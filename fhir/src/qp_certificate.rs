@@ -142,6 +142,302 @@ impl<'a> VerifiedZeroKktQpView<'a> {
     }
 }
 
+/// A one-hot optimizer decision derived from an already verified exact optimum.
+///
+/// This is the application-facing capability for allocation-style QPs.  It is
+/// not constructible from solver output or a merely feasible vector: callers
+/// obtain it only from [`VerifiedZeroKktQpCertificate::one_hot_allocation`],
+/// after hostile decoding, same-matrix PSD admission, complete public-program
+/// binding, and exact-zero KKT verification have all succeeded.  The additional
+/// shape check requires the certified primal witness to be exactly one unit in
+/// one coordinate and zero everywhere else.
+///
+/// The capability establishes that the selected coordinate is *an* optimal
+/// one-hot allocation for the bound program.  It does not, by itself, claim
+/// that the optimum is unique; a policy requiring uniqueness must encode a
+/// strict objective (as the raid allocation integration does).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedOneHotOptimalAllocation {
+    program_digest: [u8; 32],
+    winner_index: usize,
+    candidate_count: usize,
+    scale_digits: u32,
+}
+
+impl VerifiedOneHotOptimalAllocation {
+    /// Digest of the complete exact `(P,q,A,l,u)` program this decision solves.
+    pub fn program_digest(&self) -> [u8; 32] {
+        self.program_digest
+    }
+
+    /// Zero-based coordinate selected by the certified one-hot primal witness.
+    pub fn winner_index(&self) -> usize {
+        self.winner_index
+    }
+
+    pub fn candidate_count(&self) -> usize {
+        self.candidate_count
+    }
+
+    pub fn scale_digits(&self) -> u32 {
+        self.scale_digits
+    }
+}
+
+/// Why an exact optimum cannot be consumed as a one-hot allocation decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OneHotAllocationError {
+    CandidateCountMismatch { expected: usize, actual: usize },
+    ScaleOverflow { scale_digits: u32 },
+    NonBinaryCoordinate { index: usize, value: i128 },
+    WinnerCount { actual: usize },
+}
+
+impl std::fmt::Display for OneHotAllocationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for OneHotAllocationError {}
+
+/// Canonical exact value of twice a QP objective.
+///
+/// For certificate entries at fixed-point scale `S`, `xᵀPx + 2qᵀx` is
+/// represented by `twice_numerator / S³`. Carrying twice the value avoids a
+/// division-by-two convention while remaining an exact representation of
+/// `f(x) = ½xᵀPx + qᵀx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactQpObjectiveValue {
+    twice_numerator: i128,
+    scale_digits: u32,
+}
+
+impl ExactQpObjectiveValue {
+    /// Construct a public objective-value image for commitment construction.
+    /// This value alone is not verification authority; only
+    /// [`VerifiedRosterAllocationClaim`] joins it to a checked certificate.
+    pub const fn from_twice_scaled(twice_numerator: i128, scale_digits: u32) -> Self {
+        Self {
+            twice_numerator,
+            scale_digits,
+        }
+    }
+
+    pub const fn twice_numerator(self) -> i128 {
+        self.twice_numerator
+    }
+
+    pub const fn scale_digits(self) -> u32 {
+        self.scale_digits
+    }
+}
+
+/// A game/application-facing exact-QP allocation claim.
+///
+/// Construction is private and requires a hostile `FHQPB001` artifact to pass
+/// the complete public-program, exact-zero KKT, and one-hot checks. The claim's
+/// canonical commitment binds the exact QP, ordered roster, chosen coordinate,
+/// and recomputed exact objective value in one digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedRosterAllocationClaim {
+    program_digest: [u8; 32],
+    roster: Vec<u64>,
+    winner_index: usize,
+    objective: ExactQpObjectiveValue,
+    commitment: [u8; 32],
+}
+
+impl VerifiedRosterAllocationClaim {
+    pub fn program_digest(&self) -> [u8; 32] {
+        self.program_digest
+    }
+
+    pub fn roster(&self) -> &[u64] {
+        &self.roster
+    }
+
+    pub fn winner_index(&self) -> usize {
+        self.winner_index
+    }
+
+    pub fn winner(&self) -> u64 {
+        self.roster[self.winner_index]
+    }
+
+    pub fn objective(&self) -> ExactQpObjectiveValue {
+        self.objective
+    }
+
+    pub fn commitment(&self) -> [u8; 32] {
+        self.commitment
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RosterAllocationClaimError {
+    Certificate(ExactQpCertificateBundleError),
+    Allocation(OneHotAllocationError),
+    EmptyRoster,
+    RosterTooLarge {
+        actual: usize,
+        maximum: usize,
+    },
+    ZeroRosterIdentity {
+        index: usize,
+    },
+    DuplicateRosterIdentity {
+        first: usize,
+        second: usize,
+    },
+    WinnerIndexOutOfBounds {
+        winner_index: usize,
+        roster_len: usize,
+    },
+    ObjectiveShape,
+    ObjectiveOverflow,
+}
+
+impl From<ExactQpCertificateBundleError> for RosterAllocationClaimError {
+    fn from(value: ExactQpCertificateBundleError) -> Self {
+        Self::Certificate(value)
+    }
+}
+
+impl From<OneHotAllocationError> for RosterAllocationClaimError {
+    fn from(value: OneHotAllocationError) -> Self {
+        Self::Allocation(value)
+    }
+}
+
+impl std::fmt::Display for RosterAllocationClaimError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for RosterAllocationClaimError {}
+
+/// Construct the canonical public commitment used by a roster-allocation
+/// consumer. This helper is intentionally not an authority constructor: it
+/// lets policy authors precommit an expected claim, while
+/// [`verify_zero_kkt_roster_allocation_claim`] is the only one-call hostile-wire
+/// path that mints [`VerifiedRosterAllocationClaim`].
+pub fn roster_allocation_claim_commitment(
+    program_digest: [u8; 32],
+    roster: &[u64],
+    winner_index: usize,
+    objective: ExactQpObjectiveValue,
+) -> Result<[u8; 32], RosterAllocationClaimError> {
+    validate_roster(roster)?;
+    if winner_index >= roster.len() {
+        return Err(RosterAllocationClaimError::WinnerIndexOutOfBounds {
+            winner_index,
+            roster_len: roster.len(),
+        });
+    }
+    let roster_len =
+        u64::try_from(roster.len()).map_err(|_| RosterAllocationClaimError::RosterTooLarge {
+            actual: roster.len(),
+            maximum: MAX_QP_BUNDLE_DIMENSION,
+        })?;
+    let winner_index_u64 = u64::try_from(winner_index).map_err(|_| {
+        RosterAllocationClaimError::WinnerIndexOutOfBounds {
+            winner_index,
+            roster_len: roster.len(),
+        }
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"fhir/exact-qp-roster-allocation-claim/v1");
+    hasher.update(program_digest);
+    hasher.update(roster_len.to_be_bytes());
+    for identity in roster {
+        hasher.update(identity.to_be_bytes());
+    }
+    hasher.update(winner_index_u64.to_be_bytes());
+    hasher.update(objective.twice_numerator.to_be_bytes());
+    hasher.update(objective.scale_digits.to_be_bytes());
+    Ok(hasher.finalize().into())
+}
+
+fn validate_roster(roster: &[u64]) -> Result<(), RosterAllocationClaimError> {
+    if roster.is_empty() {
+        return Err(RosterAllocationClaimError::EmptyRoster);
+    }
+    if roster.len() > MAX_QP_BUNDLE_DIMENSION {
+        return Err(RosterAllocationClaimError::RosterTooLarge {
+            actual: roster.len(),
+            maximum: MAX_QP_BUNDLE_DIMENSION,
+        });
+    }
+    for (index, identity) in roster.iter().copied().enumerate() {
+        if identity == 0 {
+            return Err(RosterAllocationClaimError::ZeroRosterIdentity { index });
+        }
+        if let Some(first) = roster[..index]
+            .iter()
+            .position(|candidate| *candidate == identity)
+        {
+            return Err(RosterAllocationClaimError::DuplicateRosterIdentity {
+                first,
+                second: index,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn exact_qp_objective(
+    certificate: &CertQpExact,
+) -> Result<ExactQpObjectiveValue, RosterAllocationClaimError> {
+    let n = certificate.n;
+    if certificate.p.len()
+        != n.checked_mul(n)
+            .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?
+        || certificate.q.len() != n
+        || certificate.x.len() != n
+    {
+        return Err(RosterAllocationClaimError::ObjectiveShape);
+    }
+    let scale = 10_i128
+        .checked_pow(certificate.scale)
+        .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?;
+    let mut quadratic = 0_i128;
+    for row in 0..n {
+        for col in 0..n {
+            let term = certificate.x[row]
+                .checked_mul(certificate.p[row * n + col])
+                .and_then(|value| value.checked_mul(certificate.x[col]))
+                .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?;
+            quadratic = quadratic
+                .checked_add(term)
+                .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?;
+        }
+    }
+    let mut linear = 0_i128;
+    for (q, x) in certificate.q.iter().zip(&certificate.x) {
+        linear = linear
+            .checked_add(
+                q.checked_mul(*x)
+                    .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?,
+            )
+            .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?;
+    }
+    let twice_linear = linear
+        .checked_mul(2)
+        .and_then(|value| value.checked_mul(scale))
+        .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?;
+    Ok(ExactQpObjectiveValue {
+        twice_numerator: quadratic
+            .checked_add(twice_linear)
+            .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?,
+        scale_digits: certificate
+            .scale
+            .checked_mul(3)
+            .ok_or(RosterAllocationClaimError::ObjectiveOverflow)?,
+    })
+}
+
 impl VerifiedZeroKktQpCertificate {
     /// The checked canonical bundle, including its same-matrix SDD admission.
     pub fn certified(&self) -> &VerifiedExactQpCertificate {
@@ -163,6 +459,75 @@ impl VerifiedZeroKktQpCertificate {
 
     pub fn solution(&self) -> (&[i128], &[i128], u32) {
         self.certified.solution()
+    }
+
+    /// Consume the verified optimum as an exact one-hot allocation over
+    /// `candidate_count` coordinates.
+    ///
+    /// A fractional optimizer result, an all-zero vector, or several selected
+    /// coordinates is refused even if it is a legitimate optimum of some other
+    /// convex policy.  This keeps game/application code from silently replacing
+    /// a discrete allocation decision with a host-authored argmax convention.
+    pub fn one_hot_allocation(
+        &self,
+        candidate_count: usize,
+    ) -> Result<VerifiedOneHotOptimalAllocation, OneHotAllocationError> {
+        let (x, _y, scale_digits) = self.solution();
+        if x.len() != candidate_count {
+            return Err(OneHotAllocationError::CandidateCountMismatch {
+                expected: candidate_count,
+                actual: x.len(),
+            });
+        }
+        let unit = 10_i128
+            .checked_pow(scale_digits)
+            .ok_or(OneHotAllocationError::ScaleOverflow { scale_digits })?;
+        let mut winner = None;
+        let mut winner_count = 0usize;
+        for (index, value) in x.iter().copied().enumerate() {
+            if value == unit {
+                winner = Some(index);
+                winner_count += 1;
+            } else if value != 0 {
+                return Err(OneHotAllocationError::NonBinaryCoordinate { index, value });
+            }
+        }
+        if winner_count != 1 {
+            return Err(OneHotAllocationError::WinnerCount {
+                actual: winner_count,
+            });
+        }
+        Ok(VerifiedOneHotOptimalAllocation {
+            program_digest: self.program_digest(),
+            winner_index: winner.expect("winner_count == 1"),
+            candidate_count,
+            scale_digits,
+        })
+    }
+
+    /// Bind this verified exact optimum to an ordered application roster and
+    /// recompute its exact objective value. Neither the winner mapping nor the
+    /// objective is accepted from a solver report or host-authored argmax.
+    pub fn roster_allocation_claim(
+        &self,
+        roster: &[u64],
+    ) -> Result<VerifiedRosterAllocationClaim, RosterAllocationClaimError> {
+        validate_roster(roster)?;
+        let allocation = self.one_hot_allocation(roster.len())?;
+        let objective = exact_qp_objective(self.certified.bundle().kkt())?;
+        let commitment = roster_allocation_claim_commitment(
+            self.program_digest(),
+            roster,
+            allocation.winner_index(),
+            objective,
+        )?;
+        Ok(VerifiedRosterAllocationClaim {
+            program_digest: self.program_digest(),
+            roster: roster.to_vec(),
+            winner_index: allocation.winner_index(),
+            objective,
+            commitment,
+        })
     }
 }
 
@@ -410,6 +775,50 @@ pub fn run_certified_qp(
     }
 }
 
+/// Build a canonical exact-QP bundle from an externally supplied primal/dual
+/// solution without running fhIR's ADMM solver.
+///
+/// This is the worker-side counterpart to [`verify_certified_qp`]. The public
+/// `(P,q,A,l,u)` image always comes from `compiled`; only `(x,y)` is supplied.
+/// It is lifted at fhIR's canonical scale with zero tolerance, then the exact
+/// KKT and same-matrix PSD checks are replayed before a bundle is returned.
+pub fn build_exact_qp_certificate_bundle(
+    compiled: &Compiled,
+    x: Vec<f64>,
+    y: Vec<f64>,
+) -> Result<ExactQpCertificateBundle, ExactQpCertificateBundleError> {
+    let ConvexProgram::Qp(problem) = &compiled.program else {
+        return Err(ExactQpCertificateBundleError::NotQp);
+    };
+    compiled.verify_exact_sdd_psd_certificate()?;
+    let admission = compiled
+        .exact_sdd_psd_certificate
+        .clone()
+        .ok_or(ExactQpCertificateBundleError::MissingAdmission)?;
+    let source = CertQp {
+        n: problem.n,
+        mc: problem.mc,
+        p: problem.p.clone(),
+        q: problem.q.clone(),
+        a: problem.a.clone(),
+        l: problem.l.clone(),
+        u: problem.u.clone(),
+        x,
+        y,
+        epsilon: 0.0,
+        // These diagnostic fields are deliberately absent from CertQpExact;
+        // `lift_cert` ignores them and the exact checker recomputes everything.
+        objective: 0.0,
+        prim_res: 0.0,
+        dual_res: 0.0,
+    };
+    let exact = lift_cert(&source, QP_CERT_EXACT_SCALE)
+        .map_err(|error| QpProblemBindingError::Lift(error))?;
+    let bundle = ExactQpCertificateBundle::new(admission, exact)?;
+    bundle.bind_checked_bundle_to_compiled(compiled)?;
+    Ok(bundle)
+}
+
 /// Canonical digest of the independently compiled exact QP public problem.
 ///
 /// This is available before an optimizer runs and excludes every solver-owned
@@ -493,6 +902,20 @@ pub fn verify_zero_kkt_certified_qp(
         certified,
         zero_kkt_report,
     })
+}
+
+/// Verify a hostile canonical exact-QP artifact and derive the complete
+/// roster/objective-bound allocation claim consumed by game/application code.
+/// This is the shortest safe boundary: decode, PSD admission, full
+/// `(P,q,A,l,u)` binding, exact-zero KKT, one-hot shape, ordered-roster
+/// validation, exact objective recomputation, and commitment construction.
+pub fn verify_zero_kkt_roster_allocation_claim(
+    compiled: &Compiled,
+    wire: &[u8],
+    roster: &[u64],
+) -> Result<VerifiedRosterAllocationClaim, RosterAllocationClaimError> {
+    let verified = verify_zero_kkt_certified_qp(compiled, wire)?;
+    verified.roster_allocation_claim(roster)
 }
 
 fn push_i128s(out: &mut Vec<u8>, values: &[i128]) {

@@ -72,6 +72,7 @@ import Market.CertQpDescriptor
 import Market.PriceCert
 import Market.FhIRAdmissible
 import Market.FhIRClearingPlan
+import Market.FhIRRaidAllocationBinding
 import Market.ZKOpenRel
 import Market.WideCommitBoundary
 import Market.ShieldedRingEndpointDescriptor

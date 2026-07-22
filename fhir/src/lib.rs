@@ -60,6 +60,10 @@
 //! only an embedded witness with literally zero tolerance and recomputed zero
 //! KKT residuals. This executable Rust boundary does not itself claim a
 //! Rust-to-Lean refinement theorem.
+//! [`qp_certificate::verify_zero_kkt_roster_allocation_claim`] further derives
+//! the application-facing one-hot decision, recomputes its exact objective,
+//! binds the chosen coordinate to an ordered roster, and returns the canonical
+//! commitment over that complete claim.
 
 pub mod ast;
 pub mod compile;
@@ -83,8 +87,12 @@ pub use optimizer_protocol::{
     OPTIMIZER_PROTOCOL_VERSION,
 };
 pub use qp_certificate::{
-    run_certified_qp, verify_certified_qp, verify_zero_kkt_certified_qp, ExactQpCertificateBundle,
-    ExactQpCertificateBundleError, VerifiedExactQpCertificate, VerifiedZeroKktQpCertificate,
+    build_exact_qp_certificate_bundle, canonical_qp_program_digest,
+    roster_allocation_claim_commitment, run_certified_qp, verify_certified_qp,
+    verify_zero_kkt_certified_qp, verify_zero_kkt_roster_allocation_claim,
+    ExactQpCertificateBundle, ExactQpCertificateBundleError, ExactQpObjectiveValue,
+    OneHotAllocationError, RosterAllocationClaimError, VerifiedExactQpCertificate,
+    VerifiedOneHotOptimalAllocation, VerifiedRosterAllocationClaim, VerifiedZeroKktQpCertificate,
     VerifiedZeroKktQpView,
 };
 pub use solver_bridge::{run, AggregationSourceBinding, RunOutcome};
