@@ -100,6 +100,8 @@ pub mod economics;
 pub mod encrypted;
 pub mod error;
 pub mod eventual;
+#[cfg(feature = "prover")]
+pub mod exact_fnsp_v4_consensus_envelope;
 pub mod execution_path;
 pub mod executor;
 pub mod faithful_note_spend;
@@ -174,6 +176,13 @@ pub use error::{CustomBindingLeg, RefusalClass, TurnError};
 pub use eventual::{
     CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
     Target, TurnBatch, TurnOutput,
+};
+#[cfg(feature = "prover")]
+pub use exact_fnsp_v4_consensus_envelope::{
+    EXACT_FNSP_V4_ACTIVATION_CORE_LEN, EXACT_FNSP_V4_FRAME_CORE_LEN, ExactFnspV4ActivationCore,
+    ExactFnspV4ActivationId, ExactFnspV4ConsensusError, ExactFnspV4FrameCore,
+    ExactFnspV4FrameCoreFields, ExactFnspV4FrameId, ExactFnspV4FramePredecessor,
+    ExactFnspV4ReceiptPredecessor, LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN, LocalExactFnspV4Envelope,
 };
 pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use executor::{
