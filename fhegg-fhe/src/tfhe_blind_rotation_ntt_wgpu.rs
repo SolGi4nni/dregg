@@ -1,5 +1,6 @@
 //! Exact four-prime transform-resident PBS backend for the deployed TFHE shape.
 
+use std::num::NonZeroU64;
 use std::sync::{mpsc, OnceLock};
 
 use wgpu::util::DeviceExt;
@@ -28,6 +29,8 @@ pub(crate) struct PreparedTransformPbsGpuKeys {
     roots: wgpu::Buffer,
     twists: wgpu::Buffer,
     crt_data: wgpu::Buffer,
+    resident_step_metadata: wgpu::Buffer,
+    resident_step_metadata_stride: u32,
     pub(crate) blind_mask_dimension: usize,
     pub(crate) params: TorusExternalProductParams,
     pub(crate) output_lwe_size: usize,
@@ -181,8 +184,13 @@ struct GpuContext {
     pointwise: wgpu::ComputePipeline,
     inverse_products: wgpu::ComputePipeline,
     crt_add: wgpu::ComputePipeline,
-    rotate_scheduled: wgpu::ComputePipeline,
-    decompose_scheduled: wgpu::ComputePipeline,
+    resident_bgl: wgpu::BindGroupLayout,
+    resident_rotate_scheduled: wgpu::ComputePipeline,
+    resident_decompose_scheduled: wgpu::ComputePipeline,
+    resident_forward_digits: wgpu::ComputePipeline,
+    resident_pointwise: wgpu::ComputePipeline,
+    resident_inverse_products: wgpu::ComputePipeline,
+    resident_crt_add: wgpu::ComputePipeline,
     keyswitch_bgl: wgpu::BindGroupLayout,
     extract_keyswitch: wgpu::ComputePipeline,
     extract_only: wgpu::ComputePipeline,
@@ -273,8 +281,47 @@ impl GpuContext {
         let pointwise = make("pointwise_products");
         let inverse_products = make("inverse_products");
         let crt_add = make("crt_add_accumulator");
-        let rotate_scheduled = make("monomial_rotate_scheduled");
-        let decompose_scheduled = make("decompose_difference_scheduled");
+
+        // Resident comparison/select PBSes use exactly the same arithmetic
+        // shader, but step metadata comes from one aligned table retained by
+        // the prepared plan. A dynamic uniform offset selects the body or BSK
+        // step without allocating a uniform buffer and bind group per step.
+        let resident_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TFHE resident PBS dynamic-step bindings"),
+            entries: &[
+                dynamic_uniform_entry(0),
+                buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer_entry(3, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer_entry(4, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer_entry(5, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(6, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(7, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(8, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(9, wgpu::BufferBindingType::Storage { read_only: true }),
+            ],
+        });
+        let resident_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("TFHE resident PBS dynamic-step layout"),
+            bind_group_layouts: &[&resident_bgl],
+            push_constant_ranges: &[],
+        });
+        let make_resident = |entry: &'static str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&resident_layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let resident_rotate_scheduled = make_resident("monomial_rotate_scheduled");
+        let resident_decompose_scheduled = make_resident("decompose_difference_scheduled");
+        let resident_forward_digits = make_resident("forward_digits");
+        let resident_pointwise = make_resident("pointwise_products");
+        let resident_inverse_products = make_resident("inverse_products");
+        let resident_crt_add = make_resident("crt_add_accumulator");
 
         let keyswitch_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_pbs_extract_keyswitch.wgsl"),
@@ -363,8 +410,13 @@ impl GpuContext {
             pointwise,
             inverse_products,
             crt_add,
-            rotate_scheduled,
-            decompose_scheduled,
+            resident_bgl,
+            resident_rotate_scheduled,
+            resident_decompose_scheduled,
+            resident_forward_digits,
+            resident_pointwise,
+            resident_inverse_products,
+            resident_crt_add,
             keyswitch_bgl,
             extract_keyswitch,
             extract_only,
@@ -456,6 +508,73 @@ impl GpuContext {
         let roots = upload_storage(&self.device, "TFHE transform roots", &plan.roots);
         let twists = upload_storage(&self.device, "TFHE transform twists", &plan.twists);
         let crt_data = upload_storage(&self.device, "TFHE transform CRT plan", &crt_words);
+        let metadata_words = 12usize;
+        let metadata_bytes = metadata_words * std::mem::size_of::<u32>();
+        let alignment = self.limits.min_uniform_buffer_offset_alignment.max(1) as usize;
+        let metadata_stride = metadata_bytes
+            .checked_add(alignment - 1)
+            .map(|bytes| bytes / alignment * alignment)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("resident metadata stride overflow".into())
+            })?;
+        let metadata_slots = blind_mask_dimension.checked_add(1).ok_or_else(|| {
+            TransformPbsGpuError::Execution("resident metadata slot count overflow".into())
+        })?;
+        let metadata_table_bytes =
+            metadata_stride.checked_mul(metadata_slots).ok_or_else(|| {
+                TransformPbsGpuError::Execution("resident metadata table overflow".into())
+            })?;
+        if metadata_table_bytes as u64 > self.limits.max_buffer_size {
+            return Err(TransformPbsGpuError::Unavailable(
+                TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+            ));
+        }
+        let blind_mask_dimension_u32 = u32::try_from(blind_mask_dimension).map_err(|_| {
+            TransformPbsGpuError::Execution("resident BSK dimension exceeds u32".into())
+        })?;
+        let common = [
+            params.degree as u32,
+            params.degree.trailing_zeros(),
+            params.glwe_size as u32,
+            params.decomposition_base_log as u32,
+            params.decomposition_level_count as u32,
+        ];
+        let mut resident_metadata_bytes = vec![0u8; metadata_table_bytes];
+        let mut write_metadata = |slot: usize, step: u32, current: u32| {
+            let metadata = [
+                common[0],
+                common[1],
+                common[2],
+                common[3],
+                common[4],
+                0,
+                step,
+                current,
+                TORUS_NTT_MODULI.len() as u32,
+                0,
+                0,
+                0,
+            ];
+            let start = slot * metadata_stride;
+            resident_metadata_bytes[start..start + metadata_bytes]
+                .copy_from_slice(bytemuck::cast_slice(&metadata));
+        };
+        // Slot zero is the scheduled body rotation. CMUX step s uses slot s+1
+        // and alternates accumulator direction starting from current=1.
+        write_metadata(0, blind_mask_dimension_u32, 0);
+        for step in 0..blind_mask_dimension {
+            write_metadata(step + 1, step as u32, u32::from(step % 2 == 0));
+        }
+        let resident_step_metadata =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("TFHE resident PBS aligned step metadata"),
+                    contents: &resident_metadata_bytes,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let resident_step_metadata_stride = u32::try_from(metadata_stride).map_err(|_| {
+            TransformPbsGpuError::Execution("resident metadata stride exceeds u32".into())
+        })?;
         let dummy = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE transform preparation dummy"),
             size: 16,
@@ -527,6 +646,8 @@ impl GpuContext {
             roots,
             twists,
             crt_data,
+            resident_step_metadata,
+            resident_step_metadata_stride,
             blind_mask_dimension,
             params,
             output_lwe_size,
@@ -1171,28 +1292,23 @@ impl GpuContext {
 
             // The body rotation is always dispatched. Rotation zero is an
             // exact copy, avoiding host knowledge of the GPU-produced schedule.
-            let body_metadata =
-                self.step_metadata(0, prepared.blind_mask_dimension, 0, prepared)?;
-            let body_bind_group = self.bind_group(
-                &body_metadata,
+            let resident_bind_group = self.resident_bind_group(
+                prepared,
                 &accumulator_a,
                 &accumulator_b,
-                &prepared.bsk_spectra,
                 &scratch,
-                &prepared.qdata,
-                &prepared.roots,
-                &prepared.twists,
-                &prepared.crt_data,
                 &rotations,
             );
-            self.dispatch_1d(
+            self.dispatch_resident_1d(
                 &mut encoder,
-                &self.rotate_scheduled,
-                &body_bind_group,
+                &self.resident_rotate_scheduled,
+                &resident_bind_group,
+                0,
+                prepared,
                 accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                 1,
                 "TFHE resident comparison scheduled body rotation",
-            );
+            )?;
             let mut current = 1u32;
             let mut in_chunk = 0usize;
             for step in 0..prepared.blind_mask_dimension {
@@ -1204,59 +1320,59 @@ impl GpuContext {
                     encoder = self.encoder("TFHE resident comparison continued command chunk");
                     in_chunk = 0;
                 }
-                let metadata = self.step_metadata(0, step, current, prepared)?;
-                let bind_group = self.bind_group(
-                    &metadata,
-                    &accumulator_a,
-                    &accumulator_b,
-                    &prepared.bsk_spectra,
-                    &scratch,
-                    &prepared.qdata,
-                    &prepared.roots,
-                    &prepared.twists,
-                    &prepared.crt_data,
-                    &rotations,
-                );
-                self.dispatch_1d(
+                let metadata_slot = step.checked_add(1).ok_or_else(|| {
+                    TransformPbsGpuError::Execution("resident metadata slot overflow".into())
+                })?;
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.decompose_scheduled,
-                    &bind_group,
+                    &self.resident_decompose_scheduled,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                     1,
                     "TFHE resident comparison scheduled decompose",
-                );
-                self.dispatch_1d(
+                )?;
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.forward_digits,
-                    &bind_group,
+                    &self.resident_forward_digits,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     1,
                     (p.glwe_size * rows) as u32,
                     "TFHE resident comparison forward digits",
-                );
-                self.dispatch_1d(
+                )?;
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.pointwise,
-                    &bind_group,
+                    &self.resident_pointwise,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     p.degree.div_ceil(WORKGROUP_SIZE as usize) as u32,
                     (p.glwe_size * rows) as u32,
                     "TFHE resident comparison pointwise products",
-                );
-                self.dispatch_1d(
+                )?;
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.inverse_products,
-                    &bind_group,
+                    &self.resident_inverse_products,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     1,
                     (p.glwe_size * rows) as u32,
                     "TFHE resident comparison inverse products",
-                );
-                self.dispatch_1d(
+                )?;
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.crt_add,
-                    &bind_group,
+                    &self.resident_crt_add,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                     1,
                     "TFHE resident comparison CRT add",
-                );
+                )?;
                 current = 1 - current;
                 in_chunk += 1;
             }
@@ -1405,28 +1521,23 @@ impl GpuContext {
                     "TFHE resident selection centered modulus switch",
                 );
 
-                let body_metadata =
-                    self.step_metadata(0, prepared.blind_mask_dimension, 0, prepared)?;
-                let body_bind_group = self.bind_group(
-                    &body_metadata,
+                let resident_bind_group = self.resident_bind_group(
+                    prepared,
                     &accumulator_a,
                     &accumulator_b,
-                    &prepared.bsk_spectra,
                     &scratch,
-                    &prepared.qdata,
-                    &prepared.roots,
-                    &prepared.twists,
-                    &prepared.crt_data,
                     &rotations,
                 );
-                self.dispatch_1d(
+                self.dispatch_resident_1d(
                     &mut encoder,
-                    &self.rotate_scheduled,
-                    &body_bind_group,
+                    &self.resident_rotate_scheduled,
+                    &resident_bind_group,
+                    0,
+                    prepared,
                     accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                     1,
                     "TFHE resident selection scheduled body rotation",
-                );
+                )?;
                 let mut current = 1u32;
                 let mut in_chunk = 0usize;
                 for step in 0..prepared.blind_mask_dimension {
@@ -1435,59 +1546,59 @@ impl GpuContext {
                         encoder = self.encoder("TFHE resident selection continued command chunk");
                         in_chunk = 0;
                     }
-                    let metadata = self.step_metadata(0, step, current, prepared)?;
-                    let bind_group = self.bind_group(
-                        &metadata,
-                        &accumulator_a,
-                        &accumulator_b,
-                        &prepared.bsk_spectra,
-                        &scratch,
-                        &prepared.qdata,
-                        &prepared.roots,
-                        &prepared.twists,
-                        &prepared.crt_data,
-                        &rotations,
-                    );
-                    self.dispatch_1d(
+                    let metadata_slot = step.checked_add(1).ok_or_else(|| {
+                        TransformPbsGpuError::Execution("resident metadata slot overflow".into())
+                    })?;
+                    self.dispatch_resident_1d(
                         &mut encoder,
-                        &self.decompose_scheduled,
-                        &bind_group,
+                        &self.resident_decompose_scheduled,
+                        &resident_bind_group,
+                        metadata_slot,
+                        prepared,
                         accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                         1,
                         "TFHE resident selection scheduled decompose",
-                    );
-                    self.dispatch_1d(
+                    )?;
+                    self.dispatch_resident_1d(
                         &mut encoder,
-                        &self.forward_digits,
-                        &bind_group,
+                        &self.resident_forward_digits,
+                        &resident_bind_group,
+                        metadata_slot,
+                        prepared,
                         1,
                         (p.glwe_size * rows) as u32,
                         "TFHE resident selection forward digits",
-                    );
-                    self.dispatch_1d(
+                    )?;
+                    self.dispatch_resident_1d(
                         &mut encoder,
-                        &self.pointwise,
-                        &bind_group,
+                        &self.resident_pointwise,
+                        &resident_bind_group,
+                        metadata_slot,
+                        prepared,
                         p.degree.div_ceil(WORKGROUP_SIZE as usize) as u32,
                         (p.glwe_size * rows) as u32,
                         "TFHE resident selection pointwise products",
-                    );
-                    self.dispatch_1d(
+                    )?;
+                    self.dispatch_resident_1d(
                         &mut encoder,
-                        &self.inverse_products,
-                        &bind_group,
+                        &self.resident_inverse_products,
+                        &resident_bind_group,
+                        metadata_slot,
+                        prepared,
                         1,
                         (p.glwe_size * rows) as u32,
                         "TFHE resident selection inverse products",
-                    );
-                    self.dispatch_1d(
+                    )?;
+                    self.dispatch_resident_1d(
                         &mut encoder,
-                        &self.crt_add,
-                        &bind_group,
+                        &self.resident_crt_add,
+                        &resident_bind_group,
+                        metadata_slot,
+                        prepared,
                         accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                         1,
                         "TFHE resident selection CRT add",
-                    );
+                    )?;
                     current = 1 - current;
                     in_chunk += 1;
                 }
@@ -1687,6 +1798,41 @@ impl GpuContext {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn resident_bind_group(
+        &self,
+        prepared: &PreparedTransformPbsGpuKeys,
+        accumulator_a: &wgpu::Buffer,
+        accumulator_b: &wgpu::Buffer,
+        scratch: &wgpu::Buffer,
+        schedule: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        let metadata_size = NonZeroU64::new(12 * 4).expect("resident metadata is nonempty");
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TFHE resident PBS dynamic-step bind group"),
+            layout: &self.resident_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &prepared.resident_step_metadata,
+                        offset: 0,
+                        size: Some(metadata_size),
+                    }),
+                },
+                entry(1, accumulator_a),
+                entry(2, accumulator_b),
+                entry(3, &prepared.bsk_spectra),
+                entry(4, scratch),
+                entry(5, &prepared.qdata),
+                entry(6, &prepared.roots),
+                entry(7, &prepared.twists),
+                entry(8, &prepared.crt_data),
+                entry(9, schedule),
+            ],
+        })
+    }
+
     fn dispatch_1d(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1703,6 +1849,34 @@ impl GpuContext {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(x, y, 1);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_resident_1d(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        metadata_slot: usize,
+        prepared: &PreparedTransformPbsGpuKeys,
+        x: u32,
+        y: u32,
+        label: &'static str,
+    ) -> Result<(), TransformPbsGpuError> {
+        let metadata_offset = metadata_slot
+            .checked_mul(prepared.resident_step_metadata_stride as usize)
+            .and_then(|offset| u32::try_from(offset).ok())
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("resident metadata offset overflow".into())
+            })?;
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[metadata_offset]);
+        pass.dispatch_workgroups(x, y, 1);
+        Ok(())
     }
 
     fn encoder(&self, label: &'static str) -> wgpu::CommandEncoder {
@@ -1793,6 +1967,19 @@ fn buffer_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLay
             ty,
             has_dynamic_offset: false,
             min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn dynamic_uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: NonZeroU64::new(12 * 4),
         },
         count: None,
     }
