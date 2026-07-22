@@ -9,11 +9,13 @@ export DREGG_REQUIRE_WGPU=1
 # reconstructed big-key FheUint32 that survives a subsequent high-level op.
 cargo nextest run --release \
   -p fhegg-fhe \
+  --features tfhe-integer \
   --test tfhe_high_level_wgpu \
   --no-capture
 
 cargo nextest run --release \
   -p fhegg-fhe \
+  --features tfhe-integer \
   --test wgpu_correctness_matrix \
   --run-ignored all \
   --no-capture

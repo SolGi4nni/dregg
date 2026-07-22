@@ -14,6 +14,7 @@
 use fhegg_fhe::bfv_lean::{fold, BfvLeanError, LeanCiphertext, RnsPoly, FOLD_MODULI};
 use fhegg_fhe::bfv_ntt_gpu::{multiply_rns_cpu, BfvNttError, RnsNttBackend, RnsNttEngine};
 use fhegg_fhe::gpu_arena::{FoldBackend, FoldEngine};
+#[cfg(feature = "tfhe-integer")]
 use fhegg_fhe::tfhe_wgpu::{
     torus_negacyclic_mac_cpu, torus_negacyclic_mac_portable, torus_negacyclic_mac_with_policy,
     TorusMacBackend, TorusMacError, TorusMacPolicy,
@@ -378,6 +379,7 @@ fn bfv_ntt_malformed_shapes_are_refused_before_backend_selection() {
     eprintln!("BFV NTT preflight: 5 adapter-independent adversarial refusals");
 }
 
+#[cfg(feature = "tfhe-integer")]
 fn torus_fixture(seed: u64, degree: usize, products: usize) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
     let mut rng = XorShift64(seed);
     let mut value = |index: usize| match index % 9 {
@@ -400,6 +402,7 @@ fn torus_fixture(seed: u64, degree: usize, products: usize) -> (Vec<u64>, Vec<u6
 }
 
 #[test]
+#[cfg(feature = "tfhe-integer")]
 fn torus_mac_randomized_wraparound_matrix_matches_cpu_bit_for_bit() {
     let mut observed_wgpu = None;
     for (case_index, &(degree, products)) in
@@ -458,6 +461,7 @@ fn torus_mac_randomized_wraparound_matrix_matches_cpu_bit_for_bit() {
 }
 
 #[test]
+#[cfg(feature = "tfhe-integer")]
 fn torus_malformed_shapes_are_refused_before_backend_selection() {
     let cases = [
         (
@@ -514,23 +518,27 @@ fn require_real_wgpu_bfv_and_torus_residency() {
     );
     eprintln!("hard BFV fold backend: {:?}", selected.backend);
 
-    let (accumulator, lhs, rhs) = torus_fixture(0x51a7_5eed, 256, 2);
-    let oracle = torus_negacyclic_mac_cpu(&accumulator, &lhs, &rhs, 256).expect("CPU torus oracle");
-    let selected = torus_negacyclic_mac_with_policy(
-        &accumulator,
-        &lhs,
-        &rhs,
-        256,
-        TorusMacPolicy::RequireWgpu,
-    )
-    .expect("required wgpu torus MAC");
-    assert_eq!(selected.coefficients, oracle);
-    assert!(
-        matches!(selected.backend, TorusMacBackend::Wgpu { .. }),
-        "real-adapter lane did not execute the torus wgpu backend: {:?}",
-        selected.backend
-    );
-    eprintln!("hard TFHE torus backend: {:?}", selected.backend);
+    #[cfg(feature = "tfhe-integer")]
+    {
+        let (accumulator, lhs, rhs) = torus_fixture(0x51a7_5eed, 256, 2);
+        let oracle =
+            torus_negacyclic_mac_cpu(&accumulator, &lhs, &rhs, 256).expect("CPU torus oracle");
+        let selected = torus_negacyclic_mac_with_policy(
+            &accumulator,
+            &lhs,
+            &rhs,
+            256,
+            TorusMacPolicy::RequireWgpu,
+        )
+        .expect("required wgpu torus MAC");
+        assert_eq!(selected.coefficients, oracle);
+        assert!(
+            matches!(selected.backend, TorusMacBackend::Wgpu { .. }),
+            "real-adapter lane did not execute the torus wgpu backend: {:?}",
+            selected.backend
+        );
+        eprintln!("hard TFHE torus backend: {:?}", selected.backend);
+    }
 
     let lhs = synthetic_rns_poly(0x4e77_aa, 4096, &FOLD_MODULI);
     let rhs = synthetic_rns_poly(0x4e77_bb, 4096, &FOLD_MODULI);

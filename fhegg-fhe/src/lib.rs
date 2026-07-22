@@ -36,8 +36,12 @@
 //! The server never learns L; it only sums ciphertexts. This is the honest
 //! "orders stay encrypted" model (Cryptobazaar unary encoding).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(feature = "tfhe-integer")]
+use std::time::Instant;
+#[cfg(feature = "tfhe-integer")]
 use tfhe::prelude::*;
+#[cfg(feature = "tfhe-integer")]
 use tfhe::{ClientKey, FheUint32};
 
 /// The CARRY-FREE ADDITIVE fold (BFV / fhe.rs) — codex Round-3 Q1's Tier-0 speed
@@ -144,10 +148,15 @@ pub mod private_book_distributed_root;
 /// This is a prover-side relation checker, not transferable ZK evidence.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_relation;
+#[cfg(feature = "tfhe-integer")]
 mod tfhe_blind_rotation_ntt_wgpu;
+#[cfg(feature = "tfhe-integer")]
 mod tfhe_blind_rotation_wgpu;
+#[cfg(feature = "tfhe-integer")]
 pub mod tfhe_high_level_wgpu;
+#[cfg(feature = "tfhe-integer")]
 mod tfhe_ntt_wgpu;
+#[cfg(feature = "tfhe-integer")]
 pub mod tfhe_wgpu;
 pub mod threshold;
 
@@ -301,6 +310,7 @@ pub struct FheTiming {
 /// final decrypt is a threshold-FHE committee decrypt of p* alone.
 ///
 /// The server key must already be installed via `set_server_key` on this thread.
+#[cfg(feature = "tfhe-integer")]
 pub fn fhe_clear(orders: &[Order], k: usize, ck: &ClientKey) -> FheTiming {
     assert!(k > 0, "fhe_clear requires at least one price bucket");
     let mut t = FheTiming {
@@ -529,7 +539,7 @@ mod clearing_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tfhe-integer"))]
 mod fhe_tests {
     use super::*;
     use tfhe::{generate_keys, set_server_key, ConfigBuilder};

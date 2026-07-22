@@ -7,6 +7,10 @@ description = "fhEgg Stage-2 NO-VIEWER FHE clearing PoC: uniform-price batch auc
 
 [features]
 default = []
+# Exact-integer TFHE clearing and its portable-wgpu TFHE kernels.  The default
+# library is the BFV/MPC engine and deliberately does not compile or link
+# tfhe-rs; deployments and benchmarks that exercise the integer lane opt in.
+tfhe-integer = ["dep:tfhe"]
 # Tier-1/operator-visible BFV↔HidingFri same-opening authority for the private
 # Dark AMM.  Keep the proof-production tower out of fhegg-fhe's default fast
 # surface; hosts opt into this producer/reference-verifier seam explicitly.
@@ -33,7 +37,7 @@ verified-pq-runtime-tests = ["dep:dregg-lean-ffi"]
 # + crossing), docs/deos/PRIVATE-CONVEX-ENGINE.md (§2.x PDHG, §1.4 FHE cost).
 
 [dependencies]
-tfhe = { version = "1.6", features = ["integer"] }
+tfhe = { version = "1.6", features = ["integer"], optional = true }
 rand = "0.8"
 # The CARRY-FREE ADDITIVE lane (codex Round-3 Q1): a REAL pure-Rust BFV/BGV
 # scheme (fhe.rs, Tancrède Lepoint) — exact-quantized R_q ring, SIMD-batched,
@@ -101,19 +105,23 @@ fhegg-solver = { path = "../fhegg-solver" }
 [[bin]]
 name = "smoke"
 path = "src/bin/smoke.rs"
+required-features = ["tfhe-integer"]
 
 [[bin]]
 name = "fhe-clearing-bench"
 path = "src/bin/bench.rs"
+required-features = ["tfhe-integer"]
 
 [[bin]]
 name = "fhe-pdhg-bench"
 path = "src/bin/pdhg.rs"
+required-features = ["tfhe-integer"]
 
 # The additive-fold vs exact-integer-TFHE head-to-head (codex R3 Q1 Tier-0 lever).
 [[bin]]
 name = "fhe-additive-bench"
 path = "src/bin/additive_bench.rs"
+required-features = ["tfhe-integer"]
 
 # The OUTPUT-BOUNDARY MPC crossing (codex R4 gold): real BFV fold -> additive
 # shares -> secret-shared Beaver-triple comparison -> reveal only (p*,V*).
@@ -192,6 +200,45 @@ required-features = ["amm-input-binding"]
 name = "ristretto_parallel_prover"
 path = "tests/ristretto_parallel_prover.rs"
 required-features = ["amm-input-binding"]
+
+[[test]]
+name = "tfhe_high_level_wgpu"
+path = "tests/tfhe_high_level_wgpu.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_blind_rotation"
+path = "tests/tfhe_wgpu_blind_rotation.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_cmux"
+path = "tests/tfhe_wgpu_cmux.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_ntt_crossover"
+path = "tests/tfhe_wgpu_ntt_crossover.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_parity"
+path = "tests/tfhe_wgpu_parity.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_pbs_deployed_envelope"
+path = "tests/tfhe_wgpu_pbs_deployed_envelope.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "tfhe_wgpu_pbs_extract_keyswitch"
+path = "tests/tfhe_wgpu_pbs_extract_keyswitch.rs"
+required-features = ["tfhe-integer"]
+
+[[test]]
+name = "wgpu_correctness_matrix"
+path = "tests/wgpu_correctness_matrix.rs"
 
 [lints]
 workspace = true
