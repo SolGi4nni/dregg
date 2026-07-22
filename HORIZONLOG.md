@@ -10788,7 +10788,16 @@ hbox RX 6750 XT, the strict depth-2048 parity gate was **2/2** with byte-identic
 proofs; the final self-identifying capture was **0.717s GPU vs 3.081s CPU**, five
 batched readbacks for 77 materialized layers, 30 DFT dispatches, and six retained
 LDE blits. CPU verification remains authoritative; query/fold work is still
-host-side.
+host-side at that checkpoint. Transcript materialization has since been banked
+(`98d4e5bca`): the five commitments now use five mapped buffers rather than 77,
+and 2,736 authentication digests avoid 21,888 one-element allocations while
+the complete seeded proof remains byte-identical to CPU. The BabyBear^4 fold
+itself is now exact on WGPU too (`1297a9fa9`), matching pinned Plonky3 for
+arities 2/4/8 at 2^10, 2^15, and 2^20. At 2^20 GPU/CPU were
+**14.060/17.541ms**, **6.789/19.274ms**, and **6.043/21.429ms** respectively.
+The current PCS still hardcodes its CPU strategy; the banked minimal upstream
+hook applies and checks cleanly, but no full proof is claimed to use the GPU
+fold until that hook is installed and seeded parity is rerun.
 
 At that checkpoint PartyMPC certified preprocessing had hard-swapped to
 `FHTRI003` (now superseded by the audited live `FHTRI004` cut below): verified-core
@@ -11055,6 +11064,18 @@ degree-4096 gate is **1/1 in 112.881s**. Poseidon/root equality, clearing
 composition, exact sampler image, and PQ replacement remain open; the envelope
 must not enter a clearing receipt until the nonlinear root link prevents pairing
 BFV evidence for book A with clearing evidence for book B.
+That substitution boundary is now closed (`0b0be577c`). The mandatory
+`FHDBE002` envelope adds a 6,663-byte nonlinear root certificate: one source-
+viewer R1CS proves the deployed Poseidon root over four private codes and eight
+root blinds, while four signed owner-local linear proofs tie those commitments
+to the exact distributed input certificate. The public statement is derived
+only from the BFV relation; the old three-certificate envelope cannot downgrade
+or omit the link. The production-degree book-A/B attack is directly refused
+**1/1 in 190.133s**, and the full production BFV/root/envelope gate is **1/1 in
+190.926s**. This closes cross-book substitution without reconstructing orders
+at workers. It remains classical Ristretto/Ed25519, and the existing HidingFRI
+source viewer still sees the complete book; a distributed/PQ root prover is not
+yet claimed.
 
 The public exact-BFV lowering is no longer duplicated between proof backends
 (`6b9691c83`). `private_book_bfv_exact` derives the public key, ciphertext,
@@ -11122,6 +11143,23 @@ must be carry-clean, output is not native `FheBool`, and ciphertext-to-
 ciphertext comparison/min/select remain. The reverse-order dense transform gate
 is still useful arithmetic qualification, but it is no longer presented as the
 high-level operation order.
+The serial host boundary is now removed (`796034f2d`). All 16 radix LWEs and
+selected LUTs upload once; encrypted 0/1/2 comparison state remains resident
+through 64 ordered 256-CMUX command chunks with zero intermediate waits; only
+the final predicate is read back. The same late-decision comparison improved
+from **1.891881s to 0.741850s (2.55×)**. Strict hbox is **3/3**, including the
+encrypted Bazaar aggregate and branch, and the one-block path remains green at
+137.474ms. Ciphertext-to-ciphertext/min/max/select, native `FheBool`, and broader
+parameter shapes remain.
+Ciphertext-to-ciphertext comparison is now banked too (`a0a3892ad`). It packs
+each encrypted radix pair into the full 16-slot domain, derives encrypted local
+0/1/2 order, then folds local order into resident comparison state in **31 exact
+PBS stages** with no loop readback and one final encrypted predicate. Independent
+tfhe-rs parity covers equal and early/late less/greater; strict hbox is **4/4**
+and warm comparisons are **1.278–1.561s**. A Bazaar-shaped composition privately
+chooses an encrypted lot in **2.306s**. That selection is cryptographically
+private but currently converts the returned integer bit to `FheBool` and uses
+tfhe-rs's CPU high-level `if_then_else`; fused WGPU select remains.
 
 The literal native BFV family now has a Lean-first scaling design
 (`04a86e7fa`). `Market.PrivateBookBfvNttFamily` replaces 98,304 separately
@@ -11204,9 +11242,14 @@ affordance, then atomically reserves the apex-use, faithful-spend-use, and
 composed action IDs before signed-spine dispatch and promotes them after
 landing. The checksummed/fsynced journal fails closed on missing/corrupt restart
 state; cross-hand/session, cross-apex, cross-spend, clone-concurrency, and bad-
-signature teeth are **3/3 + 4/4**. It remains a single-process, O(N)-snapshot
-journal with fail-closed stranded reservations, and one public controller/
-frontend caller is still needed. Roster-aware finality classification,
+signature teeth are **3/3 + 4/4**. An optional strict Telegram controller is
+now banked too (`dc4d874ef`): its request is only hand, apex id, nullifier,
+signer key/counter/signature; it re-derives the shared Dungeon action, verifies
+the mapped signer before custody, loads only verifier/store-minted typed
+authority, and returns the existing public receipt. Its focused hbox gate is
+**4/4**. It is not mounted in the long-poll binary yet, and verifier-produced
+apex custody remains process-local. The journal remains single-process and
+O(N)-snapshot with fail-closed stranded reservations. Roster-aware finality classification,
 recipient-output semantics beyond one-shot redemption, and distributed
 atomicity across the spend/Bazaar/game commits also remain.
 
@@ -11235,6 +11278,27 @@ authenticated paths, fail-before-mutate insertion, and strict sequence replay
 are focused **7/7** with the library check green. It is deliberately not wired
 into FNSP-v3 or live rotation yet, so this is runtime/refinement substrate—not a
 claim that the old accumulator has already been replaced.
+Replay has since been made scale-appropriate (`382ff8565`): it validates dense
+sequence/duplicate precedence, builds append-position linked leaves, then hashes
+the dense arity-4 tree bottom-up once. Hbox semantics are **10/10**; 16k-history
+replay improved **24.794s→390.015ms (63.57×)** with about 2.4 MiB extra RSS,
+while external hostile application remains fail-before-mutate.
+The turn-preparation bridge is now banked as well (`157a053d4`, `95f2c18c1`):
+it reconstructs the persisted prefix once and evolves one AAFI state through
+every DFS-ordered spend, so spend two must open spend one's exact successor and
+append sequences match persistence. Focused hbox is **3/3**. The staged
+descriptor is now a real canonical artifact (`af0e67411`): **431,214 bytes,
+width 3,760, 76 PI, 1,258 constraints, tables [0,9,1,84,85]**, SHA-256
+`dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e`.
+It deliberately remains outside the registry with no VK. The independent
+state16 refinement required a follow-up compiler-mode repair (`418385ad5`,
+`be322f40f`); its authoritative target and full **9,922-job** Dregg2 build are
+green. The first genuine witness slice is now constructive too (`8ae1073f1`):
+a 16-row/200-constraint `Satisfied2` covers the full-FF REAL endpoint case,
+BOT/REAL/TOP ordering, count 1→2, append-slot radix chain, both 16-limb lex
+gadgets, and 64 real range-table lookups. Hash/path/FNS3/rotated-wide witness
+composition remains. Canonical artifact bytes and a green refinement are staging evidence,
+not live proof acceptance.
 
 The pre-proof wallet path is now target-independent (`5f0999ab9`, hardened by
 `ba976498b`). A client submits only three public cursors and receives fixed
@@ -11250,3 +11314,71 @@ The current gates are **8/8 SDK + 2/2 node cache**. This removes target lookup
 and repeated O(n²)/ML-DSA work; it does not hide the later public FNSP fields or
 network metadata, and its head is threshold-1 pinned-node authority rather than
 federation freshness/finality.
+
+## 2026-07-22 — dealerless custody, exact FNSP transport, and a Dregg-owned proving-stack floor
+
+The previously named dealerless algebra and one-use custody gaps now have
+banked implementations. `bb95eec3f` proves in Lean that the complete ordered
+chosen-input-VOLE matrix—local diagonals plus every distinct-party cross term—
+reconstructs the global authenticated-bit MAC relation. It composes directly
+into `AuthenticatedBitMac.batch_check_identity`; executable omission and
+diagonal-only examples fail. This is an algebra theorem only: a live adapter
+must still prove privacy, malicious security, selective-failure resistance,
+authenticated routing, robustness, and its PQ reduction.
+
+`3118f74a4` adds the strict typed `FHTRI005` ceremony. A real threshold-BFV
+session with DKG/relinearization produces exactly 129 candidates per kept gate;
+parties retain their BFV outputs and candidate/MAC-bit custody while publishing
+only bound commitment/manifest/beacon artifacts. A real 129-row run falsified
+the old degree-4096 parameter choice, so the state machine requires the new
+degree-8192 correlation profile and refuses the downgrade. The combined target
+is **9/9 green**. There is no production call to the ideal OT helpers: the type
+terminates at `AwaitingCrossTermProvider`, where the missing malicious/PQ
+chosen-input VOLE or equivalent correlation provider must attach.
+
+`37332746f` closes the `FHTRI004` durable-use tombstone. Every public party
+runner and raw equality/crossing transport constructor synchronously refuses
+certified rows. The only execution token is child-private and is minted while a
+ledger reservation retains the locked record descriptor. Linux/macOS custody
+pins the root directory identity, uses descriptor-relative no-follow opens and
+atomic link/unlink CAS, checks owner/mode/inode/link count, forces data and
+directory durability, and binds a stable correlation identity so recertifying
+under a new session cannot reset consumption. The focused hostile suite is
+**14/14 green**, covering process/thread races, abrupt exit, restart, torn
+append, symlink/FIFO/hardlink/replacement, unsafe permissions, and
+recertification. The old market apex's direct certified transport constructor
+now correctly refuses; durable transport-machine welding remains the caller's
+next step, not grounds for reopening raw access.
+
+The exact FNSP-v3 path is no longer only an emitted plan. `1894e4c86` composes
+all 16×3760 bands and proves/verifies the exact 76-PI statement under HidingFRI;
+`f66dcd723` adds full-consumption postcard decoding, canonical 304-byte public
+wire, exact four-instance degree vector `[5,8,11,5]`, complete hiding-randomness
+shape, and hostile corruption/truncation/trailing/noncanonical/PI teeth;
+`4cfdaedbf` promotes the SHA-pinned generated descriptor into by-name static
+dispatch while keeping it outside every live `PredicateKind`. Live v2 remains
+authoritative until a distinct v3 carrier, canonical verifier identity, exact
+executor state, outer BEFORE/AFTER durable reconstruction, and block-finalizer
+revalidation/persistence land.
+
+Game publication now has one viewer-blind grammar. `a2b0ad947` adds the common
+catalog publication/card; `6f7c1b60b` makes Telegram group status and shielded
+operation returns consume only that typed projection. Raw session, actor,
+operation/artifact names, payload, verifier diagnostics, state heads, and
+public-field values cannot inhabit the shared return type. DMs retain the rich
+direct receipt. The hostile shared projection is **2/2 green** and ordinary
+DM/group/document paths remain green.
+
+The July research pass is durable at
+`docs/deos/FHEGG-RESEARCH-FRONTIER-2026-07-22.md` (`62e488353`). Its principal
+architectural result is not “replace Plonky3 wholesale.” Lean/DescriptorIR stays
+the proof-system-neutral semantic relation; Plonky3 HidingFRI stays the exact
+differential reference; a Dregg-owned second backend should add share-native
+tensor-RS/BaseFold PCS, portable GPU layouts, and stateless semantic
+accumulation at explicit backend seams. Two first formalization cuts are already
+banked: `45afb75e5` proves tensor encoding/folding and the sharp Shamir-row
+support boundary, while `1f532e7c9`/`b106efd1a` prove the honest generalized-
+bilinear accumulation direction and exhibit a nonzero-weight cancellation
+counterexample to the converse. Neither module claims collaborative ZK,
+malicious soundness, Fiat–Shamir compilation, or PCD; those remain explicit
+protocol obligations rather than clean algebra silently promoted into crypto.
