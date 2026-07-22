@@ -11,7 +11,7 @@ poly-add and which SIMD-packs all K buckets into one ciphertext. Companion to
 `fhe.rs 0.1.1` (Tancrède Lepoint — a real pure-Rust BFV/BGV, `R_q = Z_q[X]/(X^n+1)`,
 SIMD-batched). Every fold on both sides is checked EXACTLY equal to the plaintext
 `reference_clear`. Host: Apple Silicon, **CPU only** (no CUDA; same host caveats as
-`MEASURED-ENVELOPE.md`). Reproduce: `cargo run --release --bin fhe-additive-bench`.
+`MEASURED-ENVELOPE.md`). Reproduce: `cargo run --release --features tfhe-integer --bin fhe-additive-bench`.
 
 ## Bottom line (the gate verdict)
 

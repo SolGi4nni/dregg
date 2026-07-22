@@ -71,7 +71,7 @@ Two changes vs the superseded measurement, both correctness-driven:
 
 `src/bin/bench.rs` measures per-op costs on `FheUint32` (the type the circuit
 uses) and models the extrapolation on the argmax crossing (not the superseded
-one). Reproduce: `cargo run --release -p fhegg-fhe --bin fhe-clearing-bench`
+one). Reproduce: `cargo run --release -p fhegg-fhe --features tfhe-integer --bin fhe-clearing-bench`
 (set `FHEGG_HOST` so the log names the box).
 
 ## Host + params (honest about the hardware AND the contention)
