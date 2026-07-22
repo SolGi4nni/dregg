@@ -621,6 +621,187 @@ theorem accepted_implies_air {rows : List Assignment}
   simp only [butterflySliceGate, Bool.and_eq_true] at h
   exact h.1
 
+/-! ## 5. Fixed q0 threshold-share terminal relation
+
+The transform table above is still a public/verifier-visible carrier.  The
+next fixed descriptor is deliberately narrower: it proves the terminal
+coefficient identity used by a q0 threshold-decryption share while hiding the
+product, smudge, complement, quotient, and carries.  Eight public context
+lanes bind the proof to the exact transform carrier selected by the host
+verifier; they do not by themselves prove that carrier's still-open committed
+LogUp relation.
+
+All large values use the same radix `2^14` as the butterfly rows.  The signed
+values are offset exactly as the protocol does:
+
+* `smudgeShift = smudge + 2^80`;
+* `quotientShift = quotient + 2^63`.
+
+Consequently the limb equation contains the fixed positive offset
+`q0 * 2^63 - 2^80`.  A separate complement chain proves
+`smudgeShift + smudgeComplement = 2^81`, which is precisely the inclusive
+signed interval `[-2^80, 2^80]`.
+-/
+
+def TERM_LAMBDA : Nat := 0
+def TERM_PRODUCT : Nat := 3
+def TERM_H : Nat := 6
+def TERM_SMUDGE_SHIFT : Nat := 9
+def TERM_SMUDGE_COMPLEMENT : Nat := 15
+def TERM_QUOTIENT_SHIFT : Nat := 21
+def TERM_EQ_CARRY_SHIFT : Nat := 26
+def TERM_COMPLEMENT_CARRY : Nat := 34
+def TERM_CONTEXT : Nat := 40
+def TERM_PRODUCT_SLACK : Nat := 48
+def TERM_PRODUCT_CAN_CARRY : Nat := 51
+def TERM_TRACE_WIDTH : Nat := 53
+
+def TERM_CARRY_SHIFT : Int := 32768
+def TERM_Q_LIMBS : List Int := [8193, 16379, 255]
+def TERM_Q_MINUS_ONE_LIMBS : List Int := [8192, 16379, 255]
+def TERM_OFFSET_LIMBS : List Int := [0, 0, 0, 0, 128, 14784, 16383, 1]
+def TERM_DOUBLE_BOUND_LIMBS : List Int := [0, 0, 0, 0, 0, 2048]
+
+def termLimb (base limb : Nat) : EmittedExpr := ev (base + limb)
+
+def termConv3 (left right degree : Nat) : EmittedExpr :=
+  match degree with
+  | 0 => emul (termLimb left 0) (termLimb right 0)
+  | 1 => eadd
+      (emul (termLimb left 0) (termLimb right 1))
+      (emul (termLimb left 1) (termLimb right 0))
+  | 2 => eadd
+      (eadd
+        (emul (termLimb left 0) (termLimb right 2))
+        (emul (termLimb left 1) (termLimb right 1)))
+      (emul (termLimb left 2) (termLimb right 0))
+  | 3 => eadd
+      (emul (termLimb left 1) (termLimb right 2))
+      (emul (termLimb left 2) (termLimb right 1))
+  | 4 => emul (termLimb left 2) (termLimb right 2)
+  | _ => ec 0
+
+def termQuotientTimesQ (degree : Nat) : EmittedExpr :=
+  let pieces := (List.range 3).filterMap fun qlimb =>
+    if qlimb ≤ degree ∧ degree - qlimb < 5 then
+      some (emul (ec (TERM_Q_LIMBS.getD qlimb 0))
+        (termLimb TERM_QUOTIENT_SHIFT (degree - qlimb)))
+    else none
+  pieces.foldl eadd (ec 0)
+
+def termSignedEqCarry (degree : Nat) : EmittedExpr :=
+  esub (ev (TERM_EQ_CARRY_SHIFT + degree)) (ec TERM_CARRY_SHIFT)
+
+def termEquationBody (degree : Nat) : EmittedExpr :=
+  let carryIn := if degree = 0 then ec 0 else termSignedEqCarry (degree - 1)
+  let carryOut := termSignedEqCarry degree
+  let smudge := if degree < 6 then termLimb TERM_SMUDGE_SHIFT degree else ec 0
+  let h := if degree < 3 then termLimb TERM_H degree else ec 0
+  esub
+    (eadd
+      (esub
+        (eadd
+          (eadd (termConv3 TERM_LAMBDA TERM_PRODUCT degree) smudge)
+          (ec (TERM_OFFSET_LIMBS.getD degree 0)))
+        (eadd h (termQuotientTimesQ degree)))
+      carryIn)
+    (emul (ec (Int.ofNat RADIX)) carryOut)
+
+def termComplementBody (degree : Nat) : EmittedExpr :=
+  let carryIn := if degree = 0 then ec 0 else ev (TERM_COMPLEMENT_CARRY + degree - 1)
+  let carryOut := ev (TERM_COMPLEMENT_CARRY + degree)
+  esub
+    (eadd
+      (esub
+        (eadd (termLimb TERM_SMUDGE_SHIFT degree)
+          (termLimb TERM_SMUDGE_COMPLEMENT degree))
+        (ec (TERM_DOUBLE_BOUND_LIMBS.getD degree 0)))
+      carryIn)
+    (emul (ec (Int.ofNat RADIX)) carryOut)
+
+def termProductCanonicalBodies : List EmittedExpr :=
+  [ esub
+      (esub
+        (eadd (termLimb TERM_PRODUCT 0) (termLimb TERM_PRODUCT_SLACK 0))
+        (ec (TERM_Q_MINUS_ONE_LIMBS.getD 0 0)))
+      (emul (ec (Int.ofNat RADIX)) (ev TERM_PRODUCT_CAN_CARRY))
+  , esub
+      (esub
+        (eadd
+          (eadd (termLimb TERM_PRODUCT 1) (termLimb TERM_PRODUCT_SLACK 1))
+          (ev TERM_PRODUCT_CAN_CARRY))
+        (ec (TERM_Q_MINUS_ONE_LIMBS.getD 1 0)))
+      (emul (ec (Int.ofNat RADIX)) (ev (TERM_PRODUCT_CAN_CARRY + 1)))
+  , esub
+      (eadd
+        (eadd (termLimb TERM_PRODUCT 2) (termLimb TERM_PRODUCT_SLACK 2))
+        (ev (TERM_PRODUCT_CAN_CARRY + 1)))
+      (ec (TERM_Q_MINUS_ONE_LIMBS.getD 2 0))
+  , boolBody TERM_PRODUCT_CAN_CARRY
+  , boolBody (TERM_PRODUCT_CAN_CARRY + 1) ]
+
+def termBodies : List EmittedExpr :=
+  (List.range 8).map termEquationBody ++
+  (List.range 6).map termComplementBody ++
+  (List.range 6).map (fun degree => boolBody (TERM_COMPLEMENT_CARRY + degree)) ++
+  termProductCanonicalBodies ++
+  [termSignedEqCarry 7]
+
+def TERM_RANGE_TID_BASE : Nat := 768
+def termRangeTid (bits : Nat) : TableId := .custom (TERM_RANGE_TID_BASE + bits)
+def termRangeLookup (bits col : Nat) : VmConstraint2 :=
+  .lookup ⟨termRangeTid bits, [ev col]⟩
+
+def termRangeTables : List TableDef :=
+  [8, 12, 14, 16].map fun bits =>
+    ⟨termRangeTid bits, "bfv_terminal_range_" ++ toString bits, 1, .rangeLimb bits⟩
+
+def termLimbRanges : List VmConstraint2 :=
+  ([TERM_LAMBDA, TERM_PRODUCT, TERM_H, TERM_PRODUCT_SLACK].flatMap fun base =>
+    [termRangeLookup 14 base, termRangeLookup 14 (base + 1), termRangeLookup 8 (base + 2)]) ++
+  ([TERM_SMUDGE_SHIFT, TERM_SMUDGE_COMPLEMENT].flatMap fun base =>
+    (List.range 5).map (fun limb => termRangeLookup 14 (base + limb)) ++
+      [termRangeLookup 12 (base + 5)]) ++
+  ((List.range 4).map fun limb => termRangeLookup 14 (TERM_QUOTIENT_SHIFT + limb)) ++
+  [termRangeLookup 8 (TERM_QUOTIENT_SHIFT + 4)] ++
+  ((List.range 8).map fun degree => termRangeLookup 16 (TERM_EQ_CARRY_SHIFT + degree))
+
+def termPublicPins : List VmConstraint2 :=
+  ((List.range 3).map fun limb =>
+    .base (.piBinding .first (TERM_LAMBDA + limb) limb)) ++
+  ((List.range 3).map fun limb =>
+    .base (.piBinding .first (TERM_H + limb) (3 + limb))) ++
+  ((List.range 8).map fun lane =>
+    .base (.piBinding .first (TERM_CONTEXT + lane) (6 + lane)))
+
+/-- Lean-authored fixed-schema hiding relation for one production q0 terminal
+share coefficient.  There is no caller-selected modulus, range, trace height,
+or FRI knob in this descriptor. -/
+def thresholdTerminalQ0Descriptor : EffectVmDescriptor2 :=
+  { name := "private-book-bfv-threshold-terminal-q0-b80::exact-limb-v1"
+  , traceWidth := TERM_TRACE_WIDTH
+  , piCount := 14
+  , tables := termRangeTables
+  , constraints := termBodies.flatMap allRowGate ++ termLimbRanges ++ termPublicPins
+  , hashSites := []
+  , ranges := [] }
+
+#guard TERM_TRACE_WIDTH == 53
+#guard termBodies.length == 26
+#guard termLimbRanges.length == 37
+#guard thresholdTerminalQ0Descriptor.piCount == 14
+#guard thresholdTerminalQ0Descriptor.traceWidth == 53
+#guard (emitVmJson2 thresholdTerminalQ0Descriptor).contains "bfv_terminal_range_16"
+
+/-- The largest unsigned convolution plus shifted-carry term stays below the
+BabyBear modulus.  This is the numeric headroom needed before the standard
+range-table/FRI soundness floor lifts a zero field residue to the intended
+integer limb equation. -/
+theorem terminal_equation_headroom :
+    3 * (RADIX - 1) ^ 2 + 2 * (RADIX - 1) + 32768 +
+      (8193 + 16379 + 255) * (RADIX - 1) + RADIX * 32768 < 2013265921 := by
+  norm_num [RADIX]
+
 #assert_all_clean [
   Market.PrivateBookBfvButterflyAir.trace_width_matches_family,
   Market.PrivateBookBfvButterflyAir.product_limb_equation_headroom,
@@ -632,6 +813,7 @@ theorem accepted_implies_air {rows : List Assignment}
   Market.PrivateBookBfvButterflyAir.permutation_mutation_refused,
   Market.PrivateBookBfvButterflyAir.omitted_row_refused,
   Market.PrivateBookBfvButterflyAir.accepted_implies_permutation,
-  Market.PrivateBookBfvButterflyAir.accepted_implies_air]
+  Market.PrivateBookBfvButterflyAir.accepted_implies_air,
+  Market.PrivateBookBfvButterflyAir.terminal_equation_headroom]
 
 end Market.PrivateBookBfvButterflyAir
