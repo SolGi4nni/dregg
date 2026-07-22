@@ -861,6 +861,42 @@ struct ValidatedFrameSnapshot {
     frames: Vec<UntrustedExactFnspV3FrameV1>,
 }
 
+/// Receipt coordinates exported to the restart audit for the signer-independent FRC1 projection.
+///
+/// This is structural data, not frame authority.  The caller invokes it only after the ordinary
+/// exact-frame open gate has authenticated and replayed the full frame chain.
+pub(crate) struct ExactFnspV3FrameReceiptCoordinates {
+    pub(crate) receipt_index: u64,
+    pub(crate) predecessor_receipt_index: Option<u64>,
+    pub(crate) predecessor_receipt_hash: Option<[u8; 32]>,
+    pub(crate) agent: [u8; 32],
+    pub(crate) turn_hash: [u8; 32],
+    pub(crate) receipt_hash: [u8; 32],
+}
+
+pub(crate) fn exact_fnsp_v3_frame_receipt_coordinates_from_read(
+    read: &ReadTransaction,
+) -> StoreResult<Vec<ExactFnspV3FrameReceiptCoordinates>> {
+    let records = read.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
+    let capacity = usize::try_from(records.len()?).map_err(|_| {
+        StoreError::Integrity("exact FNSP-v3 frame count exceeds address space".to_string())
+    })?;
+    let mut out = Vec::with_capacity(capacity);
+    for row in records.iter()? {
+        let (_, bytes) = row.map_err(|error| StoreError::Database(error.to_string()))?;
+        let frame = UntrustedExactFnspV3FrameV1::decode(bytes.value())?;
+        out.push(ExactFnspV3FrameReceiptCoordinates {
+            receipt_index: frame.receipt_log_index,
+            predecessor_receipt_index: frame.predecessor_receipt_index,
+            predecessor_receipt_hash: frame.predecessor_receipt_hash,
+            agent: frame.agent,
+            turn_hash: frame.turn_hash,
+            receipt_hash: frame.full_receipt_hash,
+        });
+    }
+    Ok(out)
+}
+
 /// The boundary rows needed by an online exact writer.
 ///
 /// Opening the store has already replayed every receipt and exact frame.  A live writer therefore

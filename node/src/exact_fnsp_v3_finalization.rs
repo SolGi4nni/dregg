@@ -75,6 +75,7 @@ pub(crate) struct PreparedExactFnspV3Finalization {
 pub(crate) struct DurablyCommittedExactFnspV3Turn {
     outcome: CommitOutcome,
     committed_head: CommittedExactFnspV3FrameHeadV1,
+    finalized_receipt_core_id: dregg_turn::FinalizedReceiptIdV1,
     fresh_post_execution: Option<FreshExactFnspV3PostExecution>,
 }
 
@@ -95,6 +96,11 @@ impl DurablyCommittedExactFnspV3Turn {
 
     pub(crate) const fn committed_head(&self) -> &CommittedExactFnspV3FrameHeadV1 {
         &self.committed_head
+    }
+
+    /// Signer-independent semantic identity persisted with this exact finalized turn.
+    pub(crate) const fn finalized_receipt_core_id(&self) -> dregg_turn::FinalizedReceiptIdV1 {
+        self.finalized_receipt_core_id
     }
 
     /// Install the two real in-memory owners only after a fresh durable transaction.
@@ -318,6 +324,7 @@ impl PreparedExactFnspV3Finalization {
         Ok(DurablyCommittedExactFnspV3Turn {
             outcome: durable.outcome,
             committed_head: durable.committed_head,
+            finalized_receipt_core_id: durable.finalized_receipt_core_id,
             fresh_post_execution,
         })
     }

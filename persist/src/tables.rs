@@ -116,6 +116,11 @@ pub const PROMISE_RESOLUTION_RECORDS_V1: TableDefinition<u64, &[u8]> =
 pub const PROMISE_RESOLUTION_BATCHES_V1: TableDefinition<u64, &[u8]> =
     TableDefinition::new("promise_resolution_batches_v1");
 
+/// Private AEAD-sealed dependent turns keyed by their promise/turn hash.
+/// No value from this table is served by the public promise-resolution API.
+pub const PRIVATE_DEPENDENT_TURNS_V1: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("private_dependent_turns_v1");
+
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
 pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =

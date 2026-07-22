@@ -310,11 +310,14 @@ pub struct CommitOutcome {
 pub struct ExactFnspV3FrameCommitOutcome {
     pub outcome: CommitOutcome,
     pub committed_head: crate::CommittedExactFnspV3FrameHeadV1,
+    /// Signer-independent semantic identity minted and persisted in the same transaction.
+    pub finalized_receipt_core_id: dregg_turn::FinalizedReceiptIdV1,
 }
 
 struct WeldedCommitOutcome {
     outcome: CommitOutcome,
     committed_head: Option<crate::CommittedExactFnspV3FrameHeadV1>,
+    finalized_receipt_core_id: Option<dregg_turn::FinalizedReceiptIdV1>,
 }
 
 fn validate_faithful_commit_coordinates(
@@ -1354,6 +1357,12 @@ impl PersistentStore {
         Ok(ExactFnspV3FrameCommitOutcome {
             outcome: welded.outcome,
             committed_head,
+            finalized_receipt_core_id: welded.finalized_receipt_core_id.ok_or_else(|| {
+                StoreError::Integrity(
+                    "exact FNSP-v3 frame commit returned without a finalized receipt core id"
+                        .to_string(),
+                )
+            })?,
         })
     }
 
@@ -1460,6 +1469,7 @@ impl PersistentStore {
             .as_ref()
             .map(|weld| weld.exact().append_record());
         let mut faithful_bridge_append = None;
+        let mut finalized_receipt_core_id = None;
         let assigned;
         {
             let mut meta = write_txn.open_table(tables::METADATA)?;
@@ -1558,14 +1568,16 @@ impl PersistentStore {
                                         false,
                                     )?;
                                 }
-                                let committed_head = match exact_fnsp_v3.as_ref() {
+                                let (committed_head, replayed_core_id) = match exact_fnsp_v3
+                                    .as_ref()
+                                {
                                     #[cfg(test)]
                                     Some(ExactFnspV3Weld::AccumulatorOnly(exact)) => {
                                         crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
                                             &write_txn,
                                             *exact,
                                         )?;
-                                        None
+                                        (None, None)
                                     }
                                     Some(ExactFnspV3Weld::Frame {
                                         exact,
@@ -1582,11 +1594,43 @@ impl PersistentStore {
                                             activation.as_ref(),
                                             frame,
                                         )?;
-                                        Some(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable(
-                                            frame.clone(),
-                                        ))
+                                        let faithful = faithful.as_ref().ok_or_else(|| {
+                                            StoreError::Integrity(
+                                                "exact frame replay omitted faithful consensus coordinates"
+                                                    .to_string(),
+                                            )
+                                        })?;
+                                        let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                                            StoreError::Integrity(
+                                                "exact frame replay omitted durable receipt coordinates"
+                                                    .to_string(),
+                                            )
+                                        })?;
+                                        let (receipt_index, encoded_receipt) =
+                                            receipt_entry.entry();
+                                        if receipt_index != frame.receipt_log_index() {
+                                            return Err(StoreError::Integrity(
+                                                "exact frame replay receipt index disagrees with frame"
+                                                    .to_string(),
+                                            ));
+                                        }
+                                        let core_id = crate::finalized_receipt_core_v1::verify_replayed_finalized_receipt_core_in(
+                                            &write_txn,
+                                            &existing,
+                                            receipt_index,
+                                            frame.predecessor_receipt_index(),
+                                            frame.predecessor_receipt_hash(),
+                                            encoded_receipt,
+                                            faithful,
+                                        )?;
+                                        (
+                                            Some(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable(
+                                                frame.clone(),
+                                            )),
+                                            Some(core_id),
+                                        )
                                     }
-                                    None => None,
+                                    None => (None, None),
                                 };
                                 // Already durably committed; nothing to do. The
                                 // welded notes/burns were written by the original
@@ -1598,6 +1642,7 @@ impl PersistentStore {
                                         freshly_committed: false,
                                     },
                                     committed_head,
+                                    finalized_receipt_core_id: replayed_core_id,
                                 });
                             }
                             return Err(StoreError::Integrity(format!(
@@ -1840,6 +1885,40 @@ impl PersistentStore {
                 )?;
             }
 
+            // 3f. Project the exact receipt into its signer-independent semantic core only after
+            // the canonical receipt row is staged. The store derives the core from authenticated
+            // consensus coordinates and the durable per-agent predecessor; callers never supply
+            // a pre-hashed identity that could be detached from this transaction.
+            if let Some(ExactFnspV3Weld::Frame { frame, .. }) = exact_fnsp_v3.as_ref() {
+                let faithful = faithful.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(
+                        "exact frame omitted faithful consensus coordinates".to_string(),
+                    )
+                })?;
+                let receipt_entry = receipt_entry.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(
+                        "exact frame omitted durable receipt coordinates".to_string(),
+                    )
+                })?;
+                let (receipt_index, encoded_receipt) = receipt_entry.entry();
+                if receipt_index != frame.receipt_log_index() {
+                    return Err(StoreError::Integrity(
+                        "exact frame receipt index disagrees with receipt weld".to_string(),
+                    ));
+                }
+                finalized_receipt_core_id = Some(
+                    crate::finalized_receipt_core_v1::stage_fresh_finalized_receipt_core_in(
+                        &write_txn,
+                        &stored_record,
+                        receipt_index,
+                        frame.predecessor_receipt_index(),
+                        frame.predecessor_receipt_hash(),
+                        encoded_receipt,
+                        faithful,
+                    )?,
+                );
+            }
+
             // 4. Advance the durable cursor LAST within the txn (still atomic).
             let mut meta = write_txn.open_table(tables::METADATA)?;
             meta.insert(tables::META_COMMIT_CURSOR, assigned + 1)?;
@@ -1892,6 +1971,7 @@ impl PersistentStore {
             },
             committed_head: staged_frame
                 .map(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable),
+            finalized_receipt_core_id,
         })
     }
 
@@ -4979,7 +5059,9 @@ mod tests {
 
     #[test]
     fn first_exact_frame_atomically_installs_full_weld_over_nonempty_prefix() {
-        let store = PersistentStore::open_in_memory().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("exact-frc1.redb");
+        let store = PersistentStore::open(&path).unwrap();
         let prefix = FinalizedNullifierRecord {
             nullifier: [0x81; 32],
             value: 81,
@@ -5008,8 +5090,9 @@ mod tests {
             forest_hash: [0x86; 32],
             pre_state_hash: [0x87; 32],
             post_state_hash: [0x88; 32],
+            timestamp: 1_700_000_000,
             agent: dregg_cell::CellId(commit.creator),
-            federation_id: [0x89; 32],
+            federation_id: faithful_context().1,
             finality: dregg_turn::Finality::Final,
             ..Default::default()
         };
@@ -5153,6 +5236,22 @@ mod tests {
             )
             .expect("full atomic first frame");
         assert!(fresh.outcome.freshly_committed);
+        let fresh_core_id = fresh.finalized_receipt_core_id;
+        let (loaded_core_id, loaded_core) = store
+            .finalized_receipt_core_v1(0)
+            .unwrap()
+            .expect("fresh exact frame has durable semantic core");
+        assert_eq!(loaded_core_id, fresh_core_id);
+        assert_eq!(loaded_core.context().block_id(), block_id);
+        assert_eq!(loaded_core.context().tau_round(), commit.height);
+        assert_eq!(
+            loaded_core.context().consensus_unix_seconds(),
+            1_700_000_000
+        );
+        assert_eq!(
+            loaded_core.predecessor(),
+            dregg_turn::FinalizedReceiptPredecessorV1::Genesis
+        );
         assert_eq!(
             fresh.committed_head.exact_after().generation(),
             initial.generation() + 1
@@ -5227,9 +5326,17 @@ mod tests {
             )
             .expect("byte-identical first-frame replay");
         assert!(!replay.outcome.freshly_committed);
+        assert_eq!(replay.finalized_receipt_core_id, fresh_core_id);
         assert_eq!(store.commit_cursor().unwrap(), 1);
         assert_eq!(store.receipt_chain_len().unwrap(), 1);
         assert_eq!(store.load_faithful_nullifier_records().unwrap().len(), 2);
+
+        drop(store);
+        let reopened = PersistentStore::open(&path).expect("restart reauthenticates FRC1");
+        assert_eq!(
+            reopened.finalized_receipt_core_v1(0).unwrap().unwrap().0,
+            fresh_core_id
+        );
     }
 
     #[test]

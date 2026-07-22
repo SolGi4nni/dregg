@@ -3,15 +3,17 @@
 //! The arithmetic relation and its fixed 53-column schema are emitted by Lean
 //! (`Market.PrivateBookBfvButterflyAir.thresholdTerminalQ0Descriptor`).  Rust
 //! only constructs the exact limb/carry witness and invokes the pinned
-//! HidingFRI prover.  The public statement reveals `lambda`, `h`, and an
-//! eight-felt commitment to a verifier-accepted q0/N=4096 transform carrier;
-//! product, smudge, quotient, complements, slack, and carries remain private.
+//! HidingFRI prover.  The arithmetic prototype reveals `lambda`, `h`, and an
+//! eight-felt commitment to a q0/N=4096 transform carrier; product, smudge,
+//! quotient, complements, slack, and carries remain private.
 //!
-//! The public butterfly carrier is not itself zero knowledge.  This module's
-//! composite verifier first replays that carrier, derives its context from the
-//! returned authority, and only then verifies the hiding terminal proof.  It
-//! therefore closes proof/carrier substitution, without overstating the still
-//! separate committed-LogUp transform follow-up.
+//! Critically, the descriptor does **not yet equate that private product to a
+//! coefficient of the carrier**.  Context hashing only prevents metadata
+//! substitution; it cannot prove a same opening.  The public composite
+//! producer/verifier are therefore fail-closed quarantined.  The internal
+//! prover is retained solely as arithmetic/proof-engineering substrate until a
+//! committed hidden transform opening (or one fused HidingFRI relation) binds
+//! secret, ciphertext, index/role, product, DKG, and collective key.
 
 use crate::joint_turn_aggregation::CustomIr2VkRecipe;
 use dregg_circuit::descriptor_ir2::{
@@ -41,6 +43,12 @@ pub const EXPECTED_CONSTRAINT_COUNT: usize = 103;
 pub const MODULUS: u64 = 68_719_403_009;
 pub const SMUDGE_BITS: u32 = 80;
 pub const PLONKY3_REV: &str = "82cfad73cd734d37a0d51953094f970c531817ec";
+
+/// Fail-closed quarantine: the terminal AIR does not yet equate its private
+/// `product` witness to an authenticated hidden transform coefficient.  A
+/// commitment-context match is metadata binding, not a same-opening proof.
+pub const UNLINKED_PRODUCT_CARRIER_AUTHORITY: &str =
+    "BFV terminal authority quarantined: unlinked product/carrier authority";
 
 /// Stable manifest of the exact hiding verifier/config family.
 pub const HIDING_VERIFIER_MANIFEST: &str = "private-book-bfv-threshold-terminal-q0-b80-v1|BabyBear|Poseidon2-W16|HidingFriPcs|salt=4|random-codewords=4";
@@ -308,8 +316,9 @@ pub fn carrier_context(authority: &VerifiedBfvTransformBoundaries) -> [u32; 8] {
     root.map(BabyBear::as_u32)
 }
 
-/// Produce the hiding proof from an already verifier-authorized transform.
-pub fn prove_zk(
+/// Internal arithmetic prototype only.  It is deliberately not exported:
+/// product is still an unconstrained private opening relative to the carrier.
+fn prove_zk(
     authority: &VerifiedBfvTransformBoundaries,
     terminal: &ThresholdDecryptTerminalRow,
 ) -> Result<(BfvThresholdTerminalZkProof, BfvThresholdTerminalPublic), String> {
@@ -329,7 +338,7 @@ pub fn prove_zk(
     Ok((BfvThresholdTerminalZkProof { proof }, public))
 }
 
-pub fn verify_zk(
+fn verify_zk(
     proof: &BfvThresholdTerminalZkProof,
     public: BfvThresholdTerminalPublic,
 ) -> Result<(), String> {
@@ -342,9 +351,10 @@ pub fn verify_zk(
     )
 }
 
-/// End-to-end producer: the public q0/N=4096 carrier is first replayed to an
-/// authority, and its exact commitments are then made public inputs of the
-/// hidden terminal proof.
+/// Quarantined composite producer.  It cannot mint authority until the hidden
+/// terminal product is equated to an arithmetic-authenticated transform
+/// coefficient (including coefficient index, ciphertext role, and DKG/key
+/// domain) inside one proof or a sound recursive opening join.
 pub fn prove_bound_to_transform(
     claim: &BfvFaithfulTableClaim,
     expected_butterfly_descriptor: [u8; 32],
@@ -353,16 +363,19 @@ pub fn prove_bound_to_transform(
     output: &[u64],
     terminal: &ThresholdDecryptTerminalRow,
 ) -> Result<(BfvThresholdTerminalZkProof, BfvThresholdTerminalPublic), String> {
-    let authority = claim
-        .verify_boundaries(expected_butterfly_descriptor, main_rows, input, output)
-        .map_err(|error| format!("BFV transform carrier refused terminal proof: {error}"))?;
-    prove_zk(&authority, terminal)
+    let _ = (
+        claim,
+        expected_butterfly_descriptor,
+        main_rows,
+        input,
+        output,
+        terminal,
+    );
+    Err(UNLINKED_PRODUCT_CARRIER_AUTHORITY.to_string())
 }
 
-/// Composite verifier.  Context equality is checked against the authority
-/// returned by this invocation's carrier replay; a valid terminal proof cannot
-/// be transplanted to a different descriptor, trace, schedule, bus, input, or
-/// output commitment.
+/// Quarantined composite verifier.  A previously generated prototype proof is
+/// never accepted as product/carrier authority.
 pub fn verify_bound_to_transform(
     claim: &BfvFaithfulTableClaim,
     expected_butterfly_descriptor: [u8; 32],
@@ -372,14 +385,16 @@ pub fn verify_bound_to_transform(
     proof: &BfvThresholdTerminalZkProof,
     public: BfvThresholdTerminalPublic,
 ) -> Result<(), String> {
-    let authority = claim
-        .verify_boundaries(expected_butterfly_descriptor, main_rows, input, output)
-        .map_err(|error| format!("BFV transform carrier refused terminal proof: {error}"))?;
-    let expected_context = carrier_context(&authority);
-    if public.carrier_context != expected_context {
-        return Err("BFV terminal proof context does not match verified transform carrier".into());
-    }
-    verify_zk(proof, public)
+    let _ = (
+        claim,
+        expected_butterfly_descriptor,
+        main_rows,
+        input,
+        output,
+        proof,
+        public,
+    );
+    Err(UNLINKED_PRODUCT_CARRIER_AUTHORITY.to_string())
 }
 
 fn validate_hiding_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(), String> {
@@ -608,11 +623,10 @@ mod tests {
     }
 
     #[test]
-    fn q0_n4096_composite_hiding_proof_binds_exact_transform_context() {
+    fn q0_n4096_composite_authority_is_fail_closed_quarantined() {
         let (butterfly_descriptor, input, rows, output, claim) = carrier(29);
         let terminal = terminal();
-        let prove_at = Instant::now();
-        let (proof, public) = prove_bound_to_transform(
+        let prove_error = prove_bound_to_transform(
             &claim,
             butterfly_descriptor,
             &rows,
@@ -620,10 +634,18 @@ mod tests {
             &output,
             &terminal,
         )
-        .expect("HidingFRI terminal proof");
+        .expect_err("unlinked product/carrier must not mint authority");
+        assert_eq!(prove_error, UNLINKED_PRODUCT_CARRIER_AUTHORITY);
+
+        // The internal arithmetic prototype may still be exercised while the
+        // weld is repaired, but the public composite verifier refuses it.
+        let authority = claim
+            .verify_boundaries(butterfly_descriptor, &rows, &input, &output)
+            .expect("prototype public carrier");
+        let prove_at = Instant::now();
+        let (proof, public) = prove_zk(&authority, &terminal).expect("internal prototype proof");
         let prove_elapsed = prove_at.elapsed();
-        let verify_at = Instant::now();
-        verify_bound_to_transform(
+        let verify_error = verify_bound_to_transform(
             &claim,
             butterfly_descriptor,
             &rows,
@@ -632,41 +654,28 @@ mod tests {
             &proof,
             public,
         )
-        .expect("composite carrier/proof verification");
-        let verify_elapsed = verify_at.elapsed();
-        eprintln!("q0/N4096 hidden terminal: prove={prove_elapsed:?} verify={verify_elapsed:?}");
+        .expect_err("prototype proof cannot cross quarantined authority boundary");
+        assert_eq!(verify_error, UNLINKED_PRODUCT_CARRIER_AUTHORITY);
+        eprintln!("q0/N4096 quarantined terminal prototype prove={prove_elapsed:?}");
 
         let encoded = proof.to_postcard().expect("encode");
         let decoded = BfvThresholdTerminalZkProof::from_postcard(&encoded).expect("strict decode");
-        verify_bound_to_transform(
-            &claim,
-            butterfly_descriptor,
-            &rows,
-            &input,
-            &output,
-            &decoded,
-            public,
-        )
-        .expect("decoded proof");
+        assert_eq!(
+            verify_bound_to_transform(
+                &claim,
+                butterfly_descriptor,
+                &rows,
+                &input,
+                &output,
+                &decoded,
+                public,
+            )
+            .unwrap_err(),
+            UNLINKED_PRODUCT_CARRIER_AUTHORITY
+        );
         let mut overlong = encoded;
         overlong.push(0);
         assert!(BfvThresholdTerminalZkProof::from_postcard(&overlong).is_err());
-
-        let (other_descriptor, other_input, other_rows, other_output, other_claim) = carrier(31);
-        assert_eq!(other_descriptor, butterfly_descriptor);
-        assert!(
-            verify_bound_to_transform(
-                &other_claim,
-                other_descriptor,
-                &other_rows,
-                &other_input,
-                &other_output,
-                &proof,
-                public,
-            )
-            .is_err(),
-            "proof must not transplant to a different verified carrier"
-        );
 
         let mut wrong_h = public;
         wrong_h.h[0] ^= 1;

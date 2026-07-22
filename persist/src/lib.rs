@@ -38,12 +38,14 @@ pub mod executor_consensus_state;
 pub mod faithful_note_root_history;
 pub mod federation;
 pub mod finalized_faithful_spend;
+pub mod finalized_receipt_core_v1;
 pub mod forever_digests;
 pub mod image_builder;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod per_cell_receipt_heads;
 pub mod poseidon2_note_tree;
+pub mod private_dependent_turns;
 pub mod promise_resolutions;
 pub mod snapshot;
 pub mod tables;
@@ -83,6 +85,7 @@ pub use faithful_note_root_history::{
 };
 pub use federation::{QuorumSignature, StoredAttestedRoot};
 pub use finalized_faithful_spend::{FinalizedFaithfulSpend, FinalizedFaithfulSpendInput};
+pub use finalized_receipt_core_v1::DurableFinalizedReceiptCoreHeadV1;
 pub use image_builder::{
     BuildError, CellSpec, ImageArtifact, ImageAttestation, ImageFacts, ImageManifest, VerifyError,
     build_image, verify_image,
@@ -94,6 +97,10 @@ pub use per_cell_receipt_heads::{
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
+pub use private_dependent_turns::{
+    ClaimedPrivateDependentTurnV1, PrivateDependentTurnFinishV1, PrivateDependentTurnSnapshotV1,
+    PrivateDependentTurnStatusV1, private_dependent_ready_digest_v1,
+};
 pub use promise_resolutions::{
     DurablePromiseResolutionV1, PromiseBrokenReasonV1, PromiseResolutionCandidateV1,
     PromiseResolutionKindV1,
@@ -247,6 +254,7 @@ impl PersistentStore {
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
+        store.audit_finalized_receipt_cores_v1_on_open()?;
         Ok(store)
     }
 
@@ -264,6 +272,7 @@ impl PersistentStore {
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
+        store.audit_finalized_receipt_cores_v1_on_open()?;
         Ok(store)
     }
 
@@ -309,6 +318,12 @@ impl PersistentStore {
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_RECORDS)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_RECEIPT_HEADS)?;
+            let _ = write_txn.open_table(finalized_receipt_core_v1::FINALIZED_RECEIPT_CORES_V1)?;
+            let _ = write_txn.open_table(
+                finalized_receipt_core_v1::FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1,
+            )?;
+            let _ =
+                write_txn.open_table(finalized_receipt_core_v1::FINALIZED_RECEIPT_CORE_HEADS_V1)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
@@ -330,6 +345,7 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_CURRENT_V1)?;
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_BATCHES_V1)?;
+            let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for
             // commit-log compaction: ids of applied turns whose records were
             // compacted under a covering checkpoint — `compact_below`).
