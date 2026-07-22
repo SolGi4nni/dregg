@@ -1,0 +1,40 @@
+# dregg-braid-hook — THE REUSABLE BRAID WIRING, game-content-free.
+#
+# This is the in-tree consumer that GRADUATES the Braid (entity-compose over
+# param-compose) from a disconnected island into the wired substrate: a game or
+# offering calls `compose_entity` to compose a param-carrying entity through the
+# Door, and — under the `prove` feature — `fold::braid_custom_bundle` /
+# `fold::mint_entity_custom_leg` to LAND that composition as a fold-ready custom
+# turn whose published outcome is welded, in-circuit, to the committed cell field
+# (the deployed app-root atom). Speaks only subjects/params/roles/ruleset/outcome
+# — it knows no game.
+[package]
+name = "dregg-braid-hook"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "The reusable Braid wiring: a game/offering composes a param-carrying entity through the Door (dregg-entity-compose over dregg-param-compose) and lands it as a fold-ready custom turn whose published outcome is app-root-welded to the committed cell field. Game-content-free."
+
+[features]
+# The SLOW real-fold path: assemble a CustomWitnessBundle, mint the wide Custom leg over a real
+# cell, and drive the deployed app-root fold node (dregg-circuit-prove — the plonky3 recursion
+# prover). Off by default so the bare dev loop that builds this member never pulls the prover.
+prove = ["dep:dregg-circuit-prove"]
+
+[dependencies]
+# The Braid, graduated: a param-carrying entity composed into a state-welded outcome, with the
+# app-root binding (outcome PI <-> committed native fields[0..8] octet) declared.
+dregg-entity-compose = { path = "../entity-compose" }
+# The general composition AIR (re-provable as the app-root leaf) + its PI layout.
+dregg-param-compose = { path = "../param-compose" }
+# The BabyBear field, the wide Custom leg descriptor/trace generator, and the app-root ABI.
+dregg-circuit = { path = "../circuit" }
+# The entity's home cell (the wide-plane params + the native outcome octet).
+dregg-cell = { path = "../cell" }
+# The rotation witness the wide Custom leg is anchored over.
+dregg-turn = { path = "../turn" }
+# SLOW prove path (feature `prove` only): CustomWitnessBundle, the wide-leg leaf-wrap config, and
+# the deployed app-root fold node that ties the published outcome to the committed octet.
+dregg-circuit-prove = { path = "../circuit-prove", optional = true }

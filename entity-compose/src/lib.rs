@@ -23,7 +23,7 @@
 //! content (params) over this substrate, exactly as a new `dregg-param-compose` game is a new
 //! ruleset root and not an AIR edit. Nothing in this crate is dragon-specific.
 //!
-//! ## What composes end to end vs. the named residual (HONEST SCOPE)
+//! ## What composes end to end (HONEST SCOPE)
 //!
 //! **What composes, driven through the real executor** (`tests/end_to_end.rs`):
 //! a real entity's params determine its v9 commitment; a composition READ from those params
@@ -34,25 +34,46 @@
 //! (`tests/budget.rs`), and the composition leaf really proves + binds its commitment
 //! (`tests/leaf_prove.rs`, `#[ignore]`, minutes).
 //!
-//! **The named residual — the outcome→cell-field weld.** The substrate binds the *whole cell*
-//! transition (`old8`/`new8`), and this crate writes the composition's `outcome_commitment`
-//! into the POST cell's wide plane so that `new8` genuinely reflects a state that carries the
-//! outcome ([`LandedComposition::post_state_carries_outcome`]). But **nothing in-circuit or
-//! in-executor yet FORCES** the post cell's wide field to equal the sub-proof's published
-//! `outcome_commitment` public input — the host wrote both. The state weld checks only the
-//! `[old8 ‖ new8]` prefix, not the app PIs, so a host could write outcome `X` into the cell
-//! while the sub-proof commits outcome `Y`, and the Door would not notice.
-//! [`LandedComposition::harness_verify_outcome_welded`] performs exactly the comparison the
-//! kernel is missing — off to the side, as a harness check. Closing it *for real* is a single
-//! **executor atom**: "the new state's wide field `[OUTCOME_WIDE_BASE .. +8]` equals the
-//! sub-proof's `outcome_commitment` PI". That atom is cell-state-layout-aware (it names a wide
-//! key), which is why it lives at the app/executor layer and not inside the game-free AIR. It
-//! is the precise, single missing gate — named, with its shape demonstrated here.
+//! ## The outcome→cell-field weld — CLOSED by ADOPTING the deployed app-root atom
+//!
+//! The state weld binds the *whole cell* transition (`old8`/`new8`), but by itself it does not
+//! force the post cell's stored outcome field to equal the sub-proof's published
+//! `outcome_commitment` public input — a host could write outcome `X` into the cell while the
+//! sub-proof commits outcome `Y`, and the state weld alone would not notice ("the host wrote
+//! both"). That residual is closed by the SAME in-circuit tie the multiway-tug win-proof
+//! deployed on Friday: the **app-root weld**
+//! (`dregg_circuit::effect_vm::custom_state_binding::AppRootBinding` + the deployed fold node
+//! `dregg_circuit_prove::joint_turn_recursive::prove_custom_binding_node_app_root_segmented`).
+//!
+//! **Say the substrate out loud:** this is NOT hand-written Rust AIR and NOT new Lean AIR. The
+//! tie is a *fold `connect`* inside the recursion tree a pure light client folds (its in-circuit
+//! keystone descends from Lean `CustomBindingFromFold`). Rust here does only two ABI things, no
+//! constraint authoring: (1) it RELOCATES the 8-felt `outcome_commitment` out of the wide plane
+//! and into the entity cell's **native `fields[0..8]` octet** — the octet the wide Custom leg
+//! exposes and the `new8` commitment absorbs at lane-0 (`field_limbs8(fields[i])[0]`), the SAME
+//! lane the deployed weld reads; and (2) it DECLARES the binding
+//! ([`LandedComposition::app_root_binding`]) so the outcome PI at
+//! [`pi::outcome_commitment_base`] is tied, lane-by-lane, to that committed octet. The wide
+//! plane cannot be reached by the atom (`field_key` indexes only the native octet), which is
+//! why the outcome moved into `fields[0..8]`.
+//!
+//! With the binding declared and the fold routed through the app-root node, a composed entity
+//! whose PUBLISHED outcome does not equal its COMMITTED octet has NO satisfying fold (UNSAT, no
+//! root, the light client never receives a verifying artifact) — driven, honest-accepts /
+//! forged-refuses, in `dregg-braid-hook`'s weld canary. [`LandedComposition::app_root_binding`]
+//! is the declaration a game/offering hands to the deployed chain prover;
+//! [`LandedComposition::harness_verify_outcome_welded`] reads back the committed octet as a fast
+//! shadow of the equality the fold now enforces for real.
+
+use std::collections::HashMap;
 
 use dregg_cell::commitment::{
     self, V9RotationContext, bytes32_to_felt8, compute_canonical_state_commitment_v9_8,
 };
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
+use dregg_circuit::dsl::circuit::CellProgram;
+use dregg_circuit::effect_vm::custom_state_binding::AppRootBinding;
+use dregg_circuit::effect_vm::field_limbs8;
 use dregg_circuit::field::BabyBear;
 use dregg_param_compose::air::{ComposeAir, build};
 use dregg_param_compose::model::{ComposeError, Composition, Ruleset, Subject};
@@ -67,15 +88,32 @@ pub use dregg_param_compose::{ComposeShape as Shape, Composition as Comp};
 /// projection is part of the cell's state commitment. Chosen at 16, the first wide key.
 pub const PROJECTION_WIDE_BASE: u64 = 16;
 
-/// Wide-plane base key for the published `outcome_commitment` (8 felts, one per wide slot).
-/// Deliberately far above the projection so a small param vector never collides with it.
-pub const OUTCOME_WIDE_BASE: u64 = 64;
+/// Native-field slot base for the published `outcome_commitment` (8 felts → native
+/// `fields[0..8]`, one felt per slot). This is the octet the deployed **app-root weld** reaches:
+/// the wide Custom leg exposes `fields[0..8]` and the `new8` commitment absorbs each slot's
+/// lane-0, so the outcome committed here is welded, lane-by-lane, to the sub-proof's published
+/// outcome PI. The outcome deliberately rides the NATIVE octet (not the wide `fields_map` where
+/// the params live) because the weld's `field_key` indexes only `fields[0..8]`.
+pub const OUTCOME_NATIVE_BASE: usize = 0;
+
+/// The app-root weld operates over the whole 8-felt `outcome_commitment` octet.
+pub const OUTCOME_OCTET_LEN: usize = 8;
 
 /// Encode a single BabyBear as a 32-byte `FieldElement` (the low 4 bytes carry the felt; the
-/// rest are zero) — used for the published `outcome_commitment` felts.
+/// rest are zero) — used where a felt rides the WIDE plane (e.g. an entity param).
 pub fn felt_to_fe(f: BabyBear) -> [u8; 32] {
     let mut out = [0u8; 32];
     out[..4].copy_from_slice(&f.0.to_le_bytes());
+    out
+}
+
+/// Encode a single BabyBear into a native `fields[i]` slot such that
+/// `field_limbs8(&fe)[0] == f` — i.e. the felt lands in the lane-0 position the wide Custom leg
+/// exposes and the `new8` commitment absorbs. `field_limbs8` reads lane-0 from the big-endian
+/// low 4 bytes `[28..32]`, so the felt is written there; every other byte is zero.
+pub fn outcome_native_fe(f: BabyBear) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[28..32].copy_from_slice(&f.0.to_be_bytes());
     out
 }
 
@@ -240,23 +278,65 @@ impl LandedComposition {
         self.pis.iter().map(|f| f.0).collect()
     }
 
-    /// **The outcome→cell-field weld, at current resolution.** Returns true iff the POST cell's
-    /// wide plane at `OUTCOME_WIDE_BASE` carries EXACTLY the sub-proof's published
-    /// `outcome_commitment` — the property the missing executor atom would ENFORCE. Here the
-    /// host arranged it (and this reads it back through the committed `fields_root`), so a
-    /// `true` says "the shape is closeable and the post state does carry the outcome"; it does
-    /// NOT say the kernel forces it. See the crate doc's honest-scope section.
+    /// **The app-root weld declaration.** The sub-proof's published `outcome_commitment` occupies
+    /// PIs `[outcome_commitment_base .. +8)`, and it MUST equal the entity cell's committed native
+    /// `fields[0..8]` octet (`field_key = OUTCOME_NATIVE_BASE`, width 8). This is the deployed
+    /// [`AppRootBinding`] a game/offering hands to the chain prover
+    /// (`bundle.app_root_binding = Some(landed.app_root_binding())`); the prover then routes the
+    /// custom turn through `prove_custom_binding_node_app_root_segmented`, whose in-circuit
+    /// `connect` forces published-outcome == committed-octet lane-by-lane. NOT hand-written AIR —
+    /// see the crate doc.
+    pub fn app_root_binding(&self) -> AppRootBinding {
+        AppRootBinding {
+            app_root_pi_offset: pi::outcome_commitment_base(),
+            app_root_len: OUTCOME_OCTET_LEN,
+            field_key: OUTCOME_NATIVE_BASE,
+        }
+    }
+
+    /// **The fold-leaf inputs, bound to a leg's REAL rotated roots.** Rebuild the composition AIR
+    /// with the door prefix set to `(old8, new8)` — the wide Custom leg's real rotated anchors,
+    /// which are computed from the leg's rotation witness and differ from the crate's own
+    /// `v9_commitment` context — and return `(program, witness, num_rows, public_inputs)` ready
+    /// for `prove_custom_leaf_with_app_root_commitment` / a `CustomWitnessBundle`. The published
+    /// `outcome_commitment` (PI `[outcome_commitment_base .. +8)`) is a function of the
+    /// composition alone, so it is UNCHANGED by the roots and equals the committed native octet.
+    pub fn fold_leaf_inputs(
+        &self,
+        old8: &[BabyBear; 8],
+        new8: &[BabyBear; 8],
+        num_rows: usize,
+    ) -> Result<
+        (
+            CellProgram,
+            HashMap<String, Vec<BabyBear>>,
+            usize,
+            Vec<BabyBear>,
+        ),
+        ComposeError,
+    > {
+        let air = build(&self.shape, &self.composition, old8, new8)?;
+        Ok((
+            air.builder.cellprogram(),
+            air.builder.trace_witness(num_rows),
+            num_rows,
+            air.builder.pis.clone(),
+        ))
+    }
+
+    /// **The outcome→cell-field weld, fast shadow.** Returns true iff the POST cell's native
+    /// `fields[0..8]` octet carries (at lane-0) EXACTLY the sub-proof's published
+    /// `outcome_commitment` — the equality the deployed app-root fold now ENFORCES in-circuit.
+    /// Reading it back here is a cheap host-side echo of the property the light client verifies
+    /// for real once the turn is folded through `prove_custom_binding_node_app_root_segmented`.
     pub fn harness_verify_outcome_welded(&self) -> bool {
         let base = pi::outcome_commitment_base();
         for (j, expect) in self.outcome_commitment.iter().enumerate() {
-            let Some(fe) = self
-                .post_cell
-                .state
-                .get_field_ext(OUTCOME_WIDE_BASE + j as u64)
-            else {
+            let Some(fe) = self.post_cell.state.get_field(OUTCOME_NATIVE_BASE + j) else {
                 return false;
             };
-            if fe != felt_to_fe(*expect) {
+            // The committed octet's lane-0 is the felt the wide leg exposes and the weld reads.
+            if field_limbs8(fe)[0] != *expect {
                 return false;
             }
             // ...and it is the same value the sub-proof published as its outcome PI.
@@ -284,8 +364,9 @@ impl LandedComposition {
 /// bound to the entity's REAL pre/post commitments.
 ///
 /// The POST cell is the entity's cell with the composition's `outcome_commitment` written into
-/// its wide plane at [`OUTCOME_WIDE_BASE`], so `new8` genuinely reflects a state carrying the
-/// outcome (the shape of the outcome→cell-field weld; see the crate doc).
+/// its native `fields[0..8]` octet at [`OUTCOME_NATIVE_BASE`], so `new8` genuinely commits a
+/// state carrying the outcome AND the octet is the value the deployed app-root weld reaches (see
+/// the crate doc and [`LandedComposition::app_root_binding`]).
 pub fn compose_onto(
     entity: &DeployedEntity,
     partners: &[Subject],
@@ -318,12 +399,14 @@ pub fn compose_onto(
     let old_commitment = entity.commitment;
     let old8 = bytes32_to_felt8(&old_commitment);
 
-    // The POST cell carries the outcome in its wide plane -> its commitment is `new8`.
+    // The POST cell carries the outcome in its NATIVE `fields[0..8]` octet -> its commitment is
+    // `new8`. Written at lane-0 (`outcome_native_fe`) so the wide Custom leg exposes exactly this
+    // octet and the deployed app-root weld ties it to the sub-proof's published outcome PI.
     let mut post_cell = entity.cell.clone();
     for (j, f) in outcome_commitment.iter().enumerate() {
         post_cell
             .state
-            .set_field_ext(OUTCOME_WIDE_BASE + j as u64, felt_to_fe(*f));
+            .set_field(OUTCOME_NATIVE_BASE + j, outcome_native_fe(*f));
     }
     let (new_commitment, _post_ctx) = v9_commitment(&post_cell);
     let new8 = bytes32_to_felt8(&new_commitment);

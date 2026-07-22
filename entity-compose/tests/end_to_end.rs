@@ -415,35 +415,55 @@ fn the_entity_params_live_in_the_committed_wide_plane() {
 }
 
 // ===========================================================================
-// THE OUTCOME→CELL-FIELD WELD — shape demonstrated, residual named.
+// THE OUTCOME→CELL-FIELD WELD — closed by adopting the deployed app-root atom.
 // ===========================================================================
 
-/// **The post state carries the outcome — and the one missing kernel atom is named.** The POST
-/// cell's wide plane carries EXACTLY the sub-proof's published `outcome_commitment`, so `new8`
-/// (which the Door welds) reflects a state that carries the outcome. The harness check performs
-/// the comparison the kernel is missing. See the crate doc: closing it for real is a single
-/// executor atom ("new state's wide field == the sub-proof's outcome PI"), which is
-/// cell-state-layout-aware and therefore lives at the app layer, not in the game-free AIR.
+/// **The post state commits the outcome in the octet the app-root weld reaches, and the binding
+/// is declared.** The POST cell's native `fields[0..8]` octet carries (at lane-0) EXACTLY the
+/// sub-proof's published `outcome_commitment`, so `new8` commits it AND it is the value the
+/// deployed app-root fold ties the published outcome PI to. The `app_root_binding` names where
+/// the outcome PI sits and which field octet it must equal. The forged-outcome-refused bite is
+/// driven through the real fold in `dregg-braid-hook`'s weld canary (`#[ignore]`, minutes).
 #[test]
-fn the_post_state_carries_the_outcome_and_names_the_residual() {
+fn the_post_state_commits_the_outcome_and_declares_the_app_root_weld() {
+    use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+    use dregg_circuit::effect_vm::field_limbs8;
+
     let entity = deploy_entity(1, 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
 
     assert!(
         landed.harness_verify_outcome_welded(),
-        "the post state must carry the sub-proof's published outcome_commitment (the shape of \
-         the outcome->cell-field weld) — and it is the SAME value the sub-proof published"
+        "the post state's native octet must carry the sub-proof's published outcome_commitment \
+         — the value the deployed app-root fold connect enforces"
     );
 
-    // The pre state does NOT carry the outcome (the transition is what installs it).
+    // The declared binding: the outcome PI is welded to the native `fields[0..8]` octet.
+    let b = landed.app_root_binding();
     assert!(
-        entity
-            .cell
-            .state
-            .fields_root_membership(dregg_entity_compose::OUTCOME_WIDE_BASE)
-            .is_none(),
-        "the pre state must not already carry the outcome"
+        b.is_well_formed(),
+        "the app-root binding must be well-formed (R past the 16-felt state prefix, nonzero width)"
     );
+    assert_eq!(b.app_root_len, 8, "the outcome is an 8-felt octet root");
+    assert_eq!(
+        b.field_key, 0,
+        "the outcome rides the native fields[0..8] octet at slot 0"
+    );
+    assert!(
+        b.app_root_pi_offset >= CUSTOM_PI_STATE_PREFIX_LEN,
+        "the outcome PI must sit strictly past the door's state prefix"
+    );
+
+    // The PRE state does NOT already carry the outcome (the transition installs it): its native
+    // octet lane-0 is all zero.
+    for j in 0..8 {
+        let fe = entity.cell.state.get_field(j).copied().unwrap_or([0u8; 32]);
+        assert_eq!(
+            field_limbs8(&fe)[0],
+            dregg_circuit::field::BabyBear::ZERO,
+            "the pre state must not already carry the outcome (native slot {j})"
+        );
+    }
     // And the post commitment differs from the pre commitment (the outcome moved the state).
     assert_ne!(
         landed.old_commitment, landed.new_commitment,

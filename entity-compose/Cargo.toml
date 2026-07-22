@@ -6,24 +6,12 @@
 # Door = a committed, verifiable outcome. Nothing dragon-specific: HOARDLIGHT's
 # creatures are ONE ruleset + content over this, not a fork.
 #
-# STANDALONE workspace (its own root — deliberately NOT a member of the repo-root
-# workspace; the main loop owns shared manifests and will fold it in later).
-# Path-deps into the tree are root-workspace members, so THEIR `workspace = true`
-# fields (edition/version, p3-*, dregg-* locals) resolve against the ROOT; this
-# manifest references none of them that way. `[patch.crates-io]` replicates only
-# the root patch this graph consumes — the `ark-serialize` serde-integration fork
-# that `dregg-hints` (pulled transitively by `dregg-circuit`) needs. The plonky3
-# recursion deps are direct git deps in the root `[workspace.dependencies]` (no
-# patch) and resolve via the path-dep'd circuit/circuit-prove crates' root
-# membership. Follows the `dregg-tui` standalone template.
-[workspace]
-members = ["."]
-resolver = "2"
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
+# GRADUATED: a member of the repo-root breadstuffs workspace (added to root
+# `members` + `default-members`). The Braid is no longer a disconnected island —
+# CI's bare `cargo build`/`cargo test` builds it, and its downstream consumer
+# `dregg-braid-hook` is a real reverse-dependent. Shared manifests (the
+# `ark-serialize` serde-integration patch, the plonky3 recursion git deps) come
+# from the root workspace; this manifest carries none of its own.
 [package]
 name = "dregg-entity-compose"
 version = "0.1.0"
