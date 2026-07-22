@@ -129,6 +129,131 @@ carry it opaquely into the live selector/registry; install the house-blind BFV
 apex in the player-facing host; and deploy the common journey through the real
 web, Discord, and Telegram surfaces.
 
+## 0.7. July 22 exact-chain, hosted-Bazaar, and executor-state checkpoint
+
+This section supersedes sections 0.5–0.6 and older exact/Bazaar/side-table
+sentences where they disagree. It separates banked substrate from the active
+production weld and records newly found blockers rather than hiding them behind
+the amount of code landed.
+
+### Exact FNSP-v3 authority: global exact chain, independent player receipts
+
+- `9b2b72f24` makes exact proof admission a consumed one-shot executor token;
+  `8d790147f` reconstructs per-agent receipt heads from the validated durable
+  receipt log and fences the exact route to its characterized single-root,
+  single-spend Rust producer shape; `6202521e7` banks the activation authority.
+- `0cb8b2dd8` banks the signed activation/frame log, exact-head CAS, and atomic
+  receipt/faithful/exact/frame writer as explicit **non-live WIP**. It is useful
+  persistence substrate, not evidence of a production call site.
+- The first frame design incorrectly made every later exact spend extend the
+  previous exact frame's player receipt and full state. That would have made
+  Alice → ordinary turn → Bob impossible. `ea28662e0` and `e6f58f9b9` replace
+  this with the correct Lean law: one global exact-nullifier/frame chain, while
+  every frame independently authenticates the latest durable receipt of its
+  own player at an exact receipt-log index and the global commit boundary.
+  Activation authority now explicitly covers cursor/tip shape, durable cutover,
+  exact head, federation, and executor policy. The updated module passes
+  `lake env lean`.
+- `89a1e112e` is the aligned Rust turn API. The activation hash binds
+  federation, executor key, exact initial head, and dense receipt cutover
+  cursor/optional tail. Frames carry the current receipt index plus a paired
+  same-agent predecessor index/hash, enforce index order, and advance exact
+  state globally across arbitrary players without imposing false full-state
+  adjacency.
+- The node/persist redesign and real blocklace selector are still active. At
+  this checkpoint `prepare_exact_fnsp_v3_finalization` has no production caller;
+  strict v3 is rejected by the legacy v2 carrier path before generic execution.
+  The intended branch must preserve the validated-signed-turn token, divert v3
+  before the v2 decoder and every RAM overlay/event/proving side effect, commit
+  the exact durable CAS last, and install RAM only after fresh durable success.
+- Honest cryptographic scope: current v3 proves exact anti-double-spend/receipt
+  continuity and hides its witness, but its 76 public inputs expose historical
+  height/root, nullifier, value, asset, exact roots/counts, and outer anchors.
+  The currently characterized executor slice additionally requires `value = 0`
+  and no value commitment/conservation proof. It is **not** the private-value
+  Dark Bazaar apex. Hidden amount/asset settlement still requires the
+  ShieldedTransfer/fhEgg conservation/range layer to compose into this exact
+  global authority.
+
+### Hosted private Bazaar: mounted contract, missing production worker
+
+- `ff7a7fd36` banks the typed private-Bazaar game consequence: deployment-owned
+  policy/market identity, durable Enter → LIST journey, concrete Dungeon XP
+  adapter, signed/final exact-event verification, recovery, and viewer-blind
+  public receipt. `a619f51b4` mounts the same opt-in deployment contract through
+  web, Telegram, and Discord and deletes the old string-flattening compatibility
+  entry point.
+- The typed `apply_private_settlement` / `recover_private_settlement` boundary is
+  real, but only tests invoke it. No production private-worker listener yet
+  consumes an out-of-band clearing receipt and calls that boundary. Frontends
+  must never receive the private witness, winner, or raw private receipt.
+- Restart testing found that the banked adapter's one-shot lookup uses receipt or
+  turn envelope identity that changes when a semantically identical settlement
+  is reissued after restart. The active repair derives one canonical private
+  claim from market instance + proof session/rule/order root + clearing
+  price/volume + winner, while independently re-verifying each live receipt as
+  evidence. Until that version/domain bump and hostile restart gate are banked,
+  do not claim reissued-receipt recovery or exactly-once XP across a worker
+  restart.
+
+### Executor consensus side state: repaired layers and live residuals
+
+- `77c8da611` fail-closes the Lean producer for effects whose Rust path mutates
+  unprojected consensus accumulators; a stale Lean root is no longer restamped
+  over a different Rust side-table successor.
+- `a977c996d` stages rate-count/sum deltas per action, exposes them within the
+  same forest, publishes only after final Rust + Lean acceptance, supports
+  active `Cases`, rejects ambiguous multiple windows, widens sums to `u64`, and
+  adds a canonical bounded snapshot codec. Six transactionality and three codec
+  tests are green. The snapshot still needs to join the node's same redb
+  finalized-turn transaction and restart seed.
+- `a0591caec` binds Promise/Notify/React to the registered actor and condition,
+  makes the reactive registry canonical, and journals rollback. `d502ecfd2`
+  adds candidate resolve/commitment/snapshot APIs so blocklace can mutate the
+  isolated candidate executor rather than a disconnected NodeState registry.
+  The redb CAS/reseed and single-owner NodeState cutover remain active.
+- `af090f03c` adds canonical local custom-program registry persistence,
+  write-before-publish deployment, fail-closed restore/revalidation, and fresh
+  executor seeding. It is node-local administration, not yet a consensus-ordered
+  deployment protocol. Validators with unequal registries can diverge. A live
+  deployment receipt must bind prior/new registry roots, canonical descriptor
+  content/availability, VK and version policy, authority, federation/epoch, and
+  finalization height. The DFA verifier registry remains categorically separate.
+- A current generic blocklace bug is live and not exact-v3-specific:
+  `execute_finalized_turn` overlays the candidate ledger before matching
+  `TurnResult` and before the durable store transaction, and publishes pending,
+  artifact, and activity effects too early. Rejected/Expired/Pending turns or a
+  store failure can therefore leave RAM ahead of durable state. The active fix
+  isolates every candidate consequence through durable success and publishes
+  ledger/head/events/artifacts only for a fresh committed outcome, matching the
+  existing Lean `Dregg2.Exec.Durability.durableApply_reject_stays` law.
+
+### Optimizer and portable GPU truth
+
+- The strict `FHUAC001` fhIR allocation certificate is green: the checker
+  independently recomputes the caller-grid maximum-volume price, lowest-index
+  tie, exact volume, inactive-zero fills, and deterministic largest-remainder
+  allocation. The typed request/session/replay digest covers `(K, ordered
+  side/quantity/limit)`; it is not JSON and is allocation authority, not hiding.
+  Hbox results are solver 9/9 and fhIR 10/10; the eight Lean certificate
+  keystones are axiom-clean.
+- The portable WGPU path is real Vulkan, not HIP/CUDA. Exact BFV odd-NTT and
+  TFHE compare/select kernels are differential-green on the hbox RX 6750 XT and
+  persvati AMD Strix iGPU; the 32 selection-mask PBS lanes now batch key switch,
+  transform, extraction, pair-add, and one readback. Loaded timings are
+  machine/contention-sensitive and should not be promoted into a stable ratio.
+- Live `fhe_clear` still uses CPU tfhe-rs, and Dark AMM multiplication still
+  uses CPU fhe.rs because the complete BFV extended-basis/tensor/relinearization
+  GPU seam is absent. The exact WGPU Ristretto verifier is intentionally disabled
+  for performance (about 4.643s versus 9.827ms dalek at 4096 terms).
+- The largest measured current gameplay blocker is threshold-custody range
+  proving: the six-share heavy Descent settlement took about 1086s because each
+  share serially constructs three large Bulletproof inner-product proofs. The
+  active safe optimization is the owned exact host-parallel Bulletproof prover
+  plus the already-existing parallel quorum helper with bounded nested
+  parallelism, followed by cross-verification and end-to-end release timing on
+  hbox/persvati. It does not pretend that the slower Ristretto GPU path helps.
+
 ## 1. The honest current sentence
 
 The repository has a transferable, source-row-bound BFV/Poseidon same-opening
