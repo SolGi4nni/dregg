@@ -8,6 +8,7 @@
 use core::fmt;
 
 use crate::action::Effect;
+use crate::faithful_note_spend_exact_v3_anchor::ExactFnspV3DurableAnchor;
 use dregg_circuit::exact_nullifier_aafi::{ValidatedExactAafiTransition, exact_state_commit};
 use dregg_circuit::exact_nullifier_aafi_rotated_trace::{
     ExactAafiRotatedTraceWitness, NULLIFIER_OFFSETS,
@@ -172,6 +173,41 @@ pub struct FaithfulNoteSpendExactV3StateInputs {
 }
 
 impl FaithfulNoteSpendExactV3StateInputs {
+    /// Derive verifier-facing state only from a validated exact transition and the durable actor
+    /// anchor rebuilt independently of the proof.
+    ///
+    /// Both FNS3 octets are recomputed from the transition's root/count pairs and checked at every
+    /// scattered nullifier offset in the durable BEFORE/AFTER payloads.  The public outer
+    /// commitments then come from that same durable anchor; callers cannot provide commitments or
+    /// payloads separately.
+    pub fn derive_from_durable_anchor(
+        transition: &ValidatedExactAafiTransition,
+        anchor: &ExactFnspV3DurableAnchor,
+    ) -> Result<Self, FaithfulNoteSpendExactV3Error> {
+        let expected_before = exact_state_commit(transition.prior_root(), transition.prior_count());
+        let expected_after =
+            exact_state_commit(transition.successor_root(), transition.successor_count());
+        for (lane, offset) in NULLIFIER_OFFSETS.iter().copied().enumerate() {
+            if anchor.before_payload()[offset] != expected_before[lane]
+                || anchor.after_payload()[offset] != expected_after[lane]
+            {
+                return Err(FaithfulNoteSpendExactV3Error::StateProducerMismatch { lane });
+            }
+        }
+        Ok(Self {
+            prior_root: transition.prior_root().map(|felt| felt.as_u32()),
+            successor_root: transition.successor_root().map(|felt| felt.as_u32()),
+            pre_count: transition.prior_count(),
+            post_count: transition.successor_count(),
+            before_commit: anchor.before_commit().map(|felt| felt.as_u32()),
+            after_commit: anchor.after_commit().map(|felt| felt.as_u32()),
+        })
+    }
+
+    /// Prover-side derivation from the exact trace witness.
+    ///
+    /// Acceptance code should prefer [`Self::derive_from_durable_anchor`], whose stable frame is
+    /// rebuilt from durable actor state rather than supplied by a witness producer.
     pub fn derive(
         transition: &ValidatedExactAafiTransition,
         rotated: &ExactAafiRotatedTraceWitness,
@@ -420,7 +456,7 @@ impl fmt::Display for FaithfulNoteSpendExactV3Error {
             }
             Self::StateProducerMismatch { lane } => write!(
                 f,
-                "exact FNSP-v3 transition/rotated state producers disagree at FNS3 lane {lane}"
+                "exact FNSP-v3 transition/state producers disagree at FNS3 lane {lane}"
             ),
             Self::InvalidPublicWireLength { expected, actual } => write!(
                 f,
@@ -444,7 +480,10 @@ impl std::error::Error for FaithfulNoteSpendExactV3Error {}
 mod tests {
     use super::*;
     use crate::action::Event;
-    use dregg_cell::{CellId, FIELD_ZERO, Nullifier};
+    use crate::faithful_note_spend_exact_v3_anchor::derive_exact_fnsp_v3_durable_anchor;
+    use dregg_cell::commitment::{RotationCarrierMaterial, V9RotationContext, digest8_to_bytes32};
+    use dregg_cell::{Cell, CellId, FIELD_ZERO, Nullifier};
+    use dregg_circuit::Faithful8;
     use dregg_circuit::exact_nullifier_aafi::{ExactNullifierAafi, validate_exact_aafi_witness};
     use dregg_circuit::exact_nullifier_aafi_rotated_trace::{
         ROTATED_PAYLOAD_WIDTH, marshal_exact_aafi_rotated_trace,
@@ -485,6 +524,26 @@ mod tests {
             asset_type: 0x0123_4567_89ab_cdef,
             spending_proof: carrier.encode(),
             value_commitment: None,
+        }
+    }
+
+    fn anchor_actor() -> Cell {
+        let mut cell = Cell::new([7u8; 32], [9u8; 32]);
+        assert!(cell.state.credit_balance(500));
+        cell.state.set_nonce(11);
+        cell
+    }
+
+    fn anchor_context(
+        prior_fns3: dregg_circuit::exact_nullifier_aafi::Digest8,
+    ) -> V9RotationContext {
+        V9RotationContext {
+            cells_root: BabyBear::new(101),
+            nullifier_root: Faithful8::from_bytes32(&digest8_to_bytes32(prior_fns3)),
+            commitments_root: Faithful8::ZERO,
+            revoked_root: Faithful8::ZERO,
+            iroot: BabyBear::new(202),
+            material: RotationCarrierMaterial::default(),
         }
     }
 
@@ -668,5 +727,126 @@ mod tests {
             FaithfulNoteSpendExactV3StateInputs::derive(&validated_a, &rotated_b),
             Err(FaithfulNoteSpendExactV3Error::StateProducerMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn durable_state_refuses_mixed_prior_transition_and_anchor() {
+        let mut accumulator = ExactNullifierAafi::new();
+        let first = accumulator
+            .prepare_insert([0x11; 32], 11)
+            .expect("first exact insertion");
+        let first_validated = validate_exact_aafi_witness(&first).expect("valid first transition");
+        let first_anchor = derive_exact_fnsp_v3_durable_anchor(
+            &anchor_actor(),
+            &anchor_context(first.prior_state_commit),
+            first.prior_state_commit,
+            first.successor_state_commit,
+        )
+        .expect("first durable anchor");
+        accumulator
+            .apply_witness(&first)
+            .expect("advance exact accumulator");
+        let second = accumulator
+            .prepare_insert([0x22; 32], 22)
+            .expect("second exact insertion");
+        let second_validated =
+            validate_exact_aafi_witness(&second).expect("valid second transition");
+
+        assert!(
+            FaithfulNoteSpendExactV3StateInputs::derive_from_durable_anchor(
+                &first_validated,
+                &first_anchor,
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            FaithfulNoteSpendExactV3StateInputs::derive_from_durable_anchor(
+                &second_validated,
+                &first_anchor,
+            ),
+            Err(FaithfulNoteSpendExactV3Error::StateProducerMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn durable_state_refuses_mismatched_successor_with_same_prior() {
+        let witness_a = ExactNullifierAafi::new()
+            .prepare_insert([0x31; 32], 31)
+            .expect("transition A");
+        let witness_b = ExactNullifierAafi::new()
+            .prepare_insert([0x32; 32], 32)
+            .expect("transition B");
+        assert_eq!(witness_a.prior_state_commit, witness_b.prior_state_commit);
+        assert_ne!(
+            witness_a.successor_state_commit,
+            witness_b.successor_state_commit
+        );
+        let validated_a = validate_exact_aafi_witness(&witness_a).expect("valid A");
+        let anchor_b = derive_exact_fnsp_v3_durable_anchor(
+            &anchor_actor(),
+            &anchor_context(witness_b.prior_state_commit),
+            witness_b.prior_state_commit,
+            witness_b.successor_state_commit,
+        )
+        .expect("durable anchor B");
+
+        assert!(matches!(
+            FaithfulNoteSpendExactV3StateInputs::derive_from_durable_anchor(
+                &validated_a,
+                &anchor_b,
+            ),
+            Err(FaithfulNoteSpendExactV3Error::StateProducerMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn signed_statement_state_lanes_equal_transition_and_durable_anchor() {
+        let witness = ExactNullifierAafi::new()
+            .prepare_insert([0x5a; 32], 0x8877_6655_4433_2211)
+            .expect("exact insertion");
+        let validated = validate_exact_aafi_witness(&witness).expect("valid transition");
+        let anchor = derive_exact_fnsp_v3_durable_anchor(
+            &anchor_actor(),
+            &anchor_context(witness.prior_state_commit),
+            witness.prior_state_commit,
+            witness.successor_state_commit,
+        )
+        .expect("durable anchor");
+        let state =
+            FaithfulNoteSpendExactV3StateInputs::derive_from_durable_anchor(&validated, &anchor)
+                .expect("transition and durable anchor agree");
+        let statement = FaithfulNoteSpendExactV3PublicStatement::from_signed_effect(
+            &note_spend(&sample_carrier()),
+            &state,
+        )
+        .expect("canonical exact statement");
+
+        let lanes = statement.as_u32_array();
+        assert_eq!(
+            &lanes[PI_SUCCESSOR_ROOT..PI_PRIOR_ROOT],
+            &validated.successor_root().map(|felt| felt.as_u32())
+        );
+
+        let mut expected = [0u32; FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT - PI_PRIOR_ROOT];
+        expected[..8].copy_from_slice(&validated.prior_root().map(|felt| felt.as_u32()));
+        for (lane, chunk) in validated
+            .prior_count()
+            .to_le_bytes()
+            .chunks_exact(2)
+            .enumerate()
+        {
+            expected[8 + lane] = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
+        }
+        for (lane, chunk) in validated
+            .successor_count()
+            .to_le_bytes()
+            .chunks_exact(2)
+            .enumerate()
+        {
+            expected[12 + lane] = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
+        }
+        expected[16..24].copy_from_slice(&anchor.before_commit().map(|felt| felt.as_u32()));
+        expected[24..].copy_from_slice(&anchor.after_commit().map(|felt| felt.as_u32()));
+        assert_eq!(&lanes[PI_PRIOR_ROOT..], &expected);
     }
 }
