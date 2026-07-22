@@ -16,8 +16,8 @@ use dregg_types::CellId;
 use dreggnet_offerings::character::{Character, CharacterSheet, CharacterStore};
 use dreggnet_offerings::dungeon::{DungeonOffering, DungeonSession};
 use dreggnet_offerings::{
-    Action, DreggIdentity, Offering, OfferingError, OfferingHost, Outcome, SessionConfig, Surface,
-    VerifyReport,
+    Action, DreggIdentity, Offering, OfferingError, OfferingHost, Outcome, RunCost, SessionConfig,
+    Surface, VerifyReport,
 };
 use dungeon_on_dregg::meta::meta_hero_story;
 use spween_dregg::{
@@ -381,6 +381,10 @@ impl Offering for PrivateBazaarCharacterDungeonOffering {
 
     fn actions_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Vec<Action> {
         self.dungeon.actions_for(session, viewer)
+    }
+
+    fn price(&self, input: &Action) -> RunCost {
+        self.dungeon.price(input)
     }
 }
 
