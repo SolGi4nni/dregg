@@ -1,12 +1,12 @@
-//! Proof-system seam for the canonical DescriptorIR-v2 relation.
+//! Proof-system seam for DescriptorIR-v2 semantic relations.
 //!
-//! The semantic program and public statement are backend-independent:
-//! [`DescriptorStatementV1`] carries the exact supplied DescriptorIR-v2 bytes
-//! plus a canonical BabyBear public-input vector.  Registry/provenance checks
-//! authenticate whether those bytes are an approved Lean-emitted program.  A
-//! proof backend may choose a different PCS, transcript, distributed proving
-//! protocol, or witness custody model, but it does not get to reinterpret those
-//! public bytes.
+//! [`DescriptorStatement`] contains the parsed [`EffectVmDescriptor2`] relation
+//! plus canonical BabyBear public inputs.  It deliberately does not retain or
+//! hash the JSON text used to construct that relation: Lean-emitted JSON is an
+//! internal build/provenance transport, not protocol identity.  A network proof
+//! envelope should select an audited relation through a code-owned registry and
+//! bind that registry identifier, the backend/config identifier, and the public
+//! inputs.
 //!
 //! The witness is deliberately *not* part of the common interface.  The
 //! reference Plonky3 backend consumes a complete local IR-v2 trace through
@@ -14,11 +14,11 @@
 //! party-local shares as its associated witness type without first assembling a
 //! no-viewer witness in one process.
 //!
-//! This is a compile-time seam, not a proof-wire registry.  Production proof
-//! envelopes still need to bind `BACKEND_ID`, statement id, proof bytes, and
-//! verifier-parameter identity before multiple proof systems can coexist on a
-//! network boundary.  The current STARK binds the parsed relation and public
-//! inputs; exact source-byte identity remains the registry/envelope's job.
+//! This is a compile-time seam, not a proof-wire registry.  The current STARK
+//! binds the parsed relation and public inputs.  Production proof envelopes
+//! still need code-owned relation resolution and explicit backend/verifier-
+//! parameter dispatch before multiple proof systems can coexist on a network
+//! boundary.
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -30,58 +30,48 @@ use crate::field::{BABYBEAR_P, BabyBear};
 use crate::heap_root::HeapLeaf;
 use crate::stark_zk::{DreggZkStarkConfig, create_zk_config};
 
-/// Domain/version prefix of the canonical DescriptorIR statement encoding.
+/// Backend-neutral semantic relation and public inputs.
 ///
-/// Layout after the prefix:
-/// `descriptor_len:u64-le || descriptor_bytes || pi_count:u64-le || pi:u32-le*`.
-pub const DESCRIPTOR_STATEMENT_V1_MAGIC: &[u8] = b"dregg-ir2-statement-v1\0";
-/// BLAKE3 derive-key context for [`DescriptorStatementV1::statement_id`].
-pub const DESCRIPTOR_STATEMENT_V1_HASH_CONTEXT: &str = "dregg DescriptorStatementV1 identity";
-
-/// Exact public relation identity shared by every DescriptorIR-v2 proof backend.
-///
-/// Descriptor bytes are intentionally not JSON-normalized.  The supplied bytes
-/// form the program identity consumed by the custom-VK registry; registry and
-/// provenance checks separately authenticate whether they are approved
-/// Lean-emitted bytes.  Whitespace or field-order changes therefore produce a
-/// different statement id even if a permissive JSON parser assigns the same
-/// meaning.
+/// This type begins *after* DescriptorIR parsing and registry/provenance
+/// resolution.  It is intentionally not a wire encoding or content-addressed
+/// protocol object.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DescriptorStatementV1 {
-    descriptor_program: Vec<u8>,
+pub struct DescriptorStatement {
+    descriptor: EffectVmDescriptor2,
     public_inputs: Vec<u32>,
 }
 
-impl DescriptorStatementV1 {
-    /// Construct and validate one canonical DescriptorIR-v2 public statement.
+impl DescriptorStatement {
+    /// Construct and validate a parsed DescriptorIR-v2 semantic statement.
     pub fn try_new(
-        descriptor_program: impl Into<Vec<u8>>,
+        descriptor: EffectVmDescriptor2,
         public_inputs: Vec<u32>,
     ) -> Result<Self, String> {
         let statement = Self {
-            descriptor_program: descriptor_program.into(),
+            descriptor,
             public_inputs,
         };
         statement.validate()?;
         Ok(statement)
     }
 
-    /// The exact supplied DescriptorIR-v2 program bytes.
-    pub fn descriptor_program(&self) -> &[u8] {
-        &self.descriptor_program
+    /// Internal Rust/Lean bridge from emitted JSON into the semantic statement.
+    ///
+    /// The input text is discarded after parsing.  This helper does not
+    /// authenticate Lean emission and must not be used as a protocol identity;
+    /// production callers resolve approved relations through their registry.
+    pub fn try_from_json(json: &str, public_inputs: Vec<u32>) -> Result<Self, String> {
+        Self::try_new(parse_vm_descriptor2(json)?, public_inputs)
+    }
+
+    /// Parsed semantic relation consumed identically by every proof backend.
+    pub fn descriptor(&self) -> &EffectVmDescriptor2 {
+        &self.descriptor
     }
 
     /// Canonical BabyBear public inputs (`0 <= pi < BABYBEAR_P`).
     pub fn public_inputs(&self) -> &[u32] {
         &self.public_inputs
-    }
-
-    /// Parse the exact program bytes with the deployed DescriptorIR-v2 parser.
-    pub fn parse_descriptor(&self) -> Result<EffectVmDescriptor2, String> {
-        let json = core::str::from_utf8(&self.descriptor_program)
-            .map_err(|e| format!("DescriptorIR program is not UTF-8: {e}"))?;
-        require_one_complete_json_object(json)?;
-        parse_vm_descriptor2(json)
     }
 
     /// Convert the already-canonical public input words to the deployed field wrapper.
@@ -93,15 +83,14 @@ impl DescriptorStatementV1 {
             .collect()
     }
 
-    /// Validate parser acceptance, PI arity, and unique field encodings.
+    /// Validate PI arity and unique field encodings.
     pub fn validate(&self) -> Result<(), String> {
-        let desc = self.parse_descriptor()?;
-        if self.public_inputs.len() != desc.public_input_count {
+        if self.public_inputs.len() != self.descriptor.public_input_count {
             return Err(format!(
                 "DescriptorIR statement carries {} public inputs but `{}` declares {}",
                 self.public_inputs.len(),
-                desc.name,
-                desc.public_input_count
+                self.descriptor.name,
+                self.descriptor.public_input_count
             ));
         }
         for (index, value) in self.public_inputs.iter().copied().enumerate() {
@@ -113,144 +102,6 @@ impl DescriptorStatementV1 {
         }
         Ok(())
     }
-
-    /// Canonical backend-independent bytes of this exact program + public statement.
-    pub fn to_canonical_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(
-            DESCRIPTOR_STATEMENT_V1_MAGIC.len()
-                + 16
-                + self.descriptor_program.len()
-                + 4 * self.public_inputs.len(),
-        );
-        out.extend_from_slice(DESCRIPTOR_STATEMENT_V1_MAGIC);
-        out.extend_from_slice(&(self.descriptor_program.len() as u64).to_le_bytes());
-        out.extend_from_slice(&self.descriptor_program);
-        out.extend_from_slice(&(self.public_inputs.len() as u64).to_le_bytes());
-        for value in &self.public_inputs {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
-        out
-    }
-
-    /// Decode the canonical encoding, refusing truncation, trailing bytes, and
-    /// non-canonical field words.
-    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, String> {
-        if !bytes.starts_with(DESCRIPTOR_STATEMENT_V1_MAGIC) {
-            return Err("DescriptorIR statement magic/version mismatch".to_string());
-        }
-        let mut cursor = DESCRIPTOR_STATEMENT_V1_MAGIC.len();
-        let descriptor_len = read_u64(bytes, &mut cursor, "descriptor length")?;
-        let descriptor_len = usize::try_from(descriptor_len)
-            .map_err(|_| "DescriptorIR descriptor length does not fit usize".to_string())?;
-        let descriptor_end = cursor
-            .checked_add(descriptor_len)
-            .ok_or_else(|| "DescriptorIR descriptor length overflow".to_string())?;
-        let descriptor_program = bytes
-            .get(cursor..descriptor_end)
-            .ok_or_else(|| "truncated DescriptorIR program bytes".to_string())?
-            .to_vec();
-        cursor = descriptor_end;
-
-        let pi_count = read_u64(bytes, &mut cursor, "public-input count")?;
-        let pi_count = usize::try_from(pi_count)
-            .map_err(|_| "DescriptorIR public-input count does not fit usize".to_string())?;
-        let pi_bytes = pi_count
-            .checked_mul(4)
-            .ok_or_else(|| "DescriptorIR public-input byte length overflow".to_string())?;
-        let expected_end = cursor
-            .checked_add(pi_bytes)
-            .ok_or_else(|| "DescriptorIR statement length overflow".to_string())?;
-        if expected_end != bytes.len() {
-            return Err(if expected_end > bytes.len() {
-                "truncated DescriptorIR public-input vector".to_string()
-            } else {
-                "trailing bytes after DescriptorIR public-input vector".to_string()
-            });
-        }
-        let mut public_inputs = Vec::with_capacity(pi_count);
-        for chunk in bytes[cursor..expected_end].chunks_exact(4) {
-            public_inputs.push(u32::from_le_bytes(
-                chunk.try_into().expect("chunk width is four"),
-            ));
-        }
-        Self::try_new(descriptor_program, public_inputs)
-    }
-
-    /// Domain-separated identity of the exact canonical statement bytes.
-    pub fn statement_id(&self) -> [u8; 32] {
-        let mut h = blake3::Hasher::new_derive_key(DESCRIPTOR_STATEMENT_V1_HASH_CONTEXT);
-        h.update(&self.to_canonical_bytes());
-        *h.finalize().as_bytes()
-    }
-}
-
-fn read_u64(bytes: &[u8], cursor: &mut usize, what: &str) -> Result<u64, String> {
-    let end = cursor
-        .checked_add(8)
-        .ok_or_else(|| format!("{what} offset overflow"))?;
-    let raw = bytes
-        .get(*cursor..end)
-        .ok_or_else(|| format!("truncated DescriptorIR {what}"))?;
-    *cursor = end;
-    Ok(u64::from_le_bytes(
-        raw.try_into().expect("slice width is eight"),
-    ))
-}
-
-/// The deployed DescriptorIR parser historically stops after the first top-level
-/// object.  The backend-neutral statement boundary cannot inherit that behavior:
-/// otherwise `valid_descriptor || attacker_suffix` would acquire a distinct id
-/// while the verifier silently ignored the suffix.  Require one complete object
-/// before handing bytes to the existing grammar parser.
-fn require_one_complete_json_object(json: &str) -> Result<(), String> {
-    let bytes = json.as_bytes();
-    let mut cursor = 0;
-    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-        cursor += 1;
-    }
-    if bytes.get(cursor) != Some(&b'{') {
-        return Err("DescriptorIR program must be one JSON object".to_string());
-    }
-
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut object_end = None;
-    for (offset, byte) in bytes[cursor..].iter().copied().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match byte {
-            b'"' => in_string = true,
-            b'{' => depth += 1,
-            b'}' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| "unbalanced DescriptorIR JSON object".to_string())?;
-                if depth == 0 {
-                    object_end = Some(cursor + offset + 1);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let object_end =
-        object_end.ok_or_else(|| "unterminated DescriptorIR JSON object".to_string())?;
-    if bytes[object_end..]
-        .iter()
-        .any(|byte| !byte.is_ascii_whitespace())
-    {
-        return Err("trailing bytes after DescriptorIR JSON object".to_string());
-    }
-    Ok(())
 }
 
 /// Verify one proof against the backend-neutral DescriptorIR statement.
@@ -263,10 +114,10 @@ pub trait DescriptorProofVerifier: Send + Sync + 'static {
     const BACKEND_ID: &'static str;
 
     /// Verify `proof` against the relation and public inputs selected by `statement`.
-    fn verify(statement: &DescriptorStatementV1, proof: &Self::Proof) -> Result<(), String>;
+    fn verify(statement: &DescriptorStatement, proof: &Self::Proof) -> Result<(), String>;
 }
 
-/// Prove the canonical relation, with a backend-specific witness custody shape.
+/// Prove the semantic relation, with a backend-specific witness custody shape.
 pub trait DescriptorProofProver: DescriptorProofVerifier {
     /// The prover input for one call.  It is deliberately backend-specific: a
     /// collaborative prover can use party-local shares rather than a full trace.
@@ -274,9 +125,9 @@ pub trait DescriptorProofProver: DescriptorProofVerifier {
     where
         Self: 'a;
 
-    /// Produce a proof for exactly `statement`.
+    /// Produce a proof for the semantic relation and public inputs in `statement`.
     fn prove<'a>(
-        statement: &DescriptorStatementV1,
+        statement: &DescriptorStatement,
         witness: Self::Witness<'a>,
     ) -> Result<Self::Proof, String>;
 }
@@ -303,10 +154,10 @@ impl DescriptorProofVerifier for Plonky3HidingFriReference {
 
     const BACKEND_ID: &'static str = "plonky3-hidingfri-babybear-ir2@82cfad73cd734d37a0d51953094f970c531817ec|lb3|lfp0|arity3|q38|qpow16|ext4|salt4|random-codewords4";
 
-    fn verify(statement: &DescriptorStatementV1, proof: &Self::Proof) -> Result<(), String> {
+    fn verify(statement: &DescriptorStatement, proof: &Self::Proof) -> Result<(), String> {
         statement.validate()?;
         verify_vm_descriptor2_with_config(
-            &statement.parse_descriptor()?,
+            statement.descriptor(),
             proof,
             &statement.public_input_felts(),
             &create_zk_config(),
@@ -318,12 +169,12 @@ impl DescriptorProofProver for Plonky3HidingFriReference {
     type Witness<'a> = Plonky3HidingFriWitness<'a>;
 
     fn prove<'a>(
-        statement: &DescriptorStatementV1,
+        statement: &DescriptorStatement,
         witness: Self::Witness<'a>,
     ) -> Result<Self::Proof, String> {
         statement.validate()?;
         prove_vm_descriptor2_for_config(
-            &statement.parse_descriptor()?,
+            statement.descriptor(),
             witness.base_trace,
             &statement.public_input_felts(),
             witness.mem_boundary,
@@ -334,7 +185,7 @@ impl DescriptorProofProver for Plonky3HidingFriReference {
     }
 }
 
-/// Outcome of a two-backend proving differential over one exact statement.
+/// Outcome of a two-backend proving differential over one semantic statement.
 pub enum DifferentialProofOutcome<ReferenceProof, CandidateProof> {
     /// Both backends produced and accepted their backend-native proof.
     Accepted {
@@ -361,7 +212,7 @@ pub enum DifferentialVerifyDecision {
 /// soundness.  Its purpose is to make relation/statement drift immediately
 /// testable while a new implementation is brought up.
 pub fn differential_verify<Reference, Candidate>(
-    statement: &DescriptorStatementV1,
+    statement: &DescriptorStatement,
     reference_proof: &Reference::Proof,
     candidate_proof: &Candidate::Proof,
 ) -> Result<DifferentialVerifyDecision, String>
@@ -387,13 +238,13 @@ where
     }
 }
 
-/// Prove and then verify the same canonical statement with two real backends.
+/// Prove and then verify the same semantic statement with two real backends.
 ///
 /// The two witness values may have different types.  That is load-bearing for a
 /// future no-viewer backend whose input is a set of party-local shares rather
 /// than the reference backend's assembled trace.
 pub fn differential_prove_and_verify<'reference, 'candidate, Reference, Candidate>(
-    statement: &DescriptorStatementV1,
+    statement: &DescriptorStatement,
     reference_witness: Reference::Witness<'reference>,
     candidate_witness: Candidate::Witness<'candidate>,
 ) -> Result<DifferentialProofOutcome<Reference::Proof, Candidate::Proof>, String>
@@ -440,8 +291,8 @@ mod tests {
 
     const TEST_DESCRIPTOR: &str = "{\"name\":\"descriptor-backend-seam-v1\",\"ir\":2,\"trace_width\":1,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0}],\"hash_sites\":[],\"ranges\":[]}";
 
-    fn test_statement(value: u32) -> DescriptorStatementV1 {
-        DescriptorStatementV1::try_new(TEST_DESCRIPTOR.as_bytes(), vec![value]).unwrap()
+    fn test_statement(value: u32) -> DescriptorStatement {
+        DescriptorStatement::try_from_json(TEST_DESCRIPTOR, vec![value]).unwrap()
     }
 
     fn rows(value: u32) -> Vec<Vec<BabyBear>> {
@@ -449,30 +300,14 @@ mod tests {
     }
 
     #[test]
-    fn canonical_statement_roundtrip_is_exact_and_fail_closed() {
-        let statement = test_statement(7);
-        let bytes = statement.to_canonical_bytes();
-        assert_eq!(
-            DescriptorStatementV1::from_canonical_bytes(&bytes).unwrap(),
-            statement
-        );
+    fn semantic_statement_validates_public_input_contract() {
+        let descriptor = parse_vm_descriptor2(TEST_DESCRIPTOR).unwrap();
+        let statement = DescriptorStatement::try_new(descriptor.clone(), vec![7]).unwrap();
+        assert_eq!(statement.descriptor(), &descriptor);
+        assert_eq!(statement.public_inputs(), &[7]);
 
-        let mut trailing = bytes.clone();
-        trailing.push(0);
-        assert!(DescriptorStatementV1::from_canonical_bytes(&trailing).is_err());
-
-        let whitespace_program = TEST_DESCRIPTOR.replacen('{', "{ ", 1).into_bytes();
-        let whitespace = DescriptorStatementV1::try_new(whitespace_program, vec![7]).unwrap();
-        assert_ne!(statement.statement_id(), whitespace.statement_id());
-
-        let mut suffixed_program = TEST_DESCRIPTOR.as_bytes().to_vec();
-        suffixed_program.extend_from_slice(b" attacker-controlled-suffix");
-        assert!(DescriptorStatementV1::try_new(suffixed_program, vec![7]).is_err());
-
-        assert!(DescriptorStatementV1::try_new(TEST_DESCRIPTOR.as_bytes(), vec![]).is_err());
-        assert!(
-            DescriptorStatementV1::try_new(TEST_DESCRIPTOR.as_bytes(), vec![BABYBEAR_P]).is_err()
-        );
+        assert!(DescriptorStatement::try_new(descriptor.clone(), vec![]).is_err());
+        assert!(DescriptorStatement::try_new(descriptor, vec![BABYBEAR_P]).is_err());
     }
 
     // A second marker over the SAME real cryptographic backend is enough to
@@ -485,7 +320,7 @@ mod tests {
         type Proof = <Plonky3HidingFriReference as DescriptorProofVerifier>::Proof;
         const BACKEND_ID: &'static str = "test-only-reference-api-twin";
 
-        fn verify(statement: &DescriptorStatementV1, proof: &Self::Proof) -> Result<(), String> {
+        fn verify(statement: &DescriptorStatement, proof: &Self::Proof) -> Result<(), String> {
             Plonky3HidingFriReference::verify(statement, proof)
         }
     }
@@ -494,7 +329,7 @@ mod tests {
         type Witness<'a> = Plonky3HidingFriWitness<'a>;
 
         fn prove<'a>(
-            statement: &DescriptorStatementV1,
+            statement: &DescriptorStatement,
             witness: Self::Witness<'a>,
         ) -> Result<Self::Proof, String> {
             Plonky3HidingFriReference::prove(statement, witness)
@@ -507,7 +342,7 @@ mod tests {
         type Proof = <Plonky3HidingFriReference as DescriptorProofVerifier>::Proof;
         const BACKEND_ID: &'static str = "test-only-refusing-verifier-twin";
 
-        fn verify(_statement: &DescriptorStatementV1, _proof: &Self::Proof) -> Result<(), String> {
+        fn verify(_statement: &DescriptorStatement, _proof: &Self::Proof) -> Result<(), String> {
             Err("intentional candidate refusal".to_string())
         }
     }
@@ -516,7 +351,7 @@ mod tests {
         type Witness<'a> = Plonky3HidingFriWitness<'a>;
 
         fn prove<'a>(
-            statement: &DescriptorStatementV1,
+            statement: &DescriptorStatement,
             witness: Self::Witness<'a>,
         ) -> Result<Self::Proof, String> {
             Plonky3HidingFriReference::prove(statement, witness)
@@ -524,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn hidingfri_reference_runs_through_exact_differential_scaffold() {
+    fn hidingfri_reference_runs_through_semantic_differential_scaffold() {
         let rows = rows(7);
         let mem = MemBoundaryWitness::default();
         let umem = UMemBoundaryWitness::default();
