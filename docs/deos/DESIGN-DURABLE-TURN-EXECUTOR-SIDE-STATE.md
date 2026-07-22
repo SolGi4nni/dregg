@@ -6,8 +6,10 @@ registry/nullifier CAS images. Fresh executors fail-closed while restoring those
 images. The live exact-FNSP-v3 finality route carries the bundle in the same
 transaction as its activation, exact state append, signed frame, full receipt,
 faithful root, spend records, and commit cursor. The ordinary finalized-turn
-route is being switched to the same bundle; until that splice lands, this
-document does not claim every ingress has one durable side-state owner.
+route now captures and commits the same complete bundle. Both routes resolve
+promises on the retained isolated executor, atomically persist the exact typed
+resolution batch with the source commit, and publish only after a `Fresh`
+outcome. The superseded `NodeState` pending-registry mirror is deleted.
 
 ## Why this exists
 
@@ -59,7 +61,7 @@ head index, with a single actor lookup in `O(log agents)` or better.
 | `bridged_nullifiers` | cross-federation replay gate | typed durable set + frontier; atomic store/reseed implemented |
 | `note_commitments` | duplicate-create gate and commitments root | durable `(commitment, value, append_seq)` records + frontier; atomic store/reseed implemented |
 | `note_revoked` | credential/channel revocation gate and root | durable `(key, height, append_seq)` records + frontier; atomic store/reseed implemented |
-| `reactive_registry` | promise/notify/react pending state | canonical whole-image CAS; atomic store/reseed implemented |
+| `reactive_registry` | promise/notify/react pending state | canonical whole-image CAS; atomic store/reseed implemented on exact and ordinary finality; typed durable resolution outbox has cursor HTTP + WebSocket surfaces |
 | `reactive_nullifiers` | React one-shot replay gate | dedicated domain, canonical set CAS; atomic store/reseed implemented |
 | `cell_migrations` | migration freeze and two-phase state | **missing** |
 | `program_registry` | custom/sovereign verifier dispatch | durable local-admin registry with write-before-publish and fail-closed restore; federation-consensus deployment receipt is still missing |
@@ -97,17 +99,14 @@ snapshot/CAS bundle is the owner; a request gets an isolated executor image,
 and only a fresh atomic commit may publish its successor. The remaining engine
 work is:
 
-- route ordinary finalized turns through the same complete executor-state
-  bundle already used by exact-v3 finality;
-- delete the legacy `NodeState` pending-turn registry mirror after that route
-  resolves on the retained executor candidate;
 - persist migration and channel-revocation authority under the same commit;
 - make custom-program deployment a federation-consensus operation rather than
   a local administrative write;
 - represent sovereign/mixed per-cell receipt provenance without collapsing
   distinct receipts into `CommitRecord::receipt_hash`;
-- publish typed, replay-idempotent durable promise-resolution records to the
-  Discord, Telegram, and web adapters;
+- consume the node's typed, replay-idempotent promise-resolution cursor in the
+  Discord, Telegram, and game-web adapters (the durable HTTP/WebSocket node
+  surface is implemented; adapter presentation remains);
 - switch all ordinary receipt-head construction to the audited online index.
 
 The handle must satisfy these rules:
