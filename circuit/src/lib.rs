@@ -243,6 +243,7 @@ pub mod bridge_action_witness;
 #[allow(deprecated)]
 pub mod derivation_air;
 pub mod effect_action_air;
+pub mod exact_nullifier_aafi;
 pub mod fold_types;
 #[allow(deprecated)]
 pub mod garbled_air;
