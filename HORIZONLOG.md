@@ -10871,7 +10871,11 @@ against **422.847ms** coefficient GPU and **1,380.391ms CPU** (3.65× / 11.9×).
 Exact 64/256/512/918 transform points were 11.622/28.049/52.973/115.746ms. The
 remaining boundary is high-level shortint/`FheUint32` comparison and live
 `fhe_clear`/Dark Bazaar integration; the current deployed-shape evaluation-key
-residency is roughly 172 MiB total.
+residency is roughly 172 MiB total. The measured plan is exact PBS→2048-to-918
+key switch, while the default `EncryptionKeyChoice::Big` high-level path is
+2048-to-918 key switch→PBS. It therefore qualifies the arithmetic and deployed
+dimensions, not the actual `FheUint32` operation order; the correct KS→resident-
+PBS adapter and typed ciphertext parity are the next gate.
 
 `Dregg2.Circuit.TfhePbsRefinement` is now the Lean-first semantic authority for
 this boundary over the exact native `ZMod (2^64)` torus. It proves the

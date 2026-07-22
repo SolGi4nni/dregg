@@ -36,12 +36,13 @@ private-clearing data path.
 |---|---:|
 | message modulus / carry modulus | 4 / 4 |
 | `FheUint32` radix blocks | 16 |
-| LWE dimension | 918 |
+| small / big LWE dimension | 918 / 2048 |
 | GLWE dimension / size | 1 / 2 |
 | polynomial size | 2048 |
 | PBS decomposition | base log 23, level count 1 |
 | key switch decomposition | base log 4, level count 4 |
 | ciphertext modulus | native torus, `2^64` wrapping arithmetic |
+| high-level key choice / PBS order | `Big` / key-switch then bootstrap |
 | reported `log2_p_fail` | -129.581 |
 
 The upstream high-level `ge`, `gt`, and `if_then_else` interfaces do not expose a
@@ -169,7 +170,8 @@ GPU median.  These are different startup conditions, not interchangeable "cold"
 measurements.  The standard KSK is load-bearing under mutation and the final
 ciphertext decrypts to the same rounded message as tfhe-rs.
 
-The production-shaped follow-on gate now executes the complete deployed envelope.
+The production-dimension follow-on gate executes a complete reverse-order
+qualification envelope, not yet the high-level `FheUint32` operation order.
 It generates a real 918-bit input LWE secret, a genuinely noisy standard GGSW
 encryption for every one of its BSK bits, and a real encrypted LWE input whose 918
 mask coefficients all modulus-switch to nonzero rotations. It uses the full 57.38
@@ -177,6 +179,11 @@ MiB standard BSK, the complete 2048-to-918 standard key switch and its 57.44 MiB
 KSK, and checks all 919 post-key-switch LWE coefficients bit-for-bit against
 tfhe-rs. Clearing the final noisy BSK ciphertext changes the CPU authority, so slot
 917 is load-bearing. This is a dense 918-CMUX gate, not sparse/no-op extrapolation.
+Its order is bootstrap → 2048-to-918 key switch (`BootstrapKeyswitch`). The
+default high-level parameter set encrypts under the 2048-dimensional big key and
+uses 2048-to-918 key switch → bootstrap (`KeyswitchBootstrap`). Thus this gate
+qualifies both exact kernels and deployed dimensions, but is not itself a typed
+high-level ciphertext path.
 
 `TorusPbsWgpuPlan` is the first explicit execution context for this path. Its
 constructor validates the exact BSK/KSK shapes and uploads each immutable key
@@ -211,8 +218,8 @@ transform-form residency.
 
 ## Exact transform-resident dense PBS
 
-`TorusPbsTransformWgpuPlan` closes that named performance seam for the deployed
-shape. Plan construction interprets every standard BSK coefficient as a centered
+`TorusPbsTransformWgpuPlan` closes that named performance seam for the measured
+deployed-dimension kernel. Plan construction interprets every standard BSK coefficient as a centered
 native-torus integer, maps it into the same four exact NTT primes, uploads the
 complete 114.75 MiB residue carrier, and forward-transforms all 14,688
 polynomial/modulus series once. The 57.44 MiB standard KSK and all root, twist,
@@ -256,15 +263,17 @@ CMUX steps, 99.029 ms CPU / 43.780 ms coefficient GPU / 11.622 ms transform GPU;
 ms; and 918 steps, 1,380.391 / 422.847 / 115.746 ms.
 
 This is still not a complete high-level `FheUint32` backend. The dense coefficient
-and transform routes are exact measured backends, but the default shortint key
-order plus integer comparison integration remains. The transform plan is
-deliberately restricted to the deployed `N=2048`, GLWE-two, PBS-23x1,
-KS-4x4, 918-by-918 shape; its spectrum memory and per-PBS latency are real costs.
-Those are named implementation boundaries.
+and transform routes are exact measured backends, but their qualified envelope
+is PBS→KS while the default `EncryptionKeyChoice::Big` shortint path is KS→PBS.
+The correct integration must first key-switch a 2048-dimensional high-level block
+to the 918-dimensional small key, then run the transform-resident PBS and return
+the extracted 2048-dimensional big-key block. The transform plan is deliberately
+restricted to `N=2048`, GLWE-two, PBS-23x1, and KS-4x4; its spectrum memory and
+per-PBS latency are real costs. Those are named implementation boundaries.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
 described above. The next hard cut is to wire this exact primitive below the
 default shortint/integer key order and qualify a real comparison—not infer
-high-level `FheUint32` throughput from one dense PBS.
+high-level `FheUint32` throughput from the reverse-order dense PBS benchmark.

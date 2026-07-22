@@ -107,7 +107,7 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
-| Portable encrypted TFHE PBS | **TRANSFORM-RESIDENT DENSE ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs/nonzero rotations and all 919 tfhe-rs outputs; strict 1/1, 115.746ms warm transform GPU vs 422.847ms coefficient GPU / 1,380.391ms CPU; high-level integers/live clearing wiring remain |
+| Portable encrypted TFHE PBS | **TRANSFORM-RESIDENT KERNEL GATED; HIGH-LEVEL ORDER OPEN** | real encrypted 918-bit input, all 918 noisy GGSWs/nonzero rotations and all 919 tfhe-rs outputs; strict 1/1, 115.746ms warm transform GPU vs 422.847ms coefficient GPU / 1,380.391ms CPU; measured PBS→KS order is opposite default Big-key `FheUint32` KS→PBS |
 | Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE BFV SLICE LIVE; FULL FAMILY OPEN** | model checks all 98,304 equations; the first complete 4,096-term equation now has a real HidingFRI proof 1/1, while 98,303 slices remain; WideNativePqCommitment binds 16 canonical lanes |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; accumulator insertion is host-planned rather than recomputed in AIR |
@@ -1174,9 +1174,10 @@ from first principles.
 - portable TFHE encrypted PBS — exact coefficient/RNS-NTT and
   four-selector device-resident blind rotation combined strict GPU **4/4**,
   exact extraction/key-switch combined strict GPU **5/5**, and the genuine
-  dense 918-CMUX deployed envelope **1/1**; all 919 outputs match tfhe-rs and
+  dense 918-CMUX reverse-order qualification envelope **1/1**; all 919 outputs match tfhe-rs and
   transform-resident warm GPU was **115.746ms** versus **422.847ms** coefficient
-  GPU and **1,380.391ms CPU**. High-level integers/live clearing wiring remain.
+  GPU and **1,380.391ms CPU**. The measured plan is PBS→KS, while default
+  Big-key `FheUint32` is KS→PBS; correct typed integration remains.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - native exact-BFV HidingFRI slice — exact 4,096-term coefficient equation plus
