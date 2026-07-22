@@ -11495,7 +11495,10 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   public inputs expose nullifier/value/asset/root/count/outer coordinates and
   the currently total executor slice is value-zero with no value commitment.
   It is the exact anti-double-spend/receipt foundation beneath a future composed
-  ShieldedTransfer/fhEgg conservation+range consequence.
+  ShieldedTransfer/fhEgg conservation+range consequence. The present ring↔wide
+  sidecar join is only one BabyBear `legacy_binding` (~31 bits), not a
+  cryptographic same-opening; v4 must share one witness or a faithful full-width
+  commitment across both proofs.
 - `ff7a7fd36` banks the typed Bazaar→Dungeon consequence and `a619f51b4`
   mounts one deployment-owned opt-in contract through web/Telegram/Discord.
   The private worker listener is still missing; frontends never carry the

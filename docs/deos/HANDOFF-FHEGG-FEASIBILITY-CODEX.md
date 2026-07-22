@@ -189,7 +189,13 @@ the amount of code landed.
   and no value commitment/conservation proof. It is **not** the private-value
   Dark Bazaar apex. Hidden amount/asset settlement still requires the
   ShieldedTransfer/fhEgg conservation/range layer to compose into this exact
-  global authority.
+  global authority. In particular, the existing
+  `verify_stark_with_wide_bindings` composition joins the ring proof to the
+  full-u64 sidecar through one BabyBear `legacy_binding` field (about 31 bits).
+  Equality of that scalar is not cryptographic-strength same-opening and admits
+  chosen-pair collisions at an unacceptable scale. A private-value successor
+  must use one shared witness relation or make both proofs open the same
+  faithful full-width commitment; v3 plus the current sidecar does not close it.
 
 ### Hosted private Bazaar: mounted contract, missing production worker
 
