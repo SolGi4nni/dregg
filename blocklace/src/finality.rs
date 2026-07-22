@@ -53,6 +53,12 @@ pub enum Payload {
     /// `Turn` alongside this variant preserves compatibility with older
     /// blocks and peers that only carry signed turn bytes.
     TurnBundle(TurnArtifactBundle),
+    /// Flag-day turn carrier with consensus-authenticated time.
+    ///
+    /// The timestamp is part of [`Block::payload_bytes`], hence both signature halves and the block
+    /// id commit to it. Legacy [`Payload::Turn`] / [`Payload::TurnBundle`] remain decodable for
+    /// historical replay but are refused by a lace with consensus-time-v1 enabled.
+    ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1),
     /// An acknowledgment (I've seen these blocks).
     Ack,
     /// A checkpoint (federation root at this height).
@@ -61,6 +67,135 @@ pub enum Payload {
     MembershipVote { action: MembershipAction },
     /// Generic application data.
     Data(Vec<u8>),
+}
+
+const CONSENSUS_TIME_MAGIC_V1: [u8; 4] = *b"CTM1";
+const CONSENSUS_TIME_VERSION_V1: u8 = 1;
+/// Exact canonical width of a consensus-time-v1 claim.
+pub const CONSENSUS_TIME_V1_WIRE_LEN: usize = 16;
+/// Protocol-wide maximum causal time advance between a timed turn and its predecessor frontier.
+pub const CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS: i64 = 300;
+
+/// Fixed-width authenticated consensus time carried by a versioned turn payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsensusTimeV1 {
+    unix_seconds: i64,
+}
+
+impl ConsensusTimeV1 {
+    pub const fn new(unix_seconds: i64) -> Self {
+        Self { unix_seconds }
+    }
+
+    pub const fn unix_seconds(self) -> i64 {
+        self.unix_seconds
+    }
+
+    pub fn encode(self) -> [u8; CONSENSUS_TIME_V1_WIRE_LEN] {
+        let mut out = [0u8; CONSENSUS_TIME_V1_WIRE_LEN];
+        out[..4].copy_from_slice(&CONSENSUS_TIME_MAGIC_V1);
+        out[4] = CONSENSUS_TIME_VERSION_V1;
+        out[8..].copy_from_slice(&self.unix_seconds.to_le_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, ConsensusTimeWireError> {
+        if bytes.len() != CONSENSUS_TIME_V1_WIRE_LEN {
+            return Err(ConsensusTimeWireError::Length(bytes.len()));
+        }
+        if bytes[..4] != CONSENSUS_TIME_MAGIC_V1 {
+            return Err(ConsensusTimeWireError::Magic);
+        }
+        if bytes[4] != CONSENSUS_TIME_VERSION_V1 {
+            return Err(ConsensusTimeWireError::Version(bytes[4]));
+        }
+        if bytes[5..8] != [0; 3] {
+            return Err(ConsensusTimeWireError::Reserved);
+        }
+        Ok(Self::new(i64::from_le_bytes(
+            bytes[8..].try_into().expect("eight bytes"),
+        )))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ConsensusTimeWireError {
+    #[error("consensus-time-v1 wire length {0}, expected 16")]
+    Length(usize),
+    #[error("consensus-time-v1 wire has wrong magic")]
+    Magic,
+    #[error("unsupported consensus-time-v1 wire version {0}")]
+    Version(u8),
+    #[error("consensus-time-v1 reserved bytes are nonzero")]
+    Reserved,
+}
+
+/// Versioned turn payload whose canonical block identity contains deterministic consensus time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsensusTimedTurnPayloadV1 {
+    consensus_time: ConsensusTimeV1,
+    signed_turn: Vec<u8>,
+    receipt: Option<Vec<u8>>,
+    witnessed_receipts: Vec<Vec<u8>>,
+}
+
+impl ConsensusTimedTurnPayloadV1 {
+    pub fn new(consensus_unix_seconds: i64, signed_turn: Vec<u8>) -> Self {
+        Self {
+            consensus_time: ConsensusTimeV1::new(consensus_unix_seconds),
+            signed_turn,
+            receipt: None,
+            witnessed_receipts: Vec::new(),
+        }
+    }
+
+    pub fn with_artifacts(
+        consensus_unix_seconds: i64,
+        signed_turn: Vec<u8>,
+        receipt: Option<Vec<u8>>,
+        witnessed_receipts: Vec<Vec<u8>>,
+    ) -> Self {
+        Self {
+            consensus_time: ConsensusTimeV1::new(consensus_unix_seconds),
+            signed_turn,
+            receipt,
+            witnessed_receipts,
+        }
+    }
+
+    pub const fn consensus_time(&self) -> ConsensusTimeV1 {
+        self.consensus_time
+    }
+
+    pub fn signed_turn(&self) -> &[u8] {
+        &self.signed_turn
+    }
+
+    pub fn receipt(&self) -> Option<&[u8]> {
+        self.receipt.as_deref()
+    }
+
+    pub fn witnessed_receipts(&self) -> &[Vec<u8>] {
+        &self.witnessed_receipts
+    }
+
+    fn validate_shape(&self) -> Result<(), BlockError> {
+        let fits = |len: usize| u32::try_from(len).is_ok();
+        if !fits(self.signed_turn.len())
+            || self
+                .receipt
+                .as_ref()
+                .is_some_and(|bytes| !fits(bytes.len()))
+            || !fits(self.witnessed_receipts.len())
+            || self
+                .witnessed_receipts
+                .iter()
+                .any(|bytes| !fits(bytes.len()))
+        {
+            return Err(BlockError::ConsensusTimedTurnOversize);
+        }
+        Ok(())
+    }
 }
 
 /// Full devnet artifact payload for a turn-bearing block.
@@ -233,6 +368,27 @@ pub struct BlocklaceMetrics {
     pub creator_count: usize,
 }
 
+/// Federation flag-day configuration for consensus-time-v1.
+///
+/// The forward bound is a protocol constant; the sole deployment coordinate is the genesis time
+/// which the signed predecessorless v1 block must reproduce exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConsensusTimePolicyV1 {
+    genesis_unix_seconds: i64,
+}
+
+impl ConsensusTimePolicyV1 {
+    pub const fn new(genesis_unix_seconds: i64) -> Self {
+        Self {
+            genesis_unix_seconds,
+        }
+    }
+
+    pub const fn genesis_unix_seconds(self) -> i64 {
+        self.genesis_unix_seconds
+    }
+}
+
 /// State of ordering for blocks reaching consensus.
 #[derive(Clone, Debug, Default)]
 pub struct OrderingState {
@@ -279,6 +435,30 @@ pub enum BlockError {
         "no ML-DSA key enrolled for creator {creator:?} (block seq {seq} rejected fail-closed)"
     )]
     UnenrolledCreator { creator: [u8; 32], seq: u64 },
+
+    #[error("consensus-time-v1 policy is not enabled")]
+    ConsensusTimePolicyMissing,
+
+    #[error("legacy timestamp-less turn payload refused after consensus-time-v1 cutover")]
+    LegacyTurnAfterConsensusTimeCutover,
+
+    #[error("consensus-time-v1 turn payload contains an oversized length/count")]
+    ConsensusTimedTurnOversize,
+
+    #[error("consensus-time-v1 genesis timestamp {actual} differs from anchor {expected}")]
+    ConsensusGenesisTimeMismatch { expected: i64, actual: i64 },
+
+    #[error("consensus timestamp {actual} regresses below predecessor frontier {minimum}")]
+    ConsensusTimeRegression { minimum: i64, actual: i64 },
+
+    #[error("consensus timestamp {actual} exceeds causal forward bound {maximum}")]
+    ConsensusTimeForwardBound { maximum: i64, actual: i64 },
+
+    #[error("consensus-time-v1 causal bound overflow")]
+    ConsensusTimeBoundOverflow,
+
+    #[error("consensus-time-v1 policy is already configured with another genesis anchor")]
+    ConsensusTimePolicyReplacement,
 }
 
 /// Errors during delta-merge.
@@ -340,6 +520,27 @@ impl Block {
             }
             Payload::TurnBundle(bundle) => {
                 buf.push(0x06);
+                buf.extend_from_slice(&(bundle.signed_turn.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&bundle.signed_turn);
+                match &bundle.receipt {
+                    Some(receipt) => {
+                        buf.push(0x01);
+                        buf.extend_from_slice(&(receipt.len() as u32).to_le_bytes());
+                        buf.extend_from_slice(receipt);
+                    }
+                    None => buf.push(0x00),
+                }
+                buf.extend_from_slice(&(bundle.witnessed_receipts.len() as u32).to_le_bytes());
+                for witnessed in &bundle.witnessed_receipts {
+                    buf.extend_from_slice(&(witnessed.len() as u32).to_le_bytes());
+                    buf.extend_from_slice(witnessed);
+                }
+            }
+            Payload::ConsensusTimedTurnV1(bundle) => {
+                // A fresh discriminant and fixed-width CTM1 header prevent legacy payload bytes
+                // from silently acquiring consensus-time semantics at the flag day.
+                buf.push(0x07);
+                buf.extend_from_slice(&bundle.consensus_time.encode());
                 buf.extend_from_slice(&(bundle.signed_turn.len() as u32).to_le_bytes());
                 buf.extend_from_slice(&bundle.signed_turn);
                 match &bundle.receipt {
@@ -668,6 +869,9 @@ pub struct Blocklace {
     /// membership), via [`Blocklace::enroll_pq`] — the block never carries its
     /// own PQ key.
     pq_roster: HashMap<[u8; 32], crate::pq::MlDsaPublicKey>,
+    /// `Some` after the deterministic-time flag day. Legacy turn payloads then fail closed at
+    /// admission; non-turn DAG traffic remains compatible.
+    consensus_time_v1: Option<ConsensusTimePolicyV1>,
 }
 
 impl Blocklace {
@@ -681,6 +885,7 @@ impl Blocklace {
             self_seq: 0,
             finality: FinalityTracker::new(quorum_threshold),
             pq_roster: HashMap::new(),
+            consensus_time_v1: None,
         }
     }
 
@@ -703,6 +908,29 @@ impl Blocklace {
     /// Create a blocklace without finality tracking (quorum = 1, for testing).
     pub fn new_simple(self_key: SigningKey) -> Self {
         Self::new(self_key, 1)
+    }
+
+    /// Enable the deterministic consensus-time flag day for this lace.
+    ///
+    /// Repeating the identical policy is idempotent; replacing the genesis anchor is refused. The
+    /// live node must persist/configure this coordinate from federation genesis before accepting
+    /// post-cutover turn blocks.
+    pub fn enable_consensus_time_v1(
+        &mut self,
+        policy: ConsensusTimePolicyV1,
+    ) -> Result<(), BlockError> {
+        match self.consensus_time_v1 {
+            Some(existing) if existing == policy => Ok(()),
+            Some(_) => Err(BlockError::ConsensusTimePolicyReplacement),
+            None => {
+                self.consensus_time_v1 = Some(policy);
+                Ok(())
+            }
+        }
+    }
+
+    pub const fn consensus_time_policy_v1(&self) -> Option<ConsensusTimePolicyV1> {
+        self.consensus_time_v1
     }
 
     /// Our own HYBRID creator id (`H(ed25519 ‖ ml_dsa)`) — the same value
@@ -800,6 +1028,105 @@ impl Blocklace {
         block
     }
 
+    /// Produce a locally-authored consensus-timed turn through the strict v1 path.
+    ///
+    /// Unlike generic [`Self::add_block`], this returns an error before changing sequence, tips, or
+    /// the block map when the claimed time violates genesis/causal bounds. The node flag-day cut
+    /// should use this constructor exclusively for turn-bearing blocks.
+    pub fn add_consensus_timed_turn_v1(
+        &mut self,
+        payload: ConsensusTimedTurnPayloadV1,
+    ) -> Result<Block, BlockError> {
+        if self.consensus_time_v1.is_none() {
+            return Err(BlockError::ConsensusTimePolicyMissing);
+        }
+        let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
+        let next_seq = self
+            .self_seq
+            .checked_add(1)
+            .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
+        let block = Block::new(
+            &self.self_key,
+            next_seq,
+            Payload::ConsensusTimedTurnV1(payload),
+            predecessors,
+        );
+        self.validate_consensus_time_v1(&block)?;
+        self.self_seq = next_seq;
+        let id = block.id();
+        self.blocks.insert(id, block.clone());
+        self.tips.insert(self.self_creator(), id);
+        Ok(block)
+    }
+
+    /// Deterministically validate one turn payload against authenticated causal time.
+    ///
+    /// This function never reads wall time. With v1 disabled, a v1 payload fails closed. With v1
+    /// enabled, legacy timestamp-less turns fail closed while non-turn DAG traffic remains valid.
+    pub fn validate_consensus_time_v1(&self, block: &Block) -> Result<(), BlockError> {
+        let timed = match &block.payload {
+            Payload::ConsensusTimedTurnV1(payload) => Some(payload),
+            Payload::Turn(_) | Payload::TurnBundle(_) if self.consensus_time_v1.is_some() => {
+                return Err(BlockError::LegacyTurnAfterConsensusTimeCutover);
+            }
+            _ => None,
+        };
+        let Some(payload) = timed else {
+            return Ok(());
+        };
+        let policy = self
+            .consensus_time_v1
+            .ok_or(BlockError::ConsensusTimePolicyMissing)?;
+        payload.validate_shape()?;
+        let actual = payload.consensus_time.unix_seconds;
+        if block.predecessors.is_empty() {
+            if actual != policy.genesis_unix_seconds {
+                return Err(BlockError::ConsensusGenesisTimeMismatch {
+                    expected: policy.genesis_unix_seconds,
+                    actual,
+                });
+            }
+            return Ok(());
+        }
+
+        let minimum = self.predecessor_consensus_time_frontier_v1(block, policy)?;
+        if actual < minimum {
+            return Err(BlockError::ConsensusTimeRegression { minimum, actual });
+        }
+        let maximum = minimum
+            .checked_add(CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS)
+            .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
+        if actual > maximum {
+            return Err(BlockError::ConsensusTimeForwardBound { maximum, actual });
+        }
+        Ok(())
+    }
+
+    fn predecessor_consensus_time_frontier_v1(
+        &self,
+        block: &Block,
+        policy: ConsensusTimePolicyV1,
+    ) -> Result<i64, BlockError> {
+        let mut maximum = policy.genesis_unix_seconds;
+        let mut seen = HashSet::new();
+        let mut pending = block.predecessors.clone();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let predecessor = self.blocks.get(&id).ok_or(BlockError::MissingPredecessor {
+                creator: block.creator,
+                seq: block.seq,
+                missing: id,
+            })?;
+            if let Payload::ConsensusTimedTurnV1(payload) = &predecessor.payload {
+                maximum = maximum.max(payload.consensus_time.unix_seconds);
+            }
+            pending.extend(predecessor.predecessors.iter().copied());
+        }
+        Ok(maximum)
+    }
+
     // ─── Block Reception ─────────────────────────────────────────────────
 
     /// Receive a block from a peer.
@@ -873,6 +1200,7 @@ impl Blocklace {
                 });
             }
         }
+        self.validate_consensus_time_v1(&block)?;
 
         // Check for equivocation.
         if let Some(proof) = self.detect_equivocation(&block) {
@@ -946,6 +1274,8 @@ impl Blocklace {
 
             // Verify signature.
             block.verify_signature()?;
+
+            self.validate_consensus_time_v1(&block)?;
 
             // Check for equivocation.
             if let Some(proof) = self.detect_equivocation(&block) {
