@@ -94,12 +94,18 @@ handoff prose:
   `b8ba574c4`/`a58038562` attach and Fresh-only publish the batch from both exact
   and generic live finalizers. A crash after commit but before broadcast loses
   no event: clients resume through `GET /api/promise-resolutions?after=…`.
-- **PRIVATE DEPENDENT SCHEDULER:** `7e2030739` adds bounded bearer-gated
-  arm/status/cancel, XChaCha-sealed turn custody, exact Ready digests, restart
-  scan, destructive pre-submit claim, and ordinary validated blocklace ingress.
-  The node library is green. Crash-uncertain `Claimed` is reconciled by finalized
-  lookup and never blindly resent, preserving at-most-once at a possible
-  liveness cost until ingress reservation/idempotency is complete.
+- **PRIVATE DEPENDENT SCHEDULER — SAFETY PATH CLOSED:** `7e2030739` adds bounded
+  bearer-gated arm/status/cancel, XChaCha-sealed custody, exact Ready digests,
+  destructive claim, and canonical SignedTurn admission. `960aea92f` gives each
+  claim a durable ingress reservation; `73ccbd946` closes the exact
+  Waiting→ReadyToPublish→Published→Resolved lifecycle and restart canary.
+  `0445f5870` carries the reservation through the live blocklace handle: it
+  produces CTM1 on an isolated lace, atomically persists the exact block with
+  `Submitted`, only then installs/broadcasts, and the ordinary finalizer records
+  the exact wake receipt and turn lookup. Exact replay and post-accept restart
+  are crash-safe. A multi-member crash *before* cadence produces a block retains
+  the reservation but requires explicit recovery; the node still never blindly
+  resends a crash-uncertain claim.
 - **PERF REALITY:** the captured strict Descent/Bazaar custody release run fell
   from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
   `fd86eb091` replaces the public decrypt-relation's individual scalar
