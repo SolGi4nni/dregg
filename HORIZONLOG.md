@@ -10992,6 +10992,22 @@ polynomial-table/BFV equations, Poseidon/root, sampler-image, DKG, and clearing
 are not yet proved over shares; the production relation-digest constructor also
 lacks its live call site. This remains classical Ristretto/Ed25519.
 
+The next distributed phase is now independently banked (`ff4a034f3`). Only
+after the complete v4 certificate and joint commitment are fixed, it derives a
+first transcript challenge and has each owner commit/share **384 signed BFV RNS
+quotients**. A 24-bit shifted R1CS range proof enforces the conservative
+`|q| ≤ 1,130,496` envelope; continuation-generator vector commitments add to
+the worker shares, and a random-linear proof links the R1CS commitments back to
+those exact coordinates. Owner signatures are checked before proof work (the
+hostile counter remains zero), all worker acknowledgements are required, and
+the public certificate carries no shares. Production geometry is pinned at
+16,384 coordinates per owner / 65,536 for the final worker relation. Focused
+release gates are **2/2 in 12.620s**. The quotients are still caller-supplied
+bounded integers: exact coefficient derivation/divisibility, the second
+challenge and 65,536-coordinate worker equation, canonical quotient wire,
+production relation-digest constructor, Poseidon/clearing, sampler image, and
+PQ replacement remain open.
+
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame
 ML-DSA transport crossed the unchanged 1200s ceiling after 5,242 signs and 5,242

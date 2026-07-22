@@ -91,7 +91,7 @@ classical seams into a post-quantum composition.
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody/semantic/shortness private_book_distributed_inputs: 5/5 release green |
-| Distributed private-order proof | **GATED THROUGH BOUNDED SHORTS** | four share-opening PoKs + three root-zero proofs per worker; each owner additionally proves 0≤kind≤7, 0≤quantity≤15, the exact 128-way one-hot selector, eight unary demand/supply slots, `kind+8*quantity`, and all 12,288 BFV `u/e1/e2` coefficients in `[-32,31]`, all linked to exact distributed-vector coordinates; combined 13/13 release in 8.952s; exact fhe.rs polynomial opening, Poseidon, and clearing remain monolithic |
+| Distributed private-order proof | **GATED THROUGH BOUNDED SHORTS + QUOTIENT CUSTODY** | base proof establishes share openings/root zero/order selectors/all 12,288 bounded BFV shorts; post-certificate phase commits, range-proves, shares, links, signs, and acknowledges 384 bounded RNS quotients per owner, 2/2 in 12.620s; exact quotient derivation and final worker equation remain |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
@@ -102,7 +102,7 @@ classical seams into a post-quantum composition.
 | Private-raid capability/Arena and narrated-relic composition | **GATED BY TARGET** | relic capstone 1/1; surface 8/8; lower atomic forest 2/2 (engine semantics only; its persvati fixture opted into the unaudited PQ test backend) |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **GATED** | both targets are green inside the current dreggnet-offerings 117/117 invocation |
-| hbox build substrate | **QUALIFIED FOR GPU LANES** | current filesystem probe: 86GiB free after pruning four inactive, reconstructible build-lane copies; current GPU lane and deployed services were preserved |
+| hbox build substrate | **QUALIFIED FOR GPU LANES** | current filesystem probe: 64GiB free after pruning four inactive, reconstructible build targets; active GPU/game/node/PQ lanes and deployed services were preserved |
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
@@ -475,6 +475,24 @@ bytes at production width (8,293 bytes in the degree-16 fixture); the complete
 four-owner/three-worker certificate is 1,605,710 bytes.
 The commitments, proofs, and owner/worker signatures remain classical, not
 post-quantum.
+
+The banked v5 continuation (`fhegg-fhe/src/private_book_distributed_bfv.rs`)
+starts only after that complete certificate and joint commitment. Its first
+Fiat--Shamir challenge fixes 384 signed RNS quotient coordinates per owner.
+Each owner supplies additive worker shares whose continuation-generator vector
+commitments reconstruct to its owner commitment, proves every quotient in the
+24-bit shifted interval with the conservative exact bound
+`|q| ≤ 1,130,496`, and random-linearly links the R1CS commitments back to those
+coordinates. The owner signature is verified before proof work, every worker
+must acknowledge the private packet, and the public certificate contains no
+shares. Production geometry is fixed at 16,384 coordinates per owner and
+65,536 for the final worker proof. Focused release gates are **2/2 in 12.620s**.
+
+This is custody/range/link, not yet the exact BFV proof. Quotients are currently
+caller-supplied bounded integers. The shared exact `fhe.rs` coefficient API,
+divisibility-derived quotient creation, second challenge, 65,536-coordinate
+worker equation, canonical quotient wire, production relation-digest
+constructor, Poseidon/root, clearing, sampler image, and PQ replacement remain.
 
 ### Exact test inventory
 
