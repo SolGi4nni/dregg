@@ -11506,11 +11506,12 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   durably restores the local custom-program registry. Node-level same-redb
   state welds remain, and custom program deployment is not yet federation-
   consensus-ordered.
-- A live generic `blocklace_sync::execute_finalized_turn` atomicity bug is now a
-  named P0: candidate RAM/pending/artifact/activity effects occur before durable
-  success, so rejection or store failure can leave RAM ahead. The repair must
-  implement the already-proved `Dregg2.Exec.Durability` order: isolate candidate,
-  durable commit, then publish fresh-only RAM/head/events/artifacts.
+- `a3679f739` banks the generic `blocklace_sync::execute_finalized_turn`
+  atomicity repair: isolate the complete candidate through durable outcome, then
+  publish ledger/head/pending/activity/artifacts/events only on fresh success.
+  Hostile coverage includes store failure, nonfresh replay, and post-prologue
+  rejection. The focused node build is pending the concurrent exact-v3 API
+  repair; it stopped on foreign exact compile drift, not a blocklace diagnostic.
 - Portable GPU truth stayed grounded: BFV/TFHE kernels are exact wgpu/Vulkan on
   hbox and persvati; live `fhe_clear` and Dark AMM remain CPU at their missing
   integration seams; WGPU Ristretto remains disabled because it is much slower

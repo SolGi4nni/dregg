@@ -219,14 +219,17 @@ the amount of code landed.
   deployment receipt must bind prior/new registry roots, canonical descriptor
   content/availability, VK and version policy, authority, federation/epoch, and
   finalization height. The DFA verifier registry remains categorically separate.
-- A current generic blocklace bug is live and not exact-v3-specific:
-  `execute_finalized_turn` overlays the candidate ledger before matching
-  `TurnResult` and before the durable store transaction, and publishes pending,
-  artifact, and activity effects too early. Rejected/Expired/Pending turns or a
-  store failure can therefore leave RAM ahead of durable state. The active fix
-  isolates every candidate consequence through durable success and publishes
-  ledger/head/events/artifacts only for a fresh committed outcome, matching the
-  existing Lean `Dregg2.Exec.Durability.durableApply_reject_stays` law.
+- `a3679f739` repairs a generic blocklace atomicity bug which was not
+  exact-v3-specific. `execute_finalized_turn` now keeps the complete candidate
+  isolated through the durable outcome and publishes ledger, receipt head,
+  pending resolutions, activity, artifacts, and events only on fresh success,
+  matching the existing Lean
+  `Dregg2.Exec.Durability.durableApply_reject_stays` law. The hostile test covers
+  a targeted store failure, nonfresh response, and real post-prologue body
+  rejection. A focused node build has not yet completed against the concurrent
+  exact-v3 API redesign; it stopped on foreign exact-v3 compile drift without a
+  blocklace diagnostic, so this commit is banked WIP rather than a current full
+  node green.
 
 ### Optimizer and portable GPU truth
 
