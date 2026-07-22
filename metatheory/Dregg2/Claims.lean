@@ -599,4 +599,15 @@ correlation custody. -/
 #assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.Demo.acceptsB_iff
 #assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.Demo.diagonal_products_only_can_be_invalid
 
+/-! ## §37 — dealerless chosen-input VOLE MAC composition. -/
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.runtime_endpoint_add_eq_residual
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.completeCrossTermSum_eq_global
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.sum_localTagShare_eq_residuals
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.valid_residuals_eq_completeCrossTermSum
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.all_local_tags_authenticate_global
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.chosenVole_batch_check_identity
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.Demo.fullOmitCorrelation_valid
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.Demo.omitted_pair_can_break_global_authentication
+#assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.Demo.diagonal_only_can_break_global_authentication
+
 end Dregg2.Claims
