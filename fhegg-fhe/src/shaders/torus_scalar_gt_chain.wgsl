@@ -124,6 +124,31 @@ fn load_digit(coefficient: u32) -> vec2<u32> {
     return vec2<u32>(digit_lwes[limb], digit_lwes[limb + 1u]);
 }
 
+fn load_lwe_at(buffer: ptr<storage, array<u32>, read>, block: u32, coefficient: u32) -> vec2<u32> {
+    let limb = (block * params.input_lwe_size + coefficient) * 2u;
+    return vec2<u32>((*buffer)[limb], (*buffer)[limb + 1u]);
+}
+
+fn load_small_at(block: u32, coefficient: u32) -> vec2<u32> {
+    let limb = (block * params.output_lwe_size + coefficient) * 2u;
+    return vec2<u32>(small_lwe[limb], small_lwe[limb + 1u]);
+}
+
+fn store_small_at(block: u32, coefficient: u32, value: vec2<u32>) {
+    let limb = (block * params.output_lwe_size + coefficient) * 2u;
+    small_lwe[limb] = value.x;
+    small_lwe[limb + 1u] = value.y;
+}
+
+fn load_packed_batch_input(batch: u32, coefficient: u32) -> vec2<u32> {
+    let digit = shl64(
+        load_lwe_at(&digit_lwes, params.digit_block + batch, coefficient),
+        params.digit_scale_log,
+    );
+    if (params.include_state == 0u) { return digit; }
+    return add64(load_lwe_at(&state_lwe, 0u, coefficient), digit);
+}
+
 fn load_input(coefficient: u32) -> vec2<u32> {
     let digit = shl64(load_digit(coefficient), params.digit_scale_log);
     if (params.include_state == 0u) {
@@ -159,6 +184,23 @@ fn add_large_lwes(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (coefficient >= params.input_lwe_size) { return; }
     let value = add64(load_state(coefficient), load_digit(coefficient));
     let limb = coefficient * 2u;
+    small_lwe[limb] = value.x;
+    small_lwe[limb + 1u] = value.y;
+}
+
+// Batched form used after the resident comparison. Bindings 1 and 2 carry
+// contiguous true-mask and false-mask LWEs respectively; binding 4 receives
+// one contiguous selected radix ciphertext.
+@compute @workgroup_size(64)
+fn add_large_lwe_pairs(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let block = gid.y;
+    if (coefficient >= params.input_lwe_size) { return; }
+    let value = add64(
+        load_lwe_at(&state_lwe, block, coefficient),
+        load_lwe_at(&digit_lwes, params.digit_block + block, coefficient),
+    );
+    let limb = (block * params.input_lwe_size + coefficient) * 2u;
     small_lwe[limb] = value.x;
     small_lwe[limb + 1u] = value.y;
 }
@@ -218,6 +260,42 @@ fn keyswitch_packed_input(@builtin(global_invocation_id) gid: vec3<u32>) {
     small_lwe[limb + 1u] = value.y;
 }
 
+
+// Key-switch every independent masked selection digit in parallel. `gid.y`
+// is the mask lane; each lane packs the shared encrypted predicate with one
+// uploaded branch digit and writes a disjoint small-key LWE.
+@compute @workgroup_size(64)
+fn keyswitch_packed_inputs_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let output_index = gid.x;
+    let batch = gid.y;
+    if (output_index >= params.output_lwe_size) { return; }
+    let input_dimension = params.input_lwe_size - 1u;
+    var value = vec2<u32>(0u, 0u);
+    if (output_index + 1u == params.output_lwe_size) {
+        value = load_packed_batch_input(batch, input_dimension);
+    }
+
+    for (var input_index = 0u; input_index < input_dimension; input_index = input_index + 1u) {
+        var state = init_decomposer_state(load_packed_batch_input(batch, input_index));
+        for (var level = 0u; level < params.level_count; level = level + 1u) {
+            let digit_mask = (1u << params.base_log) - 1u;
+            let raw_digit = state.x & digit_mask;
+            state = arithmetic_shr64(state, params.base_log);
+            let carry = (((raw_digit - 1u) | state.x) & raw_digit)
+                >> (params.base_log - 1u);
+            state = add64(state, vec2<u32>(carry, 0u));
+            let digit = sub64(
+                vec2<u32>(raw_digit, 0u),
+                shl64(vec2<u32>(carry, 0u), params.base_log),
+            );
+            let key_index = ((input_index * params.level_count + level)
+                * params.output_lwe_size) + output_index;
+            value = sub64(value, mul64_low(digit, load_ksk(key_index)));
+        }
+    }
+    store_small_at(batch, output_index, value);
+}
+
 // Reproduce tfhe-rs's centered_binary_ms_body_correction_to_add exactly.
 // Mask rotations are independent. The body invocation performs the bounded
 // 918-element correction reduction and writes the corrected body rotation.
@@ -256,4 +334,40 @@ fn centered_modulus_switch(@builtin(global_invocation_id) gid: vec3<u32>) {
     let switched_body = modulus_switch(add64(load_small(mask_dimension), correction));
     let rotation_modulus = 1u << params.log_modulus;
     rotations[mask_dimension] = (rotation_modulus - switched_body) & (rotation_modulus - 1u);
+}
+
+
+@compute @workgroup_size(64)
+fn centered_modulus_switch_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let index = gid.x;
+    let batch = gid.y;
+    let mask_dimension = params.output_lwe_size - 1u;
+    let schedule_base = batch * params.output_lwe_size;
+    if (index < mask_dimension) {
+        rotations[schedule_base + index] = modulus_switch(load_small_at(batch, index));
+        return;
+    }
+    if (index != mask_dimension) { return; }
+
+    let shift = 64u - params.log_modulus;
+    var sum_half_round_errors = vec2<u32>(0u, 0u);
+    var sum_halving_errors_doubled = vec2<u32>(0u, 0u);
+    for (var mask_index = 0u; mask_index < mask_dimension; mask_index = mask_index + 1u) {
+        let mask = load_small_at(batch, mask_index);
+        let rounded = shl64(vec2<u32>(modulus_switch(mask), 0u), shift);
+        let error = sub64(rounded, mask);
+        let half_error = signed_divide_by_two_toward_zero(error);
+        let halving_error_doubled = sub64(shl64(half_error, 1u), error);
+        sum_half_round_errors = add64(sum_half_round_errors, half_error);
+        sum_halving_errors_doubled =
+            add64(sum_halving_errors_doubled, halving_error_doubled);
+    }
+    let sum_halving_errors =
+        signed_divide_by_two_toward_zero(sum_halving_errors_doubled);
+    sum_half_round_errors = sub64(sum_half_round_errors, sum_halving_errors);
+    let correction = sub64(sum_half_round_errors, pow2_64(shift - 1u));
+    let switched_body = modulus_switch(add64(load_small_at(batch, mask_dimension), correction));
+    let rotation_modulus = 1u << params.log_modulus;
+    rotations[schedule_base + mask_dimension] =
+        (rotation_modulus - switched_body) & (rotation_modulus - 1u);
 }

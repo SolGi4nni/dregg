@@ -123,6 +123,29 @@ fn store_acc64(coefficient: u32, which: u32, value: vec2<u32>) {
     }
 }
 
+fn batch_accumulator_coefficients() -> u32 {
+    return params.glwe_size * params.degree;
+}
+
+fn load_batch_acc64(batch: u32, coefficient: u32, which: u32) -> vec2<u32> {
+    let limb = (batch * batch_accumulator_coefficients() + coefficient) * 2u;
+    if (which == 0u) {
+        return vec2<u32>(accumulator_a[limb], accumulator_a[limb + 1u]);
+    }
+    return vec2<u32>(accumulator_b[limb], accumulator_b[limb + 1u]);
+}
+
+fn store_batch_acc64(batch: u32, coefficient: u32, which: u32, value: vec2<u32>) {
+    let limb = (batch * batch_accumulator_coefficients() + coefficient) * 2u;
+    if (which == 0u) {
+        accumulator_a[limb] = value.x;
+        accumulator_a[limb + 1u] = value.y;
+    } else {
+        accumulator_b[limb] = value.x;
+        accumulator_b[limb + 1u] = value.y;
+    }
+}
+
 fn init_decomposer_state(input: vec2<u32>) -> vec2<u32> {
     let represented_bits = params.base_log * params.level_count;
     let non_represented_bits = 64u - represented_bits;
@@ -154,6 +177,28 @@ fn load_rotated64_at(output_coefficient: u32, rotation: u32) -> vec2<u32> {
         wrap_negative = true;
     }
     let value = load_acc64(polynomial * params.degree + source_index, params.input_buffer);
+    return select(value, neg64(value), global_negative != wrap_negative);
+}
+
+fn load_batch_rotated64_at(batch: u32, output_coefficient: u32, rotation: u32) -> vec2<u32> {
+    let polynomial = output_coefficient / params.degree;
+    let out_index = output_coefficient % params.degree;
+    let global_negative = rotation >= params.degree;
+    let shift = select(rotation, rotation - params.degree, global_negative);
+    var source_index: u32;
+    var wrap_negative: bool;
+    if (out_index >= shift) {
+        source_index = out_index - shift;
+        wrap_negative = false;
+    } else {
+        source_index = params.degree + out_index - shift;
+        wrap_negative = true;
+    }
+    let value = load_batch_acc64(
+        batch,
+        polynomial * params.degree + source_index,
+        params.input_buffer,
+    );
     return select(value, neg64(value), global_negative != wrap_negative);
 }
 
@@ -225,6 +270,18 @@ fn product_series_base(series: u32) -> u32 {
     return product_offset() + series * params.degree;
 }
 
+fn batch_scratch_words() -> u32 {
+    return 2u * params.glwe_size * params.n_rows * params.degree;
+}
+
+fn batch_digit_series_base(batch: u32, series: u32) -> u32 {
+    return batch * batch_scratch_words() + digit_series_base(series);
+}
+
+fn batch_product_series_base(batch: u32, series: u32) -> u32 {
+    return batch * batch_scratch_words() + product_series_base(series);
+}
+
 @compute @workgroup_size(64)
 fn monomial_rotate(@builtin(global_invocation_id) gid: vec3<u32>) {
     let coefficient = gid.x;
@@ -241,6 +298,20 @@ fn monomial_rotate_scheduled(@builtin(global_invocation_id) gid: vec3<u32>) {
         coefficient,
         1u - params.input_buffer,
         load_rotated64_at(coefficient, rotation),
+    );
+}
+
+@compute @workgroup_size(64)
+fn monomial_rotate_scheduled_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let batch = gid.z;
+    if (coefficient >= params.glwe_size * params.degree) { return; }
+    let rotation = scheduled_rotations[batch * params._pad0 + params.key_step];
+    store_batch_acc64(
+        batch,
+        coefficient,
+        1u - params.input_buffer,
+        load_batch_rotated64_at(batch, coefficient, rotation),
     );
 }
 
@@ -286,6 +357,40 @@ fn decompose_difference_scheduled(@builtin(global_invocation_id) gid: vec3<u32>)
     let glwe_coefficients = params.glwe_size * params.degree;
     if (coefficient >= glwe_coefficients) { return; }
     decompose_at_rotation(coefficient, scheduled_rotations[params.key_step]);
+}
+
+@compute @workgroup_size(64)
+fn decompose_difference_scheduled_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let batch = gid.z;
+    let glwe_coefficients = params.glwe_size * params.degree;
+    if (coefficient >= glwe_coefficients) { return; }
+    let rotation = scheduled_rotations[batch * params._pad0 + params.key_step];
+    let difference = sub64(
+        load_batch_rotated64_at(batch, coefficient, rotation),
+        load_batch_acc64(batch, coefficient, params.input_buffer),
+    );
+    var state = init_decomposer_state(difference);
+    let digit_mask = (1u << params.base_log) - 1u;
+    let raw_digit = state.x & digit_mask;
+    state = arithmetic_shr64(state, params.base_log);
+    let carry = (((raw_digit - 1u) | state.x) & raw_digit) >> (params.base_log - 1u);
+    let digit = sub64(
+        vec2<u32>(raw_digit, 0u),
+        shl64(vec2<u32>(carry, 0u), params.base_log),
+    );
+    let negative = (digit.y & 0x80000000u) != 0u;
+    let magnitude = select(digit, neg64(digit), negative).x;
+    let polynomial = coefficient / params.degree;
+    let local = coefficient % params.degree;
+    for (var row = 0u; row < params.n_rows; row = row + 1u) {
+        let q = row_q(row);
+        let canonical = select(magnitude, select(0u, q - magnitude, magnitude != 0u), negative);
+        let montgomery = mont_mul(canonical, row_r2(row), q, row_qinv(row));
+        transform_scratch[
+            batch_digit_series_base(batch, polynomial * params.n_rows + row) + local
+        ] = montgomery;
+    }
 }
 
 // Forward-transform every BSK polynomial once at plan construction.
@@ -365,6 +470,45 @@ fn forward_digits(
     }
 }
 
+@compute @workgroup_size(256)
+fn forward_digits_batch(
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+) {
+    let series = wid.y;
+    let batch = wid.z;
+    if (series >= params.glwe_size * params.n_rows) { return; }
+    let row = series % params.n_rows;
+    let base = batch_digit_series_base(batch, series);
+    let q = row_q(row);
+    let qinv = row_qinv(row);
+    for (var i = lid.x; i < params.degree; i = i + 256u) {
+        ntt_row[reverse_low_bits(i, params.log_degree)] =
+            mont_mul(transform_scratch[base + i], twist(row, i), q, qinv);
+    }
+    workgroupBarrier();
+    var len = 2u;
+    while (len <= params.degree) {
+        let half = len / 2u;
+        let step = params.degree / len;
+        for (var b = lid.x; b < params.degree / 2u; b = b + 256u) {
+            let block = b / half;
+            let j = b - block * half;
+            let left = block * len + j;
+            let right = left + half;
+            let u = ntt_row[left];
+            let v = mont_mul(ntt_row[right], root(row, j * step), q, qinv);
+            ntt_row[left] = addmod(u, v, q);
+            ntt_row[right] = submod(u, v, q);
+        }
+        workgroupBarrier();
+        len = len * 2u;
+    }
+    for (var i = lid.x; i < params.degree; i = i + 256u) {
+        transform_scratch[base + i] = ntt_row[i];
+    }
+}
+
 @compute @workgroup_size(64)
 fn pointwise_products(@builtin(global_invocation_id) gid: vec3<u32>) {
     let local = gid.x;
@@ -388,6 +532,30 @@ fn pointwise_products(@builtin(global_invocation_id) gid: vec3<u32>) {
     transform_scratch[product_series_base(series) + local] = sum;
 }
 
+@compute @workgroup_size(64)
+fn pointwise_products_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let local = gid.x;
+    let series = gid.y;
+    let batch = gid.z;
+    if (local >= params.degree || series >= params.glwe_size * params.n_rows) { return; }
+    let output_polynomial = series / params.n_rows;
+    let row_prime = series % params.n_rows;
+    let q = row_q(row_prime);
+    let qinv = row_qinv(row_prime);
+    var sum = 0u;
+    for (var input_row = 0u; input_row < params.glwe_size; input_row = input_row + 1u) {
+        let digit = transform_scratch[
+            batch_digit_series_base(batch, input_row * params.n_rows + row_prime) + local
+        ];
+        let bsk_polynomial = params.key_step * params.glwe_size * params.glwe_size
+            + input_row * params.glwe_size + output_polynomial;
+        let bsk_series_index = bsk_polynomial * params.n_rows + row_prime;
+        let key = bsk_spectra[bsk_base(bsk_series_index) + local];
+        sum = addmod(sum, mont_mul(digit, key, q, qinv), q);
+    }
+    transform_scratch[batch_product_series_base(batch, series) + local] = sum;
+}
+
 @compute @workgroup_size(256)
 fn inverse_products(
     @builtin(local_invocation_id) lid: vec3<u32>,
@@ -397,6 +565,54 @@ fn inverse_products(
     if (series >= params.glwe_size * params.n_rows) { return; }
     let row = series % params.n_rows;
     let base = product_series_base(series);
+    let q = row_q(row);
+    let qinv = row_qinv(row);
+    for (var i = lid.x; i < params.degree; i = i + 256u) {
+        ntt_row[i] = transform_scratch[base + i];
+    }
+    workgroupBarrier();
+    for (var i = lid.x; i < params.degree; i = i + 256u) {
+        let reversed = reverse_low_bits(i, params.log_degree);
+        if (i < reversed) {
+            let value = ntt_row[i];
+            ntt_row[i] = ntt_row[reversed];
+            ntt_row[reversed] = value;
+        }
+    }
+    workgroupBarrier();
+    var len = 2u;
+    while (len <= params.degree) {
+        let half = len / 2u;
+        let step = params.degree / len;
+        for (var b = lid.x; b < params.degree / 2u; b = b + 256u) {
+            let block = b / half;
+            let j = b - block * half;
+            let left = block * len + j;
+            let right = left + half;
+            let u = ntt_row[left];
+            let v = mont_mul(ntt_row[right], root(row, params.degree + j * step), q, qinv);
+            ntt_row[left] = addmod(u, v, q);
+            ntt_row[right] = submod(u, v, q);
+        }
+        workgroupBarrier();
+        len = len * 2u;
+    }
+    for (var i = lid.x; i < params.degree; i = i + 256u) {
+        let scaled = mont_mul(ntt_row[i], twist(row, params.degree + i), q, qinv);
+        transform_scratch[base + i] = mont_mul(scaled, 1u, q, qinv);
+    }
+}
+
+@compute @workgroup_size(256)
+fn inverse_products_batch(
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+) {
+    let series = wid.y;
+    let batch = wid.z;
+    if (series >= params.glwe_size * params.n_rows) { return; }
+    let row = series % params.n_rows;
+    let base = batch_product_series_base(batch, series);
     let q = row_q(row);
     let qinv = row_qinv(row);
     for (var i = lid.x; i < params.degree; i = i + 256u) {
@@ -532,4 +748,24 @@ fn crt_add_accumulator(@builtin(global_invocation_id) gid: vec3<u32>) {
     let product = reconstruct_centered_low64(residues);
     let next = add64(load_acc64(coefficient, params.input_buffer), product);
     store_acc64(coefficient, 1u - params.input_buffer, next);
+}
+
+
+@compute @workgroup_size(64)
+fn crt_add_accumulator_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let batch = gid.z;
+    if (coefficient >= params.glwe_size * params.degree) { return; }
+    let polynomial = coefficient / params.degree;
+    let local = coefficient % params.degree;
+    let base_series = polynomial * params.n_rows;
+    let residues = vec4<u32>(
+        transform_scratch[batch_product_series_base(batch, base_series) + local],
+        transform_scratch[batch_product_series_base(batch, base_series + 1u) + local],
+        transform_scratch[batch_product_series_base(batch, base_series + 2u) + local],
+        transform_scratch[batch_product_series_base(batch, base_series + 3u) + local],
+    );
+    let product = reconstruct_centered_low64(residues);
+    let next = add64(load_batch_acc64(batch, coefficient, params.input_buffer), product);
+    store_batch_acc64(batch, coefficient, 1u - params.input_buffer, next);
 }

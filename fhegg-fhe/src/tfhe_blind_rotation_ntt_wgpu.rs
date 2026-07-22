@@ -191,13 +191,23 @@ struct GpuContext {
     resident_pointwise: wgpu::ComputePipeline,
     resident_inverse_products: wgpu::ComputePipeline,
     resident_crt_add: wgpu::ComputePipeline,
+    resident_rotate_scheduled_batch: wgpu::ComputePipeline,
+    resident_decompose_scheduled_batch: wgpu::ComputePipeline,
+    resident_forward_digits_batch: wgpu::ComputePipeline,
+    resident_pointwise_batch: wgpu::ComputePipeline,
+    resident_inverse_products_batch: wgpu::ComputePipeline,
+    resident_crt_add_batch: wgpu::ComputePipeline,
     keyswitch_bgl: wgpu::BindGroupLayout,
     extract_keyswitch: wgpu::ComputePipeline,
     extract_only: wgpu::ComputePipeline,
+    extract_only_batch: wgpu::ComputePipeline,
     scalar_chain_bgl: wgpu::BindGroupLayout,
     keyswitch_packed_input: wgpu::ComputePipeline,
     centered_modulus_switch: wgpu::ComputePipeline,
     add_large_lwes: wgpu::ComputePipeline,
+    keyswitch_packed_inputs_batch: wgpu::ComputePipeline,
+    centered_modulus_switch_batch: wgpu::ComputePipeline,
+    add_large_lwe_pairs: wgpu::ComputePipeline,
 }
 
 impl GpuContext {
@@ -322,6 +332,13 @@ impl GpuContext {
         let resident_pointwise = make_resident("pointwise_products");
         let resident_inverse_products = make_resident("inverse_products");
         let resident_crt_add = make_resident("crt_add_accumulator");
+        let resident_rotate_scheduled_batch = make_resident("monomial_rotate_scheduled_batch");
+        let resident_decompose_scheduled_batch =
+            make_resident("decompose_difference_scheduled_batch");
+        let resident_forward_digits_batch = make_resident("forward_digits_batch");
+        let resident_pointwise_batch = make_resident("pointwise_products_batch");
+        let resident_inverse_products_batch = make_resident("inverse_products_batch");
+        let resident_crt_add_batch = make_resident("crt_add_accumulator_batch");
 
         let keyswitch_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_pbs_extract_keyswitch.wgsl"),
@@ -360,6 +377,14 @@ impl GpuContext {
             compilation_options: Default::default(),
             cache: None,
         });
+        let extract_only_batch = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("extract_only_batch"),
+            layout: Some(&keyswitch_layout),
+            module: &keyswitch_shader,
+            entry_point: Some("extract_only_batch"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let scalar_chain_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("torus_scalar_gt_chain.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
@@ -395,6 +420,9 @@ impl GpuContext {
         let keyswitch_packed_input = make_scalar_chain("keyswitch_packed_input");
         let centered_modulus_switch = make_scalar_chain("centered_modulus_switch");
         let add_large_lwes = make_scalar_chain("add_large_lwes");
+        let keyswitch_packed_inputs_batch = make_scalar_chain("keyswitch_packed_inputs_batch");
+        let centered_modulus_switch_batch = make_scalar_chain("centered_modulus_switch_batch");
+        let add_large_lwe_pairs = make_scalar_chain("add_large_lwe_pairs");
         let context = Self {
             _instance: instance,
             device,
@@ -417,13 +445,23 @@ impl GpuContext {
             resident_pointwise,
             resident_inverse_products,
             resident_crt_add,
+            resident_rotate_scheduled_batch,
+            resident_decompose_scheduled_batch,
+            resident_forward_digits_batch,
+            resident_pointwise_batch,
+            resident_inverse_products_batch,
+            resident_crt_add_batch,
             keyswitch_bgl,
             extract_keyswitch,
             extract_only,
+            extract_only_batch,
             scalar_chain_bgl,
             keyswitch_packed_input,
             centered_modulus_switch,
             add_large_lwes,
+            keyswitch_packed_inputs_batch,
+            centered_modulus_switch_batch,
+            add_large_lwe_pairs,
         };
         if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
             return GpuState::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(format!(
@@ -552,7 +590,7 @@ impl GpuContext {
                 current,
                 TORUS_NTT_MODULI.len() as u32,
                 0,
-                0,
+                output_lwe_size as u32,
                 0,
             ];
             let start = slot * metadata_stride;
@@ -693,6 +731,41 @@ impl GpuContext {
             .and_then(|n| n.checked_mul(2))
             .ok_or_else(|| TransformPbsGpuError::Execution("transform scratch overflow".into()))?;
         let scratch_bytes = word_bytes(scratch_words)?;
+        let selection_mask_count = selection_blocks.checked_mul(2).ok_or_else(|| {
+            TransformPbsGpuError::Execution("resident selection mask count overflow".into())
+        })?;
+        let selection_allocation_count = selection_mask_count.max(1) as u64;
+        let batch_accumulator_bytes = one_accumulator_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch accumulator bytes overflow".into())
+            })?;
+        let batch_small_lwe_bytes = small_lwe_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch small-LWE bytes overflow".into())
+            })?;
+        let batch_rotation_bytes = rotation_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch rotation bytes overflow".into())
+            })?;
+        let batch_scratch_bytes = scratch_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch scratch bytes overflow".into())
+            })?;
+        let batch_masked_lwe_bytes = large_lwe_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch masked-LWE bytes overflow".into())
+            })?;
+        let selected_allocation_count = selection_blocks.max(1) as u64;
+        let batch_selected_lwe_bytes = large_lwe_bytes
+            .checked_mul(selected_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch selected-LWE bytes overflow".into())
+            })?;
         let output_lwe_size = match finalization {
             Finalization::ExtractKeyswitch => prepared.output_lwe_size,
             Finalization::ExtractOnly => (p.glwe_size - 1)
@@ -973,8 +1046,9 @@ impl GpuContext {
     /// Run the ciphertext comparison and radix selection as one resident GPU
     /// program. `uploaded_lwes` is ordered as comparison pairs, true-branch
     /// digits, then false-branch digits. The accumulator family is ordered as
-    /// the `2 * blocks - 1` comparison stages followed by two mask LUTs per
-    /// output digit. Only the selected radix LWEs are read back.
+    /// the `2 * blocks - 1` comparison stages followed by the true-mask LUT
+    /// family and then the false-mask LUT family. Only the selected radix LWEs
+    /// are read back.
     fn run_ciphertext_gt_select(
         &self,
         uploaded_lwes: &[u64],
@@ -1133,6 +1207,12 @@ impl GpuContext {
             small_lwe_bytes,
             rotation_bytes,
             scratch_bytes,
+            batch_accumulator_bytes,
+            batch_small_lwe_bytes,
+            batch_rotation_bytes,
+            batch_scratch_bytes,
+            batch_masked_lwe_bytes,
+            batch_selected_lwe_bytes,
         ]
         .into_iter()
         .any(|bytes| bytes > binding_limit)
@@ -1169,22 +1249,18 @@ impl GpuContext {
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let masked_other = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("TFHE resident selection masked false digit"),
-            size: large_lwe_bytes,
+        let batch_masked_lwes = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched masked radix LWEs"),
+            size: batch_masked_lwe_bytes,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let selected_lwes = (0..selection_blocks)
-            .map(|_| {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("TFHE resident selected radix LWE"),
-                    size: large_lwe_bytes,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                })
-            })
-            .collect::<Vec<_>>();
+        let batch_selected_lwes = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selected radix LWEs"),
+            size: batch_selected_lwe_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
         let small = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE resident comparison small-key LWE"),
             size: small_lwe_bytes,
@@ -1212,6 +1288,36 @@ impl GpuContext {
         let scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE resident comparison transform scratch"),
             size: scratch_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let batch_small = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selection small-key LWEs"),
+            size: batch_small_lwe_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let batch_rotations = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selection rotations"),
+            size: batch_rotation_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let batch_accumulator_a = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selection accumulator A"),
+            size: batch_accumulator_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let batch_accumulator_b = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selection accumulator B"),
+            size: batch_accumulator_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let batch_scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident batched selection transform scratch"),
+            size: batch_scratch_bytes,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -1429,255 +1535,228 @@ impl GpuContext {
             self.queue.submit([encoder.finish()]);
         }
 
-        // A selection consumes the encrypted comparison state without mapping
-        // it. Each radix digit is represented as the sum of two
-        // mutually-exclusive masks. The first PBS computes
-        // `predicate ? when : 0`; the second computes
-        // `predicate ? 0 : otherwise`; their large-key LWEs are added and copied
-        // into one shared final readback buffer.
-        for block in 0..selection_blocks {
-            for branch in 0..2usize {
-                let branch_offset = branch.checked_mul(selection_blocks).ok_or_else(|| {
-                    TransformPbsGpuError::Execution(
-                        "resident selection branch offset overflow".into(),
-                    )
+        // Selection consumes the encrypted comparison state without mapping it.
+        // All true masks followed by all false masks form 2*radix independent
+        // PBS lanes. They share the resident BSK and four driver-safe command
+        // chunks; a final pairwise LWE add produces the selected radix value.
+        if selection_blocks != 0 {
+            let selection_mask_count_u32 = u32::try_from(selection_mask_count).map_err(|_| {
+                TransformPbsGpuError::Execution("selection mask count exceeds u32".into())
+            })?;
+            let uploaded_blocks_u32 = u32::try_from(uploaded_blocks).map_err(|_| {
+                TransformPbsGpuError::Execution("selection digit offset exceeds u32".into())
+            })?;
+            let chain_metadata = [
+                input_lwe_size_u32,
+                output_lwe_size_u32,
+                prepared.ks_base_log as u32,
+                prepared.ks_level_count as u32,
+                log_modulus,
+                uploaded_blocks_u32,
+                1,
+                1,
+            ];
+            let chain_metadata_buffer = uniform(
+                &self.device,
+                "TFHE batched resident selection KS/MS metadata",
+                &chain_metadata,
+            );
+            let chain_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("TFHE batched resident selection KS/MS bind group"),
+                layout: &self.scalar_chain_bgl,
+                entries: &[
+                    entry(0, &chain_metadata_buffer),
+                    entry(1, &state),
+                    entry(2, &digits),
+                    entry(3, &prepared.ksk),
+                    entry(4, &batch_small),
+                    entry(5, &batch_rotations),
+                ],
+            });
+            let mut encoder = self.encoder("TFHE batched resident selection initial chunk");
+            let selection_lut_offset = stages.len() as u64 * one_accumulator_bytes;
+            encoder.copy_buffer_to_buffer(
+                &luts,
+                selection_lut_offset,
+                &batch_accumulator_a,
+                0,
+                batch_accumulator_bytes,
+            );
+            self.dispatch_1d(
+                &mut encoder,
+                &self.keyswitch_packed_inputs_batch,
+                &chain_bind_group,
+                prepared.output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                selection_mask_count_u32,
+                "TFHE batched selection large-to-small key switches",
+            );
+            self.dispatch_1d(
+                &mut encoder,
+                &self.centered_modulus_switch_batch,
+                &chain_bind_group,
+                prepared.output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                selection_mask_count_u32,
+                "TFHE batched selection centered modulus switches",
+            );
+            let resident_bind_group = self.resident_bind_group(
+                prepared,
+                &batch_accumulator_a,
+                &batch_accumulator_b,
+                &batch_scratch,
+                &batch_rotations,
+            );
+            self.dispatch_resident_batch(
+                &mut encoder,
+                &self.resident_rotate_scheduled_batch,
+                &resident_bind_group,
+                0,
+                prepared,
+                accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                1,
+                selection_mask_count_u32,
+                "TFHE batched selection scheduled body rotations",
+            )?;
+            let mut current = 1u32;
+            let mut in_chunk = 0usize;
+            for step in 0..prepared.blind_mask_dimension {
+                if in_chunk == CMUX_STEPS_PER_SUBMISSION {
+                    self.queue.submit([encoder.finish()]);
+                    encoder = self.encoder("TFHE batched selection continued command chunk");
+                    in_chunk = 0;
+                }
+                let metadata_slot = step.checked_add(1).ok_or_else(|| {
+                    TransformPbsGpuError::Execution("resident metadata slot overflow".into())
                 })?;
-                let digit_block = uploaded_blocks
-                    .checked_add(branch_offset)
-                    .and_then(|index| index.checked_add(block))
-                    .ok_or_else(|| {
-                        TransformPbsGpuError::Execution(
-                            "resident selection digit index overflow".into(),
-                        )
-                    })?;
-                let digit_block_u32 = u32::try_from(digit_block).map_err(|_| {
-                    TransformPbsGpuError::Execution(
-                        "resident selection digit index exceeds u32".into(),
-                    )
-                })?;
-                let chain_metadata = [
-                    input_lwe_size_u32,
-                    output_lwe_size_u32,
-                    prepared.ks_base_log as u32,
-                    prepared.ks_level_count as u32,
-                    log_modulus,
-                    digit_block_u32,
-                    1,
-                    1,
-                ];
-                let chain_metadata_buffer = uniform(
-                    &self.device,
-                    "TFHE resident selection KS/MS metadata",
-                    &chain_metadata,
-                );
-                let chain_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("TFHE resident selection KS/MS bind group"),
-                    layout: &self.scalar_chain_bgl,
-                    entries: &[
-                        entry(0, &chain_metadata_buffer),
-                        entry(1, &state),
-                        entry(2, &digits),
-                        entry(3, &prepared.ksk),
-                        entry(4, &small),
-                        entry(5, &rotations),
-                    ],
-                });
-                let mut encoder = self.encoder("TFHE resident selection PBS stage");
-                let block_lut_offset = block.checked_mul(2).ok_or_else(|| {
-                    TransformPbsGpuError::Execution(
-                        "resident selection LUT block offset overflow".into(),
-                    )
-                })?;
-                let lut_stage = stages
-                    .len()
-                    .checked_add(block_lut_offset)
-                    .and_then(|index| index.checked_add(branch))
-                    .ok_or_else(|| {
-                        TransformPbsGpuError::Execution(
-                            "resident selection LUT index overflow".into(),
-                        )
-                    })?;
-                encoder.copy_buffer_to_buffer(
-                    &luts,
-                    lut_stage as u64 * one_accumulator_bytes,
-                    &accumulator_a,
-                    0,
-                    one_accumulator_bytes,
-                );
-                self.dispatch_1d(
+                self.dispatch_resident_batch(
                     &mut encoder,
-                    &self.keyswitch_packed_input,
-                    &chain_bind_group,
-                    prepared.output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                    1,
-                    "TFHE resident selection large-to-small key switch",
-                );
-                self.dispatch_1d(
-                    &mut encoder,
-                    &self.centered_modulus_switch,
-                    &chain_bind_group,
-                    prepared.output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                    1,
-                    "TFHE resident selection centered modulus switch",
-                );
-
-                let resident_bind_group = self.resident_bind_group(
-                    prepared,
-                    &accumulator_a,
-                    &accumulator_b,
-                    &scratch,
-                    &rotations,
-                );
-                self.dispatch_resident_1d(
-                    &mut encoder,
-                    &self.resident_rotate_scheduled,
+                    &self.resident_decompose_scheduled_batch,
                     &resident_bind_group,
-                    0,
+                    metadata_slot,
                     prepared,
                     accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
                     1,
-                    "TFHE resident selection scheduled body rotation",
+                    selection_mask_count_u32,
+                    "TFHE batched selection scheduled decompose",
                 )?;
-                let mut current = 1u32;
-                let mut in_chunk = 0usize;
-                for step in 0..prepared.blind_mask_dimension {
-                    if in_chunk == CMUX_STEPS_PER_SUBMISSION {
-                        self.queue.submit([encoder.finish()]);
-                        encoder = self.encoder("TFHE resident selection continued command chunk");
-                        in_chunk = 0;
-                    }
-                    let metadata_slot = step.checked_add(1).ok_or_else(|| {
-                        TransformPbsGpuError::Execution("resident metadata slot overflow".into())
-                    })?;
-                    self.dispatch_resident_1d(
-                        &mut encoder,
-                        &self.resident_decompose_scheduled,
-                        &resident_bind_group,
-                        metadata_slot,
-                        prepared,
-                        accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                        1,
-                        "TFHE resident selection scheduled decompose",
-                    )?;
-                    self.dispatch_resident_1d(
-                        &mut encoder,
-                        &self.resident_forward_digits,
-                        &resident_bind_group,
-                        metadata_slot,
-                        prepared,
-                        1,
-                        (p.glwe_size * rows) as u32,
-                        "TFHE resident selection forward digits",
-                    )?;
-                    self.dispatch_resident_1d(
-                        &mut encoder,
-                        &self.resident_pointwise,
-                        &resident_bind_group,
-                        metadata_slot,
-                        prepared,
-                        p.degree.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                        (p.glwe_size * rows) as u32,
-                        "TFHE resident selection pointwise products",
-                    )?;
-                    self.dispatch_resident_1d(
-                        &mut encoder,
-                        &self.resident_inverse_products,
-                        &resident_bind_group,
-                        metadata_slot,
-                        prepared,
-                        1,
-                        (p.glwe_size * rows) as u32,
-                        "TFHE resident selection inverse products",
-                    )?;
-                    self.dispatch_resident_1d(
-                        &mut encoder,
-                        &self.resident_crt_add,
-                        &resident_bind_group,
-                        metadata_slot,
-                        prepared,
-                        accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                        1,
-                        "TFHE resident selection CRT add",
-                    )?;
-                    current = 1 - current;
-                    in_chunk += 1;
-                }
-
-                let extract_metadata = [
-                    p.degree as u32,
-                    p.glwe_size as u32,
-                    large_lwe_size as u32,
-                    prepared.ks_base_log as u32,
-                    prepared.ks_level_count as u32,
-                    current,
-                    0,
-                    0,
-                ];
-                let extract_metadata_buffer = uniform(
-                    &self.device,
-                    "TFHE resident selection extract metadata",
-                    &extract_metadata,
-                );
-                let masked_output = if branch == 0 { &local } else { &masked_other };
-                let extract_bind_group =
-                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("TFHE resident selection extract bind group"),
-                        layout: &self.keyswitch_bgl,
-                        entries: &[
-                            entry(0, &extract_metadata_buffer),
-                            entry(1, &accumulator_a),
-                            entry(2, &accumulator_b),
-                            entry(3, &prepared.ksk),
-                            entry(4, masked_output),
-                        ],
-                    });
-                self.dispatch_1d(
+                self.dispatch_resident_batch(
                     &mut encoder,
-                    &self.extract_only,
-                    &extract_bind_group,
-                    large_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                    &self.resident_forward_digits_batch,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
                     1,
-                    "TFHE resident selection extract masked digit",
-                );
-
-                if branch == 1 {
-                    let add_metadata = [input_lwe_size_u32, 0, 0, 0, 0, 0, 0, 0];
-                    let add_metadata_buffer = uniform(
-                        &self.device,
-                        "TFHE resident selection LWE-add metadata",
-                        &add_metadata,
-                    );
-                    let add_bind_group =
-                        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("TFHE resident selection LWE-add bind group"),
-                            layout: &self.scalar_chain_bgl,
-                            entries: &[
-                                entry(0, &add_metadata_buffer),
-                                entry(1, &local),
-                                entry(2, &masked_other),
-                                entry(3, &prepared.ksk),
-                                entry(4, &selected_lwes[block]),
-                                entry(5, &rotations),
-                            ],
-                        });
-                    self.dispatch_1d(
-                        &mut encoder,
-                        &self.add_large_lwes,
-                        &add_bind_group,
-                        large_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
-                        1,
-                        "TFHE resident selection add masked LWEs",
-                    );
-                    encoder.copy_buffer_to_buffer(
-                        &selected_lwes[block],
-                        0,
-                        &readback,
-                        block as u64 * large_lwe_bytes,
-                        large_lwe_bytes,
-                    );
-                }
-                self.queue.submit([encoder.finish()]);
+                    (p.glwe_size * rows) as u32,
+                    selection_mask_count_u32,
+                    "TFHE batched selection forward digits",
+                )?;
+                self.dispatch_resident_batch(
+                    &mut encoder,
+                    &self.resident_pointwise_batch,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
+                    p.degree.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                    (p.glwe_size * rows) as u32,
+                    selection_mask_count_u32,
+                    "TFHE batched selection pointwise products",
+                )?;
+                self.dispatch_resident_batch(
+                    &mut encoder,
+                    &self.resident_inverse_products_batch,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
+                    1,
+                    (p.glwe_size * rows) as u32,
+                    selection_mask_count_u32,
+                    "TFHE batched selection inverse products",
+                )?;
+                self.dispatch_resident_batch(
+                    &mut encoder,
+                    &self.resident_crt_add_batch,
+                    &resident_bind_group,
+                    metadata_slot,
+                    prepared,
+                    accumulator_coefficients.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                    1,
+                    selection_mask_count_u32,
+                    "TFHE batched selection CRT add",
+                )?;
+                current = 1 - current;
+                in_chunk += 1;
             }
+
+            let extract_metadata = [
+                p.degree as u32,
+                p.glwe_size as u32,
+                large_lwe_size as u32,
+                prepared.ks_base_log as u32,
+                prepared.ks_level_count as u32,
+                current,
+                0,
+                0,
+            ];
+            let extract_metadata_buffer = uniform(
+                &self.device,
+                "TFHE batched resident selection extract metadata",
+                &extract_metadata,
+            );
+            let extract_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("TFHE batched resident selection extract bind group"),
+                layout: &self.keyswitch_bgl,
+                entries: &[
+                    entry(0, &extract_metadata_buffer),
+                    entry(1, &batch_accumulator_a),
+                    entry(2, &batch_accumulator_b),
+                    entry(3, &prepared.ksk),
+                    entry(4, &batch_masked_lwes),
+                ],
+            });
+            self.dispatch_1d(
+                &mut encoder,
+                &self.extract_only_batch,
+                &extract_bind_group,
+                large_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                selection_mask_count_u32,
+                "TFHE batched selection extract masked digits",
+            );
+            let selection_blocks_u32 = u32::try_from(selection_blocks).map_err(|_| {
+                TransformPbsGpuError::Execution("selection block count exceeds u32".into())
+            })?;
+            let add_metadata = [input_lwe_size_u32, 0, 0, 0, 0, selection_blocks_u32, 0, 0];
+            let add_metadata_buffer = uniform(
+                &self.device,
+                "TFHE batched resident selection LWE-add metadata",
+                &add_metadata,
+            );
+            let add_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("TFHE batched resident selection LWE-add bind group"),
+                layout: &self.scalar_chain_bgl,
+                entries: &[
+                    entry(0, &add_metadata_buffer),
+                    entry(1, &batch_masked_lwes),
+                    entry(2, &batch_masked_lwes),
+                    entry(3, &prepared.ksk),
+                    entry(4, &batch_selected_lwes),
+                    entry(5, &batch_rotations),
+                ],
+            });
+            self.dispatch_1d(
+                &mut encoder,
+                &self.add_large_lwe_pairs,
+                &add_bind_group,
+                large_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                selection_blocks_u32,
+                "TFHE batched selection add masked LWE pairs",
+            );
+            encoder.copy_buffer_to_buffer(
+                &batch_selected_lwes,
+                0,
+                &readback,
+                0,
+                batch_selected_lwe_bytes,
+            );
+            self.queue.submit([encoder.finish()]);
         }
         self.device.poll(wgpu::Maintain::Wait);
         if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
@@ -1876,6 +1955,35 @@ impl GpuContext {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[metadata_offset]);
         pass.dispatch_workgroups(x, y, 1);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_resident_batch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        bind_group: &wgpu::BindGroup,
+        metadata_slot: usize,
+        prepared: &PreparedTransformPbsGpuKeys,
+        x: u32,
+        y: u32,
+        z: u32,
+        label: &'static str,
+    ) -> Result<(), TransformPbsGpuError> {
+        let metadata_offset = metadata_slot
+            .checked_mul(prepared.resident_step_metadata_stride as usize)
+            .and_then(|offset| u32::try_from(offset).ok())
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("resident metadata offset overflow".into())
+            })?;
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[metadata_offset]);
+        pass.dispatch_workgroups(x, y, z);
         Ok(())
     }
 

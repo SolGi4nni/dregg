@@ -27,6 +27,15 @@ fn load_acc64(coefficient: u32) -> vec2<u32> {
     return vec2<u32>(accumulator_b[limb], accumulator_b[limb + 1u]);
 }
 
+fn load_batch_acc64(batch: u32, coefficient: u32) -> vec2<u32> {
+    let accumulator_coefficients = params.glwe_size * params.degree;
+    let limb = (batch * accumulator_coefficients + coefficient) * 2u;
+    if (params.input_buffer == 0u) {
+        return vec2<u32>(accumulator_a[limb], accumulator_a[limb + 1u]);
+    }
+    return vec2<u32>(accumulator_b[limb], accumulator_b[limb + 1u]);
+}
+
 fn load_ksk64(coefficient: u32) -> vec2<u32> {
     let limb = coefficient * 2u;
     return vec2<u32>(keyswitch_key[limb], keyswitch_key[limb + 1u]);
@@ -139,6 +148,18 @@ fn extracted_mask_coefficient(index: u32) -> vec2<u32> {
     return neg64(load_acc64(polynomial * params.degree + params.degree - local));
 }
 
+fn extracted_batch_mask_coefficient(batch: u32, index: u32) -> vec2<u32> {
+    let local = index % params.degree;
+    let polynomial = index / params.degree;
+    if (local == 0u) {
+        return load_batch_acc64(batch, polynomial * params.degree);
+    }
+    return neg64(load_batch_acc64(
+        batch,
+        polynomial * params.degree + params.degree - local,
+    ));
+}
+
 // Degree-zero GLWE sample extraction without the following key switch.  This
 // is the terminal step for tfhe-rs's KS->PBS order: the caller has already
 // switched the input from the large LWE key to the BSK input key, and the PBS
@@ -157,6 +178,27 @@ fn extract_only(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let limb = output_index * 2u;
+    output_lwe[limb] = value.x;
+    output_lwe[limb + 1u] = value.y;
+}
+
+
+@compute @workgroup_size(64)
+fn extract_only_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let output_index = gid.x;
+    let batch = gid.y;
+    let input_dimension = (params.glwe_size - 1u) * params.degree;
+    if (output_index > input_dimension) { return; }
+
+    var value = vec2<u32>(0u, 0u);
+    if (output_index == input_dimension) {
+        value = load_batch_acc64(batch, (params.glwe_size - 1u) * params.degree);
+    } else {
+        value = extracted_batch_mask_coefficient(batch, output_index);
+    }
+
+    let output_lwe_size = input_dimension + 1u;
+    let limb = (batch * output_lwe_size + output_index) * 2u;
     output_lwe[limb] = value.x;
     output_lwe[limb + 1u] = value.y;
 }

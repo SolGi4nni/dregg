@@ -960,6 +960,8 @@ impl FheUint32KsPbsTransformWgpuPlan {
         }
         for _ in 0..expected_blocks {
             append_lut(&selection_luts.when_true)?;
+        }
+        for _ in 0..expected_blocks {
             append_lut(&selection_luts.when_false)?;
         }
 
