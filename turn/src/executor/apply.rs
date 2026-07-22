@@ -38,6 +38,16 @@ fn shielded_nullifier_key(field_nullifier: u32) -> Nullifier {
     Nullifier(*hasher.finalize().as_bytes())
 }
 
+/// Exact-v3 dispatch is deliberately narrower than "looks like an FNSP carrier": only the shared
+/// magic plus the exact version byte selects the admission-token route.  Version 2 and every
+/// other byte sequence continue through the unchanged strict legacy decoder (and fail there when
+/// unsupported).
+fn is_exact_fnsp_v3_carrier(bytes: &[u8]) -> bool {
+    bytes.starts_with(&crate::faithful_note_spend_exact_v3::FAITHFUL_NOTE_SPEND_EXACT_V3_MAGIC)
+        && bytes.get(crate::faithful_note_spend_exact_v3::FAITHFUL_NOTE_SPEND_EXACT_V3_MAGIC.len())
+            == Some(&crate::faithful_note_spend_exact_v3::FAITHFUL_NOTE_SPEND_EXACT_V3_VERSION)
+}
+
 /// Verify a note-spend leaf proof (BridgeMint) against the IR-v2 descriptor
 /// prover — the consumer half of the `StarkProof` → `Ir2BatchProof` wire flip
 /// (stark-kill). This is the leaf leg `apply_bridge_mint`'s `verify_stark`
@@ -1353,6 +1363,216 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
+        // The exact-v3 route is authorized only by the opaque, verifier-minted token installed by
+        // node orchestration for this authenticated turn.  Keep the slot locked until the effect
+        // has completely applied; ownership moves pending -> applied only immediately before the
+        // successful return below. Final producer commitment performs the separate
+        // applied -> consumed promotion. Version 2 remains the original decoder/verifier path.
+        #[cfg(feature = "prover")]
+        let mut exact_v3_admission = if is_exact_fnsp_v3_carrier(spending_proof) {
+            let carrier =
+                crate::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier::decode(
+                    spending_proof,
+                )
+                .map_err(|error| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: format!("NoteSpend exact-v3 proof carrier rejected: {error}"),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+            let slot = self.exact_fnsp_v3_admission.lock().map_err(|_| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 admission mutex is poisoned".into(),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+            if slot.applied.is_some() || slot.consumed.is_some() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 admission was already applied".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            let accepted = slot.pending.as_ref().ok_or_else(|| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 requires an installed accepted proof".into(),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+            let binding = accepted.binding();
+
+            if binding.nullifier() != nullifier.0 {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted nullifier does not match effect"
+                            .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if binding.historical_note_root() != *note_tree_root {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted historical root does not match effect"
+                            .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if binding.value() != value {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted value does not match effect".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if binding.asset_type() != asset_type {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted asset type does not match effect"
+                            .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if binding.value_commitment() != value_commitment.copied() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason:
+                            "NoteSpend exact-v3 accepted value commitment does not match effect"
+                                .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if binding.historical_root_height() != carrier.root_height() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted root height does not match carrier"
+                            .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if !accepted.matches_signed_spending_proof(spending_proof) {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend exact-v3 accepted carrier digest does not match effect"
+                            .into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            Some(slot)
+        } else {
+            self.verify_faithful_note_spend_v2(
+                path,
+                nullifier,
+                note_tree_root,
+                spending_proof,
+                value,
+                asset_type,
+            )?;
+            None
+        };
+        #[cfg(not(feature = "prover"))]
+        self.verify_faithful_note_spend_v2(
+            path,
+            nullifier,
+            note_tree_root,
+            spending_proof,
+            value,
+            asset_type,
+        )?;
+        // Insert into the production note-nullifier set with double-spend
+        // rejection. This is the ledger-side gate that prevents the same
+        // nullifier from being re-presented in a later turn. The insert is
+        // journaled so a turn that fails *after* this point unwinds the
+        // record (preventing a deliberate-failure attack that would
+        // permanently burn the note).
+        {
+            let mut set = self.note_nullifiers.lock().unwrap();
+            if set.contains(nullifier) {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "double-spend: nullifier already in note_nullifiers set"
+                            .to_string(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            // Record the spent-note `value` in the accumulator leaf — the SAME
+            // `NOTE_VALUE_LO` the circuit noteSpend grow-gate inserts, so the
+            // committed `root8()` stays cross-turn-continuous with the proof.
+            set.insert(*nullifier, value).map_err(|e| {
+                // `insert` returns DoubleSpend on collision; we just
+                // checked above, so this is defensive against future
+                // concurrent races (the Mutex makes that impossible today).
+                let reason = match e {
+                    NoteError::DoubleSpend { .. } => {
+                        "double-spend: race on nullifier insert".to_string()
+                    }
+                    other => format!("nullifier insert failed: {:?}", other),
+                };
+                (TurnError::InvalidEffect { reason }, path.to_vec())
+            })?;
+        }
+        journal.record_note_nullifier_inserted(*nullifier);
+        // Record for the note layer to process after turn commits.
+        journal.record_note_spend(*nullifier);
+
+        // BUG #115: validate value_commitment if present.
+        // Reject malformed compressed Ristretto points immediately at apply
+        // time so that the effect can never reach the finalize layer with a
+        // value_commitment that is not a valid group element. The
+        // conservation-proof check (Schnorr excess) and cross-note consistency
+        // are verified at the finalize layer (`check_committed_conservation`).
+        if let Some(vc_bytes) = value_commitment {
+            if ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).is_none() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend value_commitment is not a valid Ristretto point".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
+        #[cfg(feature = "prover")]
+        if let Some(slot) = exact_v3_admission.as_mut() {
+            debug_assert!(slot.applied.is_none());
+            debug_assert!(slot.consumed.is_none());
+            let accepted = slot
+                .pending
+                .take()
+                .expect("validated exact-v3 admission remains installed");
+            slot.applied = Some(accepted);
+        }
+
+        Ok(())
+    }
+
+    /// The deployed strict FNSP-v2 verifier/successor path, kept as one helper so verify-only
+    /// builds and prover builds execute byte-identical legacy admission while only the latter can
+    /// select the exact-v3 opaque-token route.
+    #[allow(clippy::too_many_arguments)]
+    fn verify_faithful_note_spend_v2(
+        &self,
+        path: &[usize],
+        nullifier: &Nullifier,
+        note_tree_root: &[u8; 32],
+        spending_proof: &[u8],
+        value: u64,
+        asset_type: u64,
+    ) -> Result<(), (TurnError, Vec<usize>)> {
         let verifier = self.proof_verifier.as_ref().ok_or_else(|| {
             (
                 TurnError::InvalidEffect {
@@ -1436,60 +1656,6 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
-        // Insert into the production note-nullifier set with double-spend
-        // rejection. This is the ledger-side gate that prevents the same
-        // nullifier from being re-presented in a later turn. The insert is
-        // journaled so a turn that fails *after* this point unwinds the
-        // record (preventing a deliberate-failure attack that would
-        // permanently burn the note).
-        {
-            let mut set = self.note_nullifiers.lock().unwrap();
-            if set.contains(nullifier) {
-                return Err((
-                    TurnError::InvalidEffect {
-                        reason: "double-spend: nullifier already in note_nullifiers set"
-                            .to_string(),
-                    },
-                    path.to_vec(),
-                ));
-            }
-            // Record the spent-note `value` in the accumulator leaf — the SAME
-            // `NOTE_VALUE_LO` the circuit noteSpend grow-gate inserts, so the
-            // committed `root8()` stays cross-turn-continuous with the proof.
-            set.insert(*nullifier, value).map_err(|e| {
-                // `insert` returns DoubleSpend on collision; we just
-                // checked above, so this is defensive against future
-                // concurrent races (the Mutex makes that impossible today).
-                let reason = match e {
-                    NoteError::DoubleSpend { .. } => {
-                        "double-spend: race on nullifier insert".to_string()
-                    }
-                    other => format!("nullifier insert failed: {:?}", other),
-                };
-                (TurnError::InvalidEffect { reason }, path.to_vec())
-            })?;
-        }
-        journal.record_note_nullifier_inserted(*nullifier);
-        // Record for the note layer to process after turn commits.
-        journal.record_note_spend(*nullifier);
-
-        // BUG #115: validate value_commitment if present.
-        // Reject malformed compressed Ristretto points immediately at apply
-        // time so that the effect can never reach the finalize layer with a
-        // value_commitment that is not a valid group element. The
-        // conservation-proof check (Schnorr excess) and cross-note consistency
-        // are verified at the finalize layer (`check_committed_conservation`).
-        if let Some(vc_bytes) = value_commitment {
-            if ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).is_none() {
-                return Err((
-                    TurnError::InvalidEffect {
-                        reason: "NoteSpend value_commitment is not a valid Ristretto point".into(),
-                    },
-                    path.to_vec(),
-                ));
-            }
-        }
-
         Ok(())
     }
 

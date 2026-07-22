@@ -36,6 +36,8 @@
 //! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
 
 use std::collections::HashMap;
+#[cfg(feature = "prover")]
+use std::fmt;
 use std::sync::Mutex;
 
 #[allow(unused_imports)]
@@ -710,6 +712,50 @@ pub use exact_fnsp_state::{
     ExactFnspV3StateToken, PreparedExactFnspV3Append,
 };
 
+/// Linear admission-slot failures for the live exact FNSP-v3 executor cut.
+///
+/// An accepted exact-v3 proof is an opaque, non-`Clone` capability.  The node installs it once
+/// immediately before executing the authenticated turn, and extracts it from the consumed slot
+/// only after execution returned a genuine receipt.  Refusing replacement in either occupied
+/// state prevents a caller from silently dropping or swapping proof authority.
+#[cfg(feature = "prover")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactFnspV3AdmissionError {
+    PendingAlreadyInstalled,
+    AppliedNotFinalized,
+    ConsumedNotTaken,
+    MutexPoisoned,
+}
+
+#[cfg(feature = "prover")]
+impl fmt::Display for ExactFnspV3AdmissionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PendingAlreadyInstalled => {
+                f.write_str("an exact FNSP-v3 acceptance is already installed")
+            }
+            Self::AppliedNotFinalized => {
+                f.write_str("an applied exact FNSP-v3 acceptance awaits final turn outcome")
+            }
+            Self::ConsumedNotTaken => {
+                f.write_str("the consumed exact FNSP-v3 acceptance has not been extracted")
+            }
+            Self::MutexPoisoned => f.write_str("the exact FNSP-v3 admission mutex is poisoned"),
+        }
+    }
+}
+
+#[cfg(feature = "prover")]
+impl std::error::Error for ExactFnspV3AdmissionError {}
+
+#[cfg(feature = "prover")]
+#[derive(Default)]
+struct ExactFnspV3AdmissionSlot {
+    pending: Option<crate::AcceptedFaithfulNoteSpendExactV3>,
+    applied: Option<crate::AcceptedFaithfulNoteSpendExactV3>,
+    consumed: Option<crate::AcceptedFaithfulNoteSpendExactV3>,
+}
+
 // =============================================================================
 // Cell Migration Two-Phase Commit
 // =============================================================================
@@ -1107,6 +1153,15 @@ pub struct TurnExecutor {
     /// mutability pattern as the executor's other host-fed registries; reads are
     /// one map lookup per hybrid authorization.
     pq_identity_registry: Mutex<HashMap<CellId, crate::pq::EnrolledPqIdentity>>,
+    /// One-shot exact FNSP-v3 proof authority for the next authenticated execution.
+    ///
+    /// The node installs an opaque verifier-minted token before entering `execute`.  The strict
+    /// v3 `NoteSpend` dispatch compares every signed effect coordinate against that token and, on
+    /// successful application only, moves it into `applied`.  Final producer commitment promotes
+    /// it to `consumed`. There is no raw-statement or cloning path: post-commit orchestration can
+    /// recover only the exact token the executor used.
+    #[cfg(feature = "prover")]
+    exact_fnsp_v3_admission: Mutex<ExactFnspV3AdmissionSlot>,
     /// Additive exact FNSP-v3 nullifier accumulator state.
     ///
     /// This is deliberately not consulted by `apply`/`execute` yet. Keeping it under one mutex
@@ -1161,6 +1216,8 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            #[cfg(feature = "prover")]
+            exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
@@ -1228,6 +1285,8 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            #[cfg(feature = "prover")]
+            exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
@@ -1277,6 +1336,8 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            #[cfg(feature = "prover")]
+            exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
@@ -1289,6 +1350,112 @@ impl TurnExecutor {
     /// Set the proof verifier.
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>) {
         self.proof_verifier = Some(verifier);
+    }
+
+    /// Install the single verifier-minted exact FNSP-v3 acceptance which may authorize the next
+    /// exact-v3 `NoteSpend` application.
+    ///
+    /// Installation is replacement-free.  A pending token must first be used (or the executor
+    /// dropped), and a consumed token must first be extracted, so callers cannot overwrite either
+    /// side of the linear handoff.
+    #[cfg(feature = "prover")]
+    pub fn install_exact_fnsp_v3_admission(
+        &self,
+        accepted: crate::AcceptedFaithfulNoteSpendExactV3,
+    ) -> Result<(), ExactFnspV3AdmissionError> {
+        let mut slot = self
+            .exact_fnsp_v3_admission
+            .lock()
+            .map_err(|_| ExactFnspV3AdmissionError::MutexPoisoned)?;
+        if slot.pending.is_some() {
+            return Err(ExactFnspV3AdmissionError::PendingAlreadyInstalled);
+        }
+        if slot.applied.is_some() {
+            return Err(ExactFnspV3AdmissionError::AppliedNotFinalized);
+        }
+        if slot.consumed.is_some() {
+            return Err(ExactFnspV3AdmissionError::ConsumedNotTaken);
+        }
+        slot.pending = Some(accepted);
+        Ok(())
+    }
+
+    /// Extract the exact-v3 acceptance promoted after a final committed producer outcome.
+    ///
+    /// `None` means no applied exact-v3 effect has been promoted by
+    /// [`Self::promote_applied_exact_fnsp_v3_admission_after_commit`] since the last extraction.
+    /// The returned token remains opaque and non-`Clone`; this operation is the only transition
+    /// out of the consumed slot.
+    #[cfg(feature = "prover")]
+    pub fn take_consumed_exact_fnsp_v3_admission(
+        &self,
+    ) -> Result<Option<crate::AcceptedFaithfulNoteSpendExactV3>, ExactFnspV3AdmissionError> {
+        self.exact_fnsp_v3_admission
+            .lock()
+            .map_err(|_| ExactFnspV3AdmissionError::MutexPoisoned)
+            .map(|mut slot| slot.consumed.take())
+    }
+
+    /// Promote a successfully applied exact-v3 token into the extractable consumed slot after the
+    /// *final producer* outcome is known to be [`TurnResult::Committed`].
+    ///
+    /// The Rust executor may commit before a higher authority (notably the verified-Lean producer)
+    /// returns its final verdict.  Consequently `execute` itself deliberately does not call this:
+    /// node orchestration calls it only inside the final committed arm.  A Lean-final rejection
+    /// therefore leaves the token staged and unextractable even if cleanup is accidentally skipped.
+    /// Returns `true` when an exact-v3 effect was staged, `false` for a committed turn without one.
+    #[cfg(feature = "prover")]
+    pub fn promote_applied_exact_fnsp_v3_admission_after_commit(
+        &self,
+    ) -> Result<bool, ExactFnspV3AdmissionError> {
+        let mut slot = self
+            .exact_fnsp_v3_admission
+            .lock()
+            .map_err(|_| ExactFnspV3AdmissionError::MutexPoisoned)?;
+        if slot.consumed.is_some() {
+            return Err(ExactFnspV3AdmissionError::ConsumedNotTaken);
+        }
+        let Some(accepted) = slot.applied.take() else {
+            return Ok(false);
+        };
+        slot.consumed = Some(accepted);
+        Ok(true)
+    }
+
+    /// Refuse a new whole-turn execution while a prior committed exact-v3 token awaits extraction.
+    /// This makes rollback attribution unambiguous: a non-empty consumed slot during execution can
+    /// only have been produced by that execution.
+    #[cfg(feature = "prover")]
+    fn exact_fnsp_v3_admission_ready_for_execute(&self) -> Result<(), ExactFnspV3AdmissionError> {
+        let slot = self
+            .exact_fnsp_v3_admission
+            .lock()
+            .map_err(|_| ExactFnspV3AdmissionError::MutexPoisoned)?;
+        if slot.applied.is_some() {
+            Err(ExactFnspV3AdmissionError::AppliedNotFinalized)
+        } else if slot.consumed.is_some() {
+            Err(ExactFnspV3AdmissionError::ConsumedNotTaken)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whole-turn rollback hook: an exact effect may have applied before a later effect or final
+    /// gate rejected the turn.  Move its token back to pending in the same slot state machine, so
+    /// no rejected turn can expose an extractable consumed acceptance and the authenticated turn
+    /// may be retried atomically.
+    #[cfg(feature = "prover")]
+    pub fn restore_exact_fnsp_v3_admission_after_rejection(
+        &self,
+    ) -> Result<(), ExactFnspV3AdmissionError> {
+        let mut slot = self
+            .exact_fnsp_v3_admission
+            .lock()
+            .map_err(|_| ExactFnspV3AdmissionError::MutexPoisoned)?;
+        if slot.pending.is_none() {
+            slot.pending = slot.applied.take();
+        }
+        Ok(())
     }
 
     /// Equip the executor with an Ed25519 signing key (32-byte seed) used to

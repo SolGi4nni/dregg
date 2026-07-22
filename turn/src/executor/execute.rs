@@ -208,6 +208,21 @@ impl TurnExecutor {
     /// Future: once Effect VM covers all effect types, every turn will carry a STARK proof,
     /// making this function a thin verify-and-commit wrapper (trustless).
     pub fn execute(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
+        // Exact FNSP-v3 linearity: a committed token must be extracted before this executor can
+        // begin another whole turn.  That makes any consumed token observed below attributable to
+        // THIS execution, so every rejection can safely restore it to pending.
+        #[cfg(feature = "prover")]
+        {
+            if let Err(error) = self.exact_fnsp_v3_admission_ready_for_execute() {
+                return TurnResult::Rejected {
+                    reason: TurnError::InvalidEffect {
+                        reason: format!("exact FNSP-v3 admission slot is not ready: {error}"),
+                    },
+                    at_action: vec![],
+                };
+            }
+        }
+
         // boundary-P1 (bug 1): build the NODE-fed admission context from the executor's OWN state
         // (NOT the turn) — the chain clock, the migration freeze-set, the agent's stored
         // receipt-chain head, and the Stingray budget slice. The verified Lean gate derives its
@@ -260,11 +275,17 @@ impl TurnExecutor {
                      back (the verified kernel is the authoritative rejection gate under strict mode)"
                 );
                 *ledger = pre;
+                #[cfg(feature = "prover")]
+                let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
                 return TurnResult::Rejected {
                     reason,
                     at_action: vec![],
                 };
             }
+        }
+        #[cfg(feature = "prover")]
+        if !result.is_committed() {
+            let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
         }
         result
     }

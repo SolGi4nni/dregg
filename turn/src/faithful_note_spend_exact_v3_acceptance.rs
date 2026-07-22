@@ -1,4 +1,4 @@
-//! Additive, non-live acceptance seam for exact FNSP-v3 note spends.
+//! Verifier-minted acceptance authority for live exact FNSP-v3 note-spend admission.
 //!
 //! This module joins three independently owned facts without changing executor dispatch:
 //!
@@ -10,7 +10,9 @@
 //!    resulting canonical 76-lane statement.
 //!
 //! The public entry point has no predicate, action, resource, descriptor, VK, or verifier argument.
-//! It is intentionally not registered in the live executor yet.
+//! The executor never re-verifies or accepts a raw v3 statement: node orchestration installs the
+//! opaque token returned here into its one-shot exact-v3 admission slot, and strict dispatch joins
+//! every authenticated effect coordinate to that exact token before applying the spend.
 
 use core::fmt;
 use std::error::Error;
@@ -45,13 +47,15 @@ const ACCEPTED_SIGNED_PROOF_DIGEST_DOMAIN: &[u8] =
 /// Opaque evidence that the code-owned exact FNSP-v3 verifier accepted one canonical statement.
 ///
 /// Fields and construction are private.  The token contains no proof bytes and cannot be minted by
-/// a caller from an arbitrary statement.  A future persisted compare-and-swap can consume this
-/// token and inspect [`Self::binding`] before advancing durable exact state.
+/// a caller from an arbitrary statement.  The live executor admission and persisted
+/// compare-and-swap consume this token linearly and inspect [`Self::binding`] before advancing
+/// durable exact state.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AcceptedFaithfulNoteSpendExactV3 {
     public: FaithfulNoteSpendExactV3PublicStatement,
     prior_fns3: [u32; 8],
     successor_fns3: [u32; 8],
+    value_commitment: Option<[u8; 32]>,
     signed_spending_proof_digest: [u8; 32],
 }
 
@@ -62,6 +66,7 @@ impl AcceptedFaithfulNoteSpendExactV3 {
             public: &self.public,
             prior_fns3: &self.prior_fns3,
             successor_fns3: &self.successor_fns3,
+            value_commitment: self.value_commitment,
         }
     }
 
@@ -79,7 +84,7 @@ impl AcceptedFaithfulNoteSpendExactV3 {
         self.signed_spending_proof_digest
     }
 
-    /// Fail-closed equality check for the future node candidate's embedded signed proof carrier.
+    /// Fail-closed equality check for the node candidate's embedded signed proof carrier.
     ///
     /// Coordinate equality is not enough: two carriers with the same root height produce the same
     /// public lanes even when their inner proof bytes differ.  The node must require this method to
@@ -88,11 +93,17 @@ impl AcceptedFaithfulNoteSpendExactV3 {
         let Effect::NoteSpend { spending_proof, .. } = signed_effect else {
             return false;
         };
+        self.matches_signed_spending_proof(spending_proof)
+    }
+
+    /// Crate-internal zero-copy join used by the executor after it has already destructured the
+    /// authenticated effect.  External callers retain the safer whole-effect matcher above.
+    pub(crate) fn matches_signed_spending_proof(&self, spending_proof: &[u8]) -> bool {
         self.signed_spending_proof_digest == signed_spending_proof_digest(spending_proof)
     }
 }
 
-/// Borrowed typed view of an accepted statement's future durable-CAS binding.
+/// Borrowed typed view of an accepted statement's durable-CAS binding.
 ///
 /// This is deliberately not constructible outside this module.  Every accessor decodes the
 /// canonical lanes retained in the accepted token; the view cannot drift from what the proof
@@ -103,6 +114,7 @@ pub struct FaithfulNoteSpendExactV3AcceptanceBinding<'a> {
     public: &'a FaithfulNoteSpendExactV3PublicStatement,
     prior_fns3: &'a [u32; 8],
     successor_fns3: &'a [u32; 8],
+    value_commitment: Option<[u8; 32]>,
 }
 
 impl FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
@@ -128,6 +140,13 @@ impl FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
 
     pub fn asset_type(&self) -> u64 {
         read_u64_u16(&self.lanes()[PI_ASSET_TYPE..PI_SUCCESSOR_ROOT])
+    }
+
+    /// The optional value commitment carried by the authenticated effect accepted by the
+    /// verifier seam.  It is not an exact-AIR public lane today, so retaining it here is the
+    /// executor-side equality tooth which prevents a same-proof effect-coordinate splice.
+    pub fn value_commitment(&self) -> Option<[u8; 32]> {
+        self.value_commitment
     }
 
     pub fn successor_root(&self) -> [u32; 8] {
@@ -178,12 +197,13 @@ impl FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
 /// executor cutover will call this only after turn signature/authentication checks; this seam does
 /// not accept an unsigned proof-controlled statement as a substitute.
 ///
-/// This function is additive and non-live: it does not mutate the exact accumulator, install a
-/// verifier, or alter the v2 route.
+/// This function itself is mutation-free: it does not mutate the exact accumulator or install a
+/// caller-selected verifier. Live exact-v3 dispatch accepts only this opaque result; the v2 route
+/// remains independent.
 ///
 /// # Fail-closed live-orchestration preconditions
 ///
-/// The future node caller must additionally establish facts which are deliberately outside this
+/// The node caller must additionally establish facts which are deliberately outside this
 /// narrow proof seam:
 ///
 /// - `signed_effect` came from the authenticated `SignedTurn` being finalized;
@@ -222,6 +242,7 @@ fn verify_with_code_owned_identity(
         nullifier,
         value,
         spending_proof,
+        value_commitment,
         ..
     } = signed_effect
     else {
@@ -275,6 +296,7 @@ fn verify_with_code_owned_identity(
             transition.successor_count(),
         )
         .map(|felt| felt.as_u32()),
+        value_commitment: *value_commitment,
         // Compute this only after strict proof verification succeeds.  It binds the opaque token
         // to the exact canonical carrier bytes recovered from the authenticated signed effect.
         signed_spending_proof_digest: signed_spending_proof_digest(spending_proof),
@@ -373,7 +395,9 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use crate::action::Event;
+    use crate::action::{Effect, Event};
+    use crate::builder::{ActionBuilder, TurnBuilder};
+    use crate::executor::{ComputronCosts, ExactFnspV3AdmissionError, TurnExecutor};
     use crate::faithful_note_spend::FaithfulNoteSpendProofCarrier;
     use crate::faithful_note_spend_exact_v3::{
         FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT,
@@ -381,7 +405,9 @@ mod tests {
     };
     use crate::faithful_note_spend_exact_v3_anchor::derive_exact_fnsp_v3_durable_anchor;
     use dregg_cell::commitment::{RotationCarrierMaterial, V9RotationContext, digest8_to_bytes32};
-    use dregg_cell::{Cell, CellId, FIELD_ZERO, Nullifier};
+    use dregg_cell::{
+        AuthRequired, Cell, CellId, FIELD_ZERO, Ledger, NoteCommitment, Nullifier, Permissions,
+    };
     use dregg_circuit::Faithful8;
     use dregg_circuit::exact_nullifier_aafi::{
         Digest8, ExactNullifierAafi, validate_exact_aafi_witness,
@@ -394,6 +420,16 @@ mod tests {
         let mut cell = Cell::new([7u8; 32], [9u8; 32]);
         assert!(cell.state.credit_balance(500));
         cell.state.set_nonce(11);
+        cell.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
         cell
     }
 
@@ -506,6 +542,440 @@ mod tests {
                 });
             self.accept
         }
+    }
+
+    fn accepted_fixture(key: [u8; 32], value: u64) -> (AcceptedFaithfulNoteSpendExactV3, Effect) {
+        let (transition, anchor, effect) = fixture(key, value);
+        let accepted = verify_with_code_owned_identity(
+            &RecordingVerifier::accepting(),
+            &effect,
+            &transition,
+            &anchor,
+        )
+        .expect("test verifier mints the opaque exact-v3 acceptance");
+        (accepted, effect)
+    }
+
+    fn apply_direct(
+        executor: &TurnExecutor,
+        effect: &Effect,
+    ) -> Result<(), (crate::TurnError, Vec<usize>)> {
+        let actor = actor();
+        let actor_id = actor.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(actor).expect("insert direct-test actor");
+        let mut journal = crate::journal::LedgerJournal::new();
+        executor.apply_effect(
+            effect,
+            &mut ledger,
+            &[0],
+            &actor_id,
+            &actor_id,
+            &mut journal,
+            [0u8; 32],
+        )
+    }
+
+    fn cleartext_turn(actor_id: CellId, nonce: u64, effects: Vec<Effect>) -> crate::Turn {
+        let mut action =
+            ActionBuilder::new_unchecked_for_tests(actor_id, "exact-note-spend", actor_id);
+        for effect in effects {
+            action = action.effect(effect);
+        }
+        let mut turn = TurnBuilder::new(actor_id, nonce);
+        turn.add_action(action.build());
+        turn.fee(0).build()
+    }
+
+    fn matching_note_create(value: u64, asset_type: u64, seed: u8) -> Effect {
+        Effect::NoteCreate {
+            commitment: NoteCommitment([seed; 32]),
+            value,
+            asset_type,
+            encrypted_note: vec![seed, seed.wrapping_add(1)],
+            value_commitment: None,
+            range_proof: None,
+        }
+    }
+
+    fn assert_exact_coordinate_mismatch_retains_pending(
+        mutate: impl FnOnce(&mut Effect),
+        expected_reason: &str,
+    ) {
+        let (accepted, original) = accepted_fixture([0x5a; 32], 7);
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .install_exact_fnsp_v3_admission(accepted)
+            .expect("install exact-v3 admission");
+
+        let mut mutated = original.clone();
+        mutate(&mut mutated);
+        let (error, _) = apply_direct(&executor, &mutated)
+            .expect_err("a coordinate splice must not cross exact-v3 admission");
+        let crate::TurnError::InvalidEffect { reason } = error else {
+            panic!("expected InvalidEffect coordinate refusal, got {error:?}");
+        };
+        assert!(
+            reason.contains(expected_reason),
+            "expected {expected_reason:?} refusal, got {reason:?}"
+        );
+
+        // A mismatch is not a consumption event. The original authenticated effect can still use
+        // the same non-Clone token exactly once.
+        apply_direct(&executor, &original).expect("matching effect still consumes pending token");
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .expect("read consumed slot")
+                .is_none(),
+            "effect success alone is staged, never extractable before whole-turn commit"
+        );
+    }
+
+    #[test]
+    fn exact_v3_requires_installed_opaque_admission() {
+        let (_, effect) = accepted_fixture([0x51; 32], 51);
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let (error, _) = apply_direct(&executor, &effect)
+            .expect_err("exact-v3 carrier without opaque admission must reject");
+        let crate::TurnError::InvalidEffect { reason } = error else {
+            panic!("expected InvalidEffect missing-admission refusal, got {error:?}");
+        };
+        assert!(reason.contains("requires an installed accepted proof"));
+        assert!(executor.note_nullifiers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn exact_v3_compares_every_effect_coordinate_carrier_digest_and_height() {
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { nullifier, .. } = effect else {
+                    unreachable!()
+                };
+                *nullifier = Nullifier([0x99; 32]);
+            },
+            "nullifier",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { note_tree_root, .. } = effect else {
+                    unreachable!()
+                };
+                note_tree_root[0..4].copy_from_slice(&123u32.to_le_bytes());
+            },
+            "historical root",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { value, .. } = effect else {
+                    unreachable!()
+                };
+                *value += 1;
+            },
+            "value does not match",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { asset_type, .. } = effect else {
+                    unreachable!()
+                };
+                *asset_type ^= 1;
+            },
+            "asset type",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend {
+                    value_commitment, ..
+                } = effect
+                else {
+                    unreachable!()
+                };
+                *value_commitment = Some([0x42; 32]);
+            },
+            "value commitment",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { spending_proof, .. } = effect else {
+                    unreachable!()
+                };
+                *spending_proof = FaithfulNoteSpendExactV3ProofCarrier::new(
+                    0x1122_3344_5566_7788,
+                    vec![0xba, 0xad, 0xf0, 0x0d],
+                )
+                .expect("same-height swapped carrier")
+                .encode();
+            },
+            "carrier digest",
+        );
+        assert_exact_coordinate_mismatch_retains_pending(
+            |effect| {
+                let Effect::NoteSpend { spending_proof, .. } = effect else {
+                    unreachable!()
+                };
+                *spending_proof = FaithfulNoteSpendExactV3ProofCarrier::new(
+                    0x1122_3344_5566_7789,
+                    INNER_PROOF.to_vec(),
+                )
+                .expect("different-height carrier")
+                .encode();
+            },
+            "root height",
+        );
+    }
+
+    #[test]
+    fn exact_v3_slot_is_replacement_free_and_one_shot() {
+        let (first, effect) = accepted_fixture([0x52; 32], 52);
+        let (second, _) = accepted_fixture([0x53; 32], 53);
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .install_exact_fnsp_v3_admission(first)
+            .expect("first install");
+        assert_eq!(
+            executor.install_exact_fnsp_v3_admission(second),
+            Err(ExactFnspV3AdmissionError::PendingAlreadyInstalled)
+        );
+
+        apply_direct(&executor, &effect).expect("first application consumes pending authority");
+        let (error, _) = apply_direct(&executor, &effect)
+            .expect_err("the applied token cannot authorize a second effect");
+        let crate::TurnError::InvalidEffect { reason } = error else {
+            panic!("expected InvalidEffect one-shot refusal, got {error:?}");
+        };
+        assert!(reason.contains("already applied"));
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn strict_v3_dispatch_leaves_v2_path_unchanged() {
+        let (pending_exact, exact_effect) = accepted_fixture([0x5e; 32], 94);
+        let key = [0x54; 32];
+        let value = 54;
+        let mut planned = dregg_cell::nullifier_set::NullifierSet::new();
+        planned
+            .insert(Nullifier(key), value)
+            .expect("fresh v2 planned insertion");
+        let carrier = FaithfulNoteSpendProofCarrier::new(
+            7,
+            planned.faithful_root8_exact().to_bytes32(),
+            vec![0xaa, 0xbb],
+        )
+        .expect("canonical v2 carrier");
+        let effect = canonical_note_spend(key, value, carrier.encode());
+        let executor = TurnExecutor::with_proof_verifier(
+            ComputronCosts::zero(),
+            Box::new(RecordingVerifier::accepting()),
+        );
+        executor
+            .install_exact_fnsp_v3_admission(pending_exact)
+            .expect("install unrelated pending exact-v3 authority");
+
+        apply_direct(&executor, &effect).expect("v2 still uses its legacy verifier/successor path");
+        assert!(
+            executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&Nullifier(key))
+        );
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none(),
+            "v2 must never touch the exact-v3 slot"
+        );
+        apply_direct(&executor, &exact_effect)
+            .expect("v2 leaves the installed exact-v3 token pending and usable");
+    }
+
+    #[test]
+    fn genuine_execute_commits_receipt_nonce_and_only_then_promotes_exact_token() {
+        let key = [0x55; 32];
+        let value = 55;
+        let (accepted, spend) = accepted_fixture(key, value);
+        let asset_type = match &spend {
+            Effect::NoteSpend { asset_type, .. } => *asset_type,
+            _ => unreachable!(),
+        };
+        let actor = actor();
+        let actor_id = actor.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(actor).expect("insert execution actor");
+        let turn = cleartext_turn(
+            actor_id,
+            11,
+            vec![spend.clone(), matching_note_create(value, asset_type, 0xc1)],
+        );
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .install_exact_fnsp_v3_admission(accepted)
+            .expect("install accepted exact proof");
+
+        let (_, receipt, _) = executor.execute(&turn, &mut ledger).unwrap_committed();
+        assert_eq!(receipt.turn_hash, turn.hash());
+        assert_eq!(receipt.agent, actor_id);
+        assert_eq!(ledger.get(&actor_id).unwrap().state.nonce(), 12);
+        assert!(
+            executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&Nullifier(key))
+        );
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none(),
+            "Rust effect/receipt success is still unextractable before final producer commit"
+        );
+        assert!(
+            executor
+                .promote_applied_exact_fnsp_v3_admission_after_commit()
+                .expect("final producer commits exact admission")
+        );
+        let consumed = executor
+            .take_consumed_exact_fnsp_v3_admission()
+            .unwrap()
+            .expect("committed exact token is extractable exactly once");
+        assert!(consumed.matches_signed_effect(&spend));
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn later_turn_failure_rolls_applied_token_back_to_pending() {
+        let key = [0x56; 32];
+        let value = 56;
+        let (accepted, spend) = accepted_fixture(key, value);
+        let asset_type = match &spend {
+            Effect::NoteSpend { asset_type, .. } => *asset_type,
+            _ => unreachable!(),
+        };
+        let actor = actor();
+        let actor_id = actor.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(actor).expect("insert rollback actor");
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .install_exact_fnsp_v3_admission(accepted)
+            .expect("install accepted exact proof");
+
+        // The exact effect succeeds, then whole-turn note conservation rejects because there is
+        // no matching output. Both the nullifier and linear token must roll back.
+        let rejected = cleartext_turn(actor_id, 11, vec![spend.clone()]);
+        let (error, _) = executor.execute(&rejected, &mut ledger).unwrap_rejected();
+        assert!(matches!(
+            error,
+            crate::TurnError::NoteConservationViolation { .. }
+        ));
+        assert!(
+            !executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&Nullifier(key))
+        );
+        assert_eq!(
+            ledger.get(&actor_id).unwrap().state.nonce(),
+            12,
+            "executor policy intentionally charges the nonce even when the forest/final gate fails"
+        );
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none(),
+            "a rejected turn must expose no consumed token"
+        );
+        assert!(
+            !executor
+                .promote_applied_exact_fnsp_v3_admission_after_commit()
+                .unwrap(),
+            "rollback leaves no applied token available for false promotion"
+        );
+
+        // The same pending authority is retryable as one balanced atomic turn.
+        let retry = cleartext_turn(
+            actor_id,
+            12,
+            vec![spend, matching_note_create(value, asset_type, 0xc2)],
+        );
+        executor.execute(&retry, &mut ledger).unwrap_committed();
+        assert!(
+            executor
+                .promote_applied_exact_fnsp_v3_admission_after_commit()
+                .unwrap()
+        );
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn outer_producer_rejection_cannot_extract_inner_rust_commit() {
+        let key = [0x57; 32];
+        let value = 57;
+        let (accepted, spend) = accepted_fixture(key, value);
+        let asset_type = match &spend {
+            Effect::NoteSpend { asset_type, .. } => *asset_type,
+            _ => unreachable!(),
+        };
+        let actor = actor();
+        let actor_id = actor.id();
+        let mut ledger = Ledger::new();
+        ledger
+            .insert_cell(actor)
+            .expect("insert producer-veto actor");
+        let turn = cleartext_turn(
+            actor_id,
+            11,
+            vec![spend, matching_note_create(value, asset_type, 0xc3)],
+        );
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        executor
+            .install_exact_fnsp_v3_admission(accepted)
+            .expect("install accepted exact proof");
+
+        executor.execute(&turn, &mut ledger).unwrap_committed();
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none(),
+            "an inner Rust commit is not final-producer authority"
+        );
+        executor
+            .restore_exact_fnsp_v3_admission_after_rejection()
+            .expect("outer producer rejection restores staged authority");
+        assert!(
+            executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .unwrap()
+                .is_none(),
+            "outer/Lean rejection can never expose a consumed token"
+        );
+        let (replacement, _) = accepted_fixture([0x58; 32], 58);
+        assert_eq!(
+            executor.install_exact_fnsp_v3_admission(replacement),
+            Err(ExactFnspV3AdmissionError::PendingAlreadyInstalled),
+            "restoration preserves the original opaque token rather than dropping it"
+        );
     }
 
     #[test]
