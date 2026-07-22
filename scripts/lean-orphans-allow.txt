@@ -61,8 +61,6 @@ Dregg2.Circuit.Emit.MembershipDepthGeneralRung2  # GREEN self-checked (#assert c
 Dregg2.Circuit.Emit.MerkleMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MultiStepChainEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MultiStepChainRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.NonRevocationRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.NonRevocationRung2Full  # GREEN self-checked, REGISTERABLE — NonRevocation assurance keystone (nonRevocation_full_discharge). The prior "RED/sorryAx" was a STALE-OLEAN artifact of `lake env lean` (the mod-p lift added hcanon to nonRevocation_rung2; the dep olean predated it). `lake build` dep-ordered = EXIT 0, #assert_axioms clean.
 Dregg2.Circuit.Emit.NoteSpendingLeafEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -120,7 +118,6 @@ Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow  # GREEN self-checked (#as
 Dregg2.Circuit.WrapSafetyStaticAnalyzer  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 
 # --- PQ-crypto spec WIP (ML-DSA/ML-KEM codecs, VerifyCore/SignCore specs, ACVP KATs, NTT faithfulness); spec-in-progress, not yet CI-clean ---
-Dregg2.Crypto.AcvpKats  # GREEN, #guard-only (no axiom self-check) — PQ-crypto spec cluster
 Dregg2.Crypto.CodecRoundTrip  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.CryptoVerifyAll  # GREEN dep-ordered (lake build = EXIT 0, 8556 jobs). The prior "RED: missing VerifyCoreEqSpecW.olean" was a STALE-OLEAN artifact of `lake env lean` (orphan dep never built to olean); dep-ordered build compiles it. Crypto aggregator, unreachable from root.
 Dregg2.Crypto.EncapsCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
