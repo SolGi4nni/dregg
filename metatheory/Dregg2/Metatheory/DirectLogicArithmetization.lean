@@ -147,6 +147,7 @@ import Dregg2.Logic.FiniteSignatureFOLDescriptorIR2
 import Dregg2.Logic.CertifiedHybridProofFheBoundOpening
 import Dregg2.Logic.CertifiedHybridProofFheZeroObservation
 import Dregg2.Logic.CertifiedHybridProofFheSymmetricZeroObservation
+import Dregg2.Logic.CertifiedHybridProofFhePairedRootZeroObservation
 import Dregg2.Calculus.LinearInteractionTrace
 import Dregg2.Calculus.IntensionalCCCCategory
 import Dregg2.Calculus.IntensionalCCCInteractionBridge

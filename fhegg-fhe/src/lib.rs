@@ -96,6 +96,8 @@ pub mod decision_attestation;
 /// and threshold opening of only the one-time-padded product.
 pub mod distributed_bfv_correlation;
 pub mod fhir;
+/// Exact bounded-domain BFV zero conversion using complementary-root pairs.
+pub mod fhir_paired_root_zero;
 pub mod gpu_arena;
 pub mod gpu_qualification;
 /// Canonical public coefficients for the exact deployed BFV relation, shared
