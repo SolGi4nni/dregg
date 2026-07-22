@@ -61,6 +61,9 @@ use sha2::{Digest, Sha256};
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
+/// Additive SPDZ-style authentication for binary response shares.  Trusted MAC
+/// setup remains explicit and this is not yet wired into live preprocessing.
+pub mod authenticated_bits;
 /// Additive committed-candidate GF(2) sacrifice protocol.  This is a staged
 /// preprocessing primitive, not yet the live PartyMPC triple source.
 pub mod sacrifice;
