@@ -85,6 +85,10 @@ pub mod dark_amm_dkg;
 /// capability. The receipt binds the exact candidate/session and reveal-only
 /// transcript while keeping malicious BFV-share validity an explicit residual.
 pub mod decision_attestation;
+/// First executable dealer-removal cut for binary PartyMPC correlations:
+/// independently encrypted BFV bit shares, exact encrypted XOR/product/mask,
+/// and threshold opening of only the one-time-padded product.
+pub mod distributed_bfv_correlation;
 pub mod fhir;
 pub mod gpu_arena;
 pub mod gpu_qualification;
@@ -145,10 +149,17 @@ mod tfhe_ntt_wgpu;
 pub mod tfhe_wgpu;
 pub mod threshold;
 
+/// Roster-complete commit-reveal beacon for dealer-independent preprocessing
+/// challenges.  It is an FHTRI005 component, not a randomness-liveness claim.
+pub mod joint_beacon;
 /// The OUTPUT-BOUNDARY MPC crossing (BFV / fhe.rs → additive shares → secret-shared
 /// comparison): the semi-honest algebraic spine of the no-viewer target and the
 /// dissolved scheme-switch seam. See `docs/deos/OUTPUT-BOUNDARY-MPC.md`.
 pub mod mpc;
+/// Split-custody FHTRI005 MAC-key and authenticated-bit formation substrate.
+/// Cross terms are generated through a named pairwise OT/VOLE boundary; no API
+/// reconstructs the roster-wide `GF(2^128)` MAC key.
+pub mod mpc_distributed_mac;
 /// Process-shaped distributed execution of the output-boundary boolean MPC.
 /// Party threads retain input/triple shares; the coordinator routes only masked
 /// Beaver openings and reconstructs the public `(p*, V*)` result.
