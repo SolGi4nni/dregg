@@ -36,7 +36,19 @@ pub const BFV_BUTTERFLY_BUS_WIDTH: usize = 4;
 pub const BFV_Q0_N8_DESCRIPTOR_JSON: &str =
     include_str!("../descriptors/by-name/private-book-bfv-odd-ntt-butterfly-q0-n8.json");
 
+/// Lean-emitted provenance for the production-degree forward public carrier.
+pub const BFV_Q0_N4096_DESCRIPTOR_JSON: &str =
+    include_str!("../descriptors/by-name/private-book-bfv-odd-ntt-butterfly-q0-n4096.json");
+
+/// Lean-emitted provenance for the production-degree inverse public carrier.
+pub const BFV_Q0_N4096_INVERSE_DESCRIPTOR_JSON: &str =
+    include_str!("../descriptors/by-name/private-book-bfv-odd-intt-butterfly-q0-n4096.json");
+
 const BFV_Q0_N8_DESCRIPTOR_NAME: &str = "private-book-bfv-odd-ntt-butterfly-q0-n8::exact-48-v1";
+const BFV_Q0_N4096_DESCRIPTOR_NAME: &str =
+    "private-book-bfv-odd-ntt-butterfly-q0-n4096::public-carrier-48-v1";
+const BFV_Q0_N4096_INVERSE_DESCRIPTOR_NAME: &str =
+    "private-book-bfv-odd-intt-butterfly-q0-n4096::public-carrier-48-v1";
 
 const MAGIC: &[u8; 8] = b"FHBFM001";
 const CHECKSUM_LEN: usize = 32;
@@ -754,15 +766,48 @@ pub fn commit_bfv_butterfly_typed_descriptor(
 
 /// Canonical typed-object identity of the exact Lean-emitted q0/N=8 relation.
 pub fn bfv_q0_n8_descriptor_commitment() -> Result<[u8; 32], BfvTableError> {
-    let descriptor =
-        parse_vm_descriptor2(BFV_Q0_N8_DESCRIPTOR_JSON).map_err(BfvTableError::Descriptor)?;
-    if descriptor.name != BFV_Q0_N8_DESCRIPTOR_NAME
+    bfv_descriptor_commitment_for(
+        BFV_Q0_N8_DESCRIPTOR_JSON,
+        BFV_Q0_N8_DESCRIPTOR_NAME,
+        "q0/N=8",
+    )
+}
+
+/// Canonical typed-object identity of the production q0/N=4096 forward
+/// *public* carrier.  This identity does not upgrade its verifier-visible rows
+/// into a hiding or committed-LogUp proof.
+pub fn bfv_q0_n4096_descriptor_commitment() -> Result<[u8; 32], BfvTableError> {
+    bfv_descriptor_commitment_for(
+        BFV_Q0_N4096_DESCRIPTOR_JSON,
+        BFV_Q0_N4096_DESCRIPTOR_NAME,
+        "q0/N=4096 forward",
+    )
+}
+
+/// Canonical typed-object identity of the production q0/N=4096 inverse
+/// public carrier.  Exact `psi^-i / N` output normalization is separately
+/// enforced by [`BfvFaithfulTableClaim::verify_boundaries`].
+pub fn bfv_q0_n4096_inverse_descriptor_commitment() -> Result<[u8; 32], BfvTableError> {
+    bfv_descriptor_commitment_for(
+        BFV_Q0_N4096_INVERSE_DESCRIPTOR_JSON,
+        BFV_Q0_N4096_INVERSE_DESCRIPTOR_NAME,
+        "q0/N=4096 inverse",
+    )
+}
+
+fn bfv_descriptor_commitment_for(
+    json: &str,
+    expected_name: &str,
+    label: &str,
+) -> Result<[u8; 32], BfvTableError> {
+    let descriptor = parse_vm_descriptor2(json).map_err(BfvTableError::Descriptor)?;
+    if descriptor.name != expected_name
         || descriptor.trace_width != BFV_BUTTERFLY_TRACE_WIDTH
         || descriptor.public_input_count != 0
     {
-        return Err(BfvTableError::Descriptor(
-            "Lean q0/N=8 descriptor outer shape drifted".to_string(),
-        ));
+        return Err(BfvTableError::Descriptor(format!(
+            "Lean {label} descriptor outer shape drifted"
+        )));
     }
     commit_bfv_butterfly_typed_descriptor(&descriptor)
 }
@@ -1846,6 +1891,16 @@ mod tests {
         assert_eq!(schedule.last().unwrap()[STAGE], 11);
         assert_eq!(schedule.last().unwrap()[BUTTERFLY], 2047);
         assert_eq!(schedule.last().unwrap()[14], 13 * 4096 - 1);
+        assert_ne!(
+            bfv_q0_n4096_descriptor_commitment().unwrap(),
+            bfv_q0_n4096_inverse_descriptor_commitment().unwrap(),
+            "forward and inverse typed relations must remain distinct"
+        );
+        assert_ne!(
+            bfv_q0_n4096_descriptor_commitment().unwrap(),
+            commit_bfv_butterfly_descriptor(b"q0-n4096-forward-bound-v1"),
+            "the historical display string is not production relation identity"
+        );
     }
 
     #[test]
@@ -1916,12 +1971,34 @@ mod tests {
             .collect::<Vec<_>>();
         let (rows, output) = build_bfv_transform_rows(geometry, &input).expect("production rows");
         assert_eq!(rows.len(), 12 * 2048);
-        let descriptor = commit_bfv_butterfly_descriptor(b"q0-n4096-forward-bound-v1");
-        let claim = BfvFaithfulTableClaim::prove_public_trace(descriptor, geometry, &rows)
+        let forward_descriptor =
+            bfv_q0_n4096_descriptor_commitment().expect("Lean forward identity");
+        let claim = BfvFaithfulTableClaim::prove_public_trace(forward_descriptor, geometry, &rows)
             .expect("production exact boundary tables");
         claim
-            .verify_boundaries(descriptor, &rows, &input, &output)
+            .verify_boundaries(forward_descriptor, &rows, &input, &output)
             .expect("all 4096 ingress and egress residues bind");
+
+        let inverse_geometry = BfvButterflyGeometry::Q0_N4096_INVERSE;
+        let (inverse_rows, roundtrip) =
+            build_bfv_transform_rows(inverse_geometry, &output).expect("production inverse rows");
+        assert_eq!(inverse_rows.len(), 12 * 2048);
+        assert_eq!(roundtrip, input, "production odd NTT normalization");
+        let inverse_descriptor =
+            bfv_q0_n4096_inverse_descriptor_commitment().expect("Lean inverse identity");
+        let inverse_claim = BfvFaithfulTableClaim::prove_public_trace(
+            inverse_descriptor,
+            inverse_geometry,
+            &inverse_rows,
+        )
+        .expect("production inverse exact boundary tables");
+        inverse_claim
+            .verify_boundaries(inverse_descriptor, &inverse_rows, &output, &roundtrip)
+            .expect("all inverse ingress and normalized egress residues bind");
+        assert!(matches!(
+            inverse_claim.verify(forward_descriptor, &inverse_rows),
+            Err(BfvTableError::DescriptorCommitment)
+        ));
     }
 
     #[test]
