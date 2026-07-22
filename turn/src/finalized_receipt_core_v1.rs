@@ -18,9 +18,9 @@ const PREFIX_LEN: usize = 8;
 const CORE_ID_DOMAIN: &str = "dregg-finalized-receipt-core-v1";
 
 /// Exact canonical width of [`FinalizedExecutionContextV1`].
-pub const FINALIZED_EXECUTION_CONTEXT_V1_LEN: usize = 64;
+pub const FINALIZED_EXECUTION_CONTEXT_V1_LEN: usize = 56;
 /// Exact canonical width of [`FinalizedReceiptCoreV1`].
-pub const FINALIZED_RECEIPT_CORE_V1_LEN: usize = 560;
+pub const FINALIZED_RECEIPT_CORE_V1_LEN: usize = 592;
 
 /// Consensus input required by finalized execution.
 ///
@@ -29,21 +29,14 @@ pub const FINALIZED_RECEIPT_CORE_V1_LEN: usize = 560;
 pub struct FinalizedExecutionContextV1 {
     block_id: [u8; 32],
     tau_round: u64,
-    finalized_ordinal: u64,
     consensus_unix_seconds: i64,
 }
 
 impl FinalizedExecutionContextV1 {
-    pub const fn new(
-        block_id: [u8; 32],
-        tau_round: u64,
-        finalized_ordinal: u64,
-        consensus_unix_seconds: i64,
-    ) -> Self {
+    pub const fn new(block_id: [u8; 32], tau_round: u64, consensus_unix_seconds: i64) -> Self {
         Self {
             block_id,
             tau_round,
-            finalized_ordinal,
             consensus_unix_seconds,
         }
     }
@@ -56,10 +49,6 @@ impl FinalizedExecutionContextV1 {
         self.tau_round
     }
 
-    pub const fn finalized_ordinal(self) -> u64 {
-        self.finalized_ordinal
-    }
-
     pub const fn consensus_unix_seconds(self) -> i64 {
         self.consensus_unix_seconds
     }
@@ -70,7 +59,6 @@ impl FinalizedExecutionContextV1 {
         let mut cursor = PREFIX_LEN;
         write_32(&mut out, &mut cursor, self.block_id);
         write_u64(&mut out, &mut cursor, self.tau_round);
-        write_u64(&mut out, &mut cursor, self.finalized_ordinal);
         write_i64(&mut out, &mut cursor, self.consensus_unix_seconds);
         debug_assert_eq!(cursor, FINALIZED_EXECUTION_CONTEXT_V1_LEN);
         out
@@ -81,7 +69,6 @@ impl FinalizedExecutionContextV1 {
         let mut cursor = PREFIX_LEN;
         let context = Self::new(
             read_32(bytes, &mut cursor),
-            read_u64(bytes, &mut cursor),
             read_u64(bytes, &mut cursor),
             read_i64(bytes, &mut cursor),
         );
@@ -95,13 +82,36 @@ impl FinalizedExecutionContextV1 {
 pub struct FinalizedReceiptIdV1([u8; 32]);
 
 impl FinalizedReceiptIdV1 {
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+    pub fn from_bytes(bytes: [u8; 32]) -> Result<Self, FinalizedReceiptCoreV1Error> {
+        if bytes == [0; 32] {
+            return Err(FinalizedReceiptCoreV1Error::ZeroPredecessorIdentity);
+        }
+        Ok(Self(bytes))
     }
 
     pub const fn bytes(self) -> [u8; 32] {
         self.0
     }
+}
+
+/// Provenance-preserving predecessor at the finalized-receipt flag day.
+///
+/// A legacy receipt hash and a finalized core id are distinct variants and cannot be silently
+/// reinterpreted as one another.  `LegacyCutover` is used exactly once for a chain that existed
+/// before the flag day; later receipts link typed `Core` ids while retaining the separate legacy
+/// index/hash required by the compatibility receipt head until that older chain is retired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalizedReceiptPredecessorV1 {
+    Genesis,
+    LegacyCutover {
+        legacy_receipt_index: u64,
+        legacy_receipt_hash: [u8; 32],
+    },
+    Core {
+        core_id: FinalizedReceiptIdV1,
+        legacy_receipt_index: u64,
+        legacy_receipt_hash: [u8; 32],
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +136,7 @@ pub struct FinalizedReceiptCoreV1 {
     effects_hash: [u8; 32],
     computrons_used: u64,
     action_count: u64,
-    previous_receipt_id: Option<FinalizedReceiptIdV1>,
+    predecessor: FinalizedReceiptPredecessorV1,
     agent: [u8; 32],
     federation_id: [u8; 32],
     routing: DisclosureCommitment,
@@ -143,13 +153,45 @@ impl FinalizedReceiptCoreV1 {
     ///
     /// The receipt timestamp must equal the context time.  This fail-closed equality is the seam
     /// that prevents a locally seeded executor clock from being laundered into consensus identity.
+    /// The predecessor is supplied with explicit genesis/legacy-cutover/core provenance; a
+    /// populated `previous_receipt_hash` must exactly match the explicitly tagged legacy or core
+    /// predecessor bytes and can never silently acquire a new meaning.
     pub fn from_receipt(
         context: FinalizedExecutionContextV1,
         committee_epoch: u64,
+        predecessor: FinalizedReceiptPredecessorV1,
         receipt: &TurnReceipt,
     ) -> Result<Self, FinalizedReceiptCoreV1Error> {
         if receipt.finality != Finality::Final {
             return Err(FinalizedReceiptCoreV1Error::ReceiptNotFinal);
+        }
+        let zero_predecessor = match predecessor {
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_hash,
+                ..
+            }
+            | FinalizedReceiptPredecessorV1::Core {
+                legacy_receipt_hash,
+                ..
+            } => legacy_receipt_hash == [0; 32],
+            FinalizedReceiptPredecessorV1::Genesis => false,
+        };
+        if zero_predecessor {
+            return Err(FinalizedReceiptCoreV1Error::ZeroPredecessorIdentity);
+        }
+        let legacy_link_matches = match predecessor {
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_hash,
+                ..
+            } => receipt.previous_receipt_hash == Some(legacy_receipt_hash),
+            FinalizedReceiptPredecessorV1::Core {
+                legacy_receipt_hash,
+                ..
+            } => receipt.previous_receipt_hash == Some(legacy_receipt_hash),
+            FinalizedReceiptPredecessorV1::Genesis => receipt.previous_receipt_hash.is_none(),
+        };
+        if !legacy_link_matches {
+            return Err(FinalizedReceiptCoreV1Error::ReceiptPredecessorProvenanceMismatch);
         }
         if receipt.timestamp != context.consensus_unix_seconds {
             return Err(FinalizedReceiptCoreV1Error::ReceiptTimestampMismatch {
@@ -169,9 +211,7 @@ impl FinalizedReceiptCoreV1 {
             effects_hash: receipt.effects_hash,
             computrons_used: receipt.computrons_used,
             action_count,
-            previous_receipt_id: receipt
-                .previous_receipt_hash
-                .map(FinalizedReceiptIdV1::from_bytes),
+            predecessor,
             agent: *receipt.agent.as_bytes(),
             federation_id: receipt.federation_id,
             routing: routing_commitment(receipt)?,
@@ -192,8 +232,20 @@ impl FinalizedReceiptCoreV1 {
         self.committee_epoch
     }
 
-    pub const fn previous_receipt_id(&self) -> Option<FinalizedReceiptIdV1> {
-        self.previous_receipt_id
+    pub const fn predecessor(&self) -> FinalizedReceiptPredecessorV1 {
+        self.predecessor
+    }
+
+    pub const fn turn_hash(&self) -> [u8; 32] {
+        self.turn_hash
+    }
+
+    pub const fn agent(&self) -> [u8; 32] {
+        self.agent
+    }
+
+    pub const fn federation_id(&self) -> [u8; 32] {
+        self.federation_id
     }
 
     pub fn id(&self) -> FinalizedReceiptIdV1 {
@@ -221,16 +273,34 @@ impl FinalizedReceiptCoreV1 {
         }
         write_u64(&mut out, &mut cursor, self.computrons_used);
         write_u64(&mut out, &mut cursor, self.action_count);
-        match self.previous_receipt_id {
-            Some(id) => {
-                out[cursor] = 1;
-                cursor += 1;
-                write_32(&mut out, &mut cursor, id.bytes());
-            }
-            None => {
+        match self.predecessor {
+            FinalizedReceiptPredecessorV1::Genesis => {
                 out[cursor] = 0;
                 cursor += 1;
+                write_u64(&mut out, &mut cursor, 0);
                 write_32(&mut out, &mut cursor, [0; 32]);
+                write_32(&mut out, &mut cursor, [0; 32]);
+            }
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_index,
+                legacy_receipt_hash,
+            } => {
+                out[cursor] = 1;
+                cursor += 1;
+                write_u64(&mut out, &mut cursor, legacy_receipt_index);
+                write_32(&mut out, &mut cursor, legacy_receipt_hash);
+                write_32(&mut out, &mut cursor, [0; 32]);
+            }
+            FinalizedReceiptPredecessorV1::Core {
+                core_id,
+                legacy_receipt_index,
+                legacy_receipt_hash,
+            } => {
+                out[cursor] = 2;
+                cursor += 1;
+                write_u64(&mut out, &mut cursor, legacy_receipt_index);
+                write_32(&mut out, &mut cursor, legacy_receipt_hash);
+                write_32(&mut out, &mut cursor, core_id.bytes());
             }
         }
         write_32(&mut out, &mut cursor, self.agent);
@@ -270,11 +340,32 @@ impl FinalizedReceiptCoreV1 {
         let action_count = read_u64(bytes, &mut cursor);
         let previous_tag = bytes[cursor];
         cursor += 1;
-        let previous_bytes = read_32(bytes, &mut cursor);
-        let previous_receipt_id = match previous_tag {
-            0 if previous_bytes == [0; 32] => None,
+        let predecessor_aux = read_u64(bytes, &mut cursor);
+        let legacy_hash = read_32(bytes, &mut cursor);
+        let core_id = read_32(bytes, &mut cursor);
+        let predecessor = match previous_tag {
+            0 if predecessor_aux == 0 && legacy_hash == [0; 32] && core_id == [0; 32] => {
+                FinalizedReceiptPredecessorV1::Genesis
+            }
             0 => return Err(FinalizedReceiptCoreV1Error::NonCanonicalAbsentPredecessor),
-            1 => Some(FinalizedReceiptIdV1::from_bytes(previous_bytes)),
+            1 if core_id == [0; 32] && legacy_hash != [0; 32] => {
+                FinalizedReceiptPredecessorV1::LegacyCutover {
+                    legacy_receipt_index: predecessor_aux,
+                    legacy_receipt_hash: legacy_hash,
+                }
+            }
+            1 if legacy_hash == [0; 32] => {
+                return Err(FinalizedReceiptCoreV1Error::ZeroPredecessorIdentity);
+            }
+            1 => return Err(FinalizedReceiptCoreV1Error::NonCanonicalLegacyCutover),
+            2 if legacy_hash == [0; 32] || core_id == [0; 32] => {
+                return Err(FinalizedReceiptCoreV1Error::ZeroPredecessorIdentity);
+            }
+            2 => FinalizedReceiptPredecessorV1::Core {
+                core_id: FinalizedReceiptIdV1::from_bytes(core_id)?,
+                legacy_receipt_index: predecessor_aux,
+                legacy_receipt_hash: legacy_hash,
+            },
             tag => return Err(FinalizedReceiptCoreV1Error::BadOptionalTag(tag)),
         };
         let agent = read_32(bytes, &mut cursor);
@@ -309,7 +400,7 @@ impl FinalizedReceiptCoreV1 {
             effects_hash,
             computrons_used,
             action_count,
-            previous_receipt_id,
+            predecessor,
             agent,
             federation_id,
             routing,
@@ -434,8 +525,11 @@ pub enum FinalizedReceiptCoreV1Error {
     NonZeroReserved,
     BadOptionalTag(u8),
     NonCanonicalAbsentPredecessor,
+    NonCanonicalLegacyCutover,
+    ZeroPredecessorIdentity,
     UnknownFlags(u8),
     ReceiptNotFinal,
+    ReceiptPredecessorProvenanceMismatch,
     ReceiptTimestampMismatch { expected: i64, actual: i64 },
     CountOverflow(&'static str),
 }
@@ -458,8 +552,17 @@ impl fmt::Display for FinalizedReceiptCoreV1Error {
             Self::NonCanonicalAbsentPredecessor => {
                 f.write_str("absent finalized receipt predecessor has nonzero payload")
             }
+            Self::NonCanonicalLegacyCutover => {
+                f.write_str("legacy cutover predecessor has nonzero reserved core id")
+            }
+            Self::ZeroPredecessorIdentity => {
+                f.write_str("finalized receipt predecessor identity cannot be zero")
+            }
             Self::UnknownFlags(flags) => write!(f, "unknown finalized receipt flags {flags:#x}"),
             Self::ReceiptNotFinal => f.write_str("tentative receipt cannot mint a finalized core"),
+            Self::ReceiptPredecessorProvenanceMismatch => f.write_str(
+                "legacy receipt link does not match the typed finalized predecessor provenance",
+            ),
             Self::ReceiptTimestampMismatch { expected, actual } => write!(
                 f,
                 "receipt timestamp {actual} differs from authenticated consensus time {expected}"
@@ -559,14 +662,18 @@ mod tests {
             computrons_used: 123,
             action_count: 7,
             federation_id: [6; 32],
-            previous_receipt_hash: Some([7; 32]),
+            previous_receipt_hash: None,
             ..TurnReceipt::default()
         }
     }
 
     #[test]
     fn context_wire_is_fixed_strict_and_roundtrips() {
-        let context = FinalizedExecutionContextV1::new([9; 32], 11, 13, -17);
+        assert_eq!(
+            FinalizedReceiptIdV1::from_bytes([0; 32]),
+            Err(FinalizedReceiptCoreV1Error::ZeroPredecessorIdentity)
+        );
+        let context = FinalizedExecutionContextV1::new([9; 32], 11, -17);
         let bytes = context.to_canonical_bytes();
         assert_eq!(bytes.len(), FINALIZED_EXECUTION_CONTEXT_V1_LEN);
         assert_eq!(
@@ -574,7 +681,7 @@ mod tests {
             Ok(context)
         );
         assert!(matches!(
-            FinalizedExecutionContextV1::decode_canonical(&bytes[..63]),
+            FinalizedExecutionContextV1::decode_canonical(&bytes[..55]),
             Err(FinalizedReceiptCoreV1Error::WrongWireLength { .. })
         ));
         let mut reserved = bytes;
@@ -588,18 +695,24 @@ mod tests {
     #[test]
     fn finalized_id_ignores_local_clock_and_executor_signature() {
         let consensus_time = 1_700_000_000;
-        let context = FinalizedExecutionContextV1::new([8; 32], 21, 34, consensus_time);
+        let context = FinalizedExecutionContextV1::new([8; 32], 21, consensus_time);
         let unrelated_local_clock_a = consensus_time - 10_000;
         let unrelated_local_clock_b = consensus_time + 10_000;
         assert_ne!(unrelated_local_clock_a, unrelated_local_clock_b);
 
         let mut receipt_a = receipt_at(consensus_time);
         receipt_a.executor_signature = Some(vec![0xAA; 64]);
+        receipt_a.previous_receipt_hash = Some([7; 32]);
         let mut receipt_b = receipt_a.clone();
         receipt_b.executor_signature = Some(vec![0xBB; 64]);
 
-        let a = FinalizedReceiptCoreV1::from_receipt(context, 5, &receipt_a).unwrap();
-        let b = FinalizedReceiptCoreV1::from_receipt(context, 5, &receipt_b).unwrap();
+        let predecessor = FinalizedReceiptPredecessorV1::Core {
+            core_id: FinalizedReceiptIdV1::from_bytes([70; 32]).unwrap(),
+            legacy_receipt_index: 10,
+            legacy_receipt_hash: [7; 32],
+        };
+        let a = FinalizedReceiptCoreV1::from_receipt(context, 5, predecessor, &receipt_a).unwrap();
+        let b = FinalizedReceiptCoreV1::from_receipt(context, 5, predecessor, &receipt_b).unwrap();
         assert_eq!(a, b);
         assert_eq!(a.id(), b.id());
         assert_eq!(
@@ -611,26 +724,63 @@ mod tests {
     #[test]
     fn consensus_time_and_deterministic_disclosures_change_finalized_id() {
         let time = 1_700_000_000;
-        let base_context = FinalizedExecutionContextV1::new([8; 32], 21, 34, time);
+        let base_context = FinalizedExecutionContextV1::new([8; 32], 21, time);
         let receipt = receipt_at(time);
-        let base = FinalizedReceiptCoreV1::from_receipt(base_context, 5, &receipt).unwrap();
+        let base = FinalizedReceiptCoreV1::from_receipt(
+            base_context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &receipt,
+        )
+        .unwrap();
 
-        let later_context = FinalizedExecutionContextV1::new([8; 32], 21, 34, time + 1);
-        let later =
-            FinalizedReceiptCoreV1::from_receipt(later_context, 5, &receipt_at(time + 1)).unwrap();
+        let later_context = FinalizedExecutionContextV1::new([8; 32], 21, time + 1);
+        let later = FinalizedReceiptCoreV1::from_receipt(
+            later_context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &receipt_at(time + 1),
+        )
+        .unwrap();
         assert_ne!(base.id(), later.id());
 
         let mut disclosed = receipt;
         disclosed.was_burn = true;
-        let disclosed = FinalizedReceiptCoreV1::from_receipt(base_context, 5, &disclosed).unwrap();
+        let disclosed = FinalizedReceiptCoreV1::from_receipt(
+            base_context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &disclosed,
+        )
+        .unwrap();
         assert_ne!(base.id(), disclosed.id());
+
+        let mut linked_receipt = receipt_at(time);
+        linked_receipt.previous_receipt_hash = Some([9; 32]);
+        let linked = FinalizedReceiptCoreV1::from_receipt(
+            base_context,
+            5,
+            FinalizedReceiptPredecessorV1::Core {
+                core_id: FinalizedReceiptIdV1::from_bytes([10; 32]).unwrap(),
+                legacy_receipt_index: 11,
+                legacy_receipt_hash: [9; 32],
+            },
+            &linked_receipt,
+        )
+        .unwrap();
+        assert_ne!(base.id(), linked.id());
     }
 
     #[test]
     fn local_timestamp_or_tentative_receipt_cannot_mint_finalized_core() {
-        let context = FinalizedExecutionContextV1::new([8; 32], 21, 34, 100);
+        let context = FinalizedExecutionContextV1::new([8; 32], 21, 100);
         assert_eq!(
-            FinalizedReceiptCoreV1::from_receipt(context, 5, &receipt_at(99)),
+            FinalizedReceiptCoreV1::from_receipt(
+                context,
+                5,
+                FinalizedReceiptPredecessorV1::Genesis,
+                &receipt_at(99),
+            ),
             Err(FinalizedReceiptCoreV1Error::ReceiptTimestampMismatch {
                 expected: 100,
                 actual: 99,
@@ -639,17 +789,61 @@ mod tests {
         let mut tentative = receipt_at(100);
         tentative.finality = Finality::Tentative;
         assert_eq!(
-            FinalizedReceiptCoreV1::from_receipt(context, 5, &tentative),
+            FinalizedReceiptCoreV1::from_receipt(
+                context,
+                5,
+                FinalizedReceiptPredecessorV1::Genesis,
+                &tentative,
+            ),
             Err(FinalizedReceiptCoreV1Error::ReceiptNotFinal)
         );
+
+        let mut legacy_link = receipt_at(100);
+        legacy_link.previous_receipt_hash = Some([7; 32]);
+        assert_eq!(
+            FinalizedReceiptCoreV1::from_receipt(
+                context,
+                5,
+                FinalizedReceiptPredecessorV1::Core {
+                    core_id: FinalizedReceiptIdV1::from_bytes([9; 32]).unwrap(),
+                    legacy_receipt_index: 11,
+                    legacy_receipt_hash: [8; 32],
+                },
+                &legacy_link,
+            ),
+            Err(FinalizedReceiptCoreV1Error::ReceiptPredecessorProvenanceMismatch)
+        );
+        let cutover = FinalizedReceiptCoreV1::from_receipt(
+            context,
+            5,
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_index: 41,
+                legacy_receipt_hash: [7; 32],
+            },
+            &legacy_link,
+        )
+        .unwrap();
+        assert!(matches!(
+            cutover.predecessor(),
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_index: 41,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn core_decoder_refuses_trailing_and_noncanonical_absent_predecessor() {
-        let context = FinalizedExecutionContextV1::new([8; 32], 21, 34, 100);
+        let context = FinalizedExecutionContextV1::new([8; 32], 21, 100);
         let mut receipt = receipt_at(100);
         receipt.previous_receipt_hash = None;
-        let core = FinalizedReceiptCoreV1::from_receipt(context, 5, &receipt).unwrap();
+        let core = FinalizedReceiptCoreV1::from_receipt(
+            context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &receipt,
+        )
+        .unwrap();
         let bytes = core.to_canonical_bytes();
         let mut trailing = bytes.to_vec();
         trailing.push(0);
@@ -658,8 +852,9 @@ mod tests {
             Err(FinalizedReceiptCoreV1Error::WrongWireLength { .. })
         ));
 
-        // Header + nested context + epoch + five commitments + two counters + option tag.
-        const PREDECESSOR_PAYLOAD_OFFSET: usize = 8 + 64 + 8 + 5 * 32 + 2 * 8 + 1;
+        // Header + nested context + epoch + five commitments + two counters + tag + aux.
+        const PREDECESSOR_PAYLOAD_OFFSET: usize =
+            8 + FINALIZED_EXECUTION_CONTEXT_V1_LEN + 8 + 5 * 32 + 2 * 8 + 1 + 8;
         let mut noncanonical = bytes;
         noncanonical[PREDECESSOR_PAYLOAD_OFFSET] = 1;
         assert_eq!(

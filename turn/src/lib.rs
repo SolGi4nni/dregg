@@ -224,6 +224,7 @@ pub use fast_path::{
 pub use finalized_receipt_core_v1::{
     FINALIZED_EXECUTION_CONTEXT_V1_LEN, FINALIZED_RECEIPT_CORE_V1_LEN, FinalizedExecutionContextV1,
     FinalizedReceiptCoreV1, FinalizedReceiptCoreV1Error, FinalizedReceiptIdV1,
+    FinalizedReceiptPredecessorV1,
 };
 pub use forest::{CallForest, CallTree};
 pub use pending::{
