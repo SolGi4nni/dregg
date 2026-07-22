@@ -212,6 +212,23 @@ the amount of code landed.
   adds candidate resolve/commitment/snapshot APIs so blocklace can mutate the
   isolated candidate executor rather than a disconnected NodeState registry.
   The redb CAS/reseed and single-owner NodeState cutover remain active.
+- `5d0c79da5` adds a bounded canonical factory restart image, rolls back factory
+  quota after late rejection, and extends the producer-reference checkpoint
+  across factory/budget/rate/reactive/migration/accumulator/receipt scratch.
+  Two cell and three turn tests are green. The live persist/reseed hook remains
+  part of the same executor-state weld.
+- `d34a35787` adds lossless durable note commitment `(commitment,value,seq)`,
+  revocation `(key,height,seq)`, and bridged-nullifier/insertion-ordinal tables,
+  strict canonical snapshots, same-transaction finalized-turn hooks, sparse
+  rate snapshot loading, fail-closed bounds/legacy handling, and divergent-tail
+  rollback. `dregg-persist --lib` is green and its focused suite is 5/5. Live
+  blocklace capture and fresh-executor reseed are still active; the persist-only
+  green does not claim they are already in use.
+- `182ca73de` proves the pure per-cell receipt-head reconstruction law across a
+  compacted-prefix baseline plus dense live suffix, preserving provenance for
+  removed cells and refusing malformed floor/gap/duplicate records. Durable
+  baseline/current tables, compaction/tail recovery, and executor reseed remain
+  to be welded.
 - `af090f03c` adds canonical local custom-program registry persistence,
   write-before-publish deployment, fail-closed restore/revalidation, and fresh
   executor seeding. It is node-local administration, not yet a consensus-ordered
@@ -229,7 +246,9 @@ the amount of code landed.
   rejection. A focused node build has not yet completed against the concurrent
   exact-v3 API redesign; it stopped on foreign exact-v3 compile drift without a
   blocklace diagnostic, so this commit is banked WIP rather than a current full
-  node green.
+  node green. Typed durable charged-rejection receipts, replacement of the
+  temporary reactive NodeState mirror by its redb CAS, and atomic/recoverable
+  proof-artifact persistence remain separate residuals.
 
 ### Optimizer and portable GPU truth
 

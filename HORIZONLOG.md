@@ -11506,6 +11506,11 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   durably restores the local custom-program registry. Node-level same-redb
   state welds remain, and custom program deployment is not yet federation-
   consensus-ordered.
+- `5d0c79da5` banks factory-quota/producer-checkpoint rollback; `d34a35787`
+  banks strict lossless note-commitment, revocation, bridged-nullifier, and rate
+  snapshots in the same finalized-turn transaction (persist 5/5 green);
+  `182ca73de` banks the compacted-baseline+dense-suffix per-cell receipt-head
+  reconstruction law. Their live capture/reseed/compaction hooks remain active.
 - `a3679f739` banks the generic `blocklace_sync::execute_finalized_turn`
   atomicity repair: isolate the complete candidate through durable outcome, then
   publish ledger/head/pending/activity/artifacts/events only on fresh success.
