@@ -33,6 +33,7 @@ pub mod checkpoint;
 pub mod commit_log;
 pub mod exact_fnsp_v3_frame_head;
 pub mod exact_fnsp_v3_state;
+pub mod executor_consensus_state;
 pub mod faithful_note_root_history;
 pub mod federation;
 pub mod finalized_faithful_spend;
@@ -65,6 +66,11 @@ pub use exact_fnsp_v3_frame_head::{
 pub use exact_fnsp_v3_state::{
     EXACT_FNSP_V3_APPEND_RECORD_V1_WIRE_LEN, EXACT_FNSP_V3_STATE_HEAD_V1_WIRE_LEN,
     ExactFnspV3StateCasV1, ExactFnspV3StateHeadV1, ExactFnspV3StateStoreError,
+    PreparedExactFnspV3StateTransitionV1,
+};
+pub use executor_consensus_state::{
+    ExecutorAccumulatorSnapshot, ExecutorNoteCommitmentRecord, ExecutorRevocationRecord,
+    FinalizedExecutorConsensusState,
 };
 pub use faithful_note_root_history::{
     CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1,
@@ -248,6 +254,11 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::ATTESTED_ROOTS)?;
             // Note tree tables.
             let _ = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
+            let _ = write_txn.open_table(tables::NOTE_COMMITMENT_RECORDS_V1)?;
+            let _ = write_txn.open_table(tables::REVOCATION_RECORDS_V1)?;
+            let _ = write_txn.open_table(tables::BRIDGED_NULLIFIERS_V1)?;
+            let _ = write_txn.open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
+            let _ = write_txn.open_table(tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1)?;
             let _ = write_txn.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
             let _ = write_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;

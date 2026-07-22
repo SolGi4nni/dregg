@@ -962,6 +962,31 @@ impl PersistentStore {
             None,
             None,
             None,
+            None,
+        )
+        .map(|outcome| outcome.outcome)
+    }
+
+    /// Commit a turn together with the complete post-execution executor
+    /// consensus state. This lower-level entry is useful for non-faithful
+    /// callers and restart tests; the live note-root path uses the stronger
+    /// faithful-root counterpart below.
+    pub fn commit_finalized_turn_with_executor_state(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        executor_state: &crate::FinalizedExecutorConsensusState,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            note_commitments,
+            None,
+            None,
+            None,
+            Some(executor_state),
         )
         .map(|outcome| outcome.outcome)
     }
@@ -992,6 +1017,7 @@ impl PersistentStore {
                 index: receipt_index,
                 encoded: encoded_receipt,
             }),
+            None,
             None,
             None,
         )
@@ -1026,6 +1052,36 @@ impl PersistentStore {
             },
             faithful,
             None,
+            None,
+        )
+    }
+
+    /// The live faithful-root apex plus the complete post-execution consensus
+    /// accumulator image and canonical rate-limit snapshot. The side state is
+    /// validated as an exact extension and lands in the same redb transaction
+    /// as the record, receipt, roots, and commit cursor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
         )
     }
 
@@ -1062,6 +1118,7 @@ impl PersistentStore {
             },
             faithful,
             Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
+            None,
         )
     }
 
@@ -1120,6 +1177,34 @@ impl PersistentStore {
             },
             faithful,
             None,
+            None,
+        )
+    }
+
+    /// Existing-receipt counterpart of
+    /// [`Self::commit_finalized_turn_with_faithful_root_and_executor_state`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::ExistingExact {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
         )
     }
 
@@ -1148,6 +1233,7 @@ impl PersistentStore {
             },
             faithful,
             Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
+            None,
         )
     }
 
@@ -1214,6 +1300,7 @@ impl PersistentStore {
             Some(receipt_entry),
             Some(faithful),
             Some(ExactFnspV3Weld::Frame { exact, frame }),
+            None,
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1235,6 +1322,7 @@ impl PersistentStore {
         receipt_entry: ReceiptWeldMode<'_>,
         faithful: FinalizedFaithfulRootWeld<'_>,
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
+        executor_state: Option<&crate::FinalizedExecutorConsensusState>,
     ) -> Result<CommitOutcome> {
         if !faithful.envelope.verify_hybrid(
             faithful.author_committee,
@@ -1265,6 +1353,7 @@ impl PersistentStore {
             Some(receipt_entry),
             Some(faithful),
             exact_fnsp_v3,
+            executor_state,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1286,8 +1375,17 @@ impl PersistentStore {
         record: &CommitRecord,
         burns: &[(u8, [u8; 32], [u8; 32])],
     ) -> Result<u64> {
-        self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[], None, None, None)
-            .map(|outcome| outcome.outcome.ordinal)
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            burns,
+            &[],
+            None,
+            None,
+            None,
+            None,
+        )
+        .map(|outcome| outcome.outcome.ordinal)
     }
 
     /// The single atomic finalized-turn commit: record + secondary index +
@@ -1305,6 +1403,7 @@ impl PersistentStore {
         receipt_entry: Option<ReceiptWeldMode<'_>>,
         faithful: Option<FinalizedFaithfulRootWeld<'_>>,
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
+        executor_state: Option<&crate::FinalizedExecutorConsensusState>,
     ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
         // Exact-v3 is a shadow/cutover authority over the SAME ordered public spend history, not
@@ -1331,6 +1430,33 @@ impl PersistentStore {
                         Some(guard) => {
                             let existing = decode_commit_record(guard.value())?;
                             if existing.turn_hash == record.turn_hash {
+                                let durable_note_count = meta
+                                    .get(tables::META_NOTE_TREE_SIZE)?
+                                    .map(|guard| guard.value())
+                                    .unwrap_or(0);
+                                let tracked_executor_state = {
+                                    let frontiers = write_txn
+                                        .open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
+                                    frontiers.get(expected_ordinal)?.is_some()
+                                };
+                                match (executor_state, tracked_executor_state) {
+                                    (Some(state), true) => {
+                                        crate::executor_consensus_state::verify_replayed_executor_consensus_state_in(
+                                            &write_txn,
+                                            expected_ordinal,
+                                            durable_note_count,
+                                            note_commitments,
+                                            state,
+                                        )?;
+                                    }
+                                    (None, false) => {}
+                                    _ => {
+                                        return Err(StoreError::Integrity(
+                                            "replayed finalized turn omitted or invented its executor consensus-state weld"
+                                                .to_string(),
+                                        ));
+                                    }
+                                }
                                 if let Some(receipt_entry) = receipt_entry.as_ref() {
                                     let (receipt_index, encoded_receipt) = receipt_entry.entry();
                                     // The original atomic commit must already
@@ -1344,10 +1470,6 @@ impl PersistentStore {
                                     )?;
                                 }
                                 if let Some(faithful) = faithful.as_ref() {
-                                    let durable_note_count = meta
-                                        .get(tables::META_NOTE_TREE_SIZE)?
-                                        .map(|guard| guard.value())
-                                        .unwrap_or(0);
                                     // The replay checks below include the
                                     // attested-root table, whose helper updates
                                     // METADATA on fresh writes and therefore
@@ -1504,11 +1626,11 @@ impl PersistentStore {
             // durable leaf prefix BEFORE adding the new leaves.  This is the
             // semantic check that keeps the signed edge from floating free of
             // the mutation it authorizes.
+            let durable_note_count = meta
+                .get(tables::META_NOTE_TREE_SIZE)?
+                .map(|guard| guard.value())
+                .unwrap_or(0);
             if let Some(faithful) = faithful.as_ref() {
-                let durable_note_count = meta
-                    .get(tables::META_NOTE_TREE_SIZE)?
-                    .map(|guard| guard.value())
-                    .unwrap_or(0);
                 verify_fresh_faithful_notes_in(
                     &write_txn,
                     faithful.envelope,
@@ -1517,6 +1639,18 @@ impl PersistentStore {
                 )?;
             }
 
+            let executor_note_count = executor_state
+                .map(|state| {
+                    crate::executor_consensus_state::stage_fresh_executor_consensus_state_in(
+                        &write_txn,
+                        assigned,
+                        durable_note_count,
+                        note_commitments,
+                        state,
+                    )
+                })
+                .transpose()?;
+
             // 3b. Append note-tree leaves in the SAME transaction (the
             //     same-transaction NOTE weld, bug #58): the record and every
             //     `NoteCreate` commitment it produced are one atomic durability
@@ -1524,11 +1658,14 @@ impl PersistentStore {
             //     its turn (the double-apply that permanently diverged the
             //     note-tree root). Positions are assigned sequentially from the
             //     current durable size, mirroring `store_note_commitment`.
-            if !note_commitments.is_empty() {
-                let mut size = meta
-                    .get(tables::META_NOTE_TREE_SIZE)?
-                    .map(|g| g.value())
-                    .unwrap_or(0);
+            if let Some(size) = executor_note_count {
+                meta.insert(tables::META_NOTE_TREE_SIZE, size)?;
+                if size != durable_note_count {
+                    let mut meta_bytes = write_txn.open_table(tables::METADATA_BYTES)?;
+                    meta_bytes.remove(tables::META_NOTE_TREE_ROOT_CACHE)?;
+                }
+            } else if !note_commitments.is_empty() {
+                let mut size = durable_note_count;
                 {
                     let mut notes = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
                     for cm in note_commitments {
@@ -2564,6 +2701,14 @@ impl PersistentStore {
                     }
                 }
             }
+
+            // Regress every tracked executor-owned admission/root table to the
+            // same last-good ordinal before publishing the lower cursor. This
+            // includes typed commitment/revocation records, inbound bridge
+            // burns, sparse rate snapshots, positional note leaves, and caches.
+            crate::executor_consensus_state::truncate_executor_consensus_state_in(
+                &write_txn, new_cursor,
+            )?;
 
             // Reset the durable cursor to the last-good high-water mark. Unlike
             // compaction (which leaves the cursor as the applied high-water mark),

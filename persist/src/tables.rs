@@ -30,6 +30,47 @@ pub const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata"
 pub const NOTE_COMMITMENTS: TableDefinition<u64, &[u8; 32]> =
     TableDefinition::new("note_commitments");
 
+/// Circuit-faithful note-commitment accumulator records.
+///
+/// Key: exact 32-byte commitment. Value: `value_le_u64 || seq_le_u64`.
+/// The positional [`NOTE_COMMITMENTS`] table remains the public note-tree leaf
+/// order; this additive table retains the value and append sequence required to
+/// reconstruct `TurnExecutor::note_commitments` and its eight-felt root.
+pub const NOTE_COMMITMENT_RECORDS_V1: TableDefinition<&[u8; 32], &[u8; 16]> =
+    TableDefinition::new("note_commitment_records_v1");
+
+/// Circuit-faithful revocation accumulator records.
+///
+/// Key: domain-separated revocation key. Value:
+/// `revocation_height_le_u64 || seq_le_u64`.
+pub const REVOCATION_RECORDS_V1: TableDefinition<&[u8; 32], &[u8; 16]> =
+    TableDefinition::new("revocation_records_v1");
+
+/// Restart-durable inbound bridge replay gate.
+///
+/// Key: source-federation note nullifier. Value: the commit ordinal which
+/// first admitted it, retained so divergent-tail recovery can remove exactly
+/// the rows introduced by truncated commits.
+pub const BRIDGED_NULLIFIERS_V1: TableDefinition<&[u8; 32], u64> =
+    TableDefinition::new("bridged_nullifiers_v1");
+
+/// Post-turn accumulator frontier for every commit carrying executor side state.
+///
+/// Value: `commitment_count_le || revocation_count_le || bridged_count_le`.
+/// These rows make replay exact and provide the rollback frontier for durable
+/// tail recovery. They intentionally survive ordinary commit-log compaction.
+pub const EXECUTOR_ACCUMULATOR_FRONTIERS_V1: TableDefinition<u64, &[u8; 24]> =
+    TableDefinition::new("executor_accumulator_frontiers_v1");
+
+/// Sparse canonical rate-limit snapshots keyed by commit ordinal.
+///
+/// A present row replaces the preceding snapshot. Absence means carry forward;
+/// absence at ordinal zero means the canonical empty state. The persist crate
+/// treats bytes opaquely so it remains independent of `dregg-turn`; the node
+/// performs the strict versioned codec validation before capture and restore.
+pub const EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("executor_rate_limit_snapshots_v1");
+
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
 pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =
