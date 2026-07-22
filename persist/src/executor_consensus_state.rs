@@ -1427,7 +1427,7 @@ mod tests {
             store
                 .load_latest_reactive_registry_snapshot_bytes()
                 .unwrap(),
-            state.reactive_registry.successor_bytes
+            EMPTY_REACTIVE_REGISTRY_V1
         );
     }
 
@@ -1455,7 +1455,7 @@ mod tests {
             store
                 .load_latest_reactive_registry_snapshot_bytes()
                 .unwrap(),
-            EMPTY_REACTIVE_REGISTRY_V1
+            state.reactive_registry.successor_bytes
         );
         assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
         assert!(
