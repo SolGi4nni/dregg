@@ -118,9 +118,18 @@ pub trait FinalizedPrivateBazaarReceiptSource {
 /// chain; each poll then seeks directly to the acknowledged cursor and reads at
 /// most one bounded batch. No raw receipt accessor or public rendering type is
 /// introduced by this transport.
-#[derive(Debug)]
 pub struct PrivateBazaarReceiptSpool {
     path: PathBuf,
+    file: File,
+    identity: SpoolFileIdentity,
+}
+
+impl std::fmt::Debug for PrivateBazaarReceiptSpool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivateBazaarReceiptSpool")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PrivateBazaarReceiptSpool {
@@ -129,6 +138,8 @@ impl PrivateBazaarReceiptSpool {
         fs::create_dir_all(root)
             .map_err(|error| PrivateBazaarWorkerError::io("create receipt spool", error))?;
         ensure_private_directory(root)?;
+        let root = fs::canonicalize(root)
+            .map_err(|error| PrivateBazaarWorkerError::io("pin receipt spool directory", error))?;
         let path = root.join(SPOOL_FILE_NAME);
         let created = !path.exists();
         let mut options = private_options();
@@ -136,14 +147,19 @@ impl PrivateBazaarReceiptSpool {
         let file = options
             .open(&path)
             .map_err(|error| PrivateBazaarWorkerError::io("open receipt spool", error))?;
-        ensure_private_file(&path)?;
+        secure_private_file_handle(&file, &root)?;
         file.sync_all()
             .map_err(|error| PrivateBazaarWorkerError::io("sync receipt spool", error))?;
-        drop(file);
         if created {
-            sync_directory(root)?;
+            sync_directory(&root)?;
         }
-        let spool = Self { path };
+        let identity = SpoolFileIdentity::from_file(&file)?;
+        let spool = Self {
+            path,
+            file,
+            identity,
+        };
+        spool.revalidate_path_identity()?;
         spool.validate_complete_chain()?;
         Ok(spool)
     }
@@ -157,6 +173,29 @@ impl PrivateBazaarReceiptSpool {
         session_seed: u64,
         receipt: PrivateClearingReceipt,
     ) -> Result<(), PrivateBazaarWorkerError> {
+        self.revalidate_path_identity()?;
+        self.file
+            .lock()
+            .map_err(|error| PrivateBazaarWorkerError::io("lock receipt spool writer", error))?;
+        let result = self.append_locked(cursor, session_seed, receipt);
+        let unlock = self
+            .file
+            .unlock()
+            .map_err(|error| PrivateBazaarWorkerError::io("unlock receipt spool writer", error));
+        match (result, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+        }
+    }
+
+    fn append_locked(
+        &mut self,
+        cursor: u64,
+        session_seed: u64,
+        receipt: PrivateClearingReceipt,
+    ) -> Result<(), PrivateBazaarWorkerError> {
+        self.revalidate_path_identity()?;
         let event = FinalizedPrivateBazaarReceipt::new(cursor, session_seed, receipt);
         validate_event(&event, cursor)?;
         let count = self.record_count()?;
@@ -195,16 +234,21 @@ impl PrivateBazaarReceiptSpool {
             self.read_record(count - 1)?.1.checksum
         };
         let bytes = encode_spool_record(&event, previous_checksum)?;
-        let mut options = private_options();
-        options.append(true);
-        let mut file = options
-            .open(&self.path)
-            .map_err(|error| PrivateBazaarWorkerError::io("append receipt spool", error))?;
+        let mut file = self
+            .file
+            .try_clone()
+            .map_err(|error| PrivateBazaarWorkerError::io("clone receipt spool", error))?;
         file.write_all(&bytes)
             .map_err(|error| PrivateBazaarWorkerError::io("write receipt spool", error))?;
         file.sync_all()
             .map_err(|error| PrivateBazaarWorkerError::io("sync receipt spool append", error))?;
-        ensure_private_file(&self.path)?;
+        validate_private_file_handle(
+            &self.file,
+            self.path
+                .parent()
+                .ok_or(PrivateBazaarWorkerError::Corrupt("receipt spool parent"))?,
+        )?;
+        self.revalidate_path_identity()?;
         Ok(())
     }
 
@@ -219,6 +263,7 @@ impl PrivateBazaarReceiptSpool {
                 max: MAX_POLL_BATCH,
             });
         }
+        self.revalidate_path_identity()?;
         let count = self.record_count()?;
         if after > count {
             return Err(PrivateBazaarWorkerError::SpoolCursorAhead { after, last: count });
@@ -255,10 +300,12 @@ impl PrivateBazaarReceiptSpool {
             previous_checksum = record.checksum;
             events.push(record.event);
         }
+        self.revalidate_path_identity()?;
         Ok(events)
     }
 
     fn validate_complete_chain(&self) -> Result<(), PrivateBazaarWorkerError> {
+        self.revalidate_path_identity()?;
         let count = self.record_count()?;
         let mut previous_checksum = [0; 32];
         for position in 0..count {
@@ -277,17 +324,16 @@ impl PrivateBazaarReceiptSpool {
             }
             previous_checksum = record.checksum;
         }
+        self.revalidate_path_identity()?;
         Ok(())
     }
 
     fn record_count(&self) -> Result<u64, PrivateBazaarWorkerError> {
-        let metadata = fs::metadata(&self.path)
+        let metadata = self
+            .file
+            .metadata()
             .map_err(|error| PrivateBazaarWorkerError::io("stat receipt spool", error))?;
-        if !metadata.is_file() {
-            return Err(PrivateBazaarWorkerError::Corrupt(
-                "receipt spool is not a regular file",
-            ));
-        }
+        validate_spool_metadata(&metadata, self.path.parent())?;
         let record_len = SPOOL_RECORD_LEN as u64;
         let trailing = metadata.len() % record_len;
         if trailing != 0 {
@@ -303,8 +349,10 @@ impl PrivateBazaarReceiptSpool {
         let offset = position
             .checked_mul(SPOOL_RECORD_LEN as u64)
             .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
-        let mut file = File::open(&self.path)
-            .map_err(|error| PrivateBazaarWorkerError::io("read receipt spool", error))?;
+        let mut file = self
+            .file
+            .try_clone()
+            .map_err(|error| PrivateBazaarWorkerError::io("clone receipt spool", error))?;
         file.seek(SeekFrom::Start(offset))
             .map_err(|error| PrivateBazaarWorkerError::io("seek receipt spool", error))?;
         let mut bytes = vec![0; SPOOL_RECORD_LEN];
@@ -312,6 +360,27 @@ impl PrivateBazaarReceiptSpool {
             .map_err(|error| PrivateBazaarWorkerError::io("read receipt spool record", error))?;
         let record = decode_spool_record(&bytes)?;
         Ok((bytes, record))
+    }
+
+    fn revalidate_path_identity(&self) -> Result<(), PrivateBazaarWorkerError> {
+        let mut options = private_options();
+        options.read(true).write(false);
+        let found = options.open(&self.path).map_err(|error| {
+            PrivateBazaarWorkerError::io("reopen receipt spool identity", error)
+        })?;
+        validate_private_file_handle(
+            &found,
+            self.path
+                .parent()
+                .ok_or(PrivateBazaarWorkerError::Corrupt("receipt spool parent"))?,
+        )?;
+        if SpoolFileIdentity::from_file(&found)? != self.identity {
+            return Err(PrivateBazaarWorkerError::SpoolFileReplaced);
+        }
+        if SpoolFileIdentity::from_file(&self.file)? != self.identity {
+            return Err(PrivateBazaarWorkerError::SpoolFileReplaced);
+        }
+        Ok(())
     }
 }
 
@@ -1145,9 +1214,73 @@ fn private_options() -> OpenOptions {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(unix_no_follow_flag());
     }
     options
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const fn unix_no_follow_flag() -> i32 {
+    // O_NOFOLLOW from the Linux UAPI. Keeping the constant here avoids adding
+    // a full libc dependency to the frontend-neutral catalog crate.
+    0o400_000
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+const fn unix_no_follow_flag() -> i32 {
+    // O_NOFOLLOW on Darwin and the BSD family.
+    0x100
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))
+))]
+compile_error!("private Bazaar spool requires a reviewed O_NOFOLLOW value for this Unix target");
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SpoolFileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl SpoolFileIdentity {
+    fn from_file(file: &File) -> Result<Self, PrivateBazaarWorkerError> {
+        let metadata = file
+            .metadata()
+            .map_err(|error| PrivateBazaarWorkerError::io("stat pinned receipt spool", error))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Ok(Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = metadata;
+            Ok(Self {})
+        }
+    }
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
@@ -1160,20 +1293,71 @@ fn ensure_private_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError>
     Ok(())
 }
 
-fn ensure_private_file(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
+fn secure_private_file_handle(file: &File, parent: &Path) -> Result<(), PrivateBazaarWorkerError> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let initial = file
+            .metadata()
+            .map_err(|error| PrivateBazaarWorkerError::io("stat worker file mode", error))?;
+        validate_spool_metadata(&initial, Some(parent))?;
+        let parent_metadata = fs::metadata(parent)
+            .map_err(|error| PrivateBazaarWorkerError::io("stat worker directory owner", error))?;
+        if initial.uid() != parent_metadata.uid() {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "worker file owner differs from worker directory owner",
+            ));
+        }
+        file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|error| PrivateBazaarWorkerError::io("secure worker file", error))?;
-        let mode = fs::metadata(path)
-            .map_err(|error| PrivateBazaarWorkerError::io("stat worker file mode", error))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode != 0o600 {
+    }
+    validate_private_file_handle(file, parent)
+}
+
+fn validate_private_file_handle(
+    file: &File,
+    parent: &Path,
+) -> Result<(), PrivateBazaarWorkerError> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| PrivateBazaarWorkerError::io("stat worker file", error))?;
+    validate_spool_metadata(&metadata, Some(parent))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let parent_metadata = fs::metadata(parent)
+            .map_err(|error| PrivateBazaarWorkerError::io("stat worker directory owner", error))?;
+        if metadata.uid() != parent_metadata.uid() {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "worker file owner differs from worker directory owner",
+            ));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
             return Err(PrivateBazaarWorkerError::Corrupt(
                 "worker file permissions are not 0600",
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    validate_spool_metadata(&metadata, Some(parent))?;
+    Ok(())
+}
+
+fn validate_spool_metadata(
+    metadata: &fs::Metadata,
+    _parent: Option<&Path>,
+) -> Result<(), PrivateBazaarWorkerError> {
+    if !metadata.is_file() {
+        return Err(PrivateBazaarWorkerError::Corrupt(
+            "receipt spool is not a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool link count is not one",
             ));
         }
     }
@@ -1259,6 +1443,7 @@ pub enum PrivateBazaarWorkerError {
     SpoolTrailingBytes {
         found: u64,
     },
+    SpoolFileReplaced,
     CursorOverflow,
     UnfinalizedEvidence,
     UnsupportedReceiptField(&'static str),
@@ -1503,5 +1688,85 @@ mod tests {
     #[test]
     fn fixed_spool_v1_record_length_is_pinned() {
         assert_eq!(SPOOL_RECORD_LEN, 775);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fixed_spool_refuses_symlinks_hardlinks_and_path_replacement() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let symlink_temp = tempfile::tempdir().unwrap();
+        let symlink_root = symlink_temp.path().join("worker");
+        fs::create_dir_all(&symlink_root).unwrap();
+        let symlink_target = symlink_temp.path().join("attacker-target");
+        fs::write(&symlink_target, []).unwrap();
+        symlink(&symlink_target, symlink_root.join(SPOOL_FILE_NAME)).unwrap();
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open(&symlink_root),
+            Err(PrivateBazaarWorkerError::Io {
+                operation: "open receipt spool",
+                ..
+            })
+        ));
+
+        let hardlink_temp = tempfile::tempdir().unwrap();
+        let hardlink_root = hardlink_temp.path().join("worker");
+        fs::create_dir_all(&hardlink_root).unwrap();
+        let hardlink_target = hardlink_temp.path().join("attacker-target");
+        fs::write(&hardlink_target, []).unwrap();
+        fs::set_permissions(&hardlink_target, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::hard_link(&hardlink_target, hardlink_root.join(SPOOL_FILE_NAME)).unwrap();
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open(&hardlink_root),
+            Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool link count is not one"
+            ))
+        ));
+
+        let replace_temp = tempfile::tempdir().unwrap();
+        let replace_root = replace_temp.path().join("worker");
+        let mut spool = PrivateBazaarReceiptSpool::open(&replace_root).unwrap();
+        spool.append(1, 1, receipt(0x71)).unwrap();
+        let pinned_path = spool.path.clone();
+        let displaced = replace_root.join("displaced-spool");
+        fs::rename(&pinned_path, &displaced).unwrap();
+        fs::copy(&displaced, &pinned_path).unwrap();
+        assert!(matches!(
+            spool.poll_bounded(0, 1),
+            Err(PrivateBazaarWorkerError::SpoolFileReplaced)
+        ));
+        assert!(matches!(
+            spool.append(2, 2, receipt(0x72)),
+            Err(PrivateBazaarWorkerError::SpoolFileReplaced)
+        ));
+        assert_eq!(
+            fs::metadata(&pinned_path).unwrap().len(),
+            SPOOL_RECORD_LEN as u64
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fixed_spool_serializes_producers_on_the_pinned_inode() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("worker");
+        let locked = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        let mut writer = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        locked.file.lock().unwrap();
+        let (sent, received) = mpsc::channel();
+        let thread = thread::spawn(move || {
+            sent.send(writer.append(1, 1, receipt(0x73))).unwrap();
+        });
+        assert!(received.recv_timeout(Duration::from_millis(100)).is_err());
+        locked.file.unlock().unwrap();
+        received
+            .recv_timeout(Duration::from_secs(5))
+            .expect("writer resumes after pinned-inode lock release")
+            .unwrap();
+        thread.join().unwrap();
     }
 }
