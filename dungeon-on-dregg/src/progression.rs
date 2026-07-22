@@ -62,11 +62,14 @@
 use std::sync::Arc;
 
 use dregg_app_framework::{
-    CellProgram, Effect, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
+    CellProgram, Effect, Event, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
     field_from_u64, symbol,
 };
 use dregg_cell::program::SimpleStateConstraint;
+use dregg_turn::Finality;
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
+
+pub use spween_dregg::WorldCell as DungeonWorldCell;
 
 // ── The character cell's slot layout (we author the program directly) ────────────
 
@@ -121,6 +124,19 @@ pub fn xp_threshold(level: u64) -> u64 {
 
 /// The method a [`gain_xp`] turn presents (gated by [`StrictMonotonic`] on `xp`).
 pub const GAIN_XP_METHOD: &str = "hero/gain_xp";
+/// Dedicated executor method for one exact private-Bazaar reward.  The turn
+/// emits [`PRIVATE_BAZAAR_XP_EVENT`] with the operation id and exact XP delta,
+/// so a durable recovery path can distinguish this consequence from every
+/// other monotone XP turn without trusting a caller's description.
+pub const PRIVATE_BAZAAR_XP_METHOD: &str = "hero/gain_xp/private-bazaar/v1";
+pub const PRIVATE_BAZAAR_XP_EVENT: &str = "hero/event/private-bazaar-xp/v1";
+
+/// Canonical event symbol pinned by private-Bazaar deployment policy. Keeping
+/// this derivation beside the game vocabulary prevents frontends from
+/// reimplementing the string-to-symbol mapping.
+pub fn private_bazaar_xp_event_topic() -> [u8; 32] {
+    symbol(PRIVATE_BAZAAR_XP_EVENT)
+}
 /// The method a [`choose_class`] turn presents (the class-setting creation move).
 pub const CHOOSE_CLASS_METHOD: &str = "hero/choose_class";
 /// The method a HARDCORE death presents ([`perish`]): sets `dead = 1` under the global
@@ -196,6 +212,22 @@ pub fn hero_story() -> CompiledStory {
     cases.push(TransitionCase {
         guard: TransitionGuard::MethodIs {
             method: symbol(GAIN_XP_METHOD),
+        },
+        constraints: vec![
+            StateConstraint::StrictMonotonic { index: XP_SLOT },
+            StateConstraint::FieldEquals {
+                index: DEAD_SLOT,
+                value: field_from_u64(0),
+            },
+        ],
+    });
+
+    // Private Bazaar rewards have the same ledger invariant as an ordinary XP
+    // gain, but a distinct method identity.  Their exact operation id and
+    // reward opening are committed by an EmitEvent in the same executor turn.
+    cases.push(TransitionCase {
+        guard: TransitionGuard::MethodIs {
+            method: symbol(PRIVATE_BAZAAR_XP_METHOD),
         },
         constraints: vec![
             StateConstraint::StrictMonotonic { index: XP_SLOT },
@@ -412,6 +444,142 @@ pub fn gain_xp(world: &WorldCell, amount: u64) -> Result<TurnReceipt, WorldError
     )
 }
 
+/// Apply one exact, operation-addressed Dark Bazaar XP consequence.
+///
+/// `expected_before` is part of the prepared outbox intent.  A stale or replayed
+/// dispatch refuses before the executor runs; the caller cannot turn the same
+/// authorization into a second additive grant.  The event and the XP write are
+/// effects of the same cap-bounded turn and therefore share one signed/final
+/// receipt.
+pub fn gain_private_bazaar_xp(
+    world: &WorldCell,
+    operation_id: [u8; 32],
+    expected_before: u64,
+    amount: u64,
+) -> Result<TurnReceipt, WorldError> {
+    let observed = world.read_var("xp");
+    if observed != expected_before {
+        return Err(WorldError::Refused(format!(
+            "private Bazaar XP expected pre-value {expected_before}, observed {observed}"
+        )));
+    }
+    let expected_after = expected_before
+        .checked_add(amount)
+        .ok_or_else(|| WorldError::Refused("private Bazaar XP overflow".to_owned()))?;
+    let cell = world.cell_id();
+    world.apply_raw(
+        PRIVATE_BAZAAR_XP_METHOD,
+        vec![
+            Effect::SetField {
+                cell,
+                index: XP_SLOT as u64,
+                value: field_from_u64(expected_after),
+            },
+            Effect::EmitEvent {
+                cell,
+                event: Event::new(
+                    symbol(PRIVATE_BAZAAR_XP_EVENT),
+                    private_bazaar_event_data(
+                        operation_id,
+                        expected_before,
+                        amount,
+                        expected_after,
+                    ),
+                ),
+            },
+        ],
+    )
+}
+
+/// Verify that `receipt` is the finalized, executor-signed result of the exact
+/// dedicated reward turn.  This is the minting predicate for the Bazaar's
+/// opaque committed-effect authority immediately after dispatch.  Recovery of
+/// an older receipt uses [`verify_private_bazaar_xp_receipt_evidence`] instead:
+/// a later legitimate hero turn may have advanced the current XP head, but it
+/// cannot alter this signed historical receipt.
+pub fn verify_private_bazaar_xp_receipt(
+    world: &WorldCell,
+    receipt: &TurnReceipt,
+    executor_pubkey: [u8; 32],
+    expected_federation: [u8; 32],
+    operation_id: [u8; 32],
+    expected_before: u64,
+    amount: u64,
+) -> bool {
+    let Some(expected_after) = expected_before.checked_add(amount) else {
+        return false;
+    };
+    verify_private_bazaar_xp_receipt_evidence(
+        world,
+        receipt,
+        executor_pubkey,
+        expected_federation,
+        operation_id,
+        expected_before,
+        amount,
+    ) && world.read_var("xp") == expected_after
+}
+
+/// Verify the immutable evidence in one historical Bazaar XP receipt without
+/// requiring that receipt's post-state to remain the world's current head.
+///
+/// This is recovery-only evidence: the caller must obtain `receipt` from the
+/// target world's authoritative receipt chain.  The immediate dispatch path
+/// must use [`verify_private_bazaar_xp_receipt`], which additionally checks the
+/// live postcondition before recording `Applied`.
+pub fn verify_private_bazaar_xp_receipt_evidence(
+    world: &WorldCell,
+    receipt: &TurnReceipt,
+    executor_pubkey: [u8; 32],
+    expected_federation: [u8; 32],
+    operation_id: [u8; 32],
+    expected_before: u64,
+    amount: u64,
+) -> bool {
+    let Some(expected_after) = expected_before.checked_add(amount) else {
+        return false;
+    };
+    let expected_data =
+        private_bazaar_event_data(operation_id, expected_before, amount, expected_after);
+    receipt.finality == Finality::Final
+        && receipt.federation_id == expected_federation
+        && receipt.action_count == 1
+        && receipt.turn_hash != [0; 32]
+        && receipt.effects_hash != [0; 32]
+        && receipt.pre_state_hash != receipt.post_state_hash
+        && receipt.executor_signature.is_some()
+        && dregg_turn::verify_receipt_signature_with_keys(receipt, &[executor_pubkey]).is_ok()
+        && receipt.emitted_events.iter().any(|event| {
+            event.cell == world.cell_id()
+                && event.topic == symbol(PRIVATE_BAZAAR_XP_EVENT)
+                && event.data == expected_data
+        })
+        && receipt
+            .emitted_events
+            .iter()
+            .filter(|event| event.topic == symbol(PRIVATE_BAZAAR_XP_EVENT))
+            .count()
+            == 1
+}
+
+fn private_bazaar_event_data(
+    operation_id: [u8; 32],
+    expected_before: u64,
+    amount: u64,
+    expected_after: u64,
+) -> Vec<dregg_app_framework::FieldElement> {
+    let mut data = Vec::with_capacity(11);
+    for chunk in operation_id.chunks_exact(4) {
+        data.push(field_from_u64(u32::from_be_bytes(
+            chunk.try_into().expect("four-byte operation-id lane"),
+        ) as u64));
+    }
+    data.push(field_from_u64(expected_before));
+    data.push(field_from_u64(amount));
+    data.push(field_from_u64(expected_after));
+    data
+}
+
 /// **Level up by one** — a real turn under `level_up_to_(current+1)`. Writes `level` to
 /// the next level; the executor GATES it on `FieldGte(xp, xp_threshold(next))`. Without
 /// the earned XP the kernel REFUSES the turn (a real [`WorldError::Refused`]) and nothing
@@ -550,6 +718,74 @@ mod tests {
         assert_eq!(
             r2.pre_state_hash, r1.post_state_hash,
             "the XP-gain receipts chain (pre == prev.post)"
+        );
+    }
+
+    #[test]
+    fn private_bazaar_xp_is_exact_signed_final_and_recoverable_by_receipt() {
+        let world = deploy_hero(0xB4);
+        world.set_executor_signing_key([0xA7; 32]);
+        let executor_pubkey = world.executor_pubkey().expect("signer installed");
+        let operation_id = [0x51; 32];
+
+        let receipt =
+            gain_private_bazaar_xp(&world, operation_id, 0, 144).expect("the exact reward commits");
+        assert_eq!(world.read_var("xp"), 144);
+        assert!(verify_private_bazaar_xp_receipt(
+            &world,
+            &receipt,
+            executor_pubkey,
+            world.federation_id(),
+            operation_id,
+            0,
+            144,
+        ));
+        assert!(!verify_private_bazaar_xp_receipt(
+            &world,
+            &receipt,
+            executor_pubkey,
+            world.federation_id(),
+            operation_id,
+            0,
+            145,
+        ));
+        assert_eq!(
+            world
+                .receipt_by_hash(receipt.receipt_hash())
+                .expect("authoritative receipt lookup")
+                .receipt_hash(),
+            receipt.receipt_hash()
+        );
+
+        let replay = gain_private_bazaar_xp(&world, operation_id, 0, 144);
+        assert!(
+            matches!(replay, Err(WorldError::Refused(_))),
+            "the prepared absolute pre-state makes a second additive grant impossible"
+        );
+        assert_eq!(world.read_var("xp"), 144);
+
+        gain_xp(&world, 1).expect("a later legitimate hero turn advances the head");
+        assert_eq!(world.read_var("xp"), 145);
+        assert!(verify_private_bazaar_xp_receipt_evidence(
+            &world,
+            &receipt,
+            executor_pubkey,
+            world.federation_id(),
+            operation_id,
+            0,
+            144,
+        ));
+        assert!(
+            !verify_private_bazaar_xp_receipt(
+                &world,
+                &receipt,
+                executor_pubkey,
+                world.federation_id(),
+                operation_id,
+                0,
+                144,
+            ),
+            "the immediate verifier intentionally requires the receipt post-state to remain head"
         );
     }
 

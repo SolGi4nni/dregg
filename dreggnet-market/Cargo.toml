@@ -13,7 +13,7 @@ certified-clearing = ["dep:dregg-circuit-prove", "dep:fhegg-solver"]
 # Fixed N=4,K=4 private-book relation: a Plonky3 HidingFriPcs proof gates the
 # existing executor-backed SETTLE path.  Kept separate from `certified-clearing`
 # because it consumes neither the public Cert-F program nor fhegg-solver.
-private-clearing = ["dep:dregg-circuit-prove"]
+private-clearing = ["dep:dregg-circuit-prove", "dep:dungeon-on-dregg"]
 # One canonical receipt must pass both the fixed private-book HidingFRI proof
 # and the exact authenticated roster quorum. This composes the two existing
 # opt-in towers without pulling the public Cert-F book.
@@ -103,6 +103,7 @@ dreggnet-trade = { path = "../dreggnet-trade" }
 # factory-birth path (`create_from_factory` + `FactoryCreationParams`). `default-features = false`
 # takes the executor/turn core (no gpui), matching dreggnet-offerings.
 dregg-app-framework = { path = "../app-framework", default-features = false }
+dregg-turn = { path = "../turn" }
 # `FactoryCreationParams` / `CellState` / `CellMode` — the factory-birth parameters and the live
 # cell state the phase precondition reads. `default-features = false` matches the substrate crate.
 dregg-cell = { path = "../cell", default-features = false }
@@ -117,6 +118,7 @@ blake3 = "1"
 # The opt-in Dark Bazaar receipt path.  `dregg-circuit-prove` mints the hiding
 # Cert-F batch STARK; `fhegg-solver` supplies the deterministic clearing wire.
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+dungeon-on-dregg = { path = "../dungeon-on-dregg", optional = true }
 fhegg-solver = { path = "../fhegg-solver", optional = true }
 fhegg-fhe = { path = "../fhegg-fhe", optional = true }
 fhe = { version = "0.1.1", optional = true }
@@ -128,7 +130,6 @@ ed25519-dalek = { version = "2", features = ["std"], optional = true }
 [dev-dependencies]
 rand = "0.8"
 dregg-sdk = { path = "../sdk" }
-dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 procgen-dregg = { path = "../procgen-dregg" }
 # Full-apex game consequence: the market's strict private proof result is
 # consumed through the incarnation-bound common game spine. Dev-only avoids a

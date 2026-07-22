@@ -1,27 +1,20 @@
-//! A playable, viewer-blind shell around the private Dark Bazaar raid path.
+//! Viewer-blind public journey for a private Dark Bazaar game consequence.
 //!
-//! The cryptographic and game-authority work remains in the existing modules:
-//! `private_clearing` verifies the hiding proof and lands the real market clear,
-//! `private_clearing_guild_allocation` binds its private winner to an exact
-//! existing-character roster, and `private_clearing_consequence` lets that
-//! result authorize exactly one real executor turn. This module supplies the
-//! piece those backend APIs deliberately did not: one frontend-neutral player
-//! journey that a browser, Discord, Telegram, or WeChat adapter can render.
+//! This module is deliberately presentation and deployment policy, not an
+//! alternate authorization system.  A player can only submit the fixed,
+//! payload-free `enter` and `refresh` actions.  The server binds that public
+//! shell to:
 //!
-//! The adapter-facing contract contains only:
-//! * fixed, payload-free [`Action`]s (`enter` and `refresh`);
-//! * a [`Surface`] derived without a viewer identity; and
-//! * a public pending/settled receipt containing commitments and landed turn
-//!   hashes, never bids, reserve, winner, roster members, proof bytes, witness,
-//!   selected character, or reward-opening material.
+//! * a full market-instance digest (deployment, listing cell, seller, reserve,
+//!   deterministic seed), rather than the relation's 32-bit field element;
+//! * a deployment-owned roster and reward pin loaded independently from the
+//!   runtime values; and
+//! * a structural pending-or-settled receipt whose constructors are private.
 //!
-//! Constructing a public receipt is not authorization. Under the
-//! `private-clearing` feature, only [`PrivateBazaarRaidJourney::settle_verified`]
-//! crosses from a verified private receipt into a target game's real turn.
-//! This does not upgrade the fixed-book producer to house-blind operation:
-//! `prepare_private_clearing_zk` still sees the order witness in its process.
-//! A live fhEgg/BFV deployment can feed the same public journey after its
-//! stronger source/attestation boundary is welded to this consequence API.
+//! The sibling `private_bazaar_authority` module owns prepare-before-dispatch,
+//! durable source-use reservation, executor receipt/finality verification, and
+//! minting the opaque committed-effect authority.  A public receipt is never an
+//! authorization capability.
 
 use deos_view::ViewNode;
 use dreggnet_offerings::{Action, Surface};
@@ -29,15 +22,16 @@ use dreggnet_offerings::{Action, Surface};
 pub const TURN_ENTER_PRIVATE_BAZAAR: &str = "enter-private-bazaar";
 pub const TURN_REFRESH_PRIVATE_BAZAAR: &str = "refresh-private-bazaar";
 
+const JOURNEY_DOMAIN: &str = "dreggnet-market/private-bazaar-player-journey/v2";
 #[cfg(feature = "private-clearing")]
-const JOURNEY_DOMAIN: &str = "dreggnet-market/private-bazaar-player-journey/v1";
+const MARKET_INSTANCE_DOMAIN: &str = "dreggnet-market/private-bazaar-market-instance/v2";
 #[cfg(feature = "private-clearing")]
-const REWARD_DOMAIN: &str = "dreggnet-market/private-bazaar-public-reward/v1";
+const POLICY_DOMAIN: &str = "dreggnet-market/private-bazaar-deployment-policy/v1";
+#[cfg(feature = "private-clearing")]
+const REWARD_DOMAIN: &str = "dreggnet-market/private-bazaar-public-reward/v2";
 
-/// The complete semantic action vocabulary accepted from public game surfaces.
-/// Neither variant can transport a bid, reserve, witness, identity, or arbitrary
-/// bytes. Those values enter only through their owning authenticated/private
-/// protocols.
+/// Complete public action vocabulary.  Neither action can transport a bid,
+/// witness, identity, proof, target, reward, or arbitrary bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrivateBazaarPublicAction {
     Enter,
@@ -45,7 +39,6 @@ pub enum PrivateBazaarPublicAction {
 }
 
 impl PrivateBazaarPublicAction {
-    /// Encode into the one action type every `OfferingHost` frontend consumes.
     pub fn offering_action(self) -> Action {
         match self {
             Self::Enter => Action::new(
@@ -63,9 +56,6 @@ impl PrivateBazaarPublicAction {
         }
     }
 
-    /// Decode a shared frontend action, refusing every payload-bearing or
-    /// noncanonical shape. Labels are presentation and are intentionally not an
-    /// authority input; the fixed `(turn, arg, text)` carrier is.
     pub fn from_offering_action(action: &Action) -> Result<Self, PrivateBazaarJourneyError> {
         if action.arg != 0 || action.text.is_some() || action.wants_text {
             return Err(PrivateBazaarJourneyError::PublicActionCarriesPayload);
@@ -93,127 +83,261 @@ impl PrivateBazaarPublicPhase {
     }
 }
 
-/// The same public result is safe to place in a shared channel or return to any
-/// browser viewer. It deliberately has no actor/viewer field and no selected
-/// member, winner, bid, price, reserve, proof, ciphertext, or witness field.
-/// The roster/reward digests are binding public identifiers, not hiding
-/// commitments; no privacy claim relies on their preimage resistance against a
-/// small, guessable policy space.
+/// Fields common to both receipt variants.  All fields are private so callers
+/// cannot manufacture a contradictory phase/field combination with a struct
+/// literal.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrivateBazaarPublicReceipt {
-    pub journey_id: [u8; 32],
-    pub phase: PrivateBazaarPublicPhase,
-    pub participant_count: u32,
-    pub roster_commitment: [u8; 32],
-    pub reward_commitment: [u8; 32],
-    pub proof_session: Option<u32>,
-    pub input_root: Option<[u32; 8]>,
-    pub consequence_id: Option<[u8; 32]>,
-    pub settlement_turn_hash: Option<[u8; 32]>,
-    pub game_turn_hash: Option<[u8; 32]>,
-    pub game_state_root: Option<[u8; 32]>,
+pub(crate) struct PrivateBazaarPublicContext {
+    journey_id: [u8; 32],
+    market_instance_id: [u8; 32],
+    policy_id: [u8; 32],
+    participant_count: u32,
+    roster_commitment: [u8; 32],
+    reward_commitment: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateBazaarPendingReceipt {
+    context: PrivateBazaarPublicContext,
+}
+
+/// A settled receipt cannot exist without every committed field.  This removes
+/// the earlier public `{ phase, Option<_>, ... }` shape in which a caller could
+/// construct `Settled` with missing evidence (or `Pending` with landed hashes).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateBazaarSettledReceipt {
+    context: PrivateBazaarPublicContext,
+    source_use_id: [u8; 32],
+    operation_id: [u8; 32],
+    proof_session: u32,
+    input_root: [u32; 8],
+    settlement_turn_hash: [u8; 32],
+    game_receipt_hash: [u8; 32],
+    game_turn_hash: [u8; 32],
+    game_post_state: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrivateBazaarPublicReceipt {
+    Pending(PrivateBazaarPendingReceipt),
+    Settled(PrivateBazaarSettledReceipt),
 }
 
 impl PrivateBazaarPublicReceipt {
-    /// Build the shared pending projection. This is presentation state, not a
-    /// proof or authorization constructor.
-    pub fn pending(
-        journey_id: [u8; 32],
-        participant_count: u32,
-        roster_commitment: [u8; 32],
-        reward_commitment: [u8; 32],
-    ) -> Self {
-        Self {
-            journey_id,
-            phase: PrivateBazaarPublicPhase::Pending,
-            participant_count,
-            roster_commitment,
-            reward_commitment,
-            proof_session: None,
-            input_root: None,
-            consequence_id: None,
-            settlement_turn_hash: None,
-            game_turn_hash: None,
-            game_state_root: None,
+    fn pending(context: PrivateBazaarPublicContext) -> Self {
+        Self::Pending(PrivateBazaarPendingReceipt { context })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn settled(
+        context: PrivateBazaarPublicContext,
+        source_use_id: [u8; 32],
+        operation_id: [u8; 32],
+        proof_session: u32,
+        input_root: [u32; 8],
+        settlement_turn_hash: [u8; 32],
+        game_receipt_hash: [u8; 32],
+        game_turn_hash: [u8; 32],
+        game_post_state: [u8; 32],
+    ) -> Result<Self, PrivateBazaarJourneyError> {
+        if [
+            source_use_id,
+            operation_id,
+            settlement_turn_hash,
+            game_receipt_hash,
+            game_turn_hash,
+            game_post_state,
+        ]
+        .contains(&[0; 32])
+            || input_root == [0; 8]
+        {
+            return Err(PrivateBazaarJourneyError::InvalidCommittedAuthority);
+        }
+        Ok(Self::Settled(PrivateBazaarSettledReceipt {
+            context,
+            source_use_id,
+            operation_id,
+            proof_session,
+            input_root,
+            settlement_turn_hash,
+            game_receipt_hash,
+            game_turn_hash,
+            game_post_state,
+        }))
+    }
+
+    fn context(&self) -> &PrivateBazaarPublicContext {
+        match self {
+            Self::Pending(receipt) => &receipt.context,
+            Self::Settled(receipt) => &receipt.context,
         }
     }
 
-    /// Public fields suitable for the existing web/chat binary-operation
-    /// receipt allowlists. Values are commitments or already-public proof/turn
-    /// outputs; private openings are not retained by this type.
+    pub const fn phase(&self) -> PrivateBazaarPublicPhase {
+        match self {
+            Self::Pending(_) => PrivateBazaarPublicPhase::Pending,
+            Self::Settled(_) => PrivateBazaarPublicPhase::Settled,
+        }
+    }
+
+    pub fn journey_id(&self) -> [u8; 32] {
+        self.context().journey_id
+    }
+
+    pub fn market_instance_id(&self) -> [u8; 32] {
+        self.context().market_instance_id
+    }
+
+    pub fn policy_id(&self) -> [u8; 32] {
+        self.context().policy_id
+    }
+
+    pub fn participant_count(&self) -> u32 {
+        self.context().participant_count
+    }
+
+    pub fn roster_commitment(&self) -> [u8; 32] {
+        self.context().roster_commitment
+    }
+
+    pub fn reward_commitment(&self) -> [u8; 32] {
+        self.context().reward_commitment
+    }
+
+    pub fn source_use_id(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.source_use_id),
+        }
+    }
+
+    pub fn operation_id(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.operation_id),
+        }
+    }
+
+    pub fn proof_session(&self) -> Option<u32> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.proof_session),
+        }
+    }
+
+    pub fn input_root(&self) -> Option<[u32; 8]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.input_root),
+        }
+    }
+
+    pub fn settlement_turn_hash(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.settlement_turn_hash),
+        }
+    }
+
+    pub fn game_receipt_hash(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.game_receipt_hash),
+        }
+    }
+
+    pub fn game_post_state(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.game_post_state),
+        }
+    }
+
+    pub fn game_turn_hash(&self) -> Option<[u8; 32]> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Settled(receipt) => Some(receipt.game_turn_hash),
+        }
+    }
+
     pub fn public_fields(&self) -> Vec<(String, String)> {
+        let context = self.context();
         let mut fields = vec![
-            ("phase".to_owned(), self.phase.as_str().to_owned()),
-            ("participant".to_owned(), self.participant_count.to_string()),
-            ("requestDigest".to_owned(), hex32(self.journey_id)),
+            ("phase".to_owned(), self.phase().as_str().to_owned()),
+            (
+                "participant".to_owned(),
+                context.participant_count.to_string(),
+            ),
+            ("requestDigest".to_owned(), hex32(context.journey_id)),
+            (
+                "marketInstanceDigest".to_owned(),
+                hex32(context.market_instance_id),
+            ),
+            ("policyDigest".to_owned(), hex32(context.policy_id)),
             (
                 "decisionBundleDigest".to_owned(),
-                hex32(self.roster_commitment),
+                hex32(context.roster_commitment),
             ),
             (
                 "decisionClaimDigest".to_owned(),
-                hex32(self.reward_commitment),
+                hex32(context.reward_commitment),
             ),
         ];
-        if let Some(session) = self.proof_session {
-            fields.push(("proofSession".to_owned(), session.to_string()));
-        }
-        if let Some(root) = self.input_root {
-            fields.push(("inputRoot".to_owned(), hex_felts(root)));
-        }
-        if let Some(id) = self.consequence_id {
-            fields.push(("statementDigest".to_owned(), hex32(id)));
-        }
-        if let Some(hash) = self.settlement_turn_hash {
-            fields.push(("proofDigest".to_owned(), hex32(hash)));
-        }
-        if let Some(hash) = self.game_turn_hash {
-            fields.push(("outcome".to_owned(), hex32(hash)));
-        }
-        if let Some(root) = self.game_state_root {
-            fields.push(("newRoot".to_owned(), hex32(root)));
+        if let Self::Settled(receipt) = self {
+            fields.extend([
+                ("sourceUseDigest".to_owned(), hex32(receipt.source_use_id)),
+                ("statementDigest".to_owned(), hex32(receipt.operation_id)),
+                ("proofSession".to_owned(), receipt.proof_session.to_string()),
+                ("inputRoot".to_owned(), hex_felts(receipt.input_root)),
+                (
+                    "proofDigest".to_owned(),
+                    hex32(receipt.settlement_turn_hash),
+                ),
+                ("outcome".to_owned(), hex32(receipt.game_receipt_hash)),
+                ("gameTurnDigest".to_owned(), hex32(receipt.game_turn_hash)),
+                ("newRoot".to_owned(), hex32(receipt.game_post_state)),
+            ]);
         }
         fields
     }
 
-    /// One viewer-blind deos tree. Both browser and chat adapters render this
-    /// exact [`Surface`] rather than rebuilding a Bazaar-specific DTO.
     pub fn surface(&self) -> Surface {
-        let state = match self.phase {
-            PrivateBazaarPublicPhase::Pending => vec![
+        let context = self.context();
+        let state = match self {
+            Self::Pending(_) => vec![
                 ViewNode::Text(
-                    "The party entered. Private inputs remain with their owning protocol while the public receipt is pending."
+                    "The party entered. Private inputs remain with their owning protocol while the executor receipt is pending."
                         .to_owned(),
                 ),
                 ViewNode::Text(format!(
                     "{} committed participants · roster {} · reward {}",
-                    self.participant_count,
-                    short_hex(self.roster_commitment),
-                    short_hex(self.reward_commitment),
+                    context.participant_count,
+                    short_hex(context.roster_commitment),
+                    short_hex(context.reward_commitment),
                 )),
             ],
-            PrivateBazaarPublicPhase::Settled => vec![
+            Self::Settled(receipt) => vec![
                 ViewNode::Text(
-                    "Settled: a verified private result caused one real game-engine turn."
+                    "Settled: one finalized, executor-authenticated private result caused one exact game effect."
                         .to_owned(),
                 ),
                 ViewNode::Text(format!(
-                    "input {} · consequence {} · game state {}",
-                    self.input_root.map(short_felts).unwrap_or_else(|| "missing".to_owned()),
-                    self.consequence_id.map(short_hex).unwrap_or_else(|| "missing".to_owned()),
-                    self.game_state_root.map(short_hex).unwrap_or_else(|| "missing".to_owned()),
+                    "source {} · operation {} · game state {}",
+                    short_hex(receipt.source_use_id),
+                    short_hex(receipt.operation_id),
+                    short_hex(receipt.game_post_state),
                 )),
             ],
         };
         Surface(ViewNode::Section {
-            title: format!("Dark Bazaar raid · {}", self.phase.as_str()),
-            tag: if self.phase == PrivateBazaarPublicPhase::Settled {
+            title: format!("Dark Bazaar raid · {}", self.phase().as_str()),
+            tag: if self.phase() == PrivateBazaarPublicPhase::Settled {
                 "good".to_owned()
             } else {
                 "accent".to_owned()
             },
             children: vec![
-                ViewNode::Text(format!("Public journey {}", short_hex(self.journey_id))),
+                ViewNode::Text(format!("Public journey {}", short_hex(context.journey_id))),
                 ViewNode::Section {
                     title: "Viewer-blind receipt".to_owned(),
                     tag: "muted".to_owned(),
@@ -224,7 +348,7 @@ impl PrivateBazaarPublicReceipt {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PrivateBazaarJourneyError {
     UnknownPublicAction,
     PublicActionCarriesPayload,
@@ -232,11 +356,12 @@ pub enum PrivateBazaarJourneyError {
     RefreshBeforeEnter,
     SettlementBeforeEnter,
     SettlementAlreadyApplied,
-    RecoveryRequired,
     MarketNotReady,
-    MissingGameStateRoot,
-    #[cfg(feature = "private-clearing")]
-    Source(crate::private_clearing_consequence::PrivateClearingConsequenceError),
+    InvalidDeploymentPin(&'static str),
+    RosterPinMismatch,
+    RewardPinMismatch,
+    MarketInstanceMismatch,
+    InvalidCommittedAuthority,
     #[cfg(feature = "private-clearing")]
     Allocation(crate::private_clearing_guild_allocation::PrivateClearingGuildAllocationError),
 }
@@ -250,15 +375,6 @@ impl std::fmt::Display for PrivateBazaarJourneyError {
 impl std::error::Error for PrivateBazaarJourneyError {}
 
 #[cfg(feature = "private-clearing")]
-impl From<crate::private_clearing_consequence::PrivateClearingConsequenceError>
-    for PrivateBazaarJourneyError
-{
-    fn from(error: crate::private_clearing_consequence::PrivateClearingConsequenceError) -> Self {
-        Self::Source(error)
-    }
-}
-
-#[cfg(feature = "private-clearing")]
 impl From<crate::private_clearing_guild_allocation::PrivateClearingGuildAllocationError>
     for PrivateBazaarJourneyError
 {
@@ -269,102 +385,276 @@ impl From<crate::private_clearing_guild_allocation::PrivateClearingGuildAllocati
     }
 }
 
-/// Server-side state for one public journey. Its roster and reward openings are
-/// intentionally absent from [`PrivateBazaarPublicReceipt`].
+/// Immutable values loaded from deployment configuration before a runtime
+/// roster/reward object is accepted.  A request cannot choose these values.
 #[cfg(feature = "private-clearing")]
-pub struct PrivateBazaarRaidJourney {
-    market_session: u32,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateBazaarDeploymentPin {
+    deployment_id: [u8; 32],
+    expected_roster_commitment: [u8; 32],
+    expected_reward_commitment: [u8; 32],
+    reward_method: String,
+    reward_event_topic: [u8; 32],
+    executor_pubkey: [u8; 32],
+    executor_federation: [u8; 32],
+}
+
+#[cfg(feature = "private-clearing")]
+impl PrivateBazaarDeploymentPin {
+    pub fn new(
+        deployment_id: [u8; 32],
+        expected_roster_commitment: [u8; 32],
+        expected_reward_commitment: [u8; 32],
+        reward_method: impl Into<String>,
+        reward_event_topic: [u8; 32],
+        executor_pubkey: [u8; 32],
+        executor_federation: [u8; 32],
+    ) -> Result<Self, PrivateBazaarJourneyError> {
+        let reward_method = reward_method.into();
+        if deployment_id == [0; 32] {
+            return Err(PrivateBazaarJourneyError::InvalidDeploymentPin(
+                "zero deployment id",
+            ));
+        }
+        if expected_roster_commitment == [0; 32] || expected_reward_commitment == [0; 32] {
+            return Err(PrivateBazaarJourneyError::InvalidDeploymentPin(
+                "zero policy commitment",
+            ));
+        }
+        if reward_method.is_empty() || reward_method.len() > 256 || reward_event_topic == [0; 32] {
+            return Err(PrivateBazaarJourneyError::InvalidDeploymentPin(
+                "invalid reward method or event topic",
+            ));
+        }
+        if executor_pubkey == [0; 32] || executor_federation == [0; 32] {
+            return Err(PrivateBazaarJourneyError::InvalidDeploymentPin(
+                "zero executor authority",
+            ));
+        }
+        Ok(Self {
+            deployment_id,
+            expected_roster_commitment,
+            expected_reward_commitment,
+            reward_method,
+            reward_event_topic,
+            executor_pubkey,
+            executor_federation,
+        })
+    }
+
+    pub const fn deployment_id(&self) -> [u8; 32] {
+        self.deployment_id
+    }
+
+    pub const fn expected_roster_commitment(&self) -> [u8; 32] {
+        self.expected_roster_commitment
+    }
+
+    pub const fn expected_reward_commitment(&self) -> [u8; 32] {
+        self.expected_reward_commitment
+    }
+
+    pub fn reward_method(&self) -> &str {
+        &self.reward_method
+    }
+
+    pub const fn reward_event_topic(&self) -> [u8; 32] {
+        self.reward_event_topic
+    }
+
+    pub const fn executor_pubkey(&self) -> [u8; 32] {
+        self.executor_pubkey
+    }
+
+    pub const fn executor_federation(&self) -> [u8; 32] {
+        self.executor_federation
+    }
+}
+
+/// Runtime policy only after its roster and reward independently match the
+/// deployment pins.  The journey accepts this opaque validated object, never a
+/// caller-supplied `(value, expected_digest_of_that_same_value)` pair.
+#[cfg(feature = "private-clearing")]
+#[derive(Clone, Debug)]
+pub struct PrivateBazaarRaidPolicy {
+    pin: PrivateBazaarDeploymentPin,
     roster: crate::private_clearing_guild_allocation::GuildRoster,
     reward: crate::private_clearing_guild_allocation::GuildReward,
-    journey_id: [u8; 32],
-    reward_commitment: [u8; 32],
+    policy_id: [u8; 32],
+}
+
+#[cfg(feature = "private-clearing")]
+impl PrivateBazaarRaidPolicy {
+    pub fn load(
+        pin: PrivateBazaarDeploymentPin,
+        roster: crate::private_clearing_guild_allocation::GuildRoster,
+        reward: crate::private_clearing_guild_allocation::GuildReward,
+    ) -> Result<Self, PrivateBazaarJourneyError> {
+        if roster.digest() != pin.expected_roster_commitment {
+            return Err(PrivateBazaarJourneyError::RosterPinMismatch);
+        }
+        if reward_commitment(&reward.kind, reward.amount) != pin.expected_reward_commitment {
+            return Err(PrivateBazaarJourneyError::RewardPinMismatch);
+        }
+        let policy_id = policy_id(&pin);
+        Ok(Self {
+            pin,
+            roster,
+            reward,
+            policy_id,
+        })
+    }
+
+    pub const fn policy_id(&self) -> [u8; 32] {
+        self.policy_id
+    }
+
+    pub fn roster(&self) -> &crate::private_clearing_guild_allocation::GuildRoster {
+        &self.roster
+    }
+
+    pub fn reward(&self) -> &crate::private_clearing_guild_allocation::GuildReward {
+        &self.reward
+    }
+
+    pub fn pin(&self) -> &PrivateBazaarDeploymentPin {
+        &self.pin
+    }
+
+    pub(crate) fn allocation_for_verified_receipt(
+        &self,
+        receipt: &crate::private_clearing::PrivateClearingReceipt,
+    ) -> Result<
+        crate::private_clearing_guild_allocation::PrivateClearingGuildAllocation,
+        PrivateBazaarJourneyError,
+    > {
+        let source = crate::private_clearing_consequence::PrivateClearingConsequenceSource::from_verified_receipt(receipt)
+            .map_err(|_| PrivateBazaarJourneyError::InvalidCommittedAuthority)?;
+        Ok(
+            crate::private_clearing_guild_allocation::PrivateClearingGuildAllocation::new(
+                source,
+                self.roster.clone(),
+                self.pin.expected_roster_commitment,
+                self.reward.clone(),
+            )?,
+        )
+    }
+
+    /// Offline/deployment tooling helper. Runtime code should load the returned
+    /// digest from independent configuration, not recompute it from a request.
+    pub fn reward_commitment_for_configuration(
+        reward: &crate::private_clearing_guild_allocation::GuildReward,
+    ) -> [u8; 32] {
+        reward_commitment(&reward.kind, reward.amount)
+    }
+}
+
+/// Full stable identity of one market listing under one deployment.
+#[cfg(feature = "private-clearing")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrivateBazaarMarketIdentity {
+    digest: [u8; 32],
+    proof_session: u32,
+}
+
+#[cfg(feature = "private-clearing")]
+impl PrivateBazaarMarketIdentity {
+    pub(crate) fn from_session(
+        session: &crate::DarkBazaarSession,
+        deployment_id: [u8; 32],
+    ) -> Result<Self, PrivateBazaarJourneyError> {
+        let market = &session.market;
+        let auction_cell = market
+            .auction_cell
+            .ok_or(PrivateBazaarJourneyError::MarketNotReady)?;
+        let seller = market
+            .seller
+            .as_ref()
+            .ok_or(PrivateBazaarJourneyError::MarketNotReady)?;
+        let mut hasher = blake3::Hasher::new_derive_key(MARKET_INSTANCE_DOMAIN);
+        hasher.update(&deployment_id);
+        hasher.update(auction_cell.as_bytes());
+        hasher.update(&market.seed.to_be_bytes());
+        hasher.update(&market.reserve.to_be_bytes());
+        hasher.update(&(seller.0.len() as u64).to_be_bytes());
+        hasher.update(seller.0.as_bytes());
+        Ok(Self {
+            digest: *hasher.finalize().as_bytes(),
+            proof_session: session.private_proof_session(),
+        })
+    }
+
+    pub const fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    pub const fn proof_session(&self) -> u32 {
+        self.proof_session
+    }
+}
+
+/// Per-host public shell. Exactly-once authority is intentionally not stored in
+/// this object; all journey instances converge on the sibling durable authority
+/// store by full source/operation id.
+#[cfg(feature = "private-clearing")]
+pub struct PrivateBazaarRaidJourney {
+    market: PrivateBazaarMarketIdentity,
+    policy: PrivateBazaarRaidPolicy,
+    context: PrivateBazaarPublicContext,
     receipt: Option<PrivateBazaarPublicReceipt>,
-    recovery_only: bool,
 }
 
 #[cfg(feature = "private-clearing")]
 impl PrivateBazaarRaidJourney {
-    /// Bind an existing market session to an existing game roster and a
-    /// product-selected reward. The market must already have a listing and must
-    /// still be awaiting its private clear.
     pub fn new(
         session: &crate::DarkBazaarSession,
-        roster: crate::private_clearing_guild_allocation::GuildRoster,
-        reward: crate::private_clearing_guild_allocation::GuildReward,
+        policy: PrivateBazaarRaidPolicy,
     ) -> Result<Self, PrivateBazaarJourneyError> {
         if !session.is_listed() || session.is_settled() {
             return Err(PrivateBazaarJourneyError::MarketNotReady);
         }
-        Ok(Self::bound(session, roster, reward, false))
-    }
-
-    /// Reconstruct the exact pending public journey after a process restart in
-    /// the narrow window where the target game's turn committed but the public
-    /// settled receipt did not. Recovery still requires an independently
-    /// observed [`PrivateClearingCommittedObservation`](crate::private_clearing_consequence::PrivateClearingCommittedObservation);
-    /// this constructor does not mark a consequence settled by itself.
-    pub fn resume_pending(
-        session: &crate::DarkBazaarSession,
-        roster: crate::private_clearing_guild_allocation::GuildRoster,
-        reward: crate::private_clearing_guild_allocation::GuildReward,
-    ) -> Result<Self, PrivateBazaarJourneyError> {
-        if !session.is_listed() || !session.is_settled() {
-            return Err(PrivateBazaarJourneyError::MarketNotReady);
-        }
-        Ok(Self::bound(session, roster, reward, true))
-    }
-
-    fn bound(
-        session: &crate::DarkBazaarSession,
-        roster: crate::private_clearing_guild_allocation::GuildRoster,
-        reward: crate::private_clearing_guild_allocation::GuildReward,
-        pending: bool,
-    ) -> Self {
-        let market_session = session.private_proof_session();
-        let reward_commitment = reward_commitment(&reward.kind, reward.amount);
-        let journey_id = journey_id(
-            market_session,
-            roster.digest(),
-            reward_commitment,
-            roster.ordered_members().len() as u32,
-        );
-        let receipt = pending.then(|| {
-            PrivateBazaarPublicReceipt::pending(
-                journey_id,
-                roster.ordered_members().len() as u32,
-                roster.digest(),
-                reward_commitment,
-            )
-        });
-        Self {
-            market_session,
-            roster,
-            reward,
+        let market = PrivateBazaarMarketIdentity::from_session(session, policy.pin.deployment_id)?;
+        let participant_count = u32::try_from(policy.roster.ordered_members().len())
+            .map_err(|_| PrivateBazaarJourneyError::InvalidDeploymentPin("roster length"))?;
+        let journey_id = journey_id(market.digest, policy.policy_id, participant_count);
+        let context = PrivateBazaarPublicContext {
             journey_id,
-            reward_commitment,
-            receipt,
-            // `resume_pending` exists specifically for the post-game/public-
-            // receipt crash window. It must never redispatch the game turn.
-            recovery_only: pending,
-        }
+            market_instance_id: market.digest,
+            policy_id: policy.policy_id,
+            participant_count,
+            roster_commitment: policy.pin.expected_roster_commitment,
+            reward_commitment: policy.pin.expected_reward_commitment,
+        };
+        Ok(Self {
+            market,
+            policy,
+            context,
+            receipt: None,
+        })
     }
 
     pub fn actions(&self) -> Vec<Action> {
-        let semantic = if self.receipt.is_none() {
-            PrivateBazaarPublicAction::Enter
+        if self.receipt.is_none() {
+            vec![PrivateBazaarPublicAction::Enter.offering_action()]
         } else {
-            PrivateBazaarPublicAction::Refresh
-        };
-        vec![semantic.offering_action()]
+            // Refresh is a read-controller verb. OfferingHost advances are
+            // journaled mutations and must not fabricate a receipt for a read.
+            Vec::new()
+        }
     }
 
     pub fn receipt(&self) -> Option<&PrivateBazaarPublicReceipt> {
         self.receipt.as_ref()
     }
 
-    /// Apply only the payload-free public action grammar. Entering publishes a
-    /// pending commitment receipt; refresh is a pure read and cannot alter the
-    /// market, proof, or target game.
+    pub fn market_identity(&self) -> PrivateBazaarMarketIdentity {
+        self.market
+    }
+
+    pub fn policy(&self) -> &PrivateBazaarRaidPolicy {
+        &self.policy
+    }
+
     pub fn advance_public(
         &mut self,
         action: &Action,
@@ -374,12 +664,7 @@ impl PrivateBazaarRaidJourney {
                 if self.receipt.is_some() {
                     return Err(PrivateBazaarJourneyError::EnterAlreadySubmitted);
                 }
-                self.receipt = Some(PrivateBazaarPublicReceipt::pending(
-                    self.journey_id,
-                    self.roster.ordered_members().len() as u32,
-                    self.roster.digest(),
-                    self.reward_commitment,
-                ));
+                self.receipt = Some(PrivateBazaarPublicReceipt::pending(self.context.clone()));
             }
             PrivateBazaarPublicAction::Refresh => {
                 if self.receipt.is_none() {
@@ -390,196 +675,87 @@ impl PrivateBazaarRaidJourney {
         Ok(self.receipt.as_ref().expect("enter or existing receipt"))
     }
 
-    /// Consume a verified private clearing and apply exactly one real turn to
-    /// the selected existing character. The callback receives the selected
-    /// server-side roster member and reward opening; neither is copied into the
-    /// public receipt.
-    pub fn settle_verified<F>(
-        &mut self,
-        session: &crate::DarkBazaarSession,
-        private_receipt: &crate::private_clearing::PrivateClearingReceipt,
-        game_turn: F,
-    ) -> Result<&PrivateBazaarPublicReceipt, PrivateBazaarJourneyError>
-    where
-        F: FnOnce(
-            &crate::private_clearing_guild_allocation::GuildMember,
-            &crate::private_clearing_guild_allocation::GuildReward,
-        ) -> Result<dregg_app_framework::TurnReceipt, String>,
-    {
-        self.settle_verified_with_commit_hook(session, private_receipt, game_turn, |_| Ok(()))
-    }
-
-    /// Durable form of [`Self::settle_verified`]. After the target game turn is
-    /// committed and shape-checked, `after_game_commit` receives the exact
-    /// observation needed by [`Self::recover_verified`]. A hook error leaves
-    /// this public journey pending, so restart recovery can close the window
-    /// without dispatching the game turn again.
-    pub fn settle_verified_with_commit_hook<F, H>(
-        &mut self,
-        session: &crate::DarkBazaarSession,
-        private_receipt: &crate::private_clearing::PrivateClearingReceipt,
-        game_turn: F,
-        after_game_commit: H,
-    ) -> Result<&PrivateBazaarPublicReceipt, PrivateBazaarJourneyError>
-    where
-        F: FnOnce(
-            &crate::private_clearing_guild_allocation::GuildMember,
-            &crate::private_clearing_guild_allocation::GuildReward,
-        ) -> Result<dregg_app_framework::TurnReceipt, String>,
-        H: FnOnce(
-            crate::private_clearing_consequence::PrivateClearingCommittedObservation,
-        ) -> Result<(), String>,
-    {
-        self.require_pending(private_receipt)?;
-        if self.recovery_only {
-            return Err(PrivateBazaarJourneyError::RecoveryRequired);
-        }
-        let allocation = self.allocation(private_receipt)?;
-        let target = allocation.selected_member().character_cell;
-        let consequence_tag = allocation.consequence_tag();
-        let mut gate = allocation.consequence_gate();
-        let post_state = std::cell::Cell::new(None::<[u8; 32]>);
-        let consequence = match gate.apply_game_turn_with_commit_hook(
-            session,
-            private_receipt,
-            target,
-            || game_turn(allocation.selected_member(), allocation.reward()),
-            |consequence_id, receipt| {
-                post_state.set(Some(receipt.post_state_hash));
-                after_game_commit(
-                    crate::private_clearing_consequence::PrivateClearingCommittedObservation::new(
-                        consequence_id,
-                        target,
-                        consequence_tag,
-                        receipt.clone(),
-                    ),
-                )
-            },
-        ) {
-            Ok(consequence) => consequence,
-            Err(
-                error @ crate::private_clearing_consequence::PrivateClearingConsequenceError::ReplayCommitInterrupted(_),
-            ) => {
-                // The target turn is already committed. From this point on the
-                // only safe operation is exact observation/recovery; retrying
-                // the callback could apply the reward twice.
-                self.recovery_only = true;
-                return Err(error.into());
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let game_state_root = post_state
-            .get()
-            .ok_or(PrivateBazaarJourneyError::MissingGameStateRoot)?;
-        Ok(self.install_settled(consequence, game_state_root))
-    }
-
-    /// Recover a target game turn that committed before the public settled
-    /// receipt persisted. `observe` must query the target engine's durable
-    /// receipt/state index and return only an exact routing match; the existing
-    /// consequence gate performs the final id/target/tag and receipt checks.
-    pub fn recover_verified<O>(
-        &mut self,
-        session: &crate::DarkBazaarSession,
-        private_receipt: &crate::private_clearing::PrivateClearingReceipt,
-        observe: O,
-    ) -> Result<&PrivateBazaarPublicReceipt, PrivateBazaarJourneyError>
-    where
-        O: FnOnce(
-            [u8; 32],
-            dregg_app_framework::CellId,
-            crate::private_clearing_consequence::PrivateClearingConsequenceTag,
-        ) -> Result<
-            Option<crate::private_clearing_consequence::PrivateClearingCommittedObservation>,
-            String,
-        >,
-    {
-        self.require_pending(private_receipt)?;
-        let allocation = self.allocation(private_receipt)?;
-        let target = allocation.selected_member().character_cell;
-        let mut gate = allocation.consequence_gate();
-        let post_state = std::cell::Cell::new(None::<[u8; 32]>);
-        let consequence = gate.recover_committed_game_turn(
-            session,
-            private_receipt,
-            target,
-            |id, observed_target, tag| {
-                let observation = observe(id, observed_target, tag)?;
-                if let Some(committed) = observation.as_ref() {
-                    post_state.set(Some(committed.game_receipt().post_state_hash));
-                }
-                Ok(observation)
-            },
-        )?;
-        let game_state_root = post_state
-            .get()
-            .ok_or(PrivateBazaarJourneyError::MissingGameStateRoot)?;
-        Ok(self.install_settled(consequence, game_state_root))
-    }
-
-    fn require_pending(
+    pub(crate) fn require_pending(
         &self,
-        private_receipt: &crate::private_clearing::PrivateClearingReceipt,
+        session: &crate::DarkBazaarSession,
     ) -> Result<(), PrivateBazaarJourneyError> {
-        match self.receipt.as_ref().map(|receipt| receipt.phase) {
+        match self.receipt.as_ref().map(PrivateBazaarPublicReceipt::phase) {
             None => return Err(PrivateBazaarJourneyError::SettlementBeforeEnter),
             Some(PrivateBazaarPublicPhase::Settled) => {
                 return Err(PrivateBazaarJourneyError::SettlementAlreadyApplied);
             }
             Some(PrivateBazaarPublicPhase::Pending) => {}
         }
-        if private_receipt.statement.session != self.market_session {
-            return Err(PrivateBazaarJourneyError::MarketNotReady);
+        let live =
+            PrivateBazaarMarketIdentity::from_session(session, self.policy.pin.deployment_id)?;
+        if live != self.market {
+            return Err(PrivateBazaarJourneyError::MarketInstanceMismatch);
         }
         Ok(())
     }
 
-    fn allocation(
-        &self,
+    /// Publish one terminal viewer-blind receipt only after the durable store
+    /// has produced an opaque committed exact-effect authority.  Rejoining both
+    /// opaque values to the live market, private receipt, full market instance,
+    /// and deployment policy prevents a public caller from relabeling another
+    /// turn or constructing a settled receipt directly.
+    pub fn install_committed(
+        &mut self,
+        session: &crate::DarkBazaarSession,
         private_receipt: &crate::private_clearing::PrivateClearingReceipt,
-    ) -> Result<
-        crate::private_clearing_guild_allocation::PrivateClearingGuildAllocation,
-        PrivateBazaarJourneyError,
-    > {
-        let source = crate::private_clearing_consequence::PrivateClearingConsequenceSource::from_verified_receipt(private_receipt)?;
-        Ok(
-            crate::private_clearing_guild_allocation::PrivateClearingGuildAllocation::new(
-                source,
-                self.roster.clone(),
-                self.roster.digest(),
-                self.reward.clone(),
-            )?,
-        )
+        authority: &crate::private_bazaar_authority::PrivateBazaarExecutorAuthority,
+        committed: &crate::private_bazaar_authority::CommittedPrivateBazaarEffect,
+    ) -> Result<&PrivateBazaarPublicReceipt, PrivateBazaarJourneyError> {
+        self.require_pending(session)?;
+        if !authority.matches_source(session, private_receipt, self.market, &self.policy)
+            || !committed.matches_authority(authority)
+            || authority.market_instance_id() != self.market.digest
+            || authority.policy_id() != self.policy.policy_id
+            || committed.effect().reward_kind() != self.policy.reward.kind
+            || committed.effect().reward_amount() != self.policy.reward.amount
+        {
+            return Err(PrivateBazaarJourneyError::InvalidCommittedAuthority);
+        }
+        let receipt = PrivateBazaarPublicReceipt::settled(
+            self.context.clone(),
+            committed.source_use_id(),
+            committed.operation_id(),
+            private_receipt.statement.session,
+            private_receipt.statement.order_root,
+            private_receipt.settlement_turn.turn_hash,
+            committed.game_receipt_hash(),
+            committed.game_turn_hash(),
+            committed.game_post_state(),
+        )?;
+        self.install_settled(receipt)
     }
 
-    fn install_settled(
+    pub(crate) fn install_settled(
         &mut self,
-        consequence: crate::private_clearing_consequence::PrivateClearingConsequenceReceipt,
-        game_state_root: [u8; 32],
-    ) -> &PrivateBazaarPublicReceipt {
-        let (journey_id, participant_count, roster_commitment, reward_commitment) = {
-            let pending = self.receipt.as_ref().expect("checked pending");
-            (
-                pending.journey_id,
-                pending.participant_count,
-                pending.roster_commitment,
-                pending.reward_commitment,
-            )
-        };
-        self.receipt = Some(PrivateBazaarPublicReceipt {
-            journey_id,
-            phase: PrivateBazaarPublicPhase::Settled,
-            participant_count,
-            roster_commitment,
-            reward_commitment,
-            proof_session: Some(consequence.private_session),
-            input_root: Some(consequence.private_root),
-            consequence_id: Some(consequence.consequence_id),
-            settlement_turn_hash: Some(consequence.settlement_turn_hash),
-            game_turn_hash: Some(consequence.game_turn_hash),
-            game_state_root: Some(game_state_root),
-        });
-        self.receipt.as_ref().expect("settled receipt installed")
+        receipt: PrivateBazaarPublicReceipt,
+    ) -> Result<&PrivateBazaarPublicReceipt, PrivateBazaarJourneyError> {
+        self.require_pending_context()?;
+        if receipt.phase() != PrivateBazaarPublicPhase::Settled
+            || receipt.context() != &self.context
+        {
+            return Err(PrivateBazaarJourneyError::InvalidCommittedAuthority);
+        }
+        self.receipt = Some(receipt);
+        Ok(self.receipt.as_ref().expect("settled receipt installed"))
+    }
+
+    pub(crate) fn public_context(&self) -> PrivateBazaarPublicContext {
+        self.context.clone()
+    }
+
+    fn require_pending_context(&self) -> Result<(), PrivateBazaarJourneyError> {
+        match self.receipt.as_ref().map(PrivateBazaarPublicReceipt::phase) {
+            None => Err(PrivateBazaarJourneyError::SettlementBeforeEnter),
+            Some(PrivateBazaarPublicPhase::Pending) => Ok(()),
+            Some(PrivateBazaarPublicPhase::Settled) => {
+                Err(PrivateBazaarJourneyError::SettlementAlreadyApplied)
+            }
+        }
     }
 }
 
@@ -604,10 +780,6 @@ fn short_hex(bytes: [u8; 32]) -> String {
     format!("{}…", &hex32(bytes)[..16])
 }
 
-fn short_felts(felts: [u32; 8]) -> String {
-    format!("{}…", &hex_felts(felts)[..16])
-}
-
 #[cfg(feature = "private-clearing")]
 fn reward_commitment(kind: &str, amount: u64) -> [u8; 32] {
     *blake3::Hasher::new_derive_key(REWARD_DOMAIN)
@@ -619,16 +791,28 @@ fn reward_commitment(kind: &str, amount: u64) -> [u8; 32] {
 }
 
 #[cfg(feature = "private-clearing")]
+fn policy_id(pin: &PrivateBazaarDeploymentPin) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(POLICY_DOMAIN)
+        .update(&pin.deployment_id)
+        .update(&pin.expected_roster_commitment)
+        .update(&pin.expected_reward_commitment)
+        .update(&(pin.reward_method.len() as u64).to_be_bytes())
+        .update(pin.reward_method.as_bytes())
+        .update(&pin.reward_event_topic)
+        .update(&pin.executor_pubkey)
+        .update(&pin.executor_federation)
+        .finalize()
+        .as_bytes()
+}
+
 fn journey_id(
-    market_session: u32,
-    roster_commitment: [u8; 32],
-    reward_commitment: [u8; 32],
+    market_instance_id: [u8; 32],
+    policy_id: [u8; 32],
     participant_count: u32,
 ) -> [u8; 32] {
     *blake3::Hasher::new_derive_key(JOURNEY_DOMAIN)
-        .update(&market_session.to_be_bytes())
-        .update(&roster_commitment)
-        .update(&reward_commitment)
+        .update(&market_instance_id)
+        .update(&policy_id)
         .update(&participant_count.to_be_bytes())
         .finalize()
         .as_bytes()
@@ -668,17 +852,40 @@ mod tests {
     }
 
     #[test]
-    fn pending_receipt_is_one_viewer_blind_surface_and_allowlisted_fields() {
-        let receipt = PrivateBazaarPublicReceipt::pending([1; 32], 4, [2; 32], [3; 32]);
+    fn structural_pending_receipt_is_viewer_blind() {
+        let context = PrivateBazaarPublicContext {
+            journey_id: [1; 32],
+            market_instance_id: [2; 32],
+            policy_id: [3; 32],
+            participant_count: 4,
+            roster_commitment: [5; 32],
+            reward_commitment: [6; 32],
+        };
+        let receipt = PrivateBazaarPublicReceipt::pending(context);
+        assert_eq!(receipt.phase(), PrivateBazaarPublicPhase::Pending);
+        assert!(receipt.source_use_id().is_none());
+        assert!(receipt.game_receipt_hash().is_none());
         let surface = format!("{:?}", receipt.surface().view());
-        let fields = receipt.public_fields();
-        assert!(surface.contains("pending"));
         assert!(!surface.contains("winner"));
         assert!(!surface.contains("price"));
         assert!(!surface.contains("bid"));
-        assert!(fields.iter().all(|(name, _)| !matches!(
-            name.as_str(),
-            "winner" | "price" | "reserve" | "actor" | "proofBytes" | "witness"
-        )));
+    }
+
+    #[test]
+    fn settled_constructor_rejects_missing_committed_fields() {
+        let context = PrivateBazaarPublicContext {
+            journey_id: [1; 32],
+            market_instance_id: [2; 32],
+            policy_id: [3; 32],
+            participant_count: 4,
+            roster_commitment: [5; 32],
+            reward_commitment: [6; 32],
+        };
+        assert_eq!(
+            PrivateBazaarPublicReceipt::settled(
+                context, [0; 32], [8; 32], 9, [1; 8], [10; 32], [11; 32], [12; 32], [13; 32],
+            ),
+            Err(PrivateBazaarJourneyError::InvalidCommittedAuthority)
+        );
     }
 }

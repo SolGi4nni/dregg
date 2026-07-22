@@ -271,6 +271,49 @@ impl WorldCell {
         self.cell
     }
 
+    /// Install the deployment-owned signing key used for executor receipts.
+    ///
+    /// Game/application protocols which consume a receipt as portable
+    /// authority must pin the corresponding [`Self::executor_pubkey`] and
+    /// verify the signature.  Keeping this opt-in preserves the historical
+    /// local test profile while giving cross-offering consequences an
+    /// authenticated executor boundary.
+    pub fn set_executor_signing_key(&self, seed: [u8; 32]) {
+        self.exec.set_executor_signing_key(seed);
+    }
+
+    /// Public key for the installed executor-receipt signer, if configured.
+    pub fn executor_pubkey(&self) -> Option<[u8; 32]> {
+        self.exec.executor_pubkey()
+    }
+
+    /// Read one immutable receipt from the executor's authoritative chain.
+    ///
+    /// This is intentionally lookup-only.  Restart recovery can corroborate a
+    /// prepared cross-offering operation without accepting a caller-supplied
+    /// receipt or re-dispatching a turn whose commit status is unknown.
+    pub fn receipt_by_hash(&self, receipt_hash: [u8; 32]) -> Option<TurnReceipt> {
+        let shared = self.cclerk.shared_cipherclerk();
+        let cipherclerk = shared.read().unwrap_or_else(|error| error.into_inner());
+        cipherclerk
+            .receipt_chain()
+            .iter()
+            .find(|receipt| receipt.receipt_hash() == receipt_hash)
+            .cloned()
+    }
+
+    /// Snapshot the immutable receipt index for exact-effect recovery.
+    pub fn receipt_chain_snapshot(&self) -> Vec<TurnReceipt> {
+        let shared = self.cclerk.shared_cipherclerk();
+        let cipherclerk = shared.read().unwrap_or_else(|error| error.into_inner());
+        cipherclerk.receipt_chain().to_vec()
+    }
+
+    /// Federation identity bound into every receipt produced by this world.
+    pub const fn federation_id(&self) -> [u8; 32] {
+        WORLD_FEDERATION
+    }
+
     /// The compiled story descriptor.
     pub fn story(&self) -> &CompiledStory {
         &self.story

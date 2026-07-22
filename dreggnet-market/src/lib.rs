@@ -63,11 +63,26 @@ pub mod private_clearing_consequence;
 #[cfg(feature = "private-clearing")]
 pub mod private_clearing_guild_allocation;
 
+/// Durable global one-shot authority and exact signed-effect outbox for the
+/// playable private Bazaar consequence.
+#[cfg(feature = "private-clearing")]
+pub mod private_bazaar_authority;
+
+/// Concrete Dungeon XP adapter: derives the exact pre-value from the durable
+/// target immediately before prepare, seals dispatch before executor mutation,
+/// and recovers only from the target's authoritative receipt chain.
+#[cfg(feature = "private-clearing")]
+pub mod private_bazaar_game_adapter;
+
 /// Frontend-neutral player journey around a private Bazaar raid allocation.
 /// Browser and chat adapters receive only ordinary [`Action`]s, a viewer-blind
 /// public receipt, and a [`Surface`]; the private book, proof, winner, and target
 /// character remain on the verifier/engine side of this boundary.
 pub mod private_bazaar_journey;
+
+/// Real OfferingHost lifecycle for the viewer-blind private Bazaar raid.
+#[cfg(feature = "private-clearing")]
+pub mod private_bazaar_live_host;
 
 /// Composite integrity verifier: the same canonical fhEgg receipt must carry
 /// both an authenticated roster quorum and the fixed private-book HidingFRI
