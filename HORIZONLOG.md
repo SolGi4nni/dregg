@@ -39,11 +39,14 @@ handoff prose:
   viewer-blind game consequence. The active append-only 0600/fsync spool has 4/4
   transport units; verified full integration and restart-stable exact receipt
   identity remain before it is banked or auto-spawned.
-- **SIDE-STATE CRASH LAW:** reactive/per-cell state is now in the finalized
-  snapshot, but typed PromiseResolution publication cannot live in a second
-  postcommit journal. The immutable event batch must be written or derivable in
-  the same finalized transaction; a crash-between-commit/publication falsifier
-  is required.
+- **SIDE-STATE CRASH LAW — CLOSED:** `a0199c1e0` writes the immutable typed
+  PromiseResolution batch and manifest in the source turn's finalized redb
+  transaction, with byte-exact replay and restart recovery; `397ccb234` bounds
+  hostile batch/row/reason data before decoding. `74e0e61d2` exposes the durable
+  cursor query, typed NodeEvent, and `promise_resolutions` WebSocket topic.
+  `b8ba574c4`/`a58038562` attach and Fresh-only publish the batch from both exact
+  and generic live finalizers. A crash after commit but before broadcast loses
+  no event: clients resume through `GET /api/promise-resolutions?after=…`.
 - **PERF REALITY:** the captured strict Descent/Bazaar custody release run fell
   from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
   WGPU BFV/TFHE kernels are real; live `fhe_clear`, Dark AMM multiplication, and
@@ -3621,9 +3624,16 @@ into the React-domain set, and canonical registry removal/cascade. The Rust pers
 domain-separated CAS and exact replay-image checks; the fixed public surface and verifier rung remain to be
 specified and welded. VK-affecting proof changes remain ember-gated. (`docs/deos/REACTIVE-EFFECTS.md` §6.)
 
-NAMED delivery follow-up: publish a typed, durable `PromiseResolution` query/`NodeEvent` surface for Discord,
-Telegram, and web after fresh durable success. `ReadyToExecute` contains an unsigned dependent turn and MUST
-remain notification-only; never auto-submit it to the signed consensus queue.
+✅ TYPED DURABLE PROMISE RESOLUTION — CLOSED, 2026-07-22: `a0199c1e0` atomically
+persists one canonical PromiseResolution batch with its source finalized turn;
+`397ccb234` adds fail-closed resource bounds; `74e0e61d2` adds the resumable
+`GET /api/promise-resolutions` query, typed `NodeEvent`, and
+`promise_resolutions` WebSocket topic. `b8ba574c4` and `a58038562` weld exact
+FNSP-v3 and generic live finalization respectively: candidates enter executor
+consensus state before the atomic writer, and only a Fresh result reads back the
+exact durable batch before emitting. Exact replay emits nothing; restart clients
+recover by sequence cursor. `ReadyToExecute` carries no dependent `Turn` on the
+wire and remains notification-only—there is no unsigned auto-submission path.
 
 ## ✅ CELL CENSUS 4-vs-8 — RESOLVED: NOT a bug (cockpit installs reflexive UI cells), 2026-06-21
 The cockpit shows 8 cells, the raw `demo_world` ledger has 4. RESOLVED: `Cockpit::with_node`
