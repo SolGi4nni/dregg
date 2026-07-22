@@ -1168,12 +1168,20 @@ async fn run_node(
 
     // Load genesis.json if present in the data directory.
     let mut starbridge_seeded_from_genesis = false;
+    let mut consensus_time_policy_v1 = None;
     let genesis_path = data_path.join("genesis.json");
     if genesis_path.exists() {
         match std::fs::read_to_string(&genesis_path) {
             Ok(json_str) => {
                 match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(genesis) => {
+                        match blocklace_sync::consensus_time_policy_v1_from_genesis(&genesis) {
+                            Ok(policy) => consensus_time_policy_v1 = Some(policy),
+                            Err(error) => error!(
+                                error = %error,
+                                "genesis.json does not carry a valid explicit consensus-time-v1 policy"
+                            ),
+                        }
                         let mut s = node_state.write().await;
                         // Set committee_epoch BEFORE loading keys so the
                         // first federation_id derivation uses the correct
@@ -1767,6 +1775,13 @@ async fn run_node(
     // bumped an in-memory height counter and produced no DAG at all.
     match consensus_engine {
         "blocklace" => {
+            let consensus_time_policy = consensus_time_policy_v1.unwrap_or_else(|| {
+                error!(
+                    genesis = %genesis_path.display(),
+                    "blocklace requires consensus_genesis_unix_seconds + consensus_time_mode in the shared genesis.json; refusing an implicit clock policy"
+                );
+                std::process::exit(1);
+            });
             info!(
                 consensus = "blocklace",
                 solo = is_solo_mode,
@@ -1799,7 +1814,7 @@ async fn run_node(
                 .ok()
                 .filter(|ip| !ip.is_unspecified())
                 .map(|ip| SocketAddr::new(ip, gossip_port_copy));
-            let blocklace_handle = blocklace_sync::run_blocklace_sync(
+            let blocklace_handle = blocklace_sync::run_blocklace_sync_with_policy(
                 sync_state,
                 gossip_port_copy,
                 auto_approve_joins,
@@ -1809,6 +1824,7 @@ async fn run_node(
                 idle_heartbeat_ms,
                 min_block_interval_ms,
                 advertise_addr,
+                consensus_time_policy,
             )
             .await;
             if let Some(handle) = blocklace_handle {

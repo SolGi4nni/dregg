@@ -255,6 +255,153 @@ fn consensus_time_flag_day_and_failed_local_production_are_atomic() {
     assert_eq!(lace.tips(), &before_tips);
 }
 
+#[test]
+fn consensus_time_restart_rebuilds_authenticated_frontier_and_continues() {
+    let anchor = 1_700_000_000;
+    let key = random_key();
+    let mut live = Blocklace::new(key.clone(), 3);
+    live.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+
+    let first = live
+        .add_consensus_timed_turn_v1_with_predecessors(
+            ConsensusTimedTurnPayloadV1::new(anchor, b"first".to_vec()),
+            Vec::new(),
+        )
+        .unwrap();
+    let ack = live.add_block_with_predecessors(Payload::Ack, vec![first.id()]);
+    let checkpoint = live.checkpoint();
+
+    // The checkpoint contains signed authority only; policy and its derived cache are rebuilt.
+    let mut restarted = Blocklace::from_checkpoint(&checkpoint, key, 3).unwrap();
+    assert_eq!(restarted.consensus_time_policy_v1(), None);
+    restarted
+        .restore_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+    assert_eq!(
+        restarted.consensus_time_policy_v1(),
+        Some(ConsensusTimePolicyV1::new(anchor))
+    );
+
+    let proposed = restarted
+        .suggest_consensus_time_v1(&[ack.id()], i64::MAX)
+        .unwrap();
+    assert_eq!(proposed, anchor + CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS);
+    let next = restarted
+        .add_consensus_timed_turn_v1_with_predecessors(
+            ConsensusTimedTurnPayloadV1::new(proposed, b"after-restart".to_vec()),
+            vec![ack.id()],
+        )
+        .unwrap();
+    assert_eq!(
+        next.payload,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+            proposed,
+            b"after-restart".to_vec()
+        ))
+    );
+}
+
+#[test]
+fn consensus_time_restore_refuses_legacy_turn_history_atomically() {
+    let anchor = 1_700_000_000;
+    let key = random_key();
+    let mut old = Blocklace::new(key.clone(), 3);
+    old.add_block(Payload::Turn(b"timestamp-less-history".to_vec()));
+    let checkpoint = old.checkpoint();
+    let mut restarted = Blocklace::from_checkpoint(&checkpoint, key, 3).unwrap();
+
+    assert!(matches!(
+        restarted.restore_consensus_time_v1(ConsensusTimePolicyV1::new(anchor)),
+        Err(BlockError::LegacyTurnAfterConsensusTimeCutover)
+    ));
+    assert_eq!(
+        restarted.consensus_time_policy_v1(),
+        None,
+        "failed migration must not partially install the flag day"
+    );
+}
+
+#[test]
+fn consensus_time_suggestion_is_anchor_exact_then_causally_clamped() {
+    let anchor = 1_700_000_000;
+    let mut lace = Blocklace::new_simple(random_key());
+    lace.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+
+    assert_eq!(
+        lace.suggest_consensus_time_v1(&[], i64::MIN).unwrap(),
+        anchor
+    );
+    assert_eq!(
+        lace.suggest_consensus_time_v1(&[], i64::MAX).unwrap(),
+        anchor,
+        "opposite producer clocks must still yield identical genesis claims"
+    );
+
+    let genesis = lace
+        .add_consensus_timed_turn_v1_with_predecessors(
+            ConsensusTimedTurnPayloadV1::new(anchor, b"genesis".to_vec()),
+            Vec::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        lace.suggest_consensus_time_v1(&[genesis.id()], i64::MIN)
+            .unwrap(),
+        anchor
+    );
+    assert_eq!(
+        lace.suggest_consensus_time_v1(&[genesis.id()], i64::MAX)
+            .unwrap(),
+        anchor + CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS
+    );
+}
+
+#[test]
+fn consensus_time_v1_explicitly_permits_hostile_repeated_max_steps() {
+    let anchor = 1_700_000_000;
+    let mut lace = Blocklace::new_simple(random_key());
+    lace.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+
+    let mut predecessor = lace
+        .add_consensus_timed_turn_v1_with_predecessors(
+            ConsensusTimedTurnPayloadV1::new(anchor, b"genesis".to_vec()),
+            Vec::new(),
+        )
+        .unwrap()
+        .id();
+    for step in 1..=4 {
+        let hostile_wall = i64::MAX;
+        let claim = lace
+            .suggest_consensus_time_v1(&[predecessor], hostile_wall)
+            .unwrap();
+        assert_eq!(claim, anchor + step * CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS);
+        predecessor = lace
+            .add_consensus_timed_turn_v1_with_predecessors(
+                ConsensusTimedTurnPayloadV1::new(claim, vec![step as u8]),
+                vec![predecessor],
+            )
+            .unwrap()
+            .id();
+    }
+
+    // This is intentionally a pinned limitation, not a fairness claim: CTM1 gives deterministic
+    // replay and a per-edge bound. A federation-grade policy must replace producer choice with an
+    // agreed round/beacon/median rule before this coordinate governs real-time expiries.
+    let final_claim = lace
+        .get(&predecessor)
+        .and_then(|block| match &block.payload {
+            Payload::ConsensusTimedTurnV1(payload) => Some(payload.consensus_time().unix_seconds()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        final_claim,
+        anchor + 4 * CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS
+    );
+}
+
 // ─── Virtual Chain ───────────────────────────────────────────────────────────
 
 #[test]

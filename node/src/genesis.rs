@@ -7,6 +7,7 @@
 //! - `.devnet` — marker file indicating devnet data directory
 
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dregg_storage_templates::cap_inbox::CAP_INBOX_FACTORY_VK;
 use serde::Serialize;
@@ -18,6 +19,12 @@ use starbridge_nameservice::NAME_FACTORY_VK;
 use starbridge_privacy_voting::{BALLOT_FACTORY_VK, POLL_FACTORY_VK};
 use starbridge_storage_gateway_mandate::SGM_FACTORY_VK;
 use starbridge_subscription::SUBSCRIPTION_FACTORY_VK;
+
+/// Deployment coordinate shared by every validator for consensus-time-v1.
+pub const CONSENSUS_GENESIS_UNIX_SECONDS_ENV: &str = "DREGG_CONSENSUS_GENESIS_UNIX_SECONDS";
+/// Explicit scope label for CTM1: deterministic replay time, not fair wall-clock consensus.
+pub const CONSENSUS_TIME_V1_MODE_ENV: &str = "DREGG_CONSENSUS_TIME_V1_MODE";
+pub const CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE: &str = "devnet-causal-v1";
 
 /// A validator entry in the genesis configuration.
 #[derive(Serialize)]
@@ -101,6 +108,13 @@ struct GenesisConfig {
     /// The committee epoch this id was minted for. Always 0 at genesis;
     /// rotated by epoch transitions which mint a fresh id.
     committee_epoch: u64,
+    /// One federation-wide time anchor generated once with the deployment bundle.
+    ///
+    /// Validators load this persisted coordinate; they never derive consensus policy from their
+    /// own boot clock. The same value is copied into every `node-N.env` below.
+    consensus_genesis_unix_seconds: i64,
+    /// Explicitly scopes CTM1 as devnet causal replay time, not federation wall-clock truth.
+    consensus_time_mode: &'static str,
     epoch_length: u64,
     checkpoint_interval: u64,
     validators: Vec<GenesisValidator>,
@@ -130,6 +144,21 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         eprintln!("error: must have at least 1 validator");
         std::process::exit(1);
     }
+
+    // Wall time is sampled exactly once while BUILDING the deployment configuration. It is not a
+    // validator/replay input: every node receives this same persisted flag-day coordinate.
+    let consensus_genesis_unix_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|e| {
+            eprintln!("error: system clock predates Unix epoch: {e}");
+            std::process::exit(1);
+        })
+        .as_secs()
+        .try_into()
+        .unwrap_or_else(|_| {
+            eprintln!("error: system time does not fit consensus-time-v1 i64 coordinate");
+            std::process::exit(1);
+        });
 
     // Create output directory.
     std::fs::create_dir_all(output).unwrap_or_else(|e| {
@@ -221,16 +250,7 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
             .filter(|&j| j != i)
             .map(|j| format!("node-{j}:9420"))
             .collect();
-        let env_content = format!(
-            "RUST_LOG=info\n\
-             DREGG_NODE_INDEX={i}\n\
-             DREGG_FEDERATION_SIZE={validators}\n\
-             DREGG_FEDERATION_PEERS={peers}\n\
-             DREGG_DATA_DIR=/data\n\
-             DREGG_PORT=8420\n\
-             DREGG_GOSSIP_PORT=9420\n",
-            peers = peers.join(","),
-        );
+        let env_content = node_env_content(i, validators, &peers, consensus_genesis_unix_seconds);
         std::fs::write(&env_path, &env_content).unwrap_or_else(|e| {
             eprintln!("error: failed to write {}: {e}", env_path.display());
             std::process::exit(1);
@@ -355,6 +375,8 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     let genesis = GenesisConfig {
         federation_id,
         committee_epoch,
+        consensus_genesis_unix_seconds,
+        consensus_time_mode: CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
         epoch_length,
         checkpoint_interval,
         validators: genesis_validators,
@@ -483,6 +505,29 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn node_env_content(
+    node_index: usize,
+    federation_size: usize,
+    peers: &[String],
+    consensus_genesis_unix_seconds: i64,
+) -> String {
+    format!(
+        "RUST_LOG=info\n\
+         DREGG_NODE_INDEX={node_index}\n\
+         DREGG_FEDERATION_SIZE={federation_size}\n\
+         DREGG_FEDERATION_PEERS={peers}\n\
+         DREGG_DATA_DIR=/data\n\
+         DREGG_PORT=8420\n\
+         DREGG_GOSSIP_PORT=9420\n\
+         {consensus_time_env}={consensus_genesis_unix_seconds}\n\
+         {consensus_mode_env}={consensus_mode}\n",
+        peers = peers.join(","),
+        consensus_time_env = CONSENSUS_GENESIS_UNIX_SECONDS_ENV,
+        consensus_mode_env = CONSENSUS_TIME_V1_MODE_ENV,
+        consensus_mode = CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
+    )
+}
+
 /// The deterministic devnet ISSUER WELL cell id — the same derivation
 /// [`run_genesis`] uses (key context `dregg-devnet-issuer-well-key-v1`,
 /// default `[0u8; 32]` token domain). Lets the runtime (faucet backfill,
@@ -578,6 +623,8 @@ mod tests {
         let config = GenesisConfig {
             federation_id: "aa".repeat(32),
             committee_epoch: 0,
+            consensus_genesis_unix_seconds: 1_700_000_000,
+            consensus_time_mode: CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
             epoch_length: 100,
             checkpoint_interval: 10,
             validators: vec![],
@@ -590,6 +637,11 @@ mod tests {
         };
 
         let json = serde_json::to_value(&config).expect("serialize genesis config");
+        assert_eq!(json["consensus_genesis_unix_seconds"], 1_700_000_000);
+        assert_eq!(
+            json["consensus_time_mode"],
+            CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE
+        );
         let starbridge = json["starbridge_cells"]
             .as_array()
             .expect("starbridge_cells array present");
@@ -597,5 +649,18 @@ mod tests {
         assert_eq!(starbridge[0]["label"], "nameservice-registry");
         assert_eq!(starbridge[0]["owner_agent"], "alice");
         assert_eq!(starbridge[0]["uri_hint"], "registry-default");
+    }
+
+    #[test]
+    fn every_node_env_uses_the_same_persisted_consensus_time_anchor() {
+        let anchor = 1_700_000_000;
+        let a = node_env_content(0, 2, &["node-1:9420".into()], anchor);
+        let b = node_env_content(1, 2, &["node-0:9420".into()], anchor);
+        let coordinate = format!("{CONSENSUS_GENESIS_UNIX_SECONDS_ENV}={anchor}\n");
+        assert!(a.contains(&coordinate));
+        assert!(b.contains(&coordinate));
+        let mode = format!("{CONSENSUS_TIME_V1_MODE_ENV}={CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE}\n");
+        assert!(a.contains(&mode));
+        assert!(b.contains(&mode));
     }
 }

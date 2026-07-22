@@ -73,6 +73,20 @@ tree — never a private key. Committee size / host are env-driven:
 - Epoch length: 100 waves
 - Checkpoint interval: 10 waves
 
+### Consensus time flag day
+
+- `consensus_genesis_unix_seconds` is the one shared CTM1 anchor. Every validator
+  loads it from this public committee descriptor; a local boot clock is never a
+  replay or validation input.
+- `consensus_time_mode` is currently `devnet-causal-v1`. This means signed,
+  causally bounded deterministic replay time—not a fair federation wall clock.
+  A producer can select the allowed `predecessor_frontier + 300s` maximum; a
+  future federation policy must replace that choice with an agreed
+  round/beacon/median schedule before CTM1 governs real-time expiries.
+- This is a flag day. A store containing legacy timestamp-less turn blocks is
+  refused on restart; explicitly migrate it or re-genesis instead of silently
+  interpreting old history under the new rule.
+
 ### Deployed Apps (as cells)
 
 1. **Stablecoin** -- CDP manager + price oracle (2 cells)

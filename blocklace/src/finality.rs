@@ -74,6 +74,11 @@ const CONSENSUS_TIME_VERSION_V1: u8 = 1;
 /// Exact canonical width of a consensus-time-v1 claim.
 pub const CONSENSUS_TIME_V1_WIRE_LEN: usize = 16;
 /// Protocol-wide maximum causal time advance between a timed turn and its predecessor frontier.
+///
+/// This is a validity bound, not a fair-clock oracle: CTM1 permits a producer to choose any value
+/// in the interval, including the maximum on every turn. Deployments must label it as causal replay
+/// time (the devnet mode does); federation wall time needs a quorum median/beacon or exact round
+/// schedule in a later policy version.
 pub const CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS: i64 = 300;
 
 /// Fixed-width authenticated consensus time carried by a versioned turn payload.
@@ -368,10 +373,11 @@ pub struct BlocklaceMetrics {
     pub creator_count: usize,
 }
 
-/// Federation flag-day configuration for consensus-time-v1.
+/// Flag-day configuration for consensus-time-v1 deterministic causal replay time.
 ///
 /// The forward bound is a protocol constant; the sole deployment coordinate is the genesis time
-/// which the signed predecessorless v1 block must reproduce exactly.
+/// which the signed predecessorless v1 block must reproduce exactly. CTM1 does **not** claim fair
+/// wall-clock consensus; a producer can repeatedly select the causal maximum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConsensusTimePolicyV1 {
     genesis_unix_seconds: i64,
@@ -465,6 +471,9 @@ pub enum BlockError {
 
     #[error("consensus-time-v1 frontier missing for predecessor {predecessor:?}")]
     ConsensusTimeFrontierMissing { predecessor: BlockId },
+
+    #[error("cannot rebuild consensus-time-v1 over a causally incomplete blocklace")]
+    ConsensusTimeRestoreNotCausallyClosed,
 }
 
 /// Errors during delta-merge.
@@ -944,6 +953,49 @@ impl Blocklace {
         }
     }
 
+    /// Install consensus-time-v1 while restoring an authenticated pre-existing lace.
+    ///
+    /// Checkpoints intentionally persist signed blocks, not this derived frontier cache. Recovery
+    /// therefore topologically replays the deterministic time rule over every authenticated block.
+    /// The operation is atomic: a legacy turn, invalid claim, or broken causal graph leaves both
+    /// the current policy and cache unchanged. This is also the explicit flag-day migration gate:
+    /// old timestamp-less turn histories are refused rather than silently reinterpreted.
+    pub fn restore_consensus_time_v1(
+        &mut self,
+        policy: ConsensusTimePolicyV1,
+    ) -> Result<(), BlockError> {
+        if self
+            .consensus_time_v1
+            .is_some_and(|existing| existing != policy)
+        {
+            return Err(BlockError::ConsensusTimePolicyReplacement);
+        }
+
+        let mut candidate = self.clone();
+        candidate.consensus_time_v1 = Some(policy);
+        candidate.consensus_time_frontier_v1.clear();
+
+        let blocks: Vec<Block> = candidate.blocks.values().cloned().collect();
+        let sorted = topological_sort(&blocks, &HashMap::new())
+            .map_err(|_| BlockError::ConsensusTimeRestoreNotCausallyClosed)?;
+        if sorted.len() != blocks.len() {
+            return Err(BlockError::ConsensusTimeRestoreNotCausallyClosed);
+        }
+
+        for block in sorted {
+            let frontier = candidate.validated_consensus_time_frontier_v1(&block)?;
+            if let Some(frontier) = frontier {
+                candidate
+                    .consensus_time_frontier_v1
+                    .insert(block.id(), frontier);
+            }
+        }
+
+        self.consensus_time_v1 = candidate.consensus_time_v1;
+        self.consensus_time_frontier_v1 = candidate.consensus_time_frontier_v1;
+        Ok(())
+    }
+
     pub const fn consensus_time_policy_v1(&self) -> Option<ConsensusTimePolicyV1> {
         self.consensus_time_v1
     }
@@ -1032,7 +1084,11 @@ impl Blocklace {
         self.try_add_block_with_predecessors(payload, predecessors)
     }
 
-    fn try_add_block_with_predecessors(
+    /// Fallible local block creation over an exact predecessor cohort.
+    ///
+    /// This is the atomic counterpart of [`Self::add_block_with_predecessors`] for protocol paths
+    /// that must surface a consensus-time or causal-frontier refusal instead of panicking.
+    pub fn try_add_block_with_predecessors(
         &mut self,
         payload: Payload,
         predecessors: Vec<BlockId>,
@@ -1072,29 +1128,65 @@ impl Blocklace {
         &mut self,
         payload: ConsensusTimedTurnPayloadV1,
     ) -> Result<Block, BlockError> {
+        let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
+        self.add_consensus_timed_turn_v1_with_predecessors(payload, predecessors)
+    }
+
+    /// Produce a locally-authored timed turn over an exact round-plan predecessor cohort.
+    ///
+    /// Round-disciplined federation production must bind the time claim to the same predecessor
+    /// set the ordering protocol selected. Validation happens before any local state changes.
+    pub fn add_consensus_timed_turn_v1_with_predecessors(
+        &mut self,
+        payload: ConsensusTimedTurnPayloadV1,
+        predecessors: Vec<BlockId>,
+    ) -> Result<Block, BlockError> {
         if self.consensus_time_v1.is_none() {
             return Err(BlockError::ConsensusTimePolicyMissing);
         }
-        let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
-        let next_seq = self
-            .self_seq
-            .checked_add(1)
-            .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
-        let block = Block::new(
-            &self.self_key,
-            next_seq,
-            Payload::ConsensusTimedTurnV1(payload),
-            predecessors,
-        );
-        let frontier = self.validated_consensus_time_frontier_v1(&block)?;
-        self.self_seq = next_seq;
-        let id = block.id();
-        self.blocks.insert(id, block.clone());
-        if let Some(frontier) = frontier {
-            self.consensus_time_frontier_v1.insert(id, frontier);
+        self.try_add_block_with_predecessors(Payload::ConsensusTimedTurnV1(payload), predecessors)
+    }
+
+    /// Suggest a bounded signed time claim for an exact predecessor cohort.
+    ///
+    /// `producer_wall_unix_seconds` is proposal policy only. It is never read by validation or
+    /// replay: the returned value is clamped to the authenticated causal interval and becomes
+    /// signed block content. Predecessorless blocks always reproduce the deployment anchor exactly,
+    /// so independently booting validators cannot mint divergent genesis claims from their clocks.
+    pub fn suggest_consensus_time_v1(
+        &self,
+        predecessors: &[BlockId],
+        producer_wall_unix_seconds: i64,
+    ) -> Result<i64, BlockError> {
+        let policy = self
+            .consensus_time_v1
+            .ok_or(BlockError::ConsensusTimePolicyMissing)?;
+        if predecessors.is_empty() {
+            return Ok(policy.genesis_unix_seconds);
         }
-        self.tips.insert(self.self_creator(), id);
-        Ok(block)
+
+        let mut minimum = policy.genesis_unix_seconds;
+        for predecessor in predecessors {
+            if !self.blocks.contains_key(predecessor) {
+                return Err(BlockError::MissingPredecessor {
+                    creator: self.self_creator(),
+                    seq: self.self_seq.saturating_add(1),
+                    missing: *predecessor,
+                });
+            }
+            let frontier = self
+                .consensus_time_frontier_v1
+                .get(predecessor)
+                .copied()
+                .ok_or(BlockError::ConsensusTimeFrontierMissing {
+                    predecessor: *predecessor,
+                })?;
+            minimum = minimum.max(frontier);
+        }
+        let maximum = minimum
+            .checked_add(CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS)
+            .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
+        Ok(producer_wall_unix_seconds.clamp(minimum, maximum))
     }
 
     /// Deterministically validate one turn payload against authenticated causal time.

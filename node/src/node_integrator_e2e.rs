@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 use dregg_cell::{AuthRequired, Cell, CellId, Permissions};
 use dregg_turn::{CallForest, Effect, Turn};
 
-use crate::blocklace_sync::run_blocklace_sync;
+use crate::blocklace_sync::run_blocklace_sync_with_policy;
 use crate::state::NodeState;
 
 /// A fully-open permission set so the executor authorizes a Transfer signed by
@@ -104,7 +104,11 @@ fn build_signed_transfer(
         nonce,
         fee: 0, // sized below to the estimated computron cost so the budget gate passes
         memo: Some(format!("integrator_transfer:{amount}")),
-        valid_until: Some(1_000_000_000),
+        // The finalized executor now evaluates validity against the signed CTM1
+        // coordinate carried by the consensus block. Keep this fixture live at
+        // every deployment anchor instead of relying on the old implicit `0`
+        // executor timestamp.
+        valid_until: Some(i64::MAX / 2),
         call_forest,
         depends_on: vec![],
         previous_receipt_hash: state
@@ -135,6 +139,10 @@ fn build_signed_transfer(
 /// the honest flow reaches a verifiable receipt, then prove the Byzantine tooth.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable_receipt() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("dregg_node=debug")
+        .with_test_writer()
+        .try_init();
     // Install the ring CryptoProvider for rustls (the gossip/QUIC transport the
     // blocklace stands up needs it) — exactly what `main()` does at startup.
     // Idempotent: a second install is a no-op error we ignore (another test in the
@@ -179,11 +187,12 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
     let _ = agent_pubkey;
 
     // ── bind the consensus + finality machinery (SOLO: committee of one) ────────
-    // This is the EXACT call `main.rs::run_node` makes: it builds the real
+    // This is the dependency-injected inner call `main.rs::run_node` reaches after loading the
+    // persisted deployment time policy: it builds the real
     // `Blocklace`, gossip transport, round producer, the quiescent finality
     // executor (which executes finalized turns + writes attested roots), and
     // returns the handle. No peers ⇒ solo ⇒ `tau` finalizes every block in seq.
-    let handle = run_blocklace_sync(
+    let handle = run_blocklace_sync_with_policy(
         state.clone(),
         0,      // gossip_port 0 ⇒ OS-assigned ephemeral (no fixed bind clash)
         true,   // auto_approve_joins (irrelevant solo)
@@ -193,6 +202,7 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
         2_000,  // idle_heartbeat_ms
         0,      // min_block_interval_ms (no rate cap in-test)
         None,   // advertise_addr (solo — nothing to advertise)
+        dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
     )
     .await
     .expect("run_blocklace_sync must return a handle in solo mode");
@@ -230,7 +240,7 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
     // Insert the turn block into the real blocklace DAG. In solo mode this
     // produces the block immediately (real Ed25519 signature, real blake3 id) and
     // notifies the finality executor.
-    let (_receipt_block, _level) = handle.submit_turn(&state, turn_data).await;
+    let (receipt_block, _level) = handle.submit_turn(&state, turn_data).await;
 
     // ── wait for the QUIESCENT finality executor to commit + attest ─────────────
     // The background task wakes on the finality notify, finalizes via `tau`,
@@ -267,11 +277,29 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
             .map(|c| c.state.balance())
             .unwrap_or(0)
     };
+    let finalized_rejection = {
+        let s = state.read().await;
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &receipt_block.0,
+        );
+        s.store
+            .get_config(&key)
+            .ok()
+            .flatten()
+            .and_then(|bytes| {
+                postcard::from_bytes::<
+                    crate::signed_turn_validation::FinalizedPayloadRejectionRecord,
+                >(&bytes)
+                .ok()
+            })
+            .map(|record| record.reason_code)
+    };
 
     // [A.1] the transfer was applied authoritatively by the FINALIZED executor.
     assert_eq!(
         recipient_balance_after, amount as i64,
-        "[A] recipient must be credited the transfer amount by the finalized executor; got {recipient_balance_after}"
+        "[A] recipient must be credited the transfer amount by the finalized executor; got \
+         {recipient_balance_after}; durable rejection={finalized_rejection:?}"
     );
     assert_eq!(
         agent_balance_before - agent_balance_after,
@@ -358,7 +386,7 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
     // record the equivocator. (This exercises the SAME insert path the node's
     // gossip receiver uses for peer blocks.)
     {
-        use dregg_blocklace::finality::{Block, BlockError, Payload};
+        use dregg_blocklace::finality::{Block, BlockError, ConsensusTimedTurnPayloadV1, Payload};
 
         // A fresh "peer" signing key — a creator the lace will see for the first
         // time at seq 1, then try to fork.
@@ -370,7 +398,10 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
         let honest = Block::new(
             &peer_sk,
             1,
-            Payload::Turn(b"peer-honest-block".to_vec()),
+            Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+                1_700_000_000,
+                b"peer-honest-block".to_vec(),
+            )),
             Vec::new(),
         );
         lace.receive_block(honest.clone())
@@ -391,7 +422,10 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
         let fork = Block::new(
             &peer_sk,
             1,
-            Payload::Turn(b"peer-FORK-block".to_vec()),
+            Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+                1_700_000_000,
+                b"peer-FORK-block".to_vec(),
+            )),
             Vec::new(),
         );
         let result = lace.receive_block(fork);

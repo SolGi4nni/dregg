@@ -334,7 +334,8 @@ pub fn apply_with_buffering(
             | Err(BlockError::ConsensusTimeBoundOverflow)
             | Err(BlockError::ConsensusTimePolicyReplacement)
             | Err(BlockError::ConsensusTimeFlagDayRequiresEmptyLace)
-            | Err(BlockError::ConsensusTimeFrontierMissing { .. }) => {
+            | Err(BlockError::ConsensusTimeFrontierMissing { .. })
+            | Err(BlockError::ConsensusTimeRestoreNotCausallyClosed) => {
                 // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
                 // halves are the gate). A bad ed25519 half, a missing/forged
                 // post-quantum half, or a creator with no enrolled ML-DSA key
@@ -645,5 +646,49 @@ mod tests {
             "a block from an unenrolled creator is refused fail-closed"
         );
         assert!(out_u.inserted.is_empty());
+    }
+
+    #[test]
+    fn flag_day_catchup_drops_legacy_turn_without_buffering_then_accepts_timed_v1() {
+        let anchor = 1_700_000_000;
+        let producer = key(32);
+        let legacy = Block::new(
+            &producer,
+            1,
+            Payload::Turn(b"timestamp-less".to_vec()),
+            Vec::new(),
+        );
+
+        let mut lace = Blocklace::new_simple(key(63));
+        lace.enable_consensus_time_v1(dregg_blocklace::finality::ConsensusTimePolicyV1::new(
+            anchor,
+        ))
+        .unwrap();
+        enroll(&mut lace, &producer);
+        let mut buffer = OrphanBuffer::new();
+        let refused = apply_with_buffering(&mut lace, &mut buffer, vec![legacy.clone()]);
+        assert!(!lace.contains(&legacy.id()));
+        assert!(refused.inserted.is_empty());
+        assert!(refused.pull_roots.is_empty());
+        assert!(
+            buffer.is_empty(),
+            "deterministic flag-day refusal must not become an orphan retry loop"
+        );
+
+        let timed = Block::new(
+            &producer,
+            1,
+            Payload::ConsensusTimedTurnV1(
+                dregg_blocklace::finality::ConsensusTimedTurnPayloadV1::new(
+                    anchor,
+                    b"signed-turn".to_vec(),
+                ),
+            ),
+            Vec::new(),
+        );
+        let accepted = apply_with_buffering(&mut lace, &mut buffer, vec![timed.clone()]);
+        assert!(lace.contains(&timed.id()));
+        assert_eq!(accepted.inserted.len(), 1);
+        assert!(buffer.is_empty());
     }
 }

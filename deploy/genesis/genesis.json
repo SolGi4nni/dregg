@@ -1,6 +1,8 @@
 {
   "federation_id": "a047bc52f026aaf339d575abfc9383cf6e9e4d68b7fa74709f94559d3c84861f",
   "committee_epoch": 0,
+  "consensus_genesis_unix_seconds": 1784718776,
+  "consensus_time_mode": "devnet-causal-v1",
   "epoch_length": 100,
   "checkpoint_interval": 10,
   "validators": [

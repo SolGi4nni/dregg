@@ -18,14 +18,15 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dregg_blocklace::constitution::{
     Constitution, ConstitutionManager, LeaveReason, MembershipProposal, MembershipVote,
 };
 use dregg_blocklace::dissemination::MAX_BLOCKS_PER_PUSH;
 use dregg_blocklace::finality::{
-    Block, BlockId, Blocklace, FinalityLevel, MembershipAction, Payload, TurnArtifactBundle,
+    Block, BlockError, BlockId, Blocklace, ConsensusTimePolicyV1, ConsensusTimedTurnPayloadV1,
+    FinalityLevel, MembershipAction, Payload, TurnArtifactBundle,
 };
 use dregg_blocklace::ordering::tau;
 use dregg_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
@@ -58,6 +59,127 @@ const MAX_RETAINED_CHECKPOINTS: usize = 5;
 /// OWN quorum. Each re-emit carries a fresh nonce so the gossip `seen`-dedup
 /// never collapses it. Bounded + self-draining: the set empties after the window.
 const VOTE_REEMIT_SWEEPS: u32 = 30;
+
+fn consensus_time_policy_v1_from_config(
+    configured: Option<&str>,
+    mode: Option<&str>,
+) -> Result<ConsensusTimePolicyV1, String> {
+    match mode {
+        Some(crate::genesis::CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE) => {}
+        Some(other) => {
+            return Err(format!(
+                "unsupported {}={other:?}; CTM1 currently supports only explicit devnet causal replay time, not federation-grade fair wall time",
+                crate::genesis::CONSENSUS_TIME_V1_MODE_ENV
+            ));
+        }
+        None => {
+            return Err(format!(
+                "missing required {}={} scope acknowledgement",
+                crate::genesis::CONSENSUS_TIME_V1_MODE_ENV,
+                crate::genesis::CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE
+            ));
+        }
+    }
+    let raw = configured.ok_or_else(|| {
+        format!(
+            "missing required deployment coordinate {} (re-run genesis or provide the persisted federation anchor)",
+            crate::genesis::CONSENSUS_GENESIS_UNIX_SECONDS_ENV
+        )
+    })?;
+    let anchor = raw.parse::<i64>().map_err(|error| {
+        format!(
+            "invalid {}={raw:?}: expected canonical signed Unix seconds ({error})",
+            crate::genesis::CONSENSUS_GENESIS_UNIX_SECONDS_ENV
+        )
+    })?;
+    Ok(ConsensusTimePolicyV1::new(anchor))
+}
+
+pub(crate) fn consensus_time_policy_v1_from_genesis(
+    genesis: &serde_json::Value,
+) -> Result<ConsensusTimePolicyV1, String> {
+    let anchor = genesis["consensus_genesis_unix_seconds"]
+        .as_i64()
+        .ok_or_else(|| {
+            "genesis.json is missing signed-integer consensus_genesis_unix_seconds".to_string()
+        })?;
+    let mode = genesis["consensus_time_mode"].as_str();
+    consensus_time_policy_v1_from_config(Some(&anchor.to_string()), mode)
+}
+
+fn consensus_time_policy_v1_from_env() -> Result<ConsensusTimePolicyV1, String> {
+    let configured =
+        std::env::var(crate::genesis::CONSENSUS_GENESIS_UNIX_SECONDS_ENV).map_err(|error| {
+            format!(
+                "could not load {}: {error}",
+                crate::genesis::CONSENSUS_GENESIS_UNIX_SECONDS_ENV
+            )
+        })?;
+    let mode = std::env::var(crate::genesis::CONSENSUS_TIME_V1_MODE_ENV).map_err(|error| {
+        format!(
+            "could not load {}: {error}",
+            crate::genesis::CONSENSUS_TIME_V1_MODE_ENV
+        )
+    })?;
+    consensus_time_policy_v1_from_config(Some(&configured), Some(&mode))
+}
+
+/// Local wall time is only a proposal heuristic. The selected value is causally clamped, signed,
+/// and thereafter replayed as immutable block content by every validator.
+fn producer_wall_unix_seconds() -> Result<i64, String> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("producer clock predates Unix epoch: {error}"))?
+        .as_secs();
+    i64::try_from(seconds).map_err(|_| "producer clock does not fit signed Unix seconds".into())
+}
+
+fn payload_for_consensus_time_v1(
+    lace: &Blocklace,
+    payload: Payload,
+    predecessors: &[BlockId],
+    producer_wall_unix_seconds: i64,
+) -> Result<Payload, BlockError> {
+    match payload {
+        Payload::Turn(signed_turn) => {
+            let consensus_time =
+                lace.suggest_consensus_time_v1(predecessors, producer_wall_unix_seconds)?;
+            Ok(Payload::ConsensusTimedTurnV1(
+                ConsensusTimedTurnPayloadV1::new(consensus_time, signed_turn),
+            ))
+        }
+        Payload::TurnBundle(bundle) => {
+            let consensus_time =
+                lace.suggest_consensus_time_v1(predecessors, producer_wall_unix_seconds)?;
+            Ok(Payload::ConsensusTimedTurnV1(
+                ConsensusTimedTurnPayloadV1::with_artifacts(
+                    consensus_time,
+                    bundle.signed_turn,
+                    bundle.receipt,
+                    bundle.witnessed_receipts,
+                ),
+            ))
+        }
+        already_timed @ Payload::ConsensusTimedTurnV1(_) => Ok(already_timed),
+        non_turn => Ok(non_turn),
+    }
+}
+
+fn produce_payload_with_consensus_time_v1(
+    lace: &mut Blocklace,
+    payload: Payload,
+    predecessors: Vec<BlockId>,
+    producer_wall_unix_seconds: i64,
+) -> Result<Block, BlockError> {
+    let payload =
+        payload_for_consensus_time_v1(lace, payload, &predecessors, producer_wall_unix_seconds)?;
+    match payload {
+        Payload::ConsensusTimedTurnV1(payload) => {
+            lace.add_consensus_timed_turn_v1_with_predecessors(payload, predecessors)
+        }
+        non_turn => lace.try_add_block_with_predecessors(non_turn, predecessors),
+    }
+}
 
 /// Test-only one-shot fault injection at the generic finalized durable barrier.
 /// It exercises the real execute/prepare path while proving a store failure
@@ -540,6 +662,16 @@ impl BlocklaceHandle {
         state: &NodeState,
         payload: Payload,
     ) -> Option<BlockId> {
+        let producer_wall = match producer_wall_unix_seconds() {
+            Ok(seconds) => seconds,
+            Err(error) => {
+                warn!(
+                    error,
+                    "producer clock unavailable; proposing the causal minimum for this round"
+                );
+                i64::MIN
+            }
+        };
         let supermajority = {
             let c = self.constitution.read().await;
             dregg_blocklace::ordering::supermajority_threshold(c.current.participant_count())
@@ -547,11 +679,26 @@ impl BlocklaceHandle {
         let block = {
             let mut lace = self.lace.write().await;
             let plan = plan_round_block(&lace, lace.self_creator(), supermajority);
-            match plan {
+            let produced = match plan {
                 RoundPlan::Wait => return None,
-                RoundPlan::Genesis => lace.add_block_with_predecessors(payload, Vec::new()),
-                RoundPlan::Advance { predecessors, .. } => {
-                    lace.add_block_with_predecessors(payload, predecessors)
+                RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
+                    &mut lace,
+                    payload,
+                    Vec::new(),
+                    producer_wall,
+                ),
+                RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
+                    &mut lace,
+                    payload,
+                    predecessors,
+                    producer_wall,
+                ),
+            };
+            match produced {
+                Ok(block) => block,
+                Err(error) => {
+                    error!(%error, "consensus-time-v1 refused round block production");
+                    return None;
                 }
             }
         };
@@ -602,7 +749,19 @@ impl BlocklaceHandle {
         // the turn block immediately (linking current tips) — no round discipline.
         let block = {
             let mut lace = self.lace.write().await;
-            lace.add_block(payload)
+            let predecessors: Vec<BlockId> = lace.tips().values().copied().collect();
+            let producer_wall = match producer_wall_unix_seconds() {
+                Ok(seconds) => seconds,
+                Err(error) => {
+                    warn!(
+                        error,
+                        "producer clock unavailable; proposing the causal minimum for solo turn"
+                    );
+                    i64::MIN
+                }
+            };
+            produce_payload_with_consensus_time_v1(&mut lace, payload, predecessors, producer_wall)
+                .expect("configured live consensus-time-v1 must admit a locally produced solo turn")
         };
         let block_id = block.id();
 
@@ -2045,6 +2204,48 @@ pub async fn run_blocklace_sync(
     // disables self-advertisement and falls back to manual `--federation-peers`.
     advertise_addr: Option<SocketAddr>,
 ) -> Option<BlocklaceHandle> {
+    let consensus_time_policy = match consensus_time_policy_v1_from_env() {
+        Ok(policy) => policy,
+        Err(error) => {
+            error!(
+                error,
+                "consensus-time-v1 deployment coordinate unavailable; refusing to start consensus"
+            );
+            return None;
+        }
+    };
+    run_blocklace_sync_with_policy(
+        state,
+        gossip_port,
+        auto_approve_joins,
+        blocklace_checkpoint_interval,
+        constitution_timeout_ms,
+        block_cadence_ms,
+        idle_heartbeat_ms,
+        min_block_interval_ms,
+        advertise_addr,
+        consensus_time_policy,
+    )
+    .await
+}
+
+/// Dependency-injected consensus startup used by the node after it loads the shared public
+/// `genesis.json`, by integrator tests, and by explicit embedders. [`run_blocklace_sync`] is the
+/// environment-backed adapter for standalone callers; both routes converge here before any gossip
+/// or production task starts.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_blocklace_sync_with_policy(
+    state: NodeState,
+    gossip_port: u16,
+    auto_approve_joins: bool,
+    blocklace_checkpoint_interval: u64,
+    constitution_timeout_ms: u64,
+    block_cadence_ms: u64,
+    idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
+    advertise_addr: Option<SocketAddr>,
+    consensus_time_policy: ConsensusTimePolicyV1,
+) -> Option<BlocklaceHandle> {
     // Blocklace tuning params (from CLI --blocklace-* or safe defaults in main).
     // This is the core of making blocklace easy to configure/enable/disable/tune
     // for different envs without wrong-way const edits or forks.
@@ -2119,7 +2320,7 @@ pub async fn run_blocklace_sync(
     );
 
     // Attempt to restore blocklace from persistent storage.
-    let (blocklace, restored_cursor) = {
+    let (mut blocklace, restored_cursor) = {
         let s = state.read().await;
         match s
             .store
@@ -2213,17 +2414,27 @@ pub async fn run_blocklace_sync(
                 )
             }
             Err(e) => {
-                warn!(
+                error!(
                     error = %e,
-                    "failed to restore blocklace from storage, starting fresh"
+                    "failed to restore blocklace from storage; refusing to replace durable history with a fresh lace"
                 );
-                (
-                    Blocklace::new(signing_key.clone(), quorum_threshold),
-                    crate::execution_cursor::ExecutionCursor::new(),
-                )
+                return None;
             }
         }
     };
+    if let Err(error) = blocklace.restore_consensus_time_v1(consensus_time_policy) {
+        error!(
+            %error,
+            genesis_unix_seconds = consensus_time_policy.genesis_unix_seconds(),
+            "consensus-time-v1 flag-day migration refused durable history; an old timestamp-less turn database requires explicit migration or re-genesis"
+        );
+        return None;
+    }
+    info!(
+        genesis_unix_seconds = consensus_time_policy.genesis_unix_seconds(),
+        restored_blocks = blocklace.len(),
+        "consensus-time-v1 active; authenticated causal frontier rebuilt"
+    );
     // Create the PeerNode (QUIC endpoint) for gossip.
     let bind_addr_str = format!("0.0.0.0:{gossip_port}");
     let peer_node = match PeerNode::new(PeerNodeConfig {
@@ -4808,6 +5019,242 @@ struct LiveExactFnspV3Preparation {
     artifacts: Option<TurnArtifactBundle>,
 }
 
+/// Stable terminal disposition for failures on the disjoint exact-v3 route.
+///
+/// The payload class is safe to persist as ACK authority because it depends only on authenticated
+/// signed bytes and code-owned proof verification.  Availability/CAS failures remain retryable;
+/// contradictions between already-authenticated durable coordinates stop the finality task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExactFinalizedFailureClass {
+    DeterministicPayload(&'static str),
+    RetryableOperational,
+    FatalIntegrity,
+}
+
+#[derive(Debug)]
+struct ExactFinalizedFailure {
+    class: ExactFinalizedFailureClass,
+    error: String,
+}
+
+impl ExactFinalizedFailure {
+    fn deterministic(reason_code: &'static str, error: impl Into<String>) -> Self {
+        Self {
+            class: ExactFinalizedFailureClass::DeterministicPayload(reason_code),
+            error: error.into(),
+        }
+    }
+
+    fn retryable(error: impl Into<String>) -> Self {
+        Self {
+            class: ExactFinalizedFailureClass::RetryableOperational,
+            error: error.into(),
+        }
+    }
+
+    fn fatal(error: impl Into<String>) -> Self {
+        Self {
+            class: ExactFinalizedFailureClass::FatalIntegrity,
+            error: error.into(),
+        }
+    }
+}
+
+fn exact_store_failure_class(error: &dregg_persist::StoreError) -> ExactFinalizedFailureClass {
+    match error {
+        // redb I/O/transaction availability can clear without changing the finalized payload.
+        dregg_persist::StoreError::Database(_) => ExactFinalizedFailureClass::RetryableOperational,
+        // These say bytes or authenticated state already present in the durable image are
+        // contradictory. Retrying the same image cannot repair them and must not spin tau.
+        dregg_persist::StoreError::Serialization(_)
+        | dregg_persist::StoreError::Crypto(_)
+        | dregg_persist::StoreError::Integrity(_)
+        | dregg_persist::StoreError::NotFound => ExactFinalizedFailureClass::FatalIntegrity,
+    }
+}
+
+fn classify_exact_store_failure(error: dregg_persist::StoreError) -> ExactFinalizedFailure {
+    ExactFinalizedFailure {
+        class: exact_store_failure_class(&error),
+        error: error.to_string(),
+    }
+}
+
+fn classify_exact_executor_failure(
+    error: crate::exact_fnsp_v3_execution_authority::ExecutorProducedFinalizationError,
+) -> ExactFinalizedFailure {
+    use crate::exact_fnsp_v3_execution_authority::ExecutorProducedFinalizationError as E;
+
+    let class = match &error {
+        E::ExactNoteSpendCardinality { .. }
+        | E::ExactProofCarrierInvalid(_)
+        | E::ExactTurnShapeUnsupported => {
+            ExactFinalizedFailureClass::DeterministicPayload("exact-fnsp-v3-carrier-refused")
+        }
+        E::ExactProofAcceptance(_) => {
+            ExactFinalizedFailureClass::DeterministicPayload("exact-fnsp-v3-proof-refused")
+        }
+        E::ExactChargedRoutePreflight(_) | E::ProducerDidNotCommit(_) => {
+            ExactFinalizedFailureClass::DeterministicPayload("exact-fnsp-v3-execution-refused")
+        }
+        E::ExactAdmission(dregg_turn::executor::ExactFnspV3AdmissionError::MutexPoisoned) => {
+            ExactFinalizedFailureClass::RetryableOperational
+        }
+        E::ValidatedTurnHashMismatch
+        | E::DurableActorMismatch
+        | E::ActorOrdinalMismatch
+        | E::ProducerRejectedAfterMutation
+        | E::ReceiptTurnMismatch
+        | E::ReceiptForestMismatch
+        | E::ReceiptActorMismatch
+        | E::ReceiptBeforeContextMismatch
+        | E::ReceiptAfterContextMismatch
+        | E::ExecutorSignatureInvalid
+        | E::ExactExecutorHasBudgetGate
+        | E::NonDurableExecutorSideStateMutation
+        | E::ExactAdmission(_)
+        | E::ExactAdmissionMissingAfterCommit
+        | E::ExecutorKeyChangedAtFrameJoin
+        | E::ExactFrameReceiptMismatch
+        | E::ExactFrameCarrierMismatch
+        | E::ExactFrameStatementMismatch
+        | E::ExactFrameSignatureInvalid
+        | E::ReceiptEpoch(_) => ExactFinalizedFailureClass::FatalIntegrity,
+    };
+    ExactFinalizedFailure {
+        class,
+        error: error.to_string(),
+    }
+}
+
+fn classify_exact_actor_failure(
+    error: crate::exact_fnsp_v3_actor_authority::DurableExactFnspV3ActorAuthorityError,
+) -> ExactFinalizedFailure {
+    use crate::exact_fnsp_v3_actor_authority::DurableExactFnspV3ActorAuthorityError as E;
+
+    let class = match &error {
+        E::Store(store_error) => exact_store_failure_class(store_error),
+        E::CanonicalCheckpointUnavailable | E::SnapshotMoved => {
+            ExactFinalizedFailureClass::RetryableOperational
+        }
+        E::CheckpointAnchorEncoding(_)
+        | E::CheckpointAnchorMissing { .. }
+        | E::CheckpointAnchorBehind { .. }
+        | E::CheckpointAnchorRootMismatch { .. }
+        | E::CheckpointAnchorUnauthenticated { .. }
+        | E::ExactStateMissing
+        | E::ReceiptDecode(_)
+        | E::OverlayApply(_)
+        | E::CompactionFloorAhead { .. }
+        | E::CommitTailMissing { .. }
+        | E::RecoveredRootMismatch { .. }
+        | E::LiveRootMismatch { .. }
+        | E::DurableActorMissing(_)
+        | E::LiveActorMismatch(_) => ExactFinalizedFailureClass::FatalIntegrity,
+    };
+    ExactFinalizedFailure {
+        class,
+        error: error.to_string(),
+    }
+}
+
+fn classify_exact_activation_failure(
+    error: crate::exact_fnsp_v3_activation::ExactFnspV3ActivationError,
+) -> ExactFinalizedFailure {
+    use crate::exact_fnsp_v3_activation::ExactFnspV3ActivationError as E;
+
+    let class = match &error {
+        E::Store(store_error) => exact_store_failure_class(store_error),
+        E::ExactStateUninitialized
+        | E::ExactInitialMismatch
+        | E::ExactCurrentHeadMismatch
+        | E::ExecutorKeyMismatch
+        | E::ExecutorSignatureSelfCheckFailed
+        | E::StoredActivationMismatch
+        | E::StoredHeadMismatch
+        | E::PlayerReceiptCoordinateMismatch => ExactFinalizedFailureClass::FatalIntegrity,
+    };
+    ExactFinalizedFailure {
+        class,
+        error: error.to_string(),
+    }
+}
+
+fn classify_exact_finalization_failure(
+    error: crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError,
+) -> ExactFinalizedFailure {
+    use crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError as E;
+
+    let class = match &error {
+        E::HistoricalRootUnauthenticated | E::FaithfulHistoryUninitialized => {
+            ExactFinalizedFailureClass::DeterministicPayload(
+                "exact-fnsp-v3-historical-root-refused",
+            )
+        }
+        E::Store(store_error) => exact_store_failure_class(store_error),
+        E::FrameSignatureInvalid
+        | E::PersistedActivationMissing
+        | E::PersistedHeadMismatch(_)
+        | E::InvalidHistoryAuthority
+        | E::FaithfulSpendCardinality { .. }
+        | E::FaithfulStatementCardinality { .. }
+        | E::CoordinateMismatch(_)
+        | E::Anchor(_)
+        | E::ReceiptEncoding(_)
+        | E::ExecutorState(_)
+        | E::PromiseResolution(_)
+        | E::ReceiptHeadInstall(_) => ExactFinalizedFailureClass::FatalIntegrity,
+    };
+    ExactFinalizedFailure {
+        class,
+        error: error.to_string(),
+    }
+}
+
+fn exact_failure_outcome(
+    locked: &crate::state::NodeStateInner,
+    block_id: BlockId,
+    payload: &[u8],
+    turn_hash: [u8; 32],
+    failure: ExactFinalizedFailure,
+) -> FinalizedExecutionOutcome {
+    match failure.class {
+        ExactFinalizedFailureClass::DeterministicPayload(reason_code) => {
+            persist_finalized_payload_rejection(
+                locked,
+                block_id,
+                payload,
+                Some(turn_hash),
+                reason_code,
+            )
+        }
+        ExactFinalizedFailureClass::RetryableOperational => {
+            FinalizedExecutionOutcome::RetryableOperational {
+                block_id,
+                error: failure.error,
+            }
+        }
+        ExactFinalizedFailureClass::FatalIntegrity => FinalizedExecutionOutcome::FatalIntegrity {
+            block_id,
+            error: failure.error,
+        },
+    }
+}
+
+fn require_live_exact_epoch_supported(is_solo: bool) -> Result<(), ExactFinalizedFailure> {
+    if is_solo {
+        Ok(())
+    } else {
+        // The current exact frame has one executor signature, so a distributed epoch cannot
+        // become executable merely by retrying the same finalized payload. Treat this as a
+        // consensus-stable unsupported route, not an availability wait that wedges tau forever.
+        Err(ExactFinalizedFailure::deterministic(
+            "exact-fnsp-v3-epoch-unsupported",
+            "exact FNSP-v3 live epoch currently requires one devnet executor signer; shared/threshold frame signing is not installed",
+        ))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_live_exact_fnsp_v3(
     locked: &mut crate::state::NodeStateInner,
@@ -4818,17 +5265,13 @@ fn prepare_live_exact_fnsp_v3(
     block_id: BlockId,
     block_executed_up_to: u64,
     artifacts: Option<TurnArtifactBundle>,
-) -> Result<LiveExactFnspV3Preparation, String> {
-    if !locked
-        .solo_consensus
-        .as_ref()
-        .is_some_and(|consensus| consensus.is_solo)
-    {
-        return Err(
-            "exact FNSP-v3 live epoch currently requires one devnet executor signer; shared/threshold frame signing is not installed"
-                .into(),
-        );
-    }
+) -> Result<LiveExactFnspV3Preparation, ExactFinalizedFailure> {
+    require_live_exact_epoch_supported(
+        locked
+            .solo_consensus
+            .as_ref()
+            .is_some_and(|consensus| consensus.is_solo),
+    )?;
     // Current admission paths do not append exact-v3 receipts: the executor refuses the carrier
     // without the proof-acceptance token minted only below.  Detect a row left by an older/foreign
     // ingress anyway.  Such a row cannot be reclassified as the epoch cutover tail and reused as
@@ -4839,13 +5282,15 @@ fn prepare_live_exact_fnsp_v3(
         .iter()
         .any(|receipt| receipt.turn_hash == validated_signed_turn.turn_hash())
     {
-        return Err("same exact-v3 turn receipt was already staged before finalization".into());
+        return Err(ExactFinalizedFailure::fatal(
+            "same exact-v3 turn receipt was already staged before finalization",
+        ));
     }
 
     let live_authority = locked
         .store
         .exact_fnsp_v3_live_authority()
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     let exact_head = if let Some((activation, committed_head)) = live_authority.as_ref() {
         committed_head
             .as_ref()
@@ -4855,13 +5300,13 @@ fn prepare_live_exact_fnsp_v3(
         match locked
             .store
             .exact_fnsp_v3_state_head()
-            .map_err(|error| error.to_string())?
+            .map_err(classify_exact_store_failure)?
         {
             Some(head) => head,
             None => locked
                 .store
                 .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
-                .map_err(|error| error.to_string())?,
+                .map_err(classify_exact_store_failure)?,
         }
     };
 
@@ -4873,17 +5318,21 @@ fn prepare_live_exact_fnsp_v3(
             locked,
             signed_turn.turn.agent,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_actor_failure)?;
     let actor_coordinates = actor_authority.coordinates();
     if actor_coordinates.exact_state_head() != exact_head {
-        return Err("exact state moved while capturing durable actor authority".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "exact state moved while capturing durable actor authority",
+        ));
     }
     let prepared_transition = locked
         .store
         .prepare_exact_fnsp_v3_transition_or_replay(route.nullifier(), route.value())
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     if prepared_transition.cas().expected() != actor_coordinates.exact_state_head() {
-        return Err("prepared exact transition does not start at the actor snapshot head".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "prepared exact transition does not start at the actor snapshot head",
+        ));
     }
 
     let signer = crate::exact_fnsp_v3_activation::ExactFnspV3ExecutorSignerAuthority::capture(
@@ -4892,20 +5341,28 @@ fn prepare_live_exact_fnsp_v3(
     let (receipt_next_index, encoded_tail) = locked
         .store
         .receipt_chain_head()
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     if receipt_next_index != actor_coordinates.receipt_log_next_index() {
-        return Err("durable receipt cursor moved while capturing exact transition".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "durable receipt cursor moved while capturing exact transition",
+        ));
     }
     let receipt_tail_hash = encoded_tail
         .as_deref()
         .map(|bytes| {
             postcard::from_bytes::<dregg_turn::TurnReceipt>(bytes)
                 .map(|receipt| receipt.receipt_hash())
-                .map_err(|error| error.to_string())
+                .map_err(|error| {
+                    ExactFinalizedFailure::fatal(format!(
+                        "durable receipt tail is not canonical: {error}"
+                    ))
+                })
         })
         .transpose()?;
     if receipt_tail_hash != actor_coordinates.receipt_log_tail_hash() {
-        return Err("durable receipt tail moved while capturing exact transition".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "durable receipt tail moved while capturing exact transition",
+        ));
     }
 
     let (epoch_number, federation_id, cutover_index, cutover_tail, exact_initial) =
@@ -4928,20 +5385,20 @@ fn prepare_live_exact_fnsp_v3(
         };
     let epoch = dregg_turn::ExactFnspV3ReceiptEpochV1::prepare(
         dregg_turn::ExactFnspV3ReceiptEpoch::new(epoch_number)
-            .map_err(|error| error.to_string())?,
+            .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?,
         federation_id,
         signer.public_key().0,
         cutover_index,
         cutover_tail,
         dregg_turn::ExactFnspV3StatePoint::new(exact_initial.root(), exact_initial.count())
-            .map_err(|error| error.to_string())?,
+            .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?;
 
     let captured_executed_up_to = locked
         .store
         .load_executed_up_to()
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     let coordinates = crate::exact_fnsp_v3_execution_authority::FinalizedRecordCoordinates::new(
         actor_coordinates.commit_cursor(),
         executor.block_height,
@@ -4972,7 +5429,7 @@ async fn execute_live_exact_fnsp_v3(
     handle: &BlocklaceHandle,
     preparation: LiveExactFnspV3Preparation,
     finality_round: Option<u64>,
-) -> Result<u64, String> {
+) -> Result<u64, ExactFinalizedFailure> {
     let LiveExactFnspV3Preparation {
         signed_turn,
         validated_signed_turn,
@@ -5021,8 +5478,12 @@ async fn execute_live_exact_fnsp_v3(
         ))
     })
     .await
-    .map_err(|error| format!("exact proof/executor worker failed: {error}"))?
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+        ExactFinalizedFailure::retryable(format!(
+            "exact proof/executor worker unavailable: {error}"
+        ))
+    })?
+    .map_err(classify_exact_executor_failure)?;
 
     let (executed, signer, epoch, prepared_transition, signed_turn) = joined;
     let mut locked = state.write().await;
@@ -5032,13 +5493,15 @@ async fn execute_live_exact_fnsp_v3(
     let current_executed_up_to = locked
         .store
         .load_executed_up_to()
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     if current_executed_up_to != captured_executed_up_to {
-        return Err("exact FNSP-v3 block finalization cursor moved during proof work".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "exact FNSP-v3 block finalization cursor moved during proof work",
+        ));
     }
     executed
         .revalidate_actor_locked(&locked)
-        .map_err(|error| format!("exact FNSP-v3 snapshot became stale: {error}"))?;
+        .map_err(classify_exact_actor_failure)?;
 
     // Retain the live signer material for the prepared exact-finalization authority below.  The
     // prepared authority is also the sole historical-root admission boundary: it performs one
@@ -5046,7 +5509,9 @@ async fn execute_live_exact_fnsp_v3(
     let local_pk = locked.cclerk.public_key();
     let signing_key_bytes = locked.cclerk.gossip_signing_key().to_bytes();
     if signer.public_key() != local_pk {
-        return Err("exact FNSP-v3 executor signer changed before finalization".into());
+        return Err(ExactFinalizedFailure::fatal(
+            "exact FNSP-v3 executor signer changed before finalization",
+        ));
     }
     let (local_ml_dsa_pk, local_ml_dsa_signing_key) =
         dregg_federation::frost::MlDsaSigningKey::from_seed(&signing_key_bytes);
@@ -5061,13 +5526,13 @@ async fn execute_live_exact_fnsp_v3(
         epoch,
         signed_turn.turn.agent,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(classify_exact_activation_failure)?;
     let executed = executed
         .bind_exact_frame(&signer, predecessor)
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_executor_failure)?;
     executed
         .revalidate_actor_locked(&locked)
-        .map_err(|error| format!("exact FNSP-v3 snapshot moved before durable prepare: {error}"))?;
+        .map_err(classify_exact_actor_failure)?;
 
     let binding = executed.frame().accepted_binding();
     let spent_nullifiers = [dregg_persist::commit_log::FinalizedNullifierRecord {
@@ -5082,26 +5547,33 @@ async fn execute_live_exact_fnsp_v3(
         locked
             .store
             .load_faithful_nullifier_records()
-            .map_err(|error| error.to_string())?,
+            .map_err(classify_exact_store_failure)?,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+        ExactFinalizedFailure::fatal(format!(
+            "durable legacy nullifier accumulator is malformed: {error}"
+        ))
+    })?;
     let (_, ordered_legacy_successors) =
         planned_ordered_nullifier_successors(&durable_legacy_nullifiers, &spent_nullifiers)
             .map_err(|nullifier| {
-                format!(
-                    "exact FNSP-v3 nullifier is already present in the legacy accumulator: {}",
-                    dregg_types::hex_encode(&nullifier)
+                ExactFinalizedFailure::deterministic(
+                    "exact-fnsp-v3-nullifier-already-spent",
+                    format!(
+                        "exact FNSP-v3 nullifier is already present in the legacy accumulator: {}",
+                        dregg_types::hex_encode(&nullifier)
+                    ),
                 )
             })?;
     let successor_nullifier_root =
         dregg_persist::CanonicalFaithfulRoot::from_bytes(ordered_legacy_successors[0])
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?;
     let finalized_spends = [dregg_persist::FinalizedFaithfulSpendInput {
         root_height: binding.historical_root_height(),
         historical_note_root: dregg_persist::CanonicalFaithfulRoot::from_bytes(
             binding.historical_note_root(),
         )
-        .map_err(|error| error.to_string())?,
+        .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?,
         nullifier: binding.nullifier(),
         value: binding.value(),
         asset_type: binding.asset_type(),
@@ -5123,7 +5595,7 @@ async fn execute_live_exact_fnsp_v3(
                 threshold: 1,
             },
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_finalization_failure)?;
 
     // A spend-only exact turn advances the note-root history by one finalized height with the
     // exact same note count/root.  There are deliberately no note leaves to append or publish.
@@ -5131,19 +5603,21 @@ async fn execute_live_exact_fnsp_v3(
     let existing_faithful_head = locked
         .store
         .faithful_note_root_head()
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_store_failure)?;
     if existing_faithful_head.as_ref().is_some_and(|head| {
         head.federation_id != faithful_federation_id
             || head.committee_epoch != locked.committee_epoch
     }) {
-        return Err("faithful note-root segment belongs to another committee context".into());
+        return Err(ExactFinalizedFailure::fatal(
+            "faithful note-root segment belongs to another committee context",
+        ));
     }
     let initial_faithful_anchor = if existing_faithful_head.is_none() {
-        let previous_height = new_height
-            .checked_sub(1)
-            .ok_or_else(|| "exact finalized height zero has no faithful predecessor".to_string())?;
+        let previous_height = new_height.checked_sub(1).ok_or_else(|| {
+            ExactFinalizedFailure::fatal("exact finalized height zero has no faithful predecessor")
+        })?;
         let note_count = u64::try_from(locked.note_tree.size())
-            .map_err(|_| "faithful note count does not fit u64".to_string())?;
+            .map_err(|_| ExactFinalizedFailure::fatal("faithful note count does not fit u64"))?;
         Some(
             dregg_persist::FaithfulNoteRootAnchorV1::new(
                 faithful_history_session_id(faithful_federation_id, locked.committee_epoch),
@@ -5155,7 +5629,7 @@ async fn execute_live_exact_fnsp_v3(
                     locked.note_tree.faithful_root_immutable(),
                 ),
             )
-            .map_err(|error| error.to_string())?,
+            .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?,
         )
     } else {
         None
@@ -5170,13 +5644,13 @@ async fn execute_live_exact_fnsp_v3(
         block_id.0,
         &[],
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| ExactFinalizedFailure::fatal(error.to_string()))?;
     let faithful_message = faithful_record.signing_message();
     let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
     let faithful_classical_signature = dregg_types::sign(&signing_key, &faithful_message);
     let faithful_pq_signature = local_ml_dsa_signing_key
         .sign(&faithful_message)
-        .ok_or_else(|| "ML-DSA faithful-root signing failed".to_string())?;
+        .ok_or_else(|| ExactFinalizedFailure::fatal("ML-DSA faithful-root signing failed"))?;
     let faithful_envelope = dregg_persist::FaithfulNoteRootEnvelopeV1 {
         record: faithful_record.clone(),
         hybrid_quorum: vec![dregg_types::HybridQuorumSig {
@@ -5244,10 +5718,12 @@ async fn execute_live_exact_fnsp_v3(
     if locked
         .store
         .load_executed_up_to()
-        .map_err(|error| error.to_string())?
+        .map_err(classify_exact_store_failure)?
         != captured_executed_up_to
     {
-        return Err("exact FNSP-v3 block cursor moved before durable commit".into());
+        return Err(ExactFinalizedFailure::retryable(
+            "exact FNSP-v3 block cursor moved before durable commit",
+        ));
     }
     let faithful_weld = dregg_persist::commit_log::FinalizedFaithfulRootWeld {
         initial_anchor: initial_faithful_anchor.as_ref(),
@@ -5260,7 +5736,7 @@ async fn execute_live_exact_fnsp_v3(
     };
     let durable = prepared_finalization
         .commit_appending_receipt(&locked.store, faithful_weld)
-        .map_err(|error| error.to_string())?;
+        .map_err(classify_exact_finalization_failure)?;
     let outcome = durable.outcome();
     if !outcome.freshly_committed {
         debug!(
@@ -5281,7 +5757,7 @@ async fn execute_live_exact_fnsp_v3(
             state,
             &publication_store,
         )
-        .expect("fresh exact receipt projection was fenced against durable receipt coordinates");
+        .map_err(classify_exact_finalization_failure)?;
     crate::metrics::inc_turns_executed("committed");
     crate::metrics::set_ledger_cell_count(locked.ledger.len() as f64);
     crate::metrics::set_receipt_chain_length(locked.cclerk.receipt_log_length() as f64);
@@ -5456,17 +5932,15 @@ async fn execute_finalized_turn(
                 artifacts.cloned(),
             ) {
                 Ok(preparation) => preparation,
-                Err(error) => {
+                Err(failure) => {
                     warn!(
                         block_id = %block_id,
                         turn_hash = %turn_hash_hex,
-                        error = %error,
-                        "exact FNSP-v3 finalized turn refused during locked snapshot preparation"
+                        class = ?failure.class,
+                        error = %failure.error,
+                        "exact FNSP-v3 finalized turn refused during typed locked snapshot preparation"
                     );
-                    return FinalizedExecutionOutcome::RetryableOperational {
-                        block_id,
-                        error: format!("exact FNSP-v3 preparation failed: {error}"),
-                    };
+                    return exact_failure_outcome(&s, block_id, turn_data, computed_hash, failure);
                 }
             };
             drop(s);
@@ -5477,10 +5951,12 @@ async fn execute_finalized_turn(
                     block_id,
                     durable_ordinal,
                 },
-                Err(error) => {
-                    warn!(block_id = %block_id, turn_hash = %turn_hash_hex, error = %error,
-                        "exact FNSP-v3 finalized turn hit an operational/freshness failure; identity remains pending");
-                    FinalizedExecutionOutcome::RetryableOperational { block_id, error }
+                Err(failure) => {
+                    warn!(block_id = %block_id, turn_hash = %turn_hash_hex,
+                        class = ?failure.class, error = %failure.error,
+                        "exact FNSP-v3 finalized turn reached a typed terminal disposition");
+                    let s = state.read().await;
+                    exact_failure_outcome(&s, block_id, turn_data, computed_hash, failure)
                 }
             };
         }
@@ -7639,6 +8115,116 @@ mod tests {
     }
 
     #[test]
+    fn exact_failure_classifier_separates_payload_availability_and_integrity() {
+        use crate::exact_fnsp_v3_execution_authority::ExecutorProducedFinalizationError as E;
+
+        assert!(require_live_exact_epoch_supported(true).is_ok());
+        assert_eq!(
+            require_live_exact_epoch_supported(false)
+                .expect_err("distributed exact epoch is unsupported, not retryable")
+                .class,
+            ExactFinalizedFailureClass::DeterministicPayload("exact-fnsp-v3-epoch-unsupported"),
+            "an unsupported finalized exact epoch must not wedge tau by retrying forever"
+        );
+
+        let deterministic = [
+            (
+                E::ExactProofCarrierInvalid("bad carrier".into()),
+                "exact-fnsp-v3-carrier-refused",
+            ),
+            (
+                E::ExactProofAcceptance("bad proof".into()),
+                "exact-fnsp-v3-proof-refused",
+            ),
+            (
+                E::ExactTurnShapeUnsupported,
+                "exact-fnsp-v3-carrier-refused",
+            ),
+            (
+                E::ExactChargedRoutePreflight("bad nonce".into()),
+                "exact-fnsp-v3-execution-refused",
+            ),
+        ];
+        for (error, reason_code) in deterministic {
+            assert_eq!(
+                classify_exact_executor_failure(error).class,
+                ExactFinalizedFailureClass::DeterministicPayload(reason_code)
+            );
+        }
+
+        let impossible = [
+            E::ValidatedTurnHashMismatch,
+            E::ReceiptTurnMismatch,
+            E::ExactFrameSignatureInvalid,
+            E::NonDurableExecutorSideStateMutation,
+        ];
+        for error in impossible {
+            assert_eq!(
+                classify_exact_executor_failure(error).class,
+                ExactFinalizedFailureClass::FatalIntegrity
+            );
+        }
+        assert_eq!(
+            classify_exact_executor_failure(E::ExactAdmission(
+                dregg_turn::executor::ExactFnspV3AdmissionError::MutexPoisoned,
+            ))
+            .class,
+            ExactFinalizedFailureClass::RetryableOperational,
+            "lock availability must not let adversarial payloads permanently stop finality"
+        );
+
+        assert_eq!(
+            classify_exact_finalization_failure(
+                crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError::Store(
+                    dregg_persist::StoreError::Database("busy".into()),
+                ),
+            )
+            .class,
+            ExactFinalizedFailureClass::RetryableOperational
+        );
+        for corrupt in [
+            dregg_persist::StoreError::Integrity("contradictory seal".into()),
+            dregg_persist::StoreError::Serialization("bad durable bytes".into()),
+            dregg_persist::StoreError::Crypto("bad durable signature".into()),
+            dregg_persist::StoreError::NotFound,
+        ] {
+            assert_eq!(
+                classify_exact_store_failure(corrupt).class,
+                ExactFinalizedFailureClass::FatalIntegrity,
+                "durable corruption/missing required authority cannot become an infinite retry"
+            );
+        }
+        assert_eq!(
+            classify_exact_finalization_failure(
+                crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError::HistoricalRootUnauthenticated,
+            )
+            .class,
+            ExactFinalizedFailureClass::DeterministicPayload(
+                "exact-fnsp-v3-historical-root-refused"
+            )
+        );
+        assert_eq!(
+            classify_exact_finalization_failure(
+                crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError::FaithfulHistoryUninitialized,
+            )
+            .class,
+            ExactFinalizedFailureClass::DeterministicPayload(
+                "exact-fnsp-v3-historical-root-refused"
+            ),
+            "missing authenticated history cannot spin a finalized exact payload forever"
+        );
+        assert_eq!(
+            classify_exact_finalization_failure(
+                crate::exact_fnsp_v3_finalization::ExactFnspV3FinalizationError::CoordinateMismatch(
+                    crate::exact_fnsp_v3_finalization::ExactFnspV3Coordinate::FaithfulSpend,
+                ),
+            )
+            .class,
+            ExactFinalizedFailureClass::FatalIntegrity
+        );
+    }
+
+    #[test]
     fn finalized_note_commitments_include_nested_actions_in_dfs_order() {
         fn action(tag: u8, effects: Vec<dregg_turn::Effect>) -> dregg_turn::Action {
             dregg_turn::Action {
@@ -8383,6 +8969,116 @@ mod tests {
     }
 
     #[test]
+    fn consensus_time_flag_day_config_is_required_and_strict() {
+        let mode = Some(crate::genesis::CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE);
+        assert!(consensus_time_policy_v1_from_config(None, mode).is_err());
+        assert!(consensus_time_policy_v1_from_config(Some(""), mode).is_err());
+        assert!(consensus_time_policy_v1_from_config(Some("1.5"), mode).is_err());
+        assert!(
+            consensus_time_policy_v1_from_config(Some("1700000000"), None).is_err(),
+            "causal replay time must never be presented as fair federation wall time"
+        );
+        assert!(
+            consensus_time_policy_v1_from_config(Some("1700000000"), Some("federation-fair"))
+                .is_err()
+        );
+        let policy = consensus_time_policy_v1_from_config(Some("1700000000"), mode)
+            .expect("canonical explicitly-scoped deployment coordinate");
+        assert_eq!(policy.genesis_unix_seconds(), 1_700_000_000);
+
+        let genesis = serde_json::json!({
+            "consensus_genesis_unix_seconds": 1_700_000_000_i64,
+            "consensus_time_mode": crate::genesis::CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
+        });
+        assert_eq!(
+            consensus_time_policy_v1_from_genesis(&genesis)
+                .unwrap()
+                .genesis_unix_seconds(),
+            1_700_000_000
+        );
+        assert!(consensus_time_policy_v1_from_genesis(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn production_upgrades_raw_and_bundle_turns_to_signed_consensus_time() {
+        let anchor = 1_700_000_000;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[0x61; 32]);
+        let mut raw_lace = Blocklace::new_simple(key.clone());
+        let mut bundle_lace = Blocklace::new_simple(key);
+        raw_lace
+            .enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+            .unwrap();
+        bundle_lace
+            .enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+            .unwrap();
+
+        let raw = produce_payload_with_consensus_time_v1(
+            &mut raw_lace,
+            Payload::Turn(b"signed-turn".to_vec()),
+            Vec::new(),
+            i64::MAX,
+        )
+        .unwrap();
+        let Payload::ConsensusTimedTurnV1(raw_payload) = raw.payload else {
+            panic!("production must not sign a legacy turn carrier");
+        };
+        assert_eq!(raw_payload.consensus_time().unix_seconds(), anchor);
+        assert_eq!(raw_payload.signed_turn(), b"signed-turn");
+
+        let artifacts = TurnArtifactBundle {
+            signed_turn: b"signed-turn".to_vec(),
+            receipt: Some(b"receipt".to_vec()),
+            witnessed_receipts: vec![b"witness-a".to_vec(), b"witness-b".to_vec()],
+        };
+        let bundled = produce_payload_with_consensus_time_v1(
+            &mut bundle_lace,
+            Payload::TurnBundle(artifacts.clone()),
+            Vec::new(),
+            i64::MIN,
+        )
+        .unwrap();
+        let Payload::ConsensusTimedTurnV1(bundle_payload) = bundled.payload else {
+            panic!("production must not sign a legacy bundle carrier");
+        };
+        assert_eq!(bundle_payload.consensus_time().unix_seconds(), anchor);
+        assert_eq!(bundle_payload.signed_turn(), artifacts.signed_turn);
+        assert_eq!(bundle_payload.receipt(), artifacts.receipt.as_deref());
+        assert_eq!(
+            bundle_payload.witnessed_receipts(),
+            artifacts.witnessed_receipts
+        );
+    }
+
+    #[test]
+    fn opposite_genesis_clocks_produce_the_same_timed_block_identity() {
+        let anchor = 1_700_000_000;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[0x62; 32]);
+        let mut slow = Blocklace::new_simple(key.clone());
+        let mut fast = Blocklace::new_simple(key);
+        slow.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+            .unwrap();
+        fast.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+            .unwrap();
+
+        let slow_block = produce_payload_with_consensus_time_v1(
+            &mut slow,
+            Payload::Turn(b"same-turn".to_vec()),
+            Vec::new(),
+            i64::MIN,
+        )
+        .unwrap();
+        let fast_block = produce_payload_with_consensus_time_v1(
+            &mut fast,
+            Payload::Turn(b"same-turn".to_vec()),
+            Vec::new(),
+            i64::MAX,
+        )
+        .unwrap();
+        assert_eq!(slow_block.id(), fast_block.id());
+        assert_eq!(slow_block.payload, fast_block.payload);
+    }
+
+    #[test]
     fn blocklace_bundle_payload_preserves_signed_turn_for_ordering() {
         let bundle = TurnArtifactBundle {
             signed_turn: b"signed-turn".to_vec(),
@@ -8485,6 +9181,191 @@ mod tests {
                 .expect("read rejection row")
                 .is_none(),
             "failed rejection write must not leave terminal authority"
+        );
+    }
+
+    /// A well-formed exact-v3 carrier with attacker-chosen invalid proof bytes is a terminal
+    /// payload refusal, not a node-integrity failure.  Its authenticated rejection row must both
+    /// authorize the live ACK and reconstruct that terminal identity after a crash which lost the
+    /// best-effort executed-id projection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_exact_invalid_proof_is_durable_ack_authority_after_restart() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::install_mldsa_verified_keygen_core_real();
+        let _ = crate::install_mldsa_verified_sign_core_real();
+        let _ = crate::install_mldsa_verified_verify_core();
+        let verified_pq = dregg_pq::lean_keygen_core_real_installed()
+            && dregg_pq::lean_sign_core_real_installed()
+            && dregg_pq::lean_verify_core_real_installed();
+        if !verified_pq {
+            assert_ne!(
+                std::env::var("DREGG_REQUIRE_PQ_CORES").as_deref(),
+                Ok("1"),
+                "live exact-proof falsifier requires the three verified ML-DSA cores"
+            );
+            assert_eq!(
+                std::env::var("DREGG_ALLOW_UNAUDITED_PQ").as_deref(),
+                Ok("1"),
+                "an explicit test-only fallback is required when verified ML-DSA cores are absent"
+            );
+            eprintln!("TEST-ONLY: exact ACK control-flow runs with explicit unaudited PQ fallback");
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let actor_seed = [0x76; 32];
+        let actor_clerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(actor_seed));
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let actor_cell =
+            dregg_cell::Cell::with_balance(actor_clerk.public_key().0, default_token, 100_000);
+        let actor = actor_cell.id();
+
+        let local_pk = {
+            let mut s = state.write().await;
+            s.lean_producer_enabled = false;
+            let solo_seed = s.cclerk.gossip_signing_key().to_bytes();
+            s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(solo_seed));
+            s.ledger
+                .insert_cell(actor_cell)
+                .expect("insert exact actor");
+
+            let local_pk = s.cclerk.public_key();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&solo_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size local PQ key");
+            let actor_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&actor_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size actor PQ key");
+            s.set_federation_keys_hybrid(
+                vec![local_pk, actor_clerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
+                    dregg_federation::frost::MlDsaPublicKey(actor_pq),
+                ],
+            );
+            s.federation_configured = true;
+            s.store
+                .checkpoint_ledger(&s.ledger, 0)
+                .expect("canonical actor checkpoint");
+            // Keep a real durable tail above the compacted floor so actor authority is rooted in
+            // the finalized overlay chain (the invalid proof fails before this unrelated row can
+            // otherwise matter to exact execution).
+            s.store
+                .commit_finalized_turn(
+                    0,
+                    &dregg_persist::CommitRecord {
+                        ordinal: 0,
+                        height: 0,
+                        block_id: [0x70; 32],
+                        block_executed_up_to: 0,
+                        turn_hash: [0x71; 32],
+                        creator: local_pk.0,
+                        receipt_hash: [0x72; 32],
+                        ledger_root: canonical_ledger_root(&s.ledger),
+                        touched_cells: Vec::new(),
+                        removed: Vec::new(),
+                    },
+                )
+                .expect("durable actor-root tail");
+            local_pk
+        };
+
+        let invalid_carrier =
+            dregg_turn::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier::new(
+                0,
+                vec![0xA5, 0x5A],
+            )
+            .expect("bounded exact carrier")
+            .encode();
+        let unsigned = dregg_turn::Action {
+            target: actor,
+            method: [0x77; 32],
+            args: Vec::new(),
+            authorization: dregg_turn::Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects: vec![dregg_turn::Effect::NoteSpend {
+                nullifier: dregg_cell::Nullifier([0x78; 32]),
+                note_tree_root: [0x79; 32],
+                value: 0,
+                asset_type: 23,
+                spending_proof: invalid_carrier,
+                value_commitment: None,
+            }],
+            may_delegate: dregg_turn::DelegationMode::None,
+            commitment_mode: dregg_turn::CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: Vec::new(),
+        };
+        let mut forest = dregg_turn::CallForest::new();
+        // Exact-v3's currently characterized envelope deliberately uses an unchecked action; the
+        // hybrid-authenticated outer SignedTurn is the application perimeter.
+        forest.add_root(unsigned);
+        let signed = actor_clerk.sign_turn(&dregg_turn::Turn {
+            agent: actor,
+            nonce: 0,
+            fee: 0,
+            memo: Some("invalid exact proof must ACK".into()),
+            valid_until: Some(i64::MAX / 2),
+            call_forest: forest,
+            depends_on: Vec::new(),
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        });
+        let payload = postcard::to_stdvec(&signed).expect("exact payload");
+        let mut restored_lace =
+            Blocklace::new_simple(ed25519_dalek::SigningKey::from_bytes(&[0x7A; 32]));
+        let block_id = restored_lace.add_block(Payload::Turn(payload.clone())).id();
+        let handle = test_handle_with_committee(local_pk.0, vec![local_pk.0]).await;
+
+        let outcome =
+            execute_finalized_turn(&state, &handle, block_id, &payload, None, None, 1).await;
+        assert!(
+            matches!(
+                &outcome,
+                FinalizedExecutionOutcome::DeterministicallyRejected {
+                    block_id: rejected,
+                    reason_code,
+                } if *rejected == block_id && reason_code == "exact-fnsp-v3-proof-refused"
+            ),
+            "unexpected invalid-proof outcome: {outcome:?}"
+        );
+
+        drop(state);
+        let restarted = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("restart node");
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &block_id.0,
+        );
+        let row = restarted
+            .read()
+            .await
+            .store
+            .get_config(&key)
+            .expect("read exact rejection")
+            .expect("exact rejection is durable");
+        let rejection =
+            crate::signed_turn_validation::FinalizedPayloadRejectionRecord::decode_authenticated(
+                &row, block_id.0, &payload,
+            )
+            .expect("restart authenticates exact rejection");
+        assert_eq!(rejection.reason_code, "exact-fnsp-v3-proof-refused");
+
+        let durable_terminal = std::collections::HashSet::from([block_id]);
+        assert_eq!(
+            reconcile_restored_execution_ids(&restored_lace, Vec::new(), &durable_terminal),
+            vec![block_id],
+            "lost cursor flush must be reconstructed from authenticated exact-proof rejection"
         );
     }
 
@@ -11161,7 +12042,7 @@ pub async fn bootstrap_from_checkpoint(
     // equivocation — exactly the hardened `receive_block` checks, on the recovery
     // path. A forged/unsigned block in a malicious peer's checkpoint is rejected
     // here rather than sailing into the restored DAG (the A1-class bug this closes).
-    let blocklace = match dregg_blocklace::finality::Blocklace::from_checkpoint(
+    let mut blocklace = match dregg_blocklace::finality::Blocklace::from_checkpoint(
         &checkpoint_data,
         self_key,
         quorum_threshold,
@@ -11172,6 +12053,21 @@ pub async fn bootstrap_from_checkpoint(
             return None;
         }
     };
+    let consensus_time_policy = match consensus_time_policy_v1_from_env() {
+        Ok(policy) => policy,
+        Err(error) => {
+            warn!(peer = %peer_url, error = %error, "checkpoint bootstrap lacks consensus-time-v1 deployment coordinate");
+            return None;
+        }
+    };
+    if let Err(error) = blocklace.restore_consensus_time_v1(consensus_time_policy) {
+        warn!(
+            peer = %peer_url,
+            error = %error,
+            "peer checkpoint is incompatible with the local consensus-time-v1 flag day"
+        );
+        return None;
+    }
 
     let ledger_compressed = hex_decode_var(&checkpoint_resp.ledger)?;
     let ledger_bytes = decompress_checkpoint_data(&ledger_compressed)?;
