@@ -207,6 +207,22 @@ def endpointHashSites (depth : Nat) : List VmHashSite :=
   , { digestCol := afterDigestCol depth
       inputs := afterInputs depth, arity := depth + 2 } ]
 
+/-- The live shared Poseidon2 table accepts at most `CHIP_RATE = 16` absorbed
+felts in one site.  Hence the directly deployable one-site-per-endpoint fragment
+has address depth at most fourteen.  Deeper receipts remain meaningful in the
+abstract IR denotation but require a multi-block sponge lowering. -/
+def LiveDepth (depth : Nat) : Prop := depth + 2 <= CHIP_RATE
+
+def MAX_LIVE_DEPTH : Nat := CHIP_RATE - 2
+
+theorem max_live_depth_exact : MAX_LIVE_DEPTH = 14 := by decide
+
+theorem endpointHashSites_within_live_rate (depth : Nat) (hdepth : LiveDepth depth)
+    (site : VmHashSite) (hsite : site ∈ endpointHashSites depth) :
+    site.arity <= CHIP_RATE := by
+  simp [endpointHashSites] at hsite
+  rcases hsite with rfl | rfl <;> exact hdepth
+
 /-! ## 3. Live descriptor compiler -/
 
 def publicPins (depth : Nat) : List VmConstraint2 :=
@@ -493,6 +509,24 @@ theorem satisfying_trace_binds_exact_receipt (hash : List Int -> Int)
   subst candidate
   exact (stepReceipt_eq_receiptOfLayout step).symm
 
+/-- The arbitrary-trace binding theorem composes with the existing receipt
+checker and the typed local-step theorem.  Acceptance therefore witnesses both
+an exact Boolean interaction and preservation of the original higher-order
+typed denotation; the Boolean graph is not misrepresented as that denotation. -/
+theorem satisfying_trace_relation_sound (hash : List Int -> Int)
+    {Γ : List Ty} {A : Ty} {before after : Net Γ A}
+    (step : LocalStep before after) (trace : VmTrace)
+    (h : StatementSatisfied hash step trace) (candidate : Layout)
+    (hcandidate : layoutWords candidate =
+      firstRowLayoutWords (layout step).path.length trace)
+    (env : Env Γ) :
+    (receiptOfLayout candidate).check = true /\
+      after.denote env = before.denote env := by
+  have hreceipt := satisfying_trace_binds_exact_receipt
+    hash step trace h candidate hcandidate
+  rw [hreceipt]
+  exact translatedStep_checked_and_source_sound step env
+
 /-- The endpoint PIs carried by an arbitrary satisfying trace equal the two
 domain-separated layout commitments in the field. -/
 theorem satisfying_endpoint_commitments (hash : List Int -> Int)
@@ -623,6 +657,8 @@ end Reference
   localCertOfLayout_injective,
   receiptOfLayout_injective,
   stepReceipt_eq_receiptOfLayout,
+  max_live_depth_exact,
+  endpointHashSites_within_live_rate,
   descriptor_shape_exact,
   cost_exact,
   traceOf_hashes,
@@ -631,6 +667,7 @@ end Reference
   satisfying_path_exact,
   satisfying_layout_words_exact,
   satisfying_trace_binds_exact_receipt,
+  satisfying_trace_relation_sound,
   satisfying_endpoint_commitments,
   beforeCommit_binds,
   Reference.nested_layout_exact,
