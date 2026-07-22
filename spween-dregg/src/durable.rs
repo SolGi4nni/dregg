@@ -1325,7 +1325,7 @@ mod tests {
                 .observe_authenticated_checkpoint(&equivocation)
                 .is_err()
         );
-        let mut wrong_program = next;
+        let mut wrong_program = next.clone();
         wrong_program.scene_digest[0] ^= 1;
         wrong_program.final_receipt_count = 2;
         wrong_program.final_receipt_head = Some([0x24; 32]);
