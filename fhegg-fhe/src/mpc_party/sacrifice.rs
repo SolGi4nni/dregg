@@ -6,7 +6,8 @@
 //! unauthenticated failure mode stays executable rather than disappearing
 //! behind the hardened adapter.
 //!
-//! 1. commit every party's kept and sacrificial GF(2) share row;
+//! 1. each party locally commits its kept and sacrificial GF(2) share row and
+//!    sends only a public [`CandidateCommitmentMessage`];
 //! 2. derive 128 challenge bits per kept gate from a beacon supplied only after
 //!    the commitment is fixed;
 //! 3. open `rho = r*a + f` and `sigma = b + g`;
@@ -21,6 +22,15 @@
 //! manifest root exists.
 //!
 //! # Exact trust boundary
+//!
+//! The commitment barrier is genuinely party-local: [`prepare_candidate_commitment`]
+//! consumes one secret row into an opaque pending value, while
+//! [`seal_candidate_commitments`] receives only fixed-width public commitments.
+//! [`VerifiedSacrificeBatch::release_party`] likewise consumes one material at
+//! its owning party. No coordinator API in that path accepts a collection of
+//! secret candidate rows. The older
+//! [`commit_candidate_rows`] helper remains as a clearly labeled compatibility
+//! delegator for tests and the not-yet-cut-over FHTRI004 ceremony.
 //!
 //! This protects against malformed, precommitted candidate correlations when
 //! the party response code is honest. It is not malicious MPC yet. Response
@@ -45,8 +55,12 @@ pub const BINARY_SACRIFICE_SECURITY_BITS: usize = 128;
 /// batch. This is a preprocessing DoS bound, not a cryptographic parameter.
 pub const MAX_BINARY_SACRIFICE_TRIPLES: usize = 16 * 1024 * 1024;
 
-const ROW_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-row/v1";
-const MANIFEST_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-manifest/v1";
+const BINDING_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-binding/v2";
+const ROSTER_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-roster/v2";
+const ROW_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-row/v2";
+const MANIFEST_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-manifest/v2";
+const LEGACY_IDENTITY_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-legacy-identity/v2";
+const LEGACY_BATCH_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-legacy-batch/v2";
 const CHALLENGE_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-challenge/v1";
 const CHALLENGE_DIGEST_DOMAIN: &[u8] = b"fhegg/party-mpc/binary-sacrifice-challenge-digest/v1";
 
@@ -55,6 +69,10 @@ pub enum BinarySacrificeError {
     InvalidParameters(&'static str),
     ShapeMismatch,
     InvalidParty { party: usize, n_parties: usize },
+    IncompleteRoster { have: usize, need: usize },
+    DuplicateParty { party: usize },
+    ReorderedParty { position: usize, party: usize },
+    Equivocation,
     CommitmentMismatch { party: usize },
     ManifestMismatch,
     ChallengeMismatch,
@@ -141,10 +159,127 @@ impl SacrificeCandidateRow {
     }
 }
 
+/// Exact public definition of one candidate-commitment ceremony.
+///
+/// The ordered roster is retained, not merely its digest. `batch_binding` must
+/// name the one preprocessing batch/session attempt; callers must not reuse it
+/// to reroll after a beacon abort.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SacrificeCommitmentBinding {
+    context: [u8; 64],
+    roster: Vec<[u8; 32]>,
+    roster_digest: [u8; 64],
+    gates: usize,
+    batch_binding: [u8; 64],
+    digest: [u8; 64],
+}
+
+impl SacrificeCommitmentBinding {
+    pub fn new(
+        context: [u8; 64],
+        roster: Vec<[u8; 32]>,
+        gates: usize,
+        batch_binding: [u8; 64],
+    ) -> Result<Self> {
+        validate_commitment_shape(context, &roster, gates, batch_binding)?;
+        let roster_digest = sacrifice_roster_digest(&roster)?;
+        let digest =
+            sacrifice_binding_digest(context, &roster, roster_digest, gates, batch_binding)?;
+        Ok(Self {
+            context,
+            roster,
+            roster_digest,
+            gates,
+            batch_binding,
+            digest,
+        })
+    }
+
+    pub fn context(&self) -> [u8; 64] {
+        self.context
+    }
+
+    pub fn roster(&self) -> &[[u8; 32]] {
+        &self.roster
+    }
+
+    pub fn roster_digest(&self) -> [u8; 64] {
+        self.roster_digest
+    }
+
+    pub fn n_parties(&self) -> usize {
+        self.roster.len()
+    }
+
+    pub fn gates(&self) -> usize {
+        self.gates
+    }
+
+    pub fn batch_binding(&self) -> [u8; 64] {
+        self.batch_binding
+    }
+
+    pub fn digest(&self) -> [u8; 64] {
+        self.digest
+    }
+}
+
+/// Public fixed-shape message emitted by one party after its secret candidate
+/// row has entered local pending custody.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidateCommitmentMessage {
+    binding_digest: [u8; 64],
+    roster_digest: [u8; 64],
+    batch_binding: [u8; 64],
+    party: usize,
+    identity: [u8; 32],
+    gates: usize,
+    rounds: usize,
+    commitment: [u8; 64],
+}
+
+impl CandidateCommitmentMessage {
+    pub fn binding_digest(&self) -> [u8; 64] {
+        self.binding_digest
+    }
+
+    pub fn party(&self) -> usize {
+        self.party
+    }
+
+    pub fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+
+    pub fn gates(&self) -> usize {
+        self.gates
+    }
+
+    pub fn commitment(&self) -> [u8; 64] {
+        self.commitment
+    }
+}
+
+/// Party-local secret row waiting for a complete public commitment barrier.
+/// It intentionally implements neither `Clone` nor `Debug`.
+pub struct PendingCandidateCommitment {
+    binding_digest: [u8; 64],
+    roster_digest: [u8; 64],
+    batch_binding: [u8; 64],
+    identity: [u8; 32],
+    commitment: [u8; 64],
+    row_salt: [u8; 32],
+    row: SacrificeCandidateRow,
+}
+
 /// Public binding of all candidate rows before the beacon is sampled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedSacrificeBatch {
     context: [u8; 64],
+    binding_digest: [u8; 64],
+    roster: Vec<[u8; 32]>,
+    roster_digest: [u8; 64],
+    batch_binding: [u8; 64],
     n_parties: usize,
     gates: usize,
     row_commitments: Vec<[u8; 64]>,
@@ -154,6 +289,22 @@ pub struct CommittedSacrificeBatch {
 impl CommittedSacrificeBatch {
     pub fn context(&self) -> [u8; 64] {
         self.context
+    }
+
+    pub fn binding_digest(&self) -> [u8; 64] {
+        self.binding_digest
+    }
+
+    pub fn roster(&self) -> &[[u8; 32]] {
+        &self.roster
+    }
+
+    pub fn roster_digest(&self) -> [u8; 64] {
+        self.roster_digest
+    }
+
+    pub fn batch_binding(&self) -> [u8; 64] {
+        self.batch_binding
     }
 
     pub fn n_parties(&self) -> usize {
@@ -181,6 +332,10 @@ impl CommittedSacrificeBatch {
 pub struct PartySacrificeMaterial {
     manifest_root: [u8; 64],
     context: [u8; 64],
+    binding_digest: [u8; 64],
+    roster_digest: [u8; 64],
+    batch_binding: [u8; 64],
+    identity: [u8; 32],
     row_salt: [u8; 32],
     row: SacrificeCandidateRow,
 }
@@ -314,8 +469,33 @@ impl VerifiedSacrificeBatch {
         BINARY_SACRIFICE_SECURITY_BITS
     }
 
-    /// Consume the verification capability and exact committed custody rows,
-    /// destroying all sacrificial material and releasing only the kept shares.
+    /// Release one party's kept row at that party. The verified capability is
+    /// public ceremony state; the secret material is consumed locally and is
+    /// never gathered into a coordinator vector on this path.
+    pub fn release_party(
+        &self,
+        manifest: &CommittedSacrificeBatch,
+        material: PartySacrificeMaterial,
+    ) -> Result<SacrificedPartyRow> {
+        validate_manifest_capability(
+            manifest,
+            self.manifest_root,
+            self.context,
+            self.n_parties,
+            self.gates,
+        )?;
+        let party = material.row.party;
+        validate_material(manifest, &material, party)?;
+        Ok(SacrificedPartyRow {
+            manifest_root: manifest.root,
+            party,
+            triples: material.row.kept,
+        })
+    }
+
+    /// Legacy centralized compatibility release. Distributed callers should
+    /// call [`Self::release_party`] independently at every party instead of
+    /// collecting secret material in one process.
     pub fn release(
         self,
         manifest: &CommittedSacrificeBatch,
@@ -332,13 +512,8 @@ impl VerifiedSacrificeBatch {
             return Err(BinarySacrificeError::ShapeMismatch);
         }
         let mut survivors = Vec::with_capacity(materials.len());
-        for (party, material) in materials.into_iter().enumerate() {
-            validate_material(manifest, &material, party)?;
-            survivors.push(SacrificedPartyRow {
-                manifest_root: manifest.root,
-                party,
-                triples: material.row.kept,
-            });
+        for material in materials {
+            survivors.push(self.release_party(manifest, material)?);
             // `material.row.sacrificed` and the salt are dropped here.
         }
         Ok(survivors)
@@ -371,64 +546,161 @@ impl SacrificedPartyRow {
     }
 }
 
-/// Bind exact rows before challenge derivation. Rows must arrive in canonical
-/// party order `0..n`; reordering is refused rather than silently normalized.
+/// Commit one party's candidate row without disclosing it to the coordinator.
+/// The returned pending value remains at that party until a complete manifest
+/// has been sealed from public messages only.
+pub fn prepare_candidate_commitment(
+    binding: &SacrificeCommitmentBinding,
+    row: SacrificeCandidateRow,
+    row_salt: [u8; 32],
+) -> Result<(CandidateCommitmentMessage, PendingCandidateCommitment)> {
+    if row.party >= binding.n_parties() {
+        return Err(BinarySacrificeError::InvalidParty {
+            party: row.party,
+            n_parties: binding.n_parties(),
+        });
+    }
+    if row.gates() != binding.gates || row_salt == [0; 32] {
+        return Err(BinarySacrificeError::ShapeMismatch);
+    }
+    let identity = binding.roster[row.party];
+    let commitment = candidate_row_commitment(binding, &row, row_salt)?;
+    let message = CandidateCommitmentMessage {
+        binding_digest: binding.digest,
+        roster_digest: binding.roster_digest,
+        batch_binding: binding.batch_binding,
+        party: row.party,
+        identity,
+        gates: binding.gates,
+        rounds: BINARY_SACRIFICE_SECURITY_BITS,
+        commitment,
+    };
+    let pending = PendingCandidateCommitment {
+        binding_digest: binding.digest,
+        roster_digest: binding.roster_digest,
+        batch_binding: binding.batch_binding,
+        identity,
+        commitment,
+        row_salt,
+        row,
+    };
+    Ok((message, pending))
+}
+
+/// Seal exactly one public commitment from every roster member, in exact roster
+/// order. This function has no parameter through which secret candidate rows
+/// can enter the coordinator.
+pub fn seal_candidate_commitments(
+    binding: &SacrificeCommitmentBinding,
+    messages: &[CandidateCommitmentMessage],
+) -> Result<CommittedSacrificeBatch> {
+    validate_commitment_message_order(binding.n_parties(), messages)?;
+    let mut row_commitments = Vec::with_capacity(binding.n_parties());
+    for (party, message) in messages.iter().enumerate() {
+        if message.binding_digest != binding.digest
+            || message.roster_digest != binding.roster_digest
+            || message.batch_binding != binding.batch_binding
+            || message.identity != binding.roster[party]
+            || message.gates != binding.gates
+            || message.rounds != BINARY_SACRIFICE_SECURITY_BITS
+            || message.commitment == [0; 64]
+        {
+            return Err(BinarySacrificeError::ManifestMismatch);
+        }
+        row_commitments.push(message.commitment);
+    }
+    let root = manifest_root(binding, &row_commitments)?;
+    Ok(CommittedSacrificeBatch {
+        context: binding.context,
+        binding_digest: binding.digest,
+        roster: binding.roster.clone(),
+        roster_digest: binding.roster_digest,
+        batch_binding: binding.batch_binding,
+        n_parties: binding.n_parties(),
+        gates: binding.gates,
+        row_commitments,
+        root,
+    })
+}
+
+/// Refuse conflicting complete public views for one exact commitment context.
+/// Authenticated reliable broadcast remains the caller's responsibility.
+pub fn ensure_same_candidate_manifest(
+    binding: &SacrificeCommitmentBinding,
+    left: &CommittedSacrificeBatch,
+    right: &CommittedSacrificeBatch,
+) -> Result<()> {
+    validate_manifest_binding(binding, left)?;
+    validate_manifest_binding(binding, right)?;
+    if left != right {
+        return Err(BinarySacrificeError::Equivocation);
+    }
+    Ok(())
+}
+
+impl PendingCandidateCommitment {
+    /// Consume party-local pending custody into the exact complete manifest
+    /// that contains its public commitment.
+    pub fn bind_to_manifest(
+        self,
+        binding: &SacrificeCommitmentBinding,
+        manifest: &CommittedSacrificeBatch,
+    ) -> Result<PartySacrificeMaterial> {
+        validate_manifest_binding(binding, manifest)?;
+        let party = self.row.party;
+        if party >= manifest.n_parties
+            || self.binding_digest != binding.digest
+            || self.roster_digest != binding.roster_digest
+            || self.batch_binding != binding.batch_binding
+            || self.identity != binding.roster[party]
+            || self.commitment != manifest.row_commitments[party]
+        {
+            return Err(BinarySacrificeError::CommitmentMismatch { party });
+        }
+        let expected = candidate_row_commitment(binding, &self.row, self.row_salt)?;
+        if expected != self.commitment {
+            return Err(BinarySacrificeError::CommitmentMismatch { party });
+        }
+        Ok(PartySacrificeMaterial {
+            manifest_root: manifest.root,
+            context: binding.context,
+            binding_digest: binding.digest,
+            roster_digest: binding.roster_digest,
+            batch_binding: binding.batch_binding,
+            identity: self.identity,
+            row_salt: self.row_salt,
+            row: self.row,
+        })
+    }
+}
+
+/// Legacy centralized compatibility helper. New distributed callers must use
+/// [`prepare_candidate_commitment`] at each party and send only
+/// [`CandidateCommitmentMessage`] to [`seal_candidate_commitments`].
 pub fn commit_candidate_rows(
     context: [u8; 64],
     rows: Vec<SacrificeCandidateRow>,
     salts: Vec<[u8; 32]>,
 ) -> Result<(CommittedSacrificeBatch, Vec<PartySacrificeMaterial>)> {
-    if context == [0; 64] {
-        return Err(BinarySacrificeError::InvalidParameters(
-            "sacrifice context must be nonzero",
-        ));
-    }
     if rows.len() < 2 || rows.len() != salts.len() {
         return Err(BinarySacrificeError::ShapeMismatch);
     }
     let gates = rows[0].gates();
-    let candidates_per_party = gates
-        .checked_mul(BINARY_SACRIFICE_SECURITY_BITS + 1)
-        .ok_or(BinarySacrificeError::ArithmeticOverflow)?;
-    let total_candidates = candidates_per_party
-        .checked_mul(rows.len())
-        .ok_or(BinarySacrificeError::ArithmeticOverflow)?;
-    if total_candidates > MAX_BINARY_SACRIFICE_TRIPLES {
-        return Err(BinarySacrificeError::InvalidParameters(
-            "binary sacrifice batch exceeds allocation ceiling",
-        ));
+    let roster = legacy_roster(context, rows.len())?;
+    let batch_binding = legacy_batch_binding(context, rows.len(), gates)?;
+    let binding = SacrificeCommitmentBinding::new(context, roster, gates, batch_binding)?;
+    let mut messages = Vec::with_capacity(rows.len());
+    let mut pending = Vec::with_capacity(rows.len());
+    for (row, salt) in rows.into_iter().zip(salts) {
+        let (message, local) = prepare_candidate_commitment(&binding, row, salt)?;
+        messages.push(message);
+        pending.push(local);
     }
-    let mut row_commitments = Vec::with_capacity(rows.len());
-    for (party, (row, salt)) in rows.iter().zip(&salts).enumerate() {
-        if row.party != party {
-            return Err(BinarySacrificeError::InvalidParty {
-                party: row.party,
-                n_parties: rows.len(),
-            });
-        }
-        if row.gates() != gates || *salt == [0; 32] {
-            return Err(BinarySacrificeError::ShapeMismatch);
-        }
-        row_commitments.push(row_commitment(context, row, *salt)?);
-    }
-    let root = manifest_root(context, rows.len(), gates, &row_commitments)?;
-    let manifest = CommittedSacrificeBatch {
-        context,
-        n_parties: rows.len(),
-        gates,
-        row_commitments,
-        root,
-    };
-    let materials = rows
+    let manifest = seal_candidate_commitments(&binding, &messages)?;
+    let materials = pending
         .into_iter()
-        .zip(salts)
-        .map(|(row, row_salt)| PartySacrificeMaterial {
-            manifest_root: root,
-            context,
-            row_salt,
-            row,
-        })
-        .collect();
+        .map(|local| local.bind_to_manifest(&binding, &manifest))
+        .collect::<Result<Vec<_>>>()?;
     Ok((manifest, materials))
 }
 
@@ -645,13 +917,24 @@ fn validate_material(
 ) -> Result<()> {
     if material.manifest_root != manifest.root
         || material.context != manifest.context
+        || material.binding_digest != manifest.binding_digest
+        || material.roster_digest != manifest.roster_digest
+        || material.batch_binding != manifest.batch_binding
         || material.row.party != expected_party
         || expected_party >= manifest.n_parties
+        || material.identity != manifest.roster[expected_party]
         || material.row.gates() != manifest.gates
     {
         return Err(BinarySacrificeError::ManifestMismatch);
     }
-    let commitment = row_commitment(manifest.context, &material.row, material.row_salt)?;
+    let commitment = candidate_row_commitment_fields(
+        manifest.binding_digest,
+        manifest.roster_digest,
+        manifest.batch_binding,
+        material.identity,
+        &material.row,
+        material.row_salt,
+    )?;
     if commitment != manifest.row_commitments[expected_party] {
         return Err(BinarySacrificeError::CommitmentMismatch {
             party: expected_party,
@@ -714,15 +997,45 @@ fn validate_manifest_capability(
     Ok(())
 }
 
-fn row_commitment(
-    context: [u8; 64],
+fn candidate_row_commitment(
+    binding: &SacrificeCommitmentBinding,
+    row: &SacrificeCandidateRow,
+    salt: [u8; 32],
+) -> Result<[u8; 64]> {
+    let identity =
+        binding
+            .roster
+            .get(row.party)
+            .copied()
+            .ok_or(BinarySacrificeError::InvalidParty {
+                party: row.party,
+                n_parties: binding.n_parties(),
+            })?;
+    candidate_row_commitment_fields(
+        binding.digest,
+        binding.roster_digest,
+        binding.batch_binding,
+        identity,
+        row,
+        salt,
+    )
+}
+
+fn candidate_row_commitment_fields(
+    binding_digest: [u8; 64],
+    roster_digest: [u8; 64],
+    batch_binding: [u8; 64],
+    identity: [u8; 32],
     row: &SacrificeCandidateRow,
     salt: [u8; 32],
 ) -> Result<[u8; 64]> {
     let mut hash = Sha512::new();
     hash.update(canonical_domain(ROW_DOMAIN));
-    hash.update(context);
+    hash.update(binding_digest);
+    hash.update(roster_digest);
+    hash.update(batch_binding);
     hash.update(checked_u64(row.party)?.to_be_bytes());
+    hash.update(identity);
     hash.update(checked_u64(row.kept.len())?.to_be_bytes());
     hash.update(checked_u64(BINARY_SACRIFICE_SECURITY_BITS)?.to_be_bytes());
     hash.update(salt);
@@ -733,20 +1046,182 @@ fn row_commitment(
 }
 
 fn manifest_root(
-    context: [u8; 64],
-    n_parties: usize,
-    gates: usize,
+    binding: &SacrificeCommitmentBinding,
     row_commitments: &[[u8; 64]],
 ) -> Result<[u8; 64]> {
+    if row_commitments.len() != binding.n_parties() {
+        return Err(BinarySacrificeError::IncompleteRoster {
+            have: row_commitments.len(),
+            need: binding.n_parties(),
+        });
+    }
     let mut hash = Sha512::new();
     hash.update(canonical_domain(MANIFEST_DOMAIN));
+    hash.update(binding.digest);
+    hash.update(binding.context);
+    hash.update(binding.roster_digest);
+    hash.update(binding.batch_binding);
+    hash.update(checked_u64(binding.n_parties())?.to_be_bytes());
+    hash.update(checked_u64(binding.gates)?.to_be_bytes());
+    hash.update(checked_u64(BINARY_SACRIFICE_SECURITY_BITS)?.to_be_bytes());
+    for (party, (identity, commitment)) in binding.roster.iter().zip(row_commitments).enumerate() {
+        hash.update(checked_u64(party)?.to_be_bytes());
+        hash.update(identity);
+        hash.update(commitment);
+    }
+    Ok(hash.finalize().into())
+}
+
+fn validate_commitment_shape(
+    context: [u8; 64],
+    roster: &[[u8; 32]],
+    gates: usize,
+    batch_binding: [u8; 64],
+) -> Result<()> {
+    if context == [0; 64] || batch_binding == [0; 64] || gates == 0 {
+        return Err(BinarySacrificeError::InvalidParameters(
+            "commitment context, batch, and gate count must be nonzero",
+        ));
+    }
+    if roster.len() < 2 {
+        return Err(BinarySacrificeError::IncompleteRoster {
+            have: roster.len(),
+            need: 2,
+        });
+    }
+    for (party, identity) in roster.iter().enumerate() {
+        if *identity == [0; 32] {
+            return Err(BinarySacrificeError::InvalidParty {
+                party,
+                n_parties: roster.len(),
+            });
+        }
+        if roster[..party].contains(identity) {
+            return Err(BinarySacrificeError::DuplicateParty { party });
+        }
+    }
+    let total_candidates = gates
+        .checked_mul(BINARY_SACRIFICE_SECURITY_BITS + 1)
+        .and_then(|per_party| per_party.checked_mul(roster.len()))
+        .ok_or(BinarySacrificeError::ArithmeticOverflow)?;
+    if total_candidates > MAX_BINARY_SACRIFICE_TRIPLES {
+        return Err(BinarySacrificeError::InvalidParameters(
+            "binary sacrifice batch exceeds allocation ceiling",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_commitment_message_order(
+    n_parties: usize,
+    messages: &[CandidateCommitmentMessage],
+) -> Result<()> {
+    let mut seen = vec![false; n_parties];
+    for message in messages {
+        if message.party >= n_parties {
+            return Err(BinarySacrificeError::InvalidParty {
+                party: message.party,
+                n_parties,
+            });
+        }
+        if seen[message.party] {
+            return Err(BinarySacrificeError::DuplicateParty {
+                party: message.party,
+            });
+        }
+        seen[message.party] = true;
+    }
+    if messages.len() != n_parties {
+        return Err(BinarySacrificeError::IncompleteRoster {
+            have: messages.len(),
+            need: n_parties,
+        });
+    }
+    for (position, message) in messages.iter().enumerate() {
+        if message.party != position {
+            return Err(BinarySacrificeError::ReorderedParty {
+                position,
+                party: message.party,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_manifest_binding(
+    binding: &SacrificeCommitmentBinding,
+    manifest: &CommittedSacrificeBatch,
+) -> Result<()> {
+    if manifest.context != binding.context
+        || manifest.binding_digest != binding.digest
+        || manifest.roster != binding.roster
+        || manifest.roster_digest != binding.roster_digest
+        || manifest.batch_binding != binding.batch_binding
+        || manifest.n_parties != binding.n_parties()
+        || manifest.gates != binding.gates
+        || manifest.row_commitments.len() != binding.n_parties()
+        || manifest.root != manifest_root(binding, &manifest.row_commitments)?
+    {
+        return Err(BinarySacrificeError::ManifestMismatch);
+    }
+    Ok(())
+}
+
+fn sacrifice_roster_digest(roster: &[[u8; 32]]) -> Result<[u8; 64]> {
+    let mut hash = Sha512::new();
+    hash.update(canonical_domain(ROSTER_DOMAIN));
+    hash.update(checked_u64(roster.len())?.to_be_bytes());
+    for (party, identity) in roster.iter().enumerate() {
+        hash.update(checked_u64(party)?.to_be_bytes());
+        hash.update(identity);
+    }
+    Ok(hash.finalize().into())
+}
+
+fn sacrifice_binding_digest(
+    context: [u8; 64],
+    roster: &[[u8; 32]],
+    roster_digest: [u8; 64],
+    gates: usize,
+    batch_binding: [u8; 64],
+) -> Result<[u8; 64]> {
+    let mut hash = Sha512::new();
+    hash.update(canonical_domain(BINDING_DOMAIN));
+    hash.update(context);
+    hash.update(roster_digest);
+    hash.update(batch_binding);
+    hash.update(checked_u64(roster.len())?.to_be_bytes());
+    hash.update(checked_u64(gates)?.to_be_bytes());
+    hash.update(checked_u64(BINARY_SACRIFICE_SECURITY_BITS)?.to_be_bytes());
+    for (party, identity) in roster.iter().enumerate() {
+        hash.update(checked_u64(party)?.to_be_bytes());
+        hash.update(identity);
+    }
+    Ok(hash.finalize().into())
+}
+
+fn legacy_roster(context: [u8; 64], n_parties: usize) -> Result<Vec<[u8; 32]>> {
+    let mut roster = Vec::with_capacity(n_parties);
+    for party in 0..n_parties {
+        let mut hash = Sha512::new();
+        hash.update(canonical_domain(LEGACY_IDENTITY_DOMAIN));
+        hash.update(context);
+        hash.update(checked_u64(n_parties)?.to_be_bytes());
+        hash.update(checked_u64(party)?.to_be_bytes());
+        let digest: [u8; 64] = hash.finalize().into();
+        let mut identity = [0u8; 32];
+        identity.copy_from_slice(&digest[..32]);
+        roster.push(identity);
+    }
+    Ok(roster)
+}
+
+fn legacy_batch_binding(context: [u8; 64], n_parties: usize, gates: usize) -> Result<[u8; 64]> {
+    let mut hash = Sha512::new();
+    hash.update(canonical_domain(LEGACY_BATCH_DOMAIN));
     hash.update(context);
     hash.update(checked_u64(n_parties)?.to_be_bytes());
     hash.update(checked_u64(gates)?.to_be_bytes());
-    hash.update(checked_u64(BINARY_SACRIFICE_SECURITY_BITS)?.to_be_bytes());
-    for commitment in row_commitments {
-        hash.update(commitment);
-    }
     Ok(hash.finalize().into())
 }
 
@@ -822,6 +1297,34 @@ mod tests {
         .unwrap()
     }
 
+    fn distributed_prepared(
+        kept_global: [u8; 3],
+        sacrificed_global: [u8; 3],
+    ) -> (
+        SacrificeCommitmentBinding,
+        Vec<CandidateCommitmentMessage>,
+        Vec<PendingCandidateCommitment>,
+    ) {
+        let binding = SacrificeCommitmentBinding::new(
+            [0x42; 64],
+            vec![[0x71; 32], [0x72; 32]],
+            1,
+            [0x43; 64],
+        )
+        .unwrap();
+        let mut messages = Vec::new();
+        let mut pending = Vec::new();
+        for (row, salt) in candidate_rows(kept_global, sacrificed_global)
+            .into_iter()
+            .zip([[0x51; 32], [0x52; 32]])
+        {
+            let (message, local) = prepare_candidate_commitment(&binding, row, salt).unwrap();
+            messages.push(message);
+            pending.push(local);
+        }
+        (binding, messages, pending)
+    }
+
     fn honest_messages(
         manifest: &CommittedSacrificeBatch,
         challenge: &SacrificeChallenge,
@@ -849,6 +1352,125 @@ mod tests {
         let survivors = verified.release(&manifest, materials).unwrap();
         assert_eq!(survivors.len(), 2);
         assert!(survivors.iter().all(|row| row.gates() == 1));
+    }
+
+    #[test]
+    fn party_local_commitment_barrier_releases_material_only_after_complete_seal() {
+        let (binding, messages, pending) = distributed_prepared([1, 1, 1], [1, 0, 0]);
+        let manifest = seal_candidate_commitments(&binding, &messages).unwrap();
+        assert_eq!(manifest.context(), binding.context());
+        assert_eq!(manifest.roster(), binding.roster());
+        assert_eq!(manifest.roster_digest(), binding.roster_digest());
+        assert_eq!(manifest.batch_binding(), binding.batch_binding());
+        assert_eq!(
+            manifest.row_commitments(),
+            &[messages[0].commitment(), messages[1].commitment()]
+        );
+
+        let materials = pending
+            .into_iter()
+            .map(|local| local.bind_to_manifest(&binding, &manifest).unwrap())
+            .collect::<Vec<_>>();
+        let challenge = SacrificeChallenge::derive(&manifest, [0x61; 64]).unwrap();
+        let (opened, checks) = honest_messages(&manifest, &challenge, &materials);
+        let verified = verify_check_shares(&manifest, &challenge, &opened, &checks).unwrap();
+        let survivors = materials
+            .into_iter()
+            .map(|material| verified.release_party(&manifest, material).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(survivors.len(), binding.n_parties());
+        assert!(survivors.iter().all(|row| row.gates() == 1));
+    }
+
+    #[test]
+    fn public_commitment_barrier_refuses_omission_duplicate_and_reorder() {
+        let (binding, messages, _) = distributed_prepared([1, 1, 1], [1, 0, 0]);
+        assert!(matches!(
+            seal_candidate_commitments(&binding, &messages[..1]),
+            Err(BinarySacrificeError::IncompleteRoster { have: 1, need: 2 })
+        ));
+        assert!(matches!(
+            seal_candidate_commitments(&binding, &[messages[0].clone(), messages[0].clone()]),
+            Err(BinarySacrificeError::DuplicateParty { party: 0 })
+        ));
+        assert!(matches!(
+            seal_candidate_commitments(&binding, &[messages[1].clone(), messages[0].clone()]),
+            Err(BinarySacrificeError::ReorderedParty { .. })
+        ));
+    }
+
+    #[test]
+    fn conflicting_complete_commitment_views_are_equivocation() {
+        let (binding, honest_messages, _) = distributed_prepared([1, 1, 1], [1, 0, 0]);
+        let honest = seal_candidate_commitments(&binding, &honest_messages).unwrap();
+
+        let mut alternate_rows = candidate_rows([1, 1, 1], [1, 0, 0]).into_iter();
+        let alternate_row0 = alternate_rows.next().unwrap();
+        let (alternate0, _) =
+            prepare_candidate_commitment(&binding, alternate_row0, [0x61; 32]).unwrap();
+        let conflicting =
+            seal_candidate_commitments(&binding, &[alternate0, honest_messages[1].clone()])
+                .unwrap();
+        assert!(matches!(
+            ensure_same_candidate_manifest(&binding, &honest, &conflicting),
+            Err(BinarySacrificeError::Equivocation)
+        ));
+    }
+
+    #[test]
+    fn context_roster_and_batch_replay_are_refused() {
+        let (binding, messages, pending) = distributed_prepared([1, 1, 1], [1, 0, 0]);
+        let changed_context = SacrificeCommitmentBinding::new(
+            [0x44; 64],
+            binding.roster().to_vec(),
+            binding.gates(),
+            binding.batch_binding(),
+        )
+        .unwrap();
+        assert!(matches!(
+            seal_candidate_commitments(&changed_context, &messages),
+            Err(BinarySacrificeError::ManifestMismatch)
+        ));
+
+        let changed_roster = SacrificeCommitmentBinding::new(
+            binding.context(),
+            vec![[0x71; 32], [0x73; 32]],
+            binding.gates(),
+            binding.batch_binding(),
+        )
+        .unwrap();
+        assert!(seal_candidate_commitments(&changed_roster, &messages).is_err());
+
+        let changed_batch = SacrificeCommitmentBinding::new(
+            binding.context(),
+            binding.roster().to_vec(),
+            binding.gates(),
+            [0x45; 64],
+        )
+        .unwrap();
+        assert!(seal_candidate_commitments(&changed_batch, &messages).is_err());
+
+        let manifest = seal_candidate_commitments(&binding, &messages).unwrap();
+        let other_manifest = {
+            let mut alternate_rows = candidate_rows([1, 1, 1], [1, 0, 0]).into_iter();
+            let alternate_row0 = alternate_rows.next().unwrap();
+            let (alternate0, _) =
+                prepare_candidate_commitment(&binding, alternate_row0, [0x61; 32]).unwrap();
+            seal_candidate_commitments(&binding, &[alternate0, messages[1].clone()]).unwrap()
+        };
+        let mut pending = pending.into_iter();
+        assert!(matches!(
+            pending
+                .next()
+                .unwrap()
+                .bind_to_manifest(&binding, &other_manifest),
+            Err(BinarySacrificeError::CommitmentMismatch { party: 0 })
+        ));
+        pending
+            .next()
+            .unwrap()
+            .bind_to_manifest(&binding, &manifest)
+            .unwrap();
     }
 
     #[test]
