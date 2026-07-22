@@ -100,7 +100,8 @@ const OPENING_SESSION_DOMAIN: &[u8] = b"fhegg/quorum-opening-session/v1";
 const VSS_COMMITMENT_MAGIC: &[u8; 8] = b"FHQVv001";
 const VSS_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-row/v1";
 const VSS_DEALER_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-dealer/v1";
-const VSS_SETUP_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-setup/v1";
+const VSS_SETUP_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-setup/v2";
+const VERIFIED_DKG_COLLECTIVE_KEY_DOMAIN: &[u8] = b"fhegg/quorum-verified-dkg-collective-key/v1";
 const DECRYPT_SHARE_PROOF_DOMAIN: &[u8] = b"fhegg/quorum-decrypt-share-proof/v1";
 const DECRYPT_SHARE_PROOF_MAGIC: &[u8; 8] = b"FHQPv001";
 const DECRYPT_SHARE_RELATION_DOMAIN: &[u8] = b"fhegg/quorum-decrypt-relation/v1";
@@ -458,6 +459,11 @@ pub struct VerifiedDkgTranscript {
     /// aggregate rows admitted by the bivariate VSS checker and are therefore
     /// the public key-share anchor used by decrypt-share proofs.
     party_secret_commitments: Vec<Vec<[u8; 32]>>,
+    /// Domain-separated digest of the exact serialized collective BFV public
+    /// key produced by this verified DKG transition.  Downstream transforms
+    /// consume this transcript-owned value rather than accepting a caller's
+    /// assertion about which encryption key the setup produced.
+    collective_key_digest: [u8; 32],
     digest: [u8; 32],
 }
 
@@ -468,6 +474,10 @@ impl VerifiedDkgTranscript {
 
     pub fn party_secret_commitments(&self, party: usize) -> Option<&[[u8; 32]]> {
         self.party_secret_commitments.get(party).map(Vec::as_slice)
+    }
+
+    pub fn collective_key_digest(&self) -> [u8; 32] {
+        self.collective_key_digest
     }
 }
 
@@ -898,16 +908,19 @@ pub fn finish_verified_keygen(
             secret_commitment_blindings: blindings,
         });
     }
+    let collective_key_digest = verified_dkg_collective_key_digest(&collective);
     let digest = vss_setup_transcript_digest(
         session,
         &dealer_commitment_digests,
         &party_secret_commitments,
+        collective_key_digest,
         params,
     );
     let transcript = VerifiedDkgTranscript {
         session: session.clone(),
         dealer_commitment_digests,
         party_secret_commitments,
+        collective_key_digest,
         digest,
     };
     Ok(VerifiedQuorumSetup {
@@ -2262,6 +2275,7 @@ fn vss_setup_transcript_digest(
     session: &QuorumKeygenSession,
     dealer_commitment_digests: &[[u8; 32]],
     party_secret_commitments: &[Vec<[u8; 32]>],
+    collective_key_digest: [u8; 32],
     params: &BfvParams,
 ) -> [u8; 32] {
     let mut hash = Sha256::new();
@@ -2275,6 +2289,7 @@ fn vss_setup_transcript_digest(
     for &q in params.moduli() {
         hash.update(q.to_le_bytes());
     }
+    hash.update(collective_key_digest);
     hash.update((dealer_commitment_digests.len() as u64).to_le_bytes());
     for digest in dealer_commitment_digests {
         hash.update(digest);
@@ -2286,6 +2301,15 @@ fn vss_setup_transcript_digest(
             hash.update(commitment);
         }
     }
+    hash.finalize().into()
+}
+
+fn verified_dkg_collective_key_digest(collective: &CollectivePublicKey) -> [u8; 32] {
+    let key_bytes = collective.pk.to_bytes();
+    let mut hash = Sha256::new();
+    hash.update(VERIFIED_DKG_COLLECTIVE_KEY_DOMAIN);
+    hash.update((key_bytes.len() as u64).to_le_bytes());
+    hash.update(key_bytes);
     hash.finalize().into()
 }
 
@@ -3351,8 +3375,24 @@ mod vss_tests {
             finish_verified_keygen(&session, bundles, &params)
                 .unwrap()
                 .into_parts();
-        // The collective key is live, not a transcript-only stand-in.
-        let _ = collective.pk.to_bytes();
+        // The collective key is live, not a transcript-only stand-in, and the
+        // verified transcript itself binds its exact serialized identity.
+        assert_eq!(
+            transcript.collective_key_digest(),
+            verified_dkg_collective_key_digest(&collective)
+        );
+        let mut substituted_key_digest = transcript.collective_key_digest();
+        substituted_key_digest[0] ^= 1;
+        assert_ne!(
+            transcript.digest(),
+            vss_setup_transcript_digest(
+                &session,
+                &transcript.dealer_commitment_digests,
+                &transcript.party_secret_commitments,
+                substituted_key_digest,
+                &params,
+            )
+        );
         let party =
             QuorumParty::assemble_verified(&session, 0, assemblies.remove(0), &transcript, &params)
                 .unwrap();
