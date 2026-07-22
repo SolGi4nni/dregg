@@ -4950,7 +4950,7 @@ mod tests {
             );
         let (_, mismatched_frame, _) =
             crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_test_first_frame_bundle(
-                &store, &unrelated, &key, receipt,
+                &store, unrelated, &key, receipt,
             );
         commit.receipt_hash = frame.full_receipt_hash();
 
@@ -5081,7 +5081,10 @@ mod tests {
             )
             .expect("full atomic first frame");
         assert!(fresh.outcome.freshly_committed);
-        assert_eq!(fresh.committed_head.sequence(), initial.generation());
+        assert_eq!(
+            fresh.committed_head.exact_after().generation(),
+            initial.generation() + 1
+        );
         assert_eq!(store.commit_cursor().unwrap(), 1);
         assert_eq!(store.receipt_chain_len().unwrap(), 1);
         assert_eq!(
