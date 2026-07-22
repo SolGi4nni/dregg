@@ -5339,6 +5339,15 @@ mod tests {
             reopened.finalized_receipt_core_v1(0).unwrap().unwrap().0,
             fresh_core_id
         );
+        assert_eq!(
+            reopened
+                .finalized_receipt_core_v1_by_id(fresh_core_id)
+                .unwrap()
+                .unwrap()
+                .0,
+            0,
+            "typed semantic identity resolves to the same receipt coordinate after restart"
+        );
     }
 
     #[test]

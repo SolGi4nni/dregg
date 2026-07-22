@@ -83,6 +83,7 @@ struct FreshExactFnspV3PostExecution {
     ledger: Ledger,
     receipt: TurnReceipt,
     receipt_index: u64,
+    finalized_receipt_core_id: dregg_turn::FinalizedReceiptIdV1,
     install_receipt_head: bool,
     source_commit_ordinal: u64,
     source_receipt_hash: [u8; 32],
@@ -115,6 +116,29 @@ impl DurablyCommittedExactFnspV3Turn {
         store: &PersistentStore,
     ) -> Result<CommitOutcome, ExactFnspV3FinalizationError> {
         if let Some(fresh) = self.fresh_post_execution {
+            // Fresh RAM publication is downstream of the signer-independent consensus object,
+            // not merely of the writer's success bit.  Re-read the canonical core by the public
+            // receipt coordinate and require the exact id and receipt identity that the atomic
+            // writer returned.  FRE1/local signatures never participate in this decision.
+            let (persisted_id, persisted_core) = store
+                .finalized_receipt_core_v1(fresh.receipt_index)
+                .map_err(ExactFnspV3FinalizationError::Store)?
+                .ok_or_else(|| {
+                    ExactFnspV3FinalizationError::Store(StoreError::Integrity(format!(
+                        "fresh exact receipt {} has no durable FRC1 semantic core",
+                        fresh.receipt_index
+                    )))
+                })?;
+            if persisted_id != fresh.finalized_receipt_core_id
+                || persisted_core.id() != fresh.finalized_receipt_core_id
+                || persisted_core.turn_hash() != fresh.receipt.turn_hash
+                || persisted_core.agent() != fresh.receipt.agent.0
+                || persisted_core.federation_id() != fresh.receipt.federation_id
+            {
+                return Err(ExactFnspV3FinalizationError::Store(StoreError::Integrity(
+                    "fresh exact receipt disagrees with its durable FRC1 semantic core".into(),
+                )));
+            }
             if fresh.install_receipt_head {
                 cclerk
                     .append_receipt_already_durable(fresh.receipt_index, fresh.receipt)
@@ -308,6 +332,7 @@ impl PreparedExactFnspV3Finalization {
             post_executor,
         ));
         let durable = result.map_err(ExactFnspV3FinalizationError::Store)?;
+        let finalized_receipt_core_id = durable.finalized_receipt_core_id;
         let fresh_post_execution =
             durable
                 .outcome
@@ -316,6 +341,7 @@ impl PreparedExactFnspV3Finalization {
                     ledger: post_ledger,
                     receipt,
                     receipt_index,
+                    finalized_receipt_core_id,
                     install_receipt_head: !require_existing_receipt,
                     source_commit_ordinal: expected_ordinal,
                     source_receipt_hash: record.receipt_hash,
@@ -324,7 +350,7 @@ impl PreparedExactFnspV3Finalization {
         Ok(DurablyCommittedExactFnspV3Turn {
             outcome: durable.outcome,
             committed_head: durable.committed_head,
-            finalized_receipt_core_id: durable.finalized_receipt_core_id,
+            finalized_receipt_core_id,
             fresh_post_execution,
         })
     }

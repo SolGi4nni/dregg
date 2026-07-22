@@ -404,6 +404,49 @@ impl PersistentStore {
         Ok(Some((id, core)))
     }
 
+    /// Load one signer-independent semantic core by its typed id and return the unique receipt
+    /// index that names it.
+    ///
+    /// The id table and receipt-index table are checked in both directions on every read.  An
+    /// orphan core, duplicate index reference, missing core bytes, or id/hash mismatch is an
+    /// integrity error rather than an absent result or a silently selected row.
+    pub fn finalized_receipt_core_v1_by_id(
+        &self,
+        id: FinalizedReceiptIdV1,
+    ) -> Result<Option<(u64, FinalizedReceiptCoreV1)>> {
+        let read = self.db.begin_read()?;
+        let cores = read.open_table(FINALIZED_RECEIPT_CORES_V1)?;
+        let Some(bytes) = cores.get(&id.bytes())? else {
+            let by_index = read.open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)?;
+            for row in by_index.iter()? {
+                let (_, indexed_id) =
+                    row.map_err(|error| StoreError::Database(error.to_string()))?;
+                if indexed_id.value() == &id.bytes() {
+                    return Err(integrity("receipt index names missing semantic core bytes"));
+                }
+            }
+            return Ok(None);
+        };
+        let core = decode_core(bytes.value())?;
+        if core.id() != id {
+            return Err(integrity("requested core bytes hash to a different id"));
+        }
+        let by_index = read.open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)?;
+        let mut found = None;
+        for row in by_index.iter()? {
+            let (index, indexed_id) =
+                row.map_err(|error| StoreError::Database(error.to_string()))?;
+            if indexed_id.value() == &id.bytes() {
+                if found.replace(index.value()).is_some() {
+                    return Err(integrity("semantic core id is indexed more than once"));
+                }
+            }
+        }
+        let index =
+            found.ok_or_else(|| integrity("semantic core bytes are not receipt-indexed"))?;
+        Ok(Some((index, core)))
+    }
+
     /// Load the latest semantic core coordinate for one agent.
     pub fn finalized_receipt_core_head_v1(
         &self,
@@ -866,6 +909,28 @@ mod tests {
         )
         .unwrap();
         write.commit().unwrap();
+        assert_eq!(
+            store
+                .finalized_receipt_core_v1_by_id(first_id)
+                .unwrap()
+                .map(|(index, core)| (index, core.id())),
+            Some((0, first_id))
+        );
+        assert_eq!(
+            store
+                .finalized_receipt_core_v1_by_id(second_id)
+                .unwrap()
+                .map(|(index, core)| (index, core.id())),
+            Some((1, second_id))
+        );
+        assert!(
+            store
+                .finalized_receipt_core_v1_by_id(
+                    FinalizedReceiptIdV1::from_bytes([0xFE; 32]).unwrap()
+                )
+                .unwrap()
+                .is_none()
+        );
         let (_, second_core) = store.finalized_receipt_core_v1(1).unwrap().unwrap();
         assert_eq!(
             second_core.predecessor(),
@@ -915,5 +980,136 @@ mod tests {
         );
         write.abort().unwrap();
         assert!(store.finalized_receipt_core_v1(2).unwrap().is_none());
+
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut by_index = write
+                .open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)
+                .unwrap();
+            by_index.insert(2, &first_id.bytes()).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            store.finalized_receipt_core_v1_by_id(first_id).is_err(),
+            "a duplicated reverse coordinate must not be silently selected"
+        );
+
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut by_index = write
+                .open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)
+                .unwrap();
+            by_index.remove(2).unwrap();
+        }
+        {
+            let mut cores = write.open_table(FINALIZED_RECEIPT_CORES_V1).unwrap();
+            cores.remove(&first_id.bytes()).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            store.finalized_receipt_core_v1_by_id(first_id).is_err(),
+            "a receipt-indexed id with missing core bytes is corruption, not absence"
+        );
+    }
+
+    #[test]
+    fn first_semantic_core_after_a_legacy_receipt_is_an_explicit_cutover() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let federation = [0x33; 32];
+        let agent = dregg_cell::CellId([0x45; 32]);
+        let legacy = TurnReceipt {
+            turn_hash: [0x70; 32],
+            timestamp: 1_700_000_000,
+            finality: dregg_turn::Finality::Final,
+            agent,
+            federation_id: federation,
+            ..Default::default()
+        };
+        let legacy_bytes = postcard::to_stdvec(&legacy).unwrap();
+        store.append_receipt_chain_entry(0, &legacy_bytes).unwrap();
+
+        let block_id = [0x64; 32];
+        let exact = TurnReceipt {
+            turn_hash: [0x74; 32],
+            timestamp: 1_700_000_001,
+            finality: dregg_turn::Finality::Final,
+            agent,
+            federation_id: federation,
+            previous_receipt_hash: Some(legacy.receipt_hash()),
+            ..Default::default()
+        };
+        let exact_bytes = postcard::to_stdvec(&exact).unwrap();
+        store.append_receipt_chain_entry(1, &exact_bytes).unwrap();
+        let exact_record = record(1, 1, block_id, &exact);
+        let mut envelope = FaithfulNoteRootEnvelopeV1 {
+            record: FaithfulNoteRootRecordV1::new(
+                [1; 32],
+                federation,
+                7,
+                0,
+                1,
+                0,
+                0,
+                crate::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap(),
+                crate::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap(),
+                block_id,
+            )
+            .unwrap(),
+            hybrid_quorum: Vec::new(),
+        };
+        let mut attested = StoredAttestedRoot {
+            merkle_root: [0; 32],
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 0,
+            timestamp: 0,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 0,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        };
+        let weld = consensus_weld(1, block_id, federation, &mut envelope, &mut attested);
+        let write = store.db.begin_write().unwrap();
+        let id = stage_fresh_finalized_receipt_core_in(
+            &write,
+            &exact_record,
+            1,
+            Some(0),
+            Some(legacy.receipt_hash()),
+            &exact_bytes,
+            &weld,
+        )
+        .unwrap();
+        write.commit().unwrap();
+
+        let (queried_index, queried_core) =
+            store.finalized_receipt_core_v1_by_id(id).unwrap().unwrap();
+        assert_eq!(queried_index, 1);
+        assert_eq!(queried_core.id(), id);
+        assert_eq!(
+            queried_core.predecessor(),
+            FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_index: 0,
+                legacy_receipt_hash: legacy.receipt_hash(),
+            }
+        );
+
+        let write = store.db.begin_write().unwrap();
+        let replayed_id = verify_replayed_finalized_receipt_core_in(
+            &write,
+            &exact_record,
+            1,
+            Some(0),
+            Some(legacy.receipt_hash()),
+            &exact_bytes,
+            &weld,
+        )
+        .unwrap();
+        write.abort().unwrap();
+        assert_eq!(replayed_id, id);
     }
 }
