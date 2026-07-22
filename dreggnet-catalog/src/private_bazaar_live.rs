@@ -33,8 +33,8 @@ use dreggnet_offerings::{DreggIdentity, OfferingHost};
 use dungeon_on_dregg::progression::DungeonWorldCell;
 
 use crate::private_bazaar_worker::{
-    PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarWorkerError,
-    PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
+    PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarSpoolScope,
+    PrivateBazaarWorkerError, PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
 };
 use crate::{CatalogConfig, build_full_catalog};
 
@@ -96,6 +96,7 @@ impl From<PrivateClearingError> for PrivateBazaarLiveDeploymentError {
 #[derive(Clone)]
 pub struct PrivateBazaarLiveDeployment {
     offering: PrivateBazaarRaidOffering,
+    policy: PrivateBazaarRaidPolicy,
     registry: PrivateBazaarLiveRegistry,
     xp_adapter: PrivateBazaarXpAdapter,
     commitment_store: PrivateClearingCommitmentStore,
@@ -110,12 +111,13 @@ impl PrivateBazaarLiveDeployment {
     ) -> Result<Self, PrivateBazaarLiveDeploymentError> {
         let authority_dir = authority_dir.as_ref().to_path_buf();
         let registry = PrivateBazaarLiveRegistry::new();
-        let offering = PrivateBazaarRaidOffering::new(policy, reserve, registry.clone())?;
+        let offering = PrivateBazaarRaidOffering::new(policy.clone(), reserve, registry.clone())?;
         let xp_adapter = PrivateBazaarXpAdapter::open(&authority_dir)?;
         let commitment_store =
             PrivateClearingCommitmentStore::open(authority_dir.join("private-commitments"))?;
         Ok(Self {
             offering,
+            policy,
             registry,
             xp_adapter,
             commitment_store,
@@ -179,7 +181,55 @@ impl PrivateBazaarLiveDeployment {
     pub fn private_receipt_spool(
         &self,
     ) -> Result<PrivateBazaarReceiptSpool, PrivateBazaarWorkerError> {
-        PrivateBazaarReceiptSpool::open(self.authority_dir.join("private-worker"))
+        PrivateBazaarReceiptSpool::open(self.clone(), self.authority_dir.join("private-worker"))
+    }
+
+    pub(crate) fn private_spool_scope(&self) -> PrivateBazaarSpoolScope {
+        PrivateBazaarSpoolScope::new(
+            self.policy.pin().deployment_id(),
+            self.policy.pin().executor_federation(),
+            self.policy.policy_id(),
+        )
+    }
+
+    /// Bind a producer receipt to the exact live proof-verified market before
+    /// any semantic core is allowed into the durable spool.
+    pub(crate) fn validate_private_spool_receipt(
+        &self,
+        seed: u64,
+        receipt: &PrivateClearingReceipt,
+    ) -> Result<[u8; 32], PrivateBazaarWorkerError> {
+        self.registry
+            .with_entered_typed(seed, |market, journey| {
+                if journey.policy().policy_id() != self.policy.policy_id()
+                    || journey.policy().pin().deployment_id() != self.policy.pin().deployment_id()
+                    || journey.policy().pin().executor_federation()
+                        != self.policy.pin().executor_federation()
+                {
+                    return Err(PrivateBazaarWorkerError::StaleLiveMarket);
+                }
+                receipt
+                    .validate_worker_spool_live_settlement(market)
+                    .map_err(|_| PrivateBazaarWorkerError::StaleLiveMarket)?;
+                Ok(journey.market_identity().digest())
+            })
+            .map_err(|_| PrivateBazaarWorkerError::StaleLiveMarket)?
+    }
+
+    /// Revalidate a persisted envelope against the currently hosted issuance.
+    /// This is run at poll time so a stale pre-restart envelope cannot reach the
+    /// consequence authority after the live market has been replayed.
+    pub(crate) fn revalidate_private_spool_receipt(
+        &self,
+        seed: u64,
+        expected_market_instance_id: [u8; 32],
+        receipt: &PrivateClearingReceipt,
+    ) -> Result<(), PrivateBazaarWorkerError> {
+        let found = self.validate_private_spool_receipt(seed, receipt)?;
+        if found != expected_market_instance_id {
+            return Err(PrivateBazaarWorkerError::StaleLiveMarket);
+        }
+        Ok(())
     }
 
     /// Open the production file transport and listener as one bounded runner.
@@ -411,6 +461,7 @@ mod tests {
         install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
         install_verified_mldsa_verify_core, symbol,
     };
+    use dregg_turn::{Finality, TurnReceipt};
     use dreggnet_market::private_bazaar_journey::{
         PrivateBazaarDeploymentPin, PrivateBazaarRaidPolicy,
     };
@@ -430,39 +481,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::private_bazaar_worker::{
-        FinalizedPrivateBazaarReceipt, FinalizedPrivateBazaarReceiptSource,
-        PrivateBazaarWorkerError, PrivateBazaarWorkerTargets,
+        FinalizedPrivateBazaarReceiptSource, PrivateBazaarWorkerError, PrivateBazaarWorkerTargets,
     };
-
-    struct OneReceiptSource {
-        cursor: u64,
-        event: FinalizedPrivateBazaarReceipt,
-    }
-
-    impl OneReceiptSource {
-        fn new(cursor: u64, seed: u64, receipt: PrivateClearingReceipt) -> Self {
-            Self {
-                cursor,
-                event: FinalizedPrivateBazaarReceipt::new(cursor, seed, receipt),
-            }
-        }
-    }
-
-    impl FinalizedPrivateBazaarReceiptSource for OneReceiptSource {
-        fn poll_finalized_after(
-            &mut self,
-            after: u64,
-            limit: usize,
-        ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, String> {
-            if limit == 0 {
-                return Err("listener requested an empty batch".to_owned());
-            }
-            Ok((after < self.cursor)
-                .then(|| self.event.clone())
-                .into_iter()
-                .collect())
-        }
-    }
 
     fn deployment(root: &Path) -> PrivateBazaarLiveDeployment {
         let roster = GuildRoster::new(vec![GuildMember::new(
@@ -554,6 +574,23 @@ mod tests {
         assert!(matches!(outcome, Outcome::Landed { .. }), "{outcome:?}");
     }
 
+    fn synthetic_final_receipt() -> PrivateClearingReceipt {
+        PrivateClearingReceipt::from_worker_spool_v1_parts(
+            17,
+            1_430_520_836,
+            [19; 8],
+            3,
+            1,
+            DreggIdentity("synthetic-private-winner".to_owned()),
+            TurnReceipt {
+                turn_hash: [0x71; 32],
+                finality: Finality::Final,
+                ..TurnReceipt::default()
+            },
+        )
+        .unwrap()
+    }
+
     /// Worker-only test helper: replay the durable private inputs into the
     /// deployment registry, produce the real hiding proof, and install the
     /// verified settlement in the exact market owned by the public host. None
@@ -642,6 +679,19 @@ mod tests {
             )
             .contains("pending")
         );
+    }
+
+    #[test]
+    fn production_spool_refuses_a_missing_live_market() {
+        let temp = tempfile::tempdir().unwrap();
+        let deployment = deployment(temp.path());
+        let seed = 0x51_A1_E;
+
+        let mut spool = deployment.private_receipt_spool().unwrap();
+        assert!(matches!(
+            spool.append(1, seed, synthetic_final_receipt()),
+            Err(PrivateBazaarWorkerError::StaleLiveMarket)
+        ));
     }
 
     #[test]
@@ -758,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn finalized_receipt_listener_recovers_dispatching_without_redispatch_after_restart() {
+    fn file_spool_reissues_same_semantic_cursor_and_recovers_after_full_restart() {
         install_verified_test_pq_runtime();
         let temp = tempfile::tempdir().unwrap();
         let authority_dir = temp.path().join("authority");
@@ -783,7 +833,8 @@ mod tests {
             let private_receipt =
                 settle_worker_market(&deployment, seed, Some(commitment_blinding));
             let worker = deployment.private_worker(targets.clone()).unwrap();
-            let mut source = OneReceiptSource::new(1, seed, private_receipt.clone());
+            let mut source = deployment.private_receipt_spool().unwrap();
+            source.append(1, seed, private_receipt.clone()).unwrap();
 
             let injected = worker.poll_once_with_after_dispatch_crash(&mut source);
             assert!(matches!(
@@ -802,10 +853,10 @@ mod tests {
         let target_receipts_after_uncertain_dispatch = hero.receipt_chain_snapshot().len();
 
         // A new host/deployment replays public Enter/LIST and independently
-        // reissues the private proof/settlement evidence. The private transport
-        // replays cursor 1 because it was never acknowledged. The worker sees
-        // the persisted exact claim in Dispatching, finds the already-landed
-        // target receipt, records/commits it, and publishes viewer-blind status.
+        // reissues proof/settlement evidence. The producer appends that fresh
+        // local envelope as a revision of the identical semantic cursor. The
+        // worker polls only the current live-bound envelope, then sees the
+        // persisted exact claim in Dispatching and never redispatches.
         let restarted = PrivateBazaarLiveDeployment::open(policy, 1, &authority_dir).unwrap();
         let store = FileResumeStore::open(&sessions_dir).unwrap();
         let mut host = full_catalog_host_with_private_bazaar(&CatalogConfig::default(), &restarted)
@@ -819,11 +870,18 @@ mod tests {
             reissued.settlement_turn.receipt_hash(),
             first_receipt.settlement_turn.receipt_hash()
         );
+        assert_eq!(reissued.winner, first_receipt.winner);
 
-        let worker = restarted.private_worker(targets).unwrap();
-        let mut source = OneReceiptSource::new(1, seed, reissued);
+        let mut producer = restarted.private_receipt_spool().unwrap();
+        let stale = producer
+            .poll_finalized_after(0, 1)
+            .expect_err("the pre-restart envelope must not poll against the replayed market");
+        assert!(stale.contains("StaleLiveMarket"), "{stale}");
+        producer.append(1, seed, reissued).unwrap();
+        drop(producer);
+        let mut worker = restarted.private_file_worker(targets).unwrap();
         assert_eq!(
-            worker.poll_once(&mut source).unwrap(),
+            worker.tick().unwrap(),
             crate::private_bazaar_worker::PrivateBazaarWorkerPoll {
                 cursor: 1,
                 processed: 1,
@@ -835,7 +893,7 @@ mod tests {
             target_receipts_after_uncertain_dispatch,
             "Dispatching recovery must not call the target executor again"
         );
-        assert_eq!(worker.poll_once(&mut source).unwrap().processed, 0);
+        assert_eq!(worker.tick().unwrap().processed, 0);
 
         let rendered = format!(
             "{:?}",

@@ -1230,6 +1230,11 @@ impl Default for DarkBazaarOffering {
 /// the real market's executor-backed state.
 pub struct DarkBazaarSession {
     market: MarketSession,
+    /// The proof-verified semantic settlement retained by the live private
+    /// market. A fresh local receipt envelope may be rejoined to this claim
+    /// after restart, but can never redefine it.
+    #[cfg(feature = "private-clearing")]
+    verified_private_clearing: Option<private_clearing::VerifiedPrivateClearingSemanticRecord>,
 }
 
 impl DarkBazaarSession {
@@ -1283,9 +1288,11 @@ impl Offering for DarkBazaarOffering {
     type Session = DarkBazaarSession;
 
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
-        self.market
-            .open(cfg)
-            .map(|market| DarkBazaarSession { market })
+        self.market.open(cfg).map(|market| DarkBazaarSession {
+            market,
+            #[cfg(feature = "private-clearing")]
+            verified_private_clearing: None,
+        })
     }
 
     fn actions(&self, session: &Self::Session) -> Vec<Action> {

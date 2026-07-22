@@ -28,16 +28,18 @@ use crate::private_bazaar_live::PrivateBazaarLiveDeployment;
 const MAX_POLL_BATCH: usize = 32;
 const MAX_RUN_TICKS: usize = 1_024;
 const MAX_SPOOL_WINNER_BYTES: usize = 256;
-const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v1.spool";
-const SPOOL_MAGIC: &[u8; 8] = b"DBSP0001";
-const SPOOL_DOMAIN: &str = "dregg.private-bazaar-finalized-spool.v1";
+const LEGACY_SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v1.spool";
+const SPOOL_FILE_NAME: &str = "finalized-private-bazaar-v2.spool";
+const SPOOL_MAGIC: &[u8; 8] = b"DBSP0002";
+const SPOOL_DOMAIN: &str = "dregg.private-bazaar-finalized-spool.v2";
+const SEMANTIC_CORE_DOMAIN: &str = "dregg.private-bazaar-settlement-core.v1";
 const CLAIM_MAGIC: &[u8; 8] = b"DBWK0001";
 const CURSOR_MAGIC: &[u8; 8] = b"DBWC0001";
 const CLAIM_DOMAIN: &str = "dregg.private-bazaar-worker-claim.v1";
 const CURSOR_DOMAIN: &str = "dregg.private-bazaar-worker-cursor.v1";
 const CLAIM_LEN: usize = 8 + 1 + 8 + 8 + (3 * 32) + 32;
 const CURSOR_LEN: usize = 8 + 8 + 32;
-// v1 is deliberately fixed-width. It supports the SETTLE receipt shape only:
+// v2 is deliberately fixed-width. It supports the SETTLE receipt shape only:
 // variable routing/introduction/derivation/event/capability collections must
 // all be empty and an optional executor signature is exactly 64 bytes. Every
 // integer is big-endian, every presence/bool flag is exactly 0 or 1, absent
@@ -45,7 +47,12 @@ const CURSOR_LEN: usize = 8 + 8 + 32;
 const SPOOL_RECORD_LEN: usize = 8 // magic/version
     + 8 // cursor
     + 8 // hosted session seed
-    + 32 // checksum of predecessor record (zero for cursor 1)
+    + 32 // checksum of physical predecessor record (zero only for first record)
+    + 32 // deployment id
+    + 32 // executor federation / protocol scope
+    + 32 // exact market instance id
+    + 32 // deployment policy id
+    + 32 // restart-stable semantic settlement core id
     + (12 * 4) // proof public statement
     + 2 // winner byte length
     + MAX_SPOOL_WINNER_BYTES
@@ -65,6 +72,38 @@ const SPOOL_RECORD_LEN: usize = 8 // magic/version
     + 1 // burn flag
     + 32 // reconstructed TurnReceipt hash
     + 32; // record checksum / next-record chain anchor
+
+/// Deployment scope persisted in every fixed record.  The deterministic host
+/// seed and market identity are per event; these values prevent byte-identical
+/// market/policy claims from being replayed across deployments or federations.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrivateBazaarSpoolScope {
+    deployment_id: [u8; 32],
+    executor_federation: [u8; 32],
+    policy_id: [u8; 32],
+}
+
+impl PrivateBazaarSpoolScope {
+    pub(crate) const fn new(
+        deployment_id: [u8; 32],
+        executor_federation: [u8; 32],
+        policy_id: [u8; 32],
+    ) -> Self {
+        Self {
+            deployment_id,
+            executor_federation,
+            policy_id,
+        }
+    }
+}
+
+enum PrivateBazaarSpoolBinding {
+    Live(PrivateBazaarLiveDeployment),
+    #[cfg(test)]
+    Detached {
+        market_instance_id: [u8; 32],
+    },
+}
 
 /// One finalized receipt delivered over a private worker transport.
 ///
@@ -113,15 +152,22 @@ pub trait FinalizedPrivateBazaarReceiptSource {
 
 /// Deployment-custodied append-only source for finalized private receipts.
 ///
-/// The file contains only checksummed v1 fixed records and is forced to mode
-/// `0600` on Unix. Opening validates the complete historical cursor/checksum
-/// chain; each poll then seeks directly to the acknowledged cursor and reads at
-/// most one bounded batch. No raw receipt accessor or public rendering type is
+/// The file contains only checksummed v2 fixed records and is forced to mode
+/// `0600` on Unix. Opening validates the complete historical cursor/checksum/
+/// semantic-core chain. A small in-memory index points each logical cursor at
+/// its latest append-only local-envelope revision, so each poll reads at most
+/// one bounded batch. No raw receipt accessor or public rendering type is
 /// introduced by this transport.
 pub struct PrivateBazaarReceiptSpool {
     path: PathBuf,
     file: File,
     identity: SpoolFileIdentity,
+    scope: PrivateBazaarSpoolScope,
+    binding: PrivateBazaarSpoolBinding,
+    latest_positions: Vec<u64>,
+    latest_core_ids: Vec<[u8; 32]>,
+    scanned_records: u64,
+    tail_checksum: [u8; 32],
 }
 
 impl std::fmt::Debug for PrivateBazaarReceiptSpool {
@@ -133,7 +179,37 @@ impl std::fmt::Debug for PrivateBazaarReceiptSpool {
 }
 
 impl PrivateBazaarReceiptSpool {
-    pub(crate) fn open(root: impl AsRef<Path>) -> Result<Self, PrivateBazaarWorkerError> {
+    pub(crate) fn open(
+        deployment: PrivateBazaarLiveDeployment,
+        root: impl AsRef<Path>,
+    ) -> Result<Self, PrivateBazaarWorkerError> {
+        let scope = deployment.private_spool_scope();
+        Self::open_bound(root, scope, PrivateBazaarSpoolBinding::Live(deployment))
+    }
+
+    #[cfg(test)]
+    fn open_test(root: impl AsRef<Path>) -> Result<Self, PrivateBazaarWorkerError> {
+        Self::open_test_with_scope(root, test_spool_scope(0xD1), [0xD2; 32])
+    }
+
+    #[cfg(test)]
+    fn open_test_with_scope(
+        root: impl AsRef<Path>,
+        scope: PrivateBazaarSpoolScope,
+        market_instance_id: [u8; 32],
+    ) -> Result<Self, PrivateBazaarWorkerError> {
+        Self::open_bound(
+            root,
+            scope,
+            PrivateBazaarSpoolBinding::Detached { market_instance_id },
+        )
+    }
+
+    fn open_bound(
+        root: impl AsRef<Path>,
+        scope: PrivateBazaarSpoolScope,
+        binding: PrivateBazaarSpoolBinding,
+    ) -> Result<Self, PrivateBazaarWorkerError> {
         let root = root.as_ref();
         fs::create_dir_all(root)
             .map_err(|error| PrivateBazaarWorkerError::io("create receipt spool", error))?;
@@ -141,6 +217,9 @@ impl PrivateBazaarReceiptSpool {
         let root = fs::canonicalize(root)
             .map_err(|error| PrivateBazaarWorkerError::io("pin receipt spool directory", error))?;
         let path = root.join(SPOOL_FILE_NAME);
+        if root.join(LEGACY_SPOOL_FILE_NAME).exists() {
+            return Err(PrivateBazaarWorkerError::LegacySpoolRequiresMigration);
+        }
         let created = !path.exists();
         let mut options = private_options();
         options.read(true).append(true).create(true);
@@ -154,19 +233,39 @@ impl PrivateBazaarReceiptSpool {
             sync_directory(&root)?;
         }
         let identity = SpoolFileIdentity::from_file(&file)?;
-        let spool = Self {
+        let mut spool = Self {
             path,
             file,
             identity,
+            scope,
+            binding,
+            latest_positions: Vec::new(),
+            latest_core_ids: Vec::new(),
+            scanned_records: 0,
+            tail_checksum: [0; 32],
         };
         spool.revalidate_path_identity()?;
-        spool.validate_complete_chain()?;
+        spool
+            .file
+            .lock_shared()
+            .map_err(|error| PrivateBazaarWorkerError::io("lock receipt spool reader", error))?;
+        let validation = spool.refresh_index();
+        let unlock = spool
+            .file
+            .unlock()
+            .map_err(|error| PrivateBazaarWorkerError::io("unlock receipt spool reader", error));
+        match (validation, unlock) {
+            (Ok(()), Ok(())) => {}
+            (Err(error), _) => return Err(error),
+            (Ok(()), Err(error)) => return Err(error),
+        }
         Ok(spool)
     }
 
-    /// Append and fsync one exact finalized receipt. Cursors are the physical
-    /// record sequence: gaps and rewinds are refused. Retrying the exact tail
-    /// record is idempotent; different bytes at that cursor are a fork.
+    /// Append and fsync one finalized semantic receipt. Logical cursors remain
+    /// contiguous. Retrying the exact tail is idempotent; a fresh local envelope
+    /// for the identical live-validated semantic core is appended as a new
+    /// physical revision. Any semantic change at that cursor is a fork.
     pub fn append(
         &mut self,
         cursor: u64,
@@ -198,23 +297,37 @@ impl PrivateBazaarReceiptSpool {
         self.revalidate_path_identity()?;
         let event = FinalizedPrivateBazaarReceipt::new(cursor, session_seed, receipt);
         validate_event(&event, cursor)?;
-        let count = self.record_count()?;
-        let expected = count
+        let market_instance_id = self.bind_live_event(&event)?;
+        self.refresh_index()?;
+        let logical_tail = u64::try_from(self.latest_positions.len())
+            .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
+        let expected = logical_tail
             .checked_add(1)
             .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
+        let core_id = semantic_core_id(self.scope, market_instance_id, &event)?;
 
-        if cursor == count && count != 0 {
-            let (found_bytes, found) = self.read_record(count - 1)?;
-            let expected_bytes = encode_spool_record(&event, found.previous_checksum)?;
+        if cursor == logical_tail && logical_tail != 0 {
+            let index = usize::try_from(cursor - 1)
+                .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
+            let position = self.latest_positions[index];
+            let (found_bytes, found) = self.read_record(position)?;
+            if found.semantic_core_id != core_id {
+                return Err(PrivateBazaarWorkerError::SpoolFork {
+                    expected,
+                    found: cursor,
+                });
+            }
+            let expected_bytes = encode_spool_record(
+                self.scope,
+                market_instance_id,
+                &event,
+                found.previous_checksum,
+            )?;
             if found_bytes == expected_bytes {
                 return Ok(());
             }
-            return Err(PrivateBazaarWorkerError::SpoolFork {
-                expected,
-                found: cursor,
-            });
         }
-        if cursor != expected {
+        if cursor != expected && cursor != logical_tail {
             return Err(if cursor < expected {
                 PrivateBazaarWorkerError::SpoolFork {
                     expected,
@@ -228,12 +341,8 @@ impl PrivateBazaarReceiptSpool {
             });
         }
 
-        let previous_checksum = if count == 0 {
-            [0; 32]
-        } else {
-            self.read_record(count - 1)?.1.checksum
-        };
-        let bytes = encode_spool_record(&event, previous_checksum)?;
+        let bytes =
+            encode_spool_record(self.scope, market_instance_id, &event, self.tail_checksum)?;
         let mut file = self
             .file
             .try_clone()
@@ -249,6 +358,7 @@ impl PrivateBazaarReceiptSpool {
                 .ok_or(PrivateBazaarWorkerError::Corrupt("receipt spool parent"))?,
         )?;
         self.revalidate_path_identity()?;
+        self.refresh_index()?;
         Ok(())
     }
 
@@ -264,68 +374,136 @@ impl PrivateBazaarReceiptSpool {
             });
         }
         self.revalidate_path_identity()?;
-        let count = self.record_count()?;
-        if after > count {
-            return Err(PrivateBazaarWorkerError::SpoolCursorAhead { after, last: count });
-        }
-        let mut previous_checksum = if after == 0 {
-            [0; 32]
-        } else {
-            let (_, anchor) = self.read_record(after - 1)?;
-            if anchor.event.cursor != after {
-                return Err(cursor_order_error(after, anchor.event.cursor));
-            }
-            anchor.checksum
+        self.file
+            .lock_shared()
+            .map_err(|error| PrivateBazaarWorkerError::io("lock receipt spool reader", error))?;
+        let result = self.poll_bounded_locked(after, limit);
+        let unlock = self
+            .file
+            .unlock()
+            .map_err(|error| PrivateBazaarWorkerError::io("unlock receipt spool reader", error));
+        let events = match (result, unlock) {
+            (Ok(events), Ok(())) => events,
+            (Err(error), _) => return Err(error),
+            (Ok(_), Err(error)) => return Err(error),
         };
-        let available = usize::try_from(count - after).unwrap_or(usize::MAX);
-        let take = available.min(limit);
-        let mut events = Vec::with_capacity(take);
-        for offset in 0..take {
-            let position = after
-                .checked_add(u64::try_from(offset).expect("bounded poll offset fits u64"))
-                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
-            let (_, record) = self.read_record(position)?;
-            let expected = position
-                .checked_add(1)
-                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
-            if record.event.cursor != expected {
-                return Err(cursor_order_error(expected, record.event.cursor));
-            }
-            if record.previous_checksum != previous_checksum {
-                return Err(PrivateBazaarWorkerError::SpoolFork {
-                    expected,
-                    found: record.event.cursor,
-                });
-            }
-            previous_checksum = record.checksum;
-            events.push(record.event);
-        }
         self.revalidate_path_identity()?;
         Ok(events)
     }
 
-    fn validate_complete_chain(&self) -> Result<(), PrivateBazaarWorkerError> {
-        self.revalidate_path_identity()?;
-        let count = self.record_count()?;
-        let mut previous_checksum = [0; 32];
-        for position in 0..count {
-            let (_, record) = self.read_record(position)?;
-            let expected = position
+    fn poll_bounded_locked(
+        &mut self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, PrivateBazaarWorkerError> {
+        self.refresh_index()?;
+        let logical_tail = u64::try_from(self.latest_positions.len())
+            .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
+        if after > logical_tail {
+            return Err(PrivateBazaarWorkerError::SpoolCursorAhead {
+                after,
+                last: logical_tail,
+            });
+        }
+        let start = usize::try_from(after).map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
+        let end = start.saturating_add(limit).min(self.latest_positions.len());
+        let mut events = Vec::with_capacity(end - start);
+        for logical_index in start..end {
+            let (_, record) = self.read_record(self.latest_positions[logical_index])?;
+            let expected = u64::try_from(logical_index)
+                .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
                 .checked_add(1)
                 .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
             if record.event.cursor != expected {
                 return Err(cursor_order_error(expected, record.event.cursor));
             }
-            if record.previous_checksum != previous_checksum {
+            self.revalidate_bound_record(&record)?;
+            events.push(record.event);
+        }
+        Ok(events)
+    }
+
+    fn refresh_index(&mut self) -> Result<(), PrivateBazaarWorkerError> {
+        let count = self.record_count()?;
+        if count < self.scanned_records {
+            return Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool was truncated",
+            ));
+        }
+        for position in self.scanned_records..count {
+            let (_, record) = self.read_record(position)?;
+            if record.scope != self.scope {
+                return Err(PrivateBazaarWorkerError::SpoolScopeMismatch);
+            }
+            let expected = u64::try_from(self.latest_positions.len())
+                .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
+                .checked_add(1)
+                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
+            if record.previous_checksum != self.tail_checksum {
                 return Err(PrivateBazaarWorkerError::SpoolFork {
                     expected,
                     found: record.event.cursor,
                 });
             }
-            previous_checksum = record.checksum;
+            if record.event.cursor == expected {
+                self.latest_positions.push(position);
+                self.latest_core_ids.push(record.semantic_core_id);
+            } else if record.event.cursor == expected.saturating_sub(1) && record.event.cursor != 0
+            {
+                let last = self.latest_positions.len() - 1;
+                if self.latest_core_ids[last] != record.semantic_core_id {
+                    return Err(PrivateBazaarWorkerError::SpoolFork {
+                        expected,
+                        found: record.event.cursor,
+                    });
+                }
+                self.latest_positions[last] = position;
+            } else {
+                return Err(cursor_order_error(expected, record.event.cursor));
+            }
+            self.tail_checksum = record.checksum;
+            self.scanned_records = position
+                .checked_add(1)
+                .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
         }
-        self.revalidate_path_identity()?;
         Ok(())
+    }
+
+    fn bind_live_event(
+        &self,
+        event: &FinalizedPrivateBazaarReceipt,
+    ) -> Result<[u8; 32], PrivateBazaarWorkerError> {
+        match &self.binding {
+            PrivateBazaarSpoolBinding::Live(deployment) => {
+                deployment.validate_private_spool_receipt(event.session_seed, &event.receipt)
+            }
+            #[cfg(test)]
+            PrivateBazaarSpoolBinding::Detached { market_instance_id } => Ok(*market_instance_id),
+        }
+    }
+
+    fn revalidate_bound_record(
+        &self,
+        record: &DecodedSpoolRecord,
+    ) -> Result<(), PrivateBazaarWorkerError> {
+        match &self.binding {
+            PrivateBazaarSpoolBinding::Live(deployment) => deployment
+                .revalidate_private_spool_receipt(
+                    record.event.session_seed,
+                    record.market_instance_id,
+                    &record.event.receipt,
+                ),
+            #[cfg(test)]
+            PrivateBazaarSpoolBinding::Detached { market_instance_id }
+                if *market_instance_id == record.market_instance_id =>
+            {
+                Ok(())
+            }
+            #[cfg(test)]
+            PrivateBazaarSpoolBinding::Detached { .. } => {
+                Err(PrivateBazaarWorkerError::SpoolScopeMismatch)
+            }
+        }
     }
 
     fn record_count(&self) -> Result<u64, PrivateBazaarWorkerError> {
@@ -460,6 +638,9 @@ pub struct PrivateBazaarWorkerRun {
 
 struct DecodedSpoolRecord {
     event: FinalizedPrivateBazaarReceipt,
+    scope: PrivateBazaarSpoolScope,
+    market_instance_id: [u8; 32],
+    semantic_core_id: [u8; 32],
     previous_checksum: [u8; 32],
     checksum: [u8; 32],
 }
@@ -710,6 +891,8 @@ fn validate_event(
 }
 
 fn encode_spool_record(
+    scope: PrivateBazaarSpoolScope,
+    market_instance_id: [u8; 32],
     event: &FinalizedPrivateBazaarReceipt,
     previous_checksum: [u8; 32],
 ) -> Result<Vec<u8>, PrivateBazaarWorkerError> {
@@ -772,6 +955,11 @@ fn encode_spool_record(
     out.extend_from_slice(&event.cursor.to_be_bytes());
     out.extend_from_slice(&event.session_seed.to_be_bytes());
     out.extend_from_slice(&previous_checksum);
+    out.extend_from_slice(&scope.deployment_id);
+    out.extend_from_slice(&scope.executor_federation);
+    out.extend_from_slice(&market_instance_id);
+    out.extend_from_slice(&scope.policy_id);
+    out.extend_from_slice(&semantic_core_id(scope, market_instance_id, event)?);
     out.extend_from_slice(&receipt.statement.session.to_be_bytes());
     out.extend_from_slice(&receipt.statement.rule.to_be_bytes());
     for lane in receipt.statement.order_root {
@@ -842,6 +1030,16 @@ fn decode_spool_record(bytes: &[u8]) -> Result<DecodedSpoolRecord, PrivateBazaar
     let cursor = reader.u64()?;
     let session_seed = reader.u64()?;
     let previous_checksum = reader.array::<32>()?;
+    let deployment_id = reader.array::<32>()?;
+    let executor_federation = reader.array::<32>()?;
+    let market_instance_id = reader.array::<32>()?;
+    let policy_id = reader.array::<32>()?;
+    let scope = PrivateBazaarSpoolScope {
+        deployment_id,
+        executor_federation,
+        policy_id,
+    };
+    let expected_semantic_core_id = reader.array::<32>()?;
     let session = reader.u32()?;
     let rule = reader.u32()?;
     let mut order_root = [0; 8];
@@ -951,8 +1149,16 @@ fn decode_spool_record(bytes: &[u8]) -> Result<DecodedSpoolRecord, PrivateBazaar
     .map_err(|error| PrivateBazaarWorkerError::ReceiptCodec(error.to_string()))?;
     let event = FinalizedPrivateBazaarReceipt::new(cursor, session_seed, receipt);
     validate_event(&event, cursor)?;
+    if semantic_core_id(scope, market_instance_id, &event)? != expected_semantic_core_id {
+        return Err(PrivateBazaarWorkerError::Corrupt(
+            "receipt spool semantic core",
+        ));
+    }
     Ok(DecodedSpoolRecord {
         event,
+        scope,
+        market_instance_id,
+        semantic_core_id: expected_semantic_core_id,
         previous_checksum,
         checksum: record_checksum,
     })
@@ -1202,6 +1408,52 @@ fn checksum(domain: &str, bytes: &[u8]) -> [u8; 32] {
         .as_bytes()
 }
 
+/// Restart-stable settlement identity.  It includes every semantic public
+/// clearing coordinate and the canonical winner under an explicit deployment,
+/// federation, market, policy, logical cursor, and deterministic host seed.
+/// Proof randomness and every local [`TurnReceipt`] envelope field are excluded.
+fn semantic_core_id(
+    scope: PrivateBazaarSpoolScope,
+    market_instance_id: [u8; 32],
+    event: &FinalizedPrivateBazaarReceipt,
+) -> Result<[u8; 32], PrivateBazaarWorkerError> {
+    let winner = event.receipt.winner.0.as_bytes();
+    let winner_len = u16::try_from(winner.len())
+        .map_err(|_| PrivateBazaarWorkerError::UnsupportedReceiptField("winner length"))?;
+    if winner_len == 0 || winner.len() > MAX_SPOOL_WINNER_BYTES {
+        return Err(PrivateBazaarWorkerError::UnsupportedReceiptField(
+            "winner length",
+        ));
+    }
+    let mut hasher = blake3::Hasher::new_derive_key(SEMANTIC_CORE_DOMAIN);
+    hasher.update(b"DBSC0001");
+    hasher.update(&scope.deployment_id);
+    hasher.update(&scope.executor_federation);
+    hasher.update(&market_instance_id);
+    hasher.update(&scope.policy_id);
+    hasher.update(&event.cursor.to_be_bytes());
+    hasher.update(&event.session_seed.to_be_bytes());
+    hasher.update(&event.receipt.statement.session.to_be_bytes());
+    hasher.update(&event.receipt.statement.rule.to_be_bytes());
+    for lane in event.receipt.statement.order_root {
+        hasher.update(&lane.to_be_bytes());
+    }
+    hasher.update(&event.receipt.statement.p_star.to_be_bytes());
+    hasher.update(&event.receipt.statement.v_star.to_be_bytes());
+    hasher.update(&winner_len.to_be_bytes());
+    hasher.update(winner);
+    Ok(*hasher.finalize().as_bytes())
+}
+
+#[cfg(test)]
+const fn test_spool_scope(tag: u8) -> PrivateBazaarSpoolScope {
+    PrivateBazaarSpoolScope::new(
+        [tag; 32],
+        [tag.wrapping_add(1); 32],
+        [tag.wrapping_add(2); 32],
+    )
+}
+
 fn array_at<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
     bytes[offset..offset + N]
         .try_into()
@@ -1444,6 +1696,9 @@ pub enum PrivateBazaarWorkerError {
         found: u64,
     },
     SpoolFileReplaced,
+    LegacySpoolRequiresMigration,
+    SpoolScopeMismatch,
+    StaleLiveMarket,
     CursorOverflow,
     UnfinalizedEvidence,
     UnsupportedReceiptField(&'static str),
@@ -1534,7 +1789,7 @@ mod tests {
     fn fixed_spool_replays_unacknowledged_records_and_is_private_and_bounded() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("worker");
-        let mut spool = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
         let first = receipt(0x21);
         spool.append(1, 0xA1, first.clone()).unwrap();
         spool
@@ -1554,7 +1809,7 @@ mod tests {
             );
         }
 
-        let mut reopened = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        let mut reopened = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
         let first_poll = reopened.poll_bounded(0, 1).unwrap();
         assert_eq!(first_poll.len(), 1);
         assert_eq!(first_poll[0].cursor, 1);
@@ -1585,10 +1840,111 @@ mod tests {
     }
 
     #[test]
+    fn semantic_tail_reissue_appends_only_a_fresh_envelope_and_polls_latest() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("worker");
+        let mut spool = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        let first = receipt(0x29);
+        let mut reissued = first.clone();
+        reissued.settlement_turn.turn_hash = [0xA1; 32];
+        reissued.settlement_turn.forest_hash = [0xA2; 32];
+        reissued.settlement_turn.pre_state_hash = [0xA3; 32];
+        reissued.settlement_turn.post_state_hash = [0xA4; 32];
+        reissued.settlement_turn.timestamp = 9_999;
+        reissued.settlement_turn.previous_receipt_hash = Some([0xA5; 32]);
+        reissued.settlement_turn.executor_signature = Some(vec![0xA6; 64]);
+
+        spool.append(1, 0xBEEF, first.clone()).unwrap();
+        spool.append(1, 0xBEEF, reissued.clone()).unwrap();
+        assert_eq!(
+            fs::metadata(root.join(SPOOL_FILE_NAME)).unwrap().len(),
+            (2 * SPOOL_RECORD_LEN) as u64,
+            "a semantic retry is an append-only envelope revision"
+        );
+
+        let mut reopened = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        let events = reopened.poll_bounded(0, 1).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].receipt.statement, first.statement);
+        assert_eq!(events[0].receipt.winner.0, first.winner.0);
+        assert_eq!(
+            events[0].receipt.settlement_turn.receipt_hash(),
+            reissued.settlement_turn.receipt_hash()
+        );
+        reopened
+            .append(1, 0xBEEF, reissued)
+            .expect("exact latest envelope retry is idempotent");
+        assert_eq!(
+            fs::metadata(root.join(SPOOL_FILE_NAME)).unwrap().len(),
+            (2 * SPOOL_RECORD_LEN) as u64
+        );
+
+        let mut changed_root = first;
+        changed_root.statement.order_root[0] = 20;
+        assert!(matches!(
+            reopened.append(1, 0xBEEF, changed_root),
+            Err(PrivateBazaarWorkerError::SpoolFork { .. })
+        ));
+        let mut changed_price = receipt(0x29);
+        changed_price.statement.p_star = 2;
+        assert!(matches!(
+            reopened.append(1, 0xBEEF, changed_price),
+            Err(PrivateBazaarWorkerError::SpoolFork { .. })
+        ));
+        let mut changed_winner = receipt(0x29);
+        changed_winner.winner = DreggIdentity("other-private-winner".to_owned());
+        assert!(matches!(
+            reopened.append(1, 0xBEEF, changed_winner),
+            Err(PrivateBazaarWorkerError::SpoolFork { .. })
+        ));
+    }
+
+    #[test]
+    fn semantic_spool_refuses_cross_deployment_and_corrupt_core() {
+        let legacy = tempfile::tempdir().unwrap();
+        fs::write(legacy.path().join(LEGACY_SPOOL_FILE_NAME), []).unwrap();
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open_test(legacy.path()),
+            Err(PrivateBazaarWorkerError::LegacySpoolRequiresMigration)
+        ));
+
+        let cross = tempfile::tempdir().unwrap();
+        let scope_a = test_spool_scope(0x31);
+        let scope_b = test_spool_scope(0x41);
+        let market = [0x51; 32];
+        let mut spool =
+            PrivateBazaarReceiptSpool::open_test_with_scope(cross.path(), scope_a, market).unwrap();
+        spool.append(1, 7, receipt(0x35)).unwrap();
+        drop(spool);
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open_test_with_scope(cross.path(), scope_b, market),
+            Err(PrivateBazaarWorkerError::SpoolScopeMismatch)
+        ));
+
+        let corrupt = tempfile::tempdir().unwrap();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(corrupt.path()).unwrap();
+        spool.append(1, 8, receipt(0x36)).unwrap();
+        let path = spool.path.clone();
+        drop(spool);
+        let mut bytes = fs::read(&path).unwrap();
+        const CORE_OFFSET: usize = 8 + 8 + 8 + 32 + (4 * 32);
+        bytes[CORE_OFFSET] ^= 1;
+        let record_checksum = checksum(SPOOL_DOMAIN, &bytes[..SPOOL_RECORD_LEN - 32]);
+        bytes[SPOOL_RECORD_LEN - 32..].copy_from_slice(&record_checksum);
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            PrivateBazaarReceiptSpool::open_test(corrupt.path()),
+            Err(PrivateBazaarWorkerError::Corrupt(
+                "receipt spool semantic core"
+            ))
+        ));
+    }
+
+    #[test]
     fn fixed_spool_refuses_unsupported_receipt_collections_and_trailing_bytes() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("worker");
-        let mut spool = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
         let mut unsupported = receipt(0x31);
         unsupported
             .settlement_turn
@@ -1617,7 +1973,7 @@ mod tests {
             Err(PrivateBazaarWorkerError::SpoolTrailingBytes { found: 1 })
         ));
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(&root),
+            PrivateBazaarReceiptSpool::open_test(&root),
             Err(PrivateBazaarWorkerError::SpoolTrailingBytes { found: 1 })
         ));
     }
@@ -1629,10 +1985,13 @@ mod tests {
             first: FinalizedPrivateBazaarReceipt,
             second: FinalizedPrivateBazaarReceipt,
         ) -> PathBuf {
-            let spool = PrivateBazaarReceiptSpool::open(root).unwrap();
-            let first = encode_spool_record(&first, [0; 32]).unwrap();
+            let spool = PrivateBazaarReceiptSpool::open_test(root).unwrap();
+            let scope = spool.scope;
+            let market_instance_id = [0xD2; 32];
+            let first = encode_spool_record(scope, market_instance_id, &first, [0; 32]).unwrap();
             let first_checksum = array_at::<32>(&first, SPOOL_RECORD_LEN - 32);
-            let second = encode_spool_record(&second, first_checksum).unwrap();
+            let second =
+                encode_spool_record(scope, market_instance_id, &second, first_checksum).unwrap();
             let mut file = private_options().truncate(true).open(&spool.path).unwrap();
             file.write_all(&first).unwrap();
             file.write_all(&second).unwrap();
@@ -1647,7 +2006,7 @@ mod tests {
             FinalizedPrivateBazaarReceipt::new(3, 3, receipt(0x43)),
         );
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(gap_temp.path()),
+            PrivateBazaarReceiptSpool::open_test(gap_temp.path()),
             Err(PrivateBazaarWorkerError::SpoolGap {
                 expected: 2,
                 found: 3
@@ -1661,7 +2020,7 @@ mod tests {
             FinalizedPrivateBazaarReceipt::new(1, 2, receipt(0x52)),
         );
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(fork_temp.path()),
+            PrivateBazaarReceiptSpool::open_test(fork_temp.path()),
             Err(PrivateBazaarWorkerError::SpoolFork {
                 expected: 2,
                 found: 1
@@ -1678,7 +2037,7 @@ mod tests {
         bytes[100] ^= 1;
         fs::write(&path, bytes).unwrap();
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(corrupt_temp.path()),
+            PrivateBazaarReceiptSpool::open_test(corrupt_temp.path()),
             Err(PrivateBazaarWorkerError::Corrupt(
                 "receipt spool record checksum"
             ))
@@ -1686,8 +2045,8 @@ mod tests {
     }
 
     #[test]
-    fn fixed_spool_v1_record_length_is_pinned() {
-        assert_eq!(SPOOL_RECORD_LEN, 775);
+    fn fixed_spool_v2_record_length_is_pinned() {
+        assert_eq!(SPOOL_RECORD_LEN, 935);
     }
 
     #[cfg(unix)]
@@ -1702,7 +2061,7 @@ mod tests {
         fs::write(&symlink_target, []).unwrap();
         symlink(&symlink_target, symlink_root.join(SPOOL_FILE_NAME)).unwrap();
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(&symlink_root),
+            PrivateBazaarReceiptSpool::open_test(&symlink_root),
             Err(PrivateBazaarWorkerError::Io {
                 operation: "open receipt spool",
                 ..
@@ -1717,7 +2076,7 @@ mod tests {
         fs::set_permissions(&hardlink_target, fs::Permissions::from_mode(0o600)).unwrap();
         fs::hard_link(&hardlink_target, hardlink_root.join(SPOOL_FILE_NAME)).unwrap();
         assert!(matches!(
-            PrivateBazaarReceiptSpool::open(&hardlink_root),
+            PrivateBazaarReceiptSpool::open_test(&hardlink_root),
             Err(PrivateBazaarWorkerError::Corrupt(
                 "receipt spool link count is not one"
             ))
@@ -1725,7 +2084,7 @@ mod tests {
 
         let replace_temp = tempfile::tempdir().unwrap();
         let replace_root = replace_temp.path().join("worker");
-        let mut spool = PrivateBazaarReceiptSpool::open(&replace_root).unwrap();
+        let mut spool = PrivateBazaarReceiptSpool::open_test(&replace_root).unwrap();
         spool.append(1, 1, receipt(0x71)).unwrap();
         let pinned_path = spool.path.clone();
         let displaced = replace_root.join("displaced-spool");
@@ -1754,8 +2113,8 @@ mod tests {
 
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("worker");
-        let locked = PrivateBazaarReceiptSpool::open(&root).unwrap();
-        let mut writer = PrivateBazaarReceiptSpool::open(&root).unwrap();
+        let locked = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        let mut writer = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
         locked.file.lock().unwrap();
         let (sent, received) = mpsc::channel();
         let thread = thread::spawn(move || {

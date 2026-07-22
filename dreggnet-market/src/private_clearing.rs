@@ -124,6 +124,15 @@ pub struct PrivateClearingReceipt {
     pub settlement_turn: dregg_app_framework::TurnReceipt,
 }
 
+/// Live-session custody of the proof-verified semantic settlement. This is not
+/// a wire type: only the private settlement and worker rejoin paths can inspect
+/// it, and frontends cannot deserialize or render it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedPrivateClearingSemanticRecord {
+    statement: PublicStatement,
+    winner: DreggIdentity,
+}
+
 /// Worker-private durable binding between one commitment blind and one exact
 /// canonical private book. Fields have no public accessors: frontends never
 /// receive the blind or private-input digest.
@@ -370,6 +379,46 @@ impl PrivateClearingReceipt {
             winner,
             settlement_turn,
         })
+    }
+
+    /// Rejoin a decoded worker-spool envelope to the exact proof-verified
+    /// semantic claim and terminal receipt currently held by the live market.
+    /// Timestamp, signature, and receipt-chain bytes are issuance evidence, not
+    /// semantic identity, but must still match the current live issuance.
+    #[doc(hidden)]
+    pub fn validate_worker_spool_live_settlement(
+        &self,
+        session: &DarkBazaarSession,
+    ) -> Result<(), PrivateClearingError> {
+        let semantic = session.verified_private_clearing.as_ref().ok_or_else(|| {
+            PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "live market has no proof-verified private settlement".to_owned(),
+            )
+        })?;
+        let clearing = session.clearing().ok_or_else(|| {
+            PrivateClearingError::InvalidWorkerSpoolReceipt("live market is not settled".to_owned())
+        })?;
+        let live_turn = session.market.receipts.last().ok_or_else(|| {
+            PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "live market has no terminal settlement receipt".to_owned(),
+            )
+        })?;
+        if semantic.statement != self.statement
+            || semantic.winner != self.winner
+            || self.statement.session != session.private_proof_session()
+            || self.statement.v_star != 1
+            || session.winning_actor() != Some(&self.winner)
+            || u32::try_from(clearing.price()).ok() != Some(self.statement.p_star)
+            || !clearing.conserved()
+            || live_turn.turn_hash != self.settlement_turn.turn_hash
+            || live_turn.receipt_hash() != self.settlement_turn.receipt_hash()
+            || self.settlement_turn.turn_hash == [0; 32]
+        {
+            return Err(PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "receipt does not match the current live proof-verified settlement".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// The verified first-price clearing value.
@@ -819,11 +868,16 @@ impl DarkBazaarOffering {
             ));
         }
 
-        Ok(PrivateClearingReceipt {
+        let receipt = PrivateClearingReceipt {
             statement: authorization.statement,
             winner,
             settlement_turn,
-        })
+        };
+        session.verified_private_clearing = Some(VerifiedPrivateClearingSemanticRecord {
+            statement: receipt.statement,
+            winner: receipt.winner.clone(),
+        });
+        Ok(receipt)
     }
 }
 
