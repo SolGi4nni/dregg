@@ -8,7 +8,7 @@
 #   2. checks the mathlib dependency (metatheory/lakefile.toml pins mathlib as a portable
 #      git+rev require) and pulls its PREBUILT oleans via `lake exe cache get` — minutes,
 #      mathlib is never compiled from source here;
-#   3. `lake build`s the verified executor's three FFI splice roots (incremental; the FIRST
+#   3. `lake build`s the verified executor roots and all six real PQ splice roots (incremental; the FIRST
 #      run compiles the Dregg2 corpus and takes a while — see the note printed at that step);
 #   4. seeds dregg-lean-ffi/libdregg_lean.a (the static archive of the compiled Lean kernel;
 #      ~6000 objects, one-time — afterwards `cargo build` keeps it fresh automatically);
@@ -76,11 +76,20 @@ else
 fi
 
 # ── 3. build the verified executor (Lean → C facets) ────────────────────────
-step "lake build the three FFI splice roots (incremental; FIRST run compiles the Dregg2 corpus — long; mathlib comes prebuilt from the cache step above)"
+step "lake build the executor + real-PQ splice roots (incremental; FIRST run compiles the Dregg2 corpus — long; mathlib comes prebuilt from the cache step above)"
 # All three splice roots (the triple in build.rs + scripts/lean-ffi-closure.py):
 # DistributedExports is a root (nothing imports it) and pulls Dregg2.Coord.*,
 # which FFI alone never emits — the seed archive step needs those objects.
-( cd "$META" && lake build Dregg2.Exec.FFI Dregg2.Exec.DistributedExports Dregg2.Exec.FFIDirect ) \
+( cd "$META" && lake build \
+    Dregg2.Exec.FFI \
+    Dregg2.Exec.DistributedExports \
+    Dregg2.Exec.FFIDirect \
+    Dregg2.Crypto.Fips204Verify \
+    Dregg2.Crypto.MlDsaSignReal \
+    Dregg2.Crypto.MlDsaKeygen \
+    Dregg2.Crypto.MlKemEncaps \
+    Dregg2.Crypto.MlKemDecaps \
+    Dregg2.Crypto.MlKemKeygen ) \
   || die "lake build failed. Common causes:
   * mathlib checkout at the wrong revision (see the pin check above);
   * a partial earlier build — re-running this script resumes it (lake is incremental)."

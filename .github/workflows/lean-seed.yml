@@ -195,7 +195,16 @@ jobs:
           # good seed gets "refused to publish" with a message claiming the export is missing.
           # `case` does no piping, and runs $NM once instead of once per symbol.
           syms="$("$NM" "$arch" 2>/dev/null)"
-          for sym in dregg_exec_full_forest_auth dregg_tau_order; do
+          for sym in \
+            dregg_exec_full_forest_auth \
+            dregg_tau_order \
+            dregg_fips204_verify_real \
+            dregg_fips204_sign_real \
+            dregg_mldsa_keygen_real \
+            dregg_mlkem_encaps_real \
+            dregg_mlkem_decaps_real \
+            dregg_mlkem_keygen_real
+          do
             case "$syms" in
               *"$sym"*) ;;
               *) echo "::error::archive lacks the verified-executor export '$sym' — refusing to publish a seed that fetch-lean-seed.sh would reject."; exit 1 ;;

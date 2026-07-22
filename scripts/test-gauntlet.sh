@@ -64,10 +64,10 @@ mode="${1:-default}"
 case "$mode" in
   default|"")    exec cargo nextest run --profile default "$@" ;;
   ci)            exec cargo nextest run --profile ci      "$@" ;;
-  full)          exec cargo nextest run --profile full    "$@" ;;
-  heavy)         exec cargo nextest run --profile heavy   "$@" ;;
-  heavy-release) exec cargo nextest run --profile heavy --release "$@" ;;
-  list-heavy)    exec cargo nextest list --profile heavy  "$@" ;;
+  full)          exec cargo nextest run --profile full --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
+  heavy)         exec cargo nextest run --profile heavy --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
+  heavy-release) exec cargo nextest run --profile heavy --release --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
+  list-heavy)    exec cargo nextest list --profile heavy --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
   armed)         exec cargo nextest run --profile armed --release --run-ignored ignored-only "$@" ;;
   list-armed)    exec cargo nextest list --profile armed --run-ignored ignored-only "$@" ;;
   gpu)           exec cargo nextest run --profile gpu   --release --run-ignored ignored-only "$@" ;;

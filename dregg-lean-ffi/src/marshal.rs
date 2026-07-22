@@ -2364,9 +2364,7 @@ impl AdmissionReason {
             Self::AgentFrozen => {
                 "refused: the agent cell is frozen for migration; no turns may execute against it"
             }
-            Self::WriteSetFrozen => {
-                "refused: a cell this turn would write is frozen for migration"
-            }
+            Self::WriteSetFrozen => "refused: a cell this turn would write is frozen for migration",
             Self::ChainHeadMismatch => {
                 "refused: the turn's previous-receipt-hash does not match the agent's receipt-chain head"
             }

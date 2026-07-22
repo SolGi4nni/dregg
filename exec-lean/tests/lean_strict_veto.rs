@@ -104,10 +104,18 @@ fn burn_turn(agent: CellId) -> Turn {
 /// `Rejected(LeanShadowVeto)`, balance UNCHANGED. WITHOUT strict mode the same burn COMMITS
 /// (debits 10). The two-sidedness proves the veto is a genuine gate, not a no-op.
 ///
-/// Skips (passes vacuously, with a printed note) when the Lean FFI is not linked — the veto is a
-/// no-op without the verified executor, so there is nothing to enforce.
+/// An unarmed developer build honestly skips when the archive is absent.  Under
+/// `DREGG_TEST_REQUIRE_LEAN=1` that same absence is a hard failure: the strict-veto
+/// gate is not allowed to report green without running the verified executor.
 #[test]
 fn strict_veto_rolls_back_lean_rejected_burn() {
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::lean_available(),
+        "verified Turn executor archive (lean_available)",
+    ) {
+        return;
+    }
+
     // Single-threaded env mutation: set the shadow + strict flags for this test.
     // SAFETY: this test binary is run with --test-threads=1 for the strict-veto suite; the env
     // mutation is local to this process and restored at the end.
@@ -116,11 +124,8 @@ fn strict_veto_rolls_back_lean_rejected_burn() {
         std::env::set_var("DREGG_LEAN_SHADOW_STRICT", "1");
     }
 
-    // STRICT mode: run the under-authorised burn. If the Lean FFI is linked, the verified `.burnA`
-    // rejects the missing-cap burn ⇒ VETO ⇒ Rejected(LeanShadowVeto), balance unchanged. If the
-    // Lean FFI is NOT linked, there is no verified verdict to veto with, so the strict path falls
-    // through to the Rust commit (the burn commits, debiting 10). Both outcomes are SOUND — the
-    // veto can only TIGHTEN, never spuriously reject without a verified rejection.
+    // STRICT mode: the linked verified `.burnA` rejects the missing-cap burn ⇒ VETO ⇒
+    // Rejected(LeanShadowVeto), balance unchanged.
     let (mut ledger, agent) = one_cell_ledger(100);
     let executor = veto_executor();
     let result = executor.execute(&burn_turn(agent), &mut ledger);
@@ -155,20 +160,6 @@ fn strict_veto_rolls_back_lean_rejected_burn() {
                 ledger2.get(&agent2).map(|c| c.state.balance()),
                 Some(90),
                 "the non-vetoed burn must debit 10 (100 -> 90)"
-            );
-        }
-        dregg_turn::turn::TurnResult::Committed { .. } => {
-            // Lean FFI not linked (no verified verdict) — the strict path must NOT spuriously veto;
-            // the burn commits. (When the FFI IS linked, the branch above fires instead.)
-            assert_eq!(
-                post_bal,
-                Some(90),
-                "without a verified verdict the burn commits and debits 10 (100 -> 90), got {post_bal:?}"
-            );
-            eprintln!(
-                "[strict-veto] Lean FFI not linked — no verified verdict to veto; the burn \
-                 committed (strict path does not spuriously reject). Build with --features \
-                 a present libdregg_lean.a (linked by default on native) to exercise the veto."
             );
         }
         other => panic!("unexpected strict-veto outcome: {other:?}"),

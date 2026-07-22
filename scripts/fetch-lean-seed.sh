@@ -151,7 +151,10 @@ fi
 # ── decompress + install atomically ──────────────────────────────────────────
 say "Decompressing + installing → $DEST"
 zstd -d -f -q "$ZST" -o "$TMP/libdregg_lean.a" || die "zstd decompress failed."
-# sanity: the archive must export the load-bearing verified-executor FFI symbols.
+# Sanity: the archive must export both the load-bearing verified executor and
+# every real PQ core. A core-less archive is not a verified-runtime seed: using
+# it makes `dregg-pq` abort at first use (or requires the explicit unaudited
+# escape hatch), even though the executor export alone is present.
 NM="nm"; command -v nm >/dev/null 2>&1 || NM="llvm-nm"
 if command -v "$NM" >/dev/null 2>&1; then
   # Read the symbol table ONCE into a variable, then match — do NOT pipe `$NM … | grep -q`.
@@ -163,13 +166,23 @@ if command -v "$NM" >/dev/null 2>&1; then
   # a bad install — it just made the good one impossible. (Same bug, same fix, as the export check
   # in .github/workflows/lean-seed.yml.)
   syms="$("$NM" "$TMP/libdregg_lean.a" 2>/dev/null || true)"
-  case "$syms" in
-    *dregg_exec_full_forest_auth*) ;;
-    *) die "the downloaded archive lacks the verified-executor export 'dregg_exec_full_forest_auth' —
-  it is not a valid dregg seed (wrong asset, or a corrupt/placeholder file). NOT installing." ;;
-  esac
+  for sym in \
+    dregg_exec_full_forest_auth \
+    dregg_fips204_verify_real \
+    dregg_fips204_sign_real \
+    dregg_mldsa_keygen_real \
+    dregg_mlkem_encaps_real \
+    dregg_mlkem_decaps_real \
+    dregg_mlkem_keygen_real
+  do
+    case "$syms" in
+      *"$sym"*) ;;
+      *) die "the downloaded archive lacks required verified-runtime export '$sym' —
+  it is not a valid current dregg seed (wrong/stale asset, or a corrupt/placeholder file). NOT installing." ;;
+    esac
+  done
   unset syms
-  echo "    verified-executor exports present (dregg_exec_full_forest_auth …)"
+  echo "    verified executor + all six real PQ exports present"
 fi
 mv -f "$TMP/libdregg_lean.a" "$DEST"
 

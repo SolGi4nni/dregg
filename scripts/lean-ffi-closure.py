@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""lean-ffi-closure.py — enumerate the module closure of the FFI splice roots.
+"""lean-ffi-closure.py — enumerate the module closure of the runtime splice roots.
 
 Prints one module name per line (`Dregg2.Exec.FFI`-style) for the transitive
-import closure of the three archive splice roots build.rs recognizes
-(Dregg2.Exec.FFI / Dregg2.Exec.DistributedExports / Dregg2.Exec.FFIDirect),
+import closure of the executor roots and the six real post-quantum runtime roots
+that build.rs recognizes,
 walking BOTH the project tree and every lake package (mathlib's new module
 syntax — `public import` / `meta import` / `import all` — included). Core
 (Init/Lean/Std) modules come from the toolchain, not the seed, and are skipped.
@@ -20,7 +20,21 @@ import sys
 from pathlib import Path
 
 meta = Path(sys.argv[1] if len(sys.argv) > 1 else "metatheory")
-ROOTS = ["Dregg2.Exec.FFI", "Dregg2.Exec.DistributedExports", "Dregg2.Exec.FFIDirect"]
+ROOTS = [
+    "Dregg2.Exec.FFI",
+    "Dregg2.Exec.DistributedExports",
+    "Dregg2.Exec.FFIDirect",
+    # These roots are deliberately part of the SEED, not only build.rs's
+    # per-OUT_DIR refresh. A fetched seed is the cold-host fast path; if it omits
+    # them, a release build either recompiles the whole crypto closure or fails
+    # the PQ export gate and is tempted toward DREGG_REQUIRE_PQ_CORES=0.
+    "Dregg2.Crypto.Fips204Verify",
+    "Dregg2.Crypto.MlDsaSignReal",
+    "Dregg2.Crypto.MlDsaKeygen",
+    "Dregg2.Crypto.MlKemEncaps",
+    "Dregg2.Crypto.MlKemDecaps",
+    "Dregg2.Crypto.MlKemKeygen",
+]
 ROOTS += sys.argv[2:]
 
 pkg_roots = [meta] + sorted((meta / ".lake/packages").glob("*"))

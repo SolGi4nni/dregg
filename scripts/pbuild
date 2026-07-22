@@ -29,6 +29,18 @@ HOST="${PBUILD_HOST:-persvati}"
 # holds at least this many built artifacts (a fresh lane has 0). Override with
 # PBUILD_WARM_DEPS. A warm .lake/packages/mathlib also counts as warm.
 WARM_DEPS="${PBUILD_WARM_DEPS:-100}"
+# Optional host policy. Persvati keeps the historical defaults (no wrapper and
+# no extra disk floor). Hosts that are also production co-tenants can require a
+# cgroup wrapper and a free-space reserve without duplicating pbuild's protocol.
+REMOTE_WRAPPER="${PBUILD_REMOTE_WRAPPER:-}"
+MIN_FREE_GIB="${PBUILD_MIN_FREE_GIB:-0}"
+
+case "$MIN_FREE_GIB" in
+  ''|*[!0-9]*)
+    echo "pbuild: PBUILD_MIN_FREE_GIB must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
 
 FORCE_COLD=0
 if [ "${1:-}" = "--force-cold" ]; then FORCE_COLD=1; shift; fi
@@ -53,9 +65,44 @@ MSG
   exit 2
 fi
 
+# A co-tenant wrapper is an authority boundary, not a best-effort preference:
+# fail before mkdir/rsync if it is absent. Quote the command name so an unusual
+# contributor-owned path remains one remote shell word.
+if [ -n "$REMOTE_WRAPPER" ]; then
+  printf -v REMOTE_WRAPPER_Q '%q' "$REMOTE_WRAPPER"
+  # shellcheck disable=SC2029 # REMOTE_WRAPPER_Q is deliberately client-quoted for the remote shell.
+  if ! ssh "$HOST" "command -v ${REMOTE_WRAPPER_Q} >/dev/null 2>&1"; then
+    echo "pbuild: REFUSING — required remote wrapper '${REMOTE_WRAPPER}' is absent on ${HOST}." >&2
+    exit 4
+  fi
+fi
+
+# Check the remote home filesystem before any mutation. A Cargo link can grow a
+# warm lane by several GiB; hosts with live services need space left for those
+# services even when the build itself is memory-contained.
+if [ "$MIN_FREE_GIB" -gt 0 ]; then
+  FREE_KIB="$(ssh "$HOST" "df -Pk \"\$HOME\" | awk 'NR == 2 { print \$4 }'")"
+  case "$FREE_KIB" in
+    ''|*[!0-9]*)
+      echo "pbuild: REFUSING — could not measure free space on ${HOST}." >&2
+      exit 4
+      ;;
+  esac
+  MIN_FREE_KIB=$((MIN_FREE_GIB * 1024 * 1024))
+  if [ "$FREE_KIB" -lt "$MIN_FREE_KIB" ]; then
+    FREE_GIB=$((FREE_KIB / 1024 / 1024))
+    cat >&2 <<MSG
+pbuild: REFUSING — ${HOST} has only ~${FREE_GIB} GiB free; host policy requires
+        ${MIN_FREE_GIB} GiB (PBUILD_MIN_FREE_GIB). No mkdir or rsync was attempted.
+MSG
+    exit 4
+  fi
+fi
+
 # ---- cold-lane guard ------------------------------------------------------
 # Probe the remote (BEFORE any mkdir/rsync — a brand-new lane dir does not yet
 # exist, so it reads as cold) for this lane's warmth + the list of warm lanes.
+# shellcheck disable=SC2087 # WARM_DEPS/LANE are intentionally interpolated locally into the probe.
 PROBE="$(ssh "$HOST" "bash -s" <<PROBE_EOF
 set -e
 warm_of() {
@@ -90,6 +137,7 @@ if [ "$STATUS" != "warm" ]; then
       echo ""
       if [ -n "$WARM_LANES" ]; then
         echo "        Reuse a WARM lane instead (these already have a build cache):"
+        # shellcheck disable=SC2086 # Deliberate newline/word split: one formatted lane per row.
         printf '          %s\n' $WARM_LANES
       else
         echo "        (no warm lanes found on ${HOST} to reuse)"
@@ -104,12 +152,32 @@ fi
 
 # Sync working tree (WIP included) -> isolated lane dir. gitignore filter keeps
 # target/.lake out so persvati's per-lane build cache survives across invocations.
+# shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
 ssh "$HOST" "mkdir -p '${REMOTE}'"
 rsync -az --delete --filter=':- .gitignore' --exclude='.git/' \
   "$SRC" "${HOST}:${REMOTE}/"
 
-# Build on persvati with cargo + elan env sourced (non-login shells lack them).
-ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
-  [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
-  export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
-  cd '${REMOTE}' && $*"
+# Build with cargo + elan env sourced (non-login shells lack them). Persvati's
+# empty-wrapper path is intentionally byte-for-byte the historical behavior.
+if [ -z "$REMOTE_WRAPPER" ]; then
+  # shellcheck disable=SC2029 # Historical pbuild command interpolation on the remote shell.
+  ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
+    [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
+    export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
+    cd '${REMOTE}' && $*"
+else
+  # One argument retains the established compound-command interface. Multiple
+  # arguments are shell-quoted individually so nextest filters and feature
+  # lists cross ssh with their argv intact.
+  if [ "$#" -eq 1 ]; then
+    REMOTE_COMMAND="$1"
+  else
+    printf -v REMOTE_COMMAND '%q ' "$@"
+  fi
+  printf -v REMOTE_COMMAND_Q '%q' "$REMOTE_COMMAND"
+  # shellcheck disable=SC2029 # REMOTE_COMMAND_Q/WRAPPER_Q are client-shell-quoted by construction.
+  ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
+    [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
+    export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
+    cd '${REMOTE}' && exec ${REMOTE_WRAPPER_Q} bash -c ${REMOTE_COMMAND_Q}"
+fi
