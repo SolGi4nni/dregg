@@ -1,9 +1,12 @@
 // Exact negacyclic RNS NTT over fhe.rs's serialized power-basis rows.
 //
-// WGSL deliberately uses only core u32 operations.  Every residue/modulus is
-// represented as (lo, hi), and modular multiplication is double-and-add.  It
-// is not the final throughput kernel, but it is portable across Metal, Vulkan,
-// DX12, and browser WebGPU and is bit-exact for the < 2^62 fhe-math moduli.
+// WGSL deliberately uses only core u32 operations. Every residue/modulus is
+// represented as (lo, hi). The admitted GPU family is q < 2^48, so an exact
+// three-limb radix-2^16 Montgomery product replaces the former per-bit
+// double-and-add loop. Immutable tables upload in Montgomery form, while input
+// conversion is fused into the first GPU pass; standalone forward and
+// inverse/multiply terminal boundaries return canonical residues. This remains
+// portable across Metal, Vulkan, DX12, and WebGPU.
 
 struct Meta {
     degree      : u32,
@@ -19,7 +22,8 @@ struct Meta {
 @group(0) @binding(0) var<uniform>             params : Meta;
 @group(0) @binding(1) var<storage, read_write> lhs    : array<u32>;
 @group(0) @binding(2) var<storage, read_write> rhs    : array<u32>;
-// Per row: q.lo, q.hi, significant_bits(q), padding.
+// Per row: q.lo, q.hi, -q[0]^-1 mod 2^16, padding,
+//          R^2.lo, R^2.hi, padding, padding.
 @group(0) @binding(3) var<storage, read>       qdata  : array<u32>;
 // Per row: degree forward powers followed by degree inverse powers.
 @group(0) @binding(4) var<storage, read>       roots  : array<u32>;
@@ -41,10 +45,6 @@ fn ge64(a: vec2<u32>, b: vec2<u32>) -> bool {
     return a.y > b.y || (a.y == b.y && a.x >= b.x);
 }
 
-fn shr1(a: vec2<u32>) -> vec2<u32> {
-    return vec2<u32>((a.x >> 1u) | (a.y << 31u), a.y >> 1u);
-}
-
 fn addmod(a: vec2<u32>, b: vec2<u32>, q: vec2<u32>) -> vec2<u32> {
     var s = add64(a, b);
     if (ge64(s, q)) { s = sub64(s, q); }
@@ -56,18 +56,50 @@ fn submod(a: vec2<u32>, b: vec2<u32>, q: vec2<u32>) -> vec2<u32> {
     return sub64(q, sub64(b, a));
 }
 
-// Exact for canonical a,b < q and q < 2^62.  At every iteration acc,x < q,
-// so addmod sees a sum < 2q < 2^63 and the split-u32 add never overflows u64.
-fn mulmod(a: vec2<u32>, b: vec2<u32>, q: vec2<u32>, qbits: u32) -> vec2<u32> {
-    var acc = vec2<u32>(0u, 0u);
-    var x = a;
-    var y = b;
-    for (var bit = 0u; bit < qbits; bit = bit + 1u) {
-        if ((y.x & 1u) != 0u) { acc = addmod(acc, x, q); }
-        y = shr1(y);
-        if (bit + 1u < qbits) { x = addmod(x, x, q); }
+// REDC(a*b) in base 2^16 with R=2^48. `t` is a seven-limb carrier: six
+// product limbs plus the bounded reduction carry. Every inner accumulator is
+// at most 0xffff^2 + 2*0xffff = 0xffffffff, so no u32 product/add overflows.
+// Inputs and output are canonical Montgomery residues; one final subtraction
+// is sufficient because REDC(a*b) < 2q for a,b<q<R.
+fn mont_mul(a: vec2<u32>, b: vec2<u32>, q: vec2<u32>, qinv16: u32) -> vec2<u32> {
+    let mask = 0xffffu;
+    let ad = array<u32, 3>(a.x & mask, a.x >> 16u, a.y & mask);
+    let bd = array<u32, 3>(b.x & mask, b.x >> 16u, b.y & mask);
+    let qd = array<u32, 3>(q.x & mask, q.x >> 16u, q.y & mask);
+    var t = array<u32, 7>(0u, 0u, 0u, 0u, 0u, 0u, 0u);
+
+    for (var i = 0u; i < 3u; i = i + 1u) {
+        var carry = 0u;
+        for (var j = 0u; j < 3u; j = j + 1u) {
+            let index = i + j;
+            let uv = t[index] + ad[j] * bd[i] + carry;
+            t[index] = uv & mask;
+            carry = uv >> 16u;
+        }
+        for (var k = i + 3u; k < 7u; k = k + 1u) {
+            let uv = t[k] + carry;
+            t[k] = uv & mask;
+            carry = uv >> 16u;
+        }
+
+        let m = (t[i] * qinv16) & mask;
+        carry = 0u;
+        for (var j = 0u; j < 3u; j = j + 1u) {
+            let index = i + j;
+            let uv = t[index] + m * qd[j] + carry;
+            t[index] = uv & mask;
+            carry = uv >> 16u;
+        }
+        for (var k = i + 3u; k < 7u; k = k + 1u) {
+            let uv = t[k] + carry;
+            t[k] = uv & mask;
+            carry = uv >> 16u;
+        }
     }
-    return acc;
+
+    var reduced = vec2<u32>(t[3] | (t[4] << 16u), t[5] | (t[6] << 16u));
+    if (ge64(reduced, q)) { reduced = sub64(reduced, q); }
+    return reduced;
 }
 
 fn table_row(row: u32) -> u32 {
@@ -76,10 +108,15 @@ fn table_row(row: u32) -> u32 {
 
 fn row_q(row: u32) -> vec2<u32> {
     let source = table_row(row);
-    return vec2<u32>(qdata[source * 4u], qdata[source * 4u + 1u]);
+    return vec2<u32>(qdata[source * 8u], qdata[source * 8u + 1u]);
 }
 
-fn row_qbits(row: u32) -> u32 { return qdata[table_row(row) * 4u + 2u]; }
+fn row_qinv16(row: u32) -> u32 { return qdata[table_row(row) * 8u + 2u]; }
+
+fn row_r_squared(row: u32) -> vec2<u32> {
+    let source = table_row(row);
+    return vec2<u32>(qdata[source * 8u + 4u], qdata[source * 8u + 5u]);
+}
 
 fn load_coeff(buf: u32, index: u32) -> vec2<u32> {
     if (buf == 0u) { return vec2<u32>(lhs[index * 2u], lhs[index * 2u + 1u]); }
@@ -118,11 +155,11 @@ fn twist_both(@builtin(global_invocation_id) gid: vec3<u32>) {
     let row = gid.y;
     if (i >= params.degree || row >= params.n_rows) { return; }
     let q = row_q(row);
-    let qbits = row_qbits(row);
+    let qinv16 = row_qinv16(row);
     let index = row * params.degree + i;
     let twist = load_table(1u, row, i);
-    store_coeff(0u, index, mulmod(load_coeff(0u, index), twist, q, qbits));
-    store_coeff(1u, index, mulmod(load_coeff(1u, index), twist, q, qbits));
+    store_coeff(0u, index, mont_mul(load_coeff(0u, index), twist, q, qinv16));
+    store_coeff(1u, index, mont_mul(load_coeff(1u, index), twist, q, qinv16));
 }
 
 @compute @workgroup_size(64)
@@ -131,10 +168,10 @@ fn twist_lhs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let row = gid.y;
     if (i >= params.degree || row >= params.n_rows) { return; }
     let q = row_q(row);
-    let qbits = row_qbits(row);
+    let qinv16 = row_qinv16(row);
     let index = row * params.degree + i;
     let twist = load_table(1u, row, i);
-    store_coeff(0u, index, mulmod(load_coeff(0u, index), twist, q, qbits));
+    store_coeff(0u, index, mont_mul(load_coeff(0u, index), twist, q, qinv16));
 }
 
 @compute @workgroup_size(64)
@@ -156,26 +193,33 @@ fn bit_reverse_both(@builtin(global_invocation_id) gid: vec3<u32>) {
     store_coeff(1u, b, rhs_a);
 }
 
-fn butterfly(buf: u32, butterfly_index: u32, row: u32) {
+fn butterfly(buf: u32, butterfly_index: u32, row: u32, normalize_output: bool) {
     let block = butterfly_index / params.half;
     let j = butterfly_index - block * params.half;
     let left = block * (2u * params.half) + j;
     let right = left + params.half;
     let row_base = row * params.degree;
     let q = row_q(row);
-    let qbits = row_qbits(row);
+    let qinv16 = row_qinv16(row);
     let w = load_table(0u, row, params.roots_offset + j * params.step);
     let u = load_coeff(buf, row_base + left);
-    let v = mulmod(load_coeff(buf, row_base + right), w, q, qbits);
-    store_coeff(buf, row_base + left, addmod(u, v, q));
-    store_coeff(buf, row_base + right, submod(u, v, q));
+    let v = mont_mul(load_coeff(buf, row_base + right), w, q, qinv16);
+    var left_output = addmod(u, v, q);
+    var right_output = submod(u, v, q);
+    if (normalize_output) {
+        let one = vec2<u32>(1u, 0u);
+        left_output = mont_mul(left_output, one, q, qinv16);
+        right_output = mont_mul(right_output, one, q, qinv16);
+    }
+    store_coeff(buf, row_base + left, left_output);
+    store_coeff(buf, row_base + right, right_output);
 }
 
 @compute @workgroup_size(64)
 fn stage_both(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.degree / 2u || gid.y >= params.n_rows) { return; }
-    butterfly(0u, gid.x, gid.y);
-    butterfly(1u, gid.x, gid.y);
+    butterfly(0u, gid.x, gid.y, false);
+    butterfly(1u, gid.x, gid.y, false);
 }
 
 @compute @workgroup_size(64)
@@ -187,7 +231,7 @@ fn pointwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     store_coeff(
         0u,
         index,
-        mulmod(load_coeff(0u, index), load_coeff(1u, index), row_q(row), row_qbits(row)),
+        mont_mul(load_coeff(0u, index), load_coeff(1u, index), row_q(row), row_qinv16(row)),
     );
 }
 
@@ -206,10 +250,40 @@ fn bit_reverse_lhs(@builtin(global_invocation_id) gid: vec3<u32>) {
     store_coeff(0u, b, va);
 }
 
+// Standalone inverse transforms receive a canonical spectrum. Convert each
+// coefficient with REDC(value * R^2) while performing the same in-place bit
+// reversal. `i <= j` owns each pair exactly once; fixed points are converted
+// rather than skipped.
+@compute @workgroup_size(64)
+fn bit_reverse_lhs_mont(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    let row = gid.y;
+    if (i >= params.degree || row >= params.n_rows) { return; }
+    let j = reverse_low_bits(i, params.log_degree);
+    if (i > j) { return; }
+    let a = row * params.degree + i;
+    let b = row * params.degree + j;
+    let q = row_q(row);
+    let qinv16 = row_qinv16(row);
+    let r_squared = row_r_squared(row);
+    if (i == j) {
+        store_coeff(0u, a, mont_mul(load_coeff(0u, a), r_squared, q, qinv16));
+        return;
+    }
+    let va = load_coeff(0u, a);
+    let vb = load_coeff(0u, b);
+    store_coeff(0u, a, mont_mul(vb, r_squared, q, qinv16));
+    store_coeff(0u, b, mont_mul(va, r_squared, q, qinv16));
+}
+
 @compute @workgroup_size(64)
 fn stage_lhs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.degree / 2u || gid.y >= params.n_rows) { return; }
-    butterfly(0u, gid.x, gid.y);
+    // A standalone forward transform returns canonical spectra. Multiply and
+    // inverse stages use the inverse root-table half and stay Montgomery until
+    // `finalize_lhs`.
+    let normalize = params.roots_offset == 0u && params.half * 2u == params.degree;
+    butterfly(0u, gid.x, gid.y, normalize);
 }
 
 @compute @workgroup_size(64)
@@ -222,6 +296,16 @@ fn finalize_lhs(@builtin(global_invocation_id) gid: vec3<u32>) {
     store_coeff(
         0u,
         index,
-        mulmod(load_coeff(0u, index), inv_twist_times_n_inv, row_q(row), row_qbits(row)),
+        mont_mul(
+            mont_mul(
+                load_coeff(0u, index),
+                inv_twist_times_n_inv,
+                row_q(row),
+                row_qinv16(row),
+            ),
+            vec2<u32>(1u, 0u),
+            row_q(row),
+            row_qinv16(row),
+        ),
     );
 }

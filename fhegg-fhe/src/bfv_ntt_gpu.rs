@@ -5,8 +5,11 @@
 //! `LeanCiphertext` serialization exposes power-basis residue rows.  This
 //! module multiplies two such [`RnsPoly`] values in
 //! `Z_q[X]/(X^n + 1)`: twist by a primitive `2n`-th root, cyclic radix-2 NTT,
-//! pointwise multiply, inverse NTT, and untwist.  The WGSL shader uses split
-//! `u32` limbs and exact double-and-add modular multiplication, so it requires
+//! pointwise multiply, inverse NTT, and untwist. The deployed 36--37-bit
+//! moduli use an exact three-limb radix-2^16 Montgomery kernel: public tables
+//! enter Montgomery form at upload, input conversion is fused into the first
+//! GPU pass, every butterfly stays there, and the final boundary returns
+//! canonical residues. It requires
 //! no CUDA, HIP, native `u64`, or vendor extension.
 //!
 //! The scope is deliberately below full BFV ciphertext multiplication.  It
@@ -29,6 +32,9 @@ use crate::bfv_lean::RnsPoly;
 const WORKGROUP_SIZE: u32 = 64;
 const MAX_DEGREE: usize = 1 << 16;
 const MAX_RNS_ROWS: usize = 16;
+/// Three radix-2^16 limbs. Larger valid CPU families take a labelled adapter-
+/// limits fallback instead of entering an unsupported GPU reduction.
+const GPU_MONTGOMERY_RADIX: u64 = 1u64 << 48;
 
 type Result<T> = std::result::Result<T, BfvNttError>;
 
@@ -888,6 +894,7 @@ pub fn verify_odd_ntt_execution(
 #[derive(Clone)]
 struct RowPlan {
     psi: u64,
+    montgomery_r: u64,
     roots: Vec<u64>,
     inverse_roots: Vec<u64>,
     twists: Vec<u64>,
@@ -1038,6 +1045,7 @@ fn build_row_plan(q: u64, degree: usize) -> Result<RowPlan> {
     let omega = mod_mul(psi, psi, q);
     let omega_inv = mod_pow(omega, q - 2, q);
     let n_inv = mod_pow((degree as u64) % q, q - 2, q);
+    let montgomery_r = (u128::from(GPU_MONTGOMERY_RADIX) % u128::from(q)) as u64;
 
     let roots = powers(omega, degree, q);
     let inverse_roots = powers(omega_inv, degree, q);
@@ -1048,6 +1056,7 @@ fn build_row_plan(q: u64, degree: usize) -> Result<RowPlan> {
         .collect();
     Ok(RowPlan {
         psi,
+        montgomery_r,
         roots,
         inverse_roots,
         twists,
@@ -1063,6 +1072,27 @@ fn powers(base: u64, count: usize, modulus: u64) -> Vec<u64> {
         value = mod_mul(value, base, modulus);
     }
     out
+}
+
+fn inverse_mod_2_16(odd: u16) -> u16 {
+    // Newton iteration doubles the number of correct low bits each round.
+    let mut inverse = odd;
+    for _ in 0..4 {
+        inverse = inverse.wrapping_mul(2u16.wrapping_sub(odd.wrapping_mul(inverse)));
+    }
+    inverse
+}
+
+fn validate_gpu_montgomery_moduli(moduli: &[u64]) -> std::result::Result<(), String> {
+    if let Some(&modulus) = moduli
+        .iter()
+        .find(|&&modulus| modulus >= GPU_MONTGOMERY_RADIX)
+    {
+        return Err(format!(
+            "modulus {modulus} exceeds the exact three-limb radix-2^16 GPU carrier"
+        ));
+    }
+    Ok(())
 }
 
 fn mod_mul(a: u64, b: u64, modulus: u64) -> u64 {
@@ -1322,6 +1352,7 @@ struct GpuCtx {
     stage_both: wgpu::ComputePipeline,
     pointwise: wgpu::ComputePipeline,
     bit_reverse_lhs: wgpu::ComputePipeline,
+    bit_reverse_lhs_mont: wgpu::ComputePipeline,
     stage_lhs: wgpu::ComputePipeline,
     finalize_lhs: wgpu::ComputePipeline,
     /// One bounded resident immutable table family. Coefficient buffers stay
@@ -1407,6 +1438,7 @@ impl GpuCtx {
         let stage_both = make_pipeline("stage_both");
         let pointwise = make_pipeline("pointwise");
         let bit_reverse_lhs = make_pipeline("bit_reverse_lhs");
+        let bit_reverse_lhs_mont = make_pipeline("bit_reverse_lhs_mont");
         let stage_lhs = make_pipeline("stage_lhs");
         let finalize_lhs = make_pipeline("finalize_lhs");
         if let Some(error) = pollster::block_on(device.pop_error_scope()) {
@@ -1425,6 +1457,7 @@ impl GpuCtx {
             stage_both,
             pointwise,
             bit_reverse_lhs,
+            bit_reverse_lhs_mont,
             stage_lhs,
             finalize_lhs,
             static_tables: Mutex::new(None),
@@ -1435,6 +1468,7 @@ impl GpuCtx {
         if batch_size == 0 {
             return Err("odd-NTT GPU batch is empty".to_owned());
         }
+        validate_gpu_montgomery_moduli(&plan.moduli)?;
         if self.limits.max_storage_buffers_per_shader_stage < 5 {
             return Err(format!(
                 "adapter exposes {} storage buffers per compute stage; 5 required",
@@ -1525,15 +1559,36 @@ impl GpuCtx {
         // Serialize the rare miss so reported upload counts remain actual;
         // speculative losing allocations would otherwise upload three buffers
         // but return the winning cache entry as a zero-upload hit.
-        let mut qdata = Vec::with_capacity(plan.moduli.len() * 4);
+        let mut qdata = Vec::with_capacity(plan.moduli.len() * 8);
         let mut roots = Vec::with_capacity(plan.moduli.len() * plan.degree * 4);
         let mut twists = Vec::with_capacity(plan.moduli.len() * plan.degree * 4);
         for (&q, row) in plan.moduli.iter().zip(&plan.rows) {
-            qdata.extend_from_slice(&[q as u32, (q >> 32) as u32, 64 - q.leading_zeros(), 0]);
+            let q_inverse = inverse_mod_2_16(q as u16).wrapping_neg();
+            let r_squared = mod_mul(row.montgomery_r, row.montgomery_r, q);
+            qdata.extend_from_slice(&[
+                q as u32,
+                (q >> 32) as u32,
+                u32::from(q_inverse),
+                0,
+                r_squared as u32,
+                (r_squared >> 32) as u32,
+                0,
+                0,
+            ]);
             for &value in row.roots.iter().chain(&row.inverse_roots) {
+                let value = mod_mul(value, row.montgomery_r, q);
                 roots.extend_from_slice(&[value as u32, (value >> 32) as u32]);
             }
-            for &value in row.twists.iter().chain(&row.inverse_twists_times_n_inv) {
+            // A forward twist converts the canonical uploaded coefficient at
+            // the same time: REDC(value * twist*R^2) = value*twist*R.
+            for &value in &row.twists {
+                let value = mod_mul(value, r_squared, q);
+                twists.extend_from_slice(&[value as u32, (value >> 32) as u32]);
+            }
+            // Inverse scales consume an already-Montgomery butterfly value,
+            // so these carry the ordinary single R factor.
+            for &value in &row.inverse_twists_times_n_inv {
+                let value = mod_mul(value, row.montgomery_r, q);
                 twists.extend_from_slice(&[value as u32, (value >> 32) as u32]);
             }
         }
@@ -1736,7 +1791,7 @@ impl GpuCtx {
                 );
             }
             GpuNttOperation::Transform(OddNttDirection::Inverse) => {
-                dispatch(&self.bit_reverse_lhs, base_meta, degree);
+                dispatch(&self.bit_reverse_lhs_mont, base_meta, degree);
                 dispatch_stages(
                     &mut dispatch,
                     &self.stage_lhs,
@@ -1852,6 +1907,81 @@ mod tests {
         out
     }
 
+    /// Integer twin of the fixed-loop WGSL REDC, checked against the u128
+    /// oracle below. Deliberately uses u32 accumulators so a violated limb
+    /// bound panics in debug tests instead of being hidden by a wider host sum.
+    fn montgomery_mul_radix16_reference(a: u64, b: u64, q: u64) -> u64 {
+        const MASK: u32 = 0xffff;
+        let digits = |value: u64| {
+            [
+                value as u32 & MASK,
+                (value >> 16) as u32 & MASK,
+                (value >> 32) as u32 & MASK,
+            ]
+        };
+        let a = digits(a);
+        let b = digits(b);
+        let q_digits = digits(q);
+        let q_inverse = u32::from(inverse_mod_2_16(q as u16).wrapping_neg());
+        let mut t = [0u32; 7];
+
+        for i in 0..3 {
+            let mut carry = 0u32;
+            for j in 0..3 {
+                let index = i + j;
+                let uv = t[index]
+                    .checked_add(a[j].checked_mul(b[i]).expect("16-bit product"))
+                    .and_then(|uv| uv.checked_add(carry))
+                    .expect("radix-2^16 product accumulator fits u32");
+                t[index] = uv & MASK;
+                carry = uv >> 16;
+            }
+            for digit in &mut t[i + 3..] {
+                let uv = digit
+                    .checked_add(carry)
+                    .expect("product carry propagation fits u32");
+                *digit = uv & MASK;
+                carry = uv >> 16;
+            }
+            assert_eq!(carry, 0, "seven limbs carry the complete product");
+
+            let multiplier = t[i].wrapping_mul(q_inverse) & MASK;
+            carry = 0;
+            for j in 0..3 {
+                let index = i + j;
+                let uv = t[index]
+                    .checked_add(
+                        multiplier
+                            .checked_mul(q_digits[j])
+                            .expect("16-bit reduction product"),
+                    )
+                    .and_then(|uv| uv.checked_add(carry))
+                    .expect("radix-2^16 reduction accumulator fits u32");
+                t[index] = uv & MASK;
+                carry = uv >> 16;
+            }
+            for digit in &mut t[i + 3..] {
+                let uv = digit
+                    .checked_add(carry)
+                    .expect("reduction carry propagation fits u32");
+                *digit = uv & MASK;
+                carry = uv >> 16;
+            }
+            assert_eq!(carry, 0, "seven limbs carry the complete reduction");
+            assert_eq!(t[i], 0, "Montgomery reduction cancels the low limb");
+        }
+
+        let mut reduced = u64::from(t[3])
+            | (u64::from(t[4]) << 16)
+            | (u64::from(t[5]) << 32)
+            | (u64::from(t[6]) << 48);
+        if reduced >= q {
+            reduced -= q;
+        }
+        assert!(reduced < q);
+        reduced
+    }
+
     fn deployed_poly(seed: u64) -> RnsPoly {
         let mut state = seed;
         RnsPoly {
@@ -1897,6 +2027,66 @@ mod tests {
             lhs,
             "forward + inverse negacyclic NTT must recover every exact coefficient"
         );
+    }
+
+    #[test]
+    fn radix16_montgomery_reduction_matches_u128_oracle_at_deployed_boundaries() {
+        for &q in &FOLD_MODULI {
+            assert!(q < GPU_MONTGOMERY_RADIX);
+            let q_inverse = inverse_mod_2_16(q as u16).wrapping_neg();
+            assert_eq!((q as u16).wrapping_mul(q_inverse), u16::MAX);
+            let r = (u128::from(GPU_MONTGOMERY_RADIX) % u128::from(q)) as u64;
+            let boundaries = [
+                0,
+                1,
+                q / 2,
+                u64::from(u32::MAX),
+                u64::from(u32::MAX) + 1,
+                q - 1,
+            ];
+            for &a in &boundaries {
+                for &b in &boundaries {
+                    let a_r = mod_mul(a, r, q);
+                    let b_r = mod_mul(b, r, q);
+                    let product_r = montgomery_mul_radix16_reference(a_r, b_r, q);
+                    assert_eq!(product_r, mod_mul(mod_mul(a, b, q), r, q));
+                    assert_eq!(
+                        montgomery_mul_radix16_reference(product_r, 1, q),
+                        mod_mul(a, b, q)
+                    );
+                }
+            }
+
+            let mut state = q ^ 0x6750_4e54_545f_4d4f;
+            for _ in 0..16_384 {
+                state = state
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left(17)
+                    .wrapping_add(0xda94_2042_e4dd_58b5);
+                let a = state % q;
+                state = state
+                    .wrapping_mul(0xd134_2543_de82_ef95)
+                    .rotate_left(29)
+                    .wrapping_add(0x94d0_49bb_1331_11eb);
+                let b = state % q;
+                let a_r = mod_mul(a, r, q);
+                let b_r = mod_mul(b, r, q);
+                let product_r = montgomery_mul_radix16_reference(a_r, b_r, q);
+                assert_eq!(product_r, mod_mul(mod_mul(a, b, q), r, q));
+                assert_eq!(
+                    montgomery_mul_radix16_reference(product_r, 1, q),
+                    mod_mul(a, b, q)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn radix16_gpu_carrier_accepts_deployed_moduli_and_refuses_wider_families() {
+        validate_gpu_montgomery_moduli(&FOLD_MODULI).expect("deployed q0/q1/q2 fit 48 bits");
+        let error = validate_gpu_montgomery_moduli(&[FOLD_MODULI[0], GPU_MONTGOMERY_RADIX])
+            .expect_err("a 48-bit modulus does not fit the three-limb carrier");
+        assert!(error.contains("exceeds the exact three-limb radix-2^16 GPU carrier"));
     }
 
     #[test]
