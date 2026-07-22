@@ -1,8 +1,9 @@
 # Durable `TurnExecutor` side state
 
-Status: receipt-head reconstruction and an exact-v3 composition fence are
-implemented. The shared node-owned side-table migration below is the next
-engine cut; it is not yet claimed live.
+Status: receipt-head reconstruction, an exact-v3 composition fence, and
+transactional rate-limit accounting with a canonical snapshot codec are
+implemented. Atomic persistence/reseed of that snapshot and the remaining
+side tables below is the active engine cut; it is not yet claimed live.
 
 ## Why this exists
 
@@ -46,8 +47,8 @@ steady-state constructor.
 | --- | --- | --- |
 | `note_nullifiers` | local double-spend gate and nullifier root | durable faithful records |
 | `last_receipt_hash` | agent causal admission | durable receipt log |
-| `rate_limit_counters` | count-based epoch rate limits | **missing** |
-| `rate_limit_sum_counters` | sum/window rate limits | **missing** |
+| `rate_limit_counters` | count-based epoch rate limits | transactionally staged; strict canonical snapshot codec exists; atomic node persistence/reseed pending |
+| `rate_limit_sum_counters` | sum/window rate limits | transactionally staged with full-width `u64` accumulated sums; strict canonical snapshot codec exists; atomic node persistence/reseed pending |
 | `bridged_nullifiers` | cross-federation replay gate | **missing** |
 | `note_commitments` | duplicate-create gate and commitments root | **missing**; existing note table lacks value records |
 | `note_revoked` | credential/channel revocation gate and root | **missing** |
@@ -65,11 +66,21 @@ steady-state constructor.
 yield buffers are per-execution outputs, not history tables. They should remain
 request-local and be extracted before the executor is dropped.
 
-There is also an atomicity defect before restart is considered:
-`reactive_registry` and `factory_registry` can mutate before a later ledger
-failure, but those mutations do not currently have complete inverse journal
-entries. A long-lived shared handle must therefore stage these writes, not
-merely make today's immediate mutations survive the next constructor.
+Rate accounting no longer has this pre-restart defect. One execution owns a
+staged rate state: each action observes earlier accepted debits in the same
+forest, while the stage is published only after the entire turn and optional
+Lean veto have accepted. Rejection at any later action therefore leaves both
+count and sum maps unchanged. `CellProgram::Cases` contributes the matched
+branch constraints, multiple simultaneously active scalar rate constraints
+fail closed instead of silently selecting one, and sum history remains `u64`
+end-to-end rather than truncating through the predicate evaluator's old `u32`
+lane.
+
+`reactive_registry` and `factory_registry` still have analogous atomicity work:
+they can mutate before a later ledger failure unless every mutation is covered
+by a complete inverse journal or a staged publish. Durability by itself is not
+enough; the transaction model must be fixed before either table becomes a
+long-lived shared handle.
 
 ## Next cut: one node-owned side-state handle
 
