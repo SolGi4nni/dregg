@@ -18,7 +18,7 @@
 //! the BFV SIMD slots in one ceremony.
 //!
 //! The restriction to exactly two parties is deliberate: on the deployed
-//! degree-4096 fold parameters this circuit is multiplication depth three.
+//! degree-8192 correlation parameters this circuit is multiplication depth three.
 //! More-party parity raises the depth and is refused until a larger proven
 //! parameter set or a lower-depth threshold/PBS backend exists.
 //!
@@ -165,6 +165,11 @@ impl CorrelationSession {
                 have: keygen.n_parties(),
                 supported: DISTRIBUTED_BFV_PARTIES,
             });
+        }
+        if !params.is_correlation_set() {
+            return Err(CorrelationError::InvalidParameters(
+                "the exact degree-8192 correlation parameter set is required",
+            ));
         }
         if triples == 0 || triples > params.degree() || triples > MAX_DISTRIBUTED_BFV_TRIPLES {
             return Err(CorrelationError::InvalidParameters(
@@ -1262,7 +1267,7 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
-        let params = BfvParams::fold_set();
+        let params = BfvParams::correlation_set();
         let keygen =
             KeygenSession::from_seed(DISTRIBUTED_BFV_PARTIES, [0x41; 32]).expect("keygen session");
         let mut dkg_wires = Vec::new();
@@ -1348,6 +1353,23 @@ mod tests {
         );
         let fx = fixture();
         let active_session = session(&fx, 0x81, 8);
+        let additive_only_params = BfvParams::fold_set();
+        assert!(matches!(
+            CorrelationSession::new(
+                [0x7f; 32],
+                &fx.keygen,
+                &fx.dkg_wires,
+                &fx.collective,
+                &fx.relin_session,
+                &fx.relin_key,
+                fx.signing_keys.iter().map(MlDsaKey::public_bytes).collect(),
+                8,
+                &additive_only_params,
+            ),
+            Err(CorrelationError::InvalidParameters(
+                "the exact degree-8192 correlation parameter set is required"
+            ))
+        ));
 
         let mut reordered_dkg = fx.dkg_wires.clone();
         reordered_dkg.swap(0, 1);
