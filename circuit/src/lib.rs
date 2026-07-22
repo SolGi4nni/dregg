@@ -376,6 +376,9 @@ pub mod descriptor_ir2;
 /// identity.
 pub mod descriptor_ir2_canonical;
 
+/// Checked finite Bool/enum FOL front end to the live descriptor IR-v2 grammar.
+pub mod direct_logic_frontend;
+
 /// Backend-neutral semantic statement and compile-time proof-system seam for
 /// DescriptorIR-v2.  Plonky3 HidingFRI remains the real reference backend;
 /// alternative PCS/distributed provers consume the same parsed relation and

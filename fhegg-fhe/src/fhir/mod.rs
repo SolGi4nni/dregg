@@ -76,6 +76,9 @@
 use std::fmt;
 
 pub mod clearing_plan;
+/// Exact finite-logic schedules over the real BFV carrier, with checked
+/// residual no-wrap certificates and exact primitive-call manifests.
+pub mod logic_schedule;
 /// Executable active box projection over party-owned additive shares.
 /// This is the first fhIR prox product whose clamp may actually bind.
 pub mod private_box;
