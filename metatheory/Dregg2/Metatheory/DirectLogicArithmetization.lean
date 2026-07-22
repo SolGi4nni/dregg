@@ -23,7 +23,9 @@ The imported modules establish seven deliberately separated layers:
   product- and exponential-preserving semantic embedding of any small CCC into
   presheaves;
 * proof-producing local optimization and certified changes of presentation,
-  including an auditable finite search over residual, Boolean-graph, and mixed
+  including a live materialized quadratic Boolean-graph descriptor, a separate
+  public-input-bound statement descriptor, exact layout/byte certificates for
+  both, and an auditable finite search over residual, Boolean-graph, and mixed
   representations; the global presentation category is proved not cartesian,
   while evidence families over one fixed meaning form a genuine CCC;
 * one-opening proof/FHE coherence: a versioned fail-closed descriptor/BFV
@@ -46,8 +48,21 @@ tables are not a private RAM lowering.  Finite HOL is exact but dense.  The
 intensional strong CCC theorem covers the represented STLC fragment, while
 Yoneda is a semantic presheaf embedding, not a finite-field arithmetization.
 Presentation-search optimality is relative to an explicit finite candidate
-list and symbolic cost, not wall-clock latency.  The interaction bridge
-validates receipts but does not yet emit descriptor IR.  Robust descent gives a
+list and symbolic cost, not wall-clock latency.  On the proved four-input
+factor-sharing specimen, the abstract graph ledger moves from 30 to 13
+equations, while the accepting live descriptor moves from 31 to 14 because it
+adds `output = 1`.  The four-input public statement adds four linear bindings,
+so its total moves from 35 to 18 constraints with four public inputs.
+Multiplications move from 26 to 13, auxiliaries from 17 to 8, and total width
+from 21 to 12, with every constraint of degree at most two.  The unbound
+descriptor's `Satisfied2` equivalence is only about the compiler's canonical
+one-row trace.  By contrast, every nonempty trace satisfying the public
+descriptor proves the formula under the public residual vector, and every true
+formula has a canonical satisfying public trace; the accepted public
+certificate transports soundness back across optimization and pins the exact
+PI layout and emitted bytes.  These are structural and symbolic cost theorems,
+not a comparative wall-clock speedup.  The interaction bridge validates
+receipts but does not yet emit descriptor IR.  Robust descent gives a
 probabilistic finite-game bound, not deterministic total-column extraction.
 The assembly category is not claimed to be the exact completion or associated
 topos, and no theorem here proves Rust/CakeML decoder refinement, FHE
@@ -62,7 +77,7 @@ import Dregg2.Metatheory.GabbayMatrixBridge
 import Dregg2.Metatheory.GabbayDescriptorIR2PublicBinding
 import Dregg2.Metatheory.FinitePatchCodeDescent
 import Dregg2.Metatheory.RobustDescentTranscriptGame
-import Dregg2.Metatheory.DirectLogicOptimizerCertificate
+import Dregg2.Metatheory.DirectLogicBoolGraphDescriptorIR2
 import Dregg2.Metatheory.CertifiedRepresentationSearch
 import Dregg2.Metatheory.CertifiedPresentationFibredCCC
 import Dregg2.Metatheory.SmallCCCYonedaPresheaf
