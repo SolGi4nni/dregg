@@ -93,7 +93,7 @@ classical seams into a post-quantum composition.
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody/semantic/shortness private_book_distributed_inputs: 5/5 release green |
 | Distributed private-order proof | **GATED THROUGH FINAL EXACT BFV RELATION** | base custody plus exact 4×384 quotient derivation; post-custody challenge makes every worker prove one signed 65,536-coordinate masked relation against both certificates; real degree-4096 all-owner gate 1/1 in 91.204s, reduced adversarial gate 1/1 in 14.063s |
-| Distributed real same-opening prover | **EXACT BFV LINEAR RELATION GATED; ROOT/CLEARING COMPOSITION OPEN** | workers never reconstruct orders, openings, or quotient vectors; canonical public wire, Poseidon/root join, clearing certificate, exact sampler image, and PQ replacement remain |
+| Distributed real same-opening prover | **EXACT BFV RELATION + CANONICAL PUBLIC WIRE GATED; ROOT/CLEARING COMPOSITION OPEN** | workers never reconstruct orders, openings, or quotient vectors; strict versioned envelope replays all certificates against verifier-supplied policy; Poseidon/root join, clearing certificate, exact sampler image, and PQ replacement remain |
 | Bazaar crown consequence | **GATED THROUGH A REAL SHIELDED SPEND** | persist-minted FNSP-v2 redemption + exact private-BFV apex winner/price/asset + signed epoch-bound Dungeon Red/Blue `WriteOnce` crown; live archive gate 1/1 in 19.464s; orchestration/durable authorization journal remains |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
 | Narrated Dungeon and relic-oath composition | **GATED BY TARGET** | narrated Dungeon 3/3; repaired relic oath 2/2 |
@@ -531,8 +531,20 @@ real degree-4096 all-owner gate, including quotient custody, all three worker
 proofs, and the final public certificate, is **1/1 in 91.204s**. A shared lazy
 production generator table made this faster than the prior quotient-only
 173.204s gate; the reduced success/adversarial relation tooth is **1/1 in
-14.063s** and rejects bad signatures and a wrong public constant. Canonical
-quotient/final-certificate wire, Poseidon/root, clearing, exact sampler image,
+14.063s** and rejects bad signatures and a wrong public constant.
+
+The complete public ceremony now has a strict canonical transport envelope.
+`FHQCT001` quotient custody, standalone `FHRWP001` worker frames, and the
+`FHRLC001` final relation certificate compose under `FHDBE001`. Exact component
+lengths and EOF are checked before cryptography; roster/session and the complete
+public BFV relation remain verifier-supplied; cheap digests, commitment sums,
+and signatures precede every expensive proof; nested certificates are verified
+exactly once. Hostile truncation/trailing/count/length, forged-signature, wrong-
+relation, and recomputed-checksum mutations refuse. The real degree-4096 full
+gate, including wire round-trip, is **1/1 in 112.881s**. This transports the
+exact BFV side but does not yet authorize a clearing receipt: Poseidon/root
+equality must first prevent a valid BFV proof for book A from being paired with
+a valid clearing proof for book B. Clearing composition, exact sampler image,
 and PQ replacement remain.
 
 `private_book_bfv_exact` is the one public lowering shared by monolithic and

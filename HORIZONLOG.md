@@ -11043,8 +11043,17 @@ now including the three worker proofs and final public certificate, is **1/1 in
 91.204s**. Reusing one lazily generated production generator table cut this from
 the prior quotient-only gate's 173.204s despite adding the final proofs; the
 reduced relation/state-machine tooth is **1/1 in 14.063s**. Canonical quotient
-and final-certificate wire, Poseidon/clearing, exact sampler image, and PQ
-replacement remain open.
+and final-certificate transport is now closed too (`a539f4e75`): strict
+`FHQCT001` / `FHRWP001` / `FHRLC001` components compose into one `FHDBE001`
+public envelope, with exact framing/EOF, canonical proof lengths, checksum,
+verifier-supplied session/public BFV relation, authentication before expensive
+proof work, and exactly-once nested verification. Truncation, trailing data,
+count/length mutation (including 0 and `u32::MAX`), forged worker signature,
+wrong relation, and recomputed-checksum substitutions refuse. The expanded real
+degree-4096 gate is **1/1 in 112.881s**. Poseidon/root equality, clearing
+composition, exact sampler image, and PQ replacement remain open; the envelope
+must not enter a clearing receipt until the nonlinear root link prevents pairing
+BFV evidence for book A with clearing evidence for book B.
 
 The public exact-BFV lowering is no longer duplicated between proof backends
 (`6b9691c83`). `private_book_bfv_exact` derives the public key, ciphertext,
