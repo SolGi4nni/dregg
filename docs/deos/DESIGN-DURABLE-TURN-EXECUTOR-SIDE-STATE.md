@@ -1,9 +1,13 @@
 # Durable `TurnExecutor` side state
 
-Status: receipt-head reconstruction, an exact-v3 composition fence, and
-transactional rate-limit accounting with a canonical snapshot codec are
-implemented. Atomic persistence/reseed of that snapshot and the remaining
-side tables below is the active engine cut; it is not yet claimed live.
+Status: the finalized-turn store has one atomic executor-consensus-state bundle
+for accumulator records, sparse rate/factory snapshots, and exact reactive
+registry/nullifier CAS images. Fresh executors fail-closed while restoring those
+images. The live exact-FNSP-v3 finality route carries the bundle in the same
+transaction as its activation, exact state append, signed frame, full receipt,
+faithful root, spend records, and commit cursor. The ordinary finalized-turn
+route is being switched to the same bundle; until that splice lands, this
+document does not claim every ingress has one durable side-state owner.
 
 ## Why this exists
 
@@ -13,11 +17,16 @@ boundary, but an executor also contains mutable tables which affect admission
 or committed roots. Replacing any of those tables with an empty constructor
 default changes the transition function after every request.
 
-`configure_turn_executor` now reconstructs two durable dimensions:
+`configure_turn_executor` reconstructs these durable dimensions before an
+executor may admit a turn:
 
 1. `note_nullifiers` from the faithful `(nullifier, value, append_seq)` table;
 2. every agent's `last_receipt_hash` from the verified, interleaved durable
-   receipt log.
+   receipt log;
+3. note-commitment, revocation, and bridged-nullifier accumulators;
+4. count and sum rate-limit frontiers;
+5. the factory registry and its epoch budgets;
+6. the pending-turn registry and the dedicated React replay set.
 
 The receipt reconstruction validates the entire per-agent causal chain before
 seeding any head. A corrupt suffix therefore cannot produce a partially seeded
@@ -33,13 +42,11 @@ epoch: the Lean producer does not yet project the exact FNS3, commitment, or
 revocation side accumulators, so treating this route as root-agreeing would drop
 consensus state from the authored commitment.
 
-The present head reconstruction is deliberately a correctness cut, not the
-scaled endpoint: it revalidates and hashes the complete dense receipt log for
-every fresh executor, `O(total receipt history)` per request. The next cut must
-retain the already validated per-agent head index at append/recovery and seed
-from that index in `O(number of agents)` (or retrieve the one required actor's
-store-authenticated head in `O(1)`). Do not normalize a full-history walk as the
-steady-state constructor.
+The exact epoch maintains a transactionally updated per-agent receipt-head
+index and fully rebuilds it during recovery. Some ordinary constructor paths
+still revalidate the dense receipt log. That correctness-first walk is not the
+scaled endpoint: all executor construction should consume the already audited
+head index, with a single actor lookup in `O(log agents)` or better.
 
 ## Inventory at HEAD
 
@@ -47,20 +54,21 @@ steady-state constructor.
 | --- | --- | --- |
 | `note_nullifiers` | local double-spend gate and nullifier root | durable faithful records |
 | `last_receipt_hash` | agent causal admission | durable receipt log |
-| `rate_limit_counters` | count-based epoch rate limits | transactionally staged; strict canonical snapshot codec exists; atomic node persistence/reseed pending |
-| `rate_limit_sum_counters` | sum/window rate limits | transactionally staged with full-width `u64` accumulated sums; strict canonical snapshot codec exists; atomic node persistence/reseed pending |
-| `bridged_nullifiers` | cross-federation replay gate | **missing** |
-| `note_commitments` | duplicate-create gate and commitments root | **missing**; existing note table lacks value records |
-| `note_revoked` | credential/channel revocation gate and root | **missing** |
-| `reactive_registry` | promise/notify/react pending state | **missing** |
+| `rate_limit_counters` | count-based epoch rate limits | transactional canonical snapshot; atomic store/reseed implemented |
+| `rate_limit_sum_counters` | sum/window rate limits | transactional full-width `u64` canonical snapshot; atomic store/reseed implemented |
+| `bridged_nullifiers` | cross-federation replay gate | typed durable set + frontier; atomic store/reseed implemented |
+| `note_commitments` | duplicate-create gate and commitments root | durable `(commitment, value, append_seq)` records + frontier; atomic store/reseed implemented |
+| `note_revoked` | credential/channel revocation gate and root | durable `(key, height, append_seq)` records + frontier; atomic store/reseed implemented |
+| `reactive_registry` | promise/notify/react pending state | canonical whole-image CAS; atomic store/reseed implemented |
+| `reactive_nullifiers` | React one-shot replay gate | dedicated domain, canonical set CAS; atomic store/reseed implemented |
 | `cell_migrations` | migration freeze and two-phase state | **missing** |
-| `program_registry` | custom/sovereign verifier dispatch | node RAM has a registry, but fresh executors are not yet seeded from it and restart resets it |
-| `factory_registry` | deployed factories and per-epoch budgets | **missing** |
+| `program_registry` | custom/sovereign verifier dispatch | durable local-admin registry with write-before-publish and fail-closed restore; federation-consensus deployment receipt is still missing |
+| `factory_registry` | deployed factories and per-epoch budgets | canonical snapshot/inverse; atomic store/reseed implemented |
 | `revocation_channels` | fast channel-revocation view | **missing** |
-| `per_cell_receipt_head` | touched-cell provenance chain | **missing**; receipt alone does not encode the write set |
+| `per_cell_receipt_head` | touched-cell provenance chain | durable current+compacted-baseline maps, removal provenance, rebuild/audit, and startup restore implemented; sovereign/mixed commits with distinct receipts need a richer commit schema |
 | `pq_identity_registry` | host-anchored PQ admission | reconstructed from node-held identity state |
 | exact FNSP-v3 admission token | one-shot proof authority | request-local by design |
-| exact FNSP-v3 accumulator state | staged exact append state | durable exact store exists; live executor ownership is still WIP |
+| exact FNSP-v3 accumulator/frame state | exact spend and receipt-chain authority | live finality route atomically activates and advances the exact state/frame with faithful and executor state; current route is one strict spend in solo devnet policy |
 
 `last_write_set`, consumed-capability witnesses, universal-memory witnesses, and
 yield buffers are per-execution outputs, not history tables. They should remain
@@ -76,25 +84,31 @@ fail closed instead of silently selecting one, and sum history remains `u64`
 end-to-end rather than truncating through the predicate evaluator's old `u32`
 lane.
 
-`reactive_registry` and `factory_registry` still have analogous atomicity work:
-they can mutate before a later ledger failure unless every mutation is covered
-by a complete inverse journal or a staged publish. Durability by itself is not
-enough; the transaction model must be fixed before either table becomes a
-long-lived shared handle.
+`factory_registry` mutations have selective inverses and `reactive_registry`
+mutations have a complete journal plus durable predecessor/successor CAS. A
+candidate executor remains isolated until the carrying redb transaction returns
+fresh success. Resolution events stay candidate-local until that point;
+`ReadyToExecute` is notification-only because it contains an unsigned turn.
 
-## Next cut: one node-owned side-state handle
+## Remaining cuts
 
-Do not add more per-ingress seed calls. Introduce one
-`NodeExecutorConsensusState` owned by `NodeStateInner`, and give each fresh
-executor shared handles to the same tables. The minimum first epoch is:
+Do not add per-ingress seed calls or a second mutable RAM owner. The durable
+snapshot/CAS bundle is the owner; a request gets an isolated executor image,
+and only a fresh atomic commit may publish its successor. The remaining engine
+work is:
 
-- rate-limit count and sum maps;
-- bridged nullifiers;
-- commitment and revocation accumulators;
-- reactive registry and migration manager;
-- factory epoch counters;
-- deployed program-registry state;
-- agent and per-cell receipt heads.
+- route ordinary finalized turns through the same complete executor-state
+  bundle already used by exact-v3 finality;
+- delete the legacy `NodeState` pending-turn registry mirror after that route
+  resolves on the retained executor candidate;
+- persist migration and channel-revocation authority under the same commit;
+- make custom-program deployment a federation-consensus operation rather than
+  a local administrative write;
+- represent sovereign/mixed per-cell receipt provenance without collapsing
+  distinct receipts into `CommitRecord::receipt_hash`;
+- publish typed, replay-idempotent durable promise-resolution records to the
+  Discord, Telegram, and web adapters;
+- switch all ordinary receipt-head construction to the audited online index.
 
 The handle must satisfy these rules:
 
@@ -112,17 +126,15 @@ The handle must satisfy these rules:
    canonical record schema. Unknown versions, gaps, duplicate sequence numbers,
    or cursor disagreement are integrity errors, never empty defaults.
 
-The commitment table needs an additive record before it can participate:
-`(commitment32, value_u64, append_seq_u64)`. Revocation needs
-`(domain_separated_key32, height_u64, append_seq_u64)`. Bridge, reactive,
-migration, rate-limit, and factory state each need either a canonical delta in
-the finalized commit or a proven derivation from an unpruned canonical turn
-log. Depending on retained block bodies is not sufficient because commit-log
-compaction must not erase consensus state.
+Accumulator and policy state use typed canonical records or snapshots, never a
+derivation from prunable block bodies. Compaction folds per-cell provenance into
+an authenticated baseline and rebuilds live suffixes over it. The same rule
+applies to the remaining migration/channel state: compaction must preserve its
+complete admission frontier.
 
 ## Promotion gate
 
-Remove the exact-v3 single-effect fence only after a restart test performs this
+Broaden the exact-v3 strict-spend envelope only after a restart test performs this
 sequence through distinct fresh executors:
 
 1. create a note and reject its duplicate;
