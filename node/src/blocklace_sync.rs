@@ -58,6 +58,19 @@ const MAX_RETAINED_CHECKPOINTS: usize = 5;
 /// never collapses it. Bounded + self-draining: the set empties after the window.
 const VOTE_REEMIT_SWEEPS: u32 = 30;
 
+/// Test-only one-shot fault injection at the generic finalized durable barrier.
+/// It exercises the real execute/prepare path while proving a store failure
+/// publishes none of the isolated candidate into node RAM or subscriber state.
+#[cfg(test)]
+static FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]>> =
+    std::sync::Mutex::new(None);
+
+/// Test-only idempotent-outcome injection. This pins that even a successful
+/// store response does not republish RAM/events when the record was not fresh.
+#[cfg(test)]
+static REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]>> =
+    std::sync::Mutex::new(None);
+
 /// A strictly-monotonic per-process counter stamped into each `Frontier` message
 /// so repeated frontiers are byte-unique and never collapse under the gossip
 /// layer's hash-dedup (see `BlocklaceGossipMessage::Frontier`).
@@ -5193,26 +5206,37 @@ async fn execute_finalized_turn(
         // (commitment, value) `note_commitments` map — so the rotated producer binds the committed
         // `commitments_root` (limbs [27,74..80]) to the node's REAL created-note frontier.
         let live_commitments_root = executor.note_commitments.lock().unwrap().root8();
+        // Keep the consensus-side rate frontier beside the candidate ledger.
+        // The persist owner welds this snapshot into the same finalized record;
+        // returning it from the consumed executor here avoids reconstructing or
+        // silently resetting the limiter after the blocking task exits.
+        let post_rate_limit_snapshot = executor.rate_limit_state_snapshot();
         (
             result,
             exec_ledger,
             live_nullifier_root,
             live_commitments_root,
+            post_rate_limit_snapshot,
         )
     });
-    let (exec_result, exec_ledger, live_nullifier_root, live_commitments_root) =
-        match exec_join.await {
-            Ok(v) => v,
-            Err(e) => {
-                error!(
-                    block_id = %block_id,
-                    turn_hash = %turn_hash_hex,
-                    error = %e,
-                    "finalized-turn EXECUTION task panicked/cancelled; turn NOT applied"
-                );
-                return;
-            }
-        };
+    let (
+        exec_result,
+        exec_ledger,
+        live_nullifier_root,
+        live_commitments_root,
+        _post_rate_limit_snapshot,
+    ) = match exec_join.await {
+        Ok(v) => v,
+        Err(e) => {
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "finalized-turn EXECUTION task panicked/cancelled; turn NOT applied"
+            );
+            return;
+        }
+    };
 
     // The COMPLETE set of cells this turn changed — the full pre→post cell diff.
     // Unlike the executor's `LedgerDelta` (which omits the heap_root / lifecycle /
@@ -5223,7 +5247,10 @@ async fn execute_finalized_turn(
     // no false positives.
     let touched_ids = ledger_touched_diff(&pre_ledger, &exec_ledger);
 
-    // Re-acquire the global write lock BRIEFLY to install the result.
+    // Re-acquire the global write lock BRIEFLY to validate the snapshot and stage
+    // the durable commit.  Crucially, the candidate ledger is still isolated:
+    // no cell, receipt, pending resolution, artifact, or event becomes live until
+    // the finalized record has crossed the single durable commit boundary below.
     let mut s = state.write().await;
 
     // GLOBAL concurrency guard. The per-cell diff below cannot observe a
@@ -5305,26 +5332,9 @@ async fn execute_finalized_turn(
         return;
     }
 
-    // Install the COMPLETE post-state for exactly the touched cells (overlay, not
-    // replace): remove+insert so an updated cell's full new content lands verbatim,
-    // a created cell is inserted, and a destroyed cell (present pre, absent post)
-    // is removed. Concurrent inserts on OTHER cells are left intact.
-    for id in &touched_ids {
-        match exec_ledger.get(id) {
-            Some(cell) => {
-                let _ = s.ledger.remove(id);
-                let _ = s.ledger.insert_cell(cell.clone());
-            }
-            None => {
-                let _ = s.ledger.remove(id);
-            }
-        }
-    }
-
     match exec_result {
         dregg_turn::TurnResult::Committed {
             receipt: reexecuted_receipt,
-            ref ledger_delta,
             ..
         } => {
             // Crash recovery for the former solo ingress split: a receipt may
@@ -5375,17 +5385,6 @@ async fn execute_finalized_turn(
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect();
-            let invalid_bundle_evidence = if let Some(bundle) = artifacts {
-                materialize_blocklace_artifacts(&mut s, block_id, &receipt, bundle)
-            } else {
-                Vec::new()
-            };
-
-            // Resolve any pending turns waiting on this receipt.
-            s.pending_turns.resolve(
-                computed_hash,
-                dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
-            );
 
             // Collect note commitments from NoteCreate effects. Bug #58: the
             // DURABLE append is DEFERRED and WELDED into the crash-consistent
@@ -5419,34 +5418,28 @@ async fn execute_finalized_turn(
             // light-client verified reads that parse `Granted` facts (e.g. an
             // execution-lease grant) — sees an empty log on a FEDERATED node while
             // working on a solo one. Additive; never gates the commit.
-            {
-                let summaries =
-                    crate::api::summarize_turn_effects(&signed_turn.turn, &pre_ledger, &s.ledger);
-                let kinds: Vec<String> = signed_turn
-                    .turn
-                    .call_forest
-                    .iter_dfs()
-                    .flat_map(|t| t.action.effects.iter().map(crate::api::effect_kind))
-                    .collect();
-                let kinds = if kinds.is_empty() {
-                    vec!["turn_committed".to_string()]
-                } else {
-                    kinds
-                };
-                let agent_hex = dregg_types::hex_encode(signed_turn.turn.agent.as_bytes());
-                crate::api::push_committed_event_enriched(
-                    &mut s,
-                    receipt_hash_hex.clone(),
-                    agent_hex,
-                    kinds,
-                    summaries,
-                    // proving runs just below on this same commit path
-                    crate::state::ActivityProofStatus::ProofPending,
-                );
-            }
+            // Prepare the activity payload from the isolated candidate. Publishing
+            // it now would expose a committed-looking event even if redb rejects
+            // the finalized record, so the actual feed mutation happens only in
+            // the durable-success arm below.
+            let activity_summaries =
+                crate::api::summarize_turn_effects(&signed_turn.turn, &pre_ledger, &exec_ledger);
+            let activity_kinds: Vec<String> = signed_turn
+                .turn
+                .call_forest
+                .iter_dfs()
+                .flat_map(|t| t.action.effects.iter().map(crate::api::effect_kind))
+                .collect();
+            let activity_kinds = if activity_kinds.is_empty() {
+                vec!["turn_committed".to_string()]
+            } else {
+                activity_kinds
+            };
+            let activity_agent_hex = dregg_types::hex_encode(signed_turn.turn.agent.as_bytes());
 
             // ── Full-turn proving (commit path) ──────────────────────────
-            // When enabled (devnet), prove EVERY committed turn and gate
+            // When enabled (devnet), prove every body-committed candidate; the
+            // bytes are published only after the durable barrier below. The
             // acceptance on the proof verifying. This is what makes the public
             // "every state transition is proven" claim TRUE for the running
             // node: the finalized turn produces a real composed STARK proof
@@ -5489,7 +5482,10 @@ async fn execute_finalized_turn(
             // enabled it should get the same `spawn_blocking` + off-lock treatment
             // as the execution FFI above (the named follow-up); a proving validator
             // otherwise re-introduces a per-turn lock hold for the prover's duration.
-            let full_turn_proof_attached: Option<Vec<u8>> = if let Some((pre_balance, pre_nonce)) =
+            let full_turn_proof_artifacts: Option<(Vec<u8>, Option<Vec<u8>>)> = if let Some((
+                pre_balance,
+                pre_nonce,
+            )) =
                 full_turn_pre_state
             {
                 let effects: Vec<dregg_turn::Effect> = signed_turn
@@ -5562,7 +5558,7 @@ async fn execute_finalized_turn(
                         // scalars diverge from the v1 cap pre-state).
                         let rotation = match (
                             full_turn_pre_cell.as_ref(),
-                            s.ledger.get(&signed_turn.turn.agent),
+                            exec_ledger.get(&signed_turn.turn.agent),
                         ) {
                             (Some(before_cell), Some(after_cell)) => {
                                 let receipt_hashes = [receipt.receipt_hash()];
@@ -5610,7 +5606,7 @@ async fn execute_finalized_turn(
                             // live-only members) yields `None` ⇒ the byte-identical BARE wide leg.
                             match (
                                 full_turn_pre_cell.as_ref(),
-                                s.ledger.get(&signed_turn.turn.agent),
+                                exec_ledger.get(&signed_turn.turn.agent),
                             ) {
                                 (Some(before_cell), Some(after_cell)) => {
                                     crate::turn_proving::caps_umem_weld_witness(
@@ -5637,7 +5633,7 @@ async fn execute_finalized_turn(
                         // freshness leg (the nullifier is threaded through).
                         let rotation = match (
                             full_turn_pre_cell.as_ref(),
-                            s.ledger.get(&signed_turn.turn.agent),
+                            exec_ledger.get(&signed_turn.turn.agent),
                         ) {
                             (Some(before_cell), Some(after_cell)) => {
                                 let receipt_hashes = [receipt.receipt_hash()];
@@ -5675,7 +5671,7 @@ async fn execute_finalized_turn(
                             // producer fails closed to `None` ⇒ bare for any non-single-caps diff).
                             match (
                                 full_turn_pre_cell.as_ref(),
-                                s.ledger.get(&signed_turn.turn.agent),
+                                exec_ledger.get(&signed_turn.turn.agent),
                             ) {
                                 (Some(before_cell), Some(after_cell)) => {
                                     crate::turn_proving::caps_umem_weld_witness(
@@ -5717,7 +5713,7 @@ async fn execute_finalized_turn(
                         // cap-less pre-state cannot represent, falling back to v1).
                         let rotation = match (
                             full_turn_pre_cell.as_ref(),
-                            s.ledger.get(&signed_turn.turn.agent),
+                            exec_ledger.get(&signed_turn.turn.agent),
                         ) {
                             (Some(before_cell), Some(after_cell)) => {
                                 let receipt_hashes = [receipt.receipt_hash()];
@@ -5748,11 +5744,6 @@ async fn execute_finalized_turn(
                 match proving_result {
                     Ok(proven) => {
                         let proof_bytes = proven.proof_bytes().to_vec();
-                        let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
-                        if let Err(e) = s.store.set_config(&key, &proof_bytes) {
-                            warn!(error = %e, turn_hash = %turn_hash_hex,
-                                    "failed to persist full-turn proof");
-                        }
                         // ── FINALIZED-TURN RETENTION (the REAL IVC-compression input) ──
                         // Mint the wrap-input `FinalizedTurn` from the SAME execution
                         // context this proof was generated from, bound FAIL-CLOSED to the
@@ -5762,9 +5753,9 @@ async fn execute_finalized_turn(
                         // through `ivc_turn_chain::prove_turn_chain_recursive`. A turn
                         // that cannot be faithfully minted is NOT retained — never a
                         // fabricated stand-in — and history compression then refuses it.
-                        match (
+                        let retained_turn = match (
                             full_turn_pre_cell.as_ref(),
-                            s.ledger.get(&signed_turn.turn.agent),
+                            exec_ledger.get(&signed_turn.turn.agent),
                         ) {
                             (Some(before_cell), Some(after_cell)) => {
                                 let receipt_hashes = [receipt.receipt_hash()];
@@ -5781,38 +5772,27 @@ async fn execute_finalized_turn(
                                     proven.old_commit,
                                     proven.new_commit,
                                 ) {
-                                    Ok(turn_bytes) => {
-                                        let fkey = crate::turn_proving::finalized_turn_config_key(
-                                            &turn_hash_hex,
+                                    Ok(turn_bytes) => Some(turn_bytes),
+                                    Err(e) => {
+                                        warn!(
+                                            turn_hash = %turn_hash_hex,
+                                            error = %e,
+                                            "finalized turn NOT retained for IVC compression \
+                                             (fail-closed; history compression will refuse this turn)"
                                         );
-                                        match s.store.set_config(&fkey, &turn_bytes) {
-                                            Ok(()) => info!(
-                                                turn_hash = %turn_hash_hex,
-                                                retained_bytes = turn_bytes.len(),
-                                                "finalized turn retained for IVC history \
-                                                 compression (anchor-tied to the served proof)"
-                                            ),
-                                            Err(e) => warn!(
-                                                error = %e, turn_hash = %turn_hash_hex,
-                                                "failed to persist retained finalized turn; \
-                                                 history compression will refuse this turn"
-                                            ),
-                                        }
+                                        None
                                     }
-                                    Err(e) => warn!(
-                                        turn_hash = %turn_hash_hex,
-                                        error = %e,
-                                        "finalized turn NOT retained for IVC compression \
-                                         (fail-closed; history compression will refuse this turn)"
-                                    ),
                                 }
                             }
-                            _ => warn!(
-                                turn_hash = %turn_hash_hex,
-                                "finalized turn NOT retained for IVC compression: before/after \
-                                 actor cell context unavailable on this commit path (fail-closed)"
-                            ),
-                        }
+                            _ => {
+                                warn!(
+                                    turn_hash = %turn_hash_hex,
+                                    "finalized turn NOT retained for IVC compression: before/after \
+                                     actor cell context unavailable on this commit path (fail-closed)"
+                                );
+                                None
+                            }
+                        };
                         info!(
                             turn_hash = %turn_hash_hex,
                             block_id = %block_id,
@@ -5821,10 +5801,14 @@ async fn execute_finalized_turn(
                             new_commit = ?proven.new_commit,
                             spend = is_spend,
                             freshness_bound = is_spend,
-                            "full-turn proof generated and verified (commit path); \
+                            "full-turn proof generated and verified for finalized candidate; \
                              spend turns are FRESHNESS-bound in-circuit to the canonical spent set"
                         );
-                        Some(proof_bytes)
+                        // Proof/retention bytes are intentionally only prepared
+                        // here. Their store keys are published after the finalized
+                        // commit succeeds, so a rejected durable record leaves no
+                        // orphan proof that looks accepted.
+                        Some((proof_bytes, retained_turn))
                     }
                     Err(
                         crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
@@ -5842,14 +5826,13 @@ async fn execute_finalized_turn(
                             block_id = %block_id,
                             have,
                             max,
-                            "spend turn NOT freshness-proven: canonical nullifier set exceeds \
-                             the openable heap tree capacity; turn \
-                             committed without a freshness-bound proof"
+                            "spend candidate NOT freshness-proven: canonical nullifier set exceeds \
+                             the openable heap tree capacity"
                         );
                         None
                     }
                     Err(e) => {
-                        // SOUNDNESS: a committed turn whose full-turn proof
+                        // SOUNDNESS: a body-committed candidate whose full-turn proof
                         // does not verify is a serious event. We surface it
                         // loudly and refuse to attach an unverified proof.
                         error!(
@@ -5857,8 +5840,8 @@ async fn execute_finalized_turn(
                             block_id = %block_id,
                             error = %e,
                             spend = is_spend,
-                            "full-turn proof generation/verification FAILED; \
-                             turn committed but carries NO verified proof"
+                            "full-turn proof generation/verification FAILED for candidate; \
+                             no verified proof will be published"
                         );
                         None
                     }
@@ -5868,7 +5851,7 @@ async fn execute_finalized_turn(
             };
 
             // ── Lift TurnReceipt → FederationReceipt (audit F7) ──────────
-            // We carry the committed turn into a federation-shaped receipt
+            // We prepare the body-committed candidate's federation-shaped receipt
             // by hashing its post-state into the body and signing with the
             // local validator's Ed25519 key. In solo mode the local node is
             // the entire committee so a single signature suffices; in full
@@ -5897,11 +5880,11 @@ async fn execute_finalized_turn(
             // recovery job the dual-hash ADR (`dregg_commit::hash`) reserves for
             // non-circuit paths.
             //
-            // When full-turn proving is enabled (devnet) the committed turn ALSO
+            // When full-turn proving is enabled (devnet) the candidate ALSO
             // carries a real, re-verified full-turn STARK proof (see
-            // `full_turn_proof_attached` above); the note-tree Poseidon2 root
+            // `full_turn_proof_artifacts` above); the note-tree Poseidon2 root
             // binding remains threaded separately.
-            let merkle_root = canonical_ledger_root(&s.ledger);
+            let merkle_root = canonical_ledger_root(&exec_ledger);
             let timestamp_for_root = now;
             let federation_keys = s.known_federation_keys.clone();
             let federation_threshold = s.decryption_threshold.max(1);
@@ -6137,15 +6120,6 @@ async fn execute_finalized_turn(
                 finalization_quorum,
             };
 
-            // Emit revocation events for any RevokeCapability effects.
-            for effect in signed_turn.turn.call_forest.total_effects() {
-                if let dregg_turn::Effect::RevokeCapability { cell, .. } = effect {
-                    state.emit(NodeEvent::Revocation {
-                        token_id: dregg_types::hex_encode(&cell.0),
-                    });
-                }
-            }
-
             // ── DURABLE, CRASH-CONSISTENT COMMIT (single atomic boundary) ────
             // Record this finalized turn in the durable commit log + index in ONE
             // redb transaction (one fsync boundary): the per-turn record, the
@@ -6157,20 +6131,23 @@ async fn execute_finalized_turn(
             // double-apply: the cursor is advanced only here, atomically with the
             // record it counts. See `dregg_persist::commit_log`.
             //
-            // The touched-cell post-states are read from the just-committed
-            // ledger for exactly the cell ids the executor reported in
-            // `ledger_delta` (created ∪ updated ∪ computron_transfer endpoints) —
-            // the authoritative, complete, bounded set of cells this turn
-            // mutated. The cell-by-id index is therefore the durable
+            // The touched-cell post-states are read from the isolated candidate
+            // for the complete pre→post whole-cell diff. The cell-by-id index is
+            // therefore the durable
             // last-writer-wins overlay on top of the periodic full ledger
             // checkpoint, and recovery reconstructs the finalized ledger from
             // (checkpoint ⊕ overlay) without re-executing.
             {
-                let touched_ids = touched_cell_ids(ledger_delta);
+                // Persist the same COMPLETE whole-cell diff that will be
+                // installed after durability. `LedgerDelta` intentionally does
+                // not cover every cell dimension (heap/program/lifecycle/etc.),
+                // so using it here can make recovery diverge from the attested
+                // candidate even when the live overlay was correct.
+                let commit_touched_ids = &touched_ids;
                 let mut touched_cells: Vec<dregg_cell::Cell> =
-                    Vec::with_capacity(touched_ids.len());
-                for id in &touched_ids {
-                    if let Some(cell) = s.ledger.get(id) {
+                    Vec::with_capacity(commit_touched_ids.len());
+                for id in commit_touched_ids {
+                    if let Some(cell) = exec_ledger.get(id) {
                         touched_cells.push(cell.clone());
                     }
                     // A touched id absent post-commit is not carried here — a
@@ -6182,7 +6159,11 @@ async fn execute_finalized_turn(
                 // represent an erasure, so without this the durable overlay
                 // resurrects the removed cell as hosted on recovery and the
                 // reconstructed root diverges from `ledger_root`.
-                let removed: Vec<[u8; 32]> = ledger_delta.removed.iter().map(|id| id.0).collect();
+                let removed: Vec<[u8; 32]> = commit_touched_ids
+                    .iter()
+                    .filter(|id| pre_ledger.get(id).is_some() && exec_ledger.get(id).is_none())
+                    .map(|id| id.0)
+                    .collect();
                 let commit_record = dregg_persist::CommitRecord {
                     ordinal: 0, // assigned by the store at the durable cursor
                     height: new_height,
@@ -6209,9 +6190,19 @@ async fn execute_finalized_turn(
                     spent_nullifiers: &finalized_nullifier_spends,
                     finalized_spends: &finalized_faithful_spends,
                 };
-                let durable_outcome = if receipt_already_in_log {
-                    s.store
-                        .commit_finalized_turn_with_faithful_root_existing_receipt(
+                let commit_durable = || {
+                    if receipt_already_in_log {
+                        s.store
+                            .commit_finalized_turn_with_faithful_root_existing_receipt(
+                                expected_ordinal,
+                                &commit_record,
+                                &note_commitments,
+                                receipt_log_index,
+                                &encoded_receipt,
+                                faithful_weld,
+                            )
+                    } else {
+                        s.store.commit_finalized_turn_with_faithful_root(
                             expected_ordinal,
                             &commit_record,
                             &note_commitments,
@@ -6219,20 +6210,67 @@ async fn execute_finalized_turn(
                             &encoded_receipt,
                             faithful_weld,
                         )
-                } else {
-                    s.store.commit_finalized_turn_with_faithful_root(
-                        expected_ordinal,
-                        &commit_record,
-                        &note_commitments,
-                        receipt_log_index,
-                        &encoded_receipt,
-                        faithful_weld,
-                    )
+                    }
                 };
+                #[cfg(test)]
+                let injected_failure = {
+                    let mut target = FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+                        .lock()
+                        .expect("generic finalized failure hook mutex");
+                    if target.as_ref() == Some(&block_id.0) {
+                        target.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                #[cfg(test)]
+                let injected_replay = {
+                    let mut target = REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+                        .lock()
+                        .expect("generic finalized replay hook mutex");
+                    if target.as_ref() == Some(&block_id.0) {
+                        target.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                #[cfg(test)]
+                let durable_outcome = if injected_failure {
+                    Err(dregg_persist::StoreError::Database(
+                        "injected generic finalized commit failure".to_string(),
+                    ))
+                } else if injected_replay {
+                    Ok(dregg_persist::commit_log::CommitOutcome {
+                        ordinal: expected_ordinal,
+                        freshly_committed: false,
+                    })
+                } else {
+                    commit_durable()
+                };
+                #[cfg(not(test))]
+                let durable_outcome = commit_durable();
                 match durable_outcome {
                     Ok(outcome) => {
                         let assigned = outcome.ordinal;
-                        if outcome.freshly_committed && !receipt_already_in_log {
+                        if !outcome.freshly_committed {
+                            debug!(
+                                turn_hash = %turn_hash_hex,
+                                ordinal = assigned,
+                                "finalized commit was already durable; suppressing duplicate RAM/event publication"
+                            );
+                            return;
+                        }
+
+                        // COMMIT POINT CROSSED. Install the complete candidate
+                        // overlay only now. A rejected/expired/pending executor
+                        // result, stale CAS, or redb error can no longer leak a
+                        // fee debit, nonce tick, provisioned cell, or body write
+                        // into authoritative RAM.
+                        install_finalized_ledger_overlay(&mut s.ledger, &exec_ledger, &touched_ids);
+
+                        if !receipt_already_in_log {
                             s.cclerk
                                 .append_receipt_already_durable(
                                     receipt_log_index,
@@ -6252,10 +6290,8 @@ async fn execute_finalized_turn(
                         // and the boot-time rebuild from `load_all_note_commitments`
                         // already holds them — re-appending here would double the
                         // in-RAM tree.
-                        if outcome.freshly_committed {
-                            for cm in &note_commitments {
-                                s.note_tree_append_commitment(cm);
-                            }
+                        for cm in &note_commitments {
+                            s.note_tree_append_commitment(cm);
                         }
                         // Only a root that landed in the same atomic transaction
                         // as its exact note frontier may become externally
@@ -6281,20 +6317,84 @@ async fn execute_finalized_turn(
                         s.mirror_committed_record(&mirrored);
                     }
                     Err(e) => {
-                        // A failed durable commit is a serious crash-consistency
-                        // event: the ledger was mutated in RAM but the durable
-                        // record/cursor did not advance. We surface it loudly; the
-                        // in-RAM cursor has this block marked executed, but its
-                        // `block_id` is NOT in the durable commit log, so identity
-                        // recovery drops it from the restored executed set and
-                        // re-applies this turn idempotently after a restart.
+                        // The candidate was never published, so the durable
+                        // failure leaves authoritative RAM, receipt heads,
+                        // pending state, artifacts and subscriber events exactly
+                        // at the pre-turn snapshot. Recovery/retry can safely
+                        // execute from the same durable cursor.
                         error!(
                             turn_hash = %turn_hash_hex,
                             error = %e,
-                            "DURABLE commit-log write FAILED; turn applied in RAM but not durably \
-                             recorded — recovery will re-apply from the durable cursor"
+                            "DURABLE commit-log write FAILED; isolated candidate discarded with no RAM/event publication"
                         );
+                        return;
                     }
+                }
+            }
+
+            // Everything below is post-commit publication. None of these RAM,
+            // auxiliary-store, or observer-visible effects can run for a failed
+            // finalized record.
+            //
+            // Named crash gap: proof + retained-turn config bytes are auxiliary
+            // post-commit writes, not members of the redb finalized transaction.
+            // A crash here can leave an otherwise valid finalized record without
+            // those served artifacts. They are never published *before* commit,
+            // but complete crash recovery requires welding/rederiving them later.
+            if let Some((proof_bytes, retained_turn)) = &full_turn_proof_artifacts {
+                let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
+                if let Err(e) = s.store.set_config(&key, proof_bytes) {
+                    warn!(error = %e, turn_hash = %turn_hash_hex,
+                            "failed to persist full-turn proof after finalized commit");
+                }
+                if let Some(turn_bytes) = retained_turn {
+                    let key = crate::turn_proving::finalized_turn_config_key(&turn_hash_hex);
+                    match s.store.set_config(&key, turn_bytes) {
+                        Ok(()) => info!(
+                            turn_hash = %turn_hash_hex,
+                            retained_bytes = turn_bytes.len(),
+                            "finalized turn retained for IVC history compression \
+                             (anchor-tied to the served proof)"
+                        ),
+                        Err(e) => warn!(
+                            error = %e, turn_hash = %turn_hash_hex,
+                            "failed to persist retained finalized turn; history compression will refuse this turn"
+                        ),
+                    }
+                }
+            }
+
+            crate::api::push_committed_event_enriched(
+                &mut s,
+                receipt_hash_hex.clone(),
+                activity_agent_hex,
+                activity_kinds,
+                activity_summaries,
+                crate::state::ActivityProofStatus::ProofPending,
+            );
+
+            // Transitional second owner: now safely post-durable, but this
+            // NodeState registry must be removed when the executor-registry
+            // snapshot/CAS weld lands. The consumed executor is the consensus
+            // owner; this mirror exists only for the legacy node surface.
+            s.pending_turns.resolve(
+                computed_hash,
+                dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
+            );
+
+            let invalid_bundle_evidence = if let Some(bundle) = artifacts {
+                materialize_blocklace_artifacts(&mut s, block_id, &receipt, bundle)
+            } else {
+                Vec::new()
+            };
+
+            // Emit revocation events only after the revocation has become part
+            // of the durable finalized transition.
+            for effect in signed_turn.turn.call_forest.total_effects() {
+                if let dregg_turn::Effect::RevokeCapability { cell, .. } = effect {
+                    state.emit(NodeEvent::Revocation {
+                        token_id: dregg_types::hex_encode(&cell.0),
+                    });
                 }
             }
 
@@ -6330,40 +6430,38 @@ async fn execute_finalized_turn(
                 block_id = %block_id,
                 height = new_height,
                 round = ?finality_round,
-                full_turn_proven = full_turn_proof_attached.is_some(),
+                full_turn_proven = full_turn_proof_artifacts.is_some(),
                 "finalized turn executed (blocklace consensus)"
             );
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
-            // boundary-P1 (bug 2): a turn whose ADMISSION PROLOGUE committed (fee debited + nonce
-            // ticked, anti-DoS, never rolled back) but whose BODY then FAILED lands HERE — it is
-            // `Rejected`, NOT `Committed`. Only the `Committed` arm above appends the receipt,
-            // resolves pending turns, and proves; this arm does none of those, so a
-            // prologue-committed-body-failed turn is NEVER treated as an accepted/committed turn
-            // (the fee was charged purely as anti-spam). This mirrors the Lean export's three-way
-            // status: `PrologueCommittedBodyFailed` (status:1, ok:0) maps to this rejection, while
-            // `BodyCommitted` (status:2, ok:1) maps to the `Committed` arm. The verified Lean
-            // shadow (`decode_shadow_verdict`) reports `committed` ONLY for `BodyCommitted`, so the
-            // RUST↔LEAN divergence check agrees with this acceptance gate.
+            // Write-ahead-before-live: the executor's candidate can contain a
+            // phase-1 fee debit + nonce tick when the body fails, but a generic
+            // rejection has no typed durable attempt receipt yet. Therefore the
+            // entire candidate is discarded. This is the Rust boundary form of
+            // `Dregg2.Exec.Durability.durableApply_reject_stays`: rejection leaves
+            // the durable/live state unchanged. A future charged-rejection design
+            // must first add a typed phase1-only durable record; it must never
+            // resurrect this candidate overlay as a RAM-only anti-spam charge.
             warn!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
                 reason = %reason,
-                "finalized turn rejected (prologue fee may have been charged as anti-spam; turn NOT accepted)"
+                "finalized turn rejected; isolated phase1/body candidate discarded (no typed durable attempt receipt)"
             );
         }
         dregg_turn::TurnResult::Expired => {
             warn!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
-                "finalized turn expired"
+                "finalized turn expired; isolated candidate discarded without publication"
             );
         }
         dregg_turn::TurnResult::Pending => {
             debug!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
-                "finalized turn pending"
+                "finalized turn pending; isolated candidate discarded without publication"
             );
         }
     }
@@ -8168,6 +8266,7 @@ mod tests {
         let self_key = [0x9Au8; 32];
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
         let block_id = BlockId([0x11u8; 32]);
+        let mut publication_events = state.subscribe_events();
 
         let height_before = {
             let s = state.read().await;
@@ -8232,6 +8331,221 @@ mod tests {
             1_000_000 - 4_200 - signed.turn.fee as i64,
             "sender debited by amount + burned fee"
         );
+        assert_eq!(s.store.commit_cursor().expect("commit cursor"), 1);
+        assert_eq!(s.cclerk.receipt_chain_length(), 1);
+        assert_eq!(s.event_log.len(), 1, "activity publishes exactly once");
+        drop(s);
+
+        let mut roots = 0;
+        let mut receipts = 0;
+        while let Ok(event) = publication_events.try_recv() {
+            match event {
+                NodeEvent::Root { .. } => roots += 1,
+                NodeEvent::Receipt { .. } => receipts += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(roots, 1, "fresh durable commit emits one root event");
+        assert_eq!(receipts, 1, "fresh durable commit emits one receipt event");
+    }
+
+    /// Write-ahead-before-live falsifier: drive a valid body-committed transfer
+    /// all the way to the real durable barrier, inject a store error there, and
+    /// prove that every live/publication surface remains at its pre-turn image.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn generic_finalized_store_error_discards_every_candidate_surface() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        {
+            state.write().await.lean_producer_enabled = false;
+        }
+
+        let sender_seed = *blake3::hash(b"generic-atomicity:store-error").as_bytes();
+        let sender_cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(sender_seed));
+        let sender_pk = sender_cclerk.public_key().0;
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let sender = dregg_cell::CellId::derive_raw(&sender_pk, &default_token);
+        let dest = dregg_cell::CellId([0xE4; 32]);
+        {
+            let mut s = state.write().await;
+            let local_pk = s.cclerk.public_key();
+            let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&local_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("local ML-DSA key");
+            let sender_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("sender ML-DSA key");
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    sender_pk,
+                    default_token,
+                    1_000_000,
+                ))
+                .expect("fund sender");
+            s.set_federation_keys_hybrid(
+                vec![local_pk, sender_cclerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
+                    dregg_federation::frost::MlDsaPublicKey(sender_pq),
+                ],
+            );
+        }
+        let federation_id = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
+        let signed = signed_transfer_turn(&sender_cclerk, sender, dest, 4_200, 0, &federation_id);
+        let payload = postcard::to_stdvec(&signed).expect("encode signed turn");
+        let receipt_hash = signed.turn.hash();
+        let bundle = TurnArtifactBundle {
+            signed_turn: payload.clone(),
+            receipt: Some(vec![0xFF]),
+            witnessed_receipts: vec![vec![0xFE]],
+        };
+
+        let mut events = state.subscribe_events();
+        let before = {
+            let mut s = state.write().await;
+            let mut wake = signed.turn.clone();
+            wake.memo = Some("must remain pending across failed commit".into());
+            s.pending_turns.submit_pending(
+                wake,
+                dregg_turn::ResolutionCondition::AwaitReceipt {
+                    turn_hash: receipt_hash,
+                    federation_id: None,
+                },
+                u64::MAX,
+            );
+            (
+                canonical_ledger_root(&s.ledger),
+                s.cclerk.receipt_chain_length(),
+                s.pending_turns.len(),
+                s.event_log.len(),
+                s.witnessed_receipts.len(),
+                s.store.commit_cursor().expect("commit cursor"),
+                s.store.latest_attested_root().expect("root read"),
+            )
+        };
+
+        let failed_block = BlockId([0xE6; 32]);
+        *FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+            .lock()
+            .expect("failure hook mutex") = Some(failed_block.0);
+        let self_key = [0xE5; 32];
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        execute_finalized_turn(&state, &handle, failed_block, &payload, Some(&bundle), 0).await;
+        assert!(
+            FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+                .lock()
+                .expect("failure hook mutex")
+                .is_none(),
+            "fault hook must be consumed at the real durable barrier"
+        );
+
+        let s = state.read().await;
+        assert_eq!(canonical_ledger_root(&s.ledger), before.0);
+        assert_eq!(s.cclerk.receipt_chain_length(), before.1);
+        assert_eq!(s.pending_turns.len(), before.2);
+        assert_eq!(s.event_log.len(), before.3);
+        assert_eq!(s.witnessed_receipts.len(), before.4);
+        assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
+        assert_eq!(s.store.latest_attested_root().expect("root read"), before.6);
+        assert!(
+            s.ledger.get(&dest).is_none(),
+            "provisioned candidate leaked"
+        );
+        assert_eq!(
+            s.ledger.get(&sender).expect("sender").state.balance(),
+            1_000_000,
+            "fee/body candidate leaked"
+        );
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        drop(s);
+
+        // A successful-but-idempotent store response is also non-publishing:
+        // only `freshly_committed` may cross the live boundary.
+        let replay_block = BlockId([0xE7; 32]);
+        *REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+            .lock()
+            .expect("replay hook mutex") = Some(replay_block.0);
+        execute_finalized_turn(&state, &handle, replay_block, &payload, Some(&bundle), 0).await;
+        assert!(
+            REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
+                .lock()
+                .expect("replay hook mutex")
+                .is_none(),
+            "replay hook must be consumed at the real durable barrier"
+        );
+        {
+            let s = state.read().await;
+            assert_eq!(canonical_ledger_root(&s.ledger), before.0);
+            assert_eq!(s.cclerk.receipt_chain_length(), before.1);
+            assert_eq!(s.pending_turns.len(), before.2);
+            assert_eq!(s.event_log.len(), before.3);
+            assert_eq!(s.witnessed_receipts.len(), before.4);
+            assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
+            assert!(s.ledger.get(&dest).is_none());
+        }
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+
+        // A semantically valid envelope whose body fails after the executor's
+        // phase-1 fee/nonce charge must discard that charged candidate too. No
+        // typed durable phase1-only attempt record exists yet, so publishing the
+        // charge would violate durableApply_reject_stays.
+        let rejected_dest = dregg_cell::CellId([0xE8; 32]);
+        let rejected = signed_transfer_turn(
+            &sender_cclerk,
+            sender,
+            rejected_dest,
+            2_000_000,
+            0,
+            &federation_id,
+        );
+        let rejected_payload = postcard::to_stdvec(&rejected).expect("encode rejected turn");
+        execute_finalized_turn(
+            &state,
+            &handle,
+            BlockId([0xE9; 32]),
+            &rejected_payload,
+            None,
+            0,
+        )
+        .await;
+        let s = state.read().await;
+        assert_eq!(canonical_ledger_root(&s.ledger), before.0);
+        assert_eq!(s.cclerk.receipt_chain_length(), before.1);
+        assert_eq!(s.pending_turns.len(), before.2);
+        assert_eq!(s.event_log.len(), before.3);
+        assert_eq!(s.witnessed_receipts.len(), before.4);
+        assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
+        assert!(s.ledger.get(&rejected_dest).is_none());
+        assert_eq!(
+            s.ledger.get(&sender).expect("sender").state.balance(),
+            1_000_000,
+            "rejected phase1 fee candidate leaked"
+        );
+        assert_eq!(
+            s.ledger.get(&sender).expect("sender").state.nonce(),
+            0,
+            "rejected phase1 nonce candidate leaked"
+        );
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
     }
 
     /// FALSIFIER for the old solo receipt/ledger split: a crash could leave the
@@ -8507,6 +8821,11 @@ mod tests {
 
         // The authoritative ledger (sender funded, dest absent).
         let mut authoritative = node_genesis_ledger(sender_pk, 1_000_000);
+        let removed_cell = dregg_cell::Cell::with_balance([0xD0; 32], [0xD1; 32], 99);
+        let removed_id = removed_cell.id();
+        authoritative
+            .insert_cell(removed_cell)
+            .expect("seed cell removed by candidate");
 
         // === off-lock exec against a CLONE of the pre-state (spawn_blocking step) ===
         let pre_ledger = authoritative.clone();
@@ -8522,11 +8841,21 @@ mod tests {
             dregg_turn::TurnResult::Committed { .. } => {}
             other => panic!("finalized transfer must commit, got {other:?}"),
         }
+        let _ = exec_ledger.remove(&removed_id);
         let touched = ledger_touched_diff(&pre_ledger, &exec_ledger);
         assert!(
-            touched.contains(&sender) && touched.contains(&dest),
-            "the touched set must include the debited sender and the credited destination"
+            touched.contains(&sender) && touched.contains(&dest) && touched.contains(&removed_id),
+            "the whole-cell diff must include update, create, and remove"
         );
+
+        // PRE-COMMIT NONPUBLICATION: executing and diffing the isolated
+        // candidate does not change the authoritative ledger at all.
+        assert_eq!(
+            authoritative.get(&sender).expect("sender").state.balance(),
+            1_000_000
+        );
+        assert!(authoritative.get(&dest).is_none());
+        assert!(authoritative.get(&removed_id).is_some());
 
         // === a CONCURRENT writer touches a DISJOINT cell during the window ===
         let bystander = dregg_cell::Cell::with_balance([0xABu8; 32], [0u8; 32], 777);
@@ -8544,20 +8873,8 @@ mod tests {
             "a concurrent write to a DISJOINT cell must not register as a conflict"
         );
 
-        // === overlay install (the per-cell, non-replace apply) ===
-        for id in &touched {
-            match exec_ledger.get(id) {
-                Some(cell) => {
-                    let _ = authoritative.remove(id);
-                    authoritative
-                        .insert_cell(cell.clone())
-                        .expect("overlay insert");
-                }
-                None => {
-                    let _ = authoritative.remove(id);
-                }
-            }
-        }
+        // === post-durable overlay install (the per-cell, non-replace apply) ===
+        install_finalized_ledger_overlay(&mut authoritative, &exec_ledger, &touched);
 
         // (a) the transfer landed.
         assert_eq!(
@@ -8579,6 +8896,10 @@ mod tests {
                 .balance(),
             777,
             "a concurrent write to ANOTHER cell survives the overlay (no wholesale replace)"
+        );
+        assert!(
+            authoritative.get(&removed_id).is_none(),
+            "a candidate tombstone removes the live cell after commit"
         );
 
         // === (c) the guard DETECTS a concurrent SAME-cell write ===
@@ -10096,33 +10417,6 @@ fn build_federation_receipt(
 /// Folds each cell's id + state-hash into a domain-separated BLAKE3 hash,
 /// sorted lexicographically by cell id for determinism. This is the
 /// `merkle_root` field carried in [`dregg_types::AttestedRoot`].
-/// The complete, bounded set of cell ids a committed turn mutated, taken
-/// directly from the executor's authoritative [`dregg_cell::LedgerDelta`]:
-/// every created cell, every updated cell, and both endpoints of every
-/// computron transfer. This is the set whose post-states the durable commit log
-/// snapshots into the cell-by-id index, so recovery reconstructs the finalized
-/// ledger from (checkpoint ⊕ overlay) without re-execution. Deduplicated and
-/// order-stable.
-fn touched_cell_ids(delta: &dregg_cell::LedgerDelta) -> Vec<dregg_cell::CellId> {
-    let mut ids: Vec<dregg_cell::CellId> = Vec::new();
-    fn push(ids: &mut Vec<dregg_cell::CellId>, id: dregg_cell::CellId) {
-        if !ids.contains(&id) {
-            ids.push(id);
-        }
-    }
-    for cell in &delta.created {
-        push(&mut ids, cell.id());
-    }
-    for (id, _) in &delta.updated {
-        push(&mut ids, *id);
-    }
-    for (from, to, _) in &delta.computron_transfers {
-        push(&mut ids, *from);
-        push(&mut ids, *to);
-    }
-    ids
-}
-
 /// The COMPLETE set of cell ids whose CONTENT differs between two ledgers — the
 /// A1 off-lock execution path's authoritative touched set.
 ///
@@ -10130,8 +10424,8 @@ fn touched_cell_ids(delta: &dregg_cell::LedgerDelta) -> Vec<dregg_cell::CellId> 
 /// `spawn_blocking` thread (so the FFI holds neither the async worker nor the
 /// global write lock); this diff of the resulting post-state against the pre-state
 /// is exactly the set the caller overlays onto the authoritative ledger. It is a
-/// whole-`Cell` comparison, so — unlike [`touched_cell_ids`] over the executor's
-/// `LedgerDelta`, which omits the heap_root / lifecycle / program / vk /
+/// whole-`Cell` comparison, so — unlike the executor's `LedgerDelta`, which
+/// omits the heap_root / lifecycle / program / vk /
 /// delegation dimensions — it captures EVERY committed change and reproduces the
 /// exact post-state a re-executing validator computes. `Cell`'s `PartialEq`
 /// compares content only (the leaf-digest cache is excluded from `PartialEq`), so
@@ -10157,6 +10451,31 @@ fn ledger_touched_diff(
         }
     }
     touched
+}
+
+/// Publish an already-durable finalized candidate as a whole-cell overlay.
+///
+/// The caller owns the ordering invariant: this helper must only run after the
+/// commit-log transaction succeeds freshly and while the node write guard still
+/// excludes another authoritative writer. Keeping the mutation in one tiny
+/// helper makes that commit point visible in review and lets tests pin complete
+/// create/update/remove behavior independently of the store.
+fn install_finalized_ledger_overlay(
+    live: &mut dregg_cell::Ledger,
+    candidate: &dregg_cell::Ledger,
+    touched: &[dregg_cell::CellId],
+) {
+    for id in touched {
+        match candidate.get(id) {
+            Some(cell) => {
+                let _ = live.remove(id);
+                let _ = live.insert_cell(cell.clone());
+            }
+            None => {
+                let _ = live.remove(id);
+            }
+        }
+    }
 }
 
 /// Provision any missing Transfer destination as a deterministic zero-balance
