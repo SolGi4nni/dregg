@@ -1,178 +1,274 @@
-# THE DARK BAZAAR — the most private, most complex, most *unique* use of fhEgg, as a game
+# The Dark Bazaar — a private, proved game economy
 
-*A north-star design doc, 2026-07-18. The premise: use the game layer (`dreggnet-*`, the Descent, Seasons)
-as the proving ground for the FULLEST fhEgg — including mechanisms nobody has built anywhere, at any scale,
-web2 or web3 — with virtual stakes so the frontier can run rough and harden toward no-TODO while real players
-put real load on it. Grades are honest (PROVED / WORKING / PROTOTYPE / FRONTIER-unbuilt), because grading is
-the brand even for a dream. Companions: `FHEGG-MATURITY-ROADMAP.md`, `FHEGG-PRODUCT-ORDER-FRONTIER.md`,
-`DREGGFI-VISION.md`.*
+*North star and current implementation ledger. Re-grounded 2026-07-22 at
+`6d0e024f19` from the commit graph, current source/tests, `HORIZONLOG.md`,
+the fhEgg handoff, and the compacted-session record recovered with `cv`.
+The mixed checkpoint `7ba02bc122` is useful WIP, not evidence that every
+contained lane is gated. Uncommitted frontend/game edits are excluded.*
 
-> **The image.** Figures walking luminous threads across a black field scattered with symbols and torn maps —
-> each sees their own thread and the constellation of fixed lights where proofs anchor, and *nothing else*.
-> That is the Dark Bazaar exactly: a market where you trace your own flow and verify the stars, but the book
-> is dark to you, to every other player, **and to the house.**
+Companions:
+`HANDOFF-FHEGG-FEASIBILITY-CODEX.md` for the detailed cryptographic and
+protocol ledger, `FHEGG-RESEARCH-FRONTIER-2026-07-22.md` for the proving-stack
+and threshold-FHE research program, and `HORIZONLOG.md` for the chronological
+burn-down.
 
----
+## 0. The image, and the exact sentence we can say today
 
-## 0. The one unsayable sentence
+Figures walk luminous threads across a black field. Each player sees their own
+thread and the fixed lights where proofs anchor; no public surface receives the
+private route between them.
 
-Every game with hidden information asks you to **trust the operator** not to peek. Every private DEX is a
-trusted mixer or leaks on-chain. The Dark Bazaar is the thing none of them can say:
+The north star remains:
 
-> **The dealer cannot see the cards, the players cannot see each other, and every deal carries a proof it
-> was fair.**
+> The dealer cannot see the cards, the players cannot see each other, and every
+> deal carries a proof that the declared rule was followed.
 
-The house is *cryptographically* blind (FHE — it computes on ciphertext it can never open); the players are
-blind to each other (Tier-0 DARK); and every clearing emits a `Cert-F` proof of optimality + conservation +
-individual-rationality. No competitor, web2 or web3, can offer a market that is simultaneously **private to
-all**, **operator-blind**, and **provably fair**. That trifecta is the flex.
+The implementation now reaches much farther than the original 2026-07-18
+“crawl” document:
 
----
+> One authority-bound Dark Bazaar game can be mounted through web, Telegram,
+> and Discord; its public journey is viewer-blind; finalized private receipts
+> are consumed by a durable private worker; and an exact receipted consequence
+> can change an authenticated Dungeon world.
 
-## 1. The four halls — each a different maximal power of fhEgg
+That sentence is real. The stronger sentence—*the entire live market is
+house-blind, every private representation is proved to be the same opening,
+and a committee finalizes the full shielded result*—is still the apex, not a
+shipped claim.
 
-| hall | the mechanic | fhEgg primitive | grade | existing surface it upgrades |
-|---|---|---|---|---|
-| **The Sealed Exchange** | blind **combinatorial** bundle auction ("the Dragonslayer set: sword AND shield AND helm, all-or-nothing, ≤500g"), cleared welfare-optimally on encrypted valuations with a proof | private convex/**integer** clearing + verify-not-find (`Cert-F`) | **FRONTIER** (the LP is prototyped; discrete/combinatorial is the research reach — today on fhIR's reject-list) | `dreggnet-market` (sealed-bid, operator-held → cryptographically dark) |
-| **The Dark Pool** | a resource AMM `x·y=k` whose **reserves are hidden** — no depth to snipe, but every swap provably priced by the invariant | ct×ct **multiply** (hidden reserves need private multiplication) | **PROTOTYPE** (multiply oracle-anchored `2376160a8`; hidden-reserve AMM is the next stone) | new — the liquid companion to the exchange |
-| **The Oracle Pit** | a **confidential prediction market** on the game's own events ("does the boss fall this Season?"), positions hidden so no front-running, priced by a quadratic cost function | private **QP** + Fenchel–Young certificate | **FRONTIER** (the doc's `quadratic/PWL prediction AMM`, `Core` tier — needs the convex engine + quadratic pricing) | new — the speculation layer |
-| **The Netting Vault** | guild members accrue **hidden IOUs** all Season; at settlement only the **net** flows are revealed + settled, the gross web staying encrypted | no-viewer **multilateral compression** (the frontier's item 4) + `settleRing` conservation | **FRONTIER** (compression is theorized; the ring settle + no-viewer decrypt are built/prototyped) | `dreggnet-trade` (bilateral → N-way), `dreggnet-guild` |
+### Status vocabulary
 
-And wrapping all four: **cryptographic fog-of-war** — hidden inventories and hidden strategic state resolved
-on encrypted data. Not "the server hides it" — *mathematically* hidden, from other players AND the house.
-`FRONTIER` (general encrypted-state resolution is the deepest reach).
+- **LIVE PATH** — present in the production call graph, with focused hostile
+  tests or a captured gate.
+- **GATED SUBSTRATE** — executable and tested, but not the complete live
+  product boundary.
+- **BANKED WIP** — committed so it can be continued, without a composed green
+  claim.
+- **FRONTIER** — the relation, protocol, or product remains to be built.
 
----
+## 1. The four halls, regraded
 
-## 2. Why each hall is the *maximal* use of a different fhEgg capability
+| Hall | Mechanic | Current cut | What still makes it dark |
+|---|---|---|---|
+| **The Sealed Exchange** | A private allocation whose public output is a receipted winner/result and one exact game effect | **LIVE PATH / bounded shape.** The deployment-owned Bazaar offering, viewer-blind publication, private receipt worker, crash recovery, and Dungeon consequence path exist. Fixed private-book and uniform-allocation proof families exist. | The live player path is not yet the full combinatorial exchange, nor a fully distributed same-opening prover. |
+| **The Dark Pool** | A constant-product transition over hidden reserves | **GATED SUBSTRATE / hosted research path.** Exact encrypted arithmetic, threshold-BFV machinery, Dark-AMM relations, HidingFRI proofs, public-host lifecycle laws, and portable GPU kernels exist. | One canonical full-width shielded relation must join the hidden reserve opening, AMM lanes, exact spend, output notes, persistence, and committee authority. |
+| **The Oracle Pit** | Confidential prediction positions and privately certified pricing | **FRONTIER.** fhIR and the convex/certificate tower provide the language and proof architecture. | A production quadratic/PWL market, oracle policy, private ingestion, and game consequence have not been composed. |
+| **The Netting Vault** | Hidden guild obligations, revealing only final net settlement | **GATED SUBSTRATE / FRONTIER product.** Ring conservation, whole-note swap proof substrate, private aggregation/shuffle organs, and exact receipt machinery exist. | General N-way no-viewer compression, distributed witness production, and a live settlement application remain. |
 
-- **The Sealed Exchange** stresses **verify-not-find at its hardest**: a combinatorial allocation is
-  NP-hard to *find*, but a valuation-revealing-free certificate *disposes* it. This is the crown jewel of
-  market design — governments spend billions on spectrum auctions with trusted auctioneers who see every
-  bid. A private, trustless, provably-optimal combinatorial exchange **does not exist anywhere**. Doing it
-  first with virtual loot is how you prove it without a spectrum-license-sized mistake.
-- **The Dark Pool** is the reason we built ct×ct multiply. `x·y=k` with *private* reserves is a genuine
-  product of two secrets — the exact thing the additive fold could not do and the multiplicative frontier
-  can. Dark liquidity that is provably honest.
-- **The Oracle Pit** shows the **convex engine past `T=1`**: a quadratic cost-function market is an
-  iterated convex program, priced privately, unmanipulable because the book is dark.
-- **The Netting Vault** shows **no-viewer at social scale**: a whole guild's internal politics stay secret;
-  only the *truth of who-owes-whom-net* becomes real. The gross graph is never decrypted by anyone.
+The old table called the Dark Pool “the next stone” and the Sealed Exchange
+“not yet one Tier-0 product execution.” Those descriptions are obsolete. The
+correct boundary is now between a real shared private-game organ and its final
+house-blind cryptographic apex.
 
----
+## 2. What the sprint actually landed
 
-## 3. The crawl-walk-run (honest sequencing — no faked frontier)
+### 2.1 One game, not three frontend reimplementations
 
-The genius of the game framing (ember's four reasons + a fifth): the FRONTIER halls can ship **rough** and
-harden under real load, because a bug costs a virtual helm, not a spectrum license.
+- `0d87c03cd9`, `cf1e076fe3`, and `60aa8ef29d` mounted the private
+  Bazaar journey, unified the player receipt grammar, and joined an exact
+  private result to a game consequence.
+- `05aed2c8e2`, `cd19363ca8`, `d1b181dec7`, and `ac32f1cc54`
+  bind actions, shielded operations, artifacts, and the Telegram/Discord
+  adapters to a durable host incarnation, session generation, advertised head,
+  and signed authority envelope. An old tab or prior generation cannot be
+  silently rewrapped as a fresh action.
+- `6d0e024f19` closed a real full-Lean deployment failure: the timed close
+  loop now executes on a Lean-registered runtime thread, so the reality gate no
+  longer silently refuses an otherwise valid close.
 
-1. **CRAWL — The Sealed Exchange, single-unit first** (this Season): mount a distinct Dark Bazaar game over
-   `dreggnet-market`'s real LIST → sealed BID → SETTLE executor path on web, Telegram, and Discord. The first
-   playable cut is explicitly **operator-visible at settlement**: it commits bids during play, reveals them
-   to settle, replays the winner and ledger conservation, and makes no Tier-0/ZK/source-bound claim. Next,
-   weld the existing native Cert-F check-level clearing into that same session and receipt. In parallel,
-   replace plaintext ingestion with the collective BFV → masked-boundary MPC path only when the exact order
-   source → `(p*,V*)` → settlement integrity join is installed. Real players and load start at the honest
-   low-resolution cut; the cryptographically dark carrier hardens underneath it without a fake badge.
-2. **WALK — The Dark Pool** (multiply → hidden-reserve AMM) and **N-way trade** (`dreggnet-trade` →
-   `settleRing`): both lean on prototyped machinery; harden the noise/perf under real swaps. The busy
-   in-game AH is the realistic N that finally validates the **GPU-resident** thesis (histogram 11× at scale)
-   the microbench couldn't reach.
-3. **RUN — The combinatorial Sealed Exchange, the Oracle Pit, the Netting Vault, fog-of-war**: the true
-   frontier. Prototype live with virtual stakes, learn from players, drive each toward no-TODO. The
-   combinatorial reach means teaching fhIR *admissible discrete choice with a certificate* — a real research
-   arc, which is exactly why it is the flex.
+The frontend invariant is now concrete: web, Telegram, and Discord consume the
+same catalog/game spine and the same authority-bound session. Rich private
+receipts may exist in direct custody; shared cards cannot contain the raw
+winner, witness, proof diagnostics, state heads, or private operation payload.
 
----
+### 2.2 A durable private consequence plane
 
-## 4. The honest ledger (grading is the brand)
+- `cd3ea449b0` runs the private receipt worker. The worker owns the raw
+  finalized evidence and advances a durable
+  `Prepared → Dispatching → Applied → Committed` authority journal.
+- `9723e14ba5` supervises authenticated receipt discovery; semantic reissue
+  can refresh a local envelope without changing the logical settlement core.
+- `d08100655b`, `7bd87790fb`, and `ed5c4c5643` authenticate
+  crash-recoverable world cells and refuse missing or discontinuous checkpoint
+  authority. `190938372b` routes Bazaar reward pricing through the durable
+  Dungeon authority rather than a shadow ledger.
 
-- **PROVED/WORKING today:** the plaintext uniform-price rule/allocation/wire settlement; registered ring3 +
-  market4 Cert-F integer optimality and a real hiding proof path; the LP convex linear step; ct×ct multiply
-  (oracle-anchored); and `settleRing` conservation/atomicity. These are real components, not yet one Tier-0
-  product execution.
-- **PROTOTYPE (first cuts, named residuals):** local semi-honest no-viewer BFV → masked-boundary MPC; retained
-  GPU additive fold; convex engine at `T>1`; and the broader fhIR family. One exact two-coordinate rebalance
-  family is now Lean-authoritative end to end (typed plan + admission/no-wrap/noise proofs → canonical emitted
-  artifact → strict Rust interpreter); the legacy Rust compiler still owns the other product families. The
-  canonical runtime envelope now has a strict Ed25519 threshold-roster verifier and an opt-in certified-market
-  co-endorsement weld. This authenticates who endorsed the exact combined claim, but does not prove the
-  ciphertext-opening/source relation or malicious MPC correctness.
-- **ENGINE INTEGRATION (working seam, not yet the live flagship route):** a settled Bazaar session now exposes
-  the exact winning `DreggIdentity` and can cross an existing provenance-carrying `AssetId` for the winning
-  `$DREGG` amount through `dreggnet-trade`'s sealed-escrow atomic swap. The end-to-end gate begins with a real
-  fair-drawn Descent `LootVault` drop, adopts the exact same `AssetWorld` (no remint), and re-verifies the
-  `mint → escrow → winner` lineage. An unfunded winner is refused and the loot returns to its seller. The
-  auction-resolve turn and the asset/value cross are still two committed operations rather than one atomic
-  multi-cell turn, and the dedicated Descent frontend has not yet passed its durable player world into the
-  catalog Bazaar session.
-- **FRONTIER (unbuilt, the reach — and the point):** combinatorial/integer clearing with a certificate,
-  quadratic prediction pricing, no-viewer multilateral compression, general encrypted-state resolution.
+The result is not “a UI says you won.” A deployment-pinned settlement can
+produce one exactly-once operation against the same authenticated character
+world used by the Dungeon/Descent surfaces, while the frontend receives only a
+viewer-safe consequence card.
 
-The Dark Bazaar is not a demo of what is done — it is a **live crucible for the frontier**, run at real load
-with virtual stakes, every mechanic carrying the grade of what it actually is.
+### 2.3 Exact finality is real, but exact v3 is not dark value
 
-Its player-facing acceptance gate is one offering key and one session protocol consumed by all surfaces:
-`bazaar` must list, open, advance, render, and verify through the shared catalog on `arcade.dregg.net`, the
-Telegram host, and Discord's generic `/play` adapter. A surface-specific reimplementation is not the game.
+- `f8836e4498` executes exact FNSP-v3 at block finality.
+- `d5bb140504` closes the private dependent
+  claim → CTM1 ingress → ordinary finalization → exact wake path atomically.
+  FRC1 persistence/query and CTM1 typed finality are in the same banked wave.
+- Exact-v3 verifies a HidingFRI carrier and enforces accumulator continuity,
+  accepted-proof custody, durable state, replay, and terminal disposition.
 
----
+V3 must not be promoted into the final privacy claim. Its public statement
+still exposes value/asset/nullifier coordinates, its current live authority is
+not the committee-finalized v4 core, and its characterized execution slice is
+the exact anti-double-spend/receipt foundation beneath dark value.
 
-## 5. The private-game organ is larger than the market
+### 2.4 The fields-root and Descent quarantine was repaired
 
-The reusable primitive is not “an auction.” It is:
+- `8113f7a55e` cuts the v11 exact fields-root and ledger-root-v3 epoch. Raw
+  `u64` keys and full field bytes are committed faithfully; the concrete
+  “add one BabyBear modulus to the source bytes” aliases are regression teeth,
+  and populated legacy stores are refused rather than silently reinterpreted.
+- `e63baf8fa5` rebuilds the fixed-eight Descent custody census on that exact
+  root and installs its canonical-v2 custom-VK door. The HidingFRI proof binds
+  the native fields root and the six published custody totals to the declared
+  Descent writes.
+- `5d538dabc4` emits the exact refusal-fields transition used at the repaired
+  boundary.
 
-> evaluate a proved rule over hidden player state, reveal only the permitted outcome, and bind that outcome
-> to the cells/receipts that enact it.
+The previous handoff’s “quarantined census over a lossy folded fields root” is
+therefore stale. The census is now meaningful at the repaired v11 epoch; that
+does not make every future aggregate-game proof automatically live.
 
-That organ belongs throughout the game engine:
+## 3. The shielded cryptographic boundary
 
-- **guild and party governance:** private approval/ranked ballots, revealing only winner/quorum;
-- **matchmaking and raid formation:** private rating, role, latency, blocklist, and preference inputs;
-  reveal only the selected roster/partition, with a proof that the published compatibility and role rules held;
-- **loot and encounter resolution:** sealed need/greed or DKP comparisons, private loot councils, and
-  no-duplicate shuffled deals;
-- **quests and shared-world predicates:** prove that a party satisfies a hidden inventory/reputation/history
-  predicate without revealing which member or item witnesses it;
-- **inter-party coordination:** private bargaining, coalition selection, and season-end netting that reveal
-  only accepted terms or final net obligations.
+### 3.1 The honest whole-note proof
 
-Existing `dreggnet-party`, `collective-choice`, `starbridge-privacy-voting`, guild/tavern surfaces, asset
-custody, cell predicates, and receipts are composition material—not automatically privacy-grade rule cores.
-Where their semantics and leakage match, reuse them. Where an older crate is Rust-authored, operator-private,
-or models the wrong rule, keep its identity/cell/surface organ and replace the decision relation with a fresh
-Lean-authored descriptor. The first reusable instance is now built: fixed `N=4,K=4` private score aggregation,
-scores in `0..3`, with only `(session, rule, ballot_root8, lowest-index aggregate winner)` public. It is
-Lean-authored and byte-emitted; Rust supplies strict witness filling, `HidingFriPcs`, and a small
-`VerifiedDecision` application seam. The emitted relation is now closed from actual `Satisfied2` descriptor
-acceptance to semantic `Accepts`: exact score/total decoding, faithful packing, lowest-index argmax,
-public-input identity, and all eight Poseidon output lanes are in the theorem. As with the private Bazaar
-family, the hiding PCS shields inputs from proof consumers; a threshold FHE/MPC or distributed-prover producer
-is still required before the house itself is blind.
+The artifact once mislabeled as the full shielded v4 apex was deliberately
+deleted and replaced in `f540ed95a1` by
+`shielded-whole-note-swap-substrate-v1` (FWS1). It is a real HidingFRI
+relation over one hidden two-input/two-output whole-note swap:
 
-The current reuse boundary is concrete:
+- full-width nullifier and value/asset binding;
+- exact predecessor and append paths;
+- conservation and output-note root;
+- exact before/after state endpoints;
+- strict canonical proof decoding and a code-owned hiding verifier.
 
-- `dreggnet-party`, guild governance, council, and `starbridge-privacy-voting` already provide useful
-  eligibility, custody signatures, single-use ballots, quorum, capabilities, and committed enactment. Their
-  existing ballot/tally paths are public, however; the privacy-voting crate explicitly disclaims mixnet-style
-  ballot secrecy. Reuse the electorate and enactment organs, not the leakage semantics.
-- `dreggnet-game-board` already proves that a played card belonged to a hidden committed hand and was not
-  replayed. The new fixed-N=8 private shuffle organ now supplies the missing exact-permutation half: eight
-  independently blinded, per-seat leaves under a faithful root8, a Lean proof of no duplicates/no omissions,
-  and depth-three selective openings. It still does not prove that the chosen permutation was unbiased or
-  coordinator-independent; compose it with joint entropy or a threshold mix before claiming fairness.
-- the custom-effect turn path already welds a sub-proof's public inputs to the exact pre/post cell roots, and
-  its app-root binding can connect a published winner/root to the committed field that enacts it. The strongest
-  retained recursion-fold path currently consumes the older circuit-DSL `CellProgram`, not an arbitrary
-  Lean-emitted IR2 descriptor. A generic Lean-descriptor→custom-VK retained-witness adapter is therefore a real
-  substrate weld, not something an app should paper over with a host-side `if proof.verify()`.
+This is a major proof stone. It is intentionally not named v4 because it does
+not carry the semantic apex’s complete 19 Dark-AMM lanes, 27 ring lanes, fixed
+FXC4 rule, live output-note installation, or committee finality.
 
----
+### 3.2 BFV carrier, terminal, and LogUp
 
-## 6. The pitch, one breath
+The earlier q0 terminal prototype was correctly quarantined because a context
+hash did not prove that its private terminal product was the same opening as a
+carrier coefficient. The repair wave now contains:
 
-**The Dark Bazaar: a game economy where the market is combinatorial, the book is cryptographically dark, the
-house is blind, and every clearing carries a proof it was fair — the hardest, most-private market mechanisms
-humans have designed, run trustlessly, stress-tested by real players for the price of pixels.** The dungeon
-already has the Descent and its Seasons; this is the economy *inside the dark* — the threads of light across
-the black field, each player tracing their own, verifying the stars, seeing no one else's hand.
+- exact Lean q0 radix/carrier laws and production forward/inverse identities
+  (`13357f84c2`, `7c61dbe1a7`, `9066ab2447`);
+- a Lean terminal-product/spectral-trace binding
+  (`9dbb0bef55`);
+- exact public-row LogUp manifests and fixed KAT proofs
+  (`057a9e904a`);
+- in the mixed checkpoint `7ba02bc122`, a fused one-coordinate HidingFRI
+  relation joining the exact 4,096-term private slice to terminal arithmetic.
+
+The parent public terminal remains fail-closed, correctly. The fused cut is one
+coordinate, not the complete 98,304-equation private NTT-family terminal, and
+the public q0/N=8 LogUp proof is a fixed known-answer relation rather than a
+private runtime carrier.
+
+### 3.3 Dealerless is now a typed protocol boundary, not a wish
+
+The FHTRI005 path performs real threshold-BFV candidate generation, keeps
+candidate and MAC material in party-local custody, commits the roster/session,
+uses a joint beacon, proves the full ordered cross-term identity in Lean, and
+durably tombstones protected FHTRI004 rows after one use.
+
+It deliberately stops at `AwaitingCrossTermProvider`. A production
+malicious-secure post-quantum chosen-input VOLE/OT provider (or equivalent) is
+still required for the distinct-party MAC cross terms. The experimental q0
+commitment round also still refuses public ceremony authority: it lacks an
+authenticated broadcast and a public same-opening proof between the existing
+VSS/Ristretto and q0 commitments. “Dealerless algebra exists” is true;
+“the trusted dealer is gone from the live system” is not yet true.
+
+### 3.4 What “house-blind” still requires
+
+The final shielded apex must provide one canonical witness and one accepted
+statement that simultaneously proves:
+
+1. the hidden note opening produces the full nullifier and wide value/asset
+   commitment;
+2. the same opening supplies the BFV/TFHE market computation and any
+   conservation/range representation;
+3. the complete 19-lane Dark-AMM and 27-lane ring consequence obeys the pinned
+   FXC4 rule;
+4. the exact accumulator and output-note tree advance atomically;
+5. the persistent v4 frame is signer-independent and finalized by the
+   federation/committee; and
+6. no single prover, dealer, issuer, or frontend gains the whole witness.
+
+Until those six are installed together, “proof consumers cannot see the
+witness” and “the house cannot see the witness” remain different claims.
+
+## 4. fhEgg and GPU reality
+
+The sprint substantially expanded Dregg-owned portable GPU work:
+
+- exact BFV odd NTT families and batched validation run through WGPU;
+- TFHE comparison/selection, blind rotation/PBS, HidingFRI folds, and several
+  MSM/fold paths have exact CPU differentials;
+- `e100aae2a1` adds an exact WGPU crossover harness and an optimized
+  two-elements-per-thread odd-NTT path;
+- `07ccddf4ac` proves the deployed odd-root orders rather than trusting table
+  folklore.
+
+This is not a blanket “fhEgg runs on GPU” claim. The full market pipeline is
+not one resident schedule; several custody/range-proof paths remain classical
+Ristretto/Bulletproof work; the complete BFV terminal is not live; and the new
+crossover benchmark is ignored/on-demand until run on the intended discrete
+GPU. Performance authority belongs to exact release-mode measurements on hbox
+or persvati, after residue-for-residue validation.
+
+## 5. The private-game organ is larger than the Bazaar
+
+The reusable operation is:
+
+> Evaluate a proved rule over hidden player state, reveal only the permitted
+> result, and bind that result to the cells, receipts, and world transition
+> that enact it.
+
+That organ already has composition material for:
+
+- private guild votes and aggregate preferences;
+- role/rating/blocklist-aware matchmaking and raid formation;
+- hidden-hand legality and exact private shuffles;
+- sealed loot allocation and Dungeon consequences;
+- party predicates over hidden inventory, reputation, or history;
+- season-end netting and private inter-party bargaining.
+
+Reuse the shared identity, authority epoch, world-cell, receipt, predicate, and
+frontend organs. Do not inherit an older crate’s leakage semantics merely
+because its public game rule has the right name. The relation should be
+Lean-authored or refined where it decides value; Rust/WGPU remains the fast
+implementation boundary when the refinement and protocol identity are pinned.
+
+## 6. Baton for the next swarm
+
+The next work is not another mock screen or another detached algebra lemma.
+The shortest path to the promise is:
+
+1. finish and gate the canonical shared-witness FXC4/v4 relation, including the
+   19+27 consequence lanes and exact output notes;
+2. replace `AwaitingCrossTermProvider` with a malicious/PQ, roster-bound,
+   one-use cross-term provider and complete authenticated q0 broadcast /
+   same-opening authority;
+3. install v4 persistence, selector, output-note mutation, and
+   signer-independent committee finality beside the live v3 path;
+4. run one full deployment-owned Bazaar → finality → private worker → exact
+   Dungeon/Descent consequence journey through web, Telegram, and Discord under
+   full Lean and the audited PQ backend;
+5. keep the private BFV/HidingFRI pipeline resident long enough for the whole
+   operation to win, then publish exact cold/warm counters rather than
+   kernel-only speedups; and
+6. expand from the first raid/allocation into shuffle, vote, matchmaking,
+   netting, and Dark-AMM mechanics without forking the shared game spine.
+
+## 7. The pitch, one breath
+
+**The Dark Bazaar is the economy inside Dregg’s dark: one shared game where
+hidden player state can produce a publicly checkable, durably enacted result
+without becoming public state. The playable organ is now real. The remaining
+summit is to make its entire computation—not merely its proof—blind to every
+single operator, and to finalize that fact as ordinary Dregg consensus.**
