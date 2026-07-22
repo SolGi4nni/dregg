@@ -370,6 +370,60 @@ def butterflyDescriptor : EffectVmDescriptor2 :=
 #guard (emitVmJson2 butterflyDescriptor).contains "window_gate"
 #guard (emitVmJson2 butterflyDescriptor).contains "bfv_ntt_q0_n8_stage_bus"
 
+/-! ### Production-degree public-carrier descriptor
+
+The executable q0/N=8 tooth above contains small-domain polynomial odometers
+and routing equations.  Those equations are intentionally not reused at
+N=4096.  The production-degree descriptor keeps the exact limb arithmetic and
+the schedule/bus lookup tuple, while the native strict carrier fixes the
+24,576-row schedule multiset, row order, every boundary multiset, and the real
+transform ingress/egress.
+
+This descriptor is therefore an exact *identity for that public carrier*, not
+a claim that generic IR2 currently gives prover-supplied custom tables a
+committed LogUp meaning.  Until that seam lands, it must not be used as a
+standalone hiding-proof authority.
+-/
+
+def productionRowBodies : List EmittedExpr :=
+  [ ev DIRECTION, ev MODULUS_ROW, ev TRANSFORM,
+    boolBody ADD_REDUCE, boolBody SUB_REDUCE ] ++
+  (List.range 5).map productBody ++
+  (List.range 3).map addBody ++
+  (List.range 3).map subBody ++
+  [carryValue PRODUCT_CARRY 4, carryValue ADD_CARRY 2, carryValue SUB_CARRY 2]
+
+def productionArithmeticConstraints : List VmConstraint2 :=
+  productionRowBodies.flatMap allRowGate
+
+/-- Exact bit widths of the production q0/N=4096 schedule carrier.  Boundary
+tags range through `13*N-1 = 53247`, hence the 16-bit tag lanes. -/
+def productionScheduleRanges : List VmRange :=
+  [ ⟨DIRECTION, 1⟩, ⟨STAGE, 4⟩, ⟨BUTTERFLY, 11⟩, ⟨MODULUS_ROW, 2⟩,
+    ⟨TRANSFORM, 2⟩, ⟨LEFT_INDEX, 12⟩, ⟨RIGHT_INDEX, 12⟩,
+    ⟨TWIDDLE_INDEX, 12⟩, ⟨ADD_REDUCE, 1⟩, ⟨SUB_REDUCE, 1⟩,
+    ⟨READ_LEFT_TAG, 16⟩, ⟨READ_RIGHT_TAG, 16⟩,
+    ⟨WRITE_LEFT_TAG, 16⟩, ⟨WRITE_RIGHT_TAG, 16⟩,
+    ⟨FIRST_STAGE, 1⟩, ⟨LAST_STAGE, 1⟩ ]
+
+def productionQ0N4096Descriptor : EffectVmDescriptor2 :=
+  { name := "private-book-bfv-odd-ntt-butterfly-q0-n4096::public-carrier-48-v1"
+  , traceWidth := TRACE_WIDTH
+  , piCount := 0
+  , tables :=
+      [ ⟨.custom SCHEDULE_TID, "bfv_ntt_q0_n4096_schedule", 17, .mainRow⟩
+      , ⟨.custom BUS_TID, "bfv_ntt_q0_n4096_stage_bus", 4, .mainRow⟩ ]
+  , constraints := productionArithmeticConstraints ++ [scheduleLookup] ++ busLookups
+  , hashSites := []
+  , ranges := limbRanges ++ productionScheduleRanges ++ carryRanges }
+
+#guard productionRowBodies.length == 19
+#guard productionArithmeticConstraints.length == 38
+#guard productionQ0N4096Descriptor.constraints.length == 43
+#guard productionQ0N4096Descriptor.ranges.length == 48
+#guard 13 * 4096 < 2 ^ 16
+#guard (emitVmJson2 productionQ0N4096Descriptor).contains "bfv_ntt_q0_n4096_schedule"
+
 /-! ## 4. Executable witness and exact permutation check -/
 
 def bitReverse3 : Nat → Nat
