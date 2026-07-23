@@ -80,8 +80,17 @@ Environment=DESCENT_PLAY_ASSET_DIR=wasm/pkg
 # are per-process (audit-DATE.<platform>-<pid>.NN.jsonl), so the shared dir never
 # contends. The games-funnel.env file may override; =off disables.
 Environment=DREGG_AUDIT_DIR=%h/dregg-shared/audit
-WorkingDirectory=%h/dev/breadstuffs
-ExecStart=%h/dev/breadstuffs/target/release/dreggnet-web-server
+# DEDICATED deploy tree (%h/dregg-build/games-deploy), NOT the %h/dev/breadstuffs
+# dev checkout. That checkout is multi-tenant (crypto/orb/datacake lanes build in it
+# at arbitrary revs, hundreds of dirty files at any moment), and its churn already
+# deleted the live binary out from under this unit once: the 2026-07-19 deploy's exe
+# went `(deleted)` while systemd kept the old image alive, so restart-or-reboot would
+# have taken the funnel down and no rebuild could be trusted from that tree. The
+# deploy tree is a snapshot of a single main rev (recorded in its DEPLOY_REV file),
+# synced from the laptop and built ONLY by deploy-hbox.sh — the binary systemd
+# exec's here is the exact binary the deploy health gate checked.
+WorkingDirectory=%h/dregg-build/games-deploy
+ExecStart=%h/dregg-build/games-deploy/target/release/dreggnet-web-server
 Restart=always
 RestartSec=5
 

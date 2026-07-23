@@ -152,7 +152,7 @@ curl -fsS http://127.0.0.1:8420/api/node/identity | jq '.agent_balance'
 ```bash
 # on hbox:
 mkdir -p ~/.config/dregg ~/.local/state/dregg-games ~/dregg-games/sessions
-cp ~/dev/breadstuffs/deploy/games/.env.funnel.example ~/.config/dregg/games-funnel.env
+cp ~/dregg-build/games-deploy/deploy/games/.env.funnel.example ~/.config/dregg/games-funnel.env
 $EDITOR ~/.config/dregg/games-funnel.env
 #   DREGGNET_WEB_BIND=127.0.0.1:8790   (loopback — Funnel proxies it)
 #   DREGG_NODE_URL=http://127.0.0.1:8420
@@ -178,11 +178,26 @@ and root exposes only the proof-required v2 operation. The offline producer flow
 and its honest custody boundary are in `docs/deos/DARK-AMM-PRIVATE-RECEIPT.md`.
 
 ### (c) Run the deploy — build + install the web unit on LOOPBACK  ⟨SCRIPT⟩
+
+The deploy builds in the **dedicated deploy tree** `~/dregg-build/games-deploy` — a
+snapshot of ONE main rev synced from the laptop (`git archive HEAD` + the LFS-tracked
+`circuit/descriptors/*staged*.tsv` real contents, since hbox has no git-lfs; the rev
+is recorded in the tree's `DEPLOY_REV` file). **Never** build the funnel from
+`~/dev/breadstuffs`: that checkout is multi-tenant (crypto/orb/datacake lanes at
+arbitrary revs) and its churn deleted the live binary out from under systemd once
+(2026-07-19, exe `(deleted)`).
+
 ```bash
+# sync (from the laptop): ship the current main rev into the deploy tree
+git -C ~/dev/breadstuffs archive HEAD | ssh hbox 'rm -rf ~/dregg-build/games-deploy.new && mkdir -p ~/dregg-build/games-deploy.new && tar -x -C ~/dregg-build/games-deploy.new'
+# ... overlay the LFS real files, move target/ across, swap dirs, stamp DEPLOY_REV
+# (see docs: 2026-07-23 C1-DEPLOY session for the exact sequence)
+
+# build + install (on hbox) — swarm-build is the box law for ANY hbox build:
 ssh hbox
-cd ~/dev/breadstuffs/deploy/games
-./deploy-hbox.sh --funnel --dry-run   # rehearse — prints every step, no side effects
-./deploy-hbox.sh --funnel             # build -> snapshot -> install -> reload -> health
+cd ~/dregg-build/games-deploy/deploy/games
+./deploy-hbox.sh --funnel --dry-run       # rehearse — prints every step, no side effects
+swarm-build ./deploy-hbox.sh --funnel     # build -> snapshot -> install -> reload -> health
 ```
 `--funnel` builds `dreggnet-web-server` with the `public-shielded-games` feature
 bundle (fhEgg settlement, private raid/preference/shuffle/quest, and Dark AMM),

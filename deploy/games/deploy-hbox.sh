@@ -64,7 +64,9 @@
 #   ./deploy-hbox.sh rollback [S]    # revert binaries to snapshot S (default newest) + restart
 #
 # Knobs (env):
-#   GAMES_REPO_DIR   repo checkout on hbox        (default $HOME/dev/breadstuffs)
+#   GAMES_REPO_DIR   deploy source tree on hbox   (default $HOME/dregg-build/games-deploy,
+#                    a single-rev snapshot synced from the laptop — NEVER the multi-tenant
+#                    ~/dev/breadstuffs dev checkout; see the comment at the default below)
 #   GAMES_ENV        the stack env file           (default $HOME/.config/dregg/games.env)
 #   STATE_DIR        durable db + snapshots        (default $HOME/.local/state/dregg-games)
 #   USER_UNIT_DIR    user systemd unit dir         (default $HOME/.config/systemd/user)
@@ -93,7 +95,13 @@ for a in "$@"; do
 done
 set -- "${ARGS[@]:-up}"
 
-GAMES_REPO_DIR="${GAMES_REPO_DIR:-$HOME/dev/breadstuffs}"
+# DEDICATED deploy tree, NOT $HOME/dev/breadstuffs: that dev checkout is
+# multi-tenant (crypto/orb/datacake lanes build in it at arbitrary revs) and its
+# churn deleted the live funnel binary out from under systemd once (2026-07-19
+# exe `(deleted)`). The deploy tree is a single-rev snapshot synced from the
+# laptop (see its DEPLOY_REV file); only this script builds in it, so the binary
+# the unit exec's is the binary the health gate checked.
+GAMES_REPO_DIR="${GAMES_REPO_DIR:-$HOME/dregg-build/games-deploy}"
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/dregg-games}"
 USER_UNIT_DIR="${USER_UNIT_DIR:-$HOME/.config/systemd/user}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
