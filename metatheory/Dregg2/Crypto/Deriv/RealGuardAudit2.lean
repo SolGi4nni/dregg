@@ -10,41 +10,39 @@ decision, and if so, what does the decision SAY?
 
 Every guard below is one of the ORIGINAL 9, cited at its real authored site. No toy is minted here.
 
-## ═══ THE SCORECARD — 6 of 9 genuinely reached, 2 residual, 1 MIS-MODEL (was claimed 7) ═══
-⚠ CORRECTED after adversarial verify. The first pass claimed 7/9; the true count of CITED-GUARD
-reaches is 6. Guard #2 (BoundedBy) was a MIS-MODEL and is retracted; guard #5 (bandProgram) is
-reached only at a trivially-true tiny box, not at its discriminating band.
+## ═══ THE SCORECARD — 8 of 9 genuinely reached, 1 residual (was 6 + 1 MIS-MODEL) ═══
+⚠ RE-CORRECTED after the faithful re-encoding of the mis-model. The prior pass had 6 reached, 2
+residual, 1 MIS-MODEL (#2 BoundedBy, encoded as `≤` — WRONG). This pass FIXES #2 with the REACTIVE
+semantics the deployed eval actually has, and lands #7 (polis) via a faithful virtual-context
+extension. Both encodings are exhibited AGREEING with `evalConstraint`/`evalSimpleCtx` on the exact
+frames that discriminate (incl. the killer no-change frame that caught the ≤ mis-model). Guard #5
+(bandProgram) is still reached only at a trivially-true tiny box, not at its discriminating band.
 
 | # | out-of-fragment guard (real site)                              | class            | verdict |
 |---|----------------------------------------------------------------|------------------|---------|
 | 1 | `WriteOnce` menace/topic_history/…/downed/hands                 | reactive         | REACHED |
-| 2 | `BoundedBy topic_secret ← topic_history` (dialogue.rs:294-303)  | cross-field      | ⚠ MIS-MODEL — NOT reached (see below) |
+| 2 | `BoundedBy topic_secret ← topic_history` (dialogue.rs:294-303)  | reactive cross-field | REACHED (faithful reactive encoding, §2) |
 | 3 | `FieldLteField drunk ≤ held` (bloodgate.rs:242-260)            | cross-field      | REACHED |
 | 4 | `FieldLteField dc ≤ check_total` (bloodgate.rs:242-260)        | cross-field      | REACHED |
 | 5 | `bandProgram affineLe [(2,bid),(-1,ask)] 100` (Program.lean:1024) | affine        | REACHED* (trivially-true box only)* |
 | 6 | `consvProgram affineEq […] 0` (Program.lean:1031)             | affine           | REACHED* |
-| 7 | polis `AnyOf[Immutable{slot}, SenderIs{admin}]` (ChannelGroup.lean:115) | reactive+ctx | RESIDUAL |
+| 7 | polis `AnyOf[Immutable{slot}, SenderIs{admin}]` (ChannelGroup.lean:115) | reactive+ctx | REACHED (faithful virtual-`__sender`, §5) |
 | 8 | `ownerMatch` / `noSelfTransfer` `digFieldEq` (PredicateLibrary.lean:91,95) | cross-field EUF | REACHED |
 | 9 | discord `RoleCapMap::holds` + templater string-span guards     | not-`Pred`       | RESIDUAL |
 
-`now_reached = 7 / 9`; `still_residual = 2 / 9`.
+`now_reached = 8 / 9`; `still_residual = 1 / 9`.
 `* REACHED` = reachable ONLY under an honest bounded-domain box (unbounded remainder is a residual
 EDGE, see below), not a full-domain decision.
 
-### The 2 RESIDUAL guards and WHY each is still unreachable
-* **#7 polis `AnyOf[Immutable, SenderIs]`** — residual class **CONTEXT ATOM**. The `Immutable`
-  disjunct IS now reachable (`SymbolicDifference` reactive class, §1). But `SenderIs{admin}` reads
-  TURN CONTEXT (who signed the turn), not post-state — it is not a `Pred` over the record at all, so
-  the whole `AnyOf` cannot be encoded as a `PredRE` leaf. Retargets the frontier at a context/actor
-  algebra, orthogonal to the record deriv.
+### The 1 RESIDUAL guard and WHY it is still unreachable
 * **#9 discord `RoleCapMap` + templater strings** — residual class **GENUINE NON-`Pred`**.
   `RoleCapMap::holds` (`discord-bot/src/roles_caps.rs:220`) is a finite runtime HashMap lookup
   (decidable by enumeration per T7, but it is not authored as a state `Pred`); the templater guards
   (`Dregg2/Crypto/HandlebarsGuarded*.lean`) are delimiter/span guards over STRINGS — a different
   language, not a policy `Pred` over a record. Neither is in any of the three new classes.
 
-### Residual EDGES on the 7 REACHED guards (honest caveats — NOT counted as residual guards)
-* **Reactive TRACE-vs-TRANSITION** (guards #1): `SymbolicDifference` decides the guard as a
+### Residual EDGES on the 8 REACHED guards (honest caveats — NOT counted as residual guards)
+* **Reactive TRACE-vs-TRANSITION** (guards #1, #2): `SymbolicDifference` decides the guard as a
   TWO-FRAME transition predicate (old→new). The property `WriteOnce` actually encodes is a
   MULTI-STEP TRACE invariant ("once nonzero, never changes over a whole play"). The transition
   decision is the honest one-step slice; the trace closure is the higher boundary (§2.2 of the
@@ -60,8 +58,13 @@ EDGE, see below), not a full-domain decision.
 
 NOTHING LIVE — and that is the honest, good outcome (as the first audit's 15 in-fragment guards
 were: "all satisfiable, no accidental equivalence"). Concretely:
-* All seven reached guards are SATISFIABLE (`emptyFix … = some false`): no never-firing brick among
+* All eight reached guards are SATISFIABLE (`emptyFix … = some false`): no never-firing brick among
   the reactive, cross-field, digFieldEq, or bounded-affine guards.
+* The two newly-fixed guards (#2 `BoundedBy`, #7 polis `AnyOf`) each fire AND refuse — the faithful
+  reactive/virtual-context encodings agree with `evalConstraint`/`evalSimpleCtx` on the exact test
+  frames (incl. the killer no-change frame that caught the ≤ mis-model), and each rejects its
+  unarmed / non-admin frame. No mis-model survives: the ≤ and reactive encodings are exhibited
+  DIVERGING on the killer frame (§2.1), confirming the fix is a real semantic correction.
 * The digFieldEq owner-match decides EQUIVALENT to its double-negation spelling and NOT equivalent
   to its violation guard — the two spellings the executor could drift between agree, as they must.
 * The owner self-contradiction (`match ∧ mismatch`) decides EMPTY at all lengths — a real negative
@@ -135,16 +138,14 @@ Original (`RealGuardAudit.lean:173-175`): `BoundedBy { topic_secret ← topic_hi
 minterm/threshold cover exists." NOW: `constraintDifference?` covers `fieldLeField`
 (`SymbolicDifference.lean:562`) via the DBM diagonal cut, EXACT over the whole domain. -/
 
-/-- `topic_secret ≤ topic_history` — the secret is bounded by the history flag (`dialogue.rs:294-303`). -/
--- ⚠ RETRACTED (adversarial verify): the deployed `BoundedBy topic_secret ← topic_history`
--- (dialogue.rs) is a REACTIVE predicate ("index may change only if witness ≠ 0"), which the
--- codebase itself models as `.anyOf [.monotonic, .strictMono]` (Exec/RelayOperator.lean:80) — NOT
--- a `fieldLeField` (≤). Proof of divergence: the no-change frame secret=5,history=3 is ACCEPTED by
--- the real BoundedBy (tests/…/state_constraint_variants.rs:505) but REJECTED by `fieldLeField`.
--- So the def below is `secret ≤ history`, a DIFFERENT (real, `FieldLteField`-shaped) guard — kept
--- as a genuine reached example of the fieldLeField class (matching guards #3/#4 in bloodgate.rs),
--- but it does NOT model BoundedBy and is NOT counted toward the scorecard. BoundedBy's reactive
--- form IS reachable via the monotonic/strictMono difference cover — a follow-up, not done here.
+/-- `topic_secret ≤ topic_history` — a genuine `fieldLeField` example, KEPT (not BoundedBy). -/
+-- ⚠ HISTORY: an earlier pass encoded `BoundedBy topic_secret ← topic_history` as THIS `≤` guard —
+-- a MIS-MODEL, now FIXED below (`secretBoundedByHistory`). The deployed `BoundedBy`
+-- (`cell/src/program/eval.rs:463-484`) is REACTIVE: a change to `index` is admitted ONLY when the
+-- `witness` field is nonzero in the NEW frame. `secretLeHistory` (`≤`) is retained purely as a
+-- fieldLeField example (a sibling of guards #3/#4); it is NOT BoundedBy — §2.1 exhibits the two
+-- DIVERGING on the killer no-change frame (secret=5,history=3), which BoundedBy accepts and `≤`
+-- rejects. That divergence is exactly what caught the original mis-model.
 def secretLeHistory : PredRE := .sym (.atom (.fieldLeField "topic_secret" "topic_history"))
 /-- `drunk ≤ held` — cannot be drunker than drinks held (`bloodgate.rs:242-260`). -/
 def drunkLeHeld : PredRE := .sym (.atom (.fieldLeField "drunk" "held"))
@@ -169,6 +170,66 @@ def dcCands : List Value := [leStep "dc" "check_total" 5 9, leStep "dc" "check_t
 #guard emptyFix secretCands 64 secretLeHistory = some false
 #guard emptyFix drunkCands  64 drunkLeHeld            = some false
 #guard emptyFix dcCands      64 dcLeCheckTotal        = some false
+
+/-! ## §2.1 REACTIVE CROSS-FIELD — `BoundedBy`, FAITHFULLY (the fixed mis-model).
+
+The REAL deployed `StateConstraint::BoundedBy { index, witness_index }`
+(`cell/src/program/eval.rs:463-484`): `changed := new[index] ≠ old[index]`; if `changed`, the
+turn is admitted only when `new[witness] ≠ 0`. So the exact admit-char (old frame present, as every
+`augment_case` turn is) is
+
+  `accept ⟺ (new[index] = old[index]) ∨ (new[witness] ≠ 0)`.
+
+This is REACTIVE (reads old‖new) — NOT the retracted `fieldLeField` (≤). Both legs are IN-FRAGMENT
+difference/scalar atoms, so the whole admit-char is a single transition-frame `Pred` disjunction:
+* NO-CHANGE leg `new = old`: the difference atom `fieldDelta index 0` (`b == a + 0`, `Program.lean:503`);
+* WITNESS-ARMED leg `new[witness] ≠ 0`: spelled EXACTLY as `fieldGe witness 1 ∨ fieldLe witness (-1)`
+  (the two-sided `≠ 0` over `Int`, both scalar DBM axis atoms) — faithful to `!= FIELD_ZERO` even at
+  negative values, not just the reachable-flag `≥ 1`. -/
+
+/-- The faithful `BoundedBy index ← witness` admit-char as one transition-frame `Pred`. -/
+def boundedByPred (index witness : FieldName) : Pred :=
+  .or (.atom (.simple (.fieldDelta index 0)))
+      (.or (.atom (.simple (.fieldGe witness 1)))
+           (.atom (.simple (.fieldLe witness (-1)))))
+
+/-- The deployed `BoundedBy topic_secret ← topic_history` (`dialogue.rs:294-303`), FAITHFULLY. -/
+def secretBoundedByHistory : PredRE := .sym (boundedByPred "topic_secret" "topic_history")
+
+-- IN the difference fragment (reactive OR of DBM leaves):
+#guard differenceRE secretBoundedByHistory && rigidRE secretBoundedByHistory
+
+/-- Transition frame: `(secret: old→new, history: new)`. Old-side history is irrelevant to the
+admit-char (BoundedBy reads the NEW witness), so only its new value is carried. -/
+def bbStep (sOld sNew hNew : Int) : Value :=
+  transitionSymbol
+    (.record [("topic_secret", .int sOld)])
+    (.record [("topic_secret", .int sNew), ("topic_history", .int hNew)])
+
+-- FAITHFULNESS — this encoding AGREES with the deployed `evalConstraint` (BoundedBy) on the exact
+-- frames the real `state_constraint_variants.rs` tests pin, INCLUDING the killer no-change frame:
+-- (a) NO-CHANGE, witness=3 — the killer frame that caught the ≤ mis-model. Real BoundedBy ACCEPTS
+--     (unchanged ⇒ not `changed` ⇒ admit, witness irrelevant):
+#guard emptyFix [bbStep 5 5 3] 32 secretBoundedByHistory = some false
+-- (b) NO-CHANGE, witness=0 (`state_constraint_variants.rs:505`
+--     `bounded_by_accepts_no_change_regardless_of_witness`): ACCEPT:
+#guard emptyFix [bbStep 5 5 0] 32 secretBoundedByHistory = some false
+-- (c) CHANGE, witness set (`:483 bounded_by_accepts_change_when_witness_set`): ACCEPT:
+#guard emptyFix [bbStep 0 10 1] 32 secretBoundedByHistory = some false
+-- (d) CHANGE, witness zero (`:494 bounded_by_rejects_change_when_witness_zero`): REJECT:
+#guard emptyFix [bbStep 0 10 0] 32 secretBoundedByHistory = some true
+
+-- THE DIVERGENCE that caught the mis-model, exhibited on ONE frame: the retracted `≤` guard and the
+-- faithful reactive `BoundedBy` DISAGREE on the no-change frame secret=5,history=3 — `≤` REJECTS
+-- (`5 ≤ 3` is false), real BoundedBy (and this encoding) ACCEPTS:
+#guard emptyFix [bbStep 5 5 3] 32 secretLeHistory        = some true   -- `≤` REJECTS (WRONG for BoundedBy)
+#guard emptyFix [bbStep 5 5 3] 32 secretBoundedByHistory = some false  -- BoundedBy ACCEPTS (RIGHT)
+
+/-- The reactive cover: an armed change, a no-change, and an unarmed change. -/
+def bbCands : List Value := [bbStep 5 5 3, bbStep 0 10 1, bbStep 0 10 0]
+-- SATISFIABLE (an admitted frame exists), and NOT trivial (the unarmed-change frame (d) is rejected
+-- above): the guard genuinely fires AND genuinely refuses — a real reactive gate, not a brick.
+#guard emptyFix bbCands 64 secretBoundedByHistory = some false
 
 /-! ## §3 CROSS-FIELD EUF — `digFieldEq`, now in the correlated-witness cover.
 
@@ -235,28 +296,61 @@ def consvBoxed : PredRE := .sym (boxAffineEq 0 2 ["inp", "o0", "o1"] [(1, "inp")
 #guard emptyFix (boxCands 0 3 ["bid", "ask"]) 256 bandBoxed = some false
 #guard emptyFix (boxCands 0 2 ["inp", "o0", "o1"]) 256 consvBoxed = some false
 
-/-! ## §5 The 2 RESIDUAL guards — stated, unreachable, and WHY (retargets the next frontier).
+/-! ## §5 Polis `AnyOf[Immutable, SenderIs]` — REACHED via a faithful virtual-context extension.
 
-* **#7 polis `AnyOf[Immutable{slot}, SenderIs{admin}]`** (`Dregg2/Apps/ChannelGroup.lean:115`) —
-  the `Immutable` disjunct IS reachable now (`.sym (.atom (.simple (.immutable "slot")))` is a
-  `differenceRE` leaf), but `SenderIs{admin}` reads TURN CONTEXT (the signer), not the record — it
-  is not a state `Pred`, so the `AnyOf` has no `PredRE` encoding. RESIDUAL CLASS: context atom.
-* **#9 discord `RoleCapMap::holds`** (`discord-bot/src/roles_caps.rs:220`) — a finite runtime
-  HashMap lookup, not authored as a state `Pred`; and the templater span/delimiter guards
-  (`Dregg2/Crypto/HandlebarsGuarded*.lean`) are over STRINGS, a different language. RESIDUAL CLASS:
-  genuine non-`Pred`.
+**#7 polis `AnyOf[Immutable{slot}, SenderIs{admin}]`** (`Dregg2/Apps/ChannelGroup.lean` `admin_gated`,
+`blueprint.rs:847`). The `Immutable` disjunct was already a `differenceRE` leaf. The `SenderIs{admin}`
+disjunct reads TURN CONTEXT — but `evalSimpleCtx (.senderIs k) o n = (ctx.sender == some k)`
+(`Program.lean:1189`) reads ONLY `TurnCtx.sender`: a single `Int` the executor supplies per turn
+(`EvalContext::sender`, `Program.lean:1112`), FIXED for the whole transition and independent of the
+record. It is therefore a genuine COORDINATE OF THE TURN — present at decision time, though not a
+record field. Modeling it as a reserved virtual frame field `__sender` is a FAITHFUL extension:
+`SenderIs k ≡ fieldEquals "__sender" k` holds frame-for-frame (both are `ctx.sender = some k`), and
+`fieldEquals` is an in-fragment scalar (DBM) atom whose reserved name is invisible to authored record
+fields (like the transition envelope). So the whole `AnyOf` is now a `differenceRE` leaf.
 
-Below: the `Immutable` HALF of #7 IS reachable (proof the residual is exactly the `SenderIs` atom,
-not the whole disjunction), and the reason we cannot lift it to the full guard. -/
+CAVEAT (named, not hidden): `__sender` is a VIRTUAL coordinate the decision ranges over as a free
+per-frame `Int` — this is exactly the per-transition semantics (one sender per turn), so it is
+faithful for this per-transition decision; it is NOT a claim over multi-step traces where each step
+carries its own sender.
 
-/-- The reachable HALF of the polis binding: `Immutable{slot}` alone is a difference-fragment leaf. -/
-def polisImmutableHalf : PredRE := .sym (.atom (.simple (.immutable "slot")))
-#guard differenceRE polisImmutableHalf = true
--- SATISFIABLE (the immutable half fires on a no-change frame) — but the FULL `AnyOf[Immutable,
--- SenderIs]` is NOT expressible: `SenderIs` is a context atom, so the guard as authored stays
--- residual. This #guard is evidence of WHERE the residual sits, not a claim the guard is reached.
-#guard emptyFix [woStep "slot" (some 0) (some 0), woStep "slot" (some 0) (some 1)] 32
-        polisImmutableHalf = some false
+**#9 discord `RoleCapMap::holds`** (`discord-bot/src/roles_caps.rs:220`) — a finite runtime HashMap
+lookup, not authored as a state `Pred`; and the templater span/delimiter guards
+(`Dregg2/Crypto/HandlebarsGuarded*.lean`) are over STRINGS, a different language. RESIDUAL CLASS:
+genuine non-`Pred`. -/
+
+/-- The reserved virtual coordinate carrying the turn's signer (`TurnCtx.sender`). -/
+def senderField : FieldName := "__sender"
+
+/-- The polis per-slot actor binding `AnyOf[Immutable{slot}, SenderIs{admin}]` — slot `f` flips ONLY
+in a turn SENT by the admin. NOW a full `PredRE` leaf via the faithful virtual-`__sender` extension.
+Admit-char: `accept ⟺ (new[slot] = old[slot]) ∨ (sender = admin)` (mirrors `actorBound_untouched_open`
+/ `actorBound_flip_requires_sender`, `Exec/Program.lean:816`). -/
+def polisActorBound (slot : FieldName) (admin : Int) : PredRE :=
+  .sym (.or (.atom (.simple (.immutable slot)))
+            (.atom (.simple (.fieldEquals senderField admin))))
+
+-- IN the difference fragment (reactive immutable ⋓ scalar `__sender` equality):
+#guard differenceRE (polisActorBound "slot" 7) && rigidRE (polisActorBound "slot" 7)
+
+/-- Transition frame carrying the virtual signer coordinate: `(slot: old→new, __sender: new)`. -/
+def acStep (slotOld slotNew sender : Int) : Value :=
+  transitionSymbol
+    (.record [("slot", .int slotOld)])
+    (.record [("slot", .int slotNew), (senderField, .int sender)])
+
+-- FAITHFULNESS vs the deployed `AnyOf[Immutable, SenderIs]` semantics (admin = 7):
+-- (a) slot UNCHANGED, non-admin sender → immutable disjunct → ACCEPT:
+#guard emptyFix [acStep 3 3 0] 32 (polisActorBound "slot" 7) = some false
+-- (b) slot CHANGED, admin sender → senderIs disjunct → ACCEPT:
+#guard emptyFix [acStep 3 4 7] 32 (polisActorBound "slot" 7) = some false
+-- (c) slot CHANGED, NON-admin sender → neither disjunct → REJECT (the flip-requires-admin law):
+#guard emptyFix [acStep 3 4 0] 32 (polisActorBound "slot" 7) = some true
+-- (d) slot UNCHANGED, admin sender → both disjuncts → ACCEPT:
+#guard emptyFix [acStep 3 3 7] 32 (polisActorBound "slot" 7) = some false
+
+-- SATISFIABLE and NOT trivial (fires on (a),(b),(d); refuses (c)) — the actor binding is a real gate.
+#guard emptyFix [acStep 3 3 0, acStep 3 4 7, acStep 3 4 0] 64 (polisActorBound "slot" 7) = some false
 
 end RealGuardAudit2
 
