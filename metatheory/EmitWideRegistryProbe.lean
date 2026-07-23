@@ -50,6 +50,14 @@ import Dregg2.Deos.BareCohortFloorRefuseWide
 -- the expected dead pair of chains. `s2compact` companion lines carry the (bb, laneBase) geometry
 -- to the Rust producer table (`s2_compact_generated.rs`).
 import Dregg2.Circuit.Emit.WideCompactTable
+-- THE E1 DELETION (Epoch-1 SECOND flag-day): each S2-compact member is ADDITIONALLY compacted at
+-- its DERIVED per-member kill-set (`deadColsE1 … 90` — every column at index ≥ 90 referenced by no
+-- surviving constraint / hash site / range: the retired v1-face aux band 90..187, the gentian
+-- refuse tail, the appendix scratch bands). Gated per member by `compactE1Ok` (fail-closed); the
+-- keystone re-connects through `RotWideCompactE1.compactE1_expand`. `e1compact` companion lines
+-- carry the kill-set (POST-S2 coords, as half-open runs) to the Rust producer table
+-- (`e1_compact_generated.rs`).
+import Dregg2.Circuit.Emit.RotWideCompactE1
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpenWide v3RegistryCapOpenWriteWide)
@@ -69,13 +77,53 @@ def weldWide (key : String) (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
     Dregg2.Deos.BareCohortFloorRefuseWide.gentianWideBareRefuse d
   else d
 
-/-- Compact-and-print one wide member (S2 deleted, checked), plus its `s2compact` geometry line
-for the Rust producer table. Fails the whole emit if `compactOk` refuses. -/
+/-- The E1 face ceiling for the wide members (`AUX_BASE = 90`): strictly above every `.transition`
+face column (`sbCol`/`saCol` ≤ 89), matching `RotatedKernelRefinementAvailWideCompactE1.E1_FLOOR`. -/
+def e1Floor : Nat := 90
+
+/-- Compress a strictly-ascending column list into ascending half-open runs `[start, end)`.
+`deadColsE1` returns a filtered `List.range`, so its output is already sorted ascending, no dups. -/
+def runsOf (cols : List Nat) : List (Nat × Nat) :=
+  (cols.foldl (fun (acc : List (Nat × Nat)) (c : Nat) =>
+    match acc with
+    | (s, e) :: rest => if c == e then (s, e + 1) :: rest else (c, c + 1) :: (s, e) :: rest
+    | [] => [(c, c + 1)]) []).reverse
+
+/-- The `e1compact` companion payload: the per-member E1 kill-set as ascending half-open `start-end`
+runs (POST-S2 coordinates), for the Rust producer table (`e1_compact_generated.rs`). -/
+def intervalsStr (cols : List Nat) : String :=
+  String.intercalate "," ((runsOf cols).map (fun p => s!"{p.1}-{p.2}"))
+
+/-- `deadColsE1 cm 90`, with `liveCols` HOISTED out of the per-column filter closure. The proven
+`deadColsE1` inlines `liveCols M` INSIDE the predicate, so the interpreter (`lake env lean --run`)
+rebuilds the whole live-reference surface once PER COLUMN (~width× redundant, ~1 min/member). This
+binds `live` once and computes the DEFINITIONALLY-IDENTICAL list — the descriptor / companion line
+are byte-identical to the `deadColsE1`-based path, just fast. -/
+def deadColsE1Fast (cm : EffectVmDescriptor2) : List Nat :=
+  let live := Dregg2.Circuit.Emit.RotWideCompactE1.liveCols cm
+  (List.range cm.traceWidth).filter (fun c => decide (e1Floor ≤ c) && !live.contains c)
+
+/-- Compact-and-print one wide member (S2 deleted, then E1 deleted, both gated), plus its
+`s2compact` (bb, laneBase) geometry line and its `e1compact` kill-set line for the Rust producer
+tables. Fails the whole emit if `compactOk` (S2) refuses, or if the cheap `transitionCeilingOk`
+(the only member-specific E1 obligation — every `.transition` face column below 90) fails: by
+`RotWideCompactE1.compactE1Ok_of_ceiling` the derived kill-set then passes the full value-preservation
+gate, so `compactE1 cm (deadColsE1 cm 90)` is value-preserving (the `compactE1_expand` bridge holds).
+The transfer member emitted here is definitionally the proof object
+`RotatedKernelRefinementAvailWideCompactE1.transferWideDeployedE1`. -/
 def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
   match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
   | .ok (cm, bb, lb) =>
-    IO.println s!"{key}\t{cm.name}\t{emitVmJson2 cm}"
-    IO.println s!"s2compact\t{key}\t{bb}\t{lb}"
+    let ks := deadColsE1Fast cm
+    if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm e1Floor then
+      let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm ks
+      IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"
+      IO.println s!"s2compact\t{key}\t{bb}\t{lb}"
+      IO.println s!"e1compact\t{key}\t{intervalsStr ks}"
+    else throw (IO.userError
+      s!"E1-compact REFUSED for {key} — transitionCeilingOk failed (a `.transition` reads a face \
+         column ≥ 90, so the derived kill-set could corrupt an offset-encoded transition); the \
+         emit fails closed")
   | .error e => throw (IO.userError e)
 
 def main : IO Unit := do

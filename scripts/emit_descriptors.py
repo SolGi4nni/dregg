@@ -70,6 +70,17 @@ DESC = ROOT / "circuit" / "descriptors"
 
 # The regen-control surface (docs/VK-REGEN-CONTROLS.md).
 PROVENANCE_FILE = "PROVENANCE.json"                # lives inside circuit/descriptors/
+
+# Artifacts under circuit/descriptors/ that this driver does NOT own — each is regenerated AND
+# drift-checked by its OWN pipeline, so requiring an emitter here would be a false routing gap.
+# Every entry MUST have a co-located regen/check that keeps it fresh (never a silent exemption):
+#   * dregg-cert-qp-portfolio6-s3-ir2.json — regenerated + `--check`ed by regen-cert-qp.sh
+#     (`lake env lean --run EmitCertQpDescriptor.lean`, deliberately outside this driver's EMITTERS).
+#   * regen-cert-qp.sh — the regen SCRIPT itself (not a descriptor; it has no emitter by construction).
+COVERAGE_EXEMPT = frozenset({
+    "dregg-cert-qp-portfolio6-s3-ir2.json",
+    "regen-cert-qp.sh",
+})
 AUDIT_LOG_REL = Path("docs") / "VK-REGEN-LOG.md"   # git-tracked append-only regen log
 ACK_ENV = "DREGG_VK_REGEN_ACK"
 ALLOW_DIRTY_ENV = "DREGG_VK_REGEN_ALLOW_DIRTY"
@@ -135,6 +146,9 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
     "private-book-bfv-odd-ntt-butterfly-q0-n8.json",
     "private-book-bfv-odd-ntt-butterfly-q0-n4096.json",
     "private-book-bfv-odd-intt-butterfly-q0-n4096.json",
+    "private-book-bfv-odd-ntt-butterfly-q0-n8-stage0-exact-public.json",
+    "private-book-bfv-odd-ntt-butterfly-q0-n8-stage1-exact-public.json",
+    "private-book-bfv-odd-ntt-butterfly-q0-n8-stage2-exact-public.json",
     "turn-chain-binding.json",
     "descent-custody-census-fixed8-v1.json",
     "shielded-whole-note-swap-substrate-v1.json",
@@ -205,18 +219,43 @@ def emitter_modules() -> list[str]:
 
 
 def emit(lean_file: str) -> str:
-    """Run a Lean emitter, return its raw stdout."""
-    r = subprocess.run(
-        ["lake", "env", "lean", "--run", lean_file],
-        cwd=META, capture_output=True, text=True,
-    )
-    if r.returncode != 0:
+    """Run a Lean emitter, return its raw stdout.
+
+    Retries on TRANSIENT failures. On a co-tenant build box (multiple agents running `lake`
+    concurrently) a `lake env lean --run` can fail through no fault of the emitter: a concurrent
+    `lake` reconfigure holds the exclusive configuration lock ("could not acquire an exclusive
+    configuration lock"), or a background rebuild clobbers an olean mid-read (a bare non-zero exit
+    with empty stderr). The emitters are deterministic, so a REAL error fails every attempt and still
+    exits 2; a transient one clears on retry. Without this, a single unlucky moment aborts the whole
+    (~10 min) regen."""
+    import time
+    attempts = 4
+    for i in range(attempts):
+        r = subprocess.run(
+            ["lake", "env", "lean", "--run", lean_file],
+            cwd=META, capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return r.stdout
+        transient = (
+            "configuration lock" in r.stderr
+            or "reconfiguring the package" in r.stderr
+            or r.stderr.strip() == ""  # a bare kill (concurrent olean clobber / OOM signal)
+        )
+        if transient and i < attempts - 1:
+            sys.stderr.write(
+                f"emit_descriptors: transient failure on {lean_file} "
+                f"(attempt {i + 1}/{attempts}, rc={r.returncode}); retrying after backoff...\n"
+            )
+            time.sleep(5 * (i + 1))
+            continue
         sys.stderr.write(
             f"\nEMIT FAILED: lake env lean --run {lean_file}\n"
             f"--- stderr ---\n{r.stderr}\n"
         )
         sys.exit(2)
-    return r.stdout
+    # unreachable (loop either returns or exits)
+    sys.exit(2)
 
 
 # ---- defName/const routing reconstructed from the Rust registry -------------
@@ -482,7 +521,7 @@ def verify_provenance(strict: bool) -> None:
 
     check_set("descriptor", prov.get("descriptor_sha256", {}), {
         p.name: p for p in DESC.iterdir()
-        if p.is_file() and p.name != PROVENANCE_FILE
+        if p.is_file() and p.name != PROVENANCE_FILE and p.name not in COVERAGE_EXEMPT
     })
     by_name = DESC / "by-name"
     check_set("by-name", prov.get("by_name_sha256", {}), {
@@ -588,6 +627,27 @@ def split_wide(stdout: str, written):
 
 
 S2_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "s2_compact_generated.rs"
+E1_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "e1_compact_generated.rs"
+
+
+def _parse_e1_intervals(spec: str) -> list[tuple[int, int]]:
+    """Parse an `e1compact` payload (`a-b,c-d,...`, ascending half-open runs; possibly empty)
+    into `[(a, b), ...]`. Validates ascending, non-overlapping, well-formed."""
+    if spec == "":
+        return []
+    out: list[tuple[int, int]] = []
+    prev_end = 0
+    for chunk in spec.split(","):
+        a_s, _, b_s = chunk.partition("-")
+        a, b = int(a_s), int(b_s)
+        if not (a < b and a >= prev_end):
+            sys.exit(
+                f"emit_descriptors: e1compact interval {chunk!r} not a well-formed ascending "
+                f"non-overlapping half-open run (a<b, a>=prev_end={prev_end})"
+            )
+        out.append((a, b))
+        prev_end = b
+    return out
 
 
 def split_wide_registry(stdout: str, written):
@@ -603,8 +663,12 @@ def split_wide_registry(stdout: str, written):
     per-member deletion geometry, routed into `circuit/src/effect_vm/s2_compact_generated.rs` so
     the Rust trace producer compacts EXACTLY the columns the Lean emit deleted (single source)."""
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
-    members = [ln for ln in lines if not ln.startswith("s2compact\t")]
+    members = [
+        ln for ln in lines
+        if not ln.startswith("s2compact\t") and not ln.startswith("e1compact\t")
+    ]
     geo = [ln for ln in lines if ln.startswith("s2compact\t")]
+    e1 = [ln for ln in lines if ln.startswith("e1compact\t")]
     if len(members) != 57:
         sys.exit(
             f"emit_descriptors: wide registry emitter produced {len(members)} member lines "
@@ -613,6 +677,11 @@ def split_wide_registry(stdout: str, written):
     if len(geo) != 57:
         sys.exit(
             f"emit_descriptors: wide registry emitter produced {len(geo)} s2compact lines "
+            "(expected 57)"
+        )
+    if len(e1) != 57:
+        sys.exit(
+            f"emit_descriptors: wide registry emitter produced {len(e1)} e1compact lines "
             "(expected 57)"
         )
     for ln in members:
@@ -653,6 +722,39 @@ def split_wide_registry(stdout: str, written):
         + "\n];\n"
     )
     GENERATED_RS[S2_COMPACT_RS] = module
+
+    # THE E1 DELETION GEOMETRY (Epoch-1 SECOND flag-day): per wide-registry member, the DERIVED
+    # kill-set of dead v1-face columns (POST-S2 coords), as ascending half-open runs. The Rust trace
+    # producer drops EXACTLY these columns (`trace_rotated::compact_e1_columns`) so its rows match the
+    # E1-compacted committed descriptor. One source: this table (from the Lean `deadColsE1`).
+    e1_rows = []
+    for ln in e1:
+        _tag, key, spec = ln.split("\t", 2)
+        intervals = _parse_e1_intervals(spec)
+        body = ", ".join(f"({a}, {b})" for a, b in intervals)
+        e1_rows.append(f'    ("{key}", &[{body}]),')
+    e1_module = (
+        "// @generated by metatheory/EmitWideRegistryProbe.lean via scripts/emit_descriptors.py"
+        " — DO NOT EDIT BY HAND.\n"
+        "//\n"
+        "// THE E1 DELETION GEOMETRY (Epoch-1 SECOND flag-day): per wide-registry member, the\n"
+        "// DERIVED per-member kill-set of DEAD v1-face columns — every column at index >= 90\n"
+        "// referenced by NO surviving constraint / hash site / range (the retired aux band\n"
+        "// 90..187 incl. the 60-col balance bit-decomposition, the gentian refuse tail, and the\n"
+        "// note/heap/refusal/cap-open appendix scratch bands). Coordinates are POST-S2 (the columns\n"
+        "// as they sit in the S2-compacted member), as ascending half-open `[start, end)` runs.\n"
+        "// The Lean emit deleted these from the committed wide descriptors\n"
+        "// (`RotWideCompactE1.compactE1` at `deadColsE1 M 90`, gated per member by `compactE1Ok`);\n"
+        "// the Rust trace producer must drop the SAME columns from its S2-compacted rows\n"
+        "// (`trace_rotated::compact_e1_columns`, draining descending). One source: this table.\n"
+        "\n"
+        "/// `(registry key, &[(start, end), ...])` per wide member, in registry order — the\n"
+        "/// ascending half-open POST-S2 kill-set runs. An empty slice means no E1-dead columns.\n"
+        "pub const E1_COMPACT_TABLE: &[(&str, &[(usize, usize)])] = &[\n"
+        + "\n".join(e1_rows)
+        + "\n];\n"
+    )
+    GENERATED_RS[E1_COMPACT_RS] = e1_module
 
 
 def split_bilateral(stdout: str, written):
@@ -956,7 +1058,7 @@ def main():
     on_disk = {
         str(p.relative_to(DESC)) for p in DESC.rglob("*") if p.is_file()
     }
-    missed = on_disk - set(written) - {PROVENANCE_FILE}
+    missed = on_disk - set(written) - {PROVENANCE_FILE} - COVERAGE_EXEMPT
     if missed:
         sys.exit(
             "emit_descriptors: these checked-in descriptors were NOT reproduced "

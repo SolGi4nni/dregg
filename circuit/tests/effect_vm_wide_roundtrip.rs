@@ -65,6 +65,16 @@ fn wide_desc(name: &str) -> EffectVmDescriptor2 {
     parse_vm_descriptor2(wide_json(name)).unwrap_or_else(|e| panic!("{name} wide parses: {e}"))
 }
 
+/// Total columns the E1 deletion (Epoch-1 SECOND flag-day) drops for a wide member, summed from the
+/// Lean-emitted single source `E1_COMPACT_TABLE` — exactly what `compact_e1_columns` drains.
+fn e1_deleted_cols(key: &str) -> usize {
+    dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, iv)| iv.iter().map(|(a, b)| b - a).sum())
+        .unwrap_or(0)
+}
+
 fn open_permissions() -> Permissions {
     Permissions {
         send: AuthRequired::None,
@@ -333,6 +343,8 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     let mut trace = trace;
     dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(&mut trace, "burnVmDescriptor2R24")
         .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(&mut trace, "burnVmDescriptor2R24")
+        .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + DFA_RC_LEN (4 dsl rc, last-pre-wide) = 50; total 66
     // = the committed burnVmDescriptor2R24 public_input_count (wide pins at PI 50..65).
     assert_roundtrip(name, &desc, &trace, &dpis, &[], ROT_PI_COUNT + DFA_RC_LEN);
@@ -363,10 +375,12 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     assert_eq!(
         desc.trace_width,
         SET_FIELD_DYN_HOST_WIDTH + 2 * 8 * WIDE_NUM_CARRIERS + 48
-            - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS,
+            - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS
+            - e1_deleted_cols(name),
         "setFieldDyn wide width = the committed narrow V1Face host + the wide-carrier appendix \
          (960) + the gentian refuse widening (48) MINUS the deleted S2 stratum (960 — the two \
-         rotated 1-felt chains + their chip lanes, Epoch 1)"
+         rotated 1-felt chains + their chip lanes, Epoch 1) MINUS the E1 dead v1-face bands \
+         (Epoch-1 SECOND flag-day, per-member from E1_COMPACT_TABLE)"
     );
     assert_eq!(
         desc.public_input_count,
@@ -424,6 +438,11 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
         "setFieldDynVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "setFieldDynVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // Grow + fill the gentian refuse aux (prove-time filled; setFieldDyn declares no capacity ⟹ floor=0).
     let mut trace = trace;
     if desc.trace_width > trace[0].len() {
@@ -522,6 +541,11 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         "noteSpendVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "noteSpendVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + 1 (nullifier pin PI[46]) + DFA_RC_LEN (4 dsl rc, PI 47..50)
     // = 51; total 67 — the wide twin of the LIVE noteSpendVmDescriptor2R24 (51 PIs, rc-wrapped).
     // NOTE: the committed wide row currently says 63 (EmitWideRegistryProbe.lean builds the §J′
@@ -601,6 +625,11 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
         "noteCreateVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "noteCreateVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + 1 (commitment pin PI[46]) + DFA_RC_LEN (4 dsl rc) = 51;
     // total 67 — the wide twin of the LIVE noteCreateVmDescriptor2R24 (51 PIs, rc-wrapped). The
     // committed wide row currently says 63 (the unwrapped-base wide-registry emit gap; see the
@@ -677,6 +706,11 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
         "createCellVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "createCellVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + 1 (new-cell-key pin PI[46]) + DFA_RC_LEN (4 dsl rc) = 51;
     // total 67 — the wide twin of the LIVE createCellVmDescriptor2R24 (51 PIs, rc-wrapped). The
     // committed wide row currently says 63 (the unwrapped-base wide-registry emit gap; see the
@@ -767,6 +801,11 @@ fn wide_factory_grow_gate_proves_verifies_and_executor_anchors() {
         "factoryVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "factoryVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + 1 (grow pin PI[46]) + 16 (STEP-3 carrier-octet pins:
     // child_vk8 PI 47..54 + contract_hash8 PI 55..62) + DFA_RC_LEN (4 dsl rc, PI 63..66) = 67;
     // total 83 = the committed factoryVmDescriptor2R24 public_input_count (wide pins at PI 67..82).
@@ -812,6 +851,11 @@ fn wide_spawn_grow_gate_proves_verifies_and_executor_anchors() {
         "spawnVmDescriptor2R24",
     )
     .expect("S2 compaction must succeed on the raw wide trace");
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "spawnVmDescriptor2R24",
+    )
+    .expect("E1 compaction must succeed on the S2-compacted wide trace");
     // wide-PI base = ROT_PI_COUNT (46) + 1 (grow pin PI[46]) + DFA_RC_LEN (4 dsl rc, PI 47..50)
     // = 51; total 67 = the committed spawnVmDescriptor2R24 public_input_count (wide pins at 51..66).
     assert_roundtrip(

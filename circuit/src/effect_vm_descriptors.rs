@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "7c2ce4324cb95b61c5d4a62e4c3999fb654473c6d92f87e29a29f4bcfb3300cb";
+    "3729839b4e22ec5863bd3ba79573d306538a4677236a9cdeeb2c3de23db35996";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1216,7 +1216,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "36b1d1c85aa259507a2fc6c2d464f084f07fdd640f0da90332db8f69c75a13e3";
+    "5329ead701d212996cf4a4724013aa9f5232ccf1d5ae59c63b7288fab113ed4b";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1242,7 +1242,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "3294426e4810b9b7184c420a0aa7ac70957213b74a4816f2bed01d33fc814d83";
+    "2c2b949e8b63a369880ed6dfb4c9aa49ee5eb908d8e342645f115e5130d0c014";
 
 /// **THE LEAN-EMITTED setField VALUE8 EPOCH (STAGED, VK-AFFECTING BUT NON-DESTRUCTIVE).** The 8
 /// written-slot value8 members (`setFieldValue8VmDescriptor2-{slot}R24`) that swap the deployed

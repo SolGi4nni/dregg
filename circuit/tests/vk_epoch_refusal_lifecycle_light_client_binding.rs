@@ -23,8 +23,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_LIFECYCLE, REFUSAL_EXACT_AUDIT_PI_BASE, REFUSAL_EXACT_AUDIT_PI_LEN,
     REFUSAL_WRITE_HOST_WIDTH, ROT_PI_COUNT, RotatedBlockWitness, WIDE_CARRIER_APPENDIX,
-    compact_s2_columns, empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    generate_rotated_refusal_write_wide, rotated_descriptor_name_for_effect,
+    compact_e1_columns, compact_s2_columns, empty_caveat_manifest,
+    generate_rotated_effect_vm_trace, generate_rotated_refusal_write_wide,
+    rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, bytes32_to_8_limbs};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -189,9 +190,10 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
     }
 
     compact_s2_columns(&mut trace, "refusalVmDescriptor2R24").expect("exact refusal S2 compaction");
+    compact_e1_columns(&mut trace, "refusalVmDescriptor2R24").expect("exact refusal E1 compaction");
     let desc = parse_vm_descriptor2(wide_json("refusalVmDescriptor2R24"))
         .expect("exact refusal descriptor parses");
-    assert_eq!(desc.trace_width, 2203);
+    assert_eq!(desc.trace_width, 2097);
     assert_eq!(desc.public_input_count, 90);
     assert_eq!(trace[0].len(), 2155, "48 Gentian columns are prover-filled");
     assert!(
@@ -461,9 +463,11 @@ fn wide_fields_write_proves_and_verifies() {
     let name = "refusalVmDescriptor2R24";
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
     compact_s2_columns(&mut trace, name).expect("exact refusal S2 compaction");
+    compact_e1_columns(&mut trace, name).expect("exact refusal E1 compaction");
     assert_eq!(
-        desc.trace_width, 2203,
-        "exact host 2155 after S2 compaction + 48 Gentian refuse columns"
+        desc.trace_width, 2097,
+        "exact host 2155 after S2 compaction + 48 Gentian refuse columns (2203) MINUS the E1 dead \
+         v1-face bands (106, Epoch-1 SECOND flag-day)"
     );
     assert_eq!(
         desc.public_input_count, 90,

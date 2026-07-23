@@ -175,8 +175,18 @@ fn s2_deletion_yield_measurement() {
     const REPS: usize = 3;
 
     let (deployed, mut trace, pis, heaps, mem) = honest_wide_transfer();
-    // The deployed compact width: 2664 − 960 (two 60-col carrier bands + 840 chip lanes).
-    assert_eq!(deployed.trace_width, BASELINE_WIDTH - 960, "compact width");
+    // The deployed compact width: 2664 − 960 (two 60-col carrier bands + 840 chip lanes, S2) − the
+    // E1 dead v1-face bands (Epoch-1 SECOND flag-day, per-member from the Lean-emitted table).
+    let e1_drop: usize = dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == "transferVmDescriptor2R24")
+        .map(|(_, iv)| iv.iter().map(|(a, b)| b - a).sum())
+        .expect("transfer in E1_COMPACT_TABLE");
+    assert_eq!(
+        deployed.trace_width,
+        BASELINE_WIDTH - 960 - e1_drop,
+        "compact width"
+    );
     assert_eq!(
         deployed.public_input_count, 68,
         "PI shape UNCHANGED by the deletion"

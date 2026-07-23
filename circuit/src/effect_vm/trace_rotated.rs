@@ -4140,6 +4140,41 @@ pub fn compact_s2_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Re
     Ok(())
 }
 
+/// **THE E1 DELETION (Epoch-1 SECOND flag-day).** After [`compact_s2_columns`], additionally drop
+/// the DEAD v1-face column bands from an S2-compacted wide trace, so the rows match the committed
+/// E1-COMPACTED wide descriptor (Lean `RotWideCompactE1.compactE1` at the DERIVED per-member kill-set
+/// `deadColsE1 M 90` — every column at index ≥ 90 referenced by no surviving constraint / hash site /
+/// range: the retired aux band `90..187`, the gentian refuse tail, and the note/heap/refusal/cap-open
+/// appendix scratch bands). Geometry comes from the Lean-emitted single source
+/// (`e1_compact_generated::E1_COMPACT_TABLE`) — ascending half-open `[start, end)` runs in POST-S2
+/// coordinates. The kill-set constrains NOTHING that survives (`compactE1Ok` gated the emit), so the
+/// deletion is value-preserving and every published PI is UNCHANGED. Drains DESCENDING so earlier
+/// drains do not shift later positions. Fails closed on an unknown key or a row too short to span a
+/// band (a mis-staged producer, never a silent misalignment). MUST be called AFTER `compact_s2_columns`
+/// (the intervals are in the S2-compacted geometry).
+pub fn compact_e1_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Result<(), String> {
+    use super::e1_compact_generated::E1_COMPACT_TABLE;
+    let (_, intervals) = E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == registry_key)
+        .ok_or_else(|| format!("compact_e1_columns: {registry_key} not in E1_COMPACT_TABLE"))?;
+    for row in trace.iter_mut() {
+        // descending: drain the highest band first so lower band positions do not shift
+        for &(start, end) in intervals.iter().rev() {
+            if row.len() < end {
+                return Err(format!(
+                    "compact_e1_columns: {registry_key} row width {} < E1 band end {} — the trace \
+                     is not the S2-compacted wide row (compact E1 AFTER S2)",
+                    row.len(),
+                    end
+                ));
+            }
+            row.drain(start..end);
+        }
+    }
+    Ok(())
+}
+
 pub fn append_wide_carriers(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,
@@ -4733,6 +4768,7 @@ pub fn generate_rotated_heap_write_wide(
     ); // 3065 (HEAP_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX — OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
     compact_s2_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
+    compact_e1_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
 
@@ -4787,6 +4823,7 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
     ); // 2824
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE + 3 + 16); // 65
     compact_s2_columns(&mut trace, "transferCapOpenTBVmDescriptor2R24")?;
+    compact_e1_columns(&mut trace, "transferCapOpenTBVmDescriptor2R24")?;
     Ok((trace, dpis))
 }
 
@@ -5860,10 +5897,12 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
         MemBoundaryWitness::default()
     };
 
-    // THE S2 DELETION (Epoch 1): the committed wide registry rows are S2-COMPACTED — drop the
-    // same 960 columns the Lean emit deleted, BEFORE the descriptor-derived tail pairing below
-    // (which reasons in the committed compact geometry).
+    // THE S2 + E1 DELETION (Epoch 1): the committed wide registry rows are S2-COMPACTED (the two
+    // dead 1-felt chains) and then E1-COMPACTED (the dead v1-face bands) — drop the same columns the
+    // Lean emit deleted, BEFORE the descriptor-derived tail pairing below (which reasons in the
+    // committed compact geometry). E1 follows S2 (its kill-set is in the S2-compacted coordinates).
     compact_s2_columns(&mut trace, name)?;
+    compact_e1_columns(&mut trace, name)?;
 
     // THE POST-REGEN REGISTRY TAIL (hoisted from `rotation_witness::mint_rotated_participant_leg`
     // so EVERY route through this spine emits the committed shape): the committed row may carry

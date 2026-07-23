@@ -1846,6 +1846,13 @@ pub fn prove_wide_umem_welded_staged_with_fee(
         "transferFeeVmDescriptor2R24",
     )
     .map_err(|e| SdkError::InvalidWitness(format!("S2 compact (fee): {e}")))?;
+    // THE E1 DELETION (Epoch-1 SECOND flag-day): drop the dead v1-face bands too, so the row width
+    // is the E1-compacted committed fee width BEFORE the umem weld places its leg at that width.
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut wide_trace,
+        "transferFeeVmDescriptor2R24",
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("E1 compact (fee): {e}")))?;
 
     // WELD: append the umem leg INTO the fee WIDE descriptor (keeps the wide PI vector + the 16 wide
     // commit PIs — the 8-felt anchors — INTACT; the first appended umem column is PAST the wide
@@ -1998,13 +2005,18 @@ pub fn prove_effect_vm_rotated_wide_with_fee(
     )
     .map_err(|e| SdkError::InvalidWitness(format!("wide fee trace generation: {e}")))?;
 
-    // THE S2 DELETION (Epoch 1): match the committed compact fee member.
+    // THE S2 + E1 DELETION (Epoch 1): match the committed compact fee member.
     let mut trace = trace;
     dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(
         &mut trace,
         "transferFeeVmDescriptor2R24",
     )
     .map_err(|e| SdkError::InvalidWitness(format!("S2 compact (fee): {e}")))?;
+    dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+        &mut trace,
+        "transferFeeVmDescriptor2R24",
+    )
+    .map_err(|e| SdkError::InvalidWitness(format!("E1 compact (fee): {e}")))?;
 
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
         .map_err(|e| SdkError::InvalidWitness(format!("wide fee IR-v2 proof: {e}")))?;
@@ -3210,11 +3222,16 @@ fn build_effect_vm_cap_open_leg(
                 CAP_OPEN_TB_WIDTH + avail_pad,
                 avail_pad,
             );
-            // THE S2 DELETION (Epoch 1): drop the dead 1-felt chains so the rows match the
-            // committed compact TB member (single source: the Lean-emitted geometry table).
+            // THE S2 + E1 DELETION (Epoch 1): drop the dead 1-felt chains (S2) then the dead
+            // v1-face bands (E1) so the rows match the committed compact TB member (single source:
+            // the Lean-emitted geometry tables).
             dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(&mut trace, route.key)
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!("S2 compact ({}): {e}", route.key))
+                })?;
+            dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(&mut trace, route.key)
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("E1 compact ({}): {e}", route.key))
                 })?;
             wide_pis
         } else {
@@ -3454,6 +3471,13 @@ fn build_effect_vm_cap_open_leg(
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!("S2 compact ({effective_key}): {e}"))
                 })?;
+                dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(
+                    &mut trace,
+                    effective_key,
+                )
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("E1 compact ({effective_key}): {e}"))
+                })?;
                 Ok(d)
             })?
         } else if go_wide {
@@ -3475,10 +3499,14 @@ fn build_effect_vm_cap_open_leg(
                         "cap-open wide carriers ({effective_key}): {e}"
                     ))
                 })?;
-            // THE S2 DELETION (Epoch 1): match the committed compact cap-open member.
+            // THE S2 + E1 DELETION (Epoch 1): match the committed compact cap-open member.
             dregg_circuit::effect_vm::trace_rotated::compact_s2_columns(&mut trace, effective_key)
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!("S2 compact ({effective_key}): {e}"))
+                })?;
+            dregg_circuit::effect_vm::trace_rotated::compact_e1_columns(&mut trace, effective_key)
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("E1 compact ({effective_key}): {e}"))
                 })?;
             wide_pis
         } else {

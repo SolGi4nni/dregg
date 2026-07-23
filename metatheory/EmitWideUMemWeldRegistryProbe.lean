@@ -41,6 +41,15 @@ import Dregg2.Deos.BareCohortFloorRefuseWide
 -- strictly PAST the S2 columns, so the geometry triple is identical), gated per member by
 -- `compactOk` — the emit fails closed on any surprise.
 import Dregg2.Circuit.Emit.WideCompactTable
+-- THE E1 DELETION (Epoch-1 SECOND flag-day): each welded twin is E1-compacted at its DERIVED
+-- kill-set, EXACTLY as the bare wide registry. The E1 kill-set is the dead v1-face bands in the
+-- HOST region (below the refuse/umem welds, which append strictly PAST the S2 columns as live),
+-- so `deadColsE1 welded 90 = deadColsE1 bare 90` — the SAME per-member kill-set the shared Rust
+-- producer table carries by registry key. The runtime umem producer welds umem onto the already
+-- E1-compact bare member (`generate_wide_descriptor_and_trace` E1-compacts before the weld, base =
+-- `wide_desc.trace_width` auto-shifts); the `wide_umem_weld_registry_parity_and_no_narrowing` tooth
+-- asserts this refuse/umem-vs-compact commutation byte-for-byte.
+import Dregg2.Circuit.Emit.RotWideCompactE1
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
@@ -99,8 +108,24 @@ def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDes
 def weldedWideRegistryRefusedFirst : List (String × EffectVmDescriptor2) :=
   crownWideHosts.map weldRefusedFirst ++ weldedWriteTail ++ weldedLiveOnlyTail
 
+/-- `deadColsE1 cm 90` with `liveCols` HOISTED (same fast, value-identical form as
+`EmitWideRegistryProbe.deadColsE1Fast` — the proven def rebuilds `liveCols` once per column, which
+the interpreter makes ~1 min/member). -/
+def deadColsE1Fast (cm : EffectVmDescriptor2) : List Nat :=
+  let live := Dregg2.Circuit.Emit.RotWideCompactE1.liveCols cm
+  (List.range cm.traceWidth).filter (fun c => decide (90 ≤ c) && !live.contains c)
+
 def main : IO Unit := do
   for (key, d) in weldedWideRegistryRefusedFirst do
     match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
-    | .ok (cm, _, _) => IO.println s!"{key}\t{cm.name}\t{emitVmJson2 cm}"
+    | .ok (cm, _, _) =>
+      -- E1 (the SECOND flag-day): delete the dead v1-face bands at the derived kill-set (floor 90),
+      -- gated by the cheap `transitionCeilingOk` (`compactE1Ok_of_ceiling`). Same per-member kill-set
+      -- as the bare wide registry (the refuse/umem welds append live columns strictly PAST it).
+      if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm 90 then
+        let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm (deadColsE1Fast cm)
+        IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"
+      else throw (IO.userError
+          s!"E1-compact REFUSED for welded {key} — transitionCeilingOk failed (a `.transition` \
+             reads a face column ≥ 90); the emit fails closed")
     | .error e => throw (IO.userError e)
