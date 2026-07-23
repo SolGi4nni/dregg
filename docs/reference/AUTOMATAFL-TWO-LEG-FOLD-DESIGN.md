@@ -1,7 +1,36 @@
 # AUTOMATAFL — THE TWO-LEG FOLD: making the match proof cover the PLAYERS' MOVES
 
-**Status:** design (read-and-design pass, 2026-07-22). Nothing landed. Every file:line is `@HEAD`
-(`2ea221d99f`) unless marked NEW.
+**Status:** phases 0–9 LANDED in the working tree (2026-07-23), UNPROVEN on the deployed prover.
+Every file:line below is `@HEAD` (`2ea221d99f`) unless marked NEW; the landed code has moved some
+of them.
+
+What is in the tree: `BoardWindowBinding` + slice extractors
+(`circuit/src/effect_vm/custom_state_binding.rs`), the 46-lane board-window leaf
+(`custom_leaf_adapter.rs::prove_custom_leaf_descriptor_with_board_window`), the 47-lane node
+(`joint_turn_recursive.rs::prove_custom_binding_node_state_and_board_segmented`), the merge seam
+(`ivc_turn_chain.rs::board_window_connects` / `segment_combine_expose_with_board_window`, with the
+combine mode DERIVED from the children's own exposed shapes rather than a caller flag), the host
+mirror (`board_window_of_chain`), the verifier/artifact/lightclient extension, Leg A's `NAX/NAY`
+PIs (the step descriptor now publishes 38), and `AutomataflMatch::round_leaves` emitting Leg R then
+Leg A per round.
+
+⚠ **A LIVE BLOCKER FOUND BY THE CANARIES.** Every path that MINTS a leg — `round_leaves`,
+`build_match_turns`, and therefore the host mirror `board_window_of_chain` — currently panics in
+`dregg_multiway_tug::fold::mint_custom_leg`'s wide `Custom` leg:
+`compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band end 1675`. That is the E1
+dead-column compaction cutover (`bd21266e6b`) disagreeing with the wide custom generator's row
+width; it is unrelated to the board window, and no fast test covered it (`dregg-multiway-tug`'s 39
+lib tests pass; its leg-minting tests are `#[ignore]`d). Until it is reconciled, the two-leg fold
+cannot run at all. The seam canaries that need a minted leg are `#[ignore]`d as BLOCKED, naming it.
+
+What is NOT: **no real two-leg fold has been run.** The acceptance gate is
+`dreggnet-game-board/tests/two_leg_board_window.rs::a_mismatched_mid_does_not_fold_on_the_deployed_prover`
+(`#[ignore]`d, tens of minutes). Note §8's phase-8 gate names
+`mismatched_mid_fold_probe_11x11` — that test is on the RUST-AIR path
+(`descriptor_state_leaf: None`, no window declared) and this seam does not reach it; the gate is
+the new twin. Also not landed: the gated step (§6.2), Leg R's move PIs and Leg S (§4, §11–13), and
+`match_anchor`'s board-window pinning (§7.1's last bullet — the anchor still pins cell anchors
+only).
 
 **The substrate, said out loud:** every constraint object named here — the resolve descriptor, the
 step descriptor, the gated-step change, the appended PI families, the hold/reveal legs — is
@@ -218,12 +247,35 @@ Leg A must publish its **new** automaton coordinate. The step descriptor already
 offset columns (`AutomataflStepEmit.lean:773-793`, `A_CHOOSE_BASE + 55/56`) and the target head
 `ax + ox` / `ay + oy` (line 552-553). So:
 
-* two appended columns `NAX`, `NAY` pinned by degree-1 gates `NAX − (AX + OX) == 0`,
-  `NAY − (AY + OY) == 0`;
+* two appended columns `NAX`, `NAY` pinned by the **degree-2 mask gates**
+  `NAX − AX − M·OX == 0`, `NAY − AY − M·OY == 0`, where `M` is the step block's OWN move-mask
+  column (`A_STEP_BASE n + 34 + 2n`, `= 637` at `n = 11`);
 * two appended `.piBinding`s at **PI 36, 37** (append-only — 0..35 untouched);
 * two transport theorems mirroring `astep_autoX_pi_of_sat` / `astep_autoY_pi_of_sat`
-  (`AutomataflCommitRefine.lean`), plus the one-line fact that the stepped board's `.automaton` is
-  `⟨ax+ox, ay+oy⟩`.
+  (`AutomataflCommitRefine.astep_newAuto_pin_of_sat`), lifted to the FULL semantics by
+  `AutomataflTurnCapstone.astep_newAuto_pi_of_sat`:
+  `PI[36], PI[37] = (automatonStepCfg ⟨.column⟩ (decoded old board)).automaton`.
+
+  **The mask is not decoration — an earlier revision of this section specified the degree-1 pin
+  `NAX − (AX + OX) == 0`, and that pin cannot carry the statement the seam needs.** The reference
+  `automatonStep` moves only when its guard fires
+  (`.automaton = if m = 1 then (ax+ox, ay+oy) else (ax, ay)`), so `ax + ox` agrees with it on ONE
+  branch of that `if`. The strongest transport statable over the degree-1 pin was therefore the
+  COLUMN-level `PI = ax + ox`; lifting it to `PI = (automatonStepCfg …).automaton` would have
+  needed a reachability lemma about the reference — that a nonzero sensed offset always targets an
+  in-bounds vacuum cell — which nothing in the descriptor or the capstone had. `M·OX` collapses to
+  `0` exactly on the `m = 0` branch, so the mask pin discharges the case split AT THE GATE and the
+  transport is unconditional. Degree 2, well inside the degree-7 budget.
+
+  **Honest scope of the fix.** That reachability lemma is in fact TRUE of the reference: every arm
+  of `evaluate_axis` that yields a nonzero offset carries a `dist > 1` guard (or picks the farther
+  of two repulsors), so the first cell in the chosen direction is in-bounds and vacuum. So the
+  degree-1 pin was not rejecting reachable honest trajectories — the `m = 0`-with-nonzero-offset
+  state does not arise from the reference. The defect was in the GUARANTEE, not a demonstrated live
+  rejection, and the fix buys the full-semantics transport without paying for that lemma.
+  Canaries: `AutomataflTurnCapstone.astep_newAuto_blocked_is_old` (Lean, the gate-level fact) and
+  `dregg-automatafl/src/witness.rs::the_new_auto_pin_is_the_degree_2_mask_form` +
+  `a_nonzero_sensed_offset_always_targets_an_in_bounds_vacuum_cell` (Rust).
 
 Golden regen: `automatafl-step-n11.json` (+ `automatafl-step.json` at n=2), logged in
 `docs/VK-REGEN-LOG.md`.
@@ -487,7 +539,9 @@ Make Leg A's automaton step **conditional on a published, constrained bit**:
   ```
 
   plus `gBin(surv)`. Degree-2 only: the existing automaton gates keep their current degree, so no
-  degree-budget risk. `auto_out` blends the same way (`NAX = surv·(AX+OX) + (1−surv)·AX`).
+  degree-budget risk. `auto_out` blends the same way, on top of the mask that is already there:
+  `NAX = AX + surv·M·OX` (degree 3, still inside the budget) — the clash gate multiplies the
+  SAME offset term the move mask already gates, it does not replace it.
 * The fold connects `R.pub[44] == A.pub[38]` — one more lane on the same seam.
 
 **What this buys, beyond plumbing.** With the gated step, `automatonStepGated surv b = if surv then

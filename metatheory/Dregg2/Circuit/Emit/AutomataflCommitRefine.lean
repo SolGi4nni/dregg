@@ -126,6 +126,28 @@ theorem linGate_zero (terms : List (ℤ × Nat)) :
       = .base (.gate (sumExpr ((terms.filter (fun t => t.1 != 0)).map varTerm))) := by
   simp [linGate]
 
+/-- `prodGate terms 0` is `.base (.gate (sumExpr (…filter…)))` — the degree-`k` twin of
+`linGate_zero`. -/
+theorem prodGate_zero (terms : List (ℤ × List Nat)) :
+    prodGate terms 0
+      = .base (.gate (sumExpr ((terms.filter (fun t => t.1 != 0)).map prodTerm))) := by
+  simp [prodGate]
+
+/-- THE DEGREE-2 MASK-PIN BODY, evaluated. The gate `nax − ax − m·ox == 0` emitted by
+`newAutoCoordCommitConstraints` has body `sumExpr [var nax, (−1)·var ax, (−1)·(var m · var ox)]`;
+this computes its value as `loc nax − (loc ax + loc m · loc ox)`, the `gate_modEq_iff` shape. -/
+theorem maskPinBody_eval (a : Assignment) (naxCol axCol mCol oxCol : Nat) :
+    (sumExpr ((([(1, [naxCol]), (-1, [axCol]), (-1, [mCol, oxCol])] : List (ℤ × List Nat)).filter
+        (fun t => t.1 != 0)).map prodTerm)).eval a
+      = a naxCol - (a axCol + a mCol * a oxCol) := by
+  -- The coefficient list is CLOSED (`1, -1, -1`), so the filter/map/fold all reduce; what is left
+  -- is the literal emitted body, whose columns are the only variables.
+  show (EmittedExpr.add (.add (.var naxCol) (.mul (.const (-1)) (.var axCol)))
+      (.mul (.const (-1)) (.mul (.var mCol) (.var oxCol)))).eval a
+    = a naxCol - (a axCol + a mCol * a oxCol)
+  simp only [EmittedExpr.eval]
+  ring
+
 /-- Signed base-4 negation glue. -/
 theorem sum_map_neg {α : Type*} (l : List α) (g : α → ℤ) :
     (l.map (fun x => -(g x))).sum = -(l.map g).sum := by
@@ -398,6 +420,22 @@ theorem pack_pi_of_mem (hsat : Satisfied2 hash D minit mfin maddrs t)
     (gate_modEq_iff rfl).mp hgate
   exact ((piFirst_of_mem hsat hlen (feltCol j) (piBase + j) hpi).symm).trans hfelt
 
+/-- **`maskPin_gate_of_mem` — the DEGREE-2 mask-pin transport, host form.** A gate
+`naxCol − axCol − mCol·oxCol == 0` in ANY descriptor forces
+`loc[naxCol] ≡ loc[axCol] + loc[mCol]·loc[oxCol]` on the first row. This is the engine of the
+NEW-automaton-coordinate transport: on a moved step (`m = 1`) it reads `ax + ox`, on a BLOCKED step
+(`m = 0`) it reads `ax` — matching the reference `automatonStep` on BOTH branches, which the degree-1
+`nax = ax + ox` pin did not. -/
+theorem maskPin_gate_of_mem (hsat : Satisfied2 hash D minit mfin maddrs t)
+    (hlen : 1 < t.rows.length) (naxCol axCol mCol oxCol : Nat)
+    (hg : prodGate [(1, [naxCol]), (-1, [axCol]), (-1, [mCol, oxCol])] 0 ∈ D.constraints) :
+    (envAt t 0).loc naxCol
+      ≡ (envAt t 0).loc axCol + (envAt t 0).loc mCol * (envAt t 0).loc oxCol
+        [ZMOD 2013265921] := by
+  rw [prodGate_zero] at hg
+  have hgate := gate_of_mem hsat 0 (by omega) hg
+  exact (gate_modEq_iff (maskPinBody_eval (envAt t 0).loc naxCol axCol mCol oxCol)).mp hgate
+
 end Host
 
 /-- **`pack_pi_of_sat` — (1) THE PACKED TRANSPORT.** On a satisfying, canonical trace the committed
@@ -550,7 +588,8 @@ theorem astepN_oldPack_mem (j : Nat) (hj : j < feltCount n) :
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
   exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _
-    (List.mem_append_left _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))))
+    (List.mem_append_left _ (List.mem_append_left _
+      (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)))))
 
 /-- The NEW pack gate is a member of the emitted list. -/
 theorem astepN_newPack_mem (j : Nat) (hj : j < feltCount n) :
@@ -559,7 +598,8 @@ theorem astepN_newPack_mem (j : Nat) (hj : j < feltCount n) :
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
   exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _
-    (List.mem_append_right _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))))
+    (List.mem_append_left _ (List.mem_append_right _
+      (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)))))
 
 /-- The OLD packed-felt `.piBinding` is a member of the emitted list. -/
 theorem astepN_oldPi_mem (j : Nat) (hj : j < feltCount n) :
@@ -567,8 +607,8 @@ theorem astepN_oldPi_mem (j : Nat) (hj : j < feltCount n) :
       ∈ (automataflStepDescN n).constraints := by
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
-  exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _
-    (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)))
+  exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _
+    (List.mem_append_right _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))))
 
 /-- The NEW packed-felt `.piBinding` is a member of the emitted list. -/
 theorem astepN_newPi_mem (j : Nat) (hj : j < feltCount n) :
@@ -576,23 +616,61 @@ theorem astepN_newPi_mem (j : Nat) (hj : j < feltCount n) :
       ∈ (automataflStepDescN n).constraints := by
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
-  exact List.mem_append_left _ (List.mem_append_right _
-    (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))
+  exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _
+    (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)))
 
-/-- The automaton-coordinate `.piBinding`s are members of the emitted list. -/
+/-- The OLD automaton-coordinate `.piBinding`s are members of the emitted list. The NEW-automaton
+family is appended AFTER the old-auto pair, so each reaches the old pair through one extra
+`mem_append_left`. -/
 theorem astepN_autoX_mem :
     (.base (.piBinding VmRow.first (NGen.AX n) (AUTO_PI_BASE n)) : VmConstraint2)
       ∈ (automataflStepDescN n).constraints := by
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
-  exact List.mem_append_right _ (List.mem_cons.mpr (Or.inl rfl))
+  exact List.mem_append_left _ (List.mem_append_right _ (List.mem_cons.mpr (Or.inl rfl)))
 
 theorem astepN_autoY_mem :
     (.base (.piBinding VmRow.first (NGen.AY n) (AUTO_PI_BASE n + 1)) : VmConstraint2)
       ∈ (automataflStepDescN n).constraints := by
   refine mem_constraintsN_of_commit ?_
   unfold commitBoardsConstraints
+  exact List.mem_append_left _
+    (List.mem_append_right _ (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
+
+/-- The NEW-automaton pin GATES are members of the emitted list (the appended new-auto family, last).
+`nax − ax − m·ox == 0` is element 0, `nay − ay − m·oy == 0` element 1. -/
+theorem astepN_newAutoX_pin_mem :
+    prodGate [(1, [NAXcol n]), (-1, [NGen.AX n]), (-1, [maskCol n, offXCol n])] 0
+      ∈ (automataflStepDescN n).constraints := by
+  refine mem_constraintsN_of_commit ?_
+  unfold commitBoardsConstraints
+  exact List.mem_append_right _ (List.mem_cons.mpr (Or.inl rfl))
+
+theorem astepN_newAutoY_pin_mem :
+    prodGate [(1, [NAYcol n]), (-1, [NGen.AY n]), (-1, [maskCol n, offYCol n])] 0
+      ∈ (automataflStepDescN n).constraints := by
+  refine mem_constraintsN_of_commit ?_
+  unfold commitBoardsConstraints
   exact List.mem_append_right _ (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))
+
+/-- The NEW-automaton-coordinate `.piBinding`s (`nax → PI[AUTO_PI_BASE+2]`, `nay → PI[+3]`) are
+members of the emitted list — elements 2 and 3 of the appended new-auto family. -/
+theorem astepN_newAutoX_pi_mem :
+    (.base (.piBinding VmRow.first (NAXcol n) (AUTO_PI_BASE n + 2)) : VmConstraint2)
+      ∈ (automataflStepDescN n).constraints := by
+  refine mem_constraintsN_of_commit ?_
+  unfold commitBoardsConstraints
+  exact List.mem_append_right _
+    (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))
+
+theorem astepN_newAutoY_pi_mem :
+    (.base (.piBinding VmRow.first (NAYcol n) (AUTO_PI_BASE n + 3)) : VmConstraint2)
+      ∈ (automataflStepDescN n).constraints := by
+  refine mem_constraintsN_of_commit ?_
+  unfold commitBoardsConstraints
+  exact List.mem_append_right _
+    (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr
+      (List.mem_singleton.mpr rfl)))))))
 
 /-- **`astep_oldPack_pi_of_sat` — LEG A's OLD-board commitment transport.** `PI[16+j]` IS the `j`-th
 packed felt of the board decoded off Leg A's `old` columns. No hash, no chip-soundness hypothesis. -/
@@ -626,6 +704,50 @@ theorem astep_autoY_pi_of_sat (hsat : Satisfied2 hash (automataflStepDescN n) mi
     (hlen : 1 < t.rows.length) :
     (envAt t 0).loc (NGen.AY n) ≡ t.pub (AUTO_PI_BASE n + 1) [ZMOD 2013265921] :=
   piFirst_of_mem hsat hlen _ _ astepN_autoY_mem
+
+/-! ### The NEW automaton coordinate `(ax + m·ox, ay + m·oy)` — the fold's `auto_out`.
+
+Mirror of `astep_autoX_pi_of_sat` / `astep_autoY_pi_of_sat` for the appended NEW-auto PIs, plus the
+DEGREE-2 mask-pin fact `nax = ax + m·ox`. The `m` factor makes the pinned column agree with the
+reference `automatonStep` on BOTH branches — `ax + ox` when the mask fires, `ax` when the step is
+BLOCKED. The full-semantics statement (`PI = (automatonStepCfg …).automaton.x`) is
+`AutomataflTurnCapstone.astep_newAuto_pi_of_sat`, which needs the step capstone and so lives one
+level up; what THIS file exports is the column-level fact the capstone consumes. -/
+
+/-- The NEW-auto x `.piBinding` transport: `loc(nax) ≡ PI[AUTO_PI_BASE+2]`. -/
+theorem astep_newAutoX_pi_of_sat
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hlen : 1 < t.rows.length) :
+    (envAt t 0).loc (NAXcol n) ≡ t.pub (AUTO_PI_BASE n + 2) [ZMOD 2013265921] :=
+  piFirst_of_mem hsat hlen _ _ astepN_newAutoX_pi_mem
+
+/-- The NEW-auto y `.piBinding` transport: `loc(nay) ≡ PI[AUTO_PI_BASE+3]`. -/
+theorem astep_newAutoY_pi_of_sat
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hlen : 1 < t.rows.length) :
+    (envAt t 0).loc (NAYcol n) ≡ t.pub (AUTO_PI_BASE n + 3) [ZMOD 2013265921] :=
+  piFirst_of_mem hsat hlen _ _ astepN_newAutoY_pi_mem
+
+/-- **`astep_newAuto_pin_of_sat` — LEG A's NEW-automaton-coordinate transport, at the COLUMN level.**
+The published `PI[AUTO_PI_BASE+2]`/`[+3]` ARE (mod `p`) the MASK-GATED applied-offset coordinate
+`(ax + m·ox, ay + m·oy)` read off Leg A's OWN auto (`AX`/`AY`), chosen-offset (`offXCol`/`offYCol`)
+and move-mask (`maskCol`) columns — the value the fold OUT window exposes as `auto_out`. Engine: the
+degree-2 pin gate `nax − ax − m·ox == 0` (`maskPin_gate_of_mem`) plus the boundary `.piBinding`. NO
+hash, NO chip-soundness. `AutomataflTurnCapstone.astep_newAuto_pi_of_sat` upgrades this to the FULL
+`automatonStepCfg` semantics by discharging `m` against the reference guard. -/
+theorem astep_newAuto_pin_of_sat
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hlen : 1 < t.rows.length) :
+    t.pub (AUTO_PI_BASE n + 2)
+        ≡ (envAt t 0).loc (NGen.AX n)
+          + (envAt t 0).loc (maskCol n) * (envAt t 0).loc (offXCol n) [ZMOD 2013265921]
+    ∧ t.pub (AUTO_PI_BASE n + 3)
+        ≡ (envAt t 0).loc (NGen.AY n)
+          + (envAt t 0).loc (maskCol n) * (envAt t 0).loc (offYCol n) [ZMOD 2013265921] :=
+  ⟨(astep_newAutoX_pi_of_sat hsat hlen).symm.trans
+      (maskPin_gate_of_mem hsat hlen _ _ _ _ astepN_newAutoX_pin_mem),
+   (astep_newAutoY_pi_of_sat hsat hlen).symm.trans
+      (maskPin_gate_of_mem hsat hlen _ _ _ _ astepN_newAutoY_pin_mem)⟩
 
 /-- **`astep_forge_rejected`** — the Leg-A transport BITES: a satisfying canonical witness CANNOT
 publish an OLD-board commitment that is not the genuine pack of its own cells. -/
@@ -665,12 +787,17 @@ end LegA
 #assert_axioms gate_of_mem
 #assert_axioms piFirst_of_mem
 #assert_axioms pack_pi_of_mem
+#assert_axioms maskPinBody_eval
+#assert_axioms maskPin_gate_of_mem
 #assert_axioms astepN_oldAlpha
 #assert_axioms astepN_newAlpha
 #assert_axioms astep_oldPack_pi_of_sat
 #assert_axioms astep_newPack_pi_of_sat
 #assert_axioms astep_autoX_pi_of_sat
 #assert_axioms astep_autoY_pi_of_sat
+#assert_axioms astep_newAutoX_pi_of_sat
+#assert_axioms astep_newAutoY_pi_of_sat
+#assert_axioms astep_newAuto_pin_of_sat
 #assert_axioms astep_forge_rejected
 #assert_axioms astep_boardDecode_cellAt
 

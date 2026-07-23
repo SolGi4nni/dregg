@@ -371,6 +371,151 @@ pub fn prove_custom_binding_node_state_segmented(
     })
 }
 
+/// **THE BOARD-WINDOW BINDING NODE (the two-leg fold's per-turn half)** — identical to
+/// [`prove_custom_binding_node_state_segmented`] in every connect it makes, but it re-exposes
+/// `[segment(SEG_WIDTH) ‖ IN(W) ‖ OUT(W)]` instead of `[segment(SEG_WIDTH)]`.
+///
+/// ## Why the RE-EXPOSURE is the whole point
+///
+/// The deployed state node ends with `let seg = (0..SEG_WIDTH).map(|k| ev[k]); expose(seg)` — it
+/// DROPS the sub-proof's application PIs before the aggregation tree ever sees them. So two
+/// adjacent turns' board publications are, in the fold, unrelated numbers: a folded automatafl
+/// match attests K INDEPENDENT transitions, not one trajectory, and the `hseamPack` /
+/// `hseamAutoX` / `hseamAutoY` hypotheses of the Lean whole-turn theorem
+/// (`AutomataflTurnCapstone.turn_sat_imp_roundStep_pi`) are simply unavailable to it. Carrying the
+/// two windows up is what lets the merge (`segment_combine_expose_with_board_window`) `connect`
+/// `left.OUT == right.IN` — the ONE cross-leaf rule that instantiates the mid seam, the
+/// inter-round board carry, and the root's `[first.IN ‖ last.OUT]` endpoints at once.
+///
+/// The window lanes are NOT re-derived here: they are the custom leaf's own exposed claim lanes
+/// `[24 .. 24+2W)`, which the leaf built from its REAL in-circuit-bound descriptor PI targets
+/// ([`crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_board_window`]). Exposure IS
+/// execution.
+///
+/// ## Fail-closed on shape
+///
+/// A leaf exposing fewer than `24 + 2W` claim lanes is REFUSED, never degraded to a state-only
+/// node — the same discipline as the app-root weld, and for the same reason: a conditional connect
+/// is the forger's dodge (mint the narrow leaf, watch the window silently not fire). `window` must
+/// be nonzero.
+///
+/// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
+pub fn prove_custom_binding_node_state_and_board_segmented(
+    dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
+    custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    config: &DreggRecursionConfig,
+    window: usize,
+) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
+    use crate::custom_leaf_adapter::{CUSTOM_STATE_CLAIM_LEN, custom_board_window_claim_len};
+    use crate::ivc_turn_chain::{
+        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, expose_claim_instance_index,
+    };
+    use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
+    use p3_circuit::CircuitBuilder;
+    use p3_recursion::{Target, build_and_prove_aggregation_layer_with_expose};
+
+    type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
+
+    if window == 0 {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: "board-window fold: window must be nonzero (a zero-width window cannot carry \
+                     a board seam)"
+                .to_string(),
+        });
+    }
+    let cs_want = custom_board_window_claim_len(window);
+
+    let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
+        JointAggError::AggregationProofInvalid {
+            reason: "dual-expose custom leg leaf carries no expose_claim table — it must be \
+                     wrapped via prove_descriptor_leaf_dual_expose (segment ++ commitment)"
+                .to_string(),
+        }
+    })?;
+    let cs_idx = expose_claim_instance_index(&custom_subproof_leaf.0).ok_or_else(|| {
+        JointAggError::AggregationProofInvalid {
+            reason: "custom sub-proof leaf carries no exposed claim (expose_claim) table — the \
+                     board-window fold requires a leaf minted via \
+                     prove_custom_leaf_descriptor_with_board_window (commitment ++ [old8 ‖ new8] \
+                     ++ IN ++ OUT)"
+                .to_string(),
+        }
+    })?;
+
+    // FAIL-CLOSED on a leaf too narrow to carry the windows (read by op_type, not cs_idx — see
+    // the note on `prove_custom_binding_node_state_segmented`).
+    let cs_lanes = custom_subproof_leaf
+        .0
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")
+        .map(|e| e.public_values.len())
+        .unwrap_or(0);
+    if cs_lanes < cs_want {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: format!(
+                "custom sub-proof leaf exposes {cs_lanes} claim lane(s) but the board-window fold \
+                 requires {cs_want} (commitment(8) ‖ old8 ‖ new8 ‖ IN({window}) ‖ OUT({window})) — \
+                 mint it with prove_custom_leaf_descriptor_with_board_window. Refusing rather than \
+                 degrading to a state-only node (a conditional connect is the forger's dodge)."
+            ),
+        });
+    }
+
+    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
+    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+
+    let backend = create_recursion_backend_with_coeff_lookups();
+    let params = ProveNextLayerParams::default();
+
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       left_apt: &[Vec<Target>],
+                       right_apt: &[Vec<Target>]| {
+        let ev = left_apt
+            .get(ev_idx)
+            .expect("dual-expose leg's claim instance present");
+        let cs = right_apt
+            .get(cs_idx)
+            .expect("custom sub-proof's exposed claim instance present");
+        debug_assert!(
+            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= cs_want,
+            "leg must carry segment ++ commitment; custom leaf must carry commitment ++ \
+             [old8 ‖ new8] ++ IN ++ OUT"
+        );
+
+        // 1. THE COMMITMENT TOOTH (unchanged).
+        for k in 0..CUSTOM_COMMIT_LEN {
+            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+        }
+        // 2. THE STATE TOOTH (unchanged).
+        for k in 0..SEG_ANCHOR_WIDTH {
+            cb.connect(ev[SEG_FIRST_OLD + k], cs[CUSTOM_COMMIT_LEN + k]);
+            cb.connect(
+                ev[SEG_LAST_NEW + k],
+                cs[CUSTOM_COMMIT_LEN + SEG_ANCHOR_WIDTH + k],
+            );
+        }
+
+        // RE-EXPOSE `[segment ‖ IN ‖ OUT]`. The windows ride the leaf's own bound PI targets, so
+        // the parent sees the board this leaf actually proved — the seam the merge connects.
+        let mut out: Vec<Target> = Vec::with_capacity(SEG_WIDTH + 2 * window);
+        out.extend((0..SEG_WIDTH).map(|k| ev[k]));
+        out.extend((0..2 * window).map(|k| cs[CUSTOM_STATE_CLAIM_LEN + k]));
+        cb.expose_as_public_output(&out);
+    };
+
+    build_and_prove_aggregation_layer_with_expose::<
+        DreggRecursionConfig,
+        BatchOnly,
+        BatchOnly,
+        _,
+        D,
+    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    .map_err(|e| JointAggError::AggregationProofInvalid {
+        reason: format!("board-window custom fold aggregation node failed: {e:?}"),
+    })
+}
+
 /// **THE IN-CIRCUIT APP-ROOT WELD FOLD (the keystone)** — as
 /// [`prove_custom_binding_node_state_segmented`], but it ALSO `connect`s the custom sub-proof's
 /// PUBLISHED application root `R` to the wide leg's EXPOSED committed value for the declared field

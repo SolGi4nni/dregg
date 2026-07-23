@@ -313,6 +313,26 @@ def linGate (terms : List (ℤ × Nat)) (k : ℤ) : VmConstraint2 :=
   let ts := if k == 0 then ts else ts ++ [.const k]
   .base (.gate (sumExpr ts))
 
+/-- The product `∏ vars` (empty ↦ `1`), left-associated — the local mirror of
+`AutomataflStepEmit.varsProd`, so this leaf can author a degree-`k` term without importing the step
+golden. -/
+def varsProd : List Nat → EmittedExpr
+  | []          => .const 1
+  | co :: rest  => rest.foldl (fun acc v => .mul acc (.var v)) (.var co)
+
+/-- One gate term `coeff · ∏ cols` (`coeff = 1` elides the multiplier; `cols = []` is a constant). -/
+def prodTerm : ℤ × List Nat → EmittedExpr
+  | (c, [])         => .const c
+  | (c, co :: rest) =>
+      if c == 1 then varsProd (co :: rest) else .mul (.const c) (varsProd (co :: rest))
+
+/-- A gate `Σ coeffᵢ·∏colsᵢ + k = 0` of degree `max |colsᵢ|` (zero-coeff terms dropped, matching
+`headToExpr`). `linGate` is the all-singleton special case. -/
+def prodGate (terms : List (ℤ × List Nat)) (k : ℤ) : VmConstraint2 :=
+  let ts := (terms.filter (fun t => t.1 != 0)).map prodTerm
+  let ts := if k == 0 then ts else ts ++ [.const k]
+  .base (.gate (sumExpr ts))
+
 /-- `∏_{s∈set}(col − s)` — the alphabet membership gate (`assert_member`). -/
 def memberExpr (col : Nat) (set : List ℤ) : EmittedExpr :=
   match set with
@@ -369,6 +389,34 @@ second `AUTO`-coded cell), so the coordinate is published too. Two `.piBinding`s
 def autoCoordCommitConstraints (axCol ayCol piBase : Nat) : List VmConstraint2 :=
   [ (.base (.piBinding VmRow.first axCol piBase) : VmConstraint2)
   , (.base (.piBinding VmRow.first ayCol (piBase + 1)) : VmConstraint2) ]
+
+/-- The NEW-AUTOMATON-COORDINATE half of the commitment (Leg A only): two fresh columns
+`nax`/`nay` pinned by the DEGREE-2 gates `nax − ax − m·ox == 0`, `nay − ay − m·oy == 0` over the
+EXISTING auto-coordinate columns `ax`/`ay`, the chosen-offset columns `ox`/`oy`, and the MOVE MASK
+column `m` (`m = offnz·tib·targ_vac`, the boolean the step block already computes), then bound to
+`PI[piBase]`/`PI[piBase+1]`.
+
+THE MASK IS LOAD-BEARING, not decoration. The reference `automatonStep` moves the automaton ONLY when
+its guard fires: `automaton = if m = 1 then (ax+ox, ay+oy) else (ax, ay)`. The earlier degree-1 pin
+`nax = ax + ox` agrees with that on ONE branch of the `if`, so the strongest transport statable over
+it was the COLUMN-level `PI = ax + ox`; lifting that to the SEMANTIC `PI = (automatonStepCfg …)
+.automaton` would need a reachability lemma about the reference (that a nonzero sensed offset always
+targets an in-bounds vacuum cell), which nothing in the descriptor or the capstone has. `m·ox`
+collapses to `0` exactly on the `m = 0` branch, so the mask pin discharges the case split AT THE GATE
+and `AutomataflTurnCapstone.astep_newAuto_pi_of_sat` proves the full-semantics statement outright.
+Degree 2, well inside the degree-7 budget; two gates + two boundary `.piBinding`s, no crypto.
+
+SCOPE, HONESTLY: that reachability lemma is in fact TRUE of the reference (every `evaluate_axis` arm
+yielding a nonzero offset carries a `dist > 1` guard, or picks the farther of two repulsors — pinned
+by `dregg-automatafl/src/witness.rs::a_nonzero_sensed_offset_always_targets_an_in_bounds_vacuum_cell`
+over the sensing configurations that decide it). So the degree-1 pin was not refusing REACHABLE
+honest trajectories; what it could not do was carry the guarantee the fold seam quotes. -/
+def newAutoCoordCommitConstraints (axCol oxCol ayCol oyCol mCol naxCol nayCol piBase : Nat) :
+    List VmConstraint2 :=
+  [ prodGate [(1, [naxCol]), (-1, [axCol]), (-1, [mCol, oxCol])] 0
+  , prodGate [(1, [nayCol]), (-1, [ayCol]), (-1, [mCol, oyCol])] 0
+  , (.base (.piBinding VmRow.first naxCol piBase) : VmConstraint2)
+  , (.base (.piBinding VmRow.first nayCol (piBase + 1)) : VmConstraint2) ]
 
 /-- The linear terms of pack gate `j`: `packed_j − Σ_{i, 15j+i < n²} 4^i·cell[15j+i]`. Padding cells
 (`15j+i ≥ n²`) contribute `0` — matching `boardCode`'s pad convention. -/
@@ -451,6 +499,18 @@ def demoBoard2' : Board := mkBoard 2 [(⟨0, 0⟩, .repulsor), (⟨1, 0⟩, .rep
 #guard (packBoardConstraints 11).length = 9
 #guard (commitBoardConstraints 2).length = 1
 #guard (commitBoardConstraints 11).length = 9
+-- the NEW-auto family: two mask-pin gates + two piBindings, at any column/pi assignment.
+#guard (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).length = 4
+-- THE PIN IS DEGREE 2 (`m·ox`), not degree 1: the emitted gate body carries a var·var product.
+-- `rfl` here is the real check — the body below is the literal `EmittedExpr` the wire carries.
+example :
+    (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).head?
+      = some (.base (.gate (.add (.add (.var 254) (.mul (.const (-1)) (.var 8)))
+          (.mul (.const (-1)) (.mul (.var 247) (.var 207)))))) := rfl
+example :
+    (newAutoCoordCommitConstraints 8 207 9 208 247 254 255 20).tail.head?
+      = some (.base (.gate (.add (.add (.var 255) (.mul (.const (-1)) (.var 9)))
+          (.mul (.const (-1)) (.mul (.var 247) (.var 208)))))) := rfl
 #guard (boardRangeCells 11).length = 121
 #guard (automataflCommitDesc 11).traceWidth = 130          -- 121 cells + 9 felts
 #guard (automataflCommitDesc 11).piCount = 25              -- 16 state prefix + 9 packed felts

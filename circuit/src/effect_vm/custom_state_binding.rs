@@ -242,6 +242,119 @@ impl PostFieldsRootBinding {
     }
 }
 
+// ============================================================================
+// THE BOARD-WINDOW ABI — the SLICE-LIST generalization of `AppRootBinding`, for a
+// sub-proof that carries a state IN and a state OUT window in its public inputs.
+// ============================================================================
+//
+// `AppRootBinding` names ONE contiguous PI range and welds it to a cell field. A GAME LEG
+// publishes two *state windows* instead: the state it CONSUMED and the state it PRODUCED
+// (automatafl Leg R publishes `pack(old)` and `pack(cMidV4)`; Leg A publishes `pack(old)` and
+// `pack(new)`), each of which is the board PLUS the automaton coordinate — and those two families
+// are NOT contiguous in the PI vector (Leg A's OUT is `pack_out` at `[25..34)` and the appended
+// `NAX/NAY` at `[36..38)`, with `ax/ay` in between). So a single `(offset,len)` cannot express the
+// window; a SLICE LIST can.
+//
+// The window is the whole cross-leaf vocabulary of the two-leg fold: the ONLY rule between
+// adjacent leaves is `left.OUT == right.IN`, connected lane-by-lane in the aggregation node. That
+// one rule instantiates the resolve→step mid seam (`hseamPack ∧ hseamAutoX ∧ hseamAutoY`, the
+// hypotheses `turn_sat_imp_roundStep_pi` takes), the inter-round board carry, and — read off the
+// root as `[first.IN ‖ last.OUT]` — the genesis/final position. Because the automatafl pack is
+// INJECTIVE (`pack_injective_modp`, base-4 positional with `packed < 4^15 < p`), a window equality
+// IS a board equality: no collision-resistance assumption enters this seam.
+//
+// This floor crate carries only the DECLARATION (which PI lanes are the window). The leaf-side
+// exposure and the in-circuit `connect` live in `dregg-circuit-prove`, exactly as the app-root
+// weld's halves are split.
+
+/// A board/state WINDOW declaration: the sub-proof's public inputs carry an IN window (the state
+/// it consumed) at `in_slices` and an OUT window (the state it produced) at `out_slices`, each a
+/// list of `(pi_offset, len)` PI ranges concatenated in order.
+///
+/// Both windows must have the same total width — they are compared to each OTHER across adjacent
+/// leaves, so a width disagreement cannot express the rule and is refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardWindowBinding {
+    /// The PI slices whose concatenation is the state this leaf CONSUMED.
+    pub in_slices: Vec<(usize, usize)>,
+    /// The PI slices whose concatenation is the state this leaf PRODUCED.
+    pub out_slices: Vec<(usize, usize)>,
+}
+
+impl BoardWindowBinding {
+    /// The total felt width of a slice list.
+    pub fn slices_len(slices: &[(usize, usize)]) -> usize {
+        slices.iter().map(|(_, l)| *l).sum()
+    }
+
+    /// The window width (`in` and `out` agree on a well-formed binding).
+    pub fn window_len(&self) -> usize {
+        Self::slices_len(&self.in_slices)
+    }
+
+    /// The last PI index (exclusive) any slice touches — the minimum `public_input_count` a
+    /// sub-program carrying this binding must publish.
+    pub fn pi_end(&self) -> usize {
+        self.in_slices
+            .iter()
+            .chain(self.out_slices.iter())
+            .map(|(o, l)| o.saturating_add(*l))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Fail-closed validity: both windows non-empty and of EQUAL width, every slice of nonzero
+    /// length, and every slice strictly past the 16-felt state prefix (a window aliasing
+    /// `[old8 ‖ new8]` would weld cell anchors as if they were board state).
+    pub fn is_well_formed(&self) -> bool {
+        let ok = |slices: &[(usize, usize)]| {
+            !slices.is_empty()
+                && slices
+                    .iter()
+                    .all(|(o, l)| *l > 0 && *o >= CUSTOM_PI_STATE_PREFIX_LEN)
+        };
+        ok(&self.in_slices)
+            && ok(&self.out_slices)
+            && Self::slices_len(&self.in_slices) == Self::slices_len(&self.out_slices)
+            && self.window_len() > 0
+    }
+}
+
+/// Read the felts a slice list selects out of `public_inputs`. `None` when the list is empty or
+/// any slice runs past the end — never zero-padding a short vector into a false window.
+pub fn extract_pi_slices(
+    public_inputs: &[BabyBear],
+    slices: &[(usize, usize)],
+) -> Option<Vec<BabyBear>> {
+    if slices.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(BoardWindowBinding::slices_len(slices));
+    for (o, l) in slices {
+        let end = o.checked_add(*l)?;
+        if end > public_inputs.len() {
+            return None;
+        }
+        out.extend_from_slice(&public_inputs[*o..end]);
+    }
+    Some(out)
+}
+
+/// The `(IN, OUT)` windows a sub-proof's public inputs carry for `binding`. `None` on an
+/// ill-formed binding or a PI vector too short to carry either window (the in-circuit mirror
+/// refuses the same shape fail-closed).
+pub fn extract_custom_pi_board_window(
+    public_inputs: &[BabyBear],
+    binding: &BoardWindowBinding,
+) -> Option<(Vec<BabyBear>, Vec<BabyBear>)> {
+    if !binding.is_well_formed() {
+        return None;
+    }
+    let win_in = extract_pi_slices(public_inputs, &binding.in_slices)?;
+    let win_out = extract_pi_slices(public_inputs, &binding.out_slices)?;
+    Some((win_in, win_out))
+}
+
 /// Read the published app root `R` a sub-proof's public inputs carry for `binding`. Returns `None`
 /// when the binding is ill-formed or the vector is too short to carry `R` — never zero-padding a
 /// short vector into a false root (the in-circuit mirror refuses the same shape fail-closed).
@@ -408,6 +521,117 @@ mod tests {
             field_key: 0,
         };
         assert!(extract_custom_pi_app_root(&pis, &bad).is_none());
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The BOARD WINDOW (the two-leg fold's whole cross-leaf vocabulary).
+    // ---------------------------------------------------------------------------------------
+
+    /// The automatafl Leg-R / Leg-A windows at n = 11 (`feltCount 11 = 9`), the exact geometry the
+    /// two-leg fold declares. Leg R's OUT is contiguous; Leg A's is NOT (`pack_out` at `[25..34)`
+    /// then the appended `NAX/NAY`) — which is why the binding is a slice LIST.
+    #[test]
+    fn the_automatafl_leg_windows_are_well_formed_and_11_lanes_wide() {
+        let leg_r = BoardWindowBinding {
+            in_slices: vec![(16, 9), (34, 2)],
+            out_slices: vec![(25, 9), (34, 2)],
+        };
+        let leg_a = BoardWindowBinding {
+            in_slices: vec![(16, 9), (34, 2)],
+            out_slices: vec![(25, 9), (36, 2)],
+        };
+        for (name, b) in [("leg R", &leg_r), ("leg A", &leg_a)] {
+            assert!(b.is_well_formed(), "{name} window must be well-formed");
+            assert_eq!(b.window_len(), 11, "{name}: pack(9) ‖ auto(2)");
+        }
+        assert_eq!(leg_r.pi_end(), 36, "Leg R touches PIs up to 36");
+        assert_eq!(
+            leg_a.pi_end(),
+            38,
+            "Leg A touches the appended NAX/NAY at 36,37"
+        );
+    }
+
+    /// Fail-closed well-formedness: unequal IN/OUT widths cannot express `left.OUT == right.IN`;
+    /// an empty list, a zero-width slice, or a slice aliasing the `[old8 ‖ new8]` prefix (which
+    /// would weld CELL anchors as if they were board state) are all refused.
+    #[test]
+    fn board_window_refuses_unequal_empty_zero_width_and_prefix_aliasing() {
+        let unequal = BoardWindowBinding {
+            in_slices: vec![(16, 9)],
+            out_slices: vec![(25, 9), (34, 2)],
+        };
+        assert!(!unequal.is_well_formed(), "IN/OUT widths must agree");
+
+        let empty = BoardWindowBinding {
+            in_slices: vec![],
+            out_slices: vec![],
+        };
+        assert!(!empty.is_well_formed());
+
+        let zero = BoardWindowBinding {
+            in_slices: vec![(16, 0)],
+            out_slices: vec![(25, 0)],
+        };
+        assert!(!zero.is_well_formed());
+
+        let aliased = BoardWindowBinding {
+            in_slices: vec![(8, 9)],
+            out_slices: vec![(25, 9)],
+        };
+        assert!(
+            !aliased.is_well_formed(),
+            "a window overlapping the state prefix must be refused"
+        );
+    }
+
+    /// The extractor concatenates the declared slices in order, and REFUSES a PI vector too short
+    /// to carry either window — never zero-padding a short vector into a false board.
+    #[test]
+    fn board_window_extractor_concatenates_in_order_or_refuses() {
+        let binding = BoardWindowBinding {
+            in_slices: vec![(16, 9), (34, 2)],
+            out_slices: vec![(25, 9), (36, 2)],
+        };
+        // PI[j] = j, so the extracted window IS its own index list — order is visible.
+        let pis: Vec<BabyBear> = (0..38u32).map(BabyBear::new).collect();
+        let (win_in, win_out) =
+            extract_custom_pi_board_window(&pis, &binding).expect("both windows present");
+        assert_eq!(
+            win_in.iter().map(|f| f.as_u32()).collect::<Vec<_>>(),
+            vec![16, 17, 18, 19, 20, 21, 22, 23, 24, 34, 35]
+        );
+        assert_eq!(
+            win_out.iter().map(|f| f.as_u32()).collect::<Vec<_>>(),
+            vec![25, 26, 27, 28, 29, 30, 31, 32, 33, 36, 37]
+        );
+
+        // One PI short of the OUT window's end ⇒ None (never zero-padded into a false window).
+        assert!(extract_custom_pi_board_window(&pis[..37], &binding).is_none());
+    }
+
+    /// Every board-window lane rides the SAME commitment surface the fold already binds — so the
+    /// window needs no new hash, only the `connect`. (This is what makes "exposure IS execution"
+    /// hold for the window lanes: they are the leaf's own bound PI targets.)
+    #[test]
+    fn every_board_window_lane_moves_the_commitment() {
+        let binding = BoardWindowBinding {
+            in_slices: vec![(16, 9), (34, 2)],
+            out_slices: vec![(25, 9), (36, 2)],
+        };
+        let honest: Vec<BabyBear> = (0..38u32).map(|j| BabyBear::new(j + 1)).collect();
+        let base = custom_proof_pi_commitment_8(&honest);
+        for (o, l) in binding.in_slices.iter().chain(binding.out_slices.iter()) {
+            for k in *o..o + l {
+                let mut forged = honest.clone();
+                forged[k] += BabyBear::ONE;
+                assert_ne!(
+                    custom_proof_pi_commitment_8(&forged),
+                    base,
+                    "board-window lane {k} must be load-bearing in the PI commitment"
+                );
+            }
+        }
     }
 
     /// The published root rides the SAME commitment surface: mutating any lane of R (past the state

@@ -849,6 +849,159 @@ pub fn prove_custom_leaf_descriptor_with_state_commitment(
     .map_err(|e| format!("direct-IR2 custom state-commitment leaf-wrap failed: {e:?}"))
 }
 
+/// The width of the claim a [`prove_custom_leaf_descriptor_with_board_window`] leaf exposes for a
+/// window of `window` felts: the 24-lane state claim followed by the IN and OUT windows.
+///
+/// ```text
+///   [0  .. 24)                   = the state claim ([`CUSTOM_STATE_CLAIM_LEN`])
+///   [24 .. 24+window)            = IN  — the state this leaf CONSUMED
+///   [24+window .. 24+2*window)   = OUT — the state this leaf PRODUCED
+/// ```
+pub const fn custom_board_window_claim_len(window: usize) -> usize {
+    CUSTOM_STATE_CLAIM_LEN + 2 * window
+}
+
+/// **THE BOARD-WINDOW DIRECT-IR2 LEAF** — [`prove_custom_leaf_descriptor_with_state_commitment`]
+/// plus the two STATE WINDOWS the sub-proof's public inputs carry, re-exposed as bound claim
+/// lanes so an aggregation node can `connect` one leaf's OUT to its neighbour's IN.
+///
+/// ## What this buys over the 24-lane state leaf
+///
+/// The state leaf welds `[old8 ‖ new8]` to the leg's real rotated roots, so a light client
+/// witnesses the transition is about THIS cell. It says NOTHING about the application state the
+/// sub-proof consumed and produced: the per-turn binding node re-exposes only the segment
+/// ([`crate::joint_turn_recursive::prove_custom_binding_node_state_segmented`]), so the sub-proof's
+/// board PIs are DROPPED before the tree sees them, and two adjacent turns' boards are, in the
+/// fold, unrelated numbers. That is precisely why a folded automatafl match attests K independent
+/// automaton steps rather than one trajectory.
+///
+/// Re-exposing `IN`/`OUT` as their own bound lanes lets
+/// [`crate::joint_turn_recursive::prove_custom_binding_node_state_and_board_segmented`] carry them
+/// up, and the board-window merge (`ivc_turn_chain`'s `segment_combine_expose_with_board_window`)
+/// `connect` `left.OUT == right.IN` at every node. A pair that disagrees is a per-lane conflict ⇒
+/// the node is UNSAT ⇒ no root ⇒ the light client never receives a verifying artifact.
+///
+/// Because the window lanes are read from the leaf's REAL in-circuit-bound descriptor PI targets
+/// (the same targets the commitment absorbs), a prover cannot expose a window that disagrees with
+/// the PIs the leaf actually proves — exposure and execution are welded.
+///
+/// ## Fail-closed
+///
+/// The binding must be well-formed (both windows non-empty, of EQUAL width, every slice strictly
+/// past the 16-felt state prefix) and the descriptor must publish enough PIs to carry both
+/// windows. A descriptor that cannot express the binding is REFUSED here rather than zero-padded
+/// into a false window.
+pub fn prove_custom_leaf_descriptor_with_board_window(
+    desc2: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    binding: &dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding,
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+
+    if !binding.is_well_formed() {
+        return Err(format!(
+            "board-window leaf: ill-formed BoardWindowBinding {binding:?} — both windows must be \
+             non-empty, of EQUAL width, and every slice must sit strictly past the \
+             {CUSTOM_PI_STATE_PREFIX_LEN}-felt state prefix (a window aliasing the cell anchors, \
+             or of unequal width, cannot express `left.OUT == right.IN`)."
+        ));
+    }
+    if public_inputs.len() < CUSTOM_PI_STATE_PREFIX_LEN {
+        return Err(format!(
+            "board-window leaf: the descriptor publishes {} public input(s), but the state-binding \
+             ABI requires at least {CUSTOM_PI_STATE_PREFIX_LEN} ([old_commit8 ‖ new_commit8] ‖ ..app).",
+            public_inputs.len()
+        ));
+    }
+    if public_inputs.len() < binding.pi_end() {
+        return Err(format!(
+            "board-window leaf: the descriptor publishes {} public input(s) but the window binding \
+             {binding:?} reaches PI {}. A descriptor that cannot express the window is refused \
+             rather than zero-padded into a false one.",
+            public_inputs.len(),
+            binding.pi_end()
+        ));
+    }
+    if desc2.public_input_count != public_inputs.len() {
+        return Err(format!(
+            "board-window leaf: descriptor PI count {} != retained PI count {}",
+            desc2.public_input_count,
+            public_inputs.len()
+        ));
+    }
+    if base_trace.is_empty() || base_trace.iter().any(|row| row.len() != desc2.trace_width) {
+        return Err(format!(
+            "board-window leaf: retained trace must be non-empty and every row must have exact \
+             descriptor width {}",
+            desc2.trace_width
+        ));
+    }
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        desc2,
+        base_trace,
+        public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        config,
+    )
+    .map_err(|e| format!("board-window leaf inner IR-v2 prove failed: {e}"))?;
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(desc2, &inner, public_inputs, config)
+            .map_err(|e| format!("board-window leaf verify-triple build failed: {e}"))?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    let backend = create_recursion_backend_with_coeff_lookups();
+
+    let num_pi = public_inputs.len();
+    let in_slices = binding.in_slices.clone();
+    let out_slices = binding.out_slices.clone();
+    let claim_len = custom_board_window_claim_len(binding.window_len());
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+        let main = apt
+            .first()
+            .expect("board-window leaf has a main instance carrying the descriptor PIs");
+        debug_assert!(
+            main.len() >= num_pi,
+            "main instance must carry all {num_pi} descriptor PIs"
+        );
+        let pis: Vec<Target> = (0..num_pi).map(|k| main[k]).collect();
+        let commit = incircuit_custom_pi_commitment(cb, &pis)
+            .expect("in-circuit custom-PI commitment builds for the bound descriptor PIs");
+
+        // `[commitment(8) ‖ pis[0..16] ‖ IN(W) ‖ OUT(W)]` — the state prefix AND both windows are
+        // the leaf's REAL bound PI targets, so what is exposed IS what is proven.
+        let mut claim: Vec<Target> = Vec::with_capacity(claim_len);
+        claim.extend_from_slice(&commit);
+        claim.extend_from_slice(&pis[..CUSTOM_PI_STATE_PREFIX_LEN]);
+        for (o, l) in in_slices.iter().chain(out_slices.iter()) {
+            claim.extend_from_slice(&pis[*o..*o + *l]);
+        }
+        debug_assert_eq!(claim.len(), claim_len);
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("board-window leaf-wrap failed: {e:?}"))
+}
+
 /// The width of the claim a [`prove_custom_leaf_with_app_root_commitment`] leaf exposes for an
 /// app root of width `app_root_len`: the 24-lane state claim
 /// (`[commitment(8) ‖ old8 ‖ new8]`) followed by the published root `R` (`app_root_len` felts).

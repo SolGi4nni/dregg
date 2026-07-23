@@ -29,8 +29,17 @@
 //!                                        fold driver connects it to the leg's real rotated roots)
 //!   [16 .. 16+F)        packed_old[F]    F = ⌈n²/15⌉ packed base-4 felts of the OLD board
 //!   [16+F .. 16+2F)     packed_new[F]    the claimed-next board's packed felts
-//!   [16+2F], [16+2F+1]  ax, ay           the automaton coordinate
+//!   [16+2F], [16+2F+1]  ax, ay           the CONSUMED (pre-step) automaton coordinate
+//!   [16+2F+2], [+3]     nax, nay         the PRODUCED (post-step) automaton coordinate — the
+//!                                        fold OUT window's `auto_out`
 //! ```
+//!
+//! `nax`/`nay` are pinned by the Lean-emitted DEGREE-2 gates `nax − ax − m·ox == 0`,
+//! `nay − ay − m·oy == 0`, where `m` is the step block's own move mask. The mask is what makes the
+//! published coordinate the reference's post-step position on BOTH branches of
+//! `automaton_step`'s guard (`m·ox` collapses when the guard refuses), which is what lets the Lean
+//! transport be stated against the full `automatonStepCfg` semantics instead of against the column
+//! expression `ax + ox`. This generator never re-derives that rule; it SOLVES the emitted gate.
 //!
 //! ## Fail-closed
 //!
@@ -108,25 +117,50 @@ fn pack_board(board: &Board) -> Vec<BabyBear> {
 /// silently mis-fills.
 pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<StepTrace, String> {
     let n = old.n;
-    let k = n * n;
     let nfelts = packed_felts(n);
 
-    // The descriptor's shape must be the packed-felt D1 layout for this board size.
-    let expected_pi = 16 + 2 * nfelts + 2;
-    if desc.public_input_count != expected_pi {
+    // THE SHAPE-INDEPENDENT ABI READ. The descriptor's OWN first-row `PiBinding`s say which
+    // column every published PI is. Reading them (instead of computing `front = trace_width −
+    // 2F`) is what survives the APPEND-ONLY descriptor growth the two-leg fold rides: Leg A's
+    // stepped automaton coordinate (`NAX`/`NAY`) is two appended columns + two appended PIs past
+    // 35, which the old arithmetic silently mis-aimed. `0..35` are never re-indexed (the capstone
+    // quotes absolute indices), so the pinned prefix reads identically at any descriptor version.
+    let binds = pi_binding_cols(desc);
+    let min_pi = 16 + 2 * nfelts + 2;
+    if desc.public_input_count < min_pi {
         return Err(format!(
-            "automatafl witness-gen: descriptor '{}' publishes {} PIs, but board n={n} needs \
-             16 (old8‖new8) + 2·{nfelts} (packed) + 2 (ax,ay) = {expected_pi}",
+            "automatafl witness-gen: descriptor '{}' publishes {} PIs, but board n={n} needs at \
+             least 16 (old8‖new8) + 2·{nfelts} (packed) + 2 (ax,ay) = {min_pi}",
             desc.name, desc.public_input_count
         ));
     }
-    // A_BACK_TAIL = trace_width − 2·⌈n²/15⌉ (the front-end + back-end, before the packed tail).
-    let front = desc.trace_width.checked_sub(2 * nfelts).ok_or_else(|| {
-        format!(
-            "automatafl witness-gen: descriptor width {} < packed tail 2·{nfelts}",
-            desc.trace_width
-        )
-    })?;
+    let col_of = |pi: usize| -> Result<usize, String> {
+        binds.get(&pi).copied().ok_or_else(|| {
+            format!(
+                "automatafl witness-gen: descriptor '{}' has no first-row PI binding for PI {pi} \
+                 — the packed-felt ABI is not the shape this descriptor publishes",
+                desc.name
+            )
+        })
+    };
+    let pack_old_col = col_of(16)?;
+    let pack_new_col = col_of(16 + nfelts)?;
+    if pack_new_col != pack_old_col + nfelts {
+        return Err(format!(
+            "automatafl witness-gen: the packed tail is not contiguous (pack_old at col \
+             {pack_old_col}, pack_new at col {pack_new_col}, F = {nfelts})"
+        ));
+    }
+    // Everything below the packed tail is the front-end the Rust co-build harness fills.
+    let front = pack_old_col;
+    let ax_col = col_of(16 + 2 * nfelts)?;
+    let ay_col = col_of(16 + 2 * nfelts + 1)?;
+    if ax_col >= front || ay_col >= front {
+        return Err(format!(
+            "automatafl witness-gen: the automaton coord columns ({ax_col},{ay_col}) fall outside \
+             the front-end prefix width {front}"
+        ));
+    }
 
     // Front-end reuse: the Rust co-build harness fills columns 0..front from the reference oracle.
     let b = build_d1_honest(old);
@@ -137,42 +171,68 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
             b.width()
         ));
     }
-    // The automaton coordinate lives in the front-end at columns 2k, 2k+1 (the `alloc` order:
-    // old[k] ‖ new[k] ‖ ax ‖ ay ‖ …). Confirm it sits inside the reused prefix.
-    let (ax_col, ay_col) = (2 * k, 2 * k + 1);
-    if ay_col >= front {
-        return Err(format!(
-            "automatafl witness-gen: automaton coord columns ({ax_col},{ay_col}) fall outside the \
-             front-end prefix width {front}"
-        ));
-    }
 
     let packed_old = pack_board(old);
     let next = automaton_step(old);
     let packed_new = pack_board(&next);
 
-    // Assemble the full-width row: [0..front) from the co-build fill, then the packed tail.
-    let mut row = vec![BabyBear::ZERO; desc.trace_width];
+    // Assemble the row: [0..front) from the co-build fill, then the packed tail at its BOUND
+    // columns; every remaining column is SOLVED from the descriptor's own gates below.
+    let mut vals: Vec<Option<BabyBear>> = vec![None; desc.trace_width];
     for c in 0..front {
-        row[c] = b.value(c);
+        vals[c] = Some(b.value(c));
     }
     for (f, v) in packed_old.iter().enumerate() {
-        row[front + f] = *v;
+        vals[pack_old_col + f] = Some(*v);
     }
     for (f, v) in packed_new.iter().enumerate() {
-        row[front + nfelts + f] = *v;
+        vals[pack_new_col + f] = Some(*v);
     }
 
-    // The public inputs: the state-binding prefix (placeholder cell roots, as the Rust D1 path),
-    // then the packed board commitments, then the automaton coordinate.
+    // THE APPENDED-COLUMN SOLVE. Any column past the packed tail (today: `NAX`/`NAY`, pinned by
+    // the DEGREE-2 mask gates `NAX − AX − M·OX == 0`) is filled by EVALUATING the gate that
+    // DEFINES it — never by re-deriving the rule in Rust. Rule L solves a gate that is AFFINE in
+    // its single unknown, which the mask pin is (`NAX` has coefficient 1; `M` and `OX` are already
+    // resolved front-end columns), so the degree-2 product costs the solver nothing. A column no
+    // gate determines is a hard `Err`, not a zero-filled guess that would fail the STARK later.
+    loop {
+        if !crate::resolve_witness::rule_l_pass(desc, &mut vals)? {
+            break;
+        }
+    }
+    let unresolved: Vec<usize> = (0..desc.trace_width)
+        .filter(|c| vals[*c].is_none())
+        .collect();
+    if !unresolved.is_empty() {
+        return Err(format!(
+            "automatafl witness-gen: {} appended column(s) unresolved after the gate solver \
+             reached fixpoint (first: {:?}) — no descriptor gate determines them",
+            unresolved.len(),
+            &unresolved[..unresolved.len().min(8)]
+        ));
+    }
+    let row: Vec<BabyBear> = vals.into_iter().map(|v| v.expect("all resolved")).collect();
+
+    // The public inputs: the state-binding prefix (placeholder cell roots, as the Rust D1 path —
+    // the fold driver overwrites them with the leg's real rotated roots), then EVERY bound PI read
+    // off its own column. Unbound lanes exist only in the free 16-felt door.
     let (old8, new8) = placeholder_roots();
+    let door: Vec<BabyBear> = old8.iter().chain(new8.iter()).copied().collect();
     let mut public_inputs = Vec::with_capacity(desc.public_input_count);
-    public_inputs.extend_from_slice(&old8);
-    public_inputs.extend_from_slice(&new8);
-    public_inputs.extend_from_slice(&packed_old);
-    public_inputs.extend_from_slice(&packed_new);
-    public_inputs.push(b.value(ax_col));
-    public_inputs.push(b.value(ay_col));
+    for pi in 0..desc.public_input_count {
+        match binds.get(&pi) {
+            Some(&c) => public_inputs.push(row[c]),
+            None => {
+                let v = door.get(pi).copied().ok_or_else(|| {
+                    format!(
+                        "automatafl witness-gen: PI {pi} is neither column-bound nor part of the \
+                         16-felt free door — the descriptor publishes a lane the ABI cannot fill"
+                    )
+                })?;
+                public_inputs.push(v);
+            }
+        }
+    }
     debug_assert_eq!(public_inputs.len(), desc.public_input_count);
 
     Ok(StepTrace {
@@ -182,6 +242,89 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
     })
 }
 
+/// The descriptor's own first-row `PiBinding` map (`pi_index -> trace column`) — the ABI read
+/// that keeps this generator shape-independent under APPEND-ONLY descriptor growth.
+fn pi_binding_cols(desc: &EffectVmDescriptor2) -> std::collections::BTreeMap<usize, usize> {
+    use dregg_circuit::descriptor_ir2::VmConstraint2;
+    use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+    let mut out = std::collections::BTreeMap::new();
+    for c in &desc.constraints {
+        if let VmConstraint2::Base(VmConstraint::PiBinding {
+            row: VmRow::First,
+            col,
+            pi_index,
+        }) = c
+        {
+            out.insert(*pi_index, *col);
+        }
+    }
+    out
+}
+
+/// The PI index of the leg's packed OLD board window (`pack_in`) — the ABI constant the two-leg
+/// fold's IN window starts at. `16` = past the `[old8 ‖ new8]` door.
+pub const STEP_PACK_IN_PI: usize = 16;
+
+/// The PI index of the leg's packed NEW board window (`pack_out`) at board size `n`.
+pub fn step_pack_out_pi(n: usize) -> usize {
+    STEP_PACK_IN_PI + packed_felts(n)
+}
+
+/// The PI index of the leg's OLD automaton coordinate (`ax`, `ay` at `+0`, `+1`) at size `n`.
+pub fn step_auto_in_pi(n: usize) -> usize {
+    STEP_PACK_IN_PI + 2 * packed_felts(n)
+}
+
+/// The PI index of the leg's STEPPED automaton coordinate (`NAX`, `NAY`) at size `n` — the
+/// APPENDED family (`AutomataflStepEmit`'s degree-2 mask pin `NAX − AX − M·OX == 0`) that makes
+/// Leg A's OUT window carry the automaton it produced, not the one it consumed. `None` when the
+/// loaded descriptor predates the append (then Leg A has no OUT automaton and cannot carry a
+/// board window).
+pub fn step_auto_out_pi(n: usize, desc: &EffectVmDescriptor2) -> Option<usize> {
+    let base = step_auto_in_pi(n) + 2;
+    (desc.public_input_count >= base + 2).then_some(base)
+}
+
+/// **LEG A's BOARD WINDOW** — `IN = pack(old) ‖ (ax, ay)`, `OUT = pack(new) ‖ (NAX, NAY)`, the
+/// `2·F + 4`-PI declaration the two-leg fold connects.
+///
+/// The OUT window is NOT contiguous — `pack_out` sits at `[16+F .. 16+2F)` and the stepped
+/// automaton at the APPENDED `[16+2F+2 .. 16+2F+4)`, with the *consumed* `ax/ay` in between —
+/// which is exactly why the binding is a slice LIST rather than one range.
+///
+/// `Err` when the loaded descriptor predates the `NAX`/`NAY` append: without a published STEPPED
+/// automaton coordinate, Leg A's OUT window would carry the automaton it CONSUMED, and the
+/// inter-round carry `A_i.OUT == R_{i+1}.IN` would be a lie. Blocked, not faked.
+pub fn step_board_window(
+    n: usize,
+    desc: &EffectVmDescriptor2,
+) -> Result<dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding;
+    let f = packed_felts(n);
+    let auto_out = step_auto_out_pi(n, desc).ok_or_else(|| {
+        format!(
+            "automatafl step descriptor '{}' publishes {} PIs — it carries no STEPPED automaton \
+             coordinate (NAX/NAY at PI {}, {}). Leg A cannot declare an OUT window whose automaton \
+             is the one it PRODUCED, so the inter-round carry is blocked, not faked.",
+            desc.name,
+            desc.public_input_count,
+            step_auto_in_pi(n) + 2,
+            step_auto_in_pi(n) + 3
+        )
+    })?;
+    let b = BoardWindowBinding {
+        in_slices: vec![(STEP_PACK_IN_PI, f), (step_auto_in_pi(n), 2)],
+        out_slices: vec![(step_pack_out_pi(n), f), (auto_out, 2)],
+    };
+    if !b.is_well_formed() || desc.public_input_count < b.pi_end() {
+        return Err(format!(
+            "automatafl step board window {b:?} is not expressible in descriptor '{}' ({} PIs)",
+            desc.name, desc.public_input_count
+        ));
+    }
+    Ok(b)
+}
+
 /// The fast in-memory shadow: does the generated trace SATISFY the decoded Lean descriptor?
 /// Runs the real `Ir2Air` row-local evaluator (`ir2_eval_accepts`) over the descriptor's gates —
 /// the same arithmetization the STARK quotient enforces on the prove path. `true` iff every gate
@@ -189,8 +332,10 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
 /// commitment, and the PI bindings) vanishes on the row. This is what the tests gate on before
 /// the slow leaf prove; a wrong fill fails here exactly as it would fail the STARK.
 pub fn step_trace_accepts(desc: &EffectVmDescriptor2, tr: &StepTrace) -> bool {
+    // TWO rows, as the resolve shadow: a single replicated row exercises only the first/last-row
+    // PI bindings and never the `when_transition` gates.
     let rows_i64: Vec<Vec<i64>> = tr
-        .base_trace(1)
+        .base_trace(2)
         .iter()
         .map(|r| r.iter().map(|f| f.0 as i64).collect())
         .collect();
@@ -237,8 +382,9 @@ mod tests {
     fn n11_stock_trace_satisfies_lean_descriptor() {
         let desc = descriptor_by_name(&step_descriptor_name(11))
             .expect("the n=11 automatafl-step descriptor dispatches by name");
-        assert_eq!(desc.trace_width, 678);
-        assert_eq!(desc.public_input_count, 36);
+        // The shape is READ, not pinned to a frozen number: the descriptor grows APPEND-ONLY
+        // (the `NAX`/`NAY` stepped-automaton family), and the generator must track it.
+        assert!(desc.public_input_count >= 36, "the packed-felt ABI floor");
         let old = stock_two_player();
         let tr = automatafl_step_trace(&old, &desc).expect("witness-gen fills the n=11 layout");
         assert_eq!(tr.row.len(), desc.trace_width);
@@ -270,8 +416,7 @@ mod tests {
     fn n2_trace_satisfies_lean_descriptor() {
         let desc = descriptor_by_name(&step_descriptor_name(2))
             .expect("the n=2 automatafl-step descriptor dispatches by name");
-        assert_eq!(desc.trace_width, 254);
-        assert_eq!(desc.public_input_count, 20);
+        assert!(desc.public_input_count >= 20, "the packed-felt ABI floor");
         let old = n2_board();
         let tr = automatafl_step_trace(&old, &desc).expect("witness-gen fills the n=2 layout");
         assert!(
@@ -288,12 +433,309 @@ mod tests {
         let old = stock_two_player();
         let mut tr = automatafl_step_trace(&old, &desc).unwrap();
         // Corrupt a packed OLD felt (the tail) without touching its board cells: the pack gate
-        // `packed - Σ cell·4^i == 0` no longer vanishes.
-        let front = desc.trace_width - 2 * packed_felts(11);
+        // `packed - Σ cell·4^i == 0` no longer vanishes. The column is READ off the descriptor's
+        // own PI binding, so the canary survives an append-only layout change.
+        let front = *pi_binding_cols(&desc)
+            .get(&16)
+            .expect("pack_old[0] is PI-bound");
         tr.row[front] += BabyBear::ONE;
         assert!(
             !step_trace_accepts(&desc, &tr),
             "a corrupted packed-felt column must fail the descriptor's pack gate"
+        );
+    }
+
+    /// **`auto_out` IS THE REFERENCE POST-STEP COORDINATE** — the property Leg A's OUT window
+    /// needs, checked at every step of a real chain, against the reference oracle. This is the
+    /// positive half of the mask-pin story: what the fold reads as `auto_out` is where the
+    /// automaton actually stands after the step, and it differs from the coordinate the leg
+    /// CONSUMED (so the OUT window is not silently republishing the IN one).
+    #[test]
+    fn auto_out_is_the_reference_post_step_coordinate_along_a_chain() {
+        let desc = descriptor_by_name(&step_descriptor_name(11)).unwrap();
+        let auto_in = step_auto_in_pi(11);
+        let auto_out = step_auto_out_pi(11, &desc).expect("the descriptor publishes NAX/NAY");
+        let mut moved_at_least_once = false;
+        // The stock opening (the automaton senses nothing decisive and STANDS STILL — the `m = 0`,
+        // zero-offset case) and a pulled position (an attractor 3 north, so the guard FIRES).
+        for (name, start) in [("stock", stock_two_player()), ("pulled", pulled_n11())] {
+            let mut board = start;
+            for turn in 0..4 {
+                let tr = automatafl_step_trace(&board, &desc).unwrap();
+                assert!(step_trace_accepts(&desc, &tr), "{name} turn {turn}");
+                let stepped = automaton_step(&board);
+                assert_eq!(
+                    (tr.public_inputs[auto_out], tr.public_inputs[auto_out + 1]),
+                    (
+                        BabyBear::from_u64(stepped.auto.0 as u64),
+                        BabyBear::from_u64(stepped.auto.1 as u64)
+                    ),
+                    "{name} turn {turn}: auto_out must be `automaton_step(old).auto`"
+                );
+                assert_eq!(
+                    (tr.public_inputs[auto_in], tr.public_inputs[auto_in + 1]),
+                    (
+                        BabyBear::from_u64(board.auto.0 as u64),
+                        BabyBear::from_u64(board.auto.1 as u64)
+                    ),
+                    "{name} turn {turn}: auto_in must be the CONSUMED coordinate"
+                );
+                if stepped.auto != board.auto {
+                    moved_at_least_once = true;
+                    assert_ne!(
+                        (tr.public_inputs[auto_out], tr.public_inputs[auto_out + 1]),
+                        (tr.public_inputs[auto_in], tr.public_inputs[auto_in + 1]),
+                        "{name} turn {turn}: on a moved step the two windows must DIFFER"
+                    );
+                }
+                board = stepped;
+            }
+        }
+        assert!(
+            moved_at_least_once,
+            "the sweep must contain a step that actually moves, or the check is vacuous"
+        );
+    }
+
+    /// An n=11 position whose automaton IS pulled: an attractor three cells north of it, nothing
+    /// else on its cross, so `evaluate_axis` returns `TowardAttractor` and the guard fires.
+    fn pulled_n11() -> Board {
+        let n = 11usize;
+        let mut cells = vec![VAC; n * n];
+        cells[5 * n + 5] = AUTO;
+        cells[8 * n + 5] = ATT;
+        Board {
+            n,
+            cells,
+            auto: (5, 5),
+            col_rule: true,
+        }
+    }
+
+    /// Every `Base(Gate)` body in the descriptor that references column `col`.
+    fn gates_touching(
+        desc: &EffectVmDescriptor2,
+        col: usize,
+    ) -> Vec<&dregg_circuit::lean_descriptor_air::LeanExpr> {
+        use dregg_circuit::descriptor_ir2::VmConstraint2;
+        use dregg_circuit::lean_descriptor_air::VmConstraint;
+        desc.constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::Base(VmConstraint::Gate(e)) => Some(e),
+                _ => None,
+            })
+            .filter(|e| {
+                let mut vars = Vec::new();
+                collect_expr_vars(e, &mut vars);
+                vars.contains(&col)
+            })
+            .collect()
+    }
+
+    fn collect_expr_vars(e: &dregg_circuit::lean_descriptor_air::LeanExpr, out: &mut Vec<usize>) {
+        use dregg_circuit::lean_descriptor_air::LeanExpr;
+        match e {
+            LeanExpr::Var(i) => {
+                if !out.contains(i) {
+                    out.push(*i);
+                }
+            }
+            LeanExpr::Const(_) => {}
+            LeanExpr::Add(a, b) | LeanExpr::Mul(a, b) => {
+                collect_expr_vars(a, out);
+                collect_expr_vars(b, out);
+            }
+        }
+    }
+
+    /// **THE MASK-PIN CANARY — the emitted gate is the degree-2 mask form, evaluated.**
+    ///
+    /// The Lean-emitted pin is `NAX − AX − M·OX == 0`. This test drives the ACTUAL gate body out
+    /// of the loaded descriptor and evaluates it on synthetic assignments, so it states what the
+    /// wire object forces:
+    ///
+    /// * `M = 0` (the guard refuses): the gate is satisfied **only** by `NAX = AX`. The retired
+    ///   degree-1 pin `NAX − (AX + OX) == 0` forced `NAX = AX + OX` here instead — a value the
+    ///   reference automaton does not occupy on that branch.
+    /// * `M = 1` (the guard fires): the gate is satisfied **only** by `NAX = AX + OX`.
+    ///
+    /// Together those are exactly `if m = 1 then ax + ox else ax` — the reference `automatonStep`'s
+    /// `.automaton`, discharged AT THE GATE. That is what lets
+    /// `AutomataflTurnCapstone.astep_newAuto_pi_of_sat` be stated against the full
+    /// `automatonStepCfg` semantics rather than against the column expression `ax + ox`.
+    #[test]
+    fn the_new_auto_pin_is_the_degree_2_mask_form() {
+        use dregg_circuit::descriptor_ir2::eval_lean_expr;
+        let desc = descriptor_by_name(&step_descriptor_name(11)).unwrap();
+        let binds = pi_binding_cols(&desc);
+        // The published coordinate columns, read off the descriptor's own PI bindings.
+        let auto_in = step_auto_in_pi(11);
+        let auto_out = step_auto_out_pi(11, &desc).expect("the descriptor publishes NAX/NAY");
+
+        for k in 0..2 {
+            let ncol = binds[&(auto_out + k)];
+            let acol = binds[&(auto_in + k)];
+            let gates = gates_touching(&desc, ncol);
+            assert_eq!(
+                gates.len(),
+                1,
+                "exactly ONE gate pins the published coordinate column {ncol}"
+            );
+            let gate = gates[0];
+            let mut vars = Vec::new();
+            collect_expr_vars(gate, &mut vars);
+            assert_eq!(
+                vars.len(),
+                4,
+                "the pin references NAX, AX, M and OX — the degree-1 pin referenced only 3"
+            );
+            assert!(
+                vars.contains(&acol),
+                "and one of them is the CONSUMED coordinate"
+            );
+            let others: Vec<usize> = vars
+                .iter()
+                .copied()
+                .filter(|c| *c != ncol && *c != acol)
+                .collect();
+
+            // Which extra column is the MASK and which the OFFSET is read from BEHAVIOUR, not
+            // from a hardcoded index: exactly one orientation can act as `NAX = AX + M·OX`.
+            let mut ok = false;
+            for &(mcol, ocol) in &[(others[0], others[1]), (others[1], others[0])] {
+                let mut row = vec![BabyBear::ZERO; desc.trace_width];
+                row[acol] = BabyBear::from_u64(4);
+                row[ocol] = BabyBear::from_u64(3);
+                // BLOCKED (m = 0, nonzero offset): only `NAX = AX` satisfies the gate.
+                row[mcol] = BabyBear::ZERO;
+                row[ncol] = BabyBear::from_u64(4);
+                let blocked_old = eval_lean_expr(gate, &row) == BabyBear::ZERO;
+                row[ncol] = BabyBear::from_u64(7); // the retired degree-1 value `ax + ox`
+                let blocked_moved = eval_lean_expr(gate, &row) == BabyBear::ZERO;
+                // MOVED (m = 1): only `NAX = AX + OX` satisfies it.
+                row[mcol] = BabyBear::ONE;
+                let moved_moved = eval_lean_expr(gate, &row) == BabyBear::ZERO;
+                row[ncol] = BabyBear::from_u64(4);
+                let moved_old = eval_lean_expr(gate, &row) == BabyBear::ZERO;
+                if blocked_old && !blocked_moved && moved_moved && !moved_old {
+                    ok = true;
+                    break;
+                }
+            }
+            assert!(
+                ok,
+                "column {ncol}'s pin does not behave as `NAX = AX + M·OX` — the emitted gate is \
+                 NOT the degree-2 mask form (a degree-1 `NAX = AX + OX` pin fails here: it would \
+                 force the MOVED coordinate on the m = 0 branch)"
+            );
+        }
+    }
+
+    /// **WHY THE MASK IS THE RIGHT PIN, STATED HONESTLY.** The blocked branch (`m = 0` with a
+    /// NONZERO sensed offset) is a real branch of the AIR's case split and of the Lean capstone's
+    /// `.automaton = if m = 1 then (ax+ox, ay+oy) else (ax, ay)` — but it is **not reachable under
+    /// the reference dynamics**: every arm of `evaluate_axis` that yields a nonzero offset carries
+    /// a `dist > 1` guard (or picks the farther of two repulsors), so the first cell in the chosen
+    /// direction is always in-bounds and vacuum, and the guard fires.
+    ///
+    /// This test pins that, exhaustively over the sensing configurations that decide it: for a set
+    /// of automaton positions, every choice of `{nothing, REP@d, ATT@d}` in each of the four
+    /// directions. Off-ray cells cannot change either the sensing or the target's occupancy, so
+    /// this covers the question.
+    ///
+    /// The consequence, said plainly: the retired degree-1 pin was not rejecting reachable honest
+    /// trajectories. Its defect was in the GUARANTEE — the strongest transport statable over it was
+    /// the column-level `PI = ax + ox`, and lifting that to `PI = (automatonStepCfg …).automaton`
+    /// would have required exactly the reachability argument this test only samples. The mask pin
+    /// discharges the case split at the gate, so the transport is unconditional.
+    #[test]
+    fn a_nonzero_sensed_offset_always_targets_an_in_bounds_vacuum_cell() {
+        use crate::reference::automaton_sense;
+        let n = 11usize;
+        let dirs: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        let mut checked = 0usize;
+        for &(ax, ay) in &[
+            (5i32, 5i32),
+            (0, 0),
+            (10, 10),
+            (0, 5),
+            (5, 0),
+            (10, 5),
+            (5, 10),
+            (1, 1),
+            (9, 9),
+            (2, 7),
+        ] {
+            // Per direction: how far a piece could be placed before leaving the board.
+            let room: Vec<i32> = dirs
+                .iter()
+                .map(|d| {
+                    let mut r = 0;
+                    while (0..n as i32).contains(&(ax + d.0 * (r + 1)))
+                        && (0..n as i32).contains(&(ay + d.1 * (r + 1)))
+                    {
+                        r += 1;
+                    }
+                    r
+                })
+                .collect();
+            // option 0 = nothing; then (kind, dist) for kind ∈ {REP, ATT}, dist ∈ 1..=room.
+            let opts: Vec<Vec<Option<(u8, i32)>>> = room
+                .iter()
+                .map(|&r| {
+                    let mut v = vec![None];
+                    for kind in [REP, ATT] {
+                        for d in 1..=r {
+                            v.push(Some((kind, d)));
+                        }
+                    }
+                    v
+                })
+                .collect();
+            for o0 in &opts[0] {
+                for o1 in &opts[1] {
+                    for o2 in &opts[2] {
+                        for o3 in &opts[3] {
+                            let mut cells = vec![VAC; n * n];
+                            cells[(ay as usize) * n + ax as usize] = AUTO;
+                            for (d, o) in dirs.iter().zip([o0, o1, o2, o3]) {
+                                if let Some((kind, dist)) = o {
+                                    let (px, py) = (ax + d.0 * dist, ay + d.1 * dist);
+                                    cells[(py as usize) * n + px as usize] = *kind;
+                                }
+                            }
+                            let b = Board {
+                                n,
+                                cells,
+                                auto: (ax, ay),
+                                col_rule: true,
+                            };
+                            let off = automaton_sense(&b).offset;
+                            checked += 1;
+                            if off == (0, 0) {
+                                continue;
+                            }
+                            let target = (ax + off.0, ay + off.1);
+                            assert!(
+                                b.in_bounds(target) && b.cell_at(target) == VAC,
+                                "auto at ({ax},{ay}) senses offset {off:?} onto a BLOCKED target \
+                                 {target:?} — the blocked branch IS reachable after all, and the \
+                                 degree-1 `ax + ox` pin would have refused this honest position"
+                            );
+                            assert_eq!(
+                                automaton_step(&b).auto,
+                                target,
+                                "…and the reference takes it"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 10_000,
+            "the sweep must actually enumerate ({checked})"
         );
     }
 

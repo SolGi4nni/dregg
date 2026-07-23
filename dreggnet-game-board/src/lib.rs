@@ -82,7 +82,7 @@ use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
 use dregg_lightclient::{AttestedHistory, LightClientError, verify_history_bytes};
 
 use dregg_automatafl::build_d1_honest;
-use dregg_automatafl::reference::{Board, automaton_step};
+use dregg_automatafl::reference::{Board, Move, automaton_step};
 use dregg_multiway_tug::hidden_hand::HandTree;
 
 pub mod native_descent_board;
@@ -157,6 +157,13 @@ pub enum MatchError {
     Lowering(String),
     /// An automatafl step's honest D1 witness did not self-accept (the AIR refused it).
     D1Refused(usize),
+    /// A two-leg round's RESOLVE leg (Leg R, `old → mid`) did not satisfy the PROVEN Lean
+    /// resolve descriptor — an illegal / unresolvable move pair, refused before any proving.
+    ResolveRefused(usize),
+    /// The board size has no emitted Lean descriptor for one of the two legs (the n = 5 case).
+    /// BLOCKED, not faked: a two-leg round cannot be attested at a size the Lean AIR is not
+    /// emitted for.
+    NoDescriptor(usize, String),
     /// The match has no turns — there is nothing to fold.
     Empty,
 }
@@ -167,6 +174,15 @@ impl fmt::Display for MatchError {
             MatchError::NotInHand(c) => write!(f, "card {c} is not under the current hand root"),
             MatchError::Lowering(e) => write!(f, "membership lowering refused the play: {e}"),
             MatchError::D1Refused(i) => write!(f, "automatafl step {i}: the D1 AIR self-rejected"),
+            MatchError::ResolveRefused(i) => write!(
+                f,
+                "automatafl round {i}: the RESOLVE leg did not satisfy the Lean resolve descriptor"
+            ),
+            MatchError::NoDescriptor(n, which) => write!(
+                f,
+                "automatafl n={n}: no emitted Lean {which} descriptor — the two-leg round is \
+                 BLOCKED at this board size, not faked"
+            ),
             MatchError::Empty => write!(f, "the match has no turns to fold"),
         }
     }
@@ -270,6 +286,20 @@ fn win_leaf(w: TugWin) -> LeafBundle {
     }
 }
 
+/// Overwrite a descriptor leaf's FREE 16-felt `[old8 ‖ new8]` door with the rotated roots of the
+/// leg the fold will mint for it. The door lanes carry no `pi_binding` (the AIR does not constrain
+/// them — the FOLD does), so this changes nothing the descriptor proves and everything the
+/// deployed state tooth checks: without it the leaf claims a transition about a cell the leg never
+/// touched, and the `connect` is UNSAT.
+fn set_state_door(pis: &mut [BabyBear], old8: [BabyBear; 8], new8: [BabyBear; 8]) {
+    debug_assert!(
+        pis.len() >= 16,
+        "a state-binding leaf publishes the 16-felt door"
+    );
+    pis[..8].copy_from_slice(&old8);
+    pis[8..16].copy_from_slice(&new8);
+}
+
 /// A **PLAYED automatafl match**: the starting board and the number of automaton-step turns
 /// taken. Each turn's board transition is proven by the committed D1 AIR
 /// (`new == automaton_step(old)`); the boards themselves are never posted.
@@ -277,11 +307,153 @@ fn win_leaf(w: TugWin) -> LeafBundle {
 pub struct AutomataflMatch {
     /// The starting board (the match's genesis position).
     pub start: Board,
-    /// How many automaton-step turns the match played.
+    /// How many automaton-step turns the match played. Read ONLY when `rounds` is empty (the
+    /// legacy automaton-only shape — see [`AutomataflMatch::leaves`]).
     pub turns: usize,
+    /// **THE PLAYED ROUNDS** — the two seats' submitted moves, in order. A non-empty `rounds`
+    /// selects the TWO-LEG fold (`resolve` then `step` per round, chained by the board window);
+    /// an empty one keeps the legacy automaton-only chain, which attests no move at all.
+    pub rounds: Vec<(Move, Move)>,
 }
 
 impl AutomataflMatch {
+    /// A played match from its rounds — the shape the two-leg fold attests.
+    pub fn played(start: Board, rounds: Vec<(Move, Move)>) -> AutomataflMatch {
+        AutomataflMatch {
+            start,
+            turns: 0,
+            rounds,
+        }
+    }
+
+    /// The legacy automaton-only match (no player moves, no resolve leg).
+    pub fn automaton_only(start: Board, turns: usize) -> AutomataflMatch {
+        AutomataflMatch {
+            start,
+            turns,
+            rounds: Vec::new(),
+        }
+    }
+
+    /// **THE TWO-LEG ROUND LEAVES** — for each played round, the RESOLVE leaf (Leg R,
+    /// `old → mid`, adjudicating the two submitted moves through the PROVEN Lean
+    /// `automataflResolveDescN n`) then the STEP leaf (Leg A, `mid → new`, the automaton through
+    /// `automataflStepDescN n`), both carrying a BOARD WINDOW so the fold chains them.
+    ///
+    /// ## What the window makes true (and what it does not)
+    ///
+    /// Every leaf declares `IN = pack(board it consumed) ‖ automaton` and
+    /// `OUT = pack(board it produced) ‖ automaton`. The fold `connect`s `left.OUT == right.IN` at
+    /// every aggregation node, so:
+    ///
+    /// * `R_i.OUT == A_i.IN` is exactly `hseamPack ∧ hseamAutoX ∧ hseamAutoY` — the hypotheses
+    ///   `AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` takes, so the round's `new` board IS
+    ///   `AutomataflRules.roundStep`'s outcome board for the decoded moves;
+    /// * `A_i.OUT == R_{i+1}.IN` is the inter-round carry — the boards form ONE trajectory, not K
+    ///   independent transitions;
+    /// * the root exposes `[first.IN ‖ last.OUT]` — the genesis and final positions, decodable in
+    ///   the clear (the pack is injective).
+    ///
+    /// NOT attested by this: WHOSE moves these are. The resolve descriptor's move columns are free
+    /// witness (`moveDecodeN` hard-codes `who = 0`), so a folded round says "the transition is a
+    /// legal resolution of SOME valid move pair, carried into the automaton step" — the sealed-move
+    /// reveal leg (Leg S) is what would bind them to the two seats, and it is not folded here.
+    /// Nor are the spec-side `hfresh` / `hres` hypotheses discharged.
+    ///
+    /// The leaf's `[old8 ‖ new8]` door is filled with the REAL rotated roots of the leg the fold
+    /// will mint for that chain position ([`dregg_multiway_tug::fold::fixture_rotated_roots`]), so
+    /// the deployed state tooth holds; a placeholder door would be UNSAT.
+    pub fn round_leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
+        use dregg_automatafl::resolve_witness::{
+            automatafl_resolve_trace, resolve_board_window, resolve_descriptor_ident,
+            resolve_trace_accepts,
+        };
+        use dregg_automatafl::witness::{
+            automatafl_step_trace, step_board_window, step_descriptor_name, step_trace_accepts,
+        };
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+        use dregg_circuit_prove::joint_turn_aggregation::DescriptorStateLeafSource;
+        use dregg_multiway_tug::fold::fixture_rotated_roots;
+
+        if self.rounds.is_empty() {
+            return Err(MatchError::Empty);
+        }
+        let n = self.start.n;
+        let rdesc = descriptor_by_name(resolve_descriptor_ident(n))
+            .ok_or_else(|| MatchError::NoDescriptor(n, "resolve".to_string()))?;
+        let sdesc = descriptor_by_name(&step_descriptor_name(n))
+            .ok_or_else(|| MatchError::NoDescriptor(n, "step".to_string()))?;
+        let rwin = resolve_board_window(n, &rdesc)
+            .map_err(|e| MatchError::NoDescriptor(n, format!("resolve window: {e}")))?;
+        let awin = step_board_window(n, &sdesc)
+            .map_err(|e| MatchError::NoDescriptor(n, format!("step window: {e}")))?;
+        let layout = dregg_automatafl::resolve_layout::ResolveLayout::new(n);
+
+        let rows = 2usize; // >= 2 so the `when_transition` gates are exercised.
+        let mut out: Vec<LeafBundle> = Vec::with_capacity(2 * self.rounds.len());
+        let mut board = self.start.clone();
+
+        for (i, (ma, mb)) in self.rounds.iter().enumerate() {
+            // ---- Leg R: adjudicate the two moves, old -> mid. ----
+            let mut rt = automatafl_resolve_trace(&board, &[*ma, *mb], &rdesc)
+                .map_err(|e| MatchError::Lowering(format!("round {i} resolve witness-gen: {e}")))?;
+            let (r_old8, r_new8) = fixture_rotated_roots(out.len() as u64);
+            set_state_door(&mut rt.public_inputs, r_old8, r_new8);
+            if !resolve_trace_accepts(&rdesc, &rt) {
+                return Err(MatchError::ResolveRefused(i));
+            }
+            let mid = rt.mid_board(&layout);
+            let r_prog = dregg_automatafl::moves::build_r_honest(&board, ma, mb);
+            out.push(LeafBundle {
+                program: r_prog.cellprogram(),
+                witness_values: r_prog.trace_witness(rows),
+                num_rows: rows,
+                public_inputs: rt.public_inputs.clone(),
+                descriptor_state_leaf: Some(DescriptorStateLeafSource {
+                    descriptor: rdesc.clone(),
+                    base_trace: rt.base_trace(rows),
+                    board_window: Some(rwin.clone()),
+                }),
+            });
+
+            // ---- Leg A: step the automaton, mid -> new. ----
+            let mut st = automatafl_step_trace(&mid, &sdesc)
+                .map_err(|e| MatchError::Lowering(format!("round {i} step witness-gen: {e}")))?;
+            let (a_old8, a_new8) = fixture_rotated_roots(out.len() as u64);
+            set_state_door(&mut st.public_inputs, a_old8, a_new8);
+            if !step_trace_accepts(&sdesc, &st) {
+                return Err(MatchError::D1Refused(i));
+            }
+            let a_prog = build_d1_honest(&mid);
+            out.push(LeafBundle {
+                program: a_prog.cellprogram(),
+                witness_values: a_prog.trace_witness(rows),
+                num_rows: rows,
+                public_inputs: st.public_inputs.clone(),
+                descriptor_state_leaf: Some(DescriptorStateLeafSource {
+                    descriptor: sdesc.clone(),
+                    base_trace: st.base_trace(rows),
+                    board_window: Some(awin.clone()),
+                }),
+            });
+
+            board = automaton_step(&mid);
+        }
+        Ok(out)
+    }
+
+    /// The played board sequence a two-leg match walks: `start`, then each round's
+    /// `automaton_step(resolve(board, moves))`.
+    pub fn round_boards(&self) -> Vec<Board> {
+        let mut bs = Vec::with_capacity(self.rounds.len() + 1);
+        let mut b = self.start.clone();
+        bs.push(b.clone());
+        for (ma, mb) in &self.rounds {
+            b = automaton_step(&dregg_automatafl::reference::resolve_mid(&b, &[*ma, *mb]));
+            bs.push(b.clone());
+        }
+        bs
+    }
     /// The played board sequence: `start`, then each successive `automaton_step`.
     pub fn boards(&self) -> Vec<Board> {
         let mut bs = Vec::with_capacity(self.turns + 1);
@@ -315,6 +487,12 @@ impl AutomataflMatch {
         use dregg_circuit::descriptor_by_name::descriptor_by_name;
         use dregg_circuit_prove::joint_turn_aggregation::DescriptorStateLeafSource;
 
+        // A match with PLAYED ROUNDS folds the two-leg chain (resolve ∘ step, board-window
+        // chained). The automaton-only path below is what remains when no moves were submitted —
+        // it attests K INDEPENDENT automaton steps and no move at all.
+        if !self.rounds.is_empty() {
+            return self.round_leaves();
+        }
         if self.turns == 0 {
             return Err(MatchError::Empty);
         }
@@ -349,6 +527,10 @@ impl AutomataflMatch {
                             Some(DescriptorStateLeafSource {
                                 descriptor: desc,
                                 base_trace,
+                                // The automaton-only chain declares NO board window: nothing
+                                // connects turn i's board to turn i+1's. That is the gap; the
+                                // two-leg `round_leaves` path is what closes it.
+                                board_window: None,
                             }),
                         )
                     }

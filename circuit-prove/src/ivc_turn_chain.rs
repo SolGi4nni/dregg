@@ -886,6 +886,134 @@ fn compute_root_segment(turns: &[&FinalizedTurn]) -> HostSeg {
     fold_host_segs_balanced(turn_leaf_segs(turns))
 }
 
+/// **THE ROOT BOARD WINDOW** — the `[first.IN ‖ last.OUT]` a board-window root will expose, and
+/// the artifact's carried claim for it.
+///
+/// The pack the automatafl legs publish is INJECTIVE (`pack_injective_modp`, base-4 positional
+/// with `packed < 4^15 < p`), so these two windows ARE the genesis and final positions: a light
+/// client decodes the board in the clear and checks the win condition with no extra circuit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardWindow {
+    /// The FIRST turn's IN window — the state the chain started from.
+    pub first_in: Vec<BabyBear>,
+    /// The LAST turn's OUT window — the state the chain reached.
+    pub last_out: Vec<BabyBear>,
+}
+
+/// Read a finalized turn's declared `(IN, OUT)` state windows off its custom bundle. `None` for a
+/// turn that declares no window (every non-automatafl turn); `Err` for a turn whose declared
+/// window its own PI vector cannot express (fail-closed — never zero-padded).
+fn turn_board_window(t: &FinalizedTurn) -> Result<Option<(Vec<BabyBear>, Vec<BabyBear>)>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::extract_custom_pi_board_window;
+    let Some(CarrierWitness::Custom(bundle)) = &t.participant.rotated.carrier_witness else {
+        return Ok(None);
+    };
+    let Some(binding) = bundle
+        .descriptor_state_leaf
+        .as_ref()
+        .and_then(|src| src.board_window.as_ref())
+    else {
+        return Ok(None);
+    };
+    extract_custom_pi_board_window(&bundle.public_inputs, binding)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "the declared board window {binding:?} is not expressible in the sub-proof's {} \
+                 public inputs",
+                bundle.public_inputs.len()
+            )
+        })
+}
+
+/// **THE HOST BOARD-WINDOW MIRROR** — fold the per-turn windows the way the in-circuit merge
+/// will, and FAIL CLOSED before a single leaf is proven if the chain does not actually chain.
+///
+/// The in-circuit rule is `left.OUT == right.IN` at every node, which over a chain in order is
+/// exactly `turn[i].OUT == turn[i+1].IN`; the root then exposes `[first.IN ‖ last.OUT]`. So a
+/// forged mid (Leg A fed a board Leg R did not produce) or a substituted board between rounds is
+/// an UNSAT node — hours of proving to discover. This mirror surfaces it in milliseconds, exactly
+/// as the streaming-schedule guard does for the ordered digest.
+///
+/// A chain that MIXES windowed and unwindowed turns is refused: the merge cannot combine the two
+/// shapes, and degrading to the plain combine would drop the seam.
+/// The public face of [`compute_root_board_window`] — the HOST gate, runnable in milliseconds on a
+/// chain of finalized turns without proving anything.
+///
+/// It is a MIRROR of the in-circuit rule, not a substitute for it: the soundness property is the
+/// `connect` in the aggregation node (a disagreeing pair is UNSAT ⇒ no root ⇒ no verifying
+/// artifact). This is what makes a forged mid cost milliseconds instead of hours, and what lets a
+/// canary demonstrate the refusal without a full fold.
+pub fn board_window_of_chain(
+    turns: &[FinalizedTurn],
+) -> Result<Option<BoardWindow>, TurnChainError> {
+    let refs: Vec<&FinalizedTurn> = turns.iter().collect();
+    compute_root_board_window(&refs)
+}
+
+fn compute_root_board_window(
+    turns: &[&FinalizedTurn],
+) -> Result<Option<BoardWindow>, TurnChainError> {
+    let mut wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> = Vec::with_capacity(turns.len());
+    let mut declared = 0usize;
+    for (i, t) in turns.iter().enumerate() {
+        match turn_board_window(t)
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?
+        {
+            Some(w) => {
+                declared += 1;
+                wins.push(w);
+            }
+            None => wins.push((Vec::new(), Vec::new())),
+        }
+    }
+    if declared == 0 {
+        return Ok(None);
+    }
+    if declared != turns.len() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "board-window chain: {declared} of {} turns declare a state window — a chain \
+                 cannot mix board-window and plain turns (the merge has no combine for the mixed \
+                 shape); refused fail-closed",
+                turns.len()
+            ),
+        });
+    }
+    let w = wins[0].0.len();
+    for (i, (win_in, win_out)) in wins.iter().enumerate() {
+        if win_in.len() != w || win_out.len() != w {
+            return Err(TurnChainError::TurnProofInvalid {
+                index: i,
+                reason: format!(
+                    "board-window chain: turn {i} declares a {}/{} -lane window, chain width is {w}",
+                    win_in.len(),
+                    win_out.len()
+                ),
+            });
+        }
+    }
+    // THE SEAM, host-side: turn i's OUT must be turn i+1's IN, lane for lane.
+    for i in 0..wins.len() - 1 {
+        if wins[i].1 != wins[i + 1].0 {
+            return Err(TurnChainError::TurnProofInvalid {
+                index: i + 1,
+                reason: format!(
+                    "board-window seam broken: turn {i}'s OUT window does not equal turn {}'s IN \
+                     window. The in-circuit `connect` would be UNSAT (no root, no verifying \
+                     artifact) — refusing before proving. This is the forged-mid / substituted-\
+                     board case the seam exists to catch.",
+                    i + 1
+                ),
+            });
+        }
+    }
+    Ok(Some(BoardWindow {
+        first_in: wins[0].0.clone(),
+        last_out: wins[wins.len() - 1].1.clone(),
+    }))
+}
+
 /// The host mirror of [`aggregate_tree_streaming`]'s schedule over [`HostSeg`]s. Because the
 /// streaming schedule reproduces the balanced tree's EXACT shape (witnessed exhaustively by the
 /// `streaming_fold_tests`), this equals [`fold_host_segs_balanced`] — and the streaming prover
@@ -1602,6 +1730,15 @@ pub struct WholeChainProof {
     pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
     /// Number of finalized turns folded.
     pub num_turns: usize,
+    /// **THE BOARD WINDOW** — `[first.IN ‖ last.OUT]`, present iff every turn declared a state
+    /// window (the two-leg automatafl fold). `None` for every other chain, and then the root
+    /// exposes exactly `SEG_WIDTH` lanes as it always did.
+    ///
+    /// This is a CARRIED CLAIM, checked for exact equality against the root's exposure by
+    /// [`verify_turn_chain_recursive_from_parts_with_board_window`] — in BOTH directions: a
+    /// 47-lane root with no carried window is refused, and a carried window against a 25-lane
+    /// root is refused.
+    pub board_window: Option<BoardWindow>,
 }
 
 impl WholeChainProof {
@@ -1681,6 +1818,11 @@ pub struct WholeChainProofBytes {
     pub chain_digest: [u32; SEG_DIGEST_WIDTH],
     /// The number of finalized turns folded.
     pub num_turns: u64,
+    /// **THE BOARD WINDOW** (`v5`) — `[first.IN ‖ last.OUT]` as canonical `u32` lanes, `None` for
+    /// every chain that declares no state window. The verifier appends it to the expected root
+    /// exposure, so a board-window root shipped WITHOUT it is refused (25-lane `expected` vs a
+    /// 47-lane exposure) and a window carried against a plain root is refused too.
+    pub board_window: Option<(Vec<u32>, Vec<u32>)>,
 }
 
 /// The on-the-wire version tag of [`WholeChainProofBytes`]. Bumped on any layout
@@ -1693,7 +1835,10 @@ pub struct WholeChainProofBytes {
 /// **v4** (law-#1 turn-chain cutover): `binding_proof` changed from the hand-authored
 /// turn-chain uni-STARK to the Lean-emitted IR-v2 descriptor proof plus its exact four
 /// public inputs.
-pub const WHOLE_CHAIN_PROOF_ENVELOPE_V1: u16 = 4;
+/// **v5** (the two-leg board-window fold): the optional `board_window` claim
+/// (`[first.IN ‖ last.OUT]`) rides the envelope. Old readers are fail-closed off a v5 artifact
+/// rather than silently ignoring lanes the root exposes and they never check.
+pub const WHOLE_CHAIN_PROOF_ENVELOPE_V1: u16 = 5;
 
 impl WholeChainProofBytes {
     /// Project a [`WholeChainProof`] to its verify-sufficient byte envelope.
@@ -1711,6 +1856,12 @@ impl WholeChainProofBytes {
             final_root: core::array::from_fn(|i| proof.final_root[i].as_u32()),
             chain_digest: core::array::from_fn(|i| proof.chain_digest[i].as_u32()),
             num_turns: proof.num_turns as u64,
+            board_window: proof.board_window.as_ref().map(|w| {
+                (
+                    w.first_in.iter().map(|f| f.as_u32()).collect(),
+                    w.last_out.iter().map(|f| f.as_u32()).collect(),
+                )
+            }),
         }
     }
 
@@ -1804,13 +1955,18 @@ pub fn verify_whole_chain_proof_bytes(
 ) -> Result<(), TurnChainError> {
     let env = WholeChainProofBytes::from_postcard(bytes)?;
     let (root_proof, binding_proof) = env.decode_parts()?;
-    verify_turn_chain_recursive_from_parts(
+    let window = env.board_window.as_ref().map(|(i, o)| BoardWindow {
+        first_in: i.iter().map(|v| BabyBear::new(*v)).collect(),
+        last_out: o.iter().map(|v| BabyBear::new(*v)).collect(),
+    });
+    verify_turn_chain_recursive_from_parts_with_board_window(
         &root_proof,
         &binding_proof,
         core::array::from_fn(|i| BabyBear::new(env.genesis_root[i])),
         core::array::from_fn(|i| BabyBear::new(env.final_root[i])),
         core::array::from_fn(|i| BabyBear::new(env.chain_digest[i])),
         env.num_turns as usize,
+        window.as_ref(),
         expected_vk,
     )
 }
@@ -2310,6 +2466,7 @@ pub fn prove_welded_umem_turn_chain_recursive_staged(
         final_root,
         chain_digest,
         num_turns: turns.len(),
+        board_window: None,
     })
 }
 
@@ -3077,6 +3234,12 @@ fn prove_chain_core_rotated_with_fold(
     let final_root = root_seg.last_new8;
     let chain_digest = root_seg.acc;
 
+    // THE BOARD-WINDOW HOST MIRROR (fail-closed BEFORE any proving). If the chain declares state
+    // windows, `turn[i].OUT` must already equal `turn[i+1].IN` — the in-circuit `connect` the
+    // merge makes. A forged mid costs milliseconds here instead of hours of proving followed by
+    // an UNSAT node.
+    let board_window = compute_root_board_window(turns)?;
+
     // The ONE FRI engine the whole rotated tree runs at (inner proof + leaf-wrap +
     // aggregation), so the in-circuit FRI verifier params match every child's FRI engine.
     let config = ir2_leaf_wrap_config();
@@ -3157,6 +3320,7 @@ fn prove_chain_core_rotated_with_fold(
         final_root,
         chain_digest,
         num_turns: turns.len(),
+        board_window,
     })
 }
 
@@ -3266,6 +3430,16 @@ fn mint_rotated_turn_leaf(
                     // commitment + state prefix are both taken over the SAME `bundle.public_inputs`,
                     // so the state-binding node below is UNCHANGED. Fail-closed on a PI-count
                     // disagreement between the descriptor and the bundle's claimed PIs.
+                    // THE BOARD-WINDOW SEAM (the two-leg fold): when the descriptor source
+                    // DECLARES an IN/OUT state window, the leaf re-exposes both windows and the
+                    // per-turn node carries them up instead of dropping the sub-proof's
+                    // application PIs. That is what makes `left.OUT == right.IN` connectable at
+                    // the merge — the mid seam, the inter-round carry, and the root's
+                    // `[first.IN ‖ last.OUT]` endpoints. `None` is byte-identical to before.
+                    let board_window = bundle
+                        .descriptor_state_leaf
+                        .as_ref()
+                        .and_then(|src| src.board_window.clone());
                     let custom_leaf = match &bundle.descriptor_state_leaf {
                         Some(src) => {
                             if src.descriptor.public_input_count != bundle.public_inputs.len() {
@@ -3280,18 +3454,37 @@ fn mint_rotated_turn_leaf(
                                     ),
                                 });
                             }
-                            crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_state_commitment(
-                                &src.descriptor,
-                                &src.base_trace,
-                                &bundle.public_inputs,
-                                config,
-                            )
-                            .map_err(|reason| TurnChainError::TurnProofInvalid {
-                                index: i,
-                                reason: format!(
-                                    "direct-IR2 custom state-binding sub-proof leaf mint failed: {reason}"
-                                ),
-                            })?
+                            match &board_window {
+                                Some(bw) => {
+                                    crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_board_window(
+                                        &src.descriptor,
+                                        &src.base_trace,
+                                        &bundle.public_inputs,
+                                        bw,
+                                        config,
+                                    )
+                                    .map_err(|reason| TurnChainError::TurnProofInvalid {
+                                        index: i,
+                                        reason: format!(
+                                            "board-window sub-proof leaf mint failed: {reason}"
+                                        ),
+                                    })?
+                                }
+                                None => {
+                                    crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_state_commitment(
+                                        &src.descriptor,
+                                        &src.base_trace,
+                                        &bundle.public_inputs,
+                                        config,
+                                    )
+                                    .map_err(|reason| TurnChainError::TurnProofInvalid {
+                                        index: i,
+                                        reason: format!(
+                                            "direct-IR2 custom state-binding sub-proof leaf mint failed: {reason}"
+                                        ),
+                                    })?
+                                }
+                            }
                         }
                         None => {
                             crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment(
@@ -3311,15 +3504,31 @@ fn mint_rotated_turn_leaf(
                             })?
                         }
                     };
-                    crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
-                        &dual,
-                        &custom_leaf,
-                        config,
-                    )
-                    .map_err(|e| TurnChainError::TurnProofInvalid {
-                        index: i,
-                        reason: format!("state-binding custom-binding node failed: {e:?}"),
-                    })?
+                    match &board_window {
+                        Some(bw) => {
+                            crate::joint_turn_recursive::prove_custom_binding_node_state_and_board_segmented(
+                                &dual,
+                                &custom_leaf,
+                                config,
+                                bw.window_len(),
+                            )
+                            .map_err(|e| TurnChainError::TurnProofInvalid {
+                                index: i,
+                                reason: format!("board-window custom-binding node failed: {e:?}"),
+                            })?
+                        }
+                        None => {
+                            crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
+                                &dual,
+                                &custom_leaf,
+                                config,
+                            )
+                            .map_err(|e| TurnChainError::TurnProofInvalid {
+                                index: i,
+                                reason: format!("state-binding custom-binding node failed: {e:?}"),
+                            })?
+                        }
+                    }
                 }
                 Some(binding) => {
                     if !binding.is_well_formed() {
@@ -4043,6 +4252,126 @@ pub(crate) fn segment_combine_expose(
     cb.expose_as_public_output(&parent);
 }
 
+/// **THE BOARD-WINDOW MERGE** — [`segment_combine_expose`] plus the ONE cross-leaf rule of the
+/// two-leg fold: `left.OUT == right.IN`, lane by lane.
+///
+/// `window == 0` is BYTE-IDENTICAL to [`segment_combine_expose`] (every non-automatafl chain, and
+/// the tug/membership folds, are untouched — a hard requirement, since the ordered digest is
+/// shape-sensitive: `ordered_digest_combine_is_not_associative`). With `window == W > 0`, each
+/// child carries `[segment(SEG_WIDTH) ‖ IN(W) ‖ OUT(W)]`, and this:
+///
+/// ```text
+///   (3) BOARD CONTINUITY:  L.OUT[k] == R.IN[k]           k in 0..W        ← the seam
+///   (4) parent window:     [L.IN ‖ R.OUT]                                 ← carried to the root
+/// ```
+///
+/// At the leaf-pair nodes (3) IS `hseamPack ∧ hseamAutoX ∧ hseamAutoY` — the exact hypotheses
+/// `AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` takes, so a folded round's Leg-A `new` board
+/// IS `AutomataflRules.roundStep`'s outcome board for the moves Leg R adjudicated. One level up,
+/// the SAME rule is the inter-round carry (`A_i.OUT == R_{i+1}.IN`) — so the rounds form ONE
+/// trajectory, not K independent transitions. At the root, (4) is `[first.IN ‖ last.OUT]`: the
+/// genesis and final positions, in the clear (the automatafl pack is injective, so the 9-felt
+/// board half decodes to the actual board with no further circuit).
+///
+/// A disagreeing pair is a per-lane `connect` CONFLICT ⇒ the node is UNSAT ⇒ no root ⇒ the light
+/// client never receives a verifying artifact.
+/// **THE SEAM ITSELF** — `left.OUT[k] == right.IN[k]` for `k < window`, as `window` in-circuit
+/// `connect`s, and NOTHING else. Split out of [`segment_combine_expose_with_board_window`] so the
+/// one rule the whole two-leg design rests on can be exercised in a bare `CircuitBuilder` (no FRI,
+/// no sponge, no aggregation) — a broken seam must be a `WitnessConflict`, which is what "the node
+/// is UNSAT ⇒ no root ⇒ the light client never receives a verifying artifact" MEANS at the
+/// mechanism level.
+///
+/// The window lanes sit past the segment in each child's exposed claim: `IN` at
+/// `[SEG_WIDTH .. SEG_WIDTH+W)`, `OUT` at `[SEG_WIDTH+W .. SEG_WIDTH+2W)`.
+///
+/// `connect` in this builder is witness-slot ALIASING (a disjoint-set forest over expressions,
+/// one shared slot per class), so a disagreeing pair is not a soft constraint that a clever prover
+/// can satisfy some other way: the two lanes literally become one witness cell, and a witness that
+/// wants two different values in it does not exist.
+pub(crate) fn board_window_connects(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    l: &[p3_recursion::Target],
+    r: &[p3_recursion::Target],
+    window: usize,
+) {
+    for k in 0..window {
+        cb.connect(l[SEG_WIDTH + window + k], r[SEG_WIDTH + k]);
+    }
+}
+
+pub(crate) fn segment_combine_expose_with_board_window(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    left_apt: &[Vec<p3_recursion::Target>],
+    right_apt: &[Vec<p3_recursion::Target>],
+    left_idx: usize,
+    right_idx: usize,
+    window: usize,
+) {
+    if window == 0 {
+        segment_combine_expose(cb, left_apt, right_apt, left_idx, right_idx);
+        return;
+    }
+    let l = left_apt
+        .get(left_idx)
+        .expect("left segment instance present");
+    let r = right_apt
+        .get(right_idx)
+        .expect("right segment instance present");
+    debug_assert!(l.len() >= SEG_WIDTH + 2 * window && r.len() >= SEG_WIDTH + 2 * window);
+
+    // (1) STATE CONTINUITY — the cell tooth, unchanged.
+    for k in 0..SEG_ANCHOR_WIDTH {
+        cb.connect(l[SEG_LAST_NEW + k], r[SEG_FIRST_OLD + k]);
+    }
+    // (3) BOARD CONTINUITY — the board tooth.
+    board_window_connects(cb, l, r, window);
+
+    // (2) parent segment — identical math to the plain combine.
+    let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+    let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+    acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    let acc = seg_poseidon_commit(cb, &acc_inputs);
+    let mut parent = Vec::with_capacity(SEG_WIDTH + 2 * window);
+    parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
+    parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
+    parent.push(count);
+    parent.extend_from_slice(&acc);
+    // (4) parent window: the LEFT child's IN and the RIGHT child's OUT.
+    parent.extend_from_slice(&l[SEG_WIDTH..SEG_WIDTH + window]);
+    parent.extend_from_slice(&r[SEG_WIDTH + window..SEG_WIDTH + 2 * window]);
+    debug_assert_eq!(parent.len(), SEG_WIDTH + 2 * window);
+    cb.expose_as_public_output(&parent);
+}
+
+/// The board-window width a segment-carrying proof's exposed claim declares: `0` for a plain
+/// 25-lane segment, `W` for a `[segment ‖ IN(W) ‖ OUT(W)]` exposure.
+///
+/// Fail-closed: a lane count that is neither `SEG_WIDTH` nor `SEG_WIDTH + 2W` cannot be read as
+/// either shape and is an `Err` — never truncated into a plain segment (which would silently drop
+/// the seam) nor padded into a window.
+pub(crate) fn exposed_board_window(
+    proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+) -> Result<usize, String> {
+    let lanes = proof
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")
+        .map(|e| e.public_values.len())
+        .ok_or_else(|| "aggregation child carries no exposed claim table".to_string())?;
+    if lanes == SEG_WIDTH {
+        return Ok(0);
+    }
+    if lanes < SEG_WIDTH || (lanes - SEG_WIDTH) % 2 != 0 {
+        return Err(format!(
+            "aggregation child exposes {lanes} claim lane(s): neither a plain segment \
+             ({SEG_WIDTH}) nor a board-window segment ({SEG_WIDTH} + 2W) — refused fail-closed"
+        ));
+    }
+    Ok((lanes - SEG_WIDTH) / 2)
+}
+
 /// Build a [`RecursionInput::BatchStark`] from a BARE [`BatchStarkProof`] (the host mirror of
 /// [`RecursionOutput::into_recursion_input_pinned`], which is a method on the OWNED output). This is
 /// what lets the merge primitive run on a proof that arrived WITHOUT its prover-only
@@ -4130,13 +4459,39 @@ pub(crate) fn merge_two_segment_proofs(
                 .to_string(),
         })?;
 
+    // THE COMBINE MODE, derived from the children's own exposed shapes (never a caller flag a
+    // forging prover could clear): both plain ⇒ byte-identical to the deployed merge; both
+    // `[segment ‖ IN(W) ‖ OUT(W)]` ⇒ the board-window merge, which ALSO connects
+    // `left.OUT == right.IN`. A MIXED pair is refused fail-closed — silently degrading to the
+    // plain combine would drop the seam exactly where a forger wants it dropped.
+    let left_window =
+        exposed_board_window(left).map_err(|reason| TurnChainError::RecursionFailed {
+            reason: format!("left {reason}"),
+        })?;
+    let right_window =
+        exposed_board_window(right).map_err(|reason| TurnChainError::RecursionFailed {
+            reason: format!("right {reason}"),
+        })?;
+    if left_window != right_window {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "aggregation children declare different board-window widths ({left_window} vs \
+                 {right_window}) — a chain cannot mix board-window and plain segment turns; \
+                 refused fail-closed rather than folded without the seam"
+            ),
+        });
+    }
+    let window = left_window;
+
     let left_input = batch_to_pinned_input(left, left_commit);
     let right_input = batch_to_pinned_input(right, right_commit);
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<p3_recursion::Target>],
                        right_apt: &[Vec<p3_recursion::Target>]| {
-        segment_combine_expose(cb, left_apt, right_apt, left_idx, right_idx);
+        segment_combine_expose_with_board_window(
+            cb, left_apt, right_apt, left_idx, right_idx, window,
+        );
     };
 
     prove_recursion_aggregation_auto_with_expose(&left_input, &right_input, config, Some(&expose))
@@ -4336,13 +4691,14 @@ pub fn verify_turn_chain_recursive(
     proof: &WholeChainProof,
     expected_vk: &RecursionVk,
 ) -> Result<(), TurnChainError> {
-    verify_turn_chain_recursive_from_parts(
+    verify_turn_chain_recursive_from_parts_with_board_window(
         &proof.root.0,
         &proof.binding_proof,
         proof.genesis_root,
         proof.final_root,
         proof.chain_digest,
         proof.num_turns,
+        proof.board_window.as_ref(),
         expected_vk,
     )
 }
@@ -4375,6 +4731,44 @@ pub fn verify_turn_chain_recursive_from_parts(
     final_root: [BabyBear; SEG_ANCHOR_WIDTH],
     chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
     num_turns: usize,
+    expected_vk: &RecursionVk,
+) -> Result<(), TurnChainError> {
+    verify_turn_chain_recursive_from_parts_with_board_window(
+        root_proof,
+        binding_proof,
+        genesis_root,
+        final_root,
+        chain_digest,
+        num_turns,
+        None,
+        expected_vk,
+    )
+}
+
+/// **THE BOARD-WINDOW VERIFIER** — [`verify_turn_chain_recursive_from_parts`] with the two-leg
+/// fold's carried `[first.IN ‖ last.OUT]` claim.
+///
+/// The segment tooth compares the root's exposure for EXACT equality against the carried claim, so
+/// the shape is fail-closed in BOTH directions by construction:
+///
+///   * a board-window root (47 lanes at W = 11) presented with `board_window: None` builds a
+///     25-lane `expected` and is REFUSED — which is precisely why the deployed verifier could not
+///     silently ship lanes nobody checks;
+///   * a carried window against a plain 25-lane root is REFUSED too (the exposure is short).
+///
+/// When the window IS carried and matches, the light client has, in addition to the four chain
+/// claims: the state the chain STARTED from and the state it REACHED, as bound lanes of the same
+/// proof. For automatafl those are the packed genesis and final boards plus the automaton
+/// coordinate — and since the pack is injective, they decode to the actual positions in the clear.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_turn_chain_recursive_from_parts_with_board_window(
+    root_proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    binding_proof: &TurnChainBindingProof,
+    genesis_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    final_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
+    num_turns: usize,
+    board_window: Option<&BoardWindow>,
     expected_vk: &RecursionVk,
 ) -> Result<(), TurnChainError> {
     // (1) VK pin.
@@ -4450,6 +4844,23 @@ pub fn verify_turn_chain_recursive_from_parts(
     expected.extend_from_slice(&final_root);
     expected.push(BabyBear::new(num_turns as u32));
     expected.extend_from_slice(&chain_digest);
+    // (5) THE BOARD-WINDOW TOOTH. Appended to the SAME exact-equality comparison, so both
+    // shape mismatches (47-lane root / no carried window, and carried window / 25-lane root)
+    // fall out of it fail-closed rather than needing their own conditional.
+    if let Some(w) = board_window {
+        if w.first_in.len() != w.last_out.len() || w.first_in.is_empty() {
+            return Err(TurnChainError::ClaimedPublicsUnattested {
+                reason: format!(
+                    "carried board window is malformed ({} IN lanes, {} OUT lanes) — a window \
+                     whose halves disagree cannot be the fold of `left.OUT == right.IN`",
+                    w.first_in.len(),
+                    w.last_out.len()
+                ),
+            });
+        }
+        expected.extend_from_slice(&w.first_in);
+        expected.extend_from_slice(&w.last_out);
+    }
     if exposed != expected {
         return Err(TurnChainError::ClaimedPublicsUnattested {
             reason: format!(
@@ -4746,6 +5157,164 @@ mod streaming_fold_tests {
                 floor_pow2_window(input),
                 expect,
                 "floor_pow2_window({input})"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// THE BOARD-WINDOW SEAM CANARIES — the mechanism, at the constraint level.
+// ============================================================================
+//
+// A REAL two-leg n=11 fold is tens of minutes (two custom leaves of 1273 and 680 columns, each
+// with its own recursion wrap, plus the aggregation tree), so the end-to-end gate is `#[ignore]`d
+// in `dreggnet-game-board/tests/two_leg_board_window.rs`. What runs HERE is the mechanism the
+// whole design rests on, exercised at the level where it is decidable in milliseconds:
+// `board_window_connects` is witness-slot ALIASING, so a broken seam is a `WitnessConflict` — a
+// witness that does not exist, not a soft constraint a clever prover satisfies another way.
+//
+// SAY IT PLAINLY: these canaries pin the CONNECT. They do NOT show that a full deployed n=11 fold
+// of a forged mid fails; only
+// `two_leg_board_window.rs::a_mismatched_mid_does_not_fold_on_the_deployed_prover` settles that,
+// and it has not been run. (Note: `prove_11x11.rs::mismatched_mid_fold_probe_11x11` is NOT that
+// gate — it builds leaves on the Rust-AIR path, which declares no window, so this seam never
+// reaches it.)
+#[cfg(test)]
+mod board_window_seam_tests {
+    use super::*;
+    use p3_circuit::CircuitBuilder;
+
+    /// Build a bare circuit carrying two children's exposed claims as public inputs, wire ONLY the
+    /// board-window seam between them, and try to drive it with `left`/`right` lane values. `Ok`
+    /// iff a witness exists.
+    fn run_seam(
+        window: usize,
+        left: &[u32],
+        right: &[u32],
+    ) -> Result<(), p3_circuit::errors::CircuitError> {
+        let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
+        let l: Vec<p3_recursion::Target> = cb.alloc_public_inputs(left.len(), "left_claim");
+        let r: Vec<p3_recursion::Target> = cb.alloc_public_inputs(right.len(), "right_claim");
+        board_window_connects(&mut cb, &l, &r, window);
+        let circuit = cb.build().expect("the seam-only circuit builds");
+        let mut runner = circuit.runner();
+        let pubs: Vec<RecursionChallenge> = left
+            .iter()
+            .chain(right.iter())
+            .map(|v| RecursionChallenge::from(P3BabyBear::from_u64(*v as u64)))
+            .collect();
+        runner.set_public_inputs(&pubs)?;
+        runner.run().map(|_| ())
+    }
+
+    /// An honest automatafl leaf pair's claim lanes: `[segment(25) ‖ IN(11) ‖ OUT(11)]`, with the
+    /// window halves filled from `win_in` / `win_out`.
+    fn claim(seed: u32, win_in: &[u32], win_out: &[u32]) -> Vec<u32> {
+        let mut c: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| seed + k).collect();
+        c.extend_from_slice(win_in);
+        c.extend_from_slice(win_out);
+        c
+    }
+
+    /// The automatafl window width: `pack(9) ‖ auto(2)`.
+    const W: usize = 11;
+
+    /// **THE HONEST SEAM.** `R_i.OUT == A_i.IN` (the mid seam — `hseamPack ∧ hseamAutoX ∧
+    /// hseamAutoY`) has a witness. Non-vacuous: the two children's lanes are DISTINCT public
+    /// inputs (distinct expressions, distinct witness slots until the connect unions them), so the
+    /// `a == b` early-out in `connect` never fires and every one of the 11 lanes is a real union.
+    #[test]
+    fn an_honest_mid_seam_has_a_witness() {
+        let mid: Vec<u32> = (0..W as u32).map(|k| 7000 + 13 * k).collect();
+        let old: Vec<u32> = (0..W as u32).map(|k| 100 + k).collect();
+        let new: Vec<u32> = (0..W as u32).map(|k| 900 + k).collect();
+        // Leg R: old -> mid.   Leg A: mid -> new.
+        run_seam(W, &claim(1, &old, &mid), &claim(50, &mid, &new))
+            .expect("an honest R.OUT == A.IN seam must be satisfiable");
+    }
+
+    /// **THE LOAD-BEARING NEGATIVE — A MISMATCHED MID IS UNSAT.** Leg A is fed a board Leg R did
+    /// NOT produce. Every single lane of the window is load-bearing: forging ANY ONE of the 9 pack
+    /// lanes or either automaton lane is a `WitnessConflict`. This is the mechanism that
+    /// `mismatched_mid_diverges_board_roots_but_not_cell_continuity_11x11` records as ABSENT from
+    /// the deployed cell-continuity tooth.
+    #[test]
+    fn every_forged_mid_lane_is_a_witness_conflict() {
+        let mid: Vec<u32> = (0..W as u32).map(|k| 7000 + 13 * k).collect();
+        let old: Vec<u32> = (0..W as u32).map(|k| 100 + k).collect();
+        let new: Vec<u32> = (0..W as u32).map(|k| 900 + k).collect();
+
+        for lane in 0..W {
+            let mut forged = mid.clone();
+            forged[lane] += 1; // Leg A claims it consumed a DIFFERENT board / automaton.
+            let err = run_seam(W, &claim(1, &old, &mid), &claim(50, &forged, &new))
+                .expect_err("a forged mid lane must have NO witness");
+            assert!(
+                matches!(
+                    err,
+                    p3_circuit::errors::CircuitError::WitnessConflict { .. }
+                ),
+                "forged mid lane {lane} must be a per-lane connect CONFLICT (UNSAT node, no root, \
+                 no verifying artifact) — got {err:?}"
+            );
+        }
+    }
+
+    /// The SAME rule one level up is the INTER-ROUND CARRY: `A_i.OUT == R_{i+1}.IN`. A board
+    /// substituted between rounds is the same conflict — which is exactly why the design needs no
+    /// second mechanism for G2.
+    #[test]
+    fn a_substituted_board_between_rounds_is_a_witness_conflict() {
+        let b0: Vec<u32> = (0..W as u32).map(|k| 100 + k).collect();
+        let b1: Vec<u32> = (0..W as u32).map(|k| 400 + k).collect();
+        let b2: Vec<u32> = (0..W as u32).map(|k| 900 + k).collect();
+        run_seam(W, &claim(1, &b0, &b1), &claim(50, &b1, &b2))
+            .expect("the honest inter-round carry is satisfiable");
+
+        let mut substituted = b1.clone();
+        substituted[0] += 1;
+        let err = run_seam(W, &claim(1, &b0, &b1), &claim(50, &substituted, &b2))
+            .expect_err("a substituted inter-round board must have NO witness");
+        assert!(matches!(
+            err,
+            p3_circuit::errors::CircuitError::WitnessConflict { .. }
+        ));
+    }
+
+    /// `window == 0` connects NOTHING — the plain-segment path every non-automatafl chain runs is
+    /// untouched by this seam (the byte-identity requirement: the ordered digest is
+    /// shape-sensitive).
+    #[test]
+    fn a_zero_window_connects_nothing() {
+        let a: Vec<u32> = (0..SEG_WIDTH as u32).collect();
+        let b: Vec<u32> = (100..100 + SEG_WIDTH as u32).collect();
+        run_seam(0, &a, &b).expect("window 0 imposes no seam at all");
+    }
+
+    /// The lane arithmetic the whole design is stated in: a plain child exposes `SEG_WIDTH`, a
+    /// board-window child `SEG_WIDTH + 2W`, and the automatafl `W = 11` gives the 47/46 pair the
+    /// verifier and the leaf were extended to. Because the two windows are carried SIDE BY SIDE
+    /// (never one), a genuine windowed exposure is always `SEG_WIDTH` plus an EVEN number — which
+    /// is what lets [`exposed_board_window`] recover `W` from the lane count alone and refuse any
+    /// other shape instead of truncating it into a plain segment (silently dropping the seam) or
+    /// padding it into a window.
+    ///
+    /// NOT tested here: [`exposed_board_window`] itself, which reads a real `BatchStarkProof` and
+    /// so needs a prove.
+    #[test]
+    fn the_two_leg_lane_arithmetic_is_unambiguous() {
+        assert_eq!(SEG_WIDTH, 25);
+        assert_eq!(SEG_WIDTH + 2 * W, 47, "the board-window root exposure");
+        assert_eq!(
+            crate::custom_leaf_adapter::custom_board_window_claim_len(W),
+            46,
+            "the board-window leaf exposure"
+        );
+        for w in 1..64usize {
+            assert_eq!(
+                (SEG_WIDTH + 2 * w - SEG_WIDTH) % 2,
+                0,
+                "a windowed exposure is SEG_WIDTH plus an EVEN count at every W"
             );
         }
     }

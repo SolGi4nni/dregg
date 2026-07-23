@@ -147,6 +147,18 @@ pub struct AttestedHistory {
     /// How many finalized turns the attested history folds (`WholeChainProof.num_turns`). The light
     /// client learns ALL of them executed correctly without seeing any.
     pub num_turns: usize,
+    /// **THE ATTESTED APPLICATION STATE the history STARTED from**, when the chain carried a board
+    /// window (the two-leg automatafl fold): the first leaf's IN window, checked lane-for-lane
+    /// against the root's exposure. `None` for a chain that declared no window — and then this
+    /// says nothing, rather than a zero-padded lie.
+    ///
+    /// For automatafl these lanes are `pack(board) ‖ (ax, ay)`, and the pack is INJECTIVE
+    /// (`pack_injective_modp`), so a light client DECODES the opening position in the clear.
+    pub board_genesis: Option<Vec<BabyBear>>,
+    /// **THE ATTESTED APPLICATION STATE the history REACHED** — the last leaf's OUT window, same
+    /// terms. With the seam holding at every node, this is the endpoint of ONE trajectory, and a
+    /// verifier can check the win condition off-circuit by decoding it.
+    pub board_final: Option<Vec<BabyBear>>,
 }
 
 /// Why a light-client verification failed.
@@ -200,6 +212,8 @@ pub fn verify_history(
         final_root: agg.final_root,
         chain_digest: agg.chain_digest,
         num_turns: agg.num_turns,
+        board_genesis: agg.board_window.as_ref().map(|w| w.first_in.clone()),
+        board_final: agg.board_window.as_ref().map(|w| w.last_out.clone()),
     })
 }
 
@@ -229,6 +243,14 @@ pub fn verify_history_bytes(
         final_root: core::array::from_fn(|i| BabyBear::new(env.final_root[i])),
         chain_digest: core::array::from_fn(|i| BabyBear::new(env.chain_digest[i])),
         num_turns: env.num_turns as usize,
+        board_genesis: env
+            .board_window
+            .as_ref()
+            .map(|(i, _)| i.iter().map(|v| BabyBear::new(*v)).collect()),
+        board_final: env
+            .board_window
+            .as_ref()
+            .map(|(_, o)| o.iter().map(|v| BabyBear::new(*v)).collect()),
     })
 }
 

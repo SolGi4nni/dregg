@@ -326,7 +326,141 @@ board. So the whole-turn (resolve∘step) theorem is inherently the CLEAN / comp
 what `turn_sat_imp_roundStep` states. The clash outcome board is `roundStep_pair_outcomeBoard`'s `bR`
 branch, already proven, needing no seam. -/
 
-/-! ## §4 — Axiom hygiene. -/
+/-! ## §4 — LEG A's `auto_out`: the published NEW automaton coordinate IS the post-step position.
+
+`AutomataflCommitRefine.astep_newAuto_pin_of_sat` transports the two appended PIs down to the COLUMN
+expression `ax + m·ox` / `ay + m·oy` — the degree-2 mask-gated pin. This section discharges `m`
+against the reference guard (via `astep_sat_imp_automatonStepN`, whose `.automaton` clause is
+literally `if m = 1 then (ax+ox, ay+oy) else (ax, ay)`), giving the statement the fold seam
+`A_i.OUT == R_{i+1}.IN` actually needs: the published `auto_out` IS
+`(automatonStepCfg ⟨.column⟩ (decoded old board)).automaton`, UNCONDITIONALLY — on the moved branch
+AND on the BLOCKED branch (`m = 0`, nonzero offset), where the reference automaton stays put.
+
+WHY THIS IS THE STATEMENT AND NOT `ax + ox`: the first cut of the new-auto pin was degree-1
+(`nax = ax + ox`), which agrees with the reference on ONE branch of its guard, so the strongest
+transport available over it was the column-level `PI = ax + ox`. Lifting THAT to the semantic
+statement below would have required a reachability lemma about the reference — that a nonzero sensed
+offset always targets an in-bounds vacuum cell, so `m = 1` whenever the offset is nonzero. The mask
+factor discharges the case split at the GATE instead, so the transport is stated against the full
+semantics with no such lemma. (The lemma is true of the reference — see
+`AutomataflCommit.newAutoCoordCommitConstraints`'s scope note — so the degree-1 pin was not refusing
+reachable honest trajectories; it simply could not carry this statement.) -/
+
+section AutoOut
+open Dregg2.Circuit.Emit.AutomataflStepEmit (automataflStepDescN AUTO_PI_BASE offXCol offYCol maskCol)
+open Dregg2.Circuit.Emit.AutomataflStepEmit.NGen (AX AY A_STEP_BASE A_CHOOSE_BASE COORD_RBITS)
+open Dregg2.Circuit.Emit.AutomataflStepRefine (decodeOff decodeOff_modEq)
+open Dregg2.Circuit.Emit.AutomataflStepStep
+  (movedPartsN_of_sat tibN_of_sat astep_sat_imp_automatonStepN)
+open Dregg2.Circuit.Emit.AutomataflStepCoord (coordStepN_of_sat)
+open Dregg2.Circuit.Emit.AutomataflStepChoose (offsetN_of_sat)
+open Dregg2.Circuit.Emit.AutomataflCommitRefine (astep_newAuto_pin_of_sat)
+
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+
+/-- The reference automaton's post-step X coordinate, as a CLOSED FORM in the very columns the
+new-auto pin multiplies: `ax + m·decodeOff(ox)`. Both branches of `astep_sat_imp_automatonStepN`'s
+`.automaton` clause collapse into it — `m = 1` gives `ax + ox` (the `.toNat` is faithful because
+`tib = 1` forces the target non-negative), `m = 0` gives `ax` (faithful because the witnessed
+coordinate is a genuine board index). -/
+theorem autoOutX_closed_form (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) < 2013265921)
+    (hn99 : (n : ℤ) ≤ 99) (hwin : (2 : ℤ) ^ (COORD_RBITS n + 1) ≤ 2013265921)
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (hlen : 1 < t.rows.length) :
+    (((automatonStep (boardDecodeN n (envAt t 0))).automaton.x : Nat) : ℤ)
+      = (envAt t 0).loc (AX n)
+        + (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n)
+          * decodeOff ((envAt t 0).loc (A_CHOOSE_BASE n + 55)) := by
+  have hi : (0 : Nat) + 1 < t.rows.length := by omega
+  obtain ⟨-, hauto, -⟩ := astep_sat_imp_automatonStepN n hn1 hn hn99 hwin hsat hc 0 hi
+  obtain ⟨⟨vx, hvxLt, hvxEq⟩, -⟩ := coordStepN_of_sat n hn1 hn hwin hsat hc 0 hi
+  obtain ⟨hmB, hmIff⟩ := movedPartsN_of_sat n hn1 hn hn99 hwin hsat hc 0 hi
+  obtain ⟨-, htibIff⟩ := tibN_of_sat n hn1 hn hwin (by omega) hsat hc 0 hi
+  rw [hauto]
+  by_cases hm : (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n) = 1
+  · obtain ⟨-, htib1, -⟩ := hmIff.mp hm
+    obtain ⟨hx0, -, -, -⟩ := htibIff.mp htib1
+    rw [if_pos hm, hm, one_mul]
+    exact Int.toNat_of_nonneg hx0
+  · have hm0 : (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n) = 0 := hmB.resolve_right hm
+    rw [if_neg hm, hm0, zero_mul, add_zero, hvxEq]
+    simp
+
+/-- The Y twin of `autoOutX_closed_form`. -/
+theorem autoOutY_closed_form (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) < 2013265921)
+    (hn99 : (n : ℤ) ≤ 99) (hwin : (2 : ℤ) ^ (COORD_RBITS n + 1) ≤ 2013265921)
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (hlen : 1 < t.rows.length) :
+    (((automatonStep (boardDecodeN n (envAt t 0))).automaton.y : Nat) : ℤ)
+      = (envAt t 0).loc (AY n)
+        + (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n)
+          * decodeOff ((envAt t 0).loc (A_CHOOSE_BASE n + 56)) := by
+  have hi : (0 : Nat) + 1 < t.rows.length := by omega
+  obtain ⟨-, hauto, -⟩ := astep_sat_imp_automatonStepN n hn1 hn hn99 hwin hsat hc 0 hi
+  obtain ⟨-, ⟨vy, hvyLt, hvyEq⟩⟩ := coordStepN_of_sat n hn1 hn hwin hsat hc 0 hi
+  obtain ⟨hmB, hmIff⟩ := movedPartsN_of_sat n hn1 hn hn99 hwin hsat hc 0 hi
+  obtain ⟨-, htibIff⟩ := tibN_of_sat n hn1 hn hwin (by omega) hsat hc 0 hi
+  rw [hauto]
+  by_cases hm : (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n) = 1
+  · obtain ⟨-, htib1, -⟩ := hmIff.mp hm
+    obtain ⟨-, -, hy0, -⟩ := htibIff.mp htib1
+    rw [if_pos hm, hm, one_mul]
+    exact Int.toNat_of_nonneg hy0
+  · have hm0 : (envAt t 0).loc (A_STEP_BASE n + 34 + 2 * n) = 0 := hmB.resolve_right hm
+    rw [if_neg hm, hm0, zero_mul, add_zero, hvyEq]
+    simp
+
+/-- **`astep_newAuto_pi_of_sat` — LEG A's `auto_out`, AT THE FULL SEMANTICS.** On a satisfying,
+canonical trace of `automataflStepDescN n`, the published `PI[AUTO_PI_BASE+2]` / `PI[+3]` ARE (mod
+`p`) the coordinates of `(automatonStepCfg ⟨.column⟩ (boardDecodeN n …)).automaton` — the reference
+automaton's ACTUAL post-step position, on the moved branch and on the BLOCKED branch alike.
+
+Engine: the emitted degree-2 mask pin `nax − ax − m·ox == 0` + the boundary `.piBinding`
+(`AutomataflCommitRefine.astep_newAuto_pin_of_sat`), composed with the step capstone's
+`.automaton = if m = 1 then (ax+ox, ay+oy) else (ax, ay)`. NO hash, NO chip-table soundness, NO
+un-emitted hypothesis. This is the OUT-side mirror of `seamAuto_of_pi`'s IN-side ingredient: it is
+what makes `A_i.OUT == R_{i+1}.IN` a sound AND complete fold connection. -/
+theorem astep_newAuto_pi_of_sat (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) < 2013265921)
+    (hn99 : (n : ℤ) ≤ 99) (hwin : (2 : ℤ) ^ (COORD_RBITS n + 1) ≤ 2013265921)
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (hlen : 1 < t.rows.length) :
+    t.pub (AUTO_PI_BASE n + 2)
+        ≡ (((automatonStepCfg ⟨.column⟩ (boardDecodeN n (envAt t 0))).automaton.x : Nat) : ℤ)
+          [ZMOD 2013265921]
+    ∧ t.pub (AUTO_PI_BASE n + 3)
+        ≡ (((automatonStepCfg ⟨.column⟩ (boardDecodeN n (envAt t 0))).automaton.y : Nat) : ℤ)
+          [ZMOD 2013265921] := by
+  have hi : (0 : Nat) + 1 < t.rows.length := by omega
+  have hbridge : automatonStepCfg ⟨.column⟩ (boardDecodeN n (envAt t 0))
+      = automatonStep (boardDecodeN n (envAt t 0)) :=
+    automatonStepCfg_column_eq ⟨.column⟩ (boardDecodeN n (envAt t 0)) rfl rfl
+  obtain ⟨hpinX, hpinY⟩ := astep_newAuto_pin_of_sat hsat hlen
+  simp only [maskCol, offXCol, offYCol] at hpinX hpinY
+  obtain ⟨hoxtri, hoytri⟩ := offsetN_of_sat hsat hc 0 hi
+  rw [hbridge, autoOutX_closed_form n hn1 hn hn99 hwin hsat hc hlen,
+    autoOutY_closed_form n hn1 hn hn99 hwin hsat hc hlen]
+  exact ⟨hpinX.trans (Int.ModEq.add_left _ (Int.ModEq.mul_left _ (decodeOff_modEq hoxtri))),
+         hpinY.trans (Int.ModEq.add_left _ (Int.ModEq.mul_left _ (decodeOff_modEq hoytri)))⟩
+
+/-- **THE MASK-BRANCH CANARY (Lean side).** When the move mask is `0` the published `auto_out` is
+the OLD coordinate — the branch the degree-1 `nax = ax + ox` pin pinned to `ax + ox` instead. Stated
+as a consequence of the mask pin alone, so it bites on the emitted object. Note the scope: this is a
+fact about the GATE on the `m = 0` branch; under the reference dynamics a satisfying trace with
+`m = 0` also has `ox = oy = 0` (see `AutomataflCommit.newAutoCoordCommitConstraints`'s scope note),
+so this does not exhibit a trajectory the degree-1 pin refused. -/
+theorem astep_newAuto_blocked_is_old
+    (n : Nat) (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hlen : 1 < t.rows.length)
+    (hblocked : (envAt t 0).loc (maskCol n) = 0) :
+    t.pub (AUTO_PI_BASE n + 2) ≡ (envAt t 0).loc (AX n) [ZMOD 2013265921]
+    ∧ t.pub (AUTO_PI_BASE n + 3) ≡ (envAt t 0).loc (AY n) [ZMOD 2013265921] := by
+  obtain ⟨hpinX, hpinY⟩ := astep_newAuto_pin_of_sat hsat hlen
+  rw [hblocked, zero_mul, add_zero] at hpinX hpinY
+  exact ⟨hpinX, hpinY⟩
+
+end AutoOut
+
+/-! ## §5 — Axiom hygiene. -/
 
 #assert_axioms resolveMoves_size
 #assert_axioms resolveMoves_automaton
@@ -337,5 +471,9 @@ branch, already proven, needing no seam. -/
 #assert_axioms seamAuto_of_pi
 #assert_axioms seamCell_of_cMidV4_pack
 #assert_axioms turn_sat_imp_roundStep_pi
+#assert_axioms autoOutX_closed_form
+#assert_axioms autoOutY_closed_form
+#assert_axioms astep_newAuto_pi_of_sat
+#assert_axioms astep_newAuto_blocked_is_old
 
 end Dregg2.Circuit.Emit.AutomataflTurnCapstone

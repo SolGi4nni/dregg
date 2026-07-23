@@ -141,10 +141,7 @@ fn a_fabricated_or_replayed_card_has_no_leaf() {
 /// public inputs as *moves* — only the transition is attested.
 #[test]
 fn a_played_automatafl_match_lowers_to_d1_leaves() {
-    let m = AutomataflMatch {
-        start: demo_board(),
-        turns: 2,
-    };
+    let m = AutomataflMatch::automaton_only(demo_board(), 2);
     let boards = m.boards();
     assert_eq!(boards.len(), 3, "start + 2 stepped boards");
     assert_eq!(
@@ -165,12 +162,9 @@ fn a_played_automatafl_match_lowers_to_d1_leaves() {
     }
 
     assert!(matches!(
-        AutomataflMatch {
-            start: demo_board(),
-            turns: 0
-        }
-        .leaves()
-        .err(),
+        AutomataflMatch::automaton_only(demo_board(), 0)
+            .leaves()
+            .err(),
         Some(MatchError::Empty)
     ));
 }
@@ -183,10 +177,7 @@ fn a_played_automatafl_match_lowers_to_d1_leaves() {
 /// accept over these leaves is the `end_to_end.rs` `#[ignore]` gate.
 #[test]
 fn n11_stock_match_lowers_through_the_lean_descriptor() {
-    let m = AutomataflMatch {
-        start: stock_two_player(),
-        turns: 3,
-    };
+    let m = AutomataflMatch::automaton_only(stock_two_player(), 3);
     let leaves = m
         .leaves()
         .expect("the n=11 stock match lowers to D1 leaves");
@@ -218,12 +209,9 @@ fn n11_stock_match_lowers_through_the_lean_descriptor() {
 /// leaves correctly FALL BACK to the Rust AIR (blocked-not-faked: no descriptor source, 32 PIs).
 #[test]
 fn n5_match_falls_back_to_rust_air_no_descriptor() {
-    let leaves = AutomataflMatch {
-        start: demo_board(),
-        turns: 1,
-    }
-    .leaves()
-    .expect("n=5 lowers via the Rust AIR fallback");
+    let leaves = AutomataflMatch::automaton_only(demo_board(), 1)
+        .leaves()
+        .expect("n=5 lowers via the Rust AIR fallback");
     assert!(
         leaves[0].descriptor_state_leaf.is_none(),
         "n=5 has no Lean descriptor; the leaf must fall back (no descriptor source)"
