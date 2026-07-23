@@ -217,7 +217,7 @@ impl CardWorld {
         let effects = vec![
             Effect::SetField {
                 cell: cell_id,
-                index: self.slot,
+                index: self.slot as u64,
                 value: pack_u64(value),
             },
             Effect::IncrementNonce { cell: cell_id },
@@ -1861,7 +1861,7 @@ mod poll_forgery_tests {
         let forge2 = vec![
             Effect::SetField {
                 cell: poll_cell,
-                index: POLL_TALLY_BASE + 1,
+                index: (POLL_TALLY_BASE + 1) as u64,
                 value: fe_be(m),
             },
             Effect::IncrementNonce { cell: poll_cell },
