@@ -50,6 +50,11 @@ dregg-circuit = { path = "../circuit" }
 # `dregg-turn/prover`; named directly so the node can hold the fold's types.
 dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-commit = { path = "../commit" }
+# The realm/instance/identity/catalog MUD substrate (realm-model, §9.4/§9.5/§9.2).
+# The node HOSTS a durable `RealmWorld` via `realm_service`: realm-turn admission
+# routes through realm-model's gate, and realm state is durable across a restart
+# on the keystone receipt/turn-chain discipline (persist REALM_LOG replay).
+realm-model = { path = "../realm-model" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-coord = { path = "../coord" }
 dregg-net = { path = "../net" }

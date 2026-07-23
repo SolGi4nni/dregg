@@ -203,6 +203,12 @@ pub struct NodeState {
     /// inline (sound, sub-ms) and hand full STARK proving to this pool instead
     /// of running it under the global state-write lock.
     prove_pool: Arc<RwLock<Option<crate::prove_pool::ProvePool>>>,
+    /// The node-hosted, restart-durable REALM substrate (`realm-model` graduated
+    /// into the running node). Realm/instance turns are admitted through
+    /// realm-model's gate and persisted to the durable `REALM_LOG`, reloaded on
+    /// boot so a realm created through the node survives a restart. See
+    /// [`crate::realm_service`].
+    realms: Arc<RwLock<crate::realm_service::NodeRealms>>,
 }
 
 /// One fixed-size, cursor-only page of the public append-only faithful note
@@ -1193,6 +1199,13 @@ impl NodeState {
              load. Attested roots will not finalize until federation keys are set."
         );
 
+        // Restore the node-hosted realm substrate from the durable REALM_LOG
+        // (realm-model graduated into the node): replay the log through a fresh
+        // RealmWorld so a realm/instance/identity created through the node — and
+        // its receipt-chain head — survive this restart. Fail-closed on a corrupt
+        // log (a node must not serve a realm head it cannot recover durably).
+        let realms = crate::realm_service::NodeRealms::restore(Arc::clone(&store))?;
+
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
                 cclerk,
@@ -1284,6 +1297,7 @@ impl NodeState {
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
             prove_pool: Arc::new(RwLock::new(None)),
+            realms: Arc::new(RwLock::new(realms)),
         })
     }
 
@@ -1394,6 +1408,11 @@ impl NodeState {
         let note_tree = restore_and_verify_faithful_note_tree(&store, &cclerk)?;
         let program_registry = crate::program_registry_persistence::load_program_registry(&store)?;
 
+        // Restore the node-hosted realm substrate from the durable REALM_LOG (see
+        // `new_with_key_file`): realm/instance/identity + the realm receipt-chain
+        // head survive this restart. Fail-closed on a corrupt durable log.
+        let realms = crate::realm_service::NodeRealms::restore(Arc::clone(&store))?;
+
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
                 cclerk,
@@ -1485,7 +1504,15 @@ impl NodeState {
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
             prove_pool: Arc::new(RwLock::new(None)),
+            realms: Arc::new(RwLock::new(realms)),
         })
+    }
+
+    /// Read-only handle to the node-hosted realm substrate (`realm-model`
+    /// graduated into the node). Realm/instance turns admitted through this route
+    /// via realm-model's gate and are durable across a restart.
+    pub fn realms(&self) -> Arc<RwLock<crate::realm_service::NodeRealms>> {
+        Arc::clone(&self.realms)
     }
 
     /// Acquire a read lock on the inner state.
@@ -3592,6 +3619,138 @@ mod witnessed_receipt_persistence_tests {
         s.cclerk
             .verify_own_chain()
             .expect("every reloaded agent-scoped receipt chain verifies");
+    }
+
+    /// THE REALM-SUBSTRATE RESTART CANARY (realm-model graduated into the node).
+    ///
+    /// A realm/instance/identity created THROUGH THE NODE — every turn admitted
+    /// through realm-model's own gate (`RealmWorld::admit` / `settle_instance`),
+    /// not ad-hoc JS — is persisted to the durable `REALM_LOG` and reloaded on
+    /// boot. This drives a real `NodeState` restart: build a realm, settle a
+    /// result into it, record the realm receipt-chain head, DROP the node, reopen
+    /// the SAME data dir, and assert the realm survived (same head, same hoard,
+    /// surface still resolves, catalog still committed). It ALSO shows the deployed
+    /// refusal: a turn citing an UNLISTED `ruleset_root` is refused by realm-model's
+    /// gate on the node path and persists nothing.
+    #[tokio::test]
+    async fn realm_created_through_node_survives_restart_and_refuses_false_catalog() {
+        use realm_model::identity::{Surface, SurfaceRef};
+        use realm_model::realm::Membrane;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let key_bytes = [21u8; 32];
+        let law: realm_model::RulesetRoot = *blake3::hash(b"descent-v1").as_bytes();
+        let rogue: realm_model::RulesetRoot = *blake3::hash(b"rogue-law-v1").as_bytes();
+        let actor = SurfaceRef::new(Surface::Discord, "p1#0001");
+
+        let pre_head;
+        let pre_count;
+        let realm_id;
+        {
+            let state =
+                NodeState::with_cclerk(tmp.path(), vec![], key_bytes).expect("create node state");
+            let realms = state.realms();
+            let mut r = realms.write().await;
+
+            // Build a realm THROUGH THE NODE (each op durable + gate-routed).
+            r.mint_identity("player-one", "seed-p1").expect("mint");
+            r.bind_surface("seed-p1", &actor).expect("bind");
+            let realm = r
+                .create_realm("the-burrow", Membrane::PinAtBirth)
+                .expect("realm");
+            realm_id = realm.id;
+            r.list_ruleset("the-burrow", law).expect("list");
+
+            let inst_a = r.open_instance("the-burrow", "day-1").expect("open a");
+            assert_eq!(inst_a.parent_pin, 0, "instance A pins parent hoard 0");
+            r.play(
+                &actor,
+                inst_a.id,
+                law,
+                realm_model::instance::field::RESULT,
+                40,
+            )
+            .expect("play a");
+            r.settle(&actor, inst_a.id, law).expect("settle a");
+            assert_eq!(r.world().realm_hoard(&realm_id), 40, "realm accrued 40");
+            assert_eq!(r.world().realm_epoch(&realm_id), 1);
+
+            // ── the DEPLOYED refusal: an unlisted ruleset_root is refused by
+            //    realm-model's gate on the node path, and persists nothing.
+            let inst_b = r.open_instance("the-burrow", "day-2").expect("open b");
+            let log_len_before_bad = r.durable_log_len();
+            let bad = r.admit_turn(
+                &actor,
+                inst_b.id,
+                rogue,
+                vec![dregg_turn::action::Effect::SetField {
+                    cell: inst_b.id,
+                    index: realm_model::instance::field::RESULT as u64,
+                    value: realm_model::pack_u64(1),
+                }],
+            );
+            assert!(
+                matches!(
+                    bad,
+                    Err(crate::realm_service::RealmError::Refused(
+                        realm_model::Refused::RulesetNotInCatalog { .. }
+                    ))
+                ),
+                "unlisted ruleset_root refused by the deployed realm gate; got {bad:?}"
+            );
+            assert_eq!(
+                r.durable_log_len(),
+                log_len_before_bad,
+                "a refused realm turn persists NOTHING"
+            );
+            {
+                let s = state.read().await;
+                assert_eq!(
+                    s.store.realm_log_len().expect("durable realm len"),
+                    log_len_before_bad,
+                    "the durable REALM_LOG did not grow on the refused turn"
+                );
+            }
+
+            pre_head = r.receipt_head().expect("a realm receipt head exists");
+            pre_count = r.receipt_count();
+        }
+
+        // ── RESTART ── reopen the SAME data dir (crash recovery).
+        let restored =
+            NodeState::with_cclerk(tmp.path(), vec![], key_bytes).expect("restore node state");
+        let realms = restored.realms();
+        let r = realms.read().await;
+
+        // THE CANARY: the realm survived the restart on the durable log.
+        assert_eq!(
+            r.receipt_head(),
+            Some(pre_head),
+            "realm receipt-chain head survives the node restart (durable REALM_LOG replay)"
+        );
+        assert_eq!(
+            r.receipt_count(),
+            pre_count,
+            "every admitted realm turn reloaded"
+        );
+        assert_eq!(
+            r.world().realm_hoard(&realm_id),
+            40,
+            "the persistent realm's durable hoard survived the restart"
+        );
+        assert_eq!(r.world().realm_epoch(&realm_id), 1);
+        // The canonical identity still resolves from its surface across the reboot.
+        let resolved = r
+            .world()
+            .resolve_surface(&actor)
+            .expect("surface resolves to canonical id after restart");
+        assert_eq!(resolved.label, "player-one");
+        // The committed law survived; the rogue root is still not law.
+        assert!(r.world().is_listed(&realm_id, &law), "law still committed");
+        assert!(
+            !r.world().is_listed(&realm_id, &rogue),
+            "rogue root still refused"
+        );
     }
 
     #[test]

@@ -406,6 +406,9 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::WITNESSED_RECEIPTS)?;
             // Durable receipt chain (the served /api/receipts* log + MMR source).
             let _ = write_txn.open_table(tables::RECEIPT_CHAIN)?;
+            // Durable realm-substrate op log (realm-model persistence, replayed
+            // on boot to reconstruct realm/instance/identity/catalog + head).
+            let _ = write_txn.open_table(tables::REALM_LOG)?;
             // Durable commit log + index tables (crash-consistency).
             let _ = write_txn.open_table(tables::COMMIT_LOG)?;
             let _ = write_txn.open_table(tables::IDX_RECEIPT_BY_HASH)?;
@@ -611,6 +614,119 @@ impl PersistentStore {
             ))),
             (count, None) => Err(StoreError::Integrity(format!(
                 "receipt log reports {count} entries but has no last key"
+            ))),
+        }
+    }
+
+    // =========================================================================
+    // Durable REALM-substrate op log (realm-model persistence)
+    // =========================================================================
+    //
+    // The durable half of the MUD-SUBSTRATE receipt/turn-chain dependency: an
+    // ordered, dense, gap-checked log of admitted realm-model operations. It rides
+    // the EXACT density discipline of the receipt chain above — a `RealmWorld` is
+    // reconstructed by replaying this log through a fresh world on boot, so a
+    // realm/instance/identity/catalog created through the node survives a restart
+    // with the identical receipt-chain head.
+
+    /// Durably append the caller-serialized `RealmOp` at its dense log index. An
+    /// existing byte-identical entry is an idempotent success; an overwrite, gap,
+    /// or pre-existing gap is an integrity error. Same shape as
+    /// [`Self::append_receipt_chain_entry`], minus the receipt-index side effect.
+    pub fn append_realm_log_entry(&self, index: u64, encoded: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(tables::REALM_LOG)?;
+            let expected = {
+                let count = table.len()?;
+                match (count, table.last()?) {
+                    (0, None) => 0,
+                    (0, Some((key, _))) => {
+                        return Err(StoreError::Integrity(format!(
+                            "realm log has key {} but reports zero entries",
+                            key.value()
+                        )));
+                    }
+                    (count, Some((key, _))) if key.value() == count - 1 => count,
+                    (count, Some((key, _))) => {
+                        return Err(StoreError::Integrity(format!(
+                            "realm log is not dense: {count} entries but highest index is {}",
+                            key.value()
+                        )));
+                    }
+                    (count, None) => {
+                        return Err(StoreError::Integrity(format!(
+                            "realm log reports {count} entries but has no last key"
+                        )));
+                    }
+                }
+            };
+            if index < expected {
+                let existing = table.get(index)?.ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "realm log index {index} is below length {expected} but missing"
+                    ))
+                })?;
+                if existing.value() != encoded {
+                    return Err(StoreError::Integrity(format!(
+                        "realm log index {index} already contains different bytes"
+                    )));
+                }
+                return Ok(());
+            }
+            if index != expected {
+                return Err(StoreError::Integrity(format!(
+                    "realm log append would create a gap: next index {expected}, supplied {index}"
+                )));
+            }
+            table.insert(index, encoded)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load the complete durable realm op log. Any non-dense key is an integrity
+    /// error: boot must not turn a corrupt tail into an accepted rollback to an
+    /// earlier realm head.
+    pub fn load_realm_log(&self) -> Result<Vec<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::REALM_LOG)?;
+        let mut out = Vec::new();
+        let mut expected: u64 = 0;
+        for entry in table.iter()? {
+            let (key, value) =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            if key.value() != expected {
+                return Err(StoreError::Integrity(format!(
+                    "realm log gap: expected index {expected}, found {}",
+                    key.value()
+                )));
+            }
+            out.push(value.value().to_vec());
+            expected += 1;
+        }
+        Ok(out)
+    }
+
+    /// Length of the durable realm op log. A gap is an integrity error, not a
+    /// shorter accepted history.
+    pub fn realm_log_len(&self) -> Result<u64> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::REALM_LOG)?;
+        let count = table.len()?;
+        match (count, table.last()?) {
+            (0, None) => Ok(0),
+            (0, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "realm log has key {} but reports zero entries",
+                key.value()
+            ))),
+            (count, Some((key, _))) if key.value() == count - 1 => Ok(count),
+            (count, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "realm log is not dense: {count} entries but highest index is {}",
+                key.value()
+            ))),
+            (count, None) => Err(StoreError::Integrity(format!(
+                "realm log reports {count} entries but has no last key"
             ))),
         }
     }

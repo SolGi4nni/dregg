@@ -266,7 +266,7 @@ fn pin_at_birth_stays_deterministic_and_scoped() {
         ruleset_root: law,
         effects: vec![Effect::SetField {
             cell: realm.id,
-            index: realm_model::realm::field::HOARD,
+            index: realm_model::realm::field::HOARD as u64,
             value: pack_u64(1),
         }],
     });

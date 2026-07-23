@@ -218,7 +218,7 @@ fn catalog_is_committed_law() {
         ruleset_root: root,
         effects: vec![Effect::SetField {
             cell: inst.id,
-            index: realm_model::instance::field::RESULT,
+            index: realm_model::instance::field::RESULT as u64,
             value: pack_u64(1),
         }],
     };
@@ -287,7 +287,7 @@ fn instance_scope_membrane_holds() {
         ruleset_root: law,
         effects: vec![Effect::SetField {
             cell: realm.id,
-            index: realm_model::realm::field::HOARD,
+            index: realm_model::realm::field::HOARD as u64,
             value: pack_u64(1_000_000),
         }],
     });

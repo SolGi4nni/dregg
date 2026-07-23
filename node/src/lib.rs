@@ -77,6 +77,7 @@ pub mod private_dependent_turns;
 mod program_registry_persistence;
 pub mod promise_resolutions;
 pub mod prove_pool;
+pub mod realm_service;
 pub mod relay_dispute;
 pub mod relay_service;
 pub mod relay_slash_intake;

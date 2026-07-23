@@ -23,20 +23,10 @@ blake3 = "1"
 # turn/ hybrid signer perimeter exactly — a succession is signed by BOTH halves.
 ed25519-dalek = { version = "2", features = ["hazmat"] }
 
-# Standalone workspace: this crate is NOT a member of the root breadstuffs
-# workspace (the main loop adds it after). An empty `[workspace]` table makes
-# realm-model its own workspace root, exactly like dregg-tui — its path-deps
-# (dregg-cell / dregg-turn / dregg-types) ARE root-workspace members, so THEIR
-# `version.workspace = true` inheritance still resolves against the root.
-#
-# The path-dep crates' `p3-* = { workspace = true }` inherit from the ROOT
-# workspace (they are root members), so no p3 pins are needed here. But a
-# `[patch]` is scoped to the workspace being BUILT — it is NOT inherited from a
-# path-dep's workspace — so the one patch the dregg-turn graph requires
-# (dregg-hints needs `ark-serialize`'s `serde_with` feature, which lives only on
-# the emberian/algebra fork) must be repeated here, exactly as dregg-tui does.
-[workspace]
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+# GRADUATED: realm-model is now a member of the root breadstuffs workspace (added
+# to the root `[workspace].members` + `default-members`). It is wired into the
+# running node via `dregg-node`'s `realm_service` (durable realm/instance/catalog
+# on the keystone receipt/turn chain). Its path-deps (dregg-cell / dregg-turn /
+# dregg-types) are root members, and the one `[patch]` the dregg-turn graph needs
+# (ark-serialize's serde_with feature from emberian/algebra) is inherited from the
+# root workspace, so no per-crate `[workspace]`/`[patch]` is needed here anymore.

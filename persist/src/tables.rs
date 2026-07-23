@@ -283,6 +283,25 @@ pub const WITNESSED_RECEIPTS: TableDefinition<&[u8; 32], &[u8]> =
 /// excuse to silently roll the accepted head back to a prefix.
 pub const RECEIPT_CHAIN: TableDefinition<u64, &[u8]> = TableDefinition::new("receipt_chain");
 
+/// Durable REALM-substrate turn/operation log — the ordered, hash-linked history
+/// of admitted `realm-model` operations (`realm-model/`, the §9.4/§9.5/§9.2 MUD
+/// substrate) the running node hosts via `dregg-node`'s `realm_service`.
+///
+/// Key: dense op index (0-based ordinal). Value: caller-serialized `RealmOp`
+/// bytes (postcard). Byte-oriented (like [`RECEIPT_CHAIN`]) so this crate stays
+/// independent of `realm-model`/`dregg-turn`.
+///
+/// This is the durable half of the dependency `docs/design/MUD-SUBSTRATE.md`
+/// §"the receipt-chain dependency" named as not-built: a `RealmWorld` chains
+/// realm receipts (`previous_receipt_hash`) in-memory only, so a realm's history
+/// survives only while one process holds it. Replaying this dense log on boot
+/// through a fresh `RealmWorld` reconstructs the identical realm/instance/identity
+/// state AND the identical receipt-chain head — realm persistence across a node
+/// restart, riding the exact density discipline of [`RECEIPT_CHAIN`]. Load
+/// requires the complete dense sequence from index 0; any gap is an integrity
+/// error, never an excuse to roll the accepted realm head back to a prefix.
+pub const REALM_LOG: TableDefinition<u64, &[u8]> = TableDefinition::new("realm_log");
+
 // ─── Durable Commit Log + Index (crash-consistency) ─────────────────────────
 //
 // The commit log is the authoritative, append-only record of finalized turns

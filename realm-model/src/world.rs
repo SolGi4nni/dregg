@@ -524,7 +524,9 @@ impl RealmWorld {
                     if !in_scope {
                         return Err(Refused::OutsideInstanceScope { effect_cell: *cell });
                     }
-                    writes.push((*cell, *index, *value));
+                    // `Effect::SetField.index` is a `u64` (the turn effect ABI);
+                    // cell-state field slots are `usize`. Bridge here.
+                    writes.push((*cell, *index as usize, *value));
                 }
                 _ => return Err(Refused::UnsupportedEffect),
             }
@@ -576,7 +578,7 @@ impl RealmWorld {
             ruleset_root,
             effects: vec![Effect::SetField {
                 cell: instance,
-                index,
+                index: index as u64,
                 value: pack_u64(value),
             }],
         })
@@ -616,12 +618,12 @@ impl RealmWorld {
                 effects: vec![
                     Effect::SetField {
                         cell: realm,
-                        index: rfield::HOARD,
+                        index: rfield::HOARD as u64,
                         value: pack_u64(new_hoard),
                     },
                     Effect::SetField {
                         cell: realm,
-                        index: rfield::EPOCH,
+                        index: rfield::EPOCH as u64,
                         value: pack_u64(new_epoch),
                     },
                 ],
