@@ -96,6 +96,8 @@ duplicates.
 -/
 import Dregg2.Crypto.HermineHashCRRegrounded
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.StateCommit
 
@@ -114,6 +116,7 @@ open Dregg2.Circuit.StateCommit
   (cellLeafInjective logHashInjective AccountsWF cellDigest frameDigest movedDigest)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR LeafRealization LogRealization)
 open Dregg2.Exec
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
 
@@ -798,6 +801,164 @@ diagonal, which is exactly the surface `cellLeafInjective` claimed to cover — 
 smuggled in, and the floor may be restricted to diagonal finders without weakening the keystone. -/
 theorem scToLeafAdv_diagonal (F : StateCommitFamily) (A : Adversary (scEquivGame F)) (l : ℕ)
     (i : F.Inst l) : ((scToLeafAdv F A).run l i).1.1 = ((scToLeafAdv F A).run l i).2.1 := rfl
+
+/-! ## §9 — `hEff*` DISCHARGED: the four legs' efficiency is a THEOREM at `Eff := IsPolyTime`.
+
+§5's keystone carried FOUR bare `hEff*` parameters, one per extracted finder — the honest name for "the
+reduction is efficient", undischarged because `FloorGames` §8 had no cost model.
+`Dregg2.Crypto.CostAdversary` supplies one at COST-VECTOR resolution (intrinsic instructions +
+per-oracle call counts, DERIVED from a deep-embedded program's syntax), and every one of the four horns
+is a pure output reshaping of the equivocator's answer with the sampled instance passed through — i.e.
+an `Adversary.postMap` — so `isPolyTime_postMap` turns all four parameters into CONSEQUENCES of ONE
+hypothesis: that the equivocator itself is efficient.
+
+The only per-site inputs left are the reshapers' DECLARED work `(cw, bw)` (a Lean `fun` has no runtime;
+that number is CHARGED in the program's syntax) and each horn's OUTPUT SIZE, PROVED here:
+
+  * the two NODE horns and the LEAF horn write a FIXED-WIDTH answer (two `ℤ×ℤ` pairs / two
+    `(cell, value)` pairs), so their growth constants are `(0, 4)`;
+  * the SPONGE horn writes the two frame lists, whose length is the untouched carrier's cardinality —
+    bounded by the kernel's own `accounts` (`scFrameList_length_le`, `scCarrier` is a SUBSET), so its
+    growth constants are `(1, 0)` against the game's own answer measure. Nothing here is asserted: the
+    frame horn is the one horn that could have blown up, and it provably does not. -/
+
+/-- **THE EQUIVOCATION GAME'S ANSWER ENCODING.** A forged pair of kernels costs, to write down, its two
+account sets. Concrete on purpose: the size measure belongs to the GAME (`CostAdversary` design
+commitment 4), and leaving it open would let a degenerate `sz := 0` make the frame horn's output free. -/
+def scAnsSize (F : StateCommitFamily) : AnsSize (scEquivGame F) :=
+  fun _ (p : RecordKernelState × RecordKernelState) => p.1.accounts.card + p.2.accounts.card
+
+/-- **THE NODE COLLISION GAME'S ANSWER ENCODING** — the two claimed 2-to-1 input pairs. -/
+def scNodeAnsSize (F : StateCommitFamily) : AnsSize (hashGame (scNodeFamily F)) :=
+  fun _ (_ : (ℤ × ℤ) × (ℤ × ℤ)) => 4
+
+/-- **THE SPONGE COLLISION GAME'S ANSWER ENCODING** — the two claimed absorbed leaf lists. -/
+def scSpongeAnsSize (F : StateCommitFamily) : AnsSize (hashGame (scSpongeFamily F)) :=
+  fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
+
+/-- **THE LEAF COLLISION GAME'S ANSWER ENCODING** — the two claimed `(cell, value)` pairs. -/
+def scLeafAnsSize (F : StateCommitFamily) : AnsSize (hashGame (scLeafFamily F)) :=
+  fun _ (_ : (CellId × Value) × (CellId × Value)) => 4
+
+/-- **⚑ THE FRAME HORN DOES NOT BLOW UP ITS INPUT.** The sponge's absorbed list is one leaf per
+UNTOUCHED cell, and the untouched carrier is `accounts \ {src, dst}` — a SUBSET of the kernel's own
+account set. So the frame horn's output is bounded by the game's own answer measure, linearly with
+slope `1`: the one horn whose output is not fixed-width is still size-linear, PROVED off `scCarrier`. -/
+theorem scFrameList_length_le (F : StateCommitFamily) (l : ℕ) (i : F.Inst l)
+    (k : RecordKernelState) : (scFrameList F l i k).length ≤ k.accounts.card := by
+  simp only [scFrameList, List.length_map, Finset.length_sort]
+  exact Finset.card_le_card (Finset.sdiff_subset)
+
+/-- **⚑ ALL FOUR `hEff*` DISCHARGED — the re-grounded `StateCommit.cellDigest_binds_cells` with NO
+floating efficiency parameter.** A state-commitment equivocator that is EFFICIENT at the game's own
+answer encoding, put through the four horns of the partition walk, yields four collision finders that
+are STILL efficient — so the node, sponge and leaf collision floors at `Eff := IsPolyTime` apply to
+THEM, and the published cell-digest pins the whole cell map except with negligible probability.
+
+The four `hEff*` parameters of §5 are PROVED here, not assumed. What remains supplied is each
+reshaper's declared work `(cw, bw)`; no `PolyBoundedNat` overhead hypothesis is taken, because the
+composed overhead's poly-ness is derived from the equivocator's own bound. -/
+theorem stateCommit_equivocation_from_polyTime (F : StateCommitFamily)
+    (A : Adversary (scEquivGame F)) (hA : IsPolyTime (scAnsSize F) A) (cw bw : ℕ)
+    (hNode : HashCRHardQuant (scNodeFamily F) (IsPolyTime (scNodeAnsSize F)))
+    (hSponge : HashCRHardQuant (scSpongeFamily F) (IsPolyTime (scSpongeAnsSize F)))
+    (hLeaf : HashCRHardQuant (scLeafFamily F) (IsPolyTime (scLeafAnsSize F))) :
+    Negl (gameAdv (scEquivGame F) A) := by
+  have hOuter : IsPolyTime (scNodeAnsSize F) (scToOuterNodeAdv F A) := by
+    poly_time (scAnsSize F) (scNodeAnsSize F)
+      (fun l i (p : RecordKernelState × RecordKernelState) =>
+        (scOuterPair F l i p.1, scOuterPair F l i p.2))
+      cw bw 0 4 hA
+    intro l i p
+    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
+    omega
+  have hMoved : IsPolyTime (scNodeAnsSize F) (scToMovedNodeAdv F A) := by
+    poly_time (scAnsSize F) (scNodeAnsSize F)
+      (fun l i (p : RecordKernelState × RecordKernelState) =>
+        (scMovedPair F l i p.1.cell, scMovedPair F l i p.2.cell))
+      cw bw 0 4 hA
+    intro l i p
+    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
+    omega
+  have hSp : IsPolyTime (scSpongeAnsSize F) (scToSpongeAdv F A) := by
+    poly_time (scAnsSize F) (scSpongeAnsSize F)
+      (fun l i (p : RecordKernelState × RecordKernelState) =>
+        (scFrameList F l i p.1, scFrameList F l i p.2))
+      cw bw 1 0 hA
+    intro l i p
+    have h1 := scFrameList_length_le F l i p.1
+    have h2 := scFrameList_length_le F l i p.2
+    show (scFrameList F l i p.1).length + (scFrameList F l i p.2).length
+      ≤ 1 * (p.1.accounts.card + p.2.accounts.card) + 0
+    omega
+  have hLf : IsPolyTime (scLeafAnsSize F) (scToLeafAdv F A) := by
+    poly_time (scAnsSize F) (scLeafAnsSize F)
+      (fun _ _ (p : RecordKernelState × RecordKernelState) =>
+        ((diffCell p.1.cell p.2.cell, p.1.cell (diffCell p.1.cell p.2.cell)),
+         (diffCell p.1.cell p.2.cell, p.2.cell (diffCell p.1.cell p.2.cell))))
+      cw bw 0 4 hA
+    intro l i p
+    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
+    omega
+  exact stateCommit_equivocation_advantage_bound F
+    (IsPolyTime (scNodeAnsSize F)) (IsPolyTime (scSpongeAnsSize F)) (IsPolyTime (scLeafAnsSize F))
+    A hOuter hMoved hSp hLf hNode hSponge hLeaf
+
+/-- **THE LOG GAME'S ANSWER ENCODING** — the two claimed receipt chains. -/
+def scLogAnsSize (F : LogCommitFamily) : AnsSize (hashGame (scLogFamily F)) :=
+  fun _ (p : List Turn × List Turn) => p.1.length + p.2.length
+
+/-- **⚑ THE LOG CONSUMER'S `hEff` DISCHARGED — and its honest shape stated plainly.** §5b's bound is the
+floor applied to the equivocator ITSELF, because a receipt-chain equivocation IS definitionally a
+collision of the log hash: there is no tree, hence no extractor and no reduction hop, and inventing one
+would be theatre. What §9 changes is therefore exactly one thing, and it is the thing that was open: the
+adversary class is no longer a floating `Eff` but the CONCRETE `IsPolyTime` at the game's own answer
+encoding — a class proved non-empty (`scLogFloor_isPolyTime_inhabited`) and proved not to be `⊤`
+(`CostAdversary.bruteForce_not_polyTime`), so the floor sits strictly between the two poles §5b prices. -/
+theorem log_equivocation_from_polyTime (F : LogCommitFamily)
+    (A : Adversary (hashGame (scLogFamily F))) (hA : IsPolyTime (scLogAnsSize F) A)
+    (hLog : HashCRHardQuant (scLogFamily F) (IsPolyTime (scLogAnsSize F))) :
+    Negl (gameAdv (hashGame (scLogFamily F)) A) :=
+  log_equivocation_advantage_bound F (IsPolyTime (scLogAnsSize F)) A hA hLog
+
+/-- **(TOOTH — the node floor's class is NOT EMPTY.)** -/
+theorem scNodeFloor_isPolyTime_inhabited (F : StateCommitFamily) :
+    IsPolyTime (scNodeAnsSize F)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (((0 : ℤ), (0 : ℤ)), ((0 : ℤ), (0 : ℤ))))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨4, 0, fun _ _ => by simp [scNodeAnsSize]⟩
+
+/-- **(TOOTH — the sponge floor's class is NOT EMPTY.)** -/
+theorem scSpongeFloor_isPolyTime_inhabited (F : StateCommitFamily) :
+    IsPolyTime (scSpongeAnsSize F)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [scSpongeAnsSize]⟩
+
+/-- **(TOOTH — the leaf floor's class is NOT EMPTY.)** -/
+theorem scLeafFloor_isPolyTime_inhabited (F : StateCommitFamily) :
+    IsPolyTime (scLeafAnsSize F)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (((0 : CellId), (default : Value)),
+                     ((0 : CellId), (default : Value))))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨4, 0, fun _ _ => by simp [scLeafAnsSize]⟩
+
+/-- **(TOOTH — the log floor's class is NOT EMPTY.)** -/
+theorem scLogFloor_isPolyTime_inhabited (F : LogCommitFamily) :
+    IsPolyTime (scLogAnsSize F)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List Turn), ([] : List Turn)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [scLogAnsSize]⟩
+
+#assert_all_clean [
+  scFrameList_length_le,
+  stateCommit_equivocation_from_polyTime,
+  log_equivocation_from_polyTime,
+  scNodeFloor_isPolyTime_inhabited,
+  scSpongeFloor_isPolyTime_inhabited,
+  scLeafFloor_isPolyTime_inhabited,
+  scLogFloor_isPolyTime_inhabited
+]
 
 #assert_all_clean [
   finite_range_of_field_window,

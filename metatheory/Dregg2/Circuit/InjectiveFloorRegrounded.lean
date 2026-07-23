@@ -90,6 +90,8 @@ the three carriers' docstrings now point at these teeth. `#assert_all_clean`; no
 `axiom`.
 -/
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 import Dregg2.Circuit.VacuitySweepTeeth
 import Dregg2.Circuit.CommitDifferential
 import Dregg2.Circuit.DeployedCapTree
@@ -112,6 +114,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationR
    chunk31_length chunk31_flatten IsCollW chainCollFind chainCollFind_spec wireCommit8Find
    wireCommit8Find_spec WireColl)
 open Dregg2.Circuit.VacuitySweepTeeth (babyBearP widePerm_not_injective_babyBear compress8CR_false_babyBear)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
 
@@ -838,7 +841,287 @@ theorem wide_floor_bot_vacuous (D : WideKeyed) :
     HashCRHardQuant (wideFamily D) (fun _ => False) :=
   hashCRHardQuant_bot_vacuous _
 
-/-! ## §4 — axiom-hygiene pins. -/
+/-! ## §4 — `hEff` DISCHARGED: efficiency is a THEOREM at `Eff := IsPolyTime`, not a floating parameter.
+
+§1–§3 each close with an advantage bound carrying `hEff : Eff (extracted finder)` as a BARE PARAMETER —
+the honest name for "the reduction is efficient", undischarged because `FloorGames` §8 had no cost model.
+`Dregg2.Crypto.CostAdversary` supplies one at COST-VECTOR resolution (intrinsic instructions + per-oracle
+call counts, both DERIVED from a deep-embedded program's syntax), and at `Eff := IsPolyTime` the parameter
+becomes a CONSEQUENCE: every extractor in this file is a pure output reshaping (`Adversary.postMap`, the
+sampled tag passed through), and `isPolyTime_postMap` proves each preserves `IsPolyTime`.
+
+So each carrier gets a `_from_polyTime` twin whose ONLY per-site inputs are
+
+  * the reshaper's DECLARED work `cw · (input size) + bw` — two `ℕ` constants, LINEAR in the size of the
+    value the reduction is handed. A Lean `fun` has no runtime, so that number cannot be derived, only
+    CHARGED in the program's syntax (`CostAdversary` design commitment 5);
+  * the extractor's OUTPUT SIZE, PROVED here from the deployed widths rather than hypothesized —
+    `pack8` is 16 felts, `leafFields` is 7, an `h4` quad is 4, and the chain walk returns at most
+    `11 + 11` (§4.4's `wireCommit8Find_len_le`, the same bound the `Market` boundary consumes).
+
+NO `PolyBoundedNat` overhead hypothesis is taken: the poly-ness of the composed overhead is derived from
+the breaker's OWN bound via `FreeOracle.maxOut_le_intr` ("a poly-time adversary writes poly-many bits").
+
+The instantiated class is pinned STRICTLY BETWEEN the two poles §1.4/§2.5/§3.6 price: it is not `⊥`
+(each family's `_isPolyTime_inhabited` tooth below puts the constant finder in it) and it is not `⊤`
+(`CostAdversary.bruteForce_not_polyTime` excludes the scanning solver that collapses every floor). -/
+
+/-! ### §4.1 — the arity-16 chip: `node8` and the leaf. -/
+
+/-- **THE CHIP COLLISION GAME'S ANSWER ENCODING** — the two claimed absorbed blocks, at their genuine
+lengths. Concrete on purpose: the size measure belongs to the GAME (`CostAdversary` design commitment 4);
+leaving it open would let a degenerate `sz := 0` make the reduction's output free again. -/
+def chip8AnsSize (D : Chip8Keyed) : AnsSize (hashGame (chip8Family D)) :=
+  fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
+
+/-- **THE `node8` GAME'S ANSWER ENCODING** — four 8-felt digests, `32` felts to write down. -/
+def node8AnsSize (D : Chip8Keyed) : AnsSize (node8BreakGame D) :=
+  fun _ (_ : (Digest8 × Digest8) × (Digest8 × Digest8)) => 32
+
+/-- **THE LEAF GAME'S ANSWER ENCODING** — two 7-field `CapLeaf`s. -/
+def leaf8AnsSize (D : Chip8Keyed) : AnsSize (leaf8BreakGame D) :=
+  fun _ (_ : CapLeaf × CapLeaf) => 14
+
+/-- The deployed pack is exactly the two 8-felt children concatenated — the extractor's output size,
+proved off `pack8` rather than assumed. -/
+theorem pack8_length (l r : Digest8) : (pack8 l r).length = 16 := by
+  simp [pack8]
+
+/-- The deployed leaf block is exactly the seven `cap_root.rs` fields. -/
+theorem leafFields_length (l : CapLeaf) : (leafFields l).length = 7 := rfl
+
+/-- **⚑ `hEff` DISCHARGED for the `node8` binding.** A `node8`-injectivity breaker that is EFFICIENT at
+the game's own answer encoding, put through the `pack8` extractor, yields a chip-collision finder that is
+STILL efficient — so the chip's collision floor at `Eff := IsPolyTime` applies to IT, and the breaker's
+advantage is negligible. `hEff` is PROVED, not assumed; the only modelling input left is the reshaper's
+declared work `(cw, bw)`. -/
+theorem node8_binds_from_polyTime (D : Chip8Keyed) (A : Adversary (node8BreakGame D))
+    (hA : IsPolyTime (node8AnsSize D) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (chip8Family D) (IsPolyTime (chip8AnsSize D))) :
+    Negl (gameAdv (node8BreakGame D) A) := by
+  have hEff : IsPolyTime (chip8AnsSize D) (node8BreakToFinder D A) := by
+    poly_time (node8AnsSize D) (chip8AnsSize D)
+      (fun _ _ (c : (Digest8 × Digest8) × (Digest8 × Digest8)) =>
+        (pack8 c.1.1 c.1.2, pack8 c.2.1 c.2.2))
+      cw bw 0 32 hA
+    intro l t c
+    show (pack8 c.1.1 c.1.2).length + (pack8 c.2.1 c.2.2).length
+      ≤ 0 * (node8AnsSize D l c) + 32
+    rw [pack8_length, pack8_length]
+    omega
+  exact node8_injective_advantage_bound D (IsPolyTime (chip8AnsSize D)) A hEff hCR
+
+/-- **⚑ `hEff` DISCHARGED for the leaf binding.** Same one call; the output bound is the seven
+`leafFields`. -/
+theorem leaf8_binds_from_polyTime (D : Chip8Keyed) (A : Adversary (leaf8BreakGame D))
+    (hA : IsPolyTime (leaf8AnsSize D) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (chip8Family D) (IsPolyTime (chip8AnsSize D))) :
+    Negl (gameAdv (leaf8BreakGame D) A) := by
+  have hEff : IsPolyTime (chip8AnsSize D) (leaf8BreakToFinder D A) := by
+    poly_time (leaf8AnsSize D) (chip8AnsSize D)
+      (fun _ _ (c : CapLeaf × CapLeaf) => (leafFields c.1, leafFields c.2))
+      cw bw 0 14 hA
+    intro l t c
+    show (leafFields c.1).length + (leafFields c.2).length ≤ 0 * (leaf8AnsSize D l c) + 14
+    rw [leafFields_length, leafFields_length]
+    omega
+  exact leaf8_injective_advantage_bound D (IsPolyTime (chip8AnsSize D)) A hEff hCR
+
+/-- **(TOOTH — the class the chip floor is instantiated at is NOT EMPTY.)** `HashCRHardQuant (chip8Family
+D) (IsPolyTime (chip8AnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the
+class, because the answer it writes has size `0` under the game's own encoding. Together with
+`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
+floor strictly between §1.4's two poles. -/
+theorem chip8Floor_isPolyTime_inhabited (D : Chip8Keyed) :
+    IsPolyTime (chip8AnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [chip8AnsSize]⟩
+
+/-! ### §4.2 — the arity-4 cell commitment. -/
+
+/-- **THE `h4` COLLISION GAME'S ANSWER ENCODING** — the two claimed quads, four felts each. -/
+def h4AnsSize (D : H4Keyed) : AnsSize (hashGame (h4Family D)) :=
+  fun _ (_ : (ℤ × ℤ × ℤ × ℤ) × (ℤ × ℤ × ℤ × ℤ)) => 8
+
+/-- **THE CELL-COMMITMENT GAME'S ANSWER ENCODING** — two 13-limb claims. -/
+def commit4AnsSize (D : H4Keyed) : AnsSize (commit4BreakGame D) :=
+  fun _ (_ : Claim13 × Claim13) => 26
+
+/-- **⚑ `hEff` DISCHARGED for the deployed cell commitment.** A cell-commitment equivocator that is
+EFFICIENT, put through the TREE-TRACE extractor, yields an `h4`-collision finder that is still efficient:
+whichever of the four branches the trace takes it writes exactly two quads, a CONSTANT `8` felts. So the
+audit-P0-2 anti-ghost tooth is a concrete-security statement with no floating efficiency parameter. -/
+theorem effectVmCommit_binds_all_from_polyTime (D : H4Keyed) (A : Adversary (commit4BreakGame D))
+    (hA : IsPolyTime (commit4AnsSize D) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (h4Family D) (IsPolyTime (h4AnsSize D))) :
+    Negl (gameAdv (commit4BreakGame D) A) := by
+  have hEff : IsPolyTime (h4AnsSize D) (commit4BreakToFinder D A) := by
+    poly_time (commit4AnsSize D) (h4AnsSize D)
+      (fun _ t (c : Claim13 × Claim13) => commit4Find (D.h4At t) c.1 c.2)
+      cw bw 0 8 hA
+    intro l t c
+    show (8 : ℕ) ≤ 0 * (commit4AnsSize D l c) + 8
+    omega
+  exact effectVmCommit_binds_all_advantage_bound D (IsPolyTime (h4AnsSize D)) A hEff hCR
+
+/-- **(TOOTH — the `h4` floor's class is NOT EMPTY.)** -/
+theorem h4Floor_isPolyTime_inhabited (D : H4Keyed) :
+    IsPolyTime (h4AnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (((0 : ℤ), (0 : ℤ), (0 : ℤ), (0 : ℤ)),
+                     ((0 : ℤ), (0 : ℤ), (0 : ℤ), (0 : ℤ))))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨8, 0, fun _ _ => by simp [h4AnsSize]⟩
+
+/-! ### §4.3 — the wide chained wire commitment: the chain walk's output is BOUNDED.
+
+The wire extractor is the only one in this file that is not a fixed-width reshape: `wireCommit8Find`
+WALKS the two chains. Its output is nevertheless a CONSTANT `≤ 22` felts, because every value the walk
+can return is a carrier (width `8`, the deployed squeeze) or a carrier plus one body block (`≤ 3`). That
+is proved here, beside the extractor's own advantage bound, so the wide carrier's `hEff` is discharged AT
+its own site rather than only downstream at the `Market` boundary. -/
+
+/-- Every `chunk31` block is at most three limbs wide (the deployed body arity is `carrier ‖ 3`). -/
+theorem chunk31_len_le : ∀ (xs : List ℤ) (c : List ℤ), c ∈ chunk31 xs → c.length ≤ 3
+  | a :: b :: d :: rest, c, hc => by
+      simp only [chunk31, List.mem_cons] at hc
+      rcases hc with h | h
+      · subst h; simp
+      · exact chunk31_len_le rest c h
+  | [a, b], c, hc => by
+      simp only [chunk31, List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with h | h <;> subst h <;> simp
+  | [a], c, hc => by
+      simp only [chunk31, List.mem_cons, List.not_mem_nil, or_false] at hc
+      subst hc; simp
+  | [], c, hc => by simp [chunk31] at hc
+
+/-- **THE CHAIN WALK RETURNS BOUNDED LISTS.** Every value `chainCollFind` can return is either a carrier
+(width `8`, since `permW` squeezes eight felts) or a carrier concatenated with one body block (`≤ 3`), so
+at most `11` felts. This is what makes the wire→collision reduction's OUTPUT SIZE a proved constant
+instead of an assumption. -/
+theorem chainCollFind_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Width8 permW) :
+    ∀ (cs cs' : List (List ℤ)) (acc acc' : List ℤ),
+      acc.length ≤ 8 → acc'.length ≤ 8 →
+      (∀ c ∈ cs, c.length ≤ 3) → (∀ c ∈ cs', c.length ≤ 3) →
+      (chainCollFind permW acc cs acc' cs').1.length ≤ 11
+        ∧ (chainCollFind permW acc cs acc' cs').2.length ≤ 11 := by
+  intro cs
+  induction cs with
+  | nil =>
+      intro cs' acc acc' ha ha' _ _
+      have hnil : chainCollFind permW acc [] acc' cs' = (acc, acc') := by cases cs' <;> rfl
+      rw [hnil]
+      refine ⟨?_, ?_⟩
+      · show acc.length ≤ 11; omega
+      · show acc'.length ≤ 11; omega
+  | cons c ds ih =>
+      intro cs' acc acc' ha ha' hcs hcs'
+      cases cs' with
+      | nil =>
+          have hnil : chainCollFind permW acc (c :: ds) acc' [] = (acc, acc') := rfl
+          rw [hnil]
+          refine ⟨?_, ?_⟩
+          · show acc.length ≤ 11; omega
+          · show acc'.length ≤ 11; omega
+      | cons c' ds' =>
+          by_cases hif : permW (acc ++ c) = permW (acc' ++ c') ∧ (acc ++ c) ≠ (acc' ++ c')
+          · rw [chainCollFind, if_pos hif]
+            have h1 := hcs c (by simp)
+            have h2 := hcs' c' (by simp)
+            exact ⟨by simp only [List.length_append]; omega,
+                   by simp only [List.length_append]; omega⟩
+          · rw [chainCollFind, if_neg hif]
+            exact ih ds' (permW (acc ++ c)) (permW (acc' ++ c'))
+              (le_of_eq (hW _)) (le_of_eq (hW _))
+              (fun x hx => hcs x (List.mem_cons_of_mem _ hx))
+              (fun x hx => hcs' x (List.mem_cons_of_mem _ hx))
+
+/-- **⚑ THE WIRE→COLLISION EXTRACTOR DOES NOT BLOW UP ITS INPUT** — it returns at most `11 + 11` felts,
+a CONSTANT, whichever branch it takes. Proved, not assumed; this is the output-size obligation the cost
+model's `reshape`-leaf charge creates, discharged. -/
+theorem wireCommit8Find_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Width8 permW)
+    (l : List ℤ) (ir : ℤ) (l' : List ℤ) (ir' : ℤ) :
+    (wireCommit8Find permW l ir l' ir').1.length
+      + (wireCommit8Find permW l ir l' ir').2.length ≤ 22 := by
+  have hchunks : ∀ (xs : List ℤ) (z : ℤ) (c : List ℤ),
+      c ∈ chunk31 xs ++ [[z, 0, 0]] → c.length ≤ 3 := by
+    intro xs z c hc
+    rcases List.mem_append.mp hc with h | h
+    · exact chunk31_len_le xs c h
+    · simp only [List.mem_singleton] at h; subst h; simp
+  by_cases hif : IsCollW permW (chainCollFind permW (permW (l.take 4))
+      (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) (permW (l'.take 4)) (chunk31 (l'.drop 4) ++ [[ir', 0, 0]]))
+  · rw [wireCommit8Find, if_pos hif]
+    have h := chainCollFind_len_le permW hW
+      (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) (chunk31 (l'.drop 4) ++ [[ir', 0, 0]])
+      (permW (l.take 4)) (permW (l'.take 4))
+      (le_of_eq (hW (l.take 4))) (le_of_eq (hW (l'.take 4)))
+      (hchunks (l.drop 4) ir) (hchunks (l'.drop 4) ir')
+    omega
+  · rw [wireCommit8Find, if_neg hif]
+    have h1 : (l.take 4).length ≤ 4 := List.length_take_le 4 l
+    have h2 : (l'.take 4).length ≤ 4 := List.length_take_le 4 l'
+    show (l.take 4).length + (l'.take 4).length ≤ 22
+    omega
+
+/-- **THE WIDE COLLISION GAME'S ANSWER ENCODING** — the two claimed preimages of the wide permutation. -/
+def wideAnsSize (D : WideKeyed) : AnsSize (hashGame (wideFamily D)) :=
+  fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
+
+/-- **THE WIRE GAME'S ANSWER ENCODING** — the two limb lists plus the two iroots. -/
+def wireAnsSize (D : WideKeyed) : AnsSize (wireCommitBreakGame D) :=
+  fun _ (c : (List ℤ × ℤ) × (List ℤ × ℤ)) => c.1.1.length + c.2.1.length + 2
+
+/-- **⚑ `hEff` DISCHARGED for the faithful wide wire commitment — AT ITS OWN SITE.** A wire-commit
+equivocator that is EFFICIENT, put through the CHAIN WALK, yields a `permW`-collision finder that is
+still efficient (`wireCommit8Find_len_le`: the walk writes at most `22` felts whichever branch it
+takes) — so the wide collision floor at `Eff := IsPolyTime` applies to it and the ~124-bit binding the
+light client trusts holds except with negligible probability, with NO floating efficiency parameter.
+
+This is the carrier with seven hypothesis uses across the wide emission lane, the cap-open lane, the
+`Market` boundary and the `Deos` settle descriptors; discharging it here means every one of those
+consumers can reach the poly-time floor without re-deriving the walk's output bound. -/
+theorem wireCommitR8_binds_from_polyTime (D : WideKeyed) (A : Adversary (wireCommitBreakGame D))
+    (hA : IsPolyTime (wireAnsSize D) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (wideFamily D) (IsPolyTime (wideAnsSize D))) :
+    Negl (gameAdv (wireCommitBreakGame D) A) := by
+  have hEff : IsPolyTime (wideAnsSize D) (wireBreakToFinder D A) := by
+    poly_time (wireAnsSize D) (wideAnsSize D)
+      (fun _ t (c : (List ℤ × ℤ) × (List ℤ × ℤ)) =>
+        wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2)
+      cw bw 0 22 hA
+    intro l t c
+    have h := wireCommit8Find_len_le (D.permWAt t) (D.width8At t) c.1.1 c.1.2 c.2.1 c.2.2
+    show (wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2).1.length
+        + (wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2).2.length
+      ≤ 0 * (wireAnsSize D l c) + 22
+    omega
+  exact wireCommitR8_binds_advantage_bound D (IsPolyTime (wideAnsSize D)) A hEff hCR
+
+/-- **(TOOTH — the wide floor's class is NOT EMPTY.)** -/
+theorem wideFloor_isPolyTime_inhabited (D : WideKeyed) :
+    IsPolyTime (wideAnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [wideAnsSize]⟩
+
+/-! ## §5 — axiom-hygiene pins. -/
+
+#assert_all_clean [
+  pack8_length,
+  leafFields_length,
+  node8_binds_from_polyTime,
+  leaf8_binds_from_polyTime,
+  chip8Floor_isPolyTime_inhabited,
+  effectVmCommit_binds_all_from_polyTime,
+  h4Floor_isPolyTime_inhabited,
+  chunk31_len_le,
+  chainCollFind_len_le,
+  wireCommit8Find_len_le,
+  wireCommitR8_binds_from_polyTime,
+  wideFloor_isPolyTime_inhabited
+]
 
 #assert_all_clean [
   hashCRHardQuant_top_false_of_compressing,
