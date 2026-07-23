@@ -36,7 +36,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_key};
-use crate::resume::{SessionMoveLog, SessionResumeStore};
+use crate::resume::{SessionMoveLog, SessionResumeStore, SignedProvenance};
 use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
 use crate::{
     Action, AppliedBinaryOperation, Audience, AudienceProjection, BinaryArtifact,
@@ -201,6 +201,20 @@ pub enum ResumeError {
         /// Public refusal reason. Replay material itself is never formatted.
         reason: String,
     },
+    /// **A logged advance CLAIMED [`Attribution::Signed`] but its persisted signature did not
+    /// re-verify** — the durable line carries a signer pubkey + `s` tag with a missing or forged
+    /// signature (the exact attack a writable, unauthenticated store enables). Resume RE-RUNS
+    /// [`crate::verify_signed`] over the persisted `(pubkey, counter, signature, action)` before
+    /// honoring a `Signed` turn; a failure is fail-closed here (the session refuses to reopen, the
+    /// durable file kept as evidence) rather than admitting a "verified-signer" turn no key signed.
+    /// An `Asserted` line needs no signature and never reaches this gate. Carries the 0-based move
+    /// index and the [`SignedError`]'s reason.
+    ForgedSignature {
+        /// The 0-based index into [`SessionMoveLog::moves`] of the move whose signature failed.
+        index: usize,
+        /// Why re-verification failed (the [`SignedError`], or a missing-envelope note).
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ResumeError {
@@ -222,6 +236,11 @@ impl std::fmt::Display for ResumeError {
                 f,
                 "resume refused: journaled operation #{index} did not restore ({reason}) — \
                  the operation journal is tampered or its verifier policy changed"
+            ),
+            ResumeError::ForgedSignature { index, reason } => write!(
+                f,
+                "resume refused: logged move #{index} claimed a verified signature that did not \
+                 re-verify ({reason}) — the signed provenance in the store is forged or corrupt"
             ),
         }
     }
@@ -1387,7 +1406,7 @@ impl OfferingHost {
         if let Some(o) = &out {
             if o.landed() {
                 let attribution = Attribution::from(actor.clone());
-                self.record_landed(key, id, input, actor, attribution);
+                self.record_landed(key, id, input, actor, attribution, None);
             }
         }
         out
@@ -1484,7 +1503,15 @@ impl OfferingHost {
             let attribution = Attribution::Signed {
                 pubkey_hex: actor.0.clone(),
             };
-            self.record_landed(key, id, sa.action, actor, attribution);
+            // Persist the re-verifiable envelope verify_signed just consumed (the actor IS the
+            // canonical signer pubkey hex), so the `Signed` provenance survives a restart as a
+            // fact resume RE-CHECKS — not a bare tag over a controllable actor string.
+            let provenance = SignedProvenance {
+                pubkey_hex: actor.0.clone(),
+                counter: sa.counter,
+                signature: sa.signature,
+            };
+            self.record_landed(key, id, sa.action, actor, attribution, Some(provenance));
         }
         Ok(out)
     }
@@ -1508,14 +1535,35 @@ impl OfferingHost {
         input: Action,
         actor: DreggIdentity,
         attribution: Attribution,
+        provenance: Option<SignedProvenance>,
     ) {
-        if let Some(store) = &self.resume_store {
-            store.record_landed_attributed(key, id, &input, &actor, &attribution);
+        // A signed advance threads its re-verifiable envelope through BOTH the durable store and
+        // the in-memory log so the `Signed` provenance is a re-checkable fact, not a bare tag; an
+        // asserted/collective turn carries none.
+        match provenance {
+            Some(prov) => {
+                if let Some(store) = &self.resume_store {
+                    store.record_landed_signed(key, id, &input, &actor, &prov);
+                }
+                self.logs
+                    .entry((key.to_string(), id.clone()))
+                    .or_insert_with(|| {
+                        SessionMoveLog::new(key, id.clone(), SessionConfig::default())
+                    })
+                    .record_signed(input, actor, prov);
+            }
+            None => {
+                if let Some(store) = &self.resume_store {
+                    store.record_landed_attributed(key, id, &input, &actor, &attribution);
+                }
+                self.logs
+                    .entry((key.to_string(), id.clone()))
+                    .or_insert_with(|| {
+                        SessionMoveLog::new(key, id.clone(), SessionConfig::default())
+                    })
+                    .record_attributed(input, actor, attribution);
+            }
         }
-        self.logs
-            .entry((key.to_string(), id.clone()))
-            .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()))
-            .record_attributed(input, actor, attribution);
     }
 
     /// Advance session `(key, id)` by one real **crowd** turn carrying a [`CollectiveDecision`] (the
@@ -1542,7 +1590,7 @@ impl OfferingHost {
         if let Some(o) = &out {
             if o.landed() {
                 let attribution = Attribution::from(carrier.clone());
-                self.record_landed(key, id, input, carrier, attribution);
+                self.record_landed(key, id, input, carrier, attribution, None);
             }
         }
         out
@@ -1802,6 +1850,40 @@ impl OfferingHost {
                 break;
             }
             let m = &log.moves[move_index];
+            // Before honoring a `Signed` provenance, RE-RUN verify_signed against the PERSISTED
+            // envelope: a resumed signed turn must be as independently verifiable as the live one.
+            // A forged store line (a victim pubkey tagged `s` with a missing/wrong signature) fails
+            // here and the session refuses to reopen — fail-closed, the durable file kept as
+            // evidence — rather than admitting a "verified-signer" turn no key signed. An
+            // `Asserted` move needs no signature and is never re-verified.
+            if let Attribution::Signed { pubkey_hex } = &m.attribution {
+                let reverify = match &m.signature {
+                    Some(prov) => {
+                        let sa = SignedAction {
+                            action: m.action.clone(),
+                            actor_pubkey_hex: pubkey_hex.clone(),
+                            counter: prov.counter,
+                            signature: prov.signature,
+                        };
+                        // `expected_counter = prov.counter` so the (live-only) replay-counter leg
+                        // passes trivially; the SIGNATURE is the real check here.
+                        verify_signed(&log.key, &log.id, prov.counter, &sa)
+                            .err()
+                            .map(|e| e.to_string())
+                    }
+                    // A `Signed` claim with no persisted envelope is unverifiable — refuse it.
+                    None => Some("signed move carries no persisted signature".to_string()),
+                };
+                if let Some(reason) = reverify {
+                    if let Some(slot) = self.slots.get_mut(&log.key) {
+                        slot.close(&log.id);
+                    }
+                    return Err(ResumeError::ForgedSignature {
+                        index: move_index,
+                        reason,
+                    });
+                }
+            }
             let out = self
                 .slots
                 .get_mut(&log.key)
@@ -2336,6 +2418,274 @@ mod tests {
             format!("{:?}", restarted.render("confused", &id).unwrap().0).contains("confused = 0"),
             "restart must recover the pre-operation state, not the ghost mutation"
         );
+    }
+
+    // ── SIGNED-PROVENANCE SURVIVES RESTART AS A RE-VERIFIABLE FACT ──
+    //
+    // A resumed `Signed` turn used to be reconstructed from a 1-byte trust tag + the
+    // fully-controllable `actor` string, with NO signature re-checked — so anyone who could write
+    // the durable store forged a "verified-signer" turn no key ever signed. These tests pin that
+    // a signed turn now persists its `verify_signed` envelope and is RE-VERIFIED on resume.
+
+    /// A unique scratch directory for one file-store test (process id + a monotone counter).
+    fn signed_scratch_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "offerings-signed-{}-{}-{}",
+            std::process::id(),
+            tag,
+            n
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// (a) A legitimate signed turn round-trips persist -> resume: the durable file carries the
+    /// re-verifiable `(counter, signature)` envelope, resume RE-RUNS `verify_signed` (which passes
+    /// for the genuine signature), and the resumed turn stays `Signed` — not silently downgraded.
+    #[test]
+    fn a_signed_turn_round_trips_through_the_file_store_and_re_verifies_on_resume() {
+        let dir = signed_scratch_dir("signed-roundtrip");
+        let id = SessionId::new("signed-sess");
+        let cfg = SessionConfig::with_seed(7);
+        let signer = crate::signed::TurnSigner::from_seed([7u8; 32]);
+        let action = Action::new("tick", "tick", 1, true);
+
+        {
+            let store = crate::resume::FileResumeStore::open(&dir).expect("open store");
+            let mut host = OfferingHost::new().with_resume_store(Box::new(store));
+            host.register("counter", "Counter", CounterOffering);
+            host.open_session("counter", id.clone(), cfg.clone())
+                .unwrap();
+            let sa = signer.sign("counter", &id, 0, action.clone());
+            let out = host
+                .advance_signed("counter", &id, sa)
+                .expect("the genuine signed advance verifies");
+            assert!(out.landed());
+        }
+
+        // The persisted log reloads as Signed WITH its re-verifiable envelope (not a bare tag).
+        let reload = crate::resume::FileResumeStore::open(&dir).expect("reopen store");
+        let log = reload
+            .load("counter", &id)
+            .expect("the signed log persisted");
+        assert_eq!(log.moves.len(), 1);
+        assert!(
+            log.moves[0].attribution.is_signed(),
+            "the move stays Signed across persistence"
+        );
+        let prov = log.moves[0]
+            .signature
+            .as_ref()
+            .expect("a signed move carries its (counter, signature) envelope");
+        assert_eq!(prov.pubkey_hex.as_str(), signer.pubkey_hex());
+        assert_eq!(prov.counter, 0);
+
+        // A restart re-verifies the genuine signature and resumes; the turn is still Signed.
+        let mut restarted = OfferingHost::new().with_resume_store(Box::new(reload));
+        restarted.register("counter", "Counter", CounterOffering);
+        let results = restarted.resume_all();
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].1.is_ok(),
+            "a genuine signed turn re-verifies and resumes: {:?}",
+            results[0].1
+        );
+        assert!(restarted.is_open("counter", &id));
+        assert!(
+            results[0].0.moves[0].attribution.is_signed(),
+            "the resumed turn is still Signed, re-verified from the store"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (b) THE FORGE: a durable line that CLAIMS a victim signed (actor = victim pubkey, trust
+    /// Signed) but carries no valid signature — exactly what anyone able to write the
+    /// unauthenticated store forges. Resume RE-RUNS `verify_signed`, fails closed
+    /// ([`ResumeError::ForgedSignature`]), and lands NO forged Signed turn.
+    #[test]
+    fn a_forged_signed_provenance_refuses_to_resume_and_lands_no_forged_turn() {
+        let victim = crate::signed::TurnSigner::from_seed([9u8; 32]);
+        let id = SessionId::new("forged-sess");
+        let action = Action::new("tick", "tick", 1, true);
+
+        let mut host = OfferingHost::new();
+        host.register("counter", "Counter", CounterOffering);
+
+        // The store line a forger writes: the victim's pubkey, tagged Signed, with a signature the
+        // victim never produced (all-zero — the "no/wrong signature" the finding describes).
+        let mut forged = SessionMoveLog::new("counter", id.clone(), SessionConfig::with_seed(7));
+        forged.record_signed(
+            action.clone(),
+            DreggIdentity(victim.pubkey_hex().to_string()),
+            SignedProvenance {
+                pubkey_hex: victim.pubkey_hex().to_string(),
+                counter: 0,
+                signature: [0u8; 64],
+            },
+        );
+
+        let err = host
+            .resume(&forged)
+            .expect_err("a forged signed provenance must be refused");
+        assert!(
+            matches!(err, ResumeError::ForgedSignature { index: 0, .. }),
+            "resume fails closed on a forged signature, got {err:?}"
+        );
+        assert!(
+            !host.is_open("counter", &id),
+            "no forged Signed turn is left live — the session did not reopen"
+        );
+    }
+
+    /// (b, durable) The same forge written straight into the FileResumeStore text: take a GENUINE
+    /// signed file and re-attribute it to a victim (swap the actor/pubkey). The genuine signature
+    /// no longer verifies under the victim's key, so `resume_all` refuses it — you cannot launder a
+    /// real signature onto another identity by editing the store.
+    #[test]
+    fn re_attributing_a_signed_line_in_the_durable_file_refuses_to_resume() {
+        let dir = signed_scratch_dir("signed-reattribute");
+        let id = SessionId::new("reattr-sess");
+        let cfg = SessionConfig::with_seed(7);
+        let signer = crate::signed::TurnSigner::from_seed([3u8; 32]);
+        let victim = crate::signed::TurnSigner::from_seed([4u8; 32]);
+        let action = Action::new("tick", "tick", 1, true);
+
+        {
+            let store = crate::resume::FileResumeStore::open(&dir).expect("open store");
+            let mut host = OfferingHost::new().with_resume_store(Box::new(store));
+            host.register("counter", "Counter", CounterOffering);
+            host.open_session("counter", id.clone(), cfg.clone())
+                .unwrap();
+            let sa = signer.sign("counter", &id, 0, action.clone());
+            host.advance_signed("counter", &id, sa)
+                .expect("the genuine signed advance verifies");
+        }
+
+        // Anyone who can write the store swaps the signer's pubkey (the actor column) for the
+        // victim's — claiming the victim signed a turn the victim never touched.
+        let logpath = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
+            .expect("the session .log file");
+        let text = std::fs::read_to_string(&logpath).unwrap();
+        let forged = text.replace(signer.pubkey_hex(), victim.pubkey_hex());
+        assert_ne!(forged, text, "the forge actually re-attributed the actor");
+        std::fs::write(&logpath, forged).unwrap();
+
+        let mut restarted = OfferingHost::new().with_resume_store(Box::new(
+            crate::resume::FileResumeStore::open(&dir).unwrap(),
+        ));
+        restarted.register("counter", "Counter", CounterOffering);
+        let results = restarted.resume_all();
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(results[0].1, Err(ResumeError::ForgedSignature { .. })),
+            "a re-attributed signature must not re-verify: {:?}",
+            results[0].1
+        );
+        assert!(
+            !restarted.is_open("counter", &id),
+            "no forged turn is left live"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (c) An OLD-format (pre-trust-column, 7-column) line still resumes — honestly as `Asserted`,
+    /// exactly what every pre-signed-seam attribution was. Backward compatibility is preserved.
+    #[test]
+    fn a_legacy_seven_column_line_resumes_as_asserted() {
+        let dir = signed_scratch_dir("legacy-resume");
+        let id = SessionId::new("legacy-sess");
+        let seed = 7u64;
+        {
+            let store = crate::resume::FileResumeStore::open(&dir).expect("open store");
+            store.record_open("counter", &id, &SessionConfig::with_seed(seed));
+        }
+        // Rewrite the session file as a pre-trust-column (7-column) legacy log.
+        let logpath = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
+            .expect("the session .log file");
+        let legacy = format!(
+            "counter\t{}\t{}\ntick\ttick\t1\t1\t0\t\tweb:bob\n",
+            id.0, seed
+        );
+        std::fs::write(&logpath, legacy).unwrap();
+
+        let mut host = OfferingHost::new().with_resume_store(Box::new(
+            crate::resume::FileResumeStore::open(&dir).unwrap(),
+        ));
+        host.register("counter", "Counter", CounterOffering);
+        let results = host.resume_all();
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].1.is_ok(),
+            "a legacy line resumes: {:?}",
+            results[0].1
+        );
+        assert_eq!(results[0].0.moves.len(), 1);
+        assert!(
+            !results[0].0.moves[0].attribution.is_signed(),
+            "a legacy line is honestly Asserted"
+        );
+        assert!(results[0].0.moves[0].signature.is_none());
+        assert!(host.is_open("counter", &id));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (d) An `Asserted` advance is unaffected by the signed seam: it persists and resumes as
+    /// `Asserted`, carrying no signature envelope and never touching the re-verify gate.
+    #[test]
+    fn an_asserted_advance_persists_and_resumes_as_asserted() {
+        let dir = signed_scratch_dir("asserted-resume");
+        let id = SessionId::new("asserted-sess");
+        let cfg = SessionConfig::with_seed(7);
+        {
+            let store = crate::resume::FileResumeStore::open(&dir).expect("open store");
+            let mut host = OfferingHost::new().with_resume_store(Box::new(store));
+            host.register("counter", "Counter", CounterOffering);
+            host.open_session("counter", id.clone(), cfg.clone())
+                .unwrap();
+            let out = host.advance(
+                "counter",
+                &id,
+                Action::new("tick", "tick", 1, true),
+                DreggIdentity("web:alice".into()),
+            );
+            assert!(matches!(out, Some(o) if o.landed()));
+        }
+        let mut restarted = OfferingHost::new().with_resume_store(Box::new(
+            crate::resume::FileResumeStore::open(&dir).unwrap(),
+        ));
+        restarted.register("counter", "Counter", CounterOffering);
+        let results = restarted.resume_all();
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].1.is_ok(),
+            "an asserted turn resumes: {:?}",
+            results[0].1
+        );
+        assert!(
+            !results[0].0.moves[0].attribution.is_signed(),
+            "an asserted turn stays Asserted"
+        );
+        assert!(
+            results[0].0.moves[0].signature.is_none(),
+            "no signature envelope on an asserted turn"
+        );
+        assert!(restarted.is_open("counter", &id));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

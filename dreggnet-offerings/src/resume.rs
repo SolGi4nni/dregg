@@ -52,6 +52,33 @@ use std::rc::Rc;
 use crate::signed::Attribution;
 use crate::{Action, BinaryOperationReceipt, DreggIdentity, SessionConfig, SessionId};
 
+/// **The re-verifiable envelope of a signed advance** — everything
+/// [`verify_signed`](crate::verify_signed) consumed to admit the turn, persisted BESIDE the
+/// [`LoggedMove`] so its `Signed` provenance survives a restart as a CHECKABLE fact rather than a
+/// bare trust tag over a fully-controllable actor string.
+///
+/// A `Signed` [`LoggedMove`] used to reload from just its `actor` string + a one-byte `s` tag, so
+/// anyone who could write the (unauthenticated) durable store forged a "verified-signer" turn no
+/// key ever signed. With this envelope persisted,
+/// [`OfferingHost::resume`](crate::OfferingHost::resume) RE-RUNS `verify_signed` over
+/// `(pubkey, counter, signature, action, offering, session)` before honoring the `Signed`
+/// attribution — a forged store line (a victim pubkey tagged `s` with no/wrong signature) fails
+/// that check and the session refuses to resume (fail-closed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedProvenance {
+    /// The signer's Ed25519 public key, canonical lowercase hex — the key the signature verifies
+    /// under and (by [`verify_signed`](crate::verify_signed)'s postcondition) the exact string the
+    /// signed move's `actor` carries.
+    pub pubkey_hex: String,
+    /// The replay counter that was signed — part of the canonical
+    /// [`signing_message`](crate::signing_message), so re-verification must use this exact value.
+    pub counter: u64,
+    /// The Ed25519 signature over
+    /// `signing_message(offering_key, session, counter, action)` — the 64 bytes `verify_signed`
+    /// checked at land time and re-checks on resume.
+    pub signature: [u8; 64],
+}
+
 /// **One recorded LANDED advance** — the reproducible public input of a single committed turn: the
 /// typed [`Action`] that was resolved and the [`DreggIdentity`] it was attributed to (for a
 /// collective turn, the decision's carrier — the mover of record). Only landed advances are logged:
@@ -70,28 +97,54 @@ pub struct LoggedMove {
     /// still re-drives `(action, actor)` only. A log persisted before this field existed decodes
     /// as `Asserted` (which is exactly what every pre-signed-seam attribution was).
     pub attribution: Attribution,
+    /// **The re-verifiable signature envelope** for a `Signed` move ([`SignedProvenance`]) — the
+    /// `(counter, signature)` [`verify_signed`](crate::verify_signed) consumed, persisted so the
+    /// `Signed` provenance is INDEPENDENTLY re-checkable on resume. `Some` iff `attribution` is
+    /// [`Attribution::Signed`]: an `Asserted` (or legacy) move carries `None` and needs no
+    /// signature. A durably-decoded `Signed` move ALWAYS carries `Some` (a bare `s` tag with no
+    /// envelope is refused as a corrupt/forged line — see [`decode_log`]).
+    pub signature: Option<SignedProvenance>,
 }
 
 impl LoggedMove {
     /// A logged move — an `action` that landed, attributed to `actor`. The attribution defaults
     /// to [`Attribution::Asserted`] (the legacy trust level); a verified move is recorded with
-    /// [`LoggedMove::attributed`].
+    /// [`LoggedMove::signed`].
     pub fn new(action: Action, actor: DreggIdentity) -> Self {
         let attribution = Attribution::from(actor.clone());
         LoggedMove {
             action,
             actor,
             attribution,
+            signature: None,
         }
     }
 
-    /// A logged move with an explicit [`Attribution`] trust level (the signed-advance path
-    /// records [`Attribution::Signed`] here).
+    /// A logged move with an explicit [`Attribution`] trust level, carrying NO signature envelope
+    /// — the asserted / legacy path. (A `Signed` trust level is only durably re-verifiable via
+    /// [`LoggedMove::signed`], which persists the [`SignedProvenance`] beside it.)
     pub fn attributed(action: Action, actor: DreggIdentity, attribution: Attribution) -> Self {
         LoggedMove {
             action,
             actor,
             attribution,
+            signature: None,
+        }
+    }
+
+    /// A logged SIGNATURE-VERIFIED move — the signed-advance path records this, threading the
+    /// [`SignedProvenance`] ([`verify_signed`](crate::verify_signed)'s consumed
+    /// `(counter, signature)`) so the `Signed` attribution reloads as a re-verifiable fact. The
+    /// `actor` and the attribution's pubkey are both `provenance.pubkey_hex` (the verified signer).
+    pub fn signed(action: Action, actor: DreggIdentity, provenance: SignedProvenance) -> Self {
+        let attribution = Attribution::Signed {
+            pubkey_hex: provenance.pubkey_hex.clone(),
+        };
+        LoggedMove {
+            action,
+            actor,
+            attribution,
+            signature: Some(provenance),
         }
     }
 }
@@ -158,8 +211,9 @@ impl SessionMoveLog {
         self.moves.push(LoggedMove::new(action, actor));
     }
 
-    /// Append a landed advance with an explicit [`Attribution`] trust level (the signed-advance
-    /// path records [`Attribution::Signed`]).
+    /// Append a landed advance with an explicit [`Attribution`] trust level and NO signature
+    /// envelope — the asserted / legacy path. (The signed-advance path uses
+    /// [`record_signed`](SessionMoveLog::record_signed).)
     pub fn record_attributed(
         &mut self,
         action: Action,
@@ -168,6 +222,18 @@ impl SessionMoveLog {
     ) {
         self.moves
             .push(LoggedMove::attributed(action, actor, attribution));
+    }
+
+    /// Append a landed SIGNATURE-VERIFIED advance, persisting the [`SignedProvenance`] beside it
+    /// (the signed-advance path records this) so its `Signed` provenance is re-verifiable on resume.
+    pub fn record_signed(
+        &mut self,
+        action: Action,
+        actor: DreggIdentity,
+        provenance: SignedProvenance,
+    ) {
+        self.moves
+            .push(LoggedMove::signed(action, actor, provenance));
     }
 
     /// The number of landed advances recorded (the replayable turns; genesis is implicit in `cfg`).
@@ -222,6 +288,31 @@ pub trait SessionResumeStore {
         attribution: &Attribution,
     ) {
         let _ = attribution;
+        self.record_landed(key, id, action, actor);
+    }
+
+    /// Append a LANDED signature-VERIFIED advance **with the re-verifiable envelope**
+    /// ([`SignedProvenance`] — the replay counter and Ed25519 signature
+    /// [`verify_signed`](crate::verify_signed) consumed), so the `Signed` provenance survives a
+    /// restart as a CHECKABLE fact rather than a bare `actor` string + trust tag. A store that
+    /// persists it lets [`OfferingHost::resume`](crate::OfferingHost::resume) RE-RUN `verify_signed`
+    /// on reload; a forged store line (a victim pubkey tagged `s` with no/wrong signature) then
+    /// fails re-verification and the session refuses to resume (fail-closed), instead of
+    /// reconstructing a `Signed` turn no key ever signed.
+    ///
+    /// **Default: records the move as ASSERTED** (delegates to
+    /// [`record_landed`](SessionResumeStore::record_landed)) — an implementor that cannot persist
+    /// the signature MUST NOT persist an unverifiable `Signed` tag; it fails closed to the trust it
+    /// can prove. Additive, so an existing external implementor keeps compiling.
+    fn record_landed_signed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        provenance: &SignedProvenance,
+    ) {
+        let _ = provenance;
         self.record_landed(key, id, action, actor);
     }
 
@@ -343,6 +434,21 @@ impl SessionResumeStore for InMemoryResumeStore {
             // in practice `record_open` always precedes it (the host opens before it advances).
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
         entry.record_attributed(action.clone(), actor.clone(), attribution.clone());
+    }
+
+    fn record_landed_signed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        provenance: &SignedProvenance,
+    ) {
+        let mut map = self.inner.borrow_mut();
+        let entry = map
+            .entry(Self::map_key(key, id))
+            .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
+        entry.record_signed(action.clone(), actor.clone(), provenance.clone());
     }
 
     fn record_signed_counters(&self, key: &str, id: &SessionId, floors: &[(String, u64)]) -> bool {
@@ -549,12 +655,33 @@ impl SessionResumeStore for FileResumeStore {
         actor: &DreggIdentity,
         attribution: &Attribution,
     ) {
+        // The ASSERTED path — an asserted line's trust is implicit (no signature to persist), so
+        // the attribution level rides only in the omission of the signed columns. A `Signed`
+        // attribution never reaches here (the host routes it to `record_landed_signed`, which
+        // persists the re-verifiable envelope); were one to, it is fail-closed to asserted rather
+        // than written as an unverifiable `s`.
+        let _ = attribution;
         // A landed move on a session we never saw opened still establishes a file (default cfg);
         // in practice `record_open` always precedes it (the host opens before it advances).
         self.write_header_if_absent(key, id, &SessionConfig::default());
         let path = self.path_for(key, id);
         if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&path) {
-            let _ = writeln!(f, "{}", encode_move(action, actor, attribution));
+            let _ = writeln!(f, "{}", encode_move(action, actor, None));
+        }
+    }
+
+    fn record_landed_signed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        provenance: &SignedProvenance,
+    ) {
+        self.write_header_if_absent(key, id, &SessionConfig::default());
+        let path = self.path_for(key, id);
+        if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&path) {
+            let _ = writeln!(f, "{}", encode_move(action, actor, Some(provenance)));
         }
     }
 
@@ -719,18 +846,25 @@ fn encode_header(key: &str, id: &SessionId, cfg: &SessionConfig) -> String {
     format!("{}\t{}\t{}", esc(key), esc(&id.0), seed)
 }
 
-/// One landed advance: `label \t turn \t arg \t enabled \t has_text \t text \t actor \t trust`.
-/// The 8th `trust` column is the [`Attribution`] level — `s` (signed: `actor` is a VERIFIED
-/// pubkey hex) or `a` (asserted). It carries no payload of its own (a signed attribution's
-/// pubkey and an asserted attribution's label are both exactly the `actor` column), so old
-/// 7-column lines decode losslessly as `a` — see [`decode_log`].
-fn encode_move(action: &Action, actor: &DreggIdentity, attribution: &Attribution) -> String {
-    let trust = match attribution {
-        Attribution::Signed { .. } => "s",
-        Attribution::Asserted { .. } => "a",
-    };
-    format!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+/// One landed advance. An ASSERTED (or legacy) move is 8 columns:
+/// `label \t turn \t arg \t enabled \t has_text \t text \t actor \t a`. A SIGNED move is 10
+/// columns — the `s` trust tag PLUS the re-verifiable envelope
+/// `… \t actor \t s \t counter \t signature_hex`: the `(counter, signature)`
+/// [`verify_signed`](crate::verify_signed) consumed, so [`decode_log`] reloads a `Signed` move as
+/// a fact [`OfferingHost::resume`](crate::OfferingHost::resume) can RE-CHECK — not a bare tag over
+/// a fully-controllable `actor` string. The signer pubkey is the `actor` column itself
+/// (`verify_signed`'s postcondition: a signed move's actor IS its verified pubkey hex), so it is
+/// not duplicated on the wire. A `Signed` trust level with no persisted envelope is never written
+/// as `s` (it would be an unverifiable, forgeable claim) — `provenance = None` yields an `a` line.
+/// Old 7-column lines decode losslessly as `a`; a bare 8-column `s` (a signed tag with NO
+/// envelope) is refused as corrupt — see [`decode_log`].
+fn encode_move(
+    action: &Action,
+    actor: &DreggIdentity,
+    provenance: Option<&SignedProvenance>,
+) -> String {
+    let base = format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
         esc(&action.label),
         esc(&action.turn),
         action.arg,
@@ -738,8 +872,11 @@ fn encode_move(action: &Action, actor: &DreggIdentity, attribution: &Attribution
         action.text.is_some() as u8,
         esc(action.text.as_deref().unwrap_or("")),
         esc(&actor.0),
-        trust,
-    )
+    );
+    match provenance {
+        Some(prov) => format!("{base}\ts\t{}\t{}", prov.counter, hex64(&prov.signature)),
+        None => format!("{base}\ta"),
+    }
 }
 
 /// One opaque operation metadata row. The safe replay bytes live in a
@@ -820,6 +957,26 @@ fn decode_hex32(value: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+fn hex64(bytes: &[u8; 64]) -> String {
+    let mut out = String::with_capacity(128);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn decode_hex64(value: &str) -> Option<[u8; 64]> {
+    if value.len() != 128 {
+        return None;
+    }
+    let mut out = [0u8; 64];
+    for (index, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
 /// Parse a whole session file back into a [`SessionMoveLog`] — the header plus the ordered landed
 /// advances. Returns `None` on a structurally corrupt file (a missing / malformed header), so a
 /// damaged file is treated as absent rather than resumed to a wrong state.
@@ -848,9 +1005,12 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
             log.record_binary_operation(decode_operation(&f)?);
             continue;
         }
-        // 7 columns = the pre-attribution format (every such log was asserted-only);
-        // 8 columns = the current format with the trailing trust column.
-        if f.len() != 7 && f.len() != 8 {
+        // Column count fixes the trust shape:
+        //   7  = the pre-attribution legacy format (every such log was asserted-only);
+        //   8  = an explicit trust tag (`a` asserted — an `s` here is a bare signed CLAIM with NO
+        //        envelope and is REFUSED, never reconstructed Signed-without-a-signature);
+        //   10 = a signed move: the `s` tag + the re-verifiable `counter` and `signature`.
+        if f.len() != 7 && f.len() != 8 && f.len() != 10 {
             return None;
         }
         let label = unesc(f[0]);
@@ -860,21 +1020,34 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
         let has_text = f[4] == "1";
         let text = unesc(f[5]);
         let actor = DreggIdentity(unesc(f[6]));
-        let attribution = match f.get(7).copied() {
-            // A signed move's actor IS its verified pubkey hex (verify_signed's postcondition).
-            Some("s") => Attribution::Signed {
-                pubkey_hex: actor.0.clone(),
-            },
-            // Explicitly asserted, or the legacy 7-column line (which was always asserted).
-            Some("a") | None => Attribution::from(actor.clone()),
-            // An unknown trust tag is a corrupt file — treat as absent, never mis-labeled.
-            Some(_) => return None,
-        };
         let mut action = Action::new(label, turn, arg, enabled);
         if has_text {
             action = action.with_text(text);
         }
-        log.record_attributed(action, actor, attribution);
+        match (f.len(), f.get(7).copied()) {
+            // Legacy 7-column, or an explicit asserted 8-column tag — always ASSERTED.
+            (7, _) | (8, Some("a")) => {
+                let attribution = Attribution::from(actor.clone());
+                log.record_attributed(action, actor, attribution);
+            }
+            // A SIGNED move: the `s` tag PLUS the persisted re-verifiable envelope. The actor
+            // column IS the signer pubkey hex (verify_signed's postcondition). The signature is
+            // NOT verified here (decode is a pure codec) — `OfferingHost::resume` re-runs
+            // verify_signed before honoring the `Signed` attribution.
+            (10, Some("s")) => {
+                let counter = f[8].parse::<u64>().ok()?;
+                let signature = decode_hex64(f[9])?;
+                let provenance = SignedProvenance {
+                    pubkey_hex: actor.0.clone(),
+                    counter,
+                    signature,
+                };
+                log.record_signed(action, actor, provenance);
+            }
+            // A bare `s` with no envelope (8-column signed), or any unknown tag / column shape:
+            // a corrupt or forged line — refuse the whole file (never a mislabeled Signed).
+            _ => return None,
+        }
     }
     Some(log)
 }
@@ -1025,9 +1198,12 @@ mod file_store_tests {
     }
 
     /// ATTRIBUTION PROVENANCE round-trips through the file store — a signed move reloads as
-    /// `Signed`, an asserted one as `Asserted` — and a LEGACY 7-column log line (persisted
-    /// before the trust column existed) still decodes, as `Asserted` (which is exactly what
-    /// every pre-signed-seam attribution was). The existing wire format is never broken.
+    /// `Signed` **carrying its re-verifiable `(counter, signature)` envelope**, an asserted one as
+    /// `Asserted` — and a LEGACY 7-column log line (persisted before the trust column existed)
+    /// still decodes, as `Asserted` (which is exactly what every pre-signed-seam attribution was).
+    /// The existing wire format is never broken. A bare `s` tag with NO signature envelope (an old
+    /// 8-column signed line, or a hand-forged one) is REFUSED as corrupt — never reconstructed as
+    /// a `Signed` turn no signature backs.
     #[test]
     fn attribution_round_trips_and_legacy_seven_column_lines_still_decode() {
         let dir = scratch_dir("attribution");
@@ -1035,14 +1211,17 @@ mod file_store_tests {
         let id = SessionId::new("s");
         let cfg = SessionConfig::with_seed(11);
         let pubkey_hex = "ab".repeat(32); // a 64-char stand-in pubkey hex
+        let signature = [0x11u8; 64]; // an opaque signature blob (the store is a pure codec)
         store.record_open("dungeon", &id, &cfg);
-        store.record_landed_attributed(
+        store.record_landed_signed(
             "dungeon",
             &id,
             &Action::new("m", "choose", 1, true),
             &DreggIdentity(pubkey_hex.clone()),
-            &Attribution::Signed {
+            &SignedProvenance {
                 pubkey_hex: pubkey_hex.clone(),
+                counter: 4,
+                signature,
             },
         );
         store.record_landed(
@@ -1059,9 +1238,22 @@ mod file_store_tests {
             },
             "a signed move reloads as Signed"
         );
+        assert_eq!(
+            log.moves[0].signature,
+            Some(SignedProvenance {
+                pubkey_hex: pubkey_hex.clone(),
+                counter: 4,
+                signature,
+            }),
+            "the re-verifiable (counter, signature) envelope survives the round-trip"
+        );
         assert!(
             !log.moves[1].attribution.is_signed(),
             "a plain record_landed reloads as Asserted"
+        );
+        assert!(
+            log.moves[1].signature.is_none(),
+            "an asserted move carries no signature envelope"
         );
 
         // A LEGACY file: header + one 7-column move line (no trust column) decodes as Asserted.
@@ -1075,6 +1267,15 @@ mod file_store_tests {
                 label: "web:bob".into()
             },
             "a legacy line is honestly Asserted"
+        );
+        assert!(old.moves[0].signature.is_none());
+
+        // THE FORGE, at the codec layer: a bare 8-column `s` tag with NO signature envelope is
+        // NOT reconstructed as Signed — it is a corrupt/forged line and the whole file is refused.
+        let bare_signed = format!("dungeon\tforged\t42\nm\tchoose\t1\t1\t0\t\t{pubkey_hex}\ts\n");
+        assert!(
+            decode_log(&bare_signed).is_none(),
+            "a signed tag with no persisted signature is corrupt — never a reconstructed Signed"
         );
 
         let _ = fs::remove_dir_all(&dir);

@@ -133,7 +133,7 @@ pub use operation::{
 };
 pub use resume::{
     FileResumeStore, InMemoryResumeStore, LoggedBinaryOperation, LoggedMove, SessionMoveLog,
-    SessionResumeStore,
+    SessionResumeStore, SignedProvenance,
 };
 pub use signed::{
     Attribution, SignedAction, SignedError, TurnSigner, signing_message, verify_detached,
