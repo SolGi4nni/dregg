@@ -54,16 +54,21 @@ Those are the SEPARATELY-priced residuals, named at `stateDecode8_pre_faithful`.
 NOT yet closed: the exact-Prop AIR layer and the computational game layer are still bridged
 per-instance (the game samples a tag; the deployed trace fixes `deployedTag`).
 
-`Eff` itself is NO LONGER a bare parameter at the discharge site.  §P instantiates it at
-`Dregg2.Crypto.CostAdversary.IsPolyTime` — a cost-vector model (intrinsic instructions +
-per-oracle call counts, both DERIVED from a deep-embedded program's syntax) in which the
-⊤-collapse witness is PROVED excluded and the class is PROVED inhabited — and derives the
-composed finder's efficiency instead of assuming it, with the reduction's OUTPUT growth
-proved (`wireCommit8Find_len_le`) rather than hypothesized.  What remains supplied is each
-reshaper's DECLARED instruction count, linear in its input size: a Lean function has no
-runtime, so that number cannot be derived, only charged in the program's syntax.  §R's
-general `stateCommit_binds_advantage_bound` keeps the `Eff`/`hEff` parameters, since it is
-the statement at an arbitrary adversary class.
+`Eff` at the discharge site: an earlier §P instantiated it at
+`Dregg2.Crypto.CostAdversary.IsPolyTime` and derived the composed finder's efficiency — but
+that floor is REFUTED HERE (§P, `stateCommit_floor_polyTime_false_babyBear`): `IsPolyTime`
+prices answer SIZE, so the `Classical.choice` adversary answering every sampled tag with a
+short collision that EXISTS by pigeonhole is in the class and wins with probability `1`.
+The discharged theorem was therefore VACUOUS at deployed BabyBear parameters, and it is
+DELETED.  The honest discharge is §Q/§S: the chain is modeled as an ORACLE COMPUTATION —
+each absorption step a `query` node (`wireCommitComp`, eval-equal to the deployed
+`wireCommitR8`) — and the binding is re-grounded on the KEYED, QUERY-COUNTED sampled-oracle
+floor (`KeyedRomFloor.keyedRom_hard`, the birthday bound, a THEOREM), where the
+choice-answerer is PROVABLY excluded.  ⚑ That re-grounding is a MODELLING step (the standard
+random-oracle idealization of the deployed sponge at an asymptotic digest width — `hw`
+demands `|R l| = 2^l`, unsatisfiable by the fixed 31-bit BabyBear felt), taken deliberately
+and LABELLED in §S, not smuggled.  §R's general `stateCommit_binds_advantage_bound` keeps
+the `Eff`/`hEff` parameters, since it is the statement at an arbitrary adversary class.
 
 No axiom, `sorry`, `admit`, or native decision procedure.
 -/
@@ -71,7 +76,7 @@ import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.InjectiveFloorRegrounded
 import Dregg2.Crypto.CostAdversary
-import Dregg2.Crypto.CostTactics
+import Dregg2.Crypto.RomChainedReduction
 import Dregg2.Tactics
 
 namespace Market.WideCommitBoundary
@@ -79,17 +84,27 @@ namespace Market.WideCommitBoundary
 open Dregg2.Exec
 open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR
-  (Poseidon2Width8 chainFrom8_len chainFrom8_snoc wireCommitR8 WireColl
-   wireCommitR8_binds_or_collides chunk31 chainCollFind wireCommit8Find IsCollW)
+  (Poseidon2Width8 chainFrom8 chainFrom8_len chainFrom8_snoc wireCommitR8 WireColl
+   wireCommitR8_binds_or_collides chunk31 chunk31_length chunkCount chainCollFind
+   wireCommit8Find IsCollW)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
-open Dregg2.Crypto.ConcreteSecurity (Negl)
-open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_postMap)
-open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+  (Game Adversary Hard gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded not_negl_one)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le winProb_top)
 open Dregg2.Circuit.InjectiveFloorRegrounded
   (WideKeyed wideFamily wireCommitBreakGame wireBreakToFinder wire_adv_le
    wireCommitR8_binds_advantage_bound wide_floor_top_false_babyBear wide_floor_bot_vacuous)
+open Dregg2.Circuit.VacuitySweepTeeth (babyBearP finite_width8_bounded)
+open Dregg2.Circuit.HashFloorHonesty (not_injective_of_finite_range)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily keyedRomGame keyedRom_top_false)
+open Dregg2.Crypto.RomChainedReduction
+  (chainEval chainComp chainComp_eval chainComp_queryBounded chainEval_const
+   RomChainedCarrier romChainedGame romChainedGame_wins_iff RomChainedComp romChainedAdv
+   RomChainedEff romChained_binds romChained_choiceForger_excluded fixedChainedComp
+   fixedChainedForger_in_eff fixedChainedForger_negl romChainedGame_win_at_const)
 
 set_option autoImplicit false
 
@@ -407,9 +422,12 @@ composition and the floor closure both live INSIDE `wireCommitR8_binds_advantage
 composes `InjectiveFloorRegrounded.wire_adv_le`), so this domination step is the single new layer.
 
 ⚑ `hEff` is UNDISCHARGED — the standard "the reduction is efficient", a PARAMETER, in the open, on the
-COMPOSED finder `wireBreakToFinder D (stateBreakToWireBreak … A)` (`FloorGames` §8: the tree has no
-cost model).  The floor is priced by §R's two poles below: `⊤` FALSE at deployed BabyBear params,
-`⊥` vacuous. -/
+COMPOSED finder `wireBreakToFinder D (stateBreakToWireBreak … A)`.  It CANNOT be honestly discharged
+over THIS game: §P proves the floor at `Eff := IsPolyTime` FALSE at deployed BabyBear parameters, and
+no query-counted class repairs a FIXED-function game either (the function is public — a bounded
+adversary brute-forces it; `RomBindingReduction` header).  The honest discharge moves the GAME to the
+sampled-oracle model — §Q/§S.  The floor here is priced by §R's two poles below: `⊤` FALSE at deployed
+BabyBear params, `⊥` vacuous. -/
 theorem stateCommit_binds_advantage_bound (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ)
     (t : BoundaryTurn)
     (Eff : Adversary (hashGame (wideFamily D)) → Prop)
@@ -464,46 +482,32 @@ theorem the_reduced_stateCommit_bound_fires (D : WideKeyed) (S : CommitSurface) 
     Negl (gameAdv (stateCommitBreakGame D S hash t) A) :=
   stateCommit_binds_advantage_bound D S hash t Eff A hEff hCR
 
-/-! ## §P — `hEff` DISCHARGED: efficiency preservation is a THEOREM, and its OVERHEAD is DERIVED.
+/-! ## §P — the `IsPolyTime` discharge is REFUTED, and the theorem that carried it is GONE.
 
-⚑ **WHAT `CostAdversary` ENABLES.** `stateCommit_binds_advantage_bound` (§R) still carries
-`hEff : Eff (composed finder)` as a bare PARAMETER — the honest name for "the reduction is efficient",
-undischarged because `FloorGames` §8 had no cost model. `Dregg2.Crypto.CostAdversary` supplies one, at
-COST-VECTOR resolution (intrinsic instructions + per-oracle call counts), and at `Eff := IsPolyTime` the
-parameter becomes a CONSEQUENCE: both reduction hops are `CostAdversary.Adversary.postMap` instances
-(pure output reshaping, tag passed through), and `isPolyTime_postMap` proves each preserves
-`IsPolyTime`. So a state forger that is EFFICIENT (`hA`), reshaped by the two extractors, stays
-efficient — `hEff` is PROVED, not assumed.
+⚑ **WHAT STOOD HERE.** `stateCommit_binds_from_polyTime` instantiated §R's `Eff` at
+`Dregg2.Crypto.CostAdversary.IsPolyTime` and PROVED the composed finder stays in that class — the
+efficiency bookkeeping was real, and its output-growth lemmas remain below.  But the floor it then
+consumed,
 
-⚑ **AND THE OVERHEAD IS NO LONGER A FLOATING POLYNOMIAL.** The earlier version of this theorem took
-`ovState ovWire : ℕ → ℕ` with `PolyBoundedNat` hypotheses — two arbitrary polynomials of the security
-parameter, connected to nothing. They are GONE. What replaces them:
+    HashCRHardQuant (wideFamily D) (IsPolyTime (hashAnsSize D)),
 
-  * the reshaper's work is DECLARED as `cw · (input size) + bw` — two NAT CONSTANTS, LINEAR in the size
-    of the value the reduction is handed, and CHARGED IN THE PROGRAM'S SYNTAX (`tickN`) rather than
-    asserted about a Lean `fun` (`CostAdversary` design commitment 5);
-  * the reshaper's OUTPUT growth is PROVED here, not hypothesized: the state→wire hop emits exactly
-    `358` symbols (`kernelPayload_length`, two 178-limb payloads and two roots) and the wire→collision
-    hop emits at most `22` (`wireCommit8Find_len_le` — the chain walk returns two ≤11-felt lists);
-  * poly-ness of the total overhead is then DERIVED from the forger's OWN poly bound, via
-    `CostAdversary.FreeOracle.maxOut_le_intr` ("a poly-time adversary writes poly-many bits").
+is **FALSE at deployed BabyBear parameters**, and this section now PROVES that
+(`stateCommit_floor_polyTime_false_babyBear`) by the same construction that felled the sponge floor
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`): `IsPolyTime` prices the
+answer's SIZE, never the difficulty of finding it, so the `Classical.choice` adversary that answers
+every sampled tag with a two-limb collision — which EXISTS, by pigeonhole, in the fixed compressing
+wide permutation — is in the class and wins with probability `1`.  A binding conditioned on a refuted
+floor asserts nothing at the deployed hash; it was VACUOUS, and it is DELETED rather than retained as
+costume.  Its honest successor is §Q/§S: the same reduction shape over a game whose hash is a SAMPLED
+ORACLE the adversary can only QUERY, where the floor is a theorem (`KeyedRomFloor.keyedRom_hard`) and
+the choice-answerer is PROVABLY excluded.
 
-The ⊤-collapse witness (the brute-force scanning solver, `CostAdversary.bruteForce`) remains excluded,
-because it is `¬ PolyTime` (`CostAdversary.bruteForce_not_polyTime`). -/
+The extractor output-size facts (`chunk31_len_le`, `chainCollFind_len_le`, `wireCommit8Find_len_le`)
+are RETAINED: true deployed-width facts about the chain walk, independent of the cost model that used
+to consume them. -/
 
-/-- **THE STATE GAME'S ANSWER ENCODING.** A forged pair of chained states costs, to write down, its two
-receipt logs plus its two fixed-shape kernels. Concrete on purpose: the size measure belongs to the GAME
-(`CostAdversary` design commitment 4), and leaving it open would let a degenerate `sz := 0` make output
-free again. -/
-def stateAnsSize (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ) (t : BoundaryTurn) :
-    AnsSize (stateCommitBreakGame D S hash t) :=
-  fun _ (c : RecChainedState × RecChainedState) => c.1.log.length + c.2.log.length + 2
-
-/-- **THE WIRE GAME'S ANSWER ENCODING** — the two limb lists plus the two iroots. -/
-def wireAnsSize (D : WideKeyed) : AnsSize (wireCommitBreakGame D) :=
-  fun _ (c : (List ℤ × ℤ) × (List ℤ × ℤ)) => c.1.1.length + c.2.1.length + 2
-
-/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed preimages of the wide permutation. -/
+/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed preimages of the wide permutation.
+This is the size measure the REFUTED class `IsPolyTime (hashAnsSize D)` prices (§P header). -/
 def hashAnsSize (D : WideKeyed) : AnsSize (hashGame (wideFamily D)) :=
   fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
 
@@ -591,63 +595,339 @@ theorem wireCommit8Find_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Wi
     show (l.take 4).length + (l'.take 4).length ≤ 22
     omega
 
-/-- **⚑ `hEff` DISCHARGED, WITH THE OVERHEAD DERIVED.** A state-commit forger that is EFFICIENT at the
-game's own answer encoding, put through the two extractors, yields a `permW`-collision finder that is
-still efficient — so the wide collision floor at `Eff := IsPolyTime` applies to it, and the forger's
-advantage is negligible.
+/-- **A SHORT COLLISION AT EVERY TAG.** The one-limb messages `[n]` are an infinite family whose
+images under the deployed wide permutation all land in the finite box of 8-lane BabyBear squeezes —
+so two of them collide, and the witness is TWO LIMBS TOTAL.  Pure pigeonhole; no Poseidon2 structure
+used.  (`Exec.SystemRootsBindingReduction.exists_short_collision`, transplanted to the WIDE family —
+the same disease, at the anchor THIS file exports.) -/
+theorem exists_short_wide_collision (D : WideKeyed)
+    (hb : ∀ (t : D.Tag) (xs : List ℤ), ∀ x ∈ D.permWAt t xs, 0 ≤ x ∧ x < babyBearP)
+    (l : ℕ) (t : D.Tag) :
+    ∃ p : List ℤ × List ℤ, (hashGame (wideFamily D)).wins l t p
+      ∧ p.1.length + p.2.length ≤ 2 := by
+  have hfin : (Set.range (fun n : ℤ => D.permWAt t [n])).Finite := by
+    refine (finite_width8_bounded babyBearP).subset ?_
+    rintro _ ⟨n, rfl⟩
+    exact ⟨D.width8At t [n], fun x hx => ⟨(hb t [n] x hx).1, (hb t [n] x hx).2⟩⟩
+  have hni := not_injective_of_finite_range _ hfin
+  rw [Function.not_injective_iff] at hni
+  obtain ⟨n, m, himg, hne⟩ := hni
+  refine ⟨([n], [m]), ⟨fun h => hne ?_, himg⟩, by simp⟩
+  injection h
 
-The two reshapers' declared work `(cwState, bwState)` / `(cwWire, bwWire)` is the honest modelling input
-(a Lean function has no runtime); everything else is proved. In particular NO `PolyBoundedNat` hypothesis
-is taken: the poly-ness of the composed overhead follows from `hA` itself. -/
-theorem stateCommit_binds_from_polyTime (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ)
-    (t : BoundaryTurn)
-    (A : Adversary (stateCommitBreakGame D S hash t))
-    (hA : IsPolyTime (stateAnsSize D S hash t) A)
-    (cwState bwState cwWire bwWire : ℕ)
-    (hCR : HashCRHardQuant (wideFamily D) (IsPolyTime (hashAnsSize D))) :
-    Negl (gameAdv (stateCommitBreakGame D S hash t) A) := by
-  -- Hop 1 (state → wire): `poly_time` applies `isPolyTime_postMap` (folding in the tight-δ
-  -- composition + derived poly overhead), leaving ONLY the output-growth fact `hout` — proved
-  -- from the two 178-limb payloads (`kernelPayload_length`).
-  have h1 : IsPolyTime (wireAnsSize D) (stateBreakToWireBreak D S hash t A) := by
-    poly_time (stateAnsSize D S hash t) (wireAnsSize D)
-      (fun _ _ (c : RecChainedState × RecChainedState) =>
-        ((kernelPayload S c.1.kernel t, receiptRoot hash c.1.log),
-         (kernelPayload S c.2.kernel t, receiptRoot hash c.2.log)))
-      cwState bwState 0 358 hA
-    intro l tag c
-    show (kernelPayload S c.1.kernel t).length + (kernelPayload S c.2.kernel t).length + 2
-      ≤ 0 * (stateAnsSize D S hash t l c) + 358
-    rw [kernelPayload_length, kernelPayload_length]
-    simp [kernelPayloadWidth]
-  -- Hop 2 (wire → collision): same one call; `hout` is the chain-walk output bound
-  -- (`wireCommit8Find_len_le`, two ≤11-felt lists).
-  have hEff : IsPolyTime (hashAnsSize D)
-      (wireBreakToFinder D (stateBreakToWireBreak D S hash t A)) := by
-    poly_time (wireAnsSize D) (hashAnsSize D)
-      (fun _ tag (c : (List ℤ × ℤ) × (List ℤ × ℤ)) =>
-        wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
-      cwWire bwWire 0 22 h1
-    intro l tag c
-    have := wireCommit8Find_len_le (D.permWAt tag) (D.width8At tag) c.1.1 c.1.2 c.2.1 c.2.2
-    show (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).1.length
-        + (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).2.length
-      ≤ 0 * (wireAnsSize D l c) + 22
-    omega
-  exact stateCommit_binds_advantage_bound D S hash t
-    (IsPolyTime (hashAnsSize D)) A hEff hCR
+/-- **THE SHORT-COLLISION ADVERSARY** — answers every sampled tag with a two-limb collision of the
+wide permutation.  Nothing in `Adversary` demands computability, and nothing in `IsPolyTime` prices
+the FINDING — only the writing. -/
+noncomputable def shortWideCollAdv (D : WideKeyed)
+    (hb : ∀ (t : D.Tag) (xs : List ℤ), ∀ x ∈ D.permWAt t xs, 0 ≤ x ∧ x < babyBearP) :
+    Adversary (hashGame (wideFamily D)) where
+  run := fun l t => (exists_short_wide_collision D hb l t).choose
 
-/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** `HashCRHardQuant (wideFamily D)
-(IsPolyTime (hashAnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the class,
-because the answer it writes has size `0` under the game's own encoding.  Together with
-`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
-floor strictly between the two poles. -/
+/-- It wins at EVERY tag. -/
+theorem shortWideCollAdv_wins (D : WideKeyed)
+    (hb : ∀ (t : D.Tag) (xs : List ℤ), ∀ x ∈ D.permWAt t xs, 0 ≤ x ∧ x < babyBearP)
+    (l : ℕ) (t : D.Tag) :
+    (hashGame (wideFamily D)).wins l t ((shortWideCollAdv D hb).run l t) :=
+  (exists_short_wide_collision D hb l t).choose_spec.1
+
+/-- And it is IN the class the deleted discharge instantiated the floor at — two limbs is poly-size. -/
+theorem shortWideCollAdv_isPolyTime (D : WideKeyed)
+    (hb : ∀ (t : D.Tag) (xs : List ℤ), ∀ x ∈ D.permWAt t xs, 0 ≤ x ∧ x < babyBearP) :
+    IsPolyTime (hashAnsSize D) (shortWideCollAdv D hb) :=
+  Dregg2.Crypto.CostAdversary.isPolyTime_inhabited _ _
+    ⟨2, 0, fun l t => by
+      have h := (exists_short_wide_collision D hb l t).choose_spec.2
+      simpa [hashAnsSize, shortWideCollAdv] using h.trans (by omega)⟩
+
+/-- **⚑ THE INSTANTIATED FLOOR IS FALSE AT THE DEPLOYED WIDE PERMUTATION** — the death certificate
+of the deleted `stateCommit_binds_from_polyTime`: its `hCR` hypothesis is refutable at deployed
+BabyBear parameters, so everything conditioned on it was VACUOUS there.  The defect is the shared
+cost model (`IsPolyTime` cannot separate "writes a short string" from "finds a collision"), not this
+site; the repair is §Q/§S, not a better `Eff` over the same fixed-function game. -/
+theorem stateCommit_floor_polyTime_false_babyBear (D : WideKeyed)
+    (hb : ∀ (t : D.Tag) (xs : List ℤ), ∀ x ∈ D.permWAt t xs, 0 ≤ x ∧ x < babyBearP) :
+    ¬ HashCRHardQuant (wideFamily D) (IsPolyTime (hashAnsSize D)) := by
+  intro hHard
+  have hneg := hHard (shortWideCollAdv D hb) (shortWideCollAdv_isPolyTime D hb)
+  have hone : gameAdv (hashGame (wideFamily D)) (shortWideCollAdv D hb) = fun _ => (1 : ℝ) := by
+    funext l
+    show @Dregg2.Crypto.ProbCrypto.winProb _ ((hashGame (wideFamily D)).instFin l) _ = 1
+    have hall : (shortWideCollAdv D hb).hit l = fun _ => true := by
+      funext t
+      exact ((shortWideCollAdv D hb).hit_eq_true l t).mpr (shortWideCollAdv_wins D hb l t)
+    rw [hall]
+    exact @winProb_top _ ((hashGame (wideFamily D)).instFin l) ((hashGame (wideFamily D)).instNe l)
+  rw [hone] at hneg
+  exact not_negl_one hneg
+
+/-- **(TOOTH — the refuted class is NOT EMPTY.)** The constant finder is in
+`IsPolyTime (hashAnsSize D)` (the answer it writes has size `0` under the game's own encoding), so
+§P's refutation is not about a vacuous class: the class is inhabited AND contains a probability-`1`
+winner.  The floor fails WITH content. -/
 theorem hashFloor_isPolyTime_inhabited (D : WideKeyed) :
     IsPolyTime (hashAnsSize D)
       (Dregg2.Crypto.CostAdversary.idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
         (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
   Dregg2.Crypto.CostAdversary.isPolyTime_inhabited _ _
     ⟨0, 0, fun _ _ => by simp [hashAnsSize]⟩
+
+/-! ## §Q — the deployed chain, AS AN ORACLE COMPUTATION.
+
+⚑ **THE MODEL THE RE-GROUNDING NEEDS, ON THE REAL OBJECT.** `wireCommitR8` is a CHAINED absorption:
+the 4-limb head, fifty-eight 3-limb `chunk31` chunks each re-absorbing the previous 8-felt digest,
+the receipt root last.  `wireCommitComp` is that chain as an ORACLE PROGRAM — one `query` node per
+absorption step, the previous ANSWER threaded into the next query point — and `wireCommitComp_eval`
+proves its run at the deployed permutation IS `wireCommitR8`, step for step.  NOTHING in this
+section is idealized: the oracle type is the deployed `List ℤ → List ℤ`, and the budget
+(`wireCommitComp_queryBounded`: exactly 60 queries at the proved 178-limb payload width) is a fact
+of the deployed schedule. -/
+
+/-- The deployed fold IS the generic chain: `chainFrom8` is `chainEval` at the fixed-width
+concatenation encoding `enc acc c = acc ++ c`. -/
+theorem chainEval_append_eq_chainFrom8 (permW : List ℤ → List ℤ) :
+    ∀ (cs : List (List ℤ)) (acc : List ℤ),
+      chainEval permW (fun acc c => acc ++ c) acc cs = chainFrom8 permW acc cs
+  | [], _ => rfl
+  | c :: cs, acc => chainEval_append_eq_chainFrom8 permW cs (permW (acc ++ c))
+
+/-- **⚑ THE DEPLOYED CHAINED COMMITMENT, AS AN ORACLE PROGRAM** — the head query, then one query per
+`chunk31` block, then the iroot block: `wireCommitR8`'s exact absorption schedule, with each
+absorption a `query` node.  This is the object the re-pointing campaign named as the missing piece
+for the chained STATE_COMMIT. -/
+def wireCommitComp (l : List ℤ) (ir : ℤ) : OracleComp (List ℤ) (List ℤ) (List ℤ) :=
+  .query (l.take 4)
+    (fun h => chainComp (fun acc c => acc ++ c) h (chunk31 (l.drop 4) ++ [[ir, 0, 0]]))
+
+/-- **THE MODEL IS THE DEPLOYED OBJECT**: running the program at the deployed permutation is
+`wireCommitR8`, on the nose. -/
+theorem wireCommitComp_eval (permW : List ℤ → List ℤ) (l : List ℤ) (ir : ℤ) :
+    (wireCommitComp l ir).eval permW = wireCommitR8 permW l ir := by
+  show (chainComp (fun acc c => acc ++ c) (permW (l.take 4))
+      (chunk31 (l.drop 4) ++ [[ir, 0, 0]])).eval permW = _
+  rw [chainComp_eval, chainEval_append_eq_chainFrom8]
+  rfl
+
+/-- Every chunk of a body whose length is divisible by 3 is EXACTLY 3 limbs wide — the deployed
+174-limb body (178 minus the 4-limb head) feeds only 3-wide blocks, which is what pins the chained
+carrier's block type in §S. -/
+theorem chunk31_three_wide :
+    ∀ (xs : List ℤ), xs.length % 3 = 0 → ∀ c ∈ chunk31 xs, c.length = 3
+  | [], _, c, hc => by simp [chunk31] at hc
+  | [a], h, c, hc => by simp at h
+  | [a, b], h, c, hc => by simp at h
+  | a :: b :: d :: rest, h, c, hc => by
+      simp only [chunk31, List.mem_cons] at hc
+      rcases hc with rfl | hc
+      · rfl
+      · refine chunk31_three_wide rest ?_ c hc
+        simp only [List.length_cons] at h
+        omega
+
+/-- The deployed block count: a 178-limb payload's chain absorbs `58 + 1 = 59` blocks after the
+head. -/
+theorem deployed_blockCount (l : List ℤ) (ir : ℤ) (hlen : l.length = 178) :
+    (chunk31 (l.drop 4) ++ [[ir, 0, 0]]).length = 59 := by
+  rw [List.length_append, chunk31_length, List.length_drop, hlen]
+  show chunkCount (178 - 4) + 1 = 59
+  decide
+
+/-- **THE DEPLOYED COMMITTER PAYS EXACTLY 60 QUERIES** — 1 head + 58 chunks + 1 iroot block, at the
+proved 178-limb payload width.  The budget is a fact of the schedule, not a declaration. -/
+theorem wireCommitComp_queryBounded (l : List ℤ) (ir : ℤ) (hlen : l.length = 178) :
+    QueryBounded 60 (wireCommitComp l ir) := by
+  unfold wireCommitComp
+  refine QueryBounded.query 59 _ _ (fun h => ?_)
+  have hq := chainComp_queryBounded (fun acc c => acc ++ c)
+    (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) h
+  rwa [deployed_blockCount l ir hlen] at hq
+
+/-- **THE DEPLOYED STATE COMMIT IS THE PROGRAM'S RUN**: `commit8`'s eight felts are
+`wireCommitComp`'s output at the deployed permutation, at the deployed payload and receipt root. -/
+theorem commit8_as_oracleComp (permW : List ℤ → List ℤ) (hW : Poseidon2Width8 permW)
+    (hash : List ℤ → ℤ) (S : CommitSurface) (s : RecChainedState) (t : BoundaryTurn) :
+    (wireCommitComp (kernelPayload S s.kernel t) (receiptRoot hash s.log)).eval permW
+      = (commit8 permW hW hash S s t).vals := by
+  rw [wireCommitComp_eval]
+  rfl
+
+/-- The deployed committer program is 60-query-bounded at the real payload. -/
+theorem commit8_queryBounded (hash : List ℤ → ℤ) (S : CommitSurface) (s : RecChainedState)
+    (t : BoundaryTurn) :
+    QueryBounded 60 (wireCommitComp (kernelPayload S s.kernel t) (receiptRoot hash s.log)) :=
+  wireCommitComp_queryBounded _ _ (kernelPayload_length S s.kernel t)
+
+/-! ## §S — the state-commit binding, RE-GROUNDED on the keyed sampled-oracle floor.
+
+⚑⚑ **THE HEADLINE SUCCESSOR to the deleted `stateCommit_binds_from_polyTime`.**  §R's reduction
+shape is kept — a state forgery becomes a collision — but the GAME moves to the model where a
+collision floor is PROVABLE: the hash is a SAMPLED ORACLE the adversary can only QUERY
+(`Dregg2.Crypto.RomChainedReduction`, resting on `KeyedRomFloor.keyedRom_hard` — the birthday
+bound, a theorem).  The carrier below is §Q's DEPLOYED SCHEDULE: a 4-limb head, then 59 three-limb
+blocks (58 `chunk31` chunks + the iroot block — `deployed_blockCount`, `chunk31_three_wide`), each
+step re-absorbing the previous digest, tag-separated by the four-tag space `WideKeyed` samples.
+The binding takes NO floor hypothesis — `stateCommitRom_binds`'s only inputs are a polynomial query
+budget and the forger — and §P's `Classical.choice` collision-answerer is PROVABLY excluded at this
+layer (`stateCommitRom_choiceForger_excluded`).
+
+⚑ **THE MODELLING STEP, OUT LOUD (not smuggled).**  The floor demands a `λ`-GROWING digest space
+(`hw : |R l| = 2^l`).  The deployed Poseidon2 squeeze is a FIXED vector of 31-bit BabyBear felts —
+there is NO `l` at which its cardinality is `2^l`.  So this section idealizes the felt at width
+`2^l` (digests `Fin (2^l)`, limbs `Fin (2^l)`), exactly the standard random-oracle idealization of
+the deployed sponge at an asymptotic digest width, and exactly the deliberate labelled step
+`Dregg2.lean` §DomainSeparatedCREffRegrounded demands.  What IS proved: the deployed CHAIN
+SCHEDULE's binding, over a sampled oracle, against query-counted adversaries, with no false
+hypothesis.  What is NOT claimed: that the fixed BabyBear Poseidon2 is a random oracle, or any
+derivation from the deployed permutation's algebra.  The un-idealizable residual is priced by §P's
+refutation: NO floor over the fixed public function survives, at any honest adversary class. -/
+
+/-- **THE IDEALIZED STATE-COMMIT ORACLE FAMILY** — four domain-separation tags (the `WideKeyed`
+shape), a domain of head blocks (4 idealized limbs) ⊕ step inputs (digest × 3-limb block), and a
+`λ`-bit digest space.  The sum gives head/step domain separation for free. -/
+def stateCommitRomFamily : KeyedRomFamily where
+  Key := fun _ => Fin 4
+  D := fun l => (Fin 4 → Fin (2 ^ l)) ⊕ (Fin (2 ^ l) × (Fin 3 → Fin (2 ^ l)))
+  R := fun l => Fin (2 ^ l)
+  keyFin := fun _ => inferInstance
+  keyDec := fun _ => inferInstance
+  keyNe := fun _ => ⟨0⟩
+  dFin := fun _ => inferInstance
+  dDec := fun _ => inferInstance
+  dNe := fun l => ⟨Sum.inl (fun _ => ⟨0, by positivity⟩)⟩
+  rFin := fun _ => inferInstance
+  rDec := fun _ => inferInstance
+  rNe := fun l => ⟨⟨0, by positivity⟩⟩
+
+/-- **THE DEPLOYED-SCHEDULE CHAINED CARRIER**: 4-limb head, 59 three-limb blocks, step encoding
+`(digest, block)` — §Q's fixed-width concatenation `acc ++ c`, made type-level, which is what turns
+its injectivity into a LAYOUT fact.  The context is the tag both chains share, exactly as in §R's
+`stateCommitBreakGame`, where one sampled tag prices both commits. -/
+def stateCommitRomCarrier : RomChainedCarrier stateCommitRomFamily where
+  Ctx := fun _ => Fin 4
+  Hd := fun l => Fin 4 → Fin (2 ^ l)
+  Blk := fun l => Fin 3 → Fin (2 ^ l)
+  len := fun _ => 59
+  hdDec := fun _ => inferInstance
+  blkDec := fun _ => inferInstance
+  encHd := fun _ c h => (c, Sum.inl h)
+  encStep := fun _ c r b => (c, Sum.inr (r, b))
+  encHd_inj := fun _ _ _ _ h => Sum.inl_injective (congrArg Prod.snd h)
+  encStep_inj := fun _ _ r b r' b' h => by
+    have h2 := Sum.inr_injective (congrArg Prod.snd h)
+    exact ⟨congrArg Prod.fst h2, congrArg Prod.snd h2⟩
+
+/-- The carrier's chain length IS §Q's deployed block count — the schedule weld. -/
+theorem stateCommitRomCarrier_len_eq_deployed (l : ℕ) (xs : List ℤ) (ir : ℤ)
+    (hlen : xs.length = 178) :
+    stateCommitRomCarrier.len l = (chunk31 (xs.drop 4) ++ [[ir, 0, 0]]).length := by
+  rw [deployed_blockCount xs ir hlen]
+  rfl
+
+/-- The idealized digest space is exactly `2^l` — the `hw` obligation, DISCHARGED.  (This is the one
+obligation the deployed fixed BabyBear felt cannot meet; §S header.) -/
+theorem stateCommitRom_card_R (l : ℕ) :
+    letI := stateCommitRomFamily.rFin l
+    Fintype.card (stateCommitRomFamily.R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- The tag-separated domain is strictly larger than the digest space — compressing, as deployed. -/
+theorem stateCommitRom_compressing (l : ℕ) :
+    letI := (stateCommitRomFamily.toRomFamily).dFin l
+    letI := (stateCommitRomFamily.toRomFamily).rFin l
+    Fintype.card (stateCommitRomFamily.toRomFamily.R l)
+      < Fintype.card (stateCommitRomFamily.toRomFamily.D l) := by
+  show Fintype.card (Fin (2 ^ l))
+      < Fintype.card (Fin 4 × ((Fin 4 → Fin (2 ^ l)) ⊕ (Fin (2 ^ l) × (Fin 3 → Fin (2 ^ l)))))
+  simp only [Fintype.card_prod, Fintype.card_sum, Fintype.card_fun, Fintype.card_fin]
+  have h1 : 0 < 2 ^ l := by positivity
+  nlinarith [h1, Nat.one_le_pow 3 (2 ^ l) h1]
+
+/-- **⚑⚑ THE RE-GROUNDED STATE-COMMIT BINDING — NO floor hypothesis; the floor is a THEOREM.**
+A query-bounded chained forger against the deployed state-commit schedule has NEGLIGIBLE advantage:
+the eight-felt chained anchor binds the head and every block of its payload except with negligible
+probability, over the sampled tag-separated oracle.  Budget accounting: the forger's `Q` plus the
+extractor's re-walk of both chains (`2·59 + 2 = 120`).  This is what the deleted
+`stateCommit_binds_from_polyTime` pretended to be — same reduction shape, but what sits under it is
+`keyedRom_hard` (proved) instead of a floor §P refutes. -/
+theorem stateCommitRom_binds (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => (((Q l + 120 : ℕ) : ℝ) * ((Q l + 120 : ℕ) : ℝ) + 1)))
+    (A : Adversary (romChainedGame stateCommitRomFamily stateCommitRomCarrier))
+    (hA : RomChainedEff stateCommitRomFamily stateCommitRomCarrier Q A) :
+    Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A) :=
+  romChained_binds stateCommitRomFamily stateCommitRomCarrier Q (fun l => Q l + 120)
+    (fun l => by show Q l + (2 * 59 + 2) ≤ Q l + 120; omega)
+    hQ stateCommitRom_card_R A hA
+
+/-- **⚑ THE `Classical.choice` COLLISION-ANSWERER IS EXCLUDED AT THE STATE-COMMIT LAYER** — §P's
+refutation strategy, transplanted to the sampled-oracle state-commit game, cannot produce a member
+of the query-bounded class: any forger with non-negligible advantage is outside it.  It would have
+to know a collision of an oracle it never queried
+(`RomOracle.OracleComp.eval_congr_of_agree_on_queried` forbids that). -/
+theorem stateCommitRom_choiceForger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => (((Q l + 120 : ℕ) : ℝ) * ((Q l + 120 : ℕ) : ℝ) + 1)))
+    (A : Adversary (romChainedGame stateCommitRomFamily stateCommitRomCarrier))
+    (hnn : ¬ Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A)) :
+    ¬ RomChainedEff stateCommitRomFamily stateCommitRomCarrier Q A :=
+  fun hA => hnn (stateCommitRom_binds Q hQ A hA)
+
+/-- **THE ⊤ POLE at the idealized family** — the UNRESTRICTED floor over the same keyed game is
+FALSE (compressing pigeonhole), so the query bound is load-bearing here exactly as at deployed
+parameters. -/
+theorem stateCommitRom_top_false :
+    ¬ Hard (keyedRomGame stateCommitRomFamily) (fun _ => True) :=
+  keyedRom_top_false stateCommitRomFamily stateCommitRom_compressing
+
+/-- **⚑⚑ THE WHOLE VERDICT AT THE DEPLOYED SCHEDULE AND A CONCRETE BUDGET** (`Q = 120` — enough for
+a forger to compute both its chains honestly, §Q's 60 queries each).  Four facts at once:
+
+  1. the re-grounded binding FIRES: every `120`-query chained forger's advantage is negligible;
+  2. the class is INHABITED, and the admitted member's advantage is negligible — the exact
+     fixed-answer shape that refutes the `IsPolyTime` floor with probability `1` is ADMITTED here
+     and DEFANGED by the sampling, not excluded by fiat;
+  3. the game is WINNABLE (`l ≥ 1`: at a constant oracle any two distinct payloads equivocate), so
+     the negligible advantage is earned against a live event;
+  4. the UNRESTRICTED floor at the same game is FALSE — the query bound does the work.
+
+The budget `120` is not special: `stateCommitRom_binds` takes any polynomially bounded `Q`. -/
+theorem stateCommitRom_verdict :
+    (∀ A, RomChainedEff stateCommitRomFamily stateCommitRomCarrier (fun _ => 120) A →
+        Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A))
+      ∧ (∃ A, RomChainedEff stateCommitRomFamily stateCommitRomCarrier (fun _ => 120) A
+            ∧ Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A))
+      ∧ (∀ l, 1 ≤ l →
+          ∃ (H : (romChainedGame stateCommitRomFamily stateCommitRomCarrier).Inst l)
+            (p : (romChainedGame stateCommitRomFamily stateCommitRomCarrier).Ans l),
+            (romChainedGame stateCommitRomFamily stateCommitRomCarrier).wins l H p)
+      ∧ ¬ Hard (keyedRomGame stateCommitRomFamily) (fun _ => True) := by
+  have hpoly : PolyBounded
+      (fun l => ((((fun _ : ℕ => 120) l + 120 : ℕ) : ℝ)
+        * (((fun _ : ℕ => 120) l + 120 : ℕ) : ℝ) + 1)) := by
+    refine ⟨0, 57601, ?_⟩
+    filter_upwards with n
+    norm_num
+  refine ⟨fun A hA => stateCommitRom_binds (fun _ => 120) hpoly A hA, ?_, ?_,
+    stateCommitRom_top_false⟩
+  · refine ⟨romChainedAdv stateCommitRomFamily stateCommitRomCarrier
+      (fixedChainedComp stateCommitRomFamily stateCommitRomCarrier
+        (fun _ => (0 : Fin 4))
+        (fun l => ((fun _ => (⟨0, by positivity⟩ : Fin (2 ^ l))),
+          fun _ _ => (⟨0, by positivity⟩ : Fin (2 ^ l))))
+        (fun l => ((fun _ => (⟨0, by positivity⟩ : Fin (2 ^ l))),
+          fun _ _ => (⟨0, by positivity⟩ : Fin (2 ^ l))))), ?_, ?_⟩
+    · exact fixedChainedForger_in_eff stateCommitRomFamily stateCommitRomCarrier _ _ _ _
+    · exact stateCommitRom_binds (fun _ => 120) hpoly _
+        (fixedChainedForger_in_eff stateCommitRomFamily stateCommitRomCarrier _ _ _ _)
+  · intro l hl
+    have h2 : 1 < 2 ^ l := Nat.one_lt_two_pow_iff.mpr (by omega)
+    have hpos : 0 < 2 ^ l := by positivity
+    refine ⟨fun _ => (⟨0, hpos⟩ : Fin (2 ^ l)),
+      ((0 : Fin 4),
+       ((fun _ => (⟨0, hpos⟩ : Fin (2 ^ l))), fun _ _ => (⟨0, hpos⟩ : Fin (2 ^ l))),
+       ((fun _ => (⟨1, h2⟩ : Fin (2 ^ l))), fun _ _ => (⟨0, hpos⟩ : Fin (2 ^ l)))), ?_⟩
+    refine romChainedGame_win_at_const stateCommitRomFamily stateCommitRomCarrier l _ _ _ ?_ _
+    intro h
+    have h0 : (⟨0, hpos⟩ : Fin (2 ^ l)) = ⟨1, h2⟩ := congrFun (congrArg Prod.fst h) 0
+    simp [Fin.ext_iff] at h0
 
 #guard kernelPayloadWidth == 178
 #guard receiptRoot (fun xs => xs.sum)
@@ -668,10 +948,27 @@ theorem hashFloor_isPolyTime_inhabited (D : WideKeyed) :
 #assert_axioms chunk31_len_le
 #assert_axioms chainCollFind_len_le
 #assert_axioms wireCommit8Find_len_le
-#assert_axioms stateCommit_binds_from_polyTime
 #assert_axioms hashFloor_isPolyTime_inhabited
 #assert_axioms stateCommit_floor_top_false_babyBear
 #assert_axioms stateCommit_floor_bot_vacuous
 #assert_axioms the_reduced_stateCommit_bound_fires
+#assert_axioms exists_short_wide_collision
+#assert_axioms shortWideCollAdv_wins
+#assert_axioms shortWideCollAdv_isPolyTime
+#assert_axioms stateCommit_floor_polyTime_false_babyBear
+#assert_axioms chainEval_append_eq_chainFrom8
+#assert_axioms wireCommitComp_eval
+#assert_axioms chunk31_three_wide
+#assert_axioms deployed_blockCount
+#assert_axioms wireCommitComp_queryBounded
+#assert_axioms commit8_as_oracleComp
+#assert_axioms commit8_queryBounded
+#assert_axioms stateCommitRomCarrier_len_eq_deployed
+#assert_axioms stateCommitRom_card_R
+#assert_axioms stateCommitRom_compressing
+#assert_axioms stateCommitRom_binds
+#assert_axioms stateCommitRom_choiceForger_excluded
+#assert_axioms stateCommitRom_top_false
+#assert_axioms stateCommitRom_verdict
 
 end Market.WideCommitBoundary

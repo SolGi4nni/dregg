@@ -47,6 +47,14 @@ remaining mechanical work: the raw-function forger `Adversary (carrierBreakGame 
 reduction bodies transfer unchanged; only the adversary TYPE moves from a raw function to a query tree.
 No new proof of collision resistance is created or needed — the birthday floor supplies it.
 
+⚑ The CHAINED case is NOT mechanical, and is now CLOSED: for `wireCommitR8` the collision sits at an
+interior chain step that depends on the oracle's answers, so the extractor cannot be a `mapOut` — it
+must RE-WALK both chains, paying queries. `RomChainedReduction` supplies that (`OracleComp.bind`, the
+chain as an oracle program, the walking extractor, `romChained_binds`), and
+`Market.WideCommitBoundary` §P/§Q/§S lands it on the deployed state-commit schedule — the vacuous
+`stateCommit_binds_from_polyTime` is DELETED there, with its floor hypothesis PROVED false
+(`stateCommit_floor_polyTime_false_babyBear`).
+
 ## Axiom hygiene
 
 `#assert_all_clean` ⊆ {propext, Classical.choice, Quot.sound}; no `sorry`, no fresh `axiom`, no
