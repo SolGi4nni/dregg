@@ -27,6 +27,8 @@ pub mod builder;
 pub mod game;
 pub mod moves;
 pub mod reference;
+pub mod resolve_layout;
+pub mod resolve_witness;
 pub mod surface;
 pub mod witness;
 

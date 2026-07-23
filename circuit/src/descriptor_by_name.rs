@@ -158,6 +158,13 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     // they are re-provable recursion-leaf relations dispatched by exact name, not predicates.
     ("dregg-automatafl-step-d1-n2", AUTOMATAFL_STEP_N2_JSON),
     ("dregg-automatafl-step-d1-n11", AUTOMATAFL_STEP_N11_JSON),
+    // The automatafl move-adjudication (RESOLVE, Leg R: `old → mid`) descriptors — the Lean-emitted
+    // `automataflResolveDescN {2,11}` (`AutomataflResolveEmit.lean`), whose `cMidV4` IS
+    // `AutomataflRules.roundStep`'s resolve board (`resolve_sat_imp_roundBoardN`). The golden
+    // already exists on disk and is emitted by `EmitByName.lean`; this makes it dispatchable by
+    // name for the two-leg fold's resolve leaf (`dregg-automatafl/src/resolve_witness.rs`).
+    ("dregg-automatafl-resolve-n2", AUTOMATAFL_RESOLVE_N2_JSON),
+    ("dregg-automatafl-resolve-n11", AUTOMATAFL_RESOLVE_N11_JSON),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -291,6 +298,13 @@ const DYCK_PARSE_JSON: &str = include_str!("../descriptors/by-name/dyck-parse.js
 const AUTOMATAFL_STEP_N2_JSON: &str = include_str!("../descriptors/by-name/automatafl-step.json");
 const AUTOMATAFL_STEP_N11_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-step-n11.json");
+/// The automatafl RESOLVE (Leg R) descriptors (Lean `automataflResolveDescN {2,11}`), byte-pinned by
+/// their `emitVmJson2` `#guard` and re-derived onto `by-name/` by `EmitByName.lean`. n=2 is the
+/// byte-golden minimal instance (441w/20pi); n=11 is the deployed stock-game board (1273w/36pi).
+const AUTOMATAFL_RESOLVE_N2_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-resolve.json");
+const AUTOMATAFL_RESOLVE_N11_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-resolve-n11.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
