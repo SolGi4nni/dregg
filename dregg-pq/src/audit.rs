@@ -165,6 +165,35 @@ pub(crate) fn guard_unaudited_fallback(op: &str, unaudited_crate: &str, install_
     refuse_unaudited(op, unaudited_crate, install_fn)
 }
 
+/// Warn (loudly, once) that a KEY-GENERATION operation is proceeding WITHOUT a
+/// Lean-verified core installed, and RETURN so the caller mints from the crate
+/// primitive.
+///
+/// This is the keygen sibling of [`guard_unaudited_fallback`]. Encaps/decaps
+/// ABORT when no verified core is installed (they operate on secret material an
+/// adversary supplies the other half of); keygen WARNS and PROCEEDS, because a
+/// process that cannot link the verified archive still needs to be able to mint a
+/// key to function at all, and refusing would brick every such node. The deployed,
+/// archive-linked processes install the verified core and never reach this branch;
+/// this warning is the honest record when one is missing.
+///
+/// `op` names the operation, `unaudited_crate` names the crate that answers it,
+/// and `guards` describes what the freshly-minted key protects — all surfaced in
+/// the one-shot warning so an operator can see the exact assurance being waived.
+#[inline]
+pub(crate) fn guard_no_verified_core(op: &str, unaudited_crate: &str, guards: &str) {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.set(()).is_ok() {
+        eprintln!(
+            "WARNING: dregg-pq is generating a post-quantum key ({op}) with the UNAUDITED \
+             `{unaudited_crate}` crate primitive because NO Lean-verified core is installed in \
+             this process. The verified core is NOT the authority for this key ({guards}). \
+             Deployed, archive-linked processes install the verified core; this process cannot \
+             link it. Any assurance claim resting on the verified core is VOID for keys minted here."
+        );
+    }
+}
+
 /// Announce the opt-in exactly once per process, so an operator who set the
 /// variable (or inherited it from a script) still sees that this process is
 /// running unaudited crypto.
