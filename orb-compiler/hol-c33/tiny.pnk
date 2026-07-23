@@ -1,9 +1,0 @@
-// Minimal straight-line probe: store one constant byte, report it.
-// Smallest program with an observable FFI trace + machine_sem theorem;
-// tiny clash graph => register allocation tractable under plain EVAL.
-fun main() {
-  var buf = @base;
-  st8 buf, 65;
-  @report_vec(buf, 1, buf, 1);
-  return 0;
-}

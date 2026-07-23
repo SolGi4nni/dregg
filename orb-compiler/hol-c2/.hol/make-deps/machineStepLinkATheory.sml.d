@@ -1,1 +1,0 @@
-machineStepLinkATheory.uo: machineStepLinkATheory.ui /Users/ember/dev/HOL/sigobj/Globals.uo /Users/ember/dev/HOL/sigobj/Symtab.uo /Users/ember/dev/HOL/sigobj/Term.uo /Users/ember/dev/HOL/sigobj/Theory.uo /Users/ember/dev/HOL/sigobj/TheoryReader.uo /Users/ember/dev/HOL/sigobj/Thm.uo /Users/ember/dev/HOL/sigobj/Type.uo /Users/ember/dev/cakeml/pancake/semantics/panSemTheory.uo 

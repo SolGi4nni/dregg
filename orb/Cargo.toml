@@ -1,3 +1,0 @@
-[workspace]
-members = ["crates/ring-twin", "crates/wake-twin", "crates/borrow-recycle-twin", "crates/splitsend-twin", "crates/multishot-twin", "crates/conn-limit-twin", "crates/config-publish-twin", "crates/oneshot-recv-twin", "crates/aes-fallback", "crates/dataplane"]
-resolver = "3"
