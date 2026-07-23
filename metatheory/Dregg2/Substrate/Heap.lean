@@ -43,6 +43,7 @@ the named `Poseidon2SpongeCR` hypothesis (the cap-root floor), never as an axiom
 import Dregg2.Crypto.NonMembership
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Crypto.SpongeCarrierReduction
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Tactics
 
 namespace Dregg2.Substrate.Heap
@@ -51,10 +52,16 @@ open Dregg2.Crypto.NonMembership (Sorted Adjacent sorted_gap_excludes)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeCarrier SpongeKeyed spongeFamily carrierBreakGame carrierAnsSize spongeAnsSize
-   carrier_binds_from_polyTime carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
-open Dregg2.Crypto.FloorGames (Adversary gameAdv HashCRHardQuant)
+   carrierBreakToFinder carrier_binds_advantage_bound
+   carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv HashCRHardQuant)
 open Dregg2.Crypto.CostAdversary (IsPolyTime)
-open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierComp romCarrierAdv
+  RomCarrierEff romCarrier_binds romCarrier_choiceForger_excluded)
+open Dregg2.Crypto.RomCarrierSites
 
 universe u v
 
@@ -430,7 +437,8 @@ theorem hget_hset_frame_of_addr_ne (hash : List ℤ → ℤ)
 the strength bridge (nothing was lost re-grounding) and NOT as a deployed guarantee.
 
 **This is NOT the deployed frame law.** The deployed one is §2.3's reduction
-`heapFrame_binds_from_polyTime`. A deployed BabyBear sponge does not satisfy `Function.Injective`, so
+`heapFrame_binds_advantage_bound` (`hEff` in the open), DISCHARGED on the keyed-ROM floor as §2.4's
+`heapAddr_binds_rom`. A deployed BabyBear sponge does not satisfy `Function.Injective`, so
 reading this theorem as a statement about the running system is exactly the vacuity being retired. -/
 theorem hget_hset_frame (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     (h : FeltHeap) (coll key coll' key' v : ℤ) (hne : ¬(coll' = coll ∧ key' = key)) :
@@ -539,9 +547,10 @@ injective special case — the strength bridge showing nothing was lost — and 
 anti-ghost**. A deployed BabyBear sponge is not injective, so this theorem says nothing about the
 running system; that is precisely the vacuity this sweep retires.
 
-**The deployed anti-ghost is §2.3's `heapRoot_binds_from_polyTime`**: an efficient adversary that keeps
-the published `heap_root` while tampering any address or any value has NEGLIGIBLE advantage, under the
-deployed sponge's collision floor. -/
+**The deployed anti-ghost is §2.3's `heapRoot_binds_advantage_bound`** (an adversary that keeps the
+published `heap_root` while tampering any address or any value has NEGLIGIBLE advantage, under the
+deployed sponge's collision floor at a class its extracted finder inhabits — `hEff` honestly in the
+open), with the address layer DISCHARGED on the keyed-ROM floor in §2.4. -/
 theorem root_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) : h₁ = h₂ := by
   by_contra hne
@@ -599,12 +608,22 @@ role. The difference from what it replaces is not presentational:
     address or ANY value is turned, by `rootFind`, into a genuine collision finder for the deployed
     sponge — so its advantage is negligible under the deployed sponge's collision floor.
 
+⚑ **THE FLOOR DISCIPLINE (07-23).** The `Eff := IsPolyTime` discharge this section used to export
+(`heapRoot_binds_from_polyTime` / `heapFrame_binds_from_polyTime`) is DELETED:
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES
+`HashCRHardQuant (spongeFamily D) (IsPolyTime …)` at the deployed sponge, and
+`Crypto.RomBindingReduction`'s header proves the fixed-function game cannot be repaired by ANY class.
+What remains here is the honest fixed-hash form with `hEff` in the open (`_advantage_bound`); the
+DISCHARGED binding lives on the keyed-ROM floor — §2.4 for the ADDRESS CODEC (a one-query
+commitment, mechanically re-pointed), while the ROOT is a FOLD commitment (`hash` of `leafOf hash`
+digests, one inner query per leaf) that the one-query `RomCarrier` shape does NOT cover: its ROM
+re-grounding needs a fold/vector carrier with a first-differing-leaf extractor, NAMED OPEN WORK, not
+silently claimed.
+
 ⚑ **THE ~31-BIT BOUNDARY IS NOT CLOSED BY THIS, AND MUST NOT BE READ AS CLOSED.** `heap_root` is ONE
-felt. The floor below bounds an adversary's advantage in the deployed sponge's collision game; at a
-~31-bit digest that game is winnable in ~2^15.5 work by birthday search, so the honest reading of
-`heapRoot_binds_from_polyTime` is "the heap root binds exactly as well as its width allows", NOT "the
-heap root binds". Widening the carrier is a separate, still-open repair; what is closed here is that
-the binding now rests on a floor the deployed hash does not REFUTE, instead of one it does. -/
+felt. The floor bounds an adversary's advantage in a collision game; at a ~31-bit digest that game is
+winnable in ~2^15.5 work by birthday search, so the honest reading of every binding here is "binds
+exactly as well as its width allows". Widening the carrier is a separate, still-open repair. -/
 
 /-- **THE HEAP-ROOT CARRIER.** No context; the payload is the whole heap; the commitment is the
 deployed `root`; the extractor is `rootFind`, with its unconditional spec and its proved output
@@ -627,19 +646,20 @@ the event it actually is. -/
 abbrev heapRootBreakGame (D : SpongeKeyed) :=
   carrierBreakGame D heapRootCarrier
 
-/-- **⚑ THE DEPLOYED HEAP-ROOT BINDING — `hEff` DISCHARGED.** An efficient adversary that keeps the
-published `heap_root` while tampering the heap has NEGLIGIBLE advantage, under the deployed sponge's
-collision floor at `Eff := IsPolyTime`. The extracted finder's efficiency is DERIVED by `poly_time`
-from the forger's own bound, not assumed: the only modelling input is the reshaper's declared work
-`(cw, bw)`, because a Lean function has no runtime. -/
-theorem heapRoot_binds_from_polyTime (D : SpongeKeyed)
+/-- **⚑ THE DEPLOYED HEAP-ROOT BINDING — the honest fixed-hash form, `hEff` in the OPEN.** An
+adversary that keeps the published `heap_root` while tampering the heap, whose EXTRACTED finder is in
+the class `Eff`, has NEGLIGIBLE advantage under the deployed sponge's collision floor at `Eff`.
+
+⚑ This replaces the DELETED `heapRoot_binds_from_polyTime`: the `IsPolyTime` discharge carried a
+floor hypothesis that is REFUTED in-tree (§2.3 header), so no discharged fixed-hash form survives.
+The ROM-discharged successor needs the fold carrier named in §2.3 — open work, not yet claimed. -/
+theorem heapRoot_binds_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (Dregg2.Crypto.FloorGames.hashGame (spongeFamily D)) → Prop)
     (A : Adversary (heapRootBreakGame D))
-    (hA : IsPolyTime (carrierAnsSize D heapRootCarrier) A)
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D)
-      (IsPolyTime (spongeAnsSize D))) :
+    (hEff : Eff (carrierBreakToFinder D heapRootCarrier A))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
     Negl (gameAdv (heapRootBreakGame D) A) :=
-  carrier_binds_from_polyTime D heapRootCarrier A hA cw bw hCR
+  carrier_binds_advantage_bound D heapRootCarrier Eff A hEff hCR
 
 /-- **THE ADDRESS-CODEC CARRIER** — the frame law's crypto content, isolated. The payload is the
 `(collection, key)` pair; the commitment is the deployed `addrOf`. -/
@@ -658,20 +678,141 @@ def addrCarrier : SpongeCarrier where
   outBo := 4
   find_len_le := fun _ _ _ _ => by simp
 
-/-- **⚑ THE DEPLOYED FRAME LAW — `hEff` DISCHARGED.** An efficient adversary that finds two distinct
-`(collection, key)` pairs sharing a heap address — the ONLY way to break "untouched data costs
-nothing", by `hget_hset_frame_of_addr_ne`, which needs no crypto at all — has NEGLIGIBLE advantage
-under the deployed sponge's collision floor. This is the honest replacement for the CR hypothesis the
-old `hget_hset_frame` carried. -/
-theorem heapFrame_binds_from_polyTime (D : SpongeKeyed)
+/-- **⚑ THE DEPLOYED FRAME LAW — the honest fixed-hash form, `hEff` in the OPEN.** An adversary that
+finds two distinct `(collection, key)` pairs sharing a heap address — the ONLY way to break
+"untouched data costs nothing", by `hget_hset_frame_of_addr_ne`, which needs no crypto at all —
+whose extracted finder is in `Eff`, has NEGLIGIBLE advantage under the deployed sponge's collision
+floor at `Eff`.  Replaces the DELETED `heapFrame_binds_from_polyTime` (refuted floor, §2.3 header);
+the DISCHARGED successor is §2.4's `heapAddr_binds_rom`. -/
+theorem heapFrame_binds_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (Dregg2.Crypto.FloorGames.hashGame (spongeFamily D)) → Prop)
     (A : Adversary (carrierBreakGame D addrCarrier))
-    (hA : IsPolyTime (carrierAnsSize D addrCarrier) A)
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D)
-      (IsPolyTime (spongeAnsSize D))) :
-    Negl
-      (gameAdv (carrierBreakGame D addrCarrier) A) :=
-  carrier_binds_from_polyTime D addrCarrier A hA cw bw hCR
+    (hEff : Eff (carrierBreakToFinder D addrCarrier A))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (carrierBreakGame D addrCarrier) A) :=
+  carrier_binds_advantage_bound D addrCarrier Eff A hEff hCR
+
+/-! ## §2.4 — ⚑ THE ADDRESS CODEC, DISCHARGED ON THE KEYED-ROM FLOOR.
+
+The one-query re-pointing of the frame law, on `Crypto.RomCarrierSites`' kit. ⚑ THE MODELLING STEP,
+STATED: the sampled `H : Tag × AddrPair → Fin (2 ^ l)` idealises the deployed
+`sponge (tagCode t ++ [coll, key])` at an asymptotic digest width — a deliberate, labelled ROM
+idealisation (the `RomCarrierSites` header names exactly what it buys and does not buy); the message
+domain is the BabyBear-RANGE pair, lossless on every pair the deployed prover can absorb
+(`truncAddr_inj`, `truncAddr_limbs`). The floor under the binding is
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, PROVED — where the deleted discharge carried a
+refuted hypothesis. At the deployed ~31-bit width the honest reading remains §2.3's: binds as well
+as the width allows. -/
+
+/-- The in-range `(collection_id, key)` pair — each coordinate a genuine BabyBear felt. -/
+abbrev AddrPair : Type := Fin babyBearP × Fin babyBearP
+
+/-- **THE ADDRESS-CODEC KEYED ROM FAMILY** — keyed by the deployed tag space, over in-range pairs,
+with the ideal `λ`-bit digest. -/
+def addrRomFamily (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => AddrPair)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem addrRomFamily_card_R (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ) :
+    letI := (addrRomFamily D tagDec).rFin l
+    Fintype.card ((addrRomFamily D tagDec).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE ADDRESS CARRIER** — commitment `H (t, (coll, key))`: the heap address binds its pair.  The
+embedding is the identity, injective on the nose (the ROM restatement of `addrCarrier`'s two-limb
+`List.cons.injEq` extraction). -/
+def addrRomCarrier (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (addrRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => AddrPair) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- The address-forgery game at the sampled oracle: two distinct in-range pairs, one address. -/
+abbrev heapAddrRomGame (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) : Game :=
+  romCarrierGame (addrRomFamily D tagDec) (addrRomCarrier D tagDec)
+
+/-- Truncate an IN-RANGE deployed pair — total on exactly the pairs the deployed prover absorbs. -/
+def truncAddr (p : ℤ × ℤ) (h1 : 0 ≤ p.1 ∧ p.1 < (babyBearP : ℤ))
+    (h2 : 0 ≤ p.2 ∧ p.2 < (babyBearP : ℤ)) : AddrPair :=
+  (⟨p.1.toNat, (Int.toNat_lt h1.1).mpr h1.2⟩, ⟨p.2.toNat, (Int.toNat_lt h2.1).mpr h2.2⟩)
+
+/-- **THE TRUNCATION LOSES NOTHING** — distinct in-range pairs stay distinct. -/
+theorem truncAddr_inj {p q : ℤ × ℤ}
+    (hp1 : 0 ≤ p.1 ∧ p.1 < (babyBearP : ℤ)) (hp2 : 0 ≤ p.2 ∧ p.2 < (babyBearP : ℤ))
+    (hq1 : 0 ≤ q.1 ∧ q.1 < (babyBearP : ℤ)) (hq2 : 0 ≤ q.2 ∧ q.2 < (babyBearP : ℤ))
+    (h : truncAddr p hp1 hp2 = truncAddr q hq1 hq2) : p = q := by
+  have hv1 : p.1.toNat = q.1.toNat := congrArg Fin.val (congrArg Prod.fst h)
+  have hv2 : p.2.toNat = q.2.toNat := congrArg Fin.val (congrArg Prod.snd h)
+  have hc1 : ((p.1.toNat : ℕ) : ℤ) = ((q.1.toNat : ℕ) : ℤ) := by exact_mod_cast hv1
+  have hc2 : ((p.2.toNat : ℕ) : ℤ) = ((q.2.toNat : ℕ) : ℤ) := by exact_mod_cast hv2
+  rw [Int.toNat_of_nonneg hp1.1, Int.toNat_of_nonneg hq1.1] at hc1
+  rw [Int.toNat_of_nonneg hp2.1, Int.toNat_of_nonneg hq2.1] at hc2
+  exact Prod.ext hc1 hc2
+
+/-- **LIMB-FOR-LIMB FAITHFULNESS** — reading the truncated pair back as integers IS the deployed
+absorbed list `[coll, key]` that `addrOf` hands the sponge. -/
+theorem truncAddr_limbs (p : ℤ × ℤ) (h1 : 0 ≤ p.1 ∧ p.1 < (babyBearP : ℤ))
+    (h2 : 0 ≤ p.2 ∧ p.2 < (babyBearP : ℤ)) :
+    [(((truncAddr p h1 h2).1 : ℕ) : ℤ), (((truncAddr p h1 h2).2 : ℕ) : ℤ)] = [p.1, p.2] := by
+  simp only [truncAddr]
+  rw [Int.toNat_of_nonneg h1.1, Int.toNat_of_nonneg h2.1]
+
+/-- **⚑ THE FORGERY IS THE DEPLOYED FRAME VIOLATION** — two DISTINCT in-range pairs whose truncations
+the sampled oracle maps to ONE address ARE a win of the address game. -/
+theorem heapAddrRom_forgery_is_break (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (l : ℕ) (H : (heapAddrRomGame D tagDec).Inst l) (t : D.Tag) {p q : ℤ × ℤ}
+    (hp1 : 0 ≤ p.1 ∧ p.1 < (babyBearP : ℤ)) (hp2 : 0 ≤ p.2 ∧ p.2 < (babyBearP : ℤ))
+    (hq1 : 0 ≤ q.1 ∧ q.1 < (babyBearP : ℤ)) (hq2 : 0 ≤ q.2 ∧ q.2 < (babyBearP : ℤ))
+    (hne : p ≠ q)
+    (heq : H (t, truncAddr p hp1 hp2) = H (t, truncAddr q hq1 hq2)) :
+    (heapAddrRomGame D tagDec).wins l H ((t, ()), truncAddr p hp1 hp2, truncAddr q hq1 hq2) :=
+  ⟨fun hc => hne (truncAddr_inj hp1 hp2 hq1 hq2 hc), heq⟩
+
+/-- **⚑⚑ THE ADDRESS-CODEC BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`heapFrame_binds_from_polyTime`: every query-bounded forger of the heap address has NEGLIGIBLE
+advantage, in the keyed ROM model of §2.4's header.  Only the honest hypotheses remain: a polynomial
+query budget and membership in the query class. -/
+theorem heapAddr_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (heapAddrRomGame D tagDec))
+    (hA : RomCarrierEff (addrRomFamily D tagDec) (addrRomCarrier D tagDec) Q A) :
+    Negl (gameAdv (heapAddrRomGame D tagDec) A) :=
+  romCarrier_binds _ _ Q hQ (addrRomFamily_card_R D tagDec) A hA
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two distinct pairs is in the class and wins with positive probability at every parameter. -/
+theorem heapAddrRom_class_inhabited_pos (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) :
+    ∃ A, RomCarrierEff (addrRomFamily D tagDec) (addrRomCarrier D tagDec) Q A
+      ∧ ∀ l, 0 < gameAdv (heapAddrRomGame D tagDec) A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  refine ⟨romCarrierAdv _ _ (constTripleComp _ _ (fun _ => (t₀, ()))
+      (fun _ => (⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩))
+      (fun _ => (⟨1, one_lt_babyBearP⟩, ⟨0, babyBearP_pos⟩))),
+    constTriple_in_eff _ _ _ _ _ Q, fun l => constTriple_gameAdv_pos _ _ _ _ _ l ?_⟩
+  intro hcon
+  have h0 : (0 : ℕ) = 1 := congrArg (fun x : AddrPair => (x.1 : ℕ)) hcon
+  omega
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED at this site.)** The `0`-query
+constant answerer — the exact shape that refutes the `IsPolyTime` floor — is in the class, and its
+advantage is NEGLIGIBLE against the sampled oracle. -/
+theorem heapAddrRom_constAnswer_defanged (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (c : ∀ l, (addrRomCarrier D tagDec).Ctx l) (v w : ∀ l, (addrRomCarrier D tagDec).Val l) :
+    Negl (gameAdv (heapAddrRomGame D tagDec)
+      (romCarrierAdv _ _ (constTripleComp _ _ c v w))) :=
+  constTriple_binds _ _ c v w Q hQ (addrRomFamily_card_R D tagDec)
+
+/-- **(TOOTH — a non-negligible forger is OUTSIDE the class.)** -/
+theorem heapAddrRom_nonNegl_forger_excluded (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (heapAddrRomGame D tagDec))
+    (hnn : ¬ Negl (gameAdv (heapAddrRomGame D tagDec) A)) :
+    ¬ RomCarrierEff (addrRomFamily D tagDec) (addrRomCarrier D tagDec) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ (addrRomFamily_card_R D tagDec) A hnn
 
 /-- **(TOOTH — the floor is FALSE at the REAL BabyBear parameters.)** The honest price of the `hEff`
 obligation, re-exported at this carrier so the heap lane cannot read its own reduction as stronger
@@ -688,10 +829,18 @@ theorem heapRoot_floor_bot_vacuous (D : SpongeKeyed) :
     HashCRHardQuant (spongeFamily D) (fun _ => False) :=
   carrierFloor_bot_vacuous D
 
-#assert_axioms heapRoot_binds_from_polyTime
-#assert_axioms heapFrame_binds_from_polyTime
+#assert_axioms heapRoot_binds_advantage_bound
+#assert_axioms heapFrame_binds_advantage_bound
 #assert_axioms heapRoot_floor_top_false_babyBear
 #assert_axioms heapRoot_floor_bot_vacuous
+#assert_axioms addrRomFamily_card_R
+#assert_axioms truncAddr_inj
+#assert_axioms truncAddr_limbs
+#assert_axioms heapAddrRom_forgery_is_break
+#assert_axioms heapAddr_binds_rom
+#assert_axioms heapAddrRom_class_inhabited_pos
+#assert_axioms heapAddrRom_constAnswer_defanged
+#assert_axioms heapAddrRom_nonNegl_forger_excluded
 
 /-! ## §3 — NON-VACUITY: concrete witnesses TRUE and FALSE on a computable reference sponge.
 

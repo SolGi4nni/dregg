@@ -67,10 +67,11 @@ while being genuinely inhabited at a degenerate sponge (`badRootsSponge_has_root
 EXISTS by pigeonhole — so the disjunction is satisfiable through the `collides` branch with `binds`
 never holding. Cryptographic hardness quantifies over EFFICIENT ADVERSARIES. The exported binding of
 the eight consensus roots is now `Dregg2.Exec.SystemRootsBindingReduction`:
-`sysRoots_binds_from_polyTime` (the three digest-layer disjunctions are ONE forgery `Game` projected
-three ways), `cellCommitS_binds_from_polyTime`, and `cellRoots_binds_from_polyTime` (the three-way
-disjunction as a UNION BOUND — two extracted finders, two advantages, one floor). `hEff` is DISCHARGED
-with `CostTactics.poly_time` at `Eff := IsPolyTime`, not carried. The five `…_or_collides` theorems
+`sysRoots_binds_rom` (the three digest-layer disjunctions are ONE forgery `Game` projected
+three ways), `cellCommitS_binds_rom`, and `cellRoots_binds_rom` (the three-way
+disjunction as a UNION BOUND — two extracted finders, two advantages, one floor), all discharged on
+the keyed, query-counted ROM floor (`KeyedRomFloor.keyedRom_hard`, PROVED), under the labelled ROM
+idealisation of that module's §7; the fixed-hash `_advantage_bound` forms keep `hEff` in the open. The five `…_or_collides` theorems
 below are DEMOTED to exact-Prop skeletons; see `systemRootsDigest_binds_or_collides` for the two
 honest reasons they still exist (the §3′ bridges derive from them; 29 `Circuit/Emit` modules still
 export them one layer up) — the reduction itself does not consume any of them.
@@ -217,9 +218,9 @@ the pair `rootsCollFind` returns is a genuine collision of the deployed sponge.
 and at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole — so the disjunction is
 satisfiable through the `collides` branch with `binds` never holding.  Cryptographic hardness
 quantifies over EFFICIENT ADVERSARIES.  The exported binding of the eight consensus roots is now the
-REDUCTION `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (forgery as a `Game`, extractor as
-a map of adversaries, unconditional advantage inequality, `hEff` discharged by `poly_time` at
-`Eff := IsPolyTime`).
+REDUCTION `SystemRootsBindingReduction.sysRoots_binds_rom` (forgery as a `Game`, extractor as
+a map of oracle programs, unconditional advantage inequality, discharged on the PROVED keyed-ROM
+floor with the query budget preserved).
 
 ⚑ **WHY THIS IS RETAINED RATHER THAN DELETED, STATED AT THE TRUE RESOLUTION.** NOT because the
 reduction rests on it — it does not: `sysRootsBreakGame`'s win relation is
@@ -257,7 +258,7 @@ theorem systemRootsDigest_binds_or_collides (compressN : List FieldElem → Fiel
 /-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).** Equal
 digests force the WHOLE sub-block FUNCTION equal, or hand back the collision.  The whole-function
 projection of the SAME binding as `systemRootsDigest_binds_or_collides`; the exported claim is the
-reduction `sysRoots_binds_from_polyTime` (all three projections are ONE forgery game). `rootList = List.ofFn`,
+reduction `sysRoots_binds_rom` (all three projections are ONE forgery game). `rootList = List.ofFn`,
 and `List.ofFn_inj` says `ofFn sr = ofFn sr' → sr = sr'`. -/
 theorem systemRootsDigest_binds_fn_or_collides (compressN : List FieldElem → FieldElem)
     (sr sr' : SysRoots)
@@ -270,7 +271,7 @@ theorem systemRootsDigest_binds_fn_or_collides (compressN : List FieldElem → F
 /-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).**
 Equal digests force EVERY side-table root equal (pointwise at each kernel index), or hand back the
 collision.  The per-index projection of the same binding; the exported anti-ghost claim for all eight
-side-tables is `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (whose forgery game is won
+side-tables is `SystemRootsBindingReduction.sysRoots_binds_rom` (whose fixed-hash forgery game is won
 by exactly a sub-block pair differing at SOME kernel index —
 `SystemRootsBindingReduction.sysRoots_forgery_is_break`).  Retained on the two grounds named at
 `systemRootsDigest_binds_or_collides` — the §3′ bridges derive from it, and the per-effect emit
@@ -390,7 +391,7 @@ theorem cellCommitSColl_irrefl (rest : List FieldElem) (sr : SysRoots) :
 /-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).** Equal
 canonical commitments (over the SAME `rest`) EITHER force the SAME `systemRootsDigest`, OR hand back the
 specific pair of absorbed lists at which the deployed sponge collides.  The exported commitment-layer
-binding is the reduction `SystemRootsBindingReduction.cellCommitS_binds_from_polyTime`. The shared `rest` cancels and the
+binding is the reduction `SystemRootsBindingReduction.cellCommitS_binds_rom`. The shared `rest` cancels and the
 singleton digest limbs are compared; nothing is assumed about the sponge.
 
 The old form carried `compressNInjective compressN`, which the deployed BabyBear sponge REFUTES — so it
@@ -414,7 +415,7 @@ commitments force EVERY side-table root equal, or name a collision of the deploy
 commitment layer (`CellCommitSColl`) or at the roots digest (`RootsColl`).
 
 ⚑ **THIS THREE-WAY DISJUNCTION HAS TWO ESCAPE BRANCHES**, which is the shirk compounded.  The exported
-form is `SystemRootsBindingReduction.cellRoots_binds_from_polyTime`: ONE forgery game, TWO extracted
+form is `SystemRootsBindingReduction.cellRoots_binds_rom`: ONE forgery game, TWO extracted
 finders, the standard UNION BOUND, ONE floor — the two escapes become two ADDED advantages that the
 floor kills, and their sum is negligible. The full chain, now TRUE of the deployed
 sponge: equal commitment ⇒ equal digest ⇒ equal roots pointwise. This is "the canonical commitment binds

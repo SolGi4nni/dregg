@@ -50,6 +50,16 @@ SYNTAX — and DERIVES `hEff` with `CostTactics.poly_time`, leaving `hout` as th
 The ⊤-collapse witness (`CostAdversary.bruteForce`) is PROVED excluded from that class and the class is
 PROVED inhabited, so the instantiated floor sits strictly between the two poles proved in §4.
 
+## ⚑ The `_from_polyTime` discharge is SUPERSEDED (07-23)
+
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes the
+`IsPolyTime`-instantiated floor at the deployed sponge, and `Crypto.RomBindingReduction`'s header
+proves no `Eff` repairs the fixed-function game.  `encBinding_from_polyTime(_fixedWidth)` therefore
+discharge onto a hypothesis that is FALSE at deployed parameters; the DISCHARGED successor lives on
+the keyed-ROM floor — `Crypto.RomBindingReduction.romCarrier_binds` with `Crypto.RomCarrierSites`
+(`flatSite_binds`, `chained_rom_binds`) as the per-site kit.  The `_advantage_bound` forms here stay
+the honest fixed-hash statements with `hEff` in the open.
+
 ## Bars
 
 No `sorry`, no `axiom`, no `native_decide`, no `decide` on an opaque `Prop`.  Cost stays SYNTACTIC.

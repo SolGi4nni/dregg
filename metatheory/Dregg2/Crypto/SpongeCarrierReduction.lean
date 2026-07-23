@@ -65,6 +65,18 @@ instead of forty times.
     (`the_carrier_bound_needs_the_extracted_finder`) reds if a future edit lets the conclusion follow
     from the floor applied at some OTHER adversary.
 
+## ⚑ The `_from_polyTime` discharge is SUPERSEDED (07-23)
+
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES
+`HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))` at the deployed sponge, so §4's
+`carrier_binds_from_polyTime` is VACUOUS at deployed parameters — and `Crypto.RomBindingReduction`'s
+header proves the fixed-function game cannot be repaired by ANY `Eff`.  The DISCHARGED successor
+pattern is `Crypto.RomBindingReduction.romCarrier_binds` on the keyed-ROM floor, with
+`Crypto.RomCarrierSites` as the per-site kit; re-pointed sites (SystemRoots §7, Heap §2.4) DELETE
+their `_from_polyTime` forms.  §4 remains only as the honest record of what the answer-size cost
+model can and cannot discharge; the `_advantage_bound` forms (`hEff` in the open) stay the honest
+fixed-hash statements.
+
 ## What this does NOT buy
 
 The reduction does not make the deployed sponge collision-resistant, and it does not close the gap
