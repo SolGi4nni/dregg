@@ -87,3 +87,5 @@ tmp/
 cosmos-settlement/artifacts/
 chain/gnark/emitted
 rhlp-web
+
+.hol
