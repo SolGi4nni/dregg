@@ -84,3 +84,5 @@ import Market.FhIRRaidAllocationBinding
 import Market.ZKOpenRel
 import Market.WideCommitBoundary
 import Market.ShieldedRingEndpointDescriptor
+import Market.WideCarrierSameOpening
+import Market.Fxc4ConsequenceBinding
