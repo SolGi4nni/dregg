@@ -119,16 +119,20 @@ theorem blockedV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
 
 end Blocked
 
-/-! ## §3 — `carryV2ArithN_of_sat`: the corrected carry column is EXACTLY
-`surv ∧ nz ∧ ¬occIncl ∧ ¬nonLeave`.
+/-! ## §3 — `cv2Lift`: the membership navigator into the corrected-carry staging block.
 
-Pure gate algebra over columns already known boolean (`cCv1 = surv·nz`, `cCv2 = cCv1·(1−occIncl)`,
-`cCarryV2 = cCv2·(1−nonLeave)`), the four-conjunct twin of `carryN_of_sat`. This is the CIRCUIT side of
-the defect-#8 closure: `occIncl = 1` (occluded, via §2) OR `nonLeave = 1` (landing holds a non-mover)
-each force `cCarryV2 = 0`, i.e. the piece is KEPT. -/
+The chunk-3 `cCv1 = surv·nz` / `cCv2 = cCv1·(1−occIncl)` columns are LIVE — §11's `cv2ValN_of_sat` /
+`carryV3ArithN_of_sat` read them, and the whole V3/V4 surface rides `cCv2`. This navigator is what
+those extractions use to reach the block's gates.
+
+The chunk-3 EXTRACTION TWINS that once lived here (`carryV2ArithN_of_sat`, §4
+`nonLeaveGateN_of_sat`, §5 `midV2CellN_of_sat`, §6 `writeCellV2N_of_sat`, and the §12/§13 chunk-5
+twins `midV3CellN_of_sat`/`writeCellV3N_of_sat`) were DELETED: the live capstone chain runs
+§19's V4 extraction into `resolve_sat_imp_roundBoardN`, and nothing consumed the superseded V2/V3
+board twins. The `cCarryV2` / `cNonLeave` columns they read are still emitted (they feed `cCv2` and
+the V4 surface); the `cWBoardV2`/`cMidV2`/`cWBoardV3`/`cMidV3` columns they read are not. -/
 section CarryV2
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
+variable {n : Nat}
 
 /-- Membership lift into `carryV2One n which` at either piece index. -/
 theorem cv2Lift (which : Nat) (hw : which < 2) {g : VmConstraint2}
@@ -138,251 +142,7 @@ theorem cv2Lift (which : Nat) (hw : which < 2) {g : VmConstraint2}
   interval_cases which
   · exact List.mem_append_left _ h
   · exact List.mem_append_right _ h
-
-/-- **`carryV2ArithN_of_sat`.** With the four inputs boolean, `cCarryV2[which]` is boolean and is `1`
-iff all four of `surv`, `nz`, `¬occIncl`, `¬nonLeave` hold. -/
-theorem carryV2ArithN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (hw : which < 2)
-    (hsurv : (envAt t i).loc (NGen.cSurv n) = 0 ∨ (envAt t i).loc (NGen.cSurv n) = 1)
-    (hnz : (envAt t i).loc (NGen.nzCol n which) = 0 ∨ (envAt t i).loc (NGen.nzCol n which) = 1)
-    (hoccI : (envAt t i).loc (NGen.cOccIncl n which) = 0
-        ∨ (envAt t i).loc (NGen.cOccIncl n which) = 1)
-    (hnl : (envAt t i).loc (NGen.cNonLeave n which) = 0
-        ∨ (envAt t i).loc (NGen.cNonLeave n which) = 1) :
-    ((envAt t i).loc (NGen.cCarryV2 n which) = 0 ∨ (envAt t i).loc (NGen.cCarryV2 n which) = 1)
-      ∧ ((envAt t i).loc (NGen.cCarryV2 n which) = 1 ↔
-          ((envAt t i).loc (NGen.cSurv n) = 1 ∧ (envAt t i).loc (NGen.nzCol n which) = 1
-            ∧ (envAt t i).loc (NGen.cOccIncl n which) = 0
-            ∧ (envAt t i).loc (NGen.cNonLeave n which) = 0)) := by
-  set e := envAt t i with he
-  -- cCv1 = surv · nz
-  have hcv1 : e.loc (NGen.cCv1 n which) = e.loc (NGen.cSurv n) * e.loc (NGen.nzCol n which) := by
-    have hmem : prodPin (NGen.cCv1 n which) (NGen.cSurv n) (NGen.nzCol n which)
-        ∈ (automataflResolveDescN n).constraints :=
-      cv2Lift which hw (List.mem_cons_self)
-    exact prodN_of_sat hsat hc i hi (NGen.cCv1 n which) (NGen.cSurv n) (NGen.nzCol n which)
-      hmem hsurv hnz
-  have hcv1B : e.loc (NGen.cCv1 n which) = 0 ∨ e.loc (NGen.cCv1 n which) = 1 := by
-    rcases hsurv with a | a <;> rcases hnz with b | b <;> rw [hcv1, a, b] <;> norm_num
-  -- cCv2 = cCv1 · (1 − occIncl)
-  have hcv2 : e.loc (NGen.cCv2 n which)
-      = e.loc (NGen.cCv1 n which) - e.loc (NGen.cCv1 n which) * e.loc (NGen.cOccIncl n which) := by
-    have hmem : cgH (NGen.cv2Head n which) ∈ (automataflResolveDescN n).constraints :=
-      cv2Lift which hw (List.mem_cons_of_mem _ (List.mem_cons_self))
-    have hg := rgateHN hsat i hi hmem
-    have hE : (headToExpr (NGen.cv2Head n which)).eval e.loc
-        = e.loc (NGen.cCv2 n which) + (-1) * e.loc (NGen.cCv1 n which)
-          + e.loc (NGen.cCv1 n which) * e.loc (NGen.cOccIncl n which) := rfl
-    rw [hE] at hg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hcv1B with a | a <;> rcases hoccI with c | c <;> rw [a, c] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  have hcv2B : e.loc (NGen.cCv2 n which) = 0 ∨ e.loc (NGen.cCv2 n which) = 1 := by
-    rcases hcv1B with a | a <;> rcases hoccI with c | c <;> rw [hcv2, a, c] <;> norm_num
-  -- cCarryV2 = cCv2 · (1 − nonLeave)
-  have hcarry : e.loc (NGen.cCarryV2 n which)
-      = e.loc (NGen.cCv2 n which) - e.loc (NGen.cCv2 n which) * e.loc (NGen.cNonLeave n which) := by
-    have hmem : cgH (NGen.carryV2Head n which) ∈ (automataflResolveDescN n).constraints :=
-      cv2Lift which hw (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self)))
-    have hg := rgateHN hsat i hi hmem
-    have hE : (headToExpr (NGen.carryV2Head n which)).eval e.loc
-        = e.loc (NGen.cCarryV2 n which) + (-1) * e.loc (NGen.cCv2 n which)
-          + e.loc (NGen.cCv2 n which) * e.loc (NGen.cNonLeave n which) := rfl
-    rw [hE] at hg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hcv2B with a | a <;> rcases hnl with d | d <;> rw [a, d] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  have hval : e.loc (NGen.cCarryV2 n which)
-      = e.loc (NGen.cSurv n) * e.loc (NGen.nzCol n which)
-        - e.loc (NGen.cSurv n) * e.loc (NGen.nzCol n which) * e.loc (NGen.cOccIncl n which)
-        - (e.loc (NGen.cSurv n) * e.loc (NGen.nzCol n which)
-            - e.loc (NGen.cSurv n) * e.loc (NGen.nzCol n which) * e.loc (NGen.cOccIncl n which))
-          * e.loc (NGen.cNonLeave n which) := by rw [hcarry, hcv2, hcv1]
-  refine ⟨?_, ?_⟩
-  · rcases hcv2B with a | a <;> rcases hnl with d | d <;> rw [hcarry, a, d] <;> norm_num
-  · rw [hval]
-    rcases hsurv with a | a <;> rcases hnz with b | b <;> rcases hoccI with c | c <;>
-      rcases hnl with d | d <;> rw [a, b, c, d] <;> norm_num
-
 end CarryV2
-
-/-! ## §4 — `nonLeaveGateN_of_sat`: the non-leaver bit is `landNz ∧ ¬carry_other`.
-
-The circuit's rendering, at `m = 2`, of "piece `which`'s landing square is held by a piece that does
-not itself leave": the landing square is non-vacuum (`cLandNz`) and the OTHER piece (the only other
-mover) does not carry out of it (`carryCol (1−which) = 0`). Together with `carryV2ArithN_of_sat` this
-pins the full corrected carry `cCarryV2 = surv·nz·(1−occIncl)·(1 − landNz·(1−carry_other))`. -/
-section NonLeave
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
-
-/-- Membership lift into `nonLeaveOne n which` at either piece index. -/
-theorem nlLift (which : Nat) (hw : which < 2) {g : VmConstraint2}
-    (h : g ∈ NGen.nonLeaveOne n which) : g ∈ (automataflResolveDescN n).constraints := by
-  apply mem_resolve_of_mem_nonLeave
-  rw [NGen.nonLeaveConstraints]
-  interval_cases which
-  · exact List.mem_append_left _ h
-  · exact List.mem_append_right _ h
-
-/-- **`nonLeaveGateN_of_sat`.** `cNonLeave[which]` is boolean and is `1` iff `cLandNz[which] = 1` and
-`carryCol (1−which) = 0`. -/
-theorem nonLeaveGateN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (hw : which < 2)
-    (hlandnz : (envAt t i).loc (NGen.cLandNz n which) = 0
-        ∨ (envAt t i).loc (NGen.cLandNz n which) = 1)
-    (hcarryOther : (envAt t i).loc (NGen.carryCol n (1 - which)) = 0
-        ∨ (envAt t i).loc (NGen.carryCol n (1 - which)) = 1) :
-    ((envAt t i).loc (NGen.cNonLeave n which) = 0 ∨ (envAt t i).loc (NGen.cNonLeave n which) = 1)
-      ∧ ((envAt t i).loc (NGen.cNonLeave n which) = 1 ↔
-          ((envAt t i).loc (NGen.cLandNz n which) = 1
-            ∧ (envAt t i).loc (NGen.carryCol n (1 - which)) = 0)) := by
-  set e := envAt t i with he
-  have hmem : cgH (((Head.lin 1 (NGen.cNonLeave n which)).addLin (-1) (NGen.cLandNz n which)).addProd 1
-              [(NGen.cLandNz n which), (NGen.carryCol n (1 - which))])
-      ∈ (automataflResolveDescN n).constraints :=
-    nlLift which hw (List.mem_append_right _ (List.mem_singleton.mpr rfl))
-  have hg := rgateHN hsat i hi hmem
-  have hE : (headToExpr (((Head.lin 1 (NGen.cNonLeave n which)).addLin (-1)
-        (NGen.cLandNz n which)).addProd 1
-        [(NGen.cLandNz n which), (NGen.carryCol n (1 - which))])).eval e.loc
-      = e.loc (NGen.cNonLeave n which) + (-1) * e.loc (NGen.cLandNz n which)
-        + e.loc (NGen.cLandNz n which) * e.loc (NGen.carryCol n (1 - which)) := rfl
-  rw [hE] at hg
-  have hnl : e.loc (NGen.cNonLeave n which)
-      = e.loc (NGen.cLandNz n which)
-        - e.loc (NGen.cLandNz n which) * e.loc (NGen.carryCol n (1 - which)) := by
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hlandnz with a | a <;> rcases hcarryOther with b | b <;> rw [a, b] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  refine ⟨?_, ?_⟩
-  · rcases hlandnz with a | a <;> rcases hcarryOther with b | b <;> rw [hnl, a, b] <;> norm_num
-  · rw [hnl]
-    rcases hlandnz with a | a <;> rcases hcarryOther with b | b <;> rw [a, b] <;> norm_num
-
-end NonLeave
-
-/-! ## §5 — `midV2CellN_of_sat`: the corrected board is the `cResolvable`-gated selection.
-
-The emitted `cMidV2[c]` is `cResolvable · cWBoardV2[c] + (1 − cResolvable) · old[c]` — the circuit
-analog of `resolveMoves b ms = if resolvableB then writeBoard … else b`, one cell at a time. -/
-section MidV2
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
-
-/-- **`midV2CellN_of_sat`.** The corrected-board cell gate, rearranged (stated mod `p`). -/
-theorem midV2CellN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c : Nat) (hcK : c < NGen.KK n) :
-    (envAt t i).loc (NGen.cMidV2 n c)
-      ≡ (envAt t i).loc (NGen.cResolvable n) * (envAt t i).loc (NGen.cWBoardV2 n c)
-        + (envAt t i).loc (NGen.old n c)
-        - (envAt t i).loc (NGen.cResolvable n) * (envAt t i).loc (NGen.old n c)
-      [ZMOD 2013265921] := by
-  have hmem : cgH (NGen.midV2CellHead n c) ∈ (automataflResolveDescN n).constraints := by
-    apply mem_resolve_of_mem_midV2
-    rw [NGen.midV2Constraints]
-    exact List.mem_append_right _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hcK, rfl⟩)
-  have hg := rgateHN hsat i hi hmem
-  have hE : (headToExpr (NGen.midV2CellHead n c)).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.cMidV2 n c)
-        + (-1) * ((envAt t i).loc (NGen.cResolvable n) * (envAt t i).loc (NGen.cWBoardV2 n c))
-        + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.cResolvable n) * (envAt t i).loc (NGen.old n c) := rfl
-  rw [hE] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-end MidV2
-
-/-! ## §6 — `writeCellV2N_of_sat`: the corrected writeBoard-cell rewrite.
-
-`NGen.writeCellV2Head n c` is `writeCellHead` with the OLD `carryCol` replaced by the corrected
-`carryV2Col` and the output cell `cWBoardV2 c`. So the gate has the SAME degree-7 shape the proven
-`writeCellN_of_sat` normalises — the MID cell is the OLD cell KEPT (unless it is a cleared source or a
-landing target), plus each landing piece's particle, with the swap-restore term — but driven by the
-corrected carry that keeps the occluded stayer. Stated mod `p`; `x`/`y` are the cell's column/row. -/
-section WriteCellV2
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
-
-/-- **`writeCellV2N_of_sat`.** The emitted corrected `cWBoardV2` cell gate, rearranged. -/
-theorem writeCellV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c y x : Nat) (hy : y = c / n) (hx : x = c % n)
-    (hcK : c < NGen.KK n) :
-    (envAt t i).loc (NGen.cWBoardV2 n c)
-      ≡ (1 - (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x))
-           - (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-                * (envAt t i).loc (NGen.wDstCol n 0 x))
-           - (envAt t i).loc (NGen.carryV2Col n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x))
-           - (envAt t i).loc (NGen.carryV2Col n 1) * ((envAt t i).loc (NGen.wDstRow n 1 y)
-                * (envAt t i).loc (NGen.wDstCol n 1 x))
-           + (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryV2Col n 1)
-                * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x)))
-           + (envAt t i).loc (NGen.carryV2Col n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x)) * ((envAt t i).loc (NGen.carryV2Col n 0)
-                * ((envAt t i).loc (NGen.wDstRow n 0 y) * (envAt t i).loc (NGen.wDstCol n 0 x)))
-           + (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryV2Col n 1)
-                * ((envAt t i).loc (NGen.wSrcRow n 1 y) * (envAt t i).loc (NGen.wSrcCol n 1 x)))
-           + (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-                * (envAt t i).loc (NGen.wDstCol n 0 x)) * ((envAt t i).loc (NGen.carryV2Col n 1)
-                * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x))))
-          * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-            * (envAt t i).loc (NGen.wDstCol n 0 x)) * (envAt t i).loc (NGen.particleCol n 0)
-        + (envAt t i).loc (NGen.carryV2Col n 1) * ((envAt t i).loc (NGen.wDstRow n 1 y)
-            * (envAt t i).loc (NGen.wDstCol n 1 x)) * (envAt t i).loc (NGen.particleCol n 1)
-        - (envAt t i).loc (NGen.carryV2Col n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-            * (envAt t i).loc (NGen.wDstCol n 0 x)) * ((envAt t i).loc (NGen.carryV2Col n 1)
-            * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x)))
-            * (envAt t i).loc (NGen.particleCol n 1)
-        [ZMOD 2013265921] := by
-  subst hy; subst hx
-  have hmem : cgH (NGen.writeCellV2Head n c) ∈ (automataflResolveDescN n).constraints := by
-    apply mem_resolve_of_mem_midV2
-    rw [NGen.midV2Constraints]
-    exact List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hcK, rfl⟩)
-  have hg := rgateHN hsat i hi hmem
-  have hshape : (headToExpr (NGen.writeCellV2Head n c)).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.cWBoardV2 n c) + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.particleCol n 0))
-        + (envAt t i).loc (NGen.carryV2Col n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV2Col n 1) * (envAt t i).loc (NGen.wDstRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 1) * (envAt t i).loc (NGen.wDstRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 1 (c % n)) * (envAt t i).loc (NGen.particleCol n 1))
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV2Col n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.carryV2Col n 0)
-            * (envAt t i).loc (NGen.wDstRow n 0 (c / n)) * (envAt t i).loc (NGen.wDstCol n 0 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV2Col n 1)
-            * (envAt t i).loc (NGen.wSrcRow n 1 (c / n)) * (envAt t i).loc (NGen.wSrcCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV2Col n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (envAt t i).loc (NGen.carryV2Col n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV2Col n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.particleCol n 1) := rfl
-  rw [hshape] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-end WriteCellV2
 
 /-! ## §7 — THE FLOW-THROUGH OCCLUSION GAP: why `resolve_sat_imp_resolveMovesN` is NOT assembled
 here, and which descriptor column is STILL WRONG. (A SECOND wound, disjoint from defect #8.)
@@ -705,130 +465,6 @@ theorem carryV3ArithN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) 
     rcases hcv2 with a | a <;> rcases hnl with d | d <;> rw [a, d] <;> norm_num
 
 end CarryV3
-
-/-! ## §12 — `midV3CellN_of_sat`: the corrected board is the `cResolvableV2`-gated selection.
-
-The chunk-5 twin of §5: `cMidV3[c] = cResolvableV2 · cWBoardV3[c] + (1 − cResolvableV2) · old[c]` — the
-circuit analog of `resolveMoves b ms = if resolvableB then writeBoard … else b`, on the CORRECTED
-resolvable surface and the CORRECTED board rewrite. -/
-section MidV3
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
-
-/-- **`midV3CellN_of_sat`.** The corrected-board cell gate, rearranged (stated mod `p`). -/
-theorem midV3CellN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c : Nat) (hcK : c < NGen.KK n) :
-    (envAt t i).loc (NGen.cMidV3 n c)
-      ≡ (envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.cWBoardV3 n c)
-        + (envAt t i).loc (NGen.old n c)
-        - (envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.old n c)
-      [ZMOD 2013265921] := by
-  have hmem : cgH (NGen.midV3CellHead n c) ∈ (automataflResolveDescN n).constraints := by
-    apply mem_resolve_of_mem_midV3
-    rw [NGen.midV3Constraints]
-    exact List.mem_append_right _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hcK, rfl⟩)
-  have hg := rgateHN hsat i hi hmem
-  have hE : (headToExpr (NGen.midV3CellHead n c)).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.cMidV3 n c)
-        + (-1) * ((envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.cWBoardV3 n c))
-        + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.cResolvableV2 n) * (envAt t i).loc (NGen.old n c) := rfl
-  rw [hE] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-end MidV3
-
-/-! ## §13 — `writeCellV3N_of_sat`: the corrected writeBoard-cell rewrite.
-
-`NGen.writeCellV3Head n c` is `writeCellHead` with the OLD `carryCol` replaced by the corrected
-`carryV3Col` (§11) and the OLD landing one-hots `wDstRow`/`wDstCol` replaced by the CORRECTED
-`wDstV2Row`/`wDstV2Col` (driven by `cFtV2`), output cell `cWBoardV3 c`. Same degree-7 shape as §6's
-`writeCellV2N_of_sat` normalises — the MID cell is the OLD cell KEPT (unless a cleared source or a
-landing target), plus each landing piece's particle, with the swap-restore term — driven by the carry
-that rides the CORRECTED non-leaver and the corrected landing. Stated mod `p`; `x`/`y` = column/row. -/
-section WriteCellV3
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-  {n : Nat}
-
-/-- **`writeCellV3N_of_sat`.** The emitted corrected `cWBoardV3` cell gate, rearranged. -/
-theorem writeCellV3N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c y x : Nat) (hy : y = c / n) (hx : x = c % n)
-    (hcK : c < NGen.KK n) :
-    (envAt t i).loc (NGen.cWBoardV3 n c)
-      ≡ (1 - (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x))
-           - (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wDstV2Row n 0 y)
-                * (envAt t i).loc (NGen.wDstV2Col n 0 x))
-           - (envAt t i).loc (NGen.carryV3Col n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x))
-           - (envAt t i).loc (NGen.carryV3Col n 1) * ((envAt t i).loc (NGen.wDstV2Row n 1 y)
-                * (envAt t i).loc (NGen.wDstV2Col n 1 x))
-           + (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryV3Col n 1)
-                * ((envAt t i).loc (NGen.wDstV2Row n 1 y) * (envAt t i).loc (NGen.wDstV2Col n 1 x)))
-           + (envAt t i).loc (NGen.carryV3Col n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x)) * ((envAt t i).loc (NGen.carryV3Col n 0)
-                * ((envAt t i).loc (NGen.wDstV2Row n 0 y) * (envAt t i).loc (NGen.wDstV2Col n 0 x)))
-           + (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryV3Col n 1)
-                * ((envAt t i).loc (NGen.wSrcRow n 1 y) * (envAt t i).loc (NGen.wSrcCol n 1 x)))
-           + (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wDstV2Row n 0 y)
-                * (envAt t i).loc (NGen.wDstV2Col n 0 x)) * ((envAt t i).loc (NGen.carryV3Col n 1)
-                * ((envAt t i).loc (NGen.wDstV2Row n 1 y) * (envAt t i).loc (NGen.wDstV2Col n 1 x))))
-          * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wDstV2Row n 0 y)
-            * (envAt t i).loc (NGen.wDstV2Col n 0 x)) * (envAt t i).loc (NGen.particleCol n 0)
-        + (envAt t i).loc (NGen.carryV3Col n 1) * ((envAt t i).loc (NGen.wDstV2Row n 1 y)
-            * (envAt t i).loc (NGen.wDstV2Col n 1 x)) * (envAt t i).loc (NGen.particleCol n 1)
-        - (envAt t i).loc (NGen.carryV3Col n 0) * ((envAt t i).loc (NGen.wDstV2Row n 0 y)
-            * (envAt t i).loc (NGen.wDstV2Col n 0 x)) * ((envAt t i).loc (NGen.carryV3Col n 1)
-            * ((envAt t i).loc (NGen.wDstV2Row n 1 y) * (envAt t i).loc (NGen.wDstV2Col n 1 x)))
-            * (envAt t i).loc (NGen.particleCol n 1)
-        [ZMOD 2013265921] := by
-  subst hy; subst hx
-  have hmem : cgH (NGen.writeCellV3Head n c) ∈ (automataflResolveDescN n).constraints := by
-    apply mem_resolve_of_mem_midV3
-    rw [NGen.midV3Constraints]
-    exact List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hcK, rfl⟩)
-  have hg := rgateHN hsat i hi hmem
-  have hshape : (headToExpr (NGen.writeCellV3Head n c)).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.cWBoardV3 n c) + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n)) * (envAt t i).loc (NGen.particleCol n 0))
-        + (envAt t i).loc (NGen.carryV3Col n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryV3Col n 1) * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 1) * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n)) * (envAt t i).loc (NGen.particleCol n 1))
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV3Col n 1)
-            * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n)) * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.carryV3Col n 0)
-            * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n)) * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryV3Col n 1)
-            * (envAt t i).loc (NGen.wSrcRow n 1 (c / n)) * (envAt t i).loc (NGen.wSrcCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n)) * (envAt t i).loc (NGen.carryV3Col n 1)
-            * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n)) * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (envAt t i).loc (NGen.carryV3Col n 0) * (envAt t i).loc (NGen.wDstV2Row n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstV2Col n 0 (c % n)) * (envAt t i).loc (NGen.carryV3Col n 1)
-            * (envAt t i).loc (NGen.wDstV2Row n 1 (c / n)) * (envAt t i).loc (NGen.wDstV2Col n 1 (c % n))
-            * (envAt t i).loc (NGen.particleCol n 1) := rfl
-  rw [hshape] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-end WriteCellV3
 
 /-! ## §14 — `resolvableV2ArithN_of_sat`: the CORRECTED resolvable surface.
 
@@ -4233,10 +3869,6 @@ end RoundBoard
 
 #assert_axioms movesWindow_three
 #assert_axioms blockedV2N_of_sat
-#assert_axioms carryV2ArithN_of_sat
-#assert_axioms nonLeaveGateN_of_sat
-#assert_axioms midV2CellN_of_sat
-#assert_axioms writeCellV2N_of_sat
 #assert_axioms flowThroughOcclusionGap_witness_n3
 -- CHUNK-5 corrected-surface (V3) extraction, off `Satisfied2 (automataflResolveDescN n)`:
 #assert_axioms ftV2AN_of_sat
@@ -4244,8 +3876,6 @@ end RoundBoard
 #assert_axioms nonLeaveV2GateN_of_sat
 #assert_axioms cv2ValN_of_sat
 #assert_axioms carryV3ArithN_of_sat
-#assert_axioms midV3CellN_of_sat
-#assert_axioms writeCellV3N_of_sat
 #assert_axioms resolvableV2ArithN_of_sat
 #assert_axioms dstIndV2N_of_sat
 #assert_axioms ftV2A_inclBlocked_kills_flowThrough

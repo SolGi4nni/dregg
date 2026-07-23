@@ -50,22 +50,18 @@ re-pinned and `circuit/descriptors/by-name/automatafl-resolve.json` regenerated 
 The canary polarity is FLIPPED: `canonDoubleGood` now SATISFIES both the cell gate and the alphabet
 gate at `mid = 0`, and the two forges (`mid = −1`, the OLD forced value; `mid = 1`, source not
 vacated) are REJECTED — so the fix MOVED the pinned value rather than widening the gate.
-`noSharedSource` is replaced by `sharedSourceVacatesOnce`, and `cellAlgebra` no longer takes
-`A·C = 0` / `B·D = 0` as hypotheses: those two configurations are now LIVE, satisfiable cases.
+`cellAlgebra` consequently no longer takes `A·C = 0` / `B·D = 0` as hypotheses: those two
+configurations are now LIVE, satisfiable cases. (The `NN = 2` specialization
+`sharedSourceVacatesOnce` went out with the retired assembly — see §6.5.)
 
 ## What is CLOSED here, and what is NOT (the honest residual)
 
 CLOSED: R1 (auto pin) · R2 (`validate_move` ⇒ `MoveValid`, witnessed source read) · R3 (witnessed
 `is_vertical`, occlusion) · the R4 pattern bits, selection truth table and `srcNonVac`
-(unconditional) · (a) `boardvalid_of_sat` · (b) `conflictResolve_pair` · (c) THE `m = 2`
-CATERPILLAR, BOTH SIDES (`chainDest_a`/`chainDest_b`; `carry_of_sat`/`ft_of_sat` and their four
-instances) · (d) R6's EXTRACTORS AND ALGEBRA (§5.8): `dstOneHot_of_sat`, `writeCell_of_sat`,
-`cellAlgebra` (eleven live cases of sixteen, the five excluded ones being ONLY the same-piece
-`A·B = C·D = 0`) · (e) NEW, §5.8.2 — THE INDICATOR GLUE, residual (i), CLOSED:
-`oneHotPair_indicator`, `srcIndicator_of_sat` and `dstIndicator_of_sat` identify the emitted
-products `carry·srcRow·srcCol` / `carry·dstRow·dstCol` with the decidable `Coord` predicates
-`⟨x,y⟩ = frm_k` / `⟨x,y⟩ = dest_k` (the interpolated `to_own + ft·(to_other − to_own)`), per cell,
-via the `Int.toNat` bridge — memberships `decide`d against the byte-pinned constraint list.
+(unconditional) · (a) `boardvalid_of_sat` · (b) `conflictResolve_pair` · (c) the REFERENCE half of
+the `m = 2` caterpillar (`chainDest_a`/`chainDest_b`) · (d) `cellAlgebra`, the degree-7 board-update
+collapse to the four indicator products (eleven live cases of sixteen, the five excluded ones being
+ONLY the same-piece `A·B = C·D = 0`).
 
 Also CLOSED, in `Dregg2.Games.Automatafl` (reference side, no circuit content):
 
@@ -80,25 +76,21 @@ Also CLOSED, in `Dregg2.Games.Automatafl` (reference side, no circuit content):
     (landing-A first, then landing-B, then vacuum on a cleared source, else the old cell — the
     reference's `find?` list order IS the gate's `B`-before-`D` priority).
 
-Also CLOSED — residual (iii), THE ASSEMBLY (§6.5):
+RETIRED — the `NN = 2` ASSEMBLY (was §6.5; see §6.5's supersession note):
 
-  * `resolve_sat_imp_resolveMid` — **LEG R'S CAPSTONE, UNCONDITIONAL.** On any satisfying,
-    canonical trace the decoded MID board IS `Automatafl.resolveMid` of the decoded OLD board and
-    the two decoded moves, cell-wise over every in-bounds cell. `resolveFacts_of_sat` derives the
-    per-row semantics ONCE (validity, alphabet, the four pattern bits read as `Coord` equalities,
-    the survive verdict as the reference's fork/collide disjunction, the carries, the flow-through
-    bits, and the four one-hot indicators as `Coord` predicates); `midCell_of_facts` then cases on
-    the survive verdict and on which sources carry, matches each shape to the corresponding
-    `applyMoves_cell_*` lemma, resolves the landing through `chainDest_a`/`chainDest_b`, and pins
-    the cell with `cellAlgebra` through the indicator glue. `forkCollide_bool_of_sat` supplies the
-    fork/collide range `selection_of_sat` did not, which is what makes the NON-surviving direction
-    (`surv = 0 ⇒ the reference really does drop both moves`) provable rather than one-sided.
-  * THE WHOLE TURN now lives at the deployed `n = 11` in `AutomataflTurnCapstone.
-    turn_sat_imp_roundStep_pi` (over `roundStep` / `resolveMoves` / the FINAL corrected board
-    `cMidV4`), not here. The V2 `resolve_step_sat_imp_applyTurn` (`new = applyTurn(old, moves)` at
-    `NN = 2`, over the buggy `resolveMid` board) is RETIRED — see §D.6b: its crypto-free seam rode
-    the `mid` commitment, and the commitment now packs `cMidV4`. This file supplies the Leg-R side
-    of that emitted seam via `resolve_midPack_pi_of_sat` (re-pointed to `cMidV4`).
+  * `resolve_sat_imp_resolveMid` (LEG R'S OLD CAPSTONE) and everything that existed only to serve
+    it — `boardDecodeMid`, `prod_of_sat`/`notBit_of_sat`/`carry_of_sat`/`ft_of_sat` and their four
+    instances, `dstOneHot_of_sat`/`writeCell_of_sat`, `oneHotPair_indicator`/`srcIndicator_of_sat`/
+    `dstIndicator_of_sat`/`sharedSourceVacatesOnce`, `ResolveFacts`/`resolveFacts_of_sat`,
+    `midCell_of_facts`, and the §E two-sided `resolveMid` canaries — are DELETED. It concluded
+    `mid = resolveMid(old, moves)` over the emitted `mid` columns, and that board carries the
+    occlusion / flow-through / 2-cycle defects that CHUNK-3/5/6 were emitted to correct.
+  * THE LIVE CAPSTONE is `AutomataflResolveMovesCapstone.resolve_sat_imp_roundBoardN` —
+    `n`-generic, against the VALIDATED `AutomataflRules.roundBoard`, over the FINAL corrected board
+    `cMidV4`. THE LIVE WHOLE TURN is `AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` at the
+    deployed `n = 11`. The V2 `resolve_step_sat_imp_applyTurn` was retired earlier (§D.6b): its
+    crypto-free seam rode the `mid` commitment, and the commitment now packs `cMidV4`. This file
+    supplies the Leg-R side of that emitted seam via `resolve_midPack_pi_of_sat`.
 
 There is no `sorry`, no assumed arithmetization hypothesis, no assumed mid-board link beyond that
 named seam, and no weakened or vacuous capstone standing in for either.
@@ -243,14 +235,6 @@ def boardDecodeOld (e : VmRowEnv) : Board where
   size          := NN
   automaton     := ⟨(e.loc AX_C).toNat, (e.loc AY_C).toNat⟩
   cells         := fun c => codeToParticle (e.loc (old (c.y * NN + c.x)))
-  useColumnRule := true
-
-/-- The same decode over the CLAIMED MID board columns (the automaton is unmoved by resolution —
-`applyMoves` never relocates it, and `validate_move` forbids either endpoint being the auto cell). -/
-def boardDecodeMid (e : VmRowEnv) : Board where
-  size          := NN
-  automaton     := ⟨(e.loc AX_C).toNat, (e.loc AY_C).toNat⟩
-  cells         := fun c => codeToParticle (e.loc (mid (c.y * NN + c.x)))
   useColumnRule := true
 
 section AutoPin
@@ -1574,356 +1558,17 @@ theorem chainDest_b (bd : Board) (ma mb : Move) (ps : List Coord)
 
 end Caterpillar
 
-/-! ## §5.7 — (1) THE CIRCUIT HALF OF R5: `carry_of_sat` and `ft_of_sat`.
-
-Leg 5 and leg 6 of the descriptor are built from exactly two primitives — `Builder::alloc_prod`
-(`prodPin`) and `not_bit` (`notBitPin`) — so two mechanical extractors serve both legs. The results
-tie `cCarryA`/`cCarryB` and `cFtA`/`cFtB` to PRECISELY the conditions the four `chainDest_*` cases
-branch on, which is what makes the reference landing a function of the circuit's `ft` bit. -/
-
-/-- `Builder::alloc_prod(a, b)` forces the fresh column to the product. -/
-theorem prod_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (out a b : Nat)
-    (hg : cgH ((Head.lin (-1) out).addProd 1 [a, b]) ∈ automataflResolveDesc.constraints)
-    (ha : (envAt t i).loc a = 0 ∨ (envAt t i).loc a = 1)
-    (hb : (envAt t i).loc b = 0 ∨ (envAt t i).loc b = 1) :
-    (envAt t i).loc out = (envAt t i).loc a * (envAt t i).loc b := by
-  set e := envAt t i with he
-  have hgg := rgateH hsat i hi hg
-  have hE : (headToExpr ((Head.lin (-1) out).addProd 1 [a, b])).eval e.loc
-      = (-1) * e.loc out + e.loc a * e.loc b := rfl
-  rw [hE] at hgg
-  refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hgg)).symm
-  rcases ha with h | h <;> rcases hb with h' | h' <;> rw [h, h'] <;>
-    exact ⟨by norm_num, by norm_num⟩
-
-/-- `not_bit(col)` forces the fresh column to `1 − col`. -/
-theorem notBit_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (out col : Nat)
-    (hg : notBitPin out col ∈ automataflResolveDesc.constraints)
-    (hb : (envAt t i).loc col = 0 ∨ (envAt t i).loc col = 1) :
-    (envAt t i).loc out = 1 - (envAt t i).loc col := by
-  set e := envAt t i with he
-  have hgg := rgateH hsat i hi hg
-  have hE : (headToExpr (((Head.lin 1 out).addLin 1 col).addConst (-1))).eval e.loc
-      = e.loc out + e.loc col + (-1) := rfl
-  rw [hE] at hgg
-  refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgg)
-  rcases hb with h | h <;> rw [h] <;> exact ⟨by norm_num, by norm_num⟩
-
-/-- **(1a) — `carry_of_sat`.** The carry column is EXACTLY "the turn survived adjudication AND this
-move's source carried a piece AND its line was clear": `carry = surv ∧ nz ∧ ¬occ`. -/
-theorem carry_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (sa1 carry surv nz occ : Nat)
-    (hp : cgH ((Head.lin (-1) sa1).addProd 1 [surv, nz]) ∈ automataflResolveDesc.constraints)
-    (hq : cgH (((Head.lin 1 carry).addProd (-1) [sa1]).addProd 1 [sa1, occ])
-            ∈ automataflResolveDesc.constraints)
-    (hsurv : (envAt t i).loc surv = 0 ∨ (envAt t i).loc surv = 1)
-    (hnz : (envAt t i).loc nz = 0 ∨ (envAt t i).loc nz = 1)
-    (hocc : (envAt t i).loc occ = 0 ∨ (envAt t i).loc occ = 1) :
-    ((envAt t i).loc carry = 0 ∨ (envAt t i).loc carry = 1)
-      ∧ ((envAt t i).loc carry = 1 ↔
-          ((envAt t i).loc surv = 1 ∧ (envAt t i).loc nz = 1 ∧ (envAt t i).loc occ = 0)) := by
-  set e := envAt t i with he
-  have hsa : e.loc sa1 = e.loc surv * e.loc nz := by
-    exact prod_of_sat hsat hc i hi sa1 surv nz hp hsurv hnz
-  have hcv : e.loc carry = e.loc sa1 - e.loc sa1 * e.loc occ := by
-    have hgg := rgateH hsat i hi hq
-    have hE : (headToExpr (((Head.lin 1 carry).addProd (-1) [sa1]).addProd 1 [sa1, occ])).eval e.loc
-        = e.loc carry + (-1) * e.loc sa1 + e.loc sa1 * e.loc occ := rfl
-    rw [hE] at hgg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hgg)
-    rcases hsurv with a | a <;> rcases hnz with b | b <;> rcases hocc with c | c <;>
-      rw [hsa, a, b, c] <;> exact ⟨by norm_num, by norm_num⟩
-  rcases hsurv with a | a <;> rcases hnz with b | b <;> rcases hocc with c | c <;>
-    rw [hsa, a, b, c] at hcv <;> norm_num at hcv <;> rw [hcv, a, b, c] <;> norm_num
-
-/-- **(1b) — `ft_of_sat`.** The flow-through bit is EXACTLY the five-way conjunction the emitted
-chain computes: `ft = eq_chain ∧ ¬other_nz ∧ surv ∧ ¬occ_other ∧ ¬eq_back`. These are precisely the
-conditions `chainDest_a` / `chainDest_b` branch on, so the reference landing square is a function of
-this bit. -/
-theorem ft_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (nB nO nE f1 f2 f3 ft eqAb bnz occB eqBa surv : Nat)
-    (g1 : notBitPin nB bnz ∈ automataflResolveDesc.constraints)
-    (g2 : notBitPin nO occB ∈ automataflResolveDesc.constraints)
-    (g3 : notBitPin nE eqBa ∈ automataflResolveDesc.constraints)
-    (g4 : cgH ((Head.lin (-1) f1).addProd 1 [eqAb, nB]) ∈ automataflResolveDesc.constraints)
-    (g5 : cgH ((Head.lin (-1) f2).addProd 1 [f1, surv]) ∈ automataflResolveDesc.constraints)
-    (g6 : cgH ((Head.lin (-1) f3).addProd 1 [f2, nO]) ∈ automataflResolveDesc.constraints)
-    (g7 : cgH ((Head.lin (-1) ft).addProd 1 [f3, nE]) ∈ automataflResolveDesc.constraints)
-    (hab : (envAt t i).loc eqAb = 0 ∨ (envAt t i).loc eqAb = 1)
-    (hbnz : (envAt t i).loc bnz = 0 ∨ (envAt t i).loc bnz = 1)
-    (hocc : (envAt t i).loc occB = 0 ∨ (envAt t i).loc occB = 1)
-    (hba : (envAt t i).loc eqBa = 0 ∨ (envAt t i).loc eqBa = 1)
-    (hsurv : (envAt t i).loc surv = 0 ∨ (envAt t i).loc surv = 1) :
-    ((envAt t i).loc ft = 0 ∨ (envAt t i).loc ft = 1)
-      ∧ ((envAt t i).loc ft = 1 ↔
-          ((envAt t i).loc eqAb = 1 ∧ (envAt t i).loc bnz = 0 ∧ (envAt t i).loc surv = 1
-            ∧ (envAt t i).loc occB = 0 ∧ (envAt t i).loc eqBa = 0)) := by
-  set e := envAt t i with he
-  have hnB : e.loc nB = 1 - e.loc bnz := by
-    exact notBit_of_sat hsat hc i hi nB bnz g1 hbnz
-  have hnO : e.loc nO = 1 - e.loc occB := by
-    exact notBit_of_sat hsat hc i hi nO occB g2 hocc
-  have hnE : e.loc nE = 1 - e.loc eqBa := by
-    exact notBit_of_sat hsat hc i hi nE eqBa g3 hba
-  have bnB : e.loc nB = 0 ∨ e.loc nB = 1 := by rcases hbnz with h | h <;> rw [hnB, h] <;> norm_num
-  have bnO : e.loc nO = 0 ∨ e.loc nO = 1 := by rcases hocc with h | h <;> rw [hnO, h] <;> norm_num
-  have bnE : e.loc nE = 0 ∨ e.loc nE = 1 := by rcases hba with h | h <;> rw [hnE, h] <;> norm_num
-  have hf1 : e.loc f1 = e.loc eqAb * e.loc nB := by
-    exact prod_of_sat hsat hc i hi f1 eqAb nB g4 hab bnB
-  have bf1 : e.loc f1 = 0 ∨ e.loc f1 = 1 := by
-    rcases hab with a | a <;> rcases bnB with b | b <;> rw [hf1, a, b] <;> norm_num
-  have hf2 : e.loc f2 = e.loc f1 * e.loc surv := by
-    exact prod_of_sat hsat hc i hi f2 f1 surv g5 bf1 hsurv
-  have bf2 : e.loc f2 = 0 ∨ e.loc f2 = 1 := by
-    rcases bf1 with a | a <;> rcases hsurv with b | b <;> rw [hf2, a, b] <;> norm_num
-  have hf3 : e.loc f3 = e.loc f2 * e.loc nO := by
-    exact prod_of_sat hsat hc i hi f3 f2 nO g6 bf2 bnO
-  have bf3 : e.loc f3 = 0 ∨ e.loc f3 = 1 := by
-    rcases bf2 with a | a <;> rcases bnO with b | b <;> rw [hf3, a, b] <;> norm_num
-  have hft : e.loc ft = e.loc f3 * e.loc nE := by
-    exact prod_of_sat hsat hc i hi ft f3 nE g7 bf3 bnE
-  rcases hab with a | a <;> rcases hbnz with b | b <;> rcases hsurv with c | c <;>
-    rcases hocc with d | d <;> rcases hba with f | f <;>
-    rw [hft, hf3, hf2, hf1, hnB, hnO, hnE, a, b, c, d, f] <;> norm_num
-
-/-- The Leg-5 / Leg-6 gate memberships, `decide`d against the byte-pinned constraint list. -/
-theorem carryA_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (hsurv : (envAt t i).loc cSurv = 0 ∨ (envAt t i).loc cSurv = 1)
-    (hnz : (envAt t i).loc cAnz = 0 ∨ (envAt t i).loc cAnz = 1)
-    (hocc : (envAt t i).loc (cOcc (occBase 0)) = 0 ∨ (envAt t i).loc (cOcc (occBase 0)) = 1) :
-    ((envAt t i).loc cCarryA = 0 ∨ (envAt t i).loc cCarryA = 1)
-      ∧ ((envAt t i).loc cCarryA = 1 ↔
-          ((envAt t i).loc cSurv = 1 ∧ (envAt t i).loc cAnz = 1
-            ∧ (envAt t i).loc (cOcc (occBase 0)) = 0)) :=
-  carry_of_sat hsat hc i hi cSa1 cCarryA cSurv cAnz (cOcc (occBase 0))
-    (mem_carry_idx 2 0 (by decide)) (mem_carry_idx 2 1 (by decide))
-    hsurv hnz hocc
-
-theorem carryB_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (hsurv : (envAt t i).loc cSurv = 0 ∨ (envAt t i).loc cSurv = 1)
-    (hnz : (envAt t i).loc cBnz = 0 ∨ (envAt t i).loc cBnz = 1)
-    (hocc : (envAt t i).loc (cOcc (occBase 1)) = 0 ∨ (envAt t i).loc (cOcc (occBase 1)) = 1) :
-    ((envAt t i).loc cCarryB = 0 ∨ (envAt t i).loc cCarryB = 1)
-      ∧ ((envAt t i).loc cCarryB = 1 ↔
-          ((envAt t i).loc cSurv = 1 ∧ (envAt t i).loc cBnz = 1
-            ∧ (envAt t i).loc (cOcc (occBase 1)) = 0)) :=
-  carry_of_sat hsat hc i hi cSb1 cCarryB cSurv cBnz (cOcc (occBase 1))
-    (mem_carry_idx 2 2 (by decide)) (mem_carry_idx 2 3 (by decide))
-    hsurv hnz hocc
-
-theorem ftA_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (hab : (envAt t i).loc (cEqBit (eqBase 2)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 2)) = 1)
-    (hbnz : (envAt t i).loc cBnz = 0 ∨ (envAt t i).loc cBnz = 1)
-    (hocc : (envAt t i).loc (cOcc (occBase 1)) = 0 ∨ (envAt t i).loc (cOcc (occBase 1)) = 1)
-    (hba : (envAt t i).loc (cEqBit (eqBase 3)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 3)) = 1)
-    (hsurv : (envAt t i).loc cSurv = 0 ∨ (envAt t i).loc cSurv = 1) :
-    ((envAt t i).loc cFtA = 0 ∨ (envAt t i).loc cFtA = 1)
-      ∧ ((envAt t i).loc cFtA = 1 ↔
-          ((envAt t i).loc (cEqBit (eqBase 2)) = 1 ∧ (envAt t i).loc cBnz = 0
-            ∧ (envAt t i).loc cSurv = 1 ∧ (envAt t i).loc (cOcc (occBase 1)) = 0
-            ∧ (envAt t i).loc (cEqBit (eqBase 3)) = 0)) :=
-  ft_of_sat hsat hc i hi cNBnz cNOccb cNEqba cFa1 cFa2 cFa3 cFtA (cEqBit (eqBase 2)) cBnz
-    (cOcc (occBase 1)) (cEqBit (eqBase 3)) cSurv
-    (mem_flowThrough_idx 2 0 (by decide)) (mem_flowThrough_idx 2 1 (by decide))
-    (mem_flowThrough_idx 2 2 (by decide)) (mem_flowThrough_idx 2 3 (by decide))
-    (mem_flowThrough_idx 2 4 (by decide)) (mem_flowThrough_idx 2 5 (by decide))
-    (mem_flowThrough_idx 2 6 (by decide)) hab hbnz hocc hba hsurv
-
-theorem ftB_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (hba : (envAt t i).loc (cEqBit (eqBase 3)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 3)) = 1)
-    (hanz : (envAt t i).loc cAnz = 0 ∨ (envAt t i).loc cAnz = 1)
-    (hocc : (envAt t i).loc (cOcc (occBase 0)) = 0 ∨ (envAt t i).loc (cOcc (occBase 0)) = 1)
-    (hab : (envAt t i).loc (cEqBit (eqBase 2)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 2)) = 1)
-    (hsurv : (envAt t i).loc cSurv = 0 ∨ (envAt t i).loc cSurv = 1) :
-    ((envAt t i).loc cFtB = 0 ∨ (envAt t i).loc cFtB = 1)
-      ∧ ((envAt t i).loc cFtB = 1 ↔
-          ((envAt t i).loc (cEqBit (eqBase 3)) = 1 ∧ (envAt t i).loc cAnz = 0
-            ∧ (envAt t i).loc cSurv = 1 ∧ (envAt t i).loc (cOcc (occBase 0)) = 0
-            ∧ (envAt t i).loc (cEqBit (eqBase 2)) = 0)) :=
-  ft_of_sat hsat hc i hi cNAnz cNOcca cNEqab cFb1 cFb2 cFb3 cFtB (cEqBit (eqBase 3)) cAnz
-    (cOcc (occBase 0)) (cEqBit (eqBase 2)) cSurv
-    (mem_flowThrough_idx 2 7 (by decide)) (mem_flowThrough_idx 2 8 (by decide))
-    (mem_flowThrough_idx 2 9 (by decide)) (mem_flowThrough_idx 2 10 (by decide))
-    (mem_flowThrough_idx 2 11 (by decide)) (mem_flowThrough_idx 2 12 (by decide))
-    (mem_flowThrough_idx 2 13 (by decide)) hba hanz hocc hab hsurv
-
-/-! ## §5.8 — (2) R6: the `write_mid_witnessed` endpoints and the per-cell rewrite gate.
-
-Leg 7 is two families: `one_hot_rowcol` on each endpoint of each piece (source pinned to the move's
-own `(fx, fy)`, destination pinned to the INTERPOLATED `destHead`), and the `k` per-cell equalities
-`mid[c] == keep[c]·old[c] + Σ_i carry_i·dst_i[c]·particle_i` with the swap-restore term. The source
-one-hots are ordinary `Builder::one_hot`s (`oneHot_of_sat` applies verbatim — the emitted gate
-polynomial is literally the same expression); the destination one-hots need their own extractor
-because the index is a HEAD, not a bare column. -/
-
-/-- **The DESTINATION one-hot extractor.** The selector pair is pinned to the interpolated landing
-coordinate `own + ft·(other − own)`: on `ft = 0` the piece's own destination, on `ft = 1` the chain
-endpoint. No prover freedom — the one-hot cannot name a square the `ft` bit did not select. -/
-theorem dstOneHot_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (sel0 sel1 own other ft : Nat)
-    (h0 : cg (gBin sel0) ∈ automataflResolveDesc.constraints)
-    (h1 : cg (gBin sel1) ∈ automataflResolveDesc.constraints)
-    (hs : cgH (((Head.c (-1)).addLin 1 sel0).addLin 1 sel1) ∈ automataflResolveDesc.constraints)
-    (hx : cgH (((Head.lin 0 sel0).addLin 1 sel1).append ((destHead own other ft).scale (-1)))
-            ∈ automataflResolveDesc.constraints)
-    (hown : (envAt t i).loc own = 0 ∨ (envAt t i).loc own = 1)
-    (hoth : (envAt t i).loc other = 0 ∨ (envAt t i).loc other = 1)
-    (hft : (envAt t i).loc ft = 0 ∨ (envAt t i).loc ft = 1) :
-    ((envAt t i).loc sel1
-        = (envAt t i).loc own
-          + (envAt t i).loc ft * ((envAt t i).loc other - (envAt t i).loc own))
-      ∧ (envAt t i).loc sel0 = 1 - (envAt t i).loc sel1
-      ∧ ((envAt t i).loc sel1 = 0 ∨ (envAt t i).loc sel1 = 1) := by
-  set e := envAt t i with he
-  have b0 : e.loc sel0 = 0 ∨ e.loc sel0 = 1 :=
-    bin_of_gate (rgate hsat i hi h0) (canon_loc hc i _)
-  have b1 : e.loc sel1 = 0 ∨ e.loc sel1 = 1 :=
-    bin_of_gate (rgate hsat i hi h1) (canon_loc hc i _)
-  have hsum : e.loc sel0 + e.loc sel1 = 1 := by
-    have hg := rgateH hsat i hi hs
-    have hE : (headToExpr (((Head.c (-1)).addLin 1 sel0).addLin 1 sel1)).eval e.loc
-        = e.loc sel0 + e.loc sel1 + (-1) := rfl
-    rw [hE] at hg
-    have := (gate_modEq_iff (x := e.loc sel0 + e.loc sel1 + -1)
-      (a := e.loc sel0 + e.loc sel1) (b := 1) (by ring)).mp hg
-    rcases b0 with h | h <;> rcases b1 with h' | h' <;>
-      exact eq_of_modEq_small (by rw [h, h']; norm_num) (by norm_num) this
-  have hval : e.loc sel1 = e.loc own + e.loc ft * (e.loc other - e.loc own) := by
-    have hg := rgateH hsat i hi hx
-    have hE : (headToExpr (((Head.lin 0 sel0).addLin 1 sel1).append
-        ((destHead own other ft).scale (-1)))).eval e.loc
-        = e.loc sel1 + (-1) * e.loc own + (-1) * (e.loc ft * e.loc other)
-          + e.loc ft * e.loc own := rfl
-    rw [hE] at hg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hown with a | a <;> rcases hoth with b | b <;> rcases hft with c | c <;>
-      rw [a, b, c] <;> exact ⟨by norm_num, by norm_num⟩
-  exact ⟨hval, by omega, b1⟩
-
-/-- **The PER-CELL REWRITE GATE, as an extracted field equation.** `write_mid_witnessed`'s cell
-gate, rearranged: the MID cell is the OLD cell KEPT (unless it is a cleared source or a landing
-target), plus each landing piece's particle. Stated mod `p` — the raw polynomial can leave the
-canonical window on a witness the alphabet gates then reject, and that rejection is exactly how the
-double-count configurations are ruled out downstream. `Sa`/`Da` are the row×column one-hot products
-of piece A's source and (interpolated) destination at this cell; likewise `Sb`/`Db`. -/
-theorem writeCell_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c y x : Nat)
-    (hmem : cgH (writeCellHead c) ∈ automataflResolveDesc.constraints)
-    (hshape : (headToExpr (writeCellHead c)).eval (envAt t i).loc
-        = (envAt t i).loc (mid c) + (-1) * (envAt t i).loc (old c)
-          + (envAt t i).loc (carryCol 0) * (envAt t i).loc (wSrcRow 0 y)
-              * (envAt t i).loc (wSrcCol 0 x) * (envAt t i).loc (old c)
-          + (envAt t i).loc (carryCol 0) * (envAt t i).loc (wDstRow 0 y)
-              * (envAt t i).loc (wDstCol 0 x) * (envAt t i).loc (old c)
-          + (-1) * ((envAt t i).loc (carryCol 0) * (envAt t i).loc (wDstRow 0 y)
-              * (envAt t i).loc (wDstCol 0 x) * (envAt t i).loc (particleCol 0))
-          + (envAt t i).loc (carryCol 1) * (envAt t i).loc (wSrcRow 1 y)
-              * (envAt t i).loc (wSrcCol 1 x) * (envAt t i).loc (old c)
-          + (envAt t i).loc (carryCol 1) * (envAt t i).loc (wDstRow 1 y)
-              * (envAt t i).loc (wDstCol 1 x) * (envAt t i).loc (old c)
-          + (-1) * ((envAt t i).loc (carryCol 1) * (envAt t i).loc (wDstRow 1 y)
-              * (envAt t i).loc (wDstCol 1 x) * (envAt t i).loc (particleCol 1))
-          + (-1) * ((envAt t i).loc (carryCol 0) * (envAt t i).loc (wSrcRow 0 y)
-              * (envAt t i).loc (wSrcCol 0 x) * (envAt t i).loc (carryCol 1)
-              * (envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x)
-              * (envAt t i).loc (old c))
-          + (-1) * ((envAt t i).loc (carryCol 1) * (envAt t i).loc (wSrcRow 1 y)
-              * (envAt t i).loc (wSrcCol 1 x) * (envAt t i).loc (carryCol 0)
-              * (envAt t i).loc (wDstRow 0 y) * (envAt t i).loc (wDstCol 0 x)
-              * (envAt t i).loc (old c))
-          + (-1) * ((envAt t i).loc (carryCol 0) * (envAt t i).loc (wSrcRow 0 y)
-              * (envAt t i).loc (wSrcCol 0 x) * (envAt t i).loc (carryCol 1)
-              * (envAt t i).loc (wSrcRow 1 y) * (envAt t i).loc (wSrcCol 1 x)
-              * (envAt t i).loc (old c))
-          + (-1) * ((envAt t i).loc (carryCol 0) * (envAt t i).loc (wDstRow 0 y)
-              * (envAt t i).loc (wDstCol 0 x) * (envAt t i).loc (carryCol 1)
-              * (envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x)
-              * (envAt t i).loc (old c))
-          + (envAt t i).loc (carryCol 0) * (envAt t i).loc (wDstRow 0 y)
-              * (envAt t i).loc (wDstCol 0 x) * (envAt t i).loc (carryCol 1)
-              * (envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x)
-              * (envAt t i).loc (particleCol 1)) :
-    (envAt t i).loc (mid c)
-      ≡ (1 - (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wSrcRow 0 y)
-                * (envAt t i).loc (wSrcCol 0 x))
-           - (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wDstRow 0 y)
-                * (envAt t i).loc (wDstCol 0 x))
-           - (envAt t i).loc (carryCol 1) * ((envAt t i).loc (wSrcRow 1 y)
-                * (envAt t i).loc (wSrcCol 1 x))
-           - (envAt t i).loc (carryCol 1) * ((envAt t i).loc (wDstRow 1 y)
-                * (envAt t i).loc (wDstCol 1 x))
-           + (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wSrcRow 0 y)
-                * (envAt t i).loc (wSrcCol 0 x)) * ((envAt t i).loc (carryCol 1)
-                * ((envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x)))
-           + (envAt t i).loc (carryCol 1) * ((envAt t i).loc (wSrcRow 1 y)
-                * (envAt t i).loc (wSrcCol 1 x)) * ((envAt t i).loc (carryCol 0)
-                * ((envAt t i).loc (wDstRow 0 y) * (envAt t i).loc (wDstCol 0 x)))
-           + (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wSrcRow 0 y)
-                * (envAt t i).loc (wSrcCol 0 x)) * ((envAt t i).loc (carryCol 1)
-                * ((envAt t i).loc (wSrcRow 1 y) * (envAt t i).loc (wSrcCol 1 x)))
-           + (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wDstRow 0 y)
-                * (envAt t i).loc (wDstCol 0 x)) * ((envAt t i).loc (carryCol 1)
-                * ((envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x))))
-          * (envAt t i).loc (old c)
-        + (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wDstRow 0 y)
-            * (envAt t i).loc (wDstCol 0 x)) * (envAt t i).loc (particleCol 0)
-        + (envAt t i).loc (carryCol 1) * ((envAt t i).loc (wDstRow 1 y)
-            * (envAt t i).loc (wDstCol 1 x)) * (envAt t i).loc (particleCol 1)
-        - (envAt t i).loc (carryCol 0) * ((envAt t i).loc (wDstRow 0 y)
-            * (envAt t i).loc (wDstCol 0 x)) * ((envAt t i).loc (carryCol 1)
-            * ((envAt t i).loc (wDstRow 1 y) * (envAt t i).loc (wDstCol 1 x)))
-            * (envAt t i).loc (particleCol 1)
-        [ZMOD 2013265921] := by
-  have hg := rgateH hsat i hi hmem
-  rw [hshape] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-/-- The four cells' instances — each `(c, y, x)` triple's membership `decide`d against the
-byte-pinned list and its polynomial SHAPE discharged by `rfl` on the emitted head. -/
-example (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) : True := by
-  have _h0 := writeCell_of_sat hsat i hi 0 0 0 (mem_resolve_of_mem_writeMid (wm_writeCell 2 0 (by decide))) rfl
-  have _h1 := writeCell_of_sat hsat i hi 1 0 1 (mem_resolve_of_mem_writeMid (wm_writeCell 2 1 (by decide))) rfl
-  have _h2 := writeCell_of_sat hsat i hi 2 1 0 (mem_resolve_of_mem_writeMid (wm_writeCell 2 2 (by decide))) rfl
-  have _h3 := writeCell_of_sat hsat i hi 3 1 1 (mem_resolve_of_mem_writeMid (wm_writeCell 2 3 (by decide))) rfl
-  trivial
-
 end Selection
 
-/-! ### §5.8.1 — The FIELD ALGEBRA of the per-cell gate, discharged once for all cells.
+/-! ### §5.8.1 — The FIELD ALGEBRA of the per-cell board-rewrite gate.
 
-`writeCell_of_sat` delivers a congruence mod `p`; these two lemmas turn it into the reference's
-per-cell VALUE. Both are pure integer statements over the four indicator products
-`A = carry_a·src_a[c]`, `B = carry_a·dst_a[c]`, `C = carry_b·src_b[c]`, `D = carry_b·dst_b[c]`, so
-they hold for every cell and every board without further case analysis upstream. -/
-
-/-- **THE SHARED-SOURCE CASE — DEFECT #5, NOW FIXED (the canary polarity is FLIPPED).**
-
-BEFORE: if BOTH pieces carried and BOTH cleared the SAME cell (`frm_a = frm_b`, the "two players
-propose the identical move" turn, which the reference explicitly does NOT treat as a conflict —
-`Automatafl.conflictResolve`'s doc: "Identical `(src,dst)` moves are NOT a conflict"), the emitted
-cell gate subtracted the old particle TWICE, forcing `mid ≡ −old`; with both cells range-checked
-into the particle alphabet that pinned `old = 0`, contradicting the carry — the leaf had NO
-satisfying witness on a legal turn (a COMPLETENESS defect; soundness was never at risk).
-
-AFTER: `AutomataflResolveEmit.writeCellHead` carries the inclusion–exclusion overlap terms
-`A·C·old` and `B·D·(old − particle_b)`, so a shared source is vacated EXACTLY ONCE. This lemma is
-that fact: on the shared-source configuration the gate now pins `mid = 0`, which IS in the particle
-alphabet — the turn is SATISFIABLE, and no `old = 0` is forced. It is the shared-source
-specialization of `cellAlgebra`, which no longer needs `A·C = 0` or `B·D = 0` as hypotheses. -/
-theorem sharedSourceVacatesOnce {oldc midc : ℤ} (hold : 0 ≤ oldc ∧ oldc ≤ 3)
-    (hmid : 0 ≤ midc ∧ midc ≤ 3)
-    (hmod : midc ≡ (1 - 1 - 0 - 1 - 0 + 1 * 0 + 1 * 0 + 1 * 1 + 0 * 0) * oldc + 0 * oldc + 0 * oldc
-              [ZMOD 2013265921]) : midc = 0 := by
-  norm_num at hmod
-  exact eq_of_modEq_canon ⟨hmid.1, by omega⟩ canon_zero hmod
+`cellAlgebra` is the degree-7 board-update collapse: over the four indicator products
+`A = carry_a·src_a[c]`, `B = carry_a·dst_a[c]`, `C = carry_b·src_b[c]`, `D = carry_b·dst_b[c]` it
+turns a congruence mod `p` into the reference's per-cell VALUE, for every cell and every board with
+no case analysis upstream. It is a PURE integer statement — no descriptor, no board size — and it is
+the ONE survivor of the retired `NN = 2` per-cell assembly: the LIVE `n`-generic board-cell proofs
+in `AutomataflResolveMovesCapstone` (§25/§26/§27) consume it directly against the FINAL corrected
+board `cWBoardV4`. -/
 
 /-- **(2) THE PER-CELL REWRITE, RESOLVED.** With the ONLY remaining structural exclusion (a cell is
 never both a cleared source and a landing of the SAME piece: `A·B = C·D = 0`), the emitted cell
@@ -1955,111 +1600,6 @@ theorem cellAlgebra {oldc midc pa pb A B C D : ℤ}
            | exact hcan _ hpb.1 hpb.2
            | exact canon_zero)
 
-
-/-! ### §5.8.2 — THE INDICATOR GLUE (residual (i), CLOSED).
-
-`cellAlgebra` is phrased over the four indicator products `A, B, C, D`; the reference rewrite is
-phrased over the decidable `Coord` predicates `⟨x,y⟩ = ma.frm` / `⟨x,y⟩ = dest_a`. These three
-lemmas identify them, by per-cell unfolding of the one-hot VALUES at literal `(x, y)` plus the
-`Int.toNat` bridge from the witnessed coordinate columns to `moveDecode`'s `Coord` fields. -/
-
-/-- THE INDICATOR CORE: a pair of two-selector one-hots pinned to `(vx, vy)` multiplies to the
-`Coord` equality indicator at every literal cell of the 2×2 board. -/
-theorem oneHotPair_indicator {r0 r1 c0 c1 vx vy : ℤ}
-    (hr1 : r1 = vy) (hr0 : r0 = 1 - vy) (hvy : vy = 0 ∨ vy = 1)
-    (hc1 : c1 = vx) (hc0 : c0 = 1 - vx) (hvx : vx = 0 ∨ vx = 1)
-    (x y : Nat) (hx : x < 2) (hy : y < 2) :
-    (if y = 0 then r0 else r1) * (if x = 0 then c0 else c1)
-      = if (⟨x, y⟩ : Coord) = (⟨vx.toNat, vy.toNat⟩ : Coord) then 1 else 0 := by
-  interval_cases x <;> interval_cases y <;>
-    rcases hvx with hvx | hvx <;> rcases hvy with hvy | hvy <;>
-    subst hr0 <;> subst hr1 <;> subst hc0 <;> subst hc1 <;> rw [hvx, hvy] <;> decide
-
-section IndicatorGlue
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-
-/-- THE SOURCE-INDICATOR GLUE: piece `k`'s emitted source one-hot product at cell `(x,y)` IS the
-decidable `Coord` predicate `⟨x,y⟩ = ma.frm` that the reference rewrite is phrased in — the
-`Int.toNat` bridge between the witnessed coordinate columns and `moveDecode`'s `Coord` fields. -/
-theorem srcIndicator_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (k x y : Nat)
-    (hx : x < 2) (hy : y < 2)
-    (hr0 : cg (gBin (wSrcRow k 0)) ∈ automataflResolveDesc.constraints)
-    (hr1 : cg (gBin (wSrcRow k 1)) ∈ automataflResolveDesc.constraints)
-    (hrs : cgH (((Head.c (-1)).addLin 1 (wSrcRow k 0)).addLin 1 (wSrcRow k 1))
-            ∈ automataflResolveDesc.constraints)
-    (hrx : cgH ((Head.lin 1 (wSrcRow k 1)).addLin (-1) (cFy (mvBase k)))
-            ∈ automataflResolveDesc.constraints)
-    (hc0 : cg (gBin (wSrcCol k 0)) ∈ automataflResolveDesc.constraints)
-    (hc1 : cg (gBin (wSrcCol k 1)) ∈ automataflResolveDesc.constraints)
-    (hcs : cgH (((Head.c (-1)).addLin 1 (wSrcCol k 0)).addLin 1 (wSrcCol k 1))
-            ∈ automataflResolveDesc.constraints)
-    (hcx : cgH ((Head.lin 1 (wSrcCol k 1)).addLin (-1) (cFx (mvBase k)))
-            ∈ automataflResolveDesc.constraints) :
-    (envAt t i).loc (wSrcRow k y) * (envAt t i).loc (wSrcCol k x)
-      = if (⟨x, y⟩ : Coord)
-           = (⟨((envAt t i).loc (cFx (mvBase k))).toNat,
-              ((envAt t i).loc (cFy (mvBase k))).toNat⟩ : Coord) then 1 else 0 := by
-  obtain ⟨hvy, hs1, hs0⟩ := oneHot_of_sat hsat hc i hi (wSrcRow k 0) (wSrcRow k 1)
-    (cFy (mvBase k)) hr0 hr1 hrs hrx
-  obtain ⟨hvx, ht1, ht0⟩ := oneHot_of_sat hsat hc i hi (wSrcCol k 0) (wSrcCol k 1)
-    (cFx (mvBase k)) hc0 hc1 hcs hcx
-  have hrow : (envAt t i).loc (wSrcRow k y)
-      = if y = 0 then (envAt t i).loc (wSrcRow k 0) else (envAt t i).loc (wSrcRow k 1) := by
-    interval_cases y <;> simp
-  have hcol : (envAt t i).loc (wSrcCol k x)
-      = if x = 0 then (envAt t i).loc (wSrcCol k 0) else (envAt t i).loc (wSrcCol k 1) := by
-    interval_cases x <;> simp
-  rw [hrow, hcol]
-  exact oneHotPair_indicator hs1 hs0 hvy ht1 ht0 hvx x y hx hy
-
-/-- THE DESTINATION-INDICATOR GLUE: piece `k`'s emitted landing one-hot product at cell `(x,y)` IS
-the decidable `Coord` predicate `⟨x,y⟩ = dest_k`, where `dest_k` is the INTERPOLATED destination
-`to_own + ft·(to_other − to_own)` the `ft` bit selects (`chainDest_a`/`chainDest_b`'s value). -/
-theorem dstIndicator_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (k x y : Nat)
-    (hx : x < 2) (hy : y < 2) (ownx othx owny othy ft : Nat)
-    (hr0 : cg (gBin (wDstRow k 0)) ∈ automataflResolveDesc.constraints)
-    (hr1 : cg (gBin (wDstRow k 1)) ∈ automataflResolveDesc.constraints)
-    (hrs : cgH (((Head.c (-1)).addLin 1 (wDstRow k 0)).addLin 1 (wDstRow k 1))
-            ∈ automataflResolveDesc.constraints)
-    (hrx : cgH (((Head.lin 0 (wDstRow k 0)).addLin 1 (wDstRow k 1)).append
-              ((destHead owny othy ft).scale (-1))) ∈ automataflResolveDesc.constraints)
-    (hc0 : cg (gBin (wDstCol k 0)) ∈ automataflResolveDesc.constraints)
-    (hc1 : cg (gBin (wDstCol k 1)) ∈ automataflResolveDesc.constraints)
-    (hcs : cgH (((Head.c (-1)).addLin 1 (wDstCol k 0)).addLin 1 (wDstCol k 1))
-            ∈ automataflResolveDesc.constraints)
-    (hcx : cgH (((Head.lin 0 (wDstCol k 0)).addLin 1 (wDstCol k 1)).append
-              ((destHead ownx othx ft).scale (-1))) ∈ automataflResolveDesc.constraints)
-    (hox : (envAt t i).loc ownx = 0 ∨ (envAt t i).loc ownx = 1)
-    (htx : (envAt t i).loc othx = 0 ∨ (envAt t i).loc othx = 1)
-    (hoy : (envAt t i).loc owny = 0 ∨ (envAt t i).loc owny = 1)
-    (hty : (envAt t i).loc othy = 0 ∨ (envAt t i).loc othy = 1)
-    (hf : (envAt t i).loc ft = 0 ∨ (envAt t i).loc ft = 1) :
-    (envAt t i).loc (wDstRow k y) * (envAt t i).loc (wDstCol k x)
-      = if (⟨x, y⟩ : Coord)
-           = (⟨((envAt t i).loc ownx
-                 + (envAt t i).loc ft
-                     * ((envAt t i).loc othx - (envAt t i).loc ownx)).toNat,
-              ((envAt t i).loc owny
-                 + (envAt t i).loc ft
-                     * ((envAt t i).loc othy - (envAt t i).loc owny)).toNat⟩ : Coord)
-        then 1 else 0 := by
-  obtain ⟨hs1, hs0, hvy⟩ := dstOneHot_of_sat hsat hc i hi (wDstRow k 0) (wDstRow k 1)
-    owny othy ft hr0 hr1 hrs hrx hoy hty hf
-  obtain ⟨ht1, ht0, hvx⟩ := dstOneHot_of_sat hsat hc i hi (wDstCol k 0) (wDstCol k 1)
-    ownx othx ft hc0 hc1 hcs hcx hox htx hf
-  have hrow : (envAt t i).loc (wDstRow k y)
-      = if y = 0 then (envAt t i).loc (wDstRow k 0) else (envAt t i).loc (wDstRow k 1) := by
-    interval_cases y <;> simp
-  have hcol : (envAt t i).loc (wDstCol k x)
-      = if x = 0 then (envAt t i).loc (wDstCol k 0) else (envAt t i).loc (wDstCol k 1) := by
-    interval_cases x <;> simp
-  rw [hrow, hcol]
-  exact oneHotPair_indicator hs1 (by rw [hs0, hs1]) (hs1 ▸ hvy)
-    ht1 (by rw [ht0, ht1]) (ht1 ▸ hvx) x y hx hy
-
-end IndicatorGlue
 
 /-! ## §6 — The remaining gate bundles, discharged by `decide` against the byte-pinned list. -/
 
@@ -2095,740 +1635,37 @@ theorem bnzGates : Ge0Gates5 (cFp (mvBase 1)) cBnz (bnzBit 0) :=
    mem_srcNonVac_idx 2 11 (by decide), mem_srcNonVac_idx 2 12 (by decide),
    mem_srcNonVac_idx 2 13 (by decide)⟩
 
-/-! ## §6.5 — THE ASSEMBLY (residual (iii), CLOSED): Leg R's capstone and THE WHOLE TURN. -/
+/-! ## §6.5 — THE `NN = 2` ASSEMBLY IS RETIRED. SUPERSEDED BY `resolve_sat_imp_roundBoardN`.
 
-open Dregg2.Games.Automatafl (resolveMid nextOf followChain applyTurn applyTurn_factors
-  automatonStep automatonStep_congr applyMoves_size applyMoves_cell_TT applyMoves_cell_TF
-  applyMoves_cell_FT applyMoves_cell_FF mkBoard)
+What used to stand here — `boardDecodeMid`, the `NN = 2` circuit half of legs 5/6
+(`prod_of_sat`/`notBit_of_sat`/`carry_of_sat`/`ft_of_sat`/`carry{A,B}_of_sat`/`ft{A,B}_of_sat`), the
+per-cell `write_mid` gate (`dstOneHot_of_sat`/`writeCell_of_sat`), the indicator glue
+(`oneHotPair_indicator`/`srcIndicator_of_sat`/`dstIndicator_of_sat`/`sharedSourceVacatesOnce`), the
+fact bundle `ResolveFacts`/`resolveFacts_of_sat`, the per-cell assembly `midCell_of_facts`, LEG R'S
+OLD CAPSTONE `resolve_sat_imp_resolveMid`, and the §E two-sided `resolveMid` canaries — is DELETED.
+
+WHY, not "cleanup": it proved a board that is WRONG. `resolve_sat_imp_resolveMid` concluded
+`mid = resolveMid(old, moves)` over the emitted `mid` columns, and those columns carry the
+occlusion / flow-through / 2-cycle defects that CHUNK-3/5/6 were emitted to correct — the wounds
+`AutomataflResolveMovesCapstone.flowThroughOcclusionGap_witness_n3`,
+`twoCycleStay_witness_n3` and `AutomataflResolveCapstone.occludedStayer_witness_n3` exhibit by
+`decide`. The commitment PI now packs the FINAL corrected board `cMidV4` (§D.5,
+`resolve_midPack_pi_of_sat`), so the old `mid` columns are on NO published path.
+
+THE LIVE CAPSTONE is `AutomataflResolveMovesCapstone.resolve_sat_imp_roundBoardN` — `n`-generic,
+against the VALIDATED `AutomataflRules.roundBoard`, over `cMidV4` — and the live whole turn is
+`AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` at the deployed `n = 11`.
+
+WHAT SURVIVES HERE and why: §D.5's packed-commitment transport (the seam ingredient, re-pointed to
+`cMidV4`), §D.7/§D.8's `n`-generic adjudication core + coordinate extractions (the live capstone's
+inputs), `cellAlgebra` (§5.8.1, consumed by the live V4 board-cell proofs), and the `NN = 2`
+gate-bundle / non-vacuity canaries (§6/§7), which pin that the BYTE-PINNED `n = 2` descriptor's
+gates bite. -/
+
+open Dregg2.Games.Automatafl (resolveMid mkBoard)
 
 set_option maxRecDepth 40000
 set_option maxHeartbeats 4000000
-
-/-! ## §A — small reference/bridge lemmas. -/
-
-/-- The empty move list leaves every in-bounds cell alone. -/
-theorem applyMoves_cell_nil (bd : Board) (c : Coord) (hx : c.x < bd.size) (hy : c.y < bd.size) :
-    (applyMoves bd []).cellAt c = bd.cellAt c := by
-  rw [Board.cellAt, applyMoves_size, if_pos ⟨hx, hy⟩]
-  simp [applyMoves, Board.cellAt, hx, hy]
-
-/-- On the `{0,1}` window `Int.toNat` is injective, so a decoded `Coord` equality IS the pair of
-column equalities. -/
-theorem toNat_inj01 {a b : ℤ} (ha : a = 0 ∨ a = 1) (hb : b = 0 ∨ b = 1) :
-    (a.toNat = b.toNat) ↔ a = b := by
-  rcases ha with h | h <;> rcases hb with h' | h' <;> subst h <;> subst h' <;> decide
-
-/-- A carried indicator gate selects exactly its `Coord` predicate. -/
-theorem ite_one {α : Type} (P : Prop) [Decidable P] (a b : α) :
-    (if (1:ℤ) * (if P then 1 else 0) = 1 then a else b) = if P then a else b := by
-  by_cases h : P <;> simp [h]
-
-theorem ite_or_11 {α : Type} (P Q : Prop) [Decidable P] [Decidable Q] (a b : α) :
-    (if ((1:ℤ) * (if P then 1 else 0) = 1 ∨ (1:ℤ) * (if Q then 1 else 0) = 1) then a else b)
-      = if P ∨ Q then a else b := by
-  by_cases h : P <;> by_cases h' : Q <;> simp [h, h']
-
-/-! ## §B — the derived per-row semantic facts, bundled. -/
-
-/-- Every semantic fact the per-cell assembly needs, derived ONCE from a satisfying canonical row.
-Each field is a THEOREM about the emitted descriptor (see `resolveFacts_of_sat`); nothing here is
-assumed. -/
-structure ResolveFacts (e : VmRowEnv) : Prop where
-  validA : MoveValid (boardDecodeOld e) (moveDecode e 0)
-  validB : MoveValid (boardDecodeOld e) (moveDecode e 1)
-  alphaOld : ∀ c, c < KK →
-    (e.loc (old c) = 0 ∨ e.loc (old c) = 1 ∨ e.loc (old c) = 2 ∨ e.loc (old c) = 3)
-  alphaMid : ∀ c, c < KK →
-    (e.loc (mid c) = 0 ∨ e.loc (mid c) = 1 ∨ e.loc (mid c) = 2 ∨ e.loc (mid c) = 3)
-  paVal : (boardDecodeOld e).cellAt (moveDecode e 0).frm = codeToParticle (e.loc (particleCol 0))
-  pbVal : (boardDecodeOld e).cellAt (moveDecode e 1).frm = codeToParticle (e.loc (particleCol 1))
-  paAlpha : e.loc (particleCol 0) = 0 ∨ e.loc (particleCol 0) = 1
-    ∨ e.loc (particleCol 0) = 2 ∨ e.loc (particleCol 0) = 3
-  pbAlpha : e.loc (particleCol 1) = 0 ∨ e.loc (particleCol 1) = 1
-    ∨ e.loc (particleCol 1) = 2 ∨ e.loc (particleCol 1) = 3
-  survB : e.loc cSurv = 0 ∨ e.loc cSurv = 1
-  anzB : e.loc cAnz = 0 ∨ e.loc cAnz = 1
-  bnzB : e.loc cBnz = 0 ∨ e.loc cBnz = 1
-  anzIff : e.loc cAnz = 1 ↔
-    ((boardDecodeOld e).cellAt (moveDecode e 0).frm).isVacuum = false
-  bnzIff : e.loc cBnz = 1 ↔
-    ((boardDecodeOld e).cellAt (moveDecode e 1).frm).isVacuum = false
-  survIff : e.loc cSurv = 1 ↔
-    ¬ (((moveDecode e 0).frm = (moveDecode e 1).frm ∧ (moveDecode e 0).to ≠ (moveDecode e 1).to)
-       ∨ ((moveDecode e 0).to = (moveDecode e 1).to ∧ (moveDecode e 0).frm ≠ (moveDecode e 1).frm
-          ∧ ((boardDecodeOld e).cellAt (moveDecode e 0).frm).isVacuum = false
-          ∧ ((boardDecodeOld e).cellAt (moveDecode e 1).frm).isVacuum = false))
-  carryAB : e.loc cCarryA = 0 ∨ e.loc cCarryA = 1
-  carryBB : e.loc cCarryB = 0 ∨ e.loc cCarryB = 1
-  carryAIff : e.loc cCarryA = 1 ↔ (e.loc cSurv = 1 ∧ e.loc cAnz = 1)
-  carryBIff : e.loc cCarryB = 1 ↔ (e.loc cSurv = 1 ∧ e.loc cBnz = 1)
-  ftAB : e.loc cFtA = 0 ∨ e.loc cFtA = 1
-  ftBB : e.loc cFtB = 0 ∨ e.loc cFtB = 1
-  ftAIff : e.loc cFtA = 1 ↔
-    ((moveDecode e 0).to = (moveDecode e 1).frm ∧ e.loc cBnz = 0 ∧ e.loc cSurv = 1
-      ∧ (moveDecode e 1).to ≠ (moveDecode e 0).frm)
-  ftBIff : e.loc cFtB = 1 ↔
-    ((moveDecode e 1).to = (moveDecode e 0).frm ∧ e.loc cAnz = 0 ∧ e.loc cSurv = 1
-      ∧ (moveDecode e 0).to ≠ (moveDecode e 1).frm)
-  srcIndA : ∀ x y : Nat, x < 2 → y < 2 →
-    e.loc (wSrcRow 0 y) * e.loc (wSrcCol 0 x)
-      = if (⟨x, y⟩ : Coord) = (moveDecode e 0).frm then 1 else 0
-  srcIndB : ∀ x y : Nat, x < 2 → y < 2 →
-    e.loc (wSrcRow 1 y) * e.loc (wSrcCol 1 x)
-      = if (⟨x, y⟩ : Coord) = (moveDecode e 1).frm then 1 else 0
-  dstIndA : ∀ x y : Nat, x < 2 → y < 2 →
-    e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x)
-      = if (⟨x, y⟩ : Coord)
-           = (if e.loc cFtA = 1 then (moveDecode e 1).to else (moveDecode e 0).to) then 1 else 0
-  dstIndB : ∀ x y : Nat, x < 2 → y < 2 →
-    e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x)
-      = if (⟨x, y⟩ : Coord)
-           = (if e.loc cFtB = 1 then (moveDecode e 0).to else (moveDecode e 1).to) then 1 else 0
-
-section Facts
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-
-/-- The `fork` and `collide` columns are BOOLEAN (`selection_of_sat` pins their meaning but not
-their range; the range is what turns "not surviving" into a genuine conflict verdict). Extracted
-from the same byte-pinned gates. -/
-theorem forkCollide_bool_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
-    (hff : (envAt t i).loc (cEqBit (eqBase 0)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 0)) = 1)
-    (htt : (envAt t i).loc (cEqBit (eqBase 1)) = 0 ∨ (envAt t i).loc (cEqBit (eqBase 1)) = 1)
-    (hanz : (envAt t i).loc cAnz = 0 ∨ (envAt t i).loc cAnz = 1)
-    (hbnz : (envAt t i).loc cBnz = 0 ∨ (envAt t i).loc cBnz = 1) :
-    ((envAt t i).loc cFork = 0 ∨ (envAt t i).loc cFork = 1)
-      ∧ ((envAt t i).loc cCollide = 0 ∨ (envAt t i).loc cCollide = 1) := by
-  set e := envAt t i with he
-  have hforkv : e.loc cFork
-      = e.loc (cEqBit (eqBase 0)) - e.loc (cEqBit (eqBase 0)) * e.loc (cEqBit (eqBase 1)) := by
-    have hg := rgateH hsat i hi
-      (h := ((Head.lin 1 cFork).addLin (-1) (cEqBit (eqBase 0))).addProd 1
-              [cEqBit (eqBase 0), cEqBit (eqBase 1)]) (mem_selection_idx 2 0 (by decide))
-    have hE : (headToExpr (((Head.lin 1 cFork).addLin (-1) (cEqBit (eqBase 0))).addProd 1
-          [cEqBit (eqBase 0), cEqBit (eqBase 1)])).eval e.loc
-        = e.loc cFork + (-1) * e.loc (cEqBit (eqBase 0))
-          + e.loc (cEqBit (eqBase 0)) * e.loc (cEqBit (eqBase 1)) := rfl
-    rw [hE] at hg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hff with a | a <;> rcases htt with b | b <;> rw [a, b] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  have hnff : e.loc cNeqFf = 1 - e.loc (cEqBit (eqBase 0)) := by
-    have hg := rgateH hsat i hi
-      (h := ((Head.lin 1 cNeqFf).addLin 1 (cEqBit (eqBase 0))).addConst (-1)) (mem_selection_idx 2 1 (by decide))
-    have hE : (headToExpr (((Head.lin 1 cNeqFf).addLin 1 (cEqBit (eqBase 0))).addConst (-1))).eval
-        e.loc = e.loc cNeqFf + e.loc (cEqBit (eqBase 0)) + (-1) := rfl
-    rw [hE] at hg
-    refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
-    rcases hff with a | a <;> rw [a] <;> exact ⟨by norm_num, by norm_num⟩
-  have hcol1 : e.loc cCol1 = e.loc (cEqBit (eqBase 1)) * e.loc cNeqFf := by
-    have hg := rgateH hsat i hi (h := (Head.lin (-1) cCol1).addProd 1 [cEqBit (eqBase 1), cNeqFf]) (mem_selection_idx 2 2 (by decide))
-    have hE : (headToExpr ((Head.lin (-1) cCol1).addProd 1
-        [cEqBit (eqBase 1), cNeqFf])).eval e.loc
-        = (-1) * e.loc cCol1 + e.loc (cEqBit (eqBase 1)) * e.loc cNeqFf := rfl
-    rw [hE] at hg
-    refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
-    rcases hff with a | a <;> rcases htt with b | b <;> rw [hnff, a, b] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  have hcol2 : e.loc cCol2 = e.loc cCol1 * e.loc cAnz := by
-    have hg := rgateH hsat i hi (h := (Head.lin (-1) cCol2).addProd 1 [cCol1, cAnz]) (mem_selection_idx 2 3 (by decide))
-    have hE : (headToExpr ((Head.lin (-1) cCol2).addProd 1 [cCol1, cAnz])).eval e.loc
-        = (-1) * e.loc cCol2 + e.loc cCol1 * e.loc cAnz := rfl
-    rw [hE] at hg
-    refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
-    rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
-      rw [hcol1, hnff, a, b, c] <;> exact ⟨by norm_num, by norm_num⟩
-  have hcollv : e.loc cCollide = e.loc cCol2 * e.loc cBnz := by
-    have hg := rgateH hsat i hi (h := (Head.lin (-1) cCollide).addProd 1 [cCol2, cBnz]) (mem_selection_idx 2 4 (by decide))
-    have hE : (headToExpr ((Head.lin (-1) cCollide).addProd 1 [cCol2, cBnz])).eval e.loc
-        = (-1) * e.loc cCollide + e.loc cCol2 * e.loc cBnz := rfl
-    rw [hE] at hg
-    refine (eq_of_modEq_canon ?_ (canon_loc hc i _) ((gate_modEq_iff (by ring)).mp hg)).symm
-    rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
-      rcases hbnz with d | d <;> rw [hcol2, hcol1, hnff, a, b, c, d] <;>
-      exact ⟨by norm_num, by norm_num⟩
-  constructor
-  · rcases hff with a | a <;> rcases htt with b | b <;> rw [hforkv, a, b] <;> norm_num
-  · rcases hff with a | a <;> rcases htt with b | b <;> rcases hanz with c | c <;>
-      rcases hbnz with d | d <;> rw [hcollv, hcol2, hcol1, hnff, a, b, c, d] <;> norm_num
-
-/-- The witnessed source particle column IS the decoded OLD cell at the move's source. -/
-theorem srcParticle_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat)
-    (mg : MoveGates (mvBase which)) :
-    (boardDecodeOld (envAt t i)).cellAt (moveDecode (envAt t i) which).frm
-      = codeToParticle ((envAt t i).loc (cFp (mvBase which)))
-    ∧ ((envAt t i).loc (cFp (mvBase which)) = 0 ∨ (envAt t i).loc (cFp (mvBase which)) = 1
-        ∨ (envAt t i).loc (cFp (mvBase which)) = 2
-        ∨ (envAt t i).loc (cFp (mvBase which)) = 3) := by
-  have halpha : BoardAlphabet (envAt t i) := boardvalid_of_sat hsat hc i hi
-  set e := envAt t i with he
-  obtain ⟨X, Y, hX, hY, hfx, hfy, hfp⟩ := sourceRead_of_sat hsat hc i hi (mvBase which) mg
-  rw [← he] at hfx hfy hfp
-  have hXY : Y * NN + X < KK := by
-    have h1 : X < 2 := by simpa [NN] using hX
-    have h2 : Y < 2 := by simpa [NN] using hY
-    simp only [KK, NN]; omega
-  obtain ⟨hcellAlpha, _⟩ := halpha (Y * NN + X) hXY
-  refine ⟨?_, by rw [hfp]; exact hcellAlpha⟩
-  have hxn : (e.loc (cFx (mvBase which))).toNat = X := by rw [hfx]; simp
-  have hyn : (e.loc (cFy (mvBase which))).toNat = Y := by rw [hfy]; simp
-  simp only [Board.cellAt, boardDecodeOld, moveDecode]
-  rw [hxn, hyn, if_pos ⟨by simpa [NN] using hX, by simpa [NN] using hY⟩, hfp]
-
-/-- **THE FACT BUNDLE.** Every field is extracted from the byte-pinned constraint list. -/
-theorem resolveFacts_of_sat (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
-    ResolveFacts (envAt t i) := by
-  -- coordinate booleanity for all eight witnessed coordinate columns
-  have hfxa : (envAt t i).loc (cFx (mvBase 0)) = 0 ∨ (envAt t i).loc (cFx (mvBase 0)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_a.fxBin moveGates_a.fxPin
-  have hfya : (envAt t i).loc (cFy (mvBase 0)) = 0 ∨ (envAt t i).loc (cFy (mvBase 0)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_a.fyBin moveGates_a.fyPin
-  have htxa : (envAt t i).loc (cTx (mvBase 0)) = 0 ∨ (envAt t i).loc (cTx (mvBase 0)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_a.txBin moveGates_a.txPin
-  have htya : (envAt t i).loc (cTy (mvBase 0)) = 0 ∨ (envAt t i).loc (cTy (mvBase 0)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_a.tyBin moveGates_a.tyPin
-  have hfxb : (envAt t i).loc (cFx (mvBase 1)) = 0 ∨ (envAt t i).loc (cFx (mvBase 1)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_b.fxBin moveGates_b.fxPin
-  have hfyb : (envAt t i).loc (cFy (mvBase 1)) = 0 ∨ (envAt t i).loc (cFy (mvBase 1)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_b.fyBin moveGates_b.fyPin
-  have htxb : (envAt t i).loc (cTx (mvBase 1)) = 0 ∨ (envAt t i).loc (cTx (mvBase 1)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_b.txBin moveGates_b.txPin
-  have htyb : (envAt t i).loc (cTy (mvBase 1)) = 0 ∨ (envAt t i).loc (cTy (mvBase 1)) = 1 :=
-    coord01_of_sat hsat hc i hi _ _ moveGates_b.tyBin moveGates_b.tyPin
-  -- occlusion bits are FORCED to zero
-  have hocca : (envAt t i).loc (cOcc (occBase 0)) = 0 := occ_of_sat hsat hc i hi _ occGates_a
-  have hoccb : (envAt t i).loc (cOcc (occBase 1)) = 0 := occ_of_sat hsat hc i hi _ occGates_b
-  -- the four pattern bits
-  obtain ⟨hffB, hffI⟩ := eqCoords_of_sat hsat hc i hi _ _ _ _ _ eqGates_ff hfxa hfya hfxb hfyb
-  obtain ⟨httB, httI⟩ := eqCoords_of_sat hsat hc i hi _ _ _ _ _ eqGates_tt htxa htya htxb htyb
-  obtain ⟨habB, habI⟩ := eqCoords_of_sat hsat hc i hi _ _ _ _ _ eqGates_ab htxa htya hfxb hfyb
-  obtain ⟨hbaB, hbaI⟩ := eqCoords_of_sat hsat hc i hi _ _ _ _ _ eqGates_ba htxb htyb hfxa hfya
-  -- the non-vacuum bits
-  obtain ⟨hanzB, hanzI⟩ := srcNonVac_of_sat hsat hc i hi 0 cAnz (anzBit 0) moveGates_a anzGates
-  obtain ⟨hbnzB, hbnzI⟩ := srcNonVac_of_sat hsat hc i hi 1 cBnz (bnzBit 0) moveGates_b bnzGates
-  -- the selection truth table
-  obtain ⟨hforkI, hcollI, hsurvB, hsurvI⟩ :=
-    selection_of_sat hsat hc i hi hffB httB hanzB hbnzB
-  -- carries and flow-through bits
-  obtain ⟨hcaB, hcaI⟩ := carryA_of_sat hsat hc i hi hsurvB hanzB (Or.inl hocca)
-  obtain ⟨hcbB, hcbI⟩ := carryB_of_sat hsat hc i hi hsurvB hbnzB (Or.inl hoccb)
-  obtain ⟨hftaB, hftaI⟩ := ftA_of_sat hsat hc i hi habB hbnzB (Or.inl hoccb) hbaB hsurvB
-  obtain ⟨hftbB, hftbI⟩ := ftB_of_sat hsat hc i hi hbaB hanzB (Or.inl hocca) habB hsurvB
-  -- the Coord-level readings of the four pattern bits
-  have hffC : (envAt t i).loc (cEqBit (eqBase 0)) = 1
-      ↔ (moveDecode (envAt t i) 0).frm = (moveDecode (envAt t i) 1).frm := by
-    rw [hffI]
-    simp only [moveDecode, Coord.mk.injEq]
-    rw [toNat_inj01 hfxa hfxb, toNat_inj01 hfya hfyb]
-  have httC : (envAt t i).loc (cEqBit (eqBase 1)) = 1
-      ↔ (moveDecode (envAt t i) 0).to = (moveDecode (envAt t i) 1).to := by
-    rw [httI]
-    simp only [moveDecode, Coord.mk.injEq]
-    rw [toNat_inj01 htxa htxb, toNat_inj01 htya htyb]
-  have habC : (envAt t i).loc (cEqBit (eqBase 2)) = 1
-      ↔ (moveDecode (envAt t i) 0).to = (moveDecode (envAt t i) 1).frm := by
-    rw [habI]
-    simp only [moveDecode, Coord.mk.injEq]
-    rw [toNat_inj01 htxa hfxb, toNat_inj01 htya hfyb]
-  have hbaC : (envAt t i).loc (cEqBit (eqBase 3)) = 1
-      ↔ (moveDecode (envAt t i) 1).to = (moveDecode (envAt t i) 0).frm := by
-    rw [hbaI]
-    simp only [moveDecode, Coord.mk.injEq]
-    rw [toNat_inj01 htxb hfxa, toNat_inj01 htyb hfya]
-  obtain ⟨hpaV, hpaA⟩ := srcParticle_of_sat hsat hc i hi 0 moveGates_a
-  obtain ⟨hpbV, hpbA⟩ := srcParticle_of_sat hsat hc i hi 1 moveGates_b
-  refine
-    { validA := validMove_of_sat hsat hc i hi 0 (mvBase 0) rfl moveGates_a
-      validB := validMove_of_sat hsat hc i hi 1 (mvBase 1) rfl moveGates_b
-      alphaOld := fun c hcK => (boardvalid_of_sat hsat hc i hi c hcK).1
-      alphaMid := fun c hcK => (boardvalid_of_sat hsat hc i hi c hcK).2
-      paVal := hpaV
-      pbVal := hpbV
-      paAlpha := hpaA
-      pbAlpha := hpbA
-      survB := hsurvB
-      anzB := hanzB
-      bnzB := hbnzB
-      anzIff := hanzI
-      bnzIff := hbnzI
-      carryAB := hcaB
-      carryBB := hcbB
-      ftAB := hftaB
-      ftBB := hftbB
-      survIff := ?_
-      carryAIff := ?_
-      carryBIff := ?_
-      ftAIff := ?_
-      ftBIff := ?_
-      srcIndA := ?_
-      srcIndB := ?_
-      dstIndA := ?_
-      dstIndB := ?_ }
-  · -- survIff
-    obtain ⟨hforkB, hcollB⟩ := forkCollide_bool_of_sat hsat hc i hi hffB httB hanzB hbnzB
-    rw [hsurvI]
-    constructor
-    · rintro ⟨hf0, hc0⟩ hPQ
-      rcases hPQ with h | h
-      · have httz : (envAt t i).loc (cEqBit (eqBase 1)) = 0 := by
-          rcases httB with hz | ho
-          · exact hz
-          · exact absurd (httC.mp ho) h.2
-        have : (envAt t i).loc cFork = 1 := hforkI.mpr ⟨hffC.mpr h.1, httz⟩
-        omega
-      · have hffz : (envAt t i).loc (cEqBit (eqBase 0)) = 0 := by
-          rcases hffB with hz | ho
-          · exact hz
-          · exact absurd (hffC.mp ho) h.2.1
-        have : (envAt t i).loc cCollide = 1 :=
-          hcollI.mpr ⟨httC.mpr h.1, hffz, hanzI.mpr h.2.2.1, hbnzI.mpr h.2.2.2⟩
-        omega
-    · intro hno
-      refine ⟨?_, ?_⟩
-      · rcases hforkB with hz | ho
-        · exact hz
-        · obtain ⟨h1, h2⟩ := hforkI.mp ho
-          refine absurd (Or.inl ⟨hffC.mp h1, ?_⟩) hno
-          intro hEq
-          have := httC.mpr hEq
-          omega
-      · rcases hcollB with hz | ho
-        · exact hz
-        · obtain ⟨h1, h2, h3, h4⟩ := hcollI.mp ho
-          refine absurd (Or.inr ⟨httC.mp h1, ?_, hanzI.mp h3, hbnzI.mp h4⟩) hno
-          intro hEq
-          have := hffC.mpr hEq
-          omega
-  · rw [hcaI]; constructor
-    · rintro ⟨h1, h2, _⟩; exact ⟨h1, h2⟩
-    · rintro ⟨h1, h2⟩; exact ⟨h1, h2, hocca⟩
-  · rw [hcbI]; constructor
-    · rintro ⟨h1, h2, _⟩; exact ⟨h1, h2⟩
-    · rintro ⟨h1, h2⟩; exact ⟨h1, h2, hoccb⟩
-  · rw [hftaI]; constructor
-    · rintro ⟨h1, h2, h3, _, h5⟩
-      exact ⟨habC.mp h1, h2, h3, fun hEq => by have := hbaC.mpr hEq; omega⟩
-    · rintro ⟨h1, h2, h3, h4⟩
-      refine ⟨habC.mpr h1, h2, h3, hoccb, ?_⟩
-      rcases hbaB with hz | ho
-      · exact hz
-      · exact absurd (hbaC.mp ho) h4
-  · rw [hftbI]; constructor
-    · rintro ⟨h1, h2, h3, _, h5⟩
-      exact ⟨hbaC.mp h1, h2, h3, fun hEq => by have := habC.mpr hEq; omega⟩
-    · rintro ⟨h1, h2, h3, h4⟩
-      refine ⟨hbaC.mpr h1, h2, h3, hocca, ?_⟩
-      rcases habB with hz | ho
-      · exact hz
-      · exact absurd (habC.mp ho) h4
-  · intro x y hx hy
-    have h := srcIndicator_of_sat hsat hc i hi 0 x y hx hy
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sel 2 0 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sel 2 0 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sum 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_idx 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sel 2 0 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sel 2 0 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sum 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_idx 2 0 (by decide))))
-    rw [h]; rfl
-  · intro x y hx hy
-    have h := srcIndicator_of_sat hsat hc i hi 1 x y hx hy
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sel 2 1 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sel 2 1 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_sum 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcRow_idx 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sel 2 1 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sel 2 1 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_sum 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_srcCol_idx 2 1 (by decide))))
-    rw [h]; rfl
-  · intro x y hx hy
-    have h := dstIndicator_of_sat hsat hc i hi 0 x y hx hy (cTx (mvBase 0)) (cTx (mvBase 1))
-      (cTy (mvBase 0)) (cTy (mvBase 1)) cFtA
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sel 2 0 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sel 2 0 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sum 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_idx 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sel 2 0 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sel 2 0 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sum 2 0 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_idx 2 0 (by decide))))
-      htxa htxb htya htyb hftaB
-    have hdest : (⟨((envAt t i).loc (cTx (mvBase 0))
-                     + (envAt t i).loc cFtA * ((envAt t i).loc (cTx (mvBase 1)) - (envAt t i).loc (cTx (mvBase 0)))).toNat,
-                   ((envAt t i).loc (cTy (mvBase 0))
-                     + (envAt t i).loc cFtA * ((envAt t i).loc (cTy (mvBase 1)) - (envAt t i).loc (cTy (mvBase 0)))).toNat⟩
-                  : Coord)
-        = if (envAt t i).loc cFtA = 1 then (moveDecode (envAt t i) 1).to else (moveDecode (envAt t i) 0).to := by
-      rcases hftaB with hz | ho
-      · rw [hz, if_neg (by norm_num : ¬ (0 : ℤ) = 1)]
-        simp only [zero_mul, add_zero]; rfl
-      · rw [ho, if_pos rfl]
-        simp only [show ∀ a b : ℤ, a + 1 * (b - a) = b from fun a b => by ring]; rfl
-    rw [h, hdest]
-  · intro x y hx hy
-    have h := dstIndicator_of_sat hsat hc i hi 1 x y hx hy (cTx (mvBase 1)) (cTx (mvBase 0))
-      (cTy (mvBase 1)) (cTy (mvBase 0)) cFtB
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sel 2 1 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sel 2 1 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_sum 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstRow_idx 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sel 2 1 0 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sel 2 1 1 (by decide) (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_sum 2 1 (by decide))))
-      (mem_resolve_of_mem_writeMid (mem_writeMid_of_writeEndpoint (we_dstCol_idx 2 1 (by decide))))
-      htxb htxa htyb htya hftbB
-    have hdest : (⟨((envAt t i).loc (cTx (mvBase 1))
-                     + (envAt t i).loc cFtB * ((envAt t i).loc (cTx (mvBase 0)) - (envAt t i).loc (cTx (mvBase 1)))).toNat,
-                   ((envAt t i).loc (cTy (mvBase 1))
-                     + (envAt t i).loc cFtB * ((envAt t i).loc (cTy (mvBase 0)) - (envAt t i).loc (cTy (mvBase 1)))).toNat⟩
-                  : Coord)
-        = if (envAt t i).loc cFtB = 1 then (moveDecode (envAt t i) 0).to else (moveDecode (envAt t i) 1).to := by
-      rcases hftbB with hz | ho
-      · rw [hz, if_neg (by norm_num : ¬ (0 : ℤ) = 1)]
-        simp only [zero_mul, add_zero]; rfl
-      · rw [ho, if_pos rfl]
-        simp only [show ∀ a b : ℤ, a + 1 * (b - a) = b from fun a b => by ring]; rfl
-    rw [h, hdest]
-
-end Facts
-
-/-! ## §C — the per-cell assembly: the emitted cell value IS the reference `resolveMid` cell. -/
-
-section Cell
-variable {e : VmRowEnv}
-
-/-- **THE PER-CELL ASSEMBLY.** Given the derived facts and the emitted cell gate (in the shape
-`writeCell_of_sat` delivers), the decoded MID cell IS the reference `resolveMid` cell. -/
-theorem midCell_of_facts (F : ResolveFacts e) (x y c : Nat)
-    (hx : x < 2) (hy : y < 2) (hcxy : c = y * NN + x)
-    (hmid : e.loc (mid c)
-      ≡ (1 - e.loc (carryCol 0) * (e.loc (wSrcRow 0 y) * e.loc (wSrcCol 0 x))
-           - e.loc (carryCol 0) * (e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x))
-           - e.loc (carryCol 1) * (e.loc (wSrcRow 1 y) * e.loc (wSrcCol 1 x))
-           - e.loc (carryCol 1) * (e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x))
-           + e.loc (carryCol 0) * (e.loc (wSrcRow 0 y) * e.loc (wSrcCol 0 x))
-               * (e.loc (carryCol 1) * (e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x)))
-           + e.loc (carryCol 1) * (e.loc (wSrcRow 1 y) * e.loc (wSrcCol 1 x))
-               * (e.loc (carryCol 0) * (e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x)))
-           + e.loc (carryCol 0) * (e.loc (wSrcRow 0 y) * e.loc (wSrcCol 0 x))
-               * (e.loc (carryCol 1) * (e.loc (wSrcRow 1 y) * e.loc (wSrcCol 1 x)))
-           + e.loc (carryCol 0) * (e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x))
-               * (e.loc (carryCol 1) * (e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x))))
-          * e.loc (old c)
-        + e.loc (carryCol 0) * (e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x)) * e.loc (particleCol 0)
-        + e.loc (carryCol 1) * (e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x)) * e.loc (particleCol 1)
-        - e.loc (carryCol 0) * (e.loc (wDstRow 0 y) * e.loc (wDstCol 0 x))
-            * (e.loc (carryCol 1) * (e.loc (wDstRow 1 y) * e.loc (wDstCol 1 x)))
-            * e.loc (particleCol 1)
-        [ZMOD 2013265921]) :
-    codeToParticle (e.loc (mid c))
-      = (resolveMid (boardDecodeOld e) [moveDecode e 0, moveDecode e 1]).cellAt ⟨x, y⟩ := by
-  -- abbreviations
-  have hkK : c < KK := by simp only [hcxy, KK, NN]; omega
-  set bd := boardDecodeOld e with hbd
-  set ma := moveDecode e 0 with hma
-  set mb := moveDecode e 1 with hmb
-  -- geometry from `MoveValid`
-  obtain ⟨hdA, -, ⟨hfAx, hfAy⟩, ⟨htAx, htAy⟩, -, -, -, -⟩ := F.validA
-  obtain ⟨hdB, -, ⟨hfBx, hfBy⟩, ⟨htBx, htBy⟩, -, -, -, -⟩ := F.validB
-  have gA1 : ma.frm.x < 2 ∧ ma.frm.y < 2 := ⟨hfAx, hfAy⟩
-  have gA2 : ma.to.x < 2 ∧ ma.to.y < 2 := ⟨htAx, htAy⟩
-  have gB1 : mb.frm.x < 2 ∧ mb.frm.y < 2 := ⟨hfBx, hfBy⟩
-  have gB2 : mb.to.x < 2 ∧ mb.to.y < 2 := ⟨htBx, htBy⟩
-  -- the old cell, decoded
-  have hbdcell : bd.cellAt (⟨x, y⟩ : Coord) = codeToParticle (e.loc (old c)) := by
-    simp only [hbd, Board.cellAt, boardDecodeOld, hcxy]
-    rw [if_pos (⟨by simpa [NN] using hx, by simpa [NN] using hy⟩ :
-      (⟨x, y⟩ : Coord).x < NN ∧ (⟨x, y⟩ : Coord).y < NN)]
-  -- the indicator readings
-  have hsa := F.srcIndA x y hx hy
-  have hsb := F.srcIndB x y hx hy
-  have hda := F.dstIndA x y hx hy
-  have hdb := F.dstIndB x y hx hy
-  have hc0 : carryCol 0 = cCarryA := rfl
-  have hc1 : carryCol 1 = cCarryB := rfl
-  rw [hc0, hc1, hsa, hsb, hda, hdb] at hmid
-  -- the two landing squares the `ft` bits select
-  set destA : Coord := if e.loc cFtA = 1 then mb.to else ma.to with hdestA
-  set destB : Coord := if e.loc cFtB = 1 then ma.to else mb.to with hdestB
-  -- a landing square is never the SAME piece's source
-  have hAneA : destA ≠ ma.frm := by
-    rcases F.ftAB with hz | ho
-    · rw [hdestA, if_neg (by rw [hz]; norm_num)]; exact fun h => hdA h.symm
-    · rw [hdestA, if_pos ho]; exact (F.ftAIff.mp ho).2.2.2
-  have nA1 : ¬ (ma.frm = destA) := fun h => hAneA h.symm
-  have hBneB : destB ≠ mb.frm := by
-    rcases F.ftBB with hz | ho
-    · rw [hdestB, if_neg (by rw [hz]; norm_num)]; exact fun h => hdB h.symm
-    · rw [hdestB, if_pos ho]; exact (F.ftBIff.mp ho).2.2.2
-  have nB1 : ¬ (mb.frm = destB) := fun h => hBneB h.symm
-  have nAA : ¬ (ma.to = ma.frm) := fun h => hdA h.symm
-  have nBB : ¬ (mb.to = mb.frm) := fun h => hdB h.symm
-  -- the four indicator products are booleans with the two same-piece exclusions
-  have bA : e.loc cCarryA * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 0
-      ∨ e.loc cCarryA * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1 := by
-    rcases F.carryAB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = ma.frm <;>
-      simp [h, q]
-  have bB : e.loc cCarryA * (if (⟨x, y⟩ : Coord) = destA then (1:ℤ) else 0) = 0
-      ∨ e.loc cCarryA * (if (⟨x, y⟩ : Coord) = destA then (1:ℤ) else 0) = 1 := by
-    rcases F.carryAB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destA <;>
-      simp [h, q]
-  have bC : e.loc cCarryB * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 0
-      ∨ e.loc cCarryB * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1 := by
-    rcases F.carryBB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = mb.frm <;>
-      simp [h, q]
-  have bD : e.loc cCarryB * (if (⟨x, y⟩ : Coord) = destB then (1:ℤ) else 0) = 0
-      ∨ e.loc cCarryB * (if (⟨x, y⟩ : Coord) = destB then (1:ℤ) else 0) = 1 := by
-    rcases F.carryBB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destB <;>
-      simp [h, q]
-  have eAB : (e.loc cCarryA * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0))
-      * (e.loc cCarryA * (if (⟨x, y⟩ : Coord) = destA then (1:ℤ) else 0)) = 0 := by
-    by_cases q : (⟨x, y⟩ : Coord) = ma.frm
-    · by_cases r : (⟨x, y⟩ : Coord) = destA
-      · exact absurd (r.symm.trans q) hAneA
-      · simp [r]
-    · simp [q]
-  have eCD : (e.loc cCarryB * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0))
-      * (e.loc cCarryB * (if (⟨x, y⟩ : Coord) = destB then (1:ℤ) else 0)) = 0 := by
-    by_cases q : (⟨x, y⟩ : Coord) = mb.frm
-    · by_cases r : (⟨x, y⟩ : Coord) = destB
-      · exact absurd (r.symm.trans q) hBneB
-      · simp [r]
-    · simp [q]
-  have holdA : 0 ≤ e.loc (old c) ∧ e.loc (old c) ≤ 3 := by
-    rcases F.alphaOld c hkK with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
-  have hmidA : Canon (e.loc (mid c)) := by
-    rcases F.alphaMid c hkK with h | h | h | h <;> rw [h] <;> exact ⟨by norm_num, by norm_num⟩
-  have hpaA : 0 ≤ e.loc (particleCol 0) ∧ e.loc (particleCol 0) ≤ 3 := by
-    rcases F.paAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
-  have hpbA : 0 ≤ e.loc (particleCol 1) ∧ e.loc (particleCol 1) ≤ 3 := by
-    rcases F.pbAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
-  have halg := cellAlgebra bA bB bC bD eAB eCD holdA hmidA hpaA hpbA hmid
-  -- the reference: the validity filter is the identity on the pair
-  have hva : moveValidB bd ma = true :=
-    (Dregg2.Games.Automatafl.moveValidB_iff bd ma).mpr F.validA
-  have hvb : moveValidB bd mb = true :=
-    (Dregg2.Games.Automatafl.moveValidB_iff bd mb).mpr F.validB
-  have hfilter : List.filter (moveValidB bd) [ma, mb] = [ma, mb] := by
-    simp [List.filter, hva, hvb]
-  have hres : resolveMid bd [ma, mb] = applyMoves bd (conflictResolve bd [ma, mb]) := by
-    show applyMoves bd (conflictResolve bd (List.filter (moveValidB bd) [ma, mb])) = _
-    rw [hfilter]
-  rw [hres, conflictResolve_pair bd ma mb]
-  rw [halg]
-  have hxb : (⟨x, y⟩ : Coord).x < bd.size := by simpa [hbd, boardDecodeOld, NN] using hx
-  have hyb : (⟨x, y⟩ : Coord).y < bd.size := by simpa [hbd, boardDecodeOld, NN] using hy
-  rcases F.survB with hs0 | hs1
-  · -- THE TURN IS ADJUDICATED AWAY: the reference drops both moves, the circuit carries neither.
-    have hCOND : ((ma.frm = mb.frm ∧ ma.to ≠ mb.to)
-        ∨ (ma.to = mb.to ∧ ma.frm ≠ mb.frm
-            ∧ (bd.cellAt ma.frm).isVacuum = false ∧ (bd.cellAt mb.frm).isVacuum = false)) := by
-      by_contra hno
-      exact absurd (F.survIff.mpr hno) (by rw [hs0]; norm_num)
-    have hca : e.loc cCarryA = 0 := by
-      rcases F.carryAB with h | h
-      · exact h
-      · exact absurd (F.carryAIff.mp h).1 (by rw [hs0]; norm_num)
-    have hcb : e.loc cCarryB = 0 := by
-      rcases F.carryBB with h | h
-      · exact h
-      · exact absurd (F.carryBIff.mp h).1 (by rw [hs0]; norm_num)
-    rw [if_pos hCOND, applyMoves_cell_nil bd ⟨x, y⟩ hxb hyb, hbdcell, hca, hcb]
-    norm_num
-  · -- THE TURN SURVIVES: both moves are applied, and the shape depends on which sources carry.
-    have hnc := F.survIff.mp hs1
-    rw [if_neg hnc]
-    rcases F.anzB with ha0 | ha1 <;> rcases F.bnzB with hb0 | hb1
-    · -- FF: neither source carries
-      have hvA : (bd.cellAt ma.frm).isVacuum = true := by
-        cases h : (bd.cellAt ma.frm).isVacuum
-        · exact absurd (F.anzIff.mpr h) (by rw [ha0]; norm_num)
-        · rfl
-      have hvB : (bd.cellAt mb.frm).isVacuum = true := by
-        cases h : (bd.cellAt mb.frm).isVacuum
-        · exact absurd (F.bnzIff.mpr h) (by rw [hb0]; norm_num)
-        · rfl
-      have hca : e.loc cCarryA = 0 := by
-        rcases F.carryAB with h | h
-        · exact h
-        · exact absurd (F.carryAIff.mp h).2 (by rw [ha0]; norm_num)
-      have hcb : e.loc cCarryB = 0 := by
-        rcases F.carryBB with h | h
-        · exact h
-        · exact absurd (F.carryBIff.mp h).2 (by rw [hb0]; norm_num)
-      rw [applyMoves_cell_FF bd ma mb ⟨x, y⟩ hxb hyb hvA hvB, hbdcell, hca, hcb]
-      norm_num
-    · -- FT: only B carries
-      have hvA : (bd.cellAt ma.frm).isVacuum = true := by
-        cases h : (bd.cellAt ma.frm).isVacuum
-        · exact absurd (F.anzIff.mpr h) (by rw [ha0]; norm_num)
-        · rfl
-      have hvB : (bd.cellAt mb.frm).isVacuum = false := F.bnzIff.mp hb1
-      have hne : ma.frm ≠ mb.frm := by
-        intro h; rw [h, hvB] at hvA; exact absurd hvA (by norm_num)
-      have hca : e.loc cCarryA = 0 := by
-        rcases F.carryAB with h | h
-        · exact h
-        · exact absurd (F.carryAIff.mp h).2 (by rw [ha0]; norm_num)
-      have hcb : e.loc cCarryB = 1 := F.carryBIff.mpr ⟨hs1, hb1⟩
-      have hcont : ([mb.frm] : List Coord).contains ma.frm = false := by
-        simp [hne]
-      have hchain := Dregg2.Circuit.Emit.AutomataflResolveRefine.chainDest_b bd ma mb [mb.frm]
-        gA1 gA2 gB1 gB2 hne hdA hdB (by intro _ _ h3; simp [h3]) 1
-      have hfc : followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [mb.frm] mb.frm [] 3
-          = destB := by
-        -- defect #8's STAY branch is empty here: `to_b` is never `frm_b`.
-        have hmid : ¬ (([mb.frm] : List Coord).contains mb.to = true ∧ mb.to ≠ ma.frm) := by
-          rintro ⟨h, -⟩; simp at h; first | exact hdB h | exact hdB h.symm
-        rw [show (3 : Nat) = 1 + 1 + 1 from rfl, hchain, hcont, if_neg hmid, hdestB]
-        by_cases hf : e.loc cFtB = 1
-        · obtain ⟨h1, -, -, h4⟩ := F.ftBIff.mp hf
-          rw [if_pos hf, if_pos ⟨h1, rfl, h4⟩]
-        · rw [if_neg hf, if_neg ?_]
-          rintro ⟨h1, -, h3⟩
-          exact hf (F.ftBIff.mpr ⟨h1, ha0, hs1, h3⟩)
-      rw [applyMoves_cell_FT bd ma mb ⟨x, y⟩ hxb hyb hvA hvB, hfc, hca, hcb, F.pbVal, hbdcell]
-      by_cases q1 : (⟨x, y⟩ : Coord) = destB <;> by_cases q2 : (⟨x, y⟩ : Coord) = mb.frm <;>
-        simp [q1, q2, eq_comm, apply_ite codeToParticle, codeToParticle, nA1, nB1, hAneA, hBneB, hdA, hdB, nAA, nBB]
-    · -- TF: only A carries
-      have hvA : (bd.cellAt ma.frm).isVacuum = false := F.anzIff.mp ha1
-      have hvB : (bd.cellAt mb.frm).isVacuum = true := by
-        cases h : (bd.cellAt mb.frm).isVacuum
-        · exact absurd (F.bnzIff.mpr h) (by rw [hb0]; norm_num)
-        · rfl
-      have hca : e.loc cCarryA = 1 := F.carryAIff.mpr ⟨hs1, ha1⟩
-      have hcb : e.loc cCarryB = 0 := by
-        rcases F.carryBB with h | h
-        · exact h
-        · exact absurd (F.carryBIff.mp h).2 (by rw [hb0]; norm_num)
-      have hchain := Dregg2.Circuit.Emit.AutomataflResolveRefine.chainDest_a bd ma mb [ma.frm]
-        gA1 gA2 gB1 gB2 hdA hdB (by intro _ _ h3; simp [h3]) 1
-      have hfc : followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [ma.frm] ma.frm [] 3
-          = destA := by
-        -- defect #8's STAY branch is empty here: `to_a` is never `frm_a`.
-        have hmid : ¬ (([ma.frm] : List Coord).contains ma.to = true ∧ ma.to ≠ mb.frm) := by
-          rintro ⟨h, -⟩; simp at h; first | exact hdA h | exact hdA h.symm
-        rw [show (3 : Nat) = 1 + 1 + 1 from rfl, hchain, if_neg hmid, hdestA]
-        by_cases hf : e.loc cFtA = 1
-        · obtain ⟨h1, -, -, h4⟩ := F.ftAIff.mp hf
-          have hcont : ([ma.frm] : List Coord).contains mb.frm = false := by
-            simp only [List.contains_cons, List.contains_nil, Bool.or_false, beq_eq_false_iff_ne,
-              ne_eq]
-            intro h; exact hdA (h1.trans h).symm
-          rw [if_pos hf, if_pos ⟨h1, hcont, h4⟩]
-        · rw [if_neg hf, if_neg ?_]
-          rintro ⟨h1, -, h3⟩
-          exact hf (F.ftAIff.mpr ⟨h1, hb0, hs1, h3⟩)
-      rw [applyMoves_cell_TF bd ma mb ⟨x, y⟩ hxb hyb hvA hvB, hfc, hca, hcb, F.paVal, hbdcell]
-      by_cases q1 : (⟨x, y⟩ : Coord) = destA <;> by_cases q2 : (⟨x, y⟩ : Coord) = ma.frm <;>
-        simp [q1, q2, eq_comm, apply_ite codeToParticle, codeToParticle, nA1, nB1, hAneA, hBneB, hdA, hdB, nAA, nBB]
-    · -- TT: both sources carry
-      have hvA : (bd.cellAt ma.frm).isVacuum = false := F.anzIff.mp ha1
-      have hvB : (bd.cellAt mb.frm).isVacuum = false := F.bnzIff.mp hb1
-      have hca : e.loc cCarryA = 1 := F.carryAIff.mpr ⟨hs1, ha1⟩
-      have hcb : e.loc cCarryB = 1 := F.carryBIff.mpr ⟨hs1, hb1⟩
-      have hfA0 : e.loc cFtA = 0 := by
-        rcases F.ftAB with h | h
-        · exact h
-        · exact absurd (F.ftAIff.mp h).2.1 (by rw [hb1]; norm_num)
-      have hfB0 : e.loc cFtB = 0 := by
-        rcases F.ftBB with h | h
-        · exact h
-        · exact absurd (F.ftBIff.mp h).2.1 (by rw [ha1]; norm_num)
-      have hdA' : destA = ma.to := by rw [hdestA, if_neg (by rw [hfA0]; norm_num)]
-      have hdB' : destB = mb.to := by rw [hdestB, if_neg (by rw [hfB0]; norm_num)]
-      have hchainA := Dregg2.Circuit.Emit.AutomataflResolveRefine.chainDest_a bd ma mb
-        [ma.frm, mb.frm] gA1 gA2 gB1 gB2 hdA hdB (by intro _ h2 _; simp at h2) 1
-      have hfcA : followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [ma.frm, mb.frm] ma.frm [] 3
-          = ma.to := by
-        -- defect #8's STAY branch is empty here: `to_a ∈ {frm_a, frm_b}` is refuted either by
-        -- `frm_a ≠ to_a` or by the branch's own `to_a ≠ frm_b`.
-        have hmid : ¬ (([ma.frm, mb.frm] : List Coord).contains ma.to = true ∧ ma.to ≠ mb.frm) := by
-          rintro ⟨h, h2⟩
-          simp at h
-          rcases h with h | h
-          · first | exact hdA h | exact hdA h.symm
-          · first | exact h2 h | exact h2 h.symm
-        rw [show (3 : Nat) = 1 + 1 + 1 from rfl, hchainA,
-          if_neg (by rintro ⟨-, h2, -⟩; simp at h2), if_neg hmid]
-      have hfcB : followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [ma.frm, mb.frm] mb.frm [] 3
-          = mb.to := by
-        by_cases hne : ma.frm = mb.frm
-        · have hto : ma.to = mb.to := by
-            by_contra hno
-            exact hnc (Or.inl ⟨hne, hno⟩)
-          have hswap : followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [ma.frm, mb.frm]
-              ma.frm [] 3
-              = followChain (nextOf bd [ma, mb] [ma.frm, mb.frm]) [ma.frm, mb.frm] mb.frm [] 3 := by
-            rw [hne]
-          rw [← hswap, hfcA, hto]
-        · have hchainB := Dregg2.Circuit.Emit.AutomataflResolveRefine.chainDest_b bd ma mb
-            [ma.frm, mb.frm] gA1 gA2 gB1 gB2 hne hdA hdB (by intro _ h2 _; simp at h2) 1
-          have hmid : ¬ (([ma.frm, mb.frm] : List Coord).contains mb.to = true
-              ∧ mb.to ≠ ma.frm) := by
-            rintro ⟨h, h2⟩
-            simp at h
-            rcases h with h | h
-            · first | exact h2 h | exact h2 h.symm
-            · first | exact hdB h | exact hdB h.symm
-          rw [show (3 : Nat) = 1 + 1 + 1 from rfl, hchainB,
-            if_neg (by rintro ⟨-, h2, -⟩; simp at h2), if_neg hmid]
-      have oA : (ma.to = (⟨x, y⟩ : Coord)) = ((⟨x, y⟩ : Coord) = ma.to) :=
-        propext ⟨Eq.symm, Eq.symm⟩
-      have oB : (mb.to = (⟨x, y⟩ : Coord)) = ((⟨x, y⟩ : Coord) = mb.to) :=
-        propext ⟨Eq.symm, Eq.symm⟩
-      rw [applyMoves_cell_TT bd ma mb ⟨x, y⟩ hxb hyb hvA hvB, hfcA, hfcB, hca, hcb, hdA', hdB',
-        F.paVal, F.pbVal, hbdcell, ite_one, ite_one, ite_or_11, apply_ite codeToParticle,
-        apply_ite codeToParticle, apply_ite codeToParticle]
-      simp only [oA, oB, show codeToParticle 0 = Particle.vacuum from by decide]
-
-end Cell
-
-/-! ## §D — LEG R'S CAPSTONE, and THE WHOLE TURN. -/
-
-/-- The decoded MID board reads a cell as the felt-decode of its `mid` column. -/
-theorem boardDecodeMid_cell (e : VmRowEnv) (x y : Nat) (hx : x < NN) (hy : y < NN) :
-    (boardDecodeMid e).cellAt ⟨x, y⟩ = codeToParticle (e.loc (mid (y * NN + x))) := by
-  simp only [Board.cellAt, boardDecodeMid]
-  rw [if_pos (⟨hx, hy⟩ : (⟨x, y⟩ : Coord).x < NN ∧ (⟨x, y⟩ : Coord).y < NN)]
-
-section Capstone
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-
-/-- **LEG R'S CAPSTONE — `resolve_sat_imp_resolveMid`, UNCONDITIONAL.**
-
-On ANY satisfying, canonical trace of the byte-pinned `automataflResolveDesc`, the decoded MID board
-IS the reference `old → mid` half of the automatafl turn applied to the decoded OLD board and the
-two decoded moves — cell-wise, over every in-bounds cell, with NO assumed alphabet envelope, NO
-assumed arithmetization hypothesis and NO side condition on the witness. The validity filter, the
-conflict adjudication (fork / collide / survive), the caterpillar chain-follow and the per-cell
-rewrite are all DERIVED from constraints proved members of the emitted list. -/
-theorem resolve_sat_imp_resolveMid
-    (hsat : Satisfied2 hash automataflResolveDesc minit mfin maddrs t)
-    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
-    ∀ x y : Nat, x < NN → y < NN →
-      codeToParticle ((envAt t i).loc (mid (y * NN + x)))
-        = (resolveMid (boardDecodeOld (envAt t i))
-            [moveDecode (envAt t i) 0, moveDecode (envAt t i) 1]).cellAt ⟨x, y⟩ := by
-  have F := resolveFacts_of_sat hsat hc i hi
-  intro x y hx hy
-  have hx2 : x < 2 := by simpa [NN] using hx
-  have hy2 : y < 2 := by simpa [NN] using hy
-  interval_cases x <;> interval_cases y
-  · exact midCell_of_facts F 0 0 0 (by norm_num) (by norm_num) rfl
-      (writeCell_of_sat hsat i hi 0 0 0 (mem_resolve_of_mem_writeMid (wm_writeCell 2 0 (by decide))) rfl)
-  · exact midCell_of_facts F 0 1 2 (by norm_num) (by norm_num) rfl
-      (writeCell_of_sat hsat i hi 2 1 0 (mem_resolve_of_mem_writeMid (wm_writeCell 2 2 (by decide))) rfl)
-  · exact midCell_of_facts F 1 0 1 (by norm_num) (by norm_num) rfl
-      (writeCell_of_sat hsat i hi 1 0 1 (mem_resolve_of_mem_writeMid (wm_writeCell 2 1 (by decide))) rfl)
-  · exact midCell_of_facts F 1 1 3 (by norm_num) (by norm_num) rfl
-      (writeCell_of_sat hsat i hi 3 1 1 (mem_resolve_of_mem_writeMid (wm_writeCell 2 3 (by decide))) rfl)
-
-end Capstone
 
 /-! ## §D.5 — LEG R's PACKED COMMITMENT TRANSPORT (the seam ingredient).
 
@@ -2978,9 +1815,6 @@ automatonStep ∘ resolveMid` conclusion is the SUPERSEDED V2 spec (the buggy bo
 `resolveMoves` / `cMidV4`, with the cell seam now a fully EMITTED-crypto-free consequence of
 `resolve_midPack_pi_of_sat` (this file, re-pointed to `cMidV4`). -/
 
-#print axioms resolveFacts_of_sat
-#print axioms midCell_of_facts
-#print axioms resolve_sat_imp_resolveMid
 -- LEG R's PACKED COMMITMENT TRANSPORT (the seam ingredients).
 #print axioms rcommit_oldAlpha
 #print axioms rcommit_cMidV4Alpha
@@ -3018,20 +1852,15 @@ EXPLICIT board-size windows (`2·(n−1)² < p`, `2^(rbits+1) ≤ p`, and for th
 `eq_coords` distance sites the honest cap `dist ≤ 999` that the FIXED `RBITS = 9` decomposition
 imposes). All five are `#print axioms`-clean and non-vacuous at `n = 3`.
 
-WHAT IS STILL NOT HERE, AND WHY (the honest residual). The CAPSTONE `resolve_sat_imp_resolveMid` is
-NOT yet reached at `n > 2`; three ingredients remain at `NN = 2`:
-  • a NON-VACUOUS OCCLUSION discharge. The generic occlusion MATH exists
-    (`AutomataflOcclusionGeneric.occ_eq_occluded_vert/horiz`), but its `Satisfied2` discharge
-    `occ_iff_occluded_of_sat` (in `AutomataflOcclusionBridge`) is still stated at `NN = 2` (built on
-    `coord01_of_sat` + `NN = 2`); the capstone's occlusion leg here still routes through `occ_of_sat`
-    / `occluded_false_n2` VACUITY;
-  • the per-cell `write_mid` assembly (`writeCell_of_sat` / `midCell_of_facts`), still enumerated over
-    the 4-cell `{0,1}²` board;
-  • the caterpillar coordinate bounds (`nextOf_pair` / `followChain_*` / `chainDest_*`), still stated
-    with `.x < 2 ∧ .y < 2`.
-So `resolve_sat_imp_resolveMid` remains at `NN = 2`; it is NOT restated at an `n` its proof cannot
-reach. The `n`-generic coordinate extractions above are the assembled-capstone's inputs, landed but
-not yet composed. -/
+WHERE THE CAPSTONE ACTUALLY LIVES. The `NN = 2` capstone that once sat above is RETIRED (§6.5) — it
+proved the SUPERSEDED `mid` board. The composition these extractions feed is
+`AutomataflResolveMovesCapstone.resolve_sat_imp_roundBoardN`: `n`-generic, against the VALIDATED
+`AutomataflRules.roundBoard`, over the FINAL corrected `cMidV4`, with the occlusion leg discharged
+NON-VACUOUSLY through `AutomataflOcclusionBridgeN.occ_iff_occluded_of_sat` (arbitrary `n`) rather
+than the `occluded_false_n2` vacuity a 2-line supplies. What remains here at `NN = 2` is the
+byte-pinned descriptor's own gate-bundle and non-vacuity record (§6/§7) plus the reference-side
+`m = 2` lemmas (§5.5/§5.6) — kept because they are pure `Automatafl` statements with no descriptor
+content, not because anything downstream is waiting on them. -/
 
 section AdjudicationCoreN
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
@@ -4084,48 +2913,6 @@ theorem srcNonVacN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
 
 end CoordExtractN
 
-/-! ## §E — TWO-SIDED CANARIES for the assembly's reference side (`resolveMid` at `n = 2`).
-
-Each verdict the capstone routes through is exercised in BOTH polarities on a concrete 2×2 board
-(automaton parked off-board so no endpoint is the auto cell), so none of the four `applyMoves_cell_*`
-shapes nor the fork/collide/survive branch is vacuously reachable. -/
-
-open Dregg2.Games.Automatafl (mkBoard) in
-/-- A 2×2 board with an attractor at `(0,0)`, everything else vacuum. -/
-def canonBoardA : Board := mkBoard 2 [(⟨0, 0⟩, Particle.attractor)] ⟨9, 9⟩
-
-open Dregg2.Games.Automatafl (mkBoard) in
-/-- The same, plus a repulsor at `(1,1)`. -/
-def canonBoardAB : Board :=
-  mkBoard 2 [(⟨0, 0⟩, Particle.attractor), (⟨1, 1⟩, Particle.repulsor)] ⟨9, 9⟩
-
-def cmA : Move := Move.mk 0 ⟨0, 0⟩ ⟨0, 1⟩   -- the carrying move
-def cmB : Move := Move.mk 1 ⟨1, 0⟩ ⟨1, 1⟩   -- a vacuum-source move
-def cmFork : Move := Move.mk 1 ⟨0, 0⟩ ⟨1, 0⟩ -- SAME source, other dest
-def cmColl : Move := Move.mk 1 ⟨1, 1⟩ ⟨0, 1⟩ -- SAME dest as `cmA`
-def cmChain : Move := Move.mk 1 ⟨0, 1⟩ ⟨1, 1⟩ -- the caterpillar edge
-
--- SURVIVE (distinct sources, distinct destinations): the piece really moves…
-#guard (resolveMid canonBoardA [cmA, cmB]).cellAt ⟨0, 1⟩ = Particle.attractor
-#guard (resolveMid canonBoardA [cmA, cmB]).cellAt ⟨0, 0⟩ = Particle.vacuum
--- …and the FORK verdict (same source, two destinations) drops BOTH moves: the piece stays.
-#guard (resolveMid canonBoardA [cmA, cmFork]).cellAt ⟨0, 0⟩ = Particle.attractor
-#guard (resolveMid canonBoardA [cmA, cmFork]).cellAt ⟨0, 1⟩ = Particle.vacuum
-
--- COLLIDE (same destination, two CARRYING sources): both dropped, both pieces stay…
-#guard (resolveMid canonBoardAB [cmA, cmColl]).cellAt ⟨0, 0⟩ = Particle.attractor
-#guard (resolveMid canonBoardAB [cmA, cmColl]).cellAt ⟨1, 1⟩ = Particle.repulsor
-#guard (resolveMid canonBoardAB [cmA, cmColl]).cellAt ⟨0, 1⟩ = Particle.vacuum
--- …but with the SECOND source vacuum it is NOT a collision, and A lands.
-#guard (resolveMid canonBoardA [cmA, cmColl]).cellAt ⟨0, 1⟩ = Particle.attractor
-#guard (resolveMid canonBoardA [cmA, cmColl]).cellAt ⟨0, 0⟩ = Particle.vacuum
-
--- CATERPILLAR: the vacating square is ridden THROUGH to `(1,1)`…
-#guard (resolveMid canonBoardA [cmA, cmChain]).cellAt ⟨1, 1⟩ = Particle.attractor
-#guard (resolveMid canonBoardA [cmA, cmChain]).cellAt ⟨0, 1⟩ = Particle.vacuum
--- …whereas when `(0,1)` itself CARRIES a piece the chain STOPS there (no flow-through).
-#guard (resolveMid canonBoardAB [cmA, cmColl]).cellAt ⟨0, 1⟩ = Particle.vacuum
-
 /-! ## §7 — NON-VACUITY canaries: the gates BITE.
 
 Each canary evaluates the ACTUAL emitted gate polynomial on a good assignment (`== 0`, satisfied)
@@ -4322,20 +3109,6 @@ def canonLandForge : Assignment := fun c => if c = mid 0 then 4 else canonLandBa
 #print axioms followChain_flowThroughB
 #print axioms followChain_twoCycleB
 #print axioms chainDest_b
-#print axioms prod_of_sat
-#print axioms notBit_of_sat
-#print axioms carry_of_sat
-#print axioms ft_of_sat
-#print axioms carryA_of_sat
-#print axioms carryB_of_sat
-#print axioms ftA_of_sat
-#print axioms ftB_of_sat
-#print axioms dstOneHot_of_sat
-#print axioms writeCell_of_sat
-#print axioms sharedSourceVacatesOnce
 #print axioms cellAlgebra
-#print axioms oneHotPair_indicator
-#print axioms srcIndicator_of_sat
-#print axioms dstIndicator_of_sat
 
 end Dregg2.Circuit.Emit.AutomataflResolveRefine

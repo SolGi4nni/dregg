@@ -1,12 +1,12 @@
 /-
 # Dregg2.Circuit.Emit.AutomataflResolveCapstone — LEG R'S CAPSTONE AT ARBITRARY BOARD SIZE `n`.
 
-`AutomataflResolveRefine` closes Leg R's capstone (`resolve_sat_imp_resolveMid`) only at the frozen
-`NN = 2`: the per-cell `write_mid` assembly enumerates the four cells of `{0,1}²`, and the caterpillar
-lemmas (`nextOf_pair` / `followChain_*` / `chainDest_*`) are stated at `.x < 2 ∧ .y < 2` and ride
-`occluded_false_n2` VACUITY (a 2-line has no strictly-interior cell). §D.7/§D.8 of that file landed the
-adjudication core and every coordinate extraction at arbitrary `n`; `AutomataflOcclusionBridgeN` landed
-`occ_iff_occluded_of_sat` at arbitrary `n`. This file is the COMPOSITION.
+`AutomataflResolveRefine` once closed a Leg R capstone (`resolve_sat_imp_resolveMid`) at the frozen
+`NN = 2`, over the SUPERSEDED `mid` columns; it is RETIRED (see that file's §D.6b). §D.7/§D.8 of
+that file landed the adjudication core and every coordinate extraction at arbitrary `n`;
+`AutomataflOcclusionBridgeN` landed `occ_iff_occluded_of_sat` at arbitrary `n`. This file is the
+COMPOSITION, and its live product is `resolveFactsN_of_sat` — the per-row fact bundle the LIVE
+capstone `AutomataflResolveMovesCapstone.resolve_sat_imp_roundBoardN` consumes.
 
 What is here:
 
@@ -18,8 +18,9 @@ What is here:
     from a satisfying canonical row of `automataflResolveDescN n`. The occlusion conjuncts are REAL here
     (`carry = surv ∧ nz ∧ ¬occ`, `ft` carries `¬occ` of the other piece), bridged to the reference
     `Automatafl.occluded` by `AutomataflOcclusionBridgeN.occ_iff_occluded_of_sat`.
-  * **§4 — `writeCellN_of_sat`**: the per-cell rewrite gate at arbitrary `n` (the emitted head is
-    fixed-arity in the ONE-HOT indices `(c % n, c / n)`, so no `{0,1}²` enumeration is needed).
+  * (§4 — `writeCellN_of_sat`, the per-cell rewrite gate over the SUPERSEDED `mid` columns, is
+    DELETED. It read the OLD `carryCol` / `wDstRow`/`wDstCol` and wrote `NGen.mid`; the LIVE board
+    rewrite is `AutomataflResolveMovesCapstone`'s V4 surface over `cWBoardV4` / `cMidV4`.)
   * **§5 — the OCCLUSION-AWARE caterpillar**: `nextOf_pairN` states the `m = 2` move graph
     UNCONDITIONALLY (each edge gated by its own `occluded`), and `chainDest_aN` / `chainDest_bN` resolve
     the chain at ARBITRARY coordinates, threading the not-occluded facts the carries supply.
@@ -756,94 +757,6 @@ theorem resolveFactsN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) 
 
 end Facts
 
-/-! ## §4 — THE PER-CELL REWRITE GATE, AT ARBITRARY `n`.
-
-`NGen.writeCellHead n c` is FIXED-ARITY: it folds over the two pieces, and the only `n`-dependence is
-in the column indices and in the one-hot slots `(c % n, c / n)` it reads. So the `NN = 2` four-cell
-enumeration is unnecessary — the polynomial SHAPE is `rfl` at every `c`, for every `n`. -/
-
-section WriteCell
-variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-  {t : VmTrace} {n : Nat}
-
-/-- **`writeCellN_of_sat`.** The emitted `write_mid` cell gate, rearranged: the MID cell is the OLD
-cell KEPT (unless it is a cleared source or a landing target), plus each landing piece's particle,
-with the swap-restore term. Stated mod `p`; `x`/`y` are the cell's own column/row. -/
-theorem writeCellN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
-    (i : Nat) (hi : i + 1 < t.rows.length) (c y x : Nat) (hy : y = c / n) (hx : x = c % n)
-    (hmem : cgH (NGen.writeCellHead n c) ∈ (automataflResolveDescN n).constraints) :
-    (envAt t i).loc (NGen.mid n c)
-      ≡ (1 - (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x))
-           - (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-                * (envAt t i).loc (NGen.wDstCol n 0 x))
-           - (envAt t i).loc (NGen.carryCol n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x))
-           - (envAt t i).loc (NGen.carryCol n 1) * ((envAt t i).loc (NGen.wDstRow n 1 y)
-                * (envAt t i).loc (NGen.wDstCol n 1 x))
-           + (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryCol n 1)
-                * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x)))
-           + (envAt t i).loc (NGen.carryCol n 1) * ((envAt t i).loc (NGen.wSrcRow n 1 y)
-                * (envAt t i).loc (NGen.wSrcCol n 1 x)) * ((envAt t i).loc (NGen.carryCol n 0)
-                * ((envAt t i).loc (NGen.wDstRow n 0 y) * (envAt t i).loc (NGen.wDstCol n 0 x)))
-           + (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wSrcRow n 0 y)
-                * (envAt t i).loc (NGen.wSrcCol n 0 x)) * ((envAt t i).loc (NGen.carryCol n 1)
-                * ((envAt t i).loc (NGen.wSrcRow n 1 y) * (envAt t i).loc (NGen.wSrcCol n 1 x)))
-           + (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-                * (envAt t i).loc (NGen.wDstCol n 0 x)) * ((envAt t i).loc (NGen.carryCol n 1)
-                * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x))))
-          * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-            * (envAt t i).loc (NGen.wDstCol n 0 x)) * (envAt t i).loc (NGen.particleCol n 0)
-        + (envAt t i).loc (NGen.carryCol n 1) * ((envAt t i).loc (NGen.wDstRow n 1 y)
-            * (envAt t i).loc (NGen.wDstCol n 1 x)) * (envAt t i).loc (NGen.particleCol n 1)
-        - (envAt t i).loc (NGen.carryCol n 0) * ((envAt t i).loc (NGen.wDstRow n 0 y)
-            * (envAt t i).loc (NGen.wDstCol n 0 x)) * ((envAt t i).loc (NGen.carryCol n 1)
-            * ((envAt t i).loc (NGen.wDstRow n 1 y) * (envAt t i).loc (NGen.wDstCol n 1 x)))
-            * (envAt t i).loc (NGen.particleCol n 1)
-        [ZMOD 2013265921] := by
-  subst hy; subst hx
-  have hg := rgateHN hsat i hi hmem
-  have hshape : (headToExpr (NGen.writeCellHead n c)).eval (envAt t i).loc
-      = (envAt t i).loc (NGen.mid n c) + (-1) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.particleCol n 0))
-        + (envAt t i).loc (NGen.carryCol n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (envAt t i).loc (NGen.carryCol n 1) * (envAt t i).loc (NGen.wDstRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 1 (c % n)) * (envAt t i).loc (NGen.old n c)
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 1) * (envAt t i).loc (NGen.wDstRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 1 (c % n)) * (envAt t i).loc (NGen.particleCol n 1))
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryCol n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 1) * (envAt t i).loc (NGen.wSrcRow n 1 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 1 (c % n)) * (envAt t i).loc (NGen.carryCol n 0)
-            * (envAt t i).loc (NGen.wDstRow n 0 (c / n)) * (envAt t i).loc (NGen.wDstCol n 0 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wSrcRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wSrcCol n 0 (c % n)) * (envAt t i).loc (NGen.carryCol n 1)
-            * (envAt t i).loc (NGen.wSrcRow n 1 (c / n)) * (envAt t i).loc (NGen.wSrcCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (-1) * ((envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.carryCol n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.old n c))
-        + (envAt t i).loc (NGen.carryCol n 0) * (envAt t i).loc (NGen.wDstRow n 0 (c / n))
-            * (envAt t i).loc (NGen.wDstCol n 0 (c % n)) * (envAt t i).loc (NGen.carryCol n 1)
-            * (envAt t i).loc (NGen.wDstRow n 1 (c / n)) * (envAt t i).loc (NGen.wDstCol n 1 (c % n))
-            * (envAt t i).loc (NGen.particleCol n 1) := rfl
-  rw [hshape] at hg
-  exact (gate_modEq_iff (by ring)).mp hg
-
-end WriteCell
-
 /-! ## §5 — THE OCCLUSION-AWARE CATERPILLAR, AT COORDINATES `< n`.
 
 At `NN = 2` the move graph was unconditional in the board: `occluded_false_n2` says a 2-line has no
@@ -993,7 +906,6 @@ end Wound
 #assert_axioms moveCoordBounds
 #assert_axioms forkCollideBoolN
 #assert_axioms resolveFactsN_of_sat
-#assert_axioms writeCellN_of_sat
 #assert_axioms nextOf_pairN
 #assert_axioms chainDest_aN
 #assert_axioms chainDest_bN

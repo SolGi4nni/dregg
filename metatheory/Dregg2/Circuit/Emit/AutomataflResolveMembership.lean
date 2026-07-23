@@ -83,62 +83,62 @@ swap for every family that PRECEDES `commit` (all twenty-six below). -/
 theorem mem_resolve_of_mem_boardRange
     (h : g ∈ NGen.boardRangeConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (h)))))))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (h)))))))))))))))))))))))))
 
 theorem mem_resolve_of_mem_autoRead
     (h : g ∈ NGen.autoReadConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))))))
 
 theorem mem_resolve_of_mem_validateMove0
     (h : g ∈ NGen.validateMove n (NGen.mvBase n 0)) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))))))
 
 theorem mem_resolve_of_mem_validateMove1
     (h : g ∈ NGen.validateMove n (NGen.mvBase n 1)) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))))
 
 theorem mem_resolve_of_mem_validateOcclusion0
     (h : g ∈ NGen.validateOcclusion n (NGen.mvBase n 0) (NGen.occBase n 0) (NGen.mvBase n 1)) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))))
 
 theorem mem_resolve_of_mem_validateOcclusion1
     (h : g ∈ NGen.validateOcclusion n (NGen.mvBase n 1) (NGen.occBase n 1) (NGen.mvBase n 0)) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))
 
 theorem mem_resolve_of_mem_srcNonVac
     (h : g ∈ NGen.srcNonVacConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))
 
 theorem mem_resolve_of_mem_patternBit
     (h : g ∈ NGen.patternBitConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))
 
 theorem mem_resolve_of_mem_selection
     (h : g ∈ NGen.selectionConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))
 
 theorem mem_resolve_of_mem_carry
     (h : g ∈ NGen.carryConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))
 
 theorem mem_resolve_of_mem_flowThrough
     (h : g ∈ NGen.flowThroughConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))
 
 theorem mem_resolve_of_mem_writeMid
     (h : g ∈ NGen.writeMidConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))
 
 /-- The COMMITMENT family (`F₂₆` after the CHUNK-1/3/5/6 additive tails, still the packed board
 commitment) is emitted LAST: one `mem_append_right`. Because it is STILL last, every family lemma
@@ -152,8 +152,14 @@ theorem mem_resolve_of_mem_commit
 
 /-! ### CHUNK-1/CHUNK-3/CHUNK-5 additive-tail navigators. Spine order after `writeMid`:
 `… ++ writeMid ++ inclOcclusion(F₁₂) ++ nonLeave(F₁₃) ++ resolvable(F₁₄) ++ carryV2(F₁₅)
-++ midV2(F₁₆) ++ flowThroughV2(F₁₇) ++ destV2OneHot(F₁₈) ++ nonLeaveV2(F₁₉) ++ carryV3(F₂₀)
-++ resolvableV2(F₂₁) ++ midV3(F₂₂) ++ twoCyc(F₂₃) ++ carryV4(F₂₄) ++ midV4(F₂₅) ++ commit(F₂₆)`. Each
+++ flowThroughV2(F₁₇) ++ destV2OneHot(F₁₈) ++ nonLeaveV2(F₁₉) ++ carryV3(F₂₀) ++ resolvableV2(F₂₁)
+++ twoCyc(F₂₃) ++ carryV4(F₂₄) ++ midV4(F₂₅) ++ commit(F₂₆)`.
+
+The two DEAD board-rewrite families are GONE — `midV2(F₁₆)` and `midV3(F₂₂)`, the chunk-3 and
+chunk-5 board copies superseded by `midV4(F₂₅)` (the board the commitment packs and
+`resolve_sat_imp_roundBoardN` proves). Every navigator to their LEFT therefore peels two fewer
+(F₁–F₁₅) or one fewer (F₁₇–F₂₁) `mem_append_left`. The `Fᵢ` subscripts are kept as historical family
+NAMES, not positions. Each
 is reached by peeling the families to its RIGHT with `mem_append_left`, then one `mem_append_right`. The
 CHUNK-6 insertion of the three 2-cycle families before `commit` added exactly `+3 mem_append_left` to
 every family that PRECEDES them (all above, and the CHUNK-1/3/5 stack); `commit` stays rightmost, so its
@@ -161,75 +167,63 @@ navigator is unchanged. Chunk 2 (`occ_iff_blocked`) consumes `_inclOcclusion`; t
 capstone consumes the CHUNK-6 `_twoCyc` / `_carryV4` / `_midV4` (the FINAL corrected interface `cTwoCyc`
 / `cCarryV4` / `cMidV4`). -/
 
-/-- The inclusive-occlusion family (`F₁₂`): peel commit, midV2, carryV2, resolvable, nonLeave (5),
-then in. -/
+/-- The inclusive-occlusion family (`F₁₂`): peel commit, carryV2, resolvable, nonLeave (4), then
+in. -/
 theorem mem_resolve_of_mem_inclOcclusion
     (h : g ∈ NGen.inclOcclusionConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))
 
 /-- The non-leaver family (`F₁₃`): peel commit, resolvable (2), then in. -/
 theorem mem_resolve_of_mem_nonLeave
     (h : g ∈ NGen.nonLeaveConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))
 
-/-- The resolvable family (`F₁₄`): peel commit, midV2, carryV2 (3), then in. -/
+/-- The resolvable family (`F₁₄`): peel commit, carryV2 (2), then in. -/
 theorem mem_resolve_of_mem_resolvable
     (h : g ∈ NGen.resolvableConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))
 
-/-- The CHUNK-3 corrected-carry family (`F₁₅`): peel commit, midV2 (2), then in. -/
+/-- The CHUNK-3 corrected-carry family (`F₁₅`): peel commit (1), then in. -/
 theorem mem_resolve_of_mem_carryV2
     (h : g ∈ NGen.carryV2Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))))
-
-/-- The CHUNK-3 corrected board rewrite family (`F₁₆`): peel commit (1), then in. -/
-theorem mem_resolve_of_mem_midV2
-    (h : g ∈ NGen.midV2Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
-  rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))
 
 /-- The CHUNK-5 corrected flow-through family `flowThroughV2Constraints` (inserted before `commit`). -/
 theorem mem_resolve_of_mem_flowThroughV2
     (h : g ∈ NGen.flowThroughV2Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))
 
 /-- The CHUNK-5 corrected flow-through family `destV2OneHotConstraints` (inserted before `commit`). -/
 theorem mem_resolve_of_mem_destV2OneHot
     (h : g ∈ NGen.destV2OneHotConstraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))
 
 /-- The CHUNK-5 corrected flow-through family `nonLeaveV2Constraints` (inserted before `commit`). -/
 theorem mem_resolve_of_mem_nonLeaveV2
     (h : g ∈ NGen.nonLeaveV2Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))
 
 /-- The CHUNK-5 corrected flow-through family `carryV3Constraints` (inserted before `commit`). -/
 theorem mem_resolve_of_mem_carryV3
     (h : g ∈ NGen.carryV3Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))))
+  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))
 
 /-- The CHUNK-5 corrected flow-through family `resolvableV2Constraints` (inserted before `commit`). -/
 theorem mem_resolve_of_mem_resolvableV2
     (h : g ∈ NGen.resolvableV2Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
   rw [descN_constraints, NGen.resolveConstraints]
-  exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))))
-
-/-- The CHUNK-5 corrected flow-through family `midV3Constraints` (inserted before `commit`). -/
-theorem mem_resolve_of_mem_midV3
-    (h : g ∈ NGen.midV3Constraints n) : g ∈ (automataflResolveDescN n).constraints := by
-  rw [descN_constraints, NGen.resolveConstraints]
   exact List.mem_cons_of_mem _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h)))))
 
-/-! ### CHUNK-6 additive-tail navigators (the THIRD-wound 2-CYCLE fix). Spine order after `midV3`:
-`… ++ midV3(F₂₂) ++ twoCyc(F₂₃) ++ carryV4(F₂₄) ++ midV4(F₂₅) ++ commit(F₂₆)`. The three CHUNK-6
+/-! ### CHUNK-6 additive-tail navigators (the THIRD-wound 2-CYCLE fix). Spine order after
+`resolvableV2`: `… ++ resolvableV2(F₂₁) ++ twoCyc(F₂₃) ++ carryV4(F₂₄) ++ midV4(F₂₅) ++ commit(F₂₆)`. The three CHUNK-6
 families are inserted BEFORE `commit`, adding exactly `+3 mem_append_left` to every family that PRECEDES
 them (all the navigators above); `commit` stays rightmost, so its navigator is unchanged. The
 re-assembled MOVES capstone consumes these three (`cTwoCyc` / `cCarryV4` / `cMidV4`). -/
