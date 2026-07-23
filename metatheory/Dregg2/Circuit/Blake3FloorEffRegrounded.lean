@@ -80,6 +80,8 @@ twins are KEPT so §1's teeth and §3's fire keep compiling.
 import Dregg2.Circuit.Blake3FloorReduce
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 
 namespace Dregg2.Circuit.Blake3FloorEffRegrounded
 
@@ -93,6 +95,7 @@ open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
 
@@ -281,8 +284,8 @@ commitment BINDS EXCEPT with negligible probability. That is what a real BLAKE3 
 digest (§1). This one is not: its conclusion is about the opening game, its hypothesis about the
 collision game, and `opening_adv_le` is the only bridge. §6's canary compiles the difference.
 
-⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
-side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). §7 prices both
+⚑ **`hEff` IS A PARAMETER HERE BECAUSE THIS IS THE STATEMENT AT AN ARBITRARY CLASS.** §8 DISCHARGES it
+at `Eff := IsPolyTime`, deriving the extracted finder's efficiency from the opener's. §7 prices both
 poles: `⊤` FALSE at the deployed finite digest, `⊥` vacuous. -/
 theorem blake3_commit_opens_advantage_bound (D : Blake3Deployment)
     (Eff : Adversary (blake3CollisionGame D) → Prop)
@@ -377,6 +380,66 @@ theorem brokenBlake3_opening_top_false : ¬ Hard (commitOpeningGame brokenBlake3
   not_hard_top_of_always_solvable (commitOpeningGame brokenBlake3)
     (fun _ => ⟨([] : List Nat)⟩)
     (fun _ _ => ⟨[0], List.cons_ne_nil 0 [], rfl⟩)
+
+/-! ## §8 — `hEff` DISCHARGED: the opener→finder step's efficiency is a THEOREM.
+
+§5 states the bound at an ARBITRARY adversary class, so it carries `hEff` — honest while
+`FloorGames` §8 ("no cost model") was the last word, and no longer necessary.
+`Dregg2.Crypto.CostAdversary` gives `Eff` content at COST-VECTOR resolution, and this reduction is a
+pure output reshaping with the sampled tag passed through (it PAIRS the opener's preimage with the
+dealer's committed one), i.e. an `Adversary.postMap`, so `isPolyTime_postMap` turns `hEff` into a
+consequence of "the equivocating opener is efficient".
+
+The one per-site input is the size of the DEALER's committed preimage — the reduction writes it, and
+the opener never did, so it must be bounded by deployment data rather than by the game's answer. That
+is `hc`, a SATISFIED fact about the deployment (a real dealer commits a bounded transcript), not a
+crypto floor. -/
+
+/-- **THE OPENING GAME'S ANSWER ENCODING** — the forged preimage. -/
+def openingAnsSize (D : Blake3Deployment) : AnsSize (commitOpeningGame D) :=
+  fun _ (x : List Nat) => x.length
+
+/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed colliding preimages. -/
+def blake3AnsSize (D : Blake3Deployment) : AnsSize (blake3CollisionGame D) :=
+  fun _ (p : List Nat × List Nat) => p.1.length + p.2.length
+
+/-- **⚑ `hEff` DISCHARGED — the re-grounded BLAKE3 commitment binding with NO floating efficiency
+parameter.** An equivocating opener that is EFFICIENT at the game's own answer encoding, paired against
+the dealer's committed preimage, yields a BLAKE3-collision finder that is STILL efficient — so the
+collision floor at `Eff := IsPolyTime` applies to IT, and a transcript opened against a BLAKE3
+commitment binds except with negligible probability.
+
+Per-site inputs: the reshaper's declared work `(cw, bw)` (a Lean `fun` has no runtime) and the bound
+`c` on the dealer's committed preimage. Growth constants `(1, c)`, PROVED. No `PolyBoundedNat` overhead
+hypothesis is taken. -/
+theorem blake3_commit_opens_from_polyTime (D : Blake3Deployment)
+    (A : Adversary (commitOpeningGame D)) (hA : IsPolyTime (openingAnsSize D) A)
+    (cw bw c : ℕ) (hc : ∀ t : D.Tag, (D.committed t).length ≤ c)
+    (hcol : Hard (blake3CollisionGame D) (IsPolyTime (blake3AnsSize D))) :
+    Negl (gameAdv (commitOpeningGame D) A) := by
+  have hEff : IsPolyTime (blake3AnsSize D) (openingToCollisionFinder D A) := by
+    poly_time (openingAnsSize D) (blake3AnsSize D)
+      (fun _ t (x : List Nat) => (x, D.committed t))
+      cw bw 1 c hA
+    intro n t x
+    have h := hc t
+    show x.length + (D.committed t).length ≤ 1 * x.length + c
+    omega
+  exact blake3_commit_opens_advantage_bound D (IsPolyTime (blake3AnsSize D)) A hEff hcol
+
+/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** Together with
+`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
+floor strictly between §7's two poles. -/
+theorem blake3Floor_isPolyTime_inhabited (D : Blake3Deployment) :
+    IsPolyTime (blake3AnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List Nat), ([] : List Nat)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [blake3AnsSize]⟩
+
+#assert_all_clean [
+  blake3_commit_opens_from_polyTime,
+  blake3Floor_isPolyTime_inhabited
+]
 
 #assert_all_clean [
   orBreak_twin_trivial_at_finite_digest,

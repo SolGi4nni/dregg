@@ -75,6 +75,8 @@ import Mathlib.Data.Set.Finite.List
 import Dregg2.Circuit.FriVerifier
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 
 namespace Dregg2.Circuit.FriCompressRegrounded
 
@@ -86,6 +88,7 @@ open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
 
@@ -431,10 +434,10 @@ Unlike its predecessor this statement is FALSE if you delete the reduction: the 
 forgery game, the hypothesis about the collision game, and `merkle_adv_le` is the only bridge (§6's
 canary compiles that fact).
 
-⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
-side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor's honesty is
-exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at the deployed compression, `⊥`
-vacuous. -/
+⚑ **`hEff` IS A PARAMETER HERE BECAUSE THIS IS THE STATEMENT AT AN ARBITRARY CLASS.** §8 DISCHARGES it
+at `Eff := IsPolyTime`, deriving the peeled finder's efficiency from the forger's instead of assuming
+it. The floor's honesty is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at the
+deployed compression, `⊥` vacuous. -/
 theorem merkleRecompute_binds_advantage_bound {F : Type} (D : CompressDeployment F)
     (Eff : Adversary (compressCollisionGame D) → Prop)
     (A : Adversary (merkleForgeryGame D))
@@ -552,6 +555,146 @@ theorem compressFamily_CR_of_injective {F : Type} (D : CompressDeployment F)
     (hinj : ∀ t : D.Tag, Function.Injective (fun p : List F × List F => D.compress t p.1 p.2)) :
     CollisionResistant (compressFamily D) :=
   injective_family_CR (compressFamily D) (fun _ t => hinj t)
+
+/-! ## §8 — `hEff` DISCHARGED: the path peel's efficiency is a THEOREM.
+
+§5 states the bound at an ARBITRARY adversary class, so it carries `hEff`. `Dregg2.Crypto.CostAdversary`
+now gives `Eff` content at COST-VECTOR resolution, and the FRI reduction is a pure output reshaping of
+the forger's answer with the sampled tag passed through — an `Adversary.postMap` — so
+`isPolyTime_postMap` turns `hEff` into a consequence of "the Merkle forger is efficient".
+
+⚑ **The one thing the peel needs that the fixed-width reductions do not is a DIGEST WIDTH.** `peelPath`
+does not merely re-slice its input: it RECOMPUTES, so the pair it returns can contain accumulators the
+forger never wrote. `peelPath_len_le` proves those accumulators are bounded — by `w`, the deployed
+`DIGEST_ELEMS` width of the Poseidon2 `TruncatedPermutation`. That is the ONE per-site input, and it is
+a SATISFIED deployment contract (the real compression emits a fixed-width digest), NOT a crypto floor:
+it is the same fact §1 uses to REFUTE `CompressInjective`, here used to bound work rather than to
+refute binding. Everything else is derived. -/
+
+/-- **THE FORGERY GAME'S ANSWER ENCODING.** A forged opening costs, to write down, its two candidate
+leaves and its whole sibling path. Concrete on purpose: the size measure belongs to the GAME
+(`CostAdversary` design commitment 4); a degenerate `sz := 0` would make the peel's output free. -/
+def merkleAnsSize {F : Type} (D : CompressDeployment F) : AnsSize (merkleForgeryGame D) :=
+  fun _ (fg : MerkleForgery F) =>
+    fg.leaf1.length + fg.leaf2.length + (fg.siblings.map List.length).sum
+
+/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed 2-to-1 input pairs. -/
+def compressAnsSize {F : Type} (D : CompressDeployment F) : AnsSize (compressCollisionGame D) :=
+  fun _ (q : (List F × List F) × (List F × List F)) =>
+    q.1.1.length + q.1.2.length + q.2.1.length + q.2.2.length
+
+/-- A sibling on the forged path is no longer than the whole path. -/
+theorem sibling_len_le_sum {F : Type} {siblings : List (List F)} {s : List F} (hs : s ∈ siblings) :
+    s.length ≤ (siblings.map List.length).sum := by
+  refine List.single_le_sum (fun _ _ => Nat.zero_le _) _ ?_
+  simp only [List.mem_map]
+  exact ⟨s, hs, rfl⟩
+
+/-- **⚑ THE PATH PEEL DOES NOT BLOW UP.** Every list `peelPath` can return is either one the forger
+supplied (a leaf, or a sibling) or an ACCUMULATOR — and an accumulator is a `compress` output, hence
+bounded by the deployed digest width. So under one uniform bound `m` on the leaves, the siblings and the
+digest width, all four returned lists are `≤ m`. This is the output-size obligation the cost model's
+`reshape`-leaf charge creates, discharged by induction over the SAME path the peel walks. -/
+theorem peelPath_len_le {F : Type} [DecidableEq F] (compress : List F → List F → List F) (m : ℕ)
+    (hw : ∀ xs ys : List F, (compress xs ys).length ≤ m) :
+    ∀ (siblings : List (List F)) (idx : Nat) (l1 l2 : List F),
+      l1.length ≤ m → l2.length ≤ m → (∀ s ∈ siblings, s.length ≤ m) →
+      (peelPath compress idx l1 l2 siblings).1.1.length ≤ m ∧
+        (peelPath compress idx l1 l2 siblings).1.2.length ≤ m ∧
+          (peelPath compress idx l1 l2 siblings).2.1.length ≤ m ∧
+            (peelPath compress idx l1 l2 siblings).2.2.length ≤ m := by
+  intro siblings
+  induction siblings with
+  | nil =>
+      intro idx l1 l2 h1 h2 _
+      have hnil : peelPath compress idx l1 l2 [] = ((l1, l1), (l2, l2)) := rfl
+      rw [hnil]
+      exact ⟨h1, h1, h2, h2⟩
+  | cons s rest ih =>
+      intro idx l1 l2 h1 h2 hs
+      have hsm : s.length ≤ m := hs s (by simp)
+      have hrest : ∀ x ∈ rest, x.length ≤ m := fun x hx => hs x (List.mem_cons_of_mem _ hx)
+      by_cases hb : idx % 2 = 0
+      · by_cases hc : compress l1 s = compress l2 s
+        · have hpp : peelPath compress idx l1 l2 (s :: rest) = ((l1, s), (l2, s)) := by
+            simp only [peelPath, hb, hc, if_true]
+          rw [hpp]
+          exact ⟨h1, hsm, h2, hsm⟩
+        · have hpp : peelPath compress idx l1 l2 (s :: rest)
+              = peelPath compress (idx / 2) (compress l1 s) (compress l2 s) rest := by
+            simp only [peelPath, hb, hc, if_true, if_false]
+          rw [hpp]
+          exact ih (idx / 2) _ _ (hw _ _) (hw _ _) hrest
+      · by_cases hc : compress s l1 = compress s l2
+        · have hpp : peelPath compress idx l1 l2 (s :: rest) = ((s, l1), (s, l2)) := by
+            simp only [peelPath, hb, hc, if_true, if_false]
+          rw [hpp]
+          exact ⟨hsm, h1, hsm, h2⟩
+        · have hpp : peelPath compress idx l1 l2 (s :: rest)
+              = peelPath compress (idx / 2) (compress s l1) (compress s l2) rest := by
+            simp only [peelPath, hb, hc, if_false]
+          rw [hpp]
+          exact ih (idx / 2) _ _ (hw _ _) (hw _ _) hrest
+
+/-- **⚑ `hEff` DISCHARGED — the re-grounded `merkleRecompute_binds` with NO floating efficiency
+parameter.** A Merkle forger that is EFFICIENT at the game's own answer encoding, put through the path
+peel, yields a compression-collision finder that is STILL efficient — so the collision floor at
+`Eff := IsPolyTime` applies to IT, and a FRI query opened to a forged leaf has negligible advantage.
+
+The per-site inputs are the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime — and the
+deployed digest width `w`, a SATISFIED contract of the Poseidon2 `TruncatedPermutation`. The peel's
+output growth `(4, 4·w)` is PROVED from it (`peelPath_len_le`), not hypothesized, and no
+`PolyBoundedNat` overhead hypothesis is taken. -/
+theorem merkleRecompute_binds_from_polyTime {F : Type} (D : CompressDeployment F)
+    (A : Adversary (merkleForgeryGame D)) (hA : IsPolyTime (merkleAnsSize D) A)
+    (cw bw w : ℕ) (hw : ∀ (t : D.Tag) (xs ys : List F), (D.compress t xs ys).length ≤ w)
+    (hcol : Hard (compressCollisionGame D) (IsPolyTime (compressAnsSize D))) :
+    Negl (gameAdv (merkleForgeryGame D) A) := by
+  have hEff : IsPolyTime (compressAnsSize D) (merkleToCollisionFinder D A) := by
+    poly_time (merkleAnsSize D) (compressAnsSize D)
+      (fun _ t (fg : MerkleForgery F) =>
+        letI := D.fieldDecEq
+        peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings)
+      cw bw 4 (4 * w) hA
+    intro n t fg
+    letI := D.fieldDecEq
+    have hm := peelPath_len_le (D.compress t) (merkleAnsSize D n fg + w)
+      (fun xs ys => le_trans (hw t xs ys) (Nat.le_add_left _ _))
+      fg.siblings fg.index fg.leaf1 fg.leaf2
+      (by
+        show fg.leaf1.length ≤ merkleAnsSize D n fg + w
+        simp only [merkleAnsSize]; omega)
+      (by
+        show fg.leaf2.length ≤ merkleAnsSize D n fg + w
+        simp only [merkleAnsSize]; omega)
+      (fun s hs => by
+        have := sibling_len_le_sum hs
+        show s.length ≤ merkleAnsSize D n fg + w
+        simp only [merkleAnsSize]; omega)
+    obtain ⟨p1, p2, p3, p4⟩ := hm
+    show (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).1.1.length
+        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).1.2.length
+        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).2.1.length
+        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).2.2.length
+      ≤ 4 * (merkleAnsSize D n fg) + 4 * w
+    omega
+  exact merkleRecompute_binds_advantage_bound D (IsPolyTime (compressAnsSize D)) A hEff hcol
+
+/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** Together with
+`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
+floor strictly between §7's two poles. -/
+theorem compressFloor_isPolyTime_inhabited {F : Type} (D : CompressDeployment F) :
+    IsPolyTime (compressAnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => ((([] : List F), ([] : List F)), (([] : List F), ([] : List F))))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [compressAnsSize]⟩
+
+#assert_all_clean [
+  sibling_len_le_sum,
+  peelPath_len_le,
+  merkleRecompute_binds_from_polyTime,
+  compressFloor_isPolyTime_inhabited
+]
 
 #assert_all_clean [
   finite_range_of_width,

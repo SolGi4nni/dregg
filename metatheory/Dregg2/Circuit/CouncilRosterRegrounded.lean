@@ -92,6 +92,8 @@ import Dregg2.Circuit.CouncilCommit
 import Dregg2.Circuit.StateCommit
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 
 namespace Dregg2.Circuit.CouncilRosterRegrounded
 
@@ -107,6 +109,7 @@ open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
 
@@ -404,11 +407,12 @@ Unlike its predecessor this statement is FALSE if you delete the reduction: the 
 substitution game, the hypothesis about the collision game, and `substitution_adv_le` is the only
 bridge (§6's canary compiles that fact).
 
-⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
-side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). Nothing in this
-repository can give `Eff` content: `Computable` does not restrict it (every instance space here is
-finite, so brute-force search is computable) and Mathlib has no polynomial-time model over an arbitrary
-carrier. The floor's honesty is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at
+⚑ **`hEff` IS A PARAMETER HERE BECAUSE THIS IS THE STATEMENT AT AN ARBITRARY CLASS.** §8 DISCHARGES it:
+`Dregg2.Crypto.CostAdversary` gives `Eff` real content at cost-vector resolution, and
+`recStateCommit_recovers_council_roster_from_polyTime` proves the extracted finder efficient instead of
+assuming it. (The earlier claim here — "nothing in this repository can give `Eff` content" — was true
+when `FloorGames` §8 was the last word and is now retired; it is exactly the gap `CostAdversary`
+closed.) The floor's honesty is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at
 the deployed digest, `⊥` vacuous. -/
 theorem recStateCommit_recovers_council_roster_advantage_bound {Guardian : Type}
     (D : RosterDeployment Guardian) (Eff : Adversary (rosterCollisionGame D) → Prop)
@@ -543,6 +547,76 @@ it. -/
 theorem rosterFamily_CR_of_injective {Guardian : Type} (D : RosterDeployment Guardian)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (rosterFamily D) :=
   injective_family_CR (rosterFamily D) (fun _ t => hinj t)
+
+/-! ## §8 — `hEff` DISCHARGED: the reduction's efficiency is a THEOREM, not a parameter.
+
+§5 states the bound at an ARBITRARY adversary class, so it carries `hEff` as a parameter. That was the
+honest state while `FloorGames` §8 ("this tree has no cost model") was the last word. It no longer is:
+`Dregg2.Crypto.CostAdversary` gives `Eff` content at COST-VECTOR resolution (intrinsic instructions +
+per-oracle call counts, both DERIVED from a deep-embedded program's syntax, never an asserted field),
+and the roster reduction is a pure output reshaping — it DISCARDS the two kernel states and keeps the
+two rosters, with the sampled tag passed through, i.e. an `Adversary.postMap`. So `isPolyTime_postMap`
+turns `hEff` into a consequence of "the substituter is efficient".
+
+The one per-site fact is the extractor's output size, and it is PROVED, not assumed: the finder writes
+exactly the two rosters the substituter already committed to, so its answer is no larger than the
+substituter's own — growth constants `(1, 0)`. A reduction that THROWS STRUCTURE AWAY cannot blow up. -/
+
+/-- **THE SUBSTITUTION GAME'S ANSWER ENCODING.** A council substitution costs, to write down, the two
+guardian rosters plus the two kernel states' account sets. Concrete on purpose: the size measure belongs
+to the GAME (`CostAdversary` design commitment 4); a degenerate `sz := 0` would make the extractor's
+output free. -/
+def substitutionAnsSize {Guardian : Type} (D : RosterDeployment Guardian) :
+    AnsSize (rosterSubstitutionGame D) :=
+  fun _ (a : (RecordKernelState × RecordKernelState) × (List Guardian × List Guardian)) =>
+    a.2.1.length + a.2.2.length + (a.1.1.accounts.card + a.1.2.accounts.card)
+
+/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed colliding rosters. -/
+def rosterAnsSize {Guardian : Type} (D : RosterDeployment Guardian) :
+    AnsSize (rosterCollisionGame D) :=
+  fun _ (p : List Guardian × List Guardian) => p.1.length + p.2.length
+
+/-- **⚑ `hEff` DISCHARGED — the re-grounded council-roster recovery with NO floating efficiency
+parameter.** A council substituter that is EFFICIENT at the game's own answer encoding, put through the
+extractor, yields a roster-digest collision finder that is STILL efficient — so the collision floor at
+`Eff := IsPolyTime` applies to IT, and a guardian SWAP that survives the light client has negligible
+advantage. Governance's keystone no longer rests on an efficiency side condition nobody discharged.
+
+What remains supplied is the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime, so that
+number is CHARGED in the program's syntax rather than derived. No `PolyBoundedNat` overhead hypothesis
+is taken: the composed overhead's poly-ness follows from the substituter's own bound. -/
+theorem recStateCommit_recovers_council_roster_from_polyTime {Guardian : Type}
+    (D : RosterDeployment Guardian) (A : Adversary (rosterSubstitutionGame D))
+    (hA : IsPolyTime (substitutionAnsSize D) A) (cw bw : ℕ)
+    (hcol : Hard (rosterCollisionGame D) (IsPolyTime (rosterAnsSize D))) :
+    Negl (gameAdv (rosterSubstitutionGame D) A) := by
+  have hEff : IsPolyTime (rosterAnsSize D) (substitutionToCollisionFinder D A) := by
+    poly_time (substitutionAnsSize D) (rosterAnsSize D)
+      (fun _ _ (a : (RecordKernelState × RecordKernelState) × (List Guardian × List Guardian)) =>
+        (a.2.1, a.2.2))
+      cw bw 1 0 hA
+    intro n t a
+    show a.2.1.length + a.2.2.length
+      ≤ 1 * (a.2.1.length + a.2.2.length + (a.1.1.accounts.card + a.1.2.accounts.card)) + 0
+    omega
+  exact recStateCommit_recovers_council_roster_advantage_bound D
+    (IsPolyTime (rosterAnsSize D)) A hEff hcol
+
+/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** `Hard (rosterCollisionGame D)
+(IsPolyTime (rosterAnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the
+class, because the answer it writes has size `0` under the game's own encoding. Together with
+`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
+floor strictly between §7's two poles. -/
+theorem rosterFloor_isPolyTime_inhabited {Guardian : Type} (D : RosterDeployment Guardian) :
+    IsPolyTime (rosterAnsSize D)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List Guardian), ([] : List Guardian)))).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [rosterAnsSize]⟩
+
+#assert_all_clean [
+  recStateCommit_recovers_council_roster_from_polyTime,
+  rosterFloor_isPolyTime_inhabited
+]
 
 #assert_all_clean [
   finite_range_of_bound,
