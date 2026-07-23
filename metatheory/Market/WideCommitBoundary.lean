@@ -52,9 +52,18 @@ the receipt-root sponge (`Poseidon2SpongeCR hash`, the 1-felt residual, ~237 con
 part of this sweep) or of the kernel commit (`CommitSurface.commit_binds`, its own field).
 Those are the SEPARATELY-priced residuals, named at `stateDecode8_pre_faithful`.  What is
 NOT yet closed: the exact-Prop AIR layer and the computational game layer are still bridged
-per-instance (the game samples a tag; the deployed trace fixes `deployedTag`), and the tree
-has no cost model, so `Eff` is an undischarged PARAMETER (`FloorGames` §8) — the honest name
-for "the reduction is efficient".
+per-instance (the game samples a tag; the deployed trace fixes `deployedTag`).
+
+`Eff` itself is NO LONGER a bare parameter at the discharge site.  §P instantiates it at
+`Dregg2.Crypto.CostAdversary.IsPolyTime` — a cost-vector model (intrinsic instructions +
+per-oracle call counts, both DERIVED from a deep-embedded program's syntax) in which the
+⊤-collapse witness is PROVED excluded and the class is PROVED inhabited — and derives the
+composed finder's efficiency instead of assuming it, with the reduction's OUTPUT growth
+proved (`wireCommit8Find_len_le`) rather than hypothesized.  What remains supplied is each
+reshaper's DECLARED instruction count, linear in its input size: a Lean function has no
+runtime, so that number cannot be derived, only charged in the program's syntax.  §R's
+general `stateCommit_binds_advantage_bound` keeps the `Eff`/`hEff` parameters, since it is
+the statement at an arbitrary adversary class.
 
 No axiom, `sorry`, `admit`, or native decision procedure.
 -/
@@ -70,11 +79,12 @@ open Dregg2.Exec
 open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR
   (Poseidon2Width8 chainFrom8_len chainFrom8_snoc wireCommitR8 WireColl
-   wireCommitR8_binds_or_collides)
+   wireCommitR8_binds_or_collides chunk31 chainCollFind wireCommit8Find IsCollW)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
 open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_postMap)
 open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
 open Dregg2.Circuit.InjectiveFloorRegrounded
   (WideKeyed wideFamily wireCommitBreakGame wireBreakToFinder wire_adv_le
@@ -453,49 +463,189 @@ theorem the_reduced_stateCommit_bound_fires (D : WideKeyed) (S : CommitSurface) 
     Negl (gameAdv (stateCommitBreakGame D S hash t) A) :=
   stateCommit_binds_advantage_bound D S hash t Eff A hEff hCR
 
-/-! ## §P — `hEff` DISCHARGED: efficiency preservation is now a THEOREM, not a parameter.
+/-! ## §P — `hEff` DISCHARGED: efficiency preservation is a THEOREM, and its OVERHEAD is DERIVED.
 
-⚑ **THE ONE-LINE CHANGE `CostAdversary` ENABLES.** `stateCommit_binds_advantage_bound` (§R) still carries
+⚑ **WHAT `CostAdversary` ENABLES.** `stateCommit_binds_advantage_bound` (§R) still carries
 `hEff : Eff (composed finder)` as a bare PARAMETER — the honest name for "the reduction is efficient",
-undischarged because `FloorGames` §8 had no cost model. `Dregg2.Crypto.CostAdversary` supplies one, and at
-`Eff := IsPolyTime` the parameter becomes a CONSEQUENCE: both reduction hops are
-`CostAdversary.Adversary.postMap` instances (pure output reshaping, tag passed through), and
-`isPolyTime_postMap` proves each preserves `IsPolyTime` under a poly-bounded overhead. So a state forger
-that is EFFICIENT (`hA : IsPolyTime A`), reshaped by the two poly-overhead extractors, stays efficient —
-`hEff` is PROVED, not assumed.
+undischarged because `FloorGames` §8 had no cost model. `Dregg2.Crypto.CostAdversary` supplies one, at
+COST-VECTOR resolution (intrinsic instructions + per-oracle call counts), and at `Eff := IsPolyTime` the
+parameter becomes a CONSEQUENCE: both reduction hops are `CostAdversary.Adversary.postMap` instances
+(pure output reshaping, tag passed through), and `isPolyTime_postMap` proves each preserves
+`IsPolyTime`. So a state forger that is EFFICIENT (`hA`), reshaped by the two extractors, stays
+efficient — `hEff` is PROVED, not assumed.
 
-The overheads `ovState`/`ovWire` are the reshapings' costs — the chain walk `wireCommit8Find` (`O(depth)`)
-and the payload/receipt-root rebuild (`O(depth)`) — carried as poly bounds. That is the honest residual
-`FloorGames` §8 named, now localized to "the reduction's glue is poly" instead of a floating `hEff`; the
-⊤-collapse witness (the brute-force scanning solver, `CostAdversary.bruteForce`) is NO LONGER admitted,
+⚑ **AND THE OVERHEAD IS NO LONGER A FLOATING POLYNOMIAL.** The earlier version of this theorem took
+`ovState ovWire : ℕ → ℕ` with `PolyBoundedNat` hypotheses — two arbitrary polynomials of the security
+parameter, connected to nothing. They are GONE. What replaces them:
+
+  * the reshaper's work is DECLARED as `cw · (input size) + bw` — two NAT CONSTANTS, LINEAR in the size
+    of the value the reduction is handed, and CHARGED IN THE PROGRAM'S SYNTAX (`tickN`) rather than
+    asserted about a Lean `fun` (`CostAdversary` design commitment 5);
+  * the reshaper's OUTPUT growth is PROVED here, not hypothesized: the state→wire hop emits exactly
+    `358` symbols (`kernelPayload_length`, two 178-limb payloads and two roots) and the wire→collision
+    hop emits at most `22` (`wireCommit8Find_len_le` — the chain walk returns two ≤11-felt lists);
+  * poly-ness of the total overhead is then DERIVED from the forger's OWN poly bound, via
+    `CostAdversary.FreeOracle.maxOut_le_intr` ("a poly-time adversary writes poly-many bits").
+
+The ⊤-collapse witness (the brute-force scanning solver, `CostAdversary.bruteForce`) remains excluded,
 because it is `¬ PolyTime` (`CostAdversary.bruteForce_not_polyTime`). -/
+
+/-- **THE STATE GAME'S ANSWER ENCODING.** A forged pair of chained states costs, to write down, its two
+receipt logs plus its two fixed-shape kernels. Concrete on purpose: the size measure belongs to the GAME
+(`CostAdversary` design commitment 4), and leaving it open would let a degenerate `sz := 0` make output
+free again. -/
+def stateAnsSize (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ) (t : BoundaryTurn) :
+    AnsSize (stateCommitBreakGame D S hash t) :=
+  fun _ (c : RecChainedState × RecChainedState) => c.1.log.length + c.2.log.length + 2
+
+/-- **THE WIRE GAME'S ANSWER ENCODING** — the two limb lists plus the two iroots. -/
+def wireAnsSize (D : WideKeyed) : AnsSize (wireCommitBreakGame D) :=
+  fun _ (c : (List ℤ × ℤ) × (List ℤ × ℤ)) => c.1.1.length + c.2.1.length + 2
+
+/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed preimages of the wide permutation. -/
+def hashAnsSize (D : WideKeyed) : AnsSize (hashGame (wideFamily D)) :=
+  fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
+
+/-- Every `chunk31` block is at most three limbs wide (the deployed body arity is `carrier ‖ 3`). -/
+theorem chunk31_len_le : ∀ (xs : List ℤ) (c : List ℤ), c ∈ chunk31 xs → c.length ≤ 3
+  | a :: b :: d :: rest, c, hc => by
+      simp only [chunk31, List.mem_cons] at hc
+      rcases hc with h | h
+      · subst h; simp
+      · exact chunk31_len_le rest c h
+  | [a, b], c, hc => by
+      simp only [chunk31, List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with h | h <;> subst h <;> simp
+  | [a], c, hc => by
+      simp only [chunk31, List.mem_cons, List.not_mem_nil, or_false] at hc
+      subst hc; simp
+  | [], c, hc => by simp [chunk31] at hc
+
+/-- **THE CHAIN WALK RETURNS BOUNDED LISTS.** Every value `chainCollFind` can return is either a carrier
+(width `8`, since `permW` squeezes eight felts) or a carrier concatenated with one body block (`≤ 3`), so
+at most `11` felts. This is what makes the wire→collision reduction's OUTPUT SIZE a proved constant
+instead of an assumption. -/
+theorem chainCollFind_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Width8 permW) :
+    ∀ (cs cs' : List (List ℤ)) (acc acc' : List ℤ),
+      acc.length ≤ 8 → acc'.length ≤ 8 →
+      (∀ c ∈ cs, c.length ≤ 3) → (∀ c ∈ cs', c.length ≤ 3) →
+      (chainCollFind permW acc cs acc' cs').1.length ≤ 11
+        ∧ (chainCollFind permW acc cs acc' cs').2.length ≤ 11 := by
+  intro cs
+  induction cs with
+  | nil =>
+      intro cs' acc acc' ha ha' _ _
+      have hnil : chainCollFind permW acc [] acc' cs' = (acc, acc') := by cases cs' <;> rfl
+      rw [hnil]
+      refine ⟨?_, ?_⟩
+      · show acc.length ≤ 11; omega
+      · show acc'.length ≤ 11; omega
+  | cons c ds ih =>
+      intro cs' acc acc' ha ha' hcs hcs'
+      cases cs' with
+      | nil =>
+          have hnil : chainCollFind permW acc (c :: ds) acc' [] = (acc, acc') := rfl
+          rw [hnil]
+          refine ⟨?_, ?_⟩
+          · show acc.length ≤ 11; omega
+          · show acc'.length ≤ 11; omega
+      | cons c' ds' =>
+          by_cases hif : permW (acc ++ c) = permW (acc' ++ c') ∧ (acc ++ c) ≠ (acc' ++ c')
+          · rw [chainCollFind, if_pos hif]
+            have h1 := hcs c (by simp)
+            have h2 := hcs' c' (by simp)
+            exact ⟨by simp only [List.length_append]; omega,
+                   by simp only [List.length_append]; omega⟩
+          · rw [chainCollFind, if_neg hif]
+            exact ih ds' (permW (acc ++ c)) (permW (acc' ++ c'))
+              (le_of_eq (hW _)) (le_of_eq (hW _))
+              (fun x hx => hcs x (List.mem_cons_of_mem _ hx))
+              (fun x hx => hcs' x (List.mem_cons_of_mem _ hx))
+
+/-- **⚑ THE WIRE→COLLISION EXTRACTOR DOES NOT BLOW UP ITS INPUT** — it returns at most `11 + 11` felts,
+a CONSTANT, whichever branch it takes. Proved, not assumed; this is the output-size obligation the cost
+model's `pure`-leaf charge creates, discharged. -/
+theorem wireCommit8Find_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Width8 permW)
+    (l : List ℤ) (ir : ℤ) (l' : List ℤ) (ir' : ℤ) :
+    (wireCommit8Find permW l ir l' ir').1.length
+      + (wireCommit8Find permW l ir l' ir').2.length ≤ 22 := by
+  have hchunks : ∀ (xs : List ℤ) (z : ℤ) (c : List ℤ),
+      c ∈ chunk31 xs ++ [[z, 0, 0]] → c.length ≤ 3 := by
+    intro xs z c hc
+    rcases List.mem_append.mp hc with h | h
+    · exact chunk31_len_le xs c h
+    · simp only [List.mem_singleton] at h; subst h; simp
+  by_cases hif : IsCollW permW (chainCollFind permW (permW (l.take 4))
+      (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) (permW (l'.take 4)) (chunk31 (l'.drop 4) ++ [[ir', 0, 0]]))
+  · rw [wireCommit8Find, if_pos hif]
+    have h := chainCollFind_len_le permW hW
+      (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) (chunk31 (l'.drop 4) ++ [[ir', 0, 0]])
+      (permW (l.take 4)) (permW (l'.take 4))
+      (le_of_eq (hW (l.take 4))) (le_of_eq (hW (l'.take 4)))
+      (hchunks (l.drop 4) ir) (hchunks (l'.drop 4) ir')
+    omega
+  · rw [wireCommit8Find, if_neg hif]
+    have h1 : (l.take 4).length ≤ 4 := List.length_take_le 4 l
+    have h2 : (l'.take 4).length ≤ 4 := List.length_take_le 4 l'
+    show (l.take 4).length + (l'.take 4).length ≤ 22
+    omega
+
+/-- **⚑ `hEff` DISCHARGED, WITH THE OVERHEAD DERIVED.** A state-commit forger that is EFFICIENT at the
+game's own answer encoding, put through the two extractors, yields a `permW`-collision finder that is
+still efficient — so the wide collision floor at `Eff := IsPolyTime` applies to it, and the forger's
+advantage is negligible.
+
+The two reshapers' declared work `(cwState, bwState)` / `(cwWire, bwWire)` is the honest modelling input
+(a Lean function has no runtime); everything else is proved. In particular NO `PolyBoundedNat` hypothesis
+is taken: the poly-ness of the composed overhead follows from `hA` itself. -/
 theorem stateCommit_binds_from_polyTime (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ)
     (t : BoundaryTurn)
     (A : Adversary (stateCommitBreakGame D S hash t))
-    (hA : Dregg2.Crypto.CostAdversary.IsPolyTime A)
-    (ovState ovWire : ℕ → ℕ)
-    (hovState : Dregg2.Crypto.ConcreteSecurity.PolyBoundedNat ovState)
-    (hovWire : Dregg2.Crypto.ConcreteSecurity.PolyBoundedNat ovWire)
-    (hCR : HashCRHardQuant (wideFamily D) Dregg2.Crypto.CostAdversary.IsPolyTime) :
+    (hA : IsPolyTime (stateAnsSize D S hash t) A)
+    (cwState bwState cwWire bwWire : ℕ)
+    (hCR : HashCRHardQuant (wideFamily D) (IsPolyTime (hashAnsSize D))) :
     Negl (gameAdv (stateCommitBreakGame D S hash t) A) := by
-  have h1 : Dregg2.Crypto.CostAdversary.IsPolyTime (stateBreakToWireBreak D S hash t A) :=
-    Dregg2.Crypto.CostAdversary.isPolyTime_postMap
+  have h1 : IsPolyTime (wireAnsSize D) (stateBreakToWireBreak D S hash t A) :=
+    isPolyTime_postMap
       (G := stateCommitBreakGame D S hash t) (G' := wireCommitBreakGame D)
       (fun _ => rfl)
       (fun _ _ c => ((kernelPayload S c.1.kernel t, receiptRoot hash c.1.log),
                      (kernelPayload S c.2.kernel t, receiptRoot hash c.2.log)))
-      ovState hovState hA
-  have hEff : Dregg2.Crypto.CostAdversary.IsPolyTime
+      (stateAnsSize D S hash t) (wireAnsSize D) cwState bwState 0 358
+      (fun l tag c => by
+        show (kernelPayload S c.1.kernel t).length + (kernelPayload S c.2.kernel t).length + 2
+          ≤ 0 * (stateAnsSize D S hash t l c) + 358
+        rw [kernelPayload_length, kernelPayload_length]
+        simp [kernelPayloadWidth])
+      hA
+  have hEff : IsPolyTime (hashAnsSize D)
       (wireBreakToFinder D (stateBreakToWireBreak D S hash t A)) :=
-    Dregg2.Crypto.CostAdversary.isPolyTime_postMap
+    isPolyTime_postMap
       (G := wireCommitBreakGame D) (G' := hashGame (wideFamily D))
       (fun _ => rfl)
-      (fun _ tag c =>
-        Dregg2.Circuit.Emit.EffectVmEmitRotationR.wireCommit8Find
-          (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
-      ovWire hovWire h1
+      (fun _ tag c => wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
+      (wireAnsSize D) (hashAnsSize D) cwWire bwWire 0 22
+      (fun l tag c => by
+        show (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).1.length
+            + (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).2.length
+          ≤ 0 * (wireAnsSize D l c) + 22
+        have := wireCommit8Find_len_le (D.permWAt tag) (D.width8At tag) c.1.1 c.1.2 c.2.1 c.2.2
+        omega)
+      h1
   exact stateCommit_binds_advantage_bound D S hash t
-    Dregg2.Crypto.CostAdversary.IsPolyTime A hEff hCR
+    (IsPolyTime (hashAnsSize D)) A hEff hCR
+
+/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** `HashCRHardQuant (wideFamily D)
+(IsPolyTime (hashAnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the class,
+because the answer it writes has size `0` under the game's own encoding.  Together with
+`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
+floor strictly between the two poles. -/
+theorem hashFloor_isPolyTime_inhabited (D : WideKeyed) :
+    IsPolyTime (hashAnsSize D)
+      (Dregg2.Crypto.CostAdversary.idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
+  Dregg2.Crypto.CostAdversary.isPolyTime_inhabited _ _
+    ⟨0, 0, fun _ _ => by simp [hashAnsSize]⟩
 
 #guard kernelPayloadWidth == 178
 #guard receiptRoot (fun xs => xs.sum)
@@ -513,7 +663,11 @@ theorem stateCommit_binds_from_polyTime (D : WideKeyed) (S : CommitSurface) (has
 #assert_axioms state_wins_imp
 #assert_axioms state_adv_le
 #assert_axioms stateCommit_binds_advantage_bound
+#assert_axioms chunk31_len_le
+#assert_axioms chainCollFind_len_le
+#assert_axioms wireCommit8Find_len_le
 #assert_axioms stateCommit_binds_from_polyTime
+#assert_axioms hashFloor_isPolyTime_inhabited
 #assert_axioms stateCommit_floor_top_false_babyBear
 #assert_axioms stateCommit_floor_bot_vacuous
 #assert_axioms the_reduced_stateCommit_bound_fires
