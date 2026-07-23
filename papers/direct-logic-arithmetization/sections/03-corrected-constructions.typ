@@ -1,4 +1,4 @@
-#import "../section-helpers.typ": callout, theorem, boundary
+#import "../section-helpers.typ": callout, theorem, boundary, rust
 
 = Corrected constructions: from matrices to searched proof plans
 
@@ -40,12 +40,16 @@ checked optimization and certified representation search.
   [#raw("GabbayFiniteField")#linebreak()#raw("Projection")],
   [Private Gabbay bridge],
   [two-row, three-column successor table in DescriptorIR2],
-  [17-column constructive private trace; 12 constraints; exact for the table carried by that trace, but not externally bound],
+  [12-column constructive private trace; 15 constraints (9 gates plus 6 emitted 30-bit range lookups); exact for the table carried by that trace, but not externally bound],
   [#raw("GabbayDescriptorIR2")],
   [Public Gabbay statement],
   [six direct public table cells pinned to a six-column trace],
-  [seven constraints and three nonlinear products; any accepted canonical trace attests the named external table],
+  [15 constraints (6 PI pins, 3 linear atoms, 6 range lookups) and zero nonlinear products; any accepted canonical trace attests the named external table],
   [#raw("GabbayDescriptorIR2")#linebreak()#raw("PublicBinding")],
+  [Wire-hole canaries],
+  [the two canonical false tables that retired the previous acceptance shape, kept armed],
+  [each half of the repair refutes a table the other half admits; both refused as preselected traces and as external statements, with a positivity control],
+  [#raw("DirectLogicAdversarial")#linebreak()#raw("FalsifierV2")],
   [General finite FOL],
   [public total functions, witness relation tables, equality, all Boolean connectives and bounded quantifiers],
   [canonical trace accepts iff the finite model satisfies the sentence],
@@ -170,16 +174,17 @@ matrix compiler prove that this alternative supports the full matrix formula
 language without pretending that rational addition retained its semantics
 after reduction.
 
-== Three routes into the live DREGG relation
+== Routes into the live DREGG relation
 
 === A fixed-shape private witness/semantics bridge
 
 `GabbayDescriptorIR2` lowers a nontrivial matrix instance into the actual
 `EffectVmDescriptor2` grammar used by DREGG. Its source is a two-row,
 three-column graph of a unary successor function. The trace contains the six
-table entries, six denominator-cleared interpolation coefficients, three
-squared residuals, their numerator, and a denominator marker: exactly 17
-columns.
+table entries and six denominator-cleared interpolation coefficients: exactly
+12 columns (`TRACE_WIDTH = 12`). There are no residual, numerator, or
+denominator columns; the repair described in _The wire hole and its repair_
+below retired all three.
 
 For row values $y_1,y_2,y_3$, the compiler stores the coefficients of $2P(X)$:
 
@@ -190,23 +195,38 @@ $
 $
 
 This avoids witness-authored division inside the interpolation checks. Six
-interpolation identities, three squared-residual identities, one numerator
-identity, one denominator identity, and one acceptance identity give exactly
-12 live constraints. The coefficient columns are nevertheless redundant for
-the current acceptance path: the residual and acceptance gates read the raw
-input and output entry columns directly. This instance therefore demonstrates
-a faithful fixed-shape witness/semantics bridge, not a performance advantage
-from interpolation. Under `LiveProjectionCertificate`,
+interpolation identities, three linear acceptance atoms
+$"output"_j - "input"_j - 1$, and six 30-bit range lookups --- one on each
+entry column --- give exactly 15 live constraints
+(`compileDescriptor.constraints.length = 15`). The coefficient columns are
+nevertheless redundant for the current acceptance path: the acceptance atoms
+read the raw input and output entry columns directly. This instance therefore
+demonstrates a faithful fixed-shape witness/semantics bridge, not a
+performance advantage from interpolation.
+
 `trace_satisfied_iff_holds` proves a table-indexed equivalence: `traceOf table`
 satisfies the emitted BabyBear relation exactly when the source formula holds
-of that same `table`. The canonical successor trace is constructed, the
-constructed trace of a one-cell tamper is refused, and the known modulus-five
-projection cannot enter the compiler.
+of that same `table`. Its `WireBoundedTable` hypothesis is a premise of the
+*completeness* direction only --- it names which tables this descriptor can
+express. Soundness needs no side condition on the claim: the six emitted
+lookups are what `accepting_trace_wire_bounded` reads the 30-bit bound off,
+so a table outside the checked domain is refused rather than silently
+accepted. The canonical successor trace is constructed, the constructed trace
+of a one-cell tamper is refused, and the known modulus-five projection cannot
+enter the compiler.
 
 #boundary([
   The current descriptor is an existential private-witness statement, not an
   attestation of an externally named table. `descriptor_public_surface_empty`
-  proves `piCount = 0`, `hashSites = []`, and `ranges = []`.
+  proves `piCount = 0`, `hashSites = []`, `ranges = []`, and
+  `constraints.length = 15`. Read the third conjunct exactly: `ranges` is the
+  v1 range *carrier* field, and it is empty by construction because the
+  deployed v2 assembly refuses a descriptor that carries it at all. The
+  no-wrap bound is enforced by the six graduated `lookup` constraints against
+  the declared 30-bit range table, which the assembly lowers to a real
+  byte-limb decomposition. An empty `ranges` field is not an absent range
+  check. A range tooth binds no external *name*, however, so it does not close
+  the statement gap this boundary records.
   `constructed_traces_publicly_indistinguishable` proves that every constructed
   table trace exposes the same empty public assignment. Most sharply,
   `accepting_trace_does_not_attest_external_table` constructs an accepting
@@ -223,34 +243,47 @@ projection cannot enter the compiler.
 
 `GabbayDescriptorIR2PublicBinding` closes the statement gap with a distinct,
 smaller descriptor. All six cells of the claimed two-by-three table are public
-inputs. Six first-row PI bindings pin them to six trace columns, and one
-always-on gate checks the sum of the three successor residual squares. There
-are no interpolation coefficients, denominator column, hash site, commitment
-assumption, or range carrier.
+inputs. Six first-row PI bindings pin them to six trace columns; three
+always-on gates check the three successor equations, one equation per gate;
+and six `lookup` constraints check that each bound column is a 30-bit value in
+the declared range table. There are no interpolation coefficients, denominator
+column, hash site, or commitment assumption. The descriptor's `ranges` field is
+empty --- the enforcing instrument is the six lookups, not the v1 carrier.
 
 The exact ledger is proved by `descriptor_public_surface_exact` and
 `direct_public_cost_exact`:
 
 #table(
-  columns: (1fr, 1fr, 1fr, 1fr, 1fr),
-  align: (center, center, center, center, center),
+  columns: (0.9fr, 0.9fr, 0.9fr, 0.85fr, 1.05fr, 1fr),
+  align: (center, center, center, center, center, center),
   table.header([*Public inputs*], [*Trace columns*], [*Constraints*],
-    [*Nonlinear products*], [*Private table cells*]),
-  [6], [6], [7], [3], [0],
+    [*Range teeth*], [*Nonlinear products*], [*Private table cells*]),
+  [6], [6], [15], [6], [0], [0],
 )
 
-The three nonlinear products are exactly the three squares. The syntax also
-contains 15 multiplication nodes when multiplication by constants is counted.
-`publicLayout` pins the exact PI order, while an executable guard pins the full
-emitted descriptor JSON byte-for-byte.
+The 15 constraints are 6 PI pins, 3 linear acceptance atoms, and 6 range
+lookups. Acceptance contains *no* nonlinear product: counting multiplication by
+constants, the whole acceptance block is 6 multiplication nodes, and
+`acceptanceNonlinearMulNodes = 0`. `publicLayout` pins the exact PI order,
+while an executable guard pins the full emitted descriptor JSON byte-for-byte,
+including `"sem":"range","bits":30` on table 2 and the six
+`{"t":"lookup","table":2,...}` entries. Without that byte pin the teeth could
+be deleted and the constraint count alone would not notice, since it sees how
+many constraints there are and not which.
 
 The statement theorem is now external rather than witness-relative.
-`StatementSatisfied` requires a nonempty trace and canonical BabyBear integer
-representatives for its first row. Given the same explicit no-wrap certificate
-for the claimed table, `statement_sound` proves that *any* such satisfying
-trace implies `Holds` of the externally named table. `statement_complete`
-constructs a trace for every canonical true claim, and
-`public_statement_satisfied_iff_holds` packages the exact result:
+`StatementSatisfied hash claim trace` is exactly three conjuncts: the trace is
+nonempty, its `.range` table is the honest 30-bit table, and it satisfies the
+emitted descriptor under the claimed public vector. Both surviving conjuncts
+are conditions on the *witness*, not side conditions on the claim. Canonicality
+of the first row is no longer among them: the descriptor's own teeth force it,
+which is what `first_row_input_bounded` and `first_row_output_bounded` prove.
+`statement_sound` then proves that *any* such satisfying trace implies `Holds`
+of the externally named table, with the claim's only hypothesis being the
+decoding convention that the six public field elements are read as canonical
+BabyBear integer representatives. `statement_complete` constructs a trace for
+every wire-bounded true claim, and `public_statement_satisfied_iff_holds`
+packages the exact result:
 
 $
   exists t. "StatementSatisfied"(h, M, t)
@@ -265,10 +298,109 @@ preselected trace: the public statement itself is impossible.
   Public integrity is purchased by revealing the whole table.
   `public_statement_reveals_whole_table` proves that equality of the six public
   inputs implies equality of all table cells. This descriptor therefore has
-  zero table privacy. It also makes no interpolation performance claim: the
-  acceptance polynomial is the direct sum of three residual squares. The
-  result is an exact fixed-shape public statement, not an arbitrary-matrix
-  compiler.
+  zero table privacy. It also makes no interpolation performance claim: there
+  are no coefficient columns and interpolation is not part of logical
+  acceptance. The result is an exact fixed-shape public statement, not an
+  arbitrary-matrix compiler.
+])
+
+=== The wire hole and its repair
+
+Both Gabbay descriptors above are the *second* version. The first accepted a
+fully canonical false table, and the counterexample that retired it is
+reproduced here because it is the most instructive artifact in this section.
+
+#callout([THE HOLE], [
+  Acceptance used to be a single always-on gate on the sum of the three squared
+  successor residuals, sound only under a Lean-side `LiveProjectionCertificate`
+  bounding the integer numerator, plus a `CanonicalFirstRow` trace premise.
+  Neither premise was ever serialized, so the emitted bytes did not enforce what
+  made them sound. Over BabyBear $284861408^2 = -1$, so residuals $1$,
+  $284861408$, $0$ give $1 + (-1) + 0 = 0$ in the field while two of the three
+  equations fail. The table $"input" = (0,0,0)$, $"output" = (2, 284861409, 1)$
+  is fully canonical, lies inside the descriptor's checked domain, is false,
+  and was ACCEPTED. `wrapClaim_residual_exact` records its exact integer
+  numerator $81146021767742465 = 2013265921 times 40305665$, and
+  `wrapClaim_numerator_exceeds_modulus` records that the retired certificate
+  demanded exactly the bound this table violates.
+], tone: rust)
+
+Two independent defects meet in that table. A field sum of squares is not a
+conjunction, because a field has no order to make squares nonnegative. And the
+condition that repaired the arithmetic lived in Lean rather than in the
+descriptor, so no emitted byte checked it. The second is the deeper one: a
+premise off the wire is not a check.
+
+The repair puts both halves on the wire. Acceptance became three linear atoms,
+one per successor equation, so no cancellation between equations is available
+at all. The no-wrap condition became a 30-bit range *lookup* on each of the six
+bound columns, against the declared range table. The graduated lookup form is
+deliberate rather than the v1 `ranges` carrier: the deployed v2 assembly refuses
+a descriptor carrying the v1 form at all, so those bytes would have enforced the
+bound only in Lean --- the same mistake in a new place --- whereas a lookup is
+lowered to a real byte-limb decomposition at the width pinned by the committed
+table id.
+
+With both halves emitted, the two premises stop being premises.
+`statement_forces_wire_bounded` derives the retired `LiveProjectionCertificate`
+from the teeth; `first_row_input_bounded` and `first_row_output_bounded` derive
+the retired `CanonicalFirstRow`. `statement_sound` and
+`public_statement_satisfied_iff_holds` no longer take a certificate argument.
+
+#theorem([both halves are load-bearing], [
+  A single counterexample would leave one half of the repair looking decorative,
+  so a second is carried. `wrapClaim` lies inside the 30-bit domain, so it is
+  refused by the linear atoms alone and the teeth do no work on it.
+  `borderWrapClaim` --- $"input"_0 = 2013265920$, $"output"_0 = 0$ --- is
+  canonical and false, and `borderWrap_atom_gates_all_pass` proves that all
+  three linear gates evaluate to a BabyBear zero on it, since the first residual
+  is exactly $-p$. The only emitted gate that refuses it is the 30-bit tooth on
+  column 0 (`borderWrap_range_tooth_fires`). Each half kills a counterexample
+  the other admits; deleting either turns one of these theorems red.
+])
+
+Both canaries are proved in both polarities --- refusal of the exact
+preselected trace, and refusal of the external statement for *every* trace ---
+and `repaired_descriptor_still_accepts_truth` is the positivity control that
+the repair rejects the counterexamples rather than everything.
+`DirectLogicAdversarialFalsifierV2` is imported by the trusted umbrella, so CI
+builds these canaries like any other theorem; an unbuilt canary is not a canary.
+
+The linear repair is also the cheaper circuit:
+
+#table(
+  columns: (1.35fr, 1fr, 1fr),
+  align: (left, center, center),
+  table.header([*Public descriptor*], [*Retired sum-of-squares*], [*Repaired*]),
+  [Constraints], [7], [15],
+  [of which range teeth], [0], [6],
+  [Multiplication nodes], [15], [6],
+  [Nonlinear products], [3], [0],
+)
+
+The three squares carried 15 multiplication nodes, 3 of them nonlinear; the
+three linear atoms carry 6 constant-scaling nodes and no nonlinear product. The
+added cost is two extra gates and the deployed byte-limb realization of the six
+teeth, which the node count does not price.
+
+#boundary([
+  One premise moved rather than vanished. A range lookup bounds a column only
+  against the table it looks into, and the abstract `Satisfied2` carrier has
+  structural faithfulness conjuncts for the memory and map tables but none for
+  `.range`, so a prover may choose `tf .range` freely. `StatementSatisfied`
+  therefore carries `HonestRangeTable trace` explicitly, and every refusal that
+  routes through a range tooth is conditional on it --- `borderWrapClaim`
+  genuinely needs it, while `wrapClaim`'s refusal is table-free because linear
+  atoms read no table. This premise is of a different kind from the retired one:
+  it is a condition on the trace family rather than an unchecked assertion about
+  the claim, it is discharged by construction for every trace built here and in
+  deployment by the assembly, which constructs the limb decomposition rather
+  than reading a prover-supplied table --- and it is carrier-level and uniform,
+  since every range lookup in the codebase reads against `t.tf .range`. The
+  structural fix already exists in shape as `Satisfied2Faithful`, which carries
+  `rangeTableFaithful` as a conjunct; this descriptor has not been ported to it,
+  and porting would move the obligation to the Rust assembly rather than
+  discharge it inside Lean.
 ])
 
 === General finite-signature FOL

@@ -22,6 +22,17 @@ constructions.
   cross-language checking.
 ])
 
+The audit also turned on our own construction. The first acceptance shape of the
+public direct-table relation --- a field sum of squared residuals, made sound by
+a Lean-side no-wrap premise that no emitted byte checked --- was proved to accept
+a fully canonical false table, by exactly the class of cancellation this report
+uses against BitLogic. It was replaced with three linear atoms and six emitted
+30-bit range lookups; the two premises that had made it sound are now derived
+theorems rather than assumptions; and both counterexamples are retained as armed
+rejection canaries built by CI. Section 3 gives the account, the load-bearing
+proof for each half of the repair, and the one premise that moved rather than
+vanished.
+
 == The construction stack
 
 #block(breakable: false)[
@@ -40,10 +51,13 @@ constructions.
     [Live matrix relation],
     [The original three-entry instance is a private existential witness with no
      public binding. A separate direct-table descriptor binds all six claimed
-     cells and accepts exactly when the public table satisfies source `Holds`.],
-    [`GabbayDescriptorIR2PublicBinding`: 6 public inputs, 6 columns, 7
-     constraints, 3 nonlinear products, exact tamper refusal, and zero table
-     privacy. It is not interpolation-performance evidence.],
+     cells and accepts exactly when the public table satisfies source `Holds`.
+     Its first acceptance shape was proved to accept a canonical false table and
+     was replaced; the counterexamples are retained as armed rejection canaries.],
+    [`GabbayDescriptorIR2PublicBinding`: 6 public inputs, 6 columns, 15
+     constraints (6 PI pins, 3 linear atoms, 6 emitted 30-bit range lookups), 0
+     nonlinear products, exact tamper refusal, and zero table privacy. It is not
+     interpolation-performance evidence.],
     [Finite FOL],
     [Closed de Bruijn syntax with equality, many relations of independent
      arities, total public function tables, every connective, and exhaustive

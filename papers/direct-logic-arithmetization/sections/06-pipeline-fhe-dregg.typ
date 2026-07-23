@@ -85,34 +85,59 @@ and exact live-byte binding in one kernel-checked construction.
 
 The same target also contains a faithful fixed Gabbay matrix instance.
 `GabbayDescriptorIR2` compiles a two-row, three-entry Skolem graph using
-denominator-cleared Lagrange interpolation, squared logical residuals, an exact
-aggregate numerator, and a BabyBear no-wrap certificate.  Its
-`trace_satisfied_iff_holds` theorem relates the actual live relation to the
-ordinary bounded source formula; successor data is accepted, while a tampered
-entry and the known unchecked modulus-five projection are refused.  Arbitrary
-matrix length remains a separate symbolic compiler problem because it must emit
-and cost an interpolation algorithm rather than hide divisions in witness data.
+denominator-cleared Lagrange interpolation, three linear acceptance atoms, and
+a 30-bit range lookup on each of the six entry columns: 12 trace columns and 15
+constraints.  Its `trace_satisfied_iff_holds` theorem relates the actual live
+relation to the ordinary bounded source formula; successor data is accepted,
+while a tampered entry and the known unchecked modulus-five projection are
+refused.  Its `WireBoundedTable` hypothesis is a completeness-side premise
+naming the expressible domain; the soundness direction derives that bound from
+the emitted lookups instead of assuming it.  Arbitrary matrix length remains a
+separate symbolic compiler problem because it must emit and cost an
+interpolation algorithm rather than hide divisions in witness data.
 The fixed theorem constructs a trace from an externally named three-entry
 table, but the descriptor itself proves only an existential private-witness
-relation.  `GabbayDescriptorIR2PublicBoundary` proves that its public-input,
-hash-site, and range surfaces are all empty and that all constructed tables have
-the same public assignment.  It therefore cannot attest an independently named
-external table.  Moreover, interpolation coefficients are consistency columns;
-the logical residual and final acceptance read the raw input/output cells.
+relation.  `GabbayDescriptorIR2PublicBoundary` proves that its public-input and
+hash-site surfaces are empty, that the v1 `ranges` carrier is empty, that it
+carries 15 constraints, and that all constructed tables have the same public
+assignment.  Read the range conjunct exactly: an empty `ranges` field is not an
+absent range check.  The no-wrap bound is carried by six graduated `lookup`
+constraints against the declared 30-bit range table --- the form the deployed
+assembly actually realizes, and the form it requires, since it refuses a v2
+descriptor carrying the v1 carrier at all.  What the boundary theorem records is
+that no surface here binds an external NAME, so acceptance cannot attest an
+independently named external table.  Moreover, interpolation coefficients are
+consistency columns; acceptance reads the raw input/output cells.
 This specimen establishes a fixed-shape semantic relation, not an interpolation
 performance result.
 
 `GabbayDescriptorIR2PublicBinding` now closes that statement gap with a separate
 direct-table descriptor.  Its six disclosed table cells are pinned to six trace
-columns by six public inputs; one acceptance gate gives seven constraints in
-total and contains exactly three nonlinear products.  Under canonical field
-decoding and the explicit no-wrap certificate,
+columns by six public inputs; three linear acceptance atoms and six 30-bit range
+lookups bring the total to 15 constraints, and acceptance contains no nonlinear
+product at all.  Under the canonical field-decoding convention alone ---
+the previous no-wrap certificate is now derived rather than assumed ---
 `public_statement_satisfied_iff_holds` proves that an arbitrary nonempty
 satisfying trace exists exactly when the externally claimed table satisfies the
 source formula.  A one-cell public tamper is refused, and the complete IR-v2 JSON
-is pinned.  This construction supplies public integrity with zero table privacy.
+is pinned, including the `"bits":30` range table and the six lookup entries.
+This construction supplies public integrity with zero table privacy.
 It deliberately removes interpolation coefficients, so it closes public
 binding without manufacturing an interpolation speedup.
+
+Both Gabbay descriptors carry this shape because the previous one was proved
+unsound.  Acceptance used to be the sum of the three squared successor
+residuals, sound only under Lean-side premises that were never serialized, and
+over BabyBear $284861408^2 = -1$ makes a fully canonical FALSE table cancel to
+zero.  `DirectLogicAdversarialFalsifierV2` keeps that table and a second one ---
+whose only refuting gate is a range tooth --- as armed rejection canaries in
+both the preselected-trace and external-statement polarities, together with a
+control proving the true statement still has a witness.  Section 3 gives the
+full account, including the one premise that moved rather than vanished: a range
+lookup bounds a column only against an honest range table, and `Satisfied2` has
+no faithfulness conjunct for `.range`, so refusals through a range tooth carry
+`HonestRangeTable` explicitly.  That premise is carrier-level and uniform across
+every range lookup in the codebase, not specific to this descriptor.
 
 == Certificates optimize the relation without changing it
 

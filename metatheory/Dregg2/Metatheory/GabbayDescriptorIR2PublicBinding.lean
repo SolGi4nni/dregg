@@ -198,7 +198,13 @@ def totalMulNodes : WindowExpr -> Nat
   | .mul a b => 1 + totalMulNodes a + totalMulNodes b
 
 /-- Count only multiplications where neither top-level operand is a constant.
-The three residual squares are the only nonlinear products. -/
+The live acceptance block has NONE: `directAtom` is
+`out - in - 1`, whose only multiplications are the `-1` scalings introduced by
+`subW`/`negW`, and both have a constant operand.  The retired sum-of-squares
+gate is where the nonlinear products used to live: each squared residual was a
+`.mul` of two non-constant operands, three in all
+(`direct_public_cost_exact` records the repaired ledger `totalMulNodes = 6`,
+`nonlinearMulNodes = 0`; the retired one was `15` and `3`). -/
 def nonlinearMulNodes : WindowExpr -> Nat
   | .loc _ | .nxt _ | .const _ => 0
   | .add a b => nonlinearMulNodes a + nonlinearMulNodes b
@@ -575,32 +581,6 @@ theorem claimed_atom_modEq_zero {hash : List Int -> Int}
   simp only [withPublic, envAt] at hi ho hgate
   rwa [hi, ho] at hgate
 
-theorem holds_of_residual_zero (table : ThreeEntryTable)
-    (hzero : residualNumerator table = 0) :
-    Holds (sourceValuation table) 0 successorSkolemFormula := by
-  rw [holds_iff_entries]
-  intro j
-  have hs0 : 0 <= (table.output 0 - table.input 0 - 1) ^ 2 := sq_nonneg _
-  have hs1 : 0 <= (table.output 1 - table.input 1 - 1) ^ 2 := sq_nonneg _
-  have hs2 : 0 <= (table.output 2 - table.input 2 - 1) ^ 2 := sq_nonneg _
-  simp only [residualNumerator] at hzero
-  have hz0 : (table.output 0 - table.input 0 - 1) ^ 2 = 0 := by omega
-  have hz1 : (table.output 1 - table.input 1 - 1) ^ 2 = 0 := by omega
-  have hz2 : (table.output 2 - table.input 2 - 1) ^ 2 = 0 := by omega
-  have he0 : table.output 0 = table.input 0 + 1 := by
-    have hd := sq_eq_zero_iff.mp hz0
-    omega
-  have he1 : table.output 1 = table.input 1 + 1 := by
-    have hd := sq_eq_zero_iff.mp hz1
-    omega
-  have he2 : table.output 2 = table.input 2 + 1 := by
-    have hd := sq_eq_zero_iff.mp hz2
-    omega
-  fin_cases j
-  · exact he0
-  · exact he1
-  · exact he2
-
 /-- **Soundness for an arbitrary satisfying witness, with NO arithmetic side
 condition.**  The public statement, not a prover-selected hidden table, is what
 `Holds`; the no-wrap premise that used to be assumed is now read off the
@@ -693,7 +673,7 @@ def publicDescriptorBytes : String := emitVmJson2 publicDescriptor
   first_row_input_bounded, first_row_output_bounded,
   input_pin_exact, output_pin_exact, statement_forces_wire_bounded,
   claimed_atom_modEq_zero,
-  holds_of_residual_zero, statement_sound, statement_complete,
+  statement_sound, statement_complete,
   public_statement_satisfied_iff_holds, successorEntries_canonical,
   successor_public_statement_has_witness, tamperedEntries_canonical,
   tampered_public_statement_refused

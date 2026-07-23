@@ -34,15 +34,19 @@ matrix language and interpolation mechanism; `GabbayMatrixBridge` proves the two
 formal presentations coherent; and `GabbayDescriptorIR2` supplies a fixed-shape
 private Skolem-witness relation in the live proof grammar.
 `GabbayDescriptorIR2PublicBoundary` proves that this descriptor has zero public
-inputs and no hash or range sites: acceptance does not attest an independently
-named external table, and the fixed instance is not interpolation-performance
-evidence. The separate `GabbayDescriptorIR2PublicBinding` closes that statement
-boundary directly: six public cells bind the complete two-by-three table; six
-trace columns and seven constraints contain three nonlinear square products;
-under the stated canonical and no-wrap premises, a satisfying trace exists iff
-the named table satisfies source `Holds`, and a one-cell public tamper is
-refused. This integrity variant reveals the whole table, provides zero table
-privacy, and deliberately performs no interpolation. `FiniteSignatureFOLDescriptorIR2` then
+inputs, no hash sites, and an empty v1 range carrier: acceptance does not attest
+an independently named external table, and the fixed instance is not
+interpolation-performance evidence. The empty carrier field is not an absent
+range check --- the bound is carried by six emitted 30-bit range lookups, which
+bind no external name and so leave the statement gap open. The separate
+`GabbayDescriptorIR2PublicBinding` closes that gap directly: six public cells
+bind the complete two-by-three table; six trace columns carry 15 constraints ---
+six PI pins, three linear acceptance atoms, and six range lookups --- with no
+nonlinear product anywhere in acceptance; under the canonical decoding
+convention alone, a satisfying trace exists iff the named table satisfies source
+`Holds`, and a one-cell public tamper is refused. This integrity variant reveals
+the whole table, provides zero table privacy, and deliberately performs no
+interpolation. `FiniteSignatureFOLDescriptorIR2` then
 extends the live route to many relation symbols, total public function symbols,
 equality, all connectives, and nested finite quantifiers.
 
@@ -51,6 +55,23 @@ zero-true connective interpretation and multiplies obligations that must all
 hold. The published swap product therefore accepts a displayed counterexample.
 That is not a speculative concern or a disagreement about notation: it is a
 wrong acceptance relation.
+
+The same standard caught our own first attempt. That public relation originally
+accepted with a field sum of three squared residuals and was made sound by a
+Lean-side no-wrap premise that no emitted byte enforced --- and over BabyBear
+$284861408^2 = -1$, so a fully canonical false table cancelled to zero and was
+accepted. The repair moved both halves onto the wire: three linear atoms, one
+per equation, and a 30-bit range lookup on each bound column, in the graduated
+form the deployed assembly actually realizes. The two premises then became
+theorems, so the statement results no longer take a certificate argument. Two
+counterexamples are retained as armed canaries, one refuted by the atoms alone
+and one refuted only by a range tooth, so neither half of the repair can be
+deleted without turning a theorem red. One premise moved rather than vanished
+and is named as such: `Satisfied2` has no faithfulness conjunct for the range
+table, so refusals through a range tooth carry `HonestRangeTable` explicitly ---
+a carrier-level condition on the trace family, uniform across every range lookup
+in the codebase, discharged in deployment by the assembly that builds the limb
+decomposition itself.
 
 == The novel contribution that emerged
 
