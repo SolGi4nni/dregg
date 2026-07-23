@@ -28,7 +28,21 @@ description = "A companion: an owned dreggnet-asset (fair-hatched, un-dupable, t
 [lints]
 workspace = true
 
+[features]
+# The SLOW real-fold path for `wing::Wing::seal` — mirrors (and forwards to) the hook's own
+# `prove` gate, so the bare dev loop that builds this crate never pulls the recursion prover.
+#   cargo test -p dreggnet-companion --features prove --test wing_weld -- --ignored --nocapture
+prove = ["dregg-braid-hook/prove"]
+
 [dependencies]
+# THE BRAID HOOK — the reusable, game-content-FREE composition wiring (entity-compose over
+# param-compose, landed through the deployed app-root fold). `wing.rs` is this crate's CONTENT on
+# it: role tags, a param schema, coefficients, the projection of committed companion state, and
+# the in-fiction meaning of the composed number. The nonlinear part of the wing law (level x level,
+# rarity x rarity) is exactly what the kernel's LINEAR StateConstraint vocabulary cannot express,
+# which is why the wing rides the general Custom-VK composition AIR instead of a buff predicate.
+# NO AIR, constraint, or gadget is authored here. Consumed, never modified.
+dregg-braid-hook = { path = "../braid-hook" }
 # THE OWNED IDENTITY — the owned, transfer-gated, provenance-chained, content-addressed
 # note. A companion is HATCHED as a `dreggnet_asset` note owned by the player's key (a
 # non-owner transfer / a double-spend is a cryptographic executor refusal), so its

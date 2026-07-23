@@ -113,6 +113,12 @@ pub use dungeon_on_dregg::progression::{MAGE as CLASS_MAGE, MAX_LEVEL as COMPANI
 pub use dungeon_on_dregg::progression::{ROGUE as CLASS_ROGUE, WARRIOR as CLASS_WARRIOR};
 pub use procgen_dregg::CommittedSeed as HatchBeacon;
 
+pub mod wing;
+
+// The wing surface (this crate's content ON the Braid hook): two raised companions composed
+// into an attunement whose nonlinear terms no cell predicate can express.
+pub use wing::{Wing, reverify_attunement, wing_law, wing_shape};
+
 // ── Fair-hatch constants ───────────────────────────────────────────────────────────
 
 /// The index of the hatch rarity draw within the verified procgen stream (well under the
@@ -391,6 +397,11 @@ pub enum CompanionError {
     /// An escrow swap operation cannot proceed in the swap's current state (e.g. a settle before
     /// both sides deposited, or a double-settle). Carries the reason.
     Swap(String),
+    /// The Braid refused the composition ([`wing`]): a malformed projection (a duplicate identity
+    /// or role, an out-of-range identity, a term addressing an absent role or an inactive param
+    /// slot) or one exceeding the wing shape's fuel bounds. Carries the
+    /// [`ComposeError`](dregg_braid_hook::ComposeError).
+    Compose(String),
 }
 
 impl std::fmt::Display for CompanionError {
@@ -405,6 +416,7 @@ impl std::fmt::Display for CompanionError {
             CompanionError::Consumed => write!(f, "companion already consumed by breeding"),
             CompanionError::Ineligible(w) => write!(f, "companion ineligible: {w}"),
             CompanionError::Swap(w) => write!(f, "escrow swap refused: {w}"),
+            CompanionError::Compose(w) => write!(f, "the Braid refused the composition: {w}"),
         }
     }
 }
@@ -743,6 +755,10 @@ pub struct CompanionRoost {
     next_seed: u32,
     /// The next escrow-swap id (distinct per opened swap).
     next_swap: u64,
+    /// The next attunement-cell seed a [`wing`] is deployed under (`1..=255`; `None` once the
+    /// hook's `u8` seed namespace is exhausted, so [`CompanionRoost::attune_wing`] fails closed
+    /// rather than collide two wings onto one cell id).
+    next_wing_seed: Option<u8>,
 }
 
 impl Default for CompanionRoost {
@@ -766,6 +782,7 @@ impl CompanionRoost {
             consumed: HashSet::new(),
             next_seed: 1,
             next_swap: 1,
+            next_wing_seed: Some(1),
         }
     }
 

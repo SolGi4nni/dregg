@@ -9,6 +9,12 @@
 //! Everything speaks `subject`/`params`/`role`/`ruleset`/`outcome`; nothing here is a creature, a
 //! stat, or a game rule. A HOARDLIGHT world is ONE ruleset root + content over this hook.
 //!
+//! **First rider — a real game, not a test:** `dreggnet-companion`'s `wing` module. Two raised
+//! companions attune into a wing whose worth composes `level × level` and `rarity × rarity` off
+//! their live committed leveling cells, and seals through `fold::fold_composition_app_root`. The
+//! game supplies the roles, the param schema, the coefficients and the meaning; this crate supplies
+//! only the wiring, and nothing about that rider appears here.
+//!
 //! ## What the hook does
 //!
 //! * [`compose_entity`] (always available) deploys a sovereign entity whose wide plane carries a
