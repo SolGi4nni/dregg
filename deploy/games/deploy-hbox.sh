@@ -509,7 +509,13 @@ deploy_up() {
   build
   install_units
   install_caddy
-  start_units
+  # RESTART, not `enable --now`: on an ALREADY-ACTIVE unit `start` is a NO-OP, so
+  # the old process kept serving the old binary while the gate probed it — the
+  # 2026-07-23 redeploy failed its gate exactly this way (old PID from Jul 19
+  # still up, new binary never exec'd, auto-revert then clobbered the fresh
+  # build). `restart` also starts an inactive unit, and install_units already
+  # enabled it, so this is correct for both first-boot and redeploy.
+  restart_units
   if health_gate; then
     log "games stack HEALTHY on the new release ($snap was the rollback point)"
     if [[ "$FUNNEL" == "1" ]]; then
