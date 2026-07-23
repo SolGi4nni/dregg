@@ -50,6 +50,55 @@ fn card_binds_the_complete_receipt_not_only_the_turn_hash() {
     );
 }
 
+/// FIX #2: the lead phrase differs by attribution grade — an asserted turn is never dressed as
+/// "Verified"/"Signed", and a custodial signature is honestly distinguished from a user-held one.
+#[test]
+fn the_lead_phrase_differs_by_attribution_grade() {
+    use dreggnet_offerings::Custody;
+    let src = receipt([0x11; 32]);
+    let signer = "ab".repeat(32);
+
+    let asserted =
+        PlayerTurnReceipt::from_landed(&src, false).compact_text(PlayerReplaySurface::Web);
+    let custodial =
+        PlayerTurnReceipt::from_landed_signed(&src, false, Custody::Custodial, signer.clone())
+            .compact_text(PlayerReplaySurface::Web);
+    let user_held =
+        PlayerTurnReceipt::from_landed_signed(&src, false, Custody::UserHeld, signer.clone())
+            .compact_text(PlayerReplaySurface::Web);
+
+    // Each grade renders a distinct, honest lead phrase.
+    assert!(asserted.starts_with("Recorded (asserted)"), "{asserted}");
+    assert!(
+        !asserted.contains("Signed") && !asserted.contains("Verified"),
+        "an asserted turn is never dressed as Signed/Verified: {asserted}"
+    );
+    assert!(
+        custodial.starts_with(&format!("Signed (custodial) by {signer}")),
+        "{custodial}"
+    );
+    assert!(
+        user_held.starts_with(&format!("Signed by {signer}")),
+        "{user_held}"
+    );
+    // Custodial is honest that the SERVER signed; user-held is not.
+    assert!(custodial.contains("custodial"));
+    assert!(
+        !user_held.contains("custodial"),
+        "a user-held signature is not custodial: {user_held}"
+    );
+    // All three still carry the executor receipt join + lifecycle + replay control.
+    for text in [&asserted, &custodial, &user_held] {
+        assert!(text.contains(&hex::encode(src.receipt_hash())), "{text}");
+        assert!(text.contains("Session continues."), "{text}");
+        assert!(text.contains("Replay-verify"), "{text}");
+    }
+    // Pairwise distinct — the collapse the fix removed.
+    assert_ne!(asserted, custodial);
+    assert_ne!(asserted, user_held);
+    assert_ne!(custodial, user_held);
+}
+
 #[test]
 fn operation_projection_does_not_invent_a_session_outcome() {
     let card =

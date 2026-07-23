@@ -49,7 +49,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::signed::Attribution;
+use crate::signed::{Attribution, Custody};
 use crate::{Action, BinaryOperationReceipt, DreggIdentity, SessionConfig, SessionId};
 
 /// **The re-verifiable envelope of a signed advance** — everything
@@ -73,10 +73,24 @@ pub struct SignedProvenance {
     /// The replay counter that was signed — part of the canonical
     /// [`signing_message`](crate::signing_message), so re-verification must use this exact value.
     pub counter: u64,
-    /// The Ed25519 signature over
-    /// `signing_message(offering_key, session, counter, action)` — the 64 bytes `verify_signed`
-    /// checked at land time and re-checks on resume.
+    /// The Ed25519 signature over the canonical signing message — the 64 bytes `verify_signed`
+    /// checked at land time and re-checks on resume. Bound to [`epoch`](SignedProvenance::epoch)
+    /// when that is `Some`.
     pub signature: [u8; 64],
+    /// **The custody grade** — did a USER-held key sign, or a SERVER-held (custodial) one? Not part
+    /// of the re-verified crypto; it is *provenance* (where the key lived), persisted so a resumed
+    /// or displayed `Signed` receipt can say WHICH — a bare `Signed` used to collapse them. A line
+    /// persisted before the custody column existed decodes as [`Custody::Custodial`] (the honest
+    /// floor, never the stronger `UserHeld` claim).
+    pub custody: Custody,
+    /// **The host incarnation the signature is bound to**, if any ([`crate::OfferingHost::signing_epoch`]).
+    /// `Some` for a turn admitted through
+    /// [`advance_signed_attributed`](crate::OfferingHost::advance_signed_attributed) under a live
+    /// epoch — the message was [`signing_message_in_epoch`](crate::signing_message_in_epoch), so
+    /// resume MUST re-verify under this exact epoch (the live host now carries a fresh one). `None`
+    /// for an epoch-free signature (the game spine's inner action signature, whose replay binding is
+    /// its separate authority signature, and any pre-epoch persisted line).
+    pub epoch: Option<[u8; 32]>,
 }
 
 /// **One recorded LANDED advance** — the reproducible public input of a single committed turn: the
@@ -847,16 +861,22 @@ fn encode_header(key: &str, id: &SessionId, cfg: &SessionConfig) -> String {
 }
 
 /// One landed advance. An ASSERTED (or legacy) move is 8 columns:
-/// `label \t turn \t arg \t enabled \t has_text \t text \t actor \t a`. A SIGNED move is 10
-/// columns — the `s` trust tag PLUS the re-verifiable envelope
-/// `… \t actor \t s \t counter \t signature_hex`: the `(counter, signature)`
-/// [`verify_signed`](crate::verify_signed) consumed, so [`decode_log`] reloads a `Signed` move as
-/// a fact [`OfferingHost::resume`](crate::OfferingHost::resume) can RE-CHECK — not a bare tag over
-/// a fully-controllable `actor` string. The signer pubkey is the `actor` column itself
-/// (`verify_signed`'s postcondition: a signed move's actor IS its verified pubkey hex), so it is
-/// not duplicated on the wire. A `Signed` trust level with no persisted envelope is never written
-/// as `s` (it would be an unverifiable, forgeable claim) — `provenance = None` yields an `a` line.
-/// Old 7-column lines decode losslessly as `a`; a bare 8-column `s` (a signed tag with NO
+/// `label \t turn \t arg \t enabled \t has_text \t text \t actor \t a`. A SIGNED move is 12
+/// columns — the `s` trust tag PLUS the re-verifiable envelope AND its provenance grade:
+/// `… \t actor \t s \t counter \t signature_hex \t custody \t epoch`: the `(counter, signature)`
+/// [`verify_signed`](crate::verify_signed) consumed, the `custody` grade (`c` custodial / `u`
+/// user-held), and the `epoch` the signature is bound to (64-hex host incarnation, or `-` for an
+/// epoch-free signature). So [`decode_log`] reloads a `Signed` move as a fact
+/// [`OfferingHost::resume`](crate::OfferingHost::resume) can RE-CHECK — not a bare tag over a
+/// fully-controllable `actor` string — AND can say WHOSE key signed and under which incarnation.
+/// The signer pubkey is the `actor` column itself (`verify_signed`'s postcondition: a signed move's
+/// actor IS its verified pubkey hex), so it is not duplicated on the wire. A `Signed` trust level
+/// with no persisted envelope is never written as `s` (it would be an unverifiable, forgeable
+/// claim) — `provenance = None` yields an `a` line.
+///
+/// **Backward-compatible, additively:** old 7-column lines decode losslessly as `a`; a 10-column
+/// `s` line (the pre-custody/epoch signed format) decodes as `Signed` with custody `Custodial` and
+/// no epoch — the honest floor, never a wrong grade; a bare 8-column `s` (a signed tag with NO
 /// envelope) is refused as corrupt — see [`decode_log`].
 fn encode_move(
     action: &Action,
@@ -874,7 +894,15 @@ fn encode_move(
         esc(&actor.0),
     );
     match provenance {
-        Some(prov) => format!("{base}\ts\t{}\t{}", prov.counter, hex64(&prov.signature)),
+        Some(prov) => format!(
+            "{base}\ts\t{}\t{}\t{}\t{}",
+            prov.counter,
+            hex64(&prov.signature),
+            prov.custody.wire_tag(),
+            prov.epoch
+                .map(|e| hex32(&e))
+                .unwrap_or_else(|| "-".to_string()),
+        ),
         None => format!("{base}\ta"),
     }
 }
@@ -1009,8 +1037,10 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
         //   7  = the pre-attribution legacy format (every such log was asserted-only);
         //   8  = an explicit trust tag (`a` asserted — an `s` here is a bare signed CLAIM with NO
         //        envelope and is REFUSED, never reconstructed Signed-without-a-signature);
-        //   10 = a signed move: the `s` tag + the re-verifiable `counter` and `signature`.
-        if f.len() != 7 && f.len() != 8 && f.len() != 10 {
+        //   10 = a pre-custody/epoch signed move (the `s` tag + `counter` + `signature`) — decodes
+        //        as Custodial + epoch-free (the honest floor, never a wrong grade);
+        //   12 = a signed move carrying its custody grade + bound epoch too.
+        if !matches!(f.len(), 7 | 8 | 10 | 12) {
             return None;
         }
         let label = unesc(f[0]);
@@ -1030,10 +1060,11 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
                 let attribution = Attribution::from(actor.clone());
                 log.record_attributed(action, actor, attribution);
             }
-            // A SIGNED move: the `s` tag PLUS the persisted re-verifiable envelope. The actor
-            // column IS the signer pubkey hex (verify_signed's postcondition). The signature is
-            // NOT verified here (decode is a pure codec) — `OfferingHost::resume` re-runs
-            // verify_signed before honoring the `Signed` attribution.
+            // A pre-custody/epoch SIGNED move (10 columns): the `s` tag + the re-verifiable
+            // `(counter, signature)`. The actor column IS the signer pubkey hex. Custody defaults
+            // to the honest floor (Custodial) and the signature is epoch-free (verified under the
+            // legacy message on resume). The signature is NOT verified here (decode is a pure codec)
+            // — `OfferingHost::resume` re-runs the verifier before honoring the `Signed` attribution.
             (10, Some("s")) => {
                 let counter = f[8].parse::<u64>().ok()?;
                 let signature = decode_hex64(f[9])?;
@@ -1041,6 +1072,26 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
                     pubkey_hex: actor.0.clone(),
                     counter,
                     signature,
+                    custody: Custody::Custodial,
+                    epoch: None,
+                };
+                log.record_signed(action, actor, provenance);
+            }
+            // A full SIGNED move (12 columns): the envelope PLUS its custody grade and bound epoch.
+            (12, Some("s")) => {
+                let counter = f[8].parse::<u64>().ok()?;
+                let signature = decode_hex64(f[9])?;
+                let custody = Custody::from_wire_tag(f[10])?;
+                let epoch = match f[11] {
+                    "-" => None,
+                    hexed => Some(decode_hex32(hexed)?),
+                };
+                let provenance = SignedProvenance {
+                    pubkey_hex: actor.0.clone(),
+                    counter,
+                    signature,
+                    custody,
+                    epoch,
                 };
                 log.record_signed(action, actor, provenance);
             }
@@ -1212,7 +1263,9 @@ mod file_store_tests {
         let cfg = SessionConfig::with_seed(11);
         let pubkey_hex = "ab".repeat(32); // a 64-char stand-in pubkey hex
         let signature = [0x11u8; 64]; // an opaque signature blob (the store is a pure codec)
+        let epoch = [0x22u8; 32]; // a stand-in host incarnation
         store.record_open("dungeon", &id, &cfg);
+        // A USER-HELD, epoch-bound signed move — exercises BOTH new columns.
         store.record_landed_signed(
             "dungeon",
             &id,
@@ -1222,6 +1275,8 @@ mod file_store_tests {
                 pubkey_hex: pubkey_hex.clone(),
                 counter: 4,
                 signature,
+                custody: Custody::UserHeld,
+                epoch: Some(epoch),
             },
         );
         store.record_landed(
@@ -1244,8 +1299,10 @@ mod file_store_tests {
                 pubkey_hex: pubkey_hex.clone(),
                 counter: 4,
                 signature,
+                custody: Custody::UserHeld,
+                epoch: Some(epoch),
             }),
-            "the re-verifiable (counter, signature) envelope survives the round-trip"
+            "the envelope PLUS its custody grade and bound epoch survive the round-trip"
         );
         assert!(
             !log.moves[1].attribution.is_signed(),
@@ -1269,6 +1326,28 @@ mod file_store_tests {
             "a legacy line is honestly Asserted"
         );
         assert!(old.moves[0].signature.is_none());
+
+        // A PRE-CUSTODY/EPOCH signed line (10 columns: … actor s counter signature) decodes as
+        // Signed with custody Custodial and NO epoch — the honest floor, never a wrong grade.
+        let ten_col = format!(
+            "dungeon\ttcol\t42\nm\tchoose\t1\t1\t0\t\t{pubkey_hex}\ts\t4\t{}\n",
+            hex64(&signature)
+        );
+        let old_signed = decode_log(&ten_col).expect("a pre-custody signed log still decodes");
+        assert_eq!(old_signed.moves.len(), 1);
+        let prov = old_signed.moves[0]
+            .signature
+            .as_ref()
+            .expect("the 10-column envelope survives");
+        assert_eq!(
+            prov.custody,
+            Custody::Custodial,
+            "a pre-custody signed line defaults to the honest Custodial floor"
+        );
+        assert!(
+            prov.epoch.is_none(),
+            "a pre-epoch signed line is honestly epoch-free"
+        );
 
         // THE FORGE, at the codec layer: a bare 8-column `s` tag with NO signature envelope is
         // NOT reconstructed as Signed — it is a corrupt/forged line and the whole file is refused.

@@ -65,8 +65,8 @@ use dreggnet_catalog::{
 };
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
-    Action, Attribution, DreggIdentity, HostError, OfferingHost, Outcome, SessionId, SignedAction,
-    SignedError, verify_signed,
+    Action, Attribution, Custody, DreggIdentity, HostError, OfferingHost, Outcome, SessionId,
+    SignedAction, SignedError, verify_signed,
 };
 
 use crate::{
@@ -97,12 +97,24 @@ pub(crate) enum RoutedSignedAction {
 /// Discord call this from the same atomic host job that allocates their
 /// custodial counter, so all signed surfaces share the exact routing and
 /// viewer-blind publication boundary.
+///
+/// `custody` records WHOSE key signed on the legacy path: a server-held
+/// ([`Custody::Custodial`], the telegram/discord `seed_for` adapters) or a
+/// user-held ([`Custody::UserHeld`], the browser-extension route) one — the
+/// grade a bare `Signed` receipt used to collapse. A custodial legacy advance
+/// also BINDS this host's incarnation ([`OfferingHost::signing_epoch`]) into the
+/// signature so a captured envelope cannot re-verify on a reopened id; the
+/// user-held (extension) route is not yet epoch-bound (the extension must echo +
+/// sign the epoch, as it already echoes the game authority coordinates — a named
+/// residual), so it passes `None` and keeps working unchanged. The game branch
+/// carries its own replay binding (its authority signature) and ignores this.
 pub(crate) fn advance_signed_on_host(
     host: &mut OfferingHost,
     key: String,
     sid: SessionId,
     game_context: Option<(GameHostIncarnation, u64, GameSessionRef)>,
     signed: RoutedSignedAction,
+    custody: Custody,
 ) -> SignedAdvance {
     match (game_context, signed) {
         (Some((incarnation, generation, session)), RoutedSignedAction::Game(command)) => {
@@ -139,7 +151,11 @@ pub(crate) fn advance_signed_on_host(
             }
         }
         (None, RoutedSignedAction::Legacy(signed)) => {
-            match host.advance_signed(&key, &sid, signed) {
+            // A CUSTODIAL legacy advance binds this host incarnation (the signer signed under the
+            // same `signing_epoch`); the USER-HELD (extension) route is not yet epoch-bound (the
+            // extension must echo + sign the epoch — a named residual), so it stays epoch-free.
+            let epoch = custody.is_custodial().then(|| host.signing_epoch());
+            match host.advance_signed_attributed(&key, &sid, signed, epoch, custody) {
                 Ok(outcome) => SignedAdvance::Advanced {
                     outcome,
                     publication: None,
@@ -587,6 +603,9 @@ pub async fn post_offering_act_signed(
                         routed_sid,
                         Some((incarnation, generation, session)),
                         RoutedSignedAction::Game(command),
+                        // The extension holds the signing key (user-held), though the game route's
+                        // own authority signature is what binds replay here.
+                        Custody::UserHeld,
                     )
                 },
             ) {
@@ -605,6 +624,8 @@ pub async fn post_offering_act_signed(
                     routed_sid,
                     None,
                     RoutedSignedAction::Legacy(signed),
+                    // The browser extension holds the signing key — a genuinely user-held key.
+                    Custody::UserHeld,
                 )
             })
         }
@@ -672,8 +693,13 @@ pub async fn post_offering_act_signed(
         } => format!(
             "Turn committed — {}",
             publication.as_ref().map_or_else(
-                || PlayerTurnReceipt::from_landed(&receipt, ended)
-                    .compact_text(PlayerReplaySurface::Web),
+                || PlayerTurnReceipt::from_landed_signed(
+                    &receipt,
+                    ended,
+                    Custody::UserHeld,
+                    verified_actor.0.clone(),
+                )
+                .compact_text(PlayerReplaySurface::Web),
                 |publication| crate::game_session::public_receipt_text(
                     publication,
                     PlayerReplaySurface::Web,

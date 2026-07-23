@@ -104,6 +104,65 @@ impl From<Attribution> for DreggIdentity {
     }
 }
 
+/// **Where the signing key LIVED for a [`Attribution::Signed`] turn** — the custody grade a bare
+/// `Signed` receipt used to collapse. A signature proves *a key* signed; custody says *whose
+/// machine held that key*, which is the difference between "the user moved" and "the server moved
+/// for them":
+///
+/// * [`Custody::Custodial`] — a SERVER-held key signed (the adapters derive every user's key from
+///   the bot secret via `seed_for`, so the server can sign as anyone). Honest: the custodian's
+///   derivation of this user signed, NOT a device only the user controls. This is the [`Default`]
+///   — every existing bot-signed path, and the fail-CLOSED grade for anything unknown (understating
+///   trust is safe; overstating it is the exact wound this closes).
+/// * [`Custody::UserHeld`] — a key the USER holds signed (a browser-extension / device key; the
+///   server never saw the secret). Only a path that genuinely leaves the secret on the user's
+///   device earns this.
+///
+/// Custody is not part of the re-verified crypto (a signature is a signature); it is *provenance*
+/// (where the key lived), so it rides in [`crate::resume::SignedProvenance`] and the receipt, not
+/// in the [`Attribution`] enum — leaving the trust enum (and everything that matches on it, across
+/// the catalog / bot / game spine) untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Custody {
+    /// A server-held key signed on the user's behalf (the custodial `seed_for` derivation). The
+    /// honest, fail-closed default.
+    #[default]
+    Custodial,
+    /// A key the user holds signed (a device/extension key the server never saw).
+    UserHeld,
+}
+
+impl Custody {
+    /// Whether a server-held key signed (the [`Custody::Custodial`] grade).
+    pub fn is_custodial(self) -> bool {
+        matches!(self, Custody::Custodial)
+    }
+
+    /// Whether a user-held key signed (the [`Custody::UserHeld`] grade).
+    pub fn is_user_held(self) -> bool {
+        matches!(self, Custody::UserHeld)
+    }
+
+    /// The single-char wire tag persisted beside a signed move: `c` custodial, `u` user-held.
+    /// A missing tag (a pre-custody signed line) decodes as [`Custody::Custodial`] — the honest
+    /// floor, never the stronger `UserHeld` claim.
+    pub(crate) fn wire_tag(self) -> char {
+        match self {
+            Custody::Custodial => 'c',
+            Custody::UserHeld => 'u',
+        }
+    }
+
+    /// Decode a single-char wire tag. `None` on any tag other than `c`/`u` (a corrupt line).
+    pub(crate) fn from_wire_tag(tag: &str) -> Option<Custody> {
+        match tag {
+            "c" => Some(Custody::Custodial),
+            "u" => Some(Custody::UserHeld),
+            _ => None,
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SIGNED ACTION + the canonical signing message.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +191,12 @@ pub struct SignedAction {
 /// can be confused with a ballot, a delegation, or any other signed object in the system.
 pub const TURN_SIGNING_DOMAIN: &[u8] = b"dregg-offering-turn-v1:";
 
+/// The domain tag an **epoch-bound** offering-turn signature is bound under (see
+/// [`signing_message_in_epoch`]). A separate domain — not merely an appended field — so an
+/// epoch-bound signature and a legacy epoch-free one are cryptographically DISJOINT: a legacy
+/// envelope can never be replayed as epoch-bound, and vice versa, regardless of the trailing bytes.
+pub const TURN_SIGNING_EPOCH_DOMAIN: &[u8] = b"dregg-offering-turn-epoch-v1:";
+
 /// **The canonical signing message** — the ONE byte layout both [`TurnSigner::sign`] and
 /// [`verify_signed`] use (a signer/verifier fork here would be a silent wire split; the
 /// pin test on this function makes drift a red test instead):
@@ -151,18 +216,76 @@ pub fn signing_message(
     counter: u64,
     action: &Action,
 ) -> Vec<u8> {
+    signing_message_with(
+        TURN_SIGNING_DOMAIN,
+        offering_key,
+        session,
+        counter,
+        action,
+        None,
+    )
+}
+
+/// **The canonical signing message BOUND TO A HOST EPOCH** — the same field layout as
+/// [`signing_message`], but under [`TURN_SIGNING_EPOCH_DOMAIN`] and with `epoch` (a 32-byte host
+/// incarnation) bound at the end:
+///
+/// ```text
+/// "dregg-offering-turn-epoch-v1:" ‖ offering_key ‖ 0x00 ‖ session_id ‖ 0x00
+///   ‖ counter_le(8) ‖ 0x00 ‖ action.turn ‖ 0x00 ‖ action.arg_le(8) ‖ 0x00 ‖ text-or-empty
+///   ‖ 0x00 ‖ epoch(32)
+/// ```
+///
+/// The legacy signed route ([`crate::OfferingHost::advance_signed`]) bound only
+/// `key‖session‖counter‖action` — nothing distinguishing one host incarnation from the next. So a
+/// caller-chosen same-`id` session torn down and reopened after a restart (the durable counter
+/// floor dropped on `close`, the in-memory one gone with the process) reset its expected counter to
+/// zero and RE-ADMITTED a captured `counter = 0` envelope. Binding a per-incarnation `epoch` closes
+/// that: an envelope signed under a prior incarnation's epoch cannot verify under the new one (the
+/// message — and therefore the signature — differs). This mirrors the game spine, whose bound
+/// authority signature already binds its host incarnation; the legacy route inherited none of it.
+pub fn signing_message_in_epoch(
+    offering_key: &str,
+    session: &SessionId,
+    counter: u64,
+    action: &Action,
+    epoch: &[u8; 32],
+) -> Vec<u8> {
+    signing_message_with(
+        TURN_SIGNING_EPOCH_DOMAIN,
+        offering_key,
+        session,
+        counter,
+        action,
+        Some(epoch),
+    )
+}
+
+/// The shared field body of both signing messages — ONE layout, so the epoch-bound and epoch-free
+/// forms can never drift apart in field order/separators (only their domain tag and the trailing
+/// epoch differ). With `domain = TURN_SIGNING_DOMAIN` and `epoch = None` this reproduces the
+/// historical [`signing_message`] bytes exactly.
+fn signing_message_with(
+    domain: &[u8],
+    offering_key: &str,
+    session: &SessionId,
+    counter: u64,
+    action: &Action,
+    epoch: Option<&[u8; 32]>,
+) -> Vec<u8> {
     let text = action.text.as_deref().unwrap_or("");
     let mut m = Vec::with_capacity(
-        TURN_SIGNING_DOMAIN.len()
+        domain.len()
             + offering_key.len()
             + session.0.len()
             + action.turn.len()
             + text.len()
             + 8
             + 8
-            + 5,
+            + 5
+            + epoch.map_or(0, |_| 33),
     );
-    m.extend_from_slice(TURN_SIGNING_DOMAIN);
+    m.extend_from_slice(domain);
     m.extend_from_slice(offering_key.as_bytes());
     m.push(0);
     m.extend_from_slice(session.0.as_bytes());
@@ -174,6 +297,10 @@ pub fn signing_message(
     m.extend_from_slice(&action.arg.to_le_bytes());
     m.push(0);
     m.extend_from_slice(text.as_bytes());
+    if let Some(epoch) = epoch {
+        m.push(0);
+        m.extend_from_slice(epoch);
+    }
     m
 }
 
@@ -249,6 +376,24 @@ pub fn verify_signed(
     expected_counter: u64,
     sa: &SignedAction,
 ) -> Result<DreggIdentity, SignedError> {
+    verify_signed_in_epoch(offering_key, session, expected_counter, None, sa)
+}
+
+/// **Verify a [`SignedAction`], optionally BOUND TO A HOST EPOCH.** Identical to
+/// [`verify_signed`] except the canonical message is [`signing_message_in_epoch`] when
+/// `epoch = Some(..)` (and the historical [`signing_message`] when `None`). The host's legacy
+/// signed-advance path ([`crate::OfferingHost::advance_signed_attributed`]) verifies under
+/// `Some(host_epoch)` so an envelope signed for a prior incarnation cannot re-verify on a reopened
+/// id; resume re-verifies under the SAME epoch it persisted with each move
+/// ([`crate::resume::SignedProvenance::epoch`]), so a legitimately-persisted turn still re-checks
+/// across a restart even though the live host now carries a fresh epoch.
+pub fn verify_signed_in_epoch(
+    offering_key: &str,
+    session: &SessionId,
+    expected_counter: u64,
+    epoch: Option<&[u8; 32]>,
+    sa: &SignedAction,
+) -> Result<DreggIdentity, SignedError> {
     let key_bytes = decode_hex_32(&sa.actor_pubkey_hex).ok_or(SignedError::MalformedKey)?;
     if sa.counter < expected_counter {
         return Err(SignedError::StaleCounter {
@@ -256,7 +401,12 @@ pub fn verify_signed(
             expected: expected_counter,
         });
     }
-    let msg = signing_message(offering_key, session, sa.counter, &sa.action);
+    let msg = match epoch {
+        Some(epoch) => {
+            signing_message_in_epoch(offering_key, session, sa.counter, &sa.action, epoch)
+        }
+        None => signing_message(offering_key, session, sa.counter, &sa.action),
+    };
     let pk = PublicKey(key_bytes);
     if !dregg_types::verify(&pk, &msg, &Signature(sa.signature)) {
         return Err(SignedError::BadSignature);
@@ -336,6 +486,29 @@ impl TurnSigner {
         action: Action,
     ) -> SignedAction {
         let msg = signing_message(offering_key, session, counter, &action);
+        let sig = dregg_types::sign(&self.key, &msg);
+        SignedAction {
+            action,
+            actor_pubkey_hex: self.pubkey_hex.clone(),
+            counter,
+            signature: sig.0,
+        }
+    }
+
+    /// **Sign one turn BOUND TO A HOST EPOCH** — the epoch-bound twin of [`sign`](TurnSigner::sign),
+    /// over [`signing_message_in_epoch`]`(offering_key, session, counter, action, epoch)`. A
+    /// custodial adapter signs with the live host's [`epoch`](crate::OfferingHost::signing_epoch)
+    /// so the turn verifies through [`crate::OfferingHost::advance_signed_attributed`] and cannot be
+    /// replayed onto a same-`id` session reopened under a later incarnation.
+    pub fn sign_in_epoch(
+        &self,
+        offering_key: &str,
+        session: &SessionId,
+        counter: u64,
+        epoch: &[u8; 32],
+        action: Action,
+    ) -> SignedAction {
+        let msg = signing_message_in_epoch(offering_key, session, counter, &action, epoch);
         let sig = dregg_types::sign(&self.key, &msg);
         SignedAction {
             action,
@@ -425,6 +598,87 @@ mod tests {
         expected_text.extend_from_slice(b"hello");
         assert_eq!(with_text, expected_text);
         assert_ne!(msg, with_text);
+    }
+
+    /// THE EPOCH WIRE PIN — the epoch-bound message uses a DISTINCT domain and binds the 32-byte
+    /// epoch at the end, so it is byte-disjoint from the legacy (epoch-free) message: a legacy
+    /// signature can never verify as epoch-bound (nor the reverse).
+    #[test]
+    fn the_epoch_bound_signing_message_is_pinned_and_disjoint_from_the_legacy_one() {
+        let epoch = [0x5au8; 32];
+        let bound = signing_message_in_epoch(
+            "dungeon",
+            &SessionId::new("sess-1"),
+            7,
+            &action(), // turn "choose", arg 3, text None
+            &epoch,
+        );
+
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(b"dregg-offering-turn-epoch-v1:");
+        expected.extend_from_slice(b"dungeon");
+        expected.push(0x00);
+        expected.extend_from_slice(b"sess-1");
+        expected.push(0x00);
+        expected.extend_from_slice(&[7, 0, 0, 0, 0, 0, 0, 0]); // 7u64 LE
+        expected.push(0x00);
+        expected.extend_from_slice(b"choose");
+        expected.push(0x00);
+        expected.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0]); // 3i64 LE
+        expected.push(0x00);
+        // text-or-empty: None → empty, then the epoch binding
+        expected.push(0x00);
+        expected.extend_from_slice(&epoch);
+        assert_eq!(bound, expected, "the epoch-bound signing message drifted");
+
+        // A DIFFERENT epoch is a DIFFERENT message; and neither shares a prefix that could let a
+        // legacy signature verify as epoch-bound (distinct domain tag).
+        let other = signing_message_in_epoch(
+            "dungeon",
+            &SessionId::new("sess-1"),
+            7,
+            &action(),
+            &[0x5bu8; 32],
+        );
+        assert_ne!(bound, other, "a different epoch is a different message");
+        let legacy = signing_message("dungeon", &SessionId::new("sess-1"), 7, &action());
+        assert_ne!(bound, legacy);
+        assert!(!bound.starts_with(TURN_SIGNING_DOMAIN));
+        assert!(!legacy.starts_with(TURN_SIGNING_EPOCH_DOMAIN));
+    }
+
+    /// A turn signed under a host epoch verifies through the epoch-aware verifier BOUND TO THAT
+    /// EPOCH, and REFUSES under a different epoch (or the epoch-free verifier) — the cross-
+    /// incarnation replay tooth, at the primitive layer.
+    #[test]
+    fn sign_in_epoch_round_trips_and_a_wrong_epoch_refuses() {
+        let signer = TurnSigner::from_seed([7u8; 32]);
+        let sid = SessionId::new("s-1");
+        let epoch = [1u8; 32];
+        let sa = signer.sign_in_epoch("dungeon", &sid, 0, &epoch, action());
+
+        // The genuine epoch verifies to the signer's identity.
+        assert_eq!(
+            verify_signed_in_epoch("dungeon", &sid, 0, Some(&epoch), &sa)
+                .expect("the bound signature verifies under its epoch"),
+            signer.identity()
+        );
+        // A DIFFERENT incarnation's epoch refuses — the captured envelope cannot re-verify.
+        assert_eq!(
+            verify_signed_in_epoch("dungeon", &sid, 0, Some(&[2u8; 32]), &sa),
+            Err(SignedError::BadSignature)
+        );
+        // And the legacy (epoch-free) verifier refuses an epoch-bound envelope (disjoint domains).
+        assert_eq!(
+            verify_signed("dungeon", &sid, 0, &sa),
+            Err(SignedError::BadSignature)
+        );
+        // Conversely a legacy signature does not verify as epoch-bound.
+        let legacy = signer.sign("dungeon", &sid, 0, action());
+        assert_eq!(
+            verify_signed_in_epoch("dungeon", &sid, 0, Some(&epoch), &legacy),
+            Err(SignedError::BadSignature)
+        );
     }
 
     /// Sign → verify round-trips to the signer's identity; every verifier gate refuses its own

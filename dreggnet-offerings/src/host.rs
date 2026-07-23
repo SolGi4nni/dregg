@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_key};
 use crate::resume::{SessionMoveLog, SessionResumeStore, SignedProvenance};
-use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
+use crate::signed::{Attribution, Custody, SignedAction, SignedError, verify_signed_in_epoch};
 use crate::{
     Action, AppliedBinaryOperation, Audience, AudienceProjection, BinaryArtifact,
     BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
@@ -507,7 +507,6 @@ impl<O: Offering> OfferingSlot for Hosted<O> {
 ///
 /// Not itself `Send`/`Sync` (a registered offering's session may be `!Send`); a frontend needing a
 /// thread-crossing handle confines it to one owning thread (see `dreggnet-web`).
-#[derive(Default)]
 pub struct OfferingHost {
     /// The registered offerings, key → erased slot. `BTreeMap` so the catalog order is stable.
     slots: BTreeMap<String, Box<dyn OfferingSlot>>,
@@ -532,6 +531,17 @@ pub struct OfferingHost {
     /// — and, with a resume store attached, WRITTEN THROUGH to it on every consumption (so the
     /// floors survive lifecycle eviction and a process restart; see [`crate::lifecycle`]).
     signed_counters: HashMap<(String, SessionId, String), u64>,
+    /// **This host's signing epoch** — a 32-byte incarnation minted FRESH per process
+    /// ([`fresh_host_epoch`]). [`advance_signed_attributed`](OfferingHost::advance_signed_attributed)
+    /// binds it into the signed message ([`crate::signing_message_in_epoch`]) so an envelope signed
+    /// under a prior incarnation cannot re-verify on a caller-chosen same-`id` session reopened after
+    /// a close/restart (the counter floor is dropped on `close` / lost with the process; the epoch is
+    /// the guard that survives that gap by DIFFERING across incarnations). It is NOT durable: a fresh
+    /// process gets a fresh epoch, which is exactly the point — a legitimately-persisted signed turn
+    /// re-verifies on resume under the epoch IT was signed with ([`crate::resume::SignedProvenance::epoch`]),
+    /// not this live one. A test pins a deterministic epoch with
+    /// [`with_signing_epoch`](OfferingHost::with_signing_epoch).
+    host_epoch: [u8; 32],
     /// **The session-lifecycle policy** ([`crate::lifecycle`]) — all-`None` (the default) is the
     /// unbounded pre-lifecycle behavior, byte-identical (nothing tracked, nothing refused).
     policy: SessionPolicy,
@@ -633,10 +643,77 @@ fn validate_operation_descriptor(
     Ok(())
 }
 
+/// Mint a FRESH per-process host signing epoch — a 32-byte incarnation that DIFFERS across process
+/// restarts (the property [`OfferingHost::host_epoch`] relies on to refuse a captured envelope on a
+/// reopened id). No `getrandom` dependency is pulled in for this: it hashes the wall clock, the
+/// process id, a monotone counter, and an ASLR-varying stack address through `blake3` (already a
+/// dependency). Uniqueness across incarnations — not unpredictability — is what the replay guard
+/// needs (an attacker cannot forge a signature over any epoch, predictable or not, without the key),
+/// and distinct time/pid/address across two process starts gives that.
+fn fresh_host_epoch() -> [u8; 32] {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let local = 0u8;
+    let addr = (&local as *const u8) as usize as u64;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg.offering-host.epoch.v1");
+    hasher.update(&nanos.to_le_bytes());
+    hasher.update(&(std::process::id() as u64).to_le_bytes());
+    hasher.update(&seq.to_le_bytes());
+    hasher.update(&addr.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+impl Default for OfferingHost {
+    /// A fresh host — every collection empty, the lifecycle disarmed, and a FRESH signing epoch
+    /// ([`fresh_host_epoch`]). Manual (not derived) precisely so `host_epoch` is a fresh incarnation
+    /// rather than the all-zero default, which would be shared across every host and defeat the
+    /// cross-restart replay guard.
+    fn default() -> Self {
+        OfferingHost {
+            slots: BTreeMap::new(),
+            counter: 0,
+            logs: HashMap::new(),
+            resume_store: None,
+            signed_counters: HashMap::new(),
+            host_epoch: fresh_host_epoch(),
+            policy: SessionPolicy::default(),
+            clock: None,
+            touched: RefCell::new(HashMap::new()),
+            openers: HashMap::new(),
+            minted_live: HashMap::new(),
+            last_minted_at: HashMap::new(),
+        }
+    }
+}
+
 impl OfferingHost {
     /// A fresh host with no offerings registered.
     pub fn new() -> Self {
         OfferingHost::default()
+    }
+
+    /// **This host's signing epoch** ([`host_epoch`](OfferingHost::host_epoch)) — the 32-byte
+    /// incarnation a custodial adapter signs turns under
+    /// ([`TurnSigner::sign_in_epoch`](crate::TurnSigner::sign_in_epoch)) so
+    /// [`advance_signed_attributed`](OfferingHost::advance_signed_attributed) admits them and a
+    /// captured pre-restart envelope cannot re-verify on a reopened id.
+    pub fn signing_epoch(&self) -> [u8; 32] {
+        self.host_epoch
+    }
+
+    /// **Pin a deterministic signing epoch** — for tests that need a known, stable incarnation (and
+    /// to model a restart by opening two hosts with DISTINCT epochs). Production hosts never call
+    /// this; they take the fresh per-process epoch [`new`](OfferingHost::new) mints.
+    pub fn with_signing_epoch(mut self, epoch: [u8; 32]) -> Self {
+        self.host_epoch = epoch;
+        self
     }
 
     /// **Attach a durable [`SessionResumeStore`]** — the session-resume persistence seam. With one
@@ -1416,12 +1493,33 @@ impl OfferingHost {
     /// [`advance`](OfferingHost::advance), and the consumer the bare-string actor path never had:
     /// the turn's actor is a **verified Ed25519 public key**, not an asserted label.
     ///
+    /// This is the epoch-FREE, custodial-default entry: the signature is verified under the
+    /// historical [`crate::signing_message`] (no host incarnation), and the landed move records
+    /// [`Custody::Custodial`] with no bound epoch. It is what the **game spine** calls — the game
+    /// route's replay binding is its separate authority signature (host incarnation + generation +
+    /// observed head), so its inner action signature is legitimately epoch-free. Frontends driving
+    /// the *legacy* signed route should call
+    /// [`advance_signed_attributed`](OfferingHost::advance_signed_attributed) with
+    /// `Some(self.signing_epoch())` instead, so a captured envelope cannot re-verify on a same-`id`
+    /// session reopened under a later incarnation.
+    pub fn advance_signed(
+        &mut self,
+        key: &str,
+        id: &SessionId,
+        sa: SignedAction,
+    ) -> Result<Outcome, HostError> {
+        self.advance_signed_attributed(key, id, sa, None, Custody::Custodial)
+    }
+
+    /// **Advance by one signature-verified turn, EPOCH-BOUND and CUSTODY-GRADED** — the full legacy
+    /// signed-advance consumer.
+    ///
     /// Fail-closed, in order — nothing advances and nothing is recorded on any refusal:
     ///
     /// 1. the offering must be registered ([`HostError::UnknownOffering`]) and the session live
     ///    ([`HostError::UnknownSession`]) — the routing gates, before any crypto;
-    /// 2. the envelope must verify ([`crate::signed::verify_signed`]): a forged/tampered/spliced
-    ///    signature is [`SignedError::BadSignature`], a replayed counter is
+    /// 2. the envelope must verify ([`crate::verify_signed_in_epoch`], under `epoch`): a
+    ///    forged/tampered/spliced signature is [`SignedError::BadSignature`], a replayed counter is
     ///    [`SignedError::StaleCounter`] (the host holds the per-`(key, session, pubkey)` ledger and
     ///    requires strictly-increasing counters), a malformed key is [`SignedError::MalformedKey`]
     ///    — each surfaced as [`HostError::Signature`];
@@ -1430,12 +1528,20 @@ impl OfferingHost {
     ///    verified [`DreggIdentity`] (the canonical pubkey hex — the same handle the adapters'
     ///    cipherclerks derive), so the executor stays the sole referee and a landed move is
     ///    recorded into the resume log exactly as an unsigned one is — but with
-    ///    [`Attribution::Signed`] provenance instead of `Asserted`.
-    pub fn advance_signed(
+    ///    [`Attribution::Signed`] provenance instead of `Asserted`, carrying `custody` and `epoch`.
+    ///
+    /// `epoch`: pass `Some(self.signing_epoch())` to bind this host incarnation (the legacy custodial
+    /// route) so a captured envelope refuses on a reopened id under a later incarnation; `None` for
+    /// an epoch-free signature (the game route, whose binding is elsewhere). `custody`: whether a
+    /// server-held ([`Custody::Custodial`]) or user-held ([`Custody::UserHeld`]) key signed — the
+    /// grade a bare `Signed` receipt used to collapse.
+    pub fn advance_signed_attributed(
         &mut self,
         key: &str,
         id: &SessionId,
         sa: SignedAction,
+        epoch: Option<[u8; 32]>,
+        custody: Custody,
     ) -> Result<Outcome, HostError> {
         if !self.has(key) {
             return Err(HostError::UnknownOffering(key.to_string()));
@@ -1476,7 +1582,8 @@ impl OfferingHost {
                 }
             },
         };
-        let actor = verify_signed(key, id, expected, &sa).map_err(HostError::Signature)?;
+        let actor = verify_signed_in_epoch(key, id, expected, epoch.as_ref(), &sa)
+            .map_err(HostError::Signature)?;
         // Consume the counter NOW: a verified envelope is single-use whether or not the executor
         // lands the move (see the `signed_counters` field doc for why). With a store attached the
         // consumed floor is WRITTEN THROUGH beside the move-log, so it survives lifecycle
@@ -1503,13 +1610,17 @@ impl OfferingHost {
             let attribution = Attribution::Signed {
                 pubkey_hex: actor.0.clone(),
             };
-            // Persist the re-verifiable envelope verify_signed just consumed (the actor IS the
-            // canonical signer pubkey hex), so the `Signed` provenance survives a restart as a
-            // fact resume RE-CHECKS — not a bare tag over a controllable actor string.
+            // Persist the re-verifiable envelope the verifier just consumed (the actor IS the
+            // canonical signer pubkey hex), its custody grade, and the epoch it was bound to — so
+            // the `Signed` provenance survives a restart as a fact resume RE-CHECKS (under that same
+            // epoch), and a displayed receipt can say WHOSE key signed. Not a bare tag over a
+            // controllable actor string.
             let provenance = SignedProvenance {
                 pubkey_hex: actor.0.clone(),
                 counter: sa.counter,
                 signature: sa.signature,
+                custody,
+                epoch,
             };
             self.record_landed(key, id, sa.action, actor, attribution, Some(provenance));
         }
@@ -1866,10 +1977,19 @@ impl OfferingHost {
                             signature: prov.signature,
                         };
                         // `expected_counter = prov.counter` so the (live-only) replay-counter leg
-                        // passes trivially; the SIGNATURE is the real check here.
-                        verify_signed(&log.key, &log.id, prov.counter, &sa)
-                            .err()
-                            .map(|e| e.to_string())
+                        // passes trivially; the SIGNATURE is the real check here — re-verified under
+                        // the EXACT epoch the turn was signed with (`prov.epoch`), so a legitimately
+                        // epoch-bound turn re-checks across a restart even though the live host now
+                        // carries a fresh incarnation.
+                        verify_signed_in_epoch(
+                            &log.key,
+                            &log.id,
+                            prov.counter,
+                            prov.epoch.as_ref(),
+                            &sa,
+                        )
+                        .err()
+                        .map(|e| e.to_string())
                     }
                     // A `Signed` claim with no persisted envelope is unverifiable — refuse it.
                     None => Some("signed move carries no persisted signature".to_string()),
@@ -2525,6 +2645,8 @@ mod tests {
                 pubkey_hex: victim.pubkey_hex().to_string(),
                 counter: 0,
                 signature: [0u8; 64],
+                custody: Custody::Custodial,
+                epoch: None,
             },
         );
 
@@ -2595,6 +2717,96 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **FIX #3 — a captured legacy-signed envelope from a PRIOR INCARNATION refuses on a reopened
+    /// same-`id` session.** The counter floor guards a reopen only while it survives: `close()`
+    /// drops the durable floor (`forget`), and a restart loses the in-memory one — so a
+    /// caller-chosen same-`id` session reopened FRESH after close+restart resets its expected
+    /// counter to 0, and a captured `counter = 0` envelope used to re-verify and re-land. Binding
+    /// the host incarnation into the signed message closes exactly that gap: the envelope was signed
+    /// under incarnation A's epoch and cannot verify under incarnation B's, EVEN THOUGH `counter = 0`
+    /// clears the fresh floor (so the epoch — not the counter — is what refuses it).
+    #[test]
+    fn a_legacy_signed_envelope_from_a_prior_incarnation_refuses_on_a_reopened_id() {
+        let store = crate::resume::InMemoryResumeStore::new();
+        let signer = crate::signed::TurnSigner::from_seed([7u8; 32]);
+        let id = SessionId::new("reopen");
+        let action = Action::new("tick", "tick", 1, true);
+        let epoch_a = [0xAAu8; 32];
+
+        // Incarnation A: open under a durable store, sign+land a counter=0 turn BOUND to A's epoch,
+        // then CLOSE the session — `forget` drops its durable counter floor AND its log.
+        let captured = signer.sign_in_epoch("counter", &id, 0, &epoch_a, action.clone());
+        {
+            let mut host = OfferingHost::new()
+                .with_signing_epoch(epoch_a)
+                .with_resume_store(Box::new(store.clone()));
+            host.register("counter", "Counter", CounterOffering);
+            host.open_session("counter", id.clone(), SessionConfig::with_seed(7))
+                .unwrap();
+            assert!(
+                host.advance_signed_attributed(
+                    "counter",
+                    &id,
+                    captured.clone(),
+                    Some(epoch_a),
+                    Custody::Custodial
+                )
+                .expect("the genuine A-bound advance lands")
+                .landed()
+            );
+            host.close("counter", &id);
+        }
+        assert!(
+            store.load_signed_counters("counter", &id).is_empty(),
+            "close dropped the durable counter floor — a reopened id resets expected to 0"
+        );
+
+        // Incarnation B — a RESTART with a FRESH epoch, sharing the same store. The closed session
+        // is gone (nothing to resume), so this is a genuinely fresh open: expected counter is 0, and
+        // the captured counter=0 envelope CLEARS that floor. Only the epoch stands between it and a
+        // replay.
+        let epoch_b = [0xBBu8; 32];
+        let mut host = OfferingHost::new()
+            .with_signing_epoch(epoch_b)
+            .with_resume_store(Box::new(store.clone()));
+        host.register("counter", "Counter", CounterOffering);
+        host.open_session("counter", id.clone(), SessionConfig::with_seed(7))
+            .unwrap();
+
+        let replay = host.advance_signed_attributed(
+            "counter",
+            &id,
+            captured,
+            Some(epoch_b),
+            Custody::Custodial,
+        );
+        assert!(
+            matches!(replay, Err(HostError::Signature(SignedError::BadSignature))),
+            "a prior-incarnation envelope refuses on the reopened id — bound to the host epoch, not \
+             merely the counter (which would have passed at 0 >= 0): {replay:?}"
+        );
+        assert_eq!(
+            host.move_log("counter", &id).map(|l| l.len()),
+            Some(0),
+            "anti-ghost: the refused replay committed nothing on the fresh session"
+        );
+
+        // Non-vacuous: a turn signed under incarnation B lands on the reopened session — the lane is
+        // alive, only the STALE-incarnation envelope is refused.
+        let fresh = signer.sign_in_epoch("counter", &id, 0, &epoch_b, action);
+        assert!(
+            host.advance_signed_attributed(
+                "counter",
+                &id,
+                fresh,
+                Some(epoch_b),
+                Custody::Custodial
+            )
+            .expect("a B-incarnation turn lands")
+            .landed()
+        );
     }
 
     /// (c) An OLD-format (pre-trust-column, 7-column) line still resumes — honestly as `Asserted`,

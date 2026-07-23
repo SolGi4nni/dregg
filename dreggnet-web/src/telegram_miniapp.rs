@@ -81,7 +81,8 @@ use zeroize::Zeroizing;
 use dreggnet_catalog::{game_kind, sign_game_action};
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
-    Action, Attribution, DreggIdentity, HostError, Outcome, SessionId, SignedError, TurnSigner,
+    Action, Attribution, Custody, DreggIdentity, HostError, Outcome, SessionId, SignedError,
+    TurnSigner,
 };
 use dreggnet_telegram::cipherclerk::{TelegramCipherclerk, seed_for};
 use webauth_core::link_registry::LinkStore;
@@ -1288,6 +1289,7 @@ async fn post_tg_act(
                     sid,
                     Some((incarnation, generation, session)),
                     act_signed::RoutedSignedAction::Game(command),
+                    Custody::Custodial,
                 )
             },
         ) {
@@ -1315,13 +1317,17 @@ async fn post_tg_act(
                     }
                 },
             };
-            let sa = signer.sign(&k, &sid, expected, action);
+            // CUSTODIAL: sign under THIS host's incarnation so the turn verifies through
+            // `advance_signed_attributed` and a captured envelope cannot re-verify on a same-`id`
+            // session reopened under a later incarnation.
+            let sa = signer.sign_in_epoch(&k, &sid, expected, &h.signing_epoch(), action);
             act_signed::advance_signed_on_host(
                 h,
                 k,
                 sid,
                 None,
                 act_signed::RoutedSignedAction::Legacy(sa),
+                Custody::Custodial,
             )
         })
     };
@@ -1390,8 +1396,13 @@ async fn post_tg_act(
         } => format!(
             "Turn committed — {}",
             publication.as_ref().map_or_else(
-                || PlayerTurnReceipt::from_landed(&receipt, ended)
-                    .compact_text(PlayerReplaySurface::Telegram),
+                || PlayerTurnReceipt::from_landed_signed(
+                    &receipt,
+                    ended,
+                    Custody::Custodial,
+                    viewer.0.clone(),
+                )
+                .compact_text(PlayerReplaySurface::Telegram),
                 |publication| crate::game_session::public_receipt_text(
                     publication,
                     PlayerReplaySurface::Telegram,
