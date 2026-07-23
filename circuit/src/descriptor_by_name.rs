@@ -149,6 +149,15 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON,
     ),
     ("dregg-dyck-parse-v1", DYCK_PARSE_JSON),
+    // The automatafl board-transition automaton-step (D1) descriptors — the Lean-emitted
+    // `automataflStepDescN {2,11}` (`AutomataflStepEmit.lean`), packed-felt board commitment,
+    // ZERO lookups. These back the deployed automatafl proof-carrying leaderboard's per-turn D1
+    // leaf (`dreggnet_game_board::AutomataflMatch`) — the object PROVEN in Lean becoming the object
+    // DEPLOYED, replacing the hand-authored Rust AIR (`dregg-automatafl/src/air.rs`). Like
+    // `faithful-note-spend-v3`, these are deliberately absent from every `PredicateKind` family:
+    // they are re-provable recursion-leaf relations dispatched by exact name, not predicates.
+    ("dregg-automatafl-step-d1-n2", AUTOMATAFL_STEP_N2_JSON),
+    ("dregg-automatafl-step-d1-n11", AUTOMATAFL_STEP_N11_JSON),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -276,6 +285,12 @@ const DERIVATION_JSON: &str = include_str!("../descriptors/by-name/derivation.js
 /// [`crate::dsl::dyck_stack::lift_witness_to_v2`]; the prove-path teeth live in
 /// `circuit-prove/tests/dyck_parse_tamper.rs`.
 const DYCK_PARSE_JSON: &str = include_str!("../descriptors/by-name/dyck-parse.json");
+/// The automatafl D1 automaton-step descriptors (Lean `automataflStepDescN {2,11}`), byte-pinned by
+/// their `emitVmJson2` `#guard` and re-derived onto `by-name/` by `EmitByName.lean`. n=2 is the
+/// minimal complete instance; n=11 is the deployed stock-game board size.
+const AUTOMATAFL_STEP_N2_JSON: &str = include_str!("../descriptors/by-name/automatafl-step.json");
+const AUTOMATAFL_STEP_N11_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-step-n11.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

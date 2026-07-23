@@ -266,6 +266,7 @@ fn win_leaf(w: TugWin) -> LeafBundle {
         witness_values,
         num_rows: 4,
         public_inputs: vec![BabyBear::from_u64(w.charm), BabyBear::from_u64(w.winner)],
+        descriptor_state_leaf: None,
     }
 }
 
@@ -293,7 +294,27 @@ impl AutomataflMatch {
 
     /// Lower the played match to the foldable leaves: one committed **D1 Custom leaf** per
     /// turn, each proving `boards[i+1] == automaton_step(boards[i])`.
+    ///
+    /// **STEP CUTOVER (house-law #1):** when a PROVEN Lean-emitted descriptor
+    /// (`automataflStepDescN {n}`, refined against `automatonStep`) exists for the board size
+    /// (`n ∈ {2, 11}`), the leaf proves the transition through THAT descriptor — the trusted Rust
+    /// witness generator ([`dregg_automatafl::witness::automatafl_step_trace`]) fills its trace
+    /// (front-end reuse + packed-felt board commitment), the leaf's public inputs ARE the
+    /// descriptor's 36 PIs (`old8‖new8 ‖ packed_old ‖ packed_new ‖ ax ‖ ay`), and the fold mints
+    /// the sub-proof leaf via `prove_custom_leaf_descriptor_with_state_commitment` (see
+    /// [`DescriptorStateLeafSource`]). The hand-authored Rust AIR ([`build_d1_honest`]) is retained
+    /// on the leaf (`program`/`witness_values` — its `air_accepts` still gates lowering) but is NO
+    /// LONGER the object proven for those sizes; it is scheduled for deletion once RESOLVE is wired.
+    ///
+    /// The `n = 5` TEST board size has NO emitted Lean descriptor yet, so it FALLS BACK to the Rust
+    /// AIR path (blocked-not-faked; the Lean `automataflStepDescN 5` emission is the residual).
     pub fn leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
+        use dregg_automatafl::witness::{
+            automatafl_step_trace, step_descriptor_name, step_trace_accepts,
+        };
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+        use dregg_circuit_prove::joint_turn_aggregation::DescriptorStateLeafSource;
+
         if self.turns == 0 {
             return Err(MatchError::Empty);
         }
@@ -305,11 +326,40 @@ impl AutomataflMatch {
                 return Err(MatchError::D1Refused(i));
             }
             let rows = 2usize;
+            // Prefer the PROVEN Lean descriptor for this board size; fall back to the Rust AIR PIs
+            // where no descriptor is emitted (n = 5).
+            let (public_inputs, descriptor_state_leaf) =
+                match descriptor_by_name(&step_descriptor_name(old.n)) {
+                    Some(desc) => {
+                        let tr = automatafl_step_trace(old, &desc).map_err(|e| {
+                            MatchError::Lowering(format!(
+                                "automatafl step-{i} witness-gen (n={}): {e}",
+                                old.n
+                            ))
+                        })?;
+                        // Fail-closed canary: the generated trace must satisfy the Lean descriptor
+                        // (the real Ir2Air row-local evaluator) before it is folded — a mis-fill is
+                        // refused here, never handed to the prover.
+                        if !step_trace_accepts(&desc, &tr) {
+                            return Err(MatchError::D1Refused(i));
+                        }
+                        let base_trace = tr.base_trace(rows);
+                        (
+                            tr.public_inputs,
+                            Some(DescriptorStateLeafSource {
+                                descriptor: desc,
+                                base_trace,
+                            }),
+                        )
+                    }
+                    None => (b.pis.clone(), None),
+                };
             out.push(LeafBundle {
                 program: b.cellprogram(),
                 witness_values: b.trace_witness(rows),
                 num_rows: rows,
-                public_inputs: b.pis.clone(),
+                public_inputs,
+                descriptor_state_leaf,
             });
         }
         Ok(out)

@@ -28,6 +28,7 @@ pub mod game;
 pub mod moves;
 pub mod reference;
 pub mod surface;
+pub mod witness;
 
 pub use air::{
     SealedMove, build_a, build_a_bound, build_a_honest, build_a_honest_bound, build_d1,

@@ -736,6 +736,119 @@ pub fn prove_custom_leaf_with_state_commitment(
     .map_err(|e| format!("custom-leaf state-commitment leaf-wrap failed: {e:?}"))
 }
 
+/// **THE DIRECT-IR2 STATE-BINDING LEG** — the descriptor-native twin of
+/// [`prove_custom_leaf_with_state_commitment`]. Identical exposed claim
+/// (`[commitment(8) ‖ pis[0..16]]`, [`CUSTOM_STATE_CLAIM_LEN`] lanes) and identical fold
+/// contract ([`crate::joint_turn_recursive::prove_custom_binding_node_state_segmented`] connects
+/// the exposed `[old8 ‖ new8]` prefix to the leg's real rotated roots), but the sub-proof is a
+/// PRE-BUILT [`EffectVmDescriptor2`] + retained base trace instead of a lowered [`CellProgram`].
+///
+/// This is the seam the automatafl STEP cutover exploits: the relation's source of truth is the
+/// Lean-emitted `automataflStepDescN {n}` (byte-pinned, refined against `automatonStep`), and its
+/// trace is filled by the trusted Rust witness generator
+/// (`dregg_automatafl::witness::automatafl_step_trace`). Lowering a second Rust `CellProgram`
+/// would re-author the relation and create a second semantics — exactly the hand-written-AIR debt
+/// this cutover retires. So we `prove_vm_descriptor2_for_config(desc2, base_trace, …)` DIRECTLY,
+/// skipping `lower_cellprogram`/`augmented_base_trace`, then run the identical state expose + wrap.
+///
+/// Fail-closed: `< CUSTOM_PI_STATE_PREFIX_LEN` PIs (no `[old8 ‖ new8]` prefix), a PI-count/width
+/// mismatch against the descriptor, or an empty/misshaped trace are REFUSED here rather than
+/// zero-padded into a false binding — the direct-IR2 mirror of the `CellProgram` leaf's refusal.
+/// The current direct carrier accepts the memory-free shape only (default flat/umem boundaries, no
+/// map heaps); the Lean step descriptors are 0-lookup and memory-free, so this is exact for them.
+pub fn prove_custom_leaf_descriptor_with_state_commitment(
+    desc2: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+
+    if public_inputs.len() < CUSTOM_PI_STATE_PREFIX_LEN {
+        return Err(format!(
+            "direct-IR2 custom state-binding leaf: the descriptor publishes {} public input(s), \
+             but the state-binding ABI requires at least {CUSTOM_PI_STATE_PREFIX_LEN} \
+             ([old_commit8 ‖ new_commit8] ‖ ..app). A descriptor that cannot express the binding \
+             is refused rather than zero-padded into a false one.",
+            public_inputs.len()
+        ));
+    }
+    if desc2.public_input_count != public_inputs.len() {
+        return Err(format!(
+            "direct-IR2 custom state-binding leaf: descriptor PI count {} != retained PI count {}",
+            desc2.public_input_count,
+            public_inputs.len()
+        ));
+    }
+    if base_trace.is_empty() || base_trace.iter().any(|row| row.len() != desc2.trace_width) {
+        return Err(format!(
+            "direct-IR2 custom state-binding leaf: retained trace must be non-empty and every row \
+             must have exact descriptor width {}",
+            desc2.trace_width
+        ));
+    }
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        desc2,
+        base_trace,
+        public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        config,
+    )
+    .map_err(|e| format!("direct-IR2 custom state-binding inner prove failed: {e}"))?;
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(desc2, &inner, public_inputs, config).map_err(|e| {
+            format!("direct-IR2 custom state-binding verify-triple build failed: {e}")
+        })?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    // Same coeff-forced backend as the CellProgram state leaf: the commitment expose decomposes
+    // an ext limb into consecutive base lanes; the 16 prefix lanes are the leaf's OWN bound PI
+    // targets (already bus-present).
+    let backend = create_recursion_backend_with_coeff_lookups();
+
+    let num_pi = public_inputs.len();
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+        let main = apt
+            .first()
+            .expect("direct-IR2 custom state leaf has a main instance carrying the descriptor PIs");
+        debug_assert!(
+            main.len() >= num_pi,
+            "main instance must carry all {num_pi} descriptor PIs"
+        );
+        let pis: Vec<Target> = (0..num_pi).map(|k| main[k]).collect();
+        let commit = incircuit_custom_pi_commitment(cb, &pis)
+            .expect("in-circuit custom-PI commitment builds for the bound descriptor PIs");
+
+        // `[commitment(8) ‖ pis[0..16]]` — the prefix lanes are the leaf's REAL bound PI targets,
+        // so what is exposed IS what is proven (byte-identical claim to the CellProgram leaf).
+        let mut claim: Vec<Target> = Vec::with_capacity(CUSTOM_STATE_CLAIM_LEN);
+        claim.extend_from_slice(&commit);
+        claim.extend_from_slice(&pis[..CUSTOM_PI_STATE_PREFIX_LEN]);
+        debug_assert_eq!(claim.len(), CUSTOM_STATE_CLAIM_LEN);
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("direct-IR2 custom state-commitment leaf-wrap failed: {e:?}"))
+}
+
 /// The width of the claim a [`prove_custom_leaf_with_app_root_commitment`] leaf exposes for an
 /// app root of width `app_root_len`: the 24-lane state claim
 /// (`[commitment(8) ‖ old8 ‖ new8]`) followed by the published root `R` (`app_root_len` felts).

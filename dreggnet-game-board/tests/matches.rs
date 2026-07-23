@@ -2,7 +2,7 @@
 //! the game's own teeth bite at lowering (a fabricated / replayed card has no leaf; a board
 //! transition that is not the automaton step has no honest D1 witness). No proving here.
 
-use dregg_automatafl::reference::{ATT, AUTO, Board, VAC, automaton_step};
+use dregg_automatafl::reference::{ATT, AUTO, Board, VAC, automaton_step, stock_two_player};
 use dregg_circuit::field::BabyBear;
 use dregg_multiway_tug::hidden_hand::{HandTree, card_leaf};
 use dreggnet_game_board::{AutomataflMatch, MatchError, TugMatch, TugWin};
@@ -173,4 +173,64 @@ fn a_played_automatafl_match_lowers_to_d1_leaves() {
         .err(),
         Some(MatchError::Empty)
     ));
+}
+
+/// **THE STEP CUTOVER, at leaf-construction resolution.** The deployed n=11 stock-game match
+/// lowers each D1 leaf through the PROVEN Lean descriptor `automataflStepDescN 11`: every leaf
+/// carries a `descriptor_state_leaf` source whose trace SATISFIES the descriptor (checked by the
+/// `leaves()` fail-closed canary) and whose 36 public inputs are the packed-felt Lean form — NOT
+/// the 32-PI Merkle form of the hand-authored Rust AIR. The SLOW recursion fold + light-client
+/// accept over these leaves is the `end_to_end.rs` `#[ignore]` gate.
+#[test]
+fn n11_stock_match_lowers_through_the_lean_descriptor() {
+    let m = AutomataflMatch {
+        start: stock_two_player(),
+        turns: 3,
+    };
+    let leaves = m
+        .leaves()
+        .expect("the n=11 stock match lowers to D1 leaves");
+    assert_eq!(leaves.len(), 3, "one D1 leaf per turn");
+    for (i, l) in leaves.iter().enumerate() {
+        let src = l.descriptor_state_leaf.as_ref().unwrap_or_else(|| {
+            panic!("turn {i}: the n=11 leaf must carry the Lean descriptor source")
+        });
+        assert_eq!(
+            src.descriptor.name, "dregg-automatafl-step-d1-n11",
+            "turn {i}: proven through the Lean-emitted n=11 step descriptor"
+        );
+        assert_eq!(src.descriptor.public_input_count, 36);
+        assert_eq!(
+            l.public_inputs.len(),
+            36,
+            "turn {i}: the leaf publishes the 36-PI packed-felt form the fold commits over"
+        );
+        assert!(
+            src.base_trace
+                .iter()
+                .all(|row| row.len() == src.descriptor.trace_width),
+            "turn {i}: every base-trace row is exactly the descriptor width (678)"
+        );
+    }
+}
+
+/// The n=5 TEST board size has NO emitted Lean descriptor (only n=2, n=11 are pinned), so its
+/// leaves correctly FALL BACK to the Rust AIR (blocked-not-faked: no descriptor source, 32 PIs).
+#[test]
+fn n5_match_falls_back_to_rust_air_no_descriptor() {
+    let leaves = AutomataflMatch {
+        start: demo_board(),
+        turns: 1,
+    }
+    .leaves()
+    .expect("n=5 lowers via the Rust AIR fallback");
+    assert!(
+        leaves[0].descriptor_state_leaf.is_none(),
+        "n=5 has no Lean descriptor; the leaf must fall back (no descriptor source)"
+    );
+    assert_eq!(
+        leaves[0].public_inputs.len(),
+        32,
+        "the Rust-AIR fallback keeps the 32-PI Merkle form (old8‖new8‖board_old_root8‖board_new_root8)"
+    );
 }

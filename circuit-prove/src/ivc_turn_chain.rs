@@ -3259,22 +3259,58 @@ fn mint_rotated_turn_leaf(
                     // `enforce_custom_proof_state_binding` (`PublicInputsTooShort`), so a chain
                     // the old prover happily minted was one no executor would accept. The prover
                     // now agrees with the verifier.
-                    let custom_leaf =
-                        crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment(
-                            &bundle.program,
-                            &bundle.witness_values,
-                            bundle.num_rows,
-                            &bundle.public_inputs,
-                            config,
-                        )
-                        .map_err(|reason| {
-                            TurnChainError::TurnProofInvalid {
+                    // THE STEP-CUTOVER SEAM: if the bundle carries a PROVEN Lean descriptor +
+                    // retained trace (`descriptor_state_leaf`), mint the leaf DIRECTLY from it
+                    // (proving the Lean-authored AIR) instead of lowering the Rust `CellProgram`.
+                    // The exposed claim `[commitment(8) ‖ old8 ‖ new8]` is byte-identical, and the
+                    // commitment + state prefix are both taken over the SAME `bundle.public_inputs`,
+                    // so the state-binding node below is UNCHANGED. Fail-closed on a PI-count
+                    // disagreement between the descriptor and the bundle's claimed PIs.
+                    let custom_leaf = match &bundle.descriptor_state_leaf {
+                        Some(src) => {
+                            if src.descriptor.public_input_count != bundle.public_inputs.len() {
+                                return Err(TurnChainError::TurnProofInvalid {
+                                    index: i,
+                                    reason: format!(
+                                        "direct-IR2 custom state leaf: descriptor '{}' publishes \
+                                         {} PIs but the bundle claims {}",
+                                        src.descriptor.name,
+                                        src.descriptor.public_input_count,
+                                        bundle.public_inputs.len()
+                                    ),
+                                });
+                            }
+                            crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_state_commitment(
+                                &src.descriptor,
+                                &src.base_trace,
+                                &bundle.public_inputs,
+                                config,
+                            )
+                            .map_err(|reason| TurnChainError::TurnProofInvalid {
                                 index: i,
                                 reason: format!(
-                                    "custom state-binding sub-proof leaf mint failed: {reason}"
+                                    "direct-IR2 custom state-binding sub-proof leaf mint failed: {reason}"
                                 ),
-                            }
-                        })?;
+                            })?
+                        }
+                        None => {
+                            crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment(
+                                &bundle.program,
+                                &bundle.witness_values,
+                                bundle.num_rows,
+                                &bundle.public_inputs,
+                                config,
+                            )
+                            .map_err(|reason| {
+                                TurnChainError::TurnProofInvalid {
+                                    index: i,
+                                    reason: format!(
+                                        "custom state-binding sub-proof leaf mint failed: {reason}"
+                                    ),
+                                }
+                            })?
+                        }
+                    };
                     crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
                         &dual,
                         &custom_leaf,
