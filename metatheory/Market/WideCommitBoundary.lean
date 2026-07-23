@@ -71,6 +71,7 @@ import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.InjectiveFloorRegrounded
 import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 import Dregg2.Tactics
 
 namespace Market.WideCommitBoundary
@@ -605,33 +606,34 @@ theorem stateCommit_binds_from_polyTime (D : WideKeyed) (S : CommitSurface) (has
     (cwState bwState cwWire bwWire : ℕ)
     (hCR : HashCRHardQuant (wideFamily D) (IsPolyTime (hashAnsSize D))) :
     Negl (gameAdv (stateCommitBreakGame D S hash t) A) := by
-  have h1 : IsPolyTime (wireAnsSize D) (stateBreakToWireBreak D S hash t A) :=
-    isPolyTime_postMap
-      (G := stateCommitBreakGame D S hash t) (G' := wireCommitBreakGame D)
-      (fun _ => rfl)
-      (fun _ _ c => ((kernelPayload S c.1.kernel t, receiptRoot hash c.1.log),
-                     (kernelPayload S c.2.kernel t, receiptRoot hash c.2.log)))
-      (stateAnsSize D S hash t) (wireAnsSize D) cwState bwState 0 358
-      (fun l tag c => by
-        show (kernelPayload S c.1.kernel t).length + (kernelPayload S c.2.kernel t).length + 2
-          ≤ 0 * (stateAnsSize D S hash t l c) + 358
-        rw [kernelPayload_length, kernelPayload_length]
-        simp [kernelPayloadWidth])
-      hA
+  -- Hop 1 (state → wire): `poly_time` applies `isPolyTime_postMap` (folding in the tight-δ
+  -- composition + derived poly overhead), leaving ONLY the output-growth fact `hout` — proved
+  -- from the two 178-limb payloads (`kernelPayload_length`).
+  have h1 : IsPolyTime (wireAnsSize D) (stateBreakToWireBreak D S hash t A) := by
+    poly_time (stateAnsSize D S hash t) (wireAnsSize D)
+      (fun _ _ (c : RecChainedState × RecChainedState) =>
+        ((kernelPayload S c.1.kernel t, receiptRoot hash c.1.log),
+         (kernelPayload S c.2.kernel t, receiptRoot hash c.2.log)))
+      cwState bwState 0 358 hA
+    intro l tag c
+    show (kernelPayload S c.1.kernel t).length + (kernelPayload S c.2.kernel t).length + 2
+      ≤ 0 * (stateAnsSize D S hash t l c) + 358
+    rw [kernelPayload_length, kernelPayload_length]
+    simp [kernelPayloadWidth]
+  -- Hop 2 (wire → collision): same one call; `hout` is the chain-walk output bound
+  -- (`wireCommit8Find_len_le`, two ≤11-felt lists).
   have hEff : IsPolyTime (hashAnsSize D)
-      (wireBreakToFinder D (stateBreakToWireBreak D S hash t A)) :=
-    isPolyTime_postMap
-      (G := wireCommitBreakGame D) (G' := hashGame (wideFamily D))
-      (fun _ => rfl)
-      (fun _ tag c => wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
-      (wireAnsSize D) (hashAnsSize D) cwWire bwWire 0 22
-      (fun l tag c => by
-        show (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).1.length
-            + (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).2.length
-          ≤ 0 * (wireAnsSize D l c) + 22
-        have := wireCommit8Find_len_le (D.permWAt tag) (D.width8At tag) c.1.1 c.1.2 c.2.1 c.2.2
-        omega)
-      h1
+      (wireBreakToFinder D (stateBreakToWireBreak D S hash t A)) := by
+    poly_time (wireAnsSize D) (hashAnsSize D)
+      (fun _ tag (c : (List ℤ × ℤ) × (List ℤ × ℤ)) =>
+        wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
+      cwWire bwWire 0 22 h1
+    intro l tag c
+    have := wireCommit8Find_len_le (D.permWAt tag) (D.width8At tag) c.1.1 c.1.2 c.2.1 c.2.2
+    show (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).1.length
+        + (wireCommit8Find (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2).2.length
+      ≤ 0 * (wireAnsSize D l c) + 22
+    omega
   exact stateCommit_binds_advantage_bound D S hash t
     (IsPolyTime (hashAnsSize D)) A hEff hCR
 
