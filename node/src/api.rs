@@ -2131,6 +2131,15 @@ pub fn router_with_cors(
         // round roots pinned per phase) / complain (witness-first response) /
         // finalize (|QUAL| >= t -> output commitment pinned) / status.
         .merge(crate::dkg_service::routes())
+        // REALM substrate (the §9.4/§9.5/§9.2 MUD model, realm-model graduated
+        // into the node): create/list realms + list committed law + open/play/
+        // settle instances + canonical-identity mint/bind/resolve and hybrid-PQ
+        // succession/guardian recovery. Every write drives the SAME NodeRealms
+        // gate the in-process path uses (catalog check / identity resolution /
+        // scope membrane) and lands in the SAME durable REALM_LOG, so a realm
+        // created over HTTP survives a node restart and an uncatalogued
+        // ruleset_root is refused persisting nothing.
+        .merge(crate::realm_service::routes())
         // Private dependent-turn custody: bearer-gated, bounded octet-stream
         // arm plus cancel/status. Signed/sealed bytes are never returned.
         .merge(crate::private_dependent_turns::routes())

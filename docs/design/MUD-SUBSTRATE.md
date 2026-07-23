@@ -163,7 +163,25 @@ law; the VK proves a turn obeyed that exact root.
 ## The node + surface wiring this model needs (named — not edited here)
 
 The model crate does not edit `node/` or the surfaces. The wiring it requires,
-named precisely:
+named precisely.
+
+> **STATUS at HEAD.** Items **3** and **4** are DONE (`feeb19e7cd` + the
+> `/realm*` HTTP ingress): the node hosts a durable `RealmWorld`
+> (`node/src/realm_service.rs`), realm/instance lifecycle ops are node
+> operations persisted to `persist`'s `REALM_LOG` and replayed on boot, surface
+> → canonical-identity resolution is served at
+> `GET /realm/identity/resolve`, and item **5** (the durable node-served
+> receipt chain) landed as the keystone. Items **1** and **2** — the
+> KERNEL-PERIMETER change — are **still open** and are now ASSESSED, not
+> implemented: see **`docs/design/DESIGN-realm-kernel-perimeter.md`**, whose
+> headline is that the field on `Turn` is the *smallest* of four changes and
+> the load-bearing one is that `RealmWorld` owns a ledger disjoint from the
+> kernel's. That design also corrects the placement named in item 1 below:
+> `proof_verify.rs` runs only for proof-carrying sovereign turns, so a gate
+> there would never fire on realm traffic; the gate belongs in the
+> Lean-authored admission predicate (`Dregg2.Exec.Admission.admissible`).
+> Item 3 remains open for the *other* surfaces (`discord-bot/`, `dreggnet-*`,
+> and the node's signed-turn ingress still key on a per-surface identity).
 
 1. **Catalog gate in the executor, not a standalone function.**
    `RealmWorld::admit` models the semantics; production must move the catalog
