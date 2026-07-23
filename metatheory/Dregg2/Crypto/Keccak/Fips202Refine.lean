@@ -32,10 +32,15 @@ combinators at the FIPS-mandated lane indices — the θ `C[x]` fan-in, the ρ+�
 `toSpec (Keccak.keccakRound a rc) = Fips202.rnd (…) (toSpec a)`. `keccakRound` exposes no per-step
 `def`, so this composition cannot be a gap-free step lemma; it is stated as `RoundCompositionObligation`.
 `KeccakFRefinesObligation` (24-fold) and `SpongeRefinesObligation` (pad10*1/absorb/squeeze) complete
-the chain. These are the honest remaining work; none is discharged here.
+the chain. None is discharged IN THIS FILE, but all three are now discharged DOWNSTREAM:
+`RoundCompositionObligation` by `Fips202Round.keccakRound_refines_spec_RC`,
+`KeccakFRefinesObligation` by `Fips202Round.keccakF_refines_spec`, and `SpongeRefinesObligation` by
+`Fips202SpongeRefine.sponge_refines`, against the FIPS 202 sec. 4 sponge specification of
+`Dregg2.Crypto.Keccak.Fips202Sponge`.
 -/
 import Dregg2.Crypto.Keccak
 import Dregg2.Crypto.Keccak.Fips202Spec
+import Dregg2.Crypto.Keccak.Fips202Sponge
 
 namespace Dregg2.Crypto.Keccak.Fips202Refine
 
@@ -162,8 +167,18 @@ def KeccakFRefinesObligation : Prop :=
   ∀ (a : Array UInt64), a.size = 25 →
     toSpec (Dregg2.Crypto.Keccak.keccakF a) = Fips202.keccakF (toSpec a)
 
-/-- The sponge obligation: pad10*1 / absorb / squeeze refine the FIPS 202 sponge (UNspecified here —
-this file specifies only the permutation). NOT proven. -/
-def SpongeRefinesObligation : Prop := True  -- placeholder: sponge spec not yet authored
+/-- The sponge obligation: the executable `pad10*1` / absorb / squeeze sponge refines the FIPS 202
+sec. 4 Algorithm 8 sponge — i.e. the executable SHAKE is, under the FIPS 202 sec. B.1 byte-to-bit
+encoding, exactly FIPS 202 sec. 6.2's SHAKE. This WAS a `True` placeholder, honestly labelled as
+such, while no sponge specification existed anywhere in the tree. The specification now exists
+(`Dregg2.Crypto.Keccak.Fips202Sponge`, a bit-addressed transcription of FIPS 202 sec. 4 / 5.1 / 5.2
+/ 6 / B.1) and this obligation is DISCHARGED by `Fips202SpongeRefine.sponge_refines`. -/
+def SpongeRefinesObligation : Prop :=
+  (∀ (input : List UInt8) (outLen : Nat),
+      Fips202.bitsOfBytes (Dregg2.Crypto.Keccak.shake256 input outLen)
+        = Fips202.SHAKE256 (Fips202.bitsOfBytes input) (8 * outLen))
+  ∧ (∀ (input : List UInt8) (outLen : Nat),
+      Fips202.bitsOfBytes (Dregg2.Crypto.Keccak.shake128 input outLen)
+        = Fips202.SHAKE128 (Fips202.bitsOfBytes input) (8 * outLen))
 
 end Dregg2.Crypto.Keccak.Fips202Refine

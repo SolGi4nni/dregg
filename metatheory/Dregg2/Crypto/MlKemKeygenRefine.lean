@@ -15,6 +15,12 @@ matvec), NOT the byte implementation restated. It rides:
   its `polyBytes d`-byte window, so a decode at interior offset `i·384` reads exactly the block `byteEncode`
   wrote there), and the `sha3_512` fixed 64-byte output length (so `ρ = G(d‖k).take 32` has length 32).
 
+The `ρ`-length leg is no longer assumed. §0 proves the FIPS 202 `∀`-fact `squeeze_length` — `Keccak.squeeze`
+returns EXACTLY `outLen` bytes, for every positive rate, sponge state and length — by a manual
+`forIn`/`ForInStep` induction through the sponge's two-mutable-variable `Id.run do` block (the between-block
+`keccakF` sits under an `if` that touches only the state, never the output, so the `out.size` step is
+unconditional). `sha3_512_length` and `rhoOf_length` follow, and `kpkeKeyGen_refines_ring` is UNCONDITIONAL.
+
 The byte↔ring bridge is DEFINITIONAL: `kpkeKeyGen` IS `kpkeKeyGenRing` composed with the codec
 (`kpkeKeyGen_ek_eq` / `kpkeKeyGen_dk_eq`, both `rfl`), so `kpkeKeyGen_refines_ring` is a real byte-vs-ring
 statement, not an identity. No `sorry`, no user `axiom`; the ∀-theorems are `#assert_axioms`-clean.
@@ -23,6 +29,7 @@ Public references: NIST FIPS 202 (SHA-3/Keccak), FIPS 203 (ML-KEM) §4.2.1 / §6
 import Dregg2.Crypto.MlKemKeygen
 import Dregg2.Crypto.MlKemCodecSpec
 import Dregg2.Crypto.MlKemFips203FullDim
+import Dregg2.Crypto.Keccak
 import Dregg2.Tactics
 import Mathlib
 
@@ -36,8 +43,104 @@ open Dregg2.Crypto.MlKemCodecSpec (arrayExtAll bytesToNatLE_eq byteDecodeAt_getE
   byteDecodeAt_byteEncode decMod byteEncode_size)
 open Dregg2.Crypto.MlKemDecaps (sha3_512 prf)
 open Dregg2.Crypto.MlKemKeygen (kpkeKeyGen kpkeKeyGenRing)
+open Dregg2.Crypto.Keccak (squeeze keccakF)
 
 set_option maxRecDepth 8000
+
+/-! ## §0 — THE FIPS 202 SQUEEZE-LENGTH FACT: `|SHAKE/SHA-3 output| = outLen`, ∀.
+
+`ρ = G(d‖k).take 32` is only 32 bytes long because `G = SHA3-512` really emits 64. That is a `∀`-fact about
+`Keccak.squeeze`, and it is the last side condition standing between `kpkeKeyGen_refines_ring_of_rholen` and
+the UNCONDITIONAL `kpkeKeyGen_refines_ring`. It is proved here, from the definition of `squeeze` — no `native_decide`, no KAT, no hypothesis.
+
+**Why it is not a one-liner.** `Keccak.squeeze` is an `Id.run do` block with TWO mutable variables (`out` and
+the sponge state `s`), so the do-elaborator threads an `MProd (Array UInt8) (Array UInt64)` accumulator through
+`forIn`; and the between-block permutation sits under a `if blk + 1 < nblocks then … else …` INSIDE the loop
+body. That `if` blocks the usual `List.forIn_pure_yield_eq_foldl` normalisation, because the body is not
+syntactically `pure (.yield …)`. The route below is therefore a manual `forIn`/`ForInStep` induction
+(`forIn_id_measure`): it only needs that every iteration is a `yield` of some pure step function, and that the
+step grows the measure `out.size` by exactly `rate` — which holds UNCONDITIONALLY, since the `if` touches only
+`s`, never `out`.
+
+Public reference: NIST FIPS 202 §4 (sponge), §6.2 (SHAKE) — the squeeze phase emits `⌈outLen/rate⌉` rate-byte
+blocks and truncates to `outLen`. -/
+
+/-- **The generic `Id`-monad `forIn` measure induction.** If every iteration of a `List.forIn` in `Id` is a
+`yield` of a pure step function `g`, and `g` grows the `ℕ`-valued measure `sz` by exactly `k`, then the whole
+loop grows `sz` by `l.length * k`. The point: `g` may branch internally (as `squeeze`'s does) — all that is
+required is the uniform measure step, so no `foldl` normalisation of the body is needed. -/
+theorem forIn_id_measure {σ : Type} (sz : σ → Nat) (k : Nat)
+    (f : Nat → σ → Id (ForInStep σ)) (g : Nat → σ → σ)
+    (hf : ∀ i s, f i s = pure (ForInStep.yield (g i s)))
+    (hsz : ∀ i s, sz (g i s) = sz s + k) :
+    ∀ (l : List Nat) (init : σ), sz (forIn l init f : Id σ) = sz init + l.length * k := by
+  intro l
+  induction l with
+  | nil => intro init; show sz init = sz init + 0 * k; simp
+  | cons a t ih =>
+    intro init
+    rw [List.forIn_cons]
+    simp only [hf]
+    show sz (forIn t (g a init) f : Id σ) = _
+    rw [ih (g a init), hsz]
+    simp [Nat.succ_mul]
+    ring
+
+/-- A `push`-fold grows an array by exactly the length of the driving list. -/
+theorem foldlPush_size {β} (F : Nat → β) (l : List Nat) (init : Array β) :
+    (List.foldl (fun b a => b.push (F a)) init l).size = init.size + l.length := by
+  induction l generalizing init with
+  | nil => simp
+  | cons a t ih => simp
+
+/-- Ceiling division delivers at least the numerator: `outLen ≤ ⌈outLen/rate⌉ · rate` for `rate > 0`. This is
+what makes the final `List.take outLen` of `squeeze` a NO-OP truncation rather than a shortening one. -/
+theorem ceilDiv_mul_ge (rate outLen : Nat) (hr : 0 < rate) :
+    outLen ≤ ((outLen + rate - 1) / rate) * rate := by
+  have h1 := Nat.div_add_mod (outLen + rate - 1) rate
+  have h2 : (outLen + rate - 1) % rate < rate := Nat.mod_lt _ hr
+  have h3 : outLen ≤ rate * ((outLen + rate - 1) / rate) := by omega
+  calc outLen ≤ rate * ((outLen + rate - 1) / rate) := h3
+    _ = ((outLen + rate - 1) / rate) * rate := Nat.mul_comm _ _
+
+/-- `f <$> x = f x` in `Id` (the squeeze do-block's `return` is elaborated as a `Functor.map`). -/
+theorem id_map_apply {α β : Type} (f : α → β) (x : Id α) : (f <$> x : Id β) = f x := rfl
+
+/-- **THE FIPS 202 SQUEEZE-LENGTH THEOREM, ∀.** For every positive rate, every sponge state and every
+requested length, `Keccak.squeeze` returns EXACTLY `outLen` bytes.
+
+Proof shape: the outer block loop's accumulator is an `MProd (Array UInt8) (Array UInt64)`; `forIn_id_measure`
+(measure `out.size`, step `rate`) gives `out.size = ⌈outLen/rate⌉ · rate` — the between-block `if` only ever
+rewrites the sponge state component, so the measure step is unconditional — and `ceilDiv_mul_ge` makes the
+closing `List.take outLen` exact. -/
+theorem squeeze_length (rate : Nat) (hr : 0 < rate) (s0 : Array UInt64) (outLen : Nat) :
+    (squeeze rate s0 outLen).length = outLen := by
+  unfold squeeze
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_one_sub_one, Nat.div_one, bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl]
+  have hkey := forIn_id_measure (σ := MProd (Array UInt8) (Array UInt64)) (fun r => r.fst.size) rate
+      (fun blk r => (do
+        let r1 ← pure (List.foldl
+          (fun b a => b.push (r.snd[a / 8]! >>> (8 * (a % 8)).toUInt64).toUInt8) r.fst (List.range' 0 rate))
+        if blk + 1 < (outLen + rate - 1) / rate then pure (ForInStep.yield ⟨r1, keccakF r.snd⟩)
+          else pure (ForInStep.yield ⟨r1, r.snd⟩)))
+      (fun blk r => ⟨List.foldl
+          (fun b a => b.push (r.snd[a / 8]! >>> (8 * (a % 8)).toUInt64).toUInt8) r.fst (List.range' 0 rate),
+        if blk + 1 < (outLen + rate - 1) / rate then keccakF r.snd else r.snd⟩)
+      (by intro i s; by_cases h : i + 1 < (outLen + rate - 1) / rate <;> simp [h])
+      (by intro i s; simp)
+      (List.range' 0 ((outLen + rate - 1) / rate)) ⟨#[], s0⟩
+  simp only [List.length_range', Array.size_empty, Nat.zero_add] at hkey
+  rw [id_map_apply]
+  simp only [List.length_take, Array.length_toList]
+  exact Nat.min_eq_left (le_of_le_of_eq (ceilDiv_mul_ge rate outLen hr) hkey.symm)
+
+/-- **`SHA3-512` emits exactly 64 bytes, ∀ input.** `sha3_512 = squeeze 72 (absorb 72 (sha3Pad 72 ·)) 64`
+(FIPS 202: SHA3-512 has rate `1600 − 2·512 = 576` bits `= 72` bytes and a 512-bit digest). -/
+theorem sha3_512_length (input : List UInt8) : (sha3_512 input).length = 64 := by
+  unfold sha3_512
+  exact squeeze_length 72 (by norm_num) _ 64
 
 /-! ## §1 — generic array bookkeeping (block-append fold + interior-window read). -/
 
@@ -395,8 +498,8 @@ theorem dkPkeEncode_decode (sHat : Array Poly) (_hsz : sHat.size = paramK)
 
 The `ρ`-length side condition `(rhoOf d).length = 32` is the SHA-3 fixed-output-length fact
 (`ρ = G(d‖k).take 32`, `|G| = 64`): pure FIPS 202 Keccak `squeeze`-loop bookkeeping, no crypto content. It is
-carried as a named hypothesis here (`kpkeKeyGen_refines_ring_of_rholen`) and discharged by `rhoOf_length`
-below into the unconditional `kpkeKeyGen_refines_ring`. -/
+carried as a named hypothesis in `kpkeKeyGen_refines_ring_of_rholen` and DISCHARGED by `rhoOf_length` (§0's
+`sha3_512_length`) into the UNCONDITIONAL `kpkeKeyGen_refines_ring`. -/
 
 /-- **THE KeyGen REFINEMENT (given the `ρ`-length fact).** Decoding the emitted `ek` recovers the abstract
 `(t̂, ρ)`, and decoding `dkPKE` at block `i` recovers the abstract `ŝᵢ` — the byte impl is the ring generator
@@ -415,12 +518,38 @@ theorem kpkeKeyGen_refines_ring_of_rholen (d : List UInt8) (hrho : (rhoOf d).len
     exact dkPkeEncode_decode (kpkeKeyGenRing d).2.1 (kr_sHat_size d)
       (fun i hi => (kr_sHat_coeff d i hi).1) (fun i hi j hj => (kr_sHat_coeff d i hi).2 j hj) i hi
 
-/-! ## Trusted base — the ∀-refinement legs and their side condition. -/
+/-- **THE `ρ`-LENGTH FACT, DISCHARGED.** `ρ = G(d‖k).take 32` has length 32, because `G = SHA3-512` emits 64
+bytes for every input (§0's `sha3_512_length`, itself the `∀` FIPS 202 squeeze-length theorem). No hypothesis,
+no KAT, no `native_decide`. -/
+theorem rhoOf_length (d : List UInt8) : (rhoOf d).length = 32 := by
+  unfold rhoOf
+  rw [List.length_take, sha3_512_length]
+  omega
 
+/-- **THE KeyGen REFINEMENT — UNCONDITIONAL.** For EVERY seed `d`: decoding the emitted byte `ek` recovers the
+abstract ring `(t̂, ρ)`, and decoding `dkPKE` at block `i` recovers the abstract `ŝᵢ`. The byte implementation
+IS the ring generator composed with the codec.
+
+This is `kpkeKeyGen_refines_ring_of_rholen` with its ONE side condition discharged by `rhoOf_length`. A genuine
+`∀`-refinement: the specification side is the RING KeyGen (`kpkeKeyGenRing` — sample / NTT / matvec over
+`R_q`), NOT the byte implementation restated, and the two are related through the real codec round trip
+`byteDecodeAt_byteEncode`, not by `rfl`. FIPS 203 §4.2.1 / §6 / §8; FIPS 202 for `G`. -/
+theorem kpkeKeyGen_refines_ring (d : List UInt8) :
+    ekDecode (kpkeKeyGen d).1 = ((kpkeKeyGenRing d).1, (kpkeKeyGenRing d).2.2)
+    ∧ (∀ i, i < paramK →
+         byteDecodeAt dCoeff (kpkeKeyGen d).2.toArray (i * polyBytes dCoeff) = (kpkeKeyGenRing d).2.1[i]!) :=
+  kpkeKeyGen_refines_ring_of_rholen d (rhoOf_length d)
+
+/-! ## Trusted base — the ∀-refinement legs, the discharged side condition, and the unconditional keystone. -/
+
+#print axioms squeeze_length
+#print axioms sha3_512_length
+#print axioms rhoOf_length
 #print axioms ekDecode_ekEncode
 #print axioms dkPkeEncode_decode
 #print axioms kr_tHat_coeff
 #print axioms kr_sHat_coeff
 #print axioms kpkeKeyGen_refines_ring_of_rholen
+#print axioms kpkeKeyGen_refines_ring
 
 end Dregg2.Crypto.MlKemKeygenRefine
