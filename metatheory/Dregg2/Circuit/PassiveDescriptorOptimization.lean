@@ -20,7 +20,13 @@ bindings.  Those stronger properties therefore have their own predicates below.
 Two existing passes instantiate the framework:
 
 * E1 dead-column deletion gives an unconditional security refinement once its decidable shape
-  certificate holds.  Its existing expansion is the security map.
+  certificate holds.  Its existing expansion is the security map.  The reverse direction is NOT
+  open: for the DERIVED kill-set `deadColsE1 source floor` the canonical projection below is
+  proved complete in `Dregg2.Metatheory.EffectVmDescriptor2PassiveOptimization.E1`, which
+  therefore upgrades this pass all the way to `SatisfiabilityPreservation` (and separately
+  transports the `Satisfied2U` universal-memory legs).  That module is the PRIMARY passive-pass proof site (not the only one -- this file
+  also carries proof, e.g. the E1 security leg); it instantiates the contracts defined
+  here rather than restating them.
 * BilateralAggregationCompact is an unconditional strengthening (v3 -> v2), with reverse
   witness preservation only under `IdentityConstant`.  It is a target retraction, not a witness
   isomorphism; an explicit trace below proves the missing source round trip false.
@@ -357,11 +363,18 @@ open Dregg2.Circuit.Emit.RotWideCompactE1
 def survivorCols (source : EffectVmDescriptor2) (ks : List Nat) : List Nat :=
   (List.range source.traceWidth).filter (fun c => !isKilled ks c)
 
-/-- The canonical source-to-target row projection.  Security uses only the independently proved
-target-to-source expansion; completeness/inverse claims for this projection are intentionally not
-asserted by the E1 instance. -/
+/-- The canonical source-to-target row projection: compact column `j` reads the `j`th surviving
+source column.  The `j + ks.length` fallback keeps the map meaningful on total assignments past
+the declared source width, which is what makes agreement provable for EVERY non-killed column
+rather than only for descriptor-well-formed in-width references.
+
+Security uses only the independently proved target-to-source expansion, and this projection is
+still NOT claimed inverse to it (`WitnessIsomorphism` is a separate predicate).  Completeness is
+no longer open, though: for the derived kill-set it is proved in
+`Dregg2.Metatheory.EffectVmDescriptor2PassiveOptimization.E1.checkedDerived_complete`, over this
+exact definition. -/
 def projectRow (source : EffectVmDescriptor2) (ks : List Nat) (a : Assignment) : Assignment :=
-  fun c => a ((survivorCols source ks).getD c c)
+  fun j => a ((survivorCols source ks).getD j (j + ks.length))
 
 def projectTrace (source : EffectVmDescriptor2) (ks : List Nat) (t : VmTrace) : VmTrace :=
   { rows := t.rows.map (projectRow source ks), pub := t.pub, tf := t.tf }

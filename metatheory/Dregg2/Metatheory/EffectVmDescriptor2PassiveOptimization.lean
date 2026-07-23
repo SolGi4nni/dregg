@@ -1,176 +1,46 @@
 /-
-# Checked passive optimization for the live EffectVmDescriptor2 denotation
+# Passive-optimization PROOFS for the live EffectVmDescriptor2 denotation
 
-This module gives descriptor transformations a small proof-carrying interface at
-the `Satisfied2` boundary.  It deliberately separates two claims:
-
-* a checked refinement proves only that every accepting target witness projects
-  to an accepting source witness (the target introduces no new satisfiable
-  instances);
-* a checked exact optimization additionally proves that every accepting source
-  witness expands to an accepting target witness.  Together the two maps prove
-  equivalence of existential satisfiability, without claiming that witness
-  representations are bijective.
+The passive-pass CONTRACTS live in exactly one place,
+`Dregg2.Circuit.PassiveDescriptorOptimization`: `PassiveOptimization` (both trace
+maps plus the public ABI), `SecurityRefinement` (target acceptance implies source
+acceptance after expansion), `CompletenessPreservation` (the converse witness
+construction), `SatisfiabilityPreservation` (both, hence equisatisfiability), and
+the deliberately separate `ExactCarrierTransport` / `WitnessIsomorphism`.  This
+module does not restate any of them: it imports them, and supplies the proofs
+that instantiate them.
 
 "Passive" is literal here.  Both directions use the same hash interpretation,
 initial/final memory images, and declared address boundary.  The public-input
 count is unchanged, and trace maps preserve the complete public assignment.
 
-Two concrete instances are checked.  `eraseName` removes diagnostic metadata
-that `Satisfied2` never observes.  More substantially, the derived E1 pass
-deletes dead trace columns and proves both witness directions, including rows,
-public assignments, constraints, hash/range checks, memory/map logs, every
-auxiliary table, and the separate `Satisfied2U` universal-memory legs.  This file
-does not call arbitrary constraint reordering passive: the order of memory and
-map constraints contributes to `memLog` and `mapLog`.
+Two concrete instances are proved.  `eraseName` removes diagnostic metadata that
+`Satisfied2` never observes.  More substantially, the derived E1 pass deletes
+dead trace columns and proves BOTH witness directions over the canonical
+projection defined in the contracts module — rows, public assignments,
+constraints, hash/range checks, memory/map logs, every auxiliary table, and the
+separate `Satisfied2U` universal-memory legs.  This file does not call arbitrary
+constraint reordering passive: the order of memory and map constraints
+contributes to `memLog` and `mapLog`.
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.RotWideCompactE1
+import Dregg2.Circuit.PassiveDescriptorOptimization
 import Mathlib.Data.List.GetD
 
 namespace Dregg2.Metatheory.EffectVmDescriptor2PassiveOptimization
 
 open Dregg2.Circuit.DescriptorIR2
-
-/-- The unchecked, representation-level data of a passive descriptor pass.
-
-`expand` builds a target witness from a source witness; `project` forgets the
-target representation back to the source representation.  Preserving the whole
-public assignment is stronger than merely preserving its declared prefix, while
-`piCount_eq` fixes the length of that declared public ABI. -/
-structure PassiveTransform (source target : EffectVmDescriptor2) where
-  expand : VmTrace -> VmTrace
-  project : VmTrace -> VmTrace
-  piCount_eq : source.piCount = target.piCount
-  expand_public : forall t, (expand t).pub = t.pub
-  project_public : forall t, (project t).pub = t.pub
-
-namespace PassiveTransform
-
-/-- Identity trace translation for a descriptor. -/
-def identity (d : EffectVmDescriptor2) : PassiveTransform d d where
-  expand := id
-  project := id
-  piCount_eq := rfl
-  expand_public := by intro t; rfl
-  project_public := by intro t; rfl
-
-/-- Sequential composition.  Expansion runs source-to-target; projection runs
-in the opposite order. -/
-def compose {a b c : EffectVmDescriptor2}
-    (ab : PassiveTransform a b) (bc : PassiveTransform b c) :
-    PassiveTransform a c where
-  expand := fun t => bc.expand (ab.expand t)
-  project := fun t => ab.project (bc.project t)
-  piCount_eq := ab.piCount_eq.trans bc.piCount_eq
-  expand_public := by
-    intro t
-    calc
-      (bc.expand (ab.expand t)).pub = (ab.expand t).pub := bc.expand_public _
-      _ = t.pub := ab.expand_public _
-  project_public := by
-    intro t
-    calc
-      (ab.project (bc.project t)).pub = (bc.project t).pub := ab.project_public _
-      _ = t.pub := bc.project_public _
-
-end PassiveTransform
-
-/-- A checked one-way refinement.
-
-The direction is kept explicit: target acceptance implies source acceptance
-after projection.  No completeness claim is present;
-the target may reject source witnesses for which no accepting target witness
-exists. -/
-structure CheckedRefinement (source target : EffectVmDescriptor2)
-    extends PassiveTransform source target where
-  sound : forall (hash : List Int -> Int) (minit : Int -> Int)
-      (mfin : Int -> Int × Nat) (maddrs : List Int) (t : VmTrace),
-    Satisfied2 hash target minit mfin maddrs t ->
-      Satisfied2 hash source minit mfin maddrs (project t)
-
-namespace CheckedRefinement
-
-/-- Identity is a checked refinement. -/
-def identity (d : EffectVmDescriptor2) : CheckedRefinement d d where
-  toPassiveTransform := PassiveTransform.identity d
-  sound := by intro hash minit mfin maddrs t h; exact h
-
-/-- Checked refinements are closed under sequential composition. -/
-def compose {a b c : EffectVmDescriptor2}
-    (ab : CheckedRefinement a b) (bc : CheckedRefinement b c) :
-    CheckedRefinement a c where
-  toPassiveTransform := ab.toPassiveTransform.compose bc.toPassiveTransform
-  sound := by
-    intro hash minit mfin maddrs t hc
-    exact ab.sound hash minit mfin maddrs (bc.project t)
-      (bc.sound hash minit mfin maddrs t hc)
-
-end CheckedRefinement
-
-/-- A checked exact passive optimization.
-
-`sound` is inherited from `CheckedRefinement`; `complete` is the converse
-witness construction.  The maps need not be inverses: auxiliary columns may be
-introduced or forgotten.  The exact theorem is existential satisfiability in
-both directions, proved below. -/
-structure CheckedExactOptimization (source target : EffectVmDescriptor2)
-    extends CheckedRefinement source target where
-  complete : forall (hash : List Int -> Int) (minit : Int -> Int)
-      (mfin : Int -> Int × Nat) (maddrs : List Int) (t : VmTrace),
-    Satisfied2 hash source minit mfin maddrs t ->
-      Satisfied2 hash target minit mfin maddrs (expand t)
+open Dregg2.Circuit.PassiveDescriptorOptimization
 
 /-- Existential satisfiability of a live descriptor at a fixed external
-boundary. -/
+boundary.  This is the only bookkeeping definition this module adds on top of
+the imported contracts; the pass predicates themselves are
+`PassiveOptimization`, `SecurityRefinement`, `CompletenessPreservation` and
+`SatisfiabilityPreservation` from `Dregg2.Circuit.PassiveDescriptorOptimization`. -/
 def Satisfiable (hash : List Int -> Int) (d : EffectVmDescriptor2)
     (minit : Int -> Int) (mfin : Int -> Int × Nat) (maddrs : List Int) : Prop :=
   Exists fun t => Satisfied2 hash d minit mfin maddrs t
-
-namespace CheckedRefinement
-
-/-- A one-way checked refinement cannot create a satisfiable instance. -/
-theorem target_satisfiable_implies_source {source target : EffectVmDescriptor2}
-    (pass : CheckedRefinement source target) (hash : List Int -> Int)
-    (minit : Int -> Int) (mfin : Int -> Int × Nat) (maddrs : List Int) :
-    Satisfiable hash target minit mfin maddrs ->
-      Satisfiable hash source minit mfin maddrs := by
-  rintro ⟨t, ht⟩
-  exact ⟨pass.project t, pass.sound hash minit mfin maddrs t ht⟩
-
-end CheckedRefinement
-
-namespace CheckedExactOptimization
-
-/-- Identity is an exact checked optimization. -/
-def identity (d : EffectVmDescriptor2) : CheckedExactOptimization d d where
-  toCheckedRefinement := CheckedRefinement.identity d
-  complete := by intro hash minit mfin maddrs t h; exact h
-
-/-- Exact checked optimizations are closed under sequential composition. -/
-def compose {a b c : EffectVmDescriptor2}
-    (ab : CheckedExactOptimization a b)
-    (bc : CheckedExactOptimization b c) : CheckedExactOptimization a c where
-  toCheckedRefinement := ab.toCheckedRefinement.compose bc.toCheckedRefinement
-  complete := by
-    intro hash minit mfin maddrs t ha
-    exact bc.complete hash minit mfin maddrs (ab.expand t)
-      (ab.complete hash minit mfin maddrs t ha)
-
-/-- Soundness plus completeness is exactly two-way existential satisfiability
-preservation at the unchanged external boundary. -/
-theorem satisfiable_iff {source target : EffectVmDescriptor2}
-    (pass : CheckedExactOptimization source target) (hash : List Int -> Int)
-    (minit : Int -> Int) (mfin : Int -> Int × Nat) (maddrs : List Int) :
-    Satisfiable hash source minit mfin maddrs <->
-      Satisfiable hash target minit mfin maddrs := by
-  constructor
-  · rintro ⟨t, ht⟩
-    exact ⟨pass.expand t, pass.complete hash minit mfin maddrs t ht⟩
-  · exact pass.toCheckedRefinement.target_satisfiable_implies_source
-      hash minit mfin maddrs
-
-end CheckedExactOptimization
 
 /-! ## A first checked concrete pass -/
 
@@ -220,20 +90,23 @@ theorem eraseName_satisfied_iff (hash : List Int -> Int)
     · simpa [eraseName, memLog, memOpsOf] using h.memTableFaithful
     · simpa [eraseName, mapLog, mapOpsOf] using h.mapTableFaithful
 
-/-- A concrete exact pass over the live descriptor: strip the diagnostic name,
-leave witnesses and the public ABI untouched, and carry proofs in both
-directions. -/
-def eraseNameChecked (d : EffectVmDescriptor2) :
-    CheckedExactOptimization d (eraseName d) where
-  expand := id
-  project := id
-  piCount_eq := by simp
-  expand_public := by intro t; rfl
-  project_public := by intro t; rfl
-  sound := by
+/-- A concrete pass over the live descriptor: strip the diagnostic name, leave
+witnesses and the public ABI untouched.  Name erasure moves no constraint, so
+the ordered public binding slots are literally the same list. -/
+def eraseNamePass (d : EffectVmDescriptor2) : PassiveOptimization d (eraseName d) where
+  toTarget := id
+  toSource := id
+  publicABI := { piCount_eq := rfl, bindingSlots_eq := rfl }
+  toTarget_pub := by intro t; rfl
+  toSource_pub := by intro t; rfl
+
+/-- Both directions are carried, so name erasure is a checked exact pass. -/
+theorem eraseNamePreservation (d : EffectVmDescriptor2) :
+    SatisfiabilityPreservation (eraseNamePass d) where
+  security := by
     intro hash minit mfin maddrs t h
     exact (eraseName_satisfied_iff hash d minit mfin maddrs t).mp h
-  complete := by
+  completeness := by
     intro hash minit mfin maddrs t h
     exact (eraseName_satisfied_iff hash d minit mfin maddrs t).mpr h
 
@@ -244,7 +117,7 @@ theorem eraseName_satisfiable_iff (hash : List Int -> Int)
     (mfin : Int -> Int × Nat) (maddrs : List Int) :
     Satisfiable hash d minit mfin maddrs <->
       Satisfiable hash (eraseName d) minit mfin maddrs :=
-  (eraseNameChecked d).satisfiable_iff hash minit mfin maddrs
+  satisfiable_iff_of_preservation (eraseNamePreservation d) hash minit mfin maddrs
 
 /-! ## E1 dead-column deletion -/
 
@@ -254,21 +127,12 @@ open Dregg2.Circuit.Emit.RotWideCompactE1
 open Dregg2.Circuit.Emit.RotWideCompactS2
 open Dregg2.Circuit.Emit.EffectVmEmit
 
-/-- Old columns retained by the compact descriptor, in their original order. -/
-def survivorCols (source : EffectVmDescriptor2) (ks : List Nat) : List Nat :=
-  (List.range source.traceWidth).filter (fun c => !isKilled ks c)
+/-! `survivorCols`, `projectRow` and `projectTrace` are NOT redefined here: the
+canonical source-to-compact projection is the one the contracts module already
+installs as `PassiveDescriptorOptimization.E1.pass`'s `toTarget`, and everything
+below is proved about that exact definition. -/
 
-/-- The canonical source-to-compact row map.  Compact column `j` receives the
-`j`th surviving source column. -/
-def projectRow (source : EffectVmDescriptor2) (ks : List Nat)
-    (a : Dregg2.Circuit.Assignment) : Dregg2.Circuit.Assignment :=
-  fun j => a ((survivorCols source ks).getD j (j + ks.length))
-
-/-- Row-wise source-to-compact projection.  Public inputs and auxiliary tables
-are carried exactly. -/
-def projectTrace (source : EffectVmDescriptor2) (ks : List Nat)
-    (t : VmTrace) : VmTrace :=
-  { rows := t.rows.map (projectRow source ks), pub := t.pub, tf := t.tf }
+open Dregg2.Circuit.PassiveDescriptorOptimization.E1
 
 /-- Among the columns below `c`, the number of survivors is exactly E1's
 subtraction-based compact index. -/
@@ -837,27 +701,20 @@ theorem compactE1_expandU (hash : List Int -> Int)
     rw [huml]
     exact hsat.umemTableFaithful
 
-/-- E1's landed expansion theorem is a checked one-way refinement: every
-compact accepting witness expands to an accepting source witness. -/
-def checkedRefinement (source : EffectVmDescriptor2) (ks : List Nat)
-    (hok : compactE1Ok source ks = true) :
-    CheckedRefinement source (compactE1 source ks) where
-  expand := projectTrace source ks
-  project := expandTraceG ks
-  piCount_eq := (compactE1_piCount source ks).symm
-  expand_public := by intro t; rfl
-  project_public := by intro t; rfl
-  sound := by
-    intro hash minit mfin maddrs t hsat
-    exact compactE1_expand hash source ks minit mfin maddrs t hok hsat
+/-- The derived-kill-set instance of the shared passive pass.  `pass` and its
+one-way `security` proof come from the contracts module; the derived adapter
+only discharges the full `compactE1Ok` gate from the cheap transition-ceiling
+certificate the emit path already carries. -/
+def derivedPass (source : EffectVmDescriptor2) (floor : Nat) :
+    PassiveOptimization source (compactE1 source (deadColsE1 source floor)) :=
+  Dregg2.Circuit.PassiveDescriptorOptimization.E1.pass source
+    (deadColsE1 source floor)
 
-/-- The derived kill-set adapter discharges the complete E1 gate from the
-cheap transition-ceiling certificate used by the emit path. -/
-def checkedDerivedRefinement (source : EffectVmDescriptor2) (floor : Nat)
+theorem derivedSecurity (source : EffectVmDescriptor2) (floor : Nat)
     (hceiling : transitionCeilingOk source floor = true) :
-    CheckedRefinement source (compactE1 source (deadColsE1 source floor)) :=
-  checkedRefinement source (deadColsE1 source floor)
-    (compactE1Ok_of_ceiling source floor hceiling)
+    SecurityRefinement (derivedPass source floor) :=
+  Dregg2.Circuit.PassiveDescriptorOptimization.E1.security source
+    (deadColsE1 source floor) (compactE1Ok_of_ceiling source floor hceiling)
 
 /-- By construction, a live source column is not in the derived dead-column
 set. -/
@@ -954,18 +811,22 @@ theorem checkedDerived_satisfiableU_iff
         minit mfin maddrs uinit ufin uaddrs t
         (compactE1Ok_of_ceiling source floor hceiling) ht⟩
 
-/-- The performance-relevant derived E1 adapter is exact: the landed expansion
-is the refinement direction and `checkedDerived_complete` supplies the
-source-to-compact witness construction. -/
-def checkedDerivedExact (source : EffectVmDescriptor2) (floor : Nat)
+/-- `checkedDerived_complete` is exactly the framework's completeness contract
+for the derived E1 pass. -/
+theorem derivedCompleteness (source : EffectVmDescriptor2) (floor : Nat)
     (hceiling : transitionCeilingOk source floor = true) :
-    CheckedExactOptimization source
-      (compactE1 source (deadColsE1 source floor)) where
-  toCheckedRefinement := checkedDerivedRefinement source floor hceiling
-  complete := by
-    intro hash minit mfin maddrs t hsat
-    exact checkedDerived_complete source floor hceiling
-      hash minit mfin maddrs t hsat
+    CompletenessPreservation (derivedPass source floor) := by
+  intro hash minit mfin maddrs t hsat
+  exact checkedDerived_complete source floor hceiling hash minit mfin maddrs t hsat
+
+/-- The performance-relevant derived E1 adapter is exact: the landed expansion
+is the security direction and `checkedDerived_complete` supplies the
+source-to-compact witness construction.  This is the upgrade the contracts
+module points at — the E1 pass is not merely a one-way security refinement. -/
+theorem derivedPreservation (source : EffectVmDescriptor2) (floor : Nat)
+    (hceiling : transitionCeilingOk source floor = true) :
+    SatisfiabilityPreservation (derivedPass source floor) :=
+  ⟨derivedSecurity source floor hceiling, derivedCompleteness source floor hceiling⟩
 
 /-- E1's derived dead-column deletion therefore preserves existential
 satisfiability in both directions at every unchanged external boundary. -/
@@ -977,7 +838,7 @@ theorem checkedDerived_satisfiable_iff
     Satisfiable hash source minit mfin maddrs <->
       Satisfiable hash (compactE1 source (deadColsE1 source floor))
         minit mfin maddrs :=
-  (checkedDerivedExact source floor hceiling).satisfiable_iff
+  satisfiable_iff_of_preservation (derivedPreservation source floor hceiling)
     hash minit mfin maddrs
 
 theorem checkedDerived_target_satisfiable_implies_source
@@ -988,15 +849,24 @@ theorem checkedDerived_target_satisfiable_implies_source
     Satisfiable hash (compactE1 source (deadColsE1 source floor))
         minit mfin maddrs ->
       Satisfiable hash source minit mfin maddrs :=
-  CheckedRefinement.target_satisfiable_implies_source
-    (checkedDerivedRefinement source floor hceiling) hash minit mfin maddrs
+  security_target_witness_implies_source
+    (derivedSecurity source floor hceiling) hash minit mfin maddrs
+
+/-- The derived pass also transports every auxiliary table and the row count
+exactly, which `Satisfied2` alone would not give. -/
+theorem derivedExactCarriers (source : EffectVmDescriptor2) (floor : Nat) :
+    ExactCarrierTransport (derivedPass source floor) :=
+  Dregg2.Circuit.PassiveDescriptorOptimization.E1.exactCarriers source
+    (deadColsE1 source floor)
 
 end E1
 
-#assert_axioms CheckedRefinement.target_satisfiable_implies_source
-#assert_axioms CheckedExactOptimization.satisfiable_iff
 #assert_axioms eraseName_satisfied_iff
+#assert_axioms eraseNamePreservation
 #assert_axioms eraseName_satisfiable_iff
+#assert_axioms E1.derivedSecurity
+#assert_axioms E1.derivedCompleteness
+#assert_axioms E1.derivedPreservation
 #assert_axioms E1.checkedDerived_target_satisfiable_implies_source
 #assert_axioms E1.checkedDerived_complete
 #assert_axioms E1.checkedDerived_satisfiable_iff

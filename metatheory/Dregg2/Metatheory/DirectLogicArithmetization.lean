@@ -124,10 +124,12 @@ finality.
 -/
 
 import Dregg2.Metatheory.FOLArithmetizationCounterexamples
+import Dregg2.Metatheory.SwapRelationRepairCanary
 import Dregg2.Metatheory.FiniteHOLFormulaArithmetization
 import Dregg2.Metatheory.FinitePolynomialCCC
 import Dregg2.Metatheory.FinitePolynomialCategoryClassification
 import Dregg2.Metatheory.FamilyPolynomialYonedaFrontier
+import Dregg2.Metatheory.CCCPolynomialEvaluationFrontier
 import Dregg2.Metatheory.GabbayMatrixBridge
 import Dregg2.Metatheory.GabbayDescriptorIR2PublicBinding
 import Dregg2.Metatheory.FinitePatchCodeDescent
