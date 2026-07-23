@@ -12,7 +12,8 @@
 //! rebuild + re-run — this test FLIPS RED: `eval.rs`'s decision changed because ONLY the Lean source
 //! changed. That is the proof `eval.rs` goes through Lean, end to end.
 
-use dregg_cell::program::CellProgram;
+use dregg_cell::preconditions::EvalContext;
+use dregg_cell::program::{CellProgram, CollPred, ElemPredAtom};
 use dregg_cell::state::CellState;
 use dregg_cell::{StateConstraint, field_from_u64};
 use dregg_exec_lean::register_constraint_oracle;
@@ -89,5 +90,98 @@ fn sum_equals_routes_through_lean() {
     assert!(
         bad.evaluate(&new, None, None).is_err(),
         "sum(3,4)!=8 refuses"
+    );
+}
+
+/// ── THE NEWLY-COVERED-ARM CANARY ────────────────────────────────────────────────────────────────
+/// `CollectionAggregate` is one of the arms this widening moved into the Lean subset. Drive it through
+/// the REAL `CellProgram::evaluate` path with the oracle installed: the council `mOfNDistinct` gate
+/// admits two DISTINCT approving keys and REFUSES the duplicate-padded forge. The `mOfNDistinct`
+/// distinctness lives ONLY in `Dregg2.Exec.DeployedConstraint.DCollPred.eval` — flip its `m` to 1 (or
+/// drop the `filterMap`/dedup) and rebuild, and the forge case FLIPS to admit through `eval.rs`. That
+/// is the proof the deployed executor's decision for this arm is COMPUTED BY the Lean source.
+#[test]
+fn collection_aggregate_council_routes_through_lean() {
+    if !ensure_oracle() {
+        return;
+    }
+    // A heap `(collection_id=4)` collection of stride-2 elements: (key, approved-flag).
+    let coll = |elems: &[(u64, u64)]| -> CellState {
+        let mut s = CellState::default();
+        for (i, (k, flag)) in elems.iter().enumerate() {
+            s.set_heap(4, (i * 2) as u32, field_from_u64(*k));
+            s.set_heap(4, (i * 2 + 1) as u32, field_from_u64(*flag));
+        }
+        s
+    };
+    let council = StateConstraint::CollectionAggregate {
+        collection_id: 4,
+        stride: 2,
+        fuel: 3,
+        pred: CollPred::MOfNDistinct {
+            m: 2,
+            key_offset: 0,
+            approved: ElemPredAtom::FieldEquals {
+                offset: 1,
+                value: field_from_u64(1),
+            },
+        },
+    };
+    // Two DISTINCT approving keys (7, 9) ⇒ admit.
+    assert!(
+        CellProgram::Predicate(vec![council.clone()])
+            .evaluate(&coll(&[(7, 1), (9, 1)]), None, None)
+            .is_ok(),
+        "two distinct approving keys satisfy the 2-of-N council"
+    );
+    // THE DUPLICATE-PADDED FORGE: three approvals, ONE identity ⇒ refuse (the distinctness tooth).
+    assert!(
+        CellProgram::Predicate(vec![council])
+            .evaluate(&coll(&[(7, 1), (7, 1), (7, 1)]), None, None)
+            .is_err(),
+        "the duplicate-padded forge collapses to one distinct key and REFUSES"
+    );
+}
+
+/// A second newly-covered arm: `RateLimit` reads the executor-held `sender_epoch_count`. Under a cap
+/// of 3, two mutations admit and three refuse; an absent context fails CLOSED. The comparison lives in
+/// `Dregg2.Exec.DeployedConstraint.admits`'s `rateLimit` arm — flip its `≥` to `>` and the boundary
+/// case (`count == max`) flips through `eval.rs`.
+#[test]
+fn rate_limit_routes_through_lean() {
+    if !ensure_oracle() {
+        return;
+    }
+    let ctx = |count: u64| EvalContext {
+        block_height: 0,
+        timestamp: 0,
+        current_epoch: 0,
+        sender: None,
+        sender_epoch_count: count,
+        revealed_preimage: None,
+    };
+    let rl = StateConstraint::RateLimit {
+        max_per_epoch: 3,
+        epoch_duration: 10,
+    };
+    let new = CellState::default();
+    assert!(
+        CellProgram::Predicate(vec![rl.clone()])
+            .evaluate(&new, None, Some(&ctx(2)))
+            .is_ok(),
+        "2 mutations under a cap of 3 admits"
+    );
+    assert!(
+        CellProgram::Predicate(vec![rl.clone()])
+            .evaluate(&new, None, Some(&ctx(3)))
+            .is_err(),
+        "3 mutations at the cap refuses (>=)"
+    );
+    // ⚑ FAIL-CLOSED: no context ⇒ the count is executor-held, so a refusal, never a silent admit.
+    assert!(
+        CellProgram::Predicate(vec![rl])
+            .evaluate(&new, None, None)
+            .is_err(),
+        "an absent context fails closed"
     );
 }

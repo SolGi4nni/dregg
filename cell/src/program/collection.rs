@@ -23,7 +23,7 @@ impl ElemPredAtom {
     /// The element-relative offset this atom reads — its ANCHOR field. A
     /// collection element is "present" iff its anchor (and, for the
     /// council, its key) reads; this drives the `readIndexed` truncation.
-    pub(crate) fn anchor_offset(&self) -> u32 {
+    pub fn anchor_offset(&self) -> u32 {
         match self {
             ElemPredAtom::FieldEquals { offset, .. }
             | ElemPredAtom::FieldGte { offset, .. }
@@ -101,7 +101,7 @@ impl CollPred {
     /// (an element with no identity does not count); for the others it is
     /// the predicate's read offset (or the summed field's). An element
     /// missing its anchor truncates the collection there.
-    pub(crate) fn anchor_offset(&self) -> u32 {
+    pub fn anchor_offset(&self) -> u32 {
         match self {
             CollPred::CountSatGe { p, .. }
             | CollPred::AllMembers { p }

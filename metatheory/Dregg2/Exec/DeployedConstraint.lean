@@ -39,20 +39,34 @@ The cell BALANCE is a SIGNED `i64` (THE EPOCH §5), so it is modelled as `Int`.
   Evaluated HERE.
 * **(b) CONTEXT** — additionally reads a SMALL, TYPED slice of `EvalContext` /
   `TransitionMeta`: `block_height : u64`, `sender : Option [u8;32]`,
-  `delegation_epoch : Option u64`. That slice is marshalled EXPLICITLY onto the
-  wire (`DCtx`) and each absence is a first-class token, so an absent context
-  produces the deployed `MissingContextField` verdict — FAIL-CLOSED, never a
-  silent admit. Evaluated HERE.
-* **(c) WITNESS / CRYPTO / EXECUTOR-STATE** — dispatches to a hash, a proof
-  verifier, a DSL runtime, a peer cell, or an executor-side counter
-  (`SenderAuthorized`, `Renounced`, `PreimageGate`, `KeyRotationGate`,
-  `Witnessed`, `TemporalPredicate`, `Custom`, `CountGe`, `ObservedFieldEquals`,
-  `AnyOfBound`, `ClearanceDominates`, `RateLimit`, `RateLimitBySum`,
-  `CapabilityUniqueness`, `BoundDelta`, the collection aggregates,
-  `FieldsCountEquals`). These are NOT evaluated here; they are the NAMED
-  TRUSTED-RUST SLOT, enumerated exhaustively in
-  `exec-lean/src/constraint_oracle.rs::encode_constraint` (no wildcard arm — a
-  new `StateConstraint` variant fails the BUILD until it is classified).
+  `delegation_epoch : Option u64`, `sender_epoch_count : u64`. That slice is
+  marshalled EXPLICITLY onto the wire (`DCtx`) and each absence is a first-class
+  token, so an absent context produces the deployed `MissingContextField` verdict
+  — FAIL-CLOSED, never a silent admit. Evaluated HERE.
+* **(c) WITNESS / CRYPTO** — dispatches to a hash, a proof verifier, a DSL
+  runtime, or a peer cell: `SenderAuthorized`, `Renounced`, `PreimageGate`,
+  `KeyRotationGate`, `Witnessed`, `TemporalPredicate`, `Custom`, `CountGe`,
+  `ObservedFieldEquals`, `AnyOfBound`, `ClearanceDominates` — ELEVEN arms. These
+  are NOT evaluated here; they are the NAMED TRUSTED-RUST SLOT, enumerated
+  exhaustively in `exec-lean/src/constraint_oracle.rs::encode_constraint` (no
+  wildcard arm — a new `StateConstraint` variant fails the BUILD until it is
+  classified). ⚑ THE SLOT IS EXACTLY THE CRYPTO/WITNESS SURFACE: every remaining
+  arm needs a hash recomputation, a proof verifier, a DSL runtime, or peer-cell
+  state. Nothing "pure but unported" is left in it.
+
+## What is Lean-evaluated at HEAD
+
+58 of the 69 `StateConstraint` variants. Beyond the original pure/context set
+this module now decides:
+
+* the two EXECUTOR RATE COUNTERS (`RateLimit`, `RateLimitBySum`) over the
+  marshalled `sender_epoch_count`;
+* the three AGGREGATE arms (`FieldsCountEquals`, `CollectionAggregate`,
+  `FieldsCollectionAggregate`) over a RESOLVED cell run — Rust resolves the KEYS,
+  the truncation / element predicate / aggregate / council-distinctness live here;
+* the two EXECUTOR-ONLY SENTINELS (`CapabilityUniqueness`, `BoundDelta`), whose
+  fail-closed refusal is now Lean-authored rather than a Rust `Err(..)` a later
+  edit could soften back into `Ok(())`.
 
 ## Import discipline
 
@@ -111,6 +125,131 @@ inductive DHeapAtom where
   | deltaBounded (d : Nat)
   | deltaEquals (d : Int)
   deriving Repr, DecidableEq
+
+/-! ## The COLLECTION fragment (`cell/src/program/collection.rs`)
+
+The three aggregate arms (`FieldsCountEquals`, `CollectionAggregate`,
+`FieldsCollectionAggregate`) read a RUN of heap / field-map cells. The Rust
+marshaller resolves the KEYS (exactly the job it already does for `HeapField`) and
+ships the resolved `Option FieldElement` run as `DInput.cells`; every bit of
+SEMANTICS — the `readIndexed` anchor truncation, the per-element predicate, the
+aggregate, the council's distinctness — lives HERE. -/
+
+/-- `collection.rs::ElemPredAtom` — a per-element decision atom reading ONE
+element-relative offset. Fail-closed: an absent cell is `false`. -/
+inductive DElemPred where
+  | fieldEquals (offset : Nat) (value : DField)
+  | fieldGte (offset : Nat) (value : DField)
+  | fieldLte (offset : Nat) (value : DField)
+  | fieldInSet (offset : Nat) (set : List Nat)
+  deriving Repr, DecidableEq
+
+/-- `ElemPredAtom::anchor_offset`. -/
+def DElemPred.anchorOffset : DElemPred → Nat
+  | .fieldEquals o _ => o
+  | .fieldGte o _ => o
+  | .fieldLte o _ => o
+  | .fieldInSet o _ => o
+
+/-- Read one element-relative offset. An element is a `stride`-long run of cells;
+an offset PAST the stride reads `none` (the Rust `elem.get(off).copied().flatten()`). -/
+@[inline] def elemRead (elem : List (Option DField)) (off : Nat) : Option DField :=
+  elem.getD off none
+
+/-- `ElemPredAtom::eval` — EXACT. `fieldGte`/`fieldLte` are the UNSIGNED 256-bit
+`field_gte`/`field_lte`; `fieldInSet` reads the `field_to_u64` low lane. -/
+def DElemPred.eval (p : DElemPred) (elem : List (Option DField)) : Bool :=
+  match p with
+  | .fieldEquals off v =>
+      match elemRead elem off with | some x => decide (x = v) | none => false
+  | .fieldGte off v =>
+      match elemRead elem off with | some x => decide (v ≤ x) | none => false
+  | .fieldLte off v =>
+      match elemRead elem off with | some x => decide (x ≤ v) | none => false
+  | .fieldInSet off s =>
+      match elemRead elem off with | some x => s.contains (low64 x) | none => false
+
+/-- `collection.rs::CollPred` — the aggregate over the read-out collection. -/
+inductive DCollPred where
+  | countSatGe (m : Nat) (p : DElemPred)
+  | sumOfLe (offset : Nat) (bound : Int)
+  | sumOfGe (offset : Nat) (bound : Int)
+  | allMembers (p : DElemPred)
+  | existsMember (p : DElemPred)
+  | mOfNDistinct (m : Nat) (keyOffset : Nat) (approved : DElemPred)
+  deriving Repr, DecidableEq
+
+/-- `CollPred::anchor_offset` — the offset whose PRESENCE anchors the read (drives
+the truncation). For the council it is the KEY offset: an element with no identity
+does not count. -/
+def DCollPred.anchorOffset : DCollPred → Nat
+  | .countSatGe _ p => p.anchorOffset
+  | .allMembers p => p.anchorOffset
+  | .existsMember p => p.anchorOffset
+  | .sumOfLe o _ => o
+  | .sumOfGe o _ => o
+  | .mOfNDistinct _ k _ => k
+
+/-- `collection.rs::coll_sum` — Σ of the element field at `off` over the low lanes,
+an absent read contributing 0 (TOTAL, the Lean `sumOfField` `getD 0` discipline).
+Rust folds in `i128`; the marshaller's cell-count envelope keeps the fold inside it. -/
+def collSum (coll : List (List (Option DField))) (off : Nat) : Int :=
+  coll.foldl (fun acc e =>
+    acc + (match elemRead e off with | some x => (low64 x : Int) | none => 0)) 0
+
+/-- `eraseDups` as a structurally-recursive accumulator fold — the `BTreeSet`
+distinctness of `mOfNDistinct` (the duplicate-padded forge collapses to ONE key). -/
+def dedupGo : List Nat → List Nat → List Nat
+  | [], acc => acc
+  | x :: xs, acc => dedupGo xs (if acc.contains x then acc else x :: acc)
+
+/-- The number of DISTINCT keys in `ks`. -/
+@[inline] def distinctCount (ks : List Nat) : Nat := (dedupGo ks []).length
+
+/-- `CollPred::eval` — EXACT, including the council lift `mOfNDistinct`
+(filter to approving elements · read each key identity, DROPPING the keyless ·
+dedup · compare to `m`). -/
+def DCollPred.eval (q : DCollPred) (coll : List (List (Option DField))) : Bool :=
+  match q with
+  | .countSatGe m p => decide ((coll.filter (fun e => p.eval e)).length ≥ m)
+  | .sumOfLe off b => decide (collSum coll off ≤ b)
+  | .sumOfGe off b => decide (collSum coll off ≥ b)
+  | .allMembers p => coll.all (fun e => p.eval e)
+  | .existsMember p => coll.any (fun e => p.eval e)
+  | .mOfNDistinct m k appr =>
+      let keys := (coll.filter (fun e => appr.eval e)).filterMap
+        (fun e => (elemRead e k).map low64)
+      decide (distinctCount keys ≥ m)
+
+/-- Element `i` of the resolved cell run: the `stride`-long slice starting at
+`i * stride` (row-major, exactly the key layout `read_collection` walks). -/
+def elemAt (cells : List (Option DField)) (stride i : Nat) : List (Option DField) :=
+  (List.range stride).map (fun f => cells.getD (i * stride + f) none)
+
+/-- `read_collection`'s truncation loop: the contiguous prefix of elements whose
+ANCHOR cell is present, bounded by `fuel`.
+
+⚑ FAITHFUL ASYMMETRY: the deployed anchor probe reads heap key
+`i*stride + anchor` — NOT the element's `stride`-bounded slice — so an
+`anchor ≥ stride` probes the NEXT element's territory while the PREDICATE read of
+that same offset is absent (past the slice). Reproduced exactly. -/
+def collTake (cells : List (Option DField)) (stride anchor : Nat) :
+    Nat → Nat → List (List (Option DField))
+  | 0, _ => []
+  | n + 1, i =>
+      match cells.getD (i * stride + anchor) none with
+      | none => []
+      | some _ => elemAt cells stride i :: collTake cells stride anchor n (i + 1)
+
+/-- `read_collection` / `read_collection_fields` — `none` = NO COLLECTION
+(`stride = 0`, an ill-formed shape; or element 0's anchor absent), which the
+deployed evaluator turns into a fail-closed REFUSAL upstream. -/
+def readCollection (cells : List (Option DField)) (stride fuel anchor : Nat) :
+    Option (List (List (Option DField))) :=
+  if stride = 0 then none
+  else
+    let coll := collTake cells stride anchor fuel 0
+    if coll.isEmpty then none else some coll
 
 /-- The BASE (non-combinator) `StateConstraint` subset this evaluator decides
 (`cell/src/program/types.rs::StateConstraint`, `eval.rs::evaluate_constraint_full`).
@@ -172,6 +311,15 @@ inductive DConstraint where
   | senderInSlot (index : Nat)
   | senderMemberOf (members : List DField)
   | delegationEpochEquals (index : Nat)
+  -- ── (b) CONTEXT: the executor's per-(cell, sender, epoch) counter ───────────
+  | rateLimit (maxPerEpoch : Nat)
+  | rateLimitBySum (index : Nat) (maxSumPerEpoch : Nat)
+  -- ── (a) PURE: the resolved heap / field-map CELL RUN ───────────────────────
+  | fieldsCountEquals (count : Nat) (value : DField) (countIndex : Nat)
+  | collAggregate (stride fuel : Nat) (pred : DCollPred)
+  -- ── (a) PURE: the executor-only SENTINELS (fail-closed by construction) ────
+  | capabilityUniqueness (slot : Nat)
+  | boundDelta
   deriving Repr, DecidableEq
 
 /-- The TOP-LEVEL constraint: a base arm, or one of the two boolean combinators
@@ -208,6 +356,14 @@ structure DCtx where
   sender : DField
   epochPresent : Bool
   epoch : Nat
+  /-- `ctx.sender_epoch_count` — the executor's AUTHORITATIVE per-(cell, sender,
+  epoch) mutation counter (and, for `RateLimitBySum`, the per-(cell, slot, window)
+  running sum). Meaningless when `present = false`; the arms that read it either
+  raise `MissingContextField "sender_epoch_count"` (`RateLimit`) or read 0
+  (`RateLimitBySum`), exactly as the deployed evaluator does. It is NOT
+  submitter-controlled — the executor wires it in
+  `execute_tree::state_constraint_context_count`. -/
+  epochCount : Nat
   deriving Repr
 
 /-- The `(old, new)` state slice one constraint eval sees over the deployed
@@ -228,6 +384,10 @@ structure DInput where
   oldBalance : Int
   newBalance : Int
   ctx : DCtx
+  /-- The RESOLVED heap / field-map cell run the aggregate arms read (row-major;
+  `none` = the key is absent post-state). Rust resolves the KEYS; the truncation
+  and the aggregate semantics live in this module. Empty for every other arm. -/
+  cells : List (Option DField)
   deriving Repr
 
 /-- The admission verdict, mirroring `Result<(), ProgramError>`:
@@ -236,19 +396,27 @@ which the deployed evaluator also raises as `ConstraintViolated`);
 `needsOld idx` = `TransitionCheckRequiresOldState { index }`;
 `badIndex idx` = `InvalidFieldIndex { index }` (the `check_index` failure);
 `missingContext code` = `MissingContextField { field }` with
-`0 = "block_height"`, `1 = "sender"`, `2 = "delegation_epoch"`. -/
+`0 = "block_height"`, `1 = "sender"`, `2 = "delegation_epoch"`,
+`3 = "sender_epoch_count"`;
+`capUniqRequiresExecutor` = `CapabilityUniquenessRequiresExecutor { .. }` and
+`boundDeltaNotWired` = `BoundDeltaNotWired { .. }` — the two EXECUTOR-ONLY
+sentinels. Their payloads (`cap_set_root_slot`, `peer_cell`) are re-attached by the
+Rust decoder FROM THE CONSTRAINT, so no `CellId` needs a wire encoding. -/
 inductive DAdmit where
   | ok
   | violated
   | needsOld (index : Nat)
   | badIndex (index : Nat)
   | missingContext (code : Nat)
+  | capUniqRequiresExecutor
+  | boundDeltaNotWired
   deriving Repr, DecidableEq
 
 /-- Context-field codes (the `&'static str` the Rust decoder re-attaches). -/
 def ctxHeight : Nat := 0
 def ctxSender : Nat := 1
 def ctxEpoch : Nat := 2
+def ctxEpochCount : Nat := 3
 
 /-- Read register `idx`, mirroring `eval.rs::check_index` (`idx >= STATE_SLOTS`
 ⇒ `InvalidFieldIndex`). The 16-length invariant on `regs` holds by the wire
@@ -403,6 +571,16 @@ def prefixGo : List Nat → List Nat → List DField → DAdmit
       if seg ≥ stateSlots then .badIndex seg
       else if low64 (regs.getD seg 0) ≠ want then .violated
       else prefixGo wrest srest regs
+
+/-- `FieldsCountEquals`'s census loop over the RESOLVED key run (`eval.rs:1990`):
+an ABSENT key is `none` — the fail-closed refusal, never a "0 matches" admit.
+`checked_add` cannot overflow inside the marshaller's list envelope. -/
+def fieldsCountGo : List (Option DField) → DField → Nat → Option Nat
+  | [], _, acc => some acc
+  | c :: rest, v, acc =>
+      match c with
+      | none => none
+      | some x => fieldsCountGo rest v (if x = v then acc + 1 else acc)
 
 /-- The GENESIS ESCAPE shared by the register transition arms: with `old` absent
 and `newNonce = 0` the field may initialize (`ok`); with `old` absent and
@@ -715,6 +893,51 @@ def admits (c : DConstraint) (i : DInput) : DAdmit :=
       if idx ≥ stateSlots then .badIndex idx
       else if ¬ i.ctx.epochPresent then .missingContext ctxEpoch
       else if i.newRegs.getD idx 0 ≠ i.ctx.epoch then .violated else .ok
+  -- ── (b) context: the executor's rate counters ──────────────────────────────
+  -- `eval.rs:817` — an ABSENT context is `MissingContextField "sender_epoch_count"`
+  -- (fail-closed: there is NO submitter-controlled path to the count).
+  | .rateLimit maxPerEpoch =>
+      if ¬ i.ctx.present then .missingContext ctxEpochCount
+      else if i.ctx.epochCount ≥ maxPerEpoch then .violated else .ok
+  -- `eval.rs:848` — index check, then `saturating_sub` delta on the u64 lane and a
+  -- `saturating_add` onto the prior window sum. An absent context reads prior = 0
+  -- (NO refusal here; the deployed arm does not raise).
+  | .rateLimitBySum idx maxSum =>
+      if idx ≥ stateSlots then .badIndex idx
+      else
+        let newV := low64 (i.newRegs.getD idx 0)
+        let oldV := if i.oldPresent then low64 (i.oldRegs.getD idx 0) else 0
+        let delta := newV - oldV                      -- `Nat` sub IS saturating_sub
+        let prior := if i.ctx.present then i.ctx.epochCount else 0
+        if satAdd64 prior delta > maxSum then .violated else .ok
+  -- ── (a) the resolved CELL RUN: the aggregate arms ──────────────────────────
+  -- `eval.rs:1990` — `check_index` FIRST, then the census over the resolved keys;
+  -- an ABSENT key refuses (fail-closed, never a "0 matches" admit).
+  | .fieldsCountEquals n value countIdx =>
+      if countIdx ≥ stateSlots then .badIndex countIdx
+      else if i.cells.length < n then .violated   -- short wire ⇒ fail CLOSED
+      else
+        match fieldsCountGo (i.cells.take n) value 0 with
+        | none => .violated                        -- an ABSENT key refuses
+        | some cnt => if i.newRegs.getD countIdx 0 = cnt then .ok else .violated
+  -- `eval.rs:2169` / `eval.rs:2212` — ONE semantics for BOTH aggregate arms: they
+  -- differ only in WHERE the marshaller resolves the keys (the `(collection_id,
+  -- key)` heap vs the `fields_map` tail), which is Rust's key-resolution job, not
+  -- a semantic difference. An absent/ill-formed collection REFUSES.
+  | .collAggregate stride fuel pred =>
+      match readCollection i.cells stride fuel pred.anchorOffset with
+      | none => .violated
+      | some coll => if pred.eval coll then .ok else .violated
+  -- ── (a) the executor-only SENTINELS ────────────────────────────────────────
+  -- `eval.rs:791` — bounds-check the declared root slot, then ALWAYS refuse: the
+  -- scalar evaluator cannot see the cell's real `CapabilitySet`, so the only sound
+  -- answer off the executor path is a refusal. (The historic silent `Ok(())` let a
+  -- cell DECLARE NFT-uniqueness while enforcing nothing.)
+  | .capabilityUniqueness slot =>
+      if slot ≥ stateSlots then .badIndex slot else .capUniqRequiresExecutor
+  -- `eval.rs:1370` — cross-cell binding is the executor's γ.2 match loop; the
+  -- per-cell evaluator surfaces the sentinel unconditionally.
+  | .boundDelta => .boundDeltaNotWired
 
 /-- One `AnyOf`/`AllOf` branch — `eval.rs::evaluate_simple_constraint`'s Heyting
 `Not` under the peeled parity:
@@ -764,8 +987,8 @@ def admitsTop (t : DTop) (i : DInput) : DAdmit :=
 /-! ## The `@[export]` wire codec (Rust → Lean)
 
 Single-line, space-separated token stream; a malformed wire fails CLOSED
-(`"1"` = refuse). Token order (16 header tokens, then 32 register tokens, then
-the constraint):
+(`"1"` = refuse). Token order (17 header tokens, 32 register tokens, the resolved
+cell run, then the constraint):
 
 ```
 oldPresent(0|1)  newNonce(dec)
@@ -776,15 +999,18 @@ oldBalance(signed dec) newBalance(signed dec)
 ctxPresent(0|1) blockHeight(dec)
 senderPresent(0|1) sender(hex)
 epochPresent(0|1) delegationEpoch(dec)
+senderEpochCount(dec)
 R0..R15(hex, 16 tokens)              -- oldRegs
 N0..N15(hex, 16 tokens)              -- newRegs
+CELLS: <n>(dec) then n × (present(0|1) value(hex))   -- the RESOLVED heap run
 CONSTRAINT: <TAG> <args…>
 ```
 
 Field values are hex (the 32-byte `FieldElement`, big-endian); indices / nonce /
 counts / u64 args are decimal; deltas / coefficients / balances are signed
 decimal. Output: `"0"` ok · `"1"` violated · `"2 <idx>"` needsOld ·
-`"3 <idx>"` badIndex · `"4 <code>"` missingContext. -/
+`"3 <idx>"` badIndex · `"4 <code>"` missingContext · `"5"`
+capUniqRequiresExecutor · `"6"` boundDeltaNotWired. -/
 
 /-- One hex digit → `Nat`. -/
 @[inline] def hexDigit? (c : Char) : Option Nat :=
@@ -891,6 +1117,42 @@ def parseHeapAtom : List String → Option (DHeapAtom × List String)
   | "HSMON" :: r => some (.strictMonotonic, r)
   | "HDB" :: d :: r => (parseNat d).map (fun x => (.deltaBounded x, r))
   | "HDE" :: d :: r => (parseInt d).map (fun x => (.deltaEquals x, r))
+  | _ => none
+
+/-- Parse an `ElemPredAtom`, RETURNING the unconsumed tail. -/
+def parseElemPred : List String → Option (DElemPred × List String)
+  | "EEQ" :: o :: v :: r => do
+      let a ← parseNat o; let b ← parseHex v; some (.fieldEquals a b, r)
+  | "EGE" :: o :: v :: r => do
+      let a ← parseNat o; let b ← parseHex v; some (.fieldGte a b, r)
+  | "ELE" :: o :: v :: r => do
+      let a ← parseNat o; let b ← parseHex v; some (.fieldLte a b, r)
+  | "EIN" :: o :: n :: r => do
+      let a ← parseNat o; let k ← parseNat n
+      let (vs, tl) ← popNats k r
+      some (.fieldInSet a vs, tl)
+  | _ => none
+
+/-- Parse a `CollPred`, RETURNING the unconsumed tail. -/
+def parseCollPred : List String → Option (DCollPred × List String)
+  | "PCNT" :: m :: r => do
+      let a ← parseNat m
+      let (p, tl) ← parseElemPred r
+      some (.countSatGe a p, tl)
+  | "PSLE" :: o :: b :: r => do
+      let a ← parseNat o; let bb ← parseInt b; some (.sumOfLe a bb, r)
+  | "PSGE" :: o :: b :: r => do
+      let a ← parseNat o; let bb ← parseInt b; some (.sumOfGe a bb, r)
+  | "PALL" :: r => do
+      let (p, tl) ← parseElemPred r
+      some (.allMembers p, tl)
+  | "PEX" :: r => do
+      let (p, tl) ← parseElemPred r
+      some (.existsMember p, tl)
+  | "PMN" :: m :: k :: r => do
+      let a ← parseNat m; let kk ← parseNat k
+      let (p, tl) ← parseElemPred r
+      some (.mOfNDistinct a kk p, tl)
   | _ => none
 
 /-- Parse a BASE constraint, RETURNING the unconsumed tail. Consuming (not
@@ -1032,6 +1294,21 @@ def parseConstraint : List String → Option (DConstraint × List String)
       let (ms, tl) ← popHexes k r
       some (.senderMemberOf ms, tl)
   | "DEE" :: i :: r => (parseNat i).map (fun a => (.delegationEpochEquals a, r))
+  -- ── (b) context: the executor rate counters ──
+  | "RL" :: m :: r => (parseNat m).map (fun a => (.rateLimit a, r))
+  | "RLS" :: i :: m :: r => do
+      let a ← parseNat i; let b ← parseNat m; some (.rateLimitBySum a b, r)
+  -- ── (a) the resolved CELL RUN ──
+  | "FCE" :: n :: v :: c :: r => do
+      let k ← parseNat n; let vv ← parseHex v; let ci ← parseNat c
+      some (.fieldsCountEquals k vv ci, r)
+  | "CAGG" :: s :: f :: r => do
+      let st ← parseNat s; let fu ← parseNat f
+      let (p, tl) ← parseCollPred r
+      some (.collAggregate st fu p, tl)
+  -- ── (a) the executor-only sentinels ──
+  | "CAPU" :: s :: r => (parseNat s).map (fun a => (.capabilityUniqueness a, r))
+  | "BDW" :: r => some (.boundDelta, r)
   -- ── heap atoms (the `HeapField` lift) ──
   | toks => (parseHeapAtom toks).map (fun p => (.heapField p.1, p.2))
 
@@ -1065,31 +1342,43 @@ def parseHexRun (n : Nat) (toks : List String) : Option (List DField × List Str
   popHexes n toks
 
 /-- The number of HEADER tokens preceding the two 16-register runs. -/
-def headerTokens : Nat := 16
+def headerTokens : Nat := 17
 
-/-- Parse the 16 header tokens into a `DInput` skeleton (the register runs are
-filled by [`parse`]). Fails closed on any malformed token. -/
+/-- Parse the RESOLVED cell run: `<n>` then `n` × `present(0|1) value(hex)`. -/
+def parseCells : Nat → List String → Option (List (Option DField) × List String)
+  | 0, toks => some ([], toks)
+  | k + 1, p :: v :: rest => do
+      let cell ← if p == "1" then (parseHex v).map some
+                 else if p == "0" then some none
+                 else none
+      let (cs, tl) ← parseCells k rest
+      some (cell :: cs, tl)
+  | _ + 1, _ => none
+
+/-- Parse the 17 header tokens into a `DInput` skeleton (the register runs and the
+cell run are filled by [`parse`]). Fails closed on any malformed token. -/
 def parseHeader (hdr : List String) : Option DInput :=
   match hdr with
-  | [op, nn, hop, hov, hnp, hnv, hxp, hxv, obal, nbal, cxp, hgt, sndp, sndv, epp, epv] =>
+  | [op, nn, hop, hov, hnp, hnv, hxp, hxv, obal, nbal, cxp, hgt, sndp, sndv, epp, epv, cnt] =>
       match parseNat nn, parseInt obal, parseInt nbal, parseNat hgt, parseHex sndv,
-            parseNat epv with
+            parseNat epv, parseNat cnt with
       | some newNonce, some oldBalance, some newBalance, some height, some sender,
-        some epoch =>
+        some epoch, some epochCount =>
           match (if hop == "1" then (parseHex hov).map some else some none),
                 (if hnp == "1" then (parseHex hnv).map some else some none),
                 (if hxp == "1" then (parseHex hxv).map some else some none) with
           | some heapOld, some heapNew, some heapOther =>
               some { oldPresent := op == "1"
                    , newNonce := newNonce
-                   , oldRegs := [], newRegs := []
+                   , oldRegs := [], newRegs := [], cells := []
                    , heapOld := heapOld, heapNew := heapNew, heapOther := heapOther
                    , oldBalance := oldBalance, newBalance := newBalance
                    , ctx := { present := cxp == "1", height := height
                             , senderPresent := sndp == "1", sender := sender
-                            , epochPresent := epp == "1", epoch := epoch } }
+                            , epochPresent := epp == "1", epoch := epoch
+                            , epochCount := epochCount } }
           | _, _, _ => none
-      | _, _, _, _, _, _ => none
+      | _, _, _, _, _, _, _ => none
   | _ => none
 
 /-- Parse the whole wire into `(constraint, input)`. Fails closed. -/
@@ -1109,9 +1398,21 @@ def parse (s : String) : Option (DTop × DInput) :=
               | some (newRegs, rest2) =>
                   if oldRegs.length ≠ stateSlots ∨ newRegs.length ≠ stateSlots then none
                   else
-                    match parseTop rest2 with
-                    | none => none
-                    | some c => some (c, { skel with oldRegs := oldRegs, newRegs := newRegs })
+                    match rest2 with
+                    | [] => none
+                    | ncell :: rest3 =>
+                        match parseNat ncell with
+                        | none => none
+                        | some k =>
+                            match parseCells k rest3 with
+                            | none => none
+                            | some (cells, rest4) =>
+                                match parseTop rest4 with
+                                | none => none
+                                | some c =>
+                                    some (c, { skel with oldRegs := oldRegs
+                                                       , newRegs := newRegs
+                                                       , cells := cells })
 
 /-- Render a verdict to the wire code. -/
 def render : DAdmit → String
@@ -1120,6 +1421,8 @@ def render : DAdmit → String
   | .needsOld idx => "2 " ++ toString idx
   | .badIndex idx => "3 " ++ toString idx
   | .missingContext code => "4 " ++ toString code
+  | .capUniqRequiresExecutor => "5"
+  | .boundDeltaNotWired => "6"
 
 /-- The whole String → String decision. A malformed wire refuses (`"1"`). -/
 def admitsWire (s : String) : String :=
@@ -1140,16 +1443,24 @@ including the two reconciled divergence boundaries and the newly-widened arms.
 -- 16 registers all zero except where noted; helper wire builders.
 private def zeros16 : String := String.intercalate " " (List.replicate 16 "0")
 
-/-- 16 header tokens: old present, nonce 0, no heap, zero balances, no context. -/
-private def hdrPlain : String := "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+/-- 17 header tokens: old present, nonce 0, no heap, zero balances, no context,
+zero epoch count. -/
+private def hdrPlain : String := "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
 
-/-- Build a wire with an all-zero old/new state (nonce 0, no heap) + a constraint. -/
+/-- Build a wire with an all-zero old/new state (nonce 0, no heap, EMPTY cell run)
++ a constraint. -/
 private def wire0 (c : String) : String :=
-  hdrPlain ++ " " ++ zeros16 ++ " " ++ zeros16 ++ " " ++ c
+  hdrPlain ++ " " ++ zeros16 ++ " " ++ zeros16 ++ " 0 " ++ c
 
-/-- Build a wire with explicit header, old regs, new regs and constraint. -/
+/-- Build a wire with explicit header, old regs, new regs and constraint (empty
+cell run). -/
 private def wireH (hdr : String) (oldR newR : String) (c : String) : String :=
-  hdr ++ " " ++ oldR ++ " " ++ newR ++ " " ++ c
+  hdr ++ " " ++ oldR ++ " " ++ newR ++ " 0 " ++ c
+
+/-- Build a wire carrying an explicit RESOLVED CELL RUN (`cells` = the already
+`<n> (p v)*n` token run). -/
+private def wireC (hdr : String) (oldR newR cells : String) (c : String) : String :=
+  hdr ++ " " ++ oldR ++ " " ++ newR ++ " " ++ cells ++ " " ++ c
 
 /-- 16 register tokens with `v` (hex) at slot `i`, zeros elsewhere. -/
 private def regsAt (i : Nat) (v : String) : String :=
@@ -1172,13 +1483,13 @@ private def bigHex : String :=
 #guard admitsWire (wireH hdrPlain zeros16 (regsAt 0 bigHex) "FG 0 1") = "0"
 
 -- ⚑ DIVERGENCE (a), heap immutable: absent old ⇒ first write is FREE (ok).
-#guard admitsWire (wireH "0 0 0 0 1 7 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "0"
-#guard admitsWire (wireH "1 0 1 7 1 9 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "1"
-#guard admitsWire (wireH "1 0 1 7 1 7 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "0"
+#guard admitsWire (wireH "0 0 0 0 1 7 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "0"
+#guard admitsWire (wireH "1 0 1 7 1 9 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "1"
+#guard admitsWire (wireH "1 0 1 7 1 7 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HIM") = "0"
 
 -- Immutable register with old absent + nonce != 0 ⇒ needsOld; nonce == 0 ⇒ ok.
-#guard admitsWire (wireH "0 5 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "IM 0") = "2 0"
-#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "IM 0") = "0"
+#guard admitsWire (wireH "0 5 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "IM 0") = "2 0"
+#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "IM 0") = "0"
 
 -- SumEquals over regs [0,1] = 0 with value 0 ⇒ ok.
 #guard admitsWire (wire0 "SE 0 2 0 1") = "0"
@@ -1206,7 +1517,7 @@ private def bigHex : String :=
 #guard admitsWire (wireH hdrPlain (regsAt 0 "1") (regsAt2 0 "3" 1 "2") "SEA 1 0 1 1") = "0"
 #guard admitsWire (wireH hdrPlain (regsAt 0 "1") (regsAt2 0 "4" 1 "2") "SEA 1 0 1 1") = "1"
 -- SumEqualsAcross with old absent + nonce != 0 ⇒ needsOld 0 (index 0, not the slot).
-#guard admitsWire (wireH "0 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "SEA 1 0 1 1") = "2 0"
+#guard admitsWire (wireH "0 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "SEA 1 0 1 1") = "2 0"
 
 -- MonotonicSequence: old 4 → new 5 ok; 4 → 7 violated.
 #guard admitsWire (wireH hdrPlain (regsAt 0 "4") (regsAt 0 "5") "MSEQ 0") = "0"
@@ -1246,7 +1557,7 @@ private def bigHex : String :=
 #guard admitsWire (wireH hdrPlain (regsAt 0 "2") (regsAt 0 "5") "ADLE 1 1 0 3") = "0"
 #guard admitsWire (wireH hdrPlain (regsAt 0 "2") (regsAt 0 "5") "ADLE 1 1 0 2") = "1"
 -- AffineDeltaLe with old absent ⇒ needsOld 0 (NO nonce escape).
-#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "ADLE 1 1 0 3") = "2 0"
+#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "ADLE 1 1 0 3") = "2 0"
 
 -- Reachable: edges 1→2, 2→3; label in slot 0 is 1, target 3 ⇒ reachable.
 #guard admitsWire (wireH hdrPlain zeros16 (regsAt 0 "1") "RCH 0 3 2 1 2 2 3") = "0"
@@ -1259,7 +1570,7 @@ private def bigHex : String :=
 -- Half-open settle (leg B left Deposited) ⇒ violated.
 #guard admitsWire (wireH hdrPlain (regsAt2 0 "1" 1 "1") (regsAt2 0 "2" 1 "1") "SETL 0 1") = "1"
 -- Old absent ⇒ needsOld leg_a (NO nonce escape).
-#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "SETL 0 1") = "2 0"
+#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "SETL 0 1") = "2 0"
 
 -- VaultDeposit: assets 100→110 (d=10), shares 100→10 minted; no dilution
 -- (before_assets·m = 100·10 = 1000 ≤ before_shares·d = 100·10 = 1000) ⇒ ok.
@@ -1280,7 +1591,7 @@ private def bigHex : String :=
 -- ── (a) balance (SIGNED) ─────────────────────────────────────────────────────
 -- newBalance = 10 (header slot 10) ⇒ BGE 5 ok, BGE 20 violated.
 private def hdrBal (oldB newB : String) : String :=
-  "1 0 0 0 0 0 0 0 " ++ oldB ++ " " ++ newB ++ " 0 0 0 0 0 0"
+  "1 0 0 0 0 0 0 0 " ++ oldB ++ " " ++ newB ++ " 0 0 0 0 0 0 0"
 #guard admitsWire (wireH (hdrBal "0" "10") zeros16 zeros16 "BGE 5") = "0"
 #guard admitsWire (wireH (hdrBal "0" "10") zeros16 zeros16 "BGE 20") = "1"
 -- A NEGATIVE balance is below every u64 floor and under every u64 ceiling.
@@ -1295,21 +1606,21 @@ private def hdrBal (oldB newB : String) : String :=
 
 -- ── (a) heap: the CROSS-KEY relation ─────────────────────────────────────────
 -- heapNew (key) = 3, heapOther = 5, delta 0 ⇒ 3 <= 5 ok.
-#guard admitsWire (wireH "1 0 0 0 1 3 1 5 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "0"
-#guard admitsWire (wireH "1 0 0 0 1 7 1 5 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "1"
+#guard admitsWire (wireH "1 0 0 0 1 3 1 5 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "0"
+#guard admitsWire (wireH "1 0 0 0 1 7 1 5 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "1"
 -- FAIL CLOSED: an absent `other_key` refuses even when the bound would hold.
-#guard admitsWire (wireH "1 0 0 0 1 3 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "1"
+#guard admitsWire (wireH "1 0 0 0 1 3 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HLO 0") = "1"
 
 -- ── (b) context ──────────────────────────────────────────────────────────────
 /-- Header with a context at `h`, no sender, no epoch. -/
 private def hdrH (h : String) : String :=
-  "1 0 0 0 0 0 0 0 0 0 1 " ++ h ++ " 0 0 0 0"
+  "1 0 0 0 0 0 0 0 0 0 1 " ++ h ++ " 0 0 0 0 0"
 /-- Header with a context and a sender. -/
 private def hdrHS (h sender : String) : String :=
-  "1 0 0 0 0 0 0 0 0 0 1 " ++ h ++ " 1 " ++ sender ++ " 0 0"
+  "1 0 0 0 0 0 0 0 0 0 1 " ++ h ++ " 1 " ++ sender ++ " 0 0 0"
 /-- Header with a delegation epoch stamped (no `EvalContext`). -/
 private def hdrEp (e : String) : String :=
-  "1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 " ++ e
+  "1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 " ++ e ++ " 0"
 
 -- FieldGteHeight: height 100, offset 0 ⇒ new[0] must be >= 100.
 #guard admitsWire (wireH (hdrH "100") zeros16 (regsAt 0 "64") "FGH 0 0") = "0"
@@ -1370,6 +1681,95 @@ private def hdrEp (e : String) : String :=
 #guard admitsWire (wireH (hdrEp "7") zeros16 (regsAt 0 "8") "DEE 0") = "1"
 -- ⚑ FAIL-CLOSED: no stamped epoch ⇒ MissingContextField(delegation_epoch).
 #guard admitsWire (wire0 "DEE 0") = "4 2"
+
+-- ── (b) context: the EXECUTOR RATE COUNTERS ──────────────────────────────────
+/-- Header with a context present and `sender_epoch_count` = `n`. -/
+private def hdrRL (n : String) : String :=
+  "1 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 " ++ n
+
+-- RateLimit: 2 mutations this epoch under a cap of 3 admits; 3 refuses (`>=`).
+#guard admitsWire (wireH (hdrRL "2") zeros16 zeros16 "RL 3") = "0"
+#guard admitsWire (wireH (hdrRL "3") zeros16 zeros16 "RL 3") = "1"
+-- ⚑ FAIL-CLOSED: NO context ⇒ MissingContextField(sender_epoch_count). The count is
+-- executor-held; there is no submitter-controlled path to it.
+#guard admitsWire (wire0 "RL 3") = "4 3"
+
+-- RateLimitBySum: slot 0 rises 2 → 5 (delta 3) on a prior window sum of 0 ⇒ 3 <= 10.
+#guard admitsWire (wireH (hdrRL "0") (regsAt 0 "2") (regsAt 0 "5") "RLS 0 10") = "0"
+-- Prior window sum 8 + delta 3 = 11 > 10 ⇒ violated.
+#guard admitsWire (wireH (hdrRL "8") (regsAt 0 "2") (regsAt 0 "5") "RLS 0 10") = "1"
+-- A DECREASE saturates to delta 0 (never a negative credit).
+#guard admitsWire (wireH (hdrRL "10") (regsAt 0 "5") (regsAt 0 "2") "RLS 0 10") = "0"
+-- An absent context reads prior = 0 (this arm does NOT raise MissingContextField).
+#guard admitsWire (wireH hdrPlain (regsAt 0 "2") (regsAt 0 "5") "RLS 0 10") = "0"
+#guard admitsWire (wire0 "RLS 16 10") = "3 16"
+
+-- ── (a) the RESOLVED CELL RUN: FieldsCountEquals ─────────────────────────────
+-- Three keys resolving to (5, 7, 5); the census of `value = 5` is 2, which slot 0
+-- must equal.
+private def cells3 : String := "3 1 5 1 7 1 5"
+#guard admitsWire (wireC hdrPlain zeros16 (regsAt 0 "2") cells3 "FCE 3 5 0") = "0"
+#guard admitsWire (wireC hdrPlain zeros16 (regsAt 0 "3") cells3 "FCE 3 5 0") = "1"
+-- ⚑ FAIL-CLOSED: an ABSENT key refuses — it is never counted as a non-match.
+#guard admitsWire (wireC hdrPlain zeros16 (regsAt 0 "2") "3 1 5 0 0 1 5" "FCE 3 5 0") = "1"
+-- A SHORT cell run refuses (never a truncated census that happens to match).
+#guard admitsWire (wireC hdrPlain zeros16 zeros16 "1 1 5" "FCE 3 5 0") = "1"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16 cells3 "FCE 3 5 16") = "3 16"
+
+-- ── (a) the RESOLVED CELL RUN: the collection aggregates ─────────────────────
+-- stride 2, fuel 3, `countSatGe 2 (elem[1] == 1)`; the ANCHOR is offset 1, so the
+-- run truncates at the first element whose cell[i*2+1] is absent.
+-- elems: (aa,1) (bb,1) (absent) ⇒ 2 approving elements ⇒ admit.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 aa 1 1 1 bb 1 1 0 0 0 0" "CAGG 2 3 PCNT 2 EEQ 1 1") = "0"
+-- Second element's flag flipped to 2 ⇒ only 1 approving ⇒ violated.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 aa 1 1 1 bb 1 2 0 0 0 0" "CAGG 2 3 PCNT 2 EEQ 1 1") = "1"
+-- ⚑ FAIL-CLOSED: element 0's anchor absent ⇒ NO collection ⇒ refuse (never a
+-- vacuous ∀/`count ≥ 0` admit over an empty read).
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 aa 0 0 1 bb 1 1 1 cc 1 1" "CAGG 2 3 PALL EEQ 1 1") = "1"
+-- A zero stride is an ill-formed shape ⇒ refuse.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "2 1 1 1 1" "CAGG 0 3 PALL EEQ 0 1") = "1"
+-- ∀ / ∃ over the truncated prefix.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "4 1 1 1 1 0 0 0 0" "CAGG 1 4 PALL EEQ 0 1") = "0"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "4 1 1 1 2 0 0 0 0" "CAGG 1 4 PALL EEQ 0 1") = "1"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "4 1 1 1 2 0 0 0 0" "CAGG 1 4 PEX EEQ 0 2") = "0"
+-- Σ over the low lane: 3 + 4 + 5 = 12.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "3 1 3 1 4 1 5" "CAGG 1 3 PSLE 0 12") = "0"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "3 1 3 1 4 1 5" "CAGG 1 3 PSLE 0 11") = "1"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "3 1 3 1 4 1 5" "CAGG 1 3 PSGE 0 12") = "0"
+-- ⚑ THE COUNCIL TOOTH (`mOfNDistinct`): key offset 0, approved = elem[1] == 1,
+-- m = 2. Two DISTINCT approving keys (7, 9) ⇒ admit.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 7 1 1 1 9 1 1 1 b 1 1" "CAGG 2 3 PMN 2 0 EEQ 1 1") = "0"
+-- ⚑ THE DUPLICATE-PADDED FORGE: three approving elements, ALL key 7 — the
+-- duplicates collapse to ONE distinct key ⇒ REFUSE. (A plain count would admit.)
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 7 1 1 1 7 1 1 1 7 1 1" "CAGG 2 3 PMN 2 0 EEQ 1 1") = "1"
+-- The UNBOUND forge: a distinct key that does NOT approve is filtered out.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "6 1 7 1 1 1 9 1 0 1 b 1 0" "CAGG 2 3 PMN 2 0 EEQ 1 1") = "1"
+-- `fieldInSet` reads the u64 LOW LANE of an element field.
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "2 1 5 1 9" "CAGG 1 2 PALL EIN 0 2 5 9") = "0"
+#guard admitsWire (wireC hdrPlain zeros16 zeros16
+    "2 1 5 1 8" "CAGG 1 2 PALL EIN 0 2 5 9") = "1"
+
+-- ── (a) the EXECUTOR-ONLY SENTINELS ──────────────────────────────────────────
+-- CapabilityUniqueness: bounds-check the declared root slot, then ALWAYS refuse
+-- (the scalar evaluator cannot see the cell's real CapabilitySet).
+#guard admitsWire (wire0 "CAPU 0") = "5"
+#guard admitsWire (wire0 "CAPU 16") = "3 16"
+-- BoundDelta: the cross-cell sentinel, unconditional.
+#guard admitsWire (wire0 "BDW") = "6"
 
 -- ── the AnyOf / AllOf combinators ────────────────────────────────────────────
 -- AnyOf(FieldEquals(0,5), FieldEquals(0,7)) against new[0] = 7 ⇒ ok.
