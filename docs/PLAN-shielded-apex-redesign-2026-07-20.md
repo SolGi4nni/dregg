@@ -138,6 +138,28 @@ commitments-root. Concretely:
 
 Net: #15 moves from "trusted wire felt" to "in-AIR equality against the committed turn root."
 
+**Lean falsifier + pin-soundness landed (2026-07-22).** The invariant this section must establish is now
+machine-checked, ahead of the deployed pin: `metatheory/Dregg2/Circuit/ShieldedMerkleRootPin.lean`
+(`Dregg2.Circuit.ShieldedMerkleRootPin`, imported in `Dregg2.lean`). It models the membership fold
+faithfully (`parent = hash_fact(current,[sib0,sib1,sib2,pos])`, hash ABSTRACT so the theorems hold for
+the real Poseidon2) and proves, over ALL inputs:
+- **FALSIFIER** `root_substitution_forges` / `deployed_admits_but_pin_rejects` — the deployed accept
+  (`accepts`, membership vs the supplied root with NO committed-root conjunct;
+  `accepts_independent_of_committedRoot` shows the committed root is passed-and-ignored) admits an
+  attacker-tree forgery: a `¬ IsCommitted` leaf whose `suppliedRoot ≠ committedRoot`. Theft, non-vacuous.
+- **LAUNDER exposed** `mutation_breaks_membership` vs `mutation_test_is_not_the_pin` — the Rust
+  `forged_membership_root_rejects` test (`apply.rs:5174`, `merkle_root += 1` without reproof) rejects
+  mutation but NOT an attacker who proves against a chosen root; it is not the pin.
+- **FIX SOUND** `pinned_membership_against_committed` (pure: pin ⟹ the accepted leaf is in the committed
+  tree — the `member commitment committedRoot` that `ShieldedTransferStark.StarkResidual` leaves as the
+  UNPINNED `pi.merkleRoot`, absent from its §5 floor list) + `pinned_accept_is_committed` (under the
+  abstract `AccumulatorSound` hypothesis, ⟹ a genuinely committed note) + `pin_rejects_root_substitution`
+  / `pin_closes_the_falsifier`.
+`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}; the two pin-soundness theorems depend
+on NO axioms). Byte-safe: the module touches no deployed code — the in-AIR `connect` above and the
+wire-field retirement are still the gated deploy. Residual (this section's build work + #16 value-link
+fold + #17 PQ-commitment + the full `spend_circuit` AIR port) is unchanged.
+
 ---
 
 ## 3. Value-link fold — closing #16
