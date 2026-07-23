@@ -216,6 +216,75 @@ fn membership_leaf_is_welded_to_the_cell_prefix() {
     );
 }
 
+/// ⚑ THE NON-IGNORED LEG-MINT CANARY (the E1-compaction ↔ wide-producer coherence gate).
+///
+/// The E1 dead-column cutover (`bd21266e6b`) shipped an E1 kill-set that reached PAST the wide
+/// custom producer's post-S2 row — into the prove-time gentian refuse-aux block the producer does
+/// NOT emit — so `mint_custom_leg`'s wide `Custom` leg PANICKED in the shared trace generator:
+/// `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band end 1675`. It landed
+/// INVISIBLY because every leg-minting test was `#[ignore]`d (the lib was 39/39 green, but nothing
+/// FAST drove leg minting). This canary closes that gap: it drives the EXACT broken path — the wide
+/// dispatch's widen → S2-compact → **E1-compact** → descriptor-tail pairing — in milliseconds (no
+/// STARK; the full leaf-wrap recursive prove is ~50s), and asserts the producer trace, after the
+/// prove-time gentian fill, is COHERENT with the committed E1-compacted descriptor. Any future
+/// E1/producer-width disagreement (a stale `e1_compact_generated.rs` vs the wide generator, a
+/// regressed emit ceiling) fails HERE, on every `cargo test`, not a day later in an `#[ignore]`d fold.
+#[test]
+fn mint_custom_leg_wide_geometry_is_coherent_fast() {
+    use dregg_circuit::effect_vm::bare_floor_refuse_weld::fill_refuse_aux;
+    use dregg_circuit::field::BabyBear;
+
+    let before = producer_cell(1000, 0);
+    let after = producer_cell(1000, 1);
+    let commit = [BabyBear::ZERO; 8];
+    let (desc, mut trace, dpis, _map_heaps, _mb) =
+        super::custom_leg_wide_desc_trace(&before, &after, commit).expect(
+            "the wide custom dispatch must NOT err/panic at compact_e1 — the bd21266e6b E1 cutover \
+             break (row width < E1 band end). If this fails, the E1 table disagrees with the wide \
+             custom producer's row width again.",
+        );
+
+    // The dispatch S2+E1-COMPACTED the custom member (the point of the cutover): the producer row is
+    // far narrower than the un-compacted wide custom width (host 1627 + 960 appendix + 48 gentian).
+    let producer_w = trace[0].len();
+    assert!(
+        (1400..1700).contains(&producer_w),
+        "the wide custom producer row must be S2+E1-compacted to the host band (got {producer_w})"
+    );
+    // The PI vector matches the committed descriptor exactly.
+    assert_eq!(
+        dpis.len(),
+        desc.public_input_count,
+        "custom leg PI count must match the committed descriptor"
+    );
+    // The published 8-felt commitment rides PI 46..54 (the leg's binding anchor).
+    assert_eq!(
+        &dpis[46..54],
+        &commit[..],
+        "the leg publishes the commitment at PI 46..53"
+    );
+
+    // THE COHERENCE THE PANIC BROKE: the prove-time gentian refuse fill grows the producer row to
+    // EXACTLY the committed descriptor width. desc.trace_width - producer_w is the gentian block the
+    // Rust prover fills AFTER compaction; if the E1 kill-set had (again) eaten into that block, either
+    // the producer row would be too short (Err above) or this delta would be wrong.
+    assert!(
+        desc.trace_width >= producer_w,
+        "descriptor width {} must be >= the producer row {producer_w} (the gentian fills the delta)",
+        desc.trace_width
+    );
+    for row in &mut trace {
+        row.resize(desc.trace_width, BabyBear::ZERO);
+        fill_refuse_aux(&desc, row);
+    }
+    assert!(
+        trace.iter().all(|r| r.len() == desc.trace_width),
+        "after the prove-time gentian fill EVERY wide custom row must equal the descriptor width \
+         {} (a ragged row is a STARK reject)",
+        desc.trace_width
+    );
+}
+
 // ---------------------------------------------------------------------------
 // SLOW (#[ignore]): the whole private match folds to one verify_history-accepted proof.
 // ---------------------------------------------------------------------------

@@ -48,9 +48,10 @@
 //! builds its leaves on the RUST-AIR path (`descriptor_state_leaf: None`), which declares no
 //! window at all, so this seam never reaches it and its verdict is not about this work.
 //!
-//! ⚠ Several tests here are `#[ignore]`d as BLOCKED on an unrelated in-flight break in the wide
-//! `Custom` leg — see `WIDE_LEG_BLOCKED`. They are the ones that need a MINTED LEG (and therefore
-//! `board_window_of_chain`, the host mirror). Blocked, not faked.
+//! ⚠ Several tests here need a MINTED LEG (and therefore `board_window_of_chain`, the host mirror).
+//! They were `#[ignore]`d as BLOCKED on a wide-`Custom`-leg break (`compact_e1_columns` row-width
+//! panic); that E1-compaction break is now FIXED (see `WIDE_LEG_BLOCKED`), so the two-leg fold
+//! EXECUTES and they are re-marked SLOW — they mint wide Custom legs (~50s each), run `--ignored`.
 
 use dregg_automatafl::reference::{Board, Move, automaton_step, resolve_mid, stock_two_player};
 use dregg_circuit::field::BabyBear;
@@ -179,10 +180,13 @@ fn window_of(board: &Board) -> Vec<BabyBear> {
 /// So the canaries split in two. The ones below that need only the DESCRIPTORS and their PIs run
 /// today and gate the seam. The ones that need a minted leg are `#[ignore]`d with this reason —
 /// BLOCKED, not faked — and go green unchanged the moment the E1 table and the generator agree.
-const WIDE_LEG_BLOCKED: &str = "BLOCKED (not this seam): mint_custom_leg's wide Custom leg panics \
-     with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band end 1675` — the \
-     just-landed E1 compaction cutover disagrees with the wide generator's row width. Un-ignore \
-     when that is reconciled.";
+const WIDE_LEG_BLOCKED: &str = "FIXED: mint_custom_leg's wide Custom leg USED to panic with \
+     `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band end 1675` — the E1 \
+     compaction cutover (bd21266e6b) had emitted an E1 kill-set that reached into the prove-time \
+     gentian refuse-aux block, PAST the wide producer's post-S2 row (systemic: EVERY bare-cohort \
+     wide member, not just custom). Repaired by capping the emit's E1 scan at the host width \
+     (`EmitWideRegistryProbe.e1Ceiling`) + regenerating the wide registry/E1 table. The two-leg \
+     fold now EXECUTES; these tests are re-marked SLOW (they mint wide Custom legs, ~50s each).";
 
 /// Build one round's two leaf PI vectors DIRECTLY from the Lean descriptors, bypassing
 /// `round_leaves` (and therefore the broken wide leg). The door lanes `[0..16)` are left as the
@@ -391,9 +395,9 @@ fn a_forged_mid_breaks_the_seam_though_both_legs_are_individually_valid() {
 /// **TWO LEAVES PER ROUND, ON THE LEAN DESCRIPTORS.** A played round lowers to Leg R then Leg A —
 /// not one automaton leaf — and each declares its own IN/OUT window.
 #[test]
-#[ignore = "BLOCKED (not this seam): round_leaves fills the door via mint_custom_leg, whose wide \
-            Custom leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 \
-            band end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): round_leaves fills the door via mint_custom_leg — the two-leg fold now \
+            EXECUTES; the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is \
+            FIXED. Run with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
     let (a, b) = round_one();
     let m = AutomataflMatch::played(stock_two_player(), vec![(a, b)]);
@@ -438,9 +442,9 @@ fn a_played_round_lowers_to_a_resolve_leaf_then_a_step_leaf() {
 /// `R_0.OUT == A_0.IN` (the mid seam) and `A_0.OUT == R_1.IN` (the carry). Every one of these
 /// equalities becomes an in-circuit `connect`.
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
     let (a, b) = round_one();
     let start = stock_two_player();
@@ -495,9 +499,9 @@ fn the_windows_chain_leaf_to_leaf_across_the_mid_and_across_rounds() {
 /// pack — to the actual boards the match started from and reached. This is what lets a light
 /// client read the final position in the clear and check the win condition with no extra circuit.
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_root_window_is_the_genesis_and_final_board_in_the_clear() {
     let (a, b) = round_one();
     let start = stock_two_player();
@@ -610,9 +614,9 @@ fn hand_built_round(
 /// same window, no refusal. Without this the negative below would be unfalsifiable (a
 /// hand-construction that ALWAYS fails proves nothing).
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
     let (a, b) = round_one();
     let start = stock_two_player();
@@ -651,9 +655,9 @@ fn the_hand_built_honest_round_is_accepted_and_matches_the_generated_one() {
 /// This is the case `mismatched_mid_diverges_board_roots_but_not_cell_continuity_11x11` shows the
 /// deployed fold does NOT catch today.
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
     let (a, b) = round_one();
     let start = stock_two_player();
@@ -688,9 +692,9 @@ fn a_mismatched_mid_breaks_the_board_window_seam_and_is_refused() {
 /// packed board identical) is refused too. `hseamAutoX`/`hseamAutoY` are separate hypotheses of
 /// the whole-turn theorem for a reason.
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_forged_automaton_coordinate_alone_breaks_the_seam() {
     let (a, b) = round_one();
     let start = stock_two_player();
@@ -830,9 +834,9 @@ fn the_two_leg_claim_widths_are_the_ones_the_verifier_was_extended_to() {
 /// the mixed shape, and degrading to the plain combine would drop the seam exactly where a forger
 /// wants it dropped.
 #[test]
-#[ignore = "BLOCKED (not this seam): needs a MINTED LEG (mint_custom_leg), whose wide Custom \
-            leg panics with `compact_e1_columns: customVmDescriptor2R24 row width 1627 < E1 band \
-            end 1675` — see WIDE_LEG_BLOCKED"]
+#[ignore = "SLOW (~50s/leg): needs a MINTED LEG (mint_custom_leg) — the two-leg fold now EXECUTES; \
+            the E1-compaction block (bd21266e6b `compact_e1_columns` row-width panic) is FIXED. Run \
+            with `--ignored`. See WIDE_LEG_BLOCKED"]
 fn a_chain_mixing_windowed_and_plain_turns_is_refused() {
     let (a, b) = round_one();
     let start = stock_two_player();

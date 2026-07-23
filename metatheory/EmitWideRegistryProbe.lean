@@ -99,22 +99,45 @@ def intervalsStr (cols : List Nat) : String :=
 rebuilds the whole live-reference surface once PER COLUMN (~width× redundant, ~1 min/member). This
 binds `live` once and computes the DEFINITIONALLY-IDENTICAL list — the descriptor / companion line
 are byte-identical to the `deadColsE1`-based path, just fast. -/
-def deadColsE1Fast (cm : EffectVmDescriptor2) : List Nat :=
+def deadColsE1Fast (cm : EffectVmDescriptor2) (ceiling : Nat) : List Nat :=
   let live := Dregg2.Circuit.Emit.RotWideCompactE1.liveCols cm
-  (List.range cm.traceWidth).filter (fun c => decide (e1Floor ≤ c) && !live.contains c)
+  (List.range ceiling).filter (fun c => decide (e1Floor ≤ c) && !live.contains c)
+
+/-- The E1 kill-set CEILING for a wide member's S2-compacted `cm` at `key`: the pre-gentian column
+count, i.e. `cm.traceWidth` MINUS the gentian floor-refuse weld aux block (`3·REFUSE_STRIDE`) IFF the
+member is a bare-cohort route (the ones `weldWide` welds). The gentian aux columns ride the very TOP
+of `cm` (`gentianWideBareRefuse` bases them at the pre-weld `traceWidth`, so after S2 they sit at
+`[cm.traceWidth − 3·REFUSE_STRIDE, cm.traceWidth)`), and they are NOT emitted by the Rust wide
+producer — they are filled at PROVE time (`bare_floor_refuse_weld::fill_refuse_aux`, after the
+producer's `compact_s2`/`compact_e1`). So the E1 kill-set must NOT reach into them: the producer runs
+`compact_e1` on the PRE-gentian S2-compacted trace, so an E1 interval at index ≥ the producer width
+is unrealizable (the row is too short → the deployed producer panics). Excluding the block keeps the
+kill-set exactly the host-region dead v1-face / appendix bands `deadColsE1` is proven value-preserving
+over, and leaves the gentian weld a COMPLETE block (`refuse_weld_widen` recovers it, `fill_refuse_aux`
+fills it) — the E1-then-gentian composition the deployed `compact_e1`→`fill_refuse_aux` path realizes.
+Non-welded members (cap-open / write / supplyMint) carry no gentian, so the ceiling is the full width. -/
+def e1Ceiling (key : String) (cm : EffectVmDescriptor2) : Nat :=
+  if bareCohortKeys.contains key then
+    cm.traceWidth - 3 * Dregg2.Deos.BareCohortFloorRefuseDeployed.REFUSE_STRIDE
+  else cm.traceWidth
 
 /-- Compact-and-print one wide member (S2 deleted, then E1 deleted, both gated), plus its
 `s2compact` (bb, laneBase) geometry line and its `e1compact` kill-set line for the Rust producer
 tables. Fails the whole emit if `compactOk` (S2) refuses, or if the cheap `transitionCeilingOk`
 (the only member-specific E1 obligation — every `.transition` face column below 90) fails: by
 `RotWideCompactE1.compactE1Ok_of_ceiling` the derived kill-set then passes the full value-preservation
-gate, so `compactE1 cm (deadColsE1 cm 90)` is value-preserving (the `compactE1_expand` bridge holds).
-The transfer member emitted here is definitionally the proof object
-`RotatedKernelRefinementAvailWideCompactE1.transferWideDeployedE1`. -/
+gate, so `compactE1 cm ks` is value-preserving (the `compactE1_expand` bridge holds; the emitted `ks`
+is a SUBSET of `deadColsE1 cm 90` — capped at `e1Ceiling` to exclude the prove-time gentian aux block
+— and a subset of a `compactE1Ok`-valid pure-dead kill-set stays `compactE1Ok`-valid). The emitted
+member is then the GENTIAN weld of the proof object
+`RotatedKernelRefinementAvailWideCompactE1.transferWideDeployedE1` (the pre-gentian E1 row), peeled by
+`BareCohortFloorRefuseWide.satisfied2_of_gentianDeployedBareRefuse` — matching the deployed producer,
+whose `compact_e1` runs on the pre-gentian trace and whose `fill_refuse_aux` adds the gentian at prove
+time. -/
 def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
   match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
   | .ok (cm, bb, lb) =>
-    let ks := deadColsE1Fast cm
+    let ks := deadColsE1Fast cm (e1Ceiling key cm)
     if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm e1Floor then
       let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm ks
       IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"

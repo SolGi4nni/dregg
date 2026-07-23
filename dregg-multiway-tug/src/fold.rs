@@ -229,12 +229,30 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 /// state-binding node, to the transition the installed `CellProgram` teeth already gated (e.g.
 /// multiway-tug's `score`-method win implication). `commit` is the published
 /// `custom_proof_commitment` (IR2 PI 46..53); `bundle` is the retained re-provable sub-proof.
-fn cell_custom_leg(
+/// **THE FAST HALF of [`cell_custom_leg`] — the wide dispatch WITHOUT the STARK prove.** Build the
+/// `customVmDescriptor2R24` leg's committed DESCRIPTOR + producer TRACE + PI vector for
+/// `before_cell -> after_cell` at `commit`, threading the cell's real field octet exactly as
+/// `cell_custom_leg` does, then routing through the shared wide dispatcher
+/// (`generate_rotated_effect_vm_descriptor_and_trace_wide` — widen → S2-compact → **E1-compact** →
+/// descriptor-tail pairing). Returns the dispatcher `Result` verbatim: an E1/producer width
+/// disagreement (the `compact_e1_columns` class of break) surfaces as `Err`, NEVER a panic. This is
+/// what the fast leg-geometry canary drives (the full leaf-wrap recursive prove is ~50s; this is ~ms),
+/// so the descriptor↔producer geometry is covered on every `cargo test` run. -/
+#[allow(clippy::type_complexity)]
+pub fn custom_leg_wide_desc_trace(
     before_cell: &Cell,
     after_cell: &Cell,
     commit: [BabyBear; 8],
-    bundle: Option<CustomWitnessBundle>,
-) -> RotatedParticipantLeg {
+) -> Result<
+    (
+        dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+        Vec<Vec<BabyBear>>,
+        Vec<BabyBear>,
+        Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
+        dregg_circuit::descriptor_ir2::MemBoundaryWitness,
+    ),
+    String,
+> {
     let mut st = CellState::new(
         after_cell.state.balance() as u64,
         before_cell.state.nonce() as u32,
@@ -285,7 +303,7 @@ fn cell_custom_leg(
         &Default::default(),
     ));
 
-    let (desc, trace, dpis, map_heaps, mb) = generate_rotated_effect_vm_descriptor_and_trace_wide(
+    generate_rotated_effect_vm_descriptor_and_trace_wide(
         &st,
         &effects,
         &before_w,
@@ -296,7 +314,16 @@ fn cell_custom_leg(
         None,
         None,
     )
-    .expect("custom wide dispatch");
+}
+
+fn cell_custom_leg(
+    before_cell: &Cell,
+    after_cell: &Cell,
+    commit: [BabyBear; 8],
+    bundle: Option<CustomWitnessBundle>,
+) -> RotatedParticipantLeg {
+    let (desc, trace, dpis, map_heaps, mb) =
+        custom_leg_wide_desc_trace(before_cell, after_cell, commit).expect("custom wide dispatch");
     assert!(
         dpis.len() >= 54,
         "custom leg PI vector must carry the 8-felt commitment slice at 46..53"
