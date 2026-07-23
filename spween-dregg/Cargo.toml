@@ -46,6 +46,13 @@ blake3 = "1"
 zeroize = "1"
 serde = { workspace = true, features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
+
+# File locking for the durable world-cell image (`src/durable.rs`) — a native
+# concern. fs2 has NO wasm backend (its platform `sys` module fails to resolve),
+# so an unconditional dep breaks the whole wasm32 graph that reaches this crate
+# (e.g. `wasm-pack build wasm` for /descent/play). The `durable` module is
+# cfg-gated out alongside it.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = "0.4"
 
 [target.'cfg(unix)'.dependencies]

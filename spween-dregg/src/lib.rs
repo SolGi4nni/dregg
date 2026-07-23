@@ -38,6 +38,11 @@
 
 mod collective;
 mod compiler;
+// Native-filesystem crash-recoverable durability (file locks via `fs2`, atomic
+// image replace). wasm32 has no real filesystem and `fs2` has no wasm backend at
+// all — ungated it breaks every wasm consumer of this crate (the /descent/play
+// `wasm-pack build wasm` graph reaches spween via multiway-tug/offerings).
+#[cfg(not(target_arch = "wasm32"))]
 mod durable;
 mod encoding;
 mod real_engine;
@@ -54,6 +59,7 @@ pub use compiler::{
     PASSAGE_ENDED, PASSAGE_SLOT, SPILL_EXT_BASE, STATE_SLOTS, choice_method, compile_scene,
     value_to_field,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use durable::{
     FileWorldCellCheckpointAnchor, OpenedDurableWorldCell, WorldCellCheckpoint,
     WorldCellCheckpointAnchor, WorldCellSigningCustody, open_durable_world_cell,
