@@ -53,9 +53,15 @@ readiness claim. Captured here so they ride the same campaign.
   `Digest := Lex (Fin 8 → ℤ)` gives the whole adjacency bracketing FOR FREE (the IMT/Heap8 wrappers are
   ℤ-typed but their proofs never touch ℤ arithmetic — mechanical generalization, machine-confirmable by a
   one-section spike). The genuine new work is bounded and nameable: **one lex-`<`-over-8-felts AIR gadget**
-  (`eval_lex_lt` is only a doc-comment today, no def), a **leaf-schema widening** (addr/nextAddr → 8 felts,
+  (✅ **LANDED / VERIFIED 2026-07-22** — `Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`: the emitted
+  `lexLt8Descriptor` decides `toLex a < toLex b` as a proven iff (`lexLt8_sound`+`lexLt8_complete`, canonicity
+  hypotheses explicit, teeth incl. LSB-decider limb-7 + p-boundary canary), with the order-corollaries +
+  sorted-tree wiring bridge in `Crypto/Digest8KeySpike.lean` (`Digest8Key := Lex (Fin 8 → ℤ)`, `LinearOrder`
+  via `Pi.Lex`, `sorted_gap_excludes_digest8`); `#assert_axioms`-clean, rooted, rebuild-confirmed), a
+  **leaf-schema widening** (addr/nextAddr → 8 felts,
   arity-17 leaf), and the **easy value widening** (`hash_many→hash_many_8`, `felt_to_bytes32→digest8_to_bytes32`).
-  Still HIGH — but the cost is a compare gadget + a leaf widening, **not new combinatorics**. Plus the
+  The compare-gadget half is DONE; the residual is leaf-widening + value-widening + the ember-gated deploy.
+  Still HIGH — but the cost is now just a leaf widening, **not new combinatorics**. Plus the
   **ember-gated, frozen** kernel flip (`NullifierAccumulator.lean:12-23`, "do NOT fire piecemeal").
 - **#12 interface_id has NO Lean model and NO wide twin** — left behind when cap_root grew its `_8`.
   Reusable wide primitive exists (`Market/WideCommitBoundary.lean` `wireCommitR8`/`Poseidon2Width8`;
