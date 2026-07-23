@@ -42,12 +42,19 @@ the named `Poseidon2SpongeCR` hypothesis (the cap-root floor), never as an axiom
 -/
 import Dregg2.Crypto.NonMembership
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Crypto.SpongeCarrierReduction
 import Dregg2.Tactics
 
 namespace Dregg2.Substrate.Heap
 
 open Dregg2.Crypto.NonMembership (Sorted Adjacent sorted_gap_excludes)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.SpongeCarrierReduction
+  (SpongeCarrier SpongeKeyed spongeFamily carrierBreakGame carrierAnsSize spongeAnsSize
+   carrier_binds_from_polyTime carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv HashCRHardQuant)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
 
 universe u v
 
@@ -378,48 +385,175 @@ theorem hget_hset_self (hash : List ℤ → ℤ) (h : FeltHeap) (coll key v : �
     hget hash (hset hash h coll key v) coll key = some v :=
   get_set_self h (addrOf hash coll key) v
 
-/-- **FRAME at distinct addresses (under CR).** Writing `(coll, key)` preserves the opening of any
-OTHER `(coll', key')`: CR forces distinct pairs onto distinct addresses, then the generic frame
-applies. This is the design's "untouched data costs nothing", with the key-hash collision the ONLY
-(named) way to break it — exactly the cap-root trust boundary. -/
-theorem hget_hset_frame (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-! ### §2.1 — the EXTRACTORS: what the old CR-peeling inductions become when nothing is assumed.
+
+⚑ **THE `Poseidon2SpongeCR` FLOOR IS DELETED FROM THIS SECTION.** It used to be the hypothesis of
+`hget_hset_frame`, `map_leaf_injective` and `root_injective`. It is **FALSE at deployed BabyBear
+parameters** (`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`: the sponge lands in one
+bounded field while `List ℤ` is infinite, so collisions exist by pigeonhole), so all three theorems
+were **VACUOUSLY TRUE at the deployed hash** — true implications whose hypothesis nothing deployed
+satisfies. `#assert_axioms` was blind to it: the proofs were clean; the HYPOTHESIS was the flaw.
+
+What replaces it assumes NOTHING. Each old induction, which used to consume a CR hypothesis to peel a
+digest, becomes a total function that LOCATES the colliding pair instead — so an equivocation on the
+deployed `heap_root` either forces the heaps equal or HANDS BACK the two distinct lists at which the
+sponge actually collides. That is a true theorem at deployed parameters, where the old one was empty.
+
+The probabilistic residual is priced in §2.3 as a real reduction to the deployed sponge's collision
+game at an explicit adversary class, on `Crypto.SpongeCarrierReduction`. -/
+
+/-- **THE ADDRESS EXTRACTOR.** Two `(collection, key)` pairs claimed at the same address are handed
+back as the two preimages of `addrOf` — a genuine sponge collision whenever the pairs differ. -/
+def addrFind (c k c' k' : ℤ) : List ℤ × List ℤ := ([c, k], [c', k'])
+
+/-- **THE ADDRESS EXTRACTOR IS CORRECT — unconditionally.** Distinct `(collection, key)` pairs
+carrying the SAME heap address collide the sponge. No floor: the old `hget_hset_frame` consumed CR
+exactly here, and this is that step with the assumption removed and the witness produced. -/
+theorem addrFind_spec (hash : List ℤ → ℤ) {c k c' k' : ℤ}
+    (hne : ¬(c' = c ∧ k' = k)) (heq : addrOf hash c' k' = addrOf hash c k) :
+    ([c', k'] : List ℤ) ≠ [c, k] ∧ hash [c', k'] = hash [c, k] := by
+  refine ⟨fun hcon => ?_, heq⟩
+  simp only [List.cons.injEq, and_true] at hcon
+  exact hne ⟨hcon.1, hcon.2⟩
+
+/-- **FRAME at distinct addresses — NO CRYPTO AT ALL.** Writing `(coll, key)` preserves the opening of
+any OTHER address. This is the honest combinatorial core of the old `hget_hset_frame`: the crypto was
+only ever used to get the address inequality, and here that is a hypothesis instead of a floor. -/
+theorem hget_hset_frame_of_addr_ne (hash : List ℤ → ℤ)
+    (h : FeltHeap) (coll key coll' key' v : ℤ)
+    (haddr : addrOf hash coll' key' ≠ addrOf hash coll key) :
+    hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key' :=
+  get_set_frame h _ _ v haddr
+
+/-- **⚑ DEMOTED — `hget_hset_frame` at plain INJECTIVITY, which BabyBear REFUTES.** The named floor
+`Poseidon2SpongeCR` is gone from the statement; what remains is the mathematical special case, kept as
+the strength bridge (nothing was lost re-grounding) and NOT as a deployed guarantee.
+
+**This is NOT the deployed frame law.** The deployed one is §2.3's reduction
+`heapFrame_binds_from_polyTime`. A deployed BabyBear sponge does not satisfy `Function.Injective`, so
+reading this theorem as a statement about the running system is exactly the vacuity being retired. -/
+theorem hget_hset_frame (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     (h : FeltHeap) (coll key coll' key' v : ℤ) (hne : ¬(coll' = coll ∧ key' = key)) :
     hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key' := by
-  apply get_set_frame
-  intro haddr
-  have hlist := hCR _ _ haddr
-  simp only [List.cons.injEq, and_true] at hlist
-  exact hne ⟨hlist.1, hlist.2⟩
+  refine hget_hset_frame_of_addr_ne hash h coll key coll' key' v (fun haddr => ?_)
+  exact (addrFind_spec hash hne haddr).1 (hinj haddr)
 
-/-- The leaf-list map is injective under CR (heads peel by leaf-CR, tails by induction) — the
-inner-leaf half of the root anti-ghost, mirroring `capRoot_binds_edge`'s two-stage peel. -/
-theorem map_leaf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ (l₁ l₂ : FeltHeap), l₁.map (leafOf hash) = l₂.map (leafOf hash) → l₁ = l₂ := by
+/-- **THE LEAF-LIST EXTRACTOR.** Walk two leaf-equal entry lists to the FIRST position at which the
+entries themselves differ, and hand back that leaf's two preimages. A total function: the fallback
+`([], [])` is returned only on inputs the spec excludes. -/
+def mapLeafFind (hash : List ℤ → ℤ) : FeltHeap → FeltHeap → List ℤ × List ℤ
+  | a :: as, b :: bs => if a = b then mapLeafFind hash as bs else ([a.1, a.2], [b.1, b.2])
+  | _, _ => ([], [])
+
+/-- **THE LEAF-LIST EXTRACTOR IS CORRECT — unconditionally.** Two DISTINCT entry lists with EQUAL leaf
+maps collide the sponge at the first position where they differ. This is `map_leaf_injective`'s old
+induction with the CR hypothesis removed: the same walk, producing the witness rather than assuming it
+away. -/
+theorem mapLeafFind_spec (hash : List ℤ → ℤ) :
+    ∀ (l₁ l₂ : FeltHeap), l₁ ≠ l₂ → l₁.map (leafOf hash) = l₂.map (leafOf hash) →
+      (mapLeafFind hash l₁ l₂).1 ≠ (mapLeafFind hash l₁ l₂).2
+        ∧ hash (mapLeafFind hash l₁ l₂).1 = hash (mapLeafFind hash l₁ l₂).2 := by
   intro l₁
   induction l₁ with
-  | nil => intro l₂ h; cases l₂ with
-    | nil => rfl
-    | cons hd t => simp at h
-  | cons hd₁ t₁ ih =>
-    intro l₂ h
-    cases l₂ with
-    | nil => simp at h
-    | cons hd₂ t₂ =>
-      simp only [List.map_cons, List.cons.injEq] at h
-      obtain ⟨hleaf, htail⟩ := h
-      obtain ⟨a₁, b₁⟩ := hd₁
-      obtain ⟨a₂, b₂⟩ := hd₂
-      have hlist := hCR _ _ hleaf
-      simp only [List.cons.injEq, and_true] at hlist
-      rw [hlist.1, hlist.2, ih t₂ htail]
+  | nil =>
+      intro l₂ hne hmap
+      cases l₂ with
+      | nil => exact absurd rfl hne
+      | cons b bs => simp at hmap
+  | cons a as ih =>
+      intro l₂ hne hmap
+      cases l₂ with
+      | nil => simp at hmap
+      | cons b bs =>
+          simp only [List.map_cons, List.cons.injEq] at hmap
+          obtain ⟨hleaf, htail⟩ := hmap
+          by_cases hab : a = b
+          · subst hab
+            have htne : as ≠ bs := fun hc => hne (by rw [hc])
+            simpa only [mapLeafFind, if_pos rfl] using ih bs htne htail
+          · rw [mapLeafFind, if_neg hab]
+            refine ⟨fun hcon => ?_, hleaf⟩
+            simp only [List.cons.injEq, and_true] at hcon
+            exact hab (Prod.ext hcon.1 hcon.2)
 
-/-- **`root_injective` — the root BINDS the whole heap (the anti-ghost).** Two heaps with EQUAL
-roots are EQUAL leaf lists, under the single named CR floor: peel the outer sponge (leaf lists
-equal), then each leaf (entries equal). A prover cannot keep the published `heap_root` while
-tampering ANY address or ANY value — the `capRoot_binds_edge` tooth with a generic leaf. -/
-theorem root_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) : h₁ = h₂ :=
-  map_leaf_injective hash hCR h₁ h₂ (hCR _ _ h)
+/-- **⚑ DEMOTED — `map_leaf_injective` at plain INJECTIVITY, which BabyBear REFUTES.** The named floor
+is gone; this is the strength bridge, not a deployed guarantee. The deployed statement is §2.3. -/
+theorem map_leaf_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash) :
+    ∀ (l₁ l₂ : FeltHeap), l₁.map (leafOf hash) = l₂.map (leafOf hash) → l₁ = l₂ := by
+  intro l₁ l₂ hmap
+  by_contra hne
+  exact (mapLeafFind_spec hash l₁ l₂ hne hmap).1 (hinj (mapLeafFind_spec hash l₁ l₂ hne hmap).2)
+
+/-- **THE ROOT EXTRACTOR.** Either the two heaps' leaf lists already differ — then the equal roots ARE
+an outer-sponge collision on those lists — or they agree and the collision is inside, located by
+`mapLeafFind`. Total, and it is the reduction's witness in §2.3. -/
+def rootFind (hash : List ℤ → ℤ) (h₁ h₂ : FeltHeap) : List ℤ × List ℤ :=
+  if h₁.map (leafOf hash) = h₂.map (leafOf hash) then mapLeafFind hash h₁ h₂
+  else (h₁.map (leafOf hash), h₂.map (leafOf hash))
+
+/-- **⚑ THE ROOT EXTRACTOR IS CORRECT — UNCONDITIONALLY, and this is the theorem that replaces
+`root_injective` as content.** Two DISTINCT heaps publishing the SAME `heap_root` yield a genuine
+collision of the deployed sponge. No hypothesis on `hash` whatsoever, so — unlike the theorem it
+replaces — it is a true and non-empty statement at deployed BabyBear parameters. -/
+theorem rootFind_spec (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hne : h₁ ≠ h₂) (hroot : root hash h₁ = root hash h₂) :
+    (rootFind hash h₁ h₂).1 ≠ (rootFind hash h₁ h₂).2
+      ∧ hash (rootFind hash h₁ h₂).1 = hash (rootFind hash h₁ h₂).2 := by
+  unfold rootFind
+  by_cases hmap : h₁.map (leafOf hash) = h₂.map (leafOf hash)
+  · rw [if_pos hmap]
+    exact mapLeafFind_spec hash h₁ h₂ hne hmap
+  · rw [if_neg hmap]
+    exact ⟨hmap, hroot⟩
+
+/-- **THE EXTRACTOR DOES NOT BLOW UP ITS INPUT** — at most the two heaps' own lengths plus four felts,
+whichever branch it takes. The cost model's output-growth obligation, PROVED; without it the reduction
+in §2.3 would not preserve efficiency. -/
+theorem rootFind_len_le (hash : List ℤ → ℤ) (h₁ h₂ : FeltHeap) :
+    (rootFind hash h₁ h₂).1.length + (rootFind hash h₁ h₂).2.length
+      ≤ 1 * (h₁.length + h₂.length) + 4 := by
+  have hmapLen : ∀ (l₁ l₂ : FeltHeap),
+      (mapLeafFind hash l₁ l₂).1.length + (mapLeafFind hash l₁ l₂).2.length ≤ 4 := by
+    intro l₁
+    induction l₁ with
+    | nil => intro l₂; cases l₂ <;> simp [mapLeafFind]
+    | cons a as ih =>
+        intro l₂
+        cases l₂ with
+        | nil => simp [mapLeafFind]
+        | cons b bs =>
+            by_cases hab : a = b
+            · rw [mapLeafFind, if_pos hab]; exact ih bs
+            · rw [mapLeafFind, if_neg hab]; simp
+  unfold rootFind
+  by_cases hmap : h₁.map (leafOf hash) = h₂.map (leafOf hash)
+  · rw [if_pos hmap]; have := hmapLen h₁ h₂; omega
+  · rw [if_neg hmap]
+    simp only [List.length_map]
+    omega
+
+/-- **⚑ DEMOTED — `root_injective` at plain INJECTIVITY, which BabyBear REFUTES.**
+
+The named floor `Poseidon2SpongeCR` is DELETED from this statement. What remains is exactly the
+injective special case — the strength bridge showing nothing was lost — and it is **NOT the deployed
+anti-ghost**. A deployed BabyBear sponge is not injective, so this theorem says nothing about the
+running system; that is precisely the vacuity this sweep retires.
+
+**The deployed anti-ghost is §2.3's `heapRoot_binds_from_polyTime`**: an efficient adversary that keeps
+the published `heap_root` while tampering any address or any value has NEGLIGIBLE advantage, under the
+deployed sponge's collision floor. -/
+theorem root_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
+    {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) : h₁ = h₂ := by
+  by_contra hne
+  exact (rootFind_spec hash hne h).1 (hinj (rootFind_spec hash hne h).2)
+
+/-- **(CANARY — the extractor's output is a REAL collision, so it is refutable.)** On an injective
+sponge no equivocation can produce one, which is what makes the extraction load-bearing rather than a
+disjunction whose right branch is always available. This reds if `rootFind` is ever weakened to
+return a trivially-equal pair. -/
+theorem rootColl_refutable_of_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
+    {h₁ h₂ : FeltHeap} (hne : h₁ ≠ h₂) : root hash h₁ ≠ root hash h₂ :=
+  fun hroot => hne (root_injective hash hinj hroot)
 
 /-- **`root_deterministic` — the root is a function of the map's MEANING.** Two SORTED heaps with
 the same lookup semantics have the SAME root (via canonicity `ext_get`; NO crypto). Build history
@@ -429,21 +563,135 @@ theorem root_deterministic (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
     (hext : ∀ k, get h₁ k = get h₂ k) : root hash h₁ = root hash h₂ := by
   rw [ext_get hs₁ hs₂ hext]
 
-/-- **`root_binds_get` — equal roots open identically.** Under CR, two heaps publishing the same
-root agree at EVERY address: the membership/non-membership openings are pinned by the root alone.
-The consumable form per-effect gates will cite. -/
-theorem root_binds_get (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **⚑ DEMOTED — `root_binds_get` at plain INJECTIVITY.** Same demotion as `root_injective`: the named
+floor is gone, and this is the strength bridge, not the deployed opening law (that is §2.3). -/
+theorem root_binds_get (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) :
     ∀ coll key, hget hash h₁ coll key = hget hash h₂ coll key := by
   intro coll key
-  rw [root_injective hash hCR h]
+  rw [root_injective hash hinj h]
 
 #assert_axioms hget_hset_self
+#assert_axioms addrFind_spec
+#assert_axioms hget_hset_frame_of_addr_ne
 #assert_axioms hget_hset_frame
+#assert_axioms mapLeafFind_spec
 #assert_axioms map_leaf_injective
+#assert_axioms rootFind_spec
+#assert_axioms rootFind_len_le
 #assert_axioms root_injective
+#assert_axioms rootColl_refutable_of_injective
 #assert_axioms root_deterministic
 #assert_axioms root_binds_get
+
+/-! ## §2.3 — ⚑ THE DEPLOYED HEAP-ROOT ANTI-GHOST, AS A SECURITY REDUCTION.
+
+This is the HEADLINE binding of the `heap_root` register, and it replaces `root_injective` in that
+role. The difference from what it replaces is not presentational:
+
+  * `root_injective` assumed the deployed sponge is injective. It is not, at BabyBear — so that
+    theorem is VACUOUS at deployed parameters and transports nothing.
+  * A `binds ∨ collides` disjunction would not fix it either: a collision EXISTS by pigeonhole, so the
+    disjunction is satisfiable through its right branch without binding ever holding. It quantifies
+    over SOLUTIONS.
+  * The reduction below quantifies over EFFICIENT ADVERSARIES, which is what cryptographic hardness
+    actually quantifies over. An adversary that keeps the published `heap_root` while tampering ANY
+    address or ANY value is turned, by `rootFind`, into a genuine collision finder for the deployed
+    sponge — so its advantage is negligible under the deployed sponge's collision floor.
+
+⚑ **THE ~31-BIT BOUNDARY IS NOT CLOSED BY THIS, AND MUST NOT BE READ AS CLOSED.** `heap_root` is ONE
+felt. The floor below bounds an adversary's advantage in the deployed sponge's collision game; at a
+~31-bit digest that game is winnable in ~2^15.5 work by birthday search, so the honest reading of
+`heapRoot_binds_from_polyTime` is "the heap root binds exactly as well as its width allows", NOT "the
+heap root binds". Widening the carrier is a separate, still-open repair; what is closed here is that
+the binding now rests on a floor the deployed hash does not REFUTE, instead of one it does. -/
+
+/-- **THE HEAP-ROOT CARRIER.** No context; the payload is the whole heap; the commitment is the
+deployed `root`; the extractor is `rootFind`, with its unconditional spec and its proved output
+bound. Everything a deployed 1-felt commitment site owes the spine, and nothing more. -/
+def heapRootCarrier : SpongeCarrier where
+  Ctx := Unit
+  Val := FeltHeap
+  valDecEq := inferInstance
+  enc := fun hash _ h => root hash h
+  find := fun hash _ h₁ h₂ => rootFind hash h₁ h₂
+  find_spec := fun hash _ h₁ h₂ hne heq => rootFind_spec hash hne heq
+  size := fun _ h => h.length
+  outCo := 1
+  outBo := 4
+  find_len_le := fun hash _ h₁ h₂ => rootFind_len_le hash h₁ h₂
+
+/-- **THE HEAP-ROOT FORGERY GAME.** The adversary is handed a sampled domain-separation tag and WINS
+iff it outputs two DISTINCT heaps publishing the SAME `heap_root` — the anti-ghost break, stated as
+the event it actually is. -/
+abbrev heapRootBreakGame (D : SpongeKeyed) :=
+  carrierBreakGame D heapRootCarrier
+
+/-- **⚑ THE DEPLOYED HEAP-ROOT BINDING — `hEff` DISCHARGED.** An efficient adversary that keeps the
+published `heap_root` while tampering the heap has NEGLIGIBLE advantage, under the deployed sponge's
+collision floor at `Eff := IsPolyTime`. The extracted finder's efficiency is DERIVED by `poly_time`
+from the forger's own bound, not assumed: the only modelling input is the reshaper's declared work
+`(cw, bw)`, because a Lean function has no runtime. -/
+theorem heapRoot_binds_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (heapRootBreakGame D))
+    (hA : IsPolyTime (carrierAnsSize D heapRootCarrier) A)
+    (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D)
+      (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (heapRootBreakGame D) A) :=
+  carrier_binds_from_polyTime D heapRootCarrier A hA cw bw hCR
+
+/-- **THE ADDRESS-CODEC CARRIER** — the frame law's crypto content, isolated. The payload is the
+`(collection, key)` pair; the commitment is the deployed `addrOf`. -/
+def addrCarrier : SpongeCarrier where
+  Ctx := Unit
+  Val := ℤ × ℤ
+  valDecEq := inferInstance
+  enc := fun hash _ p => addrOf hash p.1 p.2
+  find := fun _ _ p q => ([p.1, p.2], [q.1, q.2])
+  find_spec := fun _ _ p q hne heq => by
+    refine ⟨fun hcon => ?_, heq⟩
+    simp only [List.cons.injEq, and_true] at hcon
+    exact hne (Prod.ext hcon.1 hcon.2)
+  size := fun _ _ => 2
+  outCo := 1
+  outBo := 4
+  find_len_le := fun _ _ _ _ => by simp
+
+/-- **⚑ THE DEPLOYED FRAME LAW — `hEff` DISCHARGED.** An efficient adversary that finds two distinct
+`(collection, key)` pairs sharing a heap address — the ONLY way to break "untouched data costs
+nothing", by `hget_hset_frame_of_addr_ne`, which needs no crypto at all — has NEGLIGIBLE advantage
+under the deployed sponge's collision floor. This is the honest replacement for the CR hypothesis the
+old `hget_hset_frame` carried. -/
+theorem heapFrame_binds_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (carrierBreakGame D addrCarrier))
+    (hA : IsPolyTime (carrierAnsSize D addrCarrier) A)
+    (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D)
+      (IsPolyTime (spongeAnsSize D))) :
+    Negl
+      (gameAdv (carrierBreakGame D addrCarrier) A) :=
+  carrier_binds_from_polyTime D addrCarrier A hA cw bw hCR
+
+/-- **(TOOTH — the floor is FALSE at the REAL BabyBear parameters.)** The honest price of the `hEff`
+obligation, re-exported at this carrier so the heap lane cannot read its own reduction as stronger
+than it is: at the UNRESTRICTED adversary class the floor the reduction rests on is refuted by any
+sponge whose output is a genuine BabyBear felt. -/
+theorem heapRoot_floor_top_false_babyBear (D : SpongeKeyed)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ HashCRHardQuant (spongeFamily D) (fun _ => True) :=
+  carrierFloor_top_false_babyBear D hb
+
+/-- **(TOOTH — the other pole is vacuous.)** Recorded beside the refutation, so satisfiability of the
+floor can never be mistaken for evidence. -/
+theorem heapRoot_floor_bot_vacuous (D : SpongeKeyed) :
+    HashCRHardQuant (spongeFamily D) (fun _ => False) :=
+  carrierFloor_bot_vacuous D
+
+#assert_axioms heapRoot_binds_from_polyTime
+#assert_axioms heapFrame_binds_from_polyTime
+#assert_axioms heapRoot_floor_top_false_babyBear
+#assert_axioms heapRoot_floor_bot_vacuous
 
 /-! ## §3 — NON-VACUITY: concrete witnesses TRUE and FALSE on a computable reference sponge.
 
