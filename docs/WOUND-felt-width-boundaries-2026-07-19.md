@@ -67,6 +67,39 @@ readiness claim. Captured here so they ride the same campaign.
   Reusable wide primitive exists (`Market/WideCommitBoundary.lean` `wireCommitR8`/`Poseidon2Width8`;
   Rust `hash_many_8`/`digest8_to_bytes32`). Anti-laundering: the fold accumulator must be 8-felt
   end-to-end, not just the final squeeze. Severity MODERATE (discovery/factory-identity, not funds).
+  **CORRECTION (07-22): the "NO wide twin" half is STALE.** At HEAD `cell/src/interface.rs::compute_interface_id`
+  is a FULL 8-felt fold end-to-end (`hash_many_8` at every step, `0x1FACE`+`len` seed, 8-lane sorted,
+  `digest8_to_bytes32` tail) — the Rust widening ALREADY LANDED. **The Lean proof-half is now
+  LANDED** (`metatheory/Dregg2/Cell/InterfaceIdWidth.lean`, rooted, `#assert_axioms`-clean): FALSIFIER
+  `narrow_conflates`/`narrow_colliding_interfaces_share_vk` (the pre-widening 1-felt lane-0 leaf
+  conflates two DISTINCT method sets ⇒ they share a `derive_service_factory_vk` factory VK), FIX SOUND
+  `wideId_injective`/`wide_separates` (the deployed 8-felt fold is injective in the leaf list under the
+  wide-hash CR floor `Function.Injective hash8`, a NAMED hypothesis), the exact anti-launder
+  `finalSqueezeOnly_still_conflates` (widening ONLY the final squeeze STILL conflates), and the arity
+  tooth `seed_arity_injective`. Site #12 is **byte-safe PROVEN** (Rust-fixed + machine-checked).
+
+## Update log — 2026-07-22
+
+- **#12 interface_id — PROOF-HALF LANDED, site byte-safe PROVEN.** Re-audit found it ALREADY
+  Rust-widened at HEAD (full 8-felt `hash_many_8` fold, arity-seeded, 8-lane sorted,
+  `digest8_to_bytes32` tail); the wound's "NO wide twin" was stale. Authored
+  `metatheory/Dregg2/Cell/InterfaceIdWidth.lean` (rooted in `Dregg2.lean`, `#assert_axioms`-clean,
+  `lake build` exit 0) — falsifier (1-felt lane-0 leaf conflates distinct method sets → shared factory
+  VK), fold soundness (`wideId_injective` under the wide-hash CR floor), the anti-launder
+  (`finalSqueezeOnly_still_conflates`), and the arity tooth. Mirrors the #1/`FinalityCertWidth`
+  pattern. Nothing deployed touched.
+- **#3 cap-uniqueness — PROOF-HALF LANDED, deploy stays gated.** Re-audit confirms the executor's
+  leg-(1) root gate STILL compares the NARROW lane-0 `felt_to_bytes32(compute_canonical_capability_root_felt)`
+  at HEAD (`commitment.rs:665`), while the off-chain state commitment already absorbs the WIDE
+  `digest8_to_bytes32(compute_canonical_capability_root_8)` (`commitment.rs:684`). Authored
+  `metatheory/Dregg2/Cell/CapUniquenessWidth.lean` (rooted, `#assert_axioms`-clean, `lake build` exit
+  0) — falsifier (`narrow_capRoot_underdetermines`: distinct wide roots collide on lane 0), wide-encoding
+  soundness (`wide_capRoot_determines`), the wound's own **"redundant projection" DOWNGRADE proved**
+  (`narrow_root_is_projection_of_wide`/`narrow_gate_redundant`: the narrow value is lane 0 of the wide
+  root the state commitment binds), and the compensating tooth (`accept_implies_unique`: uniqueness is
+  the felt-independent leg-(2) dup-scan). **RESIDUAL:** widening leg (1)'s in-circuit gate ITSELF is a
+  committed-state binding change (ember-gated deploy), out of scope; the security-carrying WIDE binding
+  is already deployed, so the site is defense-in-depth-narrow, PROVEN redundant.
 
 ## Update log — 2026-07-20
 
@@ -137,7 +170,7 @@ readiness claim. Captured here so they ride the same campaign.
 |---|------|-----------|------|------|------|
 | 1 | BFT finality cert — signed message is 4 bytes of lane-0 | `lightclient/src/lib.rs:281` | ~2^31 cheap + 1 proof (see note) | E | **[V]** signature narrow; compensating "segment tooth" is a launder (binds aggregate to itself, not the sig to the wide root) |
 | 2 | Federation membership gate — bare 1-felt PI compare, public SDK export | `sdk/src/verify.rs:202,214` | ~2^31 | E | [A][?] |
-| 3 | Executor cap-uniqueness gate — narrow root, wide twin exists 19 lines away | `turn/src/executor/execute_tree.rs:328` | ~2^15.5 | B | **[V]** breaks root-binding (1), NOT the structural dup-scan (2, `:345`) |
+| 3 | Executor cap-uniqueness gate — narrow root, wide twin exists 19 lines away | `turn/src/executor/execute_tree.rs:328` | ~2^15.5 | B | **[V]** breaks root-binding (1), NOT the structural dup-scan (2, `:345`) — **PROOF-HALF LANDED 07-22** (`CapUniquenessWidth.lean`; redundant-projection DOWNGRADE proved; leg-(1) gate widening = gated deploy) |
 | 4 | Note commitment + nullifier — 1 felt each, no `_8` variant | `cell/src/note.rs:329,243` | ~46k spends | C | [A] availability **certain**; mint contingent on deployed verifier [?] |
 | 5 | Accumulator leaf **keys** (nf/cm/revoked) — 31-bit addresses | `circuit/src/effect_vm/trace_rotated.rs:1377,1575,1661` | ~2^31 | D | [A] roots are `Faithful8`, membership answered by key |
 | 6 | CI pass gate — `exit_code % BABYBEAR_P` aliases failure→0 | `dregg-doc/src/ci_assurance.rs:255` | **zero** | A | **[V]** `2013265921 % p = 0`, gate is `COL_EXIT==0`, bond path unguarded |
@@ -146,7 +179,7 @@ readiness claim. Captured here so they ride the same campaign.
 | 9 | `SenderAuthorized` authorized-set root — 1 felt, leaf proves no path | `turn/src/executor/membership_verifier.rs:105` | ~2^31 | D/E | [A] |
 | 10 | Shielded pool — `merkle_root`/`nullifier`/`value_binding` declared **`u32`** | `turn/src/action.rs:1005`; `circuit-prove/src/shielded/spend_circuit.rs:462` | direct inflation on value collision | C | [A] `Effect::ShieldedTransfer` live |
 | 11 | Freshness/revocation root — 1 felt, tree depth 4 ≤14 entries | `sdk/src/full_turn_proof.rs:5248` | grind padding leaves | D/E | [A] |
-| 12 | `interface_id` — 1 felt, **no wide twin anywhere**; a factory VK is derived from it | `cell/src/interface.rs:246`; `directory/src/service_factory.rs:92` | ~2^31 → colliding interfaces share a VK | C | [A] |
+| 12 | `interface_id` — ~~1 felt, no wide twin~~ **Rust-widened to 8-felt at HEAD**; a factory VK is derived from it | `cell/src/interface.rs:275`; `directory/src/service_factory.rs:92` | ~2^31 → colliding interfaces share a VK | C | [V] **BYTE-SAFE PROVEN 07-22** (`InterfaceIdWidth.lean`; wound "no wide twin" was STALE) |
 | 13 | sandstorm-bridge — narrow throughout; byte-identity claim now **false** | `sandstorm-bridge/.../cell.rs:87,138` | ~2^31 (hostile host) | C/drift | [A] `cell/src/state.rs:535` widened, sandstorm did not — correctness drift too |
 | 14 | `leg_is_wide` cfg trap — non-prover build forces **every** leg narrow | `sdk/src/full_turn_proof.rs:5144` | verifies ~124-bit anchors at 31 bits | A | [A] wasm verifier is exactly this config; live trap, no current caller |
 
