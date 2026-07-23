@@ -402,7 +402,7 @@ pub fn automatafl_resolve_trace(
     let row: Vec<BabyBear> = vals.into_iter().map(|v| v.unwrap()).collect();
 
     // -- Assemble the PIs off the ABI: door16 (free) ‖ pack(old) ‖ pack(cMidV4) ‖ ax, ay. --
-    let (old8, new8) = crate::air::placeholder_roots();
+    let (old8, new8) = crate::witness::placeholder_roots();
     let mut public_inputs = Vec::with_capacity(desc.public_input_count);
     public_inputs.extend_from_slice(&old8);
     public_inputs.extend_from_slice(&new8);

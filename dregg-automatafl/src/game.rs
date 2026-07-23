@@ -1,6 +1,7 @@
 //! # The automatafl match DEPLOYED on the real executor.
 //!
-//! The AIR (`crate::air`) proves `new == apply_turn(old, moves)` in-circuit. This module is the
+//! The proven Lean descriptors (Leg R + Leg A, see the crate docs) prove `new == apply_turn(old,
+//! moves)` in-circuit via [`crate::witness`] / [`crate::resolve_witness`]. This module is the
 //! other half of the same game: the n=2 match hosted on a real [`spween_dregg::WorldCell`] (the
 //! deployed `EmbeddedExecutor` + ledger), so a PLAY is one cap-bounded verified turn with a real
 //! [`dregg_app_framework::TurnReceipt`] — the substrate the [`crate::surface::AutomataflOffering`]

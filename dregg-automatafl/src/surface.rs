@@ -37,9 +37,10 @@
 //! HONEST SCOPE: the seal HIDES the move by non-reveal on this trusted host (the commitment is what
 //! the cell holds; the plaintext lives in the session until the reveal) — the *in-proof* sealed move
 //! (the commitment opened inside the AIR, folded as a custom leaf) is the named next lane, exactly
-//! as the tug's in-proof hidden hand is. The board TRANSITION is already proven in-circuit by
-//! [`crate::air`] (`new == apply_turn(old, moves)`); this surface drives the same reference oracle
-//! the AIR pins.
+//! as the tug's in-proof hidden hand is. The board TRANSITION is already proven in-circuit by the
+//! PROVEN Lean descriptors ([`crate::witness`] / [`crate::resolve_witness`],
+//! `new == apply_turn(old, moves)`); this surface drives the same reference oracle the descriptors
+//! pin.
 
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{

@@ -6,21 +6,29 @@
 //! hand-authored Rust AIR.** House-law #1: the AIR is authored in Lean; this Rust only fills a
 //! trace and CALLS the general IR-v2 prover. It authors no constraints.
 //!
-//! ## Front-end reuse + tail rewrite (the design, `docs/reference/AUTOMATAFL-WIRING-AND-SHIP`)
+//! ## Solve-the-gates (NO hand-authored Rust AIR / `Builder` dependency)
 //!
-//! The Lean layout's columns `0 .. A_BACK_TAIL` are byte-identical to the frozen Rust `Builder`
-//! allocation order (`air.rs::build_d1_bound` → `automaton_gadget`): old cells, new cells, the
-//! automaton coordinate + its bit ranges, the auto row×column one-hots, the four ray scans, the
-//! two `decide_axis` truth tables, `choose_offset`, and the step + board-update gates. So the
-//! column VALUES for that prefix transfer DIRECTLY from the existing co-build harness — we run
-//! [`crate::air::build_d1_honest`] (which drives [`crate::reference`], the game oracle) and read
-//! its filled `values`.
+//! The trace is filled the SAME way [`crate::resolve_witness`] fills the resolve leg: SEED the
+//! non-affine gadget columns (the ones a linear solver cannot derive) from the reference automaton
+//! oracle at their exact [`crate::step_layout::StepLayout`] columns, then SOLVE every affine column
+//! from the descriptor's OWN gates ([`crate::resolve_witness::rule_l_pass`], the shared Rule-L
+//! propagation). This is what let the hand-authored Rust AIR (`dregg-automatafl/src/{air,builder,
+//! moves}.rs`) be DELETED — nothing here calls into it.
 //!
-//! The only genuine rewrite is the board-commitment TAIL. Where the Rust AIR appended two
-//! `board_root8` Merkle roots (arity-16 Poseidon2 lookups → 8+8 PIs), the Lean descriptor appends
-//! `⌈n²/15⌉` **packed base-4 felts per board** (`packed[f] = Σ_{i<15} cell[15f+i]·4^i`), each a
-//! degree-1 pack gate riding a first-row `PiBinding`, and NO lookup. We fill those felts from the
-//! board cells and drop them in the tail columns.
+//! The SEEDED columns (`§2`/`§4b`/`§4d` of `AutomataflStepEmit.lean`): the automaton coordinate's
+//! bit-range decompositions, the auto row×column one-hots, per ray the `hit` one-hot + the
+//! `cond_nonzero` inverse, per axis the `decide_axis` fields (`variant/pos/att/rep`) + the `ipw`/`inw`
+//! alphabet one-hots + the six `forced_ge0` distance-compare blocks, `choose_offset`'s
+//! `sgt/slt/xmove/ymove` score blocks, and the step's four target-edge `forced_ge0` blocks + the two
+//! gated target row×column one-hots + the `[tcell ≥ 1]` block. Everything else — the in-bounds bits,
+//! the gated cell reads, `dist`/`what`/`hib`, `min`, `col`, `ox`/`oy`, `tib`, `tcell`, `targ_vac`,
+//! `offnz`, `m`, the board-update NEW cells, the packed felts, and the `nax`/`nay` mask pins — is
+//! AFFINE in one unknown once the seeds land, so Rule L computes it by evaluating the gate that
+//! DEFINES it. A column no gate determines is a hard `Err` (fail-closed), never a zero guess.
+//!
+//! The board-commitment TAIL is `⌈n²/15⌉` **packed base-4 felts per board**
+//! (`packed[f] = Σ_{i<15} cell[15f+i]·4^i`), each a degree-1 pack gate riding a first-row
+//! `PiBinding` — solved by Rule L from the (seeded old / solved new) board cells, NO lookup.
 //!
 //! ## The PI vector (the `custom_state_binding` ABI + the packed commitment)
 //!
@@ -50,8 +58,94 @@
 use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::field::BabyBear;
 
-use crate::air::{build_d1_honest, placeholder_roots};
-use crate::reference::{Board, automaton_step};
+use crate::reference::{Board, VAC, automaton_sense, decision_score};
+use crate::resolve_witness::rule_l_pass;
+use crate::step_layout::{SCORE_RBITS, SMALL_RBITS, StepLayout};
+
+/// Placeholder cell-state door roots for the state-binding PI prefix `[old8 ‖ new8]` (PIs `[0..16)`).
+/// The door is OPAQUE to the board descriptor — it is a free 16-felt window the fold driver
+/// overwrites with the leg's REAL rotated roots (`set_state_door`); a placeholder serves the
+/// in-memory witness battery. (Formerly `air::placeholder_roots`, retained here after the Rust AIR
+/// deletion; [`crate::resolve_witness`] uses the same values for its door.)
+pub fn placeholder_roots() -> ([BabyBear; 8], [BabyBear; 8]) {
+    (
+        core::array::from_fn(|i| BabyBear::new(100 + i as u32)),
+        core::array::from_fn(|i| BabyBear::new(200 + i as u32)),
+    )
+}
+
+/// A signed integer lifted into BabyBear.
+fn bb(x: i64) -> BabyBear {
+    if x >= 0 {
+        BabyBear::from_u64(x as u64)
+    } else {
+        -BabyBear::from_u64((-x) as u64)
+    }
+}
+
+/// Set a column iff it is currently unfilled.
+fn set_if_none(vals: &mut [Option<BabyBear>], col: usize, v: BabyBear) {
+    if vals[col].is_none() {
+        vals[col] = Some(v);
+    }
+}
+
+/// Seed a one-hot selector vector `sel[j] = [j == idx]` (unconditional).
+fn seed_one_hot(vals: &mut [Option<BabyBear>], sel: impl Fn(usize) -> usize, len: usize, idx: i64) {
+    for j in 0..len {
+        set_if_none(
+            vals,
+            sel(j),
+            if j as i64 == idx {
+                BabyBear::ONE
+            } else {
+                BabyBear::ZERO
+            },
+        );
+    }
+}
+
+/// Seed a GATED one-hot: all-zero when the gate is off, else `sel[idx] = 1`.
+fn seed_one_hot_gated(
+    vals: &mut [Option<BabyBear>],
+    sel: impl Fn(usize) -> usize,
+    len: usize,
+    gate_on: bool,
+    idx: i64,
+) {
+    if gate_on {
+        seed_one_hot(vals, sel, len, idx);
+    } else {
+        for j in 0..len {
+            set_if_none(vals, sel(j), BabyBear::ZERO);
+        }
+    }
+}
+
+/// Seed a `forced_ge0` block over an arbitrary non-negativity witness `d` (`AutomataflStepEmit`'s
+/// `forcedGe0Constraints ib d bits`): the boolean `ib = [d ≥ 0]` and `rbits` recomposition bits of
+/// `term = 2·ib·d + ib − d − 1`. A term outside `[0, 2^rbits)` is a fail-closed UNSAT.
+fn seed_ge0(
+    vals: &mut [Option<BabyBear>],
+    d: i64,
+    ib_col: usize,
+    bit0: usize,
+    rbits: usize,
+) -> Result<(), String> {
+    let ib = i64::from(d >= 0);
+    let term = 2 * ib * d + ib - d - 1;
+    if term < 0 || term >= (1i64 << rbits) {
+        return Err(format!(
+            "automatafl step witness-gen: forced_ge0 range term {term} ∉ [0, 2^{rbits}) for d = {d} \
+             (ib col {ib_col}) — an out-of-range / invalid input (fail-closed)"
+        ));
+    }
+    set_if_none(vals, ib_col, bb(ib));
+    for k in 0..rbits {
+        set_if_none(vals, bit0 + k, bb((term >> k) & 1));
+    }
+    Ok(())
+}
 
 /// The by-name loader identity of the Lean D1 step descriptor for board size `n`
 /// (`descriptor_by_name(&step_descriptor_name(n))`). Emitted for `n ∈ {2, 11}`.
@@ -86,117 +180,211 @@ impl StepTrace {
     }
 }
 
-/// Pack a board's cells into `⌈n²/15⌉` base-4 felts: `packed[f] = Σ_{i<15} cell[15f+i]·4^i`. The
-/// last felt is partial when `n²` is not a multiple of 15. `4^15 - 1 < BABYBEAR_P`, so no felt
-/// overflows.
-fn pack_board(board: &Board) -> Vec<BabyBear> {
-    let k = board.n * board.n;
-    let nfelts = packed_felts(board.n);
-    (0..nfelts)
-        .map(|f| {
-            let mut acc: u64 = 0;
-            for i in 0..15usize {
-                let cell = f * 15 + i;
-                if cell < k {
-                    acc += (board.cells[cell] as u64) * 4u64.pow(i as u32);
-                }
-            }
-            BabyBear::from_u64(acc)
-        })
-        .collect()
+/// **SEED the genuinely non-affine gadget columns** of the step trace from the reference automaton
+/// oracle, at their exact [`StepLayout`] columns. Everything a linear gate cannot derive — the
+/// coordinate decompositions, the auto/ipw/inw/hit one-hots, the `cond_nonzero` inverses, the
+/// decision fields, and every `forced_ge0` range block — is placed here; the affine remainder is
+/// left for [`rule_l_pass`]. `Err` is fail-closed (an out-of-range distance/coordinate).
+fn seed_step(l: &StepLayout, old: &Board, vals: &mut [Option<BabyBear>]) -> Result<(), String> {
+    let n = l.n;
+    let ni = n as i64;
+
+    // -- old board cells + the automaton coordinate. --
+    for i in 0..l.kk {
+        let code = old.cells[i] as i64;
+        if !(0..=3).contains(&code) {
+            return Err(format!(
+                "automatafl step witness-gen: cell {i} particle {code} ∉ {{0,1,2,3}}"
+            ));
+        }
+        set_if_none(vals, l.old(i), bb(code));
+    }
+    let (ax, ay) = (old.auto.0 as i64, old.auto.1 as i64);
+    if !(0..ni).contains(&ax) || !(0..ni).contains(&ay) {
+        return Err(format!(
+            "automatafl step witness-gen: automaton coordinate ({ax},{ay}) out of board [0,{n})"
+        ));
+    }
+    set_if_none(vals, l.ax(), bb(ax));
+    set_if_none(vals, l.ay(), bb(ay));
+    // decompose_coord_le: lower edge = binary(coord), upper edge = binary((n−1) − coord).
+    for k in 0..l.cr {
+        set_if_none(vals, l.ax_lo(k), bb((ax >> k) & 1));
+        set_if_none(vals, l.ax_hi(k), bb(((ni - 1 - ax) >> k) & 1));
+        set_if_none(vals, l.ay_lo(k), bb((ay >> k) & 1));
+        set_if_none(vals, l.ay_hi(k), bb(((ni - 1 - ay) >> k) & 1));
+    }
+    // The auto row×column one-hots.
+    seed_one_hot(vals, |y| l.sel_row(y), n, ay);
+    seed_one_hot(vals, |x| l.sel_col(x), n, ax);
+
+    // -- the four ray scans: the hit one-hot + the cond_nonzero inverse. --
+    let sense = automaton_sense(old);
+    for d in 0..4 {
+        let ray = sense.rays[d];
+        // hit[kk] = [kk == dist] over steps 1..=n.
+        for kk in 1..=n {
+            set_if_none(
+                vals,
+                l.r_hit(d, kk),
+                if kk == ray.dist {
+                    BabyBear::ONE
+                } else {
+                    BabyBear::ZERO
+                },
+            );
+        }
+        // inv: hib·(what·inv − 1) == 0. When the hit is in-bounds (`what ≠ 0`), inv = what⁻¹; the
+        // OOB/wall hit (`what = 0`, `hib = 0`) leaves the gate free, so inv = 0.
+        let inv = if ray.what == 0 {
+            BabyBear::ZERO
+        } else {
+            bb(ray.what as i64)
+                .inverse()
+                .expect("a non-vacuum particle is a nonzero felt")
+        };
+        set_if_none(vals, l.r_inv(d), inv);
+    }
+
+    // -- the two decide_axis blocks (xdec over rays 0/1, ydec over rays 2/3). --
+    // rays: [XP, XN, YP, YN]; xdec's (pw,nw) = (XP,XN), ydec's = (YP,YN).
+    for (axis, (dec, pray, nray)) in [
+        (&sense.x_dec, 0usize, 1usize),
+        (&sense.y_dec, 2usize, 3usize),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let b = l.decide_base(axis);
+        // The witnessed decision fields (assert_case gates pin them non-affinely — seed them).
+        set_if_none(vals, l.dec_variant(b), bb(dec.variant as i64));
+        set_if_none(vals, l.dec_pos(b), bb(i64::from(dec.pos)));
+        set_if_none(vals, l.dec_att(b), bb(dec.att_dist as i64));
+        set_if_none(vals, l.dec_rep(b), bb(dec.rep_dist as i64));
+        // The pw/nw alphabet one-hots (size 3, hot at the ray's `what`).
+        seed_one_hot(vals, |j| l.dec_ipw(b, j), 3, sense.rays[pray].what as i64);
+        seed_one_hot(vals, |j| l.dec_inw(b, j), 3, sense.rays[nray].what as i64);
+        // The six forced_ge0 distance-compare blocks: gpd, gnd, lt, gt, le, gm.
+        let pd = sense.rays[pray].dist as i64;
+        let nd = sense.rays[nray].dist as i64;
+        let minv = pd.min(nd);
+        let ge0 = l.dec_ge0(b);
+        let ds = [
+            pd - 2,      // gpd = [pd ≥ 2]
+            nd - 2,      // gnd = [nd ≥ 2]
+            nd - pd - 1, // lt  = [pd < nd]
+            pd - nd - 1, // gt  = [pd > nd]
+            nd - pd,     // le  = [pd ≤ nd]
+            minv - 2,    // gm  = [min > 1]
+        ];
+        for (dv, (ib_col, bit0)) in ds.into_iter().zip(ge0) {
+            seed_ge0(vals, dv, ib_col, bit0, SMALL_RBITS)?;
+        }
+    }
+
+    // -- choose_offset: the score compare (sgt/slt) + the move-nonzero bits (xmove/ymove). --
+    let score_x = decision_score(&sense.x_dec);
+    let score_y = decision_score(&sense.y_dec);
+    seed_ge0(
+        vals,
+        score_x - score_y - 1,
+        l.co_sgt(),
+        l.co_sgt() + 1,
+        SCORE_RBITS,
+    )?;
+    seed_ge0(
+        vals,
+        score_y - score_x - 1,
+        l.co_slt(),
+        l.co_slt() + 1,
+        SCORE_RBITS,
+    )?;
+    seed_ge0(
+        vals,
+        sense.x_dec.variant as i64 - 1,
+        l.co_xmove(),
+        l.co_xmove() + 1,
+        SMALL_RBITS,
+    )?;
+    seed_ge0(
+        vals,
+        sense.y_dec.variant as i64 - 1,
+        l.co_ymove(),
+        l.co_ymove() + 1,
+        SMALL_RBITS,
+    )?;
+
+    // -- the step: the four target-edge forced_ge0 blocks, the two gated target one-hots, and the
+    //    [tcell ≥ 1] block. (`col`, `ox`, `oy`, `tib`, `tcell`, `targ_vac`, `offnz`, `m` are AFFINE
+    //    and left to Rule L; the gated one-hots and the edge blocks depend on the oracle offset.) --
+    let (ox, oy) = (sense.offset.0 as i64, sense.offset.1 as i64);
+    let tx = ax + ox;
+    let ty = ay + oy;
+    let edges = l.step_edge_ge0();
+    let edge_ds = [tx, ni - 1 - tx, ty, ni - 1 - ty];
+    for (dv, (ib_col, bit0)) in edge_ds.into_iter().zip(edges) {
+        seed_ge0(vals, dv, ib_col, bit0, SMALL_RBITS)?;
+    }
+    let target = (tx as i32, ty as i32);
+    let tib = old.in_bounds(target);
+    seed_one_hot_gated(vals, |j| l.step_targ_row_read(j), n, tib, ty);
+    seed_one_hot_gated(vals, |j| l.step_targ_col_read(j), n, tib, tx);
+    let tcell = old.cell_at(target) as i64; // 0 when OOB.
+    seed_ge0(
+        vals,
+        tcell - 1,
+        l.step_nz_ib(),
+        l.step_nz_bit0(),
+        SMALL_RBITS,
+    )?;
+    // The move mask `m = [in bounds ∧ genuine offset ∧ target vacuum]` (== `automaton_step`'s guard).
+    let moved = tib && (ox != 0 || oy != 0) && old.cell_at(target) == VAC;
+    seed_one_hot_gated(vals, |j| l.step_targ_row_upd(j), n, moved, ty);
+    seed_one_hot_gated(vals, |j| l.step_targ_col_upd(j), n, moved, tx);
+    Ok(())
 }
 
-/// **THE WITNESS GENERATOR.** Fill the Lean D1 descriptor's trace for the honest transition
-/// `next = automaton_step(old)`: reuse the Rust co-build front-end fill for columns
-/// `0 .. A_BACK_TAIL`, rewrite the tail to the packed base-4 board commitment, and assemble the
-/// public inputs.
+/// **THE WITNESS GENERATOR (solve-the-gates).** Fill the Lean D1 (Leg A) descriptor's trace for the
+/// honest transition `next = automaton_step(old)` with NO dependency on the hand-authored Rust AIR:
+/// [`seed_step`] places the non-affine gadget columns from the reference oracle, then Rule L solves
+/// every affine column from the descriptor's OWN gates, and the public inputs are read off the
+/// descriptor's first-row `PiBinding`s.
 ///
 /// `desc` is the decoded Lean descriptor for `old.n` (via
 /// `dregg_circuit::descriptor_by_name(&step_descriptor_name(old.n))`). The generator is checked
-/// against it: on any layout disagreement it returns `Err` (fail-closed) rather than a trace that
-/// silently mis-fills.
+/// against it: on a `trace_width` disagreement (a descriptor cutover the [`StepLayout`] mirror has
+/// not tracked) or a column no gate determines, it returns `Err` (fail-closed) rather than a trace
+/// that silently mis-fills.
 pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<StepTrace, String> {
     let n = old.n;
-    let nfelts = packed_felts(n);
+    let l = StepLayout::new(n);
 
-    // THE SHAPE-INDEPENDENT ABI READ. The descriptor's OWN first-row `PiBinding`s say which
-    // column every published PI is. Reading them (instead of computing `front = trace_width −
-    // 2F`) is what survives the APPEND-ONLY descriptor growth the two-leg fold rides: Leg A's
-    // stepped automaton coordinate (`NAX`/`NAY`) is two appended columns + two appended PIs past
-    // 35, which the old arithmetic silently mis-aimed. `0..35` are never re-indexed (the capstone
-    // quotes absolute indices), so the pinned prefix reads identically at any descriptor version.
-    let binds = pi_binding_cols(desc);
-    let min_pi = 16 + 2 * nfelts + 2;
-    if desc.public_input_count < min_pi {
+    // Fail-closed layout guard: the descriptor must be the step packed-felt layout for this `n`.
+    if l.width() != desc.trace_width {
         return Err(format!(
-            "automatafl witness-gen: descriptor '{}' publishes {} PIs, but board n={n} needs at \
-             least 16 (old8‖new8) + 2·{nfelts} (packed) + 2 (ax,ay) = {min_pi}",
-            desc.name, desc.public_input_count
+            "automatafl step witness-gen: layout width {} ≠ descriptor '{}' trace_width {} — a \
+             descriptor cutover the shape-independent mirror has not tracked",
+            l.width(),
+            desc.name,
+            desc.trace_width
         ));
     }
-    let col_of = |pi: usize| -> Result<usize, String> {
-        binds.get(&pi).copied().ok_or_else(|| {
-            format!(
-                "automatafl witness-gen: descriptor '{}' has no first-row PI binding for PI {pi} \
-                 — the packed-felt ABI is not the shape this descriptor publishes",
-                desc.name
-            )
-        })
-    };
-    let pack_old_col = col_of(16)?;
-    let pack_new_col = col_of(16 + nfelts)?;
-    if pack_new_col != pack_old_col + nfelts {
+    if old.cells.len() != l.kk {
         return Err(format!(
-            "automatafl witness-gen: the packed tail is not contiguous (pack_old at col \
-             {pack_old_col}, pack_new at col {pack_new_col}, F = {nfelts})"
-        ));
-    }
-    // Everything below the packed tail is the front-end the Rust co-build harness fills.
-    let front = pack_old_col;
-    let ax_col = col_of(16 + 2 * nfelts)?;
-    let ay_col = col_of(16 + 2 * nfelts + 1)?;
-    if ax_col >= front || ay_col >= front {
-        return Err(format!(
-            "automatafl witness-gen: the automaton coord columns ({ax_col},{ay_col}) fall outside \
-             the front-end prefix width {front}"
+            "automatafl step witness-gen: board has {} cells, expected KK = {}",
+            old.cells.len(),
+            l.kk
         ));
     }
 
-    // Front-end reuse: the Rust co-build harness fills columns 0..front from the reference oracle.
-    let b = build_d1_honest(old);
-    if b.width() < front {
-        return Err(format!(
-            "automatafl witness-gen: co-build harness produced {} columns, fewer than the \
-             descriptor front-end width {front}",
-            b.width()
-        ));
-    }
-
-    let packed_old = pack_board(old);
-    let next = automaton_step(old);
-    let packed_new = pack_board(&next);
-
-    // Assemble the row: [0..front) from the co-build fill, then the packed tail at its BOUND
-    // columns; every remaining column is SOLVED from the descriptor's own gates below.
     let mut vals: Vec<Option<BabyBear>> = vec![None; desc.trace_width];
-    for c in 0..front {
-        vals[c] = Some(b.value(c));
-    }
-    for (f, v) in packed_old.iter().enumerate() {
-        vals[pack_old_col + f] = Some(*v);
-    }
-    for (f, v) in packed_new.iter().enumerate() {
-        vals[pack_new_col + f] = Some(*v);
-    }
+    seed_step(&l, old, &mut vals)?;
 
-    // THE APPENDED-COLUMN SOLVE. Any column past the packed tail (today: `NAX`/`NAY`, pinned by
-    // the DEGREE-2 mask gates `NAX − AX − M·OX == 0`) is filled by EVALUATING the gate that
-    // DEFINES it — never by re-deriving the rule in Rust. Rule L solves a gate that is AFFINE in
-    // its single unknown, which the mask pin is (`NAX` has coefficient 1; `M` and `OX` are already
-    // resolved front-end columns), so the degree-2 product costs the solver nothing. A column no
-    // gate determines is a hard `Err`, not a zero-filled guess that would fail the STARK later.
+    // SOLVE the affine remainder from the descriptor's own gates to fixpoint (in-bounds bits, gated
+    // reads, dist/what/hib, min, col, ox/oy, tib/tcell/targ_vac/offnz/m, the board-update NEW cells,
+    // the packed felts, and the NAX/NAY mask pins). A column no gate determines is a hard `Err`.
     loop {
-        if !crate::resolve_witness::rule_l_pass(desc, &mut vals)? {
+        if !rule_l_pass(desc, &mut vals)? {
             break;
         }
     }
@@ -205,13 +393,15 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
         .collect();
     if !unresolved.is_empty() {
         return Err(format!(
-            "automatafl witness-gen: {} appended column(s) unresolved after the gate solver \
-             reached fixpoint (first: {:?}) — no descriptor gate determines them",
+            "automatafl step witness-gen: {} column(s) unresolved after the gate solver reached \
+             fixpoint (first: {:?}) — no descriptor gate determines them, and no seed covers them",
             unresolved.len(),
             &unresolved[..unresolved.len().min(8)]
         ));
     }
     let row: Vec<BabyBear> = vals.into_iter().map(|v| v.expect("all resolved")).collect();
+
+    let binds = pi_binding_cols(desc);
 
     // The public inputs: the state-binding prefix (placeholder cell roots, as the Rust D1 path —
     // the fold driver overwrites them with the leg's real rotated roots), then EVERY bound PI read
@@ -346,7 +536,7 @@ pub fn step_trace_accepts(desc: &EffectVmDescriptor2, tr: &StepTrace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{ATT, AUTO, REP, VAC, stock_two_player};
+    use crate::reference::{ATT, AUTO, REP, VAC, automaton_step, stock_two_player};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn n5_board() -> Board {
