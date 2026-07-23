@@ -249,6 +249,14 @@ wasm-bindgen-test = "0.3"
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 
+# Mirrors the root workspace's Plonky3 patch: the exact 82cfad73 `p3-fri` source
+# with the additive backend-injection seam (`TwoAdicFriFoldBackend` /
+# `CpuTwoAdicFriFold`) that `dregg-circuit-prove` now compiles against. Without
+# it this standalone graph resolves the unpatched upstream rev and
+# circuit-prove does not build here even though the root workspace is green.
+[patch."https://github.com/Plonky3/Plonky3"]
+p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+
 # THE FORK SEAM. This standalone workspace pulls `dregg-circuit` with its
 # DEFAULT features via `dregg-observability`/`dregg-bridge` (both depend on it
 # without `default-features = false`), so feature-unification turns on
