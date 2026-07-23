@@ -379,9 +379,13 @@ theorem keccakRound_size (a : Array UInt64) (rc : UInt64) : (keccakRound a rc).s
   rw [keccakRound_layered]; simp only [Array.set!, Array.size_setIfInBounds]; exact oArr_size _
 
 /-- The precomputed round-constant word `RC[ir]` has, bit-for-bit, the FIPS 202 Algorithm-5 LFSR
-round-constant lane `rcLaneOf ir` (for the 24 real rounds `ir < 24`). This is the ONLY step that
-carries the `native_decide` (`ofReduceBool`) residual — it is the constant-table cross-check
-`Fips202Refine.rc_lanes_eq_exec`, unpacked per bit. -/
+round-constant lane `rcLaneOf ir` (for the 24 real rounds `ir < 24`). It is the constant-table
+cross-check `Fips202Refine.rc_lanes_eq_exec`, unpacked per bit.
+
+This used to be the ONLY step carrying a `native_decide` (`ofReduceBool` + `trustCompiler`)
+residual. It no longer does: `rc_lanes_eq_exec` is now a KERNEL `decide` built on the `∀` bridges
+of `Dregg2.Crypto.Keccak.Fips202Lfsr`, so `#print axioms` here — and on `keccakF_refines_spec` and
+`Fips202SpongeRefine.sponge_refines` — is `[propext, Classical.choice, Quot.sound]`. -/
 theorem rc_bit_match (ir : Nat) (hir : ir < 24) (z : Fin 64) :
     laneBit (RC[ir]!) z = rcLaneOf ir z := by
   have H := Dregg2.Crypto.Keccak.Fips202Refine.rc_lanes_eq_exec

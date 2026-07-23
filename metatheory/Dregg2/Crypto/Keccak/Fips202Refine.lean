@@ -19,8 +19,16 @@ and `squeeze` use (byte `i` of a lane at shift `8·(i mod 8)`), so `getLsbD z` p
 * **`theta_D_bit`** — the executable's exact `D` combinator `c0 ^^^ rotl64 c1 1` equals FIPS 202
   §3.2.1's `D[x, z] = C[x−1, z] ⊕ C[x+1, z−1]` at every bit (given `c0, c1` are the neighbouring
   column parities). The θ column-mixing, proven at the bit level.
-* `rc_lanes_eq_exec` — the spec's Algorithm-5 LFSR round constants reproduce the executable's 24
-  precomputed `RC` lanes (`native_decide`; honestly a compiled-evaluation KAT, not a `∀`).
+* **`rc_lanes_eq_exec`** — the spec's Algorithm-5 LFSR round constants reproduce the executable's 24
+  precomputed `RC` lanes. This used to be `native_decide` — the LAST `Lean.ofReduceBool` /
+  `Lean.trustCompiler` residual anywhere in the Keccak chain. It is now closed by a **kernel**
+  `decide`, via `Dregg2.Crypto.Keccak.Fips202Lfsr`: that file gives FIPS 202 Algorithm 5's
+  `Std.Legacy.Range` do-loop a structurally recursive twin (the range loop is well-founded, so the
+  KERNEL cannot unfold it), proves the two equal for ALL `t` (`Fips202Lfsr.rcBit_eq_rcBitRec`,
+  `Fips202Lfsr.rcLaneOf_eq_rcLaneOfRec` — genuine `∀`s, not `rfl`-restatements), and then lets the
+  kernel itself unfold the Algorithm-5 recurrence 14 028 times. The check is still finite (24 rounds
+  × 64 bits) — it is a statement about 24 constants, so it could not be anything else — but nothing
+  outside the kernel is trusted. The `∀`-form headline is `Fips202Lfsr.round_constants_are_lfsr`.
 
 ## What is OPEN (stated explicitly, NOT `sorry`-ed — see the `Prop`s at the end)
 
@@ -41,6 +49,7 @@ the chain. None is discharged IN THIS FILE, but all three are now discharged DOW
 import Dregg2.Crypto.Keccak
 import Dregg2.Crypto.Keccak.Fips202Spec
 import Dregg2.Crypto.Keccak.Fips202Sponge
+import Dregg2.Crypto.Keccak.Fips202Lfsr
 
 namespace Dregg2.Crypto.Keccak.Fips202Refine
 
@@ -141,17 +150,26 @@ theorem theta_D_bit (c0 c1 : UInt64) (z : Fin 64) :
   rw [laneBit_xor, rotl64_getLsbD c1 1 (by decide) z]
   rfl
 
-/-! ## Round-constant cross-check (compiled-evaluation KAT, honestly labelled). -/
+/-! ## Round-constant cross-check — KERNEL-checked (no `native_decide`). -/
 
 /-- The spec's Algorithm-5 LFSR round constants (`rcLaneOf`, packed into a lane) reproduce the
-executable's 24 precomputed `RC` words, bit for bit. `native_decide` (compiled-evaluation residual —
-`Lean.ofReduceBool`), so this is a KAT over the 24×64 constant bits, NOT a `∀`-refinement. -/
+executable's 24 precomputed `RC` words, bit for bit.
+
+**No longer `native_decide`.** The proof is `Dregg2.Crypto.Keccak.Fips202Lfsr.rc_lanes_all`, closed
+by a kernel `decide` on top of two genuine `∀` bridges (`rcBit_eq_rcBitRec`,
+`rcLaneOf_eq_rcLaneOfRec`) that replace FIPS 202 Algorithm 5's well-founded `Std.Legacy.Range`
+do-loop — which the kernel cannot unfold — by a structurally recursive twin. `#print axioms` here is
+`[propext, Classical.choice, Quot.sound]`; `Lean.ofReduceBool` and `Lean.trustCompiler` are gone
+from this theorem and therefore from everything above `keccakRound`.
+
+Still a finite check (24×64 bits — it is a claim about 24 specific constants), but the checker is
+the kernel, not the compiled evaluator. See `Fips202Lfsr.round_constants_are_lfsr` for the `∀` form. -/
 theorem rc_lanes_eq_exec :
     (List.range 24).all (fun ir =>
       (List.range 64).all (fun z =>
         Fips202.rcLaneOf ir ⟨z % 64, Nat.mod_lt _ (by decide)⟩
-          == (Dregg2.Crypto.Keccak.RC[ir]!).toBitVec.getLsbD z)) = true := by
-  native_decide
+          == (Dregg2.Crypto.Keccak.RC[ir]!).toBitVec.getLsbD z)) = true :=
+  Dregg2.Crypto.Keccak.Fips202Lfsr.rc_lanes_all
 
 /-! ## The OPEN obligations — stated exactly, discharged NOWHERE. -/
 
