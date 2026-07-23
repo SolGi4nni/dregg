@@ -16,16 +16,41 @@ values `y1,y2,y3` those coefficients are
 * `y1 - 2*y2 + y3`.
 
 Thus interpolation needs no witness-authored division and every evaluation
-gate is an exact integer identity before reduction modulo BabyBear.  Three
-separate squared residual gates feed an exact numerator column, and the final
-always-on gate requires that numerator to vanish.
+gate is an exact integer identity before reduction modulo BabyBear.
 
-The main theorem is an exact live relation, not an analogy: for every concrete
-three-entry table carrying the proved no-wrap projection certificate, its
-constructed IR-v2 trace satisfies the emitted descriptor iff the ordinary
-`Holds` semantics satisfies the original bounded formula.  The final examples
-construct the successor trace and refuse both a tampered entry and the known
-unchecked modulus-five projection.
+Acceptance is three LINEAR gates `output j - input j - 1`, one per declared
+column, together with a 30-bit range tooth on each of the six entry columns.
+It is deliberately *not* the sum of the three squared residuals.  A sum of
+squares is not a faithful conjunction over BabyBear: `284861408 ^ 2 = -1`
+there, so `1 ^ 2 + 284861408 ^ 2 + 0 ^ 2` vanishes in the field while every
+individual equation fails (`Dregg2.Verify.DirectLogicAdversarialFalsifierV2`
+carries that table as a live regression canary).  The old design compensated
+with a Lean-side `LiveProjectionCertificate` asserting the integer numerator
+never wrapped — a premise that was never serialized into the descriptor, so
+the emitted bytes did not enforce what made them sound.  That premise is now
+DELETED: the atom gates plus the six emitted 30-bit LOOKUPS discharge the
+no-wrap condition on the wire, and the linear gates are also strictly cheaper
+(zero nonlinear products instead of three).
+
+Name the enforcing instrument exactly, because the field name misleads: the
+descriptor's `ranges` field is `[]` BY CONSTRUCTION (`ranges := []`, see
+`compileDescriptor`).  The v1 `VmRange` carrier is not what bounds anything
+here.  Enforcement is six `VmConstraint2.lookup` constraints against the
+declared `range` table id `2` of width `WIRE_BITS = 30` — one per entry
+column — which is the graduated form the deployed assembly actually builds
+(`{"t":"lookup","table":2,...}` in the emitted bytes).  Every claim below
+that a bound is "on the wire" means those six lookups, never `ranges`.
+
+The main theorem is an exact live relation, not an analogy: the constructed
+IR-v2 trace satisfies the emitted descriptor iff the ordinary `Holds` semantics
+satisfies the original bounded formula — and the soundness direction now needs
+no side condition on the CLAIM, because the range lookups are part of the
+descriptor.  It is still a statement about the constructed `traceOf table`,
+which supplies the honest range table the lookups are read against; for the
+prover-chosen-trace polarity see `StatementSatisfied` and the residual named
+in `Dregg2.Verify.DirectLogicAdversarialFalsifierV2` §0.
+The final examples construct the successor trace and refuse both a tampered
+entry and the known unchecked modulus-five projection.
 
 This is deliberately the largest faithful fixed-arity fragment established
 here.  A symbolic compiler for arbitrary matrix length would additionally need
@@ -40,7 +65,7 @@ namespace Dregg2.Metatheory.GabbayDescriptorIR2
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmRange)
 open GabbayMatrixSemantics
 open GabbayFiniteFieldProjection
 
@@ -89,18 +114,61 @@ theorem holds_iff_entries (table : ThreeEntryTable) :
       evalTerm_rational]
     exact_mod_cast h j
 
-/-- The exact integer numerator implemented by the live circuit. -/
+/-- The RETIRED sum-of-squares acceptance numerator.  No emitted gate reads it
+any more; it is kept only to state the field-cancellation counterexample that
+retired it (`residualNumerator = 0` over the integers does imply the three
+equations, but `≡ 0 [ZMOD 2013265921]` does not). -/
 def residualNumerator (table : ThreeEntryTable) : Int :=
   (table.output 0 - table.input 0 - 1) ^ 2 +
   (table.output 1 - table.input 1 - 1) ^ 2 +
   (table.output 2 - table.input 2 - 1) ^ 2
 
-/-- The projection obligation for the integer residual actually emitted by
-the fixed-schema descriptor.  Unlike a witness-authored field modulus, this
-certificate is checked outside the circuit and names BabyBear explicitly. -/
-structure LiveProjectionCertificate (table : ThreeEntryTable) : Prop where
-  prime : Nat.Prime 2013265921
-  numeratorNoWrap : (residualNumerator table).natAbs < 2013265921
+/-! ## 1b. The wire-checked entry domain -/
+
+/-- Width of the range tooth emitted on every entry column: 30 bits, the
+deployed BabyBear range-table width.  `2 ^ 30 < 2013265921`, so a 30-bit
+column is canonical and no entry difference can reach a nonzero multiple of
+the modulus. -/
+def WIRE_BITS : Nat := 30
+
+theorem wire_bound_lt_modulus : (2 : Int) ^ WIRE_BITS < 2013265921 := by
+  norm_num [WIRE_BITS]
+
+/-- The emitted range tooth's denotation, spelled out (the defining namespace is
+not opened wholesale here). -/
+theorem rangeHolds_def (env : VmRowEnv) (w b : Nat) :
+    Dregg2.Circuit.Emit.EffectVmEmit.VmRange.holds env ⟨w, b⟩ <->
+      (0 <= env.loc w /\ env.loc w < 2 ^ b) := Iff.rfl
+
+/-- The domain the emitted descriptor CHECKS: every claimed cell is a 30-bit
+field element.  This is not a Lean-side side condition on the TABLE — it is
+exactly what the descriptor's six emitted 30-bit LOOKUPS against range table
+`2` assert on every row (NOT the `ranges` field, which is `[]` here), so
+soundness DERIVES it instead of assuming it (contrast the deleted
+`LiveProjectionCertificate`).
+
+One premise does survive, one level down and one level up: a lookup only
+bounds anything against an HONEST range table (`HonestRangeTable`, i.e.
+`t.tf .range = rangeRows WIRE_BITS`), which is a property of the TRACE FAMILY
+the carrier hands us, not of the descriptor bytes.  `traceOf` installs it by
+construction, so every theorem about the constructed trace is unconditional;
+`Satisfied2` does not enforce it for an arbitrary trace.  See the residual
+named in `Dregg2.Verify.DirectLogicAdversarialFalsifierV2` §0. -/
+def WireBoundedTable (table : ThreeEntryTable) : Prop :=
+  (∀ j, 0 <= table.input j /\ table.input j < 2 ^ WIRE_BITS) /\
+  (∀ j, 0 <= table.output j /\ table.output j < 2 ^ WIRE_BITS)
+
+/-- The atom-gate no-wrap step, on the wire-checked domain: a BabyBear-zero
+entry difference between two 30-bit columns is an exact integer zero. -/
+theorem entry_eq_of_modEq_of_bounded {inp out : Int}
+    (hi : 0 <= inp /\ inp < 2 ^ WIRE_BITS)
+    (ho : 0 <= out /\ out < 2 ^ WIRE_BITS)
+    (h : out - inp - 1 ≡ 0 [ZMOD 2013265921]) : out = inp + 1 := by
+  rw [Int.modEq_zero_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h
+  simp only [WIRE_BITS] at hi ho
+  norm_num at hi ho
+  omega
 
 /-! ## 2. Denominator-cleared row interpolation -/
 
@@ -124,15 +192,11 @@ def inputCol (j : Fin 3) : Nat := j.1
 def outputCol (j : Fin 3) : Nat := 3 + j.1
 def inputCoeffCol (k : Fin 3) : Nat := 6 + k.1
 def outputCoeffCol (k : Fin 3) : Nat := 9 + k.1
-def residualCol (j : Fin 3) : Nat := 12 + j.1
-def numeratorCol : Nat := 15
-def denominatorCol : Nat := 16
-def TRACE_WIDTH : Nat := 17
+def TRACE_WIDTH : Nat := 12
 
 def negW (x : WindowExpr) : WindowExpr := .mul (.const (-1)) x
 def subW (x y : WindowExpr) : WindowExpr := .add x (negW y)
 def scaleW (n : Int) (x : WindowExpr) : WindowExpr := .mul (.const n) x
-def squareW (x : WindowExpr) : WindowExpr := .mul x x
 
 /-- Evaluate a denominator-cleared quadratic coefficient row at one of the
 three declared one-based nodes, then bind it to twice the entry column. -/
@@ -144,24 +208,17 @@ def interpolationBody (coeffCol : Fin 3 -> Nat) (entry : Nat)
       (scaleW (node ^ 2) (.loc (coeffCol 2))))
     (scaleW 2 (.loc entry))
 
-/-- One squared atomic residual, materialized in its own column. -/
-def residualBody (j : Fin 3) : WindowExpr :=
-  subW (.loc (residualCol j))
-    (squareW (subW (subW (.loc (outputCol j)) (.loc (inputCol j))) (.const 1)))
-
-def numeratorBody : WindowExpr :=
-  subW (.loc numeratorCol)
-    (.add (.add (.loc (residualCol 0)) (.loc (residualCol 1)))
-      (.loc (residualCol 2)))
-
-def acceptBody : WindowExpr := .loc numeratorCol
-def denominatorBody : WindowExpr := subW (.loc denominatorCol) (.const 1)
+/-- One acceptance atom: the `j`-th successor equation as a LINEAR gate.  This
+is the whole logical content of acceptance; there is no squared residual and no
+numerator column, because a field sum of squares is not a conjunction. -/
+def entryAtomBody (j : Fin 3) : WindowExpr :=
+  subW (subW (.loc (outputCol j)) (.loc (inputCol j))) (.const 1)
 
 def always (body : WindowExpr) : VmConstraint2 :=
   .windowGate { body := body, onTransition := false }
 
-/-- Explicit entry, interpolation, residual, numerator, denominator, and
-acceptance constraints.  Every gate is always-on, including the final row. -/
+/-- Interpolation binding plus one linear acceptance atom per declared column.
+Every gate is always-on, including the final row. -/
 def gabbayConstraints : List VmConstraint2 :=
   [ always (interpolationBody inputCoeffCol (inputCol 0) 1)
   , always (interpolationBody inputCoeffCol (inputCol 1) 2)
@@ -169,25 +226,57 @@ def gabbayConstraints : List VmConstraint2 :=
   , always (interpolationBody outputCoeffCol (outputCol 0) 1)
   , always (interpolationBody outputCoeffCol (outputCol 1) 2)
   , always (interpolationBody outputCoeffCol (outputCol 2) 3)
-  , always (residualBody 0)
-  , always (residualBody 1)
-  , always (residualBody 2)
-  , always numeratorBody
-  , always denominatorBody
-  , always acceptBody ]
+  , always (entryAtomBody 0)
+  , always (entryAtomBody 1)
+  , always (entryAtomBody 2) ]
+
+/-- The emitted no-wrap teeth, in the GRADUATED v2 form: a 30-bit range LOOKUP
+on each of the six entry columns, against the declared shared range table.
+These are the serialized form of what the retired `LiveProjectionCertificate`
+merely asserted in Lean.
+
+The graduated form is deliberate.  The v1 `ranges` carrier would also be
+checked by `Satisfied2`, but the deployed assembly refuses a v2 descriptor
+carrying it (`circuit/src/descriptor_ir2.rs` `check_descriptor2`: "v2 assembly
+requires a GRADUATED descriptor"), so those bytes would enforce the bound only
+in Lean.  A range lookup is realized for real: the assembly lowers it to a
+byte-limb decomposition at the width PINNED by the committed table id and
+refuses any row with `value >= 2^bits`. -/
+def rangeLookup (col : Nat) : VmConstraint2 :=
+  .lookup ⟨.range, [.var col]⟩
+
+def entryRangeLookups : List VmConstraint2 :=
+  [ rangeLookup (inputCol 0), rangeLookup (inputCol 1), rangeLookup (inputCol 2)
+  , rangeLookup (outputCol 0), rangeLookup (outputCol 1)
+  , rangeLookup (outputCol 2) ]
+
+/-- The honest range table: the one relation a range lookup is a lookup INTO.
+It is a condition on the witness's auxiliary tables, not on the claim, and the
+deployed assembly discharges it by CONSTRUCTING the limb decomposition itself
+rather than reading a prover-supplied table. -/
+def HonestRangeTable (t : VmTrace) : Prop := t.tf .range = rangeRows WIRE_BITS
 
 /-- The fixed-schema compiler target in the live v2 grammar. -/
 def compileDescriptor : EffectVmDescriptor2 :=
   { name := "dregg-gabbay-three-entry-skolem-v2"
   , traceWidth := TRACE_WIDTH
   , piCount := 0
-  , tables := [mainTableDef TRACE_WIDTH]
-  , constraints := gabbayConstraints
+  , tables := [mainTableDef TRACE_WIDTH, rangeTableDef WIRE_BITS]
+  , constraints := gabbayConstraints ++ entryRangeLookups
   , hashSites := []
   , ranges := [] }
 
-theorem accept_constraint_mem : always acceptBody ∈ compileDescriptor.constraints := by
-  simp [compileDescriptor, gabbayConstraints]
+theorem atom_constraint_mem (j : Fin 3) :
+    always (entryAtomBody j) ∈ compileDescriptor.constraints := by
+  fin_cases j <;> simp [compileDescriptor, gabbayConstraints]
+
+theorem input_range_mem (j : Fin 3) :
+    rangeLookup (inputCol j) ∈ compileDescriptor.constraints := by
+  fin_cases j <;> simp [compileDescriptor, entryRangeLookups, rangeLookup]
+
+theorem output_range_mem (j : Fin 3) :
+    rangeLookup (outputCol j) ∈ compileDescriptor.constraints := by
+  fin_cases j <;> simp [compileDescriptor, entryRangeLookups, rangeLookup]
 
 /-! ## 4. Constructive trace -/
 
@@ -204,15 +293,20 @@ def rowOf (table : ThreeEntryTable) : Assignment
   | 9 => twiceCoefficients table.output 0
   | 10 => twiceCoefficients table.output 1
   | 11 => twiceCoefficients table.output 2
-  | 12 => (table.output 0 - table.input 0 - 1) ^ 2
-  | 13 => (table.output 1 - table.input 1 - 1) ^ 2
-  | 14 => (table.output 2 - table.input 2 - 1) ^ 2
-  | 15 => residualNumerator table
-  | 16 => 1
   | _ => 0
 
+/-- The constructed trace's auxiliary tables: the honest range table at the
+declared width, and nothing else. -/
+def traceTables : TraceFamily
+  | .range => rangeRows WIRE_BITS
+  | _ => []
+
 def traceOf (table : ThreeEntryTable) : VmTrace :=
-  { rows := [rowOf table], pub := zeroAsg, tf := fun _ => [] }
+  { rows := [rowOf table], pub := zeroAsg, tf := traceTables }
+
+theorem traceOf_honest_range (table : ThreeEntryTable) :
+    HonestRangeTable (traceOf table) := by
+  simp only [HonestRangeTable, traceOf, traceTables]
 
 @[simp] theorem traceOf_loc (table : ThreeEntryTable) :
     (envAt (traceOf table) 0).loc = rowOf table := by
@@ -234,29 +328,36 @@ def traceOf (table : ThreeEntryTable) : VmTrace :=
     rowOf table (outputCoeffCol k) = twiceCoefficients table.output k := by
   fin_cases k <;> rfl
 
-@[simp] theorem rowOf_residual (table : ThreeEntryTable) (j : Fin 3) :
-    rowOf table (residualCol j) =
-      (table.output j - table.input j - 1) ^ 2 := by
-  fin_cases j <;> rfl
-
-@[simp] theorem rowOf_numerator (table : ThreeEntryTable) :
-    rowOf table numeratorCol = residualNumerator table := rfl
-
-@[simp] theorem rowOf_denominator (table : ThreeEntryTable) :
-    rowOf table denominatorCol = 1 := rfl
-
 theorem memLog_compileDescriptor (table : ThreeEntryTable) :
     memLog compileDescriptor (traceOf table) = [] := by
-  simp [memLog, memOpsOf, compileDescriptor, gabbayConstraints, always]
+  simp [memLog, memOpsOf, compileDescriptor, gabbayConstraints,
+    entryRangeLookups, rangeLookup, always]
 
 theorem mapLog_compileDescriptor (table : ThreeEntryTable) :
     mapLog compileDescriptor (traceOf table) = [] := by
-  simp [mapLog, mapOpsOf, compileDescriptor, gabbayConstraints, always]
+  simp [mapLog, mapOpsOf, compileDescriptor, gabbayConstraints,
+    entryRangeLookups, rangeLookup, always]
+
+/-- A wire-bounded input column really is a row of the honest range table. -/
+theorem inputRangeLookup_holds (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table) (j : Fin 3) :
+    Lookup.holdsAt (traceOf table).tf (envAt (traceOf table) 0)
+      ⟨.range, [.var (inputCol j)]⟩ :=
+  lookup_range_complete WIRE_BITS _ (traceOf_honest_range table) _ _
+    (by simpa [rangeHolds_def, traceOf_loc] using hbound.1 j)
+
+theorem outputRangeLookup_holds (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table) (j : Fin 3) :
+    Lookup.holdsAt (traceOf table).tf (envAt (traceOf table) 0)
+      ⟨.range, [.var (outputCol j)]⟩ :=
+  lookup_range_complete WIRE_BITS _ (traceOf_honest_range table) _ _
+    (by simpa [rangeHolds_def, traceOf_loc] using hbound.2 j)
 
 /-- All non-acceptance gates of the constructed trace are exact integer
 identities.  Consequently source truth constructs a full live `Satisfied2`
 witness. -/
 theorem trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table)
     (hholds : Holds (sourceValuation table) 0 successorSkolemFormula) :
     Satisfied2 hash compileDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (traceOf table) := by
@@ -266,9 +367,10 @@ theorem trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
     have hi0 : i = 0 := by simp [traceOf] at hi; omega
     subst i
     simp only [compileDescriptor] at hc
-    simp only [gabbayConstraints, List.mem_cons, List.not_mem_nil, or_false] at hc
-    rcases hc with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl
+    simp only [gabbayConstraints, entryRangeLookups, List.mem_append,
+      List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl) |
+      (rfl | rfl | rfl | rfl | rfl | rfl)
     all_goals
       simp only [always, VmConstraint2.holdsAt, WindowConstraint.holdsAt,
         Bool.false_eq_true, if_false]
@@ -308,22 +410,24 @@ theorem trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
         traceOf_loc, twiceCoefficients]
       ring_nf
       exact Int.ModEq.refl 0
-    · simp [residualBody, subW, negW, squareW, WindowExpr.eval, traceOf_loc]
-      ring_nf
-      exact Int.ModEq.refl 0
-    · simp [residualBody, subW, negW, squareW, WindowExpr.eval, traceOf_loc]
-      ring_nf
-      exact Int.ModEq.refl 0
-    · simp [residualBody, subW, negW, squareW, WindowExpr.eval, traceOf_loc]
-      ring_nf
-      exact Int.ModEq.refl 0
-    · simp [numeratorBody, subW, negW, WindowExpr.eval, traceOf_loc,
-        residualNumerator]
-    · simp [denominatorBody, subW, negW, WindowExpr.eval, traceOf_loc]
-    · change residualNumerator table ≡ 0 [ZMOD 2013265921]
-      have h0 : residualNumerator table = 0 := by
-        simp [residualNumerator, hentries 0, hentries 1, hentries 2]
-      rw [h0]
+    · change (entryAtomBody 0).eval (envAt (traceOf table) 0) ≡ 0
+        [ZMOD 2013265921]
+      simp [entryAtomBody, subW, negW, WindowExpr.eval, traceOf_loc,
+        hentries 0]
+    · change (entryAtomBody 1).eval (envAt (traceOf table) 0) ≡ 0
+        [ZMOD 2013265921]
+      simp [entryAtomBody, subW, negW, WindowExpr.eval, traceOf_loc,
+        hentries 1]
+    · change (entryAtomBody 2).eval (envAt (traceOf table) 0) ≡ 0
+        [ZMOD 2013265921]
+      simp [entryAtomBody, subW, negW, WindowExpr.eval, traceOf_loc,
+        hentries 2]
+    · exact inputRangeLookup_holds table hbound 0
+    · exact inputRangeLookup_holds table hbound 1
+    · exact inputRangeLookup_holds table hbound 2
+    · exact outputRangeLookup_holds table hbound 0
+    · exact outputRangeLookup_holds table hbound 1
+    · exact outputRangeLookup_holds table hbound 2
   · intro i hi
     trivial
   · intro i hi r hr
@@ -342,58 +446,76 @@ theorem trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
 
 /-! ## 5. Certified soundness and the exact live relation -/
 
-/-- Any accepting constructed trace has a BabyBear-zero exact numerator. -/
-theorem accepting_trace_modEq_zero {hash : List Int -> Int}
+/-- Any accepting constructed trace satisfies each acceptance atom in BabyBear. -/
+theorem accepting_trace_atom_modEq_zero {hash : List Int -> Int}
+    {table : ThreeEntryTable} (j : Fin 3)
+    (hsat : Satisfied2 hash compileDescriptor (fun _ => 0)
+      (fun _ => ((0 : Int), 0)) [] (traceOf table)) :
+    table.output j - table.input j - 1 ≡ 0 [ZMOD 2013265921] := by
+  have hgate := hsat.rowConstraints 0 (by simp [traceOf])
+    (always (entryAtomBody j)) (atom_constraint_mem j)
+  simpa [always, VmConstraint2.holdsAt, WindowConstraint.holdsAt,
+    entryAtomBody, subW, negW, WindowExpr.eval, traceOf_loc, sub_eq_add_neg]
+    using hgate
+
+/-- The descriptor's own range teeth force the wire-checked domain: an
+accepting trace's entries ARE 30-bit.  This is the fact that used to be the
+unserialized `LiveProjectionCertificate` premise.  Here it is unconditional,
+because the constructed trace carries the honest range table by construction. -/
+theorem accepting_trace_wire_bounded {hash : List Int -> Int}
     {table : ThreeEntryTable}
     (hsat : Satisfied2 hash compileDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (traceOf table)) :
-    residualNumerator table ≡ 0 [ZMOD 2013265921] := by
-  have hgate := hsat.rowConstraints 0 (by simp [traceOf])
-    (always acceptBody) accept_constraint_mem
-  simpa [always, VmConstraint2.holdsAt, WindowConstraint.holdsAt,
-    acceptBody, WindowExpr.eval, traceOf, envAt] using hgate
+    WireBoundedTable table := by
+  have hlen : (0 : Nat) < (traceOf table).rows.length := by simp [traceOf]
+  constructor
+  · intro j
+    have h := hsat.rowConstraints 0 hlen _ (input_range_mem j)
+    have hb := lookup_replaces_range WIRE_BITS _ (traceOf_honest_range table)
+      _ _ h
+    simpa [rangeHolds_def, traceOf_loc] using hb
+  · intro j
+    have h := hsat.rowConstraints 0 hlen _ (output_range_mem j)
+    have hb := lookup_replaces_range WIRE_BITS _ (traceOf_honest_range table)
+      _ _ h
+    simpa [rangeHolds_def, traceOf_loc] using hb
 
-/-- Certified soundness of the live BabyBear acceptance gate. -/
+/-- **Certified soundness of the live acceptance gates, with no side condition
+on the claimed table.**  Both halves of the old `LiveProjectionCertificate` are
+now discharged by the descriptor itself: the six emitted 30-bit lookups bound
+the entries and the linear atoms carry acceptance, so acceptance proves the
+source formula with `WireBoundedTable` DERIVED rather than assumed.
+
+Read the quantifier exactly.  This is not a statement about an arbitrary
+accepting trace: it quantifies over `traceOf table`, the CONSTRUCTED trace for
+`table`, and it is what lets the constructed trace discharge
+`HonestRangeTable` by construction (via `accepting_trace_wire_bounded`).  The
+statement-level, prover-chosen-trace polarity lives in
+`GabbayDescriptorIR2PublicBinding.statement_sound`, which quantifies over any
+`trace` but carries `HonestRangeTable trace` in `StatementSatisfied` as an
+explicit premise — see the residual named in
+`Dregg2.Verify.DirectLogicAdversarialFalsifierV2` §0. -/
 theorem trace_sound (hash : List Int -> Int) (table : ThreeEntryTable)
-    (cert : LiveProjectionCertificate table)
     (hsat : Satisfied2 hash compileDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (traceOf table)) :
     Holds (sourceValuation table) 0 successorSkolemFormula := by
-  have hmod := accepting_trace_modEq_zero hsat
-  rw [Int.modEq_zero_iff_dvd] at hmod
-  have hnum : residualNumerator table = 0 := by
-    apply Int.eq_zero_of_dvd_of_natAbs_lt_natAbs hmod
-    simpa using cert.numeratorNoWrap
+  have hbound := accepting_trace_wire_bounded hsat
   rw [holds_iff_entries]
   intro j
-  have hs0 : 0 <= (table.output 0 - table.input 0 - 1) ^ 2 := sq_nonneg _
-  have hs1 : 0 <= (table.output 1 - table.input 1 - 1) ^ 2 := sq_nonneg _
-  have hs2 : 0 <= (table.output 2 - table.input 2 - 1) ^ 2 := sq_nonneg _
-  simp only [residualNumerator] at hnum
-  have hz0 : (table.output 0 - table.input 0 - 1) ^ 2 = 0 := by omega
-  have hz1 : (table.output 1 - table.input 1 - 1) ^ 2 = 0 := by omega
-  have hz2 : (table.output 2 - table.input 2 - 1) ^ 2 = 0 := by omega
-  have hd0 := sq_eq_zero_iff.mp hz0
-  have hd1 := sq_eq_zero_iff.mp hz1
-  have hd2 := sq_eq_zero_iff.mp hz2
-  fin_cases j
-  · change table.output 0 = table.input 0 + 1
-    omega
-  · change table.output 1 = table.input 1 + 1
-    omega
-  · change table.output 2 = table.input 2 + 1
-    omega
+  exact entry_eq_of_modEq_of_bounded (hbound.1 j) (hbound.2 j)
+    (accepting_trace_atom_modEq_zero j hsat)
 
-/-- **Exact live compiler theorem.**  Under the exported no-wrap projection
-certificate, the constructive IR-v2 trace accepts iff the ordinary bounded
-matrix formula holds. -/
+/-- **Exact live compiler theorem.**  On the wire-checked 30-bit domain the
+constructive IR-v2 trace accepts iff the ordinary bounded matrix formula holds.
+The bound is a premise only for COMPLETENESS (it names which statements the
+descriptor can express); soundness needs it nowhere, because the descriptor
+checks it. -/
 theorem trace_satisfied_iff_holds (hash : List Int -> Int)
-    (table : ThreeEntryTable)
-    (cert : LiveProjectionCertificate table) :
+    (table : ThreeEntryTable) (hbound : WireBoundedTable table) :
     Satisfied2 hash compileDescriptor (fun _ => 0)
         (fun _ => ((0 : Int), 0)) [] (traceOf table) <->
       Holds (sourceValuation table) 0 successorSkolemFormula := by
-  exact ⟨trace_sound hash table cert, trace_complete hash table⟩
+  exact ⟨trace_sound hash table, trace_complete hash table hbound⟩
 
 /-! ## 6. Successor witness and refusal cases -/
 
@@ -412,15 +534,16 @@ theorem successorEntries_holds :
   intro j
   rfl
 
-def successorLiveCertificate : LiveProjectionCertificate successorEntries := by
-  refine ⟨babyBear_prime, ?_⟩
-  norm_num [residualNumerator, successorEntries]
+theorem successorEntries_wireBounded : WireBoundedTable successorEntries := by
+  constructor <;> intro j <;> fin_cases j <;>
+    norm_num [successorEntries, WIRE_BITS]
 
 /-- Constructive live witness for the canonical successor table. -/
 theorem successor_trace_satisfies (hash : List Int -> Int) :
     Satisfied2 hash compileDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (traceOf successorEntries) :=
-  trace_complete hash successorEntries successorEntries_holds
+  trace_complete hash successorEntries successorEntries_wireBounded
+    successorEntries_holds
 
 /-- One altered output entry. -/
 def tamperedEntries : ThreeEntryTable where
@@ -440,17 +563,16 @@ theorem tamperedEntries_not_holds :
   have h0 := h 0
   norm_num [tamperedEntries] at h0
 
-def tamperedLiveCertificate : LiveProjectionCertificate tamperedEntries := by
-  refine ⟨babyBear_prime, ?_⟩
-  norm_num [residualNumerator, tamperedEntries]
+theorem tamperedEntries_wireBounded : WireBoundedTable tamperedEntries := by
+  constructor <;> intro j <;> fin_cases j <;>
+    norm_num [tamperedEntries, WIRE_BITS]
 
-/-- The live relation refuses the one-cell tamper. -/
+/-- The live relation refuses the one-cell tamper — with no side condition. -/
 theorem tampered_trace_refused (hash : List Int -> Int) :
     ¬ Satisfied2 hash compileDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (traceOf tamperedEntries) := by
   intro hsat
-  exact tamperedEntries_not_holds
-    (trace_sound hash tamperedEntries tamperedLiveCertificate hsat)
+  exact tamperedEntries_not_holds (trace_sound hash tamperedEntries hsat)
 
 /-- The unchecked modulus-five counterexample cannot enter this compiler: its
 projection certificate is uninhabited.  Live IR-v2 is BabyBear-fixed. -/
@@ -461,14 +583,33 @@ theorem bad_prime_projection_refused :
 /-- The bad modulus is not the live descriptor field. -/
 theorem modulus_five_is_not_live : (5 : Nat) ≠ 2013265921 := by decide
 
+/-! ## 7. Exact wire bytes
+
+The PRIVATE descriptor's bytes are pinned here, exactly as the public variant's
+are in `GabbayDescriptorIR2PublicBinding`.  Without this pin the six range teeth
+that carry the no-wrap condition could be dropped from `entryRangeLookups` and
+nothing byte-level would notice: the `constraints.length = 15` count in
+`GabbayDescriptorIR2PublicBoundary` sees HOW MANY constraints there are, not
+WHICH.  The pinned string carries `"sem":"range","bits":30` on table 2 and six
+`{"t":"lookup","table":2,...}` entries over columns 0-5, so the width and the
+teeth are both proof-visible wire facts. -/
+def compileDescriptorBytes : String := emitVmJson2 compileDescriptor
+
+#guard compileDescriptorBytes ==
+  "{\"name\":\"dregg-gabbay-three-entry-skolem-v2\",\"ir\":2,\"trace_width\":12,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":12,\"sem\":\"main\"},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"loc\",\"c\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"loc\",\"c\":8}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":0}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4},\"r\":{\"t\":\"loc\",\"c\":8}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":1}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"loc\",\"c\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":9},\"r\":{\"t\":\"loc\",\"c\":8}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":2}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"loc\",\"c\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"loc\",\"c\":11}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":3}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4},\"r\":{\"t\":\"loc\",\"c\":11}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":4}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":9},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"loc\",\"c\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":9},\"r\":{\"t\":\"loc\",\"c\":11}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"loc\",\"c\":5}}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":1}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":5}]}],\"hash_sites\":[],\"ranges\":[]}"
+
 #assert_all_clean [sourceMatrix_input, sourceMatrix_output, holds_iff_entries,
-  twiceCoefficients_eval, accept_constraint_mem, traceOf_loc, rowOf_input,
+  wire_bound_lt_modulus, entry_eq_of_modEq_of_bounded,
+  twiceCoefficients_eval, atom_constraint_mem, input_range_mem,
+  output_range_mem, traceOf_honest_range, inputRangeLookup_holds,
+  outputRangeLookup_holds, traceOf_loc, rowOf_input,
   rowOf_output, rowOf_inputCoefficient, rowOf_outputCoefficient,
-  rowOf_residual, rowOf_numerator, rowOf_denominator,
   memLog_compileDescriptor, mapLog_compileDescriptor, trace_complete,
-  accepting_trace_modEq_zero, trace_sound, trace_satisfied_iff_holds,
-  successorEntries_cell, successorEntries_holds,
+  accepting_trace_atom_modEq_zero, accepting_trace_wire_bounded,
+  trace_sound, trace_satisfied_iff_holds,
+  successorEntries_cell, successorEntries_holds, successorEntries_wireBounded,
   successor_trace_satisfies, tamperedEntries_not_holds,
+  tamperedEntries_wireBounded,
   tampered_trace_refused, bad_prime_projection_refused,
   modulus_five_is_not_live]
 

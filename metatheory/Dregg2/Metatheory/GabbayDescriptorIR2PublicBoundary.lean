@@ -17,12 +17,17 @@ set_option autoImplicit false
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Metatheory.GabbayMatrixSemantics
 
-/-- The entire public binding surface of the current fixed descriptor is empty. -/
+/-- The entire public *binding* surface of the current fixed descriptor is
+empty: no public inputs, no hash sites, no v1 range carrier.  The descriptor
+DOES carry six graduated 30-bit range lookups (the teeth that make acceptance
+sound on the wire), but a range tooth binds no external name, so it does not
+close the statement gap this module records. -/
 theorem descriptor_public_surface_empty :
     compileDescriptor.piCount = 0 /\
       compileDescriptor.hashSites = [] /\
-      compileDescriptor.ranges = [] := by
-  exact ⟨rfl, rfl, rfl⟩
+      compileDescriptor.ranges = [] /\
+      compileDescriptor.constraints.length = 15 :=
+  ⟨rfl, rfl, rfl, rfl⟩
 
 /-- Every constructed table trace exposes the same public assignment, regardless
 of its private matrix entries. -/

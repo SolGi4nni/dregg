@@ -10,8 +10,8 @@
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, WindowExpr, parse_vm_descriptor2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, WindowExpr,
+    parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
@@ -19,7 +19,7 @@ const BABY_BEAR: i128 = 2_013_265_921;
 const GABBAY_LEAN: &str =
     include_str!("../../metatheory/Dregg2/Metatheory/GabbayDescriptorIR2PublicBinding.lean");
 const GABBAY_MARKER: &str = "#guard publicDescriptorBytes ==";
-const GABBAY_BLAKE3: &str = "0f2c4f6cb245c0fc41d66cf35aead9e2d17df43d5827f48cab1aa092aa409e0a";
+const GABBAY_BLAKE3: &str = "74c4898aa2b939ead8a303e8eee8307b0e8ae2fb9e2b6fbf13b76c41262942b8";
 const BOOLGRAPH_LEAN: &str =
     include_str!("../../metatheory/Dregg2/Metatheory/DirectLogicBoolGraphDescriptorIR2.lean");
 const BOOLGRAPH_MARKER: &str = "def factorPublicDescriptorJsonLiteral : String :=";
@@ -102,9 +102,24 @@ fn eval_window(expression: &WindowExpr, row: &[i128], next: &[i128]) -> i128 {
     }
 }
 
+/// The bound a range lookup enforces: the tuple is a bare column and the target
+/// table is a declared `Range { bits }` table, so membership is exactly
+/// `0 <= value < 2^bits` (Lean `lookup_replaces_range`, under the honest range
+/// table the deployed assembly builds rather than reads from the prover).
+fn range_lookup_bits(descriptor: &EffectVmDescriptor2, table: usize) -> Option<usize> {
+    descriptor
+        .tables
+        .iter()
+        .find(|t| t.id == table)
+        .and_then(|t| match t.sem {
+            TableSem::Range { bits } => Some(bits),
+            _ => None,
+        })
+}
+
 /// Independent concrete evaluator for the deliberately small descriptor
-/// fragment used by both public direct-logic specimens: PI pins and arithmetic
-/// gates, with no lookup/memory/hash/range side relations.
+/// fragment used by both public direct-logic specimens: PI pins, arithmetic
+/// gates, and range lookups, with no memory/hash/chip side relations.
 fn relation_accepts(
     descriptor: &EffectVmDescriptor2,
     rows: &[Vec<i128>],
@@ -144,9 +159,21 @@ fn relation_accepts(
                     let active = !gate.on_transition || transition;
                     !active || eval_window(&gate.body, row, next).rem_euclid(BABY_BEAR) == 0
                 }
+                VmConstraint2::Lookup(lookup) => {
+                    match (
+                        range_lookup_bits(descriptor, lookup.table),
+                        lookup.tuple.as_slice(),
+                    ) {
+                        (Some(bits), [LeanExpr::Var(column)]) => {
+                            let value = row[*column];
+                            value >= 0 && value < (1i128 << bits)
+                        }
+                        // Any other lookup is outside this evaluator's fragment.
+                        _ => false,
+                    }
+                }
                 // The reviewed descriptors intentionally have none of these.
                 VmConstraint2::Base(VmConstraint::Transition { .. })
-                | VmConstraint2::Lookup(_)
                 | VmConstraint2::MemOp(_)
                 | VmConstraint2::MapOp(_)
                 | VmConstraint2::UMemOp(_)
@@ -226,7 +253,7 @@ fn assert_identity_pi_layout(descriptor: &EffectVmDescriptor2, count: usize) {
 #[test]
 fn gabbay_guarded_bytes_parse_and_layout_is_exact() {
     let json = gabbay_json();
-    assert_eq!(json.len(), 1_740);
+    assert_eq!(json.len(), 1_580);
     assert_eq!(
         blake3::hash(json.as_bytes()).to_hex().as_str(),
         GABBAY_BLAKE3
@@ -236,10 +263,16 @@ fn gabbay_guarded_bytes_parse_and_layout_is_exact() {
     assert_eq!(descriptor.name, "dregg-gabbay-public-three-entry-direct-v2");
     assert_eq!(descriptor.trace_width, 6);
     assert_eq!(descriptor.public_input_count, 6);
-    assert_eq!(descriptor.tables.len(), 1);
+    assert_eq!(descriptor.tables.len(), 2);
     assert_eq!(descriptor.tables[0].id, 0);
     assert_eq!(descriptor.tables[0].arity, 6);
-    assert_eq!(descriptor.constraints.len(), 7);
+    // The graduated no-wrap teeth: the shared 30-bit range table, declared.
+    assert_eq!(descriptor.tables[1].id, 2);
+    assert!(matches!(
+        descriptor.tables[1].sem,
+        TableSem::Range { bits: 30 }
+    ));
+    assert_eq!(descriptor.constraints.len(), 15);
     assert_identity_pi_layout(&descriptor, 6);
     assert_eq!(
         descriptor
@@ -252,15 +285,35 @@ fn gabbay_guarded_bytes_parse_and_layout_is_exact() {
             .count(),
         6
     );
+    // Three LINEAR acceptance atoms, not one sum-of-squares gate: over BabyBear
+    // a sum of squares is not a conjunction (284861408^2 = -1).
     assert_eq!(
         descriptor
             .constraints
             .iter()
             .filter(|constraint| matches!(constraint, VmConstraint2::WindowGate(_)))
             .count(),
-        1
+        3
     );
+    // Six graduated 30-bit range lookups, one per bound column.
+    let range_columns: Vec<usize> = descriptor
+        .constraints
+        .iter()
+        .filter_map(|constraint| match constraint {
+            VmConstraint2::Lookup(lookup) => {
+                assert_eq!(range_lookup_bits(&descriptor, lookup.table), Some(30));
+                match lookup.tuple.as_slice() {
+                    [LeanExpr::Var(column)] => Some(*column),
+                    other => panic!("range lookup tuple is not a bare column: {other:?}"),
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(range_columns, vec![0, 1, 2, 3, 4, 5]);
     assert!(descriptor.hash_sites.is_empty());
+    // The teeth ride the GRADUATED lookup form; the v1 carrier stays empty
+    // because `check_descriptor2` refuses a v2 descriptor that uses it.
     assert!(descriptor.ranges.is_empty());
 }
 
@@ -322,6 +375,172 @@ fn gabbay_honest_trace_accepts_and_public_tamper_rejects() {
     ));
 }
 
+/// How the live prover refused a witness.
+///
+/// The two forms are the SAME refusal reported through two channels, selected
+/// by the build profile:
+///
+/// * `Panicked` — the dev profile, which is how CI invokes this crate
+///   (`cargo test --workspace`, so `debug_assertions` is ON).  `prove_batch`
+///   runs plonky3's `check_constraints`, which stops at the first row with an
+///   unsatisfied constraint and PANICS (`batch-stark/src/check_constraints.rs`
+///   line 133) rather than letting the failure surface as a `Result`.  The
+///   panic message names every violated constraint index, which is strictly
+///   MORE information than an `Err` carries.
+/// * `Errored` — the release profile, where that debug check is compiled out
+///   and the same witness is refused downstream as `Err`.
+///
+/// Neither is acceptance, and `Ok(())` from [`live_prover_outcome`] means the
+/// prover really did produce a proof.
+#[derive(Debug)]
+enum ProverRefusal {
+    Panicked(String),
+    Errored(String),
+}
+
+/// Drive the live prover on a witness and classify the outcome.
+///
+/// The default panic hook is deliberately left installed: swapping it would be
+/// process-global and could swallow a panic from a test running concurrently
+/// in the same binary.  So a `thread ... panicked at check_constraints.rs:133`
+/// line on stderr is EXPECTED output of the refusal tests below — the panic is
+/// the signal being asserted on, not a failure.
+fn live_prover_outcome(
+    descriptor: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    public: &[BabyBear],
+) -> Result<(), ProverRefusal> {
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prove_vm_descriptor2(
+            descriptor,
+            trace,
+            public,
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+    }));
+    match caught {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(message)) => Err(ProverRefusal::Errored(message)),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            Err(ProverRefusal::Panicked(message))
+        }
+    }
+}
+
+/// Assert that the live prover refused, and that a dev-profile refusal refused
+/// for the NAMED reason.
+///
+/// `expected_dev_panic` must be specific enough that an unrelated panic — an
+/// index-out-of-bounds in trace assembly, an `unwrap` on a missing table —
+/// cannot satisfy it.  The constraint indices are the descriptor's own
+/// constraint order, so the assertion pins WHICH gate did the refusing.
+fn assert_live_prover_refuses(
+    descriptor: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    public: &[BabyBear],
+    expected_dev_panic: &str,
+    what: &str,
+) {
+    match live_prover_outcome(descriptor, trace, public) {
+        Ok(()) => panic!("the live prover ACCEPTED {what}"),
+        Err(ProverRefusal::Panicked(message)) => assert!(
+            message.contains(expected_dev_panic),
+            "the live prover panicked on {what}, but not for the expected reason\n\
+             expected to contain: {expected_dev_panic:?}\n\
+             actual panic message: {message:?}"
+        ),
+        Err(ProverRefusal::Errored(message)) => assert!(
+            !message.is_empty(),
+            "the live prover refused {what} with an empty error"
+        ),
+    }
+}
+
+/// **Deployed-side regression canary for the BabyBear cancellation table.**
+/// `284861408^2 = -1 (mod BabyBear)`, so the RETIRED acceptance polynomial
+/// `sum_j (y_j - x_j - 1)^2` vanishes in the field on this fully canonical,
+/// entirely in-range, FALSE table — that is how the old descriptor accepted it.
+/// Acceptance is now three linear atoms, which refuse it here and in the live
+/// prover.  Lean twin: `DirectLogicAdversarialFalsifierV2`
+/// `wrapClaim_direct_trace_refused` / `wrapClaim_public_statement_refused`.
+#[test]
+fn gabbay_babybear_cancellation_table_is_refused() {
+    let descriptor = gabbay_descriptor();
+    let wrap: Vec<i128> = vec![0, 0, 0, 2, 284_861_409, 1];
+
+    // The retired sum-of-squares gate really does vanish on it.
+    let residual = (0..3)
+        .map(|j| {
+            let d = wrap[3 + j] - wrap[j] - 1;
+            (d * d).rem_euclid(BABY_BEAR)
+        })
+        .sum::<i128>()
+        .rem_euclid(BABY_BEAR);
+    assert_eq!(residual, 0);
+    // Two of the three successor equations are false all the same.
+    assert_ne!((wrap[4] - wrap[1] - 1).rem_euclid(BABY_BEAR), 0);
+    // Every cell is inside the declared 30-bit tooth, so the refusal below is
+    // by the acceptance atoms, not by the range teeth.
+    assert!(wrap.iter().all(|v| *v >= 0 && *v < (1i128 << 30)));
+
+    assert!(!relation_accepts(
+        &descriptor,
+        std::slice::from_ref(&wrap),
+        &wrap
+    ));
+    let row: Vec<BabyBear> = wrap.iter().map(|v| BabyBear::new(*v as u32)).collect();
+    // The descriptor's constraint order is: `#0..#5` the six PI bindings,
+    // `#6..#8` the three linear acceptance atoms, `#9..#14` the six 30-bit
+    // range lookups.  `#6` and `#7` are atoms `j = 0` and `j = 1` — exactly the
+    // two successor equations this table breaks.  Pinning the pair is what
+    // makes the refusal load-bearing: the atoms did it, no range tooth was
+    // involved (every cell is in the 30-bit tooth, asserted above), and the
+    // atom `j = 2` that this table satisfies is correctly absent.
+    assert_live_prover_refuses(
+        &descriptor,
+        std::slice::from_ref(&row),
+        &row,
+        "constraints not satisfied on row 0: failed constraints = [#6, #7]",
+        "the BabyBear cancellation table",
+    );
+}
+
+/// The graduated teeth are live: a cell at or above `2^30` is refused even
+/// though all three successor equations hold in the field.  This is the wire
+/// form of the premise the old descriptor only asserted in Lean.
+#[test]
+fn gabbay_out_of_range_cell_is_refused() {
+    let descriptor = gabbay_descriptor();
+    let over = (1i128 << 30) + 5;
+    let row: Vec<i128> = vec![over, 0, 0, over + 1, 1, 1];
+    for j in 0..3 {
+        assert_eq!((row[3 + j] - row[j] - 1).rem_euclid(BABY_BEAR), 0);
+    }
+    assert!(!relation_accepts(
+        &descriptor,
+        std::slice::from_ref(&row),
+        &row
+    ));
+
+    let field_row: Vec<BabyBear> = row.iter().map(|v| BabyBear::new(*v as u32)).collect();
+    assert!(
+        prove_vm_descriptor2(
+            &descriptor,
+            std::slice::from_ref(&field_row),
+            &field_row,
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn gabbay_live_prover_accepts_honest_and_refuses_public_tamper() {
     let descriptor = gabbay_descriptor();
@@ -339,15 +558,15 @@ fn gabbay_live_prover_accepts_honest_and_refuses_public_tamper() {
 
     let mut tampered_public = honest_row.clone();
     tampered_public[4] += BabyBear::ONE;
-    assert!(
-        prove_vm_descriptor2(
-            &descriptor,
-            std::slice::from_ref(&honest_row),
-            &tampered_public,
-            &MemBoundaryWitness::default(),
-            &[],
-        )
-        .is_err()
+    // Public input 4 is bound to column 4 by PI binding `#4`, and that is the
+    // one constraint the tamper breaks — the trace itself is still the honest
+    // successor table, so no acceptance atom and no range tooth fires.
+    assert_live_prover_refuses(
+        &descriptor,
+        std::slice::from_ref(&honest_row),
+        &tampered_public,
+        "constraints not satisfied on row 0: failed constraints = [#4]",
+        "a one-cell public-input tamper",
     );
 }
 

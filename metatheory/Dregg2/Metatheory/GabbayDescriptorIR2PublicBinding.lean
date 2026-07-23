@@ -11,19 +11,43 @@ This is deliberately a *direct-table* construction.  It makes no interpolation
 performance claim: there are no coefficient columns and interpolation is not
 part of logical acceptance.  The benefit is instead exact and auditable:
 
-* six public cells, six trace columns, seven constraints;
-* three nonlinear multiplications (the three squares);
+* six public cells, six trace columns, fifteen constraints — six PI pins,
+  three acceptance atoms, six graduated range teeth;
+* ZERO nonlinear multiplications — acceptance is three linear atoms;
 * no hash site, commitment assumption, coefficient witness, or denominator;
 * the whole table is public, so this variant provides integrity but no table
   privacy.
 
-The main theorem is statement-level rather than witness-specific.  Under the
-same explicit BabyBear no-wrap certificate as the source compiler, an
-arbitrary nonempty canonical trace satisfies the public descriptor for a
-claimed table iff that external table satisfies the source `Holds` semantics.
-The canonical-representative premise is necessary because `Satisfied2` models
-field equality by integer congruence; deployed field serialization supplies
-exactly this boundary condition.
+Acceptance used to be the single polynomial `sum of three squared residuals`,
+sound only under a Lean-side `LiveProjectionCertificate` bounding the integer
+numerator.  That premise was never serialized, so the emitted bytes did not
+enforce what made them sound, and a fully canonical FALSE table was accepted:
+`284861408 ^ 2 = -1` in BabyBear, so `1 ^ 2 + 284861408 ^ 2 + 0 ^ 2 = 0` in
+the field.  Acceptance is now three LINEAR atoms plus a 30-bit range LOOKUP on
+each of the six bound columns, both of which ARE serialized — and the lookup
+form is the one the deployed assembly actually realizes (byte-limb
+decomposition at the width pinned by the committed table id), not the v1
+`ranges` carrier it refuses outright.  The teeth also discharge the old
+`CanonicalFirstRow` trace premise: an accepting first row is 30-bit, hence
+canonical, by the descriptor's own check.
+`Dregg2.Verify.DirectLogicAdversarialFalsifierV2` keeps the cancellation table
+as a live regression canary and now proves it REJECTED.
+
+The main theorem is statement-level rather than witness-specific: an arbitrary
+nonempty trace satisfies the public descriptor for a claimed table iff that
+external table satisfies the source `Holds` semantics.  Two boundary
+conditions remain, both named exactly.  (1) The claimed cells are canonical
+integer representatives — `Satisfied2` models field equality by integer
+congruence, and deployed field serialization supplies exactly this decoding
+convention; it is a statement about how the six public field elements are
+READ, not an arithmetic side condition on the witness.  (2) The witness is
+structural: a nonempty row list (the abstract `Satisfied2` carrier admits an
+empty one, on which every row-indexed obligation is vacuous, whereas a deployed
+AIR trace always has at least one row) carrying the honest range table (what a
+range lookup is a lookup INTO; the deployed assembly builds it rather than
+reading it from the prover).  Neither is expressible as a gate: no descriptor
+byte can constrain a row that does not exist, and a lookup cannot bootstrap the
+table it looks into.
 -/
 
 import Dregg2.Metatheory.GabbayDescriptorIR2PublicBoundary
@@ -32,7 +56,7 @@ namespace Dregg2.Metatheory.GabbayDescriptorIR2PublicBinding
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmRange)
 open Dregg2.Metatheory.GabbayMatrixSemantics
 open Dregg2.Metatheory.GabbayDescriptorIR2
 
@@ -90,16 +114,13 @@ def tableOfPublic (pub : Assignment) : ThreeEntryTable where
       · funext j
         exact publicOf_output { input := input, output := output } j
 
-/-! ## 2. One direct logical polynomial -/
+/-! ## 2. Three direct logical atoms -/
 
-/-- One direct residual square.  No interpolation coefficient appears here. -/
-def directResidual (j : Fin 3) : WindowExpr :=
-  squareW (subW (subW (.loc (outputCol j)) (.loc (inputCol j))) (.const 1))
-
-/-- The acceptance polynomial is exactly the sum of the three residual
-squares.  This is the logical use of the public table. -/
-def directAcceptBody : WindowExpr :=
-  .add (.add (directResidual 0) (directResidual 1)) (directResidual 2)
+/-- One direct successor atom, as a LINEAR gate.  No interpolation coefficient
+and no square appears here: a field sum of squares is not a conjunction, so
+each equation gets its own gate. -/
+def directAtom (j : Fin 3) : WindowExpr :=
+  subW (subW (.loc (outputCol j)) (.loc (inputCol j))) (.const 1)
 
 def publicPins : List VmConstraint2 :=
   [ .base (.piBinding .first (inputCol 0) (inputPi 0))
@@ -109,15 +130,32 @@ def publicPins : List VmConstraint2 :=
   , .base (.piBinding .first (outputCol 1) (outputPi 1))
   , .base (.piBinding .first (outputCol 2) (outputPi 2)) ]
 
+def publicAtoms : List VmConstraint2 :=
+  [always (directAtom 0), always (directAtom 1), always (directAtom 2)]
+
+/-- The emitted no-wrap teeth, in the GRADUATED v2 form: a 30-bit range LOOKUP
+on each of the six bound columns, against the declared shared range table.
+This is the serialized form of what the retired `LiveProjectionCertificate`
+and the retired `CanonicalFirstRow` trace premise merely asserted in Lean.
+
+Graduated rather than the v1 `ranges` carrier because the deployed assembly
+refuses a v2 descriptor that carries the v1 form at all, while a range lookup
+it lowers to a real byte-limb decomposition at the width pinned by the
+committed table id. -/
+def publicRangeLookups : List VmConstraint2 :=
+  [ rangeLookup (inputCol 0), rangeLookup (inputCol 1), rangeLookup (inputCol 2)
+  , rangeLookup (outputCol 0), rangeLookup (outputCol 1)
+  , rangeLookup (outputCol 2) ]
+
 def publicConstraints : List VmConstraint2 :=
-  publicPins ++ [always directAcceptBody]
+  publicPins ++ publicAtoms ++ publicRangeLookups
 
 /-- Live IR-v2 descriptor for the public two-by-three table statement. -/
 def publicDescriptor : EffectVmDescriptor2 :=
   { name := "dregg-gabbay-public-three-entry-direct-v2"
   , traceWidth := TRACE_WIDTH
   , piCount := PUBLIC_INPUT_COUNT
-  , tables := [mainTableDef TRACE_WIDTH]
+  , tables := [mainTableDef TRACE_WIDTH, rangeTableDef WIRE_BITS]
   , constraints := publicConstraints
   , hashSites := []
   , ranges := [] }
@@ -126,18 +164,31 @@ theorem public_pin_mem {pin : VmConstraint2} (hpin : pin ∈ publicPins) :
     pin ∈ publicDescriptor.constraints := by
   simp [publicDescriptor, publicConstraints, hpin]
 
-theorem direct_accept_mem :
-    always directAcceptBody ∈ publicDescriptor.constraints := by
-  simp [publicDescriptor, publicConstraints]
+theorem direct_atom_mem (j : Fin 3) :
+    always (directAtom j) ∈ publicDescriptor.constraints := by
+  fin_cases j <;> simp [publicDescriptor, publicConstraints, publicAtoms]
 
-/-- Exact public surface: six direct PIs and no commitment or range carrier. -/
+theorem public_input_range_mem (j : Fin 3) :
+    rangeLookup (inputCol j) ∈ publicDescriptor.constraints := by
+  fin_cases j <;>
+    simp [publicDescriptor, publicConstraints, publicRangeLookups, rangeLookup]
+
+theorem public_output_range_mem (j : Fin 3) :
+    rangeLookup (outputCol j) ∈ publicDescriptor.constraints := by
+  fin_cases j <;>
+    simp [publicDescriptor, publicConstraints, publicRangeLookups, rangeLookup]
+
+/-- Exact public surface: six direct PIs, no commitment carrier, no v1 range
+carrier, and fifteen constraints — six pins, three linear atoms, and the six
+graduated 30-bit teeth that carry the no-wrap condition on the wire. -/
 theorem descriptor_public_surface_exact :
     publicDescriptor.piCount = 6 /\
       publicDescriptor.hashSites = [] /\
       publicDescriptor.ranges = [] /\
+      publicDescriptor.tables.length = 2 /\
       publicDescriptor.traceWidth = 6 /\
-      publicDescriptor.constraints.length = 7 := by
-  decide
+      publicDescriptor.constraints.length = 15 :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ## 3. Exact cost and privacy accounting -/
 
@@ -159,25 +210,42 @@ structure DirectPublicCost where
   publicInputs : Nat
   traceColumns : Nat
   constraints : Nat
+  rangeTeeth : Nat
   totalMulNodes : Nat
   nonlinearMulNodes : Nat
   privateTableCells : Nat
   interpolationCoefficients : Nat
   deriving Repr, DecidableEq
 
+/-- Multiplication cost of the whole acceptance block (all three atoms), not of
+one polynomial: the retired single sum-of-squares gate hid its cost in one
+body. -/
+def acceptanceMulNodes : Nat :=
+  totalMulNodes (directAtom 0) + totalMulNodes (directAtom 1) +
+    totalMulNodes (directAtom 2)
+
+def acceptanceNonlinearMulNodes : Nat :=
+  nonlinearMulNodes (directAtom 0) + nonlinearMulNodes (directAtom 1) +
+    nonlinearMulNodes (directAtom 2)
+
 def directPublicCost : DirectPublicCost :=
   { publicInputs := publicDescriptor.piCount
   , traceColumns := publicDescriptor.traceWidth
   , constraints := publicDescriptor.constraints.length
-  , totalMulNodes := totalMulNodes directAcceptBody
-  , nonlinearMulNodes := nonlinearMulNodes directAcceptBody
+  , rangeTeeth := publicRangeLookups.length
+  , totalMulNodes := acceptanceMulNodes
+  , nonlinearMulNodes := acceptanceNonlinearMulNodes
   , privateTableCells := 0
   , interpolationCoefficients := 0 }
 
+/-- The linear repair is also the cheaper circuit: the three squared residuals
+(15 multiplication nodes, 3 of them nonlinear) become 6 constant-scaling nodes
+and NO nonlinear product, at the price of two extra gates and six graduated
+range teeth (whose deployed byte-limb realization is the real added cost). -/
 theorem direct_public_cost_exact :
     directPublicCost =
-      { publicInputs := 6, traceColumns := 6, constraints := 7,
-        totalMulNodes := 15, nonlinearMulNodes := 3,
+      { publicInputs := 6, traceColumns := 6, constraints := 15,
+        rangeTeeth := 6, totalMulNodes := 6, nonlinearMulNodes := 0,
         privateTableCells := 0, interpolationCoefficients := 0 } := by
   decide
 
@@ -199,7 +267,11 @@ def directRowOf (table : ThreeEntryTable) : Assignment
   | _ => 0
 
 def directTraceOf (table : ThreeEntryTable) : VmTrace :=
-  { rows := [directRowOf table], pub := publicOf table, tf := fun _ => [] }
+  { rows := [directRowOf table], pub := publicOf table, tf := traceTables }
+
+theorem directTraceOf_honest_range (table : ThreeEntryTable) :
+    HonestRangeTable (directTraceOf table) := by
+  simp only [HonestRangeTable, directTraceOf, traceTables]
 
 @[simp] theorem directTraceOf_loc (table : ThreeEntryTable) :
     (envAt (directTraceOf table) 0).loc = directRowOf table := by
@@ -213,37 +285,56 @@ def directTraceOf (table : ThreeEntryTable) : VmTrace :=
     directRowOf table (outputCol j) = table.output j := by
   fin_cases j <;> rfl
 
-theorem directAcceptBody_eval (table : ThreeEntryTable) :
-    directAcceptBody.eval (envAt (directTraceOf table) 0) =
-      residualNumerator table := by
-  simp [directAcceptBody, directResidual, squareW, subW, negW,
-    WindowExpr.eval, directTraceOf_loc, residualNumerator, pow_two]
+/-- The acceptance atom of an arbitrary trace reads exactly the two bound
+columns of its first row. -/
+theorem directAtom_eval (trace : VmTrace) (j : Fin 3) :
+    (directAtom j).eval (envAt trace 0) =
+      (envAt trace 0).loc (outputCol j) - (envAt trace 0).loc (inputCol j) - 1 := by
+  simp [directAtom, subW, negW, WindowExpr.eval]
   ring
 
 theorem memLog_publicDescriptor (trace : VmTrace) :
     memLog publicDescriptor trace = [] := by
-  simp [memLog, memOpsOf, publicDescriptor, publicConstraints, publicPins, always]
+  simp [memLog, memOpsOf, publicDescriptor, publicConstraints, publicPins,
+    publicAtoms, publicRangeLookups, rangeLookup, always]
 
 theorem mapLog_publicDescriptor (trace : VmTrace) :
     mapLog publicDescriptor trace = [] := by
-  simp [mapLog, mapOpsOf, publicDescriptor, publicConstraints, publicPins, always]
+  simp [mapLog, mapOpsOf, publicDescriptor, publicConstraints, publicPins,
+    publicAtoms, publicRangeLookups, rangeLookup, always]
 
-/-- Source truth constructs the complete public-input-bound live trace. -/
+/-- A wire-bounded public column really is a row of the honest range table. -/
+theorem directInputRangeLookup_holds (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table) (j : Fin 3) :
+    Lookup.holdsAt (directTraceOf table).tf (envAt (directTraceOf table) 0)
+      ⟨.range, [.var (inputCol j)]⟩ :=
+  lookup_range_complete WIRE_BITS _ (directTraceOf_honest_range table) _ _
+    (by simpa [rangeHolds_def, directTraceOf_loc] using hbound.1 j)
+
+theorem directOutputRangeLookup_holds (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table) (j : Fin 3) :
+    Lookup.holdsAt (directTraceOf table).tf (envAt (directTraceOf table) 0)
+      ⟨.range, [.var (outputCol j)]⟩ :=
+  lookup_range_complete WIRE_BITS _ (directTraceOf_honest_range table) _ _
+    (by simpa [rangeHolds_def, directTraceOf_loc] using hbound.2 j)
+
+/-- Source truth on the wire-checked domain constructs the complete
+public-input-bound live trace. -/
 theorem direct_trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
+    (hbound : WireBoundedTable table)
     (hholds : Holds (sourceValuation table) 0 successorSkolemFormula) :
     Satisfied2 hash publicDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (directTraceOf table) := by
   have hentries := (holds_iff_entries table).1 hholds
-  have hres : residualNumerator table = 0 := by
-    simp [residualNumerator, hentries 0, hentries 1, hentries 2]
   refine ⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     have hi0 : i = 0 := by simp [directTraceOf] at hi; omega
     subst i
     simp only [publicDescriptor] at hc
-    simp only [publicConstraints, publicPins, List.mem_append, List.mem_cons,
-      List.not_mem_nil, or_false] at hc
-    rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | rfl
+    simp only [publicConstraints, publicPins, publicAtoms, publicRangeLookups,
+      List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with ((rfl | rfl | rfl | rfl | rfl | rfl) |
+      (rfl | rfl | rfl)) | (rfl | rfl | rfl | rfl | rfl | rfl)
     · simp [VmConstraint2.holdsAt, directTraceOf, envAt, publicOf,
         directRowOf, inputCol, inputPi]
     · simp [VmConstraint2.holdsAt, directTraceOf, envAt, publicOf,
@@ -258,7 +349,25 @@ theorem direct_trace_complete (hash : List Int -> Int) (table : ThreeEntryTable)
         directRowOf, outputCol, outputPi]
     · simp only [VmConstraint2.holdsAt, always, WindowConstraint.holdsAt,
         Bool.false_eq_true, if_false]
-      rw [directAcceptBody_eval, hres]
+      rw [directAtom_eval]
+      simp only [directTraceOf_loc, directRowOf_input, directRowOf_output]
+      rw [hentries 0]; simp
+    · simp only [VmConstraint2.holdsAt, always, WindowConstraint.holdsAt,
+        Bool.false_eq_true, if_false]
+      rw [directAtom_eval]
+      simp only [directTraceOf_loc, directRowOf_input, directRowOf_output]
+      rw [hentries 1]; simp
+    · simp only [VmConstraint2.holdsAt, always, WindowConstraint.holdsAt,
+        Bool.false_eq_true, if_false]
+      rw [directAtom_eval]
+      simp only [directTraceOf_loc, directRowOf_input, directRowOf_output]
+      rw [hentries 2]; simp
+    · exact directInputRangeLookup_holds table hbound 0
+    · exact directInputRangeLookup_holds table hbound 1
+    · exact directInputRangeLookup_holds table hbound 2
+    · exact directOutputRangeLookup_holds table hbound 0
+    · exact directOutputRangeLookup_holds table hbound 1
+    · exact directOutputRangeLookup_holds table hbound 2
   · intro i hi
     trivial
   · intro i hi r hr
@@ -282,24 +391,43 @@ def CanonicalTable (table : ThreeEntryTable) : Prop :=
   (∀ j, 0 <= table.input j /\ table.input j < BABYBEAR_MODULUS) /\
   (∀ j, 0 <= table.output j /\ table.output j < BABYBEAR_MODULUS)
 
-/-- Canonical integer representatives for the six bound columns of row zero. -/
-def CanonicalFirstRow (trace : VmTrace) : Prop :=
-  (∀ j, 0 <= (envAt trace 0).loc (inputCol j) /\
-    (envAt trace 0).loc (inputCol j) < BABYBEAR_MODULUS) /\
-  (∀ j, 0 <= (envAt trace 0).loc (outputCol j) /\
-    (envAt trace 0).loc (outputCol j) < BABYBEAR_MODULUS)
+/-- A 30-bit wire value is a canonical BabyBear representative. -/
+theorem canonical_of_wire_bounded {x : Int}
+    (h : 0 <= x /\ x < 2 ^ WIRE_BITS) : 0 <= x /\ x < BABYBEAR_MODULUS := by
+  refine ⟨h.1, ?_⟩
+  have := h.2
+  simp only [WIRE_BITS] at this
+  norm_num [BABYBEAR_MODULUS] at this ⊢
+  omega
+
+/-- The wire-checked domain implies canonicality of the claim. -/
+theorem canonicalTable_of_wireBounded {claim : ThreeEntryTable}
+    (h : WireBoundedTable claim) : CanonicalTable claim :=
+  ⟨fun j => canonical_of_wire_bounded (h.1 j),
+   fun j => canonical_of_wire_bounded (h.2 j)⟩
 
 /-- Replace only the verifier-visible statement; the prover's rows and tables
 remain arbitrary. -/
 def withPublic (claim : ThreeEntryTable) (trace : VmTrace) : VmTrace :=
   { trace with pub := publicOf claim }
 
-/-- The exact statement relation used below.  Nonemptiness is explicit because
-the abstract `Satisfied2` carrier permits an empty list, whereas an AIR trace
-has at least one row. -/
+/-- The exact statement relation used below.  Two structural conjuncts remain,
+and both are conditions on the WITNESS, not side conditions on the claim.
+
+* Nonemptiness: the abstract `Satisfied2` carrier permits an empty row list,
+  whereas an AIR trace has at least one row.  No descriptor byte can constrain
+  a row that does not exist.
+* `HonestRangeTable`: a range lookup is a membership in the trace family's
+  range table, so the table has to be the real one.  The deployed assembly
+  discharges this by BUILDING the byte-limb decomposition itself at the width
+  pinned by the committed table id, rather than reading a prover-supplied
+  table.
+
+The former `CanonicalFirstRow` conjunct is gone: the descriptor's own teeth now
+force it (`first_row_input_bounded` / `first_row_output_bounded`). -/
 def StatementSatisfied (hash : List Int -> Int) (claim : ThreeEntryTable)
     (trace : VmTrace) : Prop :=
-  trace.rows ≠ [] /\ CanonicalFirstRow trace /\
+  trace.rows ≠ [] /\ HonestRangeTable trace /\
     Satisfied2 hash publicDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (withPublic claim trace)
 
@@ -342,52 +470,110 @@ theorem output_pin_field_binding {hash : List Int -> Int}
     (public_pin_mem (by fin_cases j <;> simp [publicPins]))
   simpa [VmConstraint2.holdsAt, withPublic, envAt] using h
 
+/-- **The retired `CanonicalFirstRow` premise, now a theorem.**  The
+descriptor's own range teeth bound row zero's six bound columns to 30 bits. -/
+theorem withPublic_honest_range {claim : ThreeEntryTable} {trace : VmTrace}
+    (hrange : HonestRangeTable trace) :
+    HonestRangeTable (withPublic claim trace) := by
+  simpa [HonestRangeTable, withPublic] using hrange
+
+theorem first_row_input_bounded {hash : List Int -> Int}
+    {claim : ThreeEntryTable} {trace : VmTrace}
+    (hne : trace.rows ≠ []) (hrange : HonestRangeTable trace)
+    (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
+      (fun _ => ((0 : Int), 0)) [] (withPublic claim trace))
+    (j : Fin 3) :
+    0 <= (envAt trace 0).loc (inputCol j) /\
+      (envAt trace 0).loc (inputCol j) < 2 ^ WIRE_BITS := by
+  have hpos : 0 < (withPublic claim trace).rows.length := by
+    simp [withPublic]
+    exact List.length_pos_iff.mpr hne
+  have h := hsat.rowConstraints 0 hpos _ (public_input_range_mem j)
+  have hb := lookup_replaces_range WIRE_BITS _
+    (withPublic_honest_range hrange) _ _ h
+  simpa [rangeHolds_def, withPublic, envAt] using hb
+
+theorem first_row_output_bounded {hash : List Int -> Int}
+    {claim : ThreeEntryTable} {trace : VmTrace}
+    (hne : trace.rows ≠ []) (hrange : HonestRangeTable trace)
+    (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
+      (fun _ => ((0 : Int), 0)) [] (withPublic claim trace))
+    (j : Fin 3) :
+    0 <= (envAt trace 0).loc (outputCol j) /\
+      (envAt trace 0).loc (outputCol j) < 2 ^ WIRE_BITS := by
+  have hpos : 0 < (withPublic claim trace).rows.length := by
+    simp [withPublic]
+    exact List.length_pos_iff.mpr hne
+  have h := hsat.rowConstraints 0 hpos _ (public_output_range_mem j)
+  have hb := lookup_replaces_range WIRE_BITS _
+    (withPublic_honest_range hrange) _ _ h
+  simpa [rangeHolds_def, withPublic, envAt] using hb
+
 theorem input_pin_exact {hash : List Int -> Int}
     {claim : ThreeEntryTable} {trace : VmTrace}
-    (hclaim : CanonicalTable claim) (hrow : CanonicalFirstRow trace)
-    (hne : trace.rows ≠ [])
+    (hclaim : CanonicalTable claim)
+    (hne : trace.rows ≠ []) (hrange : HonestRangeTable trace)
     (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (withPublic claim trace))
     (j : Fin 3) :
     (envAt trace 0).loc (inputCol j) = claim.input j :=
   eq_of_modEq_of_canonical (input_pin_field_binding hne hsat j)
-    (hrow.1 j) (hclaim.1 j)
+    (canonical_of_wire_bounded (first_row_input_bounded hne hrange hsat j))
+    (hclaim.1 j)
 
 theorem output_pin_exact {hash : List Int -> Int}
     {claim : ThreeEntryTable} {trace : VmTrace}
-    (hclaim : CanonicalTable claim) (hrow : CanonicalFirstRow trace)
-    (hne : trace.rows ≠ [])
+    (hclaim : CanonicalTable claim)
+    (hne : trace.rows ≠ []) (hrange : HonestRangeTable trace)
     (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (withPublic claim trace))
     (j : Fin 3) :
     (envAt trace 0).loc (outputCol j) = claim.output j :=
   eq_of_modEq_of_canonical (output_pin_field_binding hne hsat j)
-    (hrow.2 j) (hclaim.2 j)
+    (canonical_of_wire_bounded (first_row_output_bounded hne hrange hsat j))
+    (hclaim.2 j)
 
-/-- The direct acceptance gate of any nonempty satisfying trace reduces to the
-claimed table's exact residual, once the six field pins are canonically decoded. -/
-theorem claimed_residual_modEq_zero {hash : List Int -> Int}
+/-- **The retired `LiveProjectionCertificate`, now a theorem.**  Every
+canonically decoded claim of a satisfying trace lies in the wire-checked
+30-bit domain, because the emitted teeth say so. -/
+theorem statement_forces_wire_bounded {hash : List Int -> Int}
     {claim : ThreeEntryTable} {trace : VmTrace}
-    (hclaim : CanonicalTable claim) (hrow : CanonicalFirstRow trace)
-    (hne : trace.rows ≠ [])
+    (hclaim : CanonicalTable claim) (hne : trace.rows ≠ [])
+    (hrange : HonestRangeTable trace)
     (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
       (fun _ => ((0 : Int), 0)) [] (withPublic claim trace)) :
-    residualNumerator claim ≡ 0 [ZMOD 2013265921] := by
+    WireBoundedTable claim := by
+  constructor
+  · intro j
+    have hb := first_row_input_bounded hne hrange hsat j
+    rwa [input_pin_exact hclaim hne hrange hsat j] at hb
+  · intro j
+    have hb := first_row_output_bounded hne hrange hsat j
+    rwa [output_pin_exact hclaim hne hrange hsat j] at hb
+
+/-- Each acceptance atom of any nonempty satisfying trace reduces to the
+claimed table's own successor equation, once the six field pins are
+canonically decoded. -/
+theorem claimed_atom_modEq_zero {hash : List Int -> Int}
+    {claim : ThreeEntryTable} {trace : VmTrace}
+    (hclaim : CanonicalTable claim)
+    (hne : trace.rows ≠ []) (hrange : HonestRangeTable trace)
+    (hsat : Satisfied2 hash publicDescriptor (fun _ => 0)
+      (fun _ => ((0 : Int), 0)) [] (withPublic claim trace))
+    (j : Fin 3) :
+    claim.output j - claim.input j - 1 ≡ 0 [ZMOD 2013265921] := by
   have hpos : 0 < (withPublic claim trace).rows.length := by
     simp [withPublic]
     exact List.length_pos_iff.mpr hne
   have hgate := hsat.rowConstraints 0 hpos
-    (always directAcceptBody) direct_accept_mem
-  have hi0 := input_pin_exact hclaim hrow hne hsat (0 : Fin 3)
-  have hi1 := input_pin_exact hclaim hrow hne hsat (1 : Fin 3)
-  have hi2 := input_pin_exact hclaim hrow hne hsat (2 : Fin 3)
-  have ho0 := output_pin_exact hclaim hrow hne hsat (0 : Fin 3)
-  have ho1 := output_pin_exact hclaim hrow hne hsat (1 : Fin 3)
-  have ho2 := output_pin_exact hclaim hrow hne hsat (2 : Fin 3)
-  simp only [withPublic, envAt] at hi0 hi1 hi2 ho0 ho1 ho2 hgate
-  simpa [always, VmConstraint2.holdsAt, WindowConstraint.holdsAt,
-    directAcceptBody, directResidual, squareW, subW, negW, WindowExpr.eval,
-    residualNumerator, pow_two, hi0, hi1, hi2, ho0, ho1, ho2] using hgate
+    (always (directAtom j)) (direct_atom_mem j)
+  have hi := input_pin_exact hclaim hne hrange hsat j
+  have ho := output_pin_exact hclaim hne hrange hsat j
+  simp only [always, VmConstraint2.holdsAt, WindowConstraint.holdsAt,
+    Bool.false_eq_true, if_false] at hgate
+  rw [directAtom_eval] at hgate
+  simp only [withPublic, envAt] at hi ho hgate
+  rwa [hi, ho] at hgate
 
 theorem holds_of_residual_zero (table : ThreeEntryTable)
     (hzero : residualNumerator table = 0) :
@@ -415,43 +601,48 @@ theorem holds_of_residual_zero (table : ThreeEntryTable)
   · exact he1
   · exact he2
 
-/-- Soundness for an arbitrary satisfying witness: the public statement, not a
-prover-selected hidden table, is what `Holds`. -/
+/-- **Soundness for an arbitrary satisfying witness, with NO arithmetic side
+condition.**  The public statement, not a prover-selected hidden table, is what
+`Holds`; the no-wrap premise that used to be assumed is now read off the
+descriptor's own range teeth.  The only remaining hypothesis is the decoding
+convention that the six claimed field elements are given by their canonical
+integer representatives. -/
 theorem statement_sound (hash : List Int -> Int) (claim : ThreeEntryTable)
-    (cert : LiveProjectionCertificate claim) (hclaim : CanonicalTable claim)
+    (hclaim : CanonicalTable claim)
     (trace : VmTrace) (hs : StatementSatisfied hash claim trace) :
     Holds (sourceValuation claim) 0 successorSkolemFormula := by
-  rcases hs with ⟨hne, hrow, hsat⟩
-  have hmod := claimed_residual_modEq_zero hclaim hrow hne hsat
-  rw [Int.modEq_zero_iff_dvd] at hmod
-  have hzero : residualNumerator claim = 0 := by
-    apply Int.eq_zero_of_dvd_of_natAbs_lt_natAbs hmod
-    simpa using cert.numeratorNoWrap
-  exact holds_of_residual_zero claim hzero
+  rcases hs with ⟨hne, hrange, hsat⟩
+  have hbound := statement_forces_wire_bounded hclaim hne hrange hsat
+  rw [holds_iff_entries]
+  intro j
+  exact entry_eq_of_modEq_of_bounded (hbound.1 j) (hbound.2 j)
+    (claimed_atom_modEq_zero hclaim hne hrange hsat j)
 
-/-- A canonical true public statement has a constructive live witness. -/
+/-- A wire-bounded true public statement has a constructive live witness. -/
 theorem statement_complete (hash : List Int -> Int) (claim : ThreeEntryTable)
-    (hclaim : CanonicalTable claim)
+    (hbound : WireBoundedTable claim)
     (hholds : Holds (sourceValuation claim) 0 successorSkolemFormula) :
     StatementSatisfied hash claim (directTraceOf claim) := by
-  refine ⟨by simp [directTraceOf], ?_, ?_⟩
-  · constructor <;> intro j
-    · simpa [directTraceOf, envAt] using hclaim.1 j
-    · simpa [directTraceOf, envAt] using hclaim.2 j
-  · simpa [withPublic, directTraceOf] using direct_trace_complete hash claim hholds
+  refine ⟨by simp [directTraceOf], directTraceOf_honest_range claim, ?_⟩
+  simpa [withPublic, directTraceOf] using
+    direct_trace_complete hash claim hbound hholds
 
-/-- **Exact external statement theorem.**  Existence of an arbitrary canonical
-satisfying trace is equivalent to truth of the named public table. -/
+/-- **Exact external statement theorem.**  On the descriptor's wire-checked
+30-bit domain, existence of an arbitrary nonempty satisfying trace is
+equivalent to truth of the named public table.  The bound is a premise only
+because COMPLETENESS needs it — it names which statements this descriptor can
+express; soundness derives it, so a claim outside the domain is REFUSED rather
+than silently accepted. -/
 theorem public_statement_satisfied_iff_holds (hash : List Int -> Int)
-    (claim : ThreeEntryTable) (cert : LiveProjectionCertificate claim)
-    (hclaim : CanonicalTable claim) :
+    (claim : ThreeEntryTable) (hbound : WireBoundedTable claim) :
     (∃ trace, StatementSatisfied hash claim trace) <->
       Holds (sourceValuation claim) 0 successorSkolemFormula := by
   constructor
   · rintro ⟨trace, hs⟩
-    exact statement_sound hash claim cert hclaim trace hs
+    exact statement_sound hash claim (canonicalTable_of_wireBounded hbound)
+      trace hs
   · intro hholds
-    exact ⟨directTraceOf claim, statement_complete hash claim hclaim hholds⟩
+    exact ⟨directTraceOf claim, statement_complete hash claim hbound hholds⟩
 
 /-! ## 6. Concrete positive and tamper polarities -/
 
@@ -462,7 +653,7 @@ theorem successorEntries_canonical : CanonicalTable successorEntries := by
 theorem successor_public_statement_has_witness (hash : List Int -> Int) :
     ∃ trace, StatementSatisfied hash successorEntries trace :=
   (public_statement_satisfied_iff_holds hash successorEntries
-    successorLiveCertificate successorEntries_canonical).2 successorEntries_holds
+    successorEntries_wireBounded).2 successorEntries_holds
 
 theorem tamperedEntries_canonical : CanonicalTable tamperedEntries := by
   constructor <;> intro j <;> fin_cases j <;> norm_num [tamperedEntries,
@@ -474,8 +665,8 @@ theorem tampered_public_statement_refused (hash : List Int -> Int) :
     ¬ (∃ trace, StatementSatisfied hash tamperedEntries trace) := by
   intro hex
   exact tamperedEntries_not_holds
-    ((public_statement_satisfied_iff_holds hash tamperedEntries
-      tamperedLiveCertificate tamperedEntries_canonical).1 hex)
+    (statement_sound hash tamperedEntries tamperedEntries_canonical
+      hex.choose hex.choose_spec)
 
 /-! ## 7. Exact wire bytes -/
 
@@ -485,17 +676,23 @@ wire change. -/
 def publicDescriptorBytes : String := emitVmJson2 publicDescriptor
 
 #guard publicDescriptorBytes ==
-  "{\"name\":\"dregg-gabbay-public-three-entry-direct-v2\",\"ir\":2,\"trace_width\":6,\"public_input_count\":6,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":6,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-gabbay-public-three-entry-direct-v2\",\"ir\":2,\"trace_width\":6,\"public_input_count\":6,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":6,\"sem\":\"main\"},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":1}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":5}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 #assert_all_clean [
   publicOf_input, publicOf_output, tableOfPublic_publicOf,
-  public_pin_mem, direct_accept_mem, descriptor_public_surface_exact,
+  public_pin_mem, direct_atom_mem, public_input_range_mem,
+  public_output_range_mem, descriptor_public_surface_exact,
   direct_public_cost_exact, public_statement_reveals_whole_table,
   directTraceOf_loc, directRowOf_input, directRowOf_output,
-  directAcceptBody_eval, memLog_publicDescriptor, mapLog_publicDescriptor,
+  directAtom_eval, directInputRangeLookup_holds, directOutputRangeLookup_holds,
+  memLog_publicDescriptor, mapLog_publicDescriptor,
   direct_trace_complete, eq_of_modEq_of_canonical,
+  canonical_of_wire_bounded, canonicalTable_of_wireBounded,
   input_pin_field_binding, output_pin_field_binding,
-  input_pin_exact, output_pin_exact, claimed_residual_modEq_zero,
+  withPublic_honest_range, directTraceOf_honest_range,
+  first_row_input_bounded, first_row_output_bounded,
+  input_pin_exact, output_pin_exact, statement_forces_wire_bounded,
+  claimed_atom_modEq_zero,
   holds_of_residual_zero, statement_sound, statement_complete,
   public_statement_satisfied_iff_holds, successorEntries_canonical,
   successor_public_statement_has_witness, tamperedEntries_canonical,
