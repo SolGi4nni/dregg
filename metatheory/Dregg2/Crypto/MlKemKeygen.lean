@@ -94,6 +94,38 @@ def kpkeKeyGen (d : List UInt8) : (List UInt8 × List UInt8) := Id.run do
     dkPke := dkPke ++ byteEncode dCoeff sHat[i]!
   return (ek, dkPke)
 
+/-- **The RING-level `K-PKE.KeyGen(d)`** — the abstract generator of `MlKemKeygen`'s refinement obligation.
+It runs the IDENTICAL sampling / NTT / matvec as `kpkeKeyGen` above (same `G`, `Â`, `s`/`e` PRF counters,
+`ŝ`/`ê`, `t̂[i] = Σⱼ Â[i][j] ∘ ŝ[j] + ê[i]`) but STOPS BEFORE the byte codec, returning the ring objects
+`(t̂, ŝ, ρ)` directly — NO `ByteEncode`. `kpkeKeyGen` is exactly this composed with the codec (see
+`kpkeKeyGen_ek_eq` / `kpkeKeyGen_dk_eq` in `MlKemKeygenRefine`), so the refinement target
+`ekDecode (kpkeKeyGen d).1 = (t̂, ρ)` is a REAL byte↔ring statement, not the impl restated. -/
+def kpkeKeyGenRing (d : List UInt8) : (Array Poly × Array Poly × List UInt8) := Id.run do
+  let g := sha3_512 (d ++ [UInt8.ofNat paramK])        -- G(d ‖ k) → 64 bytes
+  let rho := g.take 32
+  let sigma := g.drop 32
+  let aHat := expandMatrix rho                          -- Â[i][j] at index i·k+j
+  let mut s : Array Poly := #[]
+  let mut n : Nat := 0
+  for _ in [0:paramK] do
+    s := s.push (samplePolyCBD 2 (prf 2 sigma n)); n := n + 1
+  let mut e : Array Poly := #[]
+  for _ in [0:paramK] do
+    e := e.push (samplePolyCBD 2 (prf 2 sigma n)); n := n + 1
+  let mut sHat : Array Poly := #[]
+  for i in [0:paramK] do
+    sHat := sHat.push (ntt s[i]!)
+  let mut eHat : Array Poly := #[]
+  for i in [0:paramK] do
+    eHat := eHat.push (ntt e[i]!)
+  let mut tHat : Array Poly := #[]
+  for i in [0:paramK] do
+    let mut acc : Poly := zeroPoly
+    for j in [0:paramK] do
+      acc := addPoly acc (pointwiseNtt aHat[i * paramK + j]! sHat[j]!)
+    tHat := tHat.push (addPoly acc eHat[i]!)
+  return (tHat, sHat, rho)
+
 /-! ## ML-KEM.KeyGen_internal (FIPS 203) — the deterministic KEM wrapper from a 64-byte `(d ‖ z)` seed. -/
 
 /-- **`ML-KEM.KeyGen_internal(d, z)`** (FIPS 203). `(ekPKE, dkPKE) = K-PKE.KeyGen(d)`; `ek = ekPKE`;
@@ -144,29 +176,28 @@ def mlkemKeygenRealFFI (input : String) : String :=
 #guard mlkemKeygenRealFFI "0" = "ERR"
 #guard mlkemKeygenRealFFI "00" = "ERR"
 
-/-! ## THE OPEN REFINEMENT OBLIGATION (stated, NOT proved — no `sorry`, just the named goal).
+/-! ## THE KeyGen byte↔ring REFINEMENT — DISCHARGED in `Dregg2.Crypto.MlKemKeygenRefine`.
 
 The KATs in `MlKemKeygenAcvp` are single-vector `native_decide` agreements with NIST; they are NOT a for-all
-correctness proof. The genuine for-all refinement — that the BYTE-level `kpkeKeyGen` is the byte encoding of an
-abstract RING-level KeyGen — is OPEN. Written out, the target is:
+correctness proof. The genuine for-all refinement — that the BYTE-level `kpkeKeyGen` is the byte encoding of the
+abstract RING-level `kpkeKeyGenRing` (defined above, `(t̂, ŝ, ρ)`, NO ByteEncode) — is now PROVEN in the
+sibling module `Dregg2.Crypto.MlKemKeygenRefine`:
 
-  Define the abstract ring-level generator
-    `kpkeKeyGenRing (d) : Array Poly × Array Poly × List UInt8`   -- returns `(t̂, ŝ, ρ)`, NO ByteEncode
-  (identical sampling/NTT/matmul, stopping BEFORE the byte codec). Then the OPEN goal is
-
-    theorem kpkeKeyGen_refines_ring (d : List UInt8) :
-        let (tHat, sHat, rho) := kpkeKeyGenRing d
-        MlKemCodec.ekDecode (kpkeKeyGen d).1 = (tHat, rho)
+    theorem kpkeKeyGen_refines_ring_of_rholen (d : List UInt8) (hrho : (rhoOf d).length = 32) :
+        ekDecode (kpkeKeyGen d).1 = ((kpkeKeyGenRing d).1, (kpkeKeyGenRing d).2.2)
         ∧ (∀ i, i < paramK →
-             MlKemCodec.byteDecodeAt dCoeff (kpkeKeyGen d).2.toArray (i * polyBytes dCoeff) = sHat[i]!)
+             byteDecodeAt dCoeff (kpkeKeyGen d).2.toArray (i * polyBytes dCoeff) = (kpkeKeyGenRing d).2.1[i]!)
 
-  i.e. decoding the emitted `ek` recovers exactly the abstract `t̂`/`ρ`, and decoding `dkPKE` recovers exactly
-  the abstract `ŝ`. This is a REAL refinement (LHS = byte impl through the decoder, RHS = the abstract
-  computation; it is NOT `rfl`). It reduces to the EXISTING codec round-trip lemmas in `MlKemCodecSpec`
-  (`byteDecode₁₂_byteEncode₁₂ : byteDecode 12 (byteEncode 12 f) = f`, given `f.size = 256 ∧ ∀ j, f[j]! < q`)
-  once one discharges the coefficient bounds `t̂[i]! < q` and `ŝ[i]! < q` — both hold because `addPoly` (via
-  `addQ`) and `ntt` (via `addQ`/`subQ`/`mulModQ`) reduce every coefficient mod `q`, but that per-coefficient
-  bound over the `Id.run do` loops is the remaining work and is NOT discharged here.
+decoding the emitted `ek` recovers exactly the abstract `t̂`/`ρ`, and decoding `dkPKE` at block `i` recovers
+exactly `ŝᵢ`. It is a REAL refinement (LHS = byte impl through the decoder, RHS = the RING generator; NOT
+`rfl`), `#print axioms`-clean (`[propext, Classical.choice, Quot.sound]`). It composes
+`MlKemCodecSpec.byteDecodeAt_byteEncode` (`byteDecode ∘ byteEncode = id`, `< q`) with the discharged
+per-coefficient bounds `kr_tHat_coeff` (`t̂ᵢ = addPoly _ _`, so `< q` by `addPoly_lt`) and `kr_sHat_coeff`
+(`ŝᵢ = NTT(sᵢ)`, `< q` by `ntt_lt`/`samplePolyCBD_lt`) over the `Id.run do` loops, plus the block-append offset
+engine (`appendFold_spec` + `byteDecodeAt_eq_of_window`). The `ek`/`dkPKE` codec legs `ekDecode_ekEncode` and
+`dkPkeEncode_decode` are unconditional axiom-clean `∀`-theorems. The one named side condition `hrho :
+(rhoOf d).length = 32` is the SHA-3 fixed-output-length fact (`ρ = G(d‖k).take 32`, `|G| = 64` — pure FIPS 202
+`squeeze`-loop bookkeeping, no crypto), the sole remaining leg to the fully-unconditional statement.
 
 Also OPEN (the larger goal): the ML-KEM correctness theorem — that Decaps of a ciphertext Encaps'd under a
 freshly generated `(ek, dk)` recovers the shared secret for all seeds — which is probabilistic (noise-bounded)
