@@ -61,6 +61,7 @@ No axiom, `sorry`, `admit`, or native decision procedure.
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.InjectiveFloorRegrounded
+import Dregg2.Crypto.CostAdversary
 import Dregg2.Tactics
 
 namespace Market.WideCommitBoundary
@@ -452,6 +453,50 @@ theorem the_reduced_stateCommit_bound_fires (D : WideKeyed) (S : CommitSurface) 
     Negl (gameAdv (stateCommitBreakGame D S hash t) A) :=
   stateCommit_binds_advantage_bound D S hash t Eff A hEff hCR
 
+/-! ## §P — `hEff` DISCHARGED: efficiency preservation is now a THEOREM, not a parameter.
+
+⚑ **THE ONE-LINE CHANGE `CostAdversary` ENABLES.** `stateCommit_binds_advantage_bound` (§R) still carries
+`hEff : Eff (composed finder)` as a bare PARAMETER — the honest name for "the reduction is efficient",
+undischarged because `FloorGames` §8 had no cost model. `Dregg2.Crypto.CostAdversary` supplies one, and at
+`Eff := IsPolyTime` the parameter becomes a CONSEQUENCE: both reduction hops are
+`CostAdversary.Adversary.postMap` instances (pure output reshaping, tag passed through), and
+`isPolyTime_postMap` proves each preserves `IsPolyTime` under a poly-bounded overhead. So a state forger
+that is EFFICIENT (`hA : IsPolyTime A`), reshaped by the two poly-overhead extractors, stays efficient —
+`hEff` is PROVED, not assumed.
+
+The overheads `ovState`/`ovWire` are the reshapings' costs — the chain walk `wireCommit8Find` (`O(depth)`)
+and the payload/receipt-root rebuild (`O(depth)`) — carried as poly bounds. That is the honest residual
+`FloorGames` §8 named, now localized to "the reduction's glue is poly" instead of a floating `hEff`; the
+⊤-collapse witness (the brute-force scanning solver, `CostAdversary.bruteForce`) is NO LONGER admitted,
+because it is `¬ PolyTime` (`CostAdversary.bruteForce_not_polyTime`). -/
+theorem stateCommit_binds_from_polyTime (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ)
+    (t : BoundaryTurn)
+    (A : Adversary (stateCommitBreakGame D S hash t))
+    (hA : Dregg2.Crypto.CostAdversary.IsPolyTime A)
+    (ovState ovWire : ℕ → ℕ)
+    (hovState : Dregg2.Crypto.ConcreteSecurity.PolyBoundedNat ovState)
+    (hovWire : Dregg2.Crypto.ConcreteSecurity.PolyBoundedNat ovWire)
+    (hCR : HashCRHardQuant (wideFamily D) Dregg2.Crypto.CostAdversary.IsPolyTime) :
+    Negl (gameAdv (stateCommitBreakGame D S hash t) A) := by
+  have h1 : Dregg2.Crypto.CostAdversary.IsPolyTime (stateBreakToWireBreak D S hash t A) :=
+    Dregg2.Crypto.CostAdversary.isPolyTime_postMap
+      (G := stateCommitBreakGame D S hash t) (G' := wireCommitBreakGame D)
+      (fun _ => rfl)
+      (fun _ _ c => ((kernelPayload S c.1.kernel t, receiptRoot hash c.1.log),
+                     (kernelPayload S c.2.kernel t, receiptRoot hash c.2.log)))
+      ovState hovState hA
+  have hEff : Dregg2.Crypto.CostAdversary.IsPolyTime
+      (wireBreakToFinder D (stateBreakToWireBreak D S hash t A)) :=
+    Dregg2.Crypto.CostAdversary.isPolyTime_postMap
+      (G := wireCommitBreakGame D) (G' := hashGame (wideFamily D))
+      (fun _ => rfl)
+      (fun _ tag c =>
+        Dregg2.Circuit.Emit.EffectVmEmitRotationR.wireCommit8Find
+          (D.permWAt tag) c.1.1 c.1.2 c.2.1 c.2.2)
+      ovWire hovWire h1
+  exact stateCommit_binds_advantage_bound D S hash t
+    Dregg2.Crypto.CostAdversary.IsPolyTime A hEff hCR
+
 #guard kernelPayloadWidth == 178
 #guard receiptRoot (fun xs => xs.sum)
   [{ actor := 1, src := 1, dst := 2, amt := 3 }] == 7
@@ -468,6 +513,7 @@ theorem the_reduced_stateCommit_bound_fires (D : WideKeyed) (S : CommitSurface) 
 #assert_axioms state_wins_imp
 #assert_axioms state_adv_le
 #assert_axioms stateCommit_binds_advantage_bound
+#assert_axioms stateCommit_binds_from_polyTime
 #assert_axioms stateCommit_floor_top_false_babyBear
 #assert_axioms stateCommit_floor_bot_vacuous
 #assert_axioms the_reduced_stateCommit_bound_fires
