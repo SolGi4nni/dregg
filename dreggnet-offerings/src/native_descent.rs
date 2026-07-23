@@ -8,13 +8,44 @@
 //! and a deos surface. It does not mirror the game rules; affordance `enabled`
 //! decorations ask the native [`Sim`] mover and every submitted action goes
 //! through the real executor-backed [`Descent`] verb.
+//!
+//! ## Banking a relic MINTS a real owned note
+//!
+//! A session is deployed on a committed **run day-seed** (its provenance root) and owns a
+//! [`LootVault`]. When the terminal `flee` lands, the run's BANKED custody relics are minted
+//! through [`Descent::mint_banked_relics`] into that vault, and
+//! [`NativeDescentCompletion::banked_notes`] carries the resulting real
+//! [`dreggnet_asset`] notes — not merely the computed
+//! [`banked_relics`](NativeDescentCompletion::banked_relics) index list. Each note's
+//! [`AssetId`] is content-addressed to `(run day-seed, custody slot, player key)`, so it
+//! **replays to this run**: re-deriving
+//! [`banked_relic_drop`](dungeon_on_dregg::loot::banked_relic_drop) from the record's day-seed
+//! and the banked slot re-mints the byte-identical id — which is exactly what the exact-replay
+//! verifier does on every [`verify`](Offering::verify) (the completion, notes included, must
+//! recompute). A run that banks nothing mints nothing.
+//!
+//! The run day-seed is the offering's day binding: [`NativeDescentOffering::new`] derives a
+//! reproducible one from the normalized deploy seed, while
+//! [`NativeDescentOffering::on_beacon`] / [`on_day`](NativeDescentOffering::on_day) bind the
+//! day's REAL verified beacon seed, making the provenance root
+//! unpredictable-until-revealed and distinct per day. Either way the run day-seed is folded
+//! into the journal's genesis root, so a record cannot be re-pointed at another day's
+//! provenance without breaking its hash chain.
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
+/// A minted note's content-addressed id, re-exported so a surface or leaderboard can name a
+/// settled run's owned notes without its own dependency on the asset layer.
+pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
-    BANKED, BREATH, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT, PROGRAM_JSON, RELICS, SMITE,
-    Sim, UNLOCK, guard_hp,
+    BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT,
+    PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_seed_from_deploy_seed, guard_hp,
 };
+use dungeon_on_dregg::loot::LootError;
+/// The settled run's owned-note world and the shape of what it recorded — re-exported so a
+/// consumer can read a banked note's provenance / rarity, and hand the live vault on to a
+/// market organ, without its own dependency on the loot layer.
+pub use dungeon_on_dregg::loot::{LootProvenance, LootVault, Rarity};
 #[cfg(feature = "private-fair-shuffle-operation")]
 use dungeon_on_dregg::private_fair_shuffle::{
     DIGEST_WIDTH as SHUFFLE_DIGEST_WIDTH, FairCardOpening, FairShuffleAttemptOutcome,
@@ -28,6 +59,8 @@ use dungeon_on_dregg::private_preference::{
 use dungeon_on_dregg::private_raid::{
     RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
 };
+use procgen_dregg::CommittedSeed;
+use procgen_dregg::beacon::DailyBeacon;
 use spween_dregg::WorldError;
 
 use crate::{
@@ -50,6 +83,8 @@ const MAX_ACTOR_BYTES: usize = 512;
 
 const GENESIS_ROOT_DOMAIN: &str = "dregg.native-descent.genesis.v1";
 const EVENT_ROOT_DOMAIN: &str = "dregg.native-descent.event.v1";
+/// Domain tag binding a day's committed beacon seed to one normalized native deploy seed.
+const RUN_DAY_SEED_DOMAIN: &str = "dregg.native-descent.run-day-seed.v1";
 
 #[cfg(any(
     feature = "private-preference-operation",
@@ -201,9 +236,35 @@ pub struct NativeDescentCheckpoint {
     pub state: Sim,
 }
 
+/// One banked relic that became a **real owned asset note** at settlement.
+///
+/// The [`AssetId`] is `blake3_derive_key(player_pubkey ‖ drop_commitment(run day-seed, banked
+/// slot, fair roll, rarity, chest))`, so it content-addresses this run's provenance root, this
+/// custody slot, and this player. Re-deriving
+/// [`banked_relic_drop`](dungeon_on_dregg::loot::banked_relic_drop) from the run's day-seed and
+/// `relic`, then claiming it for the same player, re-mints the byte-identical id — the note
+/// **replays to the banked run** rather than to a manufactured draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeDescentBankedNote {
+    /// The stable relic identifier (the custody slot the relic banked in); never a
+    /// target-sized collection offset.
+    pub relic: u64,
+    /// The minted note's content-addressed asset id — the handle a market names it by.
+    pub asset_id: AssetId,
+    /// The fair-draw tier of the banked relic's drop (a legendary is a provable ~3% tail).
+    pub rarity: Rarity,
+    /// The owning player's pubkey at mint (the settling actor's vault identity).
+    pub owner: [u8; 32],
+}
+
 /// A terminal bank settlement. `settlement_receipt_hash` is the real `flee`
 /// executor receipt; banking is the native game's settlement rather than a
 /// second application-level promise.
+///
+/// [`banked_relics`](Self::banked_relics) is the custody read; [`banked_notes`](Self::banked_notes)
+/// is what those relics BECAME — real owned [`dreggnet_asset`] notes minted into the session's
+/// [`LootVault`] under this run's day-seed. Both are re-derived by exact replay, so a record
+/// whose notes do not re-mint is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeDescentCompletion {
     pub actor: DreggIdentity,
@@ -212,6 +273,9 @@ pub struct NativeDescentCompletion {
     pub settlement_receipt_hash: [u8; 32],
     /// Stable relic identifiers; never target-sized collection offsets.
     pub banked_relics: Vec<u64>,
+    /// The owned asset notes the banked relics minted, in the same slot order as
+    /// [`banked_relics`](Self::banked_relics). Empty exactly when the run banked nothing.
+    pub banked_notes: Vec<NativeDescentBankedNote>,
     pub crowned: bool,
 }
 
@@ -324,6 +388,10 @@ impl NativeDescentPrivateDeal {
 #[derive(Clone, Debug)]
 pub struct NativeDescentRecord {
     pub seed: u8,
+    /// The run's committed day-seed — the provenance root the banked relics minted under.
+    /// Replay redeploys on exactly this seed, and it is folded into the genesis root, so a
+    /// record re-pointed at another day's provenance no longer recomputes its own hash chain.
+    pub day_seed: CommittedSeed,
     pub actor: Option<DreggIdentity>,
     pub events: Vec<NativeDescentEvent>,
     pub root: [u8; 32],
@@ -341,6 +409,8 @@ pub struct NativeDescentRecord {
 pub struct NativeDescentSession {
     seed: u8,
     game: Descent,
+    /// The player-owned loot vault this session's BANKED relics mint into at settlement.
+    vault: LootVault,
     actor: Option<DreggIdentity>,
     events: Vec<NativeDescentEvent>,
     root: [u8; 32],
@@ -361,6 +431,35 @@ impl NativeDescentSession {
 
     pub fn game(&self) -> &Descent {
         &self.game
+    }
+
+    /// The run's committed day-seed — the provenance root this session's banked relics mint
+    /// under. Reproducible from the deploy seed unless the offering bound a day
+    /// ([`NativeDescentOffering::on_day`] / [`on_beacon`](NativeDescentOffering::on_beacon)).
+    pub fn day_seed(&self) -> &CommittedSeed {
+        self.game.day_seed()
+    }
+
+    /// The session's loot vault — the real owned-note world the settled run's banked relics
+    /// were minted into. Provenance, ownership, and rarity of every
+    /// [`NativeDescentBankedNote`] read back off this vault.
+    pub fn loot_vault(&self) -> &LootVault {
+        &self.vault
+    }
+
+    /// Take the session's loot vault, to hand the LIVE note world on to a market/inventory
+    /// organ (`vault.into_assets()` → `dreggnet_trade::TradeWorld::with_assets`). The minted
+    /// notes keep their existing lineage and owner; a consumer must never re-mint them from
+    /// display metadata.
+    pub fn into_loot_vault(self) -> LootVault {
+        self.vault
+    }
+
+    /// The full provenance of one settled banked note — the run day-seed + chest (the banked
+    /// custody slot) it was drawn from, its fair roll/rarity, and the asset layer's own lineage
+    /// re-verification. `None` if the note was not minted by this session's vault.
+    pub fn banked_note_provenance(&self, note: &NativeDescentBankedNote) -> Option<LootProvenance> {
+        self.vault.provenance(note.asset_id)
     }
 
     pub fn revision(&self) -> u64 {
@@ -417,6 +516,7 @@ impl NativeDescentSession {
     pub fn export_record(&self) -> NativeDescentRecord {
         NativeDescentRecord {
             seed: self.seed,
+            day_seed: *self.game.day_seed(),
             actor: self.actor.clone(),
             events: self.events.clone(),
             root: self.root,
@@ -524,13 +624,64 @@ pub fn encode_native_descent_private_deal(
     encode_private_operation(PrivateOperationKind::Deal, context, &deal)
 }
 
+/// **The run day-seed a bound day mints its banked relics under** — a domain-separated hash of
+/// the day's committed beacon seed and the normalized native deploy seed. Distinct days give
+/// distinct provenance roots (a banked note cannot be pre-computed before the day's beacon
+/// round matures), and distinct worlds within one day keep distinct roots; both are
+/// re-derivable by anyone holding the day's seed.
+pub fn native_descent_run_day_seed(day: &CommittedSeed, seed: u8) -> CommittedSeed {
+    let mut hasher = blake3::Hasher::new_derive_key(RUN_DAY_SEED_DOMAIN);
+    hasher.update(day.as_bytes());
+    hasher.update(&[seed]);
+    CommittedSeed::from_bytes(*hasher.finalize().as_bytes())
+}
+
 /// The generic Offering adapter for the Lean-native Descent.
+///
+/// `day` is the offering's optional **day binding**: `None` (the [`new`](Self::new) default)
+/// mints banked relics under the reproducible seed-derived provenance root
+/// ([`day_seed_from_deploy_seed`]); `Some(day)` binds a real verified beacon day, so each day's
+/// runs mint under a root that was unpredictable until that round was revealed.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct NativeDescentOffering;
+pub struct NativeDescentOffering {
+    day: Option<CommittedSeed>,
+}
 
 impl NativeDescentOffering {
     pub fn new() -> Self {
-        Self
+        Self { day: None }
+    }
+
+    /// **Bind this offering to a day's committed seed.** Every session it opens deploys on the
+    /// run day-seed [`native_descent_run_day_seed`] derives from it, so the banked relics of
+    /// that day's runs mint under that day's provenance root. Pass the seed of a VERIFIED
+    /// beacon (or use [`on_beacon`](Self::on_beacon), which verifies for you).
+    pub fn on_day(day: CommittedSeed) -> Self {
+        Self { day: Some(day) }
+    }
+
+    /// **Bind this offering to today's verified drand beacon** — the live daily path. The
+    /// beacon is verified HERE and a beacon that does not verify yields no offering
+    /// (fail-closed: you cannot open a forged day), so a banked relic's minted note is
+    /// unpredictable-until-revealed and distinct per day.
+    pub fn on_beacon(beacon: &DailyBeacon) -> Result<Self, OfferingError> {
+        let day = beacon
+            .seed()
+            .map_err(|error| OfferingError::Deploy(format!("beacon did not verify: {error:?}")))?;
+        Ok(Self::on_day(day))
+    }
+
+    /// The day this offering binds its sessions' provenance roots to, if any.
+    pub fn day(&self) -> Option<&CommittedSeed> {
+        self.day.as_ref()
+    }
+
+    /// The run day-seed a session opened at `seed` deploys on.
+    fn run_day_seed(&self, seed: u8) -> CommittedSeed {
+        match &self.day {
+            Some(day) => native_descent_run_day_seed(day, seed),
+            None => day_seed_from_deploy_seed(seed),
+        }
     }
 
     /// Resume an untrusted record only after exact native re-execution.
@@ -609,6 +760,7 @@ impl NativeDescentOffering {
     ) -> VerifyReport {
         let turns = record.events.len() + 1;
         if record.seed != session.seed
+            || record.day_seed != *session.game.day_seed()
             || record.actor != session.actor
             || record.root != session.root
             || record.checkpoint != session.checkpoint
@@ -659,12 +811,13 @@ impl Offering for NativeDescentOffering {
 
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
         let seed = ((cfg.seed.unwrap_or(1) % 251) + 1) as u8;
-        let game =
-            Descent::deploy(seed).map_err(|error| OfferingError::Deploy(error.to_string()))?;
-        let root = genesis_root(seed, game.sim());
+        let game = Descent::deploy_on_day(seed, self.run_day_seed(seed))
+            .map_err(|error| OfferingError::Deploy(error.to_string()))?;
+        let root = genesis_root(seed, game.day_seed(), game.sim());
         Ok(NativeDescentSession {
             seed,
             game,
+            vault: LootVault::new(),
             actor: None,
             events: Vec::new(),
             root,
@@ -744,7 +897,22 @@ impl Offering for NativeDescentOffering {
             state: post.clone(),
         });
         if post.fate != 0 {
-            session.completion = Some(completion(&actor, revision, root, &post, &receipt));
+            // The terminal bank is where a BANKED custody relic becomes a real owned note:
+            // mint the run's banked relics into this session's vault under the run day-seed.
+            // The mint is driven from the committed custody, so a run that banked nothing
+            // mints nothing. It cannot fail here — the draws are the fair `(day_seed, slot)`
+            // drops the vault re-verifies, each slot is claimed once, and `fate` latches so
+            // this settlement runs exactly once per session.
+            let banked_notes = mint_banked_notes(&session.game, &mut session.vault, &actor)
+                .expect("a settled run's own banked-relic drops are the vault's fair draws");
+            session.completion = Some(completion(
+                &actor,
+                revision,
+                root,
+                &post,
+                &receipt,
+                banked_notes,
+            ));
         }
         Outcome::Landed {
             receipt,
@@ -831,6 +999,25 @@ impl Offering for NativeDescentOffering {
                         "{} relics banked in the terminal flee receipt",
                         completion.banked_relics.len()
                     )),
+                    ViewNode::Text(if completion.banked_notes.is_empty() {
+                        "no relics banked — nothing was minted".to_string()
+                    } else {
+                        format!(
+                            "minted as owned notes on run day-seed {}: {}",
+                            short_digest(*session.day_seed().as_bytes()),
+                            completion
+                                .banked_notes
+                                .iter()
+                                .map(|note| format!(
+                                    "{} ({}) {}",
+                                    relic_label(note.relic as usize),
+                                    note.rarity.label(),
+                                    short_digest(note.asset_id.bytes())
+                                ))
+                                .collect::<Vec<String>>()
+                                .join(" · ")
+                        )
+                    }),
                     ViewNode::Text(format!(
                         "proof/share record: actor {} · root {} · receipt {}",
                         completion.actor.as_str(),
@@ -1047,8 +1234,10 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
             record.events.len()
         ));
     }
-    let mut game = Descent::deploy(record.seed).map_err(|error| error.to_string())?;
-    let mut root = genesis_root(record.seed, game.sim());
+    let mut game =
+        Descent::deploy_on_day(record.seed, record.day_seed).map_err(|error| error.to_string())?;
+    let mut vault = LootVault::new();
+    let mut root = genesis_root(record.seed, game.day_seed(), game.sim());
     #[cfg(any(
         feature = "private-preference-operation",
         feature = "private-raid-operation",
@@ -1112,12 +1301,20 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
             if index + 1 != record.events.len() {
                 return Err("the banked tomb carried later events".to_string());
             }
+            // Re-mint the run's banked relics into a FRESH vault. This is the provenance
+            // replay: the notes must re-derive byte-identically from the record's day-seed
+            // and the committed banked slots, or the completion below no longer matches.
+            let banked_notes =
+                mint_banked_notes(&game, &mut vault, &expected.actor).map_err(|error| {
+                    format!("event {revision} banked relics did not re-mint: {error}")
+                })?;
             derived_completion = Some(completion(
                 &expected.actor,
                 revision,
                 root,
                 &expected.post,
                 &expected.receipt,
+                banked_notes,
             ));
         }
     }
@@ -1146,6 +1343,7 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
     Ok(NativeDescentSession {
         seed: record.seed,
         game,
+        vault,
         actor,
         events: record.events.clone(),
         root,
@@ -2049,9 +2247,14 @@ fn valid_actor(actor: &DreggIdentity) -> bool {
     !actor.as_str().is_empty() && actor.as_str().len() <= MAX_ACTOR_BYTES
 }
 
-fn genesis_root(seed: u8, sim: &Sim) -> [u8; 32] {
+/// The journal's genesis root. It commits to the deploy seed, the run's day-seed (the
+/// provenance root the banked relics will mint under), the exact Lean-emitted program, and the
+/// genesis state — so a record cannot be re-pointed at another day's provenance without
+/// breaking its whole hash chain.
+fn genesis_root(seed: u8, day_seed: &CommittedSeed, sim: &Sim) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(GENESIS_ROOT_DOMAIN);
     hasher.update(&[seed]);
+    hasher.update(day_seed.as_bytes());
     hasher.update(blake3::hash(PROGRAM_JSON.as_bytes()).as_bytes());
     hash_sim(&mut hasher, sim);
     *hasher.finalize().as_bytes()
@@ -2097,12 +2300,35 @@ fn hash_sim(hasher: &mut blake3::Hasher, sim: &Sim) {
     }
 }
 
+/// **Mint the settled run's BANKED relics into `vault` as real owned notes.** Delegates to
+/// [`Descent::mint_banked_relics`], which iterates the run's COMMITTED custody and feeds each
+/// BANKED slot plus the run's day-seed through the loot vault's forged-claim gate — so the
+/// notes are the banked relics' own fair `(day_seed, slot)` drops, in slot order, and a run
+/// that banked nothing mints nothing.
+fn mint_banked_notes(
+    game: &Descent,
+    vault: &mut LootVault,
+    actor: &DreggIdentity,
+) -> Result<Vec<NativeDescentBankedNote>, LootError> {
+    Ok(game
+        .mint_banked_relics(vault, actor.as_str())?
+        .into_iter()
+        .map(|BankedRelicMint { slot, item }| NativeDescentBankedNote {
+            relic: u64::try_from(slot).expect("the fixed native relic set fits the stable wire"),
+            asset_id: item.asset_id,
+            rarity: item.rarity,
+            owner: item.owner,
+        })
+        .collect())
+}
+
 fn completion(
     actor: &DreggIdentity,
     revision: u64,
     root: [u8; 32],
     sim: &Sim,
     receipt: &TurnReceipt,
+    banked_notes: Vec<NativeDescentBankedNote>,
 ) -> NativeDescentCompletion {
     let banked_relics: Vec<u64> = sim
         .custody
@@ -2114,6 +2340,14 @@ fn completion(
             })
         })
         .collect();
+    debug_assert_eq!(
+        banked_relics,
+        banked_notes
+            .iter()
+            .map(|note| note.relic)
+            .collect::<Vec<u64>>(),
+        "the minted notes are exactly the committed banked custody, in slot order"
+    );
     NativeDescentCompletion {
         actor: actor.clone(),
         revision,
@@ -2121,6 +2355,7 @@ fn completion(
         settlement_receipt_hash: receipt.receipt_hash(),
         crowned: banked_relics.contains(&0),
         banked_relics,
+        banked_notes,
     }
 }
 

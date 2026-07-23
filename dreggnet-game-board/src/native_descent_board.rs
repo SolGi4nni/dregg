@@ -26,13 +26,17 @@ use std::collections::HashSet;
 use std::fmt;
 
 use dreggnet_offerings::native_descent::{
-    NativeDescentCompletion, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
+    AssetId, NativeDescentBankedNote, NativeDescentCompletion, NativeDescentMove,
+    NativeDescentOffering, NativeDescentRecord, Rarity,
 };
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
 
 const SNAPSHOT_MAGIC: [u8; 8] = *b"DREGGNDB";
-const SNAPSHOT_VERSION: u8 = 2;
-const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v2";
+/// v3 carries a settled run's BANKED-RELIC NOTES (the real owned assets the banked custody
+/// minted) alongside the relic index list, so a restart image claims the complete completion
+/// its fresh re-execution is compared against.
+const SNAPSHOT_VERSION: u8 = 3;
+const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v3";
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 10_000;
 const MAX_ACTOR_BYTES: usize = 512;
@@ -349,6 +353,17 @@ impl NativeDescentSeasonBoard {
             for relic in &entry.completion.banked_relics {
                 put_u64(&mut out, *relic);
             }
+            put_u16(
+                &mut out,
+                u16::try_from(entry.completion.banked_notes.len())
+                    .expect("the fixed native relic set fits u16"),
+            );
+            for note in &entry.completion.banked_notes {
+                put_u64(&mut out, note.relic);
+                out.extend_from_slice(&note.asset_id.bytes());
+                out.push(note.rarity.tag());
+                out.extend_from_slice(&note.owner);
+            }
             out.push(u8::from(entry.completion.crowned));
         }
         let digest = snapshot_digest(&out);
@@ -417,6 +432,20 @@ impl NativeDescentSeasonBoard {
                     let mut values = Vec::with_capacity(relics);
                     for _ in 0..relics {
                         values.push(cursor.u64()?);
+                    }
+                    values
+                },
+                banked_notes: {
+                    let notes = usize::from(cursor.u16()?);
+                    let mut values = Vec::with_capacity(notes);
+                    for _ in 0..notes {
+                        values.push(NativeDescentBankedNote {
+                            relic: cursor.u64()?,
+                            asset_id: AssetId(cursor.array::<32>()?),
+                            rarity: Rarity::from_tag(cursor.u8()?)
+                                .ok_or_else(|| malformed("rarity tag is not canonical"))?,
+                            owner: cursor.array::<32>()?,
+                        });
                     }
                     values
                 },

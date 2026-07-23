@@ -86,13 +86,26 @@ pub enum Rarity {
 
 impl Rarity {
     /// A stable byte tag (folded into the drop commitment so the rarity is bound into the
-    /// asset's content address).
-    fn tag(self) -> u8 {
+    /// asset's content address). Because it is already the committed byte, it is also THE
+    /// canonical wire encoding of a rarity — see [`from_tag`](Self::from_tag).
+    pub fn tag(self) -> u8 {
         match self {
             Rarity::Common => 0,
             Rarity::Uncommon => 1,
             Rarity::Rare => 2,
             Rarity::Legendary => 3,
+        }
+    }
+
+    /// The rarity a canonical [`tag`](Self::tag) byte denotes; `None` for a non-canonical byte
+    /// (a decoder must fail closed rather than invent a tier).
+    pub fn from_tag(tag: u8) -> Option<Rarity> {
+        match tag {
+            0 => Some(Rarity::Common),
+            1 => Some(Rarity::Uncommon),
+            2 => Some(Rarity::Rare),
+            3 => Some(Rarity::Legendary),
+            _ => None,
         }
     }
 

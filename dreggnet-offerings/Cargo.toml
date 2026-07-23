@@ -95,6 +95,13 @@ dreggnet-tournament = { path = "../dreggnet-tournament" }
 # Already in this crate's build graph via dungeon-on-dregg's seat-custody keyring.
 dregg-types = { path = "../types" }
 
+# THE OWNED-NOTE LAYER — `AssetId`: the content-addressed handle a settled native Descent's
+# BANKED relic mints under (`NativeDescentCompletion::banked_notes`). The mint itself is
+# dungeon-on-dregg's `Descent::mint_banked_relics` -> `loot::LootVault`; this dep only lets the
+# completion name the real asset id rather than a bag of bytes. Already in the build graph via
+# dungeon-on-dregg (same path pin) — no new compilation.
+dreggnet-asset = { path = "../dreggnet-asset" }
+
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent
 # driven test seeds "today's dungeon" from (genuine drand interop for the beacon leg).
