@@ -66,6 +66,27 @@ the shared projection of the others.
   commitment. Dually for the executor root (`setFieldCommit_binds_cellCommit`). The pale ghost is dead:
   "circuit proof" now provably constrains "the committed cell state."
 
+* **§4½/§R THE RUNNABLE SIDE-TABLE BINDING IS A SECURITY REDUCTION, NOT A DISJUNCTION.** The crown
+  above is about the three ABSTRACT commitments. The circuit the prover RUNS publishes its own
+  `state_commit`, which absorbs the `system_roots` digest column, and this file used to export that
+  binding as `runnable_binds_same_system_roots_or_collides` — a bare THREE-way disjunction
+  `binds ∨ WideColl ∨ RootsColl`. True at deployed BabyBear parameters, but a shirk with TWO escape
+  branches: a sponge collision EXISTS there by pigeonhole, so the statement is satisfiable with the
+  binding half never holding. It quantified over SOLUTIONS; cryptographic hardness quantifies over
+  EFFICIENT ADVERSARIES. §R replaces it, at this address, with the reduction that does — the forgery
+  as a `Game`, the deployed extractor as a map of adversaries, an unconditional advantage inequality,
+  and negligibility under the named floor with efficiency DISCHARGED. The disjunction is DEMOTED in
+  place to the exact-Prop skeleton (the win relation's deterministic backbone and the `_of_injective`
+  bridge's base), and the extractors keep their correct role as the reduction's internal witnesses.
+
+  ⚑ The reduction itself is NOT re-derived here. It lives one layer down, at the definition site of
+  the disjunction — `Dregg2.Circuit.Emit.EffectVmWideCommitReduction.wideFullState_binds_from_polyTime`
+  — where it prices ALL FOUR of that file's full-state disjunctions at once, with the GROUP-4 peel and
+  the roots peel composed into ONE extracted finder (so no union-bound tightness is lost) and with the
+  ABSORBED COLUMNS bound as well as the eight roots. §R is the AC:520 ADDRESS re-exporting it, plus
+  the bridge proving that the exact negation of this file's keystone — a side-table root moved under a
+  fixed published `state_commit` — IS a win of that game.
+
 ## The assumption ledger (enumerated — NOTHING else is assumed)
 
 REUSED CR carriers (the STANDARD Poseidon/BLAKE3 set, each realizable, each named, never `axiom`,
@@ -96,6 +117,7 @@ This crown binds the three commitments **through their shared `CH`/`RH`/`cmb` su
 import Dregg2.Circuit.SetFieldCommit
 import Dregg2.Exec.RecordCommit
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmWideCommitReduction
 
 namespace Dregg2.Circuit.CommitmentCrossBind
 
@@ -422,12 +444,26 @@ the side-table `system_roots` state to the circuit the prover actually runs was 
 
 `Dregg2.Circuit.Emit.EffectVmFullStateRunnable` (the magnesium STAGE-4 widening) closes R1 for the
 side-table roots: the WIDE runnable descriptor's `state_commit` absorbs the `system_roots` digest
-column (`sysRootsDigestCol`), and `wide_binds_systemRoots` proves a satisfying RUNNABLE witness binds
-every side-table root — through the SAME `Exec.SystemRoots.systemRootsDigest` carrier whose
-`cellCommitS` the abstract record-layer commitment uses. So the "ONE object" thesis now spans the
-abstract AND the runnable surface: the same 8 side-table roots are pinned by `cellCommitS`
-(record-layer) AND by `state_commit` (the circuit the prover runs). We re-export the runnable binding
-here, beside the abstract crown, so the cross-surface weld reads in one place. -/
+column (`sysRootsDigestCol`). So the "ONE object" thesis spans the abstract AND the runnable surface:
+the same 8 side-table roots are pinned by `cellCommitS` (record-layer) AND by `state_commit` (the
+circuit the prover runs).
+
+⚑ **THE HEADLINE OF THIS SECTION IS §R, NOT THE DISJUNCTION BELOW.** The re-export
+`runnable_binds_same_system_roots_or_collides` used to be this file's exported runnable keystone
+(AC:520), stated as a bare THREE-WAY disjunction `binds ∨ WideColl ∨ RootsColl`. Unlike its
+`Poseidon2SpongeCR`-carrying predecessor it is TRUE at deployed BabyBear parameters — but it is still a
+SHIRK, and the worse kind, because it offers TWO escape branches: a sponge collision EXISTS at those
+parameters by pigeonhole (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the statement is
+satisfiable through `WideColl`/`RootsColl` with the binding half never holding. It quantifies over
+SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+
+§R supplies the object that does quantify over adversaries — the forgery as a `Game`, the deployed
+extractor as a map of adversaries, an unconditional advantage inequality, and negligibility under ONE
+named floor with efficiency DISCHARGED rather than carried. The disjunction below is DEMOTED, in
+place, to the exact-Prop skeleton (the deterministic backbone the win relation rests on, and the base
+of the `_of_injective` strength bridge) — the same demotion `Market.WideCommitBoundary` applied to
+`stateDecode8_pre_faithful` and `Exec.SystemRootsBindingReduction` applied to the five
+`systemRootsDigest_*_or_collides`. -/
 
 section RunnableWeld
 
@@ -437,12 +473,26 @@ open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest N_SYSTEM_ROOTS)
 
-/-- **`runnable_binds_same_system_roots` (R1 closed for the side-table state).** Two rows of
-the WIDE runnable descriptor that publish the SAME `state_commit`, whose `sysRootsDigestCol` carriers
-ARE the `systemRootsDigest` of their `system_roots` sub-blocks, agree on EVERY side-table root. This
-is `cellCommitS_binds_roots_pointwise_or_collides` (the record-layer binding) realized on the CIRCUIT THE PROVER
-RUNS: the runnable `state_commit` now binds the same 8 roots the abstract `cellCommitS` does — the
-abstract three-commitment crown and the runnable descriptor pin ONE side-table state object. -/
+/-- **EXACT-PROP SKELETON — NOT the exported binding (see §R).** Two rows of the WIDE runnable
+descriptor that publish the SAME `state_commit`, whose `sysRootsDigestCol` carriers ARE the
+`systemRootsDigest` of their `system_roots` sub-blocks, agree on EVERY side-table root — OR one of the
+two total extractors lands on a genuine sponge collision.
+
+⚑ **WHY THIS IS NOT THE HEADLINE.** The three-way `∨` has TWO unpriced escape branches, and at deployed
+BabyBear parameters a sponge collision exists by pigeonhole, so nothing here stops an adversary from
+living in a right branch forever. What this statement IS good for, and all it is now used for:
+
+  * it is the deterministic backbone of the reduction's win relation — the same GROUP-4-then-roots
+    peel, but composed into ONE total extractor (`EffectVmWideCommitReduction.wideFullFind`) inside a
+    game, instead of offered as an exported escape;
+  * it is the base of the `_of_injective` strength bridge
+    (`EffectVmFullStateRunnable.wide_binds_systemRoots_of_injective`), which recovers the deleted
+    injective form as exactly its special case;
+  * ~40 per-effect wide keystones instantiate it as THEIR deterministic skeleton, which is why it is
+    retained rather than deleted.
+
+The EXPORTED binding of the runnable side-table state is
+`runnable_binds_same_system_roots_from_polyTime` (§R). -/
 theorem runnable_binds_same_system_roots_or_collides
     (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
@@ -458,6 +508,178 @@ theorem runnable_binds_same_system_roots_or_collides
 #assert_axioms runnable_binds_same_system_roots_or_collides
 
 end RunnableWeld
+
+/-! ## §R — THE RUNNABLE SIDE-TABLE BINDING, AS A SECURITY REDUCTION (⚑ THE AC:520 HEADLINE).
+
+⚑ **WHAT THIS REPLACES.** `runnable_binds_same_system_roots_or_collides` (§4½) as the exported AC:520
+keystone. The disjunction quantified over SOLUTIONS ("a collision of the deployed sponge exists" — and
+one does, by pigeonhole, at deployed BabyBear parameters); this section exports the claim that
+quantifies over EFFICIENT ADVERSARIES.
+
+⚑ **AND IT DOES NOT RE-DERIVE THE REDUCTION.** The reduction lives one layer down, at the DEFINITION
+site of the disjunction: `Dregg2.Circuit.Emit.EffectVmWideCommitReduction`. That is the right home and
+it is strictly stronger than a roots-only rebuild would be, on two axes:
+
+  * it binds the WHOLE post-state the runnable descriptor commits — the twelve absorbed state-block
+    columns AND the eight side-table roots — where this file's keystone spoke only of the roots; and
+  * the GROUP-4 peel and the roots peel are composed into ONE total extractor (`wideFullFind`), so the
+    three-way disjunction becomes ONE collision finder rather than a union bound over two. No
+    tightness is lost: the forger's advantage is bounded by one finder's, not by a sum.
+
+So §R is the AC:520 ADDRESS, re-exporting that reduction beside the abstract crown, plus the BRIDGE
+that ties it to this file's own keystone: the exact negation of
+`runnable_binds_same_system_roots_or_collides` — a side-table root MOVED under a fixed published
+`state_commit`, on two rows that genuinely satisfy the wide hash-sites — IS a win of the game whose
+advantage is negligible. Re-exports, never re-derivations; there is exactly ONE wide-commit reduction
+in the tree and this points at it.
+
+**THE RESIDUAL, NAMED.** The floor is `HashCRHardQuant (spongeFamily D) Eff` — the SAME floor the
+record layer stands on, so nothing new is assumed here. At `Eff := ⊤` it is FALSE at deployed BabyBear
+parameters (the honest price of `hEff`); at `Eff := ⊥` vacuous; `Eff := IsPolyTime` sits strictly
+between (the class is PROVED inhabited, the ⊤-collapse witness `CostAdversary.bruteForce` PROVED
+excluded). Also NOT closed here, and not claimed: the exact-Prop AIR layer and the computational game
+layer are still bridged per-instance — the game samples a tag, the deployed trace fixes
+`deployedTag`. -/
+
+section RunnableReduction
+
+open Dregg2.Circuit.Emit.EffectVmEmit
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable (wideHashSites)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest N_SYSTEM_ROOTS)
+open Dregg2.Crypto.SpongeCarrierReduction
+  (SpongeKeyed spongeFamily carrierBreakGame carrierBreakToFinder carrierAnsSize spongeAnsSize)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Circuit.Emit.EffectVmWideCommitReduction
+  (wideFullCarrier rowFull wide_root_tamper_is_break
+   wideFullState_binds_advantage_bound wideFullState_binds_from_polyTime wideFullState_adv_le
+   wideCommit_floor_top_false_babyBear wideCommit_floor_bot_vacuous
+   wideCommit_polyTime_class_inhabited)
+
+set_option autoImplicit false
+
+/-- **⚑ THE BRIDGE — THE EXACT NEGATION OF THIS FILE'S KEYSTONE IS A WIN.** Hand this lemma precisely
+the hypotheses `runnable_binds_same_system_roots_or_collides` takes (at `hash := D.hashAt t`, the
+deployed sponge at the sampled domain-separation tag: two rows SATISFYING the wide hash-sites, with
+`systemRootsDigest` carriers, publishing ONE `state_commit`) together with a DISAGREEMENT at any
+kernel root index — a dropped escrow, an omitted nullifier, a reordered queue, a stale delegation
+epoch — and it is a WIN of the wide full-state forgery game.
+
+That is what makes §R an answer rather than a restatement: the failure the §4½ keystone declined to
+price is now an EVENT of a game, and the next theorem bounds that game's advantage. -/
+theorem runnable_root_tamper_is_break (D : SpongeKeyed) (l : ℕ) (t : D.Tag)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hs₁ : siteHoldsAll (D.hashAt t) e₁ wideHashSites)
+    (hs₂ : siteHoldsAll (D.hashAt t) e₂ wideHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT))
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest (D.hashAt t) sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest (D.hashAt t) sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
+    (carrierBreakGame D wideFullCarrier).wins l t ((), rowFull e₁ sr₁, rowFull e₂ sr₂) :=
+  wide_root_tamper_is_break D l t e₁ e₂ sr₁ sr₂ hs₁ hs₂ hcommit hd₁ hd₂ htamper
+
+/-- **THE ADVANTAGE INEQUALITY, UNCONDITIONAL — the adversary class does NOT appear in it.**
+Re-exported at this address so the reduction's load-bearing step is visible where the keystone is
+cited: the wide forger's advantage is at most the EXTRACTED collision finder's, at every security
+parameter, over the SAME sampled tag space. `Eff` enters only when the floor is applied. -/
+theorem runnable_binds_same_system_roots_adv_le (D : SpongeKeyed)
+    (A : Adversary (carrierBreakGame D wideFullCarrier)) (l : ℕ) :
+    gameAdv (carrierBreakGame D wideFullCarrier) A l
+      ≤ gameAdv (hashGame (spongeFamily D)) (carrierBreakToFinder D wideFullCarrier A) l :=
+  wideFullState_adv_le D A l
+
+/-- **⚑ THE HEADLINE, at an arbitrary adversary class.** Under the deployed sponge's collision floor,
+a forger of the runnable `state_commit` whose extracted finder is in the class has NEGLIGIBLE
+advantage — the circuit the prover RUNS binds its whole committed post-state, side-table roots
+included. `hEff` is the honest open obligation; the next theorem discharges it. -/
+theorem runnable_binds_same_system_roots_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (carrierBreakGame D wideFullCarrier))
+    (hEff : Eff (carrierBreakToFinder D wideFullCarrier A))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
+  wideFullState_binds_advantage_bound D Eff A hEff hCR
+
+/-- **⚑ THE EXPORTED AC:520 BINDING — `hEff` DISCHARGED.** An EFFICIENT forger that moves ANY of the
+eight kernel-owned side-table roots (or any absorbed state-block column) under one published runnable
+`state_commit` has NEGLIGIBLE advantage under the deployed sponge's collision floor at
+`Eff := IsPolyTime`. Efficiency is a THEOREM here, not a carried parameter: the extractor is a pure
+post-map, and `CostTactics.poly_time` derives the composed overhead from the forger's own bound, with
+the only per-site inputs the reshaper's declared work and the PROVED layout widths (four felts per
+GROUP-4 block, eight roots per sub-block).
+
+⚑ **THIS IS WHAT REPLACES `runnable_binds_same_system_roots_or_collides`** as this file's exported
+runnable keystone. That disjunction is retained one section up, demoted to the exact-Prop skeleton. -/
+theorem runnable_binds_same_system_roots_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (carrierBreakGame D wideFullCarrier))
+    (hA : IsPolyTime (carrierAnsSize D wideFullCarrier) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
+  wideFullState_binds_from_polyTime D A hA cw bw hCR
+
+/-! ### The floor, PRICED at both poles — re-exported at this address so the residual is legible where
+the keystone is cited, and identical (not merely analogous) to the record layer's. -/
+
+/-- **⚑ THE ⊤ POLE — the floor is FALSE at the REAL BabyBear parameters** (the honest price of `hEff`).
+A sponge whose output is a genuine felt has finite range while `List ℤ` is infinite, so a collision
+exists at every tag. What the rebuild buys is NOT a floor the deployed sponge satisfies at ⊤ — no such
+floor exists — it is that the residual is ONE named parameter with both poles proved, in place of TWO
+disjuncts that were unconditionally available. -/
+theorem runnable_roots_floor_top_false_babyBear (D : SpongeKeyed)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ HashCRHardQuant (spongeFamily D) (fun _ => True) :=
+  wideCommit_floor_top_false_babyBear D hb
+
+/-- **THE ⊥ POLE — vacuous.** Recorded so the floor's satisfiability cannot be mistaken for evidence. -/
+theorem runnable_roots_floor_bot_vacuous (D : SpongeKeyed) :
+    HashCRHardQuant (spongeFamily D) (fun _ => False) :=
+  wideCommit_floor_bot_vacuous D
+
+/-- **(TOOTH — the class the export is instantiated at is NOT EMPTY.)** The constant finder is in
+`IsPolyTime`, so `Eff := IsPolyTime` is not `⊥` in disguise; with `bruteForce_not_polyTime` (the
+⊤-collapse witness PROVED excluded) the instantiated floor sits STRICTLY between the two poles. -/
+theorem runnable_roots_polyTime_class_inhabited (D : SpongeKeyed) :
+    IsPolyTime (spongeAnsSize D)
+      (Dregg2.Crypto.CostAdversary.idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
+        (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
+  wideCommit_polyTime_class_inhabited D
+
+/-- **(CANARY — the keystone does NOT follow from the floor applied at ANOTHER finder.)** Strip the
+reduction: try to conclude the forger's negligibility from the collision floor at some OTHER finder
+`B`, not the one EXTRACTED from it. It does not go through — only the advantage inequality connects
+the two games. A disjunction whose right branches are always available would carry no more content
+than `True`; this tooth reds if a future edit reconnects them. -/
+example (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (carrierBreakGame D wideFullCarrier))
+    (B : Adversary (hashGame (spongeFamily D))) (hB : Eff B)
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) := hCR B hB)
+  trivial
+
+/-- **THE POSITIVE POLE — the RIGHT floor DOES discharge it.** A gate that refuses everything is a
+broken keystone, not a fixed one: with the floor at the EXTRACTED finder, the runnable binding
+fires. -/
+theorem the_reduced_runnable_roots_bound_fires (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (carrierBreakGame D wideFullCarrier))
+    (hEff : Eff (carrierBreakToFinder D wideFullCarrier A))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
+  runnable_binds_same_system_roots_advantage_bound D Eff A hEff hCR
+
+#assert_axioms runnable_root_tamper_is_break
+#assert_axioms runnable_binds_same_system_roots_adv_le
+#assert_axioms runnable_binds_same_system_roots_advantage_bound
+#assert_axioms runnable_binds_same_system_roots_from_polyTime
+#assert_axioms runnable_roots_floor_top_false_babyBear
+#assert_axioms runnable_roots_floor_bot_vacuous
+#assert_axioms runnable_roots_polyTime_class_inhabited
+#assert_axioms the_reduced_runnable_roots_bound_fires
+
+end RunnableReduction
 
 /-! ## §5 — NON-VACUITY: every portal witnessed BOTH ways (no carried hypothesis is secretly `True`).
 
