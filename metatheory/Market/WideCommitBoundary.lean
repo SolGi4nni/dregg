@@ -881,9 +881,10 @@ theorem stateCommitRom_top_false :
 a forger to compute both its chains honestly, §Q's 60 queries each).  Four facts at once:
 
   1. the re-grounded binding FIRES: every `120`-query chained forger's advantage is negligible;
-  2. the class is INHABITED, and the admitted member's advantage is negligible — the exact
-     fixed-answer shape that refutes the `IsPolyTime` floor with probability `1` is ADMITTED here
-     and DEFANGED by the sampling, not excluded by fiat;
+  2. the class is INHABITED (a fixed-answer 0-query member), and its advantage is negligible by 1 —
+     the general defanging of the DISTINCT fixed-pair refuter shape (the one that wins with
+     probability `1` against the fixed public function) is `fixedChainedForger_negl`: admitted by
+     the class, collapsed by the sampling, not excluded by fiat;
   3. the game is WINNABLE (`l ≥ 1`: at a constant oracle any two distinct payloads equivocate), so
      the negligible advantage is earned against a live event;
   4. the UNRESTRICTED floor at the same game is FALSE — the query bound does the work.
