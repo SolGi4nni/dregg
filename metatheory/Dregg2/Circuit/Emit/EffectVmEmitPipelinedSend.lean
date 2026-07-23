@@ -227,14 +227,21 @@ theorem pipelinedSendVm_rejects_nonce_freeze (env : VmRowEnv)
 
 theorem pipelinedSendHashSites_eq : pipelinedSendHashSites = transferHashSites := rfl
 
-theorem pipelinedSendVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites)
-    (hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  rw [pipelinedSendHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **`pipelinedSendVm_commit_binds_block_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+
+That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`.
+True at deployed BabyBear parameters (unlike its `Poseidon2SpongeCR`-carrying predecessor, which the
+deployed compressing sponge REFUTES), but UNCLOSED: a collision EXISTS at those parameters by
+pigeonhole, so the `collides` branch is unconditionally available and the binding never has to hold.
+A disjunction quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+
+The deployed binding of pipelinedSend's absorbed state block is now
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.pipelinedSend_commit_binds_block_advantage_bound`
+(`hEff` discharged at `Eff := IsPolyTime` by `pipelinedSend_commit_binds_block_from_polyTime`), whose forgery
+game's answers are DEPLOYED pipelinedSend ROWS (`pipelinedSendVm_row_forgery_is_break`, stated at THIS file's
+`pipelinedSendHashSites`). It is hosted DOWNSTREAM because the deployed sponge's keyed family
+(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree — a reduction stated at that
+family cannot be imported by an emission module without a build cycle. -/
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -331,41 +338,20 @@ theorem pipelinedSendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRo
   rw [← hsaC]
   omega
 
-theorem pipelinedSendDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptor e₂ true true)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites := hsat₂.2.1
-  -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
-  -- chains the two commit cells (both canonical) into ℤ equality — no PI canonicality needed.
-  have hcm : ∀ (e : VmRowEnv), satisfiedVm hash pipelinedSendVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ pipelinedSendVmDescriptor.constraints := by
-        unfold pipelinedSendVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have h₁ := hcm e₁ hsat₁
-  have h₂ := hcm e₂ hsat₂
-  rw [hpub] at h₁
-  have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **`pipelinedSendDescriptor_commit_binds_state_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+
+That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`
+from two SATISFYING rows sharing a `NEW_COMMIT`. True at deployed BabyBear parameters, but UNCLOSED:
+a collision of the compressing sponge EXISTS there by pigeonhole, so the `collides` branch is
+unconditionally available and the binding never has to hold.
+
+Its per-effect content — the `boundaryLastPins` step that turns a shared published `NEW_COMMIT` into
+a shared `state_commit` COLUMN — survives VERBATIM as the `pinsNewCommit` field of
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.pipelinedSendNarrowSpec`. The headline is the reduction
+`EffectVmCommitReduction.pipelinedSendDescriptor_commit_binds_state_advantage_bound` (`hEff` discharged by
+`..._from_polyTime`), whose forgery game `narrowDescriptorBreakGame D pipelinedSendNarrowSpec` has as its
+answers two rows SATISFYING THIS file's `pipelinedSendVmDescriptor`. It is hosted DOWNSTREAM because the deployed
+sponge's keyed family (`Poseidon2KeyedBridge`) transitively imports the effect-emission tree. -/
 
 /-! ## §9 — THE CONNECTOR — to universe-A's `pipelinedSendA_full_sound` (whole-kernel freeze). -/
 
@@ -521,8 +507,6 @@ theorem staleNonceSendRow_rejected :
 #assert_axioms pipelinedSendVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms pipelinedSendDescriptor_full_sound
-#assert_axioms pipelinedSendVm_commit_binds_block_or_collides
-#assert_axioms pipelinedSendDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_pipelinedSend
 #assert_axioms unify_pipelinedSend_via_full_sound
 #assert_axioms goodSendRow_realizes_intent

@@ -47,6 +47,7 @@ impl ConverseBackend for FakeModel {
             stop_reason: "end_turn".to_string(),
             input_tokens: 24,
             output_tokens: 18,
+            attestation: None,
         })
     }
 }

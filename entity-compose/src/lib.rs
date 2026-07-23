@@ -232,12 +232,33 @@ impl DeployedEntity {
     }
 }
 
+/// **An entity's key** — the full 32-byte cell key an entity is deployed at.
+///
+/// The cell id is `CellId::derive_raw(&key, &token_id)`, so DISTINCT keys are distinct entities
+/// and the key space is the entity namespace. It is the full width on purpose: a narrow
+/// ordinal-shaped seed caps a deployer at that many live entities (the app then has to fail
+/// closed at the cap or, worse, collide two entities onto one cell), which is a property of the
+/// wiring rather than of anything the app means.
+pub type EntityKey = [u8; 32];
+
+/// **A key from an ordinal** — the injective little-endian encoding of `n` into [`EntityKey`].
+/// Injective, so two ordinals never name one cell; `2^64` entities per deployer, which is not a
+/// cap any caller reaches. A caller that already HAS a 32-byte identity (an asset id, a pubkey,
+/// a digest of the thing the entity stands for) should pass it straight to [`deploy_entity`]
+/// instead — this exists for the ordinary "the nth entity I minted" case.
+pub fn entity_key(n: u64) -> EntityKey {
+    let mut key = [0u8; 32];
+    key[..8].copy_from_slice(&n.to_le_bytes());
+    key
+}
+
 /// Deploy a primary entity: a sovereign cell whose wide plane carries `subject`'s projection.
-pub fn deploy_entity(seed: u8, balance: i64, subject: Subject) -> DeployedEntity {
-    let mut pk = [0u8; 32];
-    pk[0] = seed;
-    pk[31] = seed.wrapping_mul(37);
-    let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
+///
+/// `key` is the entity's full-width cell key ([`entity_key`] builds one from an ordinal). The
+/// wiring imposes no bound on how many entities a deployer can carry — an exhausted namespace is
+/// not a thing this hook can hand its callers.
+pub fn deploy_entity(key: EntityKey, balance: i64, subject: Subject) -> DeployedEntity {
+    let mut cell = Cell::with_balance(key, [0u8; 32], balance);
     cell.permissions = open_permissions();
     cell.mode = CellMode::Sovereign;
     install_projection(&mut cell, PROJECTION_WIDE_BASE, &subject);

@@ -53,3 +53,8 @@ dregg-cell = { path = "../cell" }
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 # Canonical snapshot corruption detection and stable board-entry identities.
 blake3 = "1"
+
+[dev-dependencies]
+# `tests/native_descent_board.rs` drives a season over a REAL verified drand reveal (the pinned
+# published round) — the day binding a live daily surface's runs carry.
+procgen-dregg = { path = "../procgen-dregg" }

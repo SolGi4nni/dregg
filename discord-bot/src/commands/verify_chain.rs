@@ -20,7 +20,6 @@
 
 use serenity::all::{
     ButtonStyle, ComponentInteraction, Context, CreateActionRow, CreateButton, CreateEmbed,
-    CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
 use crate::BotState;
@@ -86,31 +85,45 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, _
 /// live session and post what was recomputed. Pure Discord I/O around
 /// [`offering::verify_live`]; the report text core is [`recheck_note`] (test-readable).
 async fn respond<O: DiscordOffering>(ctx: &Context, component: &ComponentInteraction) {
+    // ACK inside the 3s window (a deferred update that leaves the pressed offering surface
+    // intact) BEFORE the re-derivation: a long receipt chain replay runs on the offering's store
+    // thread and would otherwise park the async worker past the window, showing "interaction
+    // failed" on a check that is running fine.
+    crate::commands::ack::ack_component(ctx, component).await;
+
     let channel = component.channel_id.get();
     let started = std::time::Instant::now();
-    let report = offering::verify_live::<O>(channel);
+    // The verifier re-derives the whole chain on the store thread; move the blocking wait OFF the
+    // async worker.
+    let report = tokio::task::spawn_blocking(move || offering::verify_live::<O>(channel))
+        .await
+        .ok()
+        .flatten();
     let elapsed_ms = started.elapsed().as_millis();
 
-    let msg = match report {
+    match report {
         Some(report) => {
             let embed = CreateEmbed::new()
                 .title(format!("{} — chain re-verified in front of you", O::TITLE))
                 .description(recheck_note(&offering::verify_note(&report), elapsed_ms))
                 .color(if report.verified { O::COLOR } else { 0xE63946 });
-            CreateInteractionResponseMessage::new().embed(embed)
+            // PUBLIC, as before — the point is a re-verification anyone can watch.
+            crate::commands::ack::followup_embed(ctx, component, embed).await;
         }
-        None => CreateInteractionResponseMessage::new()
-            .content(format!(
-                "No live {} session in this channel to re-verify — the chain lives with the \
-                 session. Open one and every landed move extends a hash-linked receipt chain \
-                 this button re-derives.",
-                O::KEY
-            ))
-            .ephemeral(true),
-    };
-    let _ = component
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-        .await;
+        None => {
+            crate::commands::ack::followup_ephemeral(
+                ctx,
+                component,
+                &format!(
+                    "No live {} session in this channel to re-verify — the chain lives with the \
+                     session. Open one and every landed move extends a hash-linked receipt chain \
+                     this button re-derives.",
+                    O::KEY
+                ),
+            )
+            .await;
+        }
+    }
 }
 
 /// The honest recomputation report: the verifier's own note plus what the press actually did —

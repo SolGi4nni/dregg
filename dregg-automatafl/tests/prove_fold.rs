@@ -675,6 +675,7 @@ mod fold {
                 num_rows: rows,
                 public_inputs: pis,
                 app_root_binding: None,
+                descriptor_state_leaf: None,
             },
         )
     }
@@ -820,6 +821,7 @@ mod fold {
                 num_rows: rows,
                 public_inputs: pis,
                 app_root_binding: None,
+                descriptor_state_leaf: None,
             },
         )
     }

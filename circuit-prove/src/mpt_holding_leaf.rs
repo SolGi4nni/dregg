@@ -440,6 +440,7 @@ impl MptHoldingWitness {
             num_rows,
             public_inputs: self.public_inputs(old_commit8, new_commit8),
             app_root_binding: None,
+            descriptor_state_leaf: None,
         }
     }
 }

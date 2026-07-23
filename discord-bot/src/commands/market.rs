@@ -646,11 +646,14 @@ mod tests {
     #[test]
     fn discord_renders_the_shared_private_bazaar_journey_contract() {
         use dreggnet_market::private_bazaar_journey::{
-            PrivateBazaarPublicAction, PrivateBazaarPublicPhase, PrivateBazaarPublicReceipt,
-            TURN_ENTER_PRIVATE_BAZAAR,
+            PrivateBazaarPublicAction, TURN_ENTER_PRIVATE_BAZAAR,
+            contract_fixtures::{sample_pending_receipt, sample_settled_receipt},
         };
 
-        let receipt = PrivateBazaarPublicReceipt::pending([0x11; 32], 4, [0x22; 32], [0x33; 32]);
+        // A REAL, crate-authored, viewer-blind pending receipt — never fabricated
+        // from external dummy bytes. The removed public `pending(...)` constructor
+        // is replaced by the market crate's own `contract-fixtures` receipt.
+        let receipt = sample_pending_receipt();
         let surface = receipt.surface();
         let action = PrivateBazaarPublicAction::Enter.offering_action();
 
@@ -677,14 +680,11 @@ mod tests {
         assert_eq!(action.arg, 0);
         assert!(action.text.is_none());
 
-        let mut settled = receipt;
-        settled.phase = PrivateBazaarPublicPhase::Settled;
-        settled.proof_session = Some(17);
-        settled.input_root = Some([7; 8]);
-        settled.consequence_id = Some([0x44; 32]);
-        settled.settlement_turn_hash = Some([0x55; 32]);
-        settled.game_turn_hash = Some([0x66; 32]);
-        settled.game_state_root = Some([0x77; 32]);
+        // The SETTLED phase is likewise a real, crate-authored, viewer-blind
+        // receipt: it can only exist with every committed authority field present
+        // (the enum has no public field-mutation path anymore), so we render the
+        // market crate's canonical settled contract fixture.
+        let settled = sample_settled_receipt();
         let settled_card = deos_view::discord::render_card(
             <DarkBazaarOffering as DiscordOffering>::TITLE,
             settled.surface().view(),
@@ -693,8 +693,11 @@ mod tests {
         let settled_embed =
             serde_json::to_string(&settled_card.embed).expect("settled Discord embed JSON");
         assert!(settled_embed.contains("settled"), "{settled_embed}");
+        // The settled surface still tells the viewer that one authenticated private
+        // result caused a real game consequence (codex reworded "real game-engine
+        // turn" → "one exact game effect"); assert on the crate's current text.
         assert!(
-            settled_embed.contains("real game-engine turn"),
+            settled_embed.contains("exact game effect"),
             "{settled_embed}"
         );
         for forbidden in ["winner", "reserve", "private bid", "proof bytes", "witness"] {

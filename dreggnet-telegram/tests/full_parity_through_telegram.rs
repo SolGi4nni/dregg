@@ -36,6 +36,12 @@ const ALICE: u64 = 1001;
 const BOB: u64 = 1002;
 
 fn host() -> TelegramHost<MockTransport> {
+    // The Telegram catalog registers the Descent against the LIVE verified drand day and
+    // REFUSES to open without one (a live surface must not serve the pre-computable,
+    // seed-derived relic provenance). Publish the pinned PUBLISHED round — a genuine
+    // BLS-verifiable reveal, and exactly what the bot serves when the transport is down — so
+    // this drive exercises the real live path with no network.
+    dreggnet_catalog::publish_pinned_descent_day().expect("the pinned published round verifies");
     TelegramHost::new(BOT_SECRET, MockTransport::new(), &[ALICE, BOB])
 }
 

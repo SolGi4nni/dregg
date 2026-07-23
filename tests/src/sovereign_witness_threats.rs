@@ -106,7 +106,10 @@ fn set_field_turn_with_action_witnesses(
     agent: CellId,
     target: CellId,
     witnesses: HashMap<CellId, SovereignCellWitness>,
-    index: usize,
+    // `Effect::SetField.index` is the canonical committed-map key: a `u64`, not a
+    // slot ordinal. (`Cell::state::set_field` still takes a `usize` slot index —
+    // `post_set_field_commitment` below keeps that type.)
+    index: u64,
     value: [u8; 32],
     witness_blobs: Vec<WitnessBlob>,
 ) -> Turn {

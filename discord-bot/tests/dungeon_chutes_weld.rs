@@ -243,6 +243,7 @@ fn response(command: &str, narration: &str) -> ConverseResponse {
         stop_reason: "tool_calls".to_string(),
         input_tokens: 1,
         output_tokens: 1,
+        attestation: None,
     }
 }
 

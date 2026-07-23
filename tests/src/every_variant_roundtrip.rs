@@ -22,12 +22,15 @@
 //!   1. Executor: build a minimal Turn, call `executor.execute(...)`.
 //!      Required to return a `TurnResult` (Committed or Rejected) — NOT
 //!      panic. Variants that hit `unimplemented!` / `unreachable!` /
-//!      arithmetic-overflow surface as test failures.
+//!      arithmetic-overflow surface as test failures. The two PQ-identity variants
+//!      are excluded here and only here — see `PQ_CORE_REQUIRED`.
 //!
-//!   2. Projection: `AgentCipherclerk::convert_effects_to_vm(...)` (the public
-//!      surface mirroring the executor's private `convert_turn_effects_to_vm`).
-//!      Required to produce at least one non-NoOp VM effect. Variants that
-//!      collapse to `vec![VmEffect::NoOp]` surface as test failures.
+//!   2. Projection: `AgentCipherclerk::try_convert_effects_to_vm(...)` (the public
+//!      surface mirroring the executor's `try_convert_turn_effects_to_vm`).
+//!      Required to produce at least one non-NoOp VM effect, OR to REFUSE the
+//!      variant by name as an explicitly listed out-of-AIR-domain variant
+//!      (`VM_DOMAIN_EXCLUSIONS`). Variants that collapse to `vec![VmEffect::NoOp]`
+//!      surface as test failures; so does an unlisted or anonymous refusal.
 //!
 //!   3. AIR / proof: build the trace, prove and verify the descriptor.
 //!      Required to round-trip. Variants with no AIR coverage surface here.
@@ -50,6 +53,7 @@ use dregg_cell_crypto::note_bridge::PortableNoteProof;
 use dregg_sdk::AgentCipherclerk;
 use dregg_turn::action::{BearerCapProof, DelegationProofData, symbol};
 use dregg_turn::eventual::EventualRef;
+use dregg_turn::pq::{ML_DSA_PK_LEN, ML_DSA_SIG_LEN};
 use dregg_turn::{
     Action, Authorization, ComputronCosts, DelegationMode, Effect, Event, Turn, TurnExecutor,
     TurnResult,
@@ -78,6 +82,19 @@ struct Variant {
 /// Every current variant of `Effect` appears here exactly once. Adding a
 /// new variant to `Effect` without adding it here is a compile-time
 /// match-exhaustiveness failure in [`assert_variant_coverage`].
+/// Deterministic, non-constant filler of an exact FIPS-204 length.
+///
+/// A BLAKE3 XOF stream rather than `vec![0u8; len]`: zero-filled buffers are a
+/// degenerate input that several encodings compress or short-circuit, so they can
+/// pass a round-trip that real material would fail.
+fn pq_material(domain: &str, len: usize) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain.as_bytes());
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
 fn all_effect_variants() -> Vec<Variant> {
     let cell_a = cell_id(b"variant-cell-a");
     let cell_b = cell_id(b"variant-cell-b");
@@ -92,6 +109,25 @@ fn all_effect_variants() -> Vec<Variant> {
         stored_epoch: None,
         provenance: [0u8; 32],
     };
+
+    // -- PQ identity material (Effect::CreateHybridCell / Effect::RotatePqIdentity).
+    //
+    // Both variants carry variable-length FIPS-204 ML-DSA-65 material. The bytes here
+    // are EXACT-LENGTH (`ML_DSA_PK_LEN` / `ML_DSA_SIG_LEN`) and non-constant, so the
+    // encoding is genuinely exercised — an empty or all-zero vector would be rejected
+    // by a length check before any of it mattered.
+    //
+    // They are NOT a real keypair/signature, and deliberately so: minting one calls
+    // `MlDsaTurnKey::from_ed25519_seed`, and `dregg-pq`'s audit gate ABORTS any process
+    // that reaches an ML-DSA primitive with no Lean-verified core installed. This test
+    // binary installs none, so a real keypair here would kill the whole suite. See
+    // `PQ_CORE_REQUIRED` for where the executor-stage coverage actually lives.
+    let hybrid_child_ed_pk = *blake3::hash(b"variant-hybrid-child-ed25519").as_bytes();
+    let hybrid_child_token = *blake3::hash(b"variant-hybrid-child-token").as_bytes();
+    let hybrid_child_pq_pk = pq_material("variant-hybrid-child-mldsa-pk", ML_DSA_PK_LEN);
+    let hybrid_creation_sig = pq_material("variant-hybrid-child-possession-sig", ML_DSA_SIG_LEN);
+    let rotate_next_pq_pk = pq_material("variant-rotate-next-mldsa-pk", ML_DSA_PK_LEN);
+    let rotation_sig = pq_material("variant-rotate-possession-sig", ML_DSA_SIG_LEN);
 
     vec![
         // -- Core state effects ---------------------------------------------------
@@ -387,6 +423,32 @@ fn all_effect_variants() -> Vec<Variant> {
                 proof_commitment: [0x22; 32],
             },
         },
+        // -- PQ identity authority plane (appended after Custom, mirroring the
+        //    append-only discriminant law on `Effect` itself) --------------------
+        //
+        // Both variants are listed in `VM_DOMAIN_EXCLUSIONS` below: the EffectVM AIR
+        // has no row for the PQ identity plane, so their projection stage is a NAMED
+        // fail-closed refusal rather than a VM row. Stage 1 (executor, no panic) is
+        // the same round-trip every other variant gets.
+        Variant {
+            label: "CreateHybridCell",
+            effect: Effect::CreateHybridCell {
+                public_key: hybrid_child_ed_pk,
+                token_id: hybrid_child_token,
+                balance: 0, // the apply path refuses a non-zero birth balance
+                ml_dsa_public_key: hybrid_child_pq_pk,
+                pq_possession_signature: hybrid_creation_sig,
+            },
+        },
+        Variant {
+            label: "RotatePqIdentity",
+            effect: Effect::RotatePqIdentity {
+                cell: cell_a,
+                expected_epoch: 0,
+                new_ml_dsa_public_key: rotate_next_pq_pk,
+                new_key_possession_signature: rotation_sig,
+            },
+        },
     ]
 }
 
@@ -437,6 +499,11 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         Effect::Notify { .. } => "Notify",
         Effect::React { .. } => "React",
         Effect::Custom { .. } => "Custom",
+        // PQ cell identity (added 2026-07-22, e85ba68fb7). Both are in the variant
+        // table above; their EffectVM stage is the named refusal asserted by
+        // `VM_DOMAIN_EXCLUSIONS`, because the PQ identity authority plane has no AIR row.
+        Effect::CreateHybridCell { .. } => "CreateHybridCell",
+        Effect::RotatePqIdentity { .. } => "RotatePqIdentity",
     }
 }
 
@@ -572,12 +639,32 @@ fn outcome_is_recoverable(r: &TurnResult) -> bool {
 // Test #1: every variant is executable (no panics)
 // ---------------------------------------------------------------------------
 
+/// Variants whose executor path reaches an ML-DSA-65 primitive.
+///
+/// `dregg-pq`'s audit gate ABORTS the process — uncatchably, by design — the moment
+/// an ML-DSA keygen/verify is reached with no Lean-verified core installed, and this
+/// test binary installs none (installing one means linking the ~195 MB Lean archive
+/// and makes every case here hostage to that archive being HEAD-fresh). The abort is
+/// CORRECT behaviour: it is the refusal to run unaudited PQ crypto. But it is a
+/// `SIGABRT`, not a panic, so `catch_unwind` below cannot contain it — ONE such
+/// variant would take down the whole binary instead of failing a single case.
+///
+/// So the executor stage for these two lives in `turn/tests/pq_cell_identity.rs`,
+/// which drives create -> rotate -> hostile-rollback -> stale-epoch against real
+/// keys. They are still in the variant table and still get the projection stage
+/// below, which touches no PQ primitive.
+const PQ_CORE_REQUIRED: &[&str] = &["CreateHybridCell", "RotatePqIdentity"];
+
 #[test]
 fn every_effect_variant_is_executable() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut report = Vec::<(String, ExecOutcome)>::new();
 
     for (idx, v) in all_effect_variants().into_iter().enumerate() {
+        if PQ_CORE_REQUIRED.contains(&v.label) {
+            report.push((v.label.to_string(), ExecOutcome::NeedsVerifiedPqCore));
+            continue;
+        }
         let mut fx = Fixture::new();
         let turn = construct_minimal_turn_with(fx.agent, v.effect.clone(), idx as u64);
 
@@ -617,6 +704,8 @@ enum ExecOutcome {
     Committed,
     Rejected,
     Panicked,
+    /// Not executed here: see [`PQ_CORE_REQUIRED`].
+    NeedsVerifiedPqCore,
 }
 
 fn print_exec_summary(report: &[(String, ExecOutcome)]) {
@@ -624,6 +713,7 @@ fn print_exec_summary(report: &[(String, ExecOutcome)]) {
     let mut committed = 0;
     let mut rejected = 0;
     let mut panicked = 0;
+    let mut needs_pq_core = 0;
     for (label, outcome) in report {
         match outcome {
             ExecOutcome::Committed => {
@@ -638,14 +728,22 @@ fn print_exec_summary(report: &[(String, ExecOutcome)]) {
                 panicked += 1;
                 eprintln!("  PANIC!      {}", label);
             }
+            ExecOutcome::NeedsVerifiedPqCore => {
+                needs_pq_core += 1;
+                eprintln!(
+                    "  NO-PQ-CORE  {} (executed in turn/tests/pq_cell_identity.rs)",
+                    label
+                );
+            }
         }
     }
     eprintln!(
-        "  {} total: {} committed, {} rejected (recoverable), {} panicked",
+        "  {} total: {} committed, {} rejected (recoverable), {} panicked, {} need a verified PQ core",
         report.len(),
         committed,
         rejected,
-        panicked
+        panicked,
+        needs_pq_core
     );
 }
 
@@ -653,8 +751,21 @@ fn print_exec_summary(report: &[(String, ExecOutcome)]) {
 // Test #2: every variant projects to a non-NoOp VM effect sequence
 // ---------------------------------------------------------------------------
 
-/// Projection roundtrip. Every runtime `Effect` variant must project to a
-/// non-NoOp Effect VM sequence.
+/// Variants deliberately OUTSIDE the EffectVM AIR domain.
+///
+/// The PQ identity authority plane has no AIR row, so both projection twins
+/// (`AgentCipherclerk::try_convert_effects_to_vm` and the executor's
+/// `dregg_turn::executor::effect_vm_bridge::try_convert_turn_effects_to_vm`) refuse
+/// these variants BY NAME rather than emitting a row. Refusing is the correct
+/// behaviour: projecting them to `NoOp` would let a prover carry an identity effect
+/// the circuit never constrained. This list is the standing ledger of that debt —
+/// when the AIR row lands, the refusal stops and the test below fails until the
+/// variant is deleted from here.
+const VM_DOMAIN_EXCLUSIONS: &[&str] = &["CreateHybridCell", "RotatePqIdentity"];
+
+/// Projection roundtrip. Every runtime `Effect` variant must either project to a
+/// non-NoOp Effect VM sequence, or be refused by name as an explicitly listed
+/// out-of-AIR-domain variant ([`VM_DOMAIN_EXCLUSIONS`]).
 ///
 ///   cargo test -p dregg-tests every_effect_variant_round_trips_through_projection \
 ///       -- --nocapture
@@ -664,16 +775,35 @@ fn every_effect_variant_round_trips_through_projection() {
 
     let mut collapsed = Vec::<String>::new();
     let mut ok = Vec::<String>::new();
+    let mut refused = Vec::<&'static str>::new();
 
     let agent = cell_id(b"variant-cell-a");
 
     for v in all_effect_variants() {
-        let projected = AgentCipherclerk::convert_effects_to_vm(&agent, &[v.effect.clone()]);
-        let all_noop = projected.iter().all(|e| matches!(e, VmEffect::NoOp));
-        if all_noop {
-            collapsed.push(v.label.to_string());
-        } else {
-            ok.push(v.label.to_string());
+        // The CHECKED projection: the unchecked twin `convert_effects_to_vm` turns an
+        // out-of-domain variant into a panic, which would read here as a test crash
+        // rather than as the fail-closed refusal it actually is.
+        match AgentCipherclerk::try_convert_effects_to_vm(&agent, &[v.effect.clone()]) {
+            Ok(projected) => {
+                let all_noop = projected.iter().all(|e| matches!(e, VmEffect::NoOp));
+                if all_noop {
+                    collapsed.push(v.label.to_string());
+                } else {
+                    ok.push(v.label.to_string());
+                }
+            }
+            Err(error) => {
+                // A refusal must NAME the variant it cannot prove — an anonymous
+                // refusal is indistinguishable from a projection bug, and a verifier
+                // reading it cannot tell which effect went unconstrained.
+                let rendered = error.to_string();
+                assert!(
+                    rendered.contains(v.label),
+                    "projection refused {} without naming it: {rendered}",
+                    v.label
+                );
+                refused.push(v.label);
+            }
         }
     }
 
@@ -681,6 +811,13 @@ fn every_effect_variant_round_trips_through_projection() {
     eprintln!("  {} variants project cleanly:", ok.len());
     for label in &ok {
         eprintln!("    OK    {}", label);
+    }
+    eprintln!(
+        "  {} variants refused (outside the AIR domain):",
+        refused.len()
+    );
+    for label in &refused {
+        eprintln!("    REFUSED {}", label);
     }
     eprintln!("  {} variants collapse to NoOp:", collapsed.len());
     for label in &collapsed {
@@ -692,6 +829,16 @@ fn every_effect_variant_round_trips_through_projection() {
         "{} variant(s) project to all-NoOp — projection is lossy: {:?}",
         collapsed.len(),
         collapsed
+    );
+
+    refused.sort_unstable();
+    let mut expected = VM_DOMAIN_EXCLUSIONS.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        refused, expected,
+        "the set of variants outside the EffectVM AIR domain changed; a NEW refusal is \
+         unproven-effect debt, and a DISAPPEARED one means the AIR row landed and the \
+         variant must be deleted from VM_DOMAIN_EXCLUSIONS"
     );
 }
 

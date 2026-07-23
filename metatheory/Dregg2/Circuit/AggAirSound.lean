@@ -49,11 +49,21 @@ satisfiable and falsifiable; the discharge is non-vacuous.
 -/
 import Dregg2.Circuit.RecursiveAggregation
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.SpongeForgeReduction
 
 namespace Dregg2.Circuit.AggAirSound
 
 open Dregg2.Circuit.RecursiveAggregation (Seg combineSeg CombineOk combineOk_eq)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv hashGame)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFamily)
+open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
+open Dregg2.Circuit.SpongeForgeReduction
+  (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
+   codeForge_binds_from_polyTime injective_code_forgery_is_break forge_floor_top_false_babyBear
+   forge_floor_bot_vacuous)
 
 /-! ## 1. The ordered digest combiner the segment AIR's gate computes.
 
@@ -194,28 +204,122 @@ theorem segsound_node_discharged
 
 end Floor
 
-/-! ## 4. THE CR TOOTH — the ordered digest binds the children (rests on `Poseidon2SpongeCR`). -/
+/-! ## 4. THE ANTI-REORDER TOOTH, AS A SECURITY REDUCTION (§R).
 
-/-- **`combine_digest_binds` (THE CR ANTI-REORDER TOOTH).** Two satisfying nodes (same sponge) that
-expose the SAME parent digest `P.acc` were folded from children with the SAME ordered child digests:
-`L.acc = L'.acc ∧ R.acc = R'.acc`. So a same-endpoint reorder/swap of the two children (different
-`(L.acc, R.acc)`) yields a DIFFERENT parent digest and is rejected. The only crypto reliance is the
-named `Poseidon2SpongeCR` floor — the ordered digest fold `sponge [L.acc, R.acc]` is order-sensitive
-(L before R), so this also rejects a left/right swap. -/
-theorem combine_digest_binds
-    {sponge : List ℤ → ℤ} (hCR : Poseidon2SpongeCR sponge)
-    {t t' : CombineTrace} (h : SatCombine sponge t) (h' : SatCombine sponge t')
+⚑ **WHAT WAS DELETED HERE.** The exported tooth used to be
+
+    combine_digest_binds (hCR : Poseidon2SpongeCR sponge) … : t.L.acc = t'.L.acc ∧ t.R.acc = t'.R.acc
+
+`Poseidon2SpongeCR` is INJECTIVITY of `List ℤ → ℤ`, PROVED FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`): the hypothesis has NO deployed inhabitant, so the
+theorem was **VACUOUSLY TRUE at the deployed sponge** and transported ZERO anti-reorder security. It is
+GONE — not weakened, not doc-marked, deleted.
+
+What replaces it is the standard cryptographic object: the reorder forgery is a `FloorGames.Game`
+(`combineBreakGame`), the extractor is a MAP OF ADVERSARIES into the deployed sponge's collision game,
+the advantage inequality quantifies over ALL adversaries, and the conclusion is `Negl` under the NAMED
+floor `DomainSeparatedCREff D Eff` — instantiated at `Eff := IsPolyTime`, where the efficiency
+obligation is DISCHARGED (`combine_digest_binds_from_polyTime`) rather than carried.
+
+`combine_digest_binds_or_collides` survives as the reduction's INTERNAL witness (the extractor), NOT as
+the exported binding: a collision EXISTS at deployed parameters by pigeonhole, so its right branch is
+unconditionally available and it would be a shirk to export it. -/
+
+/-- The node's ordered two-lane preimage, exactly as `segment_combine_expose` absorbs it: L before R.
+This is the per-site absorption CODE the generic reduction is instantiated at. -/
+def childCode (c : ℤ × ℤ) : List ℤ := [c.1, c.2]
+
+/-- The absorption code is STRUCTURALLY injective — cons-injectivity on a two-element list. Note this
+is NOT a crypto floor and unlike `Poseidon2SpongeCR` it is TRUE at deployed parameters; it is exactly
+the `injection` steps the deleted proof performed BESIDE the refuted hypothesis. -/
+theorem childCode_injective : Function.Injective childCode := by
+  rintro ⟨a, b⟩ ⟨c, d⟩ h
+  simp only [childCode, List.cons.injEq, and_true] at h
+  simp [h.1, h.2.1]
+
+/-- **THE COMBINE-DIGEST FORGERY GAME.** The adversary is handed a sampled domain-separation tag and
+WINS iff it outputs two ordered child-digest pairs that DIFFER yet fold to the SAME parent digest under
+the deployed sponge — i.e. a genuine same-endpoint reorder/swap the aggregate would accept. The break
+is IN the win relation. -/
+abbrev combineBreakGame (D : DomainSeparatedSponge) : Game :=
+  codeForgeGame D (ℤ × ℤ) childCode
+
+/-- **⚑ THE FORGERY IS THE DEPLOYED NODE.** Two SATISFYING combine nodes over the DEPLOYED sponge that
+expose the same parent digest from DIFFERENT ordered children ARE a `combineBreakGame` win at the
+deployed tag. This ties the abstract game to the very `segment_combine_expose` gates the aggregate
+enforces — the game is not a free-floating construction. -/
+theorem satCombine_forgery_is_break (D : DomainSeparatedSponge) {t t' : CombineTrace}
+    (h : SatCombine D.deployedHash t) (h' : SatCombine D.deployedHash t')
+    (hne : (t.L.acc, t.R.acc) ≠ (t'.L.acc, t'.R.acc))
     (hdig : t.P.acc = t'.P.acc) :
-    t.L.acc = t'.L.acc ∧ t.R.acc = t'.R.acc := by
-  have e : sponge [t.L.acc, t.R.acc] = sponge [t'.L.acc, t'.R.acc] := by
-    have hl := h.digest; have hr := h'.digest
-    simp only [Hsponge] at hl hr
-    rw [← hl, ← hr, hdig]
-  have hlist := hCR _ _ e
-  -- `[a, b] = [a', b']` ⇒ `a = a' ∧ b = b'`.
-  injection hlist with hacc htail
-  injection htail with hr _
-  exact ⟨hacc, hr⟩
+    (combineBreakGame D).wins 0 D.deployedTag ((t.L.acc, t.R.acc), (t'.L.acc, t'.R.acc)) := by
+  refine injective_code_forgery_is_break D (ℤ × ℤ) childCode childCode_injective _ _ hne ?_
+  have hl := h.digest; have hr := h'.digest
+  simp only [Hsponge] at hl hr
+  show D.deployedHash [t.L.acc, t.R.acc] = D.deployedHash [t'.L.acc, t'.R.acc]
+  rw [← hl, ← hr, hdig]
+
+/-- **THE EXACT-PROP SKELETON (the reduction's INTERNAL witness, NOT the headline).** Two satisfying
+nodes with one parent digest have the SAME ordered children — OR exhibit a genuine collision of the
+deployed domain-separated sponge. The refuted injectivity hypothesis is GONE; the collision branch is
+what §R prices. Retained ONLY as the extractor. -/
+theorem combine_digest_binds_or_collides (D : DomainSeparatedSponge) {t t' : CombineTrace}
+    (h : SatCombine D.deployedHash t) (h' : SatCombine D.deployedHash t')
+    (hdig : t.P.acc = t'.P.acc) :
+    (t.L.acc = t'.L.acc ∧ t.R.acc = t'.R.acc) ∨
+      (combineBreakGame D).wins 0 D.deployedTag ((t.L.acc, t.R.acc), (t'.L.acc, t'.R.acc)) := by
+  by_cases hne : (t.L.acc, t.R.acc) = (t'.L.acc, t'.R.acc)
+  · exact Or.inl ⟨congrArg Prod.fst hne, congrArg Prod.snd hne⟩
+  · exact Or.inr (satCombine_forgery_is_break D h h' hne hdig)
+
+/-- **⚑ THE HEADLINE — the anti-reorder tooth, as a REDUCTION.** Under the DEPLOYED domain-separated
+sponge's collision floor at the class `Eff`, a combine-digest forger whose EXTRACTED finder is in that
+class has NEGLIGIBLE advantage: the ordered parent digest binds the two children except with negligible
+probability. This replaces the vacuous `combine_digest_binds` as the exported anti-reorder guarantee.
+
+⚑ `hEff` is a PARAMETER at an arbitrary class; `combine_digest_binds_from_polyTime` DISCHARGES it. -/
+theorem combine_digest_binds_advantage_bound (D : DomainSeparatedSponge)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (combineBreakGame D))
+    (hEff : Eff (codeForgeToFinder D (ℤ × ℤ) childCode adv))
+    (hCR : DomainSeparatedCREff D Eff) :
+    Negl (gameAdv (combineBreakGame D) adv) :=
+  codeForge_advantage_bound D (ℤ × ℤ) childCode Eff adv hEff hCR
+
+/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT reorder forger, put through the
+extractor, is still efficient — so the deployed sponge's collision floor applies to it and its advantage
+is negligible. The reshaper's declared work `(cw, bw)` is the only modelling input; the output growth is
+PROVED. No floating polynomial, no `hEff` parameter. -/
+theorem combine_digest_binds_from_polyTime (D : DomainSeparatedSponge)
+    (adv : Adversary (combineBreakGame D))
+    (hA : IsPolyTime (codeAnsSize D (ℤ × ℤ) childCode) adv) (cw bw : ℕ)
+    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
+    Negl (gameAdv (combineBreakGame D) adv) :=
+  codeForge_binds_from_polyTime D (ℤ × ℤ) childCode adv hA cw bw hCR
+
+/-- **⚑ THE ⊤ POLE — the floor is FALSE at the REAL BabyBear parameters** (the honest price of `hEff`).
+Recorded here so the reduction cannot be mistaken for a floor the deployed sponge satisfies. -/
+theorem combine_floor_top_false_babyBear (D : DomainSeparatedSponge)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ DomainSeparatedCREff D (fun _ => True) :=
+  forge_floor_top_false_babyBear D hb
+
+/-- **THE ⊥ POLE — vacuous.** Both poles proved, so `Eff` is a dial and not a costume. -/
+theorem combine_floor_bot_vacuous (D : DomainSeparatedSponge) :
+    DomainSeparatedCREff D (fun _ => False) :=
+  forge_floor_bot_vacuous D
+
+/-- **(CANARY — the bound does NOT follow from the floor applied at ANOTHER finder.)** Strip the
+reduction and the conclusion does not go through; only `code_adv_le` at the EXTRACTED finder connects
+the collision floor to the reorder game. Reds if a future edit disconnects them. -/
+example (D : DomainSeparatedSponge)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (combineBreakGame D))
+    (B : Adversary (hashGame (poseidon2KeyedFamily D))) (hB : Eff B)
+    (hCR : DomainSeparatedCREff D Eff) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (combineBreakGame D) adv) := hCR B hB)
+  trivial
 
 /-! ## 5. NON-VACUITY — the discharge FIRES on an honest node, and tampered combines are REJECTED.
 
@@ -325,7 +429,13 @@ end Vacuity
 #assert_axioms parent_is_genuine_combine
 #assert_axioms agg_air_sound
 #assert_axioms segsound_node_discharged
-#assert_axioms combine_digest_binds
+#assert_axioms childCode_injective
+#assert_axioms satCombine_forgery_is_break
+#assert_axioms combine_digest_binds_or_collides
+#assert_axioms combine_digest_binds_advantage_bound
+#assert_axioms combine_digest_binds_from_polyTime
+#assert_axioms combine_floor_top_false_babyBear
+#assert_axioms combine_floor_bot_vacuous
 #assert_axioms honest_satCombine
 #assert_axioms honest_parent_count_is_two
 #assert_axioms broken_continuity_unsat

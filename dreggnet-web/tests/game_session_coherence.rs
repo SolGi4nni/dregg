@@ -40,6 +40,13 @@ fn act(path: &str, turn: &str, arg: i64) -> Request<Body> {
 
 #[tokio::test]
 async fn four_rule_families_share_the_same_resumable_action_result_contract() {
+    // The web catalog registers the Descent against the LIVE verified drand day, and refuses to
+    // open on no day at all (a live surface must not serve the pre-computable, seed-derived
+    // relic provenance). Publish the pinned PUBLISHED round — a genuine BLS-verifiable reveal,
+    // and exactly what the surface serves when the transport is down — so this test drives the
+    // real live path with no network.
+    dreggnet_catalog::publish_pinned_descent_day().expect("the pinned published round verifies");
+
     let app = catalog_router(Arc::new(CatalogState::new()));
     let cases = [
         ("descent", "descent", "delve", 0),

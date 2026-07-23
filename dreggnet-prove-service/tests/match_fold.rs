@@ -182,10 +182,7 @@ fn tug_match_folds_off_path_to_a_verifying_proof() {
 #[test]
 #[ignore = "SLOW: the real deployed recursion fold over the D1 board-transition chain; run with --ignored"]
 fn automatafl_match_folds_off_path_to_a_verifying_proof() {
-    let m = AutomataflMatch {
-        start: demo_board(),
-        turns: 2,
-    };
+    let m = AutomataflMatch::automaton_only(demo_board(), 2);
     let svc = match_prove_service();
     let job = svc
         .enqueue(PlayedMatch::Automatafl(m.clone()))
@@ -249,10 +246,7 @@ fn two_matches_fold_concurrently() {
             winner: 1,
         }),
     });
-    let afl = PlayedMatch::Automatafl(AutomataflMatch {
-        start: demo_board(),
-        turns: 2,
-    });
+    let afl = PlayedMatch::Automatafl(AutomataflMatch::automaton_only(demo_board(), 2));
     let j1 = svc.enqueue(tug).expect("enqueued");
     let j2 = svc.enqueue(afl).expect("enqueued");
     let p1 = svc.wait(j1).expect("tug folds");

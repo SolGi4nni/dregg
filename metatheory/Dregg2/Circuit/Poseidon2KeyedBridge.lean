@@ -56,6 +56,7 @@ bridge theorems are genuine implications, not vacuous. The keyed family reuses
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Circuit.FloorRegroundedConsumers
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Crypto.SpongeCarrierReduction
 
 namespace Dregg2.Circuit.Poseidon2KeyedBridge
 
@@ -64,6 +65,7 @@ open Dregg2.Circuit.HashFloorHonesty
    brokenFamily_not_CR idFamily_CR)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot)
 open Dregg2.Crypto.ConcreteSecurity (Ensemble Negl negl_zero not_negl_one)
+open Dregg2.Crypto
 
 set_option autoImplicit false
 
@@ -257,66 +259,173 @@ def refDomainSep : DomainSeparatedSponge where
 theorem refDomainSep_CR : DomainSeparatedCR refDomainSep :=
   domainSeparatedCR_of_poseidon2SpongeCR Poseidon2Binding.Reference.refSponge_CR
 
-/-! ## §4 — the connection: the deployed consumers rest on the deployed hash's domain-separation CR.
+/-! ## §4 — the connection, REBUILT (2026-07-22): the deployed consumers as SECURITY REDUCTIONS.
 
-Under `DomainSeparatedCR D` (the deployed sponge's domain-separation floor), every
-`FloorRegroundedConsumers` advantage bound fires at `F := poseidon2KeyedFamily D`. So the STARK/FRI/
-binding consumers — `FinBindsKernel`'s full-state root binder, the OOD/Merkle-opening/trace-digest
-binders, the multi-round FRI/STARK fold, and the apex two-hash forgery advantage — are now bridged to
-the REAL deployed Poseidon2 (its domain-separated keyed family), not an abstract `F`. -/
+⚑ **WHAT WAS HERE BEFORE, AND WHY IT WENT.** This section used to export six `deployed_*_advantage_bound`
+theorems of the shape
 
-/-- **`FinBindsKernel` root binder, bridged.** The full-state-root-equivocation adversary (two distinct
-kernel states committing to one root — `FinBindsKernel.recStateCommit_binds_kernel_fin`'s collision) has
-negligible advantage under the DEPLOYED sponge's domain-separation floor. -/
-theorem deployed_recStateCommit_advantage_bound (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (rootEquivocator : CollisionFinder (poseidon2KeyedFamily D)) :
-    Negl (collisionAdv (poseidon2KeyedFamily D) rootEquivocator) :=
-  FloorRegroundedConsumers.recStateCommit_root_advantage_bound hD rootEquivocator
+    theorem deployed_oodCommitmentOpening_advantage_bound (D) (hD : DomainSeparatedCR D)
+        (opener : CollisionFinder (poseidon2KeyedFamily D))
+        : Negl (collisionAdv (poseidon2KeyedFamily D) opener) :=
+      FloorRegroundedConsumers.oodCommitmentOpening_advantage_bound hD opener
 
-/-- **OOD / Merkle-opening binder, bridged.** The opening-equivocation adversary has negligible advantage
-under the deployed domain-separation floor. -/
-theorem deployed_oodCommitmentOpening_advantage_bound (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (opener : CollisionFinder (poseidon2KeyedFamily D)) :
-    Negl (collisionAdv (poseidon2KeyedFamily D) opener) :=
-  FloorRegroundedConsumers.oodCommitmentOpening_advantage_bound hD opener
+carrying a DOUBLE defect, both halves fatal on their own:
 
-/-- **FRI oracle binder, bridged.** -/
-theorem deployed_friOracle_binding_advantage_bound (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (oracleEquivocator : CollisionFinder (poseidon2KeyedFamily D)) :
-    Negl (collisionAdv (poseidon2KeyedFamily D) oracleEquivocator) :=
-  FloorRegroundedConsumers.friOracle_binding_advantage_bound hD oracleEquivocator
+  1. the consumed `FloorRegroundedConsumers` bound was `P → P` — the hypothesis handed back, with the
+     OOD opening named in the theorem's NAME and absent from its STATEMENT (see that file's §0); and
+  2. the floor `DomainSeparatedCR D` is PROVED FALSE at deployed BabyBear parameters
+     (`DomainSeparatedCREffRegrounded.domainSeparatedCR_false_babyBear`; the ⚠⚠ warning on
+     `DomainSeparatedCR` above says so at length). So the whole section was vacuously true at the
+     deployed hash — it transported no security to the thing it was written to be about.
 
-/-- **AIR trace-digest binder, bridged.** -/
-theorem deployed_committedTrace_pinned_advantage_bound (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (traceEquivocator : CollisionFinder (poseidon2KeyedFamily D)) :
-    Negl (collisionAdv (poseidon2KeyedFamily D) traceEquivocator) :=
-  FloorRegroundedConsumers.committedTrace_pinned_advantage_bound hD traceEquivocator
+The four rebuilt bounds below stand on `Dregg2.Crypto.SpongeCarrierReduction`'s spine at
+`FloorRegroundedConsumers.merkleOpenCarrier`: the forgery is a GAME whose win relation is a deployed
+Merkle-opening equivocation, the extractor is a TOTAL FUNCTION with an unconditional correctness theorem,
+the advantage inequality quantifies over ALL adversaries, and the floor is `HashCRHardQuant` at an
+EXPLICIT class — which is exactly `DomainSeparatedCREffRegrounded.DomainSeparatedCREff D Eff`, the honest
+successor of `DomainSeparatedCR`. Efficiency is DISCHARGED with `poly_time`, not carried.
 
-/-- **Multi-round FRI/STARK fold, bridged.** The total binding-failure advantage across the `rounds`
-Merkle checks is a finite sum of per-round collision advantages, negligible under the deployed floor. -/
+⚑ **TWO OF THE SIX ARE GONE, NOT MOVED.** `deployed_recStateCommit_advantage_bound` and
+`deployed_committedTrace_pinned_advantage_bound` are DELETED, because the `FloorRegroundedConsumers`
+bounds they consumed are themselves BLOCKED (that file's §7 (a) and (b): the AIR trace binder is stated
+over an abstract `CommitReveal` with no `ℤ`-valued deployed function, and the faithful state root's
+extractor chain ends at `FaithfulBreak`, a disjunction of EXISTENTIALS with no total-function extractor).
+Exporting a deployed bound for either would be asserting a reduction that does not exist.
+
+⚑ **A MIRROR IS NAMED HERE, NOT SILENTLY FORKED.** `DomainSeparatedSponge` (§1) and
+`SpongeCarrierReduction.SpongeKeyed` are FIELD-FOR-FIELD THE SAME STRUCTURE, and `poseidon2KeyedFamily`
+is `spongeFamily`. `toSpongeKeyed` below converts, and `spongeFamily_toSpongeKeyed` proves the two
+families are one `KeyedHashFamily` by `rfl` — so no drift is possible. But the right repair is to DELETE
+one of the two structures, not to bridge them; that is a single-owner edit across the eight files now
+using `poseidon2KeyedFamily`/`hashAt`, and is on the work-list rather than done here while those files
+are being actively written by other lanes. `Dregg2.Crypto.SpongeCarrierBridge` proves the same
+identification from above. -/
+
+/-- The deployed bundle, converted to the reduction spine's bundle. Field-for-field; the theorem below
+proves there is nothing to get wrong. -/
+def toSpongeKeyed (D : DomainSeparatedSponge) : SpongeCarrierReduction.SpongeKeyed where
+  sponge := D.sponge
+  Tag := D.Tag
+  tagFintype := D.tagFintype
+  tagNonempty := D.tagNonempty
+  tagCode := D.tagCode
+  deployedTag := D.deployedTag
+
+/-- **⚑ THE SAME KEYED FAMILY.** The spine's family at the converted bundle IS this file's
+`poseidon2KeyedFamily` — by `rfl`, so `deployed_hash_is_family_instance` and
+`wins_iff_deployed_collision` (the faithfulness lemmas, this file's real contribution) apply verbatim to
+every reduction landed below. The reductions are about the deployed function. -/
+theorem spongeFamily_toSpongeKeyed (D : DomainSeparatedSponge) :
+    SpongeCarrierReduction.spongeFamily (toSpongeKeyed D) = poseidon2KeyedFamily D := rfl
+
+/-- The deployed fixed function is the same one on both sides of the conversion. -/
+theorem deployedHash_toSpongeKeyed (D : DomainSeparatedSponge) :
+    (toSpongeKeyed D).deployedHash = D.deployedHash := rfl
+
+/-- **THE DEPLOYED MERKLE-OPENING FORGERY GAME.** The adversary is handed a uniformly sampled
+domain-separation tag of the DEPLOYED sponge and WINS iff it opens one committed Merkle root at one query
+index to TWO DISTINCT values. By `spongeFamily_toSpongeKeyed` this is a game about the real
+`poseidon2KeyedFamily D`, not an abstract `F`. -/
+abbrev deployedOpenBreakGame (D : DomainSeparatedSponge) : FloorGames.Game :=
+  FloorRegroundedConsumers.merkleOpenBreakGame (toSpongeKeyed D)
+
+/-- The deployed forgery game's answer encoding (the two opened values plus the sibling path). -/
+abbrev deployedOpenAnsSize (D : DomainSeparatedSponge) :=
+  SpongeCarrierReduction.carrierAnsSize (toSpongeKeyed D) FloorRegroundedConsumers.merkleOpenCarrier
+
+/-- The deployed collision game's answer encoding (the two claimed sponge preimages). -/
+abbrev deployedSpongeAnsSize (D : DomainSeparatedSponge) :=
+  SpongeCarrierReduction.spongeAnsSize (toSpongeKeyed D)
+
+/-- **⚑ THE DEPLOYED FLOOR THE REBUILT BOUNDS REST ON.** The collision game of the DEPLOYED
+domain-separated Poseidon2 family, at the EXPLICIT class of poly-time adversaries. This is
+`DomainSeparatedCREffRegrounded.DomainSeparatedCREff D (IsPolyTime …)` — definitionally, since
+`spongeFamily_toSpongeKeyed` identifies the families — and it is the successor of the refuted
+`DomainSeparatedCR`, which is this same floor at the UNRESTRICTED class. -/
+abbrev DeployedOpenFloor (D : DomainSeparatedSponge) : Prop :=
+  FloorGames.HashCRHardQuant (poseidon2KeyedFamily D)
+    (CostAdversary.IsPolyTime (deployedSpongeAnsSize D))
+
+/-- **⚑ OOD / Merkle-opening binder, bridged — AS A REDUCTION.** An efficient adversary that opens one
+committed OOD/Merkle root of the DEPLOYED Poseidon2 at one query to two DISTINCT values has NEGLIGIBLE
+advantage. `hEff` is discharged inside, off the extractor's proved output bound; the only modelling input
+is the reshaper's declared work `(cw, bw)`. -/
+theorem deployed_oodCommitmentOpening_advantage_bound (D : DomainSeparatedSponge)
+    (A : FloorGames.Adversary (deployedOpenBreakGame D))
+    (hA : CostAdversary.IsPolyTime (deployedOpenAnsSize D) A) (cw bw : ℕ)
+    (hD : DeployedOpenFloor D) :
+    Negl (FloorGames.gameAdv (deployedOpenBreakGame D) A) :=
+  FloorRegroundedConsumers.oodCommitmentOpening_advantage_bound (toSpongeKeyed D) A hA cw bw hD
+
+/-- **⚑ FRI per-query layer-opening binder, bridged — AS A REDUCTION.** See
+`FloorRegroundedConsumers` §3 for exactly which step is proved and which is a stated modelling
+identification (the abstract `OracleCR` ⟶ the concrete per-query Merkle recompute). -/
+theorem deployed_friOracle_binding_advantage_bound (D : DomainSeparatedSponge)
+    (oracleEquivocator : FloorGames.Adversary (deployedOpenBreakGame D))
+    (hA : CostAdversary.IsPolyTime (deployedOpenAnsSize D) oracleEquivocator) (cw bw : ℕ)
+    (hD : DeployedOpenFloor D) :
+    Negl (FloorGames.gameAdv (deployedOpenBreakGame D) oracleEquivocator) :=
+  FloorRegroundedConsumers.friOracle_binding_advantage_bound (toSpongeKeyed D) oracleEquivocator
+    hA cw bw hD
+
+/-- **⚑ Multi-round FRI/STARK fold, bridged — AS A REDUCTION.** The total binding-failure advantage
+across the `rounds` Merkle checks is a finite sum of PER-ROUND DEPLOYED-GAME advantages (not a sum of the
+hypothesis), negligible by the union bound under the deployed floor. -/
 theorem deployed_friStark_fold_advantage_bound (D : DomainSeparatedSponge) (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → CollisionFinder (poseidon2KeyedFamily D)) (hD : DomainSeparatedCR D) :
-    Negl (fun n => ∑ r ∈ rounds, collisionAdv (poseidon2KeyedFamily D) (roundEquivocator r) n) :=
-  FloorRegroundedConsumers.friStark_fold_advantage_bound rounds roundEquivocator hD
+    (roundEquivocator : ℕ → FloorGames.Adversary (deployedOpenBreakGame D))
+    (hA : ∀ r ∈ rounds, CostAdversary.IsPolyTime (deployedOpenAnsSize D) (roundEquivocator r))
+    (cw bw : ℕ) (hD : DeployedOpenFloor D) :
+    Negl (fun n => ∑ r ∈ rounds,
+      FloorGames.gameAdv (deployedOpenBreakGame D) (roundEquivocator r) n) :=
+  FloorRegroundedConsumers.friStark_fold_advantage_bound (toSpongeKeyed D) rounds roundEquivocator
+    hA cw bw hD
 
-/-- **APEX two-hash forgery advantage, bridged.** The light-client forgery advantage — trace-commitment
-equivocation PLUS OOD-commitment equivocation — is negligible under the DEPLOYED sponge's domain-
-separation floor. The deployed apex is now welded to the real hash. -/
-theorem deployed_lightclientUnfoolable_advantage_bound (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (traceEquivocator oodEquivocator : CollisionFinder (poseidon2KeyedFamily D)) :
-    Negl (fun n => collisionAdv (poseidon2KeyedFamily D) traceEquivocator n
-        + collisionAdv (poseidon2KeyedFamily D) oodEquivocator n) :=
-  FloorRegroundedConsumers.lightclientUnfoolable_advantage_bound hD traceEquivocator oodEquivocator
+/-- **⚑ APEX two-hash forgery advantage, bridged — AS A REDUCTION.** The light-client forgery advantage
+— trace-commitment opening equivocation PLUS OOD-commitment opening equivocation — is negligible under
+the DEPLOYED sponge's domain-separation floor at the poly-time class, with both legs' efficiency
+discharged. The deployed apex is welded to the real hash by `spongeFamily_toSpongeKeyed`.
 
-/-! ### The bridge FIRES on a concrete deployment (non-vacuity of the connection). -/
+⚑ HONEST SCOPE: this is the HASH-BINDING leg of light-client soundness, not the whole of it. The FRI
+proximity leg is a separate named residual, and the deployed digest is ONE BabyBear felt (~31 bits), so
+the collision game this reduces to is winnable in ~2^15.5 work by birthday search. What the rebuild buys
+is that the leg now rests on a floor the deployed sponge does not REFUTE, priced at both poles, instead
+of one it does. -/
+theorem deployed_lightclientUnfoolable_advantage_bound (D : DomainSeparatedSponge)
+    (traceEquivocator oodEquivocator : FloorGames.Adversary (deployedOpenBreakGame D))
+    (hT : CostAdversary.IsPolyTime (deployedOpenAnsSize D) traceEquivocator)
+    (hO : CostAdversary.IsPolyTime (deployedOpenAnsSize D) oodEquivocator) (cw bw : ℕ)
+    (hD : DeployedOpenFloor D) :
+    Negl (fun n => FloorGames.gameAdv (deployedOpenBreakGame D) traceEquivocator n
+        + FloorGames.gameAdv (deployedOpenBreakGame D) oodEquivocator n) :=
+  FloorRegroundedConsumers.lightclientUnfoolable_advantage_bound (toSpongeKeyed D)
+    traceEquivocator oodEquivocator hT hO cw bw hD
 
-/-- The apex two-hash bridge fires on the concrete `refDomainSep` deployment at the real `babyBearD4W16`
-params — the hypothesis `DomainSeparatedCR refDomainSep` is INHABITED (`refDomainSep_CR`), so the bridge
-is a genuine implication, not a vacuous one. -/
-example (traceEquivocator oodEquivocator : CollisionFinder (poseidon2KeyedFamily refDomainSep)) :
-    Negl (fun n => collisionAdv (poseidon2KeyedFamily refDomainSep) traceEquivocator n
-        + collisionAdv (poseidon2KeyedFamily refDomainSep) oodEquivocator n) :=
-  deployed_lightclientUnfoolable_advantage_bound refDomainSep refDomainSep_CR traceEquivocator oodEquivocator
+/-! ### The deployed floor, PRICED at both poles (so the rebuild cannot be read as stronger). -/
+
+/-- **(TOOTH — the deployed floor is FALSE at the UNRESTRICTED class, at REAL BabyBear parameters.)** The
+honest price of every `hEff` discharge above, at the deployed family. This is why the rebuilt bounds are
+stated at `IsPolyTime` and not at `⊤`: at `⊤` the floor is the EXISTENCE floor, and collisions exist. -/
+theorem deployedFloor_top_false_babyBear (D : DomainSeparatedSponge)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ FloorGames.HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => True) :=
+  FloorRegroundedConsumers.merkleFloor_top_false_babyBear (toSpongeKeyed D) hb
+
+/-- **(TOOTH — the other pole is vacuous.)** Recorded beside the refutation. -/
+theorem deployedFloor_bot_vacuous (D : DomainSeparatedSponge) :
+    FloorGames.HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => False) :=
+  FloorRegroundedConsumers.merkleFloor_bot_vacuous (toSpongeKeyed D)
+
+/-- **(CANARY — the deployed apex does NOT follow from the floor applied at an unrelated finder.)** Only
+the extractor connects the deployed forgery game to the collision game. If this stops failing, the
+`P → P` shape has come back. -/
+example (D : DomainSeparatedSponge)
+    (Eff : FloorGames.Adversary (FloorGames.hashGame (poseidon2KeyedFamily D)) → Prop)
+    (A : FloorGames.Adversary (deployedOpenBreakGame D))
+    (B : FloorGames.Adversary (FloorGames.hashGame (poseidon2KeyedFamily D))) (hB : Eff B)
+    (hD : FloorGames.HashCRHardQuant (poseidon2KeyedFamily D) Eff) : True := by
+  fail_if_success
+    (have : Negl (FloorGames.gameAdv (deployedOpenBreakGame D) A) := hD B hB)
+  trivial
 
 /-! ## §5 — axiom-hygiene tripwires. -/
 
@@ -326,8 +435,13 @@ example (traceEquivocator oodEquivocator : CollisionFinder (poseidon2KeyedFamily
 #assert_axioms domainSeparatedCR_of_poseidon2SpongeCR
 #assert_axioms brokenDomainSep_not_CR
 #assert_axioms refDomainSep_CR
-#assert_axioms deployed_recStateCommit_advantage_bound
+#assert_axioms spongeFamily_toSpongeKeyed
+#assert_axioms deployedHash_toSpongeKeyed
+#assert_axioms deployed_oodCommitmentOpening_advantage_bound
+#assert_axioms deployed_friOracle_binding_advantage_bound
 #assert_axioms deployed_lightclientUnfoolable_advantage_bound
 #assert_axioms deployed_friStark_fold_advantage_bound
+#assert_axioms deployedFloor_top_false_babyBear
+#assert_axioms deployedFloor_bot_vacuous
 
 end Dregg2.Circuit.Poseidon2KeyedBridge

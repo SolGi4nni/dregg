@@ -1,0 +1,57 @@
+[package]
+name = "dregg-chutes-e2ee"
+version = "0.1.0"
+edition = "2021"
+description = "Attested, end-to-end-encrypted client for Chutes (Bittensor SN64) LLM inference: encrypt to a TEE-attested ML-KEM key so only a DCAP-verified enclave can decrypt. Byte-compatible with the Chutes reference client."
+license = "AGPL-3.0-or-later"
+
+[features]
+# Fetch DCAP collateral over the network (Intel PCS / Phala PCCS) for the LIVE acceptance
+# test. OFF by default so the default build + all OFFLINE tests stay network-free (the
+# attestation gate takes pre-fetched collateral in production, matching dregg-tee-verify).
+collateral-fetch = ["dregg-tee-verify/collateral-fetch"]
+
+[dependencies]
+# The attestation gate (our value-add): DCAP TDX quote verification + the FIXED Chutes
+# report_data string-binding. Fail-closed.
+dregg-tee-verify = { path = "../tee-verify" }
+
+# The NARRATOR SEAM. The dependency points THIS way on purpose: `dregg-narrator` is the light
+# crate every narrating process depends on (dungeon-service, discord-bot, hermes, web surface),
+# while THIS crate pulls dregg-tee-verify -> dcap-qvl -> PQClean ML-KEM C. Hosting
+# `ChutesTeeBackend` here keeps the attestation stack out of every narrator consumer, and
+# `cargo build -p dregg-narrator` is unaffected. No cycle: narrator does not know this crate
+# exists — it only publishes the `ConverseBackend` trait, the Converse types, and the OpenAI
+# request/response mapping this backend REUSES (rather than mirroring, which would drift).
+# Costs the default dev loop nothing new: `demo/dungeon-service` is already a default-member
+# that depends on dregg-narrator, so the AWS Converse SDK is in the graph either way.
+dregg-narrator = { path = "../narrator" }
+
+# ML-KEM-768 (FIPS 203) via PQClean C bindings — the SAME C the Python reference
+# (`pqcrypto.kem.ml_kem_768`) links, so encapsulate/decapsulate interoperate byte-for-byte.
+# `default-features = false, features = ["std"]` selects the portable PQClean *clean*
+# implementation (no avx2/neon codegen); all PQClean variants implement the identical FIPS
+# 203 wire format, so the choice is about build portability, not interop.
+pqcrypto-mlkem = { version = "0.1", default-features = false, features = ["std"] }
+pqcrypto-traits = "0.3"
+
+# HKDF-SHA256, ChaCha20-Poly1305 (IETF, 12-byte nonce), gzip, base64 — the exact symmetric
+# stack of crypto.py, cross-checked against the reference `cryptography` lib (see tests).
+hkdf = "0.12"
+sha2 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+flate2 = "1"
+base64 = { workspace = true }
+hex = "0.4"
+getrandom = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Blocking HTTP client, rustls-tls (matching the workspace pattern). Used only by the
+# network-facing discovery / attestation / invoke paths — the crypto core is transport-free.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

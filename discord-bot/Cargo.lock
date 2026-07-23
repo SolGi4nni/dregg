@@ -2231,6 +2231,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-braid-hook"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-entity-compose",
+ "dregg-param-compose",
+ "dregg-turn",
+]
+
+[[package]]
 name = "dregg-bridge"
 version = "0.1.0"
 dependencies = [
@@ -2321,6 +2332,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-chutes-e2ee"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "dregg-narrator",
+ "dregg-tee-verify",
+ "flate2",
+ "getrandom 0.3.4",
+ "hex",
+ "hkdf",
+ "pqcrypto-mlkem",
+ "pqcrypto-traits",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
@@ -2360,6 +2392,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "chacha20poly1305",
+ "dregg-cell",
  "dregg-circuit",
  "dregg-commit",
  "futures-channel",
@@ -2490,6 +2523,7 @@ dependencies = [
  "dregg-automatafl",
  "dregg-captp",
  "dregg-cell",
+ "dregg-chutes-e2ee",
  "dregg-circuit",
  "dregg-dfa",
  "dregg-dice",
@@ -2602,6 +2636,16 @@ dependencies = [
  "dregg-circuit",
  "dregg-dsl",
  "dregg-dsl-runtime",
+]
+
+[[package]]
+name = "dregg-entity-compose"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-param-compose",
+ "dregg-turn",
 ]
 
 [[package]]
@@ -2836,6 +2880,13 @@ name = "dregg-node-target"
 version = "0.1.0"
 
 [[package]]
+name = "dregg-param-compose"
+version = "0.1.0"
+dependencies = [
+ "dregg-circuit",
+]
+
+[[package]]
 name = "dregg-pay"
 version = "0.1.0"
 dependencies = [
@@ -2876,6 +2927,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-federation",
+ "dregg-turn",
  "dregg-types",
  "ed25519-dalek",
  "postcard",
@@ -3158,6 +3210,7 @@ dependencies = [
  "blake3",
  "dregg-automatafl",
  "dregg-multiway-tug",
+ "dregg-turn",
  "dregg-types",
  "dreggnet-compute",
  "dreggnet-council",
@@ -3170,6 +3223,9 @@ dependencies = [
  "dreggnet-surfaces",
  "dungeon-on-dregg",
  "getrandom 0.3.4",
+ "procgen-dregg",
+ "spween-dregg",
+ "zeroize",
 ]
 
 [[package]]
@@ -3190,6 +3246,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-app-framework",
+ "dregg-braid-hook",
  "dregg-cell",
  "dregg-turn",
  "dreggnet-asset",
@@ -3377,6 +3434,7 @@ dependencies = [
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",
+ "dreggnet-asset",
  "dreggnet-tournament",
  "dungeon-on-dregg",
  "procgen-dregg",
@@ -3481,6 +3539,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 name = "dungeon-on-dregg"
 version = "0.1.0"
 dependencies = [
+ "attested-dm",
  "blake3",
  "collective-choice",
  "dregg-app-framework",
@@ -4067,6 +4126,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "globset"
@@ -5661,7 +5726,6 @@ dependencies = [
 [[package]]
 name = "p3-fri"
 version = "0.5.1"
-source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
 dependencies = [
  "itertools 0.14.0",
  "p3-challenger",
@@ -6300,6 +6364,37 @@ checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
 ]
+
+[[package]]
+name = "pqcrypto-internals"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a326caf27cbf2ac291ca7fd56300497ba9e76a8cc6a7d95b7a18b57f22b61d"
+dependencies = [
+ "cc",
+ "dunce",
+ "getrandom 0.3.4",
+ "libc",
+]
+
+[[package]]
+name = "pqcrypto-mlkem"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb14d207f3749e8a59a026c22ceaa72d70fff931cfbf4c8d9b08f3fc56dc6e60"
+dependencies = [
+ "cc",
+ "glob",
+ "libc",
+ "pqcrypto-internals",
+ "pqcrypto-traits",
+]
+
+[[package]]
+name = "pqcrypto-traits"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e851c7654eed9e68d7d27164c454961a616cf8c203d500607ef22c737b51bb"
 
 [[package]]
 name = "pqvrf"
@@ -7791,6 +7886,12 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-node-target",
+ "dregg-sdk",
+ "dregg-turn",
+ "fs2",
+ "libc",
+ "postcard",
+ "serde",
  "spween",
  "zeroize",
 ]

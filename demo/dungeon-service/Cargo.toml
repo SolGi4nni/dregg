@@ -12,7 +12,7 @@
 # THE NARRATOR is honest: if ollama (`http://127.0.0.1:11434`, `gemma2:2b`) is
 # reachable, a REAL model narrates and `narratorKind: "model:gemma2:2b"`; otherwise
 # the deterministic `RecordedDm` and `narratorKind: "scripted:RecordedDm"`. Either
-# way the ATTESTATION and the un-jailbreakable tooth are REAL — the model's prose is
+# way the ATTESTATION and the prompt-certificate teeth are REAL — the model's prose is
 # the DM's framing; the player's raw text is reflected VERBATIM into the narration so
 # a `{{` prompt-injection still reaches `attest_narration`'s injection-free leg.
 #
@@ -26,14 +26,14 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 publish = false
-description = "The attested, un-jailbreakable AI dungeon-master, playable over HTTP: every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), a player prompt-injection is refused by the injection-free leg, and an over-cap grant (the unearned crown) is refused fail-closed."
+description = "The attested, cap-bounded AI dungeon-master, playable over HTTP: every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), the submitted prompt is a certified expansion of the committed template with the player confined to a data slot, and an over-cap grant (the unearned crown) is refused fail-closed."
 
 [[bin]]
 name = "dungeon-service"
 path = "src/main.rs"
 
 [dependencies]
-# THE DM — the provably-honest, un-jailbreakable narrator + world-cell + caps.
+# THE DM — the attested, cap-bounded narrator (certified prompt) + world-cell + caps.
 attested-dm = { path = "../../attested-dm" }
 # THE SHARED DRAFT + EDIT MODEL — the collective co-authoring data heart: a Draft renders to
 # .dungeon source, an Edit is a bounded typed proposal, and dispose re-validates via parse_dungeon

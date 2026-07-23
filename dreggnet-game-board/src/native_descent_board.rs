@@ -26,7 +26,7 @@ use std::collections::HashSet;
 use std::fmt;
 
 use dreggnet_offerings::native_descent::{
-    AssetId, NativeDescentBankedNote, NativeDescentCompletion, NativeDescentMove,
+    AssetId, CommittedSeed, NativeDescentBankedNote, NativeDescentCompletion, NativeDescentMove,
     NativeDescentOffering, NativeDescentRecord, Rarity,
 };
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
@@ -35,8 +35,10 @@ const SNAPSHOT_MAGIC: [u8; 8] = *b"DREGGNDB";
 /// v3 carries a settled run's BANKED-RELIC NOTES (the real owned assets the banked custody
 /// minted) alongside the relic index list, so a restart image claims the complete completion
 /// its fresh re-execution is compared against.
-const SNAPSHOT_VERSION: u8 = 3;
-const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v3";
+/// v4 carries the season's run day-seed. A v3 image could only describe a seed-derived season
+/// and carries no day to restart under, so it is refused rather than restarted on a guess.
+const SNAPSHOT_VERSION: u8 = 4;
+const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v4";
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 10_000;
 const MAX_ACTOR_BYTES: usize = 512;
@@ -50,6 +52,15 @@ pub struct NativeDescentSeason {
     pub season_id: u64,
     /// The normalized native seed (`1..=251`) recorded by the offering.
     pub seed: u8,
+    /// **The run day-seed every run on this board deployed on** — the provenance root its banked
+    /// relics mint under, and (folded into the genesis root) part of the season's identity.
+    ///
+    /// A season is a *day's* board: a live daily surface binds this to the day's verified drand
+    /// reveal, so the season is over worlds nobody could pre-compute. It is carried explicitly
+    /// rather than left implicit in `genesis_root`, because [`NativeDescentSeasonBoard::
+    /// reverify`] and the snapshot decode REBUILD runs by re-opening and re-driving their
+    /// commands — and a session opened on the wrong provenance root re-derives nothing.
+    pub day_seed: CommittedSeed,
     /// The exact genesis journal root re-derived when the board is opened/imported.
     pub genesis_root: [u8; 32],
 }
@@ -84,7 +95,12 @@ struct ArchivedRun {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeBoardError {
     InvalidSeasonSeed,
-    WrongWorldSeed { expected: u8, found: u8 },
+    WrongWorldSeed {
+        expected: u8,
+        found: u8,
+    },
+    /// The submitted run's provenance root is not this season's day.
+    WrongSeasonDay,
     ReplayRefused(String),
     MissingCompletion,
     PlayerSubstitution,
@@ -106,6 +122,9 @@ impl fmt::Display for NativeBoardError {
                     f,
                     "run belongs to native seed {found}, board expects {expected}"
                 )
+            }
+            Self::WrongSeasonDay => {
+                f.write_str("run's provenance day-seed is not this season's day")
             }
             Self::ReplayRefused(reason) => write!(f, "fresh native replay refused: {reason}"),
             Self::MissingCompletion => f.write_str("run has no terminal bank settlement"),
@@ -143,9 +162,35 @@ pub struct NativeDescentSeasonBoard {
 }
 
 impl NativeDescentSeasonBoard {
-    /// Open a board from the same raw seed accepted by `SessionConfig`.
+    /// Open a board over the reproducible, deploy-seed-derived world for `raw_seed` — the
+    /// fixture season. A board for a LIVE day's runs is [`open_on_day`](Self::open_on_day):
+    /// the runs a live surface produces deploy on their day's provenance root, and a board
+    /// opened here would reject every one of them as belonging to another season.
     pub fn open(season_id: u64, raw_seed: u64) -> Result<Self, NativeBoardError> {
-        let offering = NativeDescentOffering::new();
+        Self::open_with(NativeDescentOffering::new(), season_id, raw_seed)
+    }
+
+    /// **Open a board for one exact run day-seed** — the season a live daily surface's runs
+    /// belong to. Pass the day-seed those runs carry (`NativeDescentRecord::day_seed`, itself
+    /// derived from that day's verified beacon); every admitted run must name it, and reverify
+    /// and snapshot-restart re-drive commands under it.
+    pub fn open_on_day(
+        season_id: u64,
+        raw_seed: u64,
+        day_seed: CommittedSeed,
+    ) -> Result<Self, NativeBoardError> {
+        Self::open_with(
+            NativeDescentOffering::on_run_day_seed(day_seed),
+            season_id,
+            raw_seed,
+        )
+    }
+
+    fn open_with(
+        offering: NativeDescentOffering,
+        season_id: u64,
+        raw_seed: u64,
+    ) -> Result<Self, NativeBoardError> {
         let session = offering
             .open(SessionConfig::with_seed(raw_seed))
             .map_err(|error| NativeBoardError::ReplayRefused(error.to_string()))?;
@@ -154,6 +199,7 @@ impl NativeDescentSeasonBoard {
             season: NativeDescentSeason {
                 season_id,
                 seed: record.seed,
+                day_seed: record.day_seed,
                 genesis_root: session.root(),
             },
             entries: Vec::new(),
@@ -161,9 +207,16 @@ impl NativeDescentSeasonBoard {
         })
     }
 
+    /// The offering this board's season re-opens runs through — pinned to the season's own run
+    /// day-seed, so a re-drive lands on the same genesis the admitted runs did.
+    fn offering(&self) -> NativeDescentOffering {
+        NativeDescentOffering::on_run_day_seed(self.season.day_seed)
+    }
+
     fn open_normalized(
         season_id: u64,
         seed: u8,
+        day_seed: CommittedSeed,
         claimed_genesis: [u8; 32],
     ) -> Result<Self, NativeBoardError> {
         if !(1..=251).contains(&seed) {
@@ -171,7 +224,7 @@ impl NativeDescentSeasonBoard {
         }
         // The offering normalizes raw as `(raw % 251) + 1`; `seed - 1` is the
         // canonical inverse for every normalized seed.
-        let board = Self::open(season_id, u64::from(seed - 1))?;
+        let board = Self::open_on_day(season_id, u64::from(seed - 1), day_seed)?;
         if board.season.seed != seed || board.season.genesis_root != claimed_genesis {
             return Err(NativeBoardError::SnapshotSeasonMismatch);
         }
@@ -201,6 +254,13 @@ impl NativeDescentSeasonBoard {
                 expected: self.season.seed,
                 found: record.seed,
             });
+        }
+        // A season is a day's board. A run whose provenance root is another day's is another
+        // season's run, even at the same world seed — and admitting it would leave an entry
+        // this board cannot re-drive (reverify and snapshot-restart deploy on the season's
+        // day-seed). Refuse it at the door instead.
+        if record.day_seed != self.season.day_seed {
+            return Err(NativeBoardError::WrongSeasonDay);
         }
         if self.entries.len() >= MAX_ENTRIES {
             return Err(NativeBoardError::BoardFull);
@@ -294,7 +354,7 @@ impl NativeDescentSeasonBoard {
             .iter()
             .find(|entry| &entry.standing.completion_root == completion_root)
             .ok_or(NativeBoardError::UnknownCompletion)?;
-        let offering = NativeDescentOffering::new();
+        let offering = self.offering();
         let (record, completion) = drive_commands(
             &offering,
             self.season.seed,
@@ -307,6 +367,7 @@ impl NativeDescentSeasonBoard {
         let mut fresh = Self::open_normalized(
             self.season.season_id,
             self.season.seed,
+            self.season.day_seed,
             self.season.genesis_root,
         )?;
         let accepted = fresh.submit(archived.standing.player.clone(), &record, &completion)?;
@@ -324,6 +385,7 @@ impl NativeDescentSeasonBoard {
         out.push(SNAPSHOT_VERSION);
         put_u64(&mut out, self.season.season_id);
         out.push(self.season.seed);
+        out.extend_from_slice(self.season.day_seed.as_bytes());
         out.extend_from_slice(&self.season.genesis_root);
         put_u32(
             &mut out,
@@ -396,6 +458,7 @@ impl NativeDescentSeasonBoard {
         }
         let season_id = cursor.u64()?;
         let seed = cursor.u8()?;
+        let day_seed = CommittedSeed::from_bytes(cursor.array::<32>()?);
         let genesis_root = cursor.array::<32>()?;
         let count = usize::try_from(cursor.u32()?)
             .map_err(|_| malformed("entry count exceeds this target"))?;
@@ -404,8 +467,8 @@ impl NativeDescentSeasonBoard {
                 "entry count exceeds the fixed bound".to_string(),
             ));
         }
-        let mut board = Self::open_normalized(season_id, seed, genesis_root)?;
-        let offering = NativeDescentOffering::new();
+        let mut board = Self::open_normalized(season_id, seed, day_seed, genesis_root)?;
+        let offering = board.offering();
         let mut previous_root = None;
         for _ in 0..count {
             let actor_bytes = cursor.bytes_u16(MAX_ACTOR_BYTES)?;

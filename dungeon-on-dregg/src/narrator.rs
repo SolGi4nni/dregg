@@ -1,4 +1,4 @@
-//! # `narrator` — the un-jailbreakable AI narrator, landed on the REAL turn substrate
+//! # `narrator` — the confined AI narrator, landed on the REAL turn substrate
 //!
 //! Phase B of the collective-fiction rebuild (plan `ok-yeah-wanna-binary-tide.md`).
 //! Phase A proved a dungeon move is a real cap-bounded [`TurnReceipt`] on the real
@@ -25,8 +25,19 @@
 //!
 //! ```text
 //!   EmitEvent { cell, event: Event { topic = symbol(NARRATION_TOPIC),
-//!                                    data  = [ narration_commit (‖ attestation_commit) ] } }
+//!                                    data  = [ narration_commit,
+//!                                              attestation_commit  | 0,
+//!                                              tee_provenance_commit | 0 ] } }
 //! ```
+//!
+//! The `data` vector has **fixed arity** ([`NARRATION_DATA_ARITY`]) and each slot has a
+//! **fixed meaning** ([`SLOT_NARRATION_COMMIT`], [`SLOT_ATTESTATION_COMMIT`],
+//! [`SLOT_TEE_PROVENANCE_COMMIT`]); an absent fact is the all-zero [`ABSENT_FACT`]
+//! sentinel, never a missing element. Positional-optional encoding (push-if-present)
+//! does not survive a second optional fact: with two of them, `data[1]` means
+//! "attestation" or "TEE provenance" depending on which earlier fact happened to be
+//! present, and every reader silently mis-attributes. Fixed slots + a sentinel keep
+//! slot `k` meaning fact `k` forever.
 //!
 //! `EmitEvent` is a receipt-only effect: it mutates NO cap-gated state (it changes no
 //! cell field), but it IS bound into the [`TurnReceipt`] — the event's `(cell, topic,
@@ -36,6 +47,22 @@
 //! which narration was bound to that exact turn. Tamper the narration and its
 //! commitment flips → a different `EmitEvent` → a different `turn_hash`/`receipt_hash`:
 //! the binding is real, not decorative.
+//!
+//! ## …and the binding is CHECKED — [`verify_narration_binding`]
+//!
+//! "The commitment is in the receipt" is only half a guarantee. A receipt commits to a
+//! *digest*; a served record shows a reader the *text*. Nothing in the receipt chain
+//! relates the two, so a record can pair authentic receipts with prose the model never
+//! wrote — and because `EmitEvent` is state-passthrough, the swap moves neither state
+//! hash, so replay and every state-shaped check pass. [`verify_narration_binding`] closes
+//! that: it takes the retained prose and provenance ([`RecordedNarration`]), RE-DERIVES
+//! the whole fixed-arity `data` vector, and requires the receipt to bind exactly it.
+//! Paired with `spween_dregg::verify_receipt_hash_chain` (which re-hashes each receipt
+//! body, so editing the event to match the new prose breaks the NEXT receipt's link) and
+//! `spween_dregg::verify_receipts_anchored` (which covers the head receipt), a narration
+//! retcon has nowhere to hide. What none of it establishes is that any particular model
+//! produced the prose — that is [`TeeProvenance`]'s job, and its trust roots in Intel's
+//! attestation key, not in any comparison here.
 //!
 //! ## The injection-free leg — refused BEFORE it binds
 //!
@@ -89,6 +116,47 @@ pub const NARRATION_TOPIC: &str = "dungeon-on-dregg/narration-commitment-v1";
 /// Domain separator for the narration commitment (so it can never collide with a
 /// method symbol, a state root, or any other hashed object).
 const NARRATION_COMMIT_DOMAIN: &str = "dungeon-on-dregg/narration-body-v1:";
+
+/// Domain separator for the TEE-provenance commitment ([`tee_provenance_commitment`]).
+/// Its own domain, so a provenance digest can never be confused with a narration
+/// commitment, a method symbol, or any other hashed object in the system.
+const TEE_PROVENANCE_COMMIT_DOMAIN: &[u8] = b"dungeon-on-dregg/tee-provenance-v1:";
+
+// ── The narration event's FIXED data layout ──────────────────────────────────
+//
+// `data` is a fixed-arity vector; slot `k` always means fact `k`, and an absent fact
+// is `ABSENT_FACT` (all-zero), never an omitted element. See the module doc for why
+// push-if-present breaks once there is more than one optional fact.
+
+/// `data[0]` — the commitment to the narration body ([`narration_commitment`]). Always
+/// present: a narration event exists only because there is a narration.
+pub const SLOT_NARRATION_COMMIT: usize = 0;
+
+/// `data[1]` — the zkOracle attestation's content commitment, or [`ABSENT_FACT`] when the
+/// turn took an unattested path. Read via [`bound_attestation_commit`].
+pub const SLOT_ATTESTATION_COMMIT: usize = 1;
+
+/// `data[2]` — the TEE-provenance commitment ([`tee_provenance_commitment`]), or
+/// [`ABSENT_FACT`] when the narration was not produced inside a verified enclave. Read
+/// via [`bound_tee_provenance_commit`].
+pub const SLOT_TEE_PROVENANCE_COMMIT: usize = 2;
+
+/// The number of `data` felts a narration event carries. Every narration event emitted by
+/// this module has exactly this many, whatever facts are present.
+pub const NARRATION_DATA_ARITY: usize = 3;
+
+/// **The absent-fact sentinel** for an optional narration-event slot: the all-zero field
+/// element. A slot holding this reads as "this turn carries no such fact".
+///
+/// Honest about the aliasing this admits: a sentinel is not a tag, so a genuine fact that
+/// happens to equal zero reads as absent. For [`SLOT_TEE_PROVENANCE_COMMIT`] that needs a
+/// BLAKE3 preimage of the all-zero digest, so it is not a design case. For
+/// [`SLOT_ATTESTATION_COMMIT`] the fact is a single `BabyBear` felt widened by
+/// `field_from_u64`, so an honest zero lands there roughly once in 2^31 attestations and
+/// reads as "unattested" — fail-CLOSED (a real attestation is under-reported, never a
+/// missing one over-reported), and one more reason that slot's ~31-bit source is a
+/// catalogued felt-width wound (`attestation_commit_field`) rather than a shape to copy.
+pub const ABSENT_FACT: FieldElement = [0u8; 32];
 
 /// The deterministic fixture-notary seed for the attested path's authentic leg. The
 /// authentic leg is a FIXTURE — provenance-from-Claude is Phase E (see the module doc).
@@ -243,11 +311,20 @@ pub struct NarratedReceipt {
     pub command: Command,
     /// The narration bound into the receipt.
     pub narration: String,
-    /// The narration commitment carried by the receipt's `EmitEvent` (`data[0]`).
+    /// The narration commitment carried by the receipt's `EmitEvent`
+    /// ([`SLOT_NARRATION_COMMIT`]).
     pub narration_commit: FieldElement,
-    /// The zkOracle attestation's content commitment (`data[1]`), present only on the
-    /// [`narrate_turn_attested`] path.
+    /// The zkOracle attestation's content commitment ([`SLOT_ATTESTATION_COMMIT`]), present
+    /// only on the [`narrate_turn_attested`] path.
     pub attestation_commit: Option<FieldElement>,
+    /// The TEE-provenance commitment ([`SLOT_TEE_PROVENANCE_COMMIT`]), present only when the
+    /// caller supplied a [`TeeProvenance`] (the [`narrate_turn_in_enclave`] path).
+    ///
+    /// It asserts WHERE the narration was produced — an enclave whose measurement the DCAP
+    /// verifier accepted, under the TCB verdict recorded at that moment. It asserts nothing
+    /// about whether the narration is correct, honest, or un-jailbroken. See
+    /// [`TeeProvenance`].
+    pub tee_provenance_commit: Option<FieldElement>,
 }
 
 /// Why a narrated turn could not commit.
@@ -297,29 +374,376 @@ pub fn narration_commitment(narration: &str) -> FieldElement {
     symbol(&material)
 }
 
-/// **Read the bound narration commitment off a committed receipt** — the exact path a
-/// stranger replaying the chain uses. Finds the receipt's `EmitEvent` under
-/// [`NARRATION_TOPIC`] and returns its first data field. `None` if the turn bound no
-/// narration.
-pub fn bound_narration_commit(receipt: &TurnReceipt) -> Option<FieldElement> {
-    let topic = symbol(NARRATION_TOPIC);
-    receipt
-        .emitted_events
-        .iter()
-        .find(|e| e.topic == topic)
-        .and_then(|e| e.data.first().copied())
+/// **Where a narration was produced** — the load-bearing fields of a DCAP-verified
+/// enclave attestation that covered the model call.
+///
+/// This mirrors `dregg_narrator::AttestationSummary` (`narrator/src/backend.rs`) field for
+/// field. It is re-declared here rather than imported because `dregg-narrator` drags the
+/// whole hosted-inference stack (`aws-sdk-bedrockruntime`, `reqwest`, `tokio`) and the game
+/// crate must stay light; the mapping is mechanical:
+///
+/// ```text
+///   TeeProvenance { measurement, instance_id, tcb_status, quote_sha256 }
+///     ← AttestationSummary { measurement, instance_id, tcb_status, quote_sha256 }
+/// ```
+///
+/// (`AttestationSummary::quote_len` is deliberately not carried: it is a cheap sanity
+/// check on the same quote whose SHA-256 is already bound here.)
+///
+/// ## What a bound `TeeProvenance` asserts — and what it does NOT
+///
+/// It asserts **WHERE** the text was produced: that at narration time a DCAP verification
+/// accepted a quote whose SHA-256 is `quote_sha256`, that the quote's folded code-identity
+/// measurement was `measurement`, that the verifier's TCB verdict at that moment was
+/// `tcb_status`, and that the serving enclave instance identified itself as `instance_id`.
+///
+/// It asserts **NOTHING about the text**. It does not say the narration is correct,
+/// honest, non-hallucinated, un-jailbroken, faithful to the world state, or produced by any
+/// particular model or weights — only that *some* code with that measurement, running in
+/// an enclave the verifier accepted, is where the bytes came from. `tcb_status` is a
+/// point-in-time verdict, not a standing guarantee: a platform up-to-date at narration time
+/// can be known-vulnerable later, and this commitment freezes the verdict, it does not
+/// refresh it. Nor does it certify the *transport*: the digest binds the summary a verifying
+/// backend handed back, so it is exactly as trustworthy as that backend's verification.
+///
+/// **Prose is still not power.** As with every narration fact on this turn, the executor
+/// resolves the [`Command`]'s effects; enclave provenance buys no state authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TeeProvenance {
+    /// The folded code-identity measurement (MRTD+RTMR0..2) the verifier matched against the
+    /// pinned registry.
+    pub measurement: [u8; 32],
+    /// The enclave instance that served the call (pinned as `X-Instance-Id`).
+    pub instance_id: String,
+    /// The DCAP TCB status the verifier accepted at narration time (e.g. `UpToDate`).
+    pub tcb_status: String,
+    /// SHA-256 of the raw attestation quote — the handle onto the full quote bytes, which
+    /// stay with the backend that verified them.
+    pub quote_sha256: [u8; 32],
 }
 
-/// **Read the bound attestation commitment off a committed receipt** (`data[1]` of the
-/// narration event). `None` if the turn was not attested (the plain [`narrate_turn`]
-/// path binds no attestation commitment).
-pub fn bound_attestation_commit(receipt: &TurnReceipt) -> Option<FieldElement> {
+impl TeeProvenance {
+    /// Name a TEE provenance from its four load-bearing components.
+    pub fn new(
+        measurement: [u8; 32],
+        instance_id: impl Into<String>,
+        tcb_status: impl Into<String>,
+        quote_sha256: [u8; 32],
+    ) -> TeeProvenance {
+        TeeProvenance {
+            measurement,
+            instance_id: instance_id.into(),
+            tcb_status: tcb_status.into(),
+            quote_sha256,
+        }
+    }
+}
+
+/// **The commitment to a narration's TEE provenance** — a domain-separated, length-prefixed
+/// BLAKE3 over the REAL preimages of the attestation, packed into a [`FieldElement`] (the
+/// raw 32-byte hash; `FieldElement = [u8; 32]`).
+///
+/// The absorbed preimage is, in order:
+///
+/// ```text
+///   "dungeon-on-dregg/tee-provenance-v1:"
+///   ‖ measurement            (32 bytes)
+///   ‖ len(instance_id) u64LE ‖ instance_id
+///   ‖ len(tcb_status)  u64LE ‖ tcb_status
+///   ‖ quote_sha256           (32 bytes)
+/// ```
+///
+/// **The full 32 bytes are the commitment.** It is derived from the attestation's own
+/// bytes — never from `attestation_commit_field`'s single ~31-bit `BabyBear` felt. A wide
+/// hash seeded from a 31-bit value inherits that value's ~2^15.5 collision set no matter
+/// how wide the output looks; deriving over the preimages is what makes the width real.
+///
+/// **The length prefixes are load-bearing.** `instance_id` and `tcb_status` are both
+/// variable-length and adjacent. Concatenated bare, `("ab", "c")` and `("a", "bc")` absorb
+/// the identical byte stream — the boundary slides — so two distinct attestations would
+/// commit identically and the per-component discrimination this commitment exists to
+/// provide would be false. Counting the bytes pins the boundary. (The fixed-width 32-byte
+/// components need no prefix; the domain is a constant.) Same reasoning, same shape, as
+/// `dregg_turn::absorb_emitted_event` and `deos_hermes::attestation_commitment`.
+///
+/// See [`TeeProvenance`] for what the resulting commitment does and does NOT assert.
+pub fn tee_provenance_commitment(provenance: &TeeProvenance) -> FieldElement {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(TEE_PROVENANCE_COMMIT_DOMAIN);
+    hasher.update(&provenance.measurement);
+    hasher.update(&(provenance.instance_id.len() as u64).to_le_bytes());
+    hasher.update(provenance.instance_id.as_bytes());
+    hasher.update(&(provenance.tcb_status.len() as u64).to_le_bytes());
+    hasher.update(provenance.tcb_status.as_bytes());
+    hasher.update(&provenance.quote_sha256);
+    *hasher.finalize().as_bytes()
+}
+
+/// The narration event's `data` vector off a committed receipt, if the turn bound one.
+fn narration_event_data(receipt: &TurnReceipt) -> Option<&[FieldElement]> {
     let topic = symbol(NARRATION_TOPIC);
     receipt
         .emitted_events
         .iter()
         .find(|e| e.topic == topic)
-        .and_then(|e| e.data.get(1).copied())
+        .map(|e| e.data.as_slice())
+}
+
+/// Read one optional slot, mapping the [`ABSENT_FACT`] sentinel (and a short `data`, i.e.
+/// an event written before this slot existed) to `None`.
+fn bound_optional_slot(receipt: &TurnReceipt, slot: usize) -> Option<FieldElement> {
+    narration_event_data(receipt)
+        .and_then(|data| data.get(slot).copied())
+        .filter(|value| *value != ABSENT_FACT)
+}
+
+/// **Read the bound narration commitment off a committed receipt** — the exact path a
+/// stranger replaying the chain uses. Finds the receipt's `EmitEvent` under
+/// [`NARRATION_TOPIC`] and returns [`SLOT_NARRATION_COMMIT`]. `None` if the turn bound no
+/// narration.
+pub fn bound_narration_commit(receipt: &TurnReceipt) -> Option<FieldElement> {
+    narration_event_data(receipt).and_then(|data| data.get(SLOT_NARRATION_COMMIT).copied())
+}
+
+/// **Read the bound attestation commitment off a committed receipt**
+/// ([`SLOT_ATTESTATION_COMMIT`] of the narration event). `None` if the turn was not
+/// attested — the plain [`narrate_turn`] path writes the [`ABSENT_FACT`] sentinel there.
+pub fn bound_attestation_commit(receipt: &TurnReceipt) -> Option<FieldElement> {
+    bound_optional_slot(receipt, SLOT_ATTESTATION_COMMIT)
+}
+
+/// **Read the bound TEE-provenance commitment off a committed receipt**
+/// ([`SLOT_TEE_PROVENANCE_COMMIT`] of the narration event). `None` if the narration was not
+/// produced inside a verified enclave — that path writes the [`ABSENT_FACT`] sentinel.
+///
+/// A holder of the [`TeeProvenance`] recomputes [`tee_provenance_commitment`] and checks
+/// equality against this; a mismatch means the turn does not carry that provenance. What a
+/// match does and does not assert is spelled out on [`TeeProvenance`]: it says the text was
+/// produced in an enclave with that measurement under that TCB verdict — it says nothing
+/// about whether the text is correct, honest, or un-jailbroken.
+pub fn bound_tee_provenance_commit(receipt: &TurnReceipt) -> Option<FieldElement> {
+    bound_optional_slot(receipt, SLOT_TEE_PROVENANCE_COMMIT)
+}
+
+/// **The raw narration-event `data` vector off a committed receipt**, if the turn bound
+/// one. The whole fixed-arity vector, sentinels and all — the input
+/// [`verify_narration_binding`] compares its re-derivation against. Individual facts are
+/// better read through [`bound_narration_commit`] / [`bound_attestation_commit`] /
+/// [`bound_tee_provenance_commit`], which map [`ABSENT_FACT`] to `None`.
+pub fn bound_narration_event_data(receipt: &TurnReceipt) -> Option<&[FieldElement]> {
+    narration_event_data(receipt)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The narration-binding tooth — re-deriving the event from the RECORDED prose.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **What a record retains about ONE turn's narration** — the prose a reader is shown,
+/// plus whichever provenance facts that turn bound.
+///
+/// This is the *input side* of [`verify_narration_binding`]. Its whole reason to exist is
+/// that a served record shows a human the narration TEXT while the receipt commits only to
+/// a digest; unless the text travels with the receipt there is nothing to re-derive the
+/// digest from, and the commitment can only ever be checked against itself.
+///
+/// The two provenance fields are deliberately asymmetric, because their re-derivability is:
+///
+/// * `tee_provenance` keeps the [`TeeProvenance`] PREIMAGE, so the expected slot value is
+///   RE-DERIVED by [`tee_provenance_commitment`]. Editing any of the four attestation
+///   fields flips the derived commitment and the tooth fires.
+/// * `attestation_commit` keeps only the zkOracle content commitment felt. The attested
+///   body is not retained (it is the zkOracle attestation's, not the record's), so there
+///   is nothing to re-derive it from and the check is VALUE EQUALITY: it catches an edit
+///   to the receipt's slot or to the recorded felt, not a coordinated edit to both. It is
+///   also the ~31-bit `BabyBear` value flagged on [`attestation_commit_field`] — narrow,
+///   and no wider for being compared here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedNarration {
+    /// The narration prose exactly as the record retains it.
+    pub narration: String,
+    /// The zkOracle attestation content commitment the turn bound, if any. Compared by
+    /// value; see the type doc.
+    pub attestation_commit: Option<FieldElement>,
+    /// The enclave provenance the turn bound, if any. Its commitment is re-derived.
+    pub tee_provenance: Option<TeeProvenance>,
+}
+
+impl RecordedNarration {
+    /// A record of a plain (unattested, non-enclave) narration.
+    pub fn plain(narration: impl Into<String>) -> RecordedNarration {
+        RecordedNarration {
+            narration: narration.into(),
+            attestation_commit: None,
+            tee_provenance: None,
+        }
+    }
+
+    /// What to retain about a turn that just landed: the prose and attestation commitment
+    /// off the [`NarratedReceipt`], plus the [`TeeProvenance`] the *caller* supplied.
+    ///
+    /// The provenance comes from the caller and not from `landed` on purpose:
+    /// [`NarratedReceipt`] carries only the provenance *commitment*, and a commitment is
+    /// not a preimage — recording it would leave nothing to re-derive. The caller is the
+    /// trusted transport that ran the DCAP verification, so it is the one place the
+    /// preimage exists.
+    pub fn landed(
+        landed: &NarratedReceipt,
+        provenance: Option<&TeeProvenance>,
+    ) -> RecordedNarration {
+        RecordedNarration {
+            narration: landed.narration.clone(),
+            attestation_commit: landed.attestation_commit,
+            tee_provenance: provenance.cloned(),
+        }
+    }
+}
+
+/// **The narration-event `data` vector a [`RecordedNarration`] implies** — recomputed from
+/// the retained prose and provenance, in the fixed slot layout
+/// ([`SLOT_NARRATION_COMMIT`] / [`SLOT_ATTESTATION_COMMIT`] /
+/// [`SLOT_TEE_PROVENANCE_COMMIT`]), absent facts as [`ABSENT_FACT`].
+///
+/// Deliberately built by the same slot-indexed assignment `narration_event_effect` uses,
+/// so the emitter and the verifier cannot disagree about which slot means what.
+pub fn expected_narration_event_data(
+    record: &RecordedNarration,
+) -> [FieldElement; NARRATION_DATA_ARITY] {
+    let mut data = [ABSENT_FACT; NARRATION_DATA_ARITY];
+    data[SLOT_NARRATION_COMMIT] = narration_commitment(&record.narration);
+    data[SLOT_ATTESTATION_COMMIT] = record.attestation_commit.unwrap_or(ABSENT_FACT);
+    data[SLOT_TEE_PROVENANCE_COMMIT] = record
+        .tee_provenance
+        .as_ref()
+        .map(tee_provenance_commitment)
+        .unwrap_or(ABSENT_FACT);
+    data
+}
+
+/// A specific way a record's narrations fail to match the receipts that bound them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NarrationBreak {
+    /// Turn `index` records a narration, but its receipt carries no narration event at
+    /// all — the binding was stripped out of the receipt.
+    EventStripped { index: usize },
+    /// Turn `index` records NO narration, yet its receipt carries a narration event —
+    /// prose (and whatever provenance rode with it) stapled onto a turn the record says
+    /// had none.
+    EventStapled { index: usize },
+    /// Turn `index`'s narration event has the wrong number of `data` felts. The layout is
+    /// fixed-arity by construction ([`NARRATION_DATA_ARITY`]), so a different length is a
+    /// hand-built event, not one this module emitted.
+    ArityWrong { index: usize, found: usize },
+    /// Turn `index`'s narration event disagrees with the record at `slot`: the value the
+    /// receipt binds is not the one the recorded narration/provenance implies.
+    SlotMismatch {
+        index: usize,
+        slot: usize,
+        expected: FieldElement,
+        bound: FieldElement,
+    },
+}
+
+impl std::fmt::Display for NarrationBreak {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NarrationBreak::EventStripped { index } => write!(
+                f,
+                "turn {index} records a narration but its receipt binds no narration event"
+            ),
+            NarrationBreak::EventStapled { index } => write!(
+                f,
+                "turn {index} records no narration but its receipt binds a narration event"
+            ),
+            NarrationBreak::ArityWrong { index, found } => write!(
+                f,
+                "turn {index}'s narration event carries {found} data felts, not the fixed {NARRATION_DATA_ARITY}"
+            ),
+            NarrationBreak::SlotMismatch { index, slot, .. } => {
+                let what = match *slot {
+                    SLOT_NARRATION_COMMIT => {
+                        "the narration commitment (the recorded prose does not hash to what the receipt bound)"
+                    }
+                    SLOT_ATTESTATION_COMMIT => "the attestation commitment",
+                    SLOT_TEE_PROVENANCE_COMMIT => {
+                        "the TEE-provenance commitment (the recorded attestation summary does not hash to what the receipt bound)"
+                    }
+                    _ => "an unnamed narration slot",
+                };
+                write!(
+                    f,
+                    "turn {index} slot {slot} disagrees with the record: {what}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for NarrationBreak {}
+
+/// **The narration-binding tooth.** For every recorded turn, RE-DERIVE the narration
+/// event from the retained prose and provenance and require the receipt to bind exactly
+/// that.
+///
+/// `turns` pairs each receipt with what the record retains about its narration
+/// (`None` = "this turn had no narration", e.g. an ordinary player choice or genesis).
+///
+/// ## Why the receipt chain alone does not do this
+///
+/// The receipt commits to a *digest* of the narration; the record shows a reader the
+/// *text*. Nothing in the receipt chain relates the two, so a record can pair an authentic
+/// receipt with prose the model never wrote and every state-shaped check still passes: an
+/// `EmitEvent` mutates no cap-gated field, so swapping the prose moves neither
+/// `pre_state_hash` nor `post_state_hash`, and replay never re-emits the event at all
+/// (it re-drives choices, not narrated turns). Re-deriving the commitment from the text is
+/// the step that makes the recorded prose the thing that was committed.
+///
+/// ## What this establishes — and what it does NOT
+///
+/// It establishes that the narration in this record is the narration bound into these
+/// receipts: a retcon of the prose *after the fact* is caught. Combined with
+/// `spween_dregg::verify_receipt_hash_chain` (which re-hashes each receipt body, so
+/// editing the event to match the tampered prose breaks the next receipt's link) the pair
+/// leaves only an edit confined to the head receipt, which needs
+/// `spween_dregg::verify_receipts_anchored` against the issuing executor.
+///
+/// It establishes NOTHING about where the prose came from. It does not show the narration
+/// was produced by any particular model, by a model at all, honestly, or without
+/// jailbreak. That is what [`TeeProvenance`] is for, and even a matching TEE slot only
+/// says a DCAP verification accepted an enclave with that measurement — its trust root is
+/// Intel's attestation key and the backend that checked the quote, not this comparison.
+/// A host that fabricates a narration and then honestly commits to the fabrication passes
+/// this tooth; what it cannot do is change its story afterwards.
+pub fn verify_narration_binding<'a>(
+    turns: impl IntoIterator<Item = (&'a TurnReceipt, Option<&'a RecordedNarration>)>,
+) -> Result<(), NarrationBreak> {
+    for (index, (receipt, record)) in turns.into_iter().enumerate() {
+        let bound = bound_narration_event_data(receipt);
+        match (record, bound) {
+            (None, None) => {}
+            (None, Some(_)) => return Err(NarrationBreak::EventStapled { index }),
+            (Some(_), None) => return Err(NarrationBreak::EventStripped { index }),
+            (Some(record), Some(bound)) => {
+                if bound.len() != NARRATION_DATA_ARITY {
+                    return Err(NarrationBreak::ArityWrong {
+                        index,
+                        found: bound.len(),
+                    });
+                }
+                let expected = expected_narration_event_data(record);
+                for (slot, (expected, bound)) in expected.iter().zip(bound).enumerate() {
+                    if expected != bound {
+                        return Err(NarrationBreak::SlotMismatch {
+                            index,
+                            slot,
+                            expected: *expected,
+                            bound: *bound,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,18 +818,24 @@ fn lower_choice_effects(world: &WorldCell, choice: &Choice) -> Vec<Effect> {
     effects
 }
 
-/// The `EmitEvent` that binds a narration (and, when attested, its content commitment)
-/// into the turn: a receipt-only effect carrying `[narration_commit (‖ attestation_commit)]`
-/// under [`NARRATION_TOPIC`].
+/// The `EmitEvent` that binds a narration and its optional provenance facts into the turn:
+/// a receipt-only effect carrying the FIXED-arity `data` vector under [`NARRATION_TOPIC`].
+///
+/// Every emitted narration event has exactly [`NARRATION_DATA_ARITY`] felts, in the slot
+/// order fixed by [`SLOT_NARRATION_COMMIT`] / [`SLOT_ATTESTATION_COMMIT`] /
+/// [`SLOT_TEE_PROVENANCE_COMMIT`]; an absent fact is [`ABSENT_FACT`], never an omitted
+/// element. That is what lets a reader index a slot by MEANING instead of by "how many of
+/// the earlier optional facts happened to be present".
 fn narration_event_effect(
     cell: CellId,
     narration_commit: FieldElement,
     attestation_commit: Option<FieldElement>,
+    tee_provenance_commit: Option<FieldElement>,
 ) -> Effect {
-    let mut data = vec![narration_commit];
-    if let Some(a) = attestation_commit {
-        data.push(a);
-    }
+    let mut data = vec![ABSENT_FACT; NARRATION_DATA_ARITY];
+    data[SLOT_NARRATION_COMMIT] = narration_commit;
+    data[SLOT_ATTESTATION_COMMIT] = attestation_commit.unwrap_or(ABSENT_FACT);
+    data[SLOT_TEE_PROVENANCE_COMMIT] = tee_provenance_commit.unwrap_or(ABSENT_FACT);
     Effect::EmitEvent {
         cell,
         event: Event::new(symbol(NARRATION_TOPIC), data),
@@ -414,6 +844,13 @@ fn narration_event_effect(
 
 /// Encode a zkOracle content commitment ([`dregg_zkoracle_prove`]'s `BabyBear` Poseidon2
 /// sponge over the attested body) as a [`FieldElement`] for the receipt.
+///
+/// ⚠ **NARROW — do not build on this, and never re-hash it.** `content_commit` is ONE
+/// `BabyBear` element (~31 bits, ~2^15.5 to collide); zero-padding it into 32 bytes makes
+/// it *look* wide and does not make it wide. It is catalogued as felt-width wound site #18
+/// in `docs/WOUND-felt-width-boundaries-2026-07-19.md`. A wide fold seeded from this value
+/// inherits its 31-bit collision set exactly, so a new commitment must be derived over the
+/// REAL preimages — the shape [`tee_provenance_commitment`] uses.
 fn attestation_commit_field(att: &ZkOracleAttestation) -> FieldElement {
     field_from_u64(att.content_commit.0 as u64)
 }
@@ -436,12 +873,44 @@ pub fn narrate_turn(
     scene: &Scene,
     narrated: &Narrated,
 ) -> Result<NarratedReceipt, NarrateError> {
+    narrate_turn_in_enclave(world, scene, narrated, None)
+}
+
+/// **Commit a narrated turn, binding WHERE the narration was produced.** Identical to
+/// [`narrate_turn`] in every state-transition respect — the world still resolves
+/// `narrated.command` on the real executor and prose is still not power — except that the
+/// narration event additionally carries [`tee_provenance_commitment`] of `provenance` in
+/// [`SLOT_TEE_PROVENANCE_COMMIT`]. `None` binds the [`ABSENT_FACT`] sentinel, which is
+/// exactly what [`narrate_turn`] does.
+///
+/// **The provenance is a parameter, not a field of [`Narrated`], on purpose.** [`Narrated`]
+/// is what the *brain* proposes; a [`Brain`] that could fill in its own `TeeProvenance`
+/// would be authoring its own attestation. This argument comes from the trusted transport
+/// that actually ran the DCAP verification (today `dregg_chutes_e2ee`'s TDX backend, whose
+/// `dregg_narrator::AttestationSummary` maps onto [`TeeProvenance`] field for field), never
+/// from model output.
+///
+/// What the bound commitment does and does NOT assert is on [`TeeProvenance`]: it says the
+/// text came out of an enclave with that measurement under that TCB verdict; it says
+/// nothing about the text being correct, honest, or un-jailbroken.
+pub fn narrate_turn_in_enclave(
+    world: &WorldCell,
+    scene: &Scene,
+    narrated: &Narrated,
+    provenance: Option<&TeeProvenance>,
+) -> Result<NarratedReceipt, NarrateError> {
     let cmd = &narrated.command;
     let choice = choice_at(scene, &cmd.room, cmd.choice);
     let commit = narration_commitment(&narrated.narration);
+    let tee_provenance_commit = provenance.map(tee_provenance_commitment);
 
     let mut effects = lower_choice_effects(world, &choice);
-    effects.push(narration_event_effect(world.cell_id(), commit, None));
+    effects.push(narration_event_effect(
+        world.cell_id(),
+        commit,
+        None,
+        tee_provenance_commit,
+    ));
 
     let method = choice_method(&cmd.room, cmd.choice);
     let receipt = world
@@ -454,10 +923,11 @@ pub fn narrate_turn(
         narration: narrated.narration.clone(),
         narration_commit: commit,
         attestation_commit: None,
+        tee_provenance_commit,
     })
 }
 
-/// **Commit a narrated turn, with the narration ATTESTED first** (the un-jailbreakable
+/// **Commit a narrated turn, with the narration ATTESTED first** (the `{{` delimiter
 /// path). The narration is run through the real zkOracle legs BEFORE any turn is built:
 ///
 /// 1. [`prove_zkoracle`] proves the narration well-formed + injection-free + bound to
@@ -486,10 +956,14 @@ pub fn narrate_turn_attested(
     let attestation_commit = attestation_commit_field(&att);
 
     let mut effects = lower_choice_effects(world, &choice);
+    // The zkOracle legs say nothing about WHERE the narration ran, so the TEE slot takes
+    // the sentinel. The two facts live in independent slots: a path that has both binds
+    // both without either reader changing.
     effects.push(narration_event_effect(
         world.cell_id(),
         narration_commit,
         Some(attestation_commit),
+        None,
     ));
 
     let method = choice_method(&cmd.room, cmd.choice);
@@ -503,6 +977,7 @@ pub fn narrate_turn_attested(
         narration: narrated.narration.clone(),
         narration_commit,
         attestation_commit: Some(attestation_commit),
+        tee_provenance_commit: None,
     })
 }
 
@@ -746,8 +1221,19 @@ impl BedrockBrain {
         }
     }
 
-    /// The CONFINED user prompt for `view`: the room + the finite legal command keywords,
-    /// and the strict `COMMAND:`/`NARRATION:` reply protocol the closed channel parses.
+    /// **The DM's voice for the Warden's Keep** — the same authored voice
+    /// [`attested_dm::VOICE_SPEC`] carries, so the Keep and the Drowned Marches sound like one
+    /// world rather than two products. Authored once, in `attested-dm`; referenced here.
+    pub fn voice_spec() -> &'static str {
+        attested_dm::VOICE_SPEC
+    }
+
+    /// The CONFINED user prompt for `view`: the DM's voice, the room, the finite legal command
+    /// keywords, and the strict `COMMAND:`/`NARRATION:` reply protocol the closed channel parses.
+    ///
+    /// The confinement here is on the model's OUTPUT and it is structural: whatever the model
+    /// writes, [`parse_confined_response`] admits a move only if its keyword is in this room's
+    /// finite legal set. That is a property of the parse, not of the model's cooperation.
     pub fn confined_prompt(&self, view: &SceneView) -> String {
         let room = view.room.as_deref().unwrap_or("(the story has ended)");
         let mut list = String::new();
@@ -756,13 +1242,17 @@ impl BedrockBrain {
             list.push_str(kw);
             list.push('\n');
         }
+        let voice = BedrockBrain::voice_spec();
         format!(
-            "You are the dungeon master of the Warden's Keep. The player stands in the `{room}`.\n\
-             Choose EXACTLY ONE command from this closed list — no other command exists:\n\
+            "{voice}\n\n\
+             The body stands in the `{room}` of the Warden's Keep.\n\
+             Choose EXACTLY ONE command from this closed list — no other command exists, and \
+             naming anything else moves nothing:\n\
              {list}\n\
              Reply in EXACTLY this format and nothing else:\n\
              COMMAND: <one keyword copied verbatim from the list above>\n\
-             NARRATION: <one or two vivid sentences of plain prose; no quotation marks, no braces>\n"
+             NARRATION: <your two or three sentences, in the voice above; no quotation marks, \
+             no braces>\n"
         )
     }
 }
@@ -989,10 +1479,13 @@ pub fn narrate_turn_bedrock_attested(
     let narration_commit = narration_commitment(&narrated.narration);
 
     let mut effects = lower_choice_effects(world, &choice);
+    // Bedrock's MPC-TLS provenance is a TRANSPORT fact, not an enclave-identity fact: the
+    // TEE slot takes the sentinel here.
     effects.push(narration_event_effect(
         world.cell_id(),
         narration_commit,
         Some(attestation_commit),
+        None,
     ));
 
     let method = choice_method(&cmd.room, cmd.choice);
@@ -1006,6 +1499,7 @@ pub fn narrate_turn_bedrock_attested(
         narration: narrated.narration.clone(),
         narration_commit,
         attestation_commit: Some(attestation_commit),
+        tee_provenance_commit: None,
     })
 }
 
@@ -1382,6 +1876,281 @@ mod narrator_tests {
             bound_narration_commit(&out.receipt),
             Some(narration_commitment(&narrated.narration)),
             "the confined narration binds into the real receipt"
+        );
+    }
+}
+
+#[cfg(test)]
+mod narration_binding_tests {
+    //! **The narration-binding tooth, and the proof it FIRES.**
+    //!
+    //! Every canary here is built the same way: land a REAL narrated turn, alter the
+    //! *record* of it while leaving the world's state untouched, and check that
+    //! [`verify_narration_binding`] refuses — beside the demonstration that the
+    //! state-shaped checks do not, which is what makes this tooth load-bearing rather
+    //! than decorative.
+    use super::*;
+    use crate::{deploy_keep, keep_scene};
+    use spween_dregg::{
+        Playthrough, StepReceipt, Value, verify_chain_linkage, verify_receipt_hash_chain,
+    };
+
+    /// A DCAP summary shaped like one a TDX backend hands back.
+    fn provenance() -> TeeProvenance {
+        TeeProvenance::new([0x5a; 32], "tdx-keep-01", "UpToDate", [0xc3; 32])
+    }
+
+    /// Two real narrated turns on one Keep, with the records that describe them.
+    fn narrated_run() -> (Vec<TurnReceipt>, Vec<RecordedNarration>) {
+        let scene = keep_scene();
+        let mut world = deploy_keep(40);
+        world.seed_var("hp", Value::Int(50));
+
+        let first = Narrated::new(
+            Command::trade_blows(),
+            "You trade a ringing blow with the gate-warden; sparks fly from notched steel.",
+        );
+        let prov = provenance();
+        let r1 = narrate_turn_in_enclave(&world, &scene, &first, Some(&prov))
+            .expect("the first narrated blow commits");
+
+        let second = Narrated::new(
+            Command::trade_blows(),
+            "The warden reels; your second blow bites deep into his guard.",
+        );
+        let r2 = narrate_turn(&world, &scene, &second).expect("the second narrated blow commits");
+
+        let records = vec![
+            RecordedNarration::landed(&r1, Some(&prov)),
+            RecordedNarration::landed(&r2, None),
+        ];
+        (vec![r1.receipt, r2.receipt], records)
+    }
+
+    /// Pair receipts with their records for [`verify_narration_binding`].
+    fn paired<'a>(
+        receipts: &'a [TurnReceipt],
+        records: &'a [RecordedNarration],
+    ) -> Vec<(&'a TurnReceipt, Option<&'a RecordedNarration>)> {
+        receipts.iter().zip(records.iter().map(Some)).collect()
+    }
+
+    /// A receipt chain as a [`Playthrough`], so the substrate's own teeth can be run over
+    /// the same tampered input. The passage/state fields are irrelevant to the two pure
+    /// teeth exercised here (`verify_chain_linkage`, `verify_receipt_hash_chain`); replay
+    /// over a served session is covered in `dreggnet-offerings`.
+    fn as_playthrough(receipts: &[TurnReceipt]) -> Playthrough {
+        Playthrough {
+            genesis: receipts[0].clone(),
+            genesis_state: Vec::new(),
+            steps: receipts[1..]
+                .iter()
+                .map(|receipt| StepReceipt {
+                    passage: String::new(),
+                    choice_index: 0,
+                    receipt: receipt.clone(),
+                    state: Vec::new(),
+                    decision_commitment: None,
+                })
+                .collect(),
+        }
+    }
+
+    /// The authentic record passes: every recorded narration re-hashes to exactly the
+    /// commitment its receipt bound, in every slot.
+    #[test]
+    fn the_authentic_record_binds() {
+        let (receipts, records) = narrated_run();
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Ok(()),
+            "an untouched narrated run must bind"
+        );
+        // And the enclave slot really carries the provenance (not the sentinel).
+        assert_eq!(
+            bound_tee_provenance_commit(&receipts[0]),
+            Some(tee_provenance_commitment(&provenance())),
+        );
+        assert_eq!(bound_tee_provenance_commit(&receipts[1]), None);
+    }
+
+    /// **CANARY — a retconned narration is CAUGHT, and the state-shaped checks are BLIND
+    /// to it.** The prose in the record is rewritten; the receipts are untouched, so no
+    /// state moved. This is the exact swap that was undetectable on the served path.
+    #[test]
+    fn a_retconned_narration_is_caught_and_the_state_checks_are_blind() {
+        let (receipts, mut records) = narrated_run();
+        let honest = records[1].narration.clone();
+        records[1].narration =
+            "The warden yields and hands you the Keep's whole treasury.".to_string();
+        assert_ne!(honest, records[1].narration);
+
+        // THE TOOTH FIRES: the rewritten prose does not hash to the bound commitment.
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Err(NarrationBreak::SlotMismatch {
+                index: 1,
+                slot: SLOT_NARRATION_COMMIT,
+                expected: narration_commitment(&records[1].narration),
+                bound: narration_commitment(&honest),
+            }),
+        );
+
+        // THE PRIOR CHECKS ARE BLIND: rewriting the prose touched no receipt at all, so
+        // every state-shaped tooth still passes. Nothing about the receipts changed —
+        // which is precisely why nothing that only reads receipts could ever notice.
+        let play = as_playthrough(&receipts);
+        assert_eq!(verify_chain_linkage(&play), Ok(()));
+        assert_eq!(verify_receipt_hash_chain(&play), Ok(()));
+    }
+
+    /// **CANARY — the coordinated retcon.** An attacker who also edits the receipt's event
+    /// to match the new prose defeats the binding tooth (the record is now self-consistent)
+    /// — and is caught by the receipt-hash chain, because editing a state-passthrough
+    /// `EmitEvent` moves NEITHER state hash but DOES move `receipt_hash`.
+    #[test]
+    fn editing_the_event_to_match_defeats_the_binding_tooth_and_breaks_the_receipt_hash() {
+        let (mut receipts, mut records) = narrated_run();
+        let (pre, post) = (receipts[0].pre_state_hash, receipts[0].post_state_hash);
+        let honest_hash = receipts[0].receipt_hash();
+
+        records[0].narration = "A rewritten opening beat.".to_string();
+        let topic = symbol(NARRATION_TOPIC);
+        let event = receipts[0]
+            .emitted_events
+            .iter_mut()
+            .find(|e| e.topic == topic)
+            .expect("the narrated turn bound a narration event");
+        event.data[SLOT_NARRATION_COMMIT] = narration_commitment(&records[0].narration);
+
+        // Self-consistent now, so the binding tooth alone is satisfied.
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Ok(())
+        );
+        // The state hashes did NOT move — an emitted event mutates no cap-gated field.
+        assert_eq!(receipts[0].pre_state_hash, pre);
+        assert_eq!(receipts[0].post_state_hash, post);
+        // …so the linkage tooth is blind, exactly as before.
+        let play = as_playthrough(&receipts);
+        assert_eq!(verify_chain_linkage(&play), Ok(()));
+        // But `receipt_hash` DID move, and receipt 1 committed to the old value.
+        assert_ne!(receipts[0].receipt_hash(), honest_hash);
+        assert_eq!(
+            verify_receipt_hash_chain(&play),
+            Err(spween_dregg::VerifyBreak::ReceiptHashMismatch { index: 1 }),
+        );
+    }
+
+    /// **CANARY — a swapped attestation summary is CAUGHT.** The enclave slot's expected
+    /// value is RE-DERIVED from the recorded [`TeeProvenance`], so flipping any one of its
+    /// four fields (here the TCB verdict, the field a host would most want to launder)
+    /// breaks the match.
+    #[test]
+    fn a_swapped_tee_provenance_is_caught() {
+        for swapped in [
+            TeeProvenance::new([0x5a; 32], "tdx-keep-01", "SWVulnerable", [0xc3; 32]),
+            TeeProvenance::new([0x5a; 32], "tdx-keep-99", "UpToDate", [0xc3; 32]),
+            TeeProvenance::new([0x00; 32], "tdx-keep-01", "UpToDate", [0xc3; 32]),
+            TeeProvenance::new([0x5a; 32], "tdx-keep-01", "UpToDate", [0x00; 32]),
+        ] {
+            let (receipts, mut records) = narrated_run();
+            records[0].tee_provenance = Some(swapped.clone());
+            assert_eq!(
+                verify_narration_binding(paired(&receipts, &records)),
+                Err(NarrationBreak::SlotMismatch {
+                    index: 0,
+                    slot: SLOT_TEE_PROVENANCE_COMMIT,
+                    expected: tee_provenance_commitment(&swapped),
+                    bound: tee_provenance_commitment(&provenance()),
+                }),
+                "a swapped attestation summary must be refused",
+            );
+        }
+    }
+
+    /// **CANARY — dropping the provenance is CAUGHT too.** Claiming a turn carried no
+    /// enclave provenance when its receipt binds one is a mismatch against the
+    /// [`ABSENT_FACT`] sentinel, not a silently-skipped slot. Absent must be as
+    /// checkable as present or the sentinel is a hole.
+    #[test]
+    fn dropping_a_bound_tee_provenance_is_caught() {
+        let (receipts, mut records) = narrated_run();
+        records[0].tee_provenance = None;
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Err(NarrationBreak::SlotMismatch {
+                index: 0,
+                slot: SLOT_TEE_PROVENANCE_COMMIT,
+                expected: ABSENT_FACT,
+                bound: tee_provenance_commitment(&provenance()),
+            }),
+        );
+    }
+
+    /// **CANARY — a claimed attestation the turn never bound is CAUGHT.** The unattested
+    /// path writes [`ABSENT_FACT`] in the attestation slot, so a record asserting a zkOracle
+    /// content commitment there disagrees with the receipt.
+    #[test]
+    fn a_claimed_attestation_the_turn_never_bound_is_caught() {
+        let (receipts, mut records) = narrated_run();
+        let invented = field_from_u64(0x1234_5678);
+        records[1].attestation_commit = Some(invented);
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Err(NarrationBreak::SlotMismatch {
+                index: 1,
+                slot: SLOT_ATTESTATION_COMMIT,
+                expected: invented,
+                bound: ABSENT_FACT,
+            }),
+        );
+    }
+
+    /// **CANARY — stapling and stripping.** A narration event on a turn the record says had
+    /// none, and a record claiming a narration for a turn whose receipt binds none, are both
+    /// refused. Without the negative case a forger just deletes the record entry.
+    #[test]
+    fn stapled_and_stripped_narration_events_are_caught() {
+        let (receipts, records) = narrated_run();
+
+        let stapled: Vec<_> = vec![
+            (&receipts[0], Some(&records[0])),
+            (&receipts[1], None), // the record denies a narration the receipt binds
+        ];
+        assert_eq!(
+            verify_narration_binding(stapled),
+            Err(NarrationBreak::EventStapled { index: 1 }),
+        );
+
+        // The mirror image: the narration event is deleted from the receipt while the record
+        // still claims one — a turn whose binding was stripped out.
+        let mut stripped = receipts[0].clone();
+        let topic = symbol(NARRATION_TOPIC);
+        stripped.emitted_events.retain(|e| e.topic != topic);
+        assert_eq!(bound_narration_event_data(&stripped), None);
+        assert_eq!(
+            verify_narration_binding(vec![(&stripped, Some(&records[0]))]),
+            Err(NarrationBreak::EventStripped { index: 0 }),
+        );
+    }
+
+    /// A hand-built narration event with the wrong number of felts is refused rather than
+    /// read slot-by-slot: the layout is fixed-arity by construction, so a short vector is a
+    /// forgery, and indexing into it would silently treat a missing slot as absent.
+    #[test]
+    fn a_wrong_arity_narration_event_is_caught() {
+        let (mut receipts, records) = narrated_run();
+        let topic = symbol(NARRATION_TOPIC);
+        let event = receipts[0]
+            .emitted_events
+            .iter_mut()
+            .find(|e| e.topic == topic)
+            .expect("the narrated turn bound a narration event");
+        event.data.truncate(1);
+        assert_eq!(
+            verify_narration_binding(paired(&receipts, &records)),
+            Err(NarrationBreak::ArityWrong { index: 0, found: 1 }),
         );
     }
 }

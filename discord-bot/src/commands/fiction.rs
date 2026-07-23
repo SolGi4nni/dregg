@@ -55,7 +55,7 @@ use serenity::all::{
     CreateInteractionResponseMessage, CreateMessage, Permissions,
 };
 
-use dregg_narrator::{ConverseResponse, ToolDef};
+use dregg_narrator::{AttestationSummary, ConverseResponse, ToolDef};
 use dreggnet_offerings::character::{CharacterSheet, CharacterStore};
 use dreggnet_offerings::chutes_consent::{
     ChutesReplaySurface, ViewerBlindChutesConsent, ViewerBlindChutesReceipt,
@@ -65,7 +65,8 @@ use dreggnet_offerings::{
     BinaryOperationDescriptor, DreggIdentity, Offering, Outcome, SessionConfig,
 };
 use dungeon_on_dregg::narrator::{
-    Narrated, bound_narration_commit, legal_commands, narration_commitment, parse_confined_response,
+    Narrated, TeeProvenance, bound_narration_commit, bound_tee_provenance_commit, legal_commands,
+    narration_commitment, parse_confined_response, tee_provenance_commitment,
 };
 
 use crate::BotState;
@@ -77,7 +78,7 @@ use crate::commands::offering::{
     with_live,
 };
 use crate::orchestration::{OpenAuthority, SessionSpec};
-use crate::pay::{PaidCreditHoldError, PaidNarratorProvider};
+use crate::pay::PaidCreditHoldError;
 
 /// The bot-branded teal (matches `embeds::DREGG_COLOR`).
 const DUNGEON_COLOR: u32 = 0x7B2CBF;
@@ -117,8 +118,9 @@ fn offering() -> DungeonOffering {
 /// the world-cell + the ballot). Nothing here touches the substrate — it is display state and
 /// the orchestrated-thread teardown key.
 struct DungeonMeta {
-    /// How the current room narration was produced (hosted provider / gemma / scripted).
-    narrator: NarratorKind,
+    /// How the current room narration was produced (hosted provider / gemma / scripted) and the
+    /// enclave attestation that covered it, when there was one.
+    narrator: NarrationProvenance,
     /// The narration text posted for the current room — kept so a live vote re-render
     /// preserves the prose (a vote never re-hits the network, so it never misreports it).
     last_narration: String,
@@ -363,6 +365,9 @@ pub enum NarratorKind {
     Bedrock,
     /// A real hosted model through Chutes/Bittensor narrated it — a PAID run that spent one credit.
     Chutes,
+    /// A real hosted model through Chutes/Bittensor narrated it INSIDE a DCAP-verified Intel TDX
+    /// enclave — a PAID run, end-to-end encrypted to an attested enclave key.
+    ChutesTee,
     /// Another operator-configured OpenAI-compatible hosted model narrated it — a PAID run.
     OpenAiCompatible,
     /// A real local `gemma2:2b` (ollama) narrated it (the free tier).
@@ -376,6 +381,7 @@ impl NarratorKind {
         match provider {
             crate::pay::PaidNarratorProvider::Bedrock => Self::Bedrock,
             crate::pay::PaidNarratorProvider::Chutes => Self::Chutes,
+            crate::pay::PaidNarratorProvider::ChutesTee => Self::ChutesTee,
             crate::pay::PaidNarratorProvider::OpenAiCompatible => Self::OpenAiCompatible,
         }
     }
@@ -386,11 +392,64 @@ impl NarratorKind {
             NarratorKind::Chutes => {
                 "narrator: chutes / bittensor (real AI · paid with a $DREGG credit)"
             }
+            // What the attestation covers is the SERVING enclave's code identity plus
+            // confidentiality — never the weights or the sampled tokens. The label says the
+            // enclave was attested, and claims nothing about the prose.
+            NarratorKind::ChutesTee => {
+                "narrator: chutes / bittensor in an ATTESTED TDX enclave (real AI · paid with a \
+                 $DREGG credit)"
+            }
             NarratorKind::OpenAiCompatible => {
                 "narrator: hosted OpenAI-compatible (real AI · paid with a $DREGG credit)"
             }
             NarratorKind::Gemma => "narrator: gemma2:2b (free)",
             NarratorKind::Scripted => "narrator: scripted (free)",
+        }
+    }
+}
+
+/// **The honest provenance of one narration**, as every dungeon surface reports it: HOW the prose
+/// was produced, plus the TEE attestation that covered the call when the backend verified one.
+///
+/// The two halves travel TOGETHER because they are answers to the same question and a surface must
+/// never report one without the other. Both are non-spoofable by model output: the kind comes from
+/// the operator configuration the backend was built from, and the attestation is whatever the
+/// backend's DCAP verification produced — a `None` here is the honest "no attestation", never
+/// "attestation passed". Carried in [`DungeonMeta`] so a re-render (a vote tally, a
+/// post-operation round) restates exactly what produced the prose already on screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NarrationProvenance {
+    /// How the narration on screen was produced.
+    kind: NarratorKind,
+    /// The enclave attestation covering it, when the backend verified one. `None` = none.
+    attestation: Option<AttestationSummary>,
+}
+
+impl NarrationProvenance {
+    /// Provenance with NO attestation — every free-tier narration and every paid narration from a
+    /// backend that does not attest.
+    const fn plain(kind: NarratorKind) -> Self {
+        NarrationProvenance {
+            kind,
+            attestation: None,
+        }
+    }
+
+    /// The scripted fallback's provenance — the honest default when nothing else is known.
+    const fn scripted() -> Self {
+        NarrationProvenance::plain(NarratorKind::Scripted)
+    }
+
+    /// Provenance of a PAID narration: the trusted operator-configured provider, plus whatever
+    /// attestation the backend actually verified for that call (cloned from the narration; this
+    /// function cannot invent one).
+    fn from_paid(
+        provider: crate::pay::PaidNarratorProvider,
+        attestation: Option<&AttestationSummary>,
+    ) -> Self {
+        NarrationProvenance {
+            kind: NarratorKind::from_paid(provider),
+            attestation: attestation.cloned(),
         }
     }
 }
@@ -501,21 +560,21 @@ async fn post_operation_round(ctx: &Context, command: &CommandInteraction) {
     }) else {
         return;
     };
-    let (narration, kind) = meta()
+    let (narration, provenance) = meta()
         .lock()
         .ok()
         .and_then(|metadata| {
             metadata
                 .get(&channel)
-                .map(|dungeon| (dungeon.last_narration.clone(), dungeon.narrator))
+                .map(|dungeon| (dungeon.last_narration.clone(), dungeon.narrator.clone()))
         })
-        .unwrap_or_else(|| (String::new(), NarratorKind::Scripted));
+        .unwrap_or_else(|| (String::new(), NarrationProvenance::scripted()));
     let narration = if narration.trim().is_empty() {
         snapshot.room_desc.clone()
     } else {
         narration
     };
-    let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
+    let embed = with_adventurers(round_embed(&snapshot, &narration, &provenance), channel);
     let rows = ballot_rows(&snapshot.options, snapshot.stamp);
     if let Err(error) = ChannelId::new(channel)
         .send_message(
@@ -565,7 +624,7 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction) {
     );
     let embed = base_embed(&format!("{KEEP_NAME} — the hosted world"))
         .description(desc)
-        .footer(footer(NarratorKind::Scripted));
+        .footer(footer(&NarrationProvenance::scripted()));
     respond(ctx, command, embed, vec![], true).await;
 }
 
@@ -697,7 +756,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
     meta().lock().unwrap_or_else(|e| e.into_inner()).insert(
         target_channel,
         DungeonMeta {
-            narrator: NarratorKind::Scripted,
+            narrator: NarrationProvenance::scripted(),
             last_narration: String::new(),
             orchestrated_key,
             current_room: String::new(),
@@ -721,11 +780,11 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
     .expect("the session was just opened in the store");
 
     // The opening room carries no prior beats — the continuity context is empty on a fresh run.
-    let (narration, kind) =
+    let (narration, provenance) =
         narrate_room_gated(state, command.user.id.get(), &room_name, &room_desc, "").await;
     if let Ok(mut m) = meta().lock() {
         if let Some(d) = m.get_mut(&target_channel) {
-            d.narrator = kind;
+            d.narrator = provenance.clone();
             d.last_narration = narration.clone();
             d.current_room = room_name.clone();
         }
@@ -739,7 +798,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             .send_message(
                 &ctx.http,
                 CreateMessage::new()
-                    .embed(round_embed(&snap, &narration, kind))
+                    .embed(round_embed(&snap, &narration, &provenance))
                     .components(ballot_rows(&snap.options, snap.stamp)),
             )
             .await;
@@ -749,7 +808,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     "The party plays in <#{target_channel}>. Vote the buttons there; run \
                      `/dungeon close` and `/dungeon verify` from inside the thread."
                 ))
-                .footer(footer(kind));
+                .footer(footer(&provenance));
             ack::edit_slash(ctx, command, ping, vec![]).await;
             return;
         }
@@ -773,7 +832,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
         }
     }
 
-    let embed = round_embed(&snap, &narration, kind);
+    let embed = round_embed(&snap, &narration, &provenance);
     let rows = ballot_rows(&snap.options, snap.stamp);
     ack::edit_slash(ctx, command, embed, rows).await;
 }
@@ -916,7 +975,10 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         .await;
         return;
     };
-    if paid.provider() != PaidNarratorProvider::Chutes {
+    // Chutes-FAMILY: the plain endpoint or the DCAP-attested TDX backend. The attested one is
+    // strictly stronger provenance (same Bittensor inference, plus the serving enclave's code
+    // identity), so turning attestation on must not silently remove this action.
+    if !paid.provider().is_chutes() {
         respond(
             ctx,
             command,
@@ -1082,7 +1144,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
             return;
         }
     };
-    if provider.provider() != PaidNarratorProvider::Chutes {
+    if !provider.provider().is_chutes() {
         ack::edit_slash(
             ctx,
             command,
@@ -1095,6 +1157,14 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         .await;
         return;
     }
+    // The footer's provenance for THIS turn: the trusted operator configuration the backend was
+    // built from — plain Chutes or the DCAP-attested TDX backend — PLUS the attestation that
+    // backend actually verified for this call, if any. Neither half is inferred from model prose,
+    // and both are captured here so every surface below reports the same thing. An attesting
+    // backend fills the summary in after its DCAP check; every other backend leaves it `None`, and
+    // `None` is rendered as silence, never as a claim.
+    let narration_provenance =
+        NarrationProvenance::from_paid(provider.provider(), provider.response.attestation.as_ref());
 
     let admitted = match admit_chutes_turn(&requested_view, &provider.response) {
         Ok(narrated) => narrated,
@@ -1147,6 +1217,20 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
             &display_narration,
         ),
     };
+    // WHERE the prose was produced, for the receipt. The preimages come from the summary the
+    // backend's own DCAP verification produced — never from model output — so the narrator
+    // cannot author its own provenance. `None` (every non-attesting backend) binds the absent
+    // sentinel: silence, never a claim. What lands on the turn attests the serving enclave's
+    // code identity and TCB verdict; it attests nothing about the prose being correct or
+    // un-jailbroken, which is why the prose still has no state authority below.
+    let tee_provenance = provider.response.attestation.as_ref().map(|att| {
+        TeeProvenance::new(
+            att.measurement,
+            att.instance_id.clone(),
+            att.tcb_status.clone(),
+            att.quote_sha256,
+        )
+    });
     let model = provider.model.clone();
     let operator_spend_micro_usd = provider.operator_spend_micro_usd();
     let applied = with_live::<DungeonOffering, _>(channel, move |live| {
@@ -1165,7 +1249,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         }
         let turn = live
             .session
-            .advance_narrated_receipt(&bound, actor)
+            .advance_narrated_receipt_in_enclave(&bound, actor, tee_provenance.as_ref())
             .map_err(|error| format!("the executor refused the proposal: {error}"))?;
         let committed = narration_commitment(&bound.narration);
         if turn.narrated.narration != bound.narration
@@ -1174,6 +1258,18 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
         {
             return Err(
                 "the landed receipt did not bind the trusted Chutes provenance".to_string(),
+            );
+        }
+        // Fail-CLOSED on the enclave fact too: the turn must bind exactly the provenance this
+        // call verified — the commitment for an attested call, the absent sentinel for an
+        // unattested one. Anything else and the surface would report a provenance the receipt
+        // does not carry.
+        let expected_tee = tee_provenance.as_ref().map(tee_provenance_commitment);
+        if turn.narrated.tee_provenance_commit != expected_tee
+            || bound_tee_provenance_commit(&turn.narrated.receipt) != expected_tee
+        {
+            return Err(
+                "the landed receipt did not bind this turn's enclave provenance".to_string(),
             );
         }
 
@@ -1275,7 +1371,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
 
     if let Ok(mut metadata) = meta().lock() {
         if let Some(dungeon) = metadata.get_mut(&channel) {
-            dungeon.narrator = NarratorKind::Chutes;
+            dungeon.narrator = narration_provenance.clone();
             dungeon.last_narration = applied.display_narration.clone();
             dungeon.current_room = applied
                 .next_snapshot
@@ -1308,7 +1404,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
     match applied.next_snapshot {
         Some(snapshot) => {
             let embed = with_adventurers(
-                round_embed(&snapshot, &applied.display_narration, NarratorKind::Chutes).field(
+                round_embed(&snapshot, &applied.display_narration, &narration_provenance).field(
                     "Public Chutes receipt · replay-verifiable",
                     provenance,
                     false,
@@ -1332,7 +1428,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
                     ),
                     4000,
                 ))
-                .footer(footer(NarratorKind::Chutes));
+                .footer(footer(&narration_provenance));
             ack::edit_slash(ctx, command, embed, vec![]).await;
             if let Some(key) = applied.teardown_key {
                 if let Err(error) = state
@@ -1512,7 +1608,7 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 // from this run's history (the just-recorded beat included) so it narrates one
                 // evolving story. Same single credit-gated call — only the prompt prefix grows.
                 let continuity = continuity_of(channel);
-                let (narration, kind) = narrate_room_gated(
+                let (narration, provenance) = narrate_room_gated(
                     state,
                     command.user.id.get(),
                     &next_room_name,
@@ -1522,13 +1618,13 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 .await;
                 if let Ok(mut m) = meta().lock() {
                     if let Some(d) = m.get_mut(&channel) {
-                        d.narrator = kind;
+                        d.narrator = provenance.clone();
                         d.last_narration = narration.clone();
                         d.current_room = next_room_name.clone();
                     }
                 }
                 let embed = with_adventurers(
-                    resolution_then_round_embed(&resolution, &snap, &narration, kind),
+                    resolution_then_round_embed(&resolution, &snap, &narration, &provenance),
                     channel,
                 );
                 let rows = ballot_rows(&snap.options, snap.stamp);
@@ -1653,7 +1749,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
             .description(format!(
                 "**{count} verified turns** re-verify: a fresh, identically-seeded world-cell, re-driven through the recorded choices, reproduces exactly this committed state chain in passage order.\n\nA reordered, mutated, or forged (ineligible) choice would break replay — the executor refuses on re-drive, or the reproduced state diverges."
             ))
-            .footer(footer(NarratorKind::Scripted))
+            .footer(footer(&NarrationProvenance::scripted()))
     } else {
         error_embed(
             &format!("✗ {name} — replay BREAKS"),
@@ -1772,7 +1868,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         Update {
             snapshot: RenderSnapshot,
             narration: String,
-            kind: NarratorKind,
+            provenance: NarrationProvenance,
         },
     }
 
@@ -1808,18 +1904,18 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     .unwrap_or_default();
                 note_adventurer(channel, &voter_hex, sheet);
             }
-            let (narration, kind) = meta()
+            let (narration, provenance) = meta()
                 .lock()
                 .ok()
                 .and_then(|m| {
                     m.get(&channel)
-                        .map(|d| (d.last_narration.clone(), d.narrator))
+                        .map(|d| (d.last_narration.clone(), d.narrator.clone()))
                 })
-                .unwrap_or_else(|| (String::new(), NarratorKind::Scripted));
+                .unwrap_or_else(|| (String::new(), NarrationProvenance::scripted()));
             Reply::Update {
                 snapshot,
                 narration,
-                kind,
+                provenance,
             }
         }
     };
@@ -1833,14 +1929,14 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         Reply::Update {
             snapshot,
             narration,
-            kind,
+            provenance,
         } => {
             let narration = if narration.trim().is_empty() {
                 snapshot.room_desc.clone()
             } else {
                 narration
             };
-            let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
+            let embed = with_adventurers(round_embed(&snapshot, &narration, &provenance), channel);
             let rows = ballot_rows(&snapshot.options, snapshot.stamp);
             ack::edit_component(ctx, component, embed, rows).await;
         }
@@ -2073,7 +2169,11 @@ fn tally_lines(options: &[VoteOption], tally: &[usize]) -> String {
 
 /// The round embed: the room (narrated), a rich ASCII map + status HUD, objective, receipts, and
 /// the live ballot rendered as a party panel.
-fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> CreateEmbed {
+fn round_embed(
+    snap: &RenderSnapshot,
+    narration: &str,
+    provenance: &NarrationProvenance,
+) -> CreateEmbed {
     let mut desc = String::new();
     desc.push_str(&truncate(narration, 1400));
     if narration.trim() != snap.room_desc.trim() && !snap.room_desc.trim().is_empty() {
@@ -2103,7 +2203,7 @@ fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> Cr
     for (title, body) in crate::commands::binary_operation::affordance_fields(&snap.operations) {
         embed = embed.field(title, truncate(&body, 1024), false);
     }
-    embed.footer(footer(kind))
+    embed.footer(footer(provenance))
 }
 
 /// The combined "round resolved → next round" embed after `/dungeon close`.
@@ -2111,9 +2211,9 @@ fn resolution_then_round_embed(
     res: &ResolvedRound,
     snap: &RenderSnapshot,
     narration: &str,
-    kind: NarratorKind,
+    provenance: &NarrationProvenance,
 ) -> CreateEmbed {
-    let mut embed = round_embed(snap, narration, kind);
+    let mut embed = round_embed(snap, narration, provenance);
     let tie = if res.was_tie {
         " (tie → lowest option index)"
     } else {
@@ -2161,7 +2261,7 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
     );
     base_embed(&format!("{} — {}", res.world_name, title))
         .description(truncate(&body, 4000))
-        .footer(footer(NarratorKind::Scripted))
+        .footer(footer(&NarrationProvenance::scripted()))
 }
 
 /// The ballot buttons for a round, chunked into Discord action rows of five (max five rows).
@@ -2213,8 +2313,41 @@ fn warn_embed(title: &str, body: &str) -> CreateEmbed {
         .color(0xE9C46A)
 }
 
-fn footer(kind: NarratorKind) -> CreateEmbedFooter {
-    CreateEmbedFooter::new(format!("{} · {}", kind.label(), TAGLINE))
+fn footer(provenance: &NarrationProvenance) -> CreateEmbedFooter {
+    CreateEmbedFooter::new(footer_text(provenance))
+}
+
+/// The footer line: how the narration was produced, the enclave note when an attestation covered
+/// it, and the tagline. Split out from [`footer`] so the wording is testable without Discord.
+fn footer_text(provenance: &NarrationProvenance) -> String {
+    match &provenance.attestation {
+        Some(attestation) => format!(
+            "{} · {} · {}",
+            provenance.kind.label(),
+            attestation_note(attestation),
+            TAGLINE
+        ),
+        None => format!("{} · {}", provenance.kind.label(), TAGLINE),
+    }
+}
+
+/// The compact attestation note — the smallest thing a player can act on: the enclave's folded
+/// code-identity measurement (short hex, enough to compare against the published registry) and the
+/// DCAP TCB status the verifier accepted.
+///
+/// **It is deliberately narrow about what it claims.** A verified quote establishes WHERE this text
+/// was produced — inside an enclave measuring to this value — and nothing about whether the prose
+/// is true, good, or in any way authoritative: the executor is still the only thing that moves the
+/// world. The parenthetical says exactly that, so the note cannot be read as a stamp of approval on
+/// the fiction. Both fields come from the verifier, never from model output; the status is length-
+/// bounded because it is rendered into a Discord footer.
+fn attestation_note(attestation: &AttestationSummary) -> String {
+    let measurement = attestation.measurement_hex();
+    let short: String = measurement.chars().take(16).collect();
+    format!(
+        "attested enclave {short}… · TCB {} (where the text was produced — not a claim about it)",
+        truncate(&attestation.tcb_status, 32),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2226,15 +2359,16 @@ fn footer(kind: NarratorKind) -> CreateEmbedFooter {
 /// **The credit gate.** Narrate a room for `discord_user_id`, spending a `$DREGG` run-credit
 /// on an automatic-safe hosted narration when the user has one, else falling back to the FREE tier
 /// ([`narrate_room`], ollama/scripted). The paid backend is never free-ridden: a paid
-/// narration debits exactly one credit AFTER a successful hosted call. The narrator kind is
-/// reported honestly. Chutes is excluded because it requires the explicit confirmed turn above.
+/// narration debits exactly one credit AFTER a successful hosted call. The narrator kind — and the
+/// attestation the backend verified, when it verified one — is reported honestly. Chutes is
+/// excluded because it requires the explicit confirmed turn above.
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
     room_name: &str,
     room_desc: &str,
     continuity: &str,
-) -> (String, NarratorKind) {
+) -> (String, NarrationProvenance) {
     let discord = discord_user_id.to_string();
 
     if !state.pay.can_run_paid(&discord) {
@@ -2272,7 +2406,14 @@ async fn narrate_room_gated(
     match narration {
         Some(n) => {
             if state.pay.commit_paid_credit(hold).is_ok() {
-                (sanitize(&n.text), NarratorKind::from_paid(n.provider()))
+                // The provenance the footer reports is the trusted provider PLUS whatever
+                // attestation the backend verified for this exact call — carried from the
+                // narration rather than re-derived from the provider label, so a provider that
+                // CAN attest but did not on this turn says nothing.
+                (
+                    sanitize(&n.text),
+                    NarrationProvenance::from_paid(n.provider(), n.attestation()),
+                )
             } else {
                 narrate_room(room_name, room_desc, continuity).await
             }
@@ -2281,19 +2422,27 @@ async fn narrate_room_gated(
     }
 }
 
-/// The narrator's system instruction, with the run's bounded continuity context woven in when
-/// present. On a fresh run (`continuity` empty) this is the original opening instruction verbatim
-/// — the memory is purely additive, only appearing once the run has a story to remember.
+/// The narrator's system instruction: the ONE authored voice ([`attested_dm::VOICE_SPEC`] — the
+/// dungeon master of the Drowned Marches, referenced rather than re-invented here so the Discord
+/// runs, the Keep, and the bundled dungeons sound like one world), the party framing, and the
+/// run's bounded continuity context when there is one.
+///
+/// The continuity paragraph is assembled from the bot's OWN run history — room names and the
+/// crowd's winning ballot labels, both closed values the bot minted — never from free player
+/// chat, so nothing a player typed is laundered into the instruction region a turn later.
 fn narrator_system_prompt(continuity: &str) -> String {
-    let base = "You are the dungeon master of a shared party dungeon crawl. In two vivid \
-                sentences, set the scene for the party as they arrive. Do NOT use curly braces.";
+    let base = format!(
+        "{voice}\n\n\
+         This is a shared crawl: several bodies in the room, one voice describing it. Set the \
+         scene as the party arrives, in two or three sentences. Address the party as you.",
+        voice = attested_dm::VOICE_SPEC,
+    );
     if continuity.trim().is_empty() {
-        base.to_string()
+        base
     } else {
         format!(
-            "{base} Keep the tone and the characters consistent with the run so far, and weave in \
-             continuity where it fits (a callback to a room the party already passed, a \
-             consequence of an earlier choice). {continuity}"
+            "{base}\n\nWHAT HAS ALREADY HAPPENED (carry it forward; never contradict it, and \
+             prefer a callback to an invention): {continuity}"
         )
     }
 }
@@ -2307,10 +2456,18 @@ async fn narrate_room(
     room_name: &str,
     room_desc: &str,
     continuity: &str,
-) -> (String, NarratorKind) {
+) -> (String, NarrationProvenance) {
+    // Neither free-tier path attests anything: local ollama and the scene's own prose carry no
+    // enclave identity, so the provenance is plain.
     match gemma_narrate(room_name, room_desc, continuity).await {
-        Some(text) if !text.trim().is_empty() => (sanitize(&text), NarratorKind::Gemma),
-        _ => (room_desc.to_string(), NarratorKind::Scripted),
+        Some(text) if !text.trim().is_empty() => (
+            sanitize(&text),
+            NarrationProvenance::plain(NarratorKind::Gemma),
+        ),
+        _ => (
+            room_desc.to_string(),
+            NarrationProvenance::plain(NarratorKind::Scripted),
+        ),
     }
 }
 
@@ -2320,18 +2477,12 @@ async fn gemma_narrate(room_name: &str, room_desc: &str, continuity: &str) -> Op
     let endpoint =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
     let url = format!("{}/api/generate", endpoint.trim_end_matches('/'));
-    let continuity_clause = if continuity.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            " Keep the tone and characters consistent with the run so far, weaving in continuity \
-             where it fits. {continuity}"
-        )
-    };
+    // The free tier narrates in the SAME authored voice and with the SAME continuity as the paid
+    // tier — a player should not be able to tell which model spoke by the prose alone, only by the
+    // honestly-reported `NarratorKind` footer.
     let prompt = format!(
-        "You are the dungeon master of a shared party dungeon crawl. In two vivid sentences, \
-         set the scene for the party as they arrive. Do NOT use curly braces.{continuity_clause} \
-         Room: {room_name}. {room_desc}"
+        "{system}\n\nRoom: {room_name}. {room_desc}",
+        system = narrator_system_prompt(continuity),
     );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
@@ -2413,6 +2564,72 @@ mod tests {
         assert_eq!(
             NarratorKind::from_paid(crate::pay::PaidNarratorProvider::Chutes),
             NarratorKind::Chutes
+        );
+        // The ATTESTED backend gets its OWN label. It must not be reported as plain Chutes
+        // (an under-report of what ran), and the plain one must never claim attestation.
+        assert_eq!(
+            NarratorKind::from_paid(crate::pay::PaidNarratorProvider::ChutesTee),
+            NarratorKind::ChutesTee
+        );
+        assert!(NarratorKind::ChutesTee.label().contains("ATTESTED"));
+        assert!(!NarratorKind::Chutes.label().contains("ATTESTED"));
+    }
+
+    /// **A verified attestation reaches the player's footer, and claims exactly what it proves.**
+    /// The note names the enclave (short measurement hex, matchable against the published
+    /// registry) and the DCAP TCB status the verifier accepted, and says in plain words that this
+    /// is WHERE the text was produced — not a claim about the text. The complement is the tooth: a
+    /// narration with NO attestation gets NO note, so the footer can never imply a verification
+    /// that did not happen.
+    #[test]
+    fn an_attested_narration_names_its_enclave_in_the_footer_and_claims_nothing_more() {
+        let attested = NarrationProvenance::from_paid(
+            crate::pay::PaidNarratorProvider::ChutesTee,
+            Some(&AttestationSummary {
+                instance_id: "inst-7f".to_string(),
+                measurement: [0xA5; 32],
+                tcb_status: "UpToDate".to_string(),
+                quote_sha256: [0x3C; 32],
+                quote_len: 4_782,
+            }),
+        );
+        let text = footer_text(&attested);
+        assert!(
+            text.contains("a5a5a5a5a5a5a5a5…"),
+            "the enclave's measurement is legible in the footer:\n{text}"
+        );
+        assert!(
+            text.contains("TCB UpToDate"),
+            "the accepted TCB status is named:\n{text}"
+        );
+        assert!(
+            text.contains("where the text was produced — not a claim about it"),
+            "the note bounds what the attestation establishes:\n{text}"
+        );
+        assert!(
+            text.contains(NarratorKind::ChutesTee.label()) && text.contains(TAGLINE),
+            "the note is ADDITIVE — the provider label and tagline still stand:\n{text}"
+        );
+
+        // The complement: no attestation ⇒ no attestation words, for the SAME provider. An
+        // attesting provider that did not attest THIS call must read exactly like one that cannot.
+        let unattested =
+            NarrationProvenance::from_paid(crate::pay::PaidNarratorProvider::ChutesTee, None);
+        let plain = footer_text(&unattested);
+        assert!(
+            !plain.contains("attested enclave") && !plain.contains("TCB"),
+            "an unattested narration must not carry an enclave note:\n{plain}"
+        );
+        assert_eq!(
+            plain,
+            footer_text(&NarrationProvenance::plain(NarratorKind::ChutesTee)),
+            "`None` attestation renders identically to no attestation at all"
+        );
+
+        // Free-tier prose never acquires a note.
+        assert!(
+            !footer_text(&NarrationProvenance::scripted()).contains("attested"),
+            "the scripted fallback claims no enclave"
         );
     }
 
@@ -2511,6 +2728,7 @@ mod tests {
             stop_reason: "tool_calls".to_string(),
             input_tokens: 12,
             output_tokens: 8,
+            attestation: None,
         };
         let admitted = admit_chutes_turn(&view, &response).expect("native parser admits press_on");
         assert_eq!(admitted.command.choice, KP_PRESS_ON);
@@ -2545,6 +2763,7 @@ mod tests {
             stop_reason: "tool_calls".to_string(),
             input_tokens: 12,
             output_tokens: 8,
+            attestation: None,
         };
         assert!(
             admit_chutes_turn(&view, &extra_effect).is_err(),
@@ -3033,13 +3252,25 @@ mod tests {
             "the map trail is the distinct room sequence"
         );
 
-        // THE WIRING: a non-empty continuity is actually woven into the narrator's system prompt.
+        // THE WIRING: a non-empty continuity is actually woven into the narrator's system prompt —
+        // the assembled context VERBATIM, under an instruction to carry it forward rather than
+        // contradict it. Both halves are load-bearing and neither is in the memory-free prompt: a
+        // prompt that pasted the beats with no instruction, or instructed continuity while dropping
+        // the beats, would fail here.
         let with_mem = narrator_system_prompt(&ctx);
         assert!(
-            with_mem.contains("dungeon master")
-                && with_mem.contains(&ctx)
-                && with_mem.contains("consistent"),
-            "the narrator prompt carries the run's memory + a consistency instruction"
+            with_mem.contains("dungeon master") && with_mem.contains(&ctx),
+            "the narrator prompt carries the run's memory verbatim"
+        );
+        assert!(
+            with_mem.contains("WHAT HAS ALREADY HAPPENED")
+                && with_mem.contains("carry it forward")
+                && with_mem.contains("never contradict it"),
+            "the memory arrives under the instruction to carry it forward, not as loose text"
+        );
+        assert!(
+            !base.contains("WHAT HAS ALREADY HAPPENED") && !base.contains("carry it forward"),
+            "the carry-forward instruction appears only when there IS a memory to carry"
         );
 
         // The window is bounded: pushing past the max rolls the oldest off.
@@ -3130,7 +3361,11 @@ mod tests {
         assert!(party.contains('▓'), "the live tally bar renders:\n{party}");
 
         // The whole embed builds without panicking (map + HUD + party fields all present).
-        let _ = round_embed(&snap, "You step into the gatehall.", NarratorKind::Scripted);
+        let _ = round_embed(
+            &snap,
+            "You step into the gatehall.",
+            &NarrationProvenance::scripted(),
+        );
         close_in::<DungeonOffering>(channel);
     }
 }

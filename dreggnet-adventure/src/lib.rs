@@ -99,7 +99,15 @@ impl PlayerIdentity {
     }
 }
 
-/// A stable committed seed used by the daily adventure and its companion draw.
+/// A stable committed seed used by this crate's adventure and its companion draw.
+///
+/// ⚠ It is a FIXTURE, not a day: a fixed constant, deliberately, so this integration crate's
+/// saga is reproducible. It is not a beacon reveal and nothing here is a live daily surface —
+/// the surfaces that serve players (web / Telegram / WeChat via `dreggnet_catalog::
+/// CatalogConfig::live`, Discord via its `native_descent::live_offering`) bind the day's
+/// verified drand round instead, so a live run's relic provenance is unpredictable until that
+/// round matures. A run opened here mints under the reproducible deploy-seed-derived root, and
+/// says so.
 pub fn today_seed() -> CommittedSeed {
     CommittedSeed::from_bytes([0x7D; 32])
 }
@@ -121,6 +129,10 @@ pub struct NativeDescentWorld {
 }
 
 /// Open a fresh Lean-native Descent for `seed` and return its immutable world identity.
+///
+/// The world is over the reproducible deploy-seed-derived provenance root (see [`today_seed`]);
+/// [`open_descent_on_day`] is the beacon-bound sibling, for a caller composing this saga over a
+/// real day's runs.
 pub fn open_descent(
     seed: &CommittedSeed,
 ) -> Result<
@@ -131,7 +143,36 @@ pub fn open_descent(
     ),
     String,
 > {
-    let offering = NativeDescentOffering::new();
+    open_descent_with(NativeDescentOffering::new(), seed)
+}
+
+/// [`open_descent`] over one verified beacon `day` — the world's banked relics then mint under
+/// `native_descent_run_day_seed(day, seed)`, unpredictable until that round was revealed.
+pub fn open_descent_on_day(
+    seed: &CommittedSeed,
+    day: CommittedSeed,
+) -> Result<
+    (
+        NativeDescentOffering,
+        NativeDescentSession,
+        NativeDescentWorld,
+    ),
+    String,
+> {
+    open_descent_with(NativeDescentOffering::on_day(day), seed)
+}
+
+fn open_descent_with(
+    offering: NativeDescentOffering,
+    seed: &CommittedSeed,
+) -> Result<
+    (
+        NativeDescentOffering,
+        NativeDescentSession,
+        NativeDescentWorld,
+    ),
+    String,
+> {
     let session = offering
         .open(SessionConfig::with_seed(native_session_seed(seed)))
         .map_err(|error| format!("the native Descent did not deploy: {error}"))?;
@@ -231,7 +272,12 @@ impl NativeDescentRun {
         // NativeDescentOffering normalizes cfg seed as `(raw % 251) + 1`; every
         // normalized seed therefore has this canonical inverse.
         let raw_seed = u64::from(self.world.seed.saturating_sub(1));
-        let offering = NativeDescentOffering::new();
+        // Re-open on the RECORD'S OWN provenance root. The run day-seed is folded into the
+        // genesis root, so a world re-opened on a different one re-derives a different genesis
+        // and this verification would reject every beacon-bound run as forged. The day-seed is
+        // untrusted like everything else in the record: it is what the re-execution is DONE
+        // UNDER, and the genesis / completion / root equalities below are what accept it.
+        let offering = NativeDescentOffering::on_run_day_seed(self.record.day_seed);
         let genesis = offering
             .open(SessionConfig::with_seed(raw_seed))
             .map_err(|error| format!("the native world did not re-open: {error}"))?;

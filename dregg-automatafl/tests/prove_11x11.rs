@@ -484,6 +484,7 @@ mod fold {
                 num_rows: rows,
                 public_inputs: pis,
                 app_root_binding: None,
+                descriptor_state_leaf: None,
             },
         )
     }
@@ -547,6 +548,14 @@ mod fold {
     /// rotated roots (nonce 0→1), independent of board content, so it does NOT catch the
     /// board mismatch. If `verify_history` ACCEPTS, the cross-turn board-root weld is MISSING
     /// (the residual). If it REJECTS, the seam is enforced in-fold. This test RECORDS which.
+    ///
+    /// ⚠ **THIS PROBE IS ON THE RUST-AIR PATH AND THE BOARD-WINDOW SEAM DOES NOT REACH IT.**
+    /// `bundle_of` sets `descriptor_state_leaf: None`, so these leaves prove the hand-written
+    /// Rust AIR and declare NO `BoardWindowBinding` — the fold has nothing to connect and this
+    /// probe will keep recording the hole no matter what the two-leg fold does. The twin that
+    /// actually settles the seam goes through the Lean descriptors + windows:
+    /// `dreggnet-game-board/tests/two_leg_board_window.rs::a_mismatched_mid_does_not_fold_on_the_deployed_prover`.
+    /// Do not read a panic here as "the seam failed", nor a pass as "the seam works".
     #[test]
     #[ignore = "SLOW: the mismatched-mid soundness probe at 11×11 (unblocked: Leg A 901 ≤ 1024). \
                 The n=5 twin `mismatched_mid_fold_probe_n5` runs the SAME probe faster"]

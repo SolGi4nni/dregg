@@ -50,9 +50,13 @@
 //!   future round). This wire *binds* that beacon and makes each day's binding verifiable; it
 //!   does not re-prove the threshold assumption.
 
-use dregg_dice::{
-    Beacon, BeaconParams, BeaconSchedule, DrandBeacon, VerifyError, verify_beacon_round,
-};
+use dregg_dice::{Beacon, BeaconParams, BeaconSchedule, DrandBeacon, verify_beacon_round};
+
+/// The verification failure this module's PUBLIC surface already returns
+/// ([`DailyBeacon::verify`], [`DailyBeacon::seed`], [`generate_daily`]) — re-exported so a
+/// downstream crate can name the error it is handed without depending on `dregg-dice` directly.
+/// Imported privately it was a private-in-public type: callable, unnameable.
+pub use dregg_dice::VerifyError;
 
 use crate::{CommittedSeed, daily_seed};
 

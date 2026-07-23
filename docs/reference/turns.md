@@ -239,7 +239,7 @@ authorize, with sorted-Merkle membership against the holder's pre-state
 
 `effects_hash` = BLAKE3 fold over per-effect `Effect::hash` values, returning
 `[0;32]` for an empty list (`turn/src/executor/finalize.rs:488`).
-`receipt_hash` (domain tag `dregg-receipt-v3`, `turn.rs:933-937`) binds every
+`receipt_hash` (domain tag `dregg-receipt-v5`, `turn.rs:964,993`) binds every
 field including the `was_encrypted`/`was_burn`/`consumed_capabilities`
 disclosures, so a malicious executor cannot strip or forge them. The executor's
 narrower signed message binds the full receipt hash.

@@ -6020,6 +6020,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-braid-hook"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-entity-compose",
+ "dregg-param-compose",
+ "dregg-turn",
+]
+
+[[package]]
 name = "dregg-bridge"
 version = "0.1.0"
 dependencies = [
@@ -6137,6 +6149,27 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "dregg-chutes-e2ee"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "dregg-narrator",
+ "dregg-tee-verify",
+ "flate2",
+ "getrandom 0.3.4",
+ "hex",
+ "hkdf",
+ "pqcrypto-mlkem",
+ "pqcrypto-traits",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -6539,6 +6572,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-entity-compose"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-param-compose",
+ "dregg-turn",
+ "postcard",
+]
+
+[[package]]
 name = "dregg-epoch"
 version = "0.1.0"
 dependencies = [
@@ -6897,6 +6943,7 @@ dependencies = [
  "postcard",
  "quinn",
  "rand_core 0.6.4",
+ "realm-model",
  "reqwest 0.12.28",
  "rustls 0.23.41",
  "serde",
@@ -7716,6 +7763,8 @@ dependencies = [
  "dreggnet-surfaces",
  "dungeon-on-dregg",
  "getrandom 0.3.4",
+ "hex",
+ "procgen-dregg",
  "spween-dregg",
  "tempfile",
  "zeroize",
@@ -7741,6 +7790,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-app-framework",
+ "dregg-braid-hook",
  "dregg-cell",
  "dregg-turn",
  "dreggnet-asset",
@@ -7827,6 +7877,7 @@ dependencies = [
  "dregg-multiway-tug",
  "dreggnet-offerings",
  "game-turn-slice",
+ "procgen-dregg",
  "ugc-dregg",
 ]
 
@@ -7940,6 +7991,7 @@ dependencies = [
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",
+ "dreggnet-asset",
  "dreggnet-tournament",
  "dungeon-on-dregg",
  "hex",
@@ -8213,6 +8265,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 name = "dungeon-on-dregg"
 version = "0.1.0"
 dependencies = [
+ "attested-dm",
  "blake3",
  "collective-choice",
  "dregg-app-framework",
@@ -16869,6 +16922,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "pqcrypto-internals"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a326caf27cbf2ac291ca7fd56300497ba9e76a8cc6a7d95b7a18b57f22b61d"
+dependencies = [
+ "cc",
+ "dunce",
+ "getrandom 0.3.4",
+ "libc",
+]
+
+[[package]]
+name = "pqcrypto-mlkem"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb14d207f3749e8a59a026c22ceaa72d70fff931cfbf4c8d9b08f3fc56dc6e60"
+dependencies = [
+ "cc",
+ "glob",
+ "libc",
+ "pqcrypto-internals",
+ "pqcrypto-traits",
+]
+
+[[package]]
+name = "pqcrypto-traits"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e851c7654eed9e68d7d27164c454961a616cf8c203d500607ef22c737b51bb"
+
+[[package]]
 name = "pqvrf"
 version = "0.1.0"
 dependencies = [
@@ -17805,6 +17889,17 @@ dependencies = [
  "serde_json",
  "spween",
  "spween-dregg",
+]
+
+[[package]]
+name = "realm-model"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+ "ed25519-dalek",
 ]
 
 [[package]]

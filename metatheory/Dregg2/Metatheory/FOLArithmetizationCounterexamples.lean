@@ -19,9 +19,19 @@ one satisfied factor makes the entire relation accept.  The concrete witness
 below satisfies the balance-change factor while violating the pricing and
 constant-product factors.
 
-This file is deliberately a standalone attack/regression artifact.  It is not
-yet imported by `Dregg2.lean`: the eventual corrected compiler should import it
-as a negative conformance suite, alongside positive soundness theorems.
+This file is the ATTACK half of a two-file pair.  The repair, the proof that the
+repaired relation rejects this exact forged witness, and the executable teeth
+live in `Dregg2.Metatheory.SwapRelationRepairCanary`, which imports this module
+and is itself reached from `Dregg2.lean` via
+`Dregg2.Metatheory.DirectLogicArithmetization`.  Do not delete a theorem here
+without checking what the canary cites: the swap forgery below is the falsifier
+that `repaired_rejects_the_published_forgery` proves is refused.
+
+The attacked object is a THIRD-PARTY published relation (ModulusZK/BitLogic
+§4.1 p. 6, transcription pinned at `tools/direct-logic-bench/README.md:56-60`),
+not a dregg relation.  The shipped dregg analogue, `dark-amm-private-v1`, emits
+its swap conditions as separate gates and is not reachable by this bypass; see
+the scope note at the head of the canary module.
 -/
 import Dregg2.Tactics
 import Mathlib.Data.ZMod.Basic

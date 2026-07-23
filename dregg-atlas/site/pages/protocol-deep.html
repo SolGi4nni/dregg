@@ -59,7 +59,7 @@
 </ul>
 <p>The first site refuses *the formation of authority*; the second refuses *a turn that violates what the substances are*. Both are surfaced, never swallowed.</p>
 <h3 id="receipts">receipts</h3>
-<p>A committed turn produces a <code>TurnReceipt</code> (<code>turn/src/turn.rs:768-840</code>) — the cryptographic evidence the light client trusts in lieu of re-execution. Its hash-bound core (<code>receipt_hash</code>, domain-separated <code>&quot;dregg-receipt-v3&quot;</code>):</p>
+<p>A committed turn produces a <code>TurnReceipt</code> (<code>turn/src/turn.rs:768-840</code>) — the cryptographic evidence the light client trusts in lieu of re-execution. Its hash-bound core (<code>receipt_hash</code>, domain-separated <code>&quot;dregg-receipt-v5&quot;</code>):</p>
 <ul>
 <li><strong><code>turn_hash</code></strong> — the hash of the <code>Turn</code> that produced this receipt; plus <code>forest_hash</code> binding the call-forest shape.</li>
 <li><strong><code>pre_state_hash</code> / <code>post_state_hash</code></strong> — the agent&#x27;s committed state before and after. This pair IS the transition.</li>

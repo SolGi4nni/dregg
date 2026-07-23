@@ -60,6 +60,11 @@ dregg-turn = { path = "../turn", optional = true }
 dregg-persist = { path = "../persist", optional = true }
 blake3 = "1"
 getrandom = { workspace = true }
+# THE DAY BINDING. `CatalogConfig::live` registers the Descent against the CURRENT verified
+# drand day (`DailyBeacon::seed` — BLS pairing first, so a forged reveal yields no day), so a
+# live run's banked-relic provenance root is unpredictable-until-revealed. Already in-graph via
+# `dreggnet-offerings` (its `native_descent` takes the same `CommittedSeed`) — no new compilation.
+procgen-dregg = { path = "../procgen-dregg" }
 zeroize = { workspace = true, optional = true }
 
 # The eight portfolio games.
@@ -89,6 +94,10 @@ dreggnet-hermes = { path = "../dreggnet-hermes" }
 deos-view = { path = "../deos-view", default-features = false }
 dregg-app-framework = { path = "../app-framework", default-features = false }
 tempfile = { workspace = true }
+# `tests/live_descent_day.rs` drives the live day binding against the SAME roots the Descent
+# derives (`day_seed_from_deploy_seed`) and the SAME published reveal a surface would serve.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+hex = "0.4"
 
 [lints]
 workspace = true

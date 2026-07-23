@@ -63,13 +63,21 @@ normalization the fixed point is reached at the FIRST fold.
   * `step_canonical_id` — folding two canonical-shaped proofs yields a canonical-shaped proof: the
     manifest count is STABLE at `K` (`foldStep K a b` recanonicalizes the combined real tables).
 
-## The crypto floor (reduces to `Poseidon2SpongeCR` ONLY — no new axiom)
+## The crypto floor: a SECURITY REDUCTION, not a refuted injectivity (§R)
 
 The FORWARD soundness (`normalize_to_shape_sound`) needs NO crypto: equal sponge input ⟹ equal digest.
-The only place a hash fact is consumed is `publish_binds_content` — the faithfulness/anti-ghost
-companion: two proofs publishing the SAME commitment commit the SAME content. That is exactly
-`Poseidon2SpongeCR` (the existing carrier from `Poseidon2Binding`), applied once. No other crypto fact,
-no new axiom. Everything is `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
+The only place a hash fact is consumed is the faithfulness/anti-ghost companion — two proofs publishing
+the SAME commitment commit the SAME content.
+
+⚑ That companion USED to be `publish_binds_content (hCR : Poseidon2SpongeCR hash)`, whose entire proof
+was `hCR _ _ h`. `Poseidon2SpongeCR` is injectivity of `List ℤ → ℤ`, PROVED FALSE at deployed BabyBear
+parameters, so the anti-ghost guarantee was VACUOUS at the deployed hash. It is DELETED. §R rebuilds it
+as the standard cryptographic object: `publishBreakGame` (the content-swap as a first-class game),
+`codeForgeToFinder` (the extractor as a map of adversaries), an UNCONDITIONAL advantage inequality, and
+`publish_binds_content_advantage_bound` / `publish_binds_content_from_polyTime` — negligible advantage
+under the named `DomainSeparatedCREff` floor, with efficiency DISCHARGED at `Eff := IsPolyTime` rather
+than carried. Both poles of the residual class are proved (`⊤` FALSE at BabyBear, `⊥` vacuous).
+No new axiom; `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
 
 Non-vacuity (§NV): a real canonical shape is exhibited (`real_canonical`), the morphism genuinely moves
 a non-canonical shape (`non_canonical_not_fixed`) while preserving its semantics
@@ -77,10 +85,20 @@ a non-canonical shape (`non_canonical_not_fixed`) while preserving its semantics
 -/
 import Dregg2.Tactics
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.SpongeForgeReduction
 
 namespace Dregg2.Circuit.NormalizeToShapeSound
 
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv hashGame)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFamily)
+open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
+open Dregg2.Circuit.SpongeForgeReduction
+  (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
+   codeForge_binds_from_polyTime deployed_forgery_is_break forge_floor_top_false_babyBear
+   forge_floor_bot_vacuous)
 
 /-! ## §1 — the recursion-layer shape: a `non_primitives` manifest of tables. -/
 
@@ -233,15 +251,94 @@ theorem normalize_to_shape_sound
   · -- semantics + published content preserved
     exact ⟨semantics_pad, publishedContent_pad K m⟩
 
-/-- **`publish_binds_content` (the faithfulness/anti-ghost — THE SOLE crypto consumer).** Under
-Poseidon2-sponge collision-resistance, two proofs publishing the SAME commitment commit the SAME
-content. This is the ONLY place a hash fact is used in the whole module — `Poseidon2SpongeCR`, applied
-once. It makes the published-commitment preservation BINDING (a normalized proof can't silently swap
-content behind an equal digest). -/
-theorem publish_binds_content (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {m m' : List TableShape} (h : publish hash m = publish hash m') :
-    publishedContent m = publishedContent m' :=
-  hCR _ _ h
+/-! ### The faithfulness/anti-ghost leg, AS A SECURITY REDUCTION (§R).
+
+⚑ **WHAT WAS DELETED HERE.** The module's sole crypto consumer used to be
+
+    publish_binds_content (hCR : Poseidon2SpongeCR hash) (h : publish hash m = publish hash m') :
+      publishedContent m = publishedContent m'   -- proof: `hCR _ _ h`
+
+i.e. it WAS the refuted floor, applied once, with nothing else in it. `Poseidon2SpongeCR` is
+INJECTIVITY of `List ℤ → ℤ`, PROVED FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the anti-ghost guarantee was **VACUOUS at the
+deployed hash**: a normalizer COULD silently swap content behind an equal digest for all this theorem
+said. DELETED.
+
+What replaces it: the content-swap is a `FloorGames.Game` (`publishBreakGame`), the extractor is a map
+of adversaries into the deployed sponge's collision game, and the anti-ghost guarantee is a NEGLIGIBLE
+ADVANTAGE under the named floor — with efficiency DISCHARGED at `Eff := IsPolyTime`. -/
+
+/-- **THE PUBLISHED-CONTENT FORGERY GAME.** The adversary is handed a sampled domain-separation tag and
+WINS iff it outputs two manifests whose published CONTENT differs yet whose published PI commitment
+agrees — exactly the silent content-swap behind an equal digest that `normalize_to_shape_sound`'s
+commitment-preservation must exclude. The break is IN the win relation. -/
+abbrev publishBreakGame (D : DomainSeparatedSponge) : Game :=
+  codeForgeGame D (List TableShape) publishedContent
+
+/-- **⚑ THE FORGERY IS THE DEPLOYED PUBLICATION.** Two manifests with different published content but
+one published commitment under the DEPLOYED sponge ARE a `publishBreakGame` win at the deployed tag —
+the game is about the very `publish` the descriptor circuit computes. -/
+theorem publish_forgery_is_break (D : DomainSeparatedSponge) {m m' : List TableShape}
+    (hne : publishedContent m ≠ publishedContent m')
+    (h : publish D.deployedHash m = publish D.deployedHash m') :
+    (publishBreakGame D).wins 0 D.deployedTag (m, m') :=
+  deployed_forgery_is_break D (List TableShape) publishedContent m m' hne h
+
+/-- **THE EXACT-PROP SKELETON (the reduction's INTERNAL witness, NOT the headline).** Equal published
+commitments force equal published content — OR exhibit a genuine collision of the deployed
+domain-separated sponge. The refuted injectivity hypothesis is GONE. Retained ONLY as the extractor:
+a collision EXISTS at deployed parameters, so exporting this disjunction would be a shirk. -/
+theorem publish_binds_content_or_collides (D : DomainSeparatedSponge) {m m' : List TableShape}
+    (h : publish D.deployedHash m = publish D.deployedHash m') :
+    publishedContent m = publishedContent m' ∨
+      (publishBreakGame D).wins 0 D.deployedTag (m, m') := by
+  by_cases hne : publishedContent m = publishedContent m'
+  · exact Or.inl hne
+  · exact Or.inr (publish_forgery_is_break D hne h)
+
+/-- **⚑ THE HEADLINE — the anti-ghost leg, as a REDUCTION.** Under the DEPLOYED sponge's collision floor
+at the class `Eff`, a content-swap forger whose EXTRACTED finder is in that class has NEGLIGIBLE
+advantage: the published commitment binds the published content except with negligible probability.
+This is what makes `normalize_to_shape_sound`'s commitment-preservation binding, and it replaces the
+vacuous `publish_binds_content`. -/
+theorem publish_binds_content_advantage_bound (D : DomainSeparatedSponge)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (publishBreakGame D))
+    (hEff : Eff (codeForgeToFinder D (List TableShape) publishedContent adv))
+    (hCR : DomainSeparatedCREff D Eff) :
+    Negl (gameAdv (publishBreakGame D) adv) :=
+  codeForge_advantage_bound D (List TableShape) publishedContent Eff adv hEff hCR
+
+/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT content-swap forger stays efficient
+through the extractor, so the deployed floor applies and its advantage is negligible. The reshaper's
+declared work `(cw, bw)` is the only modelling input. -/
+theorem publish_binds_content_from_polyTime (D : DomainSeparatedSponge)
+    (adv : Adversary (publishBreakGame D))
+    (hA : IsPolyTime (codeAnsSize D (List TableShape) publishedContent) adv) (cw bw : ℕ)
+    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
+    Negl (gameAdv (publishBreakGame D) adv) :=
+  codeForge_binds_from_polyTime D (List TableShape) publishedContent adv hA cw bw hCR
+
+/-- **⚑ THE ⊤ POLE — FALSE at the REAL BabyBear parameters** (the honest price of `hEff`). -/
+theorem publish_floor_top_false_babyBear (D : DomainSeparatedSponge)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ DomainSeparatedCREff D (fun _ => True) :=
+  forge_floor_top_false_babyBear D hb
+
+/-- **THE ⊥ POLE — vacuous.** Both poles proved, so `Eff` is a dial and not a costume. -/
+theorem publish_floor_bot_vacuous (D : DomainSeparatedSponge) :
+    DomainSeparatedCREff D (fun _ => False) :=
+  forge_floor_bot_vacuous D
+
+/-- **(CANARY.)** The bound does NOT follow from the floor applied at another finder. -/
+example (D : DomainSeparatedSponge)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (publishBreakGame D))
+    (B : Adversary (hashGame (poseidon2KeyedFamily D))) (hB : Eff B)
+    (hCR : DomainSeparatedCREff D Eff) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (publishBreakGame D) adv) := hCR B hB)
+  trivial
 
 /-! ## §7 — THE DEPTH-1 FIXED POINT (the structural version of `running_vk_perpetually_constant`). -/
 
@@ -333,7 +430,12 @@ carrier is `Poseidon2SpongeCR`, taken as a hypothesis). -/
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_pad
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.semantics_pad
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.normalize_to_shape_sound
-#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_forgery_is_break
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_or_collides
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_advantage_bound
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_from_polyTime
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_top_false_babyBear
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_bot_vacuous
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonical_is_fixed_point
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canon_fixed_at_depth_one
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canon_perpetually_constant

@@ -758,7 +758,10 @@ pub struct CompanionRoost {
     /// The next attunement-cell seed a [`wing`] is deployed under (`1..=255`; `None` once the
     /// hook's `u8` seed namespace is exhausted, so [`CompanionRoost::attune_wing`] fails closed
     /// rather than collide two wings onto one cell id).
-    next_wing_seed: Option<u8>,
+    /// The next wing's attunement-cell ordinal (`None` = exhausted, which refuses rather than
+    /// wrapping onto a live cell id). A `u64` because the Braid hook's entity key is the full
+    /// 32-byte cell-key width — a roost is bounded by nothing a player can reach.
+    next_wing_ordinal: Option<u64>,
 }
 
 impl Default for CompanionRoost {
@@ -782,7 +785,7 @@ impl CompanionRoost {
             consumed: HashSet::new(),
             next_seed: 1,
             next_swap: 1,
-            next_wing_seed: Some(1),
+            next_wing_ordinal: Some(1),
         }
     }
 

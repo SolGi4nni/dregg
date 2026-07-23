@@ -34,6 +34,7 @@ The sole crypto carrier is the NAMED `Poseidon2SpongeCR`.
 -/
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.ListCommit
+import Dregg2.Circuit.SpongeForgeReduction
 import Dregg2.Exec.RecordKernel
 
 namespace Dregg2.Circuit.Poseidon2Surface
@@ -42,6 +43,15 @@ open Dregg2.Circuit.StateCommit (compressNInjective cellLeafInjective logHashInj
 open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Circuit.Poseidon2Binding
 open Dregg2.Exec
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv hashGame)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFamily)
+open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
+open Dregg2.Circuit.SpongeForgeReduction
+  (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
+   codeForge_binds_from_polyTime injective_code_forgery_is_break forge_floor_top_false_babyBear
+   forge_floor_bot_vacuous)
 
 /-! ## §0 — the two carriers (the split).
 
@@ -75,15 +85,95 @@ theorem p2sponge_compressNInjective {p2sponge : List ℤ → ℤ} (hCR : Poseido
     compressNInjective p2sponge :=
   compressNInjective_of_poseidon2CR hCR
 
-/-- Equal `p2Digest`s over an INJECTIVE leaf encoder force the WHOLE lists equal (the anti-ghost
-binding): CR of the sponge ⇒ the mapped lists agree; `enc`-injective ⇒ the lists agree. The single
-crypto content is `hCR`. -/
-theorem p2Digest_binds {α : Type} {p2sponge : List ℤ → ℤ} (hCR : Poseidon2SpongeCR p2sponge)
-    (enc : α → ℤ) (henc : Function.Injective enc)
-    (xs ys : List α) (h : p2Digest p2sponge enc xs = p2Digest p2sponge enc ys) : xs = ys := by
-  unfold p2Digest at h
-  have hmap : xs.map enc = ys.map enc := hCR _ _ h
-  exact List.map_injective_iff.mpr henc hmap
+/-! ### The list-digest anti-ghost binding, AS A SECURITY REDUCTION (§R).
+
+⚑ **WHAT WAS DELETED HERE.** The exported binding used to be
+
+    p2Digest_binds (hCR : Poseidon2SpongeCR p2sponge) (henc : Function.Injective enc) … : xs = ys
+
+`Poseidon2SpongeCR` is INJECTIVITY of `List ℤ → ℤ`, PROVED FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — so the binding was **VACUOUS at the deployed
+sponge**. DELETED. Note that the OTHER hypothesis, `henc : Function.Injective enc`, is NOT the sin: a
+per-entry canonical serialization into the infinite `ℤ` genuinely can be injective, and it survives
+below as the structural side of the code. Only the sponge-injectivity leg was refuted. -/
+
+/-- The absorbed code of a list under the leaf encoder — exactly the `List ℤ` the deployed sponge takes.
+The per-site absorption CODE the generic reduction is instantiated at. -/
+def p2Code {α : Type} (enc : α → ℤ) (xs : List α) : List ℤ := xs.map enc
+
+/-- The absorption code is injective when the LEAF encoder is — `List.map_injective_iff`, a STRUCTURAL
+fact about the serializer, TRUE at deployed parameters (unlike the deleted sponge injectivity). -/
+theorem p2Code_injective {α : Type} {enc : α → ℤ} (henc : Function.Injective enc) :
+    Function.Injective (p2Code enc) :=
+  fun _ _ h => List.map_injective_iff.mpr henc h
+
+/-- **THE LIST-DIGEST FORGERY GAME.** The adversary is handed a sampled domain-separation tag and WINS
+iff it outputs two lists whose absorbed leaf encodings DIFFER yet whose `p2Digest` AGREES — a genuine
+drop / reorder / substitution behind an equal digest. The break is IN the win relation. -/
+abbrev p2DigestBreakGame (D : DomainSeparatedSponge) (α : Type) (enc : α → ℤ) : Game :=
+  codeForgeGame D (List α) (p2Code enc)
+
+/-- **⚑ THE FORGERY IS THE DEPLOYED PUBLICATION.** Two DISTINCT lists with one `p2Digest` under the
+DEPLOYED sponge ARE a game win at the deployed tag (the code is injective, so distinct lists have
+distinct codes). Ties the game to the very digest the circuit computes. -/
+theorem p2Digest_forgery_is_break (D : DomainSeparatedSponge) {α : Type} {enc : α → ℤ}
+    (henc : Function.Injective enc) (xs ys : List α) (hne : xs ≠ ys)
+    (h : p2Digest D.deployedHash enc xs = p2Digest D.deployedHash enc ys) :
+    (p2DigestBreakGame D α enc).wins 0 D.deployedTag (xs, ys) :=
+  injective_code_forgery_is_break D (List α) (p2Code enc) (p2Code_injective henc) xs ys hne h
+
+/-- **THE EXACT-PROP SKELETON (the reduction's INTERNAL witness, NOT the headline).** Equal digests
+force equal lists — OR exhibit a genuine collision of the deployed domain-separated sponge. The refuted
+injectivity hypothesis is GONE; the collision branch is what §R prices. Retained ONLY as the extractor. -/
+theorem p2Digest_binds_or_collides (D : DomainSeparatedSponge) {α : Type} {enc : α → ℤ}
+    (henc : Function.Injective enc) (xs ys : List α)
+    (h : p2Digest D.deployedHash enc xs = p2Digest D.deployedHash enc ys) :
+    xs = ys ∨ (p2DigestBreakGame D α enc).wins 0 D.deployedTag (xs, ys) := by
+  by_cases hne : xs = ys
+  · exact Or.inl hne
+  · exact Or.inr (p2Digest_forgery_is_break D henc xs ys hne h)
+
+/-- **⚑ THE HEADLINE — the anti-ghost list binding, as a REDUCTION.** Under the DEPLOYED sponge's
+collision floor at the class `Eff`, a list-digest forger whose EXTRACTED finder is in that class has
+NEGLIGIBLE advantage: the digest pins the WHOLE ordered list except with negligible probability. This
+replaces the vacuous `p2Digest_binds`. -/
+theorem p2Digest_binds_advantage_bound (D : DomainSeparatedSponge) (α : Type) (enc : α → ℤ)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (p2DigestBreakGame D α enc))
+    (hEff : Eff (codeForgeToFinder D (List α) (p2Code enc) adv))
+    (hCR : DomainSeparatedCREff D Eff) :
+    Negl (gameAdv (p2DigestBreakGame D α enc) adv) :=
+  codeForge_advantage_bound D (List α) (p2Code enc) Eff adv hEff hCR
+
+/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT list-digest forger stays efficient
+through the extractor, so the deployed floor applies and its advantage is negligible. -/
+theorem p2Digest_binds_from_polyTime (D : DomainSeparatedSponge) (α : Type) (enc : α → ℤ)
+    (adv : Adversary (p2DigestBreakGame D α enc))
+    (hA : IsPolyTime (codeAnsSize D (List α) (p2Code enc)) adv) (cw bw : ℕ)
+    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
+    Negl (gameAdv (p2DigestBreakGame D α enc) adv) :=
+  codeForge_binds_from_polyTime D (List α) (p2Code enc) adv hA cw bw hCR
+
+/-- **⚑ THE ⊤ POLE — FALSE at the REAL BabyBear parameters** (the honest price of `hEff`). -/
+theorem p2Digest_floor_top_false_babyBear (D : DomainSeparatedSponge)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ DomainSeparatedCREff D (fun _ => True) :=
+  forge_floor_top_false_babyBear D hb
+
+/-- **THE ⊥ POLE — vacuous.** Both poles proved, so `Eff` is a dial and not a costume. -/
+theorem p2Digest_floor_bot_vacuous (D : DomainSeparatedSponge) :
+    DomainSeparatedCREff D (fun _ => False) :=
+  forge_floor_bot_vacuous D
+
+/-- **(CANARY.)** The bound does NOT follow from the floor applied at another finder. -/
+example (D : DomainSeparatedSponge) (α : Type) (enc : α → ℤ)
+    (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
+    (adv : Adversary (p2DigestBreakGame D α enc))
+    (B : Adversary (hashGame (poseidon2KeyedFamily D))) (hB : Eff B)
+    (hCR : DomainSeparatedCREff D Eff) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (p2DigestBreakGame D α enc) adv) := hCR B hB)
+  trivial
 
 /-- Completeness dual: equal lists ⇒ equal digests. -/
 theorem p2Digest_congr {α : Type} (p2sponge : List ℤ → ℤ) (enc : α → ℤ) {xs ys : List α} (h : xs = ys) :
@@ -357,7 +447,13 @@ def turnLogDigest (ts : List Turn) : ℤ :=
 /-! ## §6 — axiom-hygiene tripwires (the sole crypto carrier is the NAMED `Poseidon2SpongeCR`). -/
 
 #assert_axioms p2sponge_compressNInjective
-#assert_axioms p2Digest_binds
+#assert_axioms p2Code_injective
+#assert_axioms p2Digest_forgery_is_break
+#assert_axioms p2Digest_binds_or_collides
+#assert_axioms p2Digest_binds_advantage_bound
+#assert_axioms p2Digest_binds_from_polyTime
+#assert_axioms p2Digest_floor_top_false_babyBear
+#assert_axioms p2Digest_floor_bot_vacuous
 #assert_axioms p2Digest_congr
 #assert_axioms hornerOf_window
 #assert_axioms refP2_injOn

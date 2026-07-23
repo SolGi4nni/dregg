@@ -919,6 +919,9 @@ impl Accumulator {
             final_root: summary.head_root,
             chain_digest: summary.chain_digest,
             num_turns: summary.num_turns,
+            // The accumulator folds plain segment turns; the board window is the two-leg
+            // automatafl fold's claim and is absent here (a 25-lane root, as before).
+            board_window: None,
         })
     }
 

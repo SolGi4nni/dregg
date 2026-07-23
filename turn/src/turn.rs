@@ -210,6 +210,37 @@ pub struct EmittedEvent {
     pub data: Vec<FieldElement>,
 }
 
+/// Absorb one [`EmittedEvent`] into `hasher` under the canonical **prefix-free**
+/// event encoding:
+///
+/// ```text
+/// cell (32) ‖ topic (32) ‖ data.len() as u64 LE (8) ‖ data[0] (32) ‖ … ‖ data[n-1] (32)
+/// ```
+///
+/// This is the single source of truth for how an event contributes to a
+/// commitment. Both [`TurnReceipt::receipt_hash`] (domain `dregg-receipt-v5`)
+/// and [`crate::finalized_receipt_core_v1`]'s `event_commitment` (domain
+/// `dregg-finalized-events-v1`) call it, so the two can no longer drift.
+///
+/// **Why the `data.len()` prefix is load-bearing.** `data` is variable length
+/// and every other component is exactly 32 bytes. Without the count, the
+/// concatenation of a *list* of events is not prefix-free: with
+/// `e1 = { cell: c1, topic: t1, data: [a, b] }`, `e2 = { cell: c2, topic: t2,
+/// data: [] }` and `e1' = { cell: c1, topic: t1, data: [a] }`,
+/// `e2' = { cell: b, topic: c2, data: [t2] }`, the two *different* lists
+/// `[e1, e2]` and `[e1', e2']` absorb the *identical* byte stream — the field
+/// boundaries slide by exactly one 32-byte lane. That is a receipt-hash
+/// collision, i.e. two distinct execution outcomes with one executor signature
+/// valid over both. Counting the felts pins the boundary.
+pub fn absorb_emitted_event(hasher: &mut blake3::Hasher, event: &EmittedEvent) {
+    hasher.update(event.cell.as_bytes());
+    hasher.update(&event.topic);
+    hasher.update(&(event.data.len() as u64).to_le_bytes());
+    for field in &event.data {
+        hasher.update(field);
+    }
+}
+
 /// A custom program proof for CellProgram dispatch within the Effect VM.
 ///
 /// When a sovereign cell has a deployed custom program (e.g., a CDP circuit),
@@ -943,11 +974,23 @@ impl TurnReceipt {
         // signature check rather than silently comparing a Poseidon2 anchor
         // against a BLAKE3 root.
         //
+        // v5 makes the `emitted_events` absorption PREFIX-FREE. Through v4 an
+        // event was absorbed as `cell ‖ topic ‖ data*` with no count in front
+        // of the variable-length `data` vector, so the event *list* encoding
+        // admitted collisions: two different `Vec<EmittedEvent>` whose field
+        // boundaries slide by one 32-byte lane produce the same absorbed byte
+        // stream, hence the same receipt hash and one executor signature valid
+        // over both outcomes. `absorb_emitted_event` now counts the felts, and
+        // is shared verbatim with `finalized_receipt_core_v1::event_commitment`
+        // (which already counted) so the two encodings cannot drift again.
+        // Same fencing rationale as v4: a v4 verifier reconstructing a v5
+        // preimage fails, rather than silently accepting.
+        //
         // NB the receipt hash itself stays BLAKE3. That is the dual-hash ADR
         // working as written (`dregg_commit::hash`): this is a non-ZK
         // general-purpose commitment over an already-algebraic anchor, not a
         // value any circuit recomputes.
-        hasher.update(b"dregg-receipt-v4");
+        hasher.update(b"dregg-receipt-v5");
         hasher.update(&self.turn_hash);
         hasher.update(&self.forest_hash);
         hasher.update(&self.pre_state_hash);
@@ -993,11 +1036,9 @@ impl TurnReceipt {
         }
         hasher.update(&(self.emitted_events.len() as u64).to_le_bytes());
         for ev in &self.emitted_events {
-            hasher.update(ev.cell.as_bytes());
-            hasher.update(&ev.topic);
-            for d in &ev.data {
-                hasher.update(d);
-            }
+            // v5: prefix-free per-event encoding, shared with
+            // `finalized_receipt_core_v1::event_commitment`.
+            absorb_emitted_event(&mut hasher, ev);
         }
         // Finality status binding.
         match self.finality {
@@ -1069,16 +1110,24 @@ impl TurnReceipt {
     /// canonical `receipt_hash` under a fresh domain string, v3 makes the
     /// signature attest to *every* field bound into `receipt_hash`. The
     /// v2 narrow message is preserved (see
-    /// [`canonical_executor_signed_message_v2`]) so existing fixtures and
-    /// test vectors can still round-trip; new signers should use v4.
+    /// [`Self::canonical_executor_signed_message_v2`]) so existing fixtures and
+    /// test vectors can still round-trip; new signers should use v5.
     ///
     /// **v4 (state anchor):** the state fields the message transitively covers
     /// are no longer the trusted-Rust BLAKE3 `Ledger::root()` — they are the
     /// AIR-bound chip 8-felt commitment (`crate::state_commit`). The domain
     /// bumps in lockstep with `dregg-receipt-v4` so an executor signature can
     /// never be replayed across the meaning change.
+    ///
+    /// **v5 (prefix-free events):** `receipt_hash` now counts each event's
+    /// data felts ([`absorb_emitted_event`]), closing a receipt-hash collision
+    /// on the emitted-event list. The domain bumps in lockstep with
+    /// `dregg-receipt-v5` for exactly the reason v4 did: a v4 verifier
+    /// reconstructing a v5 preimage must FAIL the signature check rather than
+    /// silently compare two encodings that disagree about where an event's
+    /// data ends.
     pub fn canonical_executor_signed_message(&self) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"executor-receipt-sig-v4:";
+        const DOMAIN: &[u8] = b"executor-receipt-sig-v5:";
         let receipt_hash = self.receipt_hash();
         let mut msg = Vec::with_capacity(DOMAIN.len() + 32);
         msg.extend_from_slice(DOMAIN);

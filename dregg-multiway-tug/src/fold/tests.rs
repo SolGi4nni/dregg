@@ -58,6 +58,7 @@ fn win_bundle(charm: u64, winner: u64) -> LeafBundle {
         witness_values,
         num_rows: 4,
         public_inputs: vec![BabyBear::from_u64(charm), BabyBear::from_u64(winner)],
+        descriptor_state_leaf: None,
     }
 }
 

@@ -11,6 +11,7 @@ use core::fmt;
 
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
+use crate::turn::absorb_emitted_event;
 use crate::{Finality, TurnReceipt};
 
 const CONTEXT_MAGIC: [u8; 4] = *b"FEC1";
@@ -658,13 +659,13 @@ fn event_commitment(
     let mut hasher = blake3::Hasher::new_derive_key("dregg-finalized-events-v1");
     hasher.update(&count.to_le_bytes());
     for event in &receipt.emitted_events {
-        hasher.update(event.cell.as_bytes());
-        hasher.update(&event.topic);
-        let data_count = checked_count(event.data.len(), "event data")?;
-        hasher.update(&data_count.to_le_bytes());
-        for field in &event.data {
-            hasher.update(field);
-        }
+        // Overflow guard, kept ahead of the shared encoder: a data vector too
+        // long to express as a `u64` is refused rather than silently truncated.
+        checked_count(event.data.len(), "event data")?;
+        // The per-event encoding itself is the ONE shared prefix-free encoder
+        // (`cell ‖ topic ‖ data.len() ‖ data*`), used verbatim by
+        // `TurnReceipt::receipt_hash` (v5). Only the outer domain differs.
+        absorb_emitted_event(&mut hasher, event);
     }
     Ok(DisclosureCommitment {
         count,

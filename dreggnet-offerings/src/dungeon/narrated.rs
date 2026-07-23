@@ -16,8 +16,8 @@
 //! verify provenance before committing that hold.
 
 use dungeon_on_dregg::narrator::{
-    BrainRefusal, NarrateError, Narrated, NarratedReceipt, SceneView, legal_commands, narrate_turn,
-    parse_confined_response, scene_view,
+    BrainRefusal, NarrateError, Narrated, NarratedReceipt, RecordedNarration, SceneView,
+    TeeProvenance, legal_commands, narrate_turn_in_enclave, parse_confined_response, scene_view,
 };
 use spween_dregg::{StepReceipt, WorldError};
 
@@ -376,6 +376,33 @@ impl DungeonSession {
         narrated: &Narrated,
         actor: DreggIdentity,
     ) -> Result<NarratedSessionTurn, String> {
+        self.advance_narrated_receipt_in_enclave(narrated, actor, None)
+    }
+
+    /// [`Self::advance_narrated_receipt`], additionally binding WHERE the prose was
+    /// produced.
+    ///
+    /// A frontend whose narrator backend actually DCAP-verified an enclave (today
+    /// `dregg_chutes_e2ee`'s TDX backend, which hands back a
+    /// `dregg_narrator::AttestationSummary`) maps that summary onto a [`TeeProvenance`]
+    /// field for field and passes it here; the resulting turn carries
+    /// `tee_provenance_commitment` in the narration event's TEE slot, and a verifier
+    /// holding the same summary recomputes it and checks equality.
+    ///
+    /// `None` is the HONEST default and means exactly "this turn carries no enclave
+    /// provenance" — never "attestation passed". The provenance is a parameter from the
+    /// trusted transport, never a field of [`Narrated`], so a narrator's own output can
+    /// never author its own attestation claim.
+    ///
+    /// Admission, refusal, and state authority are unchanged: the commitment records where
+    /// the text came from, and buys it no influence over the transition. It asserts nothing
+    /// about the text being correct, honest, or un-jailbroken (see [`TeeProvenance`]).
+    pub fn advance_narrated_receipt_in_enclave(
+        &mut self,
+        narrated: &Narrated,
+        actor: DreggIdentity,
+        provenance: Option<&TeeProvenance>,
+    ) -> Result<NarratedSessionTurn, String> {
         let view = self.narrated_view();
         let admitted = legal_commands(&view)
             .into_iter()
@@ -394,7 +421,7 @@ impl DungeonSession {
 
         let passage = narrated.command.room.clone();
         let choice_index = narrated.command.choice;
-        match narrate_turn(&self.world, &self.scene, narrated) {
+        match narrate_turn_in_enclave(&self.world, &self.scene, narrated, provenance) {
             Ok(narrated_receipt) => {
                 self.steps.push(StepReceipt {
                     passage,
@@ -406,6 +433,15 @@ impl DungeonSession {
                     decision_commitment: None,
                 });
                 self.actors.push(actor);
+                // Retain the PROSE (and the provenance PREIMAGE the caller supplied) beside the
+                // receipt. The receipt binds only a digest of the narration, so without this the
+                // served record could show a reader any text at all and every replay/state check
+                // would still pass — `EmitEvent` is state-passthrough. `Offering::verify`
+                // re-derives the expected event from this entry.
+                self.narrations.push(Some(RecordedNarration::landed(
+                    &narrated_receipt,
+                    provenance,
+                )));
                 // This is an explicit single-actor operation, never an implicit crowd
                 // decision. A collective frontend keeps using `advance_collective`.
                 self.collectives.push(None);

@@ -321,6 +321,7 @@ fn bundle_of(program: CellProgram, pis: Vec<BabyBear>) -> CustomWitnessBundle {
         num_rows: rows,
         public_inputs: pis,
         app_root_binding: None,
+        descriptor_state_leaf: None,
     }
 }
 

@@ -336,20 +336,21 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 /-- `archiveHashSites` is DEFINITIONALLY the transfer keystone's `transferHashSites`. -/
 theorem archiveHashSites_eq : archiveHashSites = transferHashSites := rfl
 
-/-- **`archiveDescriptor_commit_binds_state_or_collides` — the whole-state tooth, UNCONDITIONAL.** Two
-`receiptArchiveA` rows that satisfy the hash-sites and publish equal `state_commit`s EITHER have
-identical absorbed columns — the set post-`field[1]` (an absorbed column, site 1) included — OR exhibit
-a genuine deployed-sponge collision. So a prover CANNOT tamper the post-`field[1]` (or any absorbed
-cell) while keeping the published commitment unless it finds a collision. Reuses the cured keystone
-core; no refuted injective sponge floor. -/
-theorem archiveDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ archiveHashSites)
-    (hs₂ : siteHoldsAll hash e₂ archiveHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  rw [archiveHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **`archiveDescriptor_commit_binds_state_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+
+That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`.
+True at deployed BabyBear parameters (unlike its `Poseidon2SpongeCR`-carrying predecessor, which the
+deployed compressing sponge REFUTES), but UNCLOSED: a collision EXISTS at those parameters by
+pigeonhole, so the `collides` branch is unconditionally available and the binding never has to hold.
+A disjunction quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+
+The deployed binding of receiptArchive's absorbed state block is now
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.archive_commit_binds_block_advantage_bound`
+(`hEff` discharged at `Eff := IsPolyTime` by `archive_commit_binds_block_from_polyTime`), whose forgery
+game's answers are DEPLOYED receiptArchive ROWS (`archiveVm_row_forgery_is_break`, stated at THIS file's
+`archiveHashSites`). It is hosted DOWNSTREAM because the deployed sponge's keyed family
+(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree — a reduction stated at that
+family cannot be imported by an emission module without a build cycle. -/
 
 /-! ## §8 — THE CONNECTOR — `lifeProj` to universe-A's `ReceiptArchiveSpec`.
 
@@ -493,7 +494,6 @@ theorem archiveBadRow_rejected : ¬ (VmConstraint.gate gLifeSet).holdsVm archive
 #assert_axioms archiveVm_rejects_wrong_output
 #assert_axioms intent_to_archiveCellSpec
 #assert_axioms archiveDescriptor_full_sound
-#assert_axioms archiveDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_archive
 #assert_axioms unify_archive_via_exec
 #assert_axioms archiveGoodRow_realizes_intent

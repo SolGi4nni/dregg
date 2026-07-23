@@ -18,7 +18,9 @@
 #![cfg(feature = "prove")]
 
 use dregg_braid_hook::fold::{fold_composition_app_root, forged_after, honest_after};
-use dregg_braid_hook::{ComposeShape, Knot, LinearTerm, Ruleset, Subject, compose_entity};
+use dregg_braid_hook::{
+    ComposeShape, Knot, LinearTerm, Ruleset, Subject, compose_entity, entity_key,
+};
 
 const ROLE_ACTOR: u64 = 101;
 const ROLE_PARTNER: u64 = 202;
@@ -68,8 +70,16 @@ fn ruleset() -> Ruleset {
 #[test]
 #[ignore = "SLOW: real deployed app-root weld recursion folds (~minutes each); run with --ignored"]
 fn braid_outcome_weld_bites() {
-    let (entity, landed) = compose_entity(1, 1_000, actor(), &[partner()], ruleset(), shape(), 4)
-        .expect("the entity composes through the Braid");
+    let (entity, landed) = compose_entity(
+        entity_key(1),
+        1_000,
+        actor(),
+        &[partner()],
+        ruleset(),
+        shape(),
+        4,
+    )
+    .expect("the entity composes through the Braid");
     assert_eq!(
         landed.outcome, -20,
         "10*2 + (-2)*5*4 = -20 (the licensed outcome)"

@@ -22,6 +22,12 @@ edition = "2024"
 description = "A 3-room dungeon (rooms/item/gated-exit) hosted on spween-dregg's real WorldCell: a move is a real cap-bounded TurnReceipt, an illegal move is a real executor refusal, the gate is an executor-enforced CellProgram StateConstraint. Phase-A de-risk slice."
 
 [dependencies]
+# THE DM'S VOICE, authored ONCE. `attested_dm::VOICE_SPEC` is the single authored voice of the
+# Drowned Marches (sensory discipline, sentence rhythm, second person present, the list of things
+# the DM never does). The Keep's confined Bedrock prompt (`BedrockBrain::confined_prompt`)
+# references it rather than keeping a second, drifting copy — one world, one voice. A prose
+# constant only; no runtime coupling to attested-dm's parallel ledger.
+attested-dm = { path = "../attested-dm" }
 # THE FOUNDATION — the real cell/turn substrate for interactive fiction: the
 # `WorldCell` binding (a move is ONE cap-bounded turn the real `EmbeddedExecutor`
 # admits IFF the installed gate passes), the stock-runtime `Driver` (a playthrough

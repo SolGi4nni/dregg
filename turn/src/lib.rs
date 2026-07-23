@@ -255,7 +255,7 @@ pub use routing::{IntroductionExport, RoutingDirective};
 pub use shadow::{NoOpShadowObserver, ShadowHostCtx, ShadowObserver};
 pub use turn::{
     ConsumedCapAuthPath, ConsumedCapWitness, CustomProgramProof, EmittedEvent, Finality,
-    SovereignCellWitness, Turn, TurnReceipt, TurnResult,
+    SovereignCellWitness, Turn, TurnReceipt, TurnResult, absorb_emitted_event,
 };
 pub use verify::{
     VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,

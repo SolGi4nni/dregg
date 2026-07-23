@@ -622,7 +622,7 @@ impl SharedFork {
 ///
 /// The closed finding (`docs/deos/SHARED-FORK-CONSENT.md`): the embedded `World`
 /// executor signs [`TurnReceipt::canonical_executor_signed_message`] (the `v3`
-/// domain `b"executor-receipt-sig-v4:" || receipt_hash`), while the generic
+/// domain `b"executor-receipt-sig-v5:" || receipt_hash`), while the generic
 /// [`resolve_condition`] `TurnExecuted` arm verifies the bare `receipt_hash()`.
 /// A real grant receipt therefore cannot satisfy that arm. This function applies
 /// the IDENTICAL three checks the `TurnExecuted` arm applies — turn-hash binding,

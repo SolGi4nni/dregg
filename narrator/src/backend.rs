@@ -98,8 +98,55 @@ impl ConverseRequest {
     }
 }
 
+/// A LIGHT, provider-neutral receipt that a hosted call ran inside an ATTESTED enclave.
+///
+/// This crate does not verify anything — it only *names* the shape, so a backend that DOES
+/// attest (today: `dregg-chutes-e2ee`'s `ChutesTeeBackend`, which DCAP-verifies an Intel TDX
+/// quote before a byte is encrypted) can hand the outcome back through [`ConverseResponse`]
+/// without dragging `tee-verify` → `dcap-qvl` → `pqcrypto` into every narrator consumer.
+///
+/// It is deliberately a SUMMARY: the full DER quote stays with the backend that verified it
+/// (`ChutesTeeBackend::last_attestation`), so a receipt lane can commit the bytes without the
+/// narration path carrying ~5 KB per turn. `quote_sha256` is the link between the two.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttestationSummary {
+    /// The enclave instance that served this call (pinned as `X-Instance-Id`).
+    pub instance_id: String,
+    /// The folded code-identity measurement (MRTD+RTMR0..2) that matched the pinned registry.
+    pub measurement: [u8; 32],
+    /// The DCAP TCB status the verifier accepted (e.g. `UpToDate`).
+    pub tcb_status: String,
+    /// SHA-256 of the raw attestation quote — the handle onto the full quote bytes.
+    pub quote_sha256: [u8; 32],
+    /// Length of the raw quote in bytes (a cheap sanity check against the full bytes).
+    pub quote_len: usize,
+}
+
+impl AttestationSummary {
+    /// The measurement as lowercase hex (for logs / embeds / receipts).
+    pub fn measurement_hex(&self) -> String {
+        hex32(&self.measurement)
+    }
+
+    /// The quote digest as lowercase hex.
+    pub fn quote_sha256_hex(&self) -> String {
+        hex32(&self.quote_sha256)
+    }
+}
+
+/// Lowercase hex of a 32-byte digest — a 6-line local encoder so naming an attestation costs
+/// the light narrator crate no new dependency.
+fn hex32(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(64);
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
 /// A backend-agnostic Converse response.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ConverseResponse {
     /// The concatenated text blocks (the narration).
     pub text: String,
@@ -111,6 +158,13 @@ pub struct ConverseResponse {
     pub input_tokens: u32,
     /// The REAL output-token count from the response usage.
     pub output_tokens: u32,
+    /// The TEE attestation that covered this call, when the backend attested one.
+    ///
+    /// `None` is the HONEST default and means exactly "this response carries no attestation" —
+    /// never "attestation passed". Every non-attesting backend (Bedrock, the plain
+    /// OpenAI-compatible client, every test double) leaves it `None`; only a backend that ran a
+    /// real verification fills it in.
+    pub attestation: Option<AttestationSummary>,
 }
 
 /// A hosted model that can run a Converse turn. Implemented by the real Bedrock client; a test

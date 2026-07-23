@@ -11,7 +11,7 @@
 //! ## What is ATTESTED (real verifiers reused)
 //!
 //!   * **Chain integrity** — we recompute each receipt's hash with the REAL
-//!     [`dregg_turn::TurnReceipt::receipt_hash`] (the `dregg-receipt-v4`
+//!     [`dregg_turn::TurnReceipt::receipt_hash`] (the `dregg-receipt-v5`
 //!     domain-separated commitment that binds turn/forest/pre/post-state,
 //!     federation, the prior link, and every disclosure bit) and check that
 //!     `receipt[i].previous_receipt_hash == receipt[i-1].receipt_hash()`. A
@@ -126,7 +126,7 @@ pub fn analyze(capture: &ReceiptStrandCapture) -> AnalysisReport {
             "receipts.chain_intact",
             format!(
                 "receipt-chain integrity VERIFIED: all {} link(s) recompute exactly \
-                 against the real dregg-receipt-v4 hash — no receipt was tampered \
+                 against the real dregg-receipt-v5 hash — no receipt was tampered \
                  or reordered",
                 receipts.len().saturating_sub(1)
             ),

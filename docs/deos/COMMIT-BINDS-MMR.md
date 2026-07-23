@@ -135,7 +135,7 @@ anchor note).
   root. The Poseidon2 forest must bag with the same anti-ghost shape
   (`BadFrontier` on non-mountains, count check against the root-pinned length).
 - **Leaf = `receipt_hash`.** The MMR leaf is the canonical
-  `dregg-receipt-v3` digest; the rotation re-expresses it as field limbs, it
+  `dregg-receipt-v5` digest; the rotation re-expresses it as field limbs, it
   does not recompute receipts.
 - **Coverage semantics.** `Coverage::WholeLog` still requires the certified
   range to reach `[0, len-1]` of the *root-pinned* length; with the root now

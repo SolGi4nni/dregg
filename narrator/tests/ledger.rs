@@ -59,6 +59,7 @@ impl ConverseBackend for FakeBackend {
             stop_reason: "end_turn".to_string(),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
+            attestation: None,
         })
     }
 }

@@ -33,8 +33,15 @@ seam-abutting braces) stays the NAMED WALL; see §6.
   * `brace_split_unique` — the core: a `brace`-free prefix before the first `brace` is unique.
   * `delim_render_injective` — RENDER INJECTIVITY: for a delimiter-guarded template, equal output
     forces equal per-hole data on every hole of the template (`∀ h ∈ holesOf T, d h = d' h`). This is
-    the unique-data-recovery / round-trip-inverse half; the existence half rides
-    `Handlebars.render_mem_language`.
+    UNIQUENESS ONLY — AT MOST ONE brace-free assignment produces a given output, on this class.
+
+    It is NOT an exists-unique, and NOTHING here supplies the other half. The EXISTENCE / PARSE
+    direction — `output ∈ (handlebarsToGrammar T).language → ∃ d, safe T d ∧ render T d = output` —
+    is an OPEN RESIDUAL: `Handlebars.lean` §9 `RESIDUAL (round_trip)` (`:328`) and §6
+    `RESIDUAL (general_round_trip)` (`:212`) below. In particular
+    `Handlebars.render_mem_language` does NOT supply it: its statement is
+    `safe T d → render T d ∈ language`, the FORWARD / GENERATION direction, which consumes a `d`
+    already in hand and says nothing about parsing an arbitrary language member back into one.
   * `DelimGuarded` — a DECIDABLE structural recognizer for the class (a `Bool` function), with a
     concrete Demo showing it accepts the guarded form and rejects adjacent-hole ambiguity.
   * Demo — a guarded template with two DISTINCT data assignments producing DISTINCT outputs
@@ -189,9 +196,25 @@ theorem delim_render_injective_holes :
 /-- **`delim_render_injective`** — RENDER INJECTIVITY on `holesOf`. For a delimiter-guarded template
 `delimTemplate holes` whose holes carry `brace`-free data on both assignments, `render T d = render T
 d'` forces `d h = d' h` for every hole `h` of `T`. This is the unique-data-recovery / round-trip
-INVERSE, load-bearing half: an output determines the data that produced it. The existence half
-(some safe `d` renders to a given language member) rides `Handlebars.render_mem_language`; together
-they give the exists-UNIQUE the round-trip needs, on this class. -/
+INVERSE, load-bearing half: an output determines the data that produced it — i.e. UNIQUENESS ONLY,
+AT MOST ONE brace-free assignment produces a given output.
+
+This is NOT an exists-unique. The EXISTENCE / PARSE half —
+`output ∈ (handlebarsToGrammar T).language → ∃ d, safe T d ∧ render T d = output` — is an OPEN
+RESIDUAL, named at `Handlebars.lean` §9 `RESIDUAL (round_trip)` (`:328`) and at §6 below
+`RESIDUAL (general_round_trip)` (`:212`). `Handlebars.render_mem_language` does NOT supply it: that
+theorem is `safe T d → render T d ∈ language`, the FORWARD / GENERATION direction — it starts from a
+`d` in hand, so it cannot produce one from a language member. Until the residual is discharged, no
+round-trip `∃!` is available ON THIS (`Tok` / `handlebarsToGrammar`) CLASS.
+
+Scope note, so this is not read as more pessimistic than it is: the GUARDED (`Value` /
+`guardedToGrammar`) twin HAS closed both halves —
+`HandlebarsGuardedParse.parse_exists_distinct_holes` (existence, under `(holesOf T).Nodup`) and
+`HandlebarsGuardedParse.separated_parse_exists_unique` (a literal `∃!`, under `Nodup` AND
+`SeparatedTemplate`). That proof does NOT transport here for free: it is stated over `Value` and
+routes through `GuardedSpans.mem_language_iff_spans`, so carrying it to `Tok` needs the
+`tokVal`-embedding identification — named, not done. The residual above is that gap, not a claim
+that the parse direction is unreachable. -/
 theorem delim_render_injective (holes : List HoleId) (d d' : HoleId → List Tok)
     (hnd : ∀ h ∈ holes, NoBrace (d h)) (hnd' : ∀ h ∈ holes, NoBrace (d' h))
     (heq : render (delimTemplate holes) d = render (delimTemplate holes) d') :

@@ -73,10 +73,10 @@
 //!
 //! # What the quorum signs
 //!
-//! `TurnReceipt::receipt_hash` (domain `dregg-receipt-v4`) absorbs both
+//! `TurnReceipt::receipt_hash` (domain `dregg-receipt-v5`) absorbs both
 //! `pre_state_hash` and `post_state_hash`, so:
 //!
-//! * the **executor signature** (`executor-receipt-sig-v4`) signs the anchor;
+//! * the **executor signature** (`executor-receipt-sig-v5`) signs the anchor;
 //! * the **federation receipt QC** — a BLS threshold aggregate over
 //!   `FederationReceiptBody::body_hash` (`dregg-fed-receipt-body-v2`) — is a
 //!   genuine quorum certificate over the anchor;

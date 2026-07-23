@@ -363,6 +363,19 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 
 pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotState) {
     let custom_id = modal.data.custom_id.as_str();
+    // ACK inside Discord's 3s window BEFORE any submit runs — several forms do multi-second work
+    // (the credential-verify STARK proof; network round-trips) that would otherwise blow the
+    // window before the first response. None of these branches OPENS a modal, so a deferred
+    // ephemeral response is safe (a modal must be the FIRST response — see `commands::ack`); the
+    // result lands as an EDIT of this deferred response.
+    let _ = modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
     let embed = match custom_id {
         ID_NAME_REGISTER => submit_name_register(modal, state).await,
         ID_NAME_RESOLVE => submit_name_resolve(modal, state).await,
@@ -400,12 +413,13 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSt
         ),
     };
 
-    let msg = CreateInteractionResponseMessage::new()
-        .embed(embed)
-        .components(home_components())
-        .ephemeral(true);
     let _ = modal
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+        .edit_response(
+            &ctx.http,
+            serenity::all::EditInteractionResponse::new()
+                .embed(embed)
+                .components(home_components()),
+        )
         .await;
 }
 
@@ -1124,9 +1138,27 @@ async fn submit_credential_verify(modal: &ModalInteraction, state: &BotState) ->
         Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     };
 
-    // Generate a REAL unlinkable predicate STARK over the held attributes, then verify.
+    // Generate a REAL unlinkable predicate STARK over the held attributes, then verify. The prove
+    // + verify is multi-second CPU work — run it on a blocking thread (never the async worker) so
+    // it does not park a tokio worker, and the deferred ACK in `handle_modal` keeps the 3s window.
     let seed = crate::cipherclerk::seed_for(&state.config.bot_secret, user_id);
-    match crate::identity_proof::prove_and_verify_held(&seed, &predicate, &held.attributes_json) {
+    let predicate_for_proof = predicate.clone();
+    let attributes_json = held.attributes_json.clone();
+    let proof = tokio::task::spawn_blocking(move || {
+        crate::identity_proof::prove_and_verify_held(&seed, &predicate_for_proof, &attributes_json)
+    })
+    .await;
+    let proof = match proof {
+        Ok(result) => result,
+        Err(_) => {
+            return embeds::error_embed(
+                "Proof Worker Unavailable",
+                "The proof generation task did not complete (it panicked or was cancelled), so \
+                 nothing was verified. Please retry in a moment.",
+            );
+        }
+    };
+    match proof {
         Ok(verified) if verified.verified => embeds::success_embed("Selective-Disclosure Proof Verified")
             .field("Predicate", format!("`{}`", truncate(&predicate, 120)), true)
             .field("Credential", short_cell(&held.credential_id), true)

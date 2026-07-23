@@ -270,15 +270,19 @@ fn evaluate_constraint_full(
     witnesses: &WitnessBundle<'_>,
 ) -> Result<(), ProgramError> {
     // ── The deployed-node CONSTRAINT ORACLE (game-proof LARP-audit collapse) ──
-    // When a Lean-backed oracle is installed (`dregg-node` via `dregg-exec-lean`), the PURE
-    // (context-free, witness-free) `StateConstraint`/`HeapAtom` subset's admission is COMPUTED BY the
-    // verified Lean `dregg_constraint_admits` (`Dregg2.Exec.DeployedConstraint.admits`) — the ONE
-    // source. `admits` returns `Some(decision)` for that subset and `None` for the context/witness
-    // variants below (which stay Rust-evaluated). No oracle installed (cell's own tests, wasm, the
-    // SP1 zkVM guest — none can link the archive) ⇒ the Rust guest-path evaluator below runs.
+    // When a Lean-backed oracle is installed (`dregg-node` via `dregg-exec-lean`), the Lean-evaluated
+    // `StateConstraint`/`HeapAtom` subset's admission is COMPUTED BY the verified Lean
+    // `dregg_constraint_admits` (`Dregg2.Exec.DeployedConstraint.admitsTop`) — the ONE source. That
+    // subset is the PURE arms (registers / heap / balance), the bounded CONTEXT arms (the
+    // `{block_height, sender, delegation_epoch}` slice of `ctx`/`meta`, marshalled explicitly and
+    // fail-closed on absence), and the `AnyOf` / `AllOf` combinators over them. `admits` returns
+    // `Some(decision)` for that subset and `None` for the witness / crypto / executor-state variants
+    // below (which stay Rust-evaluated — the NAMED trusted slot enumerated in
+    // `dregg-exec-lean::constraint_oracle`). No oracle installed (cell's own tests, wasm, the SP1
+    // zkVM guest — none can link the archive) ⇒ the Rust guest-path evaluator below runs.
     // See `super::oracle` for why this is a runtime seam and not a direct FFI call.
     if let Some(oracle) = super::oracle::installed_oracle() {
-        if let Some(decision) = oracle.admits(constraint, new_state, old_state) {
+        if let Some(decision) = oracle.admits(constraint, new_state, old_state, ctx, meta) {
             return decision;
         }
     }

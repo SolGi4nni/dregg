@@ -44,6 +44,7 @@ Imports are read-only; this module owns only its own declarations.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitMint
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitMintRunnable
 
@@ -55,9 +56,20 @@ open Dregg2.Circuit.Emit.EffectVmEmitMint
    CellMintSpec RowEncodes MintRowIntent IsMintRow mintVmAirName
    goodMintRow goodMintRow_realizes_intent)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
-  (baseAbsorbedCols wideHashSites RunnableFullStateSpec runnable_full_sound
-   WideColl RootsColl wide_rejects_state_tamper_or_collides wide_rejects_root_tamper_or_collides)
+  (baseAbsorbedCols wideHashSites RunnableFullStateSpec runnable_full_sound)
 open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+open Dregg2.Crypto.SpongeCarrierReduction
+  (SpongeKeyed spongeFamily carrierBreakToFinder spongeAnsSize)
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (WideRowSpec wideStateCarrier wideRowBreakGame wideRowToCarrier wideRowAnsSize
+   wideRow_binds_advantage_bound wideRow_binds_from_polyTime
+   wideStateTamperGame stateTamperToWide stateTamperAnsSize
+   wide_state_tamper_advantage_bound wide_state_tamper_from_polyTime
+   wideRootTamperGame rootTamperToWide rootTamperAnsSize
+   wide_root_tamper_advantage_bound wide_root_tamper_from_polyTime)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant)
+open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
@@ -151,61 +163,107 @@ theorem mint_runnable_full_sound (amt : ℤ) (preRoots : SysRoots) (hash : List 
 
 #assert_axioms mint_runnable_full_sound
 
-/-! ## §4 — ANTI-GHOST on all 17 fields (instantiating the generic teeth at `mintRunnableSpec`).
+/-! ## §4 — ANTI-GHOST on all 17 fields, REBUILT AS A SECURITY REDUCTION.
 
-The whole-state tooth: two rows satisfying `mintVmDescriptorWide` that publish the SAME `NEW_COMMIT` (with
-`systemRootsDigest` carriers) can DISAGREE on an absorbed state-block column
-(`mint_rejects_state_tamper_or_collides`) or on a side-table root (`mint_rejects_root_tamper_or_collides`)
-only by exhibiting a hash collision. So the RUNNABLE mint commitment binds the per-cell block AND the
-side-table state — the magnesium breadth, not a projection — up to a collision the theorem produces. -/
+⚑ **WHAT CHANGED AND WHY.** This section used to export `mint_rejects_state_tamper_or_collides` /
+`mint_rejects_root_tamper_or_collides`, each concluding `WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`.
+Those forms are TRUE of the deployed sponge — unlike the `Poseidon2SpongeCR` predecessors they
+replaced, which it REFUTES — but they are still UNCLOSED: a collision of the deployed sponge EXISTS at
+BabyBear parameters by pigeonhole (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so
+`binds ∨ collides` is satisfiable through its RIGHT branch WITHOUT the binding ever holding. They
+quantify over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
 
-/-- **`mint_rejects_state_tamper_or_collides` — per-cell-block anti-ghost, as EXTRACTION.** Two wide mint
-rows publishing the same `NEW_COMMIT` whose absorbed state-block columns DIFFER exhibit a concrete
-collision of `hash`: a `WideColl` on the wide absorbed lists, or a `RootsColl` on the two root lists.
+They are DELETED — not kept beside the new form, which would be the same sin in additive dress — and
+rebuilt on `Emit.EffectVmRowCommitReduction` (itself landed on the shared
+`Crypto.SpongeCarrierReduction` spine): the tamper is a first-class `Game` AT MINT'S OWN WIDE
+DESCRIPTOR (a win is two rows BOTH ACCEPTED by `mintVmDescriptorWide` publishing one `NEW_COMMIT` over
+different bound state), the extractor — the deployed GROUP-4 peel falling through to the ordered
+side-table root list — is a MAP OF ADVERSARIES, the advantage inequality is UNCONDITIONAL over ALL
+adversaries, and the conclusion is negligibility under the DEPLOYED sponge's collision floor
+`HashCRHardQuant (spongeFamily D) Eff`, both of whose poles are proved
+(`EffectVmRowCommitReduction.rowCommitFloor_top_false_babyBear` / `_bot_vacuous`). The extraction spine
+REMAINS — as the reduction's internal witness, which is its correct role. -/
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`. The deployed BabyBear sponge REFUTES
-that hypothesis (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the previous form was vacuous at
-deployed parameters. This disjunction is formally weaker and holds of the deployed sponge. -/
-theorem mint_rejects_state_tamper_or_collides (amt : ℤ) (preRoots : SysRoots)
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash mintVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash mintVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    (htamper : baseAbsorbedCols e₁ ≠ baseAbsorbedCols e₂) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_state_tamper_or_collides (mintRunnableSpec amt preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+/-- **`mintWideRowSpec`** — mint's WIDE runnable descriptor as the reduction's per-effect datum. The
+only obligation is that its hash sites ARE the `system_roots`-absorbing wide sites (`rfl`). -/
+def mintWideRowSpec : WideRowSpec where
+  descriptor := mintVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`mint_rejects_root_tamper_or_collides` — side-table anti-ghost on mint, as EXTRACTION.** Two wide
-mint rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table sub-blocks
-DIFFER at some index `i` exhibit a concrete collision of `hash` — a `WideColl` on the wide absorbed lists
-or a `RootsColl` on the two root lists. The side-table state is bound BY the runnable mint commitment up
-to a produced collision.
+/-- **⚑ `mint_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD BINDING for mint.** Under
+the DEPLOYED sponge's collision floor at the class `Eff`, an adversary that produces two rows BOTH
+SATISFYING `mintVmDescriptorWide`, publishing one `NEW_COMMIT` with genuine `systemRootsDigest`
+carriers, yet binding DIFFERENT state (an absorbed column or a side-table root), has NEGLIGIBLE
+advantage. This is the headline that replaces the bare disjunction. -/
+theorem mint_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D mintWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier (wideRowToCarrier D mintWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D mintWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D mintWideRowSpec Eff A hEff hCR
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge
-refutes; it was therefore vacuous at deployed parameters. This form is weaker and holds of that sponge. -/
-theorem mint_rejects_root_tamper_or_collides (amt : ℤ) (preRoots : SysRoots)
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash mintVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash mintVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (mintRunnableSpec amt preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+/-- **⚑ `mint_binds_full_state_from_polyTime` — `hEff` DISCHARGED, not carried.** At
+`Eff := IsPolyTime` (`CostAdversary`'s cost-vector class, cost DERIVED from program syntax) the
+efficiency of the extracted collision finder is a THEOREM: both reduction hops are pure output
+reshapings, and the extractor's output growth is the proved constant `40`. The only inputs left are
+each reshaper's DECLARED instruction count — a Lean function has no runtime, so that number can only be
+charged in the program's syntax. -/
+theorem mint_binds_full_state_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (wideRowBreakGame D mintWideRowSpec))
+    (hA : IsPolyTime (wideRowAnsSize D mintWideRowSpec) A) (cw₀ bw₀ cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (wideRowBreakGame D mintWideRowSpec) A) :=
+  wideRow_binds_from_polyTime D mintWideRowSpec A hA cw₀ bw₀ cw bw hCR
 
-#assert_axioms mint_rejects_state_tamper_or_collides
-#assert_axioms mint_rejects_root_tamper_or_collides
+/-- **⚑ `mint_rejects_state_tamper_advantage_bound` — the per-cell-block anti-ghost, REDUCED.** An
+efficient adversary cannot keep the published `NEW_COMMIT` while tampering an absorbed state-block
+column of a satisfying wide mint row (a forged balance, a tampered field, a forged `cap_root`), except
+with negligible probability. Replaces `mint_rejects_state_tamper_or_collides`. -/
+theorem mint_rejects_state_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideStateTamperGame D mintWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D mintWideRowSpec (stateTamperToWide D mintWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideStateTamperGame D mintWideRowSpec) A) :=
+  wide_state_tamper_advantage_bound D mintWideRowSpec Eff A hEff hCR
+
+/-- **⚑ `mint_rejects_state_tamper_from_polyTime`** — the same tooth with `hEff` DISCHARGED. -/
+theorem mint_rejects_state_tamper_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (wideStateTamperGame D mintWideRowSpec))
+    (hA : IsPolyTime (stateTamperAnsSize D mintWideRowSpec) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (wideStateTamperGame D mintWideRowSpec) A) :=
+  wide_state_tamper_from_polyTime D mintWideRowSpec A hA cwT bwT cw₀ bw₀ cw bw hCR
+
+/-- **⚑ `mint_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED.** An efficient
+adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a satisfying wide
+mint row (a dropped escrow, an omitted nullifier, a reordered queue), except with negligible
+probability. Replaces `mint_rejects_root_tamper_or_collides`. -/
+theorem mint_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D mintWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D mintWideRowSpec (rootTamperToWide D mintWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D mintWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D mintWideRowSpec Eff A hEff hCR
+
+/-- **⚑ `mint_rejects_root_tamper_from_polyTime`** — the same tooth with `hEff` DISCHARGED. -/
+theorem mint_rejects_root_tamper_from_polyTime (D : SpongeKeyed)
+    (A : Adversary (wideRootTamperGame D mintWideRowSpec))
+    (hA : IsPolyTime (rootTamperAnsSize D mintWideRowSpec) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (wideRootTamperGame D mintWideRowSpec) A) :=
+  wide_root_tamper_from_polyTime D mintWideRowSpec A hA cwT bwT cw₀ bw₀ cw bw hCR
+
+#assert_axioms mint_binds_full_state_advantage_bound
+#assert_axioms mint_binds_full_state_from_polyTime
+#assert_axioms mint_rejects_state_tamper_advantage_bound
+#assert_axioms mint_rejects_state_tamper_from_polyTime
+#assert_axioms mint_rejects_root_tamper_advantage_bound
+#assert_axioms mint_rejects_root_tamper_from_polyTime
 
 /-! ## §5 — NON-VACUITY: the full clause is inhabited by a real mint, and refutable.
 

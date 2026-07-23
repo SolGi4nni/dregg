@@ -80,7 +80,7 @@ pub enum EffectSummary {
 }
 
 /// One receipt row: the dense MMR position (`chain_index`), the receipt
-/// commitment (`receipt_hash`, hex of the 32-byte blake3 `dregg-receipt-v4`
+/// commitment (`receipt_hash`, hex of the 32-byte blake3 `dregg-receipt-v5`
 /// digest computed by `dregg_turn::TurnReceipt::receipt_hash`), the commit
 /// height, the acting agent, and the per-effect summaries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

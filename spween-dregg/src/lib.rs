@@ -61,7 +61,10 @@ pub use durable::{
 };
 pub use encoding::{field_to_u64, value_to_u64};
 pub use real_engine::CollectiveChoiceEngine;
-pub use verify::{StepPos, VerifyBreak, verify, verify_by_replay, verify_chain_linkage};
+pub use verify::{
+    StepPos, VerifyBreak, verify, verify_by_replay, verify_chain_linkage,
+    verify_receipt_hash_chain, verify_receipts_anchored,
+};
 pub use vote::{StubVoteEngine, VoteEngine, VoteError, VoteOption, labeled_tally};
 pub use world::{
     CellHandler, ChoiceView, DECISION_EXT_KEY, Driver, Playthrough, StepReceipt, WorldCell,

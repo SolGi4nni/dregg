@@ -60,11 +60,13 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
-  (commitRevealFamily commitRevealFamily_CR_of_hashcr hermine_commitment_binding_advantage_bound
-   hermine_commitment_binding_advantage_bound_eff crEquivocator)
+  (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
+   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
+   hashAnsSizeOf openAnsSizeOf crEquivocator)
 open Dregg2.Crypto.FloorGames
-  (Adversary hashGame finderToAdv HashCRHardQuant collisionResistant_iff_hashCRHardQuant_top
-   hard_bot_vacuous)
+  (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
+   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 
 set_option autoImplicit false
 
@@ -85,42 +87,65 @@ theorem sessionKey_eq_family {SS Tr Pre K : Type} [DecidableEq Pre] [DecidableEq
     Dregg2.Crypto.WireAke.sessionKey cr frameK ssx sspq tr
       = (channelKeyFamily cr).H n k (frameK (ssx, sspq, tr)) := rfl
 
-/-! ## §2 — the advantage-bounded channel-binding keystone (`channel_binding`, re-grounded). -/
+/-! ## §2 — the UKS break, as a SECURITY REDUCTION.
 
-/-- **RE-GROUNDED `WireAke.channel_binding`.** Under the proper keyed floor, the key-reuse / UKS adversary
-(per key, two DISTINCT framed inputs — hence two distinct `(ss_x, ss_pq, transcript)` triples, by
-`WireAke.uks_breaks_hashcr` — colliding to one session key, a hash collision) has negligible advantage. The
-Boolean "equal session key ⟹ equal transcript" becomes "⟹ equal transcript EXCEPT with negligible
-probability": an unknown-key-share attack cannot pin a shared key across distinct channels except with
-negligible advantage. Proof: `thread_advantage_bound` (the single `CollisionResistant` leaf), via the
-generic commit-reveal keystone. -/
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `channel_binding_advantage_bound` took
+`hCR : CollisionResistant (channelKeyFamily cr)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top`
+proves that IS the collision floor at the UNRESTRICTED class, and `collisionResistant_false_of_compressing`
+proves THAT false for any compressing hash — including the deployed concat-KDF, which maps a long framed
+`(ss_x, ss_pq, transcript)` pre-image to a fixed-width session key. So the exported binding rested on a
+hypothesis REFUTED at deployed parameters: vacuous, and vacuous in exactly the way the sweep exists to
+name. Its `_eff` sibling took a `CollisionFinder` and applied the floor TO IT — hypothesis and conclusion
+the same object, with the UKS attack never appearing in a `Prop`. BOTH ARE DELETED.
+
+What stands here is the generic commit-opening REDUCTION (`HermineHashCRRegrounded` §2) instantiated at
+the deployed session-key family: the break is a `Game` whose win relation says an adversary published a
+session key together with two DISTINCT framed `(ss_x, ss_pq, transcript)` triples that BOTH derive it —
+the unknown-key-share attack, on the deployed key — and the extractor DISCARDS the key to reach a genuine
+collision. The advantage inequality is unconditional; the class is discharged at `IsPolyTime` below. -/
+
+/-- **THE UNKNOWN-KEY-SHARE GAME** — the commit-opening break of the deployed session-key hash. A win is
+one session key derived from two DISTINCT channels: exactly the attack `WireAke.channel_binding` denies. -/
+abbrev uksGame {Pre K : Type} [DecidableEq Pre] [DecidableEq K] (cr : CommitReveal Unit Pre K) : Game :=
+  commitOpenGame (channelKeyFamily cr)
+
+/-- **THE PROBLEM IS IN THE STATEMENT** — a win unfolds, by `Iff.rfl`, to two distinct framed inputs
+deriving one published session key. -/
+theorem uksGame_wins_iff {Pre K : Type} [DecidableEq Pre] [DecidableEq K]
+    (cr : CommitReveal Unit Pre K) (n : ℕ) (k : (channelKeyFamily cr).Key n) (p : K × Pre × Pre) :
+    (uksGame cr).wins n k p ↔ (p.2.1 ≠ p.2.2 ∧ cr.H () p.2.1 = p.1 ∧ cr.H () p.2.2 = p.1) :=
+  Iff.rfl
+
+/-- **⚑ RE-GROUNDED `WireAke.channel_binding` — from the session-key hash's collision floor, VIA the
+reduction.** Under the collision floor at the class `Eff`, a UKS adversary whose extracted finder is in
+that class has NEGLIGIBLE advantage: "equal session key ⟹ equal transcript" becomes "⟹ equal transcript
+EXCEPT with negligible probability", off a floor the deployed concat-KDF can actually satisfy.
+
+`Eff` is a parameter here because this is the statement at an ARBITRARY class; `_from_polyTime` below
+discharges it. -/
 theorem channel_binding_advantage_bound {Pre K : Type} [DecidableEq Pre] [DecidableEq K]
     (cr : CommitReveal Unit Pre K)
-    (hCR : CollisionResistant (channelKeyFamily cr))
-    (uksEquivocator : CollisionFinder (channelKeyFamily cr)) :
-    Negl (collisionAdv (channelKeyFamily cr) uksEquivocator) :=
-  hermine_commitment_binding_advantage_bound hCR uksEquivocator
-
-/-- **⚑ RE-GROUNDED `WireAke.channel_binding` — the `Eff`-carrying gate.** The bare-CR sibling above rests on
-`CollisionResistant (channelKeyFamily cr)` = `HashCRHardQuant (channelKeyFamily cr) ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`), FALSE for the compressing deployed concat-KDF session-key
-hash (`cr.H ()` maps a long framed `(ss_x, ss_pq, transcript)` pre-image to a fixed-width session key) — so
-it transports no security. This one conditions on the SAME collision game at an EXPLICIT class `Eff`: under
-it, a key-reuse / UKS equivocation finder in the class (`hEff`) has negligible advantage — "equal session
-key ⟹ equal transcript EXCEPT with negligible probability". Routes through the generic
-`hermine_commitment_binding_advantage_bound_eff` (the `CollisionFinder` advantage IS the game advantage the
-honest floor bounds, `collisionAdv_eq_gameAdv`).
-
-⚑ **THE `hEff` OBLIGATION IS UNDISCHARGED AND THAT IS THE HONEST STATE** (`FloorGames` §8 — no cost model);
-the floor is priced at both poles in §4. -/
-theorem channel_binding_advantage_bound_eff {Pre K : Type} [DecidableEq Pre] [DecidableEq K]
-    (cr : CommitReveal Unit Pre K)
     (Eff : Adversary (hashGame (channelKeyFamily cr)) → Prop)
-    (uksEquivocator : CollisionFinder (channelKeyFamily cr))
-    (hEff : Eff (finderToAdv uksEquivocator))
+    (A : Adversary (uksGame cr))
+    (hEff : Eff (openToFinder (channelKeyFamily cr) A))
     (hD : HashCRHardQuant (channelKeyFamily cr) Eff) :
-    Negl (collisionAdv (channelKeyFamily cr) uksEquivocator) :=
-  hermine_commitment_binding_advantage_bound_eff Eff uksEquivocator hEff hD
+    Negl (gameAdv (uksGame cr) A) :=
+  hermine_commitment_binding_advantage_bound (channelKeyFamily cr) Eff A hEff hD
+
+/-- **⚑ THE EFFICIENCY OBLIGATION DISCHARGED.** A UKS adversary that is EFFICIENT at the game's own answer
+encoding yields a collision finder that is STILL efficient (the extractor DISCARDS the published key, so
+its growth constants are `(1, 0)` and nothing can blow up), so the collision floor at `Eff := IsPolyTime`
+applies to IT and the channel binds with no floating efficiency parameter. The per-site inputs are the
+reshaper's declared work `(cw, bw)` and the family's own encoding `szIn`/`szOut` — the deployed pre-image
+and key encodings, which a `KeyedHashFamily` over abstract carriers cannot supply itself. -/
+theorem channel_binding_from_polyTime {Pre K : Type} [DecidableEq Pre] [DecidableEq K]
+    (cr : CommitReveal Unit Pre K) (szIn : ℕ → Pre → ℕ) (szOut : ℕ → K → ℕ)
+    (A : Adversary (uksGame cr))
+    (hA : IsPolyTime (openAnsSizeOf (channelKeyFamily cr) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (channelKeyFamily cr)
+      (IsPolyTime (hashAnsSizeOf (channelKeyFamily cr) szIn))) :
+    Negl (gameAdv (uksGame cr) A) :=
+  hermine_commitment_binding_from_polyTime (channelKeyFamily cr) szIn szOut A hA cw bw hD
 
 /-! ## §3 — non-vacuity: the floor is satisfiable AND load-bearing on the channel-binding hash. -/
 
@@ -160,9 +185,10 @@ theorem channelKey_badCR_not_CR : ¬ CollisionResistant (channelKeyFamily badCha
 /-- **THE RE-GROUNDED CHANNEL BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective identity family
 (`HashFloorHonesty.idFamily_CR`), the UKS-equivocation advantage is negligible — the deployed channel
 binding runs end-to-end to a genuine `Negl` conclusion at an inhabited floor hypothesis. -/
-theorem channel_binding_fires (uksEquivocator : CollisionFinder idFamily) :
-    Negl (collisionAdv idFamily uksEquivocator) :=
-  hermine_commitment_binding_advantage_bound idFamily_CR uksEquivocator
+theorem channel_binding_fires (A : Adversary (commitOpenGame idFamily)) :
+    Negl (gameAdv (commitOpenGame idFamily) A) :=
+  hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
+    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
@@ -189,25 +215,25 @@ does not follow: `hD B hB` bounds a DIFFERENT ensemble than `collisionAdv (chann
 uksEquivocator`, and only `collisionAdv_eq_gameAdv` at the extracted finder connects them. -/
 example {Pre K : Type} [DecidableEq Pre] [DecidableEq K] (cr : CommitReveal Unit Pre K)
     (Eff : Adversary (hashGame (channelKeyFamily cr)) → Prop)
-    (uksEquivocator : CollisionFinder (channelKeyFamily cr))
+    (A : Adversary (uksGame cr))
     (B : Adversary (hashGame (channelKeyFamily cr))) (hB : Eff B)
     (hD : HashCRHardQuant (channelKeyFamily cr) Eff) : True := by
   fail_if_success
-    (have : Negl (collisionAdv (channelKeyFamily cr) uksEquivocator) := hD B hB)
+    (have : Negl (gameAdv (uksGame cr) A) := hD B hB)
   trivial
 
 /-- **THE `Eff` GATE FIRES AT A REAL FLOOR WITNESS.** On the injective transcript-including carrier
 `WireAke.crK` the `Eff`-floor at `⊤` holds (`channelKey_crK_CR`, an INHABITED hypothesis, unlike the vacuous
 injective floor), so the `Eff` gate runs end-to-end to a genuine `Negl`. -/
-theorem channel_binding_eff_fires
-    (uksEquivocator : CollisionFinder (channelKeyFamily Dregg2.Crypto.WireAke.crK)) :
-    Negl (collisionAdv (channelKeyFamily Dregg2.Crypto.WireAke.crK) uksEquivocator) :=
-  channel_binding_advantage_bound_eff Dregg2.Crypto.WireAke.crK (fun _ => True)
-    uksEquivocator trivial ((collisionResistant_iff_hashCRHardQuant_top _).mp channelKey_crK_CR)
+theorem channel_binding_eff_fires (A : Adversary (uksGame Dregg2.Crypto.WireAke.crK)) :
+    Negl (gameAdv (uksGame Dregg2.Crypto.WireAke.crK) A) :=
+  channel_binding_advantage_bound Dregg2.Crypto.WireAke.crK (fun _ => True) A trivial
+    ((collisionResistant_iff_hashCRHardQuant_top _).mp channelKey_crK_CR)
 
 #assert_all_clean [
+  uksGame_wins_iff,
   channel_binding_advantage_bound,
-  channel_binding_advantage_bound_eff,
+  channel_binding_from_polyTime,
   sessionKey_eq_family,
   channelKey_crK_CR,
   channelKey_badCR_not_CR,

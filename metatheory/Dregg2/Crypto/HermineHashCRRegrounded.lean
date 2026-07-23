@@ -22,11 +22,19 @@ COMMIT-REVEAL side.
 * **`commitRevealFamily_CR_of_hashcr`** — the OLD-floor ⟹ NEW-floor bridge: if the injective `HashCR cr`
   held it would discharge `CollisionResistant (commitRevealFamily cr i)` (via `injective_family_CR`), so
   the old floor was STRICTLY STRONGER than needed — and, being false for a compressing commitment, empty.
-* **`hermine_commitment_binding_advantage_bound`** — the advantage-bounded sibling of
-  `HermineHintMLWE.commitment_binding`: an equivocating opener (per key, two DISTINCT reveals colliding
-  under the commit hash — exactly the reduction `HermineHintMLWE.equivocation_breaks_hashcr` witnesses) IS
-  a `CollisionFinder`, so under the proper floor its advantage is `Negl` — "opens ⟹ equal" becomes
-  "opens ⟹ equal EXCEPT with negligible probability". Discharged by `thread_advantage_bound`.
+* **`commitOpenGame` / `openToFinder` / `hermine_commitment_binding_advantage_bound`** — the
+  commitment-opening break, as a SECURITY REDUCTION. ⚑ THIS REPLACES two earlier exports that are now
+  DELETED, not kept beside it: the bare-CR form took `CollisionResistant F`, which
+  `collisionResistant_iff_hashCRHardQuant_top` proves IS the floor at the UNRESTRICTED class and
+  `collisionResistant_false_of_compressing` proves FALSE for every compressing (i.e. real) commit hash —
+  a refuted hypothesis, exactly the disease the sweep exists to name; and its `_eff` sibling took a
+  `CollisionFinder` and applied the floor TO IT, so hypothesis and conclusion were the same object and the
+  OPENING never appeared in a `Prop`. The replacement makes the opening a `Game` (an adversary that
+  publishes a commitment and two reveals that both open it), extracts a collision finder by DISCARDING the
+  commitment, and proves the advantage inequality unconditionally.
+* **`hermine_commitment_binding_from_polyTime`** — `hEff` DISCHARGED at `Eff := IsPolyTime`
+  (`Dregg2.Crypto.CostAdversary`), so the class the floor quantifies over is concrete, proved non-empty
+  and proved not to be `⊤`.
 
 ## ⚑ The concurrent-forgery keystone, ROUTED THROUGH THE REAL DICHOTOMY (the 2026-07-17 repair)
 
@@ -85,6 +93,8 @@ subtree — no consumer moved here lives elsewhere.
 import Dregg2.Tactics.ThreadAdvantageBound
 import Dregg2.Crypto.HermineHintMLWE
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.CostAdversary
+import Dregg2.Crypto.CostTactics
 
 namespace Dregg2.Crypto.HermineHashCRRegrounded
 
@@ -102,6 +112,8 @@ open Dregg2.Crypto.HermineSelfTargetMSIS
   (IsSelfTargetMSISSolution augmented augmented_apply selftarget_extract_nonzero instShortNormProd)
 open scoped Dregg2.Crypto.HermineSelfTargetMSIS
 open Dregg2.Crypto.Lattice
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp)
 
 set_option autoImplicit false
 
@@ -133,52 +145,145 @@ theorem commitRevealFamily_CR_of_hashcr {Idx W C : Type} [DecidableEq W] [Decida
     CollisionResistant (commitRevealFamily cr i) :=
   injective_family_CR (commitRevealFamily cr i) (fun _ _ w w' h => hcr i w w' h)
 
-/-! ## §2 — the advantage-bounded binding keystone (`commitment_binding`, re-grounded).
+/-! ## §2 — the commitment OPENING, as a SECURITY REDUCTION.
 
-⚑ **THE `CollisionResistant`-shaped keystone is ITSELF false at deployed parameters** (FINDING-2 of the
-07-17 sweep). `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves `CollisionResistant F ↔
-HashCRHardQuant F ⊤`, and `collisionResistant_false_of_compressing` proves that floor FALSE for ANY
-compressing `F` — every real commit hash. So `hermine_commitment_binding_advantage_bound` (kept below,
-untouched, and consumed by `WireAke`/`IdentityCommitment`/`XmVrf`/`RandomnessBeacon` re-groundings) is a
-true implication off a hypothesis that transports NO security. `_eff` below is the honest keystone: the
-SAME game over the SAME family at an EXPLICIT adversary class `Eff`, with the `Eff` obligation in the open
-at the use site (`FloorGames` §8 — this tree has no cost model). -/
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** Two theorems stood here:
 
-/-- **RE-GROUNDED `HermineHintMLWE.commitment_binding` (bare-CR form — kept for the downstream consumers).**
-Under the proper keyed floor, the commitment-equivocation adversary (per key, two DISTINCT reveals of one
-commitment colliding under the commit hash — a collision by `HermineHintMLWE.equivocation_breaks_hashcr`)
-has negligible advantage. ⚠ Its hypothesis `CollisionResistant F` IS `HashCRHardQuant F ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`), FALSE at deployed compressing parameters — use
-`hermine_commitment_binding_advantage_bound_eff` for the security-transporting form. Proof:
-`thread_advantage_bound` (the single `CollisionResistant` leaf). -/
-theorem hermine_commitment_binding_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (equivocator : CollisionFinder F) :
-    Negl (collisionAdv F equivocator) := by
-  thread_advantage_bound
+  * `hermine_commitment_binding_advantage_bound (hCR : CollisionResistant F) (equivocator :
+    CollisionFinder F)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves
+    `CollisionResistant F` IS the collision floor at the UNRESTRICTED adversary class, and
+    `collisionResistant_false_of_compressing` proves THAT false for any compressing family — every real
+    commit hash. So the hypothesis was REFUTED at deployed parameters and the theorem transported no
+    security, which is the same defect it was written to repair, one costume along.
+  * its `_eff` sibling, which took a `CollisionFinder F` and applied the floor to it. Hypothesis and
+    conclusion were the SAME object: there was no game about the OPENING at all, so the deployed break —
+    "two reveals both open the published commitment" — never appeared in a `Prop`.
 
-/-- **⚑ RE-GROUNDED `HermineHintMLWE.commitment_binding` — the `Eff`-carrying keystone.** Under the hash-CR
-floor at an EXPLICIT adversary class `Eff`, a commitment-equivocation finder whose game adversary is in the
-class (`hEff`) has negligible advantage: the `CollisionFinder` advantage the old consumers state IS the
-game advantage the honest floor bounds (`collisionAdv_eq_gameAdv`). The Boolean "two openings ⟹ equal"
-becomes "⟹ equal EXCEPT with negligible probability", off a floor a real commit hash could satisfy.
+Both are DELETED. What stands here instead is the shape the rest of the sweep uses: the break is a
+first-class `Game` whose win relation mentions the PUBLISHED commitment, the reduction is a map of
+adversaries, the advantage inequality is unconditional (no adversary class appears in it), and the
+security conclusion is taken under a NAMED floor whose class is then discharged at `IsPolyTime` (§2b).
 
-⚑ **THE `hEff` OBLIGATION IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is
-efficient" side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor is
-priced at both poles below: `⊤` FALSE at compressing parameters, `⊥` vacuous. This is the generic keystone
-the `IdentityCommitment` / `XmVrf` / `RandomnessBeacon` re-groundings route their own `_eff` siblings
-through. -/
-theorem hermine_commitment_binding_advantage_bound_eff {F : KeyedHashFamily}
-    (Eff : Adversary (hashGame F) → Prop) (equivocator : CollisionFinder F)
-    (hEff : Eff (finderToAdv equivocator)) (hD : HashCRHardQuant F Eff) :
-    Negl (collisionAdv F equivocator) := by
-  rw [collisionAdv_eq_gameAdv]
-  exact hD _ hEff
+The four downstream instantiations (`IdentityCommitmentRegrounded`, `WireAkeRegrounded`,
+`XmVrfRefinementRegrounded`, `RandomnessBeaconRegrounded`) are rewired onto this object. -/
+
+/-- **THE COMMITMENT-OPENING BREAK GAME.** The adversary is handed a sampled key and WINS iff it
+publishes a commitment together with TWO DISTINCT reveals that BOTH open it under the deployed commit
+hash. Winning is exactly the equivocated opening `HermineHintMLWE.commitment_binding` denies — and the
+published commitment is IN the win relation, so this is a game about the deployed opening predicate
+rather than the collision relation wearing a different name. -/
+def commitOpenGame (F : KeyedHashFamily) : Game where
+  Inst := F.Key
+  Ans := fun _ => F.Out × F.Input × F.Input
+  instFin := F.keyFintype
+  instNe := F.keyNonempty
+  wins := fun l k p => p.2.1 ≠ p.2.2 ∧ F.H l k p.2.1 = p.1 ∧ F.H l k p.2.2 = p.1
+  winsDec := fun l k p => by
+    letI := F.inputDecEq; letI := F.outDecEq
+    infer_instance
+
+/-- **THE PROBLEM IS IN THE STATEMENT** — a win unfolds, by `Iff.rfl`, to two distinct reveals opening
+one published commitment. Not a docstring: the `Prop` itself. -/
+theorem commitOpenGame_wins_iff (F : KeyedHashFamily) (l : ℕ) (k : F.Key l)
+    (p : F.Out × F.Input × F.Input) :
+    (commitOpenGame F).wins l k p ↔
+      (p.2.1 ≠ p.2.2 ∧ F.H l k p.2.1 = p.1 ∧ F.H l k p.2.2 = p.1) :=
+  Iff.rfl
+
+/-- **THE EXTRACTOR, AS A MAP OF ADVERSARIES.** An equivocating opener becomes a collision finder by
+DISCARDING the published commitment and keeping the two reveals. The commitment is where the opener's
+leverage lives — the finder never sees it — so the collision must be RE-DERIVED on the other side
+(`open_wins_imp`); the map throws structure away rather than renaming it. -/
+def openToFinder (F : KeyedHashFamily) (A : Adversary (commitOpenGame F)) :
+    Adversary (hashGame F) where
+  run := fun l k => let p := A.run l k; (p.2.1, p.2.2)
+
+/-- **⚑ WIN-PRESERVATION — and this IS `HermineHintMLWE.equivocation_breaks_hashcr`, at the game level.**
+Wherever the opener wins, its two reveals are a GENUINE collision: they are distinct (the win's own side
+condition) and both hash to the SAME published commitment, so they hash to each other. -/
+theorem open_wins_imp (F : KeyedHashFamily) (A : Adversary (commitOpenGame F)) (l : ℕ) (k : F.Key l)
+    (hwin : (commitOpenGame F).wins l k (A.run l k)) :
+    (hashGame F).wins l k ((openToFinder F A).run l k) := by
+  obtain ⟨hne, h1, h2⟩ := hwin
+  exact ⟨hne, h1.trans h2.symm⟩
+
+/-- **THE ADVANTAGE INEQUALITY.** The opener's advantage is at most the extracted finder's, at every
+parameter — both play over the SAME sampled key space. Unconditional: no adversary class appears. -/
+theorem open_adv_le (F : KeyedHashFamily) (A : Adversary (commitOpenGame F)) (l : ℕ) :
+    gameAdv (commitOpenGame F) A l ≤ gameAdv (hashGame F) (openToFinder F A) l := by
+  refine @winProb_le_of_imp _ (F.keyFintype l) _ _ (fun k hk => ?_)
+  rw [Adversary.hit_eq_true] at hk ⊢
+  exact open_wins_imp F A l k hk
+
+/-- **⚑ RE-GROUNDED `HermineHintMLWE.commitment_binding` — from the commit hash's collision floor, VIA
+the reduction.** Under the collision floor at the class `Eff`, an equivocating opener whose extracted
+finder is in that class has NEGLIGIBLE advantage: a published commitment opens to ONE reveal except with
+negligible probability. The Boolean "two openings ⟹ equal", which needed the FALSE injective `HashCR`,
+becomes an honest advantage bound on a hypothesis a real commit hash can satisfy.
+
+`hEff` is a parameter here because this is the statement at an ARBITRARY class; §2b discharges it. -/
+theorem hermine_commitment_binding_advantage_bound (F : KeyedHashFamily)
+    (Eff : Adversary (hashGame F) → Prop) (A : Adversary (commitOpenGame F))
+    (hEff : Eff (openToFinder F A)) (hD : HashCRHardQuant F Eff) :
+    Negl (gameAdv (commitOpenGame F) A) :=
+  negl_of_le (fun l => (gameAdv_mem_unit (commitOpenGame F) A l).1)
+    (open_adv_le F A) (hD _ hEff)
+
+/-! ### §2b — `hEff` DISCHARGED at `Eff := IsPolyTime`.
+
+The extractor is a pure output reshaping with the sampled key passed through — an `Adversary.postMap` —
+so `isPolyTime_postMap` turns `hEff` into a consequence of "the opener is efficient". Because `F.Input`
+and `F.Out` are ABSTRACT here, the encoding is supplied as the family's own size measure `szIn`/`szOut`
+(a `KeyedHashFamily` carries no canonical one, and inventing a degenerate `sz := 0` would make the
+reduction's output free — `CostAdversary` design commitment 4). Everything else is derived: the extractor
+DISCARDS a field, so its growth constants are `(1, 0)` and no output-size hypothesis is needed at all. -/
+
+/-- **THE COLLISION GAME'S ANSWER ENCODING**, from the family's own input measure. -/
+def hashAnsSizeOf (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ) : AnsSize (hashGame F) :=
+  fun l (p : F.Input × F.Input) => szIn l p.1 + szIn l p.2
+
+/-- **THE OPENING GAME'S ANSWER ENCODING** — the published commitment plus the two reveals. -/
+def openAnsSizeOf (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ) (szOut : ℕ → F.Out → ℕ) :
+    AnsSize (commitOpenGame F) :=
+  fun l (p : F.Out × F.Input × F.Input) => szOut l p.1 + szIn l p.2.1 + szIn l p.2.2
+
+/-- **⚑ `hEff` DISCHARGED — the commit-opening binding with NO floating efficiency parameter.** An
+equivocating opener that is EFFICIENT at the game's own answer encoding, put through the extractor,
+yields a collision finder that is STILL efficient — so the collision floor at `Eff := IsPolyTime`
+applies to IT, and the published commitment binds except with negligible probability.
+
+What remains supplied is the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime, so that
+number is CHARGED in the program's syntax rather than derived — and the family's encoding `szIn`/`szOut`.
+No output-size hypothesis and no `PolyBoundedNat` overhead hypothesis are taken. -/
+theorem hermine_commitment_binding_from_polyTime (F : KeyedHashFamily)
+    (szIn : ℕ → F.Input → ℕ) (szOut : ℕ → F.Out → ℕ)
+    (A : Adversary (commitOpenGame F)) (hA : IsPolyTime (openAnsSizeOf F szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant F (IsPolyTime (hashAnsSizeOf F szIn))) :
+    Negl (gameAdv (commitOpenGame F) A) := by
+  have hEff : IsPolyTime (hashAnsSizeOf F szIn) (openToFinder F A) := by
+    poly_time (openAnsSizeOf F szIn szOut) (hashAnsSizeOf F szIn)
+      (fun _ _ (p : F.Out × F.Input × F.Input) => (p.2.1, p.2.2))
+      cw bw 1 0 hA
+    intro l k p
+    show szIn l p.2.1 + szIn l p.2.2 ≤ 1 * (szOut l p.1 + szIn l p.2.1 + szIn l p.2.2) + 0
+    omega
+  exact hermine_commitment_binding_advantage_bound F (IsPolyTime (hashAnsSizeOf F szIn)) A hEff hD
+
+/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** The constant finder that returns
+one fixed pair is in `IsPolyTime` whenever that pair's encoding is poly-size, which any family's own
+measure makes true of a FIXED answer. Together with `CostAdversary.bruteForce_not_polyTime` (the
+⊤-collapse witness is excluded) this pins the instantiated floor strictly between the two poles below. -/
+theorem hashFloorOf_isPolyTime_inhabited (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ)
+    (a₀ : ∀ l, F.Key l → F.Input × F.Input) (C k : ℕ)
+    (hsz : ∀ l (key : F.Key l), szIn l (a₀ l key).1 + szIn l (a₀ l key).2 ≤ C * l ^ k + C) :
+    IsPolyTime (hashAnsSizeOf F szIn)
+      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit) a₀).toAdversary :=
+  isPolyTime_inhabited _ _ ⟨C, k, hsz⟩
 
 /-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing family.)** At the unrestricted class the honest floor
-IS `CollisionResistant F` (`collisionResistant_iff_hashCRHardQuant_top`), which is FALSE for any compressing
-commit hash (`collisionResistant_false_of_compressing`). This is the price of `hEff`, stated as a theorem:
-the class cannot be left implicit, because the implicit `⊤` is the empty hypothesis the whole sweep exists
-to name. -/
+IS `CollisionResistant F` (`collisionResistant_iff_hashCRHardQuant_top`), which is FALSE for any
+compressing commit hash (`collisionResistant_false_of_compressing`). This is the price of restricting the
+class, stated as a theorem — and it is precisely why the DELETED bare-CR export bought nothing. -/
 theorem hermine_binding_eff_top_false_of_compressing {F : KeyedHashFamily} (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
     ¬ HashCRHardQuant F (fun _ => True) :=
@@ -193,24 +298,25 @@ theorem hermine_binding_eff_bot_vacuous {F : KeyedHashFamily} :
   hard_bot_vacuous _
 
 /-- **(CANARY — the keystone does NOT follow from the floor applied at another adversary.)** Strip the
-reduction — try to conclude the equivocator's negligibility from the floor applied at some OTHER adversary
-`B`, NOT the one extracted from the equivocator — and the proof does not go through: `hD B hB` bounds the
-game advantage of `B`, a DIFFERENT ensemble than `collisionAdv F equivocator`, and only
-`collisionAdv_eq_gameAdv` at the extracted finder connects them. -/
+reduction — try to conclude the opener's negligibility from the floor applied at some OTHER adversary
+`B`, NOT the one extracted from it — and the proof does not go through: `hD B hB` bounds the game
+advantage of `B`, a DIFFERENT ensemble, and only `open_adv_le` connects the extracted finder to the
+opening game. ⚑ Against the DELETED `_eff` export this tooth was unwritable, because hypothesis and
+conclusion were the same object. -/
 example {F : KeyedHashFamily} (Eff : Adversary (hashGame F) → Prop)
-    (equivocator : CollisionFinder F) (B : Adversary (hashGame F)) (hB : Eff B)
+    (A : Adversary (commitOpenGame F)) (B : Adversary (hashGame F)) (hB : Eff B)
     (hD : HashCRHardQuant F Eff) : True := by
   fail_if_success
-    (have : Negl (collisionAdv F equivocator) := hD B hB)
+    (have : Negl (gameAdv (commitOpenGame F) A) := hD B hB)
   trivial
 
 /-- **THE POSITIVE POLE — the RIGHT floor DOES discharge it.** With the floor at the EXTRACTED finder the
 keystone fires. A gate that refuses everything is a broken keystone, not a fixed one. -/
 theorem hermine_binding_eff_fires {F : KeyedHashFamily} (Eff : Adversary (hashGame F) → Prop)
-    (equivocator : CollisionFinder F) (hEff : Eff (finderToAdv equivocator))
+    (A : Adversary (commitOpenGame F)) (hEff : Eff (openToFinder F A))
     (hD : HashCRHardQuant F Eff) :
-    Negl (collisionAdv F equivocator) :=
-  hermine_commitment_binding_advantage_bound_eff Eff equivocator hEff hD
+    Negl (gameAdv (commitOpenGame F) A) :=
+  hermine_commitment_binding_advantage_bound F Eff A hEff hD
 
 /-! ## §3 — the concurrent forger, as a first-class λ-indexed game.
 
@@ -543,6 +649,79 @@ theorem cf_msis_floor_top_false_of_compressing (F : ConcurrentForgeryFamily)
     ¬ MSISHardQuant (cfMsisFamily F) (fun _ => True) :=
   msisHardQuant_top_false_of_compressing (cfMsisFamily F) hsolv
 
+/-! ## §6b — the concurrent forger's `hEff`/`hEffH` DISCHARGED at `Eff := IsPolyTime`.
+
+§4's keystone carries TWO bare efficiency parameters, one per horn. Both horns are pure output
+reshapings of the forger's claim with the sampled instance passed through (`Adversary.postMap`), so
+`isPolyTime_postMap` turns both into consequences of ONE hypothesis: the forger itself is efficient.
+
+⚑ **WHAT IS GENUINELY PER-SITE HERE, and why.** `ConcurrentForgeryFamily` is ALGEBRAIC — `M l`, `N l`,
+`Rq l` are abstract modules — so it carries no canonical encoding, and inventing a degenerate `sz := 0`
+would make both reductions' output free (`CostAdversary` design commitment 4). The encoding is therefore
+supplied as `szN`/`szRq`/`szM`, and the MSIS horn's growth is supplied as `houtM`: it SUBTRACTS, so its
+output is a DIFFERENCE, and "the encoding of a difference is no larger than the two encodings" is a
+property of the encoding, not something derivable from an abstract module. That is the one honest
+modelling input; the EQUIVOCATION horn needs none (it discards fields, growth `(1, 0)`, PROVED). -/
+
+/-- **THE FORGERY CLAIM'S ANSWER ENCODING**, from the family's own component measures: two reveals, two
+challenges, two responses. -/
+def cfClaimAnsSize (F : ConcurrentForgeryFamily) (szN : ∀ l, F.N l → ℕ) (szRq : ∀ l, F.Rq l → ℕ)
+    (szM : ∀ l, F.M l → ℕ) : AnsSize (concurrentForgeryGame F) :=
+  fun l (c : (F.N l × F.N l) × (F.Rq l × F.Rq l) × (F.M l × F.M l)) =>
+    (szN l c.1.1 + szN l c.1.2) + (szRq l c.2.1.1 + szRq l c.2.1.2) +
+      (szM l c.2.2.1 + szM l c.2.2.2)
+
+/-- **THE AUGMENTED MSIS GAME'S ANSWER ENCODING** — the augmented solution `(z, c)`. -/
+def cfMsisAnsSize (F : ConcurrentForgeryFamily) (szRq : ∀ l, F.Rq l → ℕ) (szM : ∀ l, F.M l → ℕ) :
+    AnsSize (msisGame (cfMsisFamily F)) :=
+  fun l (z : F.M l × F.Rq l) => szM l z.1 + szRq l z.2
+
+/-- **THE COMMIT-COLLISION GAME'S ANSWER ENCODING** — the two claimed reveals. -/
+def cfEquivAnsSize (F : ConcurrentForgeryFamily) (szN : ∀ l, F.N l → ℕ) :
+    AnsSize (cfEquivGame F) :=
+  fun l (p : F.N l × F.N l) => szN l p.1 + szN l p.2
+
+/-- **⚑ BOTH EFFICIENCY OBLIGATIONS DISCHARGED — the concurrent-forgery keystone at a class with
+content.** A rushing forger that is EFFICIENT at the game's own answer encoding, put through the
+subtraction extractor and the reveal extractor, yields an MSIS solver and a commit-collision finder that
+are STILL efficient — so the MSIS floor and the collision floor at `Eff := IsPolyTime` apply to THEM, and
+a concurrent double-claim has negligible advantage with no floating efficiency parameter.
+
+Per-site inputs: the two reshapers' declared work (a Lean `fun` has no runtime), the family's encoding
+`szN`/`szRq`/`szM`, and `houtM` (the difference-encoding growth). No `PolyBoundedNat` overhead hypothesis
+is taken: the composed overhead's poly-ness follows from the forger's own bound. -/
+theorem hermine_concurrent_forgery_from_polyTime (F : ConcurrentForgeryFamily)
+    (szN : ∀ l, F.N l → ℕ) (szRq : ∀ l, F.Rq l → ℕ) (szM : ∀ l, F.M l → ℕ)
+    (A : Adversary (concurrentForgeryGame F))
+    (hA : IsPolyTime (cfClaimAnsSize F szN szRq szM) A)
+    (cwM bwM coM boM cwE bwE : ℕ)
+    (houtM : ∀ l (i : F.Inst l) (c : (concurrentForgeryGame F).Ans l),
+      cfMsisAnsSize F szRq szM l
+          (letI := F.rqRing l; letI := F.mGrp l
+           ((c.2.2.1 - c.2.2.2, -(c.2.1.1 - c.2.1.2)) : (cfMsisFamily F).M l))
+        ≤ coM * cfClaimAnsSize F szN szRq szM l c + boM)
+    (hmsis : MSISHardQuant (cfMsisFamily F) (IsPolyTime (cfMsisAnsSize F szRq szM)))
+    (hcol : Hard (cfEquivGame F) (IsPolyTime (cfEquivAnsSize F szN))) :
+    Negl (gameAdv (concurrentForgeryGame F) A) := by
+  have hM : IsPolyTime (cfMsisAnsSize F szRq szM) (forgeryToMsisSolver F A) := by
+    poly_time (cfClaimAnsSize F szN szRq szM) (cfMsisAnsSize F szRq szM)
+      (fun l _ (c : (concurrentForgeryGame F).Ans l) =>
+        letI := F.rqRing l; letI := F.mGrp l
+        ((c.2.2.1 - c.2.2.2, -(c.2.1.1 - c.2.1.2)) : (cfMsisFamily F).M l))
+      cwM bwM coM boM hA
+    exact houtM
+  have hE : IsPolyTime (cfEquivAnsSize F szN) (forgeryToEquivFinder F A) := by
+    poly_time (cfClaimAnsSize F szN szRq szM) (cfEquivAnsSize F szN)
+      (fun l _ (c : (concurrentForgeryGame F).Ans l) => ((c.1.1, c.1.2) : (cfEquivGame F).Ans l))
+      cwE bwE 1 0 hA
+    intro l i c
+    show szN l c.1.1 + szN l c.1.2
+      ≤ 1 * ((szN l c.1.1 + szN l c.1.2) + (szRq l c.2.1.1 + szRq l c.2.1.2) +
+          (szM l c.2.2.1 + szM l c.2.2.2)) + 0
+    omega
+  exact hermine_concurrent_forgery_advantage_bound F
+    (IsPolyTime (cfMsisAnsSize F szRq szM)) (IsPolyTime (cfEquivAnsSize F szN)) A hM hE hmsis hcol
+
 /-! ## §7 — non-vacuity: the keyed collision floor is satisfiable AND load-bearing on Hermine
 commit-reveals (the HashCR-leg siblings, untouched by the repair). -/
 
@@ -582,8 +761,13 @@ theorem badCR_family_not_CR : ¬ CollisionResistant (commitRevealFamily badCR 5)
 
 #assert_all_clean [
   commitRevealFamily_CR_of_hashcr,
+  commitOpenGame_wins_iff,
+  open_wins_imp,
+  open_adv_le,
   hermine_commitment_binding_advantage_bound,
-  hermine_commitment_binding_advantage_bound_eff,
+  hermine_commitment_binding_from_polyTime,
+  hashFloorOf_isPolyTime_inhabited,
+  hermine_concurrent_forgery_from_polyTime,
   hermine_binding_eff_top_false_of_compressing,
   hermine_binding_eff_bot_vacuous,
   hermine_binding_eff_fires,

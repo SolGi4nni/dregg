@@ -35,9 +35,14 @@ use dreggnet_offerings::native_descent::{
     NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig, VerifyReport};
+use procgen_dregg::CommittedSeed;
+use procgen_dregg::beacon::DailyBeacon;
 
 const PORTABLE_FORMAT: &str = "dregg.native-descent.record";
-const PORTABLE_VERSION: u32 = 1;
+/// v2 carries `daySeedHex` — the run day-seed the session deployed on. v1 records did not, and
+/// could therefore only ever describe a seed-derived (pre-computable) day; there is no honest
+/// upgrade of one, so they are refused rather than silently re-pointed at another provenance.
+const PORTABLE_VERSION: u32 = 2;
 const MAX_PORTABLE_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
 // Kept as a local projection macro so this boundary does not gain a second direct dependency
@@ -78,6 +83,27 @@ impl NativeDescentWorld {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u32) -> Result<NativeDescentWorld, JsError> {
         Self::try_new(u64::from(seed)).map_err(|error| JsError::new(&error))
+    }
+
+    /// **Open a Descent whose banked relics mint under TODAY'S REVEALED DAY, verified in the
+    /// tab.** `round` + `signature_hex` are the day's fetched drand `quicknet` pair; this builds
+    /// the real [`DailyBeacon`], runs the BLS pairing check against the pinned group key
+    /// (`DailyBeacon::seed` verifies before it derives), and binds the run day-seed to it.
+    ///
+    /// This is the browser half of the same tooth [`crate::bindings_descent::DescentWorld::
+    /// from_beacon`] carries for the procgen daily: FAIL-CLOSED — a forged, mutated, or
+    /// wrong-round signature does not verify, so there is no world and no day. The ordinary
+    /// [`new`](Self::new) constructor is the seed-derived (reproducible, and therefore
+    /// PRE-COMPUTABLE) path, right for a practice world and wrong for a run whose relic ids are
+    /// supposed to be unpredictable until the round matures.
+    #[wasm_bindgen(js_name = fromBeacon)]
+    pub fn from_beacon(
+        seed: u32,
+        round: u64,
+        signature_hex: String,
+    ) -> Result<NativeDescentWorld, JsError> {
+        Self::try_from_beacon(u64::from(seed), round, &signature_hex)
+            .map_err(|error| JsError::new(&error))
     }
 
     /// Restore an untrusted portable record by exact re-execution.
@@ -180,7 +206,22 @@ impl NativeDescentWorld {
 
 impl NativeDescentWorld {
     fn try_new(seed: u64) -> Result<Self, String> {
-        let offering = NativeDescentOffering::new();
+        Self::open_with(NativeDescentOffering::new(), seed)
+    }
+
+    /// The fallible core of [`Self::from_beacon`] — `String` errors, wasm-bindgen-free, so the
+    /// fail-closed path is testable NATIVELY (constructing a `JsError` panics off-wasm).
+    fn try_from_beacon(seed: u64, round: u64, signature_hex: &str) -> Result<Self, String> {
+        let signature = decode_hex_vec(signature_hex)?;
+        let beacon = DailyBeacon::quicknet(round, signature);
+        // `seed()` runs the pairing check FIRST: a beacon that does not verify yields no day.
+        let day = beacon
+            .seed()
+            .map_err(|error| format!("beacon did not verify: {error:?}"))?;
+        Self::open_with(NativeDescentOffering::on_day(day), seed)
+    }
+
+    fn open_with(offering: NativeDescentOffering, seed: u64) -> Result<Self, String> {
         let session = offering
             .open(SessionConfig::with_seed(seed))
             .map_err(|error| error.to_string())?;
@@ -209,7 +250,18 @@ impl NativeDescentWorld {
 
         // Offering::open normalizes n as (n % 251) + 1. `seed - 1` therefore opens the
         // exact already-normalized seed carried by the portable record.
-        let mut world = Self::try_new(u64::from(expected.seed - 1))?;
+        //
+        // ⚑ PIN THE RECORD'S OWN DAY. Import re-opens and re-drives the tape, so the fresh
+        // session must deploy on the SAME run day-seed the record names, or its genesis root
+        // (which folds that seed in) — and therefore every chained event root and every banked
+        // note — disagrees. The day-seed is untrusted like the rest of the record: it is not
+        // believed, it is what the replay is DONE UNDER, and the byte-for-byte envelope
+        // comparison below is what accepts or rejects the whole thing.
+        let day_seed = CommittedSeed::from_bytes(decode_hex_32(&expected.day_seed_hex)?);
+        let mut world = Self::open_with(
+            NativeDescentOffering::on_run_day_seed(day_seed),
+            u64::from(expected.seed - 1),
+        )?;
         for event in &expected.events {
             let input = Action::new(&event.turn, &event.turn, event.arg, true);
             match world.offering.advance(
@@ -369,6 +421,11 @@ struct PortableRecord {
     format: String,
     version: u32,
     seed: u8,
+    /// **The run day-seed the session deployed on** — the provenance root its banked relics
+    /// mint under, folded into the genesis journal root. Carried because import RE-OPENS a
+    /// fresh session and re-drives the tape: without it a beacon-bound run would be replayed
+    /// against the seed-derived root and nothing (genesis, chain, notes) would re-derive.
+    day_seed_hex: String,
     actor: Option<String>,
     events: Vec<PortableEvent>,
     root_hex: String,
@@ -382,6 +439,7 @@ impl PortableRecord {
             format: PORTABLE_FORMAT.to_string(),
             version: PORTABLE_VERSION,
             seed: record.seed,
+            day_seed_hex: hex(record.day_seed.as_bytes()),
             actor: record
                 .actor
                 .as_ref()
@@ -509,6 +567,26 @@ fn verify_wire(report: VerifyReport) -> serde_json::Value {
 
 fn hex(bytes: &[u8]) -> String {
     crate::bindings::hex_encode(bytes)
+}
+
+/// Decode a 32-byte value from hex (a run day-seed). Fail-closed on bad hex or wrong length.
+fn decode_hex_32(text: &str) -> Result<[u8; 32], String> {
+    decode_hex_vec(text)?
+        .try_into()
+        .map_err(|_| "expected exactly 32 bytes (64 hex chars)".to_string())
+}
+
+/// Decode a byte vector from hex (a drand signature). Accepts an optional `0x` prefix; rejects
+/// odd length / non-hex digits (fail-closed).
+fn decode_hex_vec(text: &str) -> Result<Vec<u8>, String> {
+    let text = text.strip_prefix("0x").unwrap_or(text);
+    if text.len() % 2 != 0 {
+        return Err("hex string has an odd number of digits".to_string());
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|e| e.to_string()))
+        .collect()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

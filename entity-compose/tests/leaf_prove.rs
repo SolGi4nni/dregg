@@ -10,7 +10,7 @@
 //!   cargo test -p dregg-entity-compose --features prove --test leaf_prove -- --ignored --nocapture
 #![cfg(feature = "prove")]
 
-use dregg_entity_compose::{compose_onto, deploy_entity, door_felt8};
+use dregg_entity_compose::{compose_onto, deploy_entity, door_felt8, entity_key};
 use dregg_param_compose::air::{Forgery, build, build_forged};
 use dregg_param_compose::model::{Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
@@ -70,7 +70,7 @@ fn entity_composition_leaf_proves_and_binds_its_commitment() {
     use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
     use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
 
     let old8 = door_felt8(&landed.old_commitment);
@@ -116,7 +116,7 @@ fn a_wrong_entity_outcome_does_not_prove() {
     use dregg_circuit_prove::custom_leaf_adapter::prove_custom_leaf_with_commitment;
     use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
     let old8 = door_felt8(&landed.old_commitment);
     let new8 = door_felt8(&landed.new_commitment);

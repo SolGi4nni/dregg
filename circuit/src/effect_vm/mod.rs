@@ -166,6 +166,11 @@
 // re-exports below (no path changes needed).
 
 pub mod columns;
+/// THE E1 DELETION GEOMETRY (Epoch-1 SECOND flag-day) — Lean-emitted per-member kill-set of dead
+/// v1-face columns (POST-S2 half-open runs, `deadColsE1 M 90`); the producer's
+/// `trace_rotated::compact_e1_columns` drops exactly the columns the Lean emit deleted, AFTER
+/// `compact_s2_columns`. Same law as `layout_generated` / `s2_compact_generated`: never hand-edit.
+pub mod e1_compact_generated;
 /// The rotated column layout, EXPORTED FROM LEAN (`metatheory/EmitLayoutManifest.lean`) and
 /// installed by the ack-gated emit pipeline. Lean defines this geometry and emits the constraint
 /// descriptors that READ these columns; the Rust producer WRITES them. Both now read one source.

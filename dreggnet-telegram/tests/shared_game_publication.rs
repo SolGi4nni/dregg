@@ -74,6 +74,10 @@ fn shared_projection_refuses_private_or_cross_game_objects_before_formatting() {
 
 #[test]
 fn a_real_bound_game_turn_populates_the_same_public_status_projection() {
+    // The Descent registers against the LIVE verified drand day and refuses to open without
+    // one; publish the pinned PUBLISHED round (a genuine BLS-verifiable reveal) for this
+    // network-free drive.
+    dreggnet_catalog::publish_pinned_descent_day().expect("the pinned published round verifies");
     let mut host = TelegramHost::new(BOT_SECRET, MockTransport::new(), &[PLAYER]);
     let chat = -90_402;
     host.open("descent", chat, None, PLAYER)

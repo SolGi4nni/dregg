@@ -1330,7 +1330,8 @@ pub fn try_durable_telegram_host_with_private_bazaar(
     deployment: &dreggnet_catalog::PrivateBazaarLiveDeployment,
 ) -> Result<OfferingHost, String> {
     let host = dreggnet_catalog::full_catalog_host_with_private_bazaar(
-        &dreggnet_catalog::CatalogConfig::with_council_members(council_members),
+        // Live day binding, as `telegram_default_host` — see `host::arm_todays_descent_day`.
+        &dreggnet_catalog::CatalogConfig::live(council_members),
         deployment,
     );
     attach_durable_telegram_store(host, &dir).map_err(|(_, error)| error)

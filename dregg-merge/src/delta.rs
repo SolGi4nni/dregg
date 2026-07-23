@@ -20,7 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A 32-byte content commitment — the same width as the read face's MMR leaves
-/// (`dregg_query::mmr`) and the kernel receipt hash (`b"dregg-receipt-v4"`).
+/// (`dregg_query::mmr`) and the kernel receipt hash (`b"dregg-receipt-v5"`).
 pub type Hash = [u8; 32];
 
 /// The kind of operation a delta carries — the datum the [`crate::gate`] reads

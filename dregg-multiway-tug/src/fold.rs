@@ -50,7 +50,7 @@ use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_circuit_prove::ivc_turn_chain::prove_turn_chain_recursive;
 use dregg_circuit_prove::ivc_turn_chain::{FinalizedTurn, ir2_leaf_wrap_config};
 use dregg_circuit_prove::joint_turn_aggregation::{
-    CustomWitnessBundle, DescriptorParticipant, RotatedParticipantLeg,
+    CustomWitnessBundle, DescriptorParticipant, DescriptorStateLeafSource, RotatedParticipantLeg,
 };
 use dregg_turn::rotation_witness as rw;
 use game_turn_slice::compiler::{
@@ -80,6 +80,12 @@ pub struct LeafBundle {
     pub witness_values: std::collections::HashMap<String, Vec<BabyBear>>,
     pub num_rows: usize,
     pub public_inputs: Vec<BabyBear>,
+    /// **THE STEP-CUTOVER OPT-IN.** `None` = the fold mints this leaf by lowering `program` (the
+    /// deployed default for membership / win leaves). `Some(src)` = a state-binding custom leaf
+    /// whose sub-proof is a PROVEN Lean descriptor + retained trace — the fold proves the
+    /// Lean-authored AIR directly (see [`DescriptorStateLeafSource`]). Carried into the leg's
+    /// [`CustomWitnessBundle`] by [`mint_turn`]; only the automatafl D1 leaf sets it today.
+    pub descriptor_state_leaf: Option<DescriptorStateLeafSource>,
 }
 
 impl From<LoweredMembership> for LeafBundle {
@@ -89,6 +95,7 @@ impl From<LoweredMembership> for LeafBundle {
             witness_values: l.witness_values,
             num_rows: l.num_rows,
             public_inputs: l.public_inputs,
+            descriptor_state_leaf: None,
         }
     }
 }
@@ -169,6 +176,7 @@ pub fn membership_leaf_bound(
     public_inputs.extend_from_slice(&base.public_inputs);
     Ok(LeafBundle {
         program: CellProgram::new(merkle_descriptor_with_state_prefix(), 1),
+        descriptor_state_leaf: None,
         witness_values: base.witness_values,
         num_rows: base.num_rows,
         public_inputs,
@@ -369,7 +377,7 @@ pub fn cell_rotated_roots(cell: &Cell) -> ([BabyBear; 8], [BabyBear; 8]) {
 /// commitment IS `custom_proof_pi_commitment(bundle.public_inputs)` (the honest binding), and
 /// the re-provable membership/teeth witness is retained prover-side.
 fn mint_turn(bundle: &LeafBundle, nonce: u64) -> FinalizedTurn {
-    let balance = 1000i64;
+    let balance = MATCH_LEG_BALANCE;
     let commit = custom_proof_pi_commitment(&bundle.public_inputs);
     let cwb = CustomWitnessBundle {
         program: bundle.program.clone(),
@@ -377,6 +385,8 @@ fn mint_turn(bundle: &LeafBundle, nonce: u64) -> FinalizedTurn {
         num_rows: bundle.num_rows,
         public_inputs: bundle.public_inputs.clone(),
         app_root_binding: None,
+        // Carry the STEP-cutover descriptor source (if any) so the fold proves the Lean AIR.
+        descriptor_state_leaf: bundle.descriptor_state_leaf.clone(),
     };
     let leg = mint_custom_leg(balance, nonce, commit, Some(cwb));
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
@@ -431,6 +441,7 @@ fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
         witness_values: win.witness_values.clone(),
         num_rows: win.num_rows,
         public_inputs: win.public_inputs.clone(),
+        descriptor_state_leaf: None,
         app_root_binding: Some(
             dregg_circuit::effect_vm::custom_state_binding::AppRootBinding {
                 app_root_pi_offset,
@@ -485,6 +496,32 @@ pub fn cell_wire_commit8(cell: &Cell) -> [BabyBear; 8] {
 /// minted over. Exposed so a canary can assert a real game cell's commitment is NOT this.
 pub fn fixture_wire_commit8() -> [BabyBear; 8] {
     cell_wire_commit8(&producer_cell(1000, 0))
+}
+
+/// The balance every [`mint_turn`] leg is minted at — the ONE number a leaf builder needs to
+/// reproduce the leg's rotated roots.
+pub const MATCH_LEG_BALANCE: i64 = 1000;
+
+/// **THE FIXTURE LEG'S ROTATED ROOTS at a chain position.** The wide 8-felt anchors
+/// `(wide_old_root8, wide_new_root8)` of the leg [`build_match_turns`] mints for leaf `nonce`.
+///
+/// A state-binding leaf must publish EXACTLY these at PI[0..16] or the deployed state node's
+/// second tooth (`claimed [old8 ‖ new8] == the leg's REAL roots`) is a `connect` conflict ⇒ UNSAT.
+/// A leaf builder that fills the door with a constant placeholder therefore has no satisfying
+/// fold at all — which is why this is exposed rather than left for each game to rediscover.
+///
+/// (The leg is still the `pk[0]=7` FIXTURE, not a real WorldCell — the named residual on this
+/// path. What this pins is that the leaf's door agrees with whatever leg the fold actually mints.)
+pub fn fixture_rotated_roots(nonce: u64) -> ([BabyBear; 8], [BabyBear; 8]) {
+    let probe = mint_custom_leg(MATCH_LEG_BALANCE, nonce, [BabyBear::ZERO; 8], None);
+    (
+        probe
+            .wide_old_root8()
+            .expect("the custom wide leg is wide-anchored"),
+        probe
+            .wide_new_root8()
+            .expect("the custom wide leg is wide-anchored"),
+    )
 }
 
 /// **THE WIN LEAF WELDED TO THE REAL CELL.** The terminal win/score leaf, publishing
@@ -542,6 +579,7 @@ pub fn win_leaf_bound(
         witness_values,
         num_rows: 4,
         public_inputs,
+        descriptor_state_leaf: None,
     }
 }
 
@@ -593,6 +631,7 @@ fn mint_win_turn_state_node_canary(cell: &Cell, win: &LeafBundle) -> FinalizedTu
         num_rows: win.num_rows,
         public_inputs: win.public_inputs.clone(),
         app_root_binding: None,
+        descriptor_state_leaf: None,
     };
     let after = nonce_bumped(cell);
     let leg = cell_custom_leg(cell, &after, commit, Some(cwb));
@@ -643,6 +682,7 @@ fn mint_membership_turn_over_cell(cell: &Cell, leaf: &LeafBundle) -> FinalizedTu
         num_rows: leaf.num_rows,
         public_inputs: leaf.public_inputs.clone(),
         app_root_binding: None,
+        descriptor_state_leaf: None,
     };
     let after = nonce_bumped(cell);
     let leg = cell_custom_leg(cell, &after, commit, Some(cwb));

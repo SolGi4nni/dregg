@@ -34,8 +34,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dregg_narrator::{
-    BudgetLedger, ConverseBackend, ConverseRequest, ConverseResponse, DEFAULT_MODEL, ModelRegistry,
-    NarratorError, OpenAiCompatClient, ToolDef, metered_converse,
+    AttestationSummary, BudgetLedger, ConverseBackend, ConverseRequest, ConverseResponse,
+    DEFAULT_MODEL, ModelRegistry, NarratorError, OpenAiCompatClient, ToolDef, metered_converse,
 };
 use dregg_pay::{
     AccountFetcher, ChainId, CreditLedger, CreditOutcome, CreditStore, DepositAddress,
@@ -164,6 +164,13 @@ pub enum PaidNarratorProvider {
     Bedrock,
     /// Bittensor inference through Chutes' OpenAI-compatible endpoint.
     Chutes,
+    /// Bittensor inference through Chutes inside a **DCAP-verified Intel TDX enclave**: the
+    /// request is ML-KEM-768-encapsulated to an `e2e_pubkey` bound into a quote checked against
+    /// the pinned measurement registry, and the reply is decrypted with an ephemeral key only
+    /// this process holds. Strictly stronger provenance than [`Self::Chutes`] — what it buys is
+    /// confidentiality plus the code identity of the SERVING enclave, NOT any claim about the
+    /// weights or the sampled tokens.
+    ChutesTee,
     /// Another operator-configured OpenAI-compatible endpoint.
     OpenAiCompatible,
 }
@@ -174,19 +181,30 @@ impl PaidNarratorProvider {
         match self {
             Self::Bedrock => "bedrock",
             Self::Chutes => "chutes",
+            Self::ChutesTee => "chutes-tee",
             Self::OpenAiCompatible => "openai-compatible",
         }
     }
 
     /// Chutes is allowed to drive the typed Dungeon seam only after the player invokes its
     /// explicit confirmed action. It must never be selected by an automatic room-presentation
-    /// fallback merely because a player happens to own a credit.
+    /// fallback merely because a player happens to own a credit. Attestation does not relax
+    /// that: it is the same third-party inference, so the attested backend opts in the same way.
     pub const fn requires_explicit_game_opt_in(self) -> bool {
-        matches!(self, Self::Chutes)
+        matches!(self, Self::Chutes | Self::ChutesTee)
+    }
+
+    /// Chutes-FAMILY provenance — plain Chutes or the attested TDX backend. Both are Bittensor
+    /// inference through Chutes; the attested one additionally proves which enclave served it,
+    /// so every surface that admits the plain provider admits the attested one. Used by the
+    /// explicit `/dungeon chutes` seam so enabling attestation never silently removes it.
+    pub const fn is_chutes(self) -> bool {
+        matches!(self, Self::Chutes | Self::ChutesTee)
     }
 }
 
-/// A produced paid narration + the honest kind of what produced it and what it cost.
+/// A produced paid narration + the honest kind of what produced it, what it cost, and — when the
+/// backend ran a real attestation — the [`AttestationSummary`] that covered the call.
 #[derive(Clone, Debug)]
 pub struct PaidNarration {
     /// The narration text.
@@ -199,12 +217,31 @@ pub struct PaidNarration {
     pub kind: String,
     /// The USD the per-run ledger recorded for this call (post true-up).
     pub usd_spent: f64,
+    /// The TEE attestation the backend verified for THIS call, when it verified one. Private for
+    /// the same reason as `provider` — it is trusted provenance a display surface must never be
+    /// able to mint — and read through [`Self::attestation`].
+    attestation: Option<AttestationSummary>,
 }
 
 impl PaidNarration {
     /// The trusted provider identity assigned before the model call from operator configuration.
     pub const fn provider(&self) -> PaidNarratorProvider {
         self.provider
+    }
+
+    /// The TEE attestation that covered this narration, when the backend verified one — today
+    /// only the DCAP-verifying `ChutesTeeBackend` fills it in.
+    ///
+    /// **What it establishes:** WHERE the text was produced — inside an enclave whose folded code
+    /// identity is `measurement`, accepted at `tcb_status`, with `quote_sha256` the handle onto
+    /// the full quote the backend still holds (`ChutesTeeBackend::last_attestation`). It says
+    /// NOTHING about whether the prose is true, good, or authoritative over game state; the
+    /// executor remains the sole authority over the world either way.
+    ///
+    /// `None` is the honest default and means exactly "this narration carries no attestation" —
+    /// never "attestation passed". A receipt lane binding a `tee_provenance` digest reads it here.
+    pub fn attestation(&self) -> Option<&AttestationSummary> {
+        self.attestation.as_ref()
     }
 }
 
@@ -214,8 +251,9 @@ impl PaidNarration {
 /// a mock [`ConverseBackend`], so the whole gate is driven with no network call and no spend.
 ///
 /// `Clone` (all fields are cheaply clonable — the backend is an `Arc`) so the live `/dungeon` path
-/// can move it into [`tokio::task::spawn_blocking`]: both the Bedrock and OpenAI-compatible clients
-/// are blocking backends and must not run on a bot async worker.
+/// can move it into [`tokio::task::spawn_blocking`]: the Bedrock, OpenAI-compatible and attested
+/// TDX clients are all blocking backends and must not run on a bot async worker. (The attested one
+/// additionally does its discovery + DCAP verification inline on the first turn of a TTL window.)
 #[derive(Clone)]
 pub struct PaidNarrator {
     backend: Arc<dyn ConverseBackend + Send + Sync>,
@@ -337,6 +375,11 @@ impl PaidNarrator {
             provider: self.provider,
             kind: format!("{}:{}", self.provider.kind_prefix(), self.model),
             usd_spent,
+            // CARRY the backend's attestation instead of dropping it: an attesting backend
+            // (`ChutesTeeBackend`, post-DCAP) fills this in and every other backend leaves it
+            // `None`. Nothing here can manufacture one — the value is whatever the backend
+            // verified, or nothing.
+            attestation: resp.attestation,
         })
     }
 }
@@ -1452,47 +1495,135 @@ fn devnet_mock_config(bot_secret: &[u8; 32]) -> PayConfig {
     cfg
 }
 
-/// Wire the paid narrator to a hosted backend when one appears configured, using a per-run USD
-/// budget. The provider follows `DREGG_NARRATOR`: `chutes`/`openai` uses the OpenAI-compatible
-/// endpoint (Chutes / Bittensor — `DREGG_NARRATOR_ENDPOINT` + `DREGG_NARRATOR_API_KEY` +
-/// `DREGG_NARRATOR_MODEL`); `bedrock` (or AWS creds present) uses Bedrock; when unset, an explicit
-/// `DREGG_NARRATOR_ENDPOINT` selects the OpenAI path. Returns `None` when no hosted backend is
-/// available (paid runs then fall back to the free tier).
+/// WHICH hosted backend the operator environment names — a PURE function of that environment
+/// (see [`select_narrator`]), separated from actually building it so the fail-closed dispatch is
+/// testable without mutating the process environment or touching a network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NarratorSelection {
+    /// `DREGG_NARRATOR=chutes-tee` — the ATTESTED TDX backend, and nothing else. This selection
+    /// is terminal: if the attested backend cannot be built, the answer is NO narrator (the run
+    /// falls to the free tier). It never degrades to an unattested endpoint, whatever else the
+    /// environment also happens to carry.
+    ChutesTee,
+    /// An OpenAI-compatible endpoint under the given (trusted, configuration-derived) label.
+    OpenAi(PaidNarratorProvider),
+    /// AWS Bedrock.
+    Bedrock,
+    /// No hosted backend — paid runs fall back to the free tier.
+    None,
+}
+
+/// Resolve the operator's narrator choice from `var` (production: `std::env::var(_).ok()`).
 ///
-/// NOTE on the OpenAI/Chutes path: the model's price must be pinned via
+/// `DREGG_NARRATOR` is authoritative when set to a known value: `chutes-tee` → the attested TDX
+/// backend; `chutes`/`openai` → the OpenAI-compatible endpoint; `bedrock` → Bedrock;
+/// `ollama`/`scripted`/`none` → no paid backend. Only when it is unset (or unrecognized) does
+/// the environment get sniffed: an explicit `DREGG_NARRATOR_ENDPOINT` selects the OpenAI path,
+/// else AWS credentials select Bedrock, else nothing.
+///
+/// The point of the `chutes-tee` arm being FIRST and terminal: an environment that also carries
+/// `DREGG_NARRATOR_ENDPOINT` and AWS credentials (the ordinary shape of a box that used to run
+/// an unattested narrator) must not be able to produce an unattested backend once the operator
+/// asked for the attested one.
+fn select_narrator(var: impl Fn(&str) -> Option<String>) -> NarratorSelection {
+    match var("DREGG_NARRATOR").as_deref() {
+        Some("chutes-tee") => NarratorSelection::ChutesTee,
+        Some("chutes") => NarratorSelection::OpenAi(PaidNarratorProvider::Chutes),
+        Some("openai") => NarratorSelection::OpenAi(PaidNarratorProvider::OpenAiCompatible),
+        Some("bedrock") => NarratorSelection::Bedrock,
+        Some("ollama") | Some("scripted") | Some("none") => NarratorSelection::None,
+        _ => match var("DREGG_NARRATOR_ENDPOINT") {
+            // Unset (or unrecognized): an explicit OpenAI endpoint selects that path, labelled
+            // by the endpoint itself (only the real Chutes DNS zone earns the Chutes label).
+            Some(endpoint) => NarratorSelection::OpenAi(openai_provider_for_endpoint(&endpoint)),
+            None => {
+                if var("AWS_ACCESS_KEY_ID").is_some() || var("AWS_PROFILE").is_some() {
+                    NarratorSelection::Bedrock
+                } else {
+                    NarratorSelection::None
+                }
+            }
+        },
+    }
+}
+
+/// Wire the paid narrator to a hosted backend when one appears configured, using a per-run USD
+/// budget. The provider follows `DREGG_NARRATOR` — see [`select_narrator`]. Returns `None` when no
+/// hosted backend is available (paid runs then fall back to the free tier).
+///
+/// NOTE on the OpenAI/Chutes paths (attested or not): the model's price must be pinned via
 /// `DREGG_NARRATOR_PRICE_INPUT_PER_1K` / `_OUTPUT_PER_1K` (a Chutes catalog rate), or the metered
 /// layer refuses the (unpriced) model and the run falls back to the free tier — fail-closed, never
-/// an uncapped spend.
+/// an uncapped spend. A `-TEE` chute is priced per token like any other chute, so it needs that
+/// operator override too.
 fn build_paid_narrator() -> Option<PaidNarrator> {
-    let (backend, model, provider) = match std::env::var("DREGG_NARRATOR").as_deref() {
-        Ok("chutes") => {
-            let (backend, model) = openai_paid_backend()?;
-            (backend, model, PaidNarratorProvider::Chutes)
+    let selection = select_narrator(|key| std::env::var(key).ok());
+    paid_narrator_from(selection, &BackendBuilders::from_env())
+}
+
+/// A hosted backend + the model id it serves.
+type PaidBackend = (Arc<dyn ConverseBackend + Send + Sync>, String);
+
+/// The three hosted-backend constructors, INJECTABLE on purpose: a test hands in an attested
+/// builder that refuses together with unattested builders that would happily succeed, and asserts
+/// that nothing unattested comes out. Without that seam "it does not fall back" is only readable,
+/// never falsifiable — the unattested constructors would simply fail for want of configuration in
+/// the test process, and a real fallback would look identical to none.
+struct BackendBuilders<'a> {
+    /// The ATTESTED TDX backend. Fallible with a reason (never a silent `None`).
+    tee: &'a dyn Fn() -> Result<PaidBackend, String>,
+    /// The plain OpenAI-compatible endpoint (Chutes / any operator endpoint). UNATTESTED.
+    openai: &'a dyn Fn() -> Option<PaidBackend>,
+    /// AWS Bedrock. UNATTESTED.
+    bedrock: &'a dyn Fn() -> Option<PaidBackend>,
+}
+
+impl BackendBuilders<'static> {
+    /// The production builders, each reading the operator environment.
+    fn from_env() -> BackendBuilders<'static> {
+        static TEE: fn() -> Result<PaidBackend, String> = chutes_tee_paid_backend;
+        static OPENAI: fn() -> Option<PaidBackend> = openai_paid_backend;
+        static BEDROCK: fn() -> Option<PaidBackend> = bedrock_paid_backend;
+        BackendBuilders {
+            tee: &TEE,
+            openai: &OPENAI,
+            bedrock: &BEDROCK,
         }
-        Ok("openai") => {
-            let (backend, model) = openai_paid_backend()?;
-            (backend, model, PaidNarratorProvider::OpenAiCompatible)
-        }
-        Ok("bedrock") => {
-            let (backend, model) = bedrock_paid_backend()?;
-            (backend, model, PaidNarratorProvider::Bedrock)
-        }
-        Ok("ollama") | Ok("scripted") | Ok("none") => return None,
-        _ => {
-            // Unset (or unrecognized): an explicit OpenAI endpoint selects that path; else AWS
-            // credentials select Bedrock; else no paid backend.
-            if std::env::var_os("DREGG_NARRATOR_ENDPOINT").is_some() {
-                let (backend, model) = openai_paid_backend()?;
-                (backend, model, configured_openai_provider())
-            } else if std::env::var_os("AWS_ACCESS_KEY_ID").is_some()
-                || std::env::var_os("AWS_PROFILE").is_some()
-            {
-                let (backend, model) = bedrock_paid_backend()?;
-                (backend, model, PaidNarratorProvider::Bedrock)
-            } else {
+    }
+}
+
+/// Build the narrator a [`NarratorSelection`] names from `builders`.
+///
+/// **FAIL-CLOSED.** The [`NarratorSelection::ChutesTee`] arm has exactly two outcomes: the
+/// attested backend, or `None`. It never consults `builders.openai` / `builders.bedrock` — a
+/// missing key, a missing `-TEE` model id, an unreachable measurement registry or a refused
+/// attestation all mean the operator gets NO narration rather than UNATTESTED narration.
+fn paid_narrator_from(
+    selection: NarratorSelection,
+    builders: &BackendBuilders<'_>,
+) -> Option<PaidNarrator> {
+    let (backend, model, provider) = match selection {
+        NarratorSelection::ChutesTee => match (builders.tee)() {
+            Ok((backend, model)) => (backend, model, PaidNarratorProvider::ChutesTee),
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "DREGG_NARRATOR=chutes-tee: the ATTESTED narrator could not be built. \
+                     Refusing to narrate rather than falling back to an unattested endpoint — \
+                     paid runs use the free tier until the attestation configuration is fixed."
+                );
                 return None;
             }
+        },
+        NarratorSelection::OpenAi(provider) => {
+            let (backend, model) = (builders.openai)()?;
+            (backend, model, provider)
         }
+        NarratorSelection::Bedrock => {
+            let (backend, model) = (builders.bedrock)()?;
+            (backend, model, PaidNarratorProvider::Bedrock)
+        }
+        NarratorSelection::None => return None,
     };
 
     let usd_per_run = std::env::var("DREGG_NARRATOR_USD_PER_RUN")
@@ -1511,22 +1642,6 @@ fn build_paid_narrator() -> Option<PaidNarrator> {
         )
         .with_provider(provider),
     )
-}
-
-/// Infer only the well-known Chutes endpoint when the generic OpenAI path was selected implicitly.
-/// Any other endpoint keeps the honest generic label. This reads trusted operator configuration;
-/// provider response text is never consulted.
-fn configured_openai_provider() -> PaidNarratorProvider {
-    let is_chutes = std::env::var("DREGG_NARRATOR_ENDPOINT")
-        .ok()
-        .is_some_and(|endpoint| {
-            openai_provider_for_endpoint(&endpoint) == PaidNarratorProvider::Chutes
-        });
-    if is_chutes {
-        PaidNarratorProvider::Chutes
-    } else {
-        PaidNarratorProvider::OpenAiCompatible
-    }
 }
 
 /// Classify only the exact Chutes DNS zone. A lookalike host such as
@@ -1551,6 +1666,32 @@ fn openai_paid_backend() -> Option<(Arc<dyn ConverseBackend + Send + Sync>, Stri
         .ok()
         .filter(|m| !m.trim().is_empty())?;
     Some((Arc::new(client), model))
+}
+
+/// The ATTESTED paid backend + its model id: a [`dregg_chutes_e2ee::ChutesTeeBackend`] whose
+/// inference runs inside a DCAP-verified Intel TDX enclave.
+///
+/// This hands back the RAW backend (not the crate's composed `Narrator`) on purpose —
+/// [`PaidNarrator`] must wrap the backend itself so every call rides its per-run USD ledger
+/// (reserve → call → true-up), exactly like the Bedrock and OpenAI-compatible paths.
+///
+/// `Err` carries the actionable reason from [`dregg_chutes_e2ee::TeeNarratorEnv`] (no
+/// `DREGG_NARRATOR_MODEL`, no Chutes key, no measurement registry, no DCAP collateral, an empty
+/// accepted-TCB list, …). The caller turns that into NO narrator; nothing here can degrade into
+/// an unattested client.
+fn chutes_tee_paid_backend() -> Result<PaidBackend, String> {
+    let env = dregg_chutes_e2ee::TeeNarratorEnv::from_env()?;
+    let model = env.model.clone();
+    let ttl_secs = env.ttl_secs;
+    let backend = env.build_backend()?;
+    tracing::info!(
+        model = %model,
+        attestation_ttl_secs = ttl_secs,
+        "Paid narrator: ATTESTED Chutes TDX backend selected (DCAP-verified enclave, \
+         ML-KEM-768 end-to-end encrypted). A failed attestation refuses the turn — it never \
+         falls through to a plain endpoint."
+    );
+    Ok((Arc::new(backend), model))
 }
 
 /// The Bedrock paid backend + its model id (a single `DREGG_NARRATOR_MODEL`, else the default).
@@ -1609,6 +1750,7 @@ mod tests {
                 stop_reason: "end_turn".to_string(),
                 input_tokens: self.input_tokens,
                 output_tokens: self.output_tokens,
+                attestation: None,
             })
         }
     }
@@ -1684,6 +1826,7 @@ mod tests {
                     stop_reason: "tool_calls".to_string(),
                     input_tokens: 19,
                     output_tokens: 7,
+                    attestation: None,
                 })
             }
         }
@@ -1727,6 +1870,298 @@ mod tests {
             openai_provider_for_endpoint("https://llm.chutes.ai.example.test/v1"),
             PaidNarratorProvider::OpenAiCompatible,
             "a lookalike endpoint cannot acquire the Chutes label"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // THE ATTESTED NARRATOR (`DREGG_NARRATOR=chutes-tee`) — fail-closed.
+    //
+    // These drive [`select_narrator`] / [`paid_narrator_from`] with injected
+    // environments and injected constructors, so the property is decided offline:
+    // no process env is mutated (which would race the other tests in this binary)
+    // and no attestation, network call or spend happens.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// A canned backend for a named model — the thing a constructor hands back. `reply` names
+    /// itself so a leaked fallback is visible in the failure message rather than anonymous.
+    fn mock_paid_backend(reply: &str, model: &str) -> PaidBackend {
+        (
+            Arc::new(MockBackend {
+                reply: reply.to_string(),
+                input_tokens: 12,
+                output_tokens: 9,
+            }),
+            model.to_string(),
+        )
+    }
+
+    /// **THE FAIL-CLOSED GATE.** `DREGG_NARRATOR=chutes-tee` in exactly the environment a
+    /// "helpful" fallback would exploit: the box ALSO still carries an unattested OpenAI
+    /// endpoint, its API key, a plain (non-`-TEE`) model id AND AWS credentials — every
+    /// ingredient the other two paths need. The attested constructor REFUSES (the shape of a
+    /// missing measurement registry, or a quote that does not match the pinned one), while the
+    /// two unattested constructors are wired to SUCCEED. A fallback of any kind therefore hands
+    /// back `Some(...)` tagged Chutes/OpenAiCompatible/Bedrock; the only admissible answer is no
+    /// narrator at all, so paid runs drop to the free tier.
+    #[test]
+    fn attested_narrator_never_falls_back_to_an_unattested_backend() {
+        let adversarial = |key: &str| match key {
+            "DREGG_NARRATOR" => Some("chutes-tee".to_string()),
+            "DREGG_NARRATOR_ENDPOINT" => Some("https://llm.chutes.ai/v1".to_string()),
+            "DREGG_NARRATOR_API_KEY" => Some("cpk_unattested_key".to_string()),
+            "DREGG_NARRATOR_MODEL" => Some("deepseek-ai/DeepSeek-V3-0324".to_string()),
+            "AWS_ACCESS_KEY_ID" => Some("AKIAUNATTESTEDEXAMPLE".to_string()),
+            "AWS_PROFILE" => Some("default".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            select_narrator(adversarial),
+            NarratorSelection::ChutesTee,
+            "an endpoint + AWS credentials must not out-vote an explicit attested selection"
+        );
+
+        let unattested_calls = AtomicU64::new(0);
+        let unattested = || -> Option<PaidBackend> {
+            unattested_calls.fetch_add(1, Ordering::SeqCst);
+            Some(mock_paid_backend(
+                "UNATTESTED prose from a plain endpoint.",
+                CLAUDE_HAIKU_4_5,
+            ))
+        };
+        let refused = || -> Result<PaidBackend, String> {
+            Err(
+                "chutes-tee: attestation failed, NO inference attempted: ATTESTATION REFUSED \
+                 (measurement not in the pinned registry)"
+                    .to_string(),
+            )
+        };
+        let builders = BackendBuilders {
+            tee: &refused,
+            openai: &unattested,
+            bedrock: &unattested,
+        };
+
+        let narrator = paid_narrator_from(NarratorSelection::ChutesTee, &builders);
+        assert!(
+            narrator.is_none(),
+            "a refused attestation produced a {:?} narrator instead of refusing",
+            narrator.map(|n| n.provider())
+        );
+        assert_eq!(
+            unattested_calls.load(Ordering::SeqCst),
+            0,
+            "the unattested constructors were not merely rejected — they were never consulted"
+        );
+    }
+
+    /// The attested backend is wrapped in the SAME metered [`PaidNarrator`] as every other
+    /// provider (per-run USD ledger: reserve → call → true-up), under its own non-spoofable
+    /// label. It is the raw backend that is wrapped, not a pre-composed narrator, which is what
+    /// keeps the ledger in the loop.
+    #[test]
+    fn attested_backend_rides_the_per_run_usd_ledger_under_its_own_label() {
+        // A priced model id so the metered layer admits the call — the unpriced `-TEE` case is
+        // its own test below.
+        let attested = || -> Result<PaidBackend, String> {
+            Ok(mock_paid_backend(
+                "The torchlight fails at the stair.",
+                CLAUDE_HAIKU_4_5,
+            ))
+        };
+        let never = || -> Option<PaidBackend> {
+            panic!("the attested arm consulted an UNATTESTED constructor");
+        };
+        let builders = BackendBuilders {
+            tee: &attested,
+            openai: &never,
+            bedrock: &never,
+        };
+        let paid = paid_narrator_from(NarratorSelection::ChutesTee, &builders)
+            .expect("a successful attestation yields the attested narrator");
+
+        assert_eq!(paid.provider(), PaidNarratorProvider::ChutesTee);
+        assert!(
+            paid.provider().is_chutes(),
+            "attested Chutes is still Chutes-family provenance for the explicit /dungeon seam"
+        );
+        assert!(
+            paid.provider().requires_explicit_game_opt_in(),
+            "attestation does not relax the explicit opt-in for the typed dungeon seam"
+        );
+
+        let narration = paid.narrate("system", "room").expect("usable prose");
+        assert_eq!(
+            narration.provider(),
+            PaidNarratorProvider::ChutesTee,
+            "model text cannot spoof the provider tag"
+        );
+        assert_eq!(narration.kind, format!("chutes-tee:{CLAUDE_HAIKU_4_5}"));
+        assert!(
+            narration.usd_spent > 0.0,
+            "the attested call was metered by the per-run ledger, not waved through"
+        );
+    }
+
+    /// **The attestation is CARRIED, not dropped.** The backend hands the verified summary back on
+    /// the `ConverseResponse`; [`PaidNarrator::narrate`] must put it on the [`PaidNarration`] the
+    /// caller sees, byte for byte, so a receipt lane can bind `quote_sha256` and a footer can name
+    /// the enclave. The companion half is just as load-bearing: a backend that attested NOTHING
+    /// must yield `None` — the accessor may never be a place a narration acquires provenance it
+    /// was not given.
+    #[test]
+    fn a_verified_attestation_reaches_the_caller_and_an_unattested_call_carries_none() {
+        /// A backend that answers with a canned attestation — the shape `ChutesTeeBackend`
+        /// returns after a real DCAP verification (`narrator_backend::summarize`).
+        struct AttestingBackend {
+            summary: AttestationSummary,
+        }
+        impl ConverseBackend for AttestingBackend {
+            fn converse(&self, _req: &ConverseRequest) -> Result<ConverseResponse, String> {
+                Ok(ConverseResponse {
+                    text: "The stair gives under salt water.".to_string(),
+                    tool_calls: Vec::new(),
+                    stop_reason: "end_turn".to_string(),
+                    input_tokens: 11,
+                    output_tokens: 9,
+                    attestation: Some(self.summary.clone()),
+                })
+            }
+        }
+
+        let summary = AttestationSummary {
+            instance_id: "inst-7f".to_string(),
+            measurement: [0xA5; 32],
+            tcb_status: "UpToDate".to_string(),
+            quote_sha256: [0x3C; 32],
+            quote_len: 4_782,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let paid = PaidNarrator::new(
+            Arc::new(AttestingBackend {
+                summary: summary.clone(),
+            }),
+            ModelRegistry::builtin(),
+            CLAUDE_HAIKU_4_5,
+            0.05,
+            64,
+            tmp.path().to_path_buf(),
+        )
+        .with_provider(PaidNarratorProvider::ChutesTee);
+
+        let narration = paid.narrate("system", "room").expect("usable prose");
+        assert_eq!(
+            narration.attestation(),
+            Some(&summary),
+            "the verified attestation must reach the caller unchanged, not be dropped"
+        );
+        // The receipt lane's handle: the quote digest + the enclave's measurement.
+        assert_eq!(
+            narration
+                .attestation()
+                .map(dregg_narrator::AttestationSummary::quote_sha256_hex),
+            Some("3c".repeat(32)),
+            "the quote digest a receipt binds is reachable from the narration"
+        );
+
+        // The other half: an ordinary backend attests nothing, so the narration says nothing.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let plain = PaidNarrator::new(
+            Arc::new(MockBackend {
+                reply: "The torchlight fails at the stair.".to_string(),
+                input_tokens: 10,
+                output_tokens: 8,
+            }),
+            ModelRegistry::builtin(),
+            CLAUDE_HAIKU_4_5,
+            0.05,
+            64,
+            tmp2.path().to_path_buf(),
+        )
+        .with_provider(PaidNarratorProvider::Chutes);
+        assert!(
+            plain
+                .narrate("system", "room")
+                .unwrap()
+                .attestation()
+                .is_none(),
+            "an unattested backend must never yield an attestation"
+        );
+    }
+
+    /// A `-TEE` chute is priced per token like any other chute, and NOTHING in the registry
+    /// knows its rate — so without the operator's `DREGG_NARRATOR_PRICE_*_PER_1K` pin the
+    /// metered layer refuses it before any call. Attestation buys enclave identity, never a
+    /// waiver on the budget gate.
+    #[test]
+    fn an_unpriced_tee_model_is_refused_before_the_attested_call() {
+        let attested = || -> Result<PaidBackend, String> {
+            Ok(mock_paid_backend(
+                "should never be reached",
+                "dregg-test/attested-unpriced-TEE",
+            ))
+        };
+        let never = || -> Option<PaidBackend> { panic!("unattested constructor consulted") };
+        let builders = BackendBuilders {
+            tee: &attested,
+            openai: &never,
+            bedrock: &never,
+        };
+        let paid = paid_narrator_from(NarratorSelection::ChutesTee, &builders).expect("narrator");
+        let err = paid
+            .narrate("system", "room")
+            .expect_err("an unpriced model must be refused");
+        assert!(
+            matches!(err, NarratorError::UnpricedModel { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// The rest of the dispatch is unchanged by the new arm — the sniffing fallbacks still only
+    /// apply when `DREGG_NARRATOR` names nothing known.
+    #[test]
+    fn narrator_selection_covers_the_operator_surface() {
+        let only = |name: &'static str, value: &'static str| {
+            move |key: &str| (key == name).then(|| value.to_string())
+        };
+        assert_eq!(
+            select_narrator(only("DREGG_NARRATOR", "chutes")),
+            NarratorSelection::OpenAi(PaidNarratorProvider::Chutes)
+        );
+        assert_eq!(
+            select_narrator(only("DREGG_NARRATOR", "openai")),
+            NarratorSelection::OpenAi(PaidNarratorProvider::OpenAiCompatible)
+        );
+        assert_eq!(
+            select_narrator(only("DREGG_NARRATOR", "bedrock")),
+            NarratorSelection::Bedrock
+        );
+        for free in ["ollama", "scripted", "none"] {
+            let var = |key: &str| (key == "DREGG_NARRATOR").then(|| free.to_string());
+            assert_eq!(select_narrator(var), NarratorSelection::None);
+        }
+        // Nothing configured at all.
+        assert_eq!(select_narrator(|_: &str| None), NarratorSelection::None);
+        // Unset `DREGG_NARRATOR`: an explicit endpoint selects the OpenAI path, labelled by the
+        // endpoint; AWS credentials alone select Bedrock.
+        assert_eq!(
+            select_narrator(only("DREGG_NARRATOR_ENDPOINT", "https://llm.chutes.ai/v1")),
+            NarratorSelection::OpenAi(PaidNarratorProvider::Chutes)
+        );
+        assert_eq!(
+            select_narrator(only(
+                "DREGG_NARRATOR_ENDPOINT",
+                "https://vllm.example.test/v1"
+            )),
+            NarratorSelection::OpenAi(PaidNarratorProvider::OpenAiCompatible)
+        );
+        assert_eq!(
+            select_narrator(only("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")),
+            NarratorSelection::Bedrock
+        );
+        // An unrecognized value falls through to the sniffing path, exactly as before.
+        assert_eq!(
+            select_narrator(|key: &str| (key == "DREGG_NARRATOR").then(|| "wat".to_string())),
+            NarratorSelection::None
         );
     }
 

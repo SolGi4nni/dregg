@@ -23,7 +23,7 @@
 //!     Provenance + the consumed-cap MerkleTree + a Trace of its own hash absorb).
 //!   * The verifier [`Gadget`]s (read-only — `Output = ReceiptVerification`):
 //!       - [`ChainLinkageVerifier`] — recomputes every `receipt_hash()` and the
-//!         back-links (the real `dregg-receipt-v4` commitment; reused, not faked).
+//!         back-links (the real `dregg-receipt-v5` commitment; reused, not faked).
 //!       - [`ConsumedCapVerifier`] — runs the real
 //!         [`dregg_turn::ConsumedCapWitness::verify`] (the cap-membership fold).
 //!       - [`MmrRangeVerifier`] — the positional-range / non-omission check over
@@ -475,7 +475,7 @@ impl ReflectedReceiptChain {
 
     /// The chain-linkage [`TraceView`]: step-by-step, each step recomputes
     /// `receipt[i].receipt_hash()` and checks `receipt[i+1].previous_receipt_hash`
-    /// matches it (the real `dregg-receipt-v4` linkage). A break is surfaced in
+    /// matches it (the real `dregg-receipt-v5` linkage). A break is surfaced in
     /// the step text (never swallowed).
     pub fn linkage_trace(&self) -> TraceView {
         let mut steps = Vec::new();
@@ -652,7 +652,7 @@ impl ReflectedReceipt {
     }
 
     /// The receipt's own hash-absorb [`TraceView`]: the ordered components the
-    /// `dregg-receipt-v4` commitment binds (turn/forest/pre/post-state/…), the
+    /// `dregg-receipt-v5` commitment binds (turn/forest/pre/post-state/…), the
     /// "what the receipt_hash absorbs" face.
     pub fn absorb_trace(&self) -> TraceView {
         let r = &self.receipt;
@@ -771,7 +771,7 @@ impl ReceiptVerification {
 }
 
 /// **Q-Chain Verifier** — recomputes every receipt's `receipt_hash()` (the real
-/// `dregg-receipt-v4` commitment) and checks each receipt's
+/// `dregg-receipt-v5` commitment) and checks each receipt's
 /// `previous_receipt_hash` matches its predecessor's recomputed hash. A tampered
 /// receipt (any field touched) breaks its hash, so the NEXT receipt's back-link
 /// no longer matches — the tamper is flagged at the break. Reuses the real
@@ -1304,7 +1304,7 @@ mod tests {
         let chain = ReflectedReceiptChain::from_world(&w);
 
         // The Trace presentation has one step per receipt; each non-head step's
-        // back-link matches its predecessor (the real dregg-receipt-v4 linkage).
+        // back-link matches its predecessor (the real dregg-receipt-v5 linkage).
         let trace = chain.linkage_trace();
         assert_eq!(trace.steps.len(), 3);
         assert!(trace

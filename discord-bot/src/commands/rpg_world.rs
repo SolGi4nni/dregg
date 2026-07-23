@@ -340,7 +340,11 @@ fn seam() -> &'static HostSeam {
             .spawn(move || {
                 let mut hosts: HostMap = HashMap::new();
                 while let Ok(job) = rx.recv() {
-                    job(&mut hosts);
+                    // Structural net: a panicking job is contained per-job by `run`, and this
+                    // guard guarantees no job can unwind out of the loop and kill the host thread
+                    // (which would brick every player's persistent world for the process lifetime).
+                    let _ =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut hosts)));
                 }
             })
             .expect("spawn the rpg-worlds host thread");
@@ -348,16 +352,36 @@ fn seam() -> &'static HostSeam {
     })
 }
 
-/// Run `f` against the host map on the owning thread and hand back its result.
-fn run<R: Send + 'static>(f: impl FnOnce(&mut HostMap) -> R + Send + 'static) -> R {
-    let (tx, rx) = sync_channel::<R>(1);
+/// Why a host-thread job did not return a value. Both cases used to abort the caller with a
+/// panic; now a panicking job is contained (the host thread survives) and the fault is returned
+/// to the ONE caller, which degrades gracefully.
+#[derive(Debug)]
+enum StoreError {
+    /// The host thread's channel is closed — it never spawned, or has gone away unrecoverably.
+    ThreadGone,
+    /// This job panicked; the panic was contained on the host thread, which survives.
+    JobPanicked,
+}
+
+/// Run `f` against the host map on the owning thread and hand back its result. A panic inside `f`
+/// is caught on the host thread and returned to THIS caller as [`StoreError::JobPanicked`]; the
+/// thread lives on to serve the next job. The happy path is unchanged.
+fn run<R: Send + 'static>(
+    f: impl FnOnce(&mut HostMap) -> R + Send + 'static,
+) -> Result<R, StoreError> {
+    let (tx, rx) = sync_channel::<std::thread::Result<R>>(1);
     seam()
         .jobs
         .send(Box::new(move |hosts| {
-            let _ = tx.send(f(hosts));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(hosts)));
+            let _ = tx.send(result);
         }))
-        .expect("the rpg-worlds host thread is alive");
-    rx.recv().expect("the rpg-worlds host thread answered")
+        .map_err(|_| StoreError::ThreadGone)?;
+    match rx.recv() {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_panic)) => Err(StoreError::JobPanicked),
+        Err(_) => Err(StoreError::ThreadGone),
+    }
 }
 
 /// Run `f` against `player`'s host, building it first if this is the player's first touch since
@@ -368,7 +392,7 @@ fn with_player_host<R: Send + 'static>(
     handle: tokio::runtime::Handle,
     player: String,
     f: impl FnOnce(&mut OfferingHost, &DreggIdentity) -> R + Send + 'static,
-) -> R {
+) -> Result<R, StoreError> {
     run(move |hosts| {
         let viewer = DreggIdentity(player.clone());
         let host = hosts.entry(player.clone()).or_insert_with(|| {
@@ -385,9 +409,9 @@ fn with_player_host<R: Send + 'static>(
 #[allow(dead_code)]
 pub fn evict_player_host(player: &str) {
     let player = player.to_string();
-    run(move |hosts| {
+    let _ = run(move |hosts| {
         hosts.remove(&player);
-    })
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -489,6 +513,12 @@ fn open_core(
             surface: surface_from_host(host, &key, viewer),
         }
     })
+    .unwrap_or_else(|_| RpgSurface {
+        note: "**The world service is temporarily unavailable.** Nothing was opened or reset — \
+               your persisted record is untouched; try again in a moment."
+            .to_string(),
+        surface: None,
+    })
 }
 
 /// **Drive one press as one real turn in the PRESSER's own world** (ensure-open first, so a
@@ -541,6 +571,12 @@ fn press_core(
     with_player_host(db, handle, player, move |host, viewer| {
         press_host_at(host, viewer, key, stamp, turn, arg)
     })
+    .unwrap_or_else(|_| RpgSurface {
+        note: "**The world service is temporarily unavailable.** Nothing was fired — try again \
+               in a moment."
+            .to_string(),
+        surface: None,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -581,6 +617,8 @@ fn verify_core(
     with_player_host(db, handle, player, move |host, _viewer| {
         host.verify(&key, &session_id())
     })
+    .ok()
+    .flatten()
 }
 
 /// Route `/play <rpg-key> action:verify` — re-verify the chain of the INVOKER's persistent
@@ -705,6 +743,26 @@ mod tests {
 
     fn me() -> DreggIdentity {
         DreggIdentity(format!("aa{}", "0".repeat(62)))
+    }
+
+    /// **Panic isolation**: a job that panics on the rpg-worlds host thread does NOT brick the
+    /// subsystem. Before this hardening a panicking job killed the host thread and every later
+    /// press/verify panicked at `send`/`recv`'s `.expect`; now the panic is contained (this caller
+    /// gets a clean `Err`) and a subsequent job on the same host thread still succeeds. (An
+    /// expected contained "panicked at 'rpg-panic-isolation-canary'" line on stderr is the point.)
+    #[test]
+    fn a_panicking_job_does_not_brick_the_host_thread() {
+        let panicked: Result<(), StoreError> = run(|_hosts| panic!("rpg-panic-isolation-canary"));
+        assert!(
+            panicked.is_err(),
+            "a panicking job must return an Err, not abort the caller"
+        );
+        // The host thread SURVIVED: the next job still answers.
+        let count = run(|hosts| hosts.len());
+        assert!(
+            count.is_ok(),
+            "the host thread must survive a panicking job and keep serving"
+        );
     }
 
     fn view_text(surface: &Surface) -> String {

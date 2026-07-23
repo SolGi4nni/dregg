@@ -36,12 +36,27 @@
 //! A TDX quote carries **no timestamp**, so there is no wall-clock freshness to check in
 //! the trait entry ([`TdxVerifier::verify_report`] passes `SystemTime::now()` only to
 //! bound the PCK-chain / collateral validity windows). Freshness instead rides in
-//! `report_data`: Chutes binds `report_data[0..32] = SHA-256(nonce ‖ instance_e2e_ml_kem_pubkey)`
-//! with a **fresh, per-request `nonce` supplied by the caller** and the instance's
-//! 1184-byte ML-KEM-768 end-to-end public key. [`TdxVerifier::verify_chutes_tdx`] recomputes
-//! that binding and refuses any quote whose `report_data` does not match — so a captured
-//! quote cannot be replayed against a new request, because the new request carries a nonce
-//! the old quote never bound. This is the TDX half of the replay fix.
+//! `report_data`. Chutes binds, **exactly** (chutes-api `api/instance/util.py:1086-1088`,
+//! `api/server/util.py`):
+//!
+//! ```text
+//! report_data[0..32] == SHA-256( ascii(nonce_hex_string) ‖ ascii(e2e_pubkey_base64_string) )
+//! ```
+//!
+//! where `nonce_hex_string` is the **64-character hex** attestation nonce the caller chose
+//! (`hashlib.sha256((nonce + e2e_pubkey).encode())…`) and `e2e_pubkey_base64_string` is the
+//! instance's ML-KEM-768 public key **base64 string exactly as returned by discovery**
+//! (`instance.extra["e2e_pubkey"]`) — NOT the raw 1184 key bytes. The enclave writes the raw
+//! 32-byte SHA-256 into `report_data[0..32]`; the API hex-encodes the full 64-byte
+//! `report_data` (`quote.py:129` `td_report[520:584].hex().upper()`) and compares its first
+//! 64 hex chars (`extract_nonce` = `report_data[:64].lower()`) against
+//! `sha256(...).hexdigest().lower()`. At the raw-byte level this is precisely
+//! `report_data[0..32] == sha256(ascii-concat)`, which is what we recompute here.
+//! (`report_data[32..64]` separately binds the enclave TLS cert public-key hash — checked
+//! server-side, not here.) [`TdxVerifier::verify_chutes_tdx`] recomputes the nonce/pubkey
+//! binding and refuses any quote whose `report_data` does not match — so a captured quote
+//! cannot be replayed against a new request, because the new request carries a nonce the old
+//! quote never bound. This is the TDX half of the replay fix.
 
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -138,19 +153,31 @@ pub fn fold_tdx_measurement(
     h.finalize().into()
 }
 
-/// The Chutes `report_data` binding: `SHA-256(nonce ‖ e2e_pubkey)` (nonce FIRST, then the
-/// ML-KEM-768 public key). The enclave computed this into `report_data[0..32]`; the
-/// verifier recomputes it and requires equality — the replay-kill.
-pub fn chutes_report_data_binding(nonce: &[u8], e2e_pubkey: &[u8]) -> [u8; 32] {
+/// The Chutes `report_data` binding: `SHA-256( ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64) )`.
+///
+/// **Both arguments are the ASCII STRINGS Chutes concatenates**, not raw bytes:
+/// `nonce_hex` is the 64-char hex attestation-nonce string and `e2e_pubkey_b64` is the
+/// base64 ML-KEM-768 public-key string exactly as discovery returns it. This matches
+/// chutes-api byte-for-byte (`hashlib.sha256((nonce + e2e_pubkey).encode()).hexdigest()`,
+/// `api/instance/util.py:1086-1088`) — the enclave writes the raw 32-byte digest into
+/// `report_data[0..32]`, so the verifier recomputes it and requires equality (the
+/// replay-kill). Hashing the *strings* (not the decoded key bytes) is the interop-critical
+/// point: a verifier that hashed the raw 1184 key bytes would reject every real quote.
+pub fn chutes_report_data_binding(nonce_hex: &str, e2e_pubkey_b64: &str) -> [u8; 32] {
     let mut h = Sha256::new();
-    h.update(nonce);
-    h.update(e2e_pubkey);
+    h.update(nonce_hex.as_bytes());
+    h.update(e2e_pubkey_b64.as_bytes());
     h.finalize().into()
 }
 
-/// Expected Chutes ML-KEM-768 end-to-end public-key length (bytes). Bound into the nonce
-/// commitment; a wrong length is refused (fail-closed) rather than silently hashed.
+/// Expected Chutes ML-KEM-768 end-to-end public-key length in RAW bytes (after base64
+/// decoding). The binding hashes the base64 STRING, but as a fail-closed sanity check the
+/// base64 must decode to exactly this many bytes (a well-formed ML-KEM-768 key).
 pub const ML_KEM_768_PUBKEY_LEN: usize = 1184;
+
+/// Length of the Chutes attestation nonce as a hex string (64 hex chars = 32 bytes), per
+/// chutes-api `validate_user_nonce` (`api/server/util.py`).
+pub const CHUTES_NONCE_HEX_LEN: usize = 64;
 
 /// The Intel TDX (DCAP) attestation verifier. Holds the Intel-signed **collateral**
 /// (`QuoteCollateralV3`: PCK CRL chain, root CRL, TCB info + signature, QE identity +
@@ -265,19 +292,20 @@ impl TdxVerifier {
     }
 
     /// **The Chutes replay-safe verify.** Runs [`Self::verify_tdx_core`] at wall-clock now,
-    /// then binds the result to the caller's fresh `nonce` + the instance `e2e_pubkey`
-    /// (killing replay) and to the expected registry `expected` measurements. Returns the
-    /// folded [`TeeReportClaims`] (`tcb_ok` rides in the claims; the weld enforces it).
+    /// then binds the result to the caller's fresh `nonce_hex` (64-char hex string) + the
+    /// instance `e2e_pubkey_b64` (the base64 pubkey string from discovery), killing replay,
+    /// and to the expected registry `expected` measurements. Returns the folded
+    /// [`TeeReportClaims`] (`tcb_ok` rides in the claims; the weld enforces it).
     pub fn verify_chutes_tdx(
         &self,
         quote: &[u8],
-        nonce: &[u8],
-        e2e_pubkey: &[u8],
+        nonce_hex: &str,
+        e2e_pubkey_b64: &str,
         expected: &ChutesMeasurements,
     ) -> Result<TeeReportClaims, String> {
         let now = now_secs();
         let rep = self.verify_tdx_core(quote, now)?;
-        apply_chutes_bindings(&rep, nonce, e2e_pubkey, expected)
+        apply_chutes_bindings(&rep, nonce_hex, e2e_pubkey_b64, expected)
     }
 }
 
@@ -303,30 +331,51 @@ impl TeeAttestationVerifier for TdxVerifier {
 /// is the exact security-critical logic [`TdxVerifier::verify_chutes_tdx`] applies after
 /// the crypto core; exposed so it is unit-testable in isolation from the DCAP crypto.
 ///
-/// Fail-closed: an empty nonce, a wrong-length pubkey, a `report_data` that does not equal
-/// `SHA-256(nonce ‖ pubkey)`, or any measurement mismatch (`MRTD`, `RTMR0..2`; RTMR3 is
-/// NOT checked) is an `Err`. `tcb_ok` is passed through into the returned claims.
+/// Fail-closed: an empty or non-64-hex nonce string, a base64 pubkey that does not decode to
+/// exactly 1184 ML-KEM-768 bytes, a `report_data` that does not equal
+/// `SHA-256(ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64))`, or any measurement mismatch (`MRTD`,
+/// `RTMR0..2`; RTMR3 is NOT checked) is an `Err`. `tcb_ok` is passed through into the
+/// returned claims.
+///
+/// `nonce_hex` is the 64-char hex attestation-nonce string; `e2e_pubkey_b64` is the base64
+/// pubkey string discovery returns. Both are hashed **as ASCII strings** (see
+/// [`chutes_report_data_binding`]).
 pub fn apply_chutes_bindings(
     rep: &TdxVerifiedReport,
-    nonce: &[u8],
-    e2e_pubkey: &[u8],
+    nonce_hex: &str,
+    e2e_pubkey_b64: &str,
     expected: &ChutesMeasurements,
 ) -> Result<TeeReportClaims, String> {
+    use base64::Engine;
+
     // (a) Nonce binding — the replay-kill. A fresh per-request nonce means a captured
-    //     quote cannot satisfy this for a new request.
-    if nonce.is_empty() {
-        return Err("Chutes nonce is empty (a fresh per-request nonce is required)".into());
+    //     quote cannot satisfy this for a new request. The nonce is a 64-char hex string
+    //     (32 bytes), matching chutes-api `validate_user_nonce`.
+    if nonce_hex.is_empty() {
+        return Err("Chutes nonce is empty (a fresh 64-hex-char nonce is required)".into());
     }
-    if e2e_pubkey.len() != ML_KEM_768_PUBKEY_LEN {
+    if nonce_hex.len() != CHUTES_NONCE_HEX_LEN || !nonce_hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return Err(format!(
-            "Chutes e2e pubkey must be {ML_KEM_768_PUBKEY_LEN} bytes (ML-KEM-768), got {}",
-            e2e_pubkey.len()
+            "Chutes nonce must be a {CHUTES_NONCE_HEX_LEN}-char hex string (32 bytes), got {} chars",
+            nonce_hex.len()
         ));
     }
-    let want_rd = chutes_report_data_binding(nonce, e2e_pubkey);
+    // The binding hashes the base64 STRING; as a fail-closed sanity check the string must
+    // base64-decode to a well-formed 1184-byte ML-KEM-768 key. (We still HASH the string.)
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(e2e_pubkey_b64)
+        .map_err(|e| format!("Chutes e2e pubkey is not valid base64: {e}"))?;
+    if decoded.len() != ML_KEM_768_PUBKEY_LEN {
+        return Err(format!(
+            "Chutes e2e pubkey must base64-decode to {ML_KEM_768_PUBKEY_LEN} bytes (ML-KEM-768), got {}",
+            decoded.len()
+        ));
+    }
+    let want_rd = chutes_report_data_binding(nonce_hex, e2e_pubkey_b64);
     if rep.report_data_32() != want_rd {
         return Err(
-            "report_data is not SHA-256(nonce ‖ e2e_pubkey): replayed or unbound quote".into(),
+            "report_data is not SHA-256(ascii(nonce_hex) ‖ ascii(e2e_pubkey_b64)): replayed or unbound quote".into(),
         );
     }
 
@@ -602,17 +651,33 @@ mod tests {
         assert_ne!(m1, fold_tdx_measurement(&a, &b, &c2, &d));
     }
 
+    use base64::Engine as _;
+
+    /// A well-formed 1184-byte ML-KEM-768 public key, base64-encoded (STANDARD), from a
+    /// deterministic byte pattern — so `apply_chutes_bindings`' base64/length sanity gate
+    /// passes and we exercise the real string-hash path.
+    fn valid_pubkey_b64(seed: u8) -> String {
+        let bytes: Vec<u8> = (0..ML_KEM_768_PUBKEY_LEN)
+            .map(|i| ((i as u32).wrapping_mul(37).wrapping_add(11 + seed as u32) % 256) as u8)
+            .collect();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// A valid 64-char hex nonce string.
+    const NONCE_HEX_A: &str = "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    const NONCE_HEX_B: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
     /// Build a synthetic verified report whose `report_data[0..32]` is the Chutes binding.
     fn synth_report(
-        nonce: &[u8],
-        pubkey: &[u8],
+        nonce_hex: &str,
+        pubkey_b64: &str,
         mrtd: [u8; MR_LEN],
         r0: [u8; MR_LEN],
         r1: [u8; MR_LEN],
         r2: [u8; MR_LEN],
     ) -> TdxVerifiedReport {
         let mut rd = [0u8; 64];
-        rd[..32].copy_from_slice(&chutes_report_data_binding(nonce, pubkey));
+        rd[..32].copy_from_slice(&chutes_report_data_binding(nonce_hex, pubkey_b64));
         // Non-zero second half, mirroring a real Chutes quote.
         for (i, b) in rd[32..].iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(7).wrapping_add(1);
@@ -650,8 +715,8 @@ mod tests {
 
     #[test]
     fn nonce_binding_accepts_matching_and_rejects_tamper() {
-        let nonce = b"fresh-per-request-nonce-0001";
-        let pubkey = vec![0x5Au8; ML_KEM_768_PUBKEY_LEN];
+        let nonce = NONCE_HEX_A;
+        let pubkey = valid_pubkey_b64(0);
         let mrtd = [0x11u8; MR_LEN];
         let r0 = [0x22u8; MR_LEN];
         let r1 = [0x33u8; MR_LEN];
@@ -666,26 +731,76 @@ mod tests {
         assert_eq!(claims.measurement, rep.measurement);
         assert!(claims.tcb_ok);
 
-        // Tampered nonce → reject (this is the replay-kill: a captured quote bound the OLD
-        // nonce, so a new request's nonce does not match).
-        assert!(apply_chutes_bindings(&rep, b"different-nonce", &pubkey, &expected).is_err());
+        // Tampered nonce (different valid 64-hex) → reject (the replay-kill: a captured quote
+        // bound the OLD nonce, so a new request's nonce does not match).
+        assert!(apply_chutes_bindings(&rep, NONCE_HEX_B, &pubkey, &expected).is_err());
 
         // Tampered pubkey (same length, different bytes) → reject.
-        let mut bad_pk = pubkey.clone();
-        bad_pk[0] ^= 0xFF;
+        let bad_pk = valid_pubkey_b64(1);
         assert!(apply_chutes_bindings(&rep, nonce, &bad_pk, &expected).is_err());
 
-        // Wrong-length pubkey → reject (fail-closed on malformed input).
-        assert!(apply_chutes_bindings(&rep, nonce, &[0u8; 32], &expected).is_err());
+        // Non-64-hex nonce → reject (fail-closed on malformed input).
+        assert!(apply_chutes_bindings(&rep, "deadbeef", &pubkey, &expected).is_err());
+        assert!(apply_chutes_bindings(&rep, "zz".repeat(32).as_str(), &pubkey, &expected).is_err());
+
+        // Base64 that decodes to the wrong length → reject.
+        let short_pk = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        assert!(apply_chutes_bindings(&rep, nonce, &short_pk, &expected).is_err());
+        // Non-base64 pubkey → reject.
+        assert!(apply_chutes_bindings(&rep, nonce, "not valid base64 !!!", &expected).is_err());
 
         // Empty nonce → reject.
-        assert!(apply_chutes_bindings(&rep, b"", &pubkey, &expected).is_err());
+        assert!(apply_chutes_bindings(&rep, "", &pubkey, &expected).is_err());
+    }
+
+    /// Known-answer test: the binding is byte-for-byte the value chutes-api computes
+    /// (`hashlib.sha256((nonce + e2e_pubkey).encode()).digest()`). The two expected digests
+    /// below were produced by Python `hashlib` over the SAME inputs (see the lane's KAT
+    /// derivation). This is the cross-implementation check that we hash the STRINGS the
+    /// Chutes way, and it locks the encoding so a future refactor to raw-byte hashing fails
+    /// loudly.
+    #[test]
+    fn report_data_binding_matches_chutes_python_kat() {
+        // (a) chutes-api's own unit-test vector (TEST_GPU_NONCE + "dGVzdF9lMmVfcHVia2V5").
+        //     Tests the pure binding function (this short pubkey is not a real 1184-byte key,
+        //     so it exercises the formula, not the gate).
+        let want_short =
+            hex::decode("21a8d04d2de30e7f43a4e76dc8ad397f253d9a788652f005e1f07761c6d14991")
+                .unwrap();
+        assert_eq!(
+            chutes_report_data_binding(NONCE_HEX_A, "dGVzdF9lMmVfcHVia2V5").to_vec(),
+            want_short,
+            "binding must equal Python sha256((nonce + e2e_pubkey).encode()) for the chutes vector"
+        );
+
+        // (b) a realistic 1184-byte ML-KEM-768 pubkey (bytes (i*37+11)%256), base64 STANDARD.
+        //     valid_pubkey_b64(0) reproduces exactly those bytes, so its digest must equal the
+        //     Python-computed one — and it passes the full gate.
+        let pubkey = valid_pubkey_b64(0);
+        let want_real =
+            hex::decode("a0d271a97bba0245602ba9fd2523226770d33921323d5db07fa5fb95e30da5b3")
+                .unwrap();
+        assert_eq!(
+            chutes_report_data_binding(NONCE_HEX_A, &pubkey).to_vec(),
+            want_real,
+            "binding for the realistic 1184-byte key must match the Python KAT"
+        );
+
+        // And the full verify path accepts a report carrying exactly that digest.
+        let mrtd = [0x11u8; MR_LEN];
+        let r0 = [0x22u8; MR_LEN];
+        let r1 = [0x33u8; MR_LEN];
+        let r2 = [0x44u8; MR_LEN];
+        let rep = synth_report(NONCE_HEX_A, &pubkey, mrtd, r0, r1, r2);
+        assert_eq!(rep.report_data_32().to_vec(), want_real);
+        let expected = expected_entry(mrtd, r0, r1, r2);
+        assert!(apply_chutes_bindings(&rep, NONCE_HEX_A, &pubkey, &expected).is_ok());
     }
 
     #[test]
     fn measurement_mismatch_rejects() {
-        let nonce = b"nonce-xyz";
-        let pubkey = vec![0x01u8; ML_KEM_768_PUBKEY_LEN];
+        let nonce = NONCE_HEX_B;
+        let pubkey = valid_pubkey_b64(2);
         let mrtd = [0x11u8; MR_LEN];
         let r0 = [0x22u8; MR_LEN];
         let r1 = [0x33u8; MR_LEN];

@@ -134,7 +134,12 @@ fn chat_completions_url(base: &str) -> String {
 /// Translate a [`ConverseRequest`] into an OpenAI chat/completions request body. `stream:false` (the
 /// metered path reads a single JSON envelope); `tools` is included only when non-empty (some
 /// endpoints reject an empty array).
-pub(crate) fn build_chat_body(req: &ConverseRequest, temperature: f32) -> Value {
+///
+/// PUBLIC because the ATTESTED Chutes backend (`dregg-chutes-e2ee`) encrypts exactly this body to
+/// a TEE-attested ML-KEM key instead of POSTing it in the clear. Sharing the one mapping is the
+/// point: an attested path that re-authored its own request shape would silently drift from the
+/// plain path (a mirror, not a backend).
+pub fn build_chat_body(req: &ConverseRequest, temperature: f32) -> Value {
     let mut messages: Vec<Value> = Vec::with_capacity(req.messages.len() + 1);
     if !req.system.trim().is_empty() {
         messages.push(json!({ "role": "system", "content": req.system }));
@@ -180,7 +185,11 @@ pub(crate) fn build_chat_body(req: &ConverseRequest, temperature: f32) -> Value 
 /// null, or array-of-parts `content`; maps `tool_calls`; reads `usage.prompt_tokens` /
 /// `usage.completion_tokens` for the true-up (falling back to a byte-length estimate only when the
 /// provider omits `usage`, so the ledger never silently charges zero for a real call).
-pub(crate) fn parse_chat_response(
+///
+/// PUBLIC for the same reason as [`build_chat_body`]: the attested Chutes backend decrypts an
+/// enclave's reply into this same envelope and parses it with this same function, then sets
+/// [`ConverseResponse::attestation`] itself.
+pub fn parse_chat_response(
     resp: &Value,
     req: &ConverseRequest,
 ) -> Result<ConverseResponse, String> {
@@ -253,6 +262,10 @@ pub(crate) fn parse_chat_response(
         stop_reason,
         input_tokens,
         output_tokens,
+        // Plain (UNATTESTED) OpenAI-compatible inference. An attesting caller
+        // (`dregg-chutes-e2ee`'s `ChutesTeeBackend`) reuses this parser and then fills the slot
+        // from ITS verification — this function never claims an attestation it did not run.
+        attestation: None,
     })
 }
 
@@ -318,6 +331,20 @@ mod tests {
         assert_eq!(msgs[1]["content"], "I open the door.");
         // No tools key when there are no tools.
         assert!(body.get("tools").is_none());
+    }
+
+    /// Multi-turn: assistant turns keep the `assistant` role and the order is preserved (the
+    /// attested backend encrypts this exact body, so a role slip would be invisible on the wire).
+    #[test]
+    fn body_preserves_multi_turn_roles_and_order() {
+        let mut req = ConverseRequest::plain("m", "DM rules.", "I open the door.", 128);
+        req.messages.push(ConverseMessage::assistant("It resists."));
+        req.messages.push(ConverseMessage::user("I shoulder it."));
+        let body = build_chat_body(&req, 0.7);
+        let msgs = body["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "user"]);
+        assert_eq!(msgs[3]["content"], "I shoulder it.");
     }
 
     #[test]

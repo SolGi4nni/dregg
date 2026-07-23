@@ -1957,12 +1957,33 @@ fn live_session_count(host: &OfferingHost) -> usize {
 /// The shared catalog configuration for the public web surface. The electorate preserves the
 /// existing browser identity contract: council member bytes are `blake3("alice"|"bob")`, exactly
 /// the bytes [`web_identity`] renders as those users' substrate identities.
+/// ⚑ THE DAY BINDING: this is [`dreggnet_catalog::CatalogConfig::live`], so the Descent (and the
+/// campaign over it) mints its banked relics under the CURRENT verified drand day, re-resolved at
+/// every open — a live run's relic ids therefore could not exist before that round was revealed.
+/// The day is published by [`arm_todays_descent_day`] (boot + the periodic refresh in
+/// `dreggnet-web-server`); until one is published, opening the Descent REFUSES rather than
+/// serving the pre-computable deploy-seed-derived provenance root.
 fn web_catalog_config() -> dreggnet_catalog::CatalogConfig {
     let members = ["alice", "bob"]
         .iter()
         .map(|u| *blake3::hash(u.as_bytes()).as_bytes())
         .collect();
-    dreggnet_catalog::CatalogConfig::with_council_members(members)
+    dreggnet_catalog::CatalogConfig::live(members)
+}
+
+/// **Arm (and re-arm) the day the web surface's Descent mints relics under.** Fetches today's
+/// drand round, BLS-verifies it, and publishes it process-wide for
+/// [`dreggnet_catalog::DescentDayBinding::Live`]. Blocking — call it from `spawn_blocking`, at boot and
+/// on a timer, because a rolled UTC day makes the published day stale and every Descent open
+/// then REFUSES (fail-closed, by design).
+///
+/// The returned [`dreggnet_catalog::BeaconSource`] says whether the day is today's live round or
+/// the explicitly-labeled pinned published round standing in for a transport outage. Log it: the
+/// pinned round is a genuine BLS-verifiable reveal but NOT today's, so in that window the day's
+/// relic provenance is predictable to anyone who knows the pinned round.
+pub fn arm_todays_descent_day()
+-> Result<dreggnet_catalog::BeaconSource, dreggnet_catalog::FetchError> {
+    dreggnet_catalog::refresh_todays_descent_day(dreggnet_catalog::DRAND_API_BASE)
 }
 
 /// **The default catalog host** — registers the full shared DreggNet portfolio through

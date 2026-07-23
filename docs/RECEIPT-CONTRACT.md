@@ -35,7 +35,7 @@ of one (carrying the turn-receipt hash it projects). A struct that is neither is
 - **`TurnReceipt`** — `turn/src/turn.rs`. A turn commits to a
   prev-hash-chained, Ed25519-signed receipt: `previous_receipt_hash` makes the
   stream append-only; `executor_signature` lets a non-witness verify the step;
-  the canonical `receipt_hash()` (domain-tag `dregg-receipt-v3`) binds every
+  the canonical `receipt_hash()` (domain-tag `dregg-receipt-v5`) binds every
   disclosed field. The executor holds an `executor_signing_key`
   (`TurnExecutor::with_executor_signing_key`) and signs
   `canonical_executor_signed_message()` — domain-tag `executor-receipt-sig-v3:`

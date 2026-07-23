@@ -831,8 +831,13 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
         )
         .placeholder("Choose a game door…"),
     );
+    // Discord rejects a string select with MORE than 25 options, which would fail the whole
+    // `/play` render. The offering shelf is under that today, but clamp so a growing catalog can
+    // never silently break the menu. (`.take(25)` keeps the catalog's leading keys; the full
+    // shelf is always reachable by `/play open offering:<key>` regardless.)
     let offering_options: Vec<CreateSelectMenuOption> = commands::portfolio::play_keys()
         .into_iter()
+        .take(25)
         .map(|k| CreateSelectMenuOption::new(k, k))
         .collect();
     let offering_select = CreateActionRow::SelectMenu(
@@ -1681,7 +1686,36 @@ mod tests {
                 if let CreateActionRow::Buttons(b) = row {
                     assert!(b.len() <= 5, "at most 5 buttons per row");
                 }
+                // Discord rejects a string select with >25 options — such a menu fails to render
+                // entirely (the `/play` offering selector is the one that can grow past the cap).
+                let json = serde_json::to_value(row).expect("action row serializes");
+                assert!(
+                    max_select_options(&json) <= 25,
+                    "a string select carries {} options (>25) — Discord would reject the menu",
+                    max_select_options(&json),
+                );
             }
+        }
+    }
+
+    /// The largest `options` array anywhere in a serialized component tree (a select menu's
+    /// options live nested under the action row's `components`), or 0 if there is no select.
+    fn max_select_options(v: &serde_json::Value) -> usize {
+        match v {
+            serde_json::Value::Object(map) => {
+                let here = map
+                    .get("options")
+                    .and_then(|o| o.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                map.values()
+                    .map(max_select_options)
+                    .fold(here, |a, b| a.max(b))
+            }
+            serde_json::Value::Array(arr) => {
+                arr.iter().map(max_select_options).fold(0, |a, b| a.max(b))
+            }
+            _ => 0,
         }
     }
 }

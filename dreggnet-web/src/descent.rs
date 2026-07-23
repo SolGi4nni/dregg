@@ -146,7 +146,10 @@ struct NativeRun {
 }
 
 const NATIVE_PORTABLE_FORMAT: &str = "dregg.native-descent.record";
-const NATIVE_PORTABLE_VERSION: u32 = 1;
+/// v2 carries `daySeedHex` — the run day-seed the browser session deployed on. v1 could only
+/// ever describe a seed-derived (pre-computable) day and there is no honest upgrade of one, so
+/// a v1 submission is refused rather than silently re-pointed at another day's provenance.
+const NATIVE_PORTABLE_VERSION: u32 = 2;
 const MAX_NATIVE_PORTABLE_BYTES: usize = 8 * 1024 * 1024;
 // HTTP wraps the portable object in `{day,record}`. Leave bounded room for that envelope while the
 // record itself remains pinned to wasm's 8 MiB import/export contract below.
@@ -160,6 +163,13 @@ struct NativePortableRecord {
     format: String,
     version: u32,
     seed: u8,
+    /// **The run day-seed the browser session deployed on** — its banked-relic provenance root,
+    /// folded into the genesis journal root. Untrusted like the rest of the record: it is not
+    /// believed, it is the root the re-execution below is DONE UNDER, and the byte-for-byte
+    /// envelope comparison is what accepts or rejects it. Without it, a beacon-bound run could
+    /// not be re-verified here at all (replay would deploy on the seed-derived root and nothing
+    /// would re-derive).
+    day_seed_hex: String,
     actor: Option<String>,
     events: Vec<NativePortableEvent>,
     root_hex: String,
@@ -773,7 +783,13 @@ fn verify_native_record(
         ));
     }
 
-    let offering = NativeDescentOffering::new();
+    // ⚑ REPLAY UNDER THE RECORD'S OWN DAY. The run day-seed is folded into the genesis root, so
+    // a beacon-bound run only re-derives when the fresh session deploys on the same root; a
+    // `NativeDescentOffering::new()` here would refuse every live daily run as forged.
+    let day_seed = CommittedSeed::from_bytes(
+        decode_hex32(&expected.day_seed_hex).ok_or("native record day seed is not 64 hex chars")?,
+    );
+    let offering = NativeDescentOffering::on_run_day_seed(day_seed);
     let mut session = offering
         .open(SessionConfig::with_seed(u64::from(expected.seed - 1)))
         .map_err(|error| format!("native deployment failed: {error}"))?;
@@ -819,6 +835,7 @@ fn native_portable_from_record(record: &NativeDescentRecord) -> NativePortableRe
         format: NATIVE_PORTABLE_FORMAT.to_string(),
         version: NATIVE_PORTABLE_VERSION,
         seed: record.seed,
+        day_seed_hex: hex32(record.day_seed.as_bytes()),
         actor: record
             .actor
             .as_ref()

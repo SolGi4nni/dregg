@@ -36,8 +36,22 @@ hole's data — is FORCED. This is the guard-structure generalization of `Handle
 * `guarded_render_injective` — THE KEY THEOREM: for a `SeparatedTemplate T`, `guardedSafe T d`,
   `guardedSafe T d'`, `render T d = render T d'` forces `d h = d' h` on every hole `h` of `T`.
   Unique data recovery, guard-parametric — generalizing `HandlebarsUniqueness.delim_render_injective`
-  from the hardcoded `{brace,data}` / `NoBrace` class to an ARBITRARY separated-guard class. The
-  existence half rides `HandlebarsGuarded.guarded_render_mem_language`.
+  from the hardcoded `{brace,data}` / `NoBrace` class to an ARBITRARY separated-guard class. This is
+  UNIQUENESS ONLY (AT MOST ONE guard-satisfied assignment yields a given output) — not, BY ITSELF,
+  an exists-unique. The EXISTENCE / PARSE half —
+  `output ∈ (guardedToGrammar T).language → ∃ d, guardedSafe T d ∧ render T d = output` — is now
+  PROVEN for this (guarded / `Value`) class: `HandlebarsGuardedParse.parse_exists_distinct_holes`.
+  Its side-condition is `(holesOf T).Nodup` (DISTINCT hole ids), NOT separation — the two conditions
+  buy different halves, and each is proven load-bearing by counterexample: distinctness buys
+  EXISTENCE (`Repeated.nodup_is_load_bearing` exhibits a SEPARATED template repeating a hole, with a
+  language member NO assignment renders), separation buys UNIQUENESS (`abutting_ambiguous`, below).
+  Composing them gives the genuine round-trip: `HandlebarsGuardedParse.separated_parse_exists_unique`
+  (a literal `∃!`, requiring BOTH `SeparatedTemplate` and `Nodup`).
+  The UNGUARDED (`Tok` / `handlebarsToGrammar`) residual stays OPEN — `Handlebars.lean` §9
+  `RESIDUAL (round_trip)`, `:328` — transporting the guarded proof there needs the `tokVal`-embedding
+  identification, which is named, not done.
+  `HandlebarsGuarded.guarded_render_mem_language` does NOT supply it: its statement is
+  `guardedSafe T d → render T d ∈ language`, the FORWARD / GENERATION direction.
 * `noBraceRE_excludes` + `braceSpine_render_injective` — SUBSUMPTION: the brace-free guard `noBraceRE`
   excludes `braceVal`, so a spine of brace-free holes `{`-separated is a `SeparatedTemplate`. The old
   delimiter-guarded class is the COARSEST instance. (`noDoubleBraceRE` is NOT separated — it permits a
@@ -231,8 +245,26 @@ def SeparatedTemplate (T : GuardedTemplate) : Prop :=
 /-- **`guarded_render_injective`** — THE KEY THEOREM: unique data recovery, guard-parametric. For a
 `SeparatedTemplate T` whose holes carry guard-satisfied data on both `d` and `d'`, `render T d =
 render T d'` forces `d h = d' h` for every hole `h` of `T`. This is the round-trip INVERSE,
-load-bearing half; the existence half rides `HandlebarsGuarded.guarded_render_mem_language`. It
-generalizes `HandlebarsUniqueness.delim_render_injective` from the hardcoded `{brace,data}` / `NoBrace`
+load-bearing half — UNIQUENESS ONLY: AT MOST ONE guard-satisfied assignment produces a given output.
+
+By itself this is NOT an exists-unique — it is the AT-MOST-ONE half. The EXISTENCE / PARSE half —
+`output ∈ (guardedToGrammar T).language → ∃ d, guardedSafe T d ∧ render T d = output` — is PROVEN
+separately in `HandlebarsGuardedParse.parse_exists_distinct_holes`, whose side-condition is
+`(holesOf T).Nodup`, NOT separation. Note the split carefully, since it is easy to state wrongly:
+**distinctness buys existence; separation buys uniqueness.** Neither implies the other, and both are
+load-bearing by counterexample — `Repeated.nodup_is_load_bearing` gives a SEPARATED template that
+repeats a hole and a language member no assignment renders (a parity argument), while
+`abutting_ambiguous` (below) kills uniqueness for general guards.
+
+Composing this theorem with that one yields the genuine round-trip `∃!`:
+`HandlebarsGuardedParse.separated_parse_exists_unique`, requiring BOTH conditions.
+
+`HandlebarsGuarded.guarded_render_mem_language` still does NOT supply the existence half, and it is
+worth saying why it never could: that theorem is `guardedSafe T d → render T d ∈ language`, the
+FORWARD / GENERATION direction — it consumes a `d` already in hand and says nothing about parsing an
+arbitrary language member back into one. The parse direction had to be built, not cited.
+
+It generalizes `HandlebarsUniqueness.delim_render_injective` from the hardcoded `{brace,data}` / `NoBrace`
 class to an ARBITRARY separated-guard class — the honest home of the old delimiter ban is now a
 STRUCTURAL PROPERTY OF THE GUARDS (`Excludes`), not a global content restriction. -/
 theorem guarded_render_injective (T : GuardedTemplate) (hsep : SeparatedTemplate T)

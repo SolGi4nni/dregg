@@ -118,20 +118,43 @@ struct ServiceNarrator {
 
 impl DmBrain for ServiceNarrator {
     fn narrate(&self, scene: &str, player: &PlayerMessage) -> DmMove {
-        // (0) THE COMMITTED PROMPT: render(template, {world, player}) — the exact bytes the model
-        //     is handed. The player field is pinned in its slot; the DM's rules are the template
-        //     literals. (The player field is already slot-confined: `narrate_turn` refuses a
-        //     `{{`-bearing field BEFORE this brain runs, so the model never sees a rule-rewrite.)
+        // The no-certificate path (only reached if something calls `narrate` directly). It
+        // renders the SAME committed template, but without the memory and without a certificate.
         let world_json = world_binding(scene);
-        let prompt = self.template.render_dm(&world_json, &player.text);
+        let split = self.template.render_dm_split(&world_json, &player.text);
+        self.narrate_with(scene, player, &split.system, &split.user)
+    }
 
+    /// The real path. The `DungeonMaster` assembled and CERTIFIED this turn's prompt; we send its
+    /// two regions as the provider's SYSTEM and USER messages, so the untrusted player text is
+    /// not merely fenced inside one string — it is a different message. We do NOT re-render:
+    /// re-rendering is how the bytes a model saw drift from the bytes the receipt binds.
+    fn narrate_prompted(
+        &self,
+        scene: &str,
+        player: &PlayerMessage,
+        prompt: &attested_dm::CertifiedPrompt,
+    ) -> DmMove {
+        self.narrate_with(scene, player, &prompt.prompt.system, &prompt.prompt.user)
+    }
+}
+
+impl ServiceNarrator {
+    /// One narration attempt over an already-assembled (system, user) prompt pair.
+    fn narrate_with(
+        &self,
+        scene: &str,
+        player: &PlayerMessage,
+        system: &str,
+        user: &str,
+    ) -> DmMove {
         // (1) NARRATION + the model's TYPED effect proposal, from the HOSTED narrator's JSON reply
         //     (metered against the hard USD ceiling). The prose is brace-stripped so its own
         //     output never trips the (de-emphasized) output-side lexical guard. On any hosted
         //     failure OR an exhausted budget, the deterministic scripted proposer stands in —
         //     `narratorKind` then honestly says `scripted:RecordedDm`, never a model that did not
         //     run. Either path routes through the SAME typed channel + cap gate below.
-        let (prose, raw_effect, kind) = match self.hosted.narrate_json("", &prompt) {
+        let (prose, raw_effect, kind) = match self.hosted.narrate_json(system, user) {
             Ok((obj, kind)) => {
                 let prose = obj
                     .get("narration")
@@ -418,6 +441,8 @@ fn refusal_tag(err: &DmError) -> &'static str {
         DmError::OverCap(OverCap::UngrantableItem(_)) => "overcap",
         DmError::OverCap(_) => "overcap",
         DmError::Injection => "lexical-guard",
+        DmError::FrameBreak(_) => "frame-screen",
+        DmError::PromptAssembly(_) => "prompt-assembly",
         DmError::Federation(_) => "federation",
         DmError::NotAttestable(_) => "error",
     }

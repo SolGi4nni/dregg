@@ -30,7 +30,7 @@
 //! empty/leaf/node-and-bag apart). [`Blake3Mmr`] realizes the same contract
 //! with explicit domain tags over blake3 — the hash the receipt chain
 //! already uses (`dregg_turn::TurnReceipt::receipt_hash`,
-//! `b"dregg-receipt-v4"` domain). The in-circuit instantiation (the
+//! `b"dregg-receipt-v5"` domain). The in-circuit instantiation (the
 //! `CommitBindsMMR` weld riding THE ROTATION — `iroot` as `recStateCommit`'s
 //! last limb) will be Poseidon2; this trait is the seam where the two
 //! instantiations meet, and the blake3↔Poseidon2 correspondence is a named,

@@ -385,51 +385,20 @@ theorem emitEventDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
 
 theorem emit_sites_eq : emitEventVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem emitEventDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hsat₁ : satisfiedVm hash emitEventVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash emitEventVmDescriptor e₂ true true)
-    -- FIELD-FAITHFUL bridge: the published commitment is a CANONICAL field element (Poseidon2's
-    -- output lives in `[0, p)`). The circuit pins `state_commit ≡ NEW_COMMIT [ZMOD p]`; canonicality
-    -- of the two digest columns lifts that field congruence to the ℤ equality collision-resistance
-    -- needs. This is an honest side condition (the deployed digest IS reduced), NOT a weakening.
-    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
-      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
-      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
-  have hc : ∀ (e : VmRowEnv), satisfiedVm hash emitEventVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ emitEventVmDescriptor.constraints := by
-        unfold emitEventVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
-      [ZMOD 2013265921] := by
-    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
-      rw [hpub]; exact (hc e₂ hsat₂).symm
-    exact (hc e₁ hsat₁).trans h2
-  -- canonicality of the two digest columns lifts the mod-p congruence to an ℤ equality
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    have hdvd := Int.modEq_iff_dvd.mp hmod
-    obtain ⟨l₁, u₁⟩ := hcanon₁
-    obtain ⟨l₂, u₂⟩ := hcanon₂
-    omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **`emitEventDescriptor_commit_binds_state_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+
+That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`
+from two SATISFYING rows sharing a `NEW_COMMIT`. True at deployed BabyBear parameters, but UNCLOSED:
+a collision of the compressing sponge EXISTS there by pigeonhole, so the `collides` branch is
+unconditionally available and the binding never has to hold.
+
+Its per-effect content — the `boundaryLastPins` step that turns a shared published `NEW_COMMIT` into
+a shared `state_commit` COLUMN — survives VERBATIM as the `pinsNewCommit` field of
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.emitEventNarrowSpec`. The headline is the reduction
+`EffectVmCommitReduction.emitEventDescriptor_commit_binds_state_advantage_bound` (`hEff` discharged by
+`..._from_polyTime`), whose forgery game `narrowDescriptorBreakGame D emitEventNarrowSpec` has as its
+answers two rows SATISFYING THIS file's `emitEventVmDescriptor`. It is hosted DOWNSTREAM because the deployed
+sponge's keyed family (`Poseidon2KeyedBridge`) transitively imports the effect-emission tree. -/
 
 /-! ## §8 — THE CONNECTOR — `cellProjE` to universe-A's `EmitEventSpec` (the whole-kernel FREEZE).
 
@@ -610,7 +579,6 @@ theorem staleNonceEmitRow_rejected :
 #assert_axioms emitEventVm_rejects_nonce_freeze
 #assert_axioms intent_to_tickCellSpec
 #assert_axioms emitEventDescriptor_full_sound
-#assert_axioms emitEventDescriptor_commit_binds_state_or_collides
 #assert_axioms descriptor_agrees_with_executor
 #assert_axioms goodEmitRow_realizes_intent
 #assert_axioms badEmitRow_rejected

@@ -197,8 +197,11 @@ fn portable(record: &NativeDescentRecord) -> serde_json::Value {
         .collect::<Vec<_>>();
     serde_json::json!({
         "format": "dregg.native-descent.record",
-        "version": 1,
+        "version": 2,
         "seed": record.seed,
+        // v2 carries the run's provenance root, so the endpoint can re-execute a day-bound run
+        // (the genesis root folds it in — a replay on the wrong root re-derives nothing).
+        "daySeedHex": hex(record.day_seed.as_bytes()),
         "actor": record.actor.as_ref().map(|actor| actor.as_str()),
         "events": events,
         "rootHex": hex(&record.root),

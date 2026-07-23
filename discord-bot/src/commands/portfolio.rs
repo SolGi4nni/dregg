@@ -565,12 +565,21 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         return;
     }
 
+    // ⚑ THE LIVE DESCENT OPENS ON TODAY'S VERIFIED BEACON DAY. Both Descent surfaces are built
+    // through `commands::native_descent::live_offering`, whose day is re-resolved at every open
+    // (this process outlives many UTC days), so a run's banked relics mint under a provenance
+    // root that could not exist before that day's drand round was revealed. Fail-closed: no
+    // verified day, no session — never the pre-computable deploy-seed-derived root.
     let opened: Result<(), OfferingError> = match key.as_str() {
         DescentCampaignOffering::KEY => {
             open_and_post::<DescentCampaignOffering>(
                 ctx,
                 command,
-                DescentCampaignOffering::new,
+                || {
+                    DescentCampaignOffering::with_native(
+                        crate::commands::native_descent::live_offering(),
+                    )
+                },
                 &viewer,
                 cfg,
             )
@@ -580,7 +589,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             open_and_post::<NativeDescentOffering>(
                 ctx,
                 command,
-                NativeDescentOffering::new,
+                crate::commands::native_descent::live_offering,
                 &viewer,
                 cfg,
             )

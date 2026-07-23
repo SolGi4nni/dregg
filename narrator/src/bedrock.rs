@@ -149,6 +149,8 @@ impl BedrockClient {
             stop_reason,
             input_tokens,
             output_tokens,
+            // Bedrock is not an attested path — say so honestly rather than leaving it ambiguous.
+            attestation: None,
         })
     }
 }

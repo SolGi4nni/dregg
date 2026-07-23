@@ -27,15 +27,15 @@ pub mod ollama;
 pub mod openai;
 
 pub use backend::{
-    metered_converse, ConverseBackend, ConverseMessage, ConverseRequest, ConverseResponse, Role,
-    ToolCall, ToolDef,
+    metered_converse, AttestationSummary, ConverseBackend, ConverseMessage, ConverseRequest,
+    ConverseResponse, Role, ToolCall, ToolDef,
 };
 pub use bedrock::BedrockClient;
 pub use ledger::{BudgetLedger, LedgerState, ModelSpend, PriceSource, Pricing, Reservation};
 pub use models::{ModelRegistry, CLAUDE_HAIKU_4_5, DEFAULT_MODEL, NOVA_2_LITE, NOVA_PRO};
-pub use narrator::{Narration, Narrator};
+pub use narrator::{hosted_provider, HostedProvider, Narration, Narrator};
 pub use ollama::OllamaBackend;
-pub use openai::OpenAiCompatClient;
+pub use openai::{build_chat_body, parse_chat_response, OpenAiCompatClient};
 
 /// Everything that can go wrong at the narrator layer.
 #[derive(Debug, thiserror::Error)]

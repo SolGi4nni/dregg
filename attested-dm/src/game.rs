@@ -49,8 +49,8 @@ use dregg_dice::{
 };
 
 use crate::{
-    slot_confined, world_binding, DmError, DmMove, DungeonMaster, LoadError, PromptBinding,
-    RandomnessRecord, Receipt, RecordedDm, WorldCell, WorldEffect,
+    world_binding_with_memory, Continuity, DmError, DmMove, DungeonMaster, LoadError,
+    PromptBinding, RandomnessRecord, Receipt, RecordedDm, WorldCell, WorldEffect, MEMORY_MAX_BEATS,
 };
 
 /// Domain separator for [`GameWorld::game_binding`] — the committed game identity a randomness
@@ -2521,16 +2521,19 @@ pub fn describe_room(map: &GameWorld, room_id: &str, world: &WorldCell) -> Strin
         Some(r) => r,
         None => return format!("You are nowhere ({room_id})."),
     };
-    let mut out = format!("{} — {}", room.name, room.description);
+    // Sentences, not a dashed fragment — this string IS narration on the chain (the `Examine`
+    // resolution lands it), so it reads in the DM's voice. NB no newlines: `clean_field` strips
+    // control characters before the narration is attested, which would jam the lines together.
+    let mut out = format!("{}. {}", room.name, room.description);
     let items = map.items_here(room_id, world);
     if !items.is_empty() {
         let list: Vec<&str> = items.iter().map(String::as_str).collect();
-        out.push_str(&format!(" You see: {}.", list.join(", ")));
+        out.push_str(&format!(" Here: {}.", list.join(", ")));
     }
     let npcs = map.npcs_here(room_id);
     if !npcs.is_empty() {
         let list: Vec<&str> = npcs.iter().map(|n| n.name.as_str()).collect();
-        out.push_str(&format!(" Here stands: {}.", list.join(", ")));
+        out.push_str(&format!(" With you: {}.", list.join(", ")));
     }
     if !room.exits.is_empty() {
         let dirs: Vec<&str> = room.exits.keys().map(String::as_str).collect();
@@ -2575,9 +2578,15 @@ pub trait GameBrain {
 }
 
 /// The modeled dungeon-master brain: it parses a player command into a typed [`GameAction`] and
-/// narrates a vivid line around the room. A deterministic stand-in for a real gemma2 (which would
+/// narrates a line around the room. A deterministic stand-in for a real hosted model (which would
 /// narrate + emit the same typed action). Crucially it can ONLY propose one of the closed actions —
 /// it has no free-text channel to the world.
+///
+/// **It obeys the voice it publishes.** Its lines follow [`crate::VOICE_SPEC`]: second person,
+/// present tense, one concrete sense per beat, ending short — and, load-bearingly, they never
+/// assert an OUTCOME. This is not decoration: the resolver, not the narration, decides whether a
+/// move lands, so a scripted line that said "the lock gives" would be a lie on every refused
+/// turn. It reports the attempt; the world reports the result.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScriptedGm;
 
@@ -2591,20 +2600,28 @@ impl GameBrain for ScriptedGm {
         let c = command.trim().to_lowercase();
         let words: Vec<&str> = c.split_whitespace().collect();
         let action = parse_command(&words)
-            .ok_or_else(|| format!("the dungeon master tilts their head: '{command}?'"))?;
-        // A vivid line that reflects the room + the move — the AI's prose (no authority).
+            .ok_or_else(|| format!("The {} keeps its answer to that.", room.name))?;
+        let here = &room.name;
         let narration = match &action {
-            GameAction::Move(to) => {
-                format!(
-                    "Torchlight wavering, {name} presses on toward {to}.",
-                    name = room.name
-                )
+            // NB the old line read "Torchlight wavering, <ROOM NAME> presses on toward north" —
+            // the room, not the body, doing the walking. The subject is the player, always.
+            GameAction::Move(dir) => {
+                format!("You turn {dir} out of the {here}, boots dragging in the wet. The dark closes behind.")
             }
-            GameAction::Take(i) => format!("A glint in the gloom of the {}: the {i}.", room.name),
-            GameAction::Use(i, Some(t)) => format!("With care, you work the {i} against the {t}."),
-            GameAction::Use(i, None) => format!("You raise the {i}."),
-            GameAction::Examine => format!("You study the {} in the flickering dark.", room.name),
-            GameAction::Attack(t) => format!("Steel bared, you throw yourself at the {t}."),
+            GameAction::Take(i) => {
+                format!("You reach for the {i} where it lies in the silt of the {here}.")
+            }
+            GameAction::Use(i, Some(t)) => {
+                format!("You set the {i} against the {t} and lean your weight in.")
+            }
+            GameAction::Use(i, None) => format!("You raise the {i}. The {here} waits."),
+            GameAction::Examine => format!(
+                "You hold still and let the {here} come to you: cold coming off the stone, slow \
+                 water somewhere below. Nothing moves that should not."
+            ),
+            GameAction::Attack(t) => {
+                format!("You go at the {t} with everything your arms have left.")
+            }
         };
         Ok(Proposal::new(narration, action))
     }
@@ -2891,17 +2908,20 @@ impl<B: GameBrain> GameSession<B> {
                 },
             };
         let room_id = self.world.scene.clone();
-        // The player's command is bound input-side (the same slot-confinement tooth): a
-        // `{{`-bearing command is refused before anything lands.
+        // The player's command is bound input-side under the SAME slot-confinement predicate the
+        // free-narration path uses: a `{{`-bearing or fence-forging command is refused before
+        // anything lands. The bound `world` carries the run's memory (derived from the ledger's
+        // typed legs), so what the model was shown is on the chain.
         let prompt_binding = if player_text.is_empty() {
             None
         } else {
-            if !slot_confined(player_text) {
+            if !crate::voice::player_data_confined(player_text) {
                 return PlayResult::DmRefused(DmError::SlotEscape);
             }
+            let memory = Continuity::from_ledger(&self.world.ledger, MEMORY_MAX_BEATS);
             Some(PromptBinding::new(
                 self.dm.template().template_hash(),
-                world_binding(&room_id),
+                world_binding_with_memory(&room_id, &memory),
                 player_text.to_string(),
             ))
         };

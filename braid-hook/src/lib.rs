@@ -40,7 +40,8 @@
 //! the fold through the deployed node — it authors no constraints.
 
 pub use dregg_entity_compose::{
-    Comp, DeployedEntity, LandedComposition, Shape, compose_onto, deploy_entity, door_felt8,
+    Comp, DeployedEntity, EntityKey, LandedComposition, Shape, compose_onto, deploy_entity,
+    door_felt8, entity_key,
 };
 pub use dregg_param_compose::model::{ComposeError, Knot, LinearTerm, Ruleset, Subject};
 pub use dregg_param_compose::shape::ComposeShape;
@@ -52,8 +53,14 @@ pub use dregg_param_compose::shape::ComposeShape;
 /// app-root binding tying the published outcome to the committed cell octet.
 ///
 /// `param_count` is the schema's active param width; params at or past it are canonically zero.
+///
+/// `key` is the entity's full-width [`EntityKey`] — the cell key it is deployed at. Build one
+/// from an ordinal with [`entity_key`], or pass an identity a caller already holds (an asset id,
+/// a pubkey, a digest of the thing the entity stands for). It is the FULL cell-key width
+/// deliberately: the hook must never be the reason a caller can only carry N live entities, so
+/// there is no ordinal namespace here to exhaust and no cap for a caller to fail closed against.
 pub fn compose_entity(
-    seed: u8,
+    key: EntityKey,
     balance: i64,
     subject: Subject,
     partners: &[Subject],
@@ -61,7 +68,7 @@ pub fn compose_entity(
     shape: ComposeShape,
     param_count: usize,
 ) -> Result<(DeployedEntity, LandedComposition), ComposeError> {
-    let entity = deploy_entity(seed, balance, subject);
+    let entity = deploy_entity(key, balance, subject);
     let landed = compose_onto(&entity, partners, ruleset, shape, param_count)?;
     Ok((entity, landed))
 }

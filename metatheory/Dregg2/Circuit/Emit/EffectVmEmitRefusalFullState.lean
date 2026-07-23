@@ -109,48 +109,27 @@ theorem refusal_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : SysRoo
 
 /-! ## §5 — THE ANTI-GHOST. -/
 
-/-- **`refusal_runnable_full_commit_binds_or_collides` — the refusal anti-ghost.** Two wide refusal
-rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) EITHER agree on all 12
-absorbed state-block columns AND pointwise on the 8 side-table roots, OR exhibit a collision of the
-deployed sponge — at the wide absorb, or at the two root lists.
+/-! ### ⚑ THE WHOLE-STATE ANTI-GHOST IS A SECURITY REDUCTION, AND IT LIVES DOWNSTREAM (07-22).
 
-The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed sponge
-REFUTES; at deployed parameters it was vacuous. The disjunction is formally weaker and HOLDS of the
-deployed sponge. -/
-theorem refusal_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash refusalVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash refusalVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  runnable_full_commit_binds_or_collides (refusalRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+`refusal_runnable_full_commit_binds_or_collides` and `refusal_rejects_root_tamper_or_collides` USED TO BE EXPORTED HERE as BARE DISJUNCTIONS —
+`(cols agree ∧ roots agree) ∨ WideColl … ∨ RootsColl …`. True at deployed BabyBear parameters, unlike
+their `Poseidon2SpongeCR`-carrying predecessors (which the deployed compressing sponge REFUTES), but
+still UNCLOSED: a collision of that sponge EXISTS at deployed parameters by pigeonhole, so the right
+branches are unconditionally available and `binds ∨ collides` never has to bind. A disjunction
+quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
 
-/-- **`refusal_rejects_root_tamper_or_collides` — side-table anti-ghost for refusal.** Two wide
-refusal rows publishing the same `NEW_COMMIT` whose side-table sub-blocks DIFFER at some index `i`
-exhibit a collision of the deployed sponge: forging a side-table root under a fixed commitment costs
-a sponge collision.
+**BOTH ARE DELETED.** The deployed binding of refusal's wide commitment is now the REDUCTION
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.refusal_wide_binds_full_state_advantage_bound`
+(with `hEff` discharged at `Eff := IsPolyTime` by `refusal_wide_binds_full_state_from_polyTime`): the
+forgery is a `Game` whose answers are DEPLOYED WIDE refusal ROWS
+(`refusal_wide_forgery_is_break` / `refusal_root_tamper_is_break`), the extractor is a MAP OF ADVERSARIES
+into the deployed sponge's collision game, and the conclusion is a NEGLIGIBLE ADVANTAGE under
+`DomainSeparatedCREff`, whose two poles are both proved.
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed sponge REFUTES; at
-deployed parameters it was vacuous. This one names the collision instead of assuming it away. -/
-theorem refusal_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash refusalVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash refusalVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (refusalRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+⚑ It lives in a DOWNSTREAM module, not here, for a hard reason: the deployed sponge's keyed family
+(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree, so a reduction stated at that
+family CANNOT be imported by an emission module without a build cycle. The GAME still names THIS
+file's `refusalVmDescriptorWide` — nothing is stated about an idealised stand-in. -/
 
 /-! ## §6 — NON-VACUITY. -/
 
@@ -188,8 +167,6 @@ theorem refusal_clause_rejects_root_drop :
 
 #assert_axioms refusalGates_give_cellSpec
 #assert_axioms refusal_runnable_full_sound
-#assert_axioms refusal_runnable_full_commit_binds_or_collides
-#assert_axioms refusal_rejects_root_tamper_or_collides
 #assert_axioms goodRefusal_realizes
 #assert_axioms refusal_clause_not_trivial
 #assert_axioms refusal_clause_rejects_root_drop

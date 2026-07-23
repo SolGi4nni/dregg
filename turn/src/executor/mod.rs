@@ -1951,7 +1951,7 @@ impl TurnExecutor {
     fn maybe_sign_receipt(&self, receipt: &TurnReceipt) -> Option<Vec<u8>> {
         let seed = self.executor_signing_key.as_ref()?;
         let sk = ed25519_dalek::SigningKey::from_bytes(seed);
-        // Sign the v4 canonical message: `executor-receipt-sig-v4:` || receipt_hash() —
+        // Sign the v5 canonical message: `executor-receipt-sig-v5:` || receipt_hash() —
         // the FULL receipt hash, so the signature attests to every field bound into it
         // (effects_hash, computrons_used, derivation_records, routing directives, emitted
         // events, finality, was_encrypted, was_burn, the chain link). The narrow v2 prefix

@@ -239,6 +239,18 @@ pub struct Store<O: DiscordOffering> {
     jobs: SyncSender<Job<O>>,
 }
 
+/// Why a store job did not return a value. BOTH cases used to abort the caller with a panic
+/// (`send`/`recv` `.expect`), and a job that panicked killed the store thread outright — bricking
+/// the whole offering subsystem until process restart. Now a panicking job is CONTAINED (the
+/// thread lives on) and the fault is returned to the ONE caller, which degrades gracefully.
+#[derive(Debug)]
+enum StoreError {
+    /// The store thread's channel is closed — it never spawned, or has gone away unrecoverably.
+    ThreadGone,
+    /// This job panicked; the panic was contained on the store thread, which survives.
+    JobPanicked,
+}
+
 impl<O: DiscordOffering> Store<O> {
     /// Spawn the store's owning thread (called once, from the offering's `store()` `OnceLock`).
     pub fn spawn() -> Store<O> {
@@ -248,25 +260,38 @@ impl<O: DiscordOffering> Store<O> {
             .spawn(move || {
                 let mut sessions: HashMap<u64, Live<O>> = HashMap::new();
                 while let Ok(job) = rx.recv() {
-                    job(&mut sessions);
+                    // A panicking job is contained per-job by `run`; this loop-level guard is the
+                    // structural net so NO job can ever unwind out of the loop and kill the thread
+                    // (which would brick the whole subsystem for every later caller).
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        job(&mut sessions)
+                    }));
                 }
             })
             .expect("spawn the offering session thread");
         Store { jobs }
     }
 
-    /// Run `f` against the session table on the owning thread and hand back its result.
+    /// Run `f` against the session table on the owning thread and hand back its result. A panic
+    /// inside `f` is caught on the store thread and returned to THIS caller as
+    /// [`StoreError::JobPanicked`]; the thread returns from the job normally and lives on to serve
+    /// the next. The happy path is unchanged.
     fn run<R: Send + 'static>(
         &self,
         f: impl FnOnce(&mut HashMap<u64, Live<O>>) -> R + Send + 'static,
-    ) -> R {
-        let (tx, rx) = sync_channel::<R>(1);
+    ) -> Result<R, StoreError> {
+        let (tx, rx) = sync_channel::<std::thread::Result<R>>(1);
         self.jobs
             .send(Box::new(move |sessions| {
-                let _ = tx.send(f(sessions));
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(sessions)));
+                let _ = tx.send(result);
             }))
-            .expect("the offering session thread is alive");
-        rx.recv().expect("the offering session thread answered")
+            .map_err(|_| StoreError::ThreadGone)?;
+        match rx.recv() {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_panic)) => Err(StoreError::JobPanicked),
+            Err(_) => Err(StoreError::ThreadGone),
+        }
     }
 }
 
@@ -343,32 +368,39 @@ pub fn open_in<O: DiscordOffering>(
     make: impl FnOnce() -> O + Send + 'static,
     cfg: SessionConfig,
 ) -> Result<(), dreggnet_offerings::OfferingError> {
-    O::store().run(move |sessions| {
-        let offering = make();
-        let session = offering.open(cfg.clone())?;
-        // A collective offering opens with a live round over the session's first actions (an open
-        // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
-        let round = if O::collective() {
-            Some(CollectiveRound::new(0, offering.actions(&session), None))
-        } else {
-            None
-        };
-        let generation = fresh_generation(channel);
-        let journal_id = SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
-        sessions.insert(
-            channel,
-            Live {
-                offering,
-                session,
-                round,
-                generation,
-                control_head: 0,
-                journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
-                resume_store: None,
-            },
-        );
-        Ok(())
-    })
+    O::store()
+        .run(move |sessions| {
+            let offering = make();
+            let session = offering.open(cfg.clone())?;
+            // A collective offering opens with a live round over the session's first actions (an open
+            // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
+            let round = if O::collective() {
+                Some(CollectiveRound::new(0, offering.actions(&session), None))
+            } else {
+                None
+            };
+            let generation = fresh_generation(channel);
+            let journal_id =
+                SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
+            sessions.insert(
+                channel,
+                Live {
+                    offering,
+                    session,
+                    round,
+                    generation,
+                    control_head: 0,
+                    journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
+                    resume_store: None,
+                },
+            );
+            Ok(())
+        })
+        .unwrap_or_else(|_| {
+            Err(dreggnet_offerings::OfferingError::Deploy(
+                "the offering session thread is unavailable".to_string(),
+            ))
+        })
 }
 
 /// Open a fresh live session with an OfferingHost-compatible durable replay
@@ -380,39 +412,44 @@ pub fn open_in_with_resume_store<O: DiscordOffering>(
     cfg: SessionConfig,
     make_store: impl FnOnce() -> Result<Box<dyn SessionResumeStore>, String> + Send + 'static,
 ) -> Result<(), String> {
-    O::store().run(move |sessions| {
-        let offering = make();
-        let session = offering
-            .open(cfg.clone())
-            .map_err(|error| error.to_string())?;
-        let round = if O::collective() {
-            Some(CollectiveRound::new(0, offering.actions(&session), None))
-        } else {
-            None
-        };
-        let generation = fresh_generation(channel);
-        let journal_id = SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
-        let store = make_store()?;
-        store.record_open(O::KEY, &journal_id, &cfg);
-        sessions.insert(
-            channel,
-            Live {
-                offering,
-                session,
-                round,
-                generation,
-                control_head: 0,
-                journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
-                resume_store: Some(store),
-            },
-        );
-        Ok(())
-    })
+    O::store()
+        .run(move |sessions| {
+            let offering = make();
+            let session = offering
+                .open(cfg.clone())
+                .map_err(|error| error.to_string())?;
+            let round = if O::collective() {
+                Some(CollectiveRound::new(0, offering.actions(&session), None))
+            } else {
+                None
+            };
+            let generation = fresh_generation(channel);
+            let journal_id =
+                SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
+            let store = make_store()?;
+            store.record_open(O::KEY, &journal_id, &cfg);
+            sessions.insert(
+                channel,
+                Live {
+                    offering,
+                    session,
+                    round,
+                    generation,
+                    control_head: 0,
+                    journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
+                    resume_store: Some(store),
+                },
+            );
+            Ok(())
+        })
+        .unwrap_or_else(|_| Err("the offering session thread is unavailable".to_string()))
 }
 
 /// Whether `channel` has a live session of this offering.
 pub fn is_open<O: DiscordOffering>(channel: u64) -> bool {
-    O::store().run(move |sessions| sessions.contains_key(&channel))
+    O::store()
+        .run(move |sessions| sessions.contains_key(&channel))
+        .unwrap_or(false)
 }
 
 /// Run `f` against the channel's live session (`None` when no session is open). `f` runs on the
@@ -421,7 +458,9 @@ pub fn with_live<O: DiscordOffering, R: Send + 'static>(
     channel: u64,
     f: impl FnOnce(&mut Live<O>) -> R + Send + 'static,
 ) -> Option<R> {
-    O::store().run(move |sessions| sessions.get_mut(&channel).map(f))
+    O::store()
+        .run(move |sessions| sessions.get_mut(&channel).map(f))
+        .unwrap_or(None)
 }
 
 /// Run one transaction against a live session and optionally quarantine it.
@@ -431,16 +470,18 @@ pub(crate) fn with_live_transaction<O: DiscordOffering, R: Send + 'static>(
     channel: u64,
     f: impl FnOnce(&mut Live<O>) -> (R, bool) + Send + 'static,
 ) -> Option<R> {
-    O::store().run(move |sessions| {
-        let (result, quarantine) = {
-            let live = sessions.get_mut(&channel)?;
-            f(live)
-        };
-        if quarantine {
-            sessions.remove(&channel);
-        }
-        Some(result)
-    })
+    O::store()
+        .run(move |sessions| {
+            let (result, quarantine) = {
+                let live = sessions.get_mut(&channel)?;
+                f(live)
+            };
+            if quarantine {
+                sessions.remove(&channel);
+            }
+            Some(result)
+        })
+        .unwrap_or(None)
 }
 
 /// Read the exact control incarnation/head of a live channel session.
@@ -465,7 +506,7 @@ pub fn ask_id_in<O: DiscordOffering>(channel: u64, turn: &str) -> Option<String>
 /// subcommand is the obvious next consumer); today the driven tests are what exercise it.
 #[allow(dead_code)]
 pub fn close_in<O: DiscordOffering>(channel: u64) {
-    O::store().run(move |sessions| {
+    let _ = O::store().run(move |sessions| {
         sessions.remove(&channel);
     });
 }
@@ -711,15 +752,17 @@ pub fn open_round<O: DiscordOffering>(
     channel: u64,
     electorate: Option<Vec<DreggIdentity>>,
 ) -> bool {
-    O::store().run(move |sessions| match sessions.get_mut(&channel) {
-        Some(live) => {
-            let options = live.offering.actions(&live.session);
-            live.control_head = live.control_head.saturating_add(1);
-            live.round = Some(CollectiveRound::new(live.control_head, options, electorate));
-            true
-        }
-        None => false,
-    })
+    O::store()
+        .run(move |sessions| match sessions.get_mut(&channel) {
+            Some(live) => {
+                let options = live.offering.actions(&live.session);
+                live.control_head = live.control_head.saturating_add(1);
+                live.round = Some(CollectiveRound::new(live.control_head, options, electorate));
+                true
+            }
+            None => false,
+        })
+        .unwrap_or(false)
 }
 
 /// **Cast one write-once collective ballot**, keyed by `voter`'s derived dregg identity, for the
@@ -727,13 +770,15 @@ pub fn open_round<O: DiscordOffering>(
 /// analogue of [`drive`]: it records a vote rather than resolving a turn (the plurality winner is
 /// resolved later by [`close_round`]).
 pub fn cast_vote<O: DiscordOffering>(channel: u64, voter: DreggIdentity, arg: i64) -> Cast {
-    O::store().run(move |sessions| match sessions.get_mut(&channel) {
-        None => Cast::NoSession,
-        Some(live) => match live.round.as_mut() {
-            None => Cast::NoRound,
-            Some(round) => round.cast_arg(&voter, arg),
-        },
-    })
+    O::store()
+        .run(move |sessions| match sessions.get_mut(&channel) {
+            None => Cast::NoSession,
+            Some(live) => match live.round.as_mut() {
+                None => Cast::NoRound,
+                Some(round) => round.cast_arg(&voter, arg),
+            },
+        })
+        .unwrap_or(Cast::NoSession)
 }
 
 /// Cast a ballot only if the button belongs to this exact session generation
@@ -745,14 +790,16 @@ pub fn cast_vote_at<O: DiscordOffering>(
     voter: DreggIdentity,
     arg: i64,
 ) -> Cast {
-    O::store().run(move |sessions| match sessions.get_mut(&channel) {
-        None => Cast::NoSession,
-        Some(live) if live.control_stamp() != stamp => Cast::StaleSurface,
-        Some(live) => match live.round.as_mut() {
-            None => Cast::NoRound,
-            Some(round) => round.cast_arg(&voter, arg),
-        },
-    })
+    O::store()
+        .run(move |sessions| match sessions.get_mut(&channel) {
+            None => Cast::NoSession,
+            Some(live) if live.control_stamp() != stamp => Cast::StaleSurface,
+            Some(live) => match live.round.as_mut() {
+                None => Cast::NoRound,
+                Some(round) => round.cast_arg(&voter, arg),
+            },
+        })
+        .unwrap_or(Cast::NoSession)
 }
 
 /// **Close the collective round: resolve its plurality winner as ONE real crowd turn.** Tallies
@@ -763,49 +810,52 @@ pub fn cast_vote_at<O: DiscordOffering>(
 /// the collective analogue of a single-press resolution — many pressers, one refereed turn.
 pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
     let carrier = O::collective_carrier();
-    O::store().run(move |sessions| {
-        let Some(live) = sessions.get_mut(&channel) else {
-            return CollectiveClose::NoSession;
-        };
-        let Some(round) = live.round.take() else {
-            return CollectiveClose::NoRound;
-        };
-        let Some(pos) = round.winner_position() else {
-            // An option-less round: nothing to resolve — put it back and report empty.
-            live.round = Some(round);
-            return CollectiveClose::Empty;
-        };
-        let winner = round.options[pos].clone();
-        let tally = round.tally().expect("a winner implies a tally");
-        let electorate = round.voter_ids();
-        let restrict = round.electorate.clone();
-        let round_no = round.round;
+    O::store()
+        .run(move |sessions| {
+            let Some(live) = sessions.get_mut(&channel) else {
+                return CollectiveClose::NoSession;
+            };
+            let Some(round) = live.round.take() else {
+                return CollectiveClose::NoRound;
+            };
+            let Some(pos) = round.winner_position() else {
+                // An option-less round: nothing to resolve — put it back and report empty.
+                live.round = Some(round);
+                return CollectiveClose::Empty;
+            };
+            let winner = round.options[pos].clone();
+            let tally = round.tally().expect("a winner implies a tally");
+            let electorate = round.voter_ids();
+            let restrict = round.electorate.clone();
+            let round_no = round.round;
 
-        // THE CROWD DECIDES, THE WORLD DISPOSES — one real cap-bounded turn carrying the whole
-        // decision (the substrate still admits exactly one typed Action; the tally is provenance).
-        let decision = CollectiveDecision::new(electorate.clone(), carrier.clone(), tally.clone());
-        let outcome = live
-            .offering
-            .advance_collective(&mut live.session, winner.clone(), decision);
-        live.record_landed(winner.clone(), carrier, &outcome);
+            // THE CROWD DECIDES, THE WORLD DISPOSES — one real cap-bounded turn carrying the whole
+            // decision (the substrate still admits exactly one typed Action; the tally is provenance).
+            let decision =
+                CollectiveDecision::new(electorate.clone(), carrier.clone(), tally.clone());
+            let outcome =
+                live.offering
+                    .advance_collective(&mut live.session, winner.clone(), decision);
+            live.record_landed(winner.clone(), carrier, &outcome);
 
-        // Open the next round over the new state, keeping any electorate restriction.
-        let next_options = live.offering.actions(&live.session);
-        live.control_head = round_no.saturating_add(1);
-        live.round = Some(CollectiveRound::with_electorate(
-            live.control_head,
-            next_options,
-            restrict,
-        ));
+            // Open the next round over the new state, keeping any electorate restriction.
+            let next_options = live.offering.actions(&live.session);
+            live.control_head = round_no.saturating_add(1);
+            live.round = Some(CollectiveRound::with_electorate(
+                live.control_head,
+                next_options,
+                restrict,
+            ));
 
-        CollectiveClose::Resolved(CollectiveResolved {
-            round: round_no,
-            winner,
-            tally,
-            electorate,
-            outcome,
+            CollectiveClose::Resolved(CollectiveResolved {
+                round: round_no,
+                winner,
+                tally,
+                electorate,
+                outcome,
+            })
         })
-    })
+        .unwrap_or(CollectiveClose::NoSession)
 }
 
 /// Read the channel's live collective round (`None` when no round is open). Runs on the store's
@@ -816,7 +866,9 @@ pub fn with_round<O: DiscordOffering, R: Send + 'static>(
     channel: u64,
     f: impl FnOnce(&CollectiveRound) -> R + Send + 'static,
 ) -> Option<R> {
-    O::store().run(move |sessions| sessions.get(&channel).and_then(|l| l.round.as_ref()).map(f))
+    O::store()
+        .run(move |sessions| sessions.get(&channel).and_then(|l| l.round.as_ref()).map(f))
+        .unwrap_or(None)
 }
 
 /// An honest one-line note for a cast ballot (the ephemeral ack a live vote gets).
@@ -1317,11 +1369,13 @@ pub fn drive<O: DiscordOffering>(channel: u64, custom_id: &str, actor: DreggIden
 }
 
 fn stamp_is_current<O: DiscordOffering>(channel: u64, stamp: ControlStamp) -> bool {
-    O::store().run(move |sessions| {
-        sessions
-            .get(&channel)
-            .is_some_and(|live| live.control_stamp() == stamp)
-    })
+    O::store()
+        .run(move |sessions| {
+            sessions
+                .get(&channel)
+                .is_some_and(|live| live.control_stamp() == stamp)
+        })
+        .unwrap_or(false)
 }
 
 enum MutationAttempt {
@@ -1344,21 +1398,24 @@ fn drive_value_at<O: DiscordOffering>(
     actor: DreggIdentity,
 ) -> Driven {
     let turn = turn.to_string();
-    match O::store().run(move |sessions| {
-        let Some(live) = sessions.get_mut(&channel) else {
-            return MutationAttempt::NoSession;
-        };
-        if live.control_stamp() != stamp {
-            return MutationAttempt::StaleSurface;
-        }
-        let action = Action::new(turn.clone(), turn, arg, true);
-        let outcome = live
-            .offering
-            .advance(&mut live.session, action.clone(), actor.clone());
-        live.record_landed(action, actor, &outcome);
-        note_direct_landing::<O>(live, &outcome);
-        MutationAttempt::Fired(outcome)
-    }) {
+    let attempt = O::store()
+        .run(move |sessions| {
+            let Some(live) = sessions.get_mut(&channel) else {
+                return MutationAttempt::NoSession;
+            };
+            if live.control_stamp() != stamp {
+                return MutationAttempt::StaleSurface;
+            }
+            let action = Action::new(turn.clone(), turn, arg, true);
+            let outcome = live
+                .offering
+                .advance(&mut live.session, action.clone(), actor.clone());
+            live.record_landed(action, actor, &outcome);
+            note_direct_landing::<O>(live, &outcome);
+            MutationAttempt::Fired(outcome)
+        })
+        .unwrap_or(MutationAttempt::NoSession);
+    match attempt {
         MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
         MutationAttempt::NoSession => Driven::NoSession,
         MutationAttempt::StaleSurface => Driven::StaleSurface,
@@ -1404,21 +1461,24 @@ fn drive_text_at<O: DiscordOffering>(
 ) -> Driven {
     let turn = turn.to_string();
     let text = text.to_string();
-    match O::store().run(move |sessions| {
-        let Some(live) = sessions.get_mut(&channel) else {
-            return MutationAttempt::NoSession;
-        };
-        if live.control_stamp() != stamp {
-            return MutationAttempt::StaleSurface;
-        }
-        let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
-        let outcome = live
-            .offering
-            .advance(&mut live.session, action.clone(), actor.clone());
-        live.record_landed(action, actor, &outcome);
-        note_direct_landing::<O>(live, &outcome);
-        MutationAttempt::Fired(outcome)
-    }) {
+    let attempt = O::store()
+        .run(move |sessions| {
+            let Some(live) = sessions.get_mut(&channel) else {
+                return MutationAttempt::NoSession;
+            };
+            if live.control_stamp() != stamp {
+                return MutationAttempt::StaleSurface;
+            }
+            let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
+            let outcome = live
+                .offering
+                .advance(&mut live.session, action.clone(), actor.clone());
+            live.record_landed(action, actor, &outcome);
+            note_direct_landing::<O>(live, &outcome);
+            MutationAttempt::Fired(outcome)
+        })
+        .unwrap_or(MutationAttempt::NoSession);
+    match attempt {
         MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
         MutationAttempt::NoSession => Driven::NoSession,
         MutationAttempt::StaleSurface => Driven::StaleSurface,
@@ -1506,7 +1566,15 @@ pub async fn handle_status<O: DiscordOffering>(
 /// Re-verify the channel's chain and post the honest report.
 pub async fn handle_verify<O: DiscordOffering>(ctx: &Context, command: &CommandInteraction) {
     let channel = command.channel_id.get();
-    match verify_live::<O>(channel) {
+    // ACK inside Discord's 3s window BEFORE the (possibly slow) chain re-derivation — the report
+    // lands as an EDIT of this deferred response. The verifier runs on the offering's store
+    // thread; move the blocking wait OFF the async worker so a long chain never parks it.
+    ack::defer_slash(ctx, command, false).await;
+    let report = tokio::task::spawn_blocking(move || verify_live::<O>(channel))
+        .await
+        .ok()
+        .flatten();
+    match report {
         Some(report) => {
             // AUDIT the verify: the report verdict is the outcome (read-only, but a
             // failed re-verification is exactly the finding the envelope exists for).
@@ -1535,12 +1603,15 @@ pub async fn handle_verify<O: DiscordOffering>(ctx: &Context, command: &CommandI
                 .title(format!("{} — verify", O::TITLE))
                 .description(verify_note(&report))
                 .color(if report.verified { O::COLOR } else { 0xE63946 });
-            let msg = CreateInteractionResponseMessage::new().embed(embed);
-            let _ = command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-                .await;
+            ack::edit_slash(ctx, command, embed, Vec::new()).await;
         }
-        None => ephemeral(ctx, command, &no_session_text::<O>()).await,
+        None => {
+            let embed = CreateEmbed::new()
+                .title(format!("{} — verify", O::TITLE))
+                .description(no_session_text::<O>())
+                .color(0xE63946);
+            ack::edit_slash(ctx, command, embed, Vec::new()).await;
+        }
     }
 }
 
@@ -2344,6 +2415,45 @@ mod tests {
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
+    }
+
+    /// **Panic isolation**: a job that panics on the store thread does NOT brick the subsystem.
+    /// Before this hardening a panicking job killed the store thread and every later access
+    /// panicked at `send`/`recv`'s `.expect`; now the panic is contained (the caller gets a clean
+    /// `None`) and a subsequent job on the SAME store still succeeds. (A "thread … panicked at
+    /// 'store-panic-isolation-canary'" line on stderr during this test is EXPECTED — the point is
+    /// that it is contained, not fatal.)
+    #[test]
+    fn a_panicking_job_does_not_brick_the_store() {
+        use dreggnet_offerings::native_descent::NativeDescentOffering;
+
+        let channel = 99_207;
+        close_in::<NativeDescentOffering>(channel);
+        open_in(
+            channel,
+            NativeDescentOffering::new,
+            SessionConfig::with_seed(1),
+        )
+        .unwrap();
+
+        // A job that panics comes back as a graceful `None`, not a process abort.
+        let panicked = with_live::<NativeDescentOffering, ()>(channel, |_live| {
+            panic!("store-panic-isolation-canary")
+        });
+        assert!(
+            panicked.is_none(),
+            "a panicking job must return None, not abort the caller"
+        );
+
+        // The store thread SURVIVED: the very next job against the same store still answers.
+        let revision =
+            with_live::<NativeDescentOffering, _>(channel, |live| live.session.revision());
+        assert_eq!(
+            revision,
+            Some(0),
+            "the store thread must survive a panicking job and keep serving"
+        );
+        close_in::<NativeDescentOffering>(channel);
     }
 
     #[test]

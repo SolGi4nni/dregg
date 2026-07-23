@@ -6,6 +6,16 @@ description = "DreggNet offering #commerce — a sealed-bid AUCTION/MARKET (list
 
 [features]
 default = []
+# Crate-authored, viewer-blind CONTRACT FIXTURES for cross-crate surface tests.
+# Exposes `private_bazaar_journey::contract_fixtures::{sample_pending_receipt,
+# sample_settled_receipt}` — real authenticated `PrivateBazaarPublicReceipt`s
+# built from THIS crate's private constructors (never fabricated from external
+# dummy bytes). Adds no dependencies; it only un-gates the in-crate `pending`/
+# `settled` builders that are otherwise `cfg(test)`/`private-clearing`-only, so a
+# surface adapter (e.g. the Discord bot) can render the shared receipt contract
+# without the removed public constructor or mutable fields. Kept opt-in so the
+# ordinary API surface does not carry the fixtures.
+contract-fixtures = []
 # Heavy proof surface: exposes `certified_clearing` and its real fhEgg Cert-F
 # batch-STARK prover.  Kept opt-in so ordinary market/game clients do not pull the
 # recursion/prover tower merely to list, bid, render, or settle.

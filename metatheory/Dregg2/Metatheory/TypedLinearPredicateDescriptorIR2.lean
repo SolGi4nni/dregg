@@ -50,6 +50,7 @@ inductive AffineTerm (inputCount : Nat) where
   | input (index : Fin inputCount)
   | neg (term : AffineTerm inputCount)
   | add (left right : AffineTerm inputCount)
+  | scale (k : Int) (term : AffineTerm inputCount)
   deriving DecidableEq, Repr
 
 namespace AffineTerm
@@ -59,12 +60,14 @@ def evalInt {m : Nat} (input : Fin m -> Int) : AffineTerm m -> Int
   | .input i => input i
   | .neg x => -(evalInt input x)
   | .add x y => evalInt input x + evalInt input y
+  | .scale k x => k * evalInt input x
 
 noncomputable def evalField {m : Nat} (input : Fin m -> BabyBear) : AffineTerm m -> BabyBear
   | .const k => (k : BabyBear)
   | .input i => input i
   | .neg x => -(evalField input x)
   | .add x y => evalField input x + evalField input y
+  | .scale k x => (k : BabyBear) * evalField input x
 
 /-- Wire expression at a chosen raw-input base column. -/
 def toWindowAt {m : Nat} (rawBase : Nat) : AffineTerm m -> WindowExpr
@@ -72,6 +75,7 @@ def toWindowAt {m : Nat} (rawBase : Nat) : AffineTerm m -> WindowExpr
   | .input i => .loc (rawBase + i.val)
   | .neg x => .mul (.const (-1)) (toWindowAt rawBase x)
   | .add x y => .add (toWindowAt rawBase x) (toWindowAt rawBase y)
+  | .scale k x => .mul (.const k) (toWindowAt rawBase x)
 
 def eqConst {m : Nat} (i : Fin m) (k : Int) : AffineTerm m :=
   .add (.input i) (.const (-k))
@@ -83,6 +87,7 @@ def additions {m : Nat} : AffineTerm m -> Nat
   | .const _ | .input _ => 0
   | .neg x => additions x
   | .add x y => additions x + additions y + 1
+  | .scale _ x => additions x
 
 theorem fieldWindow_toWindowAt {m : Nat} (env : VmRowEnv) (rawBase : Nat)
     (term : AffineTerm m) :

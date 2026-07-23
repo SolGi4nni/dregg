@@ -206,6 +206,35 @@ impl From<CustomIr2WitnessBundle> for CarrierWitness {
     }
 }
 
+/// A PRE-BUILT Lean-emitted descriptor + its retained base trace, an ALTERNATIVE sub-proof source
+/// for a state-binding [`CustomWitnessBundle`]. When present, the fold's state-node arm mints the
+/// custom leaf via [`crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_state_commitment`]
+/// (proving the PROVEN Lean AIR directly) instead of lowering the bundle's Rust `CellProgram` —
+/// the seam the automatafl STEP cutover rides (the deployed proof proves through
+/// `automataflStepDescN {n}`, not the hand-authored Rust AIR). The exposed claim and the fold
+/// contract are byte-identical to the `CellProgram` state leaf, so the state-binding node is
+/// unchanged. `public_inputs` (on the bundle) is the SINGLE PI source for both the commitment and
+/// the state prefix, so a descriptor source cannot disagree with the leg's claimed commitment.
+#[derive(Clone, Debug)]
+pub struct DescriptorStateLeafSource {
+    /// The decoded Lean descriptor the sub-proof re-proves (its `public_input_count` must equal
+    /// the bundle's `public_inputs.len()`).
+    pub descriptor: dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    /// The trusted-Rust-generated base trace (rows of `descriptor.trace_width`) satisfying it.
+    pub base_trace: Vec<Vec<BabyBear>>,
+    /// **THE BOARD-WINDOW OPT-IN (the two-leg fold).** `None` = the 24-lane state leaf + state
+    /// node (byte-identical to before). `Some(binding)` = the leaf ALSO re-exposes the IN/OUT
+    /// state windows the descriptor's PIs carry
+    /// ([`crate::custom_leaf_adapter::prove_custom_leaf_descriptor_with_board_window`]) and the
+    /// per-turn node carries them up
+    /// ([`crate::joint_turn_recursive::prove_custom_binding_node_state_and_board_segmented`]), so
+    /// the merge can `connect` `left.OUT == right.IN` at every aggregation node. Without it the
+    /// per-turn node drops the application PIs and adjacent turns' states are unrelated numbers.
+    /// MANDATORY when present: the board-window node REQUIRES the wide claim, so a forger cannot
+    /// dodge the seam by minting the narrow leaf.
+    pub board_window: Option<dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding>,
+}
+
 /// The prover-side re-provable witness for a `Custom` turn's external sub-proof — exactly the four
 /// arguments [`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`] consumes to re-prove
 /// the `CellProgram` as a recursion-foldable IR-v2 leaf with an in-circuit-computed PI commitment.
@@ -235,6 +264,14 @@ pub struct CustomWitnessBundle {
     /// leg's wide descriptor to publish the field octet as a PI (`generate_rotated_custom_wide`'s
     /// field-K exposure / Lean `customFieldKExposure`).
     pub app_root_binding: Option<dregg_circuit::effect_vm::custom_state_binding::AppRootBinding>,
+    /// **THE DIRECT-IR2 STATE-LEAF OPT-IN (the automatafl STEP cutover).** `None` = the leaf is
+    /// minted by lowering `program` (the deployed default). `Some(src)` = the state-node arm mints
+    /// the leaf from the PROVEN Lean descriptor `src.descriptor` + `src.base_trace` directly
+    /// (`prove_custom_leaf_descriptor_with_state_commitment`), so the fold proves the Lean-authored
+    /// AIR rather than a re-authored Rust `CellProgram`. Only consulted on the state path
+    /// (`app_root_binding == None`); the exposed claim is byte-identical, so the state-binding node
+    /// is unaffected. `program`/`witness_values`/`num_rows` are retained but unused for the leaf.
+    pub descriptor_state_leaf: Option<DescriptorStateLeafSource>,
 }
 
 /// Prover-side retention for a Lean-emitted/direct IR2 custom relation.
@@ -711,6 +748,7 @@ impl CustomWitnessBundle {
             num_rows: bound.num_rows?,
             public_inputs: bound.public_inputs.clone(),
             app_root_binding: None,
+            descriptor_state_leaf: None,
         })
     }
 

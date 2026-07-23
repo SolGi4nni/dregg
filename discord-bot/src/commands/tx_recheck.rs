@@ -94,6 +94,11 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         return;
     }
 
+    // ACK inside the 3s window (a deferred update that leaves the pressed ledger message intact)
+    // BEFORE the node round-trip: a live `/api/receipts` fetch can exceed the window, showing
+    // "interaction failed" on a check that is running fine.
+    crate::commands::ack::ack_component(ctx, component).await;
+
     let embed = match state.devnet.get_turn_details(hash).await {
         Ok(details) => found_embed(hash, &details, &state.config.devnet_url),
         Err(e) => embeds::warning_embed(
@@ -101,14 +106,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             &not_found_text(hash, &e.to_string()),
         ),
     };
-    let _ = component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().embed(embed),
-            ),
-        )
-        .await;
+    // PUBLIC, as before — the point is a chain re-check anyone can watch.
+    crate::commands::ack::followup_embed(ctx, component, embed).await;
 }
 
 /// The found-on-chain embed: what the node's receipt chain says about this hash, just now.

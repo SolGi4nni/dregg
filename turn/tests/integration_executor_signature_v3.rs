@@ -153,5 +153,5 @@ fn v2_canonical_message_is_still_recoverable() {
     let v3 = r.canonical_executor_signed_message();
     assert_ne!(v2, v3);
     assert!(v2.starts_with(b"executor-receipt-sig-v2:"));
-    assert!(v3.starts_with(b"executor-receipt-sig-v4:"));
+    assert!(v3.starts_with(b"executor-receipt-sig-v5:"));
 }

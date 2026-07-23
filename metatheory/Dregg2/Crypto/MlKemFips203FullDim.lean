@@ -38,12 +38,15 @@ Kyber NTT, the CBD sampler, and both compression codecs.
 
 ## Wired to `MlKemDelta`'s `δ`
 
-`MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight` proves — unconditionally, in-kernel — that
-the modeled ML-KEM-768 `e_total` ENVELOPE `MlKemDelta.mlkemZ` escapes the `(−832, 832)` window at some
-coefficient with probability `≤ 2⁻¹⁴⁸`. `roundtrip_fails_le_delta` transports it by STOCHASTIC DOMINATION:
-for any key sampler whose true decaps-failure event is CONTAINED in the envelope's failure event (the NAMED
-domination `hdom`, below), the full-dimension encaps→decaps round trip fails with probability `≤ 2⁻¹⁴⁸`. That
-is `Fips203Correct`-except-`δ` at real ML-KEM-768 parameters.
+`MlKemDelta` proves — unconditionally, in-kernel — that the modeled ML-KEM-768 `e_total` ENVELOPE
+`MlKemDelta.mlkemZ` escapes the `(−832, 832)` window at some coefficient with probability `≤ δ`
+(`mlkem768_decapsFailure_le_delta_unconditional`: `δ = 2⁻¹⁴⁰`; the tightened
+`…_unconditional_tight`, where the tree carries it: `δ = 2⁻¹⁴⁸`). That analytic bound is NOT re-proved here —
+it enters this module as the NAMED, THREADED obligation `EnvelopeDeltaBound δ` (§6). `roundtrip_fails_le_delta`
+transports it by STOCHASTIC DOMINATION: for any key sampler whose true decaps-failure event is CONTAINED in the
+envelope's failure event (the NAMED domination `hdom`, below), the full-dimension encaps→decaps round trip
+fails with probability `≤ δ`. `roundtrip_fails_le_delta_2pow140` is the unconditional `δ = 2⁻¹⁴⁰` instance.
+That is `Fips203Correct`-except-`δ` at real ML-KEM-768 parameters.
 
 ## ⚑ THE ONE NAMED RESIDUAL — `hdom` (the envelope's stochastic DOMINATION of the true noise)
 
@@ -394,7 +397,7 @@ theorem mlkem_roundtrip_of_kpke (dk m : List UInt8) (hwf : wfDk dk = true)
 /-- **THE ML-KEM-768 "no decryption failure" EVENT at key `dk`, message `m`** — the key is well-formed AND
 the executable pipeline's decryption noise stays inside the FIPS 203 `⌊q/4⌋` window at every one of the 256
 coefficients. This is EXACTLY the event `MlKemCorrect.decryptCorrect_conditional` needs and `MlKemDelta`
-bounds the complement of (`≤ 2⁻¹⁴⁸`). ML-KEM is `δ`-correct, not perfectly correct: keys outside this event
+bounds the complement of (`≤ δ`, §6). ML-KEM is `δ`-correct, not perfectly correct: keys outside this event
 genuinely DO fail to decapsulate, so the honest full-dimension `Fips203Correct` is stated over them. -/
 def goodKey (m dk : List UInt8) : Bool :=
   wfDk dk && noiseWindow (kpkeW (dkPkeOf dk) (ctOf (ekOfDk dk) m)) (msgPoly m)
@@ -448,13 +451,22 @@ theorem fullKemApi_agrees (m : List UInt8) (hm : m.length = 32)
           ((fullKemApi m).mlkem_encaps ((fullKemApi m).ekOf dk)).1 :=
   dregg_kem_correct (fullKemApi m) (fullKemApi_x25519 m) (fullKemApi_fips203 m hm) xskr dk xski
 
-/-! ## §6 — WIRED TO `MlKemDelta`: the round trip fails with probability `≤ 2⁻¹⁴⁸`.
+/-! ## §6 — WIRED TO `MlKemDelta`: the round trip fails with probability `≤ δ`.
 
-`MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight` bounds — unconditionally, in-kernel, by the
-exact-MGF Chernoff route over the real CBD noise — the probability that the modeled ML-KEM-768 `e_total`
-ENVELOPE `mlkemZ` escapes the `(−832, 832)` window at ANY coefficient. Since `goodKey` is EXACTLY "in-window
-everywhere" (plus key well-formedness), a key sampler whose true decaps-failure event is DOMINATED by the
-envelope's failure event inherits the bound — by `winProb` monotonicity. -/
+`MlKemDelta` bounds — unconditionally, in-kernel, by the exact-MGF Chernoff route over the real CBD noise —
+the probability that the modeled ML-KEM-768 `e_total` ENVELOPE `mlkemZ` escapes the `(−832, 832)` window at
+ANY coefficient. Since `goodKey` is EXACTLY "in-window everywhere" (plus key well-formedness), a key sampler
+whose true decaps-failure event is DOMINATED by the envelope's failure event inherits the bound — by `winProb`
+monotonicity.
+
+**The δ-level is a THREADED, NAMED OBLIGATION (`EnvelopeDeltaBound δ`), never a `sorry`.** The transport
+theorem `roundtrip_fails_le_delta` is stated ∀ δ and takes the envelope bound as an EXPLICIT HYPOTHESIS, so
+this module states exactly what it assumes and each tree may discharge it at the strongest δ it actually
+proves. `roundtrip_fails_le_delta_2pow140` is the UNCONDITIONAL instance every tree can close, from
+`MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional` (`δ = 2⁻¹⁴⁰`); on trees carrying the tightened
+`MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight`, feeding THAT to the same theorem yields
+`δ = 2⁻¹⁴⁸` with no other change. Nothing here re-asserts an analytic result it does not have: the Chernoff /
+union analysis is `MlKemDelta`'s, and its availability is visible in the hypothesis, not hidden. -/
 
 /-- `winProb` is monotone in the winning predicate (a bigger favorable set has bigger counting probability). -/
 theorem winProb_mono {Ω : Type*} [Fintype Ω] (p r : Ω → Bool) (h : ∀ ω, p ω = true → r ω = true) :
@@ -470,28 +482,43 @@ theorem winProb_mono {Ω : Type*} [Fintype Ω] (p r : Ω → Bool) (h : ∀ ω, 
   rw [div_eq_mul_inv, div_eq_mul_inv]
   exact mul_le_mul_of_nonneg_right hc (by positivity)
 
-/-- **THE `δ`-WIRED FULL-DIMENSION CORRECTNESS.** For ANY sampler of well-formed ML-KEM-768 decapsulation keys
-whose true decaps-failure event is DOMINATED by the envelope model's failure event (`hdom` — the ONE named
-residual, see the header: whenever the envelope `mlkemZ` registers NO failure at `ω`, the executable pipeline's
-noise is in-window at every coefficient), the FULL-DIMENSION encaps→decaps round trip FAILS with probability
-`≤ 2⁻¹⁴⁸`. So `Fips203Correct` holds at real ML-KEM-768 parameters except with probability `≤ δ` — which is
-exactly what FIPS 203 correctness asserts.
+/-- **THE NAMED δ-OBLIGATION.** `EnvelopeDeltaBound δ` says the MODELED ML-KEM-768 noise envelope `mlkemZ`
+escapes the `(−832, 832)` window at some coefficient with probability at most `δ`.
+
+This is the hard ANALYTIC result — exact-MGF Chernoff per coefficient plus the `768`-term union bound — and it
+is NOT proved in this module. It is `Dregg2.Crypto.MlKemDelta`'s: `mlkem768_decapsFailure_le_delta_unconditional`
+closes it at `δ = 2⁻¹⁴⁰` (available on every tree), and the tightened
+`mlkem768_decapsFailure_le_delta_unconditional_tight` at `δ = 2⁻¹⁴⁸` where present. Naming it as a `Prop` and
+THREADING it as a hypothesis (rather than `sorry`-ing it, or re-declaring it as an `axiom` this project already
+proves elsewhere) is what keeps this module's assumption set visible and greppable. -/
+def EnvelopeDeltaBound (δ : ℝ) : Prop :=
+  winProb (MlKemDelta.decapsFails MlKemDelta.mlkemZ) ≤ δ
+
+/-- **THE `δ`-WIRED FULL-DIMENSION CORRECTNESS.** For ANY `δ` bounding the envelope's failure probability
+(`hδ : EnvelopeDeltaBound δ` — the NAMED analytic obligation, supplied by `MlKemDelta`, see above) and ANY
+sampler of well-formed ML-KEM-768 decapsulation keys whose true decaps-failure event is DOMINATED by the
+envelope model's failure event (`hdom` — the ONE named residual, see the header: whenever the envelope `mlkemZ`
+registers NO failure at `ω`, the executable pipeline's noise is in-window at every coefficient), the
+FULL-DIMENSION encaps→decaps round trip FAILS with probability `≤ δ`. So `Fips203Correct` holds at real
+ML-KEM-768 parameters except with probability `≤ δ` — which is exactly what FIPS 203 correctness asserts.
+
+The CONTENT proved here is the TRANSPORT — `winProb` monotonicity through the domination, plus the executable
+`mlkem_roundtrip_of_kpke`/`kpkeDecrypt_recovers` chain — not the δ-bound itself.
 
 `hdom` is the honest replacement for the earlier (FALSE, hence vacuous) equality hypothesis `hbridge`:
 `mlkemZ` is a conservative MGF-envelope (`±104` `Δv`, `cbd²` products), so it DOMINATES rather than EQUALS the
 literal noise. `roundtrip_fails_le_delta_nonvacuous` (§7) exhibits a sampler satisfying `hdom`, so this is not
-vacuous. The `δ` is `MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight`: UNCONDITIONAL, in-kernel,
-from the exact-MGF Chernoff bound on the real CBD envelope — no distributional assumption. -/
-theorem roundtrip_fails_le_delta (m : List UInt8) (hm : m.length = 32)
+vacuous. -/
+theorem roundtrip_fails_le_delta (δ : ℝ) (hδ : EnvelopeDeltaBound δ)
+    (m : List UInt8) (hm : m.length = 32)
     (key : MlKemDelta.mlkemΩ → List UInt8)
     (hwf : ∀ ω, wfDk (key ω) = true)
     (hdom : ∀ ω, MlKemDelta.decapsFails MlKemDelta.mlkemZ ω = false →
         noiseWindow (kpkeW (dkPkeOf (key ω)) (ctOf (ekOfDk (key ω)) m)) (msgPoly m) = true) :
     winProb (fun ω => decide (mlkemDecaps (key ω) (mlkemEncaps (ekOfDk (key ω)) m).1
         ≠ (mlkemEncaps (ekOfDk (key ω)) m).2))
-      ≤ (2 : ℝ) ^ (-148 : ℤ) := by
-  refine le_trans (winProb_mono _ (MlKemDelta.decapsFails MlKemDelta.mlkemZ) ?_)
-    MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight
+      ≤ δ := by
+  refine le_trans (winProb_mono _ (MlKemDelta.decapsFails MlKemDelta.mlkemZ) ?_) hδ
   intro ω hfail
   by_contra hne
   -- the envelope registered NO failure at `ω` …
@@ -503,6 +530,21 @@ theorem roundtrip_fails_le_delta (m : List UInt8) (hm : m.length = 32)
     (kpkeDecrypt_recovers _ _ m hm hwin)
   rw [decide_eq_true_eq] at hfail
   exact hfail hrt
+
+/-- **THE UNCONDITIONAL INSTANCE THIS TREE CLOSES — `δ = 2⁻¹⁴⁰`.** `roundtrip_fails_le_delta` fed the
+assumption-free envelope bound `MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional`. No hypothesis on the
+δ-level survives; `hdom` (the domination residual) is the only one left, exactly as in §6's header. On trees
+carrying `MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional_tight`, the SAME theorem instantiated at
+that bound gives `δ = 2⁻¹⁴⁸`. -/
+theorem roundtrip_fails_le_delta_2pow140 (m : List UInt8) (hm : m.length = 32)
+    (key : MlKemDelta.mlkemΩ → List UInt8)
+    (hwf : ∀ ω, wfDk (key ω) = true)
+    (hdom : ∀ ω, MlKemDelta.decapsFails MlKemDelta.mlkemZ ω = false →
+        noiseWindow (kpkeW (dkPkeOf (key ω)) (ctOf (ekOfDk (key ω)) m)) (msgPoly m) = true) :
+    winProb (fun ω => decide (mlkemDecaps (key ω) (mlkemEncaps (ekOfDk (key ω)) m).1
+        ≠ (mlkemEncaps (ekOfDk (key ω)) m).2))
+      ≤ (2 : ℝ) ^ (-140 : ℤ) :=
+  roundtrip_fails_le_delta _ MlKemDelta.mlkem768_decapsFailure_le_delta_unconditional m hm key hwf hdom
 
 /-! ## §7 — NON-VACUITY: the GENUINE `ml-kem` v0.2.3 crate key INHABITS the `δ`-correct set.
 
@@ -550,10 +592,10 @@ theorem roundtrip_fails_le_delta_nonvacuous :
         decide (mlkemDecaps realDk.toList
             (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).1
           ≠ (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).2))
-      ≤ (2 : ℝ) ^ (-148 : ℤ) := by
+      ≤ (2 : ℝ) ^ (-140 : ℤ) := by
   have hgood := realDk_good
   simp only [goodKey, Bool.and_eq_true] at hgood
-  exact roundtrip_fails_le_delta MlKemEncaps.acvpM.toList acvpM_len
+  exact roundtrip_fails_le_delta_2pow140 MlKemEncaps.acvpM.toList acvpM_len
     (fun _ => realDk.toList) (fun _ => hgood.1) (fun _ _ => hgood.2)
 
 /-! ## §8 — REUSABLE CORE toward DISCHARGING `hdom`: `intt`-linearity + `ntt ∘ intt = id`, and the NAMED
@@ -754,7 +796,11 @@ theorem sHatOf_lt (dkPke : List UInt8) (i : Nat) : ∀ (p : Nat), (sHatOf dkPke 
 /-- **PER-TERM NEGACYCLIC REDUCTION.** The executable accumulator term `intt (pointwiseNtt ŝ (ntt u))` — the
 fast incomplete-NTT multiply of the stored NTT-domain secret `ŝ` by `u` — IS the ground-truth negacyclic ring
 product `schoolbookMul (intt ŝ) u`. Assembles `ntt_intt_rightInverse` (`ntt (intt ŝ) = ŝ`, so `ŝ` is an
-`ntt`-image) with `ntt_computes_negacyclic_mul`. -/
+`ntt`-image) with `MlKemNttFaithful`'s ∀-theorem `MlKemRing.mlkem_ntt_ring_faithful` (the fast incomplete-NTT
+path IS the negacyclic ring product, for ALL canonical size-256 pairs). We cite `mlkem_ntt_ring_faithful` —
+the PROVED ∀-statement itself — rather than the later gate-name alias `ntt_computes_negacyclic_mul`, because
+the alias only exists on trees that have already retired `MlKemRing`'s one-sample `native_decide` gate of the
+same name; the ∀-theorem it abbreviates is the same term on every tree. -/
 theorem intt_pointwiseNtt_ntt (sh u : Poly) (hsh : sh.size = 256) (hshlt : ∀ (p : Nat), sh[p]! < q)
     (hu : u.size = 256) :
     intt (pointwiseNtt sh (ntt u)) = MlKemRing.schoolbookMul (intt sh) u := by
@@ -763,7 +809,7 @@ theorem intt_pointwiseNtt_ntt (sh u : Poly) (hsh : sh.size = 256) (hshlt : ∀ (
   calc intt (pointwiseNtt sh (ntt u))
       = intt (pointwiseNtt (ntt (intt sh)) (ntt u)) := by rw [hrs]
     _ = MlKemRing.schoolbookMul (intt sh) u :=
-        MlKemRing.ntt_computes_negacyclic_mul (intt sh) u hisz hu
+        MlKemRing.mlkem_ntt_ring_faithful (intt sh) u hisz hu
 
 /-- `φ(intt zeroPoly) = 0` coefficient-wise — `intt` of the zero poly has zero `ℤ_q` coefficients (each is
 `nInv · ∑ 0 = 0` via `intt_interp_kem`). Base of the accumulator's `∑ᵢ` distribution. -/
@@ -1312,6 +1358,7 @@ checks) are NOT in this list: they carry the `native_decide` residual, and NOTHI
   fullKemApi_agrees,
   winProb_mono,
   roundtrip_fails_le_delta,
+  roundtrip_fails_le_delta_2pow140,
   intt_size,
   intt_lt,
   intt_addLinear_pair,

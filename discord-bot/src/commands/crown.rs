@@ -170,7 +170,11 @@ fn crown() -> &'static Crown {
                     next_token: 1,
                 };
                 while let Ok(job) = rx.recv() {
-                    job(&mut core);
+                    // Structural net: a panicking job is contained per-job by `run`, and this
+                    // guard guarantees no job can unwind out of the loop and kill the thread
+                    // (which would brick the crown board for every later caller).
+                    let _ =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut core)));
                 }
             })
             .expect("spawn the crown board thread");
@@ -178,16 +182,36 @@ fn crown() -> &'static Crown {
     })
 }
 
-/// Run `f` on the crown's owner thread and hand back its result.
-fn run<R: Send + 'static>(f: impl FnOnce(&mut CrownCore) -> R + Send + 'static) -> R {
-    let (tx, rx) = sync_channel::<R>(1);
+/// Why a crown-board job did not return a value. Both cases used to abort the caller with a
+/// panic; now a panicking job is contained (the board thread survives) and the fault is returned
+/// to the ONE caller, which degrades gracefully.
+#[derive(Debug)]
+enum StoreError {
+    /// The board thread's channel is closed — it never spawned, or has gone away unrecoverably.
+    ThreadGone,
+    /// This job panicked; the panic was contained on the board thread, which survives.
+    JobPanicked,
+}
+
+/// Run `f` on the crown's owner thread and hand back its result. A panic inside `f` is caught on
+/// the board thread and returned to THIS caller as [`StoreError::JobPanicked`]; the thread lives
+/// on to serve the next job. The happy path is unchanged.
+fn run<R: Send + 'static>(
+    f: impl FnOnce(&mut CrownCore) -> R + Send + 'static,
+) -> Result<R, StoreError> {
+    let (tx, rx) = sync_channel::<std::thread::Result<R>>(1);
     crown()
         .jobs
         .send(Box::new(move |core| {
-            let _ = tx.send(f(core));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(core)));
+            let _ = tx.send(result);
         }))
-        .expect("the crown board thread is alive");
-    rx.recv().expect("the crown board thread answered")
+        .map_err(|_| StoreError::ThreadGone)?;
+    match rx.recv() {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_panic)) => Err(StoreError::JobPanicked),
+        Err(_) => Err(StoreError::ThreadGone),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,6 +231,8 @@ enum Enqueued {
 /// Enqueue a played match for the background fold (guarding against a duplicate live fold of
 /// the same channel+game).
 fn enqueue_fold(game: Game, channel: u64, player: String, m: PlayedMatch) -> Enqueued {
+    // A store fault degrades to `QueueFull` — the honest "the play already happened, try the fold
+    // again shortly" refusal, never a panic.
     run(move |core| {
         if let Some((&t, _)) = core
             .folds
@@ -234,6 +260,7 @@ fn enqueue_fold(game: Game, channel: u64, player: String, m: PlayedMatch) -> Enq
             }
         }
     })
+    .unwrap_or(Enqueued::QueueFull)
 }
 
 /// A status poll's outcome.
@@ -323,6 +350,7 @@ fn poll_fold(token: u64) -> Poll {
             }
         }
     })
+    .unwrap_or_else(|_| Poll::Failed("the crown board thread is unavailable".to_string()))
 }
 
 /// **Independently re-verify** a ranked fold — re-run the O(1) whole-history light client on
@@ -342,6 +370,7 @@ fn reverify_fold(token: u64) -> Result<(Game, usize, Ranked), String> {
             .map(|turns| (rec.game, turns, facts))
             .map_err(|why| format!("the light client REFUSED the stored proof: {why}"))
     })
+    .unwrap_or_else(|_| Err("the crown board thread is unavailable".to_string()))
 }
 
 /// The board read for `/crown board`: per game, the ranked entry lines + the
@@ -412,6 +441,7 @@ fn board_lines(game: Game) -> (Vec<String>, bool) {
             .collect();
         (lines, no_moves)
     })
+    .unwrap_or_else(|_| (Vec::new(), true))
 }
 
 /// The channel's folds + a live one-word status each (for `/crown status`).
@@ -441,6 +471,7 @@ fn folds_in(channel: u64) -> Vec<(u64, Game, String)> {
         rows.sort_by_key(|(t, _, _)| *t);
         rows
     })
+    .unwrap_or_default()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -456,10 +487,10 @@ fn played_automatafl(channel: u64) -> Option<PlayedMatch> {
         if !live.session.ended() {
             return None;
         }
-        Some(PlayedMatch::Automatafl(AutomataflMatch {
-            start: live.session.board().clone(),
-            turns: live.session.turn_no().max(1) as usize,
-        }))
+        Some(PlayedMatch::Automatafl(AutomataflMatch::automaton_only(
+            live.session.board().clone(),
+            live.session.turn_no().max(1) as usize,
+        )))
     })
     .flatten()
 }
@@ -1015,5 +1046,26 @@ mod tests {
         for id in ["offering:fire:tug:comp:3", "fiction:vote:0:1", "start:menu"] {
             assert!(!id.starts_with("crown:"), "{id}");
         }
+    }
+
+    /// **Panic isolation**: a job that panics on the crown-board thread does NOT brick the board.
+    /// Before this hardening a panicking job killed the thread and every later `/crown` press
+    /// panicked at `send`/`recv`'s `.expect`; now the panic is contained (this caller gets a clean
+    /// `Err`) and a subsequent job on the same board still succeeds. (An expected contained
+    /// "panicked at 'crown-panic-isolation-canary'" line on stderr is the point, not a failure.)
+    #[test]
+    fn a_panicking_job_does_not_brick_the_board() {
+        let panicked: Result<(), StoreError> = run(|_core| panic!("crown-panic-isolation-canary"));
+        assert!(
+            panicked.is_err(),
+            "a panicking job must return an Err, not abort the caller"
+        );
+        // The board thread SURVIVED: the next job still answers.
+        let folds = run(|core| core.folds.len());
+        assert_eq!(
+            folds.ok(),
+            Some(0),
+            "the board thread must survive a panicking job and keep serving"
+        );
     }
 }

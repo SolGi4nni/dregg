@@ -148,12 +148,12 @@ pub enum PrivateBazaarPublicReceipt {
 }
 
 impl PrivateBazaarPublicReceipt {
-    #[cfg(any(feature = "private-clearing", test))]
+    #[cfg(any(feature = "private-clearing", feature = "contract-fixtures", test))]
     fn pending(context: PrivateBazaarPublicContext) -> Self {
         Self::Pending(PrivateBazaarPendingReceipt { context })
     }
 
-    #[cfg(any(feature = "private-clearing", test))]
+    #[cfg(any(feature = "private-clearing", feature = "contract-fixtures", test))]
     #[allow(clippy::too_many_arguments)]
     fn settled(
         context: PrivateBazaarPublicContext,
@@ -1327,6 +1327,68 @@ fn progression_receipt_id(
 
 #[cfg(feature = "private-clearing")]
 const PRIVATE_BAZAAR_RAID_KEY_FOR_BINDING: &str = "private-bazaar-raid";
+
+/// Crate-authored, viewer-blind CONTRACT FIXTURES for cross-crate surface tests.
+///
+/// These mirror the crate's own canonical viewer-blind receipts (the same
+/// deterministic digests its internal tests pin — see `TerminalFixture` and
+/// `structural_pending_receipt_is_viewer_blind`) so an EXTERNAL surface-contract
+/// test can render a real authenticated [`PrivateBazaarPublicReceipt`] WITHOUT
+/// the removed public constructor / mutable fields, and WITHOUT fabricating a
+/// receipt from external dummy bytes.  Every field is a fixed NON-SECRET digest:
+/// nothing here is (or renders) a private bid, witness, price, reserve, or
+/// winner.  The receipts are built through this crate's own private `pending` /
+/// `settled` constructors, so a settled fixture still satisfies the committed-
+/// authority guard (all evidence fields non-zero) exactly as an authenticated
+/// journey would produce.  Gated behind `contract-fixtures` so the fixtures are
+/// not part of the ordinary API surface.
+#[cfg(feature = "contract-fixtures")]
+pub mod contract_fixtures {
+    use super::{PrivateBazaarPublicContext, PrivateBazaarPublicReceipt};
+
+    /// A canonical viewer-blind PENDING receipt: the party entered and the
+    /// executor receipt is still pending.  Mirrors the crate's own
+    /// `structural_pending_receipt_is_viewer_blind` fixture.
+    pub fn sample_pending_receipt() -> PrivateBazaarPublicReceipt {
+        PrivateBazaarPublicReceipt::pending(PrivateBazaarPublicContext {
+            journey_id: [0x10; 32],
+            deployment_id: [0x41; 32],
+            market_instance_id: [0x51; 32],
+            policy_id: [0x42; 32],
+            participant_count: 4,
+            roster_commitment: [0x20; 32],
+            reward_commitment: [0x21; 32],
+        })
+    }
+
+    /// A canonical viewer-blind SETTLED receipt: one finalized, executor-
+    /// authenticated private result caused one exact game effect.  Mirrors the
+    /// crate's own `TerminalFixture::receipt()` — every committed authority field
+    /// is a fixed non-zero digest, so it passes the `settled` constructor's
+    /// committed-authority guard as an authenticated journey would.
+    pub fn sample_settled_receipt() -> PrivateBazaarPublicReceipt {
+        PrivateBazaarPublicReceipt::settled(
+            PrivateBazaarPublicContext {
+                journey_id: [0x10; 32],
+                deployment_id: [0x41; 32],
+                market_instance_id: [0x51; 32],
+                policy_id: [0x42; 32],
+                participant_count: 4,
+                roster_commitment: [0x20; 32],
+                reward_commitment: [0x21; 32],
+            },
+            [0x61; 32],   // source_use_id
+            [0x62; 32],   // operation_id
+            17,           // proof_session
+            [0x31u32; 8], // input_root
+            [0x32; 32],   // settlement_turn_hash
+            [0x63; 32],   // game_receipt_hash
+            [0x64; 32],   // game_turn_hash
+            [0x65; 32],   // game_post_state
+        )
+        .expect("canonical contract fixture carries non-zero committed authority")
+    }
+}
 
 #[cfg(test)]
 mod tests {

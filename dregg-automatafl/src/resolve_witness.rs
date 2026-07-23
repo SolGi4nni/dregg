@@ -200,7 +200,10 @@ fn try_solve_gate(expr: &LeanExpr, vals: &mut [Option<BabyBear>]) -> Result<bool
 }
 
 /// One Rule-L sweep over every `Base(Gate)` constraint.
-fn rule_l_pass(desc: &EffectVmDescriptor2, vals: &mut [Option<BabyBear>]) -> Result<bool, String> {
+pub(crate) fn rule_l_pass(
+    desc: &EffectVmDescriptor2,
+    vals: &mut [Option<BabyBear>],
+) -> Result<bool, String> {
     let mut progress = false;
     for c in &desc.constraints {
         if let VmConstraint2::Base(VmConstraint::Gate(expr)) = c {
@@ -686,6 +689,39 @@ fn fill_dest_one_hots(
     let mut prog = fill_one_hot(vals, l.n, &row_sel, dest_y)?;
     prog |= fill_one_hot(vals, l.n, &col_sel, dest_x)?;
     Ok(prog)
+}
+
+/// **LEG R's BOARD WINDOW** — `IN = pack(old) ‖ (ax, ay)`, `OUT = pack(cMidV4) ‖ (ax, ay)`.
+///
+/// Resolution never moves the automaton (Lean: `resolveMoves_automaton`), so Leg R's OUT automaton
+/// IS its IN automaton and costs zero new lanes. Connected to Leg A's IN window in the fold, this
+/// window is exactly `hseamPack ∧ hseamAutoX ∧ hseamAutoY` — the three seam hypotheses
+/// `AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` takes.
+pub fn resolve_board_window(
+    n: usize,
+    desc: &EffectVmDescriptor2,
+) -> Result<dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding;
+    let l = ResolveLayout::new(n);
+    if l.pi_count() != desc.public_input_count {
+        return Err(format!(
+            "resolve board window: layout PI count {} ≠ descriptor '{}' public_input_count {}",
+            l.pi_count(),
+            desc.name,
+            desc.public_input_count
+        ));
+    }
+    let b = BoardWindowBinding {
+        in_slices: vec![(l.pack_in_pi_base(), l.rfc), (l.auto_pi_base(), 2)],
+        out_slices: vec![(l.pack_out_pi_base(), l.rfc), (l.auto_pi_base(), 2)],
+    };
+    if !b.is_well_formed() || desc.public_input_count < b.pi_end() {
+        return Err(format!(
+            "resolve board window {b:?} is not expressible in descriptor '{}' ({} PIs)",
+            desc.name, desc.public_input_count
+        ));
+    }
+    Ok(b)
 }
 
 // --------------------------------------------------------------------------------------------

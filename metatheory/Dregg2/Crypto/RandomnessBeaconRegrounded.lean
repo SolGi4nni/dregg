@@ -55,11 +55,13 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
-  (commitRevealFamily commitRevealFamily_CR_of_hashcr hermine_commitment_binding_advantage_bound
-   hermine_commitment_binding_advantage_bound_eff crEquivocator)
+  (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
+   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
+   hashAnsSizeOf openAnsSizeOf crEquivocator)
 open Dregg2.Crypto.FloorGames
-  (Adversary hashGame finderToAdv HashCRHardQuant collisionResistant_iff_hashCRHardQuant_top
-   hard_bot_vacuous)
+  (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
+   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.HashRandRefinement (HashRand Role)
 
 set_option autoImplicit false
@@ -83,84 +85,128 @@ def hashRandOutputFamily {Party Ct Pre Digest : Type} [DecidableEq Pre] [Decidab
     (X : HashRand Party Ct Pre Digest) : KeyedHashFamily :=
   commitRevealFamily X.cr Role.output
 
-/-! ## §2 — the advantage-bounded beacon keystones (unbiasability / unpredictability, re-grounded). -/
+/-! ## §2 — the three beacon breaks, as SECURITY REDUCTIONS.
 
-/-- **RE-GROUNDED `RandomnessBeacon.unbiasable_of_hashcr` / `prediction_matching_two_reveals_breaks_hashcr`.**
-Under the proper keyed floor, the bias / early-prediction adversary (per key, two distinct reveals colliding
-to one beacon output — a collision by `bias_breaks_honest_slot_cr`) has negligible advantage. "distinct
-honest reveal ⟹ distinct output" becomes "⟹ distinct output EXCEPT with negligible probability": no coalition
-can steer or predict the beacon except with negligible advantage. Proof: `thread_advantage_bound`. -/
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** The three keystones took
+`hCR : CollisionResistant (…Family …)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves
+that IS the collision floor at the UNRESTRICTED class, and `collisionResistant_false_of_compressing`
+proves THAT false for any compressing hash — the deployed `crypto-hashrand` commit and combine hashes
+included. So all three exported bounds rested on a hypothesis REFUTED at deployed parameters: leader
+election was resting on nothing. Their three `_eff` siblings took a `CollisionFinder` and applied the
+floor TO IT, so the BIAS and the COMMIT EQUIVOCATION never appeared in a `Prop`. ALL SIX ARE DELETED.
+
+What stands here is the commit-opening REDUCTION (`HermineHashCRRegrounded` §2) at each of the three
+deployed families: the break is a `Game` whose win says an adversary published a beacon output (resp. a
+commitment) together with TWO DISTINCT framed pre-images that BOTH produce it — steering the beacon, or
+opening one commitment to two contributions — and the extractor DISCARDS the published value to reach a
+genuine collision. The advantage inequality is unconditional; the class is discharged at `IsPolyTime`. -/
+
+/-- **THE BEACON-STEERING GAME** — the commit-opening break of the abstract beacon combine hash. A win is
+one published beacon output produced by two DISTINCT reveals: a coalition steering the beacon. -/
+abbrev beaconGame {Idx W C : Type} [DecidableEq W] [DecidableEq C]
+    (cr : CommitReveal Idx W C) (i : Idx) : Game :=
+  commitOpenGame (beaconHashFamily cr i)
+
+/-- **THE `crypto-hashrand` COMMIT-EQUIVOCATION GAME** — one published commitment opened by two DISTINCT
+contributions: the honest party escaping its own commitment (UNPREDICTABILITY's break). -/
+abbrev hashRandCommitGame {Party Ct Pre Digest : Type} [DecidableEq Pre] [DecidableEq Digest]
+    (X : HashRand Party Ct Pre Digest) : Game :=
+  commitOpenGame (hashRandCommitFamily X)
+
+/-- **THE `crypto-hashrand` BIAS GAME** — one published beacon output produced by two DISTINCT
+contribution multisets: the coalition steering the deployed beacon (UNBIASABILITY's break). -/
+abbrev hashRandOutputGame {Party Ct Pre Digest : Type} [DecidableEq Pre] [DecidableEq Digest]
+    (X : HashRand Party Ct Pre Digest) : Game :=
+  commitOpenGame (hashRandOutputFamily X)
+
+/-- **THE PROBLEM IS IN THE STATEMENT** — by `Iff.rfl`, two distinct reveals producing one published
+beacon output. -/
+theorem beaconGame_wins_iff {Idx W C : Type} [DecidableEq W] [DecidableEq C]
+    (cr : CommitReveal Idx W C) (i : Idx) (n : ℕ) (k : (beaconHashFamily cr i).Key n)
+    (p : C × W × W) :
+    (beaconGame cr i).wins n k p ↔
+      (p.2.1 ≠ p.2.2 ∧ cr.H i p.2.1 = p.1 ∧ cr.H i p.2.2 = p.1) :=
+  Iff.rfl
+
+/-- **⚑ RE-GROUNDED `RandomnessBeacon.unbiasable_of_hashcr` /
+`prediction_matching_two_reveals_breaks_hashcr` — from the combine hash's collision floor, VIA the
+reduction.** Under the collision floor at the class `Eff`, a beacon-steering adversary whose extracted
+finder is in that class has NEGLIGIBLE advantage: no coalition steers or predicts the beacon except with
+negligible probability. `Eff` is a parameter because this is the statement at an ARBITRARY class;
+`_from_polyTime` discharges it. -/
 theorem beacon_binding_advantage_bound {Idx W C : Type} [DecidableEq W] [DecidableEq C]
     (cr : CommitReveal Idx W C) (i : Idx)
-    (hCR : CollisionResistant (beaconHashFamily cr i))
-    (biasAdversary : CollisionFinder (beaconHashFamily cr i)) :
-    Negl (collisionAdv (beaconHashFamily cr i) biasAdversary) :=
-  hermine_commitment_binding_advantage_bound hCR biasAdversary
+    (Eff : Adversary (hashGame (beaconHashFamily cr i)) → Prop)
+    (A : Adversary (beaconGame cr i))
+    (hEff : Eff (openToFinder (beaconHashFamily cr i) A))
+    (hD : HashCRHardQuant (beaconHashFamily cr i) Eff) :
+    Negl (gameAdv (beaconGame cr i) A) :=
+  hermine_commitment_binding_advantage_bound (beaconHashFamily cr i) Eff A hEff hD
 
-/-- **RE-GROUNDED `HashRandRefinement.hashrand_commit_binds`.** Under the proper keyed floor, the deployed
-`crypto-hashrand` commit-equivocation adversary (two distinct contributions opening one commitment) has
-negligible advantage — the honest party is pinned to one contribution except with negligible probability,
-grounding UNPREDICTABILITY. Proof: `thread_advantage_bound`. -/
+/-- **⚑ RE-GROUNDED `HashRandRefinement.hashrand_commit_binds` — the deployed commit leg.** A commit
+equivocator has negligible advantage: an honest party is pinned to ONE contribution except with
+negligible probability, which is what grounds UNPREDICTABILITY. -/
 theorem hashrand_commit_binding_advantage_bound {Party Ct Pre Digest : Type}
     [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
-    (hCR : CollisionResistant (hashRandCommitFamily X))
-    (equivocator : CollisionFinder (hashRandCommitFamily X)) :
-    Negl (collisionAdv (hashRandCommitFamily X) equivocator) :=
-  hermine_commitment_binding_advantage_bound hCR equivocator
+    (Eff : Adversary (hashGame (hashRandCommitFamily X)) → Prop)
+    (A : Adversary (hashRandCommitGame X))
+    (hEff : Eff (openToFinder (hashRandCommitFamily X) A))
+    (hD : HashCRHardQuant (hashRandCommitFamily X) Eff) :
+    Negl (gameAdv (hashRandCommitGame X) A) :=
+  hermine_commitment_binding_advantage_bound (hashRandCommitFamily X) Eff A hEff hD
 
-/-- **RE-GROUNDED `HashRandRefinement.hashrand_unbiasable` / `hashrand_bias_breaks_hashcr`.** Under the proper
-keyed floor, the deployed `crypto-hashrand` bias adversary (two distinct contributions colliding to one
-combine output) has negligible advantage — the honest contribution moves the beacon except with negligible
-probability, grounding UNBIASABILITY. Proof: `thread_advantage_bound`. -/
+/-- **⚑ RE-GROUNDED `HashRandRefinement.hashrand_unbiasable` — the deployed combine leg.** A bias
+adversary has negligible advantage: the honest contribution MOVES the beacon except with negligible
+probability, which is what grounds UNBIASABILITY. -/
 theorem hashrand_output_binding_advantage_bound {Party Ct Pre Digest : Type}
     [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
-    (hCR : CollisionResistant (hashRandOutputFamily X))
-    (biasAdversary : CollisionFinder (hashRandOutputFamily X)) :
-    Negl (collisionAdv (hashRandOutputFamily X) biasAdversary) :=
-  hermine_commitment_binding_advantage_bound hCR biasAdversary
-
-/-! ## §2b — ⚑ the `Eff`-CARRYING beacon keystones (FINDING-2 of the 07-17 sweep).
-
-Each bare-CR sibling above rests on `CollisionResistant _` = `HashCRHardQuant _ ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`), FALSE for the compressing combine/commit hashes — so it
-transports no security. Each `_eff` conditions on the SAME collision game at an EXPLICIT class `Eff`, with
-the finder's `hEff` obligation in the open (`FloorGames` §8 — no cost model). Poles priced in §4. -/
-
-/-- **⚑ RE-GROUNDED beacon unbiasability/unpredictability — the `Eff`-carrying form.** A bias / early-prediction
-finder in the class `Eff` has negligible advantage: no coalition steers or predicts the beacon except with
-negligible probability. -/
-theorem beacon_binding_advantage_bound_eff {Idx W C : Type} [DecidableEq W] [DecidableEq C]
-    (cr : CommitReveal Idx W C) (i : Idx)
-    (Eff : Adversary (hashGame (beaconHashFamily cr i)) → Prop)
-    (biasAdversary : CollisionFinder (beaconHashFamily cr i))
-    (hEff : Eff (finderToAdv biasAdversary))
-    (hD : HashCRHardQuant (beaconHashFamily cr i) Eff) :
-    Negl (collisionAdv (beaconHashFamily cr i) biasAdversary) :=
-  hermine_commitment_binding_advantage_bound_eff Eff biasAdversary hEff hD
-
-/-- **⚑ RE-GROUNDED `HashRandRefinement.hashrand_commit_binds` — the `Eff`-carrying form.** A deployed
-`crypto-hashrand` commit-equivocation finder in `Eff` has negligible advantage — the honest party is pinned
-to one contribution except with negligible probability (UNPREDICTABILITY). -/
-theorem hashrand_commit_binding_advantage_bound_eff {Party Ct Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
-    (Eff : Adversary (hashGame (hashRandCommitFamily X)) → Prop)
-    (equivocator : CollisionFinder (hashRandCommitFamily X))
-    (hEff : Eff (finderToAdv equivocator))
-    (hD : HashCRHardQuant (hashRandCommitFamily X) Eff) :
-    Negl (collisionAdv (hashRandCommitFamily X) equivocator) :=
-  hermine_commitment_binding_advantage_bound_eff Eff equivocator hEff hD
-
-/-- **⚑ RE-GROUNDED `HashRandRefinement.hashrand_unbiasable` — the `Eff`-carrying form.** A deployed
-`crypto-hashrand` bias finder in `Eff` has negligible advantage — the honest contribution moves the beacon
-except with negligible probability (UNBIASABILITY). -/
-theorem hashrand_output_binding_advantage_bound_eff {Party Ct Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
     (Eff : Adversary (hashGame (hashRandOutputFamily X)) → Prop)
-    (biasAdversary : CollisionFinder (hashRandOutputFamily X))
-    (hEff : Eff (finderToAdv biasAdversary))
+    (A : Adversary (hashRandOutputGame X))
+    (hEff : Eff (openToFinder (hashRandOutputFamily X) A))
     (hD : HashCRHardQuant (hashRandOutputFamily X) Eff) :
-    Negl (collisionAdv (hashRandOutputFamily X) biasAdversary) :=
-  hermine_commitment_binding_advantage_bound_eff Eff biasAdversary hEff hD
+    Negl (gameAdv (hashRandOutputGame X) A) :=
+  hermine_commitment_binding_advantage_bound (hashRandOutputFamily X) Eff A hEff hD
+
+/-! ### §2b — all three efficiency obligations DISCHARGED at `Eff := IsPolyTime`.
+
+Each extractor DISCARDS the published value and keeps the two pre-images, so its growth constants are
+`(1, 0)` and no output-size hypothesis is needed. The per-site inputs are the reshaper's declared work
+`(cw, bw)` — a Lean `fun` has no runtime — and the deployment's own pre-image/digest encodings, which a
+`KeyedHashFamily` over abstract carriers cannot supply itself. -/
+
+/-- **⚑ LEADER ELECTION'S EFFICIENCY OBLIGATION DISCHARGED.** A beacon-steering adversary that is
+EFFICIENT yields a collision finder that is STILL efficient, so the floor at `Eff := IsPolyTime` applies
+to IT: the beacon resists steering with NO floating efficiency parameter. -/
+theorem beacon_binding_from_polyTime {Idx W C : Type} [DecidableEq W] [DecidableEq C]
+    (cr : CommitReveal Idx W C) (i : Idx) (szIn : ℕ → W → ℕ) (szOut : ℕ → C → ℕ)
+    (A : Adversary (beaconGame cr i))
+    (hA : IsPolyTime (openAnsSizeOf (beaconHashFamily cr i) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (beaconHashFamily cr i)
+      (IsPolyTime (hashAnsSizeOf (beaconHashFamily cr i) szIn))) :
+    Negl (gameAdv (beaconGame cr i) A) :=
+  hermine_commitment_binding_from_polyTime (beaconHashFamily cr i) szIn szOut A hA cw bw hD
+
+/-- **⚑ THE DEPLOYED COMMIT LEG'S EFFICIENCY OBLIGATION DISCHARGED.** -/
+theorem hashrand_commit_binding_from_polyTime {Party Ct Pre Digest : Type}
+    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
+    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
+    (A : Adversary (hashRandCommitGame X))
+    (hA : IsPolyTime (openAnsSizeOf (hashRandCommitFamily X) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (hashRandCommitFamily X)
+      (IsPolyTime (hashAnsSizeOf (hashRandCommitFamily X) szIn))) :
+    Negl (gameAdv (hashRandCommitGame X) A) :=
+  hermine_commitment_binding_from_polyTime (hashRandCommitFamily X) szIn szOut A hA cw bw hD
+
+/-- **⚑ THE DEPLOYED COMBINE LEG'S EFFICIENCY OBLIGATION DISCHARGED.** -/
+theorem hashrand_output_binding_from_polyTime {Party Ct Pre Digest : Type}
+    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
+    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
+    (A : Adversary (hashRandOutputGame X))
+    (hA : IsPolyTime (openAnsSizeOf (hashRandOutputFamily X) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (hashRandOutputFamily X)
+      (IsPolyTime (hashAnsSizeOf (hashRandOutputFamily X) szIn))) :
+    Negl (gameAdv (hashRandOutputGame X) A) :=
+  hermine_commitment_binding_from_polyTime (hashRandOutputFamily X) szIn szOut A hA cw bw hD
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the abstract beacon and the deployed surface. -/
 
@@ -237,9 +283,10 @@ theorem hashRand_badCR_output_not_CR :
 
 /-- **THE RE-GROUNDED BEACON BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective identity family, the
 bias-equivocation advantage is negligible — the beacon safety runs end-to-end to a genuine `Negl`. -/
-theorem beacon_binding_fires (biasAdversary : CollisionFinder idFamily) :
-    Negl (collisionAdv idFamily biasAdversary) :=
-  hermine_commitment_binding_advantage_bound idFamily_CR biasAdversary
+theorem beacon_binding_fires (A : Adversary (commitOpenGame idFamily)) :
+    Negl (gameAdv (commitOpenGame idFamily) A) :=
+  hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
+    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
@@ -268,29 +315,30 @@ OTHER adversary `B` the bias-equivocator's negligibility does not follow: `hD B 
 ensemble. -/
 example {Idx W C : Type} [DecidableEq W] [DecidableEq C] (cr : CommitReveal Idx W C) (i : Idx)
     (Eff : Adversary (hashGame (beaconHashFamily cr i)) → Prop)
-    (biasAdversary : CollisionFinder (beaconHashFamily cr i))
+    (A : Adversary (beaconGame cr i))
     (B : Adversary (hashGame (beaconHashFamily cr i))) (hB : Eff B)
     (hD : HashCRHardQuant (beaconHashFamily cr i) Eff) : True := by
   fail_if_success
-    (have : Negl (collisionAdv (beaconHashFamily cr i) biasAdversary) := hD B hB)
+    (have : Negl (gameAdv (beaconGame cr i) A) := hD B hB)
   trivial
 
 /-- **THE `Eff` BEACON BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective deployed `goodX.cr` the
 output `Eff`-floor at `⊤` holds (`hashRand_goodCR_output_CR`), so the deployed unbiasability runs
 end-to-end to a genuine `Negl` at an inhabited hypothesis. -/
 theorem hashrand_output_eff_fires
-    (biasAdversary : CollisionFinder (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.goodX)) :
-    Negl (collisionAdv (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.goodX) biasAdversary) :=
-  hashrand_output_binding_advantage_bound_eff Dregg2.Crypto.HashRandRefinement.goodX (fun _ => True)
-    biasAdversary trivial ((collisionResistant_iff_hashCRHardQuant_top _).mp hashRand_goodCR_output_CR)
+    (A : Adversary (hashRandOutputGame Dregg2.Crypto.HashRandRefinement.goodX)) :
+    Negl (gameAdv (hashRandOutputGame Dregg2.Crypto.HashRandRefinement.goodX) A) :=
+  hashrand_output_binding_advantage_bound Dregg2.Crypto.HashRandRefinement.goodX (fun _ => True) A
+    trivial ((collisionResistant_iff_hashCRHardQuant_top _).mp hashRand_goodCR_output_CR)
 
 #assert_all_clean [
   beacon_binding_advantage_bound,
   hashrand_commit_binding_advantage_bound,
   hashrand_output_binding_advantage_bound,
-  beacon_binding_advantage_bound_eff,
-  hashrand_commit_binding_advantage_bound_eff,
-  hashrand_output_binding_advantage_bound_eff,
+  beaconGame_wins_iff,
+  beacon_binding_from_polyTime,
+  hashrand_commit_binding_from_polyTime,
+  hashrand_output_binding_from_polyTime,
   beacon_exBeaconHash_CR,
   beacon_badBeaconOut_not_CR,
   hashRand_goodCR_commit_CR,

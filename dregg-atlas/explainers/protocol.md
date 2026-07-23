@@ -71,7 +71,7 @@ The first site refuses *the formation of authority*; the second refuses *a turn 
 
 ## receipts
 
-A committed turn produces a `TurnReceipt` (`turn/src/turn.rs:768-840`) — the cryptographic evidence the light client trusts in lieu of re-execution. Its hash-bound core (`receipt_hash`, domain-separated `"dregg-receipt-v3"`):
+A committed turn produces a `TurnReceipt` (`turn/src/turn.rs:768-840`) — the cryptographic evidence the light client trusts in lieu of re-execution. Its hash-bound core (`receipt_hash`, domain-separated `"dregg-receipt-v5"`):
 
 - **`turn_hash`** — the hash of the `Turn` that produced this receipt; plus `forest_hash` binding the call-forest shape.
 - **`pre_state_hash` / `post_state_hash`** — the agent's committed state before and after. This pair IS the transition.

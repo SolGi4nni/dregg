@@ -61,12 +61,16 @@ proper floor enters as a HYPOTHESIS, so each restatement is a genuine implicatio
 consumers are KEPT UNTOUCHED (this file only ADDS siblings). The tactic's own teeth
 (`ThreadAdvantageBound` §5) show it REFUSES a non-negligible goal — it is a real discharger.
 -/
+-- ⚑ IMPORT SURFACE NARROWED (2026-07-22). `FriSoundness`, `AirSoundness` and
+-- `CommitFaithfulRegrounded` were imported for the three consumers whose bounds were `hCR opener` — they
+-- were never actually USED, because those bounds mentioned none of those files' objects. The two
+-- consumers that genuinely need them (`committedTrace_pinned`, `recStateCommit_root`) are documented as
+-- BLOCKED at §7 with their precise blockers, and export no bound. So the imports go: a file must not
+-- claim a dependency it does not have.
 import Dregg2.Tactics.ThreadAdvantageBound
 import Dregg2.Circuit.OodCommitmentBinding
-import Dregg2.Circuit.FriSoundness
-import Dregg2.Circuit.AirSoundness
-import Dregg2.Circuit.CommitFaithfulRegrounded
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.SpongeCarrierReduction
 
 namespace Dregg2.Circuit.FloorRegroundedConsumers
 
@@ -75,152 +79,416 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR
    brokenFamily brokenFamily_not_CR)
 open Dregg2.Crypto.FloorGames
-  (Adversary hashGame finderToAdv HashCRHardQuant collisionAdv_eq_gameAdv
+  (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant collisionAdv_eq_gameAdv
    collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing hard_bot_vacuous)
+open Dregg2.Crypto.SpongeCarrierReduction
+  (SpongeKeyed SpongeCarrier IsSpongeColl spongeFamily carrierBreakGame carrierBreakToFinder
+   carrier_binds_advantage_bound carrier_binds_from_polyTime carrierAnsSize spongeAnsSize
+   carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
+open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ)
 
 set_option autoImplicit false
 
-/-! ## §1 — SINGLE-USE Merkle-opening binding (`OodCommitmentBinding`).
+/-! ## §0 — ⚑ WHY §1–§7 WERE REWRITTEN (2026-07-22): they were `P → P`, on a FALSE `P`.
 
-`OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR` / `merkleRecomputeZ_binds` say: under the
-(vacuous) injective `Poseidon2SpongeCR`, two values recomputing the same Merkle root at the same query
-are EQUAL. `OodCommitmentBinding.opening_equivocation_breaks_cr` already witnesses the reduction: opening
-one root to two DISTINCT values `⟹ ¬ Poseidon2SpongeCR` — the equivocation IS a node-hash collision. So
-an equivocating opener, realized as a `CollisionFinder` on the keyed node-hash family `F`, has negligible
-advantage under the proper `CollisionResistant F` floor. -/
+The bounds this file used to export had the shape
 
-/-- **RE-GROUNDED `commitmentOpening_binds_of_poseidon2CR`.** The advantage-bounded form of the OOD /
-Merkle opening binding: under the proper keyed floor, the opening-equivocation adversary `opener` (per
-key, two distinct values recomputing the same committed root — a node-hash collision by
-`OodCommitmentBinding.opening_equivocation_breaks_cr`) has negligible advantage. "opens ⟹ equal" becomes
-"opens ⟹ equal except with negligible probability". Proof: `thread_advantage_bound` (the single
-`CollisionResistant` leaf). -/
-theorem oodCommitmentOpening_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (opener : CollisionFinder F) :
-    Negl (collisionAdv F opener) := by
-  thread_advantage_bound
+    theorem oodCommitmentOpening_advantage_bound (hCR : CollisionResistant F) (opener : CollisionFinder F)
+        : Negl (collisionAdv F opener) := by thread_advantage_bound
 
-/-- **RE-GROUNDED `merkleRecomputeZ_binds`.** Same advantage-bounded form for the raw Merkle-path
-recompute binding: an adversary equivocating two leaves down one sibling path is a collision finder,
-negligible under the proper floor. -/
-theorem merkleRecomputeZ_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (pathEquivocator : CollisionFinder F) :
-    Negl (collisionAdv F pathEquivocator) := by
-  thread_advantage_bound
+and that is, unfolded, `hCR opener` — the hypothesis handed back as the conclusion. TWO independent
+defects, either one fatal:
 
-/-! ## §2 — SINGLE-USE oracle binding (`FriSoundness.oracle_binding`).
+  1. **The statement does not mention the thing it is named after.** `opener` is an arbitrary
+     `CollisionFinder`; nothing in the statement says it opens a Merkle root, nothing says two openings
+     disagree, nothing connects it to `merkleRecomputeZ`. The reduction ("an equivocating opener IS a
+     collision finder") lived ONLY in the docstring. A theorem whose security content is in its prose
+     is not a theorem about that content.
+  2. **`CollisionResistant F` is FALSE for every compressing family** — `FloorGames`
+     `collisionResistant_iff_hashCRHardQuant_top` + `collisionResistant_false_of_compressing`, which §10
+     below already re-proves as `effFloor_top_false_of_compressing`. So the implication was true and
+     vacuous at the deployed Poseidon2, exactly the fate of the injective floors this file was written
+     to retire. The file's own §9 header says so in as many words; §1–§7 were never brought onto it.
 
-`FriSoundness.oracle_binding` (reusing the vacuous injective `HashCR`) says two oracles opening one root
-are equal; `FriSoundness.equivocation_breaks_binding` witnesses that opening one root to two DISTINCT
-oracles `f ≠ f'` is a hash collision. So the oracle-equivocation adversary is a `CollisionFinder`. -/
+§1–§7 are now genuine SECURITY REDUCTIONS on the `Dregg2.Crypto.SpongeCarrierReduction` spine, in the
+shape `Market.WideCommitBoundary` established for the wide carrier:
 
-/-- **RE-GROUNDED `FriSoundness.oracle_binding`.** Under the proper keyed floor, the oracle-equivocation
-adversary (per key, two distinct oracles opening one committed root — a collision by
-`FriSoundness.equivocation_breaks_binding`) has negligible advantage. Proof: `thread_advantage_bound`. -/
-theorem friOracle_binding_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (oracleEquivocator : CollisionFinder F) :
-    Negl (collisionAdv F oracleEquivocator) := by
-  thread_advantage_bound
+  * the forgery is a first-class `Game` whose win relation is the DEPLOYED equivocation
+    (`carrierBreakGame D merkleOpenCarrier` — one root, one query index, one sibling path, TWO DISTINCT
+    opened values);
+  * the extractor is a TOTAL FUNCTION `merklePathCollFind` with an UNCONDITIONAL correctness theorem —
+    it walks the path and LOCATES the colliding node, where the old proof assumed injectivity and peeled;
+  * the advantage inequality (`carrier_adv_le`) quantifies over ALL adversaries — the class does not
+    appear in it;
+  * the conclusion is under the NAMED floor `HashCRHardQuant (spongeFamily D) Eff` at `Eff := IsPolyTime`,
+    with `hEff` DISCHARGED by `CostTactics.poly_time` off the proved output bound
+    (`merklePathCollFind_len_le`), not carried as a floating parameter.
 
-/-! ## §3 — SINGLE-USE trace-digest binding (`AirSoundness.committed_trace_pinned`).
+⚑ **TWO OF THE EIGHT ARE NOT REBUILT, AND ARE NOT FAKED.** `committedTrace_pinned` and
+`recStateCommit_root` are documented at §5 and §6 with their precise blockers; the honest statements
+that ARE available for them are exported there. Do not read their absence as an oversight. -/
 
-`AirSoundness.committed_trace_pinned` (→ `Circuit.chain_digest_binds`, on the vacuous injective `HashCR`)
-says the committed digest pins the AIR trace uniquely. The digest-equivocation adversary — two distinct
-traces committing to one digest — is a `CollisionFinder`. -/
+/-! ## §1 — the MERKLE-OPENING EXTRACTOR: the induction, turned inside out.
 
-/-- **RE-GROUNDED `AirSoundness.committed_trace_pinned`.** Under the proper keyed floor, the
-trace-digest-equivocation adversary (two distinct traces to one committed digest) has negligible
-advantage — the committed digest pins the AIR trace except with negligible probability. Proof:
-`thread_advantage_bound`. -/
-theorem committedTrace_pinned_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (traceEquivocator : CollisionFinder F) :
-    Negl (collisionAdv F traceEquivocator) := by
-  thread_advantage_bound
+`OodCommitmentBinding.merkleRecomputeZ_binds` peels the sibling path from the OUTSIDE in, applying
+`Poseidon2SpongeCR` at each level to conclude the two leaves are equal. That hypothesis is false at
+BabyBear, so the conclusion is empty. The honest object does the same walk but in the other direction:
+assume the leaves DIFFER, and RETURN the level at which the node hashes collided. -/
 
-/-! ## §4 — SINGLE-USE faithful full-state root binding (`CommitFaithfulRegrounded`).
+/-- **THE ORDERED NODE PREIMAGE at one path level.** The index bit fixes the side (even ⇒ accumulator on
+the left), EXACTLY as `merkleRecomputeZ` branches. Naming it makes the extractor's correspondence to the
+deployed recompute a rewrite rather than a case split repeated in every proof. -/
+def nodeAt (idx : Nat) (acc s : ℤ) : List ℤ := if idx % 2 = 0 then [acc, s] else [s, acc]
 
-`CommitFaithfulRegrounded.kernelEquivocation_reduces` maps an unequal pair of kernels with equal roots
-over the deployed residue-fold leaf to a concrete `FaithfulBreak`; the hash-family realization maps
-that exhibited break to a `CollisionFinder`.  The bound below is the computational floor consumed by
-that reduction.  Unlike the retired `CH_fin` route, the leaf is the Rust `effectVmCommit` tree and no
-`Poseidon2SpongeCR` injectivity premise occurs. -/
+/-- **THE DEPLOYED RECOMPUTE, ONE LEVEL, IN TERMS OF `nodeAt`.** The bridge that makes the extractor
+provably walk the SAME path the verifier walks — not a parallel reconstruction of it. -/
+theorem merkleRecomputeZ_cons (sponge : List ℤ → ℤ) (idx : Nat) (acc s : ℤ) (rest : List ℤ) :
+    merkleRecomputeZ sponge idx acc (s :: rest)
+      = merkleRecomputeZ sponge (idx / 2) (sponge (nodeAt idx acc s)) rest := by
+  have h : sponge (nodeAt idx acc s)
+      = (if idx % 2 = 0 then sponge [acc, s] else sponge [s, acc]) := by
+    unfold nodeAt
+    exact apply_ite sponge _ _ _
+  rw [h]
+  rfl
 
-/-- **FAITHFUL state-root advantage bound.** Under the proper keyed floor, the collision finder
-extracted from a faithful full-state-root equivocation has negligible advantage. -/
-theorem recStateCommit_root_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (rootEquivocator : CollisionFinder F) :
-    Negl (collisionAdv F rootEquivocator) := by
-  thread_advantage_bound
+/-- Distinct accumulators give DISTINCT node preimages on either side of the index bit — the fact that
+makes each level's candidate pair a genuine collision candidate rather than a trivial one. -/
+theorem nodeAt_ne (idx : Nat) (l1 l2 s : ℤ) (hne : l1 ≠ l2) :
+    nodeAt idx l1 s ≠ nodeAt idx l2 s := by
+  intro hc
+  unfold nodeAt at hc
+  by_cases hb : idx % 2 = 0
+  · rw [if_pos hb, if_pos hb] at hc
+    exact hne (List.cons.inj hc).1
+  · rw [if_neg hb, if_neg hb] at hc
+    exact hne (List.cons.inj (List.cons.inj hc).2).1
 
-/-! ## §5 — MULTI-ROUND FRI/STARK fold (`FriSoundness.fri_fold_soundness`, the `StarkSound` chain).
+/-- A node preimage is exactly two felts — the deployed binary Merkle arity. -/
+theorem nodeAt_length (idx : Nat) (acc s : ℤ) : (nodeAt idx acc s).length = 2 := by
+  unfold nodeAt
+  by_cases hb : idx % 2 = 0 <;> simp [hb]
 
-The FRI fold / `StarkSound` chain runs `rounds` Merkle-binding checks (one per query in the FRI query
-set, per fold layer). Each round's equivocation is an independent collision leg; the total
-binding-failure advantage is the finite SUM of the per-round collision advantages, negligible by the
-union bound (`negl_finset_sum`). This is the shape the whole FRI-proximity / `StarkSound` binding chain
-re-derives through. -/
+/-- **⚑ THE PATH WALK, AS A FUNCTION.** Descend the sibling path alongside two candidate opened values.
+At each level form the two ordered node preimages; if their sponges AGREE, that level IS the collision
+(the preimages are distinct whenever the accumulators are) — return it. Otherwise the two new
+accumulators are distinct, so recurse. If the path runs out, the caller's equal-root hypothesis has
+already forced the two values equal, so the returned value is unconstrained there — `merklePathCollFind_spec`
+is what pins the useful case, and it never reaches that branch. -/
+def merklePathCollFind (sponge : List ℤ → ℤ) : Nat → ℤ → ℤ → List ℤ → (List ℤ × List ℤ)
+  | _, l1, l2, [] => ([l1], [l2])
+  | idx, l1, l2, s :: rest =>
+      if sponge (nodeAt idx l1 s) = sponge (nodeAt idx l2 s) then
+        (nodeAt idx l1 s, nodeAt idx l2 s)
+      else
+        merklePathCollFind sponge (idx / 2)
+          (sponge (nodeAt idx l1 s)) (sponge (nodeAt idx l2 s)) rest
 
-/-- **RE-GROUNDED FRI/STARK multi-round binding.** The total opening-binding failure advantage across the
-`rounds` Merkle checks of the FRI fold / `StarkSound` chain is a finite sum of per-round collision
-advantages, negligible under the proper keyed floor. Proof: `thread_advantage_bound` (`negl_finset_sum`,
-then the `CollisionResistant` leaf per round). -/
-theorem friStark_fold_advantage_bound {F : KeyedHashFamily} (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → CollisionFinder F) (hCR : CollisionResistant F) :
-    Negl (fun n => ∑ r ∈ rounds, collisionAdv F (roundEquivocator r) n) := by
-  thread_advantage_bound
+/-- **⚑ THE EXTRACTOR IS CORRECT, UNCONDITIONALLY.** If two DISTINCT values recompute the SAME root at
+the same query index over the same sibling path, the walk returns a GENUINE collision of the real sponge:
+two distinct lists with equal image. This is `merkleRecomputeZ_binds`'s induction inverted — instead of
+ASSUMING injectivity and concluding equality, it assumes inequality and PRODUCES the collision.
 
-/-! ## §6 — the APEX two-hash sum (`lightclient_unfoolable_deployed_transferV3`).
+⚑ Note what this theorem does NOT take: no collision-resistance hypothesis, no injectivity, no floor.
+It is therefore a true statement at deployed BabyBear parameters, unlike the binding it replaces. -/
+theorem merklePathCollFind_spec (sponge : List ℤ → ℤ) :
+    ∀ (siblings : List ℤ) (idx : Nat) (l1 l2 : ℤ), l1 ≠ l2 →
+      merkleRecomputeZ sponge idx l1 siblings = merkleRecomputeZ sponge idx l2 siblings →
+      IsSpongeColl sponge (merklePathCollFind sponge idx l1 l2 siblings) := by
+  intro siblings
+  induction siblings with
+  | nil =>
+      intro idx l1 l2 hne heq
+      exact absurd (by simpa [merkleRecomputeZ] using heq) hne
+  | cons s rest ih =>
+      intro idx l1 l2 hne heq
+      rw [merkleRecomputeZ_cons, merkleRecomputeZ_cons] at heq
+      by_cases hcoll : sponge (nodeAt idx l1 s) = sponge (nodeAt idx l2 s)
+      · rw [merklePathCollFind, if_pos hcoll]
+        exact ⟨nodeAt_ne idx l1 l2 s hne, hcoll⟩
+      · rw [merklePathCollFind, if_neg hcoll]
+        exact ih (idx / 2) _ _ hcoll heq
 
-The deployed apex `LightClientDeployed.lightclient_unfoolable_deployed_transferV3` threads TWO injective
-floors: `Poseidon2SpongeCR sponge` (the trace/state commitment) AND `Poseidon2SpongeCR hash` (the OOD
-constraint commitment). A prover fooling the light client must equivocate at ONE of the two — so the
-total forgery advantage is the SUM of the trace-commitment and OOD-commitment equivocation advantages.
-Under the proper keyed floor on each, the sum is negligible (`negl_add`, two leaves). -/
+/-- **THE EXTRACTOR DOES NOT BLOW UP ITS INPUT** — every branch returns two lists of at most two felts,
+so at most four felts total, whatever the path length. This is the cost model's output-growth obligation,
+PROVED rather than assumed; without it the reduction would not provably preserve efficiency. -/
+theorem merklePathCollFind_len_le (sponge : List ℤ → ℤ) :
+    ∀ (siblings : List ℤ) (idx : Nat) (l1 l2 : ℤ),
+      (merklePathCollFind sponge idx l1 l2 siblings).1.length
+        + (merklePathCollFind sponge idx l1 l2 siblings).2.length ≤ 4 := by
+  intro siblings
+  induction siblings with
+  | nil => intro idx l1 l2; simp [merklePathCollFind]
+  | cons s rest ih =>
+      intro idx l1 l2
+      by_cases hcoll : sponge (nodeAt idx l1 s) = sponge (nodeAt idx l2 s)
+      · rw [merklePathCollFind, if_pos hcoll]
+        show (nodeAt idx l1 s).length + (nodeAt idx l2 s).length ≤ 4
+        rw [nodeAt_length, nodeAt_length]
+      · rw [merklePathCollFind, if_neg hcoll]
+        exact ih (idx / 2) _ _
 
-/-- **RE-GROUNDED APEX `lightclient_unfoolable_deployed_transferV3`.** The total light-client forgery
-advantage — trace-commitment equivocation PLUS OOD-commitment equivocation, the two hash floors the apex
-threads — is negligible under the proper keyed floor. A verifying batch pins the pre/post kernel state
-except with this negligible advantage. Proof: `thread_advantage_bound` (`negl_add`, then a
-`CollisionResistant` leaf on each commitment). -/
-theorem lightclientUnfoolable_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F)
-    (traceEquivocator oodEquivocator : CollisionFinder F) :
-    Negl (fun n => collisionAdv F traceEquivocator n + collisionAdv F oodEquivocator n) := by
-  thread_advantage_bound
+/-- **⚑ THE MERKLE-OPENING CARRIER.** The deployed 1-felt commitment is the path recompute; the shared
+context is the query index and sibling path the verifier already fixed; the payload is the opened value.
+Everything a `SpongeCarrier` owes the spine, discharged from §1: the extractor, its unconditional
+correctness, and its proved output bound. -/
+def merkleOpenCarrier : SpongeCarrier where
+  Ctx := Nat × List ℤ
+  Val := ℤ
+  valDecEq := inferInstance
+  enc := fun hash c v => merkleRecomputeZ hash c.1 v c.2
+  find := fun hash c a b => merklePathCollFind hash c.1 a b c.2
+  find_spec := fun hash c a b hne heq => merklePathCollFind_spec hash c.2 c.1 a b hne heq
+  size := fun c _ => c.2.length + 1
+  outCo := 0
+  outBo := 4
+  find_len_le := fun hash c a b => by
+    have := merklePathCollFind_len_le hash c.2 c.1 a b
+    omega
 
-/-! ## §7 — the MIXED `AlgoStarkSound*` tower (de-batch scale + multi-round fold + hash-free leg).
+/-- **THE MERKLE-OPENING EQUIVOCATION GAME.** The adversary is handed a uniformly sampled
+domain-separation tag and WINS iff it opens ONE committed Merkle root at ONE query index over ONE sibling
+path to TWO DISTINCT values. That is exactly the forgery `OodCommitmentBinding.opening_equivocation_breaks_cr`
+describes. The break is IN the win relation — not in a docstring. -/
+abbrev merkleOpenBreakGame (D : SpongeKeyed) : Game := carrierBreakGame D merkleOpenCarrier
 
-A full `AlgoStarkSoundTransferV3`-style soundness error threads THREE contributions additively: the RLC
-de-batching term SCALED by the query-count factor `c`, the multi-round Merkle fold SUM, and an algebra
-leg carrying no hash (advantage `0`). The whole tower's "no equivocation anywhere" becomes "negligible
-total binding-failure advantage" — every leg through the one keyed floor. -/
+/-- **⚑ THE FORGERY IS THE DEPLOYED OPENING OBJECT.** Two openings of the SAME committed root at the SAME
+query index that DISAGREE ARE a `merkleOpenBreakGame` win. This ties the abstract game to the very
+`commitmentOpening_binds_of_poseidon2CR` endpoint the OOD/FRI/AIR consumers use, so the game is not a
+free-floating construction — it is the deployed check, negated. -/
+theorem opening_equivocation_is_break (D : SpongeKeyed) (t : D.Tag) (l : ℕ)
+    {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
+    (hne : vOpened ≠ vCommitted)
+    (hCommitted : merkleRecomputeZ (D.hashAt t) idx vCommitted siblings = root)
+    (hOpened : merkleRecomputeZ (D.hashAt t) idx vOpened siblings = root) :
+    (merkleOpenBreakGame D).wins l t ((idx, siblings), vOpened, vCommitted) :=
+  ⟨hne, hOpened.trans hCommitted.symm⟩
 
-/-- **RE-GROUNDED `AlgoStarkSound*` binding tower.** The composite STARK soundness-error advantage
+/-- **⚑ AND THE EXACT-PROP CONCLUSION IS RECOVERED OFF THE BREAK EVENT.** At any tag where the adversary
+does NOT win, the deployed binding holds on the nose: two openings of one root at one query are EQUAL.
+So the reduction does not weaken the consumer's conclusion — it prices the event on which it can fail,
+which is what "except with negligible probability" means. -/
+theorem opening_binds_off_break (D : SpongeKeyed) (t : D.Tag) (l : ℕ)
+    {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
+    (hCommitted : merkleRecomputeZ (D.hashAt t) idx vCommitted siblings = root)
+    (hOpened : merkleRecomputeZ (D.hashAt t) idx vOpened siblings = root)
+    (hsafe : ¬ (merkleOpenBreakGame D).wins l t ((idx, siblings), vOpened, vCommitted)) :
+    vOpened = vCommitted := by
+  by_contra hne
+  exact hsafe ⟨hne, hOpened.trans hCommitted.symm⟩
+
+/-! ## §2 — the OOD / Merkle-opening binder, AS A REDUCTION.
+
+`OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR` says the value `verifyAlgo` opens at ζ and
+the honest committed value, both recomputing to one root, are EQUAL — under injectivity. Here it is
+instead: an efficient adversary that makes them DISAGREE has negligible advantage, because it would be a
+collision finder for the deployed sponge, by §1's extractor. -/
+
+/-- **⚑ RE-GROUNDED `commitmentOpening_binds_of_poseidon2CR` — the OOD opening binds, as a REDUCTION.**
+
+Under the DEPLOYED sponge's collision floor at `Eff := IsPolyTime`, an efficient adversary that opens one
+committed OOD/Merkle root at one query to two DISTINCT values has NEGLIGIBLE advantage. Combined with
+`opening_binds_off_break`, "opens ⟹ equal" becomes "opens ⟹ equal except with negligible probability" —
+with the equivocation IN the statement and the extractor connecting it to the floor.
+
+`hEff` is DISCHARGED, not carried: the only per-site input is the reshaper's declared work `(cw, bw)`
+(a Lean function has no runtime); the output-growth slot is `merklePathCollFind_len_le`. -/
+theorem oodCommitmentOpening_advantage_bound (D : SpongeKeyed)
+    (A : Adversary (merkleOpenBreakGame D))
+    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (merkleOpenBreakGame D) A) :=
+  carrier_binds_from_polyTime D merkleOpenCarrier A hA cw bw hCR
+
+/-- **⚑ RE-GROUNDED `merkleRecomputeZ_binds` — the raw path recompute binds, as a REDUCTION.** The same
+spine at the general path-equivocation adversary, stated at an ARBITRARY adversary class so a consumer
+that has not yet instantiated `Eff` can still land on it (`hEff` in the open, `FloorGames` §8). The
+`IsPolyTime` instance is `oodCommitmentOpening_advantage_bound` above. -/
+theorem merkleRecomputeZ_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (pathEquivocator : Adversary (merkleOpenBreakGame D))
+    (hEff : Eff (carrierBreakToFinder D merkleOpenCarrier pathEquivocator))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (merkleOpenBreakGame D) pathEquivocator) :=
+  carrier_binds_advantage_bound D merkleOpenCarrier Eff pathEquivocator hEff hCR
+
+/-! ## §3 — the FRI oracle binder, AS A REDUCTION.
+
+`FriSoundness.oracle_binding` says two oracles opening one root are equal, under the vacuous injective
+`HashCR`. ⚑ WHAT IS MODELLED HERE, PRECISELY: the DEPLOYED FRI verifier never compares whole oracles —
+it checks, per query in the FRI query set, that the opened evaluation recomputes the committed layer root
+(`FriVerifier.merkleRecompute`, the `merkleRecomputeZ` of §1). Two distinct oracles opening one root must
+disagree at SOME query, and at that query the check is exactly a two-value opening equivocation. So the
+per-query opening IS the deployed object, and it is what §3 bounds.
+
+⚑ WHAT IS NOT CLOSED BY THIS: `FriSoundness`'s `OracleCR` is an ABSTRACT `CommitReveal` over an abstract
+`Digest`, not a `ℤ`-valued deployed function, so the step from "the abstract `cr.opens root () f`" to
+"the deployed per-query Merkle recompute" is a MODELLING identification, stated here rather than proved.
+Proving it needs `FriSoundness` to be re-stated over the concrete Merkle commitment — real work, in a
+file this lane does not own. Named, not smuggled. -/
+
+/-- **⚑ RE-GROUNDED `FriSoundness.oracle_binding` — the per-query FRI layer opening binds, as a
+REDUCTION.** An efficient adversary that opens one committed FRI layer root at one query to two distinct
+evaluations has negligible advantage under the deployed sponge's collision floor. See the §3 header for
+exactly which step is modelled and which is proved. -/
+theorem friOracle_binding_advantage_bound (D : SpongeKeyed)
+    (oracleEquivocator : Adversary (merkleOpenBreakGame D))
+    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) oracleEquivocator) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (merkleOpenBreakGame D) oracleEquivocator) :=
+  carrier_binds_from_polyTime D merkleOpenCarrier oracleEquivocator hA cw bw hCR
+
+/-! ## §4 — MULTI-ROUND FRI/STARK fold: the union bound over REAL per-round games.
+
+The FRI fold / `StarkSound` chain runs one Merkle-binding check per query per fold layer. Each round's
+equivocation is now a genuine `merkleOpenBreakGame` win at that round's own adversary, so the total
+binding-failure advantage is the finite SUM of REAL game advantages — negligible by the union bound.
+The old version summed `collisionAdv F (roundEquivocator r)`, i.e. summed the hypothesis. -/
+
+/-- **⚑ RE-GROUNDED FRI/STARK multi-round binding.** The total opening-binding failure advantage across
+the `rounds` Merkle checks is a finite sum of PER-ROUND MERKLE-OPENING GAME advantages, negligible under
+the deployed sponge's collision floor. Each round carries its own efficiency, discharged. -/
+theorem friStark_fold_advantage_bound (D : SpongeKeyed) (rounds : Finset ℕ)
+    (roundEquivocator : ℕ → Adversary (merkleOpenBreakGame D))
+    (hA : ∀ r ∈ rounds, IsPolyTime (carrierAnsSize D merkleOpenCarrier) (roundEquivocator r))
+    (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (fun n => ∑ r ∈ rounds, gameAdv (merkleOpenBreakGame D) (roundEquivocator r) n) :=
+  negl_finset_sum rounds (fun r hr =>
+    carrier_binds_from_polyTime D merkleOpenCarrier (roundEquivocator r) (hA r hr) cw bw hCR)
+
+/-! ## §5 — the APEX two-hash sum, AS A REDUCTION.
+
+The deployed apex threads TWO commitments — the trace/state commitment and the OOD constraint commitment.
+A prover fooling the light client must equivocate at ONE of them, so the total forgery advantage is the
+SUM of the two per-commitment MERKLE-OPENING GAME advantages. Both legs are the same deployed check at
+different roots, so both ride §1's extractor; the sum is negligible by `negl_add`. -/
+
+/-- **⚑ RE-GROUNDED APEX light-client forgery bound.** The total light-client forgery advantage —
+trace-commitment opening equivocation PLUS OOD-commitment opening equivocation — is negligible under the
+deployed sponge's collision floor, with both legs' efficiency DISCHARGED.
+
+⚑ HONEST SCOPE, unchanged by this rebuild: this bounds the HASH-BINDING contribution to the apex forgery
+advantage. It is not the whole light-client soundness — the FRI proximity leg is a separate, named
+residual (`AirSoundness`'s `FriProximity`), and the ~31-bit felt width of the digest means the collision
+game itself is winnable in ~2^15.5 work by birthday search. What is closed is that this leg now rests on
+a floor the deployed sponge does not REFUTE, instead of one it does. -/
+theorem lightclientUnfoolable_advantage_bound (D : SpongeKeyed)
+    (traceEquivocator oodEquivocator : Adversary (merkleOpenBreakGame D))
+    (hT : IsPolyTime (carrierAnsSize D merkleOpenCarrier) traceEquivocator)
+    (hO : IsPolyTime (carrierAnsSize D merkleOpenCarrier) oodEquivocator) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (fun n => gameAdv (merkleOpenBreakGame D) traceEquivocator n
+        + gameAdv (merkleOpenBreakGame D) oodEquivocator n) :=
+  negl_add (carrier_binds_from_polyTime D merkleOpenCarrier traceEquivocator hT cw bw hCR)
+    (carrier_binds_from_polyTime D merkleOpenCarrier oodEquivocator hO cw bw hCR)
+
+/-! ## §6 — the MIXED `AlgoStarkSound*` tower, AS A REDUCTION. -/
+
+/-- **⚑ RE-GROUNDED `AlgoStarkSound*` binding tower.** The composite STARK soundness-error advantage
 `c · (de-batch equivocation) + ∑_{r ∈ rounds} (per-round equivocation) + 0` is negligible under the
-proper keyed floor. Proof: `thread_advantage_bound` (the full closure spine: const-scale, finite-sum,
-zero, all bottoming at the `CollisionResistant` leaf). -/
-theorem algoStarkSound_tower_advantage_bound {F : KeyedHashFamily}
-    (c : ℝ) (debatchEquivocator : CollisionFinder F) (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → CollisionFinder F) (hCR : CollisionResistant F) :
-    Negl (fun n => c * collisionAdv F debatchEquivocator n
-        + (∑ r ∈ rounds, collisionAdv F (roundEquivocator r) n) + 0) := by
-  thread_advantage_bound
+deployed sponge's collision floor — const-scale, finite-sum, zero, every collision leg through a REAL
+per-leg Merkle-opening game rather than through the hypothesis. -/
+theorem algoStarkSound_tower_advantage_bound (D : SpongeKeyed)
+    (c : ℝ) (debatchEquivocator : Adversary (merkleOpenBreakGame D)) (rounds : Finset ℕ)
+    (roundEquivocator : ℕ → Adversary (merkleOpenBreakGame D))
+    (hD : IsPolyTime (carrierAnsSize D merkleOpenCarrier) debatchEquivocator)
+    (hA : ∀ r ∈ rounds, IsPolyTime (carrierAnsSize D merkleOpenCarrier) (roundEquivocator r))
+    (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (fun n => c * gameAdv (merkleOpenBreakGame D) debatchEquivocator n
+        + (∑ r ∈ rounds, gameAdv (merkleOpenBreakGame D) (roundEquivocator r) n) + 0) :=
+  negl_add
+    (negl_add
+      (negl_const_mul c
+        (carrier_binds_from_polyTime D merkleOpenCarrier debatchEquivocator hD cw bw hCR))
+      (friStark_fold_advantage_bound D rounds roundEquivocator hA cw bw hCR))
+    negl_zero
 
-/-! ## §8 — non-vacuity tooth (the siblings are genuine implications, the floor is load-bearing).
+/-! ## §7 — ⚑ THE TWO SITES THAT ARE **NOT** REBUILT, AND WHY (BLOCKED, NOT FAKED).
 
-The re-grounded siblings are NOT vacuous the way the old injective-floor consumers were: the proper floor
-is SATISFIABLE (`HashFloorHonesty.idFamily_CR`), so a witness family instantiates every sibling with a
-real (`fun _ => 0`) advantage — the implications have inhabited hypotheses. And the floor is LOAD-BEARING
-(`HashFloorHonesty.brokenFamily_not_CR`): on the constant-`0` family CR fails, so the siblings cannot be
-discharged there. -/
+Two of the eight consumers cannot be put on this spine without work in files this lane does not own.
+Recording the precise blocker is the point; a fabricated reduction here would be worse than the `P → P`
+it replaced, because it would LOOK closed.
 
-/-- **(TOOTH — the siblings are instantiable at a REAL floor witness.)** The injective identity family
-satisfies the proper floor, so the apex sibling fires with a genuine advantage bound — the hypothesis is
-inhabited, unlike the vacuous injective floor. -/
-example (traceEquivocator oodEquivocator : CollisionFinder HashFloorHonesty.idFamily) :
-    Negl (fun n => collisionAdv HashFloorHonesty.idFamily traceEquivocator n
-        + collisionAdv HashFloorHonesty.idFamily oodEquivocator n) :=
-  lightclientUnfoolable_advantage_bound HashFloorHonesty.idFamily_CR traceEquivocator oodEquivocator
+**(a) `committedTrace_pinned` — the AIR trace-digest binder.** `AirSoundness.committed_trace_pinned`
+routes through `Circuit.chain_digest_binds`, which is stated over an ABSTRACT `CommitReveal Unit Pre Dig`
+with an abstract `Dig` and the abstract floor `HashCR cr := ∀ ctx a b, cr.commit ctx a = cr.commit ctx b
+→ a = b`. There is no `List ℤ → ℤ` deployed function in that statement, so there is no `SpongeCarrier` to
+build: `enc` has nowhere to land. What is available and honest is the PER-QUERY form — the committed
+Merkle root pins the opened trace ROW at each query — which is exactly §2's bound at the trace root, and
+is what a STARK verifier actually checks. Pinning the WHOLE trace additionally needs the FRI proximity
+leg, which is a separate named residual and NOT a hash-floor consequence. Closing (a) properly means
+re-stating `chain_digest_binds` over the concrete Merkle commitment in `Dregg2/Circuit.lean`.
+
+**(b) `recStateCommit_root` — the faithful full-state root binder.** `CommitFaithfulRegrounded`'s
+extractor chain ends at `FaithfulBreak`, which is a DISJUNCTION OF EXISTENTIALS (`SpongeCollision h :=
+∃ xs ys, xs ≠ ys ∧ h xs = h ys`, and four siblings of the same shape). `SpongeCarrier.find` needs a
+TOTAL FUNCTION from an equivocation to a collision — that is the whole content of the repair, because an
+existential extractor is precisely the "quantifies over SOLUTIONS" defect this sweep exists to retire.
+Going from `FaithfulBreak` to a function requires `Classical.choice`, and a choice-extracted finder is
+NOT an efficient adversary — it would satisfy `IsPolyTime` only by declaring a cost for a function that
+has no algorithm, which is laundering. Closing (b) properly means re-proving
+`recStateCommit_binds_kernel_orBreak` with a function-valued extractor (the shape
+`Emit.EffectVmEmitRotationR.wireCommit8Find` already has for the wide leg) in `CommitFaithfulRegrounded`
+/ `StateCommit` — real proof engineering, not a restatement.
+
+Both are on the work-list. Neither is exported from this file as a bound. -/
+
+/-! ## §8 — non-vacuity and load-bearingness of the REBUILT spine.
+
+The rebuilt bounds are not vacuous the way §0's `P → P` forms were, and the teeth that show it are the
+spine's own (`SpongeCarrierReduction` §5): the floor is priced at BOTH poles, and the canary shows the
+bound does NOT follow from the floor applied at an unrelated finder. -/
+
+/-- **(TOOTH — the floor these bounds rest on is FALSE at the REAL BabyBear parameters.)** The honest
+price of every `hEff` discharge above, re-exported at this file's carrier so no consumer can read its own
+reduction as stronger than it is. What the rebuild buys is NOT a floor the deployed sponge satisfies at
+the unrestricted class — no such floor exists — it is that the residual is ONE named parameter with both
+poles proved, instead of a hypothesis the deployed hash simply refutes. -/
+theorem merkleFloor_top_false_babyBear (D : SpongeKeyed)
+    (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ HashCRHardQuant (spongeFamily D) (fun _ => True) :=
+  carrierFloor_top_false_babyBear D hb
+
+/-- **(TOOTH — the other pole is vacuous.)** Recorded beside the refutation so satisfiability of the
+floor can never be mistaken for evidence. -/
+theorem merkleFloor_bot_vacuous (D : SpongeKeyed) :
+    HashCRHardQuant (spongeFamily D) (fun _ => False) :=
+  carrierFloor_bot_vacuous D
+
+/-- **(CANARY — the rebuilt bound does NOT follow from the floor applied at ANOTHER finder.)** Strip the
+reduction: try to conclude the opening equivocator's negligibility from the collision floor at some OTHER
+finder `B`, not the one EXTRACTED from it. It does not go through — only `carrier_adv_le` at the
+extracted finder connects the two games. This tooth reds if a future edit disconnects them, which is
+exactly the edit that would restore the `P → P` shape. -/
+example (D : SpongeKeyed) (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (merkleOpenBreakGame D)) (B : Adversary (hashGame (spongeFamily D))) (hB : Eff B)
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (merkleOpenBreakGame D) A) := hCR B hB)
+  trivial
+
+/-- **(CANARY — the EFFICIENCY hypothesis is load-bearing, not decorative.)** The rebuilt bound cannot be
+had from the floor alone: without `hA` (the forger is efficient at the game's own answer encoding) there
+is nothing to put the extractor through, and the application does not elaborate. The retired `P → P` form
+needed no such hypothesis precisely because it did no work. -/
+example (D : SpongeKeyed) (A : Adversary (merkleOpenBreakGame D))
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (merkleOpenBreakGame D) A) :=
+      oodCommitmentOpening_advantage_bound D A trivial 0 0 hCR)
+  trivial
+
+/-- **THE POSITIVE POLE — the RIGHT hypotheses DO discharge it.** A gate that refuses everything is a
+broken keystone, not a fixed one: with the forger efficient and the floor at `IsPolyTime`, the OOD
+opening bound fires. -/
+theorem the_rebuilt_opening_bound_fires (D : SpongeKeyed) (A : Adversary (merkleOpenBreakGame D))
+    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) A) (cw bw : ℕ)
+    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
+    Negl (gameAdv (merkleOpenBreakGame D) A) :=
+  oodCommitmentOpening_advantage_bound D A hA cw bw hCR
 
 /-! ## §9 — ⚑ the `Eff`-CARRYING re-grounding (FINDING-2 of the 07-17 sweep).
 
@@ -364,14 +632,22 @@ theorem the_repaired_apex_fires_on_the_right_floor {F : KeyedHashFamily}
 /-! ## §11 — axiom-hygiene pins. -/
 
 #assert_all_clean [
+  merkleRecomputeZ_cons,
+  nodeAt_ne,
+  nodeAt_length,
+  merklePathCollFind_spec,
+  merklePathCollFind_len_le,
+  opening_equivocation_is_break,
+  opening_binds_off_break,
   oodCommitmentOpening_advantage_bound,
   merkleRecomputeZ_advantage_bound,
   friOracle_binding_advantage_bound,
-  committedTrace_pinned_advantage_bound,
-  recStateCommit_root_advantage_bound,
   friStark_fold_advantage_bound,
   lightclientUnfoolable_advantage_bound,
   algoStarkSound_tower_advantage_bound,
+  merkleFloor_top_false_babyBear,
+  merkleFloor_bot_vacuous,
+  the_rebuilt_opening_bound_fires,
   collision_advantage_bound_eff,
   oodCommitmentOpening_advantage_bound_eff,
   merkleRecomputeZ_advantage_bound_eff,

@@ -170,7 +170,7 @@ fn automatafl_match_plays_folds_submits_and_ranks() {
         auto: (2, 2),
         col_rule: true,
     };
-    let m = AutomataflMatch { start, turns: 2 };
+    let m = AutomataflMatch::automaton_only(start, 2);
     let leaves = m.leaves().expect("the played match lowers to D1 leaves");
     assert_eq!(leaves.len(), 2);
     let proof = play_prove_submit(Game::Automatafl, leaves);
@@ -197,15 +197,15 @@ fn both_games_rank_on_the_same_proof_carrying_registry() {
     let mut cells = vec![VAC; n * n];
     cells[4 * n + 2] = ATT;
     cells[2 * n + 2] = AUTO;
-    let afl = AutomataflMatch {
-        start: Board {
+    let afl = AutomataflMatch::automaton_only(
+        Board {
             n,
             cells,
             auto: (2, 2),
             col_rule: true,
         },
-        turns: 2,
-    }
+        2,
+    )
     .leaves()
     .expect("automatafl lowers");
 

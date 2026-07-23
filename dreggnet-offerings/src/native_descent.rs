@@ -31,6 +31,12 @@
 //! unpredictable-until-revealed and distinct per day. Either way the run day-seed is folded
 //! into the journal's genesis root, so a record cannot be re-pointed at another day's
 //! provenance without breaking its hash chain.
+//!
+//! Because the root is in the genesis, a verifier that rebuilds a run by RE-OPENING and
+//! re-driving its commands must deploy on the same root:
+//! [`NativeDescentOffering::on_run_day_seed`] pins the exact one a record carries.
+//! [`resume_record`](NativeDescentOffering::resume_record) needs no pinning — it reads
+//! [`NativeDescentRecord::day_seed`] itself, so every resume path is day-agnostic already.
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
@@ -59,7 +65,9 @@ use dungeon_on_dregg::private_preference::{
 use dungeon_on_dregg::private_raid::{
     RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
 };
-use procgen_dregg::CommittedSeed;
+/// A run day-seed / beacon day, re-exported so a consumer can name (and re-derive under) a
+/// record's provenance root without its own dependency on the procgen layer.
+pub use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
 use spween_dregg::WorldError;
 
@@ -636,20 +644,51 @@ pub fn native_descent_run_day_seed(day: &CommittedSeed, seed: u8) -> CommittedSe
     CommittedSeed::from_bytes(*hasher.finalize().as_bytes())
 }
 
+/// **What an offering binds its sessions' provenance roots to.**
+///
+/// Every session deploys on a *run day-seed* — the provenance root its banked relics mint
+/// under. This says where that root comes from, and it is the whole difference between a
+/// pre-computable relic id and one that could not exist before a drand round was revealed.
+#[derive(Clone, Copy, Debug, Default)]
+enum DayBinding {
+    /// **No day.** The run day-seed is [`day_seed_from_deploy_seed`] of the normalized deploy
+    /// seed: reproducible per seed, and therefore *pre-computable* — fine for a fixture or a
+    /// deterministic replay, NOT the live daily posture.
+    #[default]
+    SeedDerived,
+    /// **A verified beacon day.** The run day-seed is
+    /// [`native_descent_run_day_seed`]`(day, seed)`, so it is unpredictable until that day's
+    /// round was revealed and distinct for every day and every world within a day.
+    Day(CommittedSeed),
+    /// **An exact already-derived run day-seed** — what a [`NativeDescentRecord`] carries.
+    /// The reconstruct path: a verifier that rebuilds a run by re-opening and re-driving its
+    /// commands (rather than [`resume_record`](NativeDescentOffering::resume_record), which
+    /// reads the record's own day-seed) must deploy on the SAME root or nothing re-derives.
+    RunDaySeed(CommittedSeed),
+    /// **A live day source, resolved at EVERY open** — the deployed daily posture. A host is
+    /// registered once and then serves for weeks, so a day frozen into the offering at
+    /// registration would keep minting yesterday's provenance; this asks at open time instead.
+    /// `None` from the source REFUSES the open (fail-closed: no verified day, no run), it
+    /// never falls back to the pre-computable seed-derived root.
+    Live(fn() -> Option<CommittedSeed>),
+}
+
 /// The generic Offering adapter for the Lean-native Descent.
 ///
-/// `day` is the offering's optional **day binding**: `None` (the [`new`](Self::new) default)
-/// mints banked relics under the reproducible seed-derived provenance root
-/// ([`day_seed_from_deploy_seed`]); `Some(day)` binds a real verified beacon day, so each day's
-/// runs mint under a root that was unpredictable until that round was revealed.
+/// The offering's [`DayBinding`] decides the provenance root every session it opens deploys on:
+/// [`new`](Self::new) is the reproducible seed-derived root, [`on_beacon`](Self::on_beacon) /
+/// [`on_day`](Self::on_day) bind a real verified beacon day, and
+/// [`on_run_day_seed`](Self::on_run_day_seed) pins one exact run's root for re-derivation.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeDescentOffering {
-    day: Option<CommittedSeed>,
+    day: DayBinding,
 }
 
 impl NativeDescentOffering {
     pub fn new() -> Self {
-        Self { day: None }
+        Self {
+            day: DayBinding::SeedDerived,
+        }
     }
 
     /// **Bind this offering to a day's committed seed.** Every session it opens deploys on the
@@ -657,7 +696,9 @@ impl NativeDescentOffering {
     /// that day's runs mint under that day's provenance root. Pass the seed of a VERIFIED
     /// beacon (or use [`on_beacon`](Self::on_beacon), which verifies for you).
     pub fn on_day(day: CommittedSeed) -> Self {
-        Self { day: Some(day) }
+        Self {
+            day: DayBinding::Day(day),
+        }
     }
 
     /// **Bind this offering to today's verified drand beacon** — the live daily path. The
@@ -671,16 +712,74 @@ impl NativeDescentOffering {
         Ok(Self::on_day(day))
     }
 
-    /// The day this offering binds its sessions' provenance roots to, if any.
-    pub fn day(&self) -> Option<&CommittedSeed> {
-        self.day.as_ref()
+    /// **Pin one exact run day-seed** — the root a [`NativeDescentRecord`] already carries
+    /// ([`NativeDescentRecord::day_seed`]). This is the constructor a verifier that re-opens and
+    /// re-drives a run's commands needs: without it such a verifier deploys on the
+    /// seed-derived root and NOTHING about a beacon-bound run re-derives (its genesis root, and
+    /// therefore its whole hash chain and its banked notes, are day-bound). Note that
+    /// [`resume_record`](Self::resume_record) needs no such pinning — it reads the record's
+    /// day-seed directly, which is why every resume path is already day-agnostic.
+    pub fn on_run_day_seed(run_day_seed: CommittedSeed) -> Self {
+        Self {
+            day: DayBinding::RunDaySeed(run_day_seed),
+        }
     }
 
-    /// The run day-seed a session opened at `seed` deploys on.
-    fn run_day_seed(&self, seed: u8) -> CommittedSeed {
+    /// **The deployed daily binding: ask `source` for today's verified day at EVERY open.**
+    ///
+    /// A long-lived host registers its offerings once and then serves for weeks. An offering
+    /// built with [`on_day`](Self::on_day) would keep minting the day it was registered on, so
+    /// a live surface hands this a source that returns the CURRENT day's committed seed —
+    /// derived from a beacon its frontend already verified (`DailyBeacon::seed` pairs before it
+    /// derives, so a forged reveal never becomes a seed).
+    ///
+    /// FAIL-CLOSED: when the source has no verified day for right now (never resolved, or the
+    /// cached day has rolled and today's round has not been fetched yet), the source returns
+    /// `None` and [`open`](Offering::open) REFUSES. It does not quietly fall back to the
+    /// pre-computable seed-derived root — a day nobody has revealed is not a day to play.
+    pub fn on_day_source(source: fn() -> Option<CommittedSeed>) -> Self {
+        Self {
+            day: DayBinding::Live(source),
+        }
+    }
+
+    /// The verified beacon day this offering binds its sessions' provenance roots to right now
+    /// — the fixed day of [`on_day`](Self::on_day), or whatever a live source currently
+    /// resolves. A seed-derived or run-day-seed-pinned offering names no day.
+    pub fn day(&self) -> Option<CommittedSeed> {
         match &self.day {
-            Some(day) => native_descent_run_day_seed(day, seed),
-            None => day_seed_from_deploy_seed(seed),
+            DayBinding::Day(day) => Some(*day),
+            DayBinding::Live(source) => source(),
+            DayBinding::SeedDerived | DayBinding::RunDaySeed(_) => None,
+        }
+    }
+
+    /// Whether this offering's provenance roots come from a real revealed beacon day rather
+    /// than from the (pre-computable) deploy seed. A live daily surface must answer `true`.
+    /// A live-source offering answers `true` because that is its posture — whether it can
+    /// resolve a day *right now* is [`day`](Self::day), and an unresolvable day refuses the
+    /// open rather than degrading.
+    pub fn is_day_bound(&self) -> bool {
+        matches!(self.day, DayBinding::Day(_) | DayBinding::Live(_))
+    }
+
+    /// The run day-seed a session opened at `seed` deploys on. A live binding with no
+    /// currently-verified day yields no run day-seed, and therefore no session.
+    fn run_day_seed(&self, seed: u8) -> Result<CommittedSeed, OfferingError> {
+        match &self.day {
+            DayBinding::Day(day) => Ok(native_descent_run_day_seed(day, seed)),
+            DayBinding::RunDaySeed(run_day_seed) => Ok(*run_day_seed),
+            DayBinding::SeedDerived => Ok(day_seed_from_deploy_seed(seed)),
+            DayBinding::Live(source) => source()
+                .map(|day| native_descent_run_day_seed(&day, seed))
+                .ok_or_else(|| {
+                    OfferingError::Deploy(
+                        "this Descent is bound to the live daily beacon and no verified day is \
+                         resolved right now — refusing to open on a pre-computable provenance \
+                         root (fetch today's drand round, then retry)"
+                            .to_string(),
+                    )
+                }),
         }
     }
 
@@ -811,7 +910,7 @@ impl Offering for NativeDescentOffering {
 
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
         let seed = ((cfg.seed.unwrap_or(1) % 251) + 1) as u8;
-        let game = Descent::deploy_on_day(seed, self.run_day_seed(seed))
+        let game = Descent::deploy_on_day(seed, self.run_day_seed(seed)?)
             .map_err(|error| OfferingError::Deploy(error.to_string()))?;
         let root = genesis_root(seed, game.day_seed(), game.sim());
         Ok(NativeDescentSession {

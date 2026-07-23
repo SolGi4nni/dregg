@@ -33,6 +33,16 @@ all = { level = "warn", priority = -1 }
 [workspace.lints.rust]
 unexpected_cfgs = "allow"
 
+# p3-fri fork — the vendored `82cfad73` source with the additive backend-injection seam
+# (`TwoAdicFriFoldBackend` / `CpuTwoAdicFriFold` / 6-generic `HidingFriPcs<…, Fold>`) that
+# `dregg-circuit-prove` (a transitive dep of this bot) is built against. MUST match the ROOT
+# workspace's identical patch (root Cargo.toml `[patch."…/Plonky3/Plonky3"]`), or this
+# separate workspace resolves `p3-fri` to stock upstream (5-generic, no fold) and
+# circuit-prove fails to compile. All other p3 crates stay on the same git rev (no source
+# split), exactly as the root's patch comment describes.
+[patch."https://github.com/Plonky3/Plonky3"]
+p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+
 [patch.crates-io]
 # ark-serialize fork — the `serde_with` feature the proof tree (dregg-hints via
 # dregg-circuit/dregg-sdk) needs. Matches the root workspace patch so the locked
@@ -275,8 +285,28 @@ dreggnet-cheevo = { path = "../dreggnet-cheevo" }
 # full-turn STARK into before running the audited `dregg_sdk::verify_full_turn` (backlog #11).
 # Already resolved in the lock via dregg-sdk; named directly for the type.
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+# THE ATTESTED NARRATOR (`DREGG_NARRATOR=chutes-tee`) — `ChutesTeeBackend` is a
+# `dregg_narrator::ConverseBackend` whose inference runs inside a DCAP-verified Intel TDX
+# enclave: the request body is ML-KEM-768-encapsulated to an `e2e_pubkey` bound into a quote
+# verified against the pinned Chutes measurement registry, and the reply is decrypted with an
+# ephemeral key only this process holds. `build_paid_narrator` wraps it in the SAME
+# `PaidNarrator` (per-run USD ledger, metered reserve → call → true-up) as every other hosted
+# backend. FAIL-CLOSED at both levels: a misconfigured/refused attestation yields NO narrator
+# (the run falls to the free tier) and NEVER the unattested `OpenAiCompatClient`. A root
+# workspace member (its `workspace = true` deps resolve against the root manifest it lives
+# under); it brings dregg-tee-verify → dcap-qvl + PQClean ML-KEM C into this graph — that C is
+# the attestation stack, not the bot's PQ signing posture (`DREGG_ALLOW_UNAUDITED_PQ`).
+dregg-chutes-e2ee = { path = "../dregg-chutes-e2ee" }
 
 [dev-dependencies]
+# The shared, viewer-blind Bazaar receipt CONTRACT FIXTURES. `dreggnet-market` is a
+# normal `[dependencies]` entry above; naming it again here with `contract-fixtures`
+# turns on its crate-authored `contract_fixtures::{sample_pending_receipt,
+# sample_settled_receipt}` ONLY for this bot's own tests (resolver "2" does not leak
+# a dev-dependency feature into the shipped binary). The surface-contract test renders
+# a REAL authenticated receipt instead of the removed public constructor / mutable
+# fields — no receipt is fabricated from external dummy bytes.
+dreggnet-market = { path = "../dreggnet-market", features = ["contract-fixtures"] }
 # `ServiceExt::oneshot` drives the admin webportal router in tests without
 # binding a socket (already in the lockfile transitively via tower-http).
 tower = { version = "0.5", features = ["util"] }

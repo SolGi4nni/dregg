@@ -4,7 +4,7 @@
 #   * spween-dregg      — a spween story on a verifiable world-cell (the narrative core);
 #   * collective-choice — the REAL cap-bounded cell-backed vote engine (the crowd's authorship);
 #   * mud-dregg         — multiplayer branch-stitch play (fork / explore / stitch, conflicts REFUSED);
-#   * attested-dm       — the un-jailbreakable attested AI dungeon-master (narrates the SAME world);
+#   * attested-dm       — the attested, cap-bounded AI dungeon-master with a certified prompt (narrates the SAME world);
 #   * dregg-governance  — the federation self-governing through the SAME VoteEngine primitive.
 #
 # Run: `cargo run -p interactive-fiction-demo`
@@ -16,7 +16,7 @@ name = "interactive-fiction-demo"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The on-chain interactive-fiction stack composed into one running system: a spween story whose branches the crowd votes on the REAL collective-choice engine, played across mud-dregg's branch-stitch timelines, narrated by the un-jailbreakable attested DM, governed by the same vote primitive that runs the federation — a crowd-authored, played, narrated, light-client-verifiable playthrough."
+description = "The on-chain interactive-fiction stack composed into one running system: a spween story whose branches the crowd votes on the REAL collective-choice engine, played across mud-dregg's branch-stitch timelines, narrated by the attested DM from a certified prompt, governed by the same vote primitive that runs the federation — a crowd-authored, played, narrated, light-client-verifiable playthrough."
 
 [dependencies]
 # The story engine (its `parse`/`Scene`) + the dregg narrative core.
@@ -26,7 +26,7 @@ spween-dregg = { path = "../spween-dregg" }
 collective-choice = { path = "../collective-choice" }
 # Multiplayer branch-stitch play.
 mud-dregg = { path = "../mud-dregg" }
-# The un-jailbreakable attested dungeon-master.
+# The attested dungeon-master (certified prompt + cap bound).
 attested-dm = { path = "../attested-dm" }
 # The federation self-governance face — the SAME VoteEngine primitive.
 dregg-governance = { path = "../dregg-governance" }

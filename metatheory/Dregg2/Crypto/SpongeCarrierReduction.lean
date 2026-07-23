@@ -199,6 +199,41 @@ structure SpongeCarrier where
   find_len_le : ∀ (h : List ℤ → ℤ) (c : Ctx) (a b : Val),
     (find h c a b).1.length + (find h c a b).2.length ≤ outCo * (size c a + size c b) + outBo
 
+/-- **THE COMMONEST CARRIER SHAPE — a flat, injectively-encoded preimage.** Most deployed 1-felt
+commitments are `hash (encode v)` for a STRUCTURAL encoding that is injective on the nose: a fixed
+tuple of felts laid out in a fixed order (`hash [holder, target, rights, op]`,
+`hash [domain_tag, coll, key]`, `hash [addr, value]`, …). For those the extractor is simply the two
+encodings, and the old CR-peeling proof — `hCR _ _ h` followed by `List.cons.injEq` as many times as
+the arity — collapses into `encode_inj`, which is pure combinatorics and carries no floor.
+
+⚑ Note what moved. The old proofs used collision-resistance to invert the HASH. Here injectivity is
+required only of the ENCODING, which is a layout fact the deployment genuinely satisfies, and the
+hash's contribution is priced by the reduction instead of assumed. -/
+def SpongeCarrier.ofFlatEncoding {V : Type} (dec : DecidableEq V)
+    (encode : V → List ℤ) (encode_inj : ∀ a b : V, encode a = encode b → a = b)
+    (w : ℕ) (hw : ∀ v, (encode v).length ≤ w) : SpongeCarrier where
+  Ctx := Unit
+  Val := V
+  valDecEq := dec
+  enc := fun h _ v => h (encode v)
+  find := fun _ _ a b => (encode a, encode b)
+  find_spec := fun _ _ a b hne heq => ⟨fun hc => hne (encode_inj a b hc), heq⟩
+  size := fun _ _ => w
+  outCo := 1
+  outBo := 0
+  find_len_le := fun _ _ a b => by
+    have ha := hw a
+    have hb := hw b
+    simp only [Nat.one_mul, Nat.add_zero]
+    omega
+
+/-- The flat carrier's commitment IS the deployed `hash (encode v)`, by `rfl` — so a site that builds
+its carrier this way is landing on the function it actually computes, not on a re-derivation. -/
+theorem ofFlatEncoding_enc {V : Type} (dec : DecidableEq V) (encode : V → List ℤ)
+    (hinj : ∀ a b : V, encode a = encode b → a = b) (w : ℕ) (hw : ∀ v, (encode v).length ≤ w)
+    (h : List ℤ → ℤ) (v : V) :
+    (SpongeCarrier.ofFlatEncoding dec encode hinj w hw).enc h () v = h (encode v) := rfl
+
 /-! ## §3 — the reduction: the forgery as a GAME, the extractor as a MAP OF ADVERSARIES. -/
 
 /-- **THE CARRIER FORGERY GAME.** The adversary is handed a uniformly sampled domain-separation tag and

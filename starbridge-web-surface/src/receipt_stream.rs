@@ -24,7 +24,7 @@
 //!     the SSE `id:` / `Last-Event-ID` resume header, and the SAME monotone
 //!     `since(cursor)` discipline the cockpit's `Dynamics` log already uses;
 //!   * forge-detection is the REAL [`dregg_turn::TurnReceipt::receipt_hash`]
-//!     (the canonical `dregg-receipt-v4` BLAKE3 digest) + the REAL
+//!     (the canonical `dregg-receipt-v5` BLAKE3 digest) + the REAL
 //!     [`dregg_types::merkle_root_of_receipt_hashes`] receipt-stream verifier the
 //!     [`dregg_types::AttestedRoot`] binds — never a bespoke check.
 //!

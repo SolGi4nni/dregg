@@ -119,14 +119,35 @@ impl ModelRegistry {
             env_f64("DREGG_NARRATOR_PRICE_INPUT_PER_1K"),
             env_f64("DREGG_NARRATOR_PRICE_OUTPUT_PER_1K"),
         );
-        if in_o.is_none() && out_o.is_none() {
-            return;
-        }
         let target = std::env::var("DREGG_NARRATOR_MODEL")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        self.apply_price_override(&target, in_o, out_o);
+    }
+
+    /// The PURE rule behind [`ModelRegistry::apply_env_override`]: pin `target`'s rate from the
+    /// supplied overrides, falling back per-axis to `target`'s existing entry.
+    ///
+    /// Public + env-free so the operator-override path is testable for an ARBITRARY model id —
+    /// e.g. an attested Chutes `…-TEE` model, which has no built-in entry and is priced per token
+    /// like its non-TEE twin (Chutes charges no confidential-compute premium). Both rates must be
+    /// supplied for such a model or it stays UNPRICED and the metered layer refuses it fail-closed.
+    pub fn apply_price_override(
+        &mut self,
+        target: &str,
+        input_override: Option<f64>,
+        output_override: Option<f64>,
+    ) {
+        if input_override.is_none() && output_override.is_none() {
+            return;
+        }
+        let target = target.trim().to_string();
+        if target.is_empty() {
+            return;
+        }
+        let (in_o, out_o) = (input_override, output_override);
 
         let base = self.entries.get(&target).cloned();
         let input = in_o.or_else(|| base.as_ref().map(|b| b.input_per_1k));
@@ -145,5 +166,61 @@ impl ModelRegistry {
                 },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An attested Chutes `-TEE` model has no built-in entry. The documented operator path —
+    /// `DREGG_NARRATOR_MODEL=<id>` + BOTH `DREGG_NARRATOR_PRICE_*_PER_1K` — must price it, or the
+    /// metered layer refuses every attested call as `UnpricedModel`.
+    #[test]
+    fn tee_model_is_priceable_through_the_operator_override() {
+        const TEE: &str = "Qwen/Qwen3-32B-TEE";
+        let mut reg = ModelRegistry::builtin();
+        assert!(
+            reg.pricing_for(TEE).is_none(),
+            "no invented built-in price for a -TEE model"
+        );
+
+        reg.apply_price_override(TEE, Some(0.0003), Some(0.0009));
+        let p = reg.pricing_for(TEE).expect("operator-priced -TEE model");
+        assert_eq!(p.input_per_1k, 0.0003);
+        assert_eq!(p.output_per_1k, 0.0009);
+        assert_eq!(p.source.tag(), "operator-override");
+    }
+
+    /// FAIL-CLOSED: half a price on a model with no built-in entry pins NOTHING — the model stays
+    /// unpriced rather than silently charging zero on the missing axis.
+    #[test]
+    fn half_specified_price_on_a_new_model_pins_nothing() {
+        const TEE: &str = "deepseek-ai/DeepSeek-R1-TEE";
+        let mut reg = ModelRegistry::builtin();
+        reg.apply_price_override(TEE, Some(0.0003), None);
+        assert!(reg.pricing_for(TEE).is_none());
+        reg.apply_price_override(TEE, None, Some(0.0009));
+        assert!(reg.pricing_for(TEE).is_none());
+        reg.apply_price_override(TEE, Some(0.0003), Some(0.0009));
+        assert!(reg.pricing_for(TEE).is_some());
+    }
+
+    /// A single override axis on a model that DOES have a built-in entry keeps the other axis.
+    #[test]
+    fn single_axis_override_on_a_known_model_keeps_the_other_axis() {
+        let mut reg = ModelRegistry::builtin();
+        let before = reg.pricing_for(NOVA_2_LITE).unwrap();
+        reg.apply_price_override(NOVA_2_LITE, Some(0.5), None);
+        let after = reg.pricing_for(NOVA_2_LITE).unwrap();
+        assert_eq!(after.input_per_1k, 0.5);
+        assert_eq!(after.output_per_1k, before.output_per_1k);
+    }
+
+    #[test]
+    fn no_overrides_changes_nothing() {
+        let mut reg = ModelRegistry::builtin();
+        reg.apply_price_override("some/new-model", None, None);
+        assert!(reg.pricing_for("some/new-model").is_none());
     }
 }

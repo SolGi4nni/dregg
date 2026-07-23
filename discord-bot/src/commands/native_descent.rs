@@ -9,8 +9,31 @@ use std::sync::OnceLock;
 
 use dreggnet_offerings::Offering;
 use dreggnet_offerings::native_descent::NativeDescentOffering;
+use procgen_dregg::CommittedSeed;
 
 use crate::commands::offering::{DiscordOffering, Store};
+
+/// **Today's verified drand day, as the native Descent's provenance source.** Rides the SAME
+/// resolution `/descent` uses ([`crate::commands::descent::resolve_todays_beacon`] — the reveal
+/// cron's live cached round, else the pinned published round), and `DailyBeacon::seed` runs the
+/// BLS pairing check before it derives anything, so a reveal that does not verify yields `None`
+/// and the open is refused. No network happens here: the cron owns the fetch.
+pub fn todays_descent_day() -> Option<CommittedSeed> {
+    crate::commands::descent::resolve_todays_beacon()
+        .seed()
+        .ok()
+}
+
+/// **The LIVE native Descent** — the constructor `/play offering:descent` opens through.
+///
+/// The day is re-resolved at EVERY open (the bot process outlives many UTC days), and the run
+/// deploys on `native_descent_run_day_seed(day, seed)`, so a run's banked relics mint under a
+/// provenance root that could not exist before that day's round was revealed: nobody — including
+/// the operator — can pre-compute or grind the day's relic ids. Fail-closed: no verified day, no
+/// session; it never degrades to the pre-computable deploy-seed-derived root.
+pub fn live_offering() -> NativeDescentOffering {
+    NativeDescentOffering::on_day_source(todays_descent_day)
+}
 
 impl DiscordOffering for NativeDescentOffering {
     const KEY: &'static str = "descent";

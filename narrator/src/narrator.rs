@@ -66,6 +66,11 @@ impl Narrator {
     /// Bedrock(Haiku)→Bedrock(Nova), or a single model when `DREGG_NARRATOR_MODEL` is set;
     /// `ollama`/`scripted`/`none` skip the hosted tier. When `DREGG_NARRATOR` is unset, an explicit
     /// `DREGG_NARRATOR_ENDPOINT` selects the OpenAI path, else AWS creds select Bedrock.
+    ///
+    /// `DREGG_NARRATOR=chutes-tee` selects the ATTESTED backend, which this crate cannot build —
+    /// the auto chain then has NO hosted tier (never the unattested Chutes client in its place).
+    /// Compose it with `dregg_chutes_e2ee::attested_narrator_from_env`, which returns `Err` when
+    /// attestation is configured but unavailable.
     pub fn auto() -> Narrator {
         let mut backends = hosted_and_ollama();
         backends.push(Backend::Scripted);
@@ -86,6 +91,31 @@ impl Narrator {
             ledger: BudgetLedger::from_env(),
             registry: ModelRegistry::builtin(),
         }
+    }
+
+    /// A narrator over an EXPLICIT hosted backend set, metered by the env-configured ledger and
+    /// the built-in price registry.
+    ///
+    /// This is the composition seam for a backend this crate cannot construct itself — notably the
+    /// ATTESTED Chutes backend, which lives in `dregg-chutes-e2ee` (that crate depends on this one,
+    /// so the dependency cannot point back). `DREGG_NARRATOR=chutes-tee` selects
+    /// [`HostedProvider::ExternalAttested`], which yields NO built-in hosted tier precisely so an
+    /// unattested provider can never quietly take the attested one's place; the composer builds the
+    /// attested backend and hands it here.
+    ///
+    /// `scripted = false` keeps the chain fail-closed: when the attested backend errs, [`Narrator::narrate`]
+    /// returns `Err` instead of silently substituting other prose.
+    pub fn with_hosted(
+        hosted: Vec<(Arc<dyn ConverseBackend + Send + Sync>, String)>,
+        scripted: bool,
+    ) -> Narrator {
+        Narrator::for_test(
+            BudgetLedger::from_env(),
+            ModelRegistry::builtin(),
+            hosted,
+            None,
+            scripted,
+        )
     }
 
     /// A narrator with an explicit backend set — used by tests to inject fakes.
@@ -228,9 +258,18 @@ impl Narrator {
 /// Build the model tier — the hosted backend(s) for the resolved provider followed by a reachable
 /// Ollama. Empty if none are available.
 fn hosted_and_ollama() -> Vec<Backend> {
+    let mut backends = hosted_for(hosted_provider());
+    if let Some(o) = OllamaBackend::probe_env() {
+        backends.push(Backend::Ollama(o));
+    }
+    backends
+}
+
+/// The hosted backend(s) a resolved provider contributes (no Ollama, no Scripted).
+fn hosted_for(provider: HostedProvider) -> Vec<Backend> {
     let mut backends: Vec<Backend> = Vec::new();
 
-    match hosted_provider() {
+    match provider {
         HostedProvider::OpenAi => {
             // The OpenAI-compatible path (Chutes / Bittensor, vLLM, OpenRouter, a local proxy).
             // A missing endpoint or missing model yields no hosted backend — the chain falls
@@ -256,42 +295,63 @@ fn hosted_and_ollama() -> Vec<Backend> {
                 }
             }
         }
+        // An externally-composed ATTESTED backend. This crate deliberately builds NOTHING here:
+        // substituting the plain (unattested) Chutes client would be exactly the silent downgrade
+        // the attested path exists to prevent. `dregg_chutes_e2ee::attested_narrator_from_env`
+        // composes it via `Narrator::with_hosted`.
+        HostedProvider::ExternalAttested => {}
         HostedProvider::None => {}
-    }
-
-    if let Some(o) = OllamaBackend::probe_env() {
-        backends.push(Backend::Ollama(o));
     }
 
     backends
 }
 
 /// Which hosted provider (if any) the environment selects.
-enum HostedProvider {
-    /// An OpenAI-compatible endpoint (Chutes / Bittensor, vLLM, OpenRouter, a local proxy).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostedProvider {
+    /// An OpenAI-compatible endpoint (Chutes / Bittensor, vLLM, OpenRouter, a local proxy),
+    /// UNATTESTED: the request leaves this process in the clear to whatever host answers.
     OpenAi,
     /// AWS Bedrock (Nova / Claude).
     Bedrock,
+    /// An ATTESTED backend this crate cannot construct (`DREGG_NARRATOR=chutes-tee` →
+    /// `dregg-chutes-e2ee`'s `ChutesTeeBackend`). Resolved by the composer, not here.
+    ExternalAttested,
     /// No hosted tier — Ollama/Scripted only.
     None,
 }
 
-/// Resolve the hosted provider: `DREGG_NARRATOR=openai`/`chutes` → OpenAI-compatible; `=bedrock` →
-/// Bedrock; `=ollama`/`scripted`/`none` → none. When unset, an explicit `DREGG_NARRATOR_ENDPOINT`
-/// selects the OpenAI path, else present AWS credentials select Bedrock, else none.
-fn hosted_provider() -> HostedProvider {
-    match std::env::var("DREGG_NARRATOR")
-        .ok()
-        .as_deref()
-        .map(str::trim)
-    {
+/// Resolve the hosted provider: `DREGG_NARRATOR=openai`/`chutes` → OpenAI-compatible;
+/// `=chutes-tee` → the externally-composed ATTESTED backend; `=bedrock` → Bedrock;
+/// `=ollama`/`scripted`/`none` → none. When unset, an explicit `DREGG_NARRATOR_ENDPOINT` selects
+/// the OpenAI path, else present AWS credentials select Bedrock, else none.
+pub fn hosted_provider() -> HostedProvider {
+    hosted_provider_of(
+        std::env::var("DREGG_NARRATOR").ok().as_deref(),
+        std::env::var_os("DREGG_NARRATOR_ENDPOINT").is_some(),
+        aws_creds_present,
+    )
+}
+
+/// The pure selection rule behind [`hosted_provider`] — separated so the mapping (especially
+/// "`chutes-tee` NEVER resolves to the unattested OpenAI path") is testable without touching the
+/// process environment.
+fn hosted_provider_of(
+    selector: Option<&str>,
+    endpoint_set: bool,
+    aws_creds: impl Fn() -> bool,
+) -> HostedProvider {
+    match selector.map(str::trim) {
         Some("openai") | Some("chutes") => HostedProvider::OpenAi,
+        Some("chutes-tee") | Some("chutes_tee") | Some("attested") => {
+            HostedProvider::ExternalAttested
+        }
         Some("bedrock") => HostedProvider::Bedrock,
         Some("ollama") | Some("scripted") | Some("none") => HostedProvider::None,
         _ => {
-            if std::env::var_os("DREGG_NARRATOR_ENDPOINT").is_some() {
+            if endpoint_set {
                 HostedProvider::OpenAi
-            } else if aws_creds_present() {
+            } else if aws_creds() {
                 HostedProvider::Bedrock
             } else {
                 HostedProvider::None
@@ -353,5 +413,66 @@ fn scripted_text(user: &str) -> String {
         "The scene holds its breath; the narrator waits.".to_string()
     } else {
         format!("The narrator considers \u{201c}{snippet}\u{201d} and the scene continues.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selector_maps_to_providers() {
+        assert_eq!(
+            hosted_provider_of(Some("openai"), false, || false),
+            HostedProvider::OpenAi
+        );
+        assert_eq!(
+            hosted_provider_of(Some("bedrock"), false, || false),
+            HostedProvider::Bedrock
+        );
+        assert_eq!(
+            hosted_provider_of(Some(" chutes-tee "), false, || false),
+            HostedProvider::ExternalAttested
+        );
+        assert_eq!(
+            hosted_provider_of(None, true, || false),
+            HostedProvider::OpenAi
+        );
+        assert_eq!(
+            hosted_provider_of(None, false, || true),
+            HostedProvider::Bedrock
+        );
+        assert_eq!(
+            hosted_provider_of(None, false, || false),
+            HostedProvider::None
+        );
+    }
+
+    /// FAIL-CLOSED: asking for the attested backend must NEVER resolve to the plain, unattested
+    /// OpenAI/Chutes client — not even when `DREGG_NARRATOR_ENDPOINT` is set and AWS creds exist,
+    /// which is exactly the environment a "helpful" fallback would silently take.
+    #[test]
+    fn chutes_tee_never_degrades_to_the_unattested_openai_path() {
+        for selector in ["chutes-tee", "chutes_tee", "attested"] {
+            assert_eq!(
+                hosted_provider_of(Some(selector), true, || true),
+                HostedProvider::ExternalAttested,
+                "{selector} must not fall through to an unattested provider"
+            );
+        }
+    }
+
+    /// And the resolved `ExternalAttested` selection contributes NO hosted backend of its own —
+    /// so a composer that forgets to wire the attested client gets no hosted narration rather than
+    /// UNATTESTED hosted narration. (`hosted_for` is the real builder the auto chain calls.)
+    #[test]
+    fn external_attested_contributes_no_builtin_hosted_backend() {
+        let built = hosted_for(HostedProvider::ExternalAttested);
+        assert!(
+            built.is_empty(),
+            "the attested selection must not synthesize a hosted backend; got {:?}",
+            built.iter().map(Backend::kind).collect::<Vec<_>>()
+        );
+        assert!(hosted_for(HostedProvider::None).is_empty());
     }
 }

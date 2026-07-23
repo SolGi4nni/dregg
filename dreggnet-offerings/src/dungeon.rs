@@ -15,9 +15,21 @@
 //! The executor is the SOURCE OF TRUTH: a legal move lands a real `TurnReceipt`; an illegal one
 //! (a killing blow past the HP floor, a second grab of a `WriteOnce` relic, climbing a one-way
 //! stair, an over-budget ward) is a real `WorldError::Refused` that commits nothing — the
-//! anti-ghost tooth. `verify` re-drives a fresh identically-seeded world-cell through the
-//! recorded choices ([`verify_by_replay`]) and rechecks any private-result enactment against
-//! its accepted session/result/actor; a forged, substituted, or reordered record fails.
+//! anti-ghost tooth. [`verify_dungeon_record`] runs every tooth over a record — chain linkage,
+//! the receipt-hash chain, replay against a fresh identically-seeded world-cell, the executor
+//! anchor, the narration binding, and the private-result enactments — and BOTH the session
+//! verify and the record verify go through it; a forged, substituted, reordered, or retconned
+//! record fails.
+//!
+//! ## The narration binding is checked here, not merely committed
+//!
+//! A narrated turn's prose rides a receipt-only `Effect::EmitEvent`. That binds it into
+//! `effects_hash` and `receipt_hash` — but `EmitEvent` mutates no cap-gated field, so it moves
+//! NEITHER state hash, and replay re-drives *choices* without ever re-emitting the event. A
+//! served verify that ran replay alone therefore could not see a narration swap at all, which
+//! is what this module used to do. The session now keeps the prose beside each receipt
+//! (`DungeonSession::narrations`) and verification RE-DERIVES the expected narration event from
+//! it, so the text a reader is shown is the text that was committed.
 
 pub mod narrated;
 
@@ -28,8 +40,12 @@ use narrated::{
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::{FieldElement, TurnReceipt, field_from_bytes};
+use dungeon_on_dregg::narrator::{RecordedNarration, verify_narration_binding};
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
-use spween_dregg::{StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay};
+use spween_dregg::{
+    StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay,
+    verify_receipts_anchored,
+};
 
 #[cfg(feature = "private-preference-operation")]
 use dungeon_on_dregg::KP_PRIVATE_COUNSEL_DESCEND;
@@ -245,6 +261,21 @@ pub struct DungeonSession {
     /// Who drove each committed step (parallel to `steps`) — session-level attribution. For a
     /// collective turn this is the decision's *carrier* (the mover of record).
     actors: Vec<DreggIdentity>,
+    /// The narration bound into each committed step (parallel to `steps`): `None` for an
+    /// ordinary player/collective move, `Some` for a narrated turn
+    /// ([`DungeonSession::advance_narrated_receipt_in_enclave`]).
+    ///
+    /// **This log is what makes the narration commitment checkable at all.** The receipt binds
+    /// a *digest* of the prose; without the prose beside it there is nothing to re-derive that
+    /// digest from, and the "narration is bound into the receipt" property can only ever be
+    /// checked against itself. [`DungeonOffering::verify`] re-derives each entry's expected
+    /// narration event ([`verify_narration_binding`]) and requires the receipt to bind exactly
+    /// it, so a retconned narration — which moves NEITHER state hash, `EmitEvent` being
+    /// state-passthrough, and is therefore invisible to replay — is caught.
+    ///
+    /// Kept parallel to `steps` by every push site; a length divergence is treated as a
+    /// verification break rather than papered over (see [`DungeonSession::narration_log`]).
+    narrations: Vec<Option<RecordedNarration>>,
     /// The collective decision behind each committed step (parallel to `steps`): `None` for a
     /// single-actor [`Offering::advance`], `Some` for an [`Offering::advance_collective`] crowd
     /// turn — the recorded electorate + carrier + tally, the crowd decision made first-class.
@@ -409,6 +440,25 @@ impl DungeonSession {
     /// absent index — the recorded electorate + carrier + tally, the crowd decision first-class.
     pub fn collective_of_step(&self, n: usize) -> Option<&CollectiveDecision> {
         self.collectives.get(n).and_then(|c| c.as_ref())
+    }
+
+    /// The narration bound into step `n` (0-based over committed steps), if it was a narrated
+    /// turn. This is the prose whose commitment [`DungeonOffering::verify`] re-derives.
+    pub fn narration_of_step(&self, n: usize) -> Option<&RecordedNarration> {
+        self.narrations.get(n).and_then(|n| n.as_ref())
+    }
+
+    /// The whole per-step narration log, or `None` when it has fallen out of step with
+    /// `steps` — a push site that recorded a turn without recording (or explicitly
+    /// disclaiming) its narration.
+    ///
+    /// Fail-closed on purpose. If the logs diverge, index `i` of one no longer describes
+    /// index `i` of the other, and pairing them anyway would check turn `i`'s receipt
+    /// against turn `j`'s prose — a check that reports on the wrong turn. Verification
+    /// treats `None` as a break rather than skipping the tooth, so a future push site that
+    /// forgets the log is loud instead of silently disarming it.
+    fn narration_log(&self) -> Option<&[Option<RecordedNarration>]> {
+        (self.narrations.len() == self.steps.len()).then_some(self.narrations.as_slice())
     }
 
     /// A compact one-line projection of the party's committed state (for the surface).
@@ -716,6 +766,7 @@ impl Offering for DungeonOffering {
             genesis_state,
             steps: Vec::new(),
             actors: Vec::new(),
+            narrations: Vec::new(),
             collectives: Vec::new(),
             #[cfg(feature = "private-raid-operation")]
             private_raid: RaidAssignmentSession::new(private_raid_session)
@@ -926,6 +977,11 @@ impl Offering for DungeonOffering {
                 };
                 session.steps.push(step);
                 session.actors.push(actor);
+                // A plain choice-turn binds no narration event. Recording that explicitly (rather
+                // than leaving the log short) is what lets `verify_narration_binding` REFUSE a
+                // narration event stapled onto an ordinary move, instead of only checking turns
+                // that claim one.
+                session.narrations.push(None);
                 // Keep the collective log parallel to `steps`; `advance` is single-actor, so no
                 // crowd decision by default. `advance_collective` fills this slot after us.
                 session.collectives.push(None);
@@ -963,23 +1019,22 @@ impl Offering for DungeonOffering {
         out
     }
 
-    /// **Re-verify the whole receipt chain by REPLAY** — re-drives a fresh identically-seeded
-    /// world-cell through the recorded choices and confirms it reproduces exactly the committed
-    /// state chain in passage order ([`verify_by_replay`]). Private-counsel steps additionally
-    /// rebind their certified value to the accepted hiding-proof result, operation order, and
-    /// submitting actor. A forged/reordered/substituted record fails.
+    /// **Re-verify the whole session** — every tooth the dungeon has, over its own recorded
+    /// chain ([`verify_dungeon_record`]): chain linkage, the receipt-hash chain, replay
+    /// against a fresh identically-seeded world, the executor anchor, the narration binding,
+    /// and the private-result enactments. A forged/reordered/substituted/retconned record
+    /// fails.
+    ///
+    /// This is what the frontends' "re-verify chain" button drives. It used to run replay
+    /// ALONE, which made the narration binding unchecked in practice: replay re-drives
+    /// *choices*, never re-emitting the narration event, and `EmitEvent` moves neither state
+    /// hash, so a swapped narration was invisible on the served path even though it does
+    /// change `receipt_hash`.
     fn verify(&self, session: &DungeonSession) -> VerifyReport {
         let turns = session.receipts_len();
-        match verify_by_replay(
-            deploy_keep(session.seed),
-            &session.scene,
-            &session.playthrough(),
-        ) {
-            Ok(()) => match verify_private_result_enactments(session, &session.playthrough()) {
-                Ok(()) => VerifyReport::ok(turns),
-                Err(reason) => VerifyReport::broken(turns, reason),
-            },
-            Err(b) => VerifyReport::broken(turns, b.to_string()),
+        match verify_dungeon_record(session, &session.playthrough()) {
+            Ok(()) => VerifyReport::ok(turns),
+            Err(reason) => VerifyReport::broken(turns, reason),
         }
     }
 
@@ -1671,34 +1726,103 @@ impl Offering for DungeonOffering {
 /// **The frontend-facing tamper-verify seam for the dungeon.** A frontend holds a session
 /// (opaquely) and its exported [`Playthrough`]; it can serialize/transmit the record and might
 /// receive a **forged** copy back. [`verify_record`](RecordVerify::verify_record) re-checks any
-/// such record against the session's authentic world identity (the private `seed`/`scene`) using
-/// the FULL substrate verifier ([`verify`] — both teeth: chain-linkage + replay), so a frontend
-/// can express "a forged record fails" without reaching substrate internals. Strictly stronger
-/// than [`Offering::verify`] (which runs replay only): a spliced/relinked receipt that replay
-/// alone might miss is still caught by the linkage tooth.
+/// such record against the session's authentic world identity (the private `seed`/`scene`) with
+/// [`verify_dungeon_record`] — every tooth — so a frontend can express "a forged record fails"
+/// without reaching substrate internals.
+///
+/// [`Offering::verify`] now runs the same teeth over the session's own playthrough; the
+/// difference is only WHICH record is checked (a caller-supplied one here, the session's own
+/// there).
 impl RecordVerify for DungeonOffering {
     type Session = DungeonSession;
     type Record = Playthrough;
 
     /// Export the session's authentic playthrough (genesis + committed steps) — the public record
     /// a frontend transmits / persists / re-checks. No private world identity leaves the offering.
+    ///
+    /// Note the exported record carries RECEIPTS, not narration text: the prose stays in the
+    /// session's narration log, which is what [`verify_record`](Self::verify_record) re-derives
+    /// each receipt's narration event from. A frontend that wants to publish the prose must
+    /// publish it alongside, and a reader re-checks it with
+    /// [`verify_narration_binding`](dungeon_on_dregg::narrator::verify_narration_binding).
     fn export_record(&self, session: &DungeonSession) -> Playthrough {
         session.playthrough()
     }
 
     /// Re-verify a (possibly forged) `record` against the session's authentic world identity —
-    /// re-deploy a fresh identically-seeded Keep and run BOTH verification teeth over the record.
-    /// A legal record re-verifies; a forged / reordered / ineligible / spliced one fails.
+    /// re-deploy a fresh identically-seeded Keep and run every tooth over the record. A legal
+    /// record re-verifies; a forged / reordered / ineligible / spliced / retconned one fails.
     fn verify_record(&self, session: &DungeonSession, record: &Playthrough) -> VerifyReport {
         let turns = record.receipts().len();
-        match verify(deploy_keep(session.seed), &session.scene, record) {
-            Ok(()) => match verify_private_result_enactments(session, record) {
-                Ok(()) => VerifyReport::ok(turns),
-                Err(reason) => VerifyReport::broken(turns, reason),
-            },
-            Err(b) => VerifyReport::broken(turns, b.to_string()),
+        match verify_dungeon_record(session, record) {
+            Ok(()) => VerifyReport::ok(turns),
+            Err(reason) => VerifyReport::broken(turns, reason),
         }
     }
+}
+
+/// **Every tooth the dungeon has**, run over `record` against `session`'s authentic world
+/// identity. The one place the served verification path is defined, so
+/// [`Offering::verify`] and [`RecordVerify::verify_record`] cannot drift apart — the drift
+/// that left the deployed "re-verify chain" button running replay alone while the record
+/// verifier ran two teeth.
+///
+/// In order:
+///
+/// 1. **Chain linkage, receipt-hash chain, replay** (`spween_dregg::verify`) — the record
+///    links, each receipt's *whole body* is the one the next receipt committed to, and a
+///    fresh identically-seeded world reproduces the committed state at every step.
+/// 2. **Executor anchor** (`verify_receipts_anchored`, against the session's LIVE world) —
+///    every receipt is one this executor actually issued, under its recomputed
+///    `receipt_hash`. This is the only tooth covering the HEAD receipt's body, since
+///    `previous_receipt_hash` links backwards and nothing follows the head.
+/// 3. **Narration binding** (`verify_narration_binding`) — each recorded narration is
+///    re-hashed and must equal what its receipt bound, with the same requirement in the
+///    negative: a turn the log says had no narration must bind no narration event.
+/// 4. **Private-result enactments** — a certified private result is bound to the accepted
+///    session/result/actor and operation order.
+///
+/// The narration log is paired POSITIONALLY with `record.steps` (`record.receipts()` puts
+/// genesis first, which never carries a narration). A record whose step count differs from
+/// the session's log is refused rather than checked on a prefix: index `i` of one would no
+/// longer describe index `i` of the other.
+///
+/// ## What a passing report means — and what it does NOT
+///
+/// It means the RECORDED CHAIN has not been tampered with: these receipts are the ones this
+/// executor issued, they link, they reproduce on replay against a fresh identically-seeded
+/// world, and the narration shown beside each turn is the narration that turn committed to.
+/// A retcon — of a choice, a state, a receipt body, or the prose — fails.
+///
+/// It does NOT mean the narration was produced by any particular model, or by a model at
+/// all. Nothing in this function looks at where bytes came from; a host that invents prose
+/// and then honestly commits to the invention passes every tooth here. What it cannot do is
+/// change its story afterwards. Model provenance rides the ATTESTATION —
+/// [`TeeProvenance`](dungeon_on_dregg::narrator::TeeProvenance) for the enclave path — and
+/// even a matching provenance slot only says a DCAP verification accepted an enclave with
+/// that measurement at narration time. That claim's trust root is Intel's attestation key
+/// and the backend that checked the quote, not this check; all this check adds is that the
+/// summary in the record is the summary the turn bound.
+fn verify_dungeon_record(session: &DungeonSession, record: &Playthrough) -> Result<(), String> {
+    verify(deploy_keep(session.seed), &session.scene, record).map_err(|b| b.to_string())?;
+    verify_receipts_anchored(&session.world, record).map_err(|b| b.to_string())?;
+
+    let log = session.narration_log().ok_or_else(|| {
+        "the session's narration log has fallen out of step with its committed steps".to_string()
+    })?;
+    if record.steps.len() != log.len() {
+        return Err(format!(
+            "the record carries {} steps but this session recorded {}: its narrations cannot be paired",
+            record.steps.len(),
+            log.len()
+        ));
+    }
+    // Genesis binds no narration; the log runs parallel to the choice-steps that follow it.
+    let narrations = std::iter::once(None).chain(log.iter().map(Option::as_ref));
+    verify_narration_binding(record.receipts().into_iter().zip(narrations))
+        .map_err(|b| b.to_string())?;
+
+    verify_private_result_enactments(session, record)
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -1970,5 +2094,292 @@ mod forge_tests {
             assert!(session.actors.is_empty());
             assert!(session.collectives.is_empty());
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The narration-binding tooth on the SERVED path — in-crate tests, so they can
+// reach the session's private `seed`/`scene`/`world`/`narrations` to forge a
+// record and to show which tooth actually fires (same precedent as `forge_tests`).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod narration_tooth_tests {
+    use super::*;
+    use crate::SessionConfig;
+    use dregg_app_framework::symbol;
+    use dungeon_on_dregg::KP_PRESS_ON;
+    use dungeon_on_dregg::narrator::{
+        Command, NARRATION_TOPIC, Narrated, SLOT_NARRATION_COMMIT, TeeProvenance,
+        narration_commitment,
+    };
+    use spween_dregg::{verify_chain_linkage, verify_receipt_hash_chain};
+
+    fn party() -> DreggIdentity {
+        DreggIdentity("party".to_string())
+    }
+
+    fn provenance() -> TeeProvenance {
+        TeeProvenance::new([0x5a; 32], "tdx-keep-01", "UpToDate", [0xc3; 32])
+    }
+
+    /// A session whose committed chain is: genesis, one narrated trade-blows (with enclave
+    /// provenance), one narrated trade-blows, then one PLAIN press-on.
+    fn played(seed: u64) -> (DungeonOffering, DungeonSession) {
+        let offering = DungeonOffering::new();
+        let mut session = offering
+            .open(SessionConfig::with_seed(seed))
+            .expect("the Keep opens");
+
+        let prov = provenance();
+        session
+            .advance_narrated_receipt_in_enclave(
+                &Narrated::new(
+                    Command::trade_blows(),
+                    "Sparks leap from the warden's guard.",
+                ),
+                party(),
+                Some(&prov),
+            )
+            .expect("the first narrated blow lands");
+        session
+            .advance_narrated_receipt(
+                &Narrated::new(
+                    Command::trade_blows(),
+                    "He reels; your second blow bites deep.",
+                ),
+                party(),
+            )
+            .expect("the second narrated blow lands");
+        assert!(
+            offering
+                .advance(
+                    &mut session,
+                    Action::new("press on", TURN_CHOOSE, KP_PRESS_ON as i64, true),
+                    party(),
+                )
+                .landed(),
+            "the plain move lands"
+        );
+        (offering, session)
+    }
+
+    /// Rewrite the narration commitment inside `receipt`'s narration event.
+    fn retcon_event(receipt: &mut TurnReceipt, prose: &str) {
+        let topic = symbol(NARRATION_TOPIC);
+        let event = receipt
+            .emitted_events
+            .iter_mut()
+            .find(|e| e.topic == topic)
+            .expect("this receipt bound a narration event");
+        event.data[SLOT_NARRATION_COMMIT] = narration_commitment(prose);
+    }
+
+    /// The honest served session verifies under every tooth, narrated turns included.
+    #[test]
+    fn the_honest_session_verifies() {
+        let (offering, session) = played(55);
+        let report = offering.verify(&session);
+        assert!(report.verified, "honest session: {}", report.detail);
+        assert_eq!(report.turns, 4, "genesis + two narrated + one plain");
+
+        let record = offering.export_record(&session);
+        assert!(offering.verify_record(&session, &record).verified);
+    }
+
+    /// **CANARY — a retconned narration is CAUGHT by the served `verify`, and the tooth the
+    /// served path USED TO RUN is blind to it.**
+    ///
+    /// The prose in the session's narration log is rewritten and NOTHING else is touched:
+    /// no receipt, no state. That is the whole point — the narration rides a receipt-only
+    /// `EmitEvent`, so a swap moves neither state hash and the replay tooth (which was the
+    /// entire body of `Offering::verify`) cannot express the difference.
+    #[test]
+    fn a_retconned_narration_is_caught_where_replay_alone_was_blind() {
+        let (offering, mut session) = played(56);
+        assert!(offering.verify(&session).verified);
+
+        session.narrations[0]
+            .as_mut()
+            .expect("step 0 is narrated")
+            .narration = "The warden yields the Keep's whole treasury without a fight.".to_string();
+
+        // BEFORE — the previous served verify was exactly this call, and it still passes.
+        assert_eq!(
+            verify_by_replay(
+                deploy_keep(session.seed),
+                &session.scene,
+                &session.playthrough()
+            ),
+            Ok(()),
+            "replay is blind to the retcon: it re-drives choices and never re-emits the event"
+        );
+        // …as are the other purely receipt-shaped teeth, since no receipt changed.
+        assert_eq!(verify_chain_linkage(&session.playthrough()), Ok(()));
+        assert_eq!(verify_receipt_hash_chain(&session.playthrough()), Ok(()));
+
+        // AFTER — the served verify now refuses.
+        let report = offering.verify(&session);
+        assert!(!report.verified, "the retconned narration must be refused");
+        assert!(
+            report.detail.contains("narration commitment"),
+            "the break should name the narration commitment, got: {}",
+            report.detail
+        );
+    }
+
+    /// **CANARY — a swapped enclave attestation is CAUGHT.** Only the recorded
+    /// [`TeeProvenance`] moves (its TCB verdict), which is exactly the fact a host would
+    /// want to launder. Replay and the whole receipt chain are again blind; the tooth is not.
+    #[test]
+    fn a_swapped_tee_provenance_is_caught_where_replay_alone_was_blind() {
+        let (offering, mut session) = played(57);
+        assert!(offering.verify(&session).verified);
+
+        session.narrations[0]
+            .as_mut()
+            .expect("step 0 is narrated")
+            .tee_provenance = Some(TeeProvenance::new(
+            [0x5a; 32],
+            "tdx-keep-01",
+            "SWHardeningNeeded",
+            [0xc3; 32],
+        ));
+
+        assert_eq!(
+            verify_by_replay(
+                deploy_keep(session.seed),
+                &session.scene,
+                &session.playthrough()
+            ),
+            Ok(()),
+            "replay is blind to a swapped attestation summary"
+        );
+        let report = offering.verify(&session);
+        assert!(!report.verified, "a swapped TCB verdict must be refused");
+        assert!(
+            report.detail.contains("TEE-provenance"),
+            "the break should name the TEE slot, got: {}",
+            report.detail
+        );
+    }
+
+    /// **CANARY — a transmitted record whose narration EVENT was edited is CAUGHT.** The
+    /// forger rewrites the prose *and* recomputes its commitment into the receipt, so the
+    /// record is internally self-consistent. Replay and chain-linkage still pass (the edit
+    /// moved no state); the receipt-hash tooth fires, because the next receipt committed to
+    /// the old body.
+    #[test]
+    fn an_edited_narration_event_in_a_transmitted_record_is_caught() {
+        let (offering, session) = played(58);
+        let mut forged = offering.export_record(&session);
+        retcon_event(
+            &mut forged.steps[0].receipt,
+            "A wholly different opening beat.",
+        );
+
+        // BEFORE — both of the pre-existing teeth accept the forgery.
+        assert_eq!(
+            verify_by_replay(deploy_keep(session.seed), &session.scene, &forged),
+            Ok(()),
+            "replay accepts an edited emitted event: it moves no state"
+        );
+        assert_eq!(
+            verify_chain_linkage(&forged),
+            Ok(()),
+            "linkage accepts it too: pre/post are untouched"
+        );
+
+        // AFTER — the receipt-hash tooth sees the changed body. The edited step is
+        // `steps[0]`, i.e. receipt 1 (genesis is receipt 0), so the break surfaces on its
+        // SUCCESSOR — receipt 2 is the one that committed to the old body.
+        assert_eq!(
+            verify_receipt_hash_chain(&forged),
+            Err(VerifyBreak::ReceiptHashMismatch { index: 2 }),
+        );
+        assert!(!offering.verify_record(&session, &forged).verified);
+    }
+
+    /// **CANARY — the HEAD receipt, and why the executor anchor exists.** The forger edits
+    /// the LAST receipt's narration event and retcons the session's log to match. Every
+    /// record-only tooth now passes: replay and linkage move no state, the narration
+    /// binding is self-consistent again, and `previous_receipt_hash` links BACKWARD so
+    /// nothing commits to the head's body. Only the anchor — the executor's own chain —
+    /// refuses.
+    #[test]
+    fn a_head_receipt_edit_is_caught_only_by_the_executor_anchor() {
+        let offering = DungeonOffering::new();
+        let mut session = offering
+            .open(SessionConfig::with_seed(59))
+            .expect("the Keep opens");
+        session
+            .advance_narrated_receipt(
+                &Narrated::new(Command::trade_blows(), "Sparks leap from the guard."),
+                party(),
+            )
+            .expect("the first narrated blow lands");
+        session
+            .advance_narrated_receipt(
+                &Narrated::new(Command::trade_blows(), "He reels under the second."),
+                party(),
+            )
+            .expect("the head narrated blow lands");
+
+        let retconned = "He kneels and swears you the Keep.";
+        let mut forged = offering.export_record(&session);
+        retcon_event(
+            &mut forged.steps.last_mut().expect("a head step").receipt,
+            retconned,
+        );
+        session
+            .narrations
+            .last_mut()
+            .expect("a head narration")
+            .as_mut()
+            .expect("the head step is narrated")
+            .narration = retconned.to_string();
+
+        // BEFORE — every record-only tooth passes on the forged head.
+        assert_eq!(
+            verify(deploy_keep(session.seed), &session.scene, &forged),
+            Ok(()),
+            "linkage + receipt-hash chain + replay all accept a head-only edit"
+        );
+        // AFTER — the executor never issued a receipt with that body.
+        assert_eq!(
+            verify_receipts_anchored(&session.world, &forged),
+            Err(VerifyBreak::ReceiptUnanchored { index: 2 }),
+        );
+        assert!(!offering.verify_record(&session, &forged).verified);
+    }
+
+    /// A narration event stapled onto a PLAIN move is caught: the log records `None` for an
+    /// ordinary choice-turn, and `None` is checked, not skipped.
+    #[test]
+    fn a_narration_stapled_onto_a_plain_move_is_caught() {
+        let (offering, session) = played(60);
+        let mut forged = offering.export_record(&session);
+        let narrated_event = forged.steps[0]
+            .receipt
+            .emitted_events
+            .iter()
+            .find(|e| e.topic == symbol(NARRATION_TOPIC))
+            .expect("step 0 bound a narration event")
+            .clone();
+        // Step 2 is the plain press-on; give it prose it never had.
+        forged.steps[2].receipt.emitted_events.push(narrated_event);
+
+        // The narration tooth names the staple directly (the executor anchor also refuses
+        // the altered body; both are teeth this record has to get past, and it gets past
+        // neither).
+        let log = session
+            .narration_log()
+            .expect("the log runs parallel to the steps");
+        let narrations = std::iter::once(None).chain(log.iter().map(Option::as_ref));
+        assert_eq!(
+            verify_narration_binding(forged.receipts().into_iter().zip(narrations)),
+            Err(dungeon_on_dregg::narrator::NarrationBreak::EventStapled { index: 3 }),
+        );
+        let report = offering.verify_record(&session, &forged);
+        assert!(!report.verified, "a stapled narration must be refused");
     }
 }

@@ -193,55 +193,28 @@ bound data DISAGREE — UNSAT unless a collision of the deployed sponge is EXHIB
 (per-cell block AND the 8 roots), via the generic `runnable_full_commit_binds_or_collides` instantiated
 at `pipelinedSendRunnableSpec`. -/
 
-/-- **`pipelinedSend_wide_binds_full_state_or_collides` — the whole-state anti-ghost.** Two rows
-satisfying the wide descriptor that publish the SAME `NEW_COMMIT`, whose carriers ARE the
-`systemRootsDigest` of their post sub-blocks, EITHER agree on EVERY absorbed state-block column AND
-every side-table root, OR exhibit a genuine collision of the deployed sponge (`WideColl` on the two wide
-preimages, or `RootsColl` on the two root lists). So a prover CANNOT keep `NEW_COMMIT` while tampering
-ANY of the 17 fields' bound content without producing a collision.
+/-! ### ⚑ THE WHOLE-STATE ANTI-GHOST IS A SECURITY REDUCTION, AND IT LIVES DOWNSTREAM (07-22).
 
-The former `pipelinedSend_wide_binds_full_state` concluded the bare conjunction from `Poseidon2SpongeCR
-hash`. The deployed sponge REFUTES that hypothesis, so at deployed parameters that theorem was vacuous.
-This disjunction is formally weaker, but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem pipelinedSend_wide_binds_full_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.runnable_full_commit_binds_or_collides (pipelinedSendRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+`pipelinedSend_wide_binds_full_state_or_collides` and `pipelinedSend_wide_rejects_root_tamper_or_collides` USED TO BE EXPORTED HERE as BARE DISJUNCTIONS —
+`(cols agree ∧ roots agree) ∨ WideColl … ∨ RootsColl …`. True at deployed BabyBear parameters, unlike
+their `Poseidon2SpongeCR`-carrying predecessors (which the deployed compressing sponge REFUTES), but
+still UNCLOSED: a collision of that sponge EXISTS at deployed parameters by pigeonhole, so the right
+branches are unconditionally available and `binds ∨ collides` never has to bind. A disjunction
+quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
 
-/-- **`pipelinedSend_wide_rejects_root_tamper_or_collides` — side-table anti-ghost (the gap's headline
-tooth).** Two wide rows that publish the same `NEW_COMMIT` (with `systemRootsDigest` carriers) but whose
-side-table sub-blocks DIFFER at some index (a dropped escrow, an omitted nullifier) cannot both satisfy
-WITHOUT exhibiting a collision of the deployed sponge. The side-table state is bound BY the runnable
-commitment up to that collision.
+**BOTH ARE DELETED.** The deployed binding of pipelinedSend's wide commitment is now the REDUCTION
+`Dregg2.Circuit.Emit.EffectVmCommitReduction.pipelinedSend_wide_binds_full_state_advantage_bound`
+(with `hEff` discharged at `Eff := IsPolyTime` by `pipelinedSend_wide_binds_full_state_from_polyTime`): the
+forgery is a `Game` whose answers are DEPLOYED WIDE pipelinedSend ROWS
+(`pipelinedSend_wide_forgery_is_break` / `pipelinedSend_root_tamper_is_break`), the extractor is a MAP OF ADVERSARIES
+into the deployed sponge's collision game, and the conclusion is a NEGLIGIBLE ADVANTAGE under
+`DomainSeparatedCREff`, whose two poles are both proved.
 
-The former `pipelinedSend_wide_rejects_root_tamper` concluded `False` from `Poseidon2SpongeCR hash`,
-which the deployed sponge REFUTES; at deployed parameters it was vacuous. This disjunction is formally
-weaker, but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem pipelinedSend_wide_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.wide_rejects_root_tamper_or_collides (pipelinedSendRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+⚑ It lives in a DOWNSTREAM module, not here, for a hard reason: the deployed sponge's keyed family
+(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree, so a reduction stated at that
+family CANNOT be imported by an emission module without a build cycle. The GAME still names THIS
+file's `pipelinedSendVmDescriptorWide` — nothing is stated about an idealised stand-in. -/
 
-#assert_axioms pipelinedSend_wide_binds_full_state_or_collides
-#assert_axioms pipelinedSend_wide_rejects_root_tamper_or_collides
 
 /-! ## §5 — NON-VACUITY: the full clause is INHABITED by a real pipelined send (TRUE) and REFUTABLE
 (FALSE), and the wide descriptor is the genuine 188-wide `system_roots`-absorbing circuit. -/

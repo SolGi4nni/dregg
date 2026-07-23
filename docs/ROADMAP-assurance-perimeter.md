@@ -69,7 +69,7 @@ a trusted key. **Nothing trusted, nothing duplicated.**
    (`wire_commit_8_chip`, NOT the plain `wire_commit_8` — the plain chain diverges from the deployed chip
    chain and a canary test pins that). Converted: `execute.rs` pre/post, `collapse.rs` head,
    `exec-lean/lean_apply.rs` (Lean/Rust differential now over the anchor), `finalize.rs` contracts.
-   Domain-bumped: `dregg-receipt-v4`, `executor-receipt-sig-v4`, `dregg-fed-receipt-body-v2`,
+   Domain-bumped: `dregg-receipt-v5`, `executor-receipt-sig-v5`, `dregg-fed-receipt-body-v2`,
    `dregg-attested-root-v6`, `dregg-finalization-vote-v3`. RESIDUAL (do not overclaim): 8-felt `⟺` is not
    derived; the anchor is per-cell not whole-ledger; the lane-0 waist persists at narrow-leg broadcast
    sites; the executor's root phase regressed from incremental O(log n) to O(n_cells) Poseidon2.

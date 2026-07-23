@@ -259,8 +259,89 @@ fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
 
 fn refresh_snapshot_digest(snapshot: &mut [u8]) {
     let body_len = snapshot.len() - 32;
-    let mut hasher = blake3::Hasher::new_derive_key("dregg.native-descent-board.snapshot.v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg.native-descent-board.snapshot.v3");
     hasher.update(&snapshot[..body_len]);
     let digest = *hasher.finalize().as_bytes();
     snapshot[body_len..].copy_from_slice(&digest);
+}
+
+// ── A SEASON IS A DAY'S BOARD ────────────────────────────────────────────────────────
+
+/// Play `line` on a world whose banked-relic provenance root is `day`'s verified beacon day —
+/// exactly what a live daily surface's runs carry.
+fn played_on_day(
+    raw_seed: u64,
+    day: procgen_dregg::CommittedSeed,
+    who: &DreggIdentity,
+    line: &[(&str, i64)],
+) -> (NativeDescentRecord, NativeDescentCompletion) {
+    let offering = NativeDescentOffering::on_day(day);
+    let mut session = offering
+        .open(SessionConfig::with_seed(raw_seed))
+        .expect("native world opens on the day");
+    for &(turn, arg) in line {
+        let input = action(&offering, &session, turn, arg);
+        assert!(input.enabled, "driven command {turn}({arg}) is enabled");
+        match offering.advance(&mut session, input, who.clone()) {
+            Outcome::Landed { .. } => {}
+            Outcome::Refused(reason) => panic!("legal native command refused: {reason}"),
+        }
+    }
+    let completion = session
+        .completion()
+        .cloned()
+        .expect("driven line banks a completion");
+    (offering.export_record(&session), completion)
+}
+
+/// ⚑ A live daily run belongs to ITS day's season — admitted, re-drivable, and restartable
+/// there, and refused by a board over another provenance root.
+///
+/// The board rebuilds runs by re-opening and re-driving their commands (`reverify`,
+/// `import_canonical`), which only re-derives on the season's own run day-seed. So the season
+/// carries that day-seed, admission requires the run to name it, and a mismatch is refused at
+/// the door rather than admitted into an entry the board cannot re-drive.
+#[test]
+fn a_beacon_bound_run_belongs_to_its_days_season_and_no_other() {
+    let beacon = procgen_dregg::beacon::pinned_fallback_beacon();
+    let day = beacon.seed().expect("the pinned published round verifies");
+    let alice = actor("alice-cipherclerk");
+    let (record, completion) = played_on_day(7, day, &alice, &short_banked_line());
+
+    // The run's provenance root is the day's, not the deploy seed's.
+    assert_ne!(
+        record.day_seed,
+        *NativeDescentOffering::new()
+            .open(SessionConfig::with_seed(7))
+            .expect("seed-derived world opens")
+            .day_seed(),
+        "a beacon-bound run must not carry the pre-computable provenance root"
+    );
+
+    // The fixture (seed-derived) season refuses it: same world seed, different day.
+    let mut seed_derived = NativeDescentSeasonBoard::open(42, 7).expect("season opens");
+    assert_eq!(
+        seed_derived.submit(alice.clone(), &record, &completion),
+        Err(NativeBoardError::WrongSeasonDay),
+        "a run from another provenance day is another season's run"
+    );
+
+    // Its OWN day's season admits it, re-drives it, and survives a canonical restart.
+    let mut board =
+        NativeDescentSeasonBoard::open_on_day(42, 7, record.day_seed).expect("the day's season");
+    assert_eq!(board.season().day_seed, record.day_seed);
+    let accepted = board
+        .submit(alice.clone(), &record, &completion)
+        .expect("the day's season admits its own run");
+    assert_eq!(
+        board
+            .reverify(&accepted.standing.completion_root)
+            .expect("the archived run re-drives under the season's day"),
+        accepted.standing,
+        "reverify must re-derive the same standing — it re-opens on the season's day-seed"
+    );
+    let restarted = NativeDescentSeasonBoard::import_canonical(&board.export_canonical())
+        .expect("the snapshot carries the season's day and restarts on it");
+    assert_eq!(restarted.season(), board.season());
+    assert_eq!(restarted.leaderboard(), board.leaderboard());
 }

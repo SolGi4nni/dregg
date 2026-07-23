@@ -161,6 +161,46 @@ async fn main() {
     #[cfg(not(feature = "private-bazaar-live"))]
     let (app, catalog) = dreggnet_web::make_app_parts();
 
+    // ⚑ ARM THE DESCENT'S DAY BEFORE THE FIRST REQUEST — and keep it armed.
+    //
+    // The Descent (and the campaign over it) is registered against the LIVE day
+    // (`dreggnet_catalog::DescentDayBinding::Live`): every open re-resolves the current verified drand
+    // day, and a run's banked relics mint under a provenance root derived from it — so no relic
+    // id exists, to anyone, before that round matures. With no day published the open REFUSES
+    // (fail-closed); it never degrades to the pre-computable deploy-seed-derived root. So the
+    // day is fetched + BLS-verified at boot and re-fetched hourly, which also carries the
+    // binding across the UTC day roll (a rolled day is stale ⇒ refused until the next refresh).
+    {
+        let armed = tokio::task::spawn_blocking(dreggnet_web::arm_todays_descent_day).await;
+        match armed {
+            Ok(Ok(source)) => tracing::info!(
+                beacon = %source,
+                live = source.is_live(),
+                "Descent day armed (banked-relic provenance is beacon-bound)"
+            ),
+            Ok(Err(error)) => tracing::error!(
+                %error,
+                "could not arm the Descent day — the Descent will REFUSE to open until a \
+                 verified drand round is published (fail-closed, not degraded)"
+            ),
+            Err(error) => tracing::error!(%error, "Descent day arming task failed"),
+        }
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(3600));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                match tokio::task::spawn_blocking(dreggnet_web::arm_todays_descent_day).await {
+                    Ok(Ok(source)) => tracing::debug!(beacon = %source, "Descent day refreshed"),
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "Descent day refresh failed; opens fail closed")
+                    }
+                    Err(error) => tracing::warn!(%error, "Descent day refresh task failed"),
+                }
+            }
+        });
+    }
+
     // THE PERIODIC LIFECYCLE SWEEP — the timer half of the sweep design (documented on
     // `CatalogState::sweep`): the host already sweeps opportunistically on every fresh open, so
     // this interval task only covers the NO-TRAFFIC case (idle sessions past their TTL release

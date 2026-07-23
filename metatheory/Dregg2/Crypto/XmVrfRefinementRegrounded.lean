@@ -52,11 +52,13 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
-  (commitRevealFamily commitRevealFamily_CR_of_hashcr hermine_commitment_binding_advantage_bound
-   hermine_commitment_binding_advantage_bound_eff crEquivocator)
+  (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
+   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
+   hashAnsSizeOf openAnsSizeOf crEquivocator)
 open Dregg2.Crypto.FloorGames
-  (Adversary hashGame finderToAdv HashCRHardQuant collisionResistant_iff_hashCRHardQuant_top
-   hard_bot_vacuous)
+  (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
+   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.XmVrfRefinement (XmVrf Role)
 
 set_option autoImplicit false
@@ -75,57 +77,92 @@ def xmVrfNodeFamily {Epoch Output Rand Pre Digest : Type}
     [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest) : KeyedHashFamily :=
   commitRevealFamily X.cr Role.node
 
-/-! ## §2 — the advantage-bounded uniqueness keystones (`leaf_unique` / `merkle_leaf_binding`, re-grounded). -/
+/-! ## §2 — the leaf and node breaks, as SECURITY REDUCTIONS.
 
-/-- **RE-GROUNDED `XmVrfRefinement.leaf_unique`.** Under the proper keyed floor, the leaf-equivocation
-adversary (per key, two distinct verifying outputs committed at one leaf — a collision by
-`distinct_outputs_break_hashcr`) has negligible advantage. "two verifying outputs ⟹ equal" becomes "⟹ equal
-EXCEPT with negligible probability": a validator double-claims a committee seat only with negligible
-advantage. Proof: `thread_advantage_bound`. -/
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `xm_leaf_uniqueness_advantage_bound` and
+`xm_node_binding_advantage_bound` took `hCR : CollisionResistant (…Family X)`.
+`FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves that IS the collision floor at the
+UNRESTRICTED class, and `collisionResistant_false_of_compressing` proves THAT false for any compressing
+hash — the deployed BLAKE3 leaf and node hashes included. So both exports rested on a hypothesis REFUTED
+at deployed parameters. Their `_eff` siblings took a `CollisionFinder` and applied the floor TO IT, so
+neither the seat double-claim nor the node equivocation ever appeared in a `Prop`. ALL FOUR ARE DELETED.
+
+What stands here is the commit-opening REDUCTION (`HermineHashCRRegrounded` §2) at each deployed family:
+the break is a `Game` whose win says an adversary published a leaf digest (resp. an internal node) with
+TWO DISTINCT framed pre-images that both produce it — the seat double-claim, and the Merkle node
+equivocation — and the extractor DISCARDS the published digest to reach a genuine collision. -/
+
+/-- **THE SEAT DOUBLE-CLAIM GAME** — the commit-opening break of the deployed XM-VRF LEAF hash. A win is
+one published leaf digest opened by two DISTINCT framed `(epoch, output, rand)` pre-images: exactly the
+double-claim `XmVrfRefinement.leaf_unique` denies. -/
+abbrev xmLeafGame {Epoch Output Rand Pre Digest : Type} [DecidableEq Pre] [DecidableEq Digest]
+    (X : XmVrf Epoch Output Rand Pre Digest) : Game :=
+  commitOpenGame (xmVrfLeafFamily X)
+
+/-- **THE NODE EQUIVOCATION GAME** — the commit-opening break of the deployed XM-VRF NODE hash. A win is
+one internal node opened by two DISTINCT framed child pairs. -/
+abbrev xmNodeGame {Epoch Output Rand Pre Digest : Type} [DecidableEq Pre] [DecidableEq Digest]
+    (X : XmVrf Epoch Output Rand Pre Digest) : Game :=
+  commitOpenGame (xmVrfNodeFamily X)
+
+/-- **THE PROBLEM IS IN THE STATEMENT (leaf)** — by `Iff.rfl`, two distinct framed pre-images opening one
+published leaf digest. -/
+theorem xmLeafGame_wins_iff {Epoch Output Rand Pre Digest : Type}
+    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
+    (n : ℕ) (k : (xmVrfLeafFamily X).Key n) (p : Digest × Pre × Pre) :
+    (xmLeafGame X).wins n k p ↔
+      (p.2.1 ≠ p.2.2 ∧ X.cr.H Role.leaf p.2.1 = p.1 ∧ X.cr.H Role.leaf p.2.2 = p.1) :=
+  Iff.rfl
+
+/-- **⚑ RE-GROUNDED `XmVrfRefinement.leaf_unique` — from the leaf hash's collision floor, VIA the
+reduction.** Under the collision floor at the class `Eff`, a seat double-claimer whose extracted finder is
+in that class has NEGLIGIBLE advantage: "two verifying outputs ⟹ equal" becomes "⟹ equal EXCEPT with
+negligible probability". `Eff` is a parameter because this is the statement at an ARBITRARY class;
+`_from_polyTime` discharges it. -/
 theorem xm_leaf_uniqueness_advantage_bound {Epoch Output Rand Pre Digest : Type}
     [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
-    (hCR : CollisionResistant (xmVrfLeafFamily X))
-    (leafEquivocator : CollisionFinder (xmVrfLeafFamily X)) :
-    Negl (collisionAdv (xmVrfLeafFamily X) leafEquivocator) :=
-  hermine_commitment_binding_advantage_bound hCR leafEquivocator
+    (Eff : Adversary (hashGame (xmVrfLeafFamily X)) → Prop)
+    (A : Adversary (xmLeafGame X))
+    (hEff : Eff (openToFinder (xmVrfLeafFamily X) A))
+    (hD : HashCRHardQuant (xmVrfLeafFamily X) Eff) :
+    Negl (gameAdv (xmLeafGame X) A) :=
+  hermine_commitment_binding_advantage_bound (xmVrfLeafFamily X) Eff A hEff hD
 
-/-- **RE-GROUNDED `XmVrfRefinement.merkle_leaf_binding` (the node leg).** Under the proper keyed floor, the
-node-equivocation adversary (per key, two distinct child pairs hashing to one internal node) has negligible
-advantage — the Merkle path binds each node except with negligible probability. Proof:
-`thread_advantage_bound`. -/
+/-- **⚑ RE-GROUNDED `XmVrfRefinement.merkle_leaf_binding` (node leg) — same reduction at the node hash.**
+Each Merkle node binds its child pair except with negligible probability. -/
 theorem xm_node_binding_advantage_bound {Epoch Output Rand Pre Digest : Type}
     [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
-    (hCR : CollisionResistant (xmVrfNodeFamily X))
-    (nodeEquivocator : CollisionFinder (xmVrfNodeFamily X)) :
-    Negl (collisionAdv (xmVrfNodeFamily X) nodeEquivocator) :=
-  hermine_commitment_binding_advantage_bound hCR nodeEquivocator
-
-/-- **⚑ RE-GROUNDED `XmVrfRefinement.leaf_unique` — the `Eff`-carrying uniqueness.** The bare-CR sibling
-rests on `CollisionResistant (xmVrfLeafFamily X)` = `HashCRHardQuant _ ⊤`, FALSE for the compressing
-deployed BLAKE3 leaf hash — transporting no security. This conditions on the SAME collision game at an
-EXPLICIT class `Eff`: a leaf-equivocation finder in the class has negligible advantage — "two verifying
-outputs ⟹ equal EXCEPT with negligible probability", a validator double-claims a seat only with negligible
-advantage. `hEff` undischarged is the honest state (`FloorGames` §8); poles priced in §3. -/
-theorem xm_leaf_uniqueness_advantage_bound_eff {Epoch Output Rand Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
-    (Eff : Adversary (hashGame (xmVrfLeafFamily X)) → Prop)
-    (leafEquivocator : CollisionFinder (xmVrfLeafFamily X))
-    (hEff : Eff (finderToAdv leafEquivocator))
-    (hD : HashCRHardQuant (xmVrfLeafFamily X) Eff) :
-    Negl (collisionAdv (xmVrfLeafFamily X) leafEquivocator) :=
-  hermine_commitment_binding_advantage_bound_eff Eff leafEquivocator hEff hD
-
-/-- **⚑ RE-GROUNDED `XmVrfRefinement.merkle_leaf_binding` (node leg) — the `Eff`-carrying form.** Same move
-on the deployed node hash: a node-equivocation finder in the class `Eff` has negligible advantage — each
-Merkle node binds except with negligible probability. -/
-theorem xm_node_binding_advantage_bound_eff {Epoch Output Rand Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
     (Eff : Adversary (hashGame (xmVrfNodeFamily X)) → Prop)
-    (nodeEquivocator : CollisionFinder (xmVrfNodeFamily X))
-    (hEff : Eff (finderToAdv nodeEquivocator))
+    (A : Adversary (xmNodeGame X))
+    (hEff : Eff (openToFinder (xmVrfNodeFamily X) A))
     (hD : HashCRHardQuant (xmVrfNodeFamily X) Eff) :
-    Negl (collisionAdv (xmVrfNodeFamily X) nodeEquivocator) :=
-  hermine_commitment_binding_advantage_bound_eff Eff nodeEquivocator hEff hD
+    Negl (gameAdv (xmNodeGame X) A) :=
+  hermine_commitment_binding_advantage_bound (xmVrfNodeFamily X) Eff A hEff hD
+
+/-- **⚑ THE LEAF LEG'S EFFICIENCY OBLIGATION DISCHARGED.** A seat double-claimer that is EFFICIENT at the
+game's own answer encoding yields a collision finder that is STILL efficient (the extractor DISCARDS the
+published digest, growth `(1, 0)`), so the floor at `Eff := IsPolyTime` applies to IT. Per-site inputs:
+the reshaper's declared work `(cw, bw)` and the deployment's own pre-image/digest encodings. -/
+theorem xm_leaf_uniqueness_from_polyTime {Epoch Output Rand Pre Digest : Type}
+    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
+    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
+    (A : Adversary (xmLeafGame X))
+    (hA : IsPolyTime (openAnsSizeOf (xmVrfLeafFamily X) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (xmVrfLeafFamily X)
+      (IsPolyTime (hashAnsSizeOf (xmVrfLeafFamily X) szIn))) :
+    Negl (gameAdv (xmLeafGame X) A) :=
+  hermine_commitment_binding_from_polyTime (xmVrfLeafFamily X) szIn szOut A hA cw bw hD
+
+/-- **⚑ THE NODE LEG'S EFFICIENCY OBLIGATION DISCHARGED.** Same, at the node hash. -/
+theorem xm_node_binding_from_polyTime {Epoch Output Rand Pre Digest : Type}
+    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
+    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
+    (A : Adversary (xmNodeGame X))
+    (hA : IsPolyTime (openAnsSizeOf (xmVrfNodeFamily X) szIn szOut) A) (cw bw : ℕ)
+    (hD : HashCRHardQuant (xmVrfNodeFamily X)
+      (IsPolyTime (hashAnsSizeOf (xmVrfNodeFamily X) szIn))) :
+    Negl (gameAdv (xmNodeGame X) A) :=
+  hermine_commitment_binding_from_polyTime (xmVrfNodeFamily X) szIn szOut A hA cw bw hD
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the deployed XM-VRF hashes. -/
 
@@ -173,9 +210,10 @@ theorem xmVrf_badCR_node_not_CR : ¬ CollisionResistant (xmVrfNodeFamily badXmVr
 /-- **THE RE-GROUNDED UNIQUENESS FIRES AT A REAL FLOOR WITNESS.** On the injective identity family, the
 leaf-equivocation advantage is negligible — the deployed sortition uniqueness runs end-to-end to a genuine
 `Negl`. -/
-theorem xm_uniqueness_fires (leafEquivocator : CollisionFinder idFamily) :
-    Negl (collisionAdv idFamily leafEquivocator) :=
-  hermine_commitment_binding_advantage_bound idFamily_CR leafEquivocator
+theorem xm_uniqueness_fires (A : Adversary (commitOpenGame idFamily)) :
+    Negl (gameAdv (commitOpenGame idFamily) A) :=
+  hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
+    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
@@ -199,27 +237,28 @@ ensemble. -/
 example {Epoch Output Rand Pre Digest : Type} [DecidableEq Pre] [DecidableEq Digest]
     (X : XmVrf Epoch Output Rand Pre Digest)
     (Eff : Adversary (hashGame (xmVrfLeafFamily X)) → Prop)
-    (leafEquivocator : CollisionFinder (xmVrfLeafFamily X))
+    (A : Adversary (xmLeafGame X))
     (B : Adversary (hashGame (xmVrfLeafFamily X))) (hB : Eff B)
     (hD : HashCRHardQuant (xmVrfLeafFamily X) Eff) : True := by
   fail_if_success
-    (have : Negl (collisionAdv (xmVrfLeafFamily X) leafEquivocator) := hD B hB)
+    (have : Negl (gameAdv (xmLeafGame X) A) := hD B hB)
   trivial
 
 /-- **THE `Eff` UNIQUENESS FIRES AT A REAL FLOOR WITNESS.** On the injective deployed `goodX.cr` the leaf
 `Eff`-floor at `⊤` holds (`xmVrf_goodCR_leaf_CR`), so the `Eff` uniqueness runs end-to-end to a genuine
 `Negl` at an inhabited hypothesis. -/
 theorem xm_uniqueness_eff_fires
-    (leafEquivocator : CollisionFinder (xmVrfLeafFamily Dregg2.Crypto.XmVrfRefinement.goodX)) :
-    Negl (collisionAdv (xmVrfLeafFamily Dregg2.Crypto.XmVrfRefinement.goodX) leafEquivocator) :=
-  xm_leaf_uniqueness_advantage_bound_eff Dregg2.Crypto.XmVrfRefinement.goodX (fun _ => True)
-    leafEquivocator trivial ((collisionResistant_iff_hashCRHardQuant_top _).mp xmVrf_goodCR_leaf_CR)
+    (A : Adversary (xmLeafGame Dregg2.Crypto.XmVrfRefinement.goodX)) :
+    Negl (gameAdv (xmLeafGame Dregg2.Crypto.XmVrfRefinement.goodX) A) :=
+  xm_leaf_uniqueness_advantage_bound Dregg2.Crypto.XmVrfRefinement.goodX (fun _ => True) A trivial
+    ((collisionResistant_iff_hashCRHardQuant_top _).mp xmVrf_goodCR_leaf_CR)
 
 #assert_all_clean [
+  xmLeafGame_wins_iff,
   xm_leaf_uniqueness_advantage_bound,
   xm_node_binding_advantage_bound,
-  xm_leaf_uniqueness_advantage_bound_eff,
-  xm_node_binding_advantage_bound_eff,
+  xm_leaf_uniqueness_from_polyTime,
+  xm_node_binding_from_polyTime,
   xmVrf_goodCR_leaf_CR,
   xmVrf_goodCR_node_CR,
   xmVrf_badCR_node_not_CR,

@@ -663,7 +663,8 @@ impl<T: Transport> TelegramHost<T> {
         let mounted = deployment.clone();
         let host = HostThread::spawn(move || {
             dreggnet_catalog::full_catalog_host_with_private_bazaar(
-                &CatalogConfig::with_council_members(members),
+                // Live day binding, as `telegram_default_host` — see `arm_todays_descent_day`.
+                &CatalogConfig::live(members),
                 &mounted,
             )
         });
@@ -2252,8 +2253,25 @@ fn operation_guide_pages(
 /// identity is one of these can vote); pass the [`TelegramHost::council_member_pubkey`] of each
 /// voter's Telegram id. Every other catalog knob (quorum 2, the two candidate proposals, grain
 /// budget 1000) is [`CatalogConfig`]'s deployed default.
+///
+/// ⚑ THE DAY BINDING: built through [`CatalogConfig::live`], so the Descent (and the campaign
+/// over it) mints its banked relics under the CURRENT verified drand day, re-resolved at every
+/// open — a live run's relic ids could not exist before that round was revealed. The day is
+/// published by [`arm_todays_descent_day`] (boot + periodic refresh); until one is published the
+/// Descent REFUSES to open rather than serving the pre-computable seed-derived provenance root.
 pub fn telegram_default_host(council_members: Vec<[u8; 32]>) -> OfferingHost {
-    dreggnet_catalog::full_catalog_host(&CatalogConfig::with_council_members(council_members))
+    dreggnet_catalog::full_catalog_host(&CatalogConfig::live(council_members))
+}
+
+/// **Arm (and re-arm) the day this bot's Descent mints relics under** — fetch today's drand
+/// round, BLS-verify it, publish it for [`dreggnet_catalog::DescentDayBinding::Live`]. Blocking; run it
+/// from `spawn_blocking` at boot and on a timer, since a rolled UTC day makes the published day
+/// stale and every Descent open then refuses (fail-closed, by design). The returned
+/// [`dreggnet_catalog::BeaconSource`] says whether the day is today's live round or the
+/// explicitly-labeled pinned round standing in for a transport outage — log it.
+pub fn arm_todays_descent_day()
+-> Result<dreggnet_catalog::BeaconSource, dreggnet_catalog::FetchError> {
+    dreggnet_catalog::refresh_todays_descent_day(dreggnet_catalog::DRAND_API_BASE)
 }
 
 #[cfg(test)]

@@ -246,3 +246,49 @@ fn distinct_wings_land_on_distinct_attunement_cells() {
         "each wing must get its own attunement cell"
     );
 }
+
+/// ⚑ THE ROOST IS NOT CAPPED AT 255 WINGS — the widened hook key, driven.
+///
+/// The Braid hook used to deploy an entity from a `u8` seed, so a roost's attunement-cell
+/// namespace held 255 wings and the 256th `attune_wing` failed **closed** ("namespace is
+/// exhausted"). That was a property of the WIRING, not of anything the wing means: a handler who
+/// attunes a lot of pairs is not doing anything a game rule forbids. The hook's key is now the
+/// full 32-byte cell-key width, addressed by an injective `u64` ordinal.
+///
+/// So this drives well past the old wall and asserts BOTH halves of what widening has to mean:
+/// every attunement lands (no cap), and every one lands on its OWN cell (no collision — a wider
+/// namespace that wrapped would be strictly worse than the honest refusal it replaced).
+#[test]
+fn a_roost_carries_far_more_than_255_wings_each_on_its_own_cell() {
+    const WINGS: usize = 300;
+
+    let mut roost = CompanionRoost::new();
+    let warden = hatch(&mut roost, "ember", "companion:frostwyrm");
+    let consort = hatch(&mut roost, "ember", "companion:emberling");
+    roost.raise_to(&warden, 2).expect("the warden raises");
+
+    let mut cells = std::collections::HashSet::new();
+    for n in 1..=WINGS {
+        let wing = roost
+            .attune_wing("ember", &warden, &consort)
+            .unwrap_or_else(|error| {
+                panic!("wing #{n} must attune (the old u8 namespace died at 256): {error:?}")
+            });
+        assert!(
+            cells.insert(wing.cell),
+            "wing #{n} collided onto an already-used attunement cell"
+        );
+        // The composition itself is untouched by the widening: same committed projection, same
+        // law, same outcome — only the cell the wing is deployed at moves.
+        assert_eq!(
+            wing.attunement,
+            expected_attunement(&roost, &warden, &consort),
+            "wing #{n} must still compose the wing law over the committed projection"
+        );
+        assert!(
+            wing.outcome_welded(),
+            "wing #{n}'s committed octet must still carry the published outcome_commitment"
+        );
+    }
+    assert_eq!(cells.len(), WINGS);
+}

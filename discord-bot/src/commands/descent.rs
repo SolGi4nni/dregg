@@ -381,6 +381,9 @@ enum NarratorKind {
     Bedrock,
     /// A real hosted model through Chutes/Bittensor narrated it — a PAID run that spent one credit.
     Chutes,
+    /// A real hosted model through Chutes/Bittensor narrated it INSIDE a DCAP-verified Intel TDX
+    /// enclave — a PAID run, end-to-end encrypted to an attested enclave key.
+    ChutesTee,
     /// Another operator-configured OpenAI-compatible hosted model narrated it — a PAID run.
     OpenAiCompatible,
     /// A real local `gemma2:2b` (ollama) narrated it (the free tier).
@@ -394,6 +397,7 @@ impl NarratorKind {
         match provider {
             crate::pay::PaidNarratorProvider::Bedrock => Self::Bedrock,
             crate::pay::PaidNarratorProvider::Chutes => Self::Chutes,
+            crate::pay::PaidNarratorProvider::ChutesTee => Self::ChutesTee,
             crate::pay::PaidNarratorProvider::OpenAiCompatible => Self::OpenAiCompatible,
         }
     }
@@ -403,6 +407,12 @@ impl NarratorKind {
             NarratorKind::Bedrock => "narrator: bedrock (real AI · paid with a $DREGG credit)",
             NarratorKind::Chutes => {
                 "narrator: chutes / bittensor (real AI · paid with a $DREGG credit)"
+            }
+            // The attestation covers the SERVING enclave's code identity + confidentiality, and
+            // says nothing about the weights or the sampled tokens.
+            NarratorKind::ChutesTee => {
+                "narrator: chutes / bittensor in an ATTESTED TDX enclave (real AI · paid with a \
+                 $DREGG credit)"
             }
             NarratorKind::OpenAiCompatible => {
                 "narrator: hosted OpenAI-compatible (real AI · paid with a $DREGG credit)"
@@ -1099,21 +1109,48 @@ impl DescentStore {
                     board,
                 };
                 while let Ok(job) = rx.recv() {
-                    job(&mut world);
+                    // Structural net: a panicking job is contained per-job by `run`, and this
+                    // guard guarantees no job can unwind out of the loop and kill the store thread
+                    // (which would brick every player's live run + the board until process restart).
+                    let _ =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&mut world)));
                 }
             })
             .expect("spawn the descent store thread");
         DescentStore { jobs: tx }
     }
 
-    /// Run `f` on the store thread and return its `Send` result.
-    fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut DescentWorld) -> R + Send + 'static) -> R {
-        let (tx, rx) = sync_channel(1);
-        let _ = self.jobs.send(Box::new(move |w| {
-            let _ = tx.send(f(w));
-        }));
-        rx.recv().expect("the descent store thread is alive")
+    /// Run `f` on the store thread and return its `Send` result. A panic inside `f` is caught on
+    /// the store thread and returned to THIS caller as [`StoreError::JobPanicked`]; the thread
+    /// lives on to serve the next job. The happy path is unchanged.
+    fn run<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut DescentWorld) -> R + Send + 'static,
+    ) -> Result<R, StoreError> {
+        let (tx, rx) = sync_channel::<std::thread::Result<R>>(1);
+        self.jobs
+            .send(Box::new(move |w| {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(w)));
+                let _ = tx.send(result);
+            }))
+            .map_err(|_| StoreError::ThreadGone)?;
+        match rx.recv() {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(_panic)) => Err(StoreError::JobPanicked),
+            Err(_) => Err(StoreError::ThreadGone),
+        }
     }
+}
+
+/// Why a descent-store job did not return a value. Both cases used to abort the caller with a
+/// panic; now a panicking job is contained (the store thread survives) and the fault is returned
+/// to the ONE caller, which degrades gracefully.
+#[derive(Debug)]
+enum StoreError {
+    /// The store thread's channel is closed — it never spawned, or has gone away unrecoverably.
+    ThreadGone,
+    /// This job panicked; the panic was contained on the store thread, which survives.
+    JobPanicked,
 }
 
 /// The process-global store thread (lazy).
@@ -1133,20 +1170,23 @@ fn store() -> &'static DescentStore {
 /// day), with their best verified turns-to-win — ascending by merit (fewest turns first,
 /// name as the stable tie-break). The weekly tournament seeds its bracket by this order.
 pub fn verified_players_by_merit() -> Vec<(String, usize)> {
-    store().run(|w| {
-        let mut best: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-        for u in w.board.universes() {
-            for e in w.board.leaderboard(u.id()) {
-                let cur = best.entry(e.player.clone()).or_insert(e.turns);
-                if e.turns < *cur {
-                    *cur = e.turns;
+    store()
+        .run(|w| {
+            let mut best: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for u in w.board.universes() {
+                for e in w.board.leaderboard(u.id()) {
+                    let cur = best.entry(e.player.clone()).or_insert(e.turns);
+                    if e.turns < *cur {
+                        *cur = e.turns;
+                    }
                 }
             }
-        }
-        let mut rows: Vec<(String, usize)> = best.into_iter().collect();
-        rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-        rows
-    })
+            let mut rows: Vec<(String, usize)> = best.into_iter().collect();
+            rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+            rows
+        })
+        .unwrap_or_default()
 }
 
 /// A player's BEST verified board win — what `/export` mints as a 1-of-1 SPL NFT. The
@@ -1167,25 +1207,27 @@ pub struct VerifiedWin {
 /// if they hold no verified board entry.
 pub fn verified_win_of(player: &str) -> Option<VerifiedWin> {
     let player = player.to_string();
-    store().run(move |w| {
-        let mut best: Option<VerifiedWin> = None;
-        for u in w.board.universes() {
-            for e in w.board.leaderboard(u.id()) {
-                if e.player != player {
-                    continue;
-                }
-                if best.as_ref().is_none_or(|b| e.turns < b.turns) {
-                    best = Some(VerifiedWin {
-                        universe_id_hex: id_hex(&u.id()),
-                        universe_name: u.name().to_string(),
-                        completion_id: e.completion_id,
-                        turns: e.turns,
-                    });
+    store()
+        .run(move |w| {
+            let mut best: Option<VerifiedWin> = None;
+            for u in w.board.universes() {
+                for e in w.board.leaderboard(u.id()) {
+                    if e.player != player {
+                        continue;
+                    }
+                    if best.as_ref().is_none_or(|b| e.turns < b.turns) {
+                        best = Some(VerifiedWin {
+                            universe_id_hex: id_hex(&u.id()),
+                            universe_name: u.name().to_string(),
+                            completion_id: e.completion_id,
+                            turns: e.turns,
+                        });
+                    }
                 }
             }
-        }
-        best
-    })
+            best
+        })
+        .unwrap_or(None)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1305,12 +1347,14 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     // A LIVE run is never silently abandoned by a re-open: re-show its current room instead
     // (the recovery affordance — a lost/failed room message no longer costs the run).
-    let live_view: Option<RunView> = store().run(move |w| {
-        w.slots
-            .get(&user_id)
-            .filter(|s| !s.run.is_ended())
-            .map(|s| RunView::of(&s.run))
-    });
+    let live_view: Option<RunView> = store()
+        .run(move |w| {
+            w.slots
+                .get(&user_id)
+                .filter(|s| !s.run.is_ended())
+                .map(|s| RunView::of(&s.run))
+        })
+        .unwrap_or(None);
     if let Some(view) = live_view {
         let (narration, kind) = current_narration(user_id, &view);
         let embed = room_embed(&view, &narration, kind).field(
@@ -1329,28 +1373,30 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     // Open today's run on the store thread (deploys the day's world from the resolved seed, loads
     // the carried character, publishes today's world to the board). `Send` in, a `Send` `RunView` out.
-    let opened: Result<RunView, String> = store().run(move |w| {
-        let off = DailyDescentOffering::new(store_clone);
-        match open_core_seeded(&off, &mut w.board, who, seed, class) {
-            Ok((run, uid)) => {
-                // Durable: persist today's day-world (its committed seed) so the board can
-                // reconstruct it on boot before replaying any completion against it.
-                persist_universe_row(&run);
-                let view = RunView::of(&run);
-                w.slots.insert(
-                    user_id,
-                    Slot {
-                        run,
-                        universe_id: uid,
-                        narrator: NarratorKind::Scripted,
-                        last_narration: String::new(),
-                    },
-                );
-                Ok(view)
+    let opened: Result<RunView, String> = store()
+        .run(move |w| {
+            let off = DailyDescentOffering::new(store_clone);
+            match open_core_seeded(&off, &mut w.board, who, seed, class) {
+                Ok((run, uid)) => {
+                    // Durable: persist today's day-world (its committed seed) so the board can
+                    // reconstruct it on boot before replaying any completion against it.
+                    persist_universe_row(&run);
+                    let view = RunView::of(&run);
+                    w.slots.insert(
+                        user_id,
+                        Slot {
+                            run,
+                            universe_id: uid,
+                            narrator: NarratorKind::Scripted,
+                            last_narration: String::new(),
+                        },
+                    );
+                    Ok(view)
+                }
+                Err(e) => Err(e.to_string()),
             }
-            Err(e) => Err(e.to_string()),
-        }
-    });
+        })
+        .unwrap_or_else(|_| Err("today's descent store is unavailable".to_string()));
 
     let view = match opened {
         Ok(v) => v,
@@ -1386,8 +1432,9 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
 /// Read-only: no turn is committed, the run is untouched, the last narration is reused.
 async fn handle_room(ctx: &Context, command: &CommandInteraction) {
     let user_id = command.user.id.get();
-    let view: Option<RunView> =
-        store().run(move |w| w.slots.get(&user_id).map(|s| RunView::of(&s.run)));
+    let view: Option<RunView> = store()
+        .run(move |w| w.slots.get(&user_id).map(|s| RunView::of(&s.run)))
+        .unwrap_or(None);
     match view {
         None => {
             let embed = warn_embed(
@@ -1490,44 +1537,47 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     // WHICH WORLD this run is being played in — resolved from the SAME helper the web resolves its
     // day from, and carried on the share so the web re-executes in it (see `ShareInput::day`).
     let day_key = resolve_todays_day().0.key;
-    let (result, share) = store().run(move |w| {
-        let Some(slot) = w.slots.get_mut(&owner) else {
-            return (MoveResult::NoRun, None);
-        };
-        let mut off = DailyDescentOffering::new(store_clone);
-        let uid = slot.universe_id;
-        let outcome = advance_core(&mut off, &mut slot.run, &mut w.board, uid, &player, choice);
-        // Durable: a verified win survives restart. Only the reproducible public input (the move
-        // sequence + player) is persisted; the board is rebuilt by REPLAY on boot, so a tampered
-        // row cannot resurrect a cheat. Persist ONLY when the win actually ranked (rank Some).
-        if let MoveResult::Landed { rank: Some(_), .. } = &outcome {
-            persist_completion_row(&slot.run, &player);
-        }
-        // H2: capture the reproducible public input of a TERMINAL run (its move sequence + player +
-        // profile), so the outcome embed can hand back a shareable, independently-verifiable
-        // run-card link (the web board re-executes it). Read straight off the committed playthrough.
-        let share = match &outcome {
-            MoveResult::Landed { view, .. } if view.ended => Some(ShareInput {
-                day: day_key.clone(),
-                moves: slot
-                    .run
-                    .playthrough()
-                    .steps
-                    .iter()
-                    .map(|s| {
-                        u64::try_from(s.choice_index)
-                            .expect("committed room choice index fits the stable u64 wire format")
-                    })
-                    .collect(),
-                player: player.clone(),
-                level: slot.run.character().level(),
-                class: slot.run.character().class(),
-                won: view.won,
-            }),
-            _ => None,
-        };
-        (outcome, share)
-    });
+    let (result, share) = store()
+        .run(move |w| {
+            let Some(slot) = w.slots.get_mut(&owner) else {
+                return (MoveResult::NoRun, None);
+            };
+            let mut off = DailyDescentOffering::new(store_clone);
+            let uid = slot.universe_id;
+            let outcome = advance_core(&mut off, &mut slot.run, &mut w.board, uid, &player, choice);
+            // Durable: a verified win survives restart. Only the reproducible public input (the move
+            // sequence + player) is persisted; the board is rebuilt by REPLAY on boot, so a tampered
+            // row cannot resurrect a cheat. Persist ONLY when the win actually ranked (rank Some).
+            if let MoveResult::Landed { rank: Some(_), .. } = &outcome {
+                persist_completion_row(&slot.run, &player);
+            }
+            // H2: capture the reproducible public input of a TERMINAL run (its move sequence + player +
+            // profile), so the outcome embed can hand back a shareable, independently-verifiable
+            // run-card link (the web board re-executes it). Read straight off the committed playthrough.
+            let share = match &outcome {
+                MoveResult::Landed { view, .. } if view.ended => Some(ShareInput {
+                    day: day_key.clone(),
+                    moves: slot
+                        .run
+                        .playthrough()
+                        .steps
+                        .iter()
+                        .map(|s| {
+                            u64::try_from(s.choice_index).expect(
+                                "committed room choice index fits the stable u64 wire format",
+                            )
+                        })
+                        .collect(),
+                    player: player.clone(),
+                    level: slot.run.character().level(),
+                    class: slot.run.character().class(),
+                    won: view.won,
+                }),
+                _ => None,
+            };
+            (outcome, share)
+        })
+        .unwrap_or((MoveResult::NoRun, None));
 
     match result {
         MoveResult::NoRun => {
@@ -1622,7 +1672,7 @@ async fn update_message(
 /// Record how the current room was narrated (a brief job on the store thread).
 fn record_narration(owner: u64, narration: &str, kind: NarratorKind) {
     let narration = narration.to_string();
-    store().run(move |w| {
+    let _ = store().run(move |w| {
         if let Some(slot) = w.slots.get_mut(&owner) {
             slot.narrator = kind;
             slot.last_narration = narration;
@@ -1633,11 +1683,13 @@ fn record_narration(owner: u64, narration: &str, kind: NarratorKind) {
 /// The narration last recorded for this player's current room (so a refusal re-render keeps the
 /// prose and never re-hits the network). Falls back to the room's scripted prose.
 fn current_narration(owner: u64, view: &RunView) -> (String, NarratorKind) {
-    let recorded = store().run(move |w| {
-        w.slots
-            .get(&owner)
-            .map(|s| (s.last_narration.clone(), s.narrator))
-    });
+    let recorded = store()
+        .run(move |w| {
+            w.slots
+                .get(&owner)
+                .map(|s| (s.last_narration.clone(), s.narrator))
+        })
+        .unwrap_or(None);
     match recorded {
         Some((n, k)) if !n.trim().is_empty() => (n, k),
         _ => (view.prose.clone(), NarratorKind::Scripted),
@@ -1657,18 +1709,30 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
             detail: String,
         },
     }
-    let outcome = store().run(move |w| match w.slots.get(&user_id) {
-        None => V::NoRun,
-        Some(slot) => {
-            let off = DailyDescentOffering::new(store_clone);
-            let report = off.verify(&slot.run);
-            V::Report {
-                verified: report.verified,
-                turns: slot.run.turns(),
-                detail: report.detail,
-            }
-        }
-    });
+    // ACK inside Discord's 3s window BEFORE the (possibly slow) replay — the report lands as an
+    // EDIT of this deferred, ephemeral response.
+    ack::defer_slash(ctx, command, true).await;
+
+    // The verify replay runs on the descent store thread; move the blocking WAIT off the async
+    // worker (a long chain re-derivation can park it) and defer so the 3s window never blows.
+    let outcome = tokio::task::spawn_blocking(move || {
+        store()
+            .run(move |w| match w.slots.get(&user_id) {
+                None => V::NoRun,
+                Some(slot) => {
+                    let off = DailyDescentOffering::new(store_clone);
+                    let report = off.verify(&slot.run);
+                    V::Report {
+                        verified: report.verified,
+                        turns: slot.run.turns(),
+                        detail: report.detail,
+                    }
+                }
+            })
+            .unwrap_or(V::NoRun)
+    })
+    .await
+    .unwrap_or(V::NoRun);
 
     let embed = match outcome {
         V::NoRun => warn_embed(
@@ -1689,7 +1753,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
             &format!("The recorded chain did not re-verify ({turns} turns):\n`{detail}`"),
         ),
     };
-    respond(ctx, command, embed, vec![], true).await;
+    ack::edit_slash(ctx, command, embed, vec![]).await;
 }
 
 // ─── /descent board ───────────────────────────────────────────────────────────
@@ -1720,7 +1784,17 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
     // ONE link-store scan for the whole board render (the old per-row `resolve_display_root`
     // re-scanned the shared TSV for every row), on the account-id join key.
     let resolver = RootResolver::load();
-    let view = store().run(move |w| board_core(&w.board, uid, &day_title, &resolver));
+    let view = match store().run(move |w| board_core(&w.board, uid, &day_title, &resolver)) {
+        Ok(v) => v,
+        Err(_) => {
+            let embed = error_embed(
+                "Today's board is unavailable",
+                "the descent store is temporarily unavailable — try again in a moment",
+            );
+            respond(ctx, command, embed, vec![], true).await;
+            return;
+        }
+    };
     let rows = reverify_rows(&view.reverify);
     respond(
         ctx,
@@ -2077,6 +2151,15 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
     let Some(cid) = decode_hex32(cid_hex) else {
         return;
     };
+    // ACK inside Discord's 3s window as a NEW deferred PUBLIC response — re-executing the run is
+    // seconds of CPU. The result lands as an EDIT of this deferred response; the pressed board is
+    // left intact, exactly as the previous "post a new message" response did.
+    let _ = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
+        )
+        .await;
     let cid_hex_owned = cid_hex.to_string();
     let started = std::time::Instant::now();
 
@@ -2091,35 +2174,44 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
         },
     }
 
-    let outcome = store().run(move |w| {
-        // Resolve which published universe holds this completion (owned data out, then act).
-        let ids: Vec<UniverseId> = w.board.universes().map(|u| u.id()).collect();
-        let mut found: Option<(UniverseId, String, usize)> = None;
-        for uid in ids {
-            if let Some((i, e)) = w
-                .board
-                .leaderboard(uid)
-                .iter()
-                .enumerate()
-                .find(|(_, e)| hex32(&e.completion_id) == cid_hex_owned)
-            {
-                found = Some((uid, e.player.clone(), i + 1));
-                break;
-            }
-        }
-        let Some((uid, player, rank)) = found else {
-            return Rv::Gone;
-        };
-        Rv::Checked {
-            universe_hex: id_hex(&uid),
-            player,
-            rank,
-            result: w
-                .board
-                .reverify_entry(uid, &cid)
-                .map_err(|e| format!("{e}")),
-        }
-    });
+    // The re-execution (a full replay of the recorded run through the no-cheat gate) runs on the
+    // descent store thread; move the blocking WAIT off the async worker so it is not parked for
+    // the duration.
+    let outcome = tokio::task::spawn_blocking(move || {
+        store()
+            .run(move |w| {
+                // Resolve which published universe holds this completion (owned data out, then act).
+                let ids: Vec<UniverseId> = w.board.universes().map(|u| u.id()).collect();
+                let mut found: Option<(UniverseId, String, usize)> = None;
+                for uid in ids {
+                    if let Some((i, e)) = w
+                        .board
+                        .leaderboard(uid)
+                        .iter()
+                        .enumerate()
+                        .find(|(_, e)| hex32(&e.completion_id) == cid_hex_owned)
+                    {
+                        found = Some((uid, e.player.clone(), i + 1));
+                        break;
+                    }
+                }
+                let Some((uid, player, rank)) = found else {
+                    return Rv::Gone;
+                };
+                Rv::Checked {
+                    universe_hex: id_hex(&uid),
+                    player,
+                    rank,
+                    result: w
+                        .board
+                        .reverify_entry(uid, &cid)
+                        .map_err(|e| format!("{e}")),
+                }
+            })
+            .unwrap_or(Rv::Gone)
+    })
+    .await
+    .unwrap_or(Rv::Gone);
 
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -2179,14 +2271,9 @@ async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_he
         }
     };
 
-    let _ = component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().embed(embed),
-            ),
-        )
-        .await;
+    // EDIT the deferred public response with the outcome (a slow re-execution can no longer blow
+    // the 3s window on this public verification).
+    ack::edit_component(ctx, component, embed, Vec::new()).await;
 }
 
 /// The move buttons for the current room, chunked into Discord action rows of five. A locked
@@ -2385,6 +2472,27 @@ mod tests {
         DreggIdentity(name.to_string())
     }
 
+    /// **Panic isolation**: a job that panics on the descent store thread does NOT brick the
+    /// subsystem. Before this hardening a panicking job killed the store thread and every later
+    /// `/descent` access panicked at `recv`'s `.expect`; now the panic is contained (this caller
+    /// gets a clean `Err`) and a subsequent job on the same store still succeeds. (An expected
+    /// contained "panicked at 'descent-panic-isolation-canary'" line on stderr is the point.)
+    #[test]
+    fn a_panicking_job_does_not_brick_the_store() {
+        let panicked: Result<(), StoreError> =
+            store().run(|_w| panic!("descent-panic-isolation-canary"));
+        assert!(
+            panicked.is_err(),
+            "a panicking job must return an Err, not abort the caller"
+        );
+        // The store thread SURVIVED: the next job still answers.
+        let slots = store().run(|w| w.slots.len());
+        assert!(
+            slots.is_ok(),
+            "the store thread must survive a panicking job and keep serving"
+        );
+    }
+
     #[test]
     fn paid_provider_labels_are_truthful_on_the_descent_surface() {
         assert!(NarratorKind::Bedrock.label().contains("bedrock"));
@@ -2398,6 +2506,13 @@ mod tests {
             NarratorKind::from_paid(crate::pay::PaidNarratorProvider::Chutes),
             NarratorKind::Chutes
         );
+        // The ATTESTED backend gets its OWN label, and the plain one never claims attestation.
+        assert_eq!(
+            NarratorKind::from_paid(crate::pay::PaidNarratorProvider::ChutesTee),
+            NarratorKind::ChutesTee
+        );
+        assert!(NarratorKind::ChutesTee.label().contains("ATTESTED"));
+        assert!(!NarratorKind::Chutes.label().contains("ATTESTED"));
     }
 
     /// **THE CROSS-PROCESS WELD.** The day key this bot stamps onto a shared run re-derives — by a

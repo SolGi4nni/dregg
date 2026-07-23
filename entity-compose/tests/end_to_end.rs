@@ -28,7 +28,8 @@ use dregg_turn::{
 };
 
 use dregg_entity_compose::{
-    LandedComposition, PROJECTION_WIDE_BASE, compose_onto, deploy_entity, program_descriptor,
+    LandedComposition, PROJECTION_WIDE_BASE, compose_onto, deploy_entity, entity_key,
+    program_descriptor,
 };
 use dregg_param_compose::model::{Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
@@ -203,7 +204,7 @@ fn custom_proof(vk_hash: [u8; 32], landed: &LandedComposition) -> CustomProgramP
 /// PAST the state weld against the entity's REAL commitment, dying only at the leg parse.
 #[test]
 fn entity_params_compose_and_the_turn_passes_the_door_and_the_weld() {
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
 
     // The composed outcome is exactly what the law licenses: 10*2 + (-2)*5*4 = 20 - 40 = -20.
@@ -279,12 +280,12 @@ fn entity_params_compose_and_the_turn_passes_the_door_and_the_weld() {
 #[test]
 fn a_composition_about_a_different_entity_is_refused_by_the_weld() {
     // The entity the turn is FOR.
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let (cell_id, mut ledger, _entity) = entity.into_registered_ledger();
 
     // A DIFFERENT entity — different identity AND params -> a different commitment.
     let stranger = deploy_entity(
-        2,
+        entity_key(2),
         1_000,
         Subject {
             identity: 11,
@@ -348,7 +349,7 @@ fn a_composition_about_a_different_entity_is_refused_by_the_weld() {
 fn a_composition_the_ruleset_does_not_license_has_no_satisfying_witness() {
     use dregg_param_compose::air::{Forgery, build_forged};
 
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
     let old8 = dregg_entity_compose::door_felt8(&landed.old_commitment);
     let new8 = dregg_entity_compose::door_felt8(&landed.new_commitment);
@@ -386,7 +387,7 @@ fn a_composition_the_ruleset_does_not_license_has_no_satisfying_witness() {
 /// commitment the Door welds — so the composition's subject is the cell's real content.
 #[test]
 fn the_entity_params_live_in_the_committed_wide_plane() {
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let read = dregg_entity_compose::read_projection(
         &entity.cell,
         PROJECTION_WIDE_BASE,
@@ -400,7 +401,7 @@ fn the_entity_params_live_in_the_committed_wide_plane() {
 
     // A different param vector -> a different commitment (avalanche through fields_root).
     let other = deploy_entity(
-        1,
+        entity_key(1),
         1_000,
         Subject {
             identity: 7,
@@ -429,7 +430,7 @@ fn the_post_state_commits_the_outcome_and_declares_the_app_root_weld() {
     use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
     use dregg_circuit::effect_vm::field_limbs8;
 
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
 
     assert!(

@@ -389,6 +389,8 @@ mod interchain_adapter_tests {
                 final_root: [BabyBear::ZERO; SEG_ANCHOR_WIDTH],
                 chain_digest: [BabyBear::ZERO; SEG_DIGEST_WIDTH],
                 num_turns: 1,
+                board_genesis: None,
+                board_final: None,
             },
             finalized_root: [BabyBear::ZERO; SEG_ANCHOR_WIDTH],
             quorum_signers,

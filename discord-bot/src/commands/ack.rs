@@ -88,6 +88,19 @@ pub async fn followup_ephemeral(ctx: &Context, component: &ComponentInteraction,
         .await;
 }
 
+/// A PUBLIC followup embed after [`ack_component`] — a new in-channel message (never ephemeral),
+/// leaving the pressed message untouched. The public counterpart of [`followup_ephemeral`], for a
+/// press whose slow deferred work posts a fresh public result into the channel (a re-verification
+/// report, a chain re-check) rather than editing the pressed surface.
+pub async fn followup_embed(ctx: &Context, component: &ComponentInteraction, embed: CreateEmbed) {
+    let _ = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new().embed(embed),
+        )
+        .await;
+}
+
 /// Send a single-reader companion surface after a shared message was updated.
 ///
 /// Hidden-information games keep the channel message viewer-blind, then hand

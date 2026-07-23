@@ -14,11 +14,25 @@
 //! trajectory, but this is not yet one atomic cross-cell hyperedge or a succinct proof. A host
 //! must durably store [`DescentCampaignRecord`] and protect it against rollback; its public hash
 //! chain detects substitution but is not an external anchor.
+//!
+//! ## The day binding
+//!
+//! A campaign carries whatever day binding its native offering carries
+//! ([`DescentCampaignOffering::on_beacon`] is the live path;
+//! [`over`](DescentCampaignOffering::over) is the reproducible seed-derived one). ⚠ NAMED SEAM:
+//! [`Offering::verify`]'s campaign replay re-opens each location's native world through THIS
+//! campaign's offering, so a campaign record only re-verifies under a campaign bound to the same
+//! day. A beacon-bound campaign is therefore a *day's* campaign: an expedition record from
+//! another day must be verified against that day's campaign (`over_on_day(map, day)`), not
+//! today's. The native Descent itself has no such seam — its
+//! [`resume_record`](NativeDescentOffering::resume_record) reads the record's own day-seed.
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
 use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE, UNLOCK};
 use dungeon_on_dregg::overworld::{RegionCell, RegionMap, deepening_ways};
+use procgen_dregg::CommittedSeed;
+use procgen_dregg::beacon::DailyBeacon;
 
 use crate::native_descent::{
     NativeDescentMove, NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
@@ -177,10 +191,43 @@ impl DescentCampaignOffering {
     }
 
     pub fn over(map: RegionMap) -> Self {
-        Self {
-            map,
-            native: NativeDescentOffering::new(),
-        }
+        Self::over_with(map, NativeDescentOffering::new())
+    }
+
+    /// **The live daily campaign** — every expedition this campaign opens deploys on the day's
+    /// verified beacon, so an expedition's banked relics mint under a provenance root that was
+    /// unpredictable until that round was revealed. Fail-closed: a beacon that does not verify
+    /// yields no campaign ([`NativeDescentOffering::on_beacon`] verifies before binding).
+    pub fn on_beacon(beacon: &DailyBeacon) -> Result<Self, OfferingError> {
+        Ok(Self::over_with(
+            deepening_ways(),
+            NativeDescentOffering::on_beacon(beacon)?,
+        ))
+    }
+
+    /// A campaign over `map` whose expeditions run on the day `day` names — the
+    /// [`on_beacon`](Self::on_beacon) path with the beacon already verified by the caller.
+    pub fn over_on_day(map: RegionMap, day: CommittedSeed) -> Self {
+        Self::over_with(map, NativeDescentOffering::on_day(day))
+    }
+
+    /// A campaign over `map` whose expeditions ride the supplied native offering — the one
+    /// place the campaign's day binding is chosen.
+    pub fn over_with(map: RegionMap, native: NativeDescentOffering) -> Self {
+        Self { map, native }
+    }
+
+    /// The default Deepening Ways campaign riding the supplied native offering — the
+    /// registration seam a catalog uses to hand the campaign its day binding without naming
+    /// the map (or depending on the overworld layer) itself.
+    pub fn with_native(native: NativeDescentOffering) -> Self {
+        Self::over_with(deepening_ways(), native)
+    }
+
+    /// The verified beacon day this campaign's expeditions currently mint their relics under,
+    /// if it binds one.
+    pub fn day(&self) -> Option<CommittedSeed> {
+        self.native.day()
     }
 
     pub fn map(&self) -> &RegionMap {

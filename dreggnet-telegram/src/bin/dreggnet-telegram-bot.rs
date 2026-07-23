@@ -142,6 +142,30 @@ fn main() {
         }
     }
 
+    // 6b. ⚑ ARM THE DESCENT'S DAY BEFORE THE HOST IS BUILT — and keep it armed.
+    //     The catalog registers the Descent against the LIVE verified drand day, so a run's
+    //     banked relics mint under a provenance root that could not exist before that round was
+    //     revealed. With no day published the open REFUSES (fail-closed); it never degrades to
+    //     the pre-computable deploy-seed-derived root. Fetched + BLS-verified here and refreshed
+    //     hourly on a background thread, which also carries the binding across the UTC day roll.
+    match dreggnet_telegram::host::arm_todays_descent_day() {
+        Ok(source) => {
+            eprintln!("Descent day armed from {source} (banked-relic provenance is beacon-bound)")
+        }
+        Err(error) => eprintln!(
+            "WARN: could not arm the Descent day ({error:?}) — the Descent will REFUSE to open \
+             until a verified drand round is published (fail-closed, not degraded)"
+        ),
+    }
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+            if let Err(error) = dreggnet_telegram::host::arm_todays_descent_day() {
+                eprintln!("WARN: Descent day refresh failed ({error:?}); opens fail closed");
+            }
+        }
+    });
+
     // 7. The host: full shared catalog over the durable store, resumed on this boot — with the
     //    Mini App launch tier armed at the funnel base (env `TELEGRAM_WEBAPP_BASE`, defaulting
     //    to the hbox funnel): DMs get "🕹 Play in the app" web_app buttons + /play.

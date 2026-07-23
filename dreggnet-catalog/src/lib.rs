@@ -41,10 +41,18 @@ use dreggnet_offerings::campaign::DescentCampaignOffering;
 use dreggnet_offerings::dungeon::DungeonOffering;
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 
+use std::sync::{Mutex, OnceLock};
+
 use dregg_automatafl::AutomataflOffering;
 use dreggnet_council::{CandidateProposal, CouncilOffering};
 use dreggnet_market::{DarkBazaarOffering, MarketOffering};
 use dreggnet_surfaces::private_raid::HostedProofAssignedRaidOffering;
+/// The day binding a live catalog carries, re-exported so a frontend can publish a day
+/// ([`publish_todays_descent_day`]) without its own direct dependency on the beacon layer.
+pub use procgen_dregg::CommittedSeed;
+pub use procgen_dregg::beacon::{
+    BeaconSource, DRAND_API_BASE, DailyBeacon, FetchError, HttpRoundFetch, VerifyError,
+};
 
 pub mod game_epoch;
 pub mod game_publication;
@@ -149,6 +157,32 @@ pub struct CatalogConfig {
     /// The grain offering's spend budget (`GrainOffering::new`'s `budget: i64`).
     /// Deployed default: 1000.
     pub grain_budget: i64,
+    /// **The day the native Descent (and the campaign over it) mints its banked relics under.**
+    /// See [`DescentDayBinding`]; the deployed live answer is [`DescentDayBinding::Live`], which every
+    /// frontend gets by building this with [`CatalogConfig::live`].
+    pub descent_day: DescentDayBinding,
+}
+
+/// **Where a catalog's Descent gets the provenance root its banked relics mint under.**
+///
+/// A banked relic's note is content-addressed to `(run day-seed, custody slot, player key)`, so
+/// this is exactly the difference between a relic id anyone can compute in advance and one that
+/// could not exist before a drand round was revealed.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum DescentDayBinding {
+    /// The reproducible root derived from the deploy seed — pre-computable. Right for a
+    /// fixture or an offline replay, WRONG for a surface serving players. The [`Default`],
+    /// because a config that has not been told about a beacon must not pretend it has one.
+    #[default]
+    SeedDerived,
+    /// One verified beacon day, frozen for this host's lifetime. Honest for a single-day
+    /// fixture or a replay of a known day; a long-lived host wants [`Live`](Self::Live),
+    /// since this one keeps minting the day it was registered on.
+    Fixed(CommittedSeed),
+    /// **The deployed posture: resolved at EVERY open** from a source the frontend refreshes
+    /// (see [`todays_descent_day`] / [`publish_todays_descent_day`]). No verified day right
+    /// now ⇒ the open is REFUSED, never silently served on the pre-computable root.
+    Live(fn() -> Option<CommittedSeed>),
 }
 
 impl Default for CatalogConfig {
@@ -161,6 +195,7 @@ impl Default for CatalogConfig {
                 CandidateProposal::new("Ratify the charter", 7),
             ],
             grain_budget: 1000,
+            descent_day: DescentDayBinding::default(),
         }
     }
 }
@@ -174,6 +209,120 @@ impl CatalogConfig {
             ..CatalogConfig::default()
         }
     }
+
+    /// **THE LIVE-SURFACE CONFIG.** Identical to
+    /// [`with_council_members`](Self::with_council_members) except that the Descent (and the
+    /// campaign over it) mints its banked relics under the CURRENT verified beacon day,
+    /// re-resolved at every open through [`todays_descent_day`].
+    ///
+    /// Every frontend that serves players builds its host through this, and keeps the day fresh
+    /// by calling [`publish_todays_descent_day`] at startup and on each roll. Until a day is
+    /// published, opening the Descent REFUSES — deliberately: a live surface must not serve a
+    /// pre-computable provenance root just because the beacon fetch has not landed yet.
+    pub fn live(council_members: Vec<[u8; 32]>) -> Self {
+        CatalogConfig {
+            descent_day: DescentDayBinding::Live(todays_descent_day),
+            ..CatalogConfig::with_council_members(council_members)
+        }
+    }
+
+    /// A config pinned to ONE verified beacon day — the reveal is BLS-verified here
+    /// (`DailyBeacon::seed` pairs against the pinned quicknet group key before it derives
+    /// anything), so a forged or mutated reveal yields no config and no day at all. For a
+    /// single-day fixture or the replay of a known day; a serving host wants
+    /// [`live`](Self::live).
+    pub fn on_beacon(
+        council_members: Vec<[u8; 32]>,
+        beacon: &DailyBeacon,
+    ) -> Result<Self, VerifyError> {
+        Ok(CatalogConfig {
+            descent_day: DescentDayBinding::Fixed(beacon.seed()?),
+            ..CatalogConfig::with_council_members(council_members)
+        })
+    }
+
+    /// The native Descent offering this config's day binding calls for — the ONE place the
+    /// catalog decides whether a live run's relic provenance is beacon-bound. Public so a
+    /// canary can drive the EXACT offering `register_games` mounts, rather than a re-authored
+    /// peer of it.
+    pub fn native_descent(&self) -> NativeDescentOffering {
+        match self.descent_day {
+            DescentDayBinding::SeedDerived => NativeDescentOffering::new(),
+            DescentDayBinding::Fixed(day) => NativeDescentOffering::on_day(day),
+            DescentDayBinding::Live(source) => NativeDescentOffering::on_day_source(source),
+        }
+    }
+}
+
+/// The process-wide published day: `(UTC day number, that day's verified committed seed)`.
+static TODAYS_DESCENT_DAY: OnceLock<Mutex<Option<(u64, CommittedSeed)>>> = OnceLock::new();
+
+fn todays_descent_day_cell() -> &'static Mutex<Option<(u64, CommittedSeed)>> {
+    TODAYS_DESCENT_DAY.get_or_init(|| Mutex::new(None))
+}
+
+/// **Publish the verified beacon for `utc_day`** as the day every catalog-registered Descent
+/// mints its banked relics under. The reveal is BLS-verified HERE (`DailyBeacon::seed` runs the
+/// pairing check against the pinned quicknet group key before it derives anything), so a forged
+/// or mutated round publishes NOTHING and returns the verify error — you cannot install a
+/// forged day, and you cannot grind a favourable one.
+///
+/// A frontend calls this once at startup with the beacon it resolved
+/// (`procgen_dregg::beacon::todays_beacon`, whose result also says whether the round is live or
+/// the labeled pinned fallback) and again whenever the UTC day rolls.
+pub fn publish_todays_descent_day(utc_day: u64, beacon: &DailyBeacon) -> Result<(), VerifyError> {
+    let seed = beacon.seed()?;
+    *todays_descent_day_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((utc_day, seed));
+    Ok(())
+}
+
+/// **Today's published day, or `None`** — the [`DescentDayBinding::Live`] source. `None` (⇒ the open
+/// is refused) whenever no day has been published, or the published one is not today's: a day
+/// that has rolled is stale, and serving yesterday's provenance root under today's play would
+/// make the day's relic ids computable by anyone who played yesterday.
+pub fn todays_descent_day() -> Option<CommittedSeed> {
+    let today = procgen_dregg::beacon::current_utc_day();
+    todays_descent_day_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .and_then(|(day, seed)| (day == today).then_some(seed))
+}
+
+/// **The offline day: publish the PINNED published round for today.** For drives with no egress
+/// — an integration test, a boxed demo — where the live binding must still be exercised rather
+/// than swapped for the seed-derived one.
+///
+/// It is a REAL, BLS-verifiable drand reveal (it is what [`refresh_todays_descent_day`] serves,
+/// clearly labeled, when the transport is down), so the whole verify path runs for real. ⚠ It is
+/// NOT today's round: a fixed published round is as pre-computable as any constant, so this
+/// establishes the WIRING is beacon-bound and establishes nothing about unpredictability. A
+/// serving process calls [`refresh_todays_descent_day`], never this.
+pub fn publish_pinned_descent_day() -> Result<(), VerifyError> {
+    publish_todays_descent_day(
+        procgen_dregg::beacon::current_utc_day(),
+        &procgen_dregg::beacon::pinned_fallback_beacon(),
+    )
+}
+
+/// **Fetch today's drand round and publish it as the Descent's day** — the one beacon-source
+/// wiring every live frontend runs: once at boot, and again on a timer so the binding does not
+/// go stale when the UTC day rolls (a rolled day resolves to `None` and REFUSES opens, which is
+/// the fail-closed behaviour, not a working one).
+///
+/// Blocking (it makes an HTTP request): drive it off a `spawn_blocking`. It rides
+/// [`procgen_dregg::beacon::todays_beacon`], so a fetched round that does not parse or does not
+/// pass the BLS pairing check is a HARD error that publishes nothing, and only a *transport*
+/// failure falls back — to the pinned published round, itself re-verified, returned LABELED as
+/// [`BeaconSource::PinnedFallback`] with its staleness. Callers must log that label: the pinned
+/// round is a real reveal but not today's, so during a fallback window the day's relic
+/// provenance is predictable to anyone who knows the pinned round.
+pub fn refresh_todays_descent_day(api_base: &str) -> Result<BeaconSource, FetchError> {
+    let resolved = procgen_dregg::beacon::todays_beacon(&HttpRoundFetch, api_base)?;
+    publish_todays_descent_day(procgen_dregg::beacon::current_utc_day(), &resolved.beacon)
+        .map_err(FetchError::Verify)?;
+    Ok(resolved.source)
 }
 
 /// **THE seam: register the full DreggNet portfolio into `host`.** Nine games + nine RPG
@@ -199,15 +348,19 @@ pub fn full_catalog_host(cfg: &CatalogConfig) -> OfferingHost {
 /// Port source (titles + shapes, byte-identical across the three existing copies):
 /// `dreggnet-web/src/lib.rs:1232-1282` / `dreggnet-telegram/src/host.rs:419-451`.
 pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
+    // ⚑ The Descent and the campaign over it both deploy on `cfg`'s day binding: with
+    // `descent_day` set (the live `CatalogConfig::on_beacon` path) every run this host opens
+    // mints its banked relics under a provenance root derived from that day's verified drand
+    // reveal, so no relic id exists — to anyone — before the round matures.
     host.register(
         "descent",
         "The Descent — the Lean-authored custody dungeon (delve · unlock · smite · loot · bank)",
-        NativeDescentOffering::new(),
+        cfg.native_descent(),
     );
     host.register(
         DescentCampaignOffering::KEY,
         "The Deepening Ways — player-driven native Descent expeditions; only a replay-verified Crown opens each real region road",
-        DescentCampaignOffering::new(),
+        DescentCampaignOffering::with_native(cfg.native_descent()),
     );
     host.register(
         "dungeon",

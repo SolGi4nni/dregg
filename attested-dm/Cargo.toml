@@ -1,4 +1,4 @@
-# attested-dm — the provably-honest, un-jailbreakable AI dungeon-master.
+# attested-dm — an attested, cap-bounded AI dungeon-master with a CERTIFIED prompt.
 #
 # A confined + attested LLM narrates an on-chain interactive world: each narration /
 # NPC-response is a RECEIPTED attested turn advancing a world-cell, carrying a
@@ -7,13 +7,23 @@
 #   well-formed    — the response body lies in the JSON context-free language;
 #   injection-free — the bound narration carries no `{{` handlebars delimiter.
 #
-# THE KILLER PROPERTY (un-jailbreakable): a player message that carries a prompt-
-# injection (`{{` / the injection template) is reflected into the DM's narration and
-# CAUGHT by the injection-free leg — the DM's turn over that input is REFUSED (the
-# attestation cannot be produced), so a player cannot prompt-inject the DM into
-# breaking the game's rules. The DM's authority is also cap-bounded: it can only
-# narrate / advance within its granted affordances (it cannot grant a player an
-# unearned item).
+# THE CLAIM, AND ITS LIMIT. Two STRUCTURAL properties, both about bytes and both
+# machine-checked — and NOT a claim that the model cannot be talked into anything:
+#   PROMPT INTEGRITY   — the submitted prompt is exactly the pinned template expanded
+#                        with the declared inputs. Assembly runs through the
+#                        proof-producing templater (`dregg_zkoracle_prove::render`) and
+#                        emits a certificate over the exact payload bytes; the verifier
+#                        REPRODUCES the expansion and byte-compares.
+#   SLOT CONFINEMENT   — player text occupies only the declared data slot. Admitted only
+#                        if `{{`-free (the verified matcher) and fence-token-free;
+#                        rendered into a data region disjoint from the instruction
+#                        region; and the payload's parse certificate witnesses that
+#                        those bytes are the contents of ONE JSON string value.
+# A player CAN still write "ignore your instructions" — that is admitted as DATA, on
+# purpose (refusing it would make this a content filter). Whether the model then
+# complies is a property of the model, is NOT established here, and is NOT claimed.
+# The DM's authority is separately cap-bounded: it can only narrate / advance within its
+# granted affordances (it cannot grant a player an unearned item).
 #
 # COMPOSES the real substrate primitives, reimplementing no theorem:
 #   * zkoracle-prove — `prove_zkoracle` / `verify_zkoracle` over an Anthropic
@@ -38,7 +48,7 @@ name = "attested-dm"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-description = "The provably-honest, un-jailbreakable AI dungeon-master: a confined + attested LLM narrator whose every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), and a player prompt-injection is refused by the injection-free leg."
+description = "An attested, cap-bounded AI dungeon-master with a certified prompt: every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), the submitted prompt is a certified expansion of the committed template, and player text is structurally confined to a declared data slot."
 
 [lib]
 name = "attested_dm"

@@ -11,7 +11,7 @@
 use dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2;
 use dregg_circuit::dsl::circuit::MAX_TRACE_WIDTH;
 use dregg_circuit::field::BabyBear;
-use dregg_entity_compose::{compose_onto, deploy_entity, door_felt8};
+use dregg_entity_compose::{compose_onto, deploy_entity, door_felt8, entity_key};
 use dregg_param_compose::air::build;
 use dregg_param_compose::model::{Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
@@ -72,7 +72,7 @@ fn ruleset() -> Ruleset {
 
 #[test]
 fn the_realistic_entity_composition_rides_the_803_column_leaf() {
-    let entity = deploy_entity(1, 1_000, actor());
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed =
         compose_onto(&entity, &partners(), ruleset(), realistic_shape(), 8).expect("composes");
 

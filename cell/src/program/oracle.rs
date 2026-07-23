@@ -1,5 +1,6 @@
-//! The CONSTRAINT-ORACLE seam — a runtime-installed decision procedure for the PURE
-//! (context-free, witness-free) `StateConstraint` / `HeapAtom` subset, so the deployed node routes
+//! The CONSTRAINT-ORACLE seam — a runtime-installed decision procedure for the Lean-evaluated
+//! `StateConstraint` / `HeapAtom` subset (the PURE arms, the bounded CONTEXT arms, and the
+//! `AnyOf` / `AllOf` combinators over them), so the deployed node routes
 //! per-constraint admission through the verified Lean `dregg_constraint_admits`
 //! (`Dregg2.Exec.DeployedConstraint.admits`) instead of the hand-authored Rust `match` in
 //! [`eval`](super::eval). This closes the game-proof LARP-audit's reality-gate: the deployed
@@ -19,24 +20,41 @@
 
 use std::sync::OnceLock;
 
-use super::{ProgramError, StateConstraint};
+use super::{ProgramError, StateConstraint, TransitionMeta};
+use crate::preconditions::EvalContext;
 use crate::state::CellState;
 
-/// A decision procedure for the pure-constraint subset.
+/// A decision procedure for the Lean-evaluated constraint subset.
 ///
 /// [`admits`](ConstraintOracle::admits) returns `Some(decision)` for the variants it handles
-/// (routing them through the verified Lean evaluator) and `None` for variants OUTSIDE the subset
-/// (context-bearing / witnessed — `FieldGteHeight`, `SenderAuthorized`, `PreimageGate`, `RateLimit`,
-/// `Custom`, `Witnessed`, …), which the caller then evaluates in Rust. This lets the collapse land the
-/// pure subset without stranding the context/witness variants (named as the remaining campaign).
+/// (routing them through the verified Lean evaluator) and `None` for variants OUTSIDE the subset,
+/// which the caller then evaluates in Rust. This lets the collapse land the decidable subset without
+/// stranding the witness/crypto variants.
+///
+/// ## The three classes (`metatheory/Dregg2/Exec/DeployedConstraint.lean`)
+///
+/// * **(a) PURE** — reads only `(old, new)` registers / heap / balance. Lean-evaluated.
+/// * **(b) CONTEXT** — additionally reads the SMALL, TYPED slice
+///   `{ block_height, sender, delegation_epoch }` of [`EvalContext`] / [`TransitionMeta`]. That slice
+///   is marshalled EXPLICITLY (each absence is a first-class wire token), so an absent context
+///   produces the deployed `MissingContextField` verdict — fail-closed, never a silent admit.
+///   Lean-evaluated.
+/// * **(c) WITNESS / CRYPTO / EXECUTOR-STATE** — dispatches to a hash, a proof verifier, a DSL
+///   runtime, a peer cell, or an executor-side counter. NOT Lean-evaluated: this is the NAMED
+///   TRUSTED-RUST SLOT, enumerated exhaustively (no wildcard) in
+///   `dregg-exec-lean::constraint_oracle::encode_constraint`, so a NEW `StateConstraint` variant
+///   fails the BUILD until it is classified.
 pub trait ConstraintOracle: Send + Sync {
-    /// Decide `constraint` against `(old_state, new_state)`. `Some(Ok(()))` admits, `Some(Err(_))`
-    /// refuses with the deployed [`ProgramError`] variant, `None` = "not my subset — evaluate in Rust".
+    /// Decide `constraint` against `(old_state, new_state)` with the turn's evaluation context and
+    /// transition meta in scope. `Some(Ok(()))` admits, `Some(Err(_))` refuses with the deployed
+    /// [`ProgramError`] variant, `None` = "not my subset — evaluate in Rust".
     fn admits(
         &self,
         constraint: &StateConstraint,
         new_state: &CellState,
         old_state: Option<&CellState>,
+        ctx: Option<&EvalContext>,
+        meta: &TransitionMeta,
     ) -> Option<Result<(), ProgramError>>;
 }
 

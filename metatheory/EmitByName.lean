@@ -35,6 +35,7 @@ import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 import Dregg2.Circuit.Emit.AttestedFactMembershipEmit
 import Dregg2.Circuit.Emit.AutomataflResolveEmit
 import Dregg2.Circuit.Emit.AutomataflStepEmit
+import Dregg2.Circuit.Emit.AutomataflNGenGolden
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
@@ -69,6 +70,10 @@ import Dregg2.Games.PrivateRaidAssignmentDescriptor
 import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
 import Market.DarkBazaarPrivateDescriptor
+-- The fixed q0/N8 exact-public BFV NTT butterfly stage descriptors (`stage{0,1,2}Descriptor`, the
+-- three four-row per-stage LogUp relations). Emitted here so `by-name/*bfv*butterfly*stage*-exact-
+-- public.json` are drift-checked from their Lean author, not left as un-reproduced checked-in bytes.
+import Market.PrivateBookBfvExactPublicConsumer
 import Market.DarkAmmPrivateDescriptor
 import Market.PrivateBookBfvSliceDescriptor
 import Market.PrivateBookBfvButterflyAir
@@ -107,6 +112,10 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.AutomataflResolveEmit.automataflResolveDesc)
   , ("automatafl-step.json",
       Dregg2.Circuit.Emit.AutomataflStepEmit.automataflStepDesc)
+  , ("automatafl-step-n11.json",
+      Dregg2.Circuit.Emit.AutomataflNGenGolden.automataflStepDescN11)
+  , ("automatafl-resolve-n11.json",
+      Dregg2.Circuit.Emit.AutomataflNGenGolden.automataflResolveDescN11)
   , ("blinded-membership-4ary-depth2.json",
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 2)
   , ("blinded-membership-4ary-depth8.json",
@@ -191,13 +200,19 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Games.DescentCensusDescriptor.descentCensusDescriptor)
   , ("shielded-whole-note-swap-substrate-v1.json",
       Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor.shieldedWholeNoteSwapSubstrateDescriptor)
+  , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage0-exact-public.json",
+      Market.PrivateBookBfvExactPublicConsumer.stage0Descriptor)
+  , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage1-exact-public.json",
+      Market.PrivateBookBfvExactPublicConsumer.stage1Descriptor)
+  , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage2-exact-public.json",
+      Market.PrivateBookBfvExactPublicConsumer.stage2Descriptor)
   ]
 
-/- The routing table covers the checked-in directory exactly (41 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly (52 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 47
+#guard byNameDescriptors.length == 52
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

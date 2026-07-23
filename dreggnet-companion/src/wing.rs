@@ -69,15 +69,16 @@
 //!   by the hook's [`deploy_entity`](dregg_braid_hook::deploy_entity) rather than by a roost turn
 //!   — the companion's own leveling cell already spends native slots 1..6 on `xp`/`level`/`class`/
 //!   `ability`/`dead`, which is precisely the octet the app-root weld indexes.
-//! * **A named residual:** the hook's `deploy_entity` takes a `u8` seed, so one roost can carry
-//!   255 attunement cells; [`CompanionRoost::attune_wing`] fails **closed** when that namespace is
-//!   exhausted rather than colliding two wings onto one cell id. Widening the seed is hook work,
-//!   not game content.
+//! * **The attunement-cell namespace is the hook's full cell-key width.** Each wing is deployed
+//!   at [`entity_key`](dregg_braid_hook::entity_key) of the roost's next wing ordinal — an
+//!   injective `u64` encoding, so two wings never collide onto one cell id and a roost is not
+//!   capped at some small number of live wings. (This crate's earlier residual — the hook's `u8`
+//!   seed capping a roost at 255 attunement cells — was closed in the hook, where it belonged.)
 
 use dregg_app_framework::CellId;
 use dregg_braid_hook::{
     Comp, ComposeError, ComposeShape, DeployedEntity, Knot, LandedComposition, LinearTerm, Ruleset,
-    Subject, compose_entity,
+    Subject, compose_entity, entity_key,
 };
 use dreggnet_asset::AssetId;
 
@@ -362,17 +363,18 @@ impl CompanionRoost {
             ));
         }
 
-        // The attunement cell's key. Fail CLOSED when the hook's u8 seed namespace is exhausted
-        // rather than collide two wings onto one cell id (see the module doc's residual).
-        let seed = self.next_wing_seed.ok_or_else(|| {
-            CompanionError::Ineligible(
-                "this roost's attunement-cell namespace (255 wings) is exhausted".into(),
-            )
+        // The attunement cell's key: the roost's next wing ordinal, injectively encoded into the
+        // hook's full cell-key width. Distinct wings therefore land on distinct cells with no
+        // small cap to run out of — but the counter is still advanced with a CHECKED add and the
+        // exhausted case still refuses, because "the id space wrapped" must never be spelled
+        // "two wings share a cell".
+        let ordinal = self.next_wing_ordinal.ok_or_else(|| {
+            CompanionError::Ineligible("this roost's attunement-cell ordinals are exhausted".into())
         })?;
-        self.next_wing_seed = seed.checked_add(1);
+        self.next_wing_ordinal = ordinal.checked_add(1);
 
         let (entity, landed) = compose_entity(
-            seed,
+            entity_key(ordinal),
             0,
             warden_subject.clone(),
             std::slice::from_ref(&consort_subject),
@@ -392,5 +394,52 @@ impl CompanionRoost {
             entity,
             landed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{CompanionRoost, HatchBeacon, roll_hatch};
+
+    /// **Widening removed the CAP, not the refusal.** The roost's ordinal counter still advances
+    /// with a checked add, and an exhausted counter still refuses — because the only thing worse
+    /// than "you cannot attune another wing" is "your new wing quietly landed on someone else's
+    /// attunement cell". `u64::MAX` attunements is not reachable by play, so the exhausted state
+    /// is installed directly here (a crate-internal test, on the real roost) rather than driven
+    /// to; what is being checked is that the branch refuses and deploys nothing.
+    #[test]
+    fn an_exhausted_ordinal_refuses_rather_than_wrapping_onto_a_live_cell() {
+        let mut roost = CompanionRoost::new();
+        let draw = roll_hatch(&HatchBeacon::from_bytes([7; 32]), "companion:frostwyrm", 0);
+        let warden = roost.hatch("ember", &draw).expect("a fair hatch mints");
+        let consort = roost.hatch("ember", &draw).expect("a fair hatch mints");
+        roost.raise_to(&warden, 2).expect("the warden raises");
+
+        // The last available ordinal still attunes...
+        roost.next_wing_ordinal = Some(u64::MAX);
+        let last = roost
+            .attune_wing("ember", &warden, &consort)
+            .expect("the final ordinal is still a usable cell");
+        assert_eq!(
+            roost.next_wing_ordinal, None,
+            "the counter is now exhausted"
+        );
+
+        // ...and the next one refuses, without minting a second wing on `last`'s cell.
+        let refused = roost
+            .attune_wing("ember", &warden, &consort)
+            .expect_err("an exhausted ordinal must refuse");
+        match refused {
+            crate::CompanionError::Ineligible(why) => assert!(
+                why.contains("exhausted"),
+                "the refusal must name the exhausted namespace: {why}"
+            ),
+            other => panic!("expected an Ineligible refusal, got {other:?}"),
+        }
+        assert_eq!(
+            roost.next_wing_ordinal, None,
+            "a refusal does not advance the counter either"
+        );
+        let _ = last;
     }
 }
