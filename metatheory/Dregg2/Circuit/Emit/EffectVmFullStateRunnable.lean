@@ -91,6 +91,26 @@ as-data. The roots-leg spine (`systemRootsDigest_eq_hash_rootList`, `rootsCollFi
 `rootsColl_irrefl`) MOVED to `Exec.SystemRoots` — its natural home beside `rootList` — and is `export`ed
 below, so this file and its downstream tags read the one canonical definition instead of a parallel copy.
 
+⚑ **AND THE DISJUNCTIONS ARE NO LONGER THE HEADLINE EITHER (07-22).** Curing the FALSE injectivity
+floor was necessary and it was not sufficient. A bare `binds ∨ collides` quantifies over SOLUTIONS, and
+at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole — so all five keystones below
+(`wide_binds_or_collides`, `wide_binds_systemRoots_or_collides`,
+`runnable_full_commit_binds_or_collides`, `wide_rejects_state_tamper_or_collides`,
+`wide_rejects_root_tamper_or_collides`) are satisfiable through a `collides` branch with the binding
+never holding. Cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+
+`Dregg2.Circuit.Emit.EffectVmWideCommitReduction` supplies the headline: the forgery as a first-class
+`Game`, the peels (`Poseidon2Binding.group4Find`, `Exec.SystemRoots.rootsCollFind`) composed into ONE
+total extractor and lifted to a MAP OF ADVERSARIES, an UNCONDITIONAL advantage inequality in which the
+adversary class does not appear, and the conclusion under `FloorGames.HashCRHardQuant (spongeFamily D)
+Eff` with `hEff` DISCHARGED at `Eff := IsPolyTime` by `CostTactics.poly_time`. The five theorems below
+are DEMOTED to the exact-Prop skeleton those win relations rest on (and to the `_of_injective` bridges'
+base); they are retained rather than deleted because ~40 per-effect wide keystones instantiate them,
+and `wideCollFind` is retained because it IS the reduction's internal witness
+(`EffectVmWideCommitReduction.wideAbsorbCarrier_find_eq_wideCollFind`, by `rfl`). Same demotion
+`Market.WideCommitBoundary` applied to `stateDecode8_pre_faithful` and
+`Dregg2.Exec.SystemRootsBindingReduction` applied to the five `SystemRoots` disjunctions.
+
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -246,12 +266,25 @@ nothing. -/
 def WideColl (hash : List ℤ → ℤ) (e₁ e₂ : VmRowEnv) : Prop :=
   SpongeColl hash (wideCollFind hash e₁ e₂)
 
-/-- **⚑ THE FULL COMMITMENT-BINDING CORE — UNCONDITIONAL** (the cured `wide_binds_everything`). Two
-wide rows whose published `state_commit`s are EQUAL EITHER agree on ALL 12 absorbed state-block columns
-AND on the `sysRootsDigestCol` carrier, OR exhibit a genuine collision of the deployed sponge at the
-two lists `wideCollFind` returns.
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE BINDING ANY MORE (see
+`Dregg2.Circuit.Emit.EffectVmWideCommitReduction`).** Two wide rows whose published `state_commit`s are
+EQUAL EITHER agree on ALL 12 absorbed state-block columns AND on the `sysRootsDigestCol` carrier, OR
+exhibit a genuine collision of the deployed sponge at the two lists `wideCollFind` returns.
 
-⚑ **STRENGTH, stated honestly.** The old form concluded a bare conjunction from `Poseidon2SpongeCR
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** A bare `binds ∨ collides` quantifies over SOLUTIONS,
+and at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole — so the disjunction is
+satisfiable through the `collides` branch with `binds` never holding. Cryptographic hardness quantifies
+over EFFICIENT ADVERSARIES. The exported binding of the wide commitment is now the REDUCTION
+`EffectVmWideCommitReduction.wideCommit_binds_from_polyTime` (the forgery as a `Game`, the extractor as
+a map of adversaries, an unconditional advantage inequality, `hEff` discharged by `poly_time` at
+`Eff := IsPolyTime`, both poles of the floor proved). `wideCollFind` is RETAINED as that reduction's
+INTERNAL witness — `EffectVmWideCommitReduction.wideAbsorbCarrier_find_eq_wideCollFind` pins the
+carrier's extractor to this very function by `rfl` — and this theorem is RETAINED as the deterministic
+skeleton the win relation rests on, and as the base of the `_of_injective` strength bridge. The same
+demotion `Market.WideCommitBoundary` applied to `stateDecode8_pre_faithful` and
+`Dregg2.Exec.SystemRootsBindingReduction` applied to `systemRootsDigest_binds_or_collides`.
+
+⚑ **STRENGTH, stated honestly.** The predecessor concluded a bare conjunction from `Poseidon2SpongeCR
 hash`, which the deployed sponge REFUTES; at deployed parameters it was vacuous. This one is a
 disjunction — formally weaker, but it HOLDS of the deployed sponge, which the old one did not. Nothing
 that was genuinely proved has been given up (`wide_binds_everything_of_injective` recovers the old
@@ -327,13 +360,20 @@ export Dregg2.Exec.SystemRoots
   (systemRootsDigest_eq_hash_rootList rootsCollFind RootsColl rootsColl_irrefl
    rootsColl_refutable_of_injective)
 
-/-- **`wide_binds_systemRoots_or_collides` (the gap closed, UNCONDITIONALLY).** Two wide rows publishing the SAME
-`state_commit`, whose `sysRootsDigestCol` carriers ARE the `systemRootsDigest` of their respective
-`SysRoots` sub-blocks `sr₁`/`sr₂`, agree on EVERY side-table root (pointwise on the 8-index
-sub-block). The chain: equal commitment ⇒ equal carrier (`wide_binds_everything`) ⇒ equal digest ⇒
-equal roots pointwise, or a named collision. Tampering ONLY a side-table root (a
-dropped escrow, an omitted nullifier) provably MOVES `state_commit` ⇒ UNSAT against the published
-`NEW_COMMIT`. -/
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `EffectVmWideCommitReduction`).** Two wide rows
+publishing the SAME `state_commit`, whose `sysRootsDigestCol` carriers ARE the `systemRootsDigest` of
+their respective `SysRoots` sub-blocks `sr₁`/`sr₂`, agree on EVERY side-table root (pointwise on the
+8-index sub-block). The chain: equal commitment ⇒ equal carrier ⇒ equal digest ⇒ equal roots pointwise,
+or a named collision. Tampering ONLY a side-table root (a dropped escrow, an omitted nullifier)
+provably MOVES `state_commit` ⇒ UNSAT against the published `NEW_COMMIT`.
+
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** The THREE-way bare disjunction offers TWO escape
+branches, both of which pigeonhole makes available at deployed parameters. The exported claim is now
+`EffectVmWideCommitReduction.wideFullState_binds_from_polyTime`, where the two peels are composed into
+ONE total extractor (`wideFullFind`: the GROUP-4 peel, then `Exec.SystemRoots.rootsCollFind`), so the
+forger's advantage is bounded by ONE collision finder's rather than escaping through a disjunct.
+`EffectVmWideCommitReduction.wideFull_forgery_is_break` is the deployed-object bridge. This theorem is
+RETAINED as that win relation's deterministic skeleton and as the `_of_injective` bridge's base. -/
 theorem wide_binds_systemRoots_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
     (hs₁ : siteHoldsAll hash e₁ wideHashSites)
@@ -433,12 +473,22 @@ theorem runnable_full_sound {St : Type} (E : RunnableFullStateSpec St) (hash : L
   obtain ⟨hgates, _hsites⟩ := hgatesat
   exact E.decodeFull env pre post sr hrow hdec hgates
 
-/-- **`runnable_full_commit_binds` — the whole-state anti-ghost over the WIDE commitment.** Two rows
-satisfying the effect's wide descriptor that publish the SAME `NEW_COMMIT`, and whose carriers ARE the
-`systemRootsDigest` of their post sub-blocks, agree on EVERY absorbed state-block column AND every
-side-table root. So a prover CANNOT keep `NEW_COMMIT` while tampering ANY of the 17 fields' bound
-content — the runnable descriptor binds the whole post-state, not a projection. (Requires the decode's
-`NEW_COMMIT = after-state_commit` link, supplied as `hpin₁`/`hpin₂`.) -/
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `EffectVmWideCommitReduction`).** The whole-state
+anti-ghost over the WIDE commitment. Two rows satisfying the effect's wide descriptor that publish the
+SAME `NEW_COMMIT`, and whose carriers ARE the `systemRootsDigest` of their post sub-blocks, agree on
+EVERY absorbed state-block column AND every side-table root. So a prover CANNOT keep `NEW_COMMIT` while
+tampering ANY of the 17 fields' bound content — the runnable descriptor binds the whole post-state, not
+a projection. (Requires the decode's `NEW_COMMIT = after-state_commit` link, supplied as
+`hpin₁`/`hpin₂`.)
+
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** This is the highest-fanout `_or_collides` in the tree,
+and a three-way disjunction whose two escape branches are unconditionally available at deployed
+BabyBear parameters. The exported anti-ghost claim of the RUNNABLE descriptor is now
+`EffectVmWideCommitReduction.wideFullState_binds_from_polyTime`, with
+`EffectVmWideCommitReduction.runnable_full_forgery_is_break` — generic in `St` and in this very
+`RunnableFullStateSpec` — as the bridge saying a satisfying-but-equivocating pair IS a win of the
+forgery game. This theorem is RETAINED as that win relation's deterministic skeleton, which is also
+what the ~40 per-effect wide keystones instantiate. -/
 theorem runnable_full_commit_binds_or_collides {St : Type} (E : RunnableFullStateSpec St)
     (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
@@ -609,12 +659,26 @@ end TransferReference
 The contrapositives of §3: two rows that publish the SAME `NEW_COMMIT` (with `systemRootsDigest`
 carriers) but DISAGREE on an absorbed state-block column, or on a side-table root, cannot BOTH satisfy
 the wide descriptor under CR. The whole-state tooth bites on the per-cell block (state-fields tamper)
-AND the side-table roots (escrow/nullifier/… tamper). -/
+AND the side-table roots (escrow/nullifier/… tamper).
 
-/-- **`wide_rejects_state_tamper` — per-cell-block anti-ghost.** Two wide rows that publish the same
-`NEW_COMMIT` but whose absorbed state-block columns DIFFER cannot both satisfy (the commitment would
-force them equal). A forged balance / tampered field / forged cap-root that still claims the published
-commitment is UNSAT. -/
+⚑ **BOTH TEETH ARE EXACT-PROP SKELETON, NOT THE HEADLINE.** Their CONCLUSION is nothing but the two
+collision disjuncts, so as exported statements they name the price of a tamper without charging it. The
+exported claims are `EffectVmWideCommitReduction.wide_state_tamper_is_break` /
+`wide_root_tamper_is_break` (the tamper IS a win of the forgery game) together with
+`EffectVmWideCommitReduction.wideFullState_binds_from_polyTime` (that game's advantage is negligible
+under the named collision floor at `Eff := IsPolyTime`, `hEff` discharged). -/
+
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `EffectVmWideCommitReduction`).** Per-cell-block
+anti-ghost: two wide rows that publish the same `NEW_COMMIT` but whose absorbed state-block columns
+DIFFER cannot both satisfy (the commitment would force them equal). A forged balance / tampered field /
+forged cap-root that still claims the published commitment is UNSAT.
+
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** Read as an exported statement, its CONCLUSION is
+nothing but the two collision disjuncts — it promises the tamper "costs" a collision without ever
+naming the price, and at deployed parameters a collision exists by pigeonhole. The exported claim is
+`EffectVmWideCommitReduction.wide_state_tamper_is_break` (the tamper IS a win of the forgery game) plus
+`wideFullState_binds_from_polyTime` (that game's advantage is negligible under the named floor at
+`Eff := IsPolyTime`). Retained here as the deterministic skeleton. -/
 theorem wide_rejects_state_tamper_or_collides {St : Type} (E : RunnableFullStateSpec St)
     (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
@@ -633,10 +697,16 @@ theorem wide_rejects_state_tamper_or_collides {St : Type} (E : RunnableFullState
   · exact Or.inl hcoll
   · exact Or.inr hrcoll
 
-/-- **`wide_rejects_root_tamper` — side-table anti-ghost (the gap's headline tooth).** Two wide rows
-that publish the same `NEW_COMMIT` (with `systemRootsDigest` carriers) but whose side-table sub-blocks
-DIFFER at some index `i` (a dropped escrow, an omitted nullifier, a reordered queue) cannot both
-satisfy. The side-table state is now bound BY the runnable commitment — the Class-C disease cured. -/
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `EffectVmWideCommitReduction`).** Side-table
+anti-ghost (the gap's headline tooth): two wide rows that publish the same `NEW_COMMIT` (with
+`systemRootsDigest` carriers) but whose side-table sub-blocks DIFFER at some index `i` (a dropped
+escrow, an omitted nullifier, a reordered queue) cannot both satisfy. The side-table state is bound BY
+the runnable commitment — the Class-C disease cured.
+
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** Same defect as its state-block twin: the CONCLUSION is
+the two collision disjuncts, so the price of the tamper is named but never charged. The exported claim
+is `EffectVmWideCommitReduction.wide_root_tamper_is_break` (a root tamper under a fixed `NEW_COMMIT` IS
+a win) plus `wideFullState_binds_from_polyTime`. Retained here as the deterministic skeleton. -/
 theorem wide_rejects_root_tamper_or_collides {St : Type} (E : RunnableFullStateSpec St)
     (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
