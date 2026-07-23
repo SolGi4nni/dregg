@@ -196,9 +196,19 @@ theorem rootsColl_irrefl (compressN : List FieldElem → FieldElem) (sr : SysRoo
   rintro ⟨hne, _⟩
   exact hne rfl
 
-/-- **`systemRootsDigest_binds_or_collides` (the cured `systemRootsDigest_binds`, UNCONDITIONAL).**
-Equal digests EITHER force the SAME ordered root list, OR the pair `rootsCollFind` returns is a genuine
-collision of the deployed sponge. So tampering ANY side-table root — a dropped escrow, an omitted
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE BINDING ANY MORE (see
+`Dregg2.Exec.SystemRootsBindingReduction`).** Equal digests EITHER force the SAME ordered root list, OR
+the pair `rootsCollFind` returns is a genuine collision of the deployed sponge.
+
+⚑ **WHY THIS IS NO LONGER THE EXPORTED CLAIM.** A bare `binds ∨ collides` quantifies over SOLUTIONS,
+and at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole — so the disjunction is
+satisfiable through the `collides` branch with `binds` never holding.  Cryptographic hardness
+quantifies over EFFICIENT ADVERSARIES.  The exported binding of the eight consensus roots is now the
+REDUCTION `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (forgery as a `Game`, extractor as
+a map of adversaries, unconditional advantage inequality, `hEff` discharged by `poly_time` at
+`Eff := IsPolyTime`).  This theorem is RETAINED as the deterministic skeleton that reduction's win
+relation rests on, and as the base of the `_of_injective` strength bridges below — the same demotion
+`Market.WideCommitBoundary` applied to `stateDecode8_pre_faithful`. So tampering ANY side-table root — a dropped escrow, an omitted
 nullifier, a reordered queue — either moves the digest or COSTS the prover a named sponge collision.
 
 ⚑ **STRENGTH, stated honestly.** As a FORMULA this is weaker than the deleted equality. As CONTENT AT
@@ -216,8 +226,10 @@ theorem systemRootsDigest_binds_or_collides (compressN : List FieldElem → Fiel
       ← systemRootsDigest_eq_hash_rootList compressN sr']
     exact h
 
-/-- **`systemRootsDigest_binds_fn_or_collides` (the cured `systemRootsDigest_binds_fn`).** Equal
-digests force the WHOLE sub-block FUNCTION equal, or hand back the collision. `rootList = List.ofFn`,
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).** Equal
+digests force the WHOLE sub-block FUNCTION equal, or hand back the collision.  The whole-function
+projection of the SAME binding as `systemRootsDigest_binds_or_collides`; the exported claim is the
+reduction `sysRoots_binds_from_polyTime` (all three projections are ONE forgery game). `rootList = List.ofFn`,
 and `List.ofFn_inj` says `ofFn sr = ofFn sr' → sr = sr'`. -/
 theorem systemRootsDigest_binds_fn_or_collides (compressN : List FieldElem → FieldElem)
     (sr sr' : SysRoots)
@@ -227,9 +239,13 @@ theorem systemRootsDigest_binds_fn_or_collides (compressN : List FieldElem → F
   · exact Or.inl (List.ofFn_inj.mp hlist)
   · exact Or.inr hcoll
 
-/-- **`systemRootsDigest_binds_pointwise_or_collides` (the cured `systemRootsDigest_binds_pointwise`).**
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).**
 Equal digests force EVERY side-table root equal (pointwise at each kernel index), or hand back the
-collision. The per-index anti-ghost statement, now TRUE of the deployed sponge: if the committed digest
+collision.  The per-index projection of the same binding; the exported anti-ghost claim for all eight
+side-tables is `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (whose forgery game is won
+by exactly a sub-block pair differing at SOME kernel index —
+`SystemRootsBindingReduction.sysRoots_forgery_is_break`).  Retained here as the win relation's
+deterministic skeleton: if the committed digest
 is fixed, NO side-table root can be tampered without a named sponge collision. Combined with the
 commitment absorption (§4), this is the 3-corner anti-ghost tooth for all 8 side-tables. -/
 theorem systemRootsDigest_binds_pointwise_or_collides (compressN : List FieldElem → FieldElem)
@@ -341,9 +357,10 @@ theorem cellCommitSColl_irrefl (rest : List FieldElem) (sr : SysRoots) :
   rintro ⟨hne, _⟩
   exact hne rfl
 
-/-- **`cellCommitS_binds_systemRoots_or_collides` (the cured anti-ghost tooth, UNCONDITIONAL).** Equal
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).** Equal
 canonical commitments (over the SAME `rest`) EITHER force the SAME `systemRootsDigest`, OR hand back the
-specific pair of absorbed lists at which the deployed sponge collides. The shared `rest` cancels and the
+specific pair of absorbed lists at which the deployed sponge collides.  The exported commitment-layer
+binding is the reduction `SystemRootsBindingReduction.cellCommitS_binds_from_polyTime`. The shared `rest` cancels and the
 singleton digest limbs are compared; nothing is assumed about the sponge.
 
 The old form carried `compressNInjective compressN`, which the deployed BabyBear sponge REFUTES — so it
@@ -362,9 +379,14 @@ theorem cellCommitS_binds_systemRoots_or_collides
     simpa using this
   · exact Or.inr ⟨hne, h⟩
 
-/-- **`cellCommitS_binds_roots_pointwise_or_collides` (the cured corollary).** Equal commitments force
-EVERY side-table root equal, or name a collision of the deployed sponge — at the commitment layer
-(`CellCommitSColl`) or at the roots digest (`RootsColl`). The full chain, now TRUE of the deployed
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (see `SystemRootsBindingReduction`).** Equal
+commitments force EVERY side-table root equal, or name a collision of the deployed sponge — at the
+commitment layer (`CellCommitSColl`) or at the roots digest (`RootsColl`).
+
+⚑ **THIS THREE-WAY DISJUNCTION HAS TWO ESCAPE BRANCHES**, which is the shirk compounded.  The exported
+form is `SystemRootsBindingReduction.cellRoots_binds_from_polyTime`: ONE forgery game, TWO extracted
+finders, the standard UNION BOUND, ONE floor — the two escapes become two ADDED advantages that the
+floor kills, and their sum is negligible. The full chain, now TRUE of the deployed
 sponge: equal commitment ⇒ equal digest ⇒ equal roots pointwise. This is "the canonical commitment binds
 the whole side-table state" — the soundness statement STAGE 3 buys for ALL 8 side-tables, at deployed
 parameters instead of under a refuted hypothesis. -/
