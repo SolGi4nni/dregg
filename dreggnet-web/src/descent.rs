@@ -51,6 +51,7 @@ use dregg_node_target::{Landed, NodeError, NodeTarget, SubmittedTurn};
 use dreggnet_offerings::daily_descent::{DAILY_DEPLOY_SEED, DailyDescent, HOARD_GOLD, daily_scene};
 use dreggnet_offerings::native_descent::{
     MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
+    Rarity,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use procgen_dregg::CommittedSeed;
@@ -146,10 +147,16 @@ struct NativeRun {
 }
 
 const NATIVE_PORTABLE_FORMAT: &str = "dregg.native-descent.record";
-/// v2 carries `daySeedHex` — the run day-seed the browser session deployed on. v1 could only
+/// v2 carried `daySeedHex` — the run day-seed the browser session deployed on. v1 could only
 /// ever describe a seed-derived (pre-computable) day and there is no honest upgrade of one, so
 /// a v1 submission is refused rather than silently re-pointed at another day's provenance.
-const NATIVE_PORTABLE_VERSION: u32 = 2;
+///
+/// v3 carries `completion.bankedNotes` — the real owned `dreggnet_asset` notes the banked
+/// relics minted at settlement (asset id, canonical rarity tag, owner pubkey), which the v2
+/// mirror dropped. The notes are part of the settled completion the exact-replay envelope
+/// attests, so a v2 envelope no longer says everything this boundary compares; it is refused
+/// (the browser re-exports the same run from replay) rather than compared partially.
+const NATIVE_PORTABLE_VERSION: u32 = 3;
 const MAX_NATIVE_PORTABLE_BYTES: usize = 8 * 1024 * 1024;
 // HTTP wraps the portable object in `{day,record}`. Leave bounded room for that envelope while the
 // record itself remains pinned to wasm's 8 MiB import/export contract below.
@@ -221,7 +228,54 @@ struct NativeCompletionWire {
     /// Stable wire indices. Never expose Rust's platform-sized `usize` in a persisted/browser
     /// artifact; upstream native state may use either `usize` or `u64` internally.
     banked_relics: Vec<u64>,
+    /// The real owned notes the banked relics minted at settlement, in the same slot order as
+    /// `banked_relics` (empty exactly when the run banked nothing). Untrusted like the rest of
+    /// the record: replay re-mints every note from the record's day-seed + committed custody,
+    /// and a note that does not re-derive byte-identically is refused by name.
+    banked_notes: Vec<NativeBankedNoteWire>,
     crowned: bool,
+}
+
+/// One banked relic's minted owned-note as it crosses the wire — the transport of the
+/// offering's `NativeDescentBankedNote`. The asset id content-addresses (run day-seed, custody
+/// slot, player key), so carrying it unchanged is what "the banked note survives the process
+/// boundary" means.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeBankedNoteWire {
+    /// The stable relic identifier (the custody slot the relic banked in).
+    relic: u64,
+    /// The minted note's content-addressed asset id (64 hex chars).
+    asset_id_hex: String,
+    /// The canonical [`Rarity::tag`] byte — the committed wire encoding of the tier.
+    rarity: u8,
+    /// The owning player's pubkey at mint (64 hex chars).
+    owner_hex: String,
+}
+
+impl NativeBankedNoteWire {
+    /// Structural fail-closed decode gate, refusing a malformed note BY NAME before replay.
+    fn validate(&self) -> Result<(), String> {
+        if decode_hex32(&self.asset_id_hex).is_none() {
+            return Err(format!(
+                "banked note (relic {}) asset id is not 64 hex chars",
+                self.relic
+            ));
+        }
+        if decode_hex32(&self.owner_hex).is_none() {
+            return Err(format!(
+                "banked note (relic {}) owner is not 64 hex chars",
+                self.relic
+            ));
+        }
+        if Rarity::from_tag(self.rarity).is_none() {
+            return Err(format!(
+                "banked note (relic {}) rarity tag {} is not canonical",
+                self.relic, self.rarity
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -782,6 +836,13 @@ fn verify_native_record(
             expected.events.len()
         ));
     }
+    for note in expected
+        .completion
+        .iter()
+        .flat_map(|completion| &completion.banked_notes)
+    {
+        note.validate()?;
+    }
 
     // ⚑ REPLAY UNDER THE RECORD'S OWN DAY. The run day-seed is folded into the genesis root, so
     // a beacon-bound run only re-derives when the fresh session deploys on the same root; a
@@ -814,6 +875,17 @@ fn verify_native_record(
     }
 
     let actual = native_portable_from_record(&session.export_record());
+    // Refuse a forged NOTE by name before the anonymous whole-envelope mismatch: the replay
+    // above re-minted the banked notes from the record's own day-seed + committed custody, so
+    // a note whose asset id / rarity / owner does not re-derive is a forgery.
+    if actual.completion.as_ref().map(|c| &c.banked_notes)
+        != expected.completion.as_ref().map(|c| &c.banked_notes)
+    {
+        return Err(
+            "banked notes do not re-mint from the record's day-seed and committed custody"
+                .to_string(),
+        );
+    }
     if &actual != expected {
         return Err(
             "native record differs from exact action/receipt/state/root replay".to_string(),
@@ -880,6 +952,16 @@ fn native_portable_from_record(record: &NativeDescentRecord) -> NativePortableRe
                     .iter()
                     .map(|&relic| {
                         u64::try_from(relic).expect("native relic index fits the stable wire")
+                    })
+                    .collect(),
+                banked_notes: completion
+                    .banked_notes
+                    .iter()
+                    .map(|note| NativeBankedNoteWire {
+                        relic: note.relic,
+                        asset_id_hex: hex32(&note.asset_id.bytes()),
+                        rarity: note.rarity.tag(),
+                        owner_hex: hex32(&note.owner),
                     })
                     .collect(),
                 crowned: completion.crowned,
@@ -1026,6 +1108,13 @@ async fn post_native_submit(
         Ok((run_id, verified, durable)) => {
             let ranked = verified.crowned();
             let banked_relics = verified.banked_relics();
+            // The verified notes themselves — the first wire consumer. These are the replayed
+            // (re-minted) notes, not echoes of the submission.
+            let banked_notes = verified
+                .completion
+                .as_ref()
+                .map(|completion| completion.banked_notes.clone())
+                .unwrap_or_default();
             let detail = if ranked {
                 "exact native replay accepted; crowned settlement ranks in the native lane"
             } else {
@@ -1044,6 +1133,7 @@ async fn post_native_submit(
                     "turns": verified.turns,
                     "root": verified.root_hex,
                     "banked_relics": banked_relics,
+                    "banked_notes": banked_notes,
                     "durable": durable,
                     "detail": detail,
                 })),
@@ -1613,16 +1703,38 @@ fn native_run_card_page(
     record: &NativePortableRecord,
     replay: Result<VerifiedNativeRun, String>,
 ) -> String {
-    let (verified, actor, turns, root, banked, crowned, detail) = match replay {
+    let (verified, actor, turns, root, banked, notes, crowned, detail) = match replay {
         Ok(run) => {
             let banked = run.banked_relics();
             let crowned = run.crowned();
+            // The minted owned-notes, re-derived by THIS replay (trusted only because the
+            // envelope re-verified): tier + the note's content-addressed asset id.
+            let notes = run
+                .completion
+                .as_ref()
+                .filter(|completion| !completion.banked_notes.is_empty())
+                .map(|completion| {
+                    completion
+                        .banked_notes
+                        .iter()
+                        .map(|note| {
+                            format!(
+                                "{} {}",
+                                Rarity::from_tag(note.rarity).map_or("?", |rarity| rarity.label()),
+                                &note.asset_id_hex[..12.min(note.asset_id_hex.len())],
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                })
+                .unwrap_or_else(|| "none minted".to_string());
             (
                 true,
                 run.actor,
                 run.turns,
                 run.root_hex,
                 banked,
+                notes,
                 crowned,
                 "The server deployed a fresh Lean-native world, replayed every verb through the native \
                  Offering, and reproduced the complete receipt, post-state, checkpoint, completion, \
@@ -1639,6 +1751,7 @@ fn native_run_card_page(
             record.events.len(),
             record.root_hex.clone(),
             0,
+            "unverifiable".to_string(),
             false,
             format!("Exact native replay refused this record: {error}"),
         ),
@@ -1668,6 +1781,7 @@ fn native_run_card_page(
          <div class=\"kv\"><div><p class=\"k\">Outcome</p><p class=\"v\">{outcome}</p></div>\
          <div><p class=\"k\">Landed turns</p><p class=\"v mono\">{turns}</p></div>\
          <div><p class=\"k\">Banked relics</p><p class=\"v mono\">{banked}</p></div>\
+         <div><p class=\"k\">Minted notes</p><p class=\"v mono\">{notes}</p></div>\
          <div><p class=\"k\">Journal root</p><p class=\"v mono\">{root}</p></div></div>\
          </main>",
         day = esc(day_key),
@@ -1680,6 +1794,7 @@ fn native_run_card_page(
         outcome = outcome,
         turns = turns,
         banked = banked,
+        notes = esc(&notes),
         root = esc(&root),
     );
     document(

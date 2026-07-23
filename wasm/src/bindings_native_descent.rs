@@ -31,18 +31,25 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use dreggnet_offerings::native_descent::{
-    MAX_NATIVE_DESCENT_EVENTS, NativeDescentCompletion, NativeDescentEvent, NativeDescentMove,
-    NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
+    MAX_NATIVE_DESCENT_EVENTS, NativeDescentBankedNote, NativeDescentCompletion,
+    NativeDescentEvent, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
+    NativeDescentSession, Rarity,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig, VerifyReport};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
 
 const PORTABLE_FORMAT: &str = "dregg.native-descent.record";
-/// v2 carries `daySeedHex` — the run day-seed the session deployed on. v1 records did not, and
+/// v2 carried `daySeedHex` — the run day-seed the session deployed on. v1 records did not, and
 /// could therefore only ever describe a seed-derived (pre-computable) day; there is no honest
 /// upgrade of one, so they are refused rather than silently re-pointed at another provenance.
-const PORTABLE_VERSION: u32 = 2;
+///
+/// v3 carries `completion.bankedNotes` — the real owned [`dreggnet_asset`] notes the banked
+/// relics minted at settlement (asset id, canonical rarity tag, owner pubkey), which v2 dropped
+/// at this mirror. The notes are part of the settled completion the byte-for-byte envelope
+/// attests, so a v2 envelope no longer says everything this boundary compares; it is refused
+/// (a client re-exports the same run from replay) rather than compared partially.
+const PORTABLE_VERSION: u32 = 3;
 const MAX_PORTABLE_RECORD_BYTES: usize = 8 * 1024 * 1024;
 
 // Kept as a local projection macro so this boundary does not gain a second direct dependency
@@ -238,6 +245,13 @@ impl NativeDescentWorld {
         let expected: PortableRecord =
             serde_json::from_str(record_json).map_err(|error| format!("record JSON: {error}"))?;
         expected.validate_header()?;
+        for note in expected
+            .completion
+            .iter()
+            .flat_map(|completion| &completion.banked_notes)
+        {
+            note.validate()?;
+        }
         if expected.events.len() > MAX_NATIVE_DESCENT_EVENTS {
             return Err(format!(
                 "{} events exceeds the native Descent bound",
@@ -287,6 +301,18 @@ impl NativeDescentWorld {
             ));
         }
         let actual = PortableRecord::from_record(&world.session.export_record());
+        // Refuse a forged NOTE by name before the anonymous whole-envelope mismatch: the
+        // replay above re-minted the banked notes from the record's own day-seed + committed
+        // custody, so a note whose asset id / rarity / owner does not re-derive is a forgery.
+        if actual.completion.as_ref().map(|c| &c.banked_notes)
+            != expected.completion.as_ref().map(|c| &c.banked_notes)
+        {
+            return Err(
+                "portable banked notes do not re-mint from the record's day-seed and committed \
+                 custody"
+                    .to_string(),
+            );
+        }
         if actual != expected {
             return Err(
                 "portable record differs from exact native action/receipt/state replay".to_string(),
@@ -524,6 +550,11 @@ struct CompletionWire {
     root_hex: String,
     settlement_receipt_hash_hex: String,
     banked_relics: Vec<u64>,
+    /// The real owned notes the banked relics minted at settlement, in the same slot order as
+    /// `banked_relics`. Empty exactly when the run banked nothing. Untrusted like every other
+    /// wire field: import re-mints the notes from the record's day-seed + committed custody and
+    /// a note that does not re-derive byte-identically is refused.
+    banked_notes: Vec<BankedNoteWire>,
     crowned: bool,
 }
 
@@ -535,8 +566,61 @@ impl From<&NativeDescentCompletion> for CompletionWire {
             root_hex: hex(&completion.root),
             settlement_receipt_hash_hex: hex(&completion.settlement_receipt_hash),
             banked_relics: completion.banked_relics.clone(),
+            banked_notes: completion
+                .banked_notes
+                .iter()
+                .map(BankedNoteWire::from)
+                .collect(),
             crowned: completion.crowned,
         }
+    }
+}
+
+/// One banked relic's minted owned-note as it crosses the wire — the transport of
+/// [`NativeDescentBankedNote`]. The asset id is content-addressed to (run day-seed, custody
+/// slot, player key), so carrying it unchanged is exactly what "the note survives the process
+/// boundary" means; the id, the canonical rarity tag, and the owner pubkey must all re-mint
+/// on replay or the record is refused.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BankedNoteWire {
+    /// The stable relic identifier (the custody slot the relic banked in).
+    relic: u64,
+    /// The minted note's content-addressed asset id (64 hex chars).
+    asset_id_hex: String,
+    /// The canonical [`Rarity::tag`] byte — the committed wire encoding of the tier.
+    rarity: u8,
+    /// The owning player's pubkey at mint (64 hex chars).
+    owner_hex: String,
+}
+
+impl From<&NativeDescentBankedNote> for BankedNoteWire {
+    fn from(note: &NativeDescentBankedNote) -> Self {
+        Self {
+            relic: note.relic,
+            asset_id_hex: hex(&note.asset_id.bytes()),
+            rarity: note.rarity.tag(),
+            owner_hex: hex(&note.owner),
+        }
+    }
+}
+
+impl BankedNoteWire {
+    /// Structural fail-closed decode gate, refusing a malformed note BY NAME before replay:
+    /// a non-32-byte asset id / owner or a non-canonical rarity tag never reaches the
+    /// envelope comparison as an anonymous mismatch.
+    fn validate(&self) -> Result<(), String> {
+        decode_hex_32(&self.asset_id_hex)
+            .map_err(|error| format!("banked note (relic {}) asset id: {error}", self.relic))?;
+        decode_hex_32(&self.owner_hex)
+            .map_err(|error| format!("banked note (relic {}) owner: {error}", self.relic))?;
+        if Rarity::from_tag(self.rarity).is_none() {
+            return Err(format!(
+                "banked note (relic {}) rarity tag {} is not canonical",
+                self.relic, self.rarity
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -661,9 +745,140 @@ mod tests {
 
         let record = value(&world.record_json());
         assert!(record["completion"].is_object());
+        assert_eq!(
+            record["completion"]["bankedNotes"],
+            serde_json::json!([]),
+            "a run that banked nothing minted nothing — and stays portable"
+        );
         assert!(record["events"][0]["receipt"].is_object());
         assert_eq!(record["events"][0]["turn"], "flee");
         assert!(world.verify());
+
+        let restored = NativeDescentWorld::try_from_record_json(&record.to_string())
+            .expect("a note-less settlement still replays exactly");
+        assert_eq!(restored.record_json(), world.record_json());
+    }
+
+    /// Drive the shortest run that BANKS a relic: delve, slay the floor-1 guardian, probe the
+    /// relic slots until the one lying on floor 1 loots (a refusal preserves the journal, so
+    /// probing is sound), then flee — flee banks the carried relic and settlement mints its note.
+    fn world_with_a_banked_note() -> NativeDescentWorld {
+        let mut world = NativeDescentWorld::try_new(22).expect("native world opens");
+        assert_eq!(
+            value(&world.advance("delve".to_string(), 0, "alice".to_string()))["ok"],
+            true
+        );
+        assert_eq!(
+            value(&world.advance("smite".to_string(), 0, "alice".to_string()))["ok"],
+            true
+        );
+        let looted = (0..8).any(|relic| {
+            value(&world.advance("loot".to_string(), relic, "alice".to_string()))["ok"] == true
+        });
+        assert!(looted, "some relic lies on floor 1");
+        assert_eq!(
+            value(&world.advance("flee".to_string(), 0, "alice".to_string()))["ok"],
+            true
+        );
+        assert!(world.is_complete());
+        world
+    }
+
+    #[test]
+    fn banked_note_payload_survives_the_portable_boundary_content_address_unchanged() {
+        let world = world_with_a_banked_note();
+        // Ground truth from the OFFERING's own completion, not the wire under test.
+        let minted = world
+            .session
+            .completion()
+            .expect("the run settled")
+            .banked_notes
+            .clone();
+        assert_eq!(minted.len(), 1, "the probe run banked exactly one relic");
+
+        let record_json = world.record_json();
+        let record = value(&record_json);
+        let notes = record["completion"]["bankedNotes"]
+            .as_array()
+            .expect("v3 completion carries bankedNotes");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0]["relic"], serde_json::json!(minted[0].relic));
+        assert_eq!(
+            notes[0]["assetIdHex"],
+            serde_json::json!(hex(&minted[0].asset_id.bytes())),
+            "the note's content-address crosses the wire unchanged"
+        );
+        assert_eq!(
+            notes[0]["rarity"],
+            serde_json::json!(minted[0].rarity.tag())
+        );
+        assert_eq!(
+            notes[0]["ownerHex"],
+            serde_json::json!(hex(&minted[0].owner))
+        );
+
+        let restored = NativeDescentWorld::try_from_record_json(&record_json)
+            .expect("the note-bearing record replays exactly");
+        assert_eq!(
+            restored.record_json(),
+            record_json,
+            "import re-mints the identical note payload"
+        );
+    }
+
+    #[test]
+    fn a_forged_banked_note_is_refused_by_name() {
+        let world = world_with_a_banked_note();
+        let record = value(&world.record_json());
+
+        // A substituted content-address: structurally valid hex, but it does not re-mint.
+        let mut forged_id = record.clone();
+        forged_id["completion"]["bankedNotes"][0]["assetIdHex"] =
+            serde_json::json!("11".repeat(32));
+        let error = NativeDescentWorld::try_from_record_json(&forged_id.to_string())
+            .err()
+            .expect("a substituted asset id is a forgery");
+        assert!(
+            error.contains("banked notes do not re-mint"),
+            "refusal names the notes: {error}"
+        );
+
+        // An inflated rarity: the canonical-tag gate refuses a non-canonical byte by name…
+        let mut fake_tier = record.clone();
+        fake_tier["completion"]["bankedNotes"][0]["rarity"] = serde_json::json!(9);
+        let error = NativeDescentWorld::try_from_record_json(&fake_tier.to_string())
+            .err()
+            .expect("a non-canonical rarity tag fails closed");
+        assert!(
+            error.contains("rarity tag 9 is not canonical"),
+            "refusal names the tag: {error}"
+        );
+
+        // …and a canonical-but-wrong tier is caught by the re-mint, not believed.
+        let honest_tag = record["completion"]["bankedNotes"][0]["rarity"]
+            .as_u64()
+            .expect("wire tag");
+        let wrong_tag = (honest_tag + 1) % 4;
+        let mut relabeled = record.clone();
+        relabeled["completion"]["bankedNotes"][0]["rarity"] = serde_json::json!(wrong_tag);
+        let error = NativeDescentWorld::try_from_record_json(&relabeled.to_string())
+            .err()
+            .expect("a relabeled tier does not re-mint");
+        assert!(
+            error.contains("banked notes do not re-mint"),
+            "refusal names the notes: {error}"
+        );
+
+        // A stolen note: same run, different claimed owner key.
+        let mut stolen = record.clone();
+        stolen["completion"]["bankedNotes"][0]["ownerHex"] = serde_json::json!("22".repeat(32));
+        let error = NativeDescentWorld::try_from_record_json(&stolen.to_string())
+            .err()
+            .expect("a substituted owner does not re-mint");
+        assert!(
+            error.contains("banked notes do not re-mint"),
+            "refusal names the notes: {error}"
+        );
     }
 
     #[test]
@@ -674,6 +889,7 @@ mod tests {
             root_hex: "00".repeat(32),
             settlement_receipt_hash_hex: "11".repeat(32),
             banked_relics: vec![u64::MAX],
+            banked_notes: vec![],
             crowned: false,
         };
         let json = serde_json::to_string(&completion).expect("completion wire serializes");

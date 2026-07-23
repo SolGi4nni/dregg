@@ -197,7 +197,7 @@ fn portable(record: &NativeDescentRecord) -> serde_json::Value {
         .collect::<Vec<_>>();
     serde_json::json!({
         "format": "dregg.native-descent.record",
-        "version": 2,
+        "version": 3,
         "seed": record.seed,
         // v2 carries the run's provenance root, so the endpoint can re-execute a day-bound run
         // (the genesis root folds it in — a replay on the wrong root re-derives nothing).
@@ -217,6 +217,15 @@ fn portable(record: &NativeDescentRecord) -> serde_json::Value {
             "rootHex": hex(&completion.root),
             "settlementReceiptHashHex": hex(&completion.settlement_receipt_hash),
             "bankedRelics": completion.banked_relics,
+            // v3: the banked relics' minted owned-notes cross the wire — the asset id is the
+            // note's content-address (run day-seed, custody slot, player key) and the rarity is
+            // its canonical committed tag byte.
+            "bankedNotes": completion.banked_notes.iter().map(|note| serde_json::json!({
+                "relic": note.relic,
+                "assetIdHex": hex(&note.asset_id.bytes()),
+                "rarity": note.rarity.tag(),
+                "ownerHex": hex(&note.owner),
+            })).collect::<Vec<_>>(),
             "crowned": completion.crowned,
         })),
     })
@@ -246,7 +255,16 @@ async fn native_browser_record_replays_shares_and_ranks_only_in_its_own_lane() {
     let state = Arc::new(DescentState::new());
     state.open_day("native-day", day_seed);
     let app = descent_router(state);
-    let record = portable(&crowned_record(&day_seed, "web:native-browser"));
+    let native_record = crowned_record(&day_seed, "web:native-browser");
+    // Offering-side ground truth for the banked-note payload the wire must carry faithfully.
+    let minted = native_record
+        .completion
+        .as_ref()
+        .expect("crowned run settled")
+        .banked_notes
+        .clone();
+    assert_eq!(minted.len(), 4, "the crowned tape banked four relics");
+    let record = portable(&native_record);
 
     // RED seam: the procgen endpoint requires `{player,moves:[choice_index]}` and must not silently
     // reinterpret the browser's verb/receipt record.
@@ -271,11 +289,34 @@ async fn native_browser_record_replays_shares_and_ranks_only_in_its_own_lane() {
     assert_eq!(accepted["kind"], "exact-native-replay");
     assert_eq!(accepted["banked_relics"], 4);
 
+    // THE NOTES SURVIVED THE PROCESS BOUNDARY: the response carries the replayed (re-minted)
+    // notes, and each content-address is byte-identical to the one the browser-side session
+    // minted — not merely a count, and not an echo of the submission.
+    let response_notes = accepted["banked_notes"]
+        .as_array()
+        .expect("v3 submit response carries the minted notes");
+    assert_eq!(response_notes.len(), minted.len(), "{accepted}");
+    for (wire, note) in response_notes.iter().zip(&minted) {
+        assert_eq!(wire["relic"], serde_json::json!(note.relic));
+        assert_eq!(
+            wire["assetIdHex"],
+            serde_json::json!(hex(&note.asset_id.bytes())),
+            "the note's content-address crossed the wire unchanged"
+        );
+        assert_eq!(wire["rarity"], serde_json::json!(note.rarity.tag()));
+        assert_eq!(wire["ownerHex"], serde_json::json!(hex(&note.owner)));
+    }
+
     let share = accepted["share"].as_str().expect("native share path");
     let (card_status, card) = get(&app, share).await;
     assert_eq!(card_status, StatusCode::OK);
     assert!(card.contains("Independent verification — PASS"), "{card}");
     assert!(card.contains("CROWNED"), "{card}");
+    assert!(card.contains("Minted notes"), "{card}");
+    assert!(
+        card.contains(&hex(&minted[0].asset_id.bytes())[..12]),
+        "the run card shows the minted note's content-address: {card}"
+    );
     assert!(
         card.contains("Lean-native compatibility artifact"),
         "{card}"
@@ -438,6 +479,81 @@ async fn native_submit_rejects_exact_envelope_tampering_and_a_wrong_day() {
     );
 }
 
+/// A tampered or forged banked-NOTE payload is refused BY NAME — never accepted, and never an
+/// anonymous whole-envelope mismatch. The note's asset id content-addresses (run day-seed,
+/// custody slot, player key), so replay re-mints it and any substitution fails to re-derive.
+#[tokio::test]
+async fn a_forged_banked_note_payload_is_refused_by_name() {
+    let day_seed = daily_seed(&[97; 32]);
+    let state = Arc::new(DescentState::new());
+    state.open_day("note-day", day_seed);
+    let app = descent_router(state);
+    let record = portable(&crowned_record(&day_seed, "web:honest-notes"));
+
+    async fn refused_with(
+        app: &axum::Router,
+        record: serde_json::Value,
+        named: &str,
+    ) -> serde_json::Value {
+        let (status, refused) = post(
+            app,
+            "/descent/native/submit",
+            serde_json::json!({ "day": "note-day", "record": record }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(refused["verified"], false, "{refused}");
+        assert!(
+            refused["error"]
+                .as_str()
+                .is_some_and(|error| error.contains(named)),
+            "expected a refusal naming {named:?}: {refused}"
+        );
+        refused
+    }
+
+    // A substituted content-address: structurally valid hex that does not re-mint.
+    let mut forged_id = record.clone();
+    forged_id["completion"]["bankedNotes"][0]["assetIdHex"] = serde_json::json!("11".repeat(32));
+    refused_with(&app, forged_id, "banked notes do not re-mint").await;
+
+    // An inflated tier under a non-canonical tag byte fails closed at decode, by name.
+    let mut fake_tier = record.clone();
+    fake_tier["completion"]["bankedNotes"][0]["rarity"] = serde_json::json!(9);
+    refused_with(&app, fake_tier, "rarity tag 9 is not canonical").await;
+
+    // A canonical-but-wrong tier is caught by the re-mint, not believed.
+    let honest_tag = record["completion"]["bankedNotes"][0]["rarity"]
+        .as_u64()
+        .expect("wire tag");
+    let mut relabeled = record.clone();
+    relabeled["completion"]["bankedNotes"][0]["rarity"] = serde_json::json!((honest_tag + 1) % 4);
+    refused_with(&app, relabeled, "banked notes do not re-mint").await;
+
+    // A stolen note: the same run claiming a different owner key.
+    let mut stolen = record.clone();
+    stolen["completion"]["bankedNotes"][0]["ownerHex"] = serde_json::json!("22".repeat(32));
+    refused_with(&app, stolen, "banked notes do not re-mint").await;
+
+    // A dropped-notes (v2-shaped) completion no longer decodes: the field is load-bearing.
+    let mut dropped = record.clone();
+    dropped["completion"]
+        .as_object_mut()
+        .expect("completion object")
+        .remove("bankedNotes");
+    refused_with(&app, dropped, "bankedNotes").await;
+
+    // The honest record still lands after all the refusals (nothing was retained for them).
+    let (status, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "note-day", "record": record }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["verified"], true, "{accepted}");
+}
+
 #[tokio::test]
 async fn exact_non_crowned_native_settlement_is_shareable_but_never_ranked() {
     let day_seed = daily_seed(&[93; 32]);
@@ -471,6 +587,11 @@ async fn exact_non_crowned_native_settlement_is_shareable_but_never_ranked() {
     assert_eq!(status, StatusCode::OK, "{accepted}");
     assert_eq!(accepted["verified"], true);
     assert_eq!(accepted["ranked"], false);
+    assert_eq!(
+        accepted["banked_notes"],
+        serde_json::json!([]),
+        "a run that banked nothing minted nothing — and is otherwise unchanged: {accepted}"
+    );
     let share = accepted["share"].as_str().expect("verified run card");
     let (_, card) = get(&app, share).await;
     assert!(card.contains("Independent verification — PASS"), "{card}");

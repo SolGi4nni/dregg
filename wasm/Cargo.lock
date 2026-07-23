@@ -362,6 +362,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "attested-dm"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-dice",
+ "dregg-node-target",
+ "dregg-zkoracle-prove",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1373,7 +1385,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytemuck",
+ "chacha20poly1305",
+ "dregg-cell",
  "dregg-circuit",
+ "dregg-commit",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
@@ -1407,6 +1422,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "wgpu",
+ "zeroize",
 ]
 
 [[package]]
@@ -1780,6 +1796,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-federation",
+ "dregg-turn",
  "dregg-types",
  "ed25519-dalek",
  "postcard",
@@ -2063,6 +2080,7 @@ dependencies = [
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",
+ "dreggnet-asset",
  "dreggnet-tournament",
  "dungeon-on-dregg",
  "procgen-dregg",
@@ -2092,6 +2110,7 @@ dependencies = [
 name = "dungeon-on-dregg"
 version = "0.1.0"
 dependencies = [
+ "attested-dm",
  "blake3",
  "collective-choice",
  "dregg-app-framework",
@@ -2389,6 +2408,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3738,7 +3767,6 @@ dependencies = [
 [[package]]
 name = "p3-fri"
 version = "0.5.1"
-source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
 dependencies = [
  "itertools 0.14.0",
  "p3-challenger",
@@ -5429,6 +5457,12 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-node-target",
+ "dregg-sdk",
+ "dregg-turn",
+ "fs2",
+ "libc",
+ "postcard",
+ "serde",
  "spween",
  "zeroize",
 ]
@@ -6356,6 +6390,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6363,6 +6413,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
