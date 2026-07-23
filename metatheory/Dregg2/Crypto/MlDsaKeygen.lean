@@ -125,51 +125,117 @@ def packEta (p : Poly) : Array UInt8 := packBits (p.map (fun c => bEncode etaP c
 /-- Pack one `t0` polynomial: `BitPack(·, 2^{d−1}−1, 2^{d−1})` at 13 bits/coeff → 416 bytes. -/
 def packT0 (p : Poly) : Array UInt8 := packBits (p.map (fun c => bEncode t0Half c)) t0Bits
 
-/-! ## ML-DSA.KeyGen_internal (FIPS 204 Algorithm 6) — the deterministic keygen from a 32-byte `ξ`. -/
+/-! ## The RING-LEVEL keygen (FIPS 204 Algorithm 6 steps 1–5) — the abstract objects, NO byte codec.
 
-/-- **`ML-DSA.KeyGen_internal(ξ)`** (FIPS 204 Algorithm 6) for ML-DSA-65. `(ρ,ρ′,K) = H(ξ ‖ k ‖ ℓ, 128)`
-(`H = SHAKE256`, split 32‖64‖32, `k = 6` / `ℓ = 5` as one byte each); `Â = ExpandA(ρ)`; `(s1,s2) =
-ExpandS(ρ′)`; `t̂[i] = Σⱼ Â[i][j] ∘ NTT(s1[j])`, `t[i] = NTT⁻¹(t̂[i]) + s2[i]`; `(t1,t0) = Power2Round(t)`;
-`pk = pkEncode(ρ, t1)`; `tr = H(pk, 64)`; `sk = ρ ‖ K ‖ tr ‖ BitPack(s1) ‖ BitPack(s2) ‖ BitPack(t0)`.
-Input `xi` is the 32-byte seed. Returns `(pk, sk)` — the 1952-byte public key and the 4032-byte secret key. -/
-def mldsaKeygenInternal (xi : List UInt8) : (List UInt8 × List UInt8) := Id.run do
+`ML-DSA.KeyGen_internal` splits cleanly at step 5: everything up to `Power2Round` lives in `R_q`
+(`ExpandA` / `ExpandS` / `NTT` / matvec / `Power2Round`), and steps 6–8 are pure byte packing
+(`pkEncode` / `H` / `skEncode`). That split is made STRUCTURAL here: `mldsaKeygenRing` is the ring
+generator, and `mldsaKeygenInternal` (below) IS `mldsaKeygenRing` composed with the byte codecs — the
+shape the byte↔ring refinement `MlDsaKeygenRefine.mldsaKeygen_refines_ring` is stated over. -/
+
+/-- The RING-level ML-DSA-65 key material: `(ρ, K, s1, s2, t1, t0)`, FIPS 204 Alg 6 through step 5.
+`ρ`/`K` are the raw `H(ξ‖k‖ℓ)` seed slices; `s1`/`s2`/`t1`/`t0` are `R_q` vectors (arrays of `Poly`),
+NOT bytes. -/
+structure RingKey where
+  /-- `ρ` — the 32-byte `ExpandA` seed (the first slice of `H(ξ ‖ k ‖ ℓ, 128)`). -/
+  rho : List UInt8
+  /-- `K` — the 32-byte signing seed (the last slice of `H(ξ ‖ k ‖ ℓ, 128)`). -/
+  kk  : List UInt8
+  /-- `s1 ∈ R_q^ℓ` — `ExpandS(ρ′)` low half, coefficients in `[−η, η]`. -/
+  s1  : Array Poly
+  /-- `s2 ∈ R_q^k` — `ExpandS(ρ′)` high half, coefficients in `[−η, η]`. -/
+  s2  : Array Poly
+  /-- `t1 ∈ R_q^k` — the `Power2Round` high parts, coefficients in `[0, 2¹⁰)`. -/
+  t1  : Array Poly
+  /-- `t0 ∈ R_q^k` — the `Power2Round` low parts, coefficients in `(−2^{d−1}, 2^{d−1}]`. -/
+  t0  : Array Poly
+
+/-- Row `i` of the NTT-domain matrix product: `Σⱼ Â[i][j] ∘ ŝ1[j]` (FIPS 204 Alg 6 step 4, NTT domain). -/
+def matAcc (aHat s1Hat : Array Poly) (i : Nat) : Poly := Id.run do
+  let mut acc : Poly := zeroPoly
+  for j in [0:paramL] do
+    acc := addPoly acc (pointwiseMul aHat[i * paramL + j]! s1Hat[j]!)
+  return acc
+
+/-- Coefficient-wise `Power2Round` of one polynomial: `(t1ᵢ, t0ᵢ)` (FIPS 204 Alg 6 step 5). -/
+def p2rLoop (ti : Poly) : (Poly × Poly) := Id.run do
+  let mut t1p := zeroPoly
+  let mut t0p := zeroPoly
+  for c in [0:256] do
+    let (r1, r0) := power2round (ti[c]!)
+    t1p := t1p.set! c r1
+    t0p := t0p.set! c r0
+  return (t1p, t0p)
+
+/-- `ŝ1 = NTT(s1)`, component-wise (FIPS 204 Alg 6 step 4). -/
+def s1HatOf (s1 : Array Poly) : Array Poly := Id.run do
+  let mut s1Hat : Array Poly := Array.mkEmpty paramL
+  for j in [0:paramL] do
+    s1Hat := s1Hat.push (ntt s1[j]!)
+  return s1Hat
+
+/-- The per-row `Power2Round` split: row `i` yields the pair `(t1ᵢ, t0ᵢ)` for
+`t[i] = NTT⁻¹(Σⱼ Â[i][j] ∘ ŝ1[j]) + s2[i]` (FIPS 204 Alg 6 steps 4–5).
+
+ONE mutable accumulator, holding the `(t1ᵢ, t0ᵢ)` PAIR — deliberately, not two parallel `mut` vectors.
+A two-`mut` `do`-loop elaborates to a `forIn` over an `MProd` state whose `List.foldl` normalisation the
+KERNEL cannot check here: each iteration carries the term `p2rLoop (addPoly (intt (matAcc …)) …)`, and
+verifying that rewrite delta-unfolds `intt`/`matAcc`/`p2rLoop` symbolically (256-point loops over symbolic
+arrays) until it deep-recurses. The single-`mut` `out.push (f i)` shape normalises to a plain indexed
+push-fold whose spec applies by UNIFICATION, leaving `f` abstract — the same shape the ML-KEM ring keygen
+uses. Same values, same order; `tLoop` below just projects the two columns. -/
+def tPairs (aHat s1Hat s2 : Array Poly) : Array (Poly × Poly) := Id.run do
+  let mut tp : Array (Poly × Poly) := Array.mkEmpty paramK
+  for i in [0:paramK] do
+    tp := tp.push (p2rLoop (addPoly (intt (matAcc aHat s1Hat i)) s2[i]!))
+  return tp
+
+/-- The `t` vector split: `t[i] = NTT⁻¹(Σⱼ Â[i][j] ∘ ŝ1[j]) + s2[i]`, then `Power2Round` per coefficient
+(FIPS 204 Alg 6 steps 4–5). Returns `(t1, t0)` — the two columns of `tPairs`. -/
+def tLoop (aHat s1Hat s2 : Array Poly) : (Array Poly × Array Poly) :=
+  ((tPairs aHat s1Hat s2).map Prod.fst, (tPairs aHat s1Hat s2).map Prod.snd)
+
+/-- **THE RING-LEVEL `ML-DSA.KeyGen_internal(ξ)`** (FIPS 204 Algorithm 6, steps 1–5). `(ρ,ρ′,K) =
+H(ξ ‖ k ‖ ℓ, 128)` (`H = SHAKE256`, split 32‖64‖32); `Â = ExpandA(ρ)`; `(s1,s2) = ExpandS(ρ′)`;
+`t[i] = NTT⁻¹(Σⱼ Â[i][j] ∘ NTT(s1)[j]) + s2[i]`; `(t1,t0) = Power2Round(t, d)`. NO byte codec: the result
+is the `R_q` key material. This is the SPECIFICATION side of the keygen refinement. -/
+def mldsaKeygenRing (xi : List UInt8) : RingKey := Id.run do
   let g := shake256 (xi ++ [UInt8.ofNat paramK, UInt8.ofNat paramL]) 128
   let rho  := g.take 32
   let rhoP := (g.drop 32).take 64
   let kk   := g.drop 96
   let aHat := expandA rho                                   -- Â[i][j] at index i·ℓ+j (NTT domain)
   let (s1, s2) := expandS rhoP
-  -- ŝ1 = NTT(s1)
-  let mut s1Hat : Array Poly := Array.mkEmpty paramL
-  for j in [0:paramL] do
-    s1Hat := s1Hat.push (ntt s1[j]!)
-  -- t[i] = NTT⁻¹(Σⱼ Â[i][j] ∘ ŝ1[j]) + s2[i]; then Power2Round each coefficient.
-  let mut t1v : Array Poly := Array.mkEmpty paramK
-  let mut t0v : Array Poly := Array.mkEmpty paramK
-  for i in [0:paramK] do
-    let mut acc : Poly := zeroPoly
-    for j in [0:paramL] do
-      acc := addPoly acc (pointwiseMul aHat[i * paramL + j]! s1Hat[j]!)
-    let ti := addPoly (intt acc) s2[i]!
-    let mut t1p := zeroPoly
-    let mut t0p := zeroPoly
-    for c in [0:256] do
-      let (r1, r0) := power2round (ti[c]!)
-      t1p := t1p.set! c r1
-      t0p := t0p.set! c r0
-    t1v := t1v.push t1p
-    t0v := t0v.push t0p
-  let pk := pkEncode (rho, t1v)
-  let tr := shake256 pk 64
-  -- sk = ρ ‖ K ‖ tr ‖ BitPack(s1) ‖ BitPack(s2) ‖ BitPack(t0)
+  let s1Hat := s1HatOf s1
+  let (t1v, t0v) := tLoop aHat s1Hat s2
+  return { rho := rho, kk := kk, s1 := s1, s2 := s2, t1 := t1v, t0 := t0v }
+
+/-- **`skEncode` — FIPS 204 Algorithm 24** at the ML-DSA-65 parameters:
+`sk = ρ ‖ K ‖ tr ‖ BitPack(s1, η, η) ‖ BitPack(s2, η, η) ‖ BitPack(t0, 2^{d−1}−1, 2^{d−1})`
+(32 + 32 + 64 + ℓ·128 + k·128 + k·416 = 4032 bytes). -/
+def skEncode (rho kk tr : List UInt8) (s1 s2 t0 : Array Poly) : List UInt8 := Id.run do
   let mut sk : List UInt8 := rho ++ kk ++ tr
   for i in [0:paramL] do
     sk := sk ++ (packEta s1[i]!).toList
   for i in [0:paramK] do
     sk := sk ++ (packEta s2[i]!).toList
   for i in [0:paramK] do
-    sk := sk ++ (packT0 t0v[i]!).toList
-  return (pk, sk)
+    sk := sk ++ (packT0 t0[i]!).toList
+  return sk
+
+/-! ## ML-DSA.KeyGen_internal (FIPS 204 Algorithm 6) — the deterministic keygen from a 32-byte `ξ`. -/
+
+/-- **`ML-DSA.KeyGen_internal(ξ)`** (FIPS 204 Algorithm 6) for ML-DSA-65 — the RING generator composed
+with the BYTE codecs. Steps 1–5 are `mldsaKeygenRing` (`(ρ,ρ′,K) = H(ξ ‖ k ‖ ℓ, 128)`; `Â = ExpandA(ρ)`;
+`(s1,s2) = ExpandS(ρ′)`; `t̂[i] = Σⱼ Â[i][j] ∘ NTT(s1[j])`, `t[i] = NTT⁻¹(t̂[i]) + s2[i]`;
+`(t1,t0) = Power2Round(t)`); steps 6–8 are the byte layer `pk = pkEncode(ρ, t1)`; `tr = H(pk, 64)`;
+`sk = skEncode(ρ, K, tr, s1, s2, t0)`. Input `xi` is the 32-byte seed. Returns `(pk, sk)` — the 1952-byte
+public key and the 4032-byte secret key. -/
+def mldsaKeygenInternal (xi : List UInt8) : (List UInt8 × List UInt8) :=
+  let rk := mldsaKeygenRing xi
+  let pk := pkEncode (rk.rho, rk.t1)
+  let tr := shake256 pk 64
+  (pk, skEncode rk.rho rk.kk tr rk.s1 rk.s2 rk.t0)
 
 /-! ## THE `@[export]` FFI ENTRY (Rust → Lean) — the REAL, FULL-BYTE ML-DSA-65 KEY GENERATION over a byte wire.
 
