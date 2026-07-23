@@ -755,6 +755,12 @@ fn constraint_dissect(
             Some(*digest_slot),
             vec![*current_slot, *last_rotated_slot],
         ),
+        SC::FieldsCountEquals { count_index, .. } => {
+            // The count register is the constraint's one u8-slot binding; the
+            // counted `keys` are u64 heap map keys and do not fit the u8 slot
+            // wire, so they are deliberately not coerced into `extra`.
+            ("fields_count_equals", Some(*count_index), vec![])
+        }
         SC::Custom { .. } => ("custom", None, vec![]),
         // Witnessed predicates are checked by the executor's predicate
         // registry; the observability layer surfaces them as a generic
@@ -904,6 +910,13 @@ fn constraint_dissect(
         // are u64 fields_map keys, which do not fit the u8 slot lanes (like the sibling
         // `HeapField`); consumers read the keys from the program view.
         SC::HeapFieldLteOther { .. } => ("heap_field_lte_other", None, vec![]),
+        // Exact zone-census gate: the count register is the constraint's one
+        // u8-slot binding; the counted `keys` are u64 heap map keys and do not
+        // fit the u8 slot lanes (same shape as the sibling match above at
+        // `constraint_tag`, and as `HeapFieldLteOther` here).
+        SC::FieldsCountEquals { count_index, .. } => {
+            ("fields_count_equals", Some(*count_index), vec![])
+        }
     }
 }
 
