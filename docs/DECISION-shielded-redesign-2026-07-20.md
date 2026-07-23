@@ -37,6 +37,19 @@ radius: it's a node-operator-trust surface, not a light-client-soundness surface
    runs **only in tests**, never in `apply` (it needs the secret opening, so it *can't* run there as
    written). Deployed conservation proves only that the *Ristretto legs* balance, not that they equal
    the STARK-witnessed leaf values → a prover can mint by decoupling them.
+   - **Resolution status (2026-07-22): metatheory landed, deployed gap STILL OPEN.** The falsifier +
+     fix-soundness are machine-checked in `metatheory/Dregg2/Circuit/ShieldedValueLinkPin.lean`
+     (`genuine_note_inflates`: a genuinely-owned `v`-note mints `v+1` with conservation passing —
+     no forged leaf, purely the missing link; `verify_value_link_forces_link` + `link_test_is_not_the_gate`
+     expose the launder that the `value_binding`/wide carrier ARE honestly bound to the leaf yet
+     conservation sums the *separate* free Pedersen leg; `linked_conservation_over_real_value` ⟹
+     minted = real spent; `#assert_axioms`-clean, non-vacuous). Confirmed at HEAD `a1ebd82c43`: the added
+     wide-binding layer (`verify_stark_with_wide_bindings`) ties `value_binding` to a full-`u64` carrier
+     but does NOT tie the Pedersen leg to the leaf (`transfer.rs:196` "This transcript binding does not
+     prove leaf↔leg value equality"). The in-AIR fix authored in
+     `Dregg2.Circuit.Emit.ShieldedValueLinkDescriptor` (Option-A lane 2) is **not yet routed into
+     `apply_shielded_transfer`** — routing the deployed transfer through it (retiring the split
+     `verify_full_conservation_bytes` over free legs) is the remaining gated deploy.
 3. **#17 — the PQ posture is overstated.** The circuit/docs declare the Poseidon2 `value_binding`
    authoritative and Ristretto "retired / not in the TCB" — but the **only no-mint gate that actually
    runs on the deployed path is the Ristretto DLog aggregate**, which is Shor-broken. The comments
