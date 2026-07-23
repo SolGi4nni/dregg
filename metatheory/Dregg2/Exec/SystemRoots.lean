@@ -61,6 +61,19 @@ returns (`rootsCollFind`/`RootsColl`, `cellCommitSCollFind`/`CellCommitSColl`). 
 relation BOTH ways as standalone bridges — every deleted theorem is recovered as exactly its injective
 special case (`…_of_injective`), and the collision disjunct is refutable there (`…_refutable_of_injective`)
 while being genuinely inhabited at a degenerate sponge (`badRootsSponge_has_rootsColl`).
+
+⚑ **AND THE `…_or_collides` FORMS ARE NO LONGER THE EXPORTED BINDING EITHER (07-23).** A bare
+`binds ∨ collides` quantifies over SOLUTIONS, and at deployed BabyBear parameters a sponge collision
+EXISTS by pigeonhole — so the disjunction is satisfiable through the `collides` branch with `binds`
+never holding. Cryptographic hardness quantifies over EFFICIENT ADVERSARIES. The exported binding of
+the eight consensus roots is now `Dregg2.Exec.SystemRootsBindingReduction`:
+`sysRoots_binds_from_polyTime` (the three digest-layer disjunctions are ONE forgery `Game` projected
+three ways), `cellCommitS_binds_from_polyTime`, and `cellRoots_binds_from_polyTime` (the three-way
+disjunction as a UNION BOUND — two extracted finders, two advantages, one floor). `hEff` is DISCHARGED
+with `CostTactics.poly_time` at `Eff := IsPolyTime`, not carried. The five `…_or_collides` theorems
+below are DEMOTED to exact-Prop skeletons; see `systemRootsDigest_binds_or_collides` for the two
+honest reasons they still exist (the §3′ bridges derive from them; 29 `Circuit/Emit` modules still
+export them one layer up) — the reduction itself does not consume any of them.
 -/
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.Poseidon2Binding
@@ -206,9 +219,24 @@ satisfiable through the `collides` branch with `binds` never holding.  Cryptogra
 quantifies over EFFICIENT ADVERSARIES.  The exported binding of the eight consensus roots is now the
 REDUCTION `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (forgery as a `Game`, extractor as
 a map of adversaries, unconditional advantage inequality, `hEff` discharged by `poly_time` at
-`Eff := IsPolyTime`).  This theorem is RETAINED as the deterministic skeleton that reduction's win
-relation rests on, and as the base of the `_of_injective` strength bridges below — the same demotion
-`Market.WideCommitBoundary` applied to `stateDecode8_pre_faithful`. So tampering ANY side-table root — a dropped escrow, an omitted
+`Eff := IsPolyTime`).
+
+⚑ **WHY THIS IS RETAINED RATHER THAN DELETED, STATED AT THE TRUE RESOLUTION.** NOT because the
+reduction rests on it — it does not: `sysRootsBreakGame`'s win relation is
+`EncodedBindingReduction.encBreakGame` at the deployed encoder, and the bridge
+`sysRoots_forgery_is_break` is proved from `rootsEnc_faithful` + `rootsEnc_inj` WITHOUT citing this
+theorem (every mention of it over there is a comment). It is retained for exactly two reasons, both
+open work rather than design:
+  1. the `_of_injective` strength bridges in §3′ are DERIVED from it (deleting it would mean
+     re-proving them directly), and
+  2. it is still the EXPORTED headline of the downstream per-effect keystones —
+     `Circuit.Emit.EffectVmFullStateRunnable.wide_binds_systemRoots_or_collides` and its per-tag
+     re-exports across 29 `Circuit/Emit` modules, of which exactly ONE
+     (`EffectVmEmitMintRunnable`, via `EffectVmRowCommitReduction.wideRow_binds_from_polyTime`) has
+     been re-pointed at a reduction. Until the rest are, the escape branch is still what the deployed
+     per-tag statements offer, one layer up.
+
+So tampering ANY side-table root — a dropped escrow, an omitted
 nullifier, a reordered queue — either moves the digest or COSTS the prover a named sponge collision.
 
 ⚑ **STRENGTH, stated honestly.** As a FORMULA this is weaker than the deleted equality. As CONTENT AT
@@ -244,8 +272,10 @@ Equal digests force EVERY side-table root equal (pointwise at each kernel index)
 collision.  The per-index projection of the same binding; the exported anti-ghost claim for all eight
 side-tables is `SystemRootsBindingReduction.sysRoots_binds_from_polyTime` (whose forgery game is won
 by exactly a sub-block pair differing at SOME kernel index —
-`SystemRootsBindingReduction.sysRoots_forgery_is_break`).  Retained here as the win relation's
-deterministic skeleton: if the committed digest
+`SystemRootsBindingReduction.sysRoots_forgery_is_break`).  Retained on the two grounds named at
+`systemRootsDigest_binds_or_collides` — the §3′ bridges derive from it, and the per-effect emit
+keystones still export it — NOT because the reduction consumes it.  As a deterministic statement it
+says: if the committed digest
 is fixed, NO side-table root can be tampered without a named sponge collision. Combined with the
 commitment absorption (§4), this is the 3-corner anti-ghost tooth for all 8 side-tables. -/
 theorem systemRootsDigest_binds_pointwise_or_collides (compressN : List FieldElem → FieldElem)

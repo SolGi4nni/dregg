@@ -20,10 +20,25 @@ branch with `binds` never holding.  They quantify over SOLUTIONS.  Cryptographic
 over EFFICIENT ADVERSARIES.
 
 ⚑ **THESE ARE NOT THE HEADLINE ANY MORE.**  This module supplies the headline, and `SystemRoots`'s
-docstrings now say so: the five disjunctions are DEMOTED to the exact-Prop skeleton the win relations
-rest on (and to the `_of_injective` strength bridges' base), exactly as `Market.WideCommitBoundary`
-demoted `stateDecode8_pre_faithful`.  The exported security claim about the eight consensus roots is
-now `sysRoots_binds_from_polyTime` / `cellRoots_binds_from_polyTime` below.
+docstrings now say so.  The exported security claim about the eight consensus roots is now
+`sysRoots_binds_from_polyTime` / `cellCommitS_binds_from_polyTime` / `cellRoots_binds_from_polyTime`
+below.
+
+⚑ **AND THE DEMOTION IS NOT A DEPENDENCE — SAID PLAINLY, BECAUSE THE OPPOSITE IS THE EASY CLAIM.**
+This reduction does NOT consume the five disjunctions.  Its win relation is
+`EncodedBindingReduction.encBreakGame` at the deployed encoder, and the two bridges
+(`sysRoots_forgery_is_break`, `cellCommitS_forgery_is_break`) are proved from `rootsEnc_faithful` +
+`rootsEnc_inj` and from `List.append_cancel_left` respectively — the disjunctions appear over there
+only in prose.  They survive for two reasons that are OPEN WORK, not architecture:
+
+  1. `SystemRoots` §3′'s `_of_injective` strength bridges are derived from them, and
+  2. they are STILL the exported headline one layer up — `Circuit.Emit.EffectVmFullStateRunnable`'s
+     `wide_binds_systemRoots_or_collides` and its per-tag re-exports across 29 `Circuit/Emit`
+     modules, of which exactly ONE (`EffectVmEmitMintRunnable`, via
+     `EffectVmRowCommitReduction.wideRow_binds_from_polyTime`) has been re-pointed at a reduction.
+
+Until (2) is finished, the deployed per-tag statements still offer the escape branch that this module
+prices at the record layer.  That residual is named here rather than left for a reader to discover.
 
 ## The shape, and what it costs
 
@@ -43,12 +58,21 @@ The three-way disjunction of `cellCommitS_binds_roots_pointwise_or_collides` bec
 UNION BOUND (`EncodedBindingReduction.chained_binding_advantage_bound`): two extracted finders, two
 advantages, one floor, one negligible sum.
 
-⚑ **THE RESIDUAL, NAMED.** The floor is `HashCRHardQuant (spongeFamily D) Eff`, and at
-`Eff := ⊤` it is FALSE at deployed BabyBear parameters (§4 — the honest price), at `Eff := ⊥` vacuous.
-`Eff := IsPolyTime` sits strictly between: the ⊤-collapse witness is PROVED excluded
-(`CostAdversary.bruteForce_not_polyTime`) and the class is PROVED inhabited.  What the rebuild buys is
-not a floor the deployed sponge satisfies at ⊤ — no such floor exists — it is that the residual is ONE
-named parameter with both poles proved, instead of a disjunct that is unconditionally available.
+⚑ **THE RESIDUAL, NAMED — AND THE INSTANTIATION IS PART OF IT.** The floor is
+`HashCRHardQuant (spongeFamily D) Eff`, and at `Eff := ⊤` it is FALSE at deployed BabyBear parameters
+(§5 — the honest price), at `Eff := ⊥` vacuous.  `Eff := IsPolyTime` is a strictly intermediate CLASS
+(the class is proved inhabited, and `CostAdversary.bruteForce_not_polyTime` excludes the brute-force
+PROGRAM) — but §6 PROVES that the floor AT that class is FALSE too at the deployed sponge:
+`IsPolyTime` prices only ANSWER SIZE and declared syntactic work, so the `Classical.choice` adversary
+that answers each tag with a TWO-LIMB collision is in it and wins with probability `1`
+(`sysRoots_floor_polyTime_false_babyBear`).
+
+So, stated without softening: the `_advantage_bound` theorems (arbitrary `Eff`, `hEff` in the open)
+are this module's live content; the three `_from_polyTime` theorems are VACUOUS at deployed
+parameters, because their floor hypothesis is refutable there.  What the `poly_time` discharge buys is
+that the REDUCTION's own efficiency is a theorem rather than an assumption — it does not buy a floor
+the deployed sponge satisfies.  Closing that needs a computability- or query-bounded adversary class
+in `Dregg2.Crypto.CostAdversary`, which is shared by every `_from_polyTime` in the tree.
 
 No `sorry`, no `axiom`, no `native_decide`.
 -/
@@ -396,6 +420,116 @@ theorem sysRoots_no_reflexive_break (D : SpongeKeyed) (l : ℕ)
     ¬ (sysRootsBreakGame D).wins l t (sr, sr) :=
   no_reflexive_break (spongeFamily D) SysRoots (rootsEnc D) l t sr
 
+/-! ## §6 — ⚑ THE INSTANTIATED FLOOR IS FALSE TOO, AT THE DEPLOYED SPONGE.
+
+§5 prices the ⊤ pole and records that `Eff := IsPolyTime` sits STRICTLY BETWEEN the two poles AS A
+CLASS.  That is true and it is not enough, and this section says why in Lean rather than in prose.
+
+`CostAdversary.IsPolyTime sz A` is `∃ B : CostAdversary …, B.toAdversary = A ∧ PolyTime sz B`, and
+`CostAdversary.idAdv a₀` accepts an ARBITRARY Lean function `a₀` — including a `Classical.choice` one —
+as `.pure (a₀ l i)`, whose whole cost is `sz l (a₀ l i)`.  So the class contains EVERY adversary whose
+ANSWERS are poly-size, no matter how hard those answers are to find:
+`isPolyTime_of_polySize_answers` below is that observation, proved.
+
+Consequently the floor at `Eff := IsPolyTime` is not the class restriction it reads as.  A compressing
+sponge has SHORT collisions — the one-limb messages `[n]`, `n : ℤ`, are an infinite family landing in
+one bounded field — so the choice adversary that answers with a short collision at every tag is in the
+class, wins with probability `1`, and REFUTES the floor.  `sysRoots_floor_polyTime_false_babyBear` is
+that refutation at the deployed BabyBear bound.
+
+⚑ **WHAT THIS MEANS FOR THE HEADLINES ABOVE, STATED WITHOUT SOFTENING.**
+`sysRoots_binds_from_polyTime`, `cellCommitS_binds_from_polyTime` and `cellRoots_binds_from_polyTime`
+carry `HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))` as a hypothesis, and at the
+deployed sponge that hypothesis is FALSE.  They are therefore VACUOUS at deployed parameters — the
+same defect, one level up, as the `compressNInjective` bindings this whole repair deleted.  The
+`_advantage_bound` forms are NOT vacuous: they quantify over an arbitrary class with `hEff` in the
+open, and they are the honest content of this module.  What the `poly_time` discharge buys is that the
+reduction's own efficiency is a THEOREM rather than an assumption; what it does NOT buy is a floor the
+deployed sponge satisfies.
+
+⚑ **THE DEFECT IS THE COST MODEL, NOT THIS SITE.** `IsPolyTime` measures OUTPUT SIZE plus DECLARED
+syntactic work, and lets any Lean function be embedded at that price, so it cannot separate "writes a
+short string" from "finds a collision".  Closing it needs the class to be a COMPUTABILITY-bounded (or
+oracle-query-bounded) one — an adversary that must COMPUTE its answer from the tag — which is a change
+to `Dregg2.Crypto.CostAdversary`, shared by every `_from_polyTime` in the tree.  Recording it here,
+where it is provable at a deployed instance, rather than leaving it for a reader to find. -/
+
+/-- **⚑ `IsPolyTime` IS EXACTLY "POLY-SIZE ANSWERS" (the ⊇ half, which is the damaging one).** Any
+adversary at all — `Classical.choice`-defined, non-computable, whatever — is in the class as soon as
+the answers it writes are poly-size, because `idAdv` embeds its `run` verbatim and charges only the
+answer.  Nothing about finding the answer is priced. -/
+theorem isPolyTime_of_polySize_answers {G : Dregg2.Crypto.FloorGames.Game}
+    (sz : AnsSize G) (A : Adversary G)
+    (hsz : ∃ C k : ℕ, ∀ l (i : G.Inst l), sz l (A.run l i) ≤ C * l ^ k + C) :
+    IsPolyTime sz A :=
+  Dregg2.Crypto.CostAdversary.isPolyTime_inhabited sz A.run hsz
+
+/-- **A SHORT COLLISION AT EVERY TAG.** The one-limb messages `[n]` for `n : ℤ` are an infinite family
+whose sponge images all land in `[0, p)` — so two of them collide, and the witness is TWO LIMBS TOTAL.
+Pure pigeonhole (`HashFloorHonesty.not_injective_of_finite_range`), no Poseidon2 structure used. -/
+theorem exists_short_collision (D : SpongeKeyed)
+    (hb : ∀ xs : List ℤ, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ))
+    (l : ℕ) (t : (spongeFamily D).Key l) :
+    ∃ p : List ℤ × List ℤ, (hashGame (spongeFamily D)).wins l t p
+      ∧ p.1.length + p.2.length ≤ 2 := by
+  have hfin : (Set.range (fun n : ℤ => D.sponge (D.tagCode t ++ [n]))).Finite := by
+    refine (Set.finite_Ico (0 : ℤ) 2013265921).subset ?_
+    rintro _ ⟨n, rfl⟩
+    exact ⟨(hb _).1, (hb _).2⟩
+  have hni := Dregg2.Circuit.HashFloorHonesty.not_injective_of_finite_range
+    (fun n : ℤ => D.sponge (D.tagCode t ++ [n])) hfin
+  rw [Function.not_injective_iff] at hni
+  obtain ⟨n, m, himg, hne⟩ := hni
+  refine ⟨([n], [m]), ⟨fun h => hne ?_, himg⟩, by simp⟩
+  injection h with h1 _
+
+/-- **THE SHORT-COLLISION ADVERSARY** — answers every sampled tag with a two-limb collision. It is a
+perfectly good `Adversary`: nothing in that type demands computability, and nothing in `IsPolyTime`
+demands it either. -/
+noncomputable def shortCollAdv (D : SpongeKeyed)
+    (hb : ∀ xs : List ℤ, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    Adversary (hashGame (spongeFamily D)) where
+  run := fun l t => (exists_short_collision D hb l t).choose
+
+/-- It wins at EVERY tag. -/
+theorem shortCollAdv_wins (D : SpongeKeyed)
+    (hb : ∀ xs : List ℤ, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ))
+    (l : ℕ) (t : (spongeFamily D).Key l) :
+    (hashGame (spongeFamily D)).wins l t ((shortCollAdv D hb).run l t) :=
+  (exists_short_collision D hb l t).choose_spec.1
+
+/-- And it is IN the class the headline theorems instantiate the floor at — two limbs is poly-size. -/
+theorem shortCollAdv_isPolyTime (D : SpongeKeyed)
+    (hb : ∀ xs : List ℤ, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    IsPolyTime (spongeAnsSize D) (shortCollAdv D hb) :=
+  isPolyTime_of_polySize_answers _ _
+    ⟨2, 0, fun l t => by
+      have h := (exists_short_collision D hb l t).choose_spec.2
+      simpa [spongeAnsSize, pairAnsSize, shortCollAdv] using h.trans (by omega)⟩
+
+/-- **⚑ THE INSTANTIATED FLOOR IS FALSE AT THE DEPLOYED SPONGE.** So
+`sysRoots_binds_from_polyTime` / `cellCommitS_binds_from_polyTime` / `cellRoots_binds_from_polyTime`
+are VACUOUS at deployed BabyBear parameters, and the module's live content is the `_advantage_bound`
+forms with `hEff` in the open.  This is the honest price of the `poly_time` discharge as
+`Dregg2.Crypto.CostAdversary` currently defines the class, and it is a defect of that shared cost
+model rather than of this instantiation. -/
+theorem sysRoots_floor_polyTime_false_babyBear (D : SpongeKeyed)
+    (hb : ∀ xs : List ℤ, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
+    ¬ HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D)) := by
+  intro hHard
+  have hneg := hHard (shortCollAdv D hb) (shortCollAdv_isPolyTime D hb)
+  have hone : gameAdv (hashGame (spongeFamily D)) (shortCollAdv D hb) = fun _ => (1 : ℝ) := by
+    funext l
+    show @Dregg2.Crypto.ProbCrypto.winProb _ ((hashGame (spongeFamily D)).instFin l) _ = 1
+    have hall : (shortCollAdv D hb).hit l = fun _ => true := by
+      funext t
+      exact ((shortCollAdv D hb).hit_eq_true l t).mpr (shortCollAdv_wins D hb l t)
+    rw [hall]
+    exact @Dregg2.Crypto.ProbCrypto.winProb_top _ ((hashGame (spongeFamily D)).instFin l)
+      ((hashGame (spongeFamily D)).instNe l)
+  rw [hone] at hneg
+  exact Dregg2.Crypto.ConcreteSecurity.not_negl_one hneg
+
 #assert_axioms rootsEnc_faithful
 #assert_axioms commitEnc_faithful
 #assert_axioms rootsEnc_inj
@@ -415,5 +549,10 @@ theorem sysRoots_no_reflexive_break (D : SpongeKeyed) (l : ℕ)
 #assert_axioms sysRoots_polyTime_class_inhabited
 #assert_axioms the_reduced_sysRoots_bound_fires
 #assert_axioms sysRoots_no_reflexive_break
+#assert_axioms isPolyTime_of_polySize_answers
+#assert_axioms exists_short_collision
+#assert_axioms shortCollAdv_wins
+#assert_axioms shortCollAdv_isPolyTime
+#assert_axioms sysRoots_floor_polyTime_false_babyBear
 
 end Dregg2.Exec.SystemRootsBindingReduction
