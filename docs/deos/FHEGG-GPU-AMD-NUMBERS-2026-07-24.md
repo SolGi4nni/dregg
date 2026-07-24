@@ -69,3 +69,20 @@ The GPU pays only for the WHOLE resident clearing pipeline (upload once → fold
 multiply, all on-device, then one download), where the many compute-bound ops amortize the upload. The
 `DREX-GPU-RESIDENCY-PLAN.md` residency plan is therefore the real lever; a fold-only GPU path is a
 de-optimization. Honest, measured, and it saves us from shipping a slower "GPU fold."
+
+### persvati iGPU CONFIRMS: the streaming fold loses on BOTH AMD boxes
+
+Same streaming single-clear on the RADV GFX1150 iGPU — the fold-loses finding is robust, not a discrete-PCIe
+artifact:
+
+| N | CPU fold | GPU stream | gpu/cpu |
+|---|---|---|---|
+| 16384 | 302.1ms | 893.9ms | **0.34×** |
+| 32768 | 612.3ms | 1770.9ms | **0.35×** |
+| 65536 | 1207.6ms | 3508.2ms | **0.34×** |
+| 100000 | 1881.8ms | 5479.8ms | **0.34×** |
+
+The iGPU loss is FLATTER (~0.34× everywhere) than the discrete 6750 XT (0.22–0.33×): shared memory makes the
+"upload" cheaper but the compute slower, so the ratio is size-independent. Either way — **a single fold of N
+orders loses on both AMD GPUs.** The measured conclusion stands on both targets: the fold is not the GPU win;
+resident reuse + compute-bound ops (histogram/NTT/multiply) are.
