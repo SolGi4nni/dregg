@@ -52,7 +52,7 @@ One deliberate grammar detail is load-bearing: constraint 10 uses an every-row `
 * Non-vacuity: `honestTrace_satisfies` is a four-row witness with two real rows followed by two
   padding rows.  Three concrete forged windows (continuity, index, real-count) are formally UNSAT.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.ChipNarrowLookup
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Tactics
 
@@ -60,6 +60,8 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.ChipNarrowLookup
+  (narrowTable narrowRow narrowRow_chipRow chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRowEnv)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 
@@ -77,10 +79,10 @@ def IDX : Nat := 4
 def IS_REAL : Nat := 5
 def REAL_COUNT : Nat := 6
 
-/-- Seven exposed Poseidon2 output lanes 1..7.  Lane 0 is `ACC_OUT`. -/
-def LANE1 : Nat := 7
-/-- Seven scalar columns plus seven chip-output lanes. -/
-def WIDTH : Nat := 7 + (CHIP_OUT_LANES - 1)
+/-- Seven scalar columns.  The seven exposed Poseidon2 output lanes 1..7 the WIDE `TID_P2` tuple
+carried are GONE (E7 narrowing, `ChipNarrowLookup.lean`): they sat at lane positions 18..24 of the
+25-wide tuple and entered no soundness conclusion.  Lane 0 is `ACC_OUT` and stays. -/
+def WIDTH : Nat := 7
 
 def PI_GENESIS_ROOT : Nat := 0
 def PI_FINAL_ROOT : Nat := 1
@@ -126,10 +128,10 @@ def lastAccBind : VmConstraint2 :=
 `[acc_in, old_root, new_root, idx]`; there is NO IVC domain tag and NO `old_hash`. -/
 def perRowHash : VmConstraint2 :=
   .lookup
-    { table := .poseidon2
-    , tuple := chipLookupTuple
+    { table := poseidon2narrow
+    , tuple := chipLookupTupleNarrow
         [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-        Chain.ACC_OUT (siteLaneCols Chain.LANE1) }
+        Chain.ACC_OUT }
 
 /-- The positional index starts at zero. -/
 def firstIdxZero : VmConstraint2 :=
@@ -206,7 +208,11 @@ def turnChainBindingDescriptor : EffectVmDescriptor2 :=
 
 /-! ## §3 — Rung 0: shape and wire tripwires. -/
 
-#guard Chain.WIDTH == 14
+#guard Chain.WIDTH == 7
+-- The narrowing dropped exactly CHIP_OUT_LANES - 1 = 7 main columns for the same forced
+-- digest equation.
+#guard Chain.WIDTH + (CHIP_OUT_LANES - 1) == 14
+#guard poseidon2narrow.wireId == 8
 #guard turnChainBindingDescriptor.piCount == 4
 #guard turnChainConstraints.length == 14
 #guard (turnChainConstraints.filter (fun c => match c with
@@ -225,7 +231,7 @@ def turnChainBindingDescriptor : EffectVmDescriptor2 :=
 /-- Byte-pinned law-#1 artifact.  Rust's eventual cutover includes this exact string rather than
 re-authoring any of the constraints below. -/
 def TURN_CHAIN_BINDING_GOLDEN : String :=
-  "{\"name\":\"dregg-turn-chain-binding-v2\",\"ir\":2,\"trace_width\":14,\"public_input_count\":4,\"tables\":[],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":0}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":1,\"pi_index\":1},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":2}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":2}}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":3,\"pi_index\":3},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13}]},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":5}}}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":6,\"pi_index\":2}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-turn-chain-binding-v2\",\"ir\":2,\"trace_width\":7,\"public_input_count\":4,\"tables\":[],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":0}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":1,\"pi_index\":1},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":2}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":2}}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":3,\"pi_index\":3},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":3}]},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":4}},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"nxt\",\"c\":5},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":6},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":5}}}}},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":6,\"pi_index\":2}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 turnChainBindingDescriptor == TURN_CHAIN_BINDING_GOLDEN
 
@@ -274,37 +280,53 @@ def turnChainWindowHolds (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmR
 
 /-! ## §5 — Hash-table realization and Rung 1/Rung 2. -/
 
-/-- The seven output-lane values carried by this main row. -/
-def hashLanes (env : VmRowEnv) : List ℤ :=
-  (siteLaneCols Chain.LANE1).map env.loc
+/-- The seven permutation lanes of the PHYSICAL chip row.  After the E7 narrowing they are no
+longer main-trace columns — they live only inside the chip, so the row model carries them as the
+canonical zero block. -/
+def hashLanes : List ℤ := List.replicate (CHIP_OUT_LANES - 1) 0
 
-/-- The canonical genuine chip table for one row window: exactly the arity-4 permutation row
+/-- The canonical genuine WIDE chip table for one row window: exactly the arity-4 permutation row
 whose input is the turn-chain preimage and whose output lane 0 is `hash (hashInputs env)`.
 This is a concrete table, not an assumed carrier. -/
+def canonicalRowWide (hash : List ℤ → ℤ) (env : VmRowEnv) : List (List ℤ) :=
+  [chipRow hash (hashInputs env) hashLanes]
+
+/-- ONE physical chip serving TWO buses: `.poseidon2` carries the genuine 25-wide row and the NARROW
+bus (`poseidon2narrow = .custom 3`) carries its 18-prefix — exactly the deployed Rust `narrow_hist`
+serving. -/
 def canonicalRowTf (hash : List ℤ → ℤ) (env : VmRowEnv) : TraceFamily := fun tid =>
-  if tid = .poseidon2 then [chipRow hash (hashInputs env) (hashLanes env)] else []
+  match tid with
+  | .poseidon2 => canonicalRowWide hash env
+  | .custom 3  => narrowTable (canonicalRowWide hash env)
+  | _ => []
+
+/-- The canonical family wires the narrow bus to the 18-prefix of the wide chip table
+(definitional). -/
+theorem canonicalRowTf_narrow_wire (hash : List ℤ → ℤ) (env : VmRowEnv) :
+    canonicalRowTf hash env poseidon2narrow = narrowTable (canonicalRowTf hash env .poseidon2) :=
+  rfl
 
 /-- The canonical row table is genuinely chip-sound, by construction. -/
 theorem canonicalRowTf_chipSound (hash : List ℤ → ℤ) (env : VmRowEnv) :
     ChipTableSound hash (canonicalRowTf hash env .poseidon2) := by
   intro r hr
-  simp only [canonicalRowTf, if_pos, List.mem_singleton] at hr
+  simp only [canonicalRowTf, canonicalRowWide, List.mem_singleton] at hr
   subst r
-  refine ⟨hashInputs env, hashLanes env, ?_, ?_, rfl⟩
+  refine ⟨hashInputs env, hashLanes, ?_, ?_, rfl⟩
   · simp [hashInputs, CHIP_RATE]
-  · simp [hashLanes, siteLaneCols, CHIP_OUT_LANES]
+  · simp [hashLanes, CHIP_OUT_LANES]
 
 /-- Completeness of the per-row chip lookup against the canonical genuine row. -/
 theorem perRowHash_complete (hash : List ℤ → ℤ) (env : VmRowEnv)
     (hhash : env.loc Chain.ACC_OUT = hash (hashInputs env)) :
     perRowHash.holdsAt hash (canonicalRowTf hash env) env false false := by
-  simp only [perRowHash, VmConstraint2.holdsAt, Lookup.holdsAt, canonicalRowTf, if_pos,
-    List.mem_singleton]
+  simp only [perRowHash, VmConstraint2.holdsAt, Lookup.holdsAt, canonicalRowTf, canonicalRowWide,
+    poseidon2narrow, narrowTable, List.map_cons, List.map_nil]
+  rw [narrowRow_chipRow hash (hashInputs env) hashLanes (by simp [hashInputs, CHIP_RATE])]
   rw [show hashInputs env =
     [env.loc Chain.ACC_IN, env.loc Chain.OLD_ROOT, env.loc Chain.NEW_ROOT, env.loc Chain.IDX] from rfl]
-  simp [chipLookupTuple, chipRow, hashLanes, siteLaneCols, padToE, padTo,
-    EmittedExpr.eval, CHIP_RATE, CHIP_OUT_LANES, hhash]
-  simp [hashInputs]
+  simp [chipLookupTupleNarrow, chipRowNarrow, padToE, padTo,
+    EmittedExpr.eval, CHIP_RATE, hhash, hashInputs]
 
 /-- The canonical lookup is EXACTLY the genuine per-row hash equation. -/
 theorem perRowHash_canonical_iff (hash : List ℤ → ℤ) (env : VmRowEnv)
@@ -315,9 +337,10 @@ theorem perRowHash_canonical_iff (hash : List ℤ → ℤ) (env : VmRowEnv)
   · intro h
     have hs := canonicalRowTf_chipSound hash env
     simp only [perRowHash, VmConstraint2.holdsAt, Lookup.holdsAt] at h
-    have hh := chip_lookup_sound hash (canonicalRowTf hash env .poseidon2) hs env.loc
-      [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-      Chain.ACC_OUT (siteLaneCols Chain.LANE1) (by unfold CHIP_RATE; decide) h
+    rw [canonicalRowTf_narrow_wire hash env] at h
+    have hh := chip_lookup_narrow_sound_of_wide_table hash (canonicalRowTf hash env .poseidon2) hs
+      env.loc [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
+      Chain.ACC_OUT (by unfold CHIP_RATE; decide) h
     simpa [hashInputs, EmittedExpr.eval] using hh
   · intro h
     exact perRowHash_complete hash env h
@@ -327,14 +350,16 @@ Poseidon2 chip table enforces every one of the fourteen Rust AIR sites. -/
 theorem turnChain_descriptor_refines_rust_air
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (hchip : ChipTableSound hash (tf .poseidon2))
+    (hwire : tf poseidon2narrow = narrowTable (tf .poseidon2))
     (h : turnChainWindowHolds hash tf env isFirst isLast) :
     RustTurnChainRow hash env isFirst isLast := by
   have hh : env.loc Chain.ACC_OUT = hash (hashInputs env) := by
     have hc := h perRowHash (by simp [turnChainBindingDescriptor, turnChainConstraints])
     simp only [perRowHash, VmConstraint2.holdsAt, Lookup.holdsAt] at hc
-    have hs := chip_lookup_sound hash (tf .poseidon2) hchip env.loc
+    rw [hwire] at hc
+    have hs := chip_lookup_narrow_sound_of_wide_table hash (tf .poseidon2) hchip env.loc
       [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-      Chain.ACC_OUT (siteLaneCols Chain.LANE1) (by unfold CHIP_RATE; decide) hc
+      Chain.ACC_OUT (by unfold CHIP_RATE; decide) hc
     simpa [hashInputs, EmittedExpr.eval] using hs
   have hroot := h rootContinuity (by simp [turnChainBindingDescriptor, turnChainConstraints])
   have hold := h firstOldRootBind (by simp [turnChainBindingDescriptor, turnChainConstraints])
@@ -374,7 +399,7 @@ theorem turnChain_descriptor_iff_rust_air
       RustTurnChainRow hash env isFirst isLast := by
   constructor
   · exact turnChain_descriptor_refines_rust_air hash (canonicalRowTf hash env) env
-      isFirst isLast (canonicalRowTf_chipSound hash env)
+      isFirst isLast (canonicalRowTf_chipSound hash env) (canonicalRowTf_narrow_wire hash env)
   · intro hr c hc
     unfold RustTurnChainRow at hr
     rcases hr with ⟨hroot, hold, hnew, ha0, hacc, haccl, hhash, hi0, hidx, hbool,
@@ -463,21 +488,32 @@ def rowOf (xs : List ℤ) : Assignment := fun i => xs.getD i 0
 still genuinely `ChipTableSound` for it; cryptographic strength is irrelevant to SAT non-vacuity. -/
 def hash99 : List ℤ → ℤ := fun _ => 99
 
-def honest0 : Assignment := rowOf [10, 20, 0, 99, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]
-def honest1 : Assignment := rowOf [20, 30, 99, 99, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0]
-def pad0 : Assignment := rowOf [30, 30, 99, 99, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0]
-def pad1 : Assignment := rowOf [30, 30, 99, 99, 3, 0, 2, 0, 0, 0, 0, 0, 0, 0]
+def honest0 : Assignment := rowOf [10, 20, 0, 99, 0, 1, 1]
+def honest1 : Assignment := rowOf [20, 30, 99, 99, 1, 1, 2]
+def pad0 : Assignment := rowOf [30, 30, 99, 99, 2, 0, 2]
+def pad1 : Assignment := rowOf [30, 30, 99, 99, 3, 0, 2]
 def honestPub : Assignment := rowOf [10, 30, 2, 99]
 
+/-- The PHYSICAL 25-wide chip row a trace row names: the 18-wide narrow key the emitted lookup now
+reads, extended by the seven permutation lanes the chip still witnesses internally. -/
 def chipTupleAt (a : Assignment) : List ℤ :=
-  (chipLookupTuple
+  (chipLookupTupleNarrow
     [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-    Chain.ACC_OUT (siteLaneCols Chain.LANE1)).map (·.eval a)
+    Chain.ACC_OUT).map (·.eval a) ++ List.replicate (CHIP_OUT_LANES - 1) 0
+
+def honestChipTbl : List (List ℤ) :=
+  [chipTupleAt honest0, chipTupleAt honest1, chipTupleAt pad0, chipTupleAt pad1]
 
 def honestTf : TraceFamily := fun tid =>
-  if tid = .poseidon2 then
-    [chipTupleAt honest0, chipTupleAt honest1, chipTupleAt pad0, chipTupleAt pad1]
-  else []
+  match tid with
+  | .poseidon2 => honestChipTbl
+  | .custom 3  => narrowTable honestChipTbl
+  | _ => []
+
+/-- The honest family wires the narrow bus to the 18-prefix of its wide chip table
+(definitional). -/
+theorem honestTf_narrow_wire :
+    honestTf poseidon2narrow = narrowTable (honestTf .poseidon2) := rfl
 
 def honestTrace : VmTrace :=
   { rows := [honest0, honest1, pad0, pad1]
@@ -508,7 +544,7 @@ theorem mapLog_turnChain (t : VmTrace) : mapLog turnChainBindingDescriptor t = [
 
 theorem honestTf_chipSound : ChipTableSound hash99 (honestTf .poseidon2) := by
   intro r hr
-  simp only [honestTf, if_pos, List.mem_cons, List.not_mem_nil, or_false] at hr
+  simp only [honestTf, honestChipTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl
   · exact ⟨[0, 10, 20, 0], List.replicate 7 0, by decide, by decide, by decide⟩
   · exact ⟨[99, 20, 30, 1], List.replicate 7 0, by decide, by decide, by decide⟩
@@ -528,12 +564,14 @@ theorem honestTrace_satisfies :
         accContinuity, lastAccBind, perRowHash, firstIdxZero, idxIncrement, isRealBoolean,
         realMonotone, firstRealCount, realCountAccum, lastRealCountBind,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        WindowExpr.eval, Lookup.holdsAt, honestTrace, honestTf, chipTupleAt,
+        WindowExpr.eval, Lookup.holdsAt, honestTrace, honestTf, honestChipTbl, chipTupleAt,
+        poseidon2narrow, narrowTable, narrowRow,
         honest0, honest1, pad0, pad1, honestPub, rowOf, envAt, zeroAsg,
-        chipLookupTuple, siteLaneCols, padToE, padTo, EmittedExpr.eval, CHIP_RATE,
+        chipLookupTupleNarrow, padToE, padTo, EmittedExpr.eval, CHIP_RATE,
         CHIP_OUT_LANES, Chain.OLD_ROOT, Chain.NEW_ROOT, Chain.ACC_IN, Chain.ACC_OUT,
         Chain.IDX, Chain.IS_REAL, Chain.REAL_COUNT, Chain.PI_GENESIS_ROOT,
-        Chain.PI_FINAL_ROOT, Chain.PI_NUM_TURNS, Chain.PI_CHAIN_DIGEST] at *
+        Chain.PI_FINAL_ROOT, Chain.PI_NUM_TURNS, Chain.PI_CHAIN_DIGEST] at * <;>
+      try decide
   rowHashes := by intro i _; trivial
   rowRanges := by
     intro i _ r hr
@@ -563,16 +601,13 @@ theorem honestTrace_matches_rust :
         (i == 0) (i + 1 == honestTrace.rows.length) := by
   intro i hi
   apply turnChain_descriptor_refines_rust_air hash99 honestTf (envAt honestTrace i)
-    (i == 0) (i + 1 == honestTrace.rows.length) honestTf_chipSound
+    (i == 0) (i + 1 == honestTrace.rows.length) honestTf_chipSound honestTf_narrow_wire
   intro c hc
   exact honestTrace_satisfies.rowConstraints i hi c hc
 
-def forgedContinuityNext : Assignment :=
-  rowOf [21, 30, 99, 99, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0]
-def forgedIdxNext : Assignment :=
-  rowOf [20, 30, 99, 99, 2, 1, 2, 0, 0, 0, 0, 0, 0, 0]
-def forgedCountNext : Assignment :=
-  rowOf [20, 30, 99, 99, 1, 1, 3, 0, 0, 0, 0, 0, 0, 0]
+def forgedContinuityNext : Assignment := rowOf [21, 30, 99, 99, 1, 1, 2]
+def forgedIdxNext : Assignment := rowOf [20, 30, 99, 99, 2, 1, 2]
+def forgedCountNext : Assignment := rowOf [20, 30, 99, 99, 1, 1, 3]
 
 def forgedContinuityEnv : VmRowEnv :=
   { loc := honest0, nxt := forgedContinuityNext, pub := honestPub }
@@ -612,6 +647,7 @@ theorem forged_real_count_row_refuted :
 
 /-! ## §8 — Axiom hygiene: every theorem in this module is pinned. -/
 
+#assert_axioms canonicalRowTf_narrow_wire
 #assert_axioms canonicalRowTf_chipSound
 #assert_axioms perRowHash_complete
 #assert_axioms perRowHash_canonical_iff
@@ -624,6 +660,7 @@ theorem forged_real_count_row_refuted :
 #assert_axioms mapOpsOf_turnChain
 #assert_axioms memLog_turnChain
 #assert_axioms mapLog_turnChain
+#assert_axioms honestTf_narrow_wire
 #assert_axioms honestTf_chipSound
 #assert_axioms honestTrace_satisfies
 #assert_axioms honestTrace_matches_rust

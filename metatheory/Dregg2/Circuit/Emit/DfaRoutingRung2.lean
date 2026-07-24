@@ -67,6 +67,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.DfaRoutingEmit
 open Dregg2.Circuit.Emit.DfaRoutingRefine
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Crypto (CryptoPrimitives)
 open Dregg2.Crypto.DfaAcceptanceAir
   (TableDfa Row classify classifyFrom symbols Satisfies Continuous Accumulates CollisionFree
@@ -145,8 +146,9 @@ section Extract
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
 variable (hsat : Satisfied2 hash dfaRoutingDesc minit mfin maddrs t)
 variable (hchip : ChipTableSound hash (t.tf .poseidon2))
+variable (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
 
-include hsat hchip
+include hsat hchip hwire
 
 /-- **C1 (entry-hash), every row.** The entry-hash chip lookup forces
 `entry_hashᵢ = hash [currentᵢ, symbolᵢ, nextᵢ, zero_laneᵢ]`. -/
@@ -155,12 +157,15 @@ theorem entry_eq {i : Nat} (hi : i < t.rows.length) :
       = hash [(t.rows[i]'hi) CURRENT, (t.rows[i]'hi) SYMBOL, (t.rows[i]'hi) NEXT,
               (t.rows[i]'hi) ZERO_LANE] := by
   have hrc := hsat.rowConstraints i hi _ mem_entryHashLookup
-  have hmem : (chipLookupTuple [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE]
-      ENTRY_HASH ENTRY_LANES).map (·.eval (t.rows[i]'hi)) ∈ t.tf .poseidon2 := by
-    have : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
-    simpa only [VmConstraint2.holdsAt, entryHashLookup, Lookup.holdsAt, this] using hrc
-  have h := chip_lookup_sound hash (t.tf .poseidon2) hchip (t.rows[i]'hi)
-    [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE] ENTRY_HASH ENTRY_LANES
+  have hmem : (chipLookupTupleNarrow [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE]
+      ENTRY_HASH).map (·.eval (t.rows[i]'hi)) ∈ narrowTable (t.tf .poseidon2) := by
+    have hl : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
+    have h0 : (chipLookupTupleNarrow [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE]
+        ENTRY_HASH).map (·.eval (t.rows[i]'hi)) ∈ t.tf poseidon2narrow := by
+      simpa only [VmConstraint2.holdsAt, entryHashLookup, Lookup.holdsAt, hl] using hrc
+    rwa [hwire] at h0
+  have h := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hchip (t.rows[i]'hi)
+    [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE] ENTRY_HASH
     (by decide) hmem
   simpa only [List.map_cons, List.map_nil, EmittedExpr.eval] using h
 
@@ -169,12 +174,15 @@ theorem entry_eq {i : Nat} (hi : i < t.rows.length) :
 theorem running_eq {i : Nat} (hi : i < t.rows.length) :
     (t.rows[i]'hi) RUNNING_HASH = hash [(t.rows[i]'hi) ACC, (t.rows[i]'hi) ENTRY_HASH] := by
   have hrc := hsat.rowConstraints i hi _ mem_runningHashLookup
-  have hmem : (chipLookupTuple [.var ACC, .var ENTRY_HASH]
-      RUNNING_HASH RUNNING_LANES).map (·.eval (t.rows[i]'hi)) ∈ t.tf .poseidon2 := by
-    have : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
-    simpa only [VmConstraint2.holdsAt, runningHashLookup, Lookup.holdsAt, this] using hrc
-  have h := chip_lookup_sound hash (t.tf .poseidon2) hchip (t.rows[i]'hi)
-    [.var ACC, .var ENTRY_HASH] RUNNING_HASH RUNNING_LANES (by decide) hmem
+  have hmem : (chipLookupTupleNarrow [.var ACC, .var ENTRY_HASH]
+      RUNNING_HASH).map (·.eval (t.rows[i]'hi)) ∈ narrowTable (t.tf .poseidon2) := by
+    have hl : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
+    have h0 : (chipLookupTupleNarrow [.var ACC, .var ENTRY_HASH]
+        RUNNING_HASH).map (·.eval (t.rows[i]'hi)) ∈ t.tf poseidon2narrow := by
+      simpa only [VmConstraint2.holdsAt, runningHashLookup, Lookup.holdsAt, hl] using hrc
+    rwa [hwire] at h0
+  have h := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hchip (t.rows[i]'hi)
+    [.var ACC, .var ENTRY_HASH] RUNNING_HASH (by decide) hmem
   simpa only [List.map_cons, List.map_nil, EmittedExpr.eval] using h
 
 end Extract
@@ -247,6 +255,7 @@ theorem dfaRouting_rung2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
     (hcanon : DfaTraceCanon t)
     (hchain : DfaChainCanon t)
     (hchip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (cf : @CollisionFree ℤ _ (dfaPrims hash))
     (gRows : List (Row ℤ ℤ ℤ))
     (hg : @Satisfies ℤ ℤ ℤ _ (dfaPrims hash) (pinnedDfa (t.pub PI_INITIAL)) id id
@@ -269,7 +278,7 @@ theorem dfaRouting_rung2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
       have hh : t.rows.head hne = a := Option.some.inj hah
       rw [← hh, List.head_eq_getElem hne]
     show (mkRow a).running = hash [t.pub PI_TABLE, (mkRow a).entryHash]
-    have hr := running_eq hsat hchip hpos
+    have hr := running_eq hsat hchip hwire hpos
     have hacc := piFirst_forces hsat hne mem_seedAccPin
     rw [envAt_loc hpos, h0] at hacc
     -- the seed pin binds only mod p; the ACC cell + the table PI are canonical, so it lifts to ℤ.
@@ -280,7 +289,7 @@ theorem dfaRouting_rung2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
     rw [h0, haccZ] at hr
     simpa only [mkRow] using hr
   have haccum_t : @Accumulates ℤ ℤ ℤ _ (dfaPrims hash) (traceRows t) := by
-    apply accumulates_map hash t.rows (fun i hi => running_eq hsat hchip hi)
+    apply accumulates_map hash t.rows (fun i hi => running_eq hsat hchip hwire hi)
     intro i hi
     have hi0 : i < t.rows.length := Nat.lt_of_succ_lt hi
     have hw := window_forces hsat hi0 (Nat.ne_of_lt hi) mem_copyForwardWindow rfl
@@ -329,7 +338,7 @@ theorem dfaRouting_rung2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
   have hgmem : glast ∈ gRows := List.getLast_mem hg.nonempty
   have hentry_a : alast ENTRY_HASH
       = hash [alast CURRENT, alast SYMBOL, alast NEXT, alast ZERO_LANE] := by
-    have := entry_eq hsat hchip hlt
+    have := entry_eq hsat hchip hwire hlt
     rw [← List.getLast_eq_getElem hne] at this; exact this
   have hentry_g : glast.entryHash = hash [glast.state, glast.sym, glast.next, 0] := by
     have := hg.entry glast hgmem
@@ -373,9 +382,13 @@ def cheatRow1 : Assignment := rowOf [1, 1, 1, 0, 0, 0, 0, 0]
 def cheatPub : Assignment := rowOf [0, 1, 0, 0]
 
 /-- The chip table carrying the two rows' entry/running tuples (so both lookups hold on both rows). -/
+def cheatChipTbl : List (List ℤ) :=
+  [entryTupleAt wr0, runTupleAt wr0, entryTupleAt cheatRow1, runTupleAt cheatRow1]
+
 def cheatTf : TraceFamily := fun id =>
   match id with
-  | .poseidon2 => [entryTupleAt wr0, runTupleAt wr0, entryTupleAt cheatRow1, runTupleAt cheatRow1]
+  | .poseidon2 => cheatChipTbl
+  | .custom 3  => narrowTable cheatChipTbl
   | _ => []
 
 /-- The cheating 2-row trace: genuine row 0, flipped last row. -/
@@ -440,9 +453,12 @@ def wtRow0 : Assignment := rowOf [0, 1, 1, hash [0, 1, 1, 0], hash [0, hash [0, 
 def wtPub : Assignment := rowOf [0, 1, 0, hash [0, hash [0, 1, 1, 0]]]
 
 /-- The sound chip table carrying exactly the row's entry / running tuples. -/
+def wtChipTbl : List (List ℤ) := [entryTupleAt (wtRow0 hash), runTupleAt (wtRow0 hash)]
+
 def wtTf : TraceFamily := fun id =>
   match id with
-  | .poseidon2 => [entryTupleAt (wtRow0 hash), runTupleAt (wtRow0 hash)]
+  | .poseidon2 => wtChipTbl hash
+  | .custom 3  => narrowTable (wtChipTbl hash)
   | _ => []
 
 /-- The 1-row genuine trace. -/
@@ -451,11 +467,16 @@ def wtTrace : VmTrace := { rows := [wtRow0 hash], pub := wtPub hash, tf := wtTf 
 /-- **The chip table is SOUND** — each row IS a genuine `chipRow` of the permutation (`hash`). -/
 theorem wtTf_chipSound : ChipTableSound hash ((wtTrace hash).tf .poseidon2) := by
   intro r hr
-  simp only [wtTrace, wtTf, List.mem_cons, List.not_mem_nil, or_false] at hr
+  simp only [wtTrace, wtTf, wtChipTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl
   · exact ⟨[0, 1, 1, 0], List.replicate 7 0, by decide, by decide, rfl⟩
   · exact ⟨[0, hash [0, 1, 1, 0]], List.replicate 7 0,
       by simp only [List.length_cons, List.length_nil, CHIP_RATE]; omega, by decide, rfl⟩
+
+/-- **The genuine witness wires the NARROW bus to the 18-prefix of its wide chip table** —
+definitional, exactly the deployed Rust `narrow_hist` serving (one physical chip, two buses). -/
+theorem wtTf_narrow_wire :
+    (wtTrace hash).tf poseidon2narrow = narrowTable ((wtTrace hash).tf .poseidon2) := rfl
 
 /-- **The 1-row trace `Satisfied2`s the descriptor** — the two lookups by membership in the sound chip
 table, the per-row gates vacuous on the single (= last) row, and the boundary pins met. -/
@@ -551,7 +572,7 @@ theorem wtTrace_rung2_fires (hinj : Function.Injective hash)
     (wtTrace hash).pub PI_FINAL
       = classify (pinnedDfa ((wtTrace hash).pub PI_INITIAL)) (symbols (traceRows (wtTrace hash))) :=
   dfaRouting_rung2 (wtTrace_satisfied2 hash) (by simp [wtTrace]) (wtTrace_dfaCanon hash)
-    (wtTrace_chainCanon hash hcanR) (wtTf_chipSound hash)
+    (wtTrace_chainCanon hash hcanR) (wtTf_chipSound hash) (wtTf_narrow_wire hash)
     (collisionFree_of_injective hinj) (wtG hash) (wtG_satisfies hash) rfl
 
 /-- The recovered value is the genuine toggle endpoint `1` over the read input `[1]`
@@ -613,6 +634,7 @@ theorem refWitness_fires :
 #assert_axioms cheatTrace_satisfied2
 #assert_axioms cheat_final_ne_classify
 #assert_axioms wtTf_chipSound
+#assert_axioms wtTf_narrow_wire
 #assert_axioms wtTrace_satisfied2
 #assert_axioms wtG_satisfies
 #assert_axioms wtTrace_rung2_fires

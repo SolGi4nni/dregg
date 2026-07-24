@@ -70,6 +70,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRowEnv holdsVm_gate_of_notLast holdsVm_piFirst_true holdsVm_piLast_true)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.DfaRoutingEmit
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable narrowRow)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt)
 open Dregg2.Crypto.DfaAcceptanceAir
   (TableDfa Row classify classifyFrom symbols lastNext_eq_classifyFrom)
@@ -452,21 +453,35 @@ def wr0 : Assignment := rowOf [0, 1, 1, 0, 0, 1, 0, 0]
 /-- Row 1 (the last row): `1 →symbol=1 0` (`current=1` chains row 0's `next`, `symbol=1, next=0`). -/
 def wr1 : Assignment := rowOf [1, 1, 0, 0, 0, 0, 0, 0]
 
-/-- The evaluated entry-hash chip tuple of a row (what the lookup asserts is a table member). -/
+/-- The PHYSICAL 25-wide chip row for a row's entry-hash absorb: the 18-wide narrow key the emitted
+lookup now reads, extended by the seven permutation lanes the chip AIR still witnesses INSIDE the
+chip (they are no longer main-trace columns — E7 narrowing deleted those). -/
 def entryTupleAt (a : Assignment) : List ℤ :=
-  (chipLookupTuple [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE] ENTRY_HASH ENTRY_LANES).map
-    (·.eval a)
+  (chipLookupTupleNarrow [.var CURRENT, .var SYMBOL, .var NEXT, .var ZERO_LANE] ENTRY_HASH).map
+    (·.eval a) ++ List.replicate (CHIP_OUT_LANES - 1) 0
 
-/-- The evaluated running-hash chip tuple of a row. -/
+/-- The PHYSICAL 25-wide chip row for a row's running-hash absorb (same one-chip/two-buses shape). -/
 def runTupleAt (a : Assignment) : List ℤ :=
-  (chipLookupTuple [.var ACC, .var ENTRY_HASH] RUNNING_HASH RUNNING_LANES).map (·.eval a)
+  (chipLookupTupleNarrow [.var ACC, .var ENTRY_HASH] RUNNING_HASH).map (·.eval a)
+    ++ List.replicate (CHIP_OUT_LANES - 1) 0
 
-/-- The witness trace family: the Poseidon2 chip table carries EXACTLY the two rows' entry/running
-tuples (so both lookups hold on both rows); every other table is empty (no mem/map content). -/
+/-- The WIDE chip table: the four physical permutation rows the two lookups of the two trace rows
+name. -/
+def witChipTbl : List (List ℤ) :=
+  [entryTupleAt wr0, runTupleAt wr0, entryTupleAt wr1, runTupleAt wr1]
+
+/-- The witness trace family: ONE physical chip serving TWO buses — `.poseidon2` carries the genuine
+25-wide rows and the NARROW bus (`poseidon2narrow = .custom 3`) carries their 18-prefix, exactly the
+deployed Rust `narrow_hist` serving. Every other table is empty (no mem/map content). -/
 def witTf : TraceFamily := fun id =>
   match id with
-  | .poseidon2 => [entryTupleAt wr0, runTupleAt wr0, entryTupleAt wr1, runTupleAt wr1]
+  | .poseidon2 => witChipTbl
+  | .custom 3  => narrowTable witChipTbl
   | _ => []
+
+/-- The witness family wires the narrow bus to the 18-prefix of the wide chip table (definitional —
+the same-rows serving `ChipNarrowLookup.narrowTable_sound` models). -/
+theorem witTf_narrow_wire : witTf poseidon2narrow = narrowTable (witTf .poseidon2) := rfl
 
 /-- The concrete 2-row toggle run `IDLE=0 →1 1 →1 0`, all public inputs `0`. -/
 def witTrace : VmTrace := { rows := [wr0, wr1], pub := zeroAsg, tf := witTf }
@@ -557,11 +572,16 @@ theorem witness_value : witTrace.pub PI_FINAL = 0 ∧ symbols (traceRows witTrac
 /-- The wrong run: row 0 claims the FORBIDDEN toggle edge `step(0,1) = 0` (`next = 0`, not `1`). -/
 def badRow0 : Assignment := rowOf [0, 1, 0, 0, 0, 1, 0, 0]
 
+/-- The wrong run's chip table (the rows it would need served). -/
+def badChipTbl : List (List ℤ) :=
+  [entryTupleAt badRow0, runTupleAt badRow0, entryTupleAt wr1, runTupleAt wr1]
+
 def badTrace : VmTrace :=
   { rows := [badRow0, wr1],
     pub := zeroAsg,
     tf := fun id => match id with
-      | .poseidon2 => [entryTupleAt badRow0, runTupleAt badRow0, entryTupleAt wr1, runTupleAt wr1]
+      | .poseidon2 => badChipTbl
+      | .custom 3  => narrowTable badChipTbl
       | _ => [] }
 
 /-- **A WRONG run PROVABLY fails the hypothesis (the false half of non-vacuity).** The row-0
@@ -582,6 +602,7 @@ theorem badTrace_not_satisfied :
 
 #assert_axioms dfaRouting_refines_classify
 #assert_axioms dfaRouting_genuine_prefix
+#assert_axioms witTf_narrow_wire
 #assert_axioms witTrace_satisfies
 #assert_axioms witness_refines
 #assert_axioms badTrace_not_satisfied
