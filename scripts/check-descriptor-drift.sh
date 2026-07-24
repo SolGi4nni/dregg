@@ -25,6 +25,17 @@ if ! command -v lake >/dev/null 2>&1; then
   exit 2
 fi
 
+# The emit normalizes its generated Rust modules through rustfmt so the generator's bytes equal
+# the bytes the pre-commit hook and `cargo fmt --all -- --check` produce. Without rustfmt the emit
+# would refuse (emit_descriptors.py: normalize_generated_rust) — say so HERE, before a ~1h Lean
+# build, rather than after it.
+if ! command -v rustfmt >/dev/null 2>&1; then
+  echo "check-descriptor-drift: FATAL — 'rustfmt' not on PATH. The generated Rust modules are" >&2
+  echo "  rustfmt-normalized at the pinned toolchain (rust-toolchain.toml) so generator bytes ==" >&2
+  echo "  committed bytes; without it this gate cannot produce an honest verdict." >&2
+  exit 2
+fi
+
 # The emitters import the compiled `Dregg2.Circuit.Emit.*` oleans (NOT the source),
 # so the corpus must be built first or `lake env lean --run` will emit from STALE
 # oleans and the gate would be blind to an un-rebuilt Lean change.
@@ -51,12 +62,20 @@ fi
 echo "check-descriptor-drift:   ${#EMIT_MODULES[@]} modules the emitters import"
 ( cd "$ROOT/metatheory" && lake build Dregg2 "${EMIT_MODULES[@]}" )
 
-# The artifacts the emit OWNS (regenerates): the descriptor files and the four
-# Rust sources that carry generated `*_FP` constants. We measure ONLY the effect
-# of re-emitting — we snapshot these paths, run emit, and diff the snapshot vs the
-# result. (Diffing against the git index would also flag unrelated unstaged edits
-# to the hand-maintained prose/logic in those same Rust files, which the emit does
-# NOT touch and which are not drift.)
+# The artifacts the emit OWNS (regenerates): the descriptor files, the five Rust
+# sources that carry generated `*_FP` constants, and the three WHOLE Lean-authored
+# `*_generated.rs` modules. We measure ONLY the effect of re-emitting — we snapshot
+# these paths, run emit, and diff the snapshot vs the result. (Diffing against the
+# git index would also flag unrelated unstaged edits to the hand-maintained
+# prose/logic in those same Rust files, which the emit does NOT touch and which are
+# not drift.)
+#
+# The `*_generated.rs` modules were MISSING from this list, which was a hole, not a
+# saving: a generated-Rust-only change takes the non-ack `GENERATED-RUST UPDATE`
+# path in `install_and_stamp` (it cannot re-key a descriptor), so the emit INSTALLS
+# it and returns 0 — and with the module unguarded this gate diffed nothing and
+# reported PASS while the tree had just been rewritten underneath it. The guarded
+# set must equal `install_and_stamp`'s change-set; it now does.
 GUARDED=(
   "circuit/descriptors"
   "circuit/src/effect_vm_descriptors.rs"
@@ -64,6 +83,9 @@ GUARDED=(
   "circuit/src/cap_delegation_nonamp_descriptor.rs"
   "circuit/src/cap_reshape_descriptor.rs"
   "circuit/src/bilateral_aggregation_air.rs"
+  "circuit/src/effect_vm/layout_generated.rs"
+  "circuit/src/effect_vm/e1_compact_generated.rs"
+  "circuit/src/effect_vm/s2_compact_generated.rs"
 )
 
 SNAP="$(mktemp -d -t descriptor-drift.XXXXXX)"

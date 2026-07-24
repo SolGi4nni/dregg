@@ -96,9 +96,9 @@
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
     "rotation-v3-setfield-value8-staged-registry.tsv": "2bd6bb0bcd646a50f665f0fd738ba36de208ba718b22926261431d03a62ac322",
     "rotation-v3-staged-registry.tsv": "3729839b4e22ec5863bd3ba79573d306538a4677236a9cdeeb2c3de23db35996",
-    "rotation-wide-registry-staged.tsv": "5329ead701d212996cf4a4724013aa9f5232ccf1d5ae59c63b7288fab113ed4b",
+    "rotation-wide-registry-staged.tsv": "4e7bf856096ff3224bb654b831777adb936b3d7cddce2749b5ff2038f7902a65",
     "rotation-wide-transfer-staged.tsv": "32d022303cdfe5c30a46cba00f3c8d0dd08e6eb6fab6975e4f49ccaa35a1a572",
-    "rotation-wide-umem-welded-registry-staged.tsv": "2c2b949e8b63a369880ed6dfb4c9aa49ee5eb908d8e342645f115e5130d0c014",
+    "rotation-wide-umem-welded-registry-staged.tsv": "39805f70d569b70e60376ff573f8767bae8d7d95e724df75ce95318ac53d8e62",
     "umem-cohort-multidomain-v1-staged-registry.tsv": "89574dbb90269e908911a7f920be691af7e24a6dc4802e5da035feec44867775",
     "umem-cohort-v1-staged-registry.tsv": "97a4d13edb173a831b81c4cb3cab84c2ee03baf2a45593d000dfa239d6bf4cfb"
   },
@@ -163,7 +163,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "f634f39e6d96cec52c1cfea9851611a0e77de73f3bf28b6dad5f41c2ed17bd85",
     "circuit/src/cap_reshape_descriptor.rs": "58cfdabae8f78b683d60dd90da1a4b587992b4498f8d63722653ed7343fd2873",
-    "circuit/src/effect_vm_descriptors.rs": "888567f5185d93cc89262ecfe665379af0310fbd0a917f487de0ab91dccc9878",
+    "circuit/src/effect_vm_descriptors.rs": "94d479b3891c86f18e7ae3d422ea81a3ad5779876818e740bbfd967f42149a33",
     "circuit/src/lean_descriptor_air.rs": "aceffe54c45a905a2f34e333214b9b0e30606b40c0f8fd460726b0067d20ddb2"
   }
 }

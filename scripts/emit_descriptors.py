@@ -16,6 +16,10 @@ Pipeline:
      registry tables (so it stays in lockstep with how the prover consumes them).
   3. Recompute sha256 of every emitted file and rewrite the matching `*_FP`
      constant in the Rust sources.
+  4. Normalize the WHOLE Lean-authored Rust modules (`circuit/src/effect_vm/
+     *_generated.rs`) through the pinned rustfmt, so the generator's bytes equal
+     the bytes `scripts/git-hooks/pre-commit` and `cargo fmt --all -- --check`
+     produce — the two producers cannot disagree (see normalize_generated_rust).
 
 Idempotent: on a freshly-emitted tree it is a byte-identical NO-OP (nothing is
 written). Run `scripts/check-descriptor-drift.sh` to GATE on drift.
@@ -293,6 +297,92 @@ def ir2_defname_to_file(rust_text: str, c2f: dict[str, str]) -> dict[str, str]:
 LAYOUT_RS = ROOT / "circuit" / "src" / "effect_vm" / "layout_generated.rs"
 
 GENERATED_RS: dict[Path, str] = {}
+
+
+# ---- rustfmt normalization of the generated modules --------------------------
+# The generated `.rs` files have TWO producers: this script (which writes them) and
+# `scripts/git-hooks/pre-commit` (which rustfmt's every STAGED `.rs` on its way into a commit,
+# `@generated` header or not — and CI's `cargo fmt --all -- --check` demands the same shape).
+# While the two disagreed, the committed bytes were rustfmt's and the emitted bytes were ours,
+# so `scripts/check-descriptor-drift.sh` could NEVER go green for such a file — a gate stuck red
+# cannot catch the next real break. We converge here, at the generator: every generated module is
+# emitted through rustfmt, so generator output == post-hook bytes == what `cargo fmt --check`
+# accepts, BY CONSTRUCTION rather than by line-length luck.
+#
+# rustfmt is version-PINNED repo-wide (`rust-toolchain.toml`, `channel = nightly-2026-06-21`,
+# `components = [… "rustfmt"]`), so this is as reproducible across machines as the `cargo fmt
+# --check` gate already is. Missing rustfmt is a HARD FAILURE, never a silent skip: emitting
+# unformatted bytes would make the drift gate report a fake drift.
+
+def _rust_edition_for(path: Path) -> str:
+    """The rustfmt edition for `path` — resolved EXACTLY as `scripts/git-hooks/pre-commit` and
+    `cargo fmt` resolve it: nearest ancestor `Cargo.toml` with a `[package]` table, honouring
+    `edition.workspace = true` against the root `[workspace.package]`. Hardcoding one edition
+    would silently mis-format a module emitted into an edition-2021 crate (rustfmt's macro and
+    `use` layout differ per edition), reopening the same two-producers disagreement."""
+    import tomllib  # local: keeps --verify-provenance / --list-emitter-modules usable pre-3.11
+
+    ws_edition = "2024"
+    try:
+        ws = tomllib.loads((ROOT / "Cargo.toml").read_text())
+        ws_edition = str(ws.get("workspace", {}).get("package", {}).get("edition", ws_edition))
+    except (OSError, tomllib.TOMLDecodeError):
+        pass
+
+    for d in path.resolve().parents:
+        toml = d / "Cargo.toml"
+        if not toml.is_file():
+            continue
+        try:
+            pkg = tomllib.loads(toml.read_text()).get("package")
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        if pkg is None:
+            continue
+        ed = pkg.get("edition")
+        if isinstance(ed, str):
+            return ed
+        if isinstance(ed, dict) and ed.get("workspace") is True:
+            return ws_edition
+        return "2015"  # a [package] with no edition — cargo's default
+    return ws_edition
+
+
+def normalize_generated_rust() -> None:
+    """Run every buffered generated module through the pinned rustfmt, IN PLACE in GENERATED_RS.
+
+    Single choke point on purpose: a future emitter that adds a module to `GENERATED_RS` cannot
+    forget to format it. Runs before the install/no-op comparison so the bytes we diff against
+    disk are the bytes we would write."""
+    if not GENERATED_RS:
+        return
+    for path in list(GENERATED_RS):
+        edition = _rust_edition_for(path)
+        try:
+            proc = subprocess.run(
+                ["rustfmt", "--edition", edition, "--emit", "stdout"],
+                input=GENERATED_RS[path],
+                capture_output=True,
+                text=True,
+                cwd=str(path.parent if path.parent.is_dir() else ROOT),
+            )
+        except FileNotFoundError:
+            sys.exit(
+                "emit_descriptors: rustfmt NOT FOUND, but the generated Rust modules must be "
+                "rustfmt-normalized to match the bytes the pre-commit hook and `cargo fmt --all "
+                "-- --check` produce. Emitting unformatted bytes here would make the descriptor "
+                "drift gate report a FAKE drift. Install the pinned toolchain "
+                "(`rustup toolchain install \"$(grep -m1 '^channel' rust-toolchain.toml | "
+                "cut -d'\"' -f2)\" --component rustfmt`) and re-run."
+            )
+        if proc.returncode != 0:
+            sys.exit(
+                f"emit_descriptors: rustfmt failed on the generated module "
+                f"{path.relative_to(ROOT)} (edition {edition}) — the emitted Rust does not parse, "
+                f"so it must not be installed.\n{proc.stderr.strip()}"
+            )
+        out = proc.stdout
+        GENERATED_RS[path] = out if out.endswith("\n") else out + "\n"
 
 
 def split_layout(stdout: str, _written):
@@ -923,6 +1013,11 @@ def install_and_stamp(written: dict[str, str]) -> None:
     descriptor install is ack-gated, provenance-stamped, and audit-logged. A generated-Rust-only
     change is byte-safe (it cannot re-key a descriptor) and installs without a VK-regeneration
     acknowledgement. A byte-identical emission is a silent no-op."""
+    # Converge the generated modules onto rustfmt's shape BEFORE the diff, so what we compare
+    # against disk is exactly what we would write — and equals what the pre-commit hook and
+    # `cargo fmt --all -- --check` produce (see normalize_generated_rust).
+    normalize_generated_rust()
+
     fp_changes, n_fp = compute_fp_rewrites(written)
 
     changed_desc = sorted(
