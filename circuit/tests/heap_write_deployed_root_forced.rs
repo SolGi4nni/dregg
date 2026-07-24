@@ -22,8 +22,25 @@
 //! The accumulator-advance site (`siteHeapRootAdvance`, `new_root = hash[leaf, old_root]`) is
 //! REPLACED by the splice (col 87 cannot be doubly pinned): the published root is now bound to the
 //! sorted-tree SPLICE, not the prepend accumulator.
+//!
+//! ## ⚠ WHICH MEMBER THIS IS — scope, stated at current resolution
+//!
+//! This file reads `V3_STAGED_REGISTRY_TSV`, the NARROW bare-v3 member. `30bddee832` established
+//! that the deployed light client does NOT resolve heapWrite there: `heapWriteVmDescriptor2R24` is
+//! one of the four `LIVE_ONLY_BARE_KEYS`, and the wire runs the BARE WIDE member out of
+//! `WIDE_REGISTRY_STAGED_TSV` (`turn/src/executor/proof_verify.rs:1088`/`:1146`). The narrow member
+//! is STRANDED at HEAD — no producer emits its geometry (there is no `Effect::HeapWrite` variant).
+//! So the word "DEPLOYED" in this file's name is inherited and OVERCLAIMS by one member: what is
+//! actually pinned here is that the Lean-emitted NARROW descriptor carries the splice at the
+//! derived rotated coordinates. The verdict ON THE DEPLOYED PATH — an executed prove + light-client
+//! verify plus the lanes-1..7 after-root forge — lives in `heap_write_roundtrip.rs`, against the
+//! wide member. This structural tooth is kept because the narrow member is still what the Lean wide
+//! emission is DEFINED over (`v3RegistryWide = wideAppend` over these members), so a splice that
+//! vanished here would silently vanish from the wide member too.
 
 use dregg_circuit::descriptor_ir2::{MapKind, MapOpSpec, VmConstraint2, parse_vm_descriptor2};
+use dregg_circuit::effect_vm::layout_generated::HEAP_ROOT_GROUP;
+use dregg_circuit::effect_vm::trace_rotated::{AFTER_BASE, BEFORE_BASE};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 
@@ -36,14 +53,27 @@ const VALUE: usize = 72; // hp.VALUE
 const HEAP_ROOT_BEFORE: usize = 65;
 const HEAP_ROOT_AFTER: usize = 87;
 const HEAP_ADDR: usize = 102;
-// Phase H-HEAP-8: the deployed splice `MapOp` reads/writes the FAITHFUL 8-felt heap-root GROUP on the
-// ROTATED limbs (lane 0 = rotated `heap_root` limb 28, completions 58..64), NOT the v1-state cols 65/87.
-// Lane 0: before = EFFECT_VM_WIDTH(188)+B_HEAP_ROOT(28) = 216; after = 188+B_SPAN(227)+28 = 443. The
-// v13 rotated block span grew 91→227 (`EffectVmEmitRotationV3.B_SPAN`: R=24 geometry + commitments_root
-// + lifecycle/perms/vk/mode + fields_root + the v11/v12 completion octets + the v13 fields[0..7] lanes).
-// Mirrors the cap weld's rotated cap-root limb. (Lean `EffectVmEmitRotationV3.heapRootGroupCol`.)
-const HEAP_ROOT_BEFORE_ROT: usize = 216;
-const HEAP_ROOT_AFTER_ROT: usize = 443;
+
+/// **The RAW rotated columns of one block's faithful 8-felt heap-root GROUP, DERIVED.** Lane 0 is
+/// the scalar `heap_root` limb, lanes 1..7 the completion limbs — read from the Lean-emitted layout
+/// row `HEAP_ROOT_GROUP` and the Lean-emitted block bases (`BEFORE_BASE = V1_WIDTH`,
+/// `AFTER_BASE = V1_WIDTH + B_SPAN`) rather than transcribed, so the next span flag-day moves these
+/// pins with the bytes instead of rotting them into a false RED.
+///
+/// ⚠ **RAW, not compacted — establish this before reusing the numbers.** The
+/// `V3_STAGED_REGISTRY_TSV` member this file reads is emitted in PRE-compaction rotated
+/// coordinates: its committed `.write` map-op carries `root` lane 0 = `BEFORE_BASE + 28` and
+/// `new_root` lane 0 = `AFTER_BASE + 28` on the nose, with the completion lanes at
+/// `base + 59..=65`. The S2/E1 kill-sets (`S2_COMPACT_TABLE` / `E1_COMPACT_TABLE`) are NOT applied
+/// here; they apply to the WIDE registry member, whose same map-op lands at the COMPACTED 120/299
+/// — pinned in `heap_write_roundtrip.rs` as `compacted_cols(AFTER_BASE + HEAP_ROOT_GROUP)`. The
+/// previous hand-typed `443` here was a stale `B_SPAN` (227, now 239), not a compaction image.
+fn heap_root_group_cols(block_base: usize) -> Vec<LeanExpr> {
+    HEAP_ROOT_GROUP
+        .iter()
+        .map(|&off| LeanExpr::Var(block_base + off))
+        .collect()
+}
 
 const P2_CHIP_TABLE: usize = 1; // table id of `poseidon2_chip` in the staged registry
 const CHIP_DIGEST_IDX: usize = 17; // out0 position in the 25-wide chip tuple (arity + 16 inputs + out0 + 7 lanes)
@@ -132,19 +162,25 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
     let m: &MapOpSpec = splice
         .expect("PHASE-E: heapWriteVmDescriptor2R24 must carry a `.write` map_op (the splice)");
 
-    // The splice op opens the committed heap root (8-felt group, lane 0 = col 65) at the in-row-
-    // recomputed address (col 102) for the written value (col 72) and FORCES the new heap root
-    // (8-felt group, lane 0 = col 87) to the genuine sorted update. Phase H-HEAP-8: `root`/`new_root`
-    // are 8-lane digest groups whose lane 0 is the old scalar heap-root limb.
+    // The splice op opens the committed heap root (the BEFORE 8-felt ROTATED group) at the in-row-
+    // recomputed address (col 102) for the written value (col 72) and FORCES the new heap root (the
+    // AFTER 8-felt ROTATED group) to the genuine sorted update. Phase H-HEAP-8: `root`/`new_root`
+    // are 8-lane digest groups on the ROTATED limbs, NOT the v1-state scalars 65/87 the
+    // accumulator-advance leg above still names.
+    let before_cols = heap_root_group_cols(BEFORE_BASE);
+    let after_cols = heap_root_group_cols(AFTER_BASE);
+
     assert_eq!(
         m.root.len(),
         8,
         "splice root must be an 8-felt heap-root group"
     );
+    // ALL EIGHT lanes, not lane 0: a lane-0-only pin would leave the completion limbs — the felts
+    // that carry the binding from ~31 bits to ~124 — free to drift to any columns at all.
     assert_eq!(
-        m.root[0],
-        LeanExpr::Var(HEAP_ROOT_BEFORE_ROT),
-        "splice root lane 0 must be the ROTATED before heap-root limb 28 (col 216)"
+        m.root, before_cols,
+        "splice root must be the RAW rotated BEFORE heap-root group BEFORE_BASE + HEAP_ROOT_GROUP \
+         ({before_cols:?})"
     );
     assert_eq!(
         m.key,
@@ -162,17 +198,16 @@ fn deployed_heapwrite_forces_sorted_merkle_splice() {
         "splice new_root must be an 8-felt heap-root group"
     );
     assert_eq!(
-        m.new_root[0],
-        LeanExpr::Var(HEAP_ROOT_AFTER_ROT),
-        "splice new_root lane 0 must be the ROTATED after heap-root limb 28 (col 443) — the published \
-         faithful heap_root"
+        m.new_root, after_cols,
+        "splice new_root must be the RAW rotated AFTER heap-root group AFTER_BASE + \
+         HEAP_ROOT_GROUP ({after_cols:?}) — the published faithful heap_root, all eight felts"
     );
 
     eprintln!(
-        "PHASE-E SPLICE WIRED: heapWriteVmDescriptor2R24 carries a `.write` map_op forcing \
-         HEAP_ROOT_AFTER({HEAP_ROOT_AFTER}) = the genuine sorted-Merkle splice of (HEAP_ADDR, VALUE) \
-         into the heap behind HEAP_ROOT_BEFORE({HEAP_ROOT_BEFORE}). A content-mismatched root is UNSAT \
-         (no update_witness). The residual is CLOSED — the published root is bound to the sorted-tree \
-         update, not the accumulator."
+        "PHASE-E SPLICE WIRED: heapWriteVmDescriptor2R24 carries a `.write` map_op forcing the \
+         8-felt AFTER heap-root group {after_cols:?} = the genuine sorted-Merkle splice of \
+         (HEAP_ADDR, VALUE) into the heap behind the BEFORE group {before_cols:?}. A \
+         content-mismatched root is UNSAT (no update_witness). The residual is CLOSED — the \
+         published root is bound to the sorted-tree update, not the accumulator."
     );
 }

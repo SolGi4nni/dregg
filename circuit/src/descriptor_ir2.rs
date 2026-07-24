@@ -2090,6 +2090,42 @@ struct MapLogEntry {
     op: MapKind,
 }
 
+/// An 8-felt root rendered as `a,b,…,h` for a refusal message.
+fn fmt_root8(v: &[BabyBear]) -> String {
+    v.iter()
+        .map(|f| f.as_u32().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// **Render an 8-felt root mismatch so the refusal NAMES THE LANE.**
+///
+/// The map-op replay comparisons are over ALL `CHIP_OUT_LANES` felts, but these refusals used to
+/// render lane 0 alone — so a mismatch confined to lanes 1..7 printed two IDENTICAL numbers
+/// (`… lane0 7 != 7`), an `X != X` verdict with no way to see what actually differed. That is
+/// precisely the after-root forgery class the heap-write teeth hunt: lane 0 honest, completion
+/// lanes forged. Emits the FIRST differing lane by index plus both full octets, on one line.
+fn root8_mismatch(claimed: &[BabyBear], genuine: &[BabyBear]) -> String {
+    match claimed.iter().zip(genuine).position(|(a, b)| a != b) {
+        Some(j) => format!(
+            "lane {j}: {} != {} (claimed [{}] vs genuine [{}])",
+            claimed[j].as_u32(),
+            genuine[j].as_u32(),
+            fmt_root8(claimed),
+            fmt_root8(genuine)
+        ),
+        // Only reachable on a LENGTH difference (equal on the common prefix); the callers compare
+        // fixed-width arrays, so this arm exists so the message can never claim a lane it lacks.
+        None => format!(
+            "lane count {} != {} (claimed [{}] vs genuine [{}])",
+            claimed.len(),
+            genuine.len(),
+            fmt_root8(claimed),
+            fmt_root8(genuine)
+        ),
+    }
+}
+
 /// The arity-16 `node8` chip-lookup tuple `[16, L8 (8), R8 (8), out8 (8)]` (Phase H-HEAP-8): the
 /// in-circuit `perm(L8 ‖ R8)[0..8]` heap-node compression, with `(cur8, sib8)` ordered by the
 /// direction bit — `dir = 0` ⇒ cur LEFT (`node8(cur, sib)`), `dir = 1` ⇒ cur RIGHT
@@ -5063,16 +5099,22 @@ fn build_traces(
                 .find(|t| t.root8() == root)
                 .cloned()
                 .ok_or_else(|| {
+                    // The lookup is over the WHOLE octet: rendering lane 0 alone made a
+                    // lanes-1..7 mismatch read as "no such tree" while printing a lane-0 value
+                    // that *does* exist among the witness heaps.
                     format!(
-                        "map op {i}: no witness heap with root8 lane0 {}",
-                        root[0].as_u32()
+                        "map op {i}: no witness heap with root8 [{}]",
+                        fmt_root8(&root)
                     )
                 })?;
 
             // -- `absent`: the bracketed sorted-gap non-membership opening, its own table. --
             if kind == MapKind::Absent {
                 if check && new_root != root {
-                    return Err(format!("map op {i}: absent must preserve the root"));
+                    return Err(format!(
+                        "map op {i}: absent must preserve the root — {}",
+                        root8_mismatch(&new_root, &root)
+                    ));
                 }
                 if check && value != BabyBear::ZERO {
                     return Err(format!("map op {i}: absent carries the canonical value 0"));
@@ -5175,9 +5217,8 @@ fn build_traces(
                     })?;
                 if check && w.new_root != new_root {
                     return Err(format!(
-                        "map op {i}: claimed new_root lane0 {} != genuine AAFI insert {}",
-                        new_root[0].as_u32(),
-                        w.new_root[0].as_u32()
+                        "map op {i}: claimed new_root != genuine AAFI insert — {}",
+                        root8_mismatch(&new_root, &w.new_root)
                     ));
                 }
                 let low_next = w.low_leaf_old.next_addr;
@@ -5371,7 +5412,10 @@ fn build_traces(
                         ));
                     }
                     if check && new_root != root {
-                        return Err(format!("map op {i}: read must preserve the root"));
+                        return Err(format!(
+                            "map op {i}: read must preserve the root — {}",
+                            root8_mismatch(&new_root, &root)
+                        ));
                     }
                     let (sibs, dirs) = tree
                         .prove_membership(pos)
@@ -5390,9 +5434,8 @@ fn build_traces(
                         })?;
                     if check && w.new_root != new_root {
                         return Err(format!(
-                            "map op {i}: claimed new_root lane0 {} != genuine sorted write {}",
-                            new_root[0].as_u32(),
-                            w.new_root[0].as_u32()
+                            "map op {i}: claimed new_root != genuine sorted write — {}",
+                            root8_mismatch(&new_root, &w.new_root)
                         ));
                     }
                     // Advance the working set: the post-write heap is reachable for later ops.
@@ -5428,9 +5471,8 @@ fn build_traces(
                         })?;
                     if check && w.new_root != new_root {
                         return Err(format!(
-                            "map op {i}: claimed new_root lane0 {} != genuine sorted insert {}",
-                            new_root[0].as_u32(),
-                            w.new_root[0].as_u32()
+                            "map op {i}: claimed new_root != genuine sorted insert — {}",
+                            root8_mismatch(&new_root, &w.new_root)
                         ));
                     }
                     // Advance the working set: the post-insert heap is reachable for later ops.
