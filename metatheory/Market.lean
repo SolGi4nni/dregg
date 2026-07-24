@@ -37,6 +37,9 @@ import Market.FhEggClearing
 import Market.DarkBazaarPrivateDescriptor
 import Market.DarkBazaarAttestation
 import Market.DarkBazaarSameOpening
+import Market.DarkBazaarDecryptConsistency
+import Market.DarkBazaarSameOpeningPoly
+import Market.DarkBazaarSameOpeningGadget
 import Market.PrivateBookEncryptionBinding
 import Market.DarkAmmPrivateSwap
 import Market.DarkAmmPrivateReceipt
