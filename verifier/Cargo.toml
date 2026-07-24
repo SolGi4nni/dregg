@@ -28,6 +28,11 @@ dregg-commit = { path = "../commit" }
 # verifier binary stays a non-async, no-runtime, ledger-free process.
 dregg-federation = { path = "../federation", default-features = false }
 dregg-turn = { path = "../turn" }
+# The `aggregated-bundle` subcommand verifies a γ.2 bundle whose TYPE +
+# verifier now live in `dregg-turn-prover` (always compiled, no `prover`
+# feature). Unconditional here because `aggregated_bundle.rs` is an
+# unconditional module of this crate.
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-captp = { path = "../captp" }
 serde = { workspace = true }
 serde_json = { workspace = true }

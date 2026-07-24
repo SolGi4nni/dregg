@@ -20,7 +20,7 @@
 //! (the `hash_4_to_1` fold ran host-side only; the `cell_commit` column was read by zero
 //! constraints; nothing tied binding rows to the folded leaves in-circuit), and the fold had
 //! zero production callers. The deployed cross-cell object is the Lean-emitted bilateral
-//! aggregation (`turn/src/aggregate_bilateral_prover.rs`, `EffectVmEmitBilateralAgg.lean`).
+//! aggregation (`turn-prover/src/aggregate_bilateral_prover.rs`, `EffectVmEmitBilateralAgg.lean`).
 
 use p3_recursion::ProveNextLayerParams;
 use p3_recursion::{BatchOnly, RecursionOutput};

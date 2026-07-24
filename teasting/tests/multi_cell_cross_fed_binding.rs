@@ -9,7 +9,7 @@
 //! "executor-trust" gap called out in `STAGE-7-GAMMA-AGGREGATION-DESIGN.md`
 //! §1a and the issue brief.
 //!
-//! After γ.2 Phase 2, `dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`
+//! After γ.2 Phase 2, `dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle`
 //! emits a single outer proof that algebraically binds:
 //!
 //!   1. each per-cell PI's bilateral count + root fields to the schedule the
@@ -52,7 +52,7 @@
 //!
 //! **Path A — aggregator AIR.** The implementation already exists at
 //! `circuit/src/bilateral_aggregation_air.rs` (the outer AIR) and
-//! `turn/src/aggregate_bilateral_prover.rs` (the prover + verifier). The
+//! `turn-prover/src/aggregate_bilateral_prover.rs` (the prover + verifier). The
 //! long-term composition target is the Plonky3 recursion stack
 //! (`plonky3_recursion_impl.rs` / `ivc_turn_chain.rs`); the former Pickles
 //! path was removed with the kimchi/pickles backends. The existing prover's
@@ -96,11 +96,11 @@
 
 use dregg_circuit::bilateral_aggregation_air as ag;
 use dregg_circuit::effect_vm::pi as inner_pi;
-use dregg_turn::aggregate_bilateral_prover::{
-    AggregatedBundle, prove_aggregated_bundle, verify_aggregated_bundle,
-};
 use dregg_turn::bilateral_schedule::ExpectedBilateral;
 use dregg_turn::{ActionBuilder, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
+use dregg_turn_prover::aggregate_bilateral_prover::{
+    AggregatedBundle, prove_aggregated_bundle, verify_aggregated_bundle,
+};
 use dregg_types::CellId;
 
 // ---------------------------------------------------------------------------

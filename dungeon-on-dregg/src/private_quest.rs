@@ -11,7 +11,7 @@
 //! Each move is proved by
 //! [`dregg_circuit_prove::private_graph_rewrite::prove_zk`] against the exact
 //! Lean-emitted descriptor, then appended through
-//! [`dregg_turn::private_graph_rewrite_history::PrivateGraphRewriteHistory`].
+//! [`dregg_turn_prover::private_graph_rewrite_history::PrivateGraphRewriteHistory`].
 //! Public callers receive only the descriptor's roots/bindings and an opaque
 //! HidingFri proof.  Graph edges, the injective match, selected rule, and
 //! commitment blindings remain owned by [`PrivateQuestRaid`].
@@ -25,7 +25,7 @@ use dregg_circuit_prove::private_graph_rewrite::{
     PublicStatement, fresh_blind4, statement,
 };
 use dregg_circuit_prove::private_quest_graph::{prove_zk, warden_rules};
-use dregg_turn::private_graph_rewrite_history::{
+use dregg_turn_prover::private_graph_rewrite_history::{
     PrivateGraphRewriteHead, PrivateGraphRewriteHistory, PrivateGraphRewriteHistoryError,
     PrivateGraphRewriteHistorySnapshot, PrivateGraphRewriteReceipt, PrivateGraphRewriteVerifier,
     PrivateGraphRewriteWireReceipt,

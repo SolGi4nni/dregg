@@ -1276,10 +1276,14 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
         let from_wr = schedule_projected_wr(&turn, &from_cell, &receipt, &from_proof);
         let to_wr = schedule_projected_wr(&turn, &to_cell, &receipt, &to_proof);
         let entries = vec![(from_cell, from_wr), (to_cell, to_wr)];
-        match dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle(&turn, &entries) {
+        match dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle(
+            &turn, &entries,
+        ) {
             Ok(bundle) => {
                 // Self-check: the bundle must verify (real outer STARK verify).
-                match dregg_turn::aggregate_bilateral_prover::verify_aggregated_bundle(&bundle) {
+                match dregg_turn_prover::aggregate_bilateral_prover::verify_aggregated_bundle(
+                    &bundle,
+                ) {
                     Ok(()) => (
                         serde_json::to_value(&bundle).unwrap_or(Value::Null),
                         "aggregated".to_string(),

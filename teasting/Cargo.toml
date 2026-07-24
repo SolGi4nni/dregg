@@ -10,6 +10,11 @@ dregg-types = { path = "../types" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-turn = { path = "../turn" }
+# The γ.2 bilateral aggregate prover/verifier (`multi_cell_cross_fed_binding`)
+# moved out of `dregg-turn`'s `prover` feature into its own always-compiled
+# crate. This suite's `prover = []` feature never enabled anything; the test
+# was riding whatever the workspace happened to unify on.
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-circuit = { path = "../circuit" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-federation = { path = "../federation" }

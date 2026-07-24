@@ -1,8 +1,6 @@
 //! Canonical v2 custom-VK registration for the Lean-emitted, HidingFri private
 //! preference decision cell.
 
-#![cfg(feature = "prover")]
-
 use std::sync::Arc;
 
 use dregg_cell::custom_effect::{CustomEffectError, CustomEffectRegistry, CustomEffectVerifier};

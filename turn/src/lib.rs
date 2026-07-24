@@ -83,7 +83,6 @@
 
 pub mod action;
 pub mod admission_reason;
-pub mod aggregate_bilateral_prover;
 pub mod bilateral_schedule;
 pub mod binding_proof;
 pub mod budget_gate;
@@ -95,28 +94,19 @@ pub mod conflict;
 pub mod continuation;
 pub mod continuation_resume;
 pub mod cross_fed_cite;
-#[cfg(feature = "prover")]
-pub mod descent_census_custom;
 pub mod dsl;
 pub mod economics;
 pub mod encrypted;
 pub mod error;
 pub mod eventual;
-#[cfg(feature = "prover")]
 pub mod exact_fnsp_v4_consensus_envelope;
 pub mod execution_path;
 pub mod executor;
 pub mod faithful_note_spend;
 pub mod faithful_note_spend_exact_v3;
-#[cfg(feature = "prover")]
 pub mod faithful_note_spend_exact_v3_acceptance;
 pub mod faithful_note_spend_exact_v3_anchor;
-#[cfg(feature = "prover")]
 pub mod faithful_note_spend_exact_v3_receipt_epoch;
-#[cfg(feature = "prover")]
-pub mod faithful_note_spend_exact_v3_verifier;
-#[cfg(feature = "prover")]
-pub mod faithful_note_spend_verifier;
 pub mod fast_path;
 pub mod finalized_receipt_core_v1;
 pub mod forest;
@@ -124,18 +114,13 @@ pub(crate) mod journal;
 pub mod pending;
 pub mod pq;
 pub mod presence_discharge;
-#[cfg(feature = "prover")]
-pub mod private_graph_rewrite_custom;
-#[cfg(feature = "prover")]
-pub mod private_graph_rewrite_history;
-#[cfg(feature = "prover")]
-pub mod private_preference_custom;
 pub mod reactive;
 pub mod reversible;
 pub mod rotation_witness;
 pub mod routing;
 pub mod script;
 pub mod shadow;
+pub mod shielded_verifier;
 pub mod state_commit;
 pub mod turn;
 pub mod umem;
@@ -180,7 +165,6 @@ pub use eventual::{
     CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
     Target, TurnBatch, TurnOutput,
 };
-#[cfg(feature = "prover")]
 pub use exact_fnsp_v4_consensus_envelope::{
     EXACT_FNSP_V4_ACTIVATION_CORE_LEN, EXACT_FNSP_V4_FRAME_CORE_LEN, EXACT_RECEIPT_CORE_V4_LEN,
     ExactFnspV4ActivationCore, ExactFnspV4ActivationId, ExactFnspV4ConsensusError,
@@ -198,26 +182,22 @@ pub use executor::{
     escrow_nullifier_for, execute_pipeline, execute_pipeline_result, new_mirror_ledger_cell,
     read_supply, resolve_eventual_ref,
 };
-#[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_acceptance::{
-    AcceptedFaithfulNoteSpendExactV3, FaithfulNoteSpendExactV3AcceptanceBinding,
-    FaithfulNoteSpendExactV3AcceptanceError, verify_faithful_note_spend_exact_v3_acceptance,
+    AcceptedFaithfulNoteSpendExactV3, ExactFnspV3ProofAuthorityAlreadyInstalled,
+    FaithfulNoteSpendExactV3AcceptanceBinding, FaithfulNoteSpendExactV3AcceptanceError,
+    exact_fnsp_v3_proof_authority_installed, install_exact_fnsp_v3_proof_authority,
+    verify_faithful_note_spend_exact_v3_acceptance,
 };
 pub use faithful_note_spend_exact_v3_anchor::{
     ExactFnspV3AnchorSide, ExactFnspV3DurableAnchor, ExactFnspV3DurableAnchorError,
     derive_exact_fnsp_v3_durable_anchor, derive_exact_fnsp_v3_durable_anchor_chain,
 };
-#[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_receipt_epoch::{
     ExactFnspV3OuterCommit, ExactFnspV3ReceiptEpoch, ExactFnspV3ReceiptEpochError,
     ExactFnspV3ReceiptEpochV1, ExactFnspV3ReceiptLinkV1, ExactFnspV3StatePoint,
     FullTurnReceiptStateCommit8, PreparedExactFnspV3ReceiptFrameV1,
     UntrustedExactFnspV3CommittedFrameHeadBindingV1, UntrustedExactFnspV3ReceiptFrameJoinV1,
 };
-#[cfg(feature = "prover")]
-pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
-#[cfg(feature = "prover")]
-pub use faithful_note_spend_verifier::FaithfulNoteSpendVerifier;
 pub use fast_path::{
     CellLockEntry, CellLockTable, FastPathConfig, FastPathError, TurnCertificate, TurnSign,
     assemble_certificate, clear_all_locks, execute_certified_turn, expire_stale_locks,
@@ -236,12 +216,10 @@ pub use pending::{
     ReactiveNullifierError, ReactiveNullifierSet, ResolutionCondition, ResolutionEvent,
     ResolutionOutcome,
 };
+pub use shielded_verifier::{ShieldedTransferVerifier, VerifiedShieldedTransfer};
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`
 // per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any
 // callers that still reach for them through the turn crate root.
-pub use aggregate_bilateral_prover::{
-    AggregatedBundle, prove_aggregated_bundle, verify_aggregated_bundle,
-};
 pub use dregg_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,

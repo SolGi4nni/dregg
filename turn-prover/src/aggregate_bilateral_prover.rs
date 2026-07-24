@@ -20,29 +20,27 @@
 //! Turn does not need to re-run any per-cell STARK. That is the headline win
 //! Phase 2 buys over Phase 1.
 
-use crate::bilateral_schedule::{BilateralCounts, BilateralRoots, ExpectedBilateral};
-use crate::error::TurnError;
-use crate::turn::Turn;
-use crate::witnessed_receipt::WitnessedReceipt;
+use dregg_turn::bilateral_schedule::{BilateralCounts, BilateralRoots, ExpectedBilateral};
+use dregg_turn::error::TurnError;
+use dregg_turn::turn::Turn;
+use dregg_turn::witnessed_receipt::WitnessedReceipt;
 // CG-5 cross-side-existence + tree-fold TRACE BUILDERS (the layout-of-record; available in every
 // build). The constraint SEMANTICS now ride the Lean-emitted descriptors (law #1), not the
 // hand-`StarkAir` impls — proved/verified through the batch prover on the `recursion`/`verifier`
 // path below; the hand-AIR `CrossSideExistenceAir`/`BundleTreeFoldAir` types are retired off the
 // live path (kept only for their layout constants + trace builders + tests until the C7 deletion).
 // The DECOUPLED descriptor aggregation + leg prove/verify surfaces + the trace builders the legs
-// use (LEAN-emitted, law #1). Gated on `recursion` exactly like `verify_aggregated_bundle` —
-// `dregg-turn` forwards `recursion = ["dregg-circuit/recursion"]` (which carries the prover-free
-// batch verifier too), and the wasm `not(recursion)` build gets the error stubs.
-#[cfg(feature = "prover")]
+// use (LEAN-emitted, law #1). Unconditional: this module lives in `dregg-turn-prover`, which is
+// always compiled as itself — there is no `prover` feature and no `not(prover)` error stub. A
+// prover-free consumer (wasm / no-lean-link / the seL4 verifier PD) does not link this crate at
+// all; that ABSENCE is the fail-closed posture the cfg stubs used to encode.
 use dregg_circuit::bilateral_aggregation_air::{
     AggregationInnerRowV2, AggregationOuterPi, CrossSideHalfEdge, FOLD_PI_COUNT, agg,
     build_aggregation_trace_v2, build_tree_fold_trace, outer_pi_v2, prove_aggregation_v2,
     prove_cross_side_existence_v2, prove_tree_fold_v2, sched, schedule_block_from_inner_pi,
     verify_aggregation_v2, verify_cross_side_existence_v2, verify_tree_fold_v2,
 };
-#[cfg(feature = "prover")]
 use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof};
-#[cfg(any(feature = "prover", test))]
 use dregg_circuit::effect_vm::pi as inner_pi;
 use dregg_circuit::field::BabyBear;
 use dregg_types::CellId;
@@ -50,7 +48,6 @@ use serde::{Deserialize, Serialize};
 
 /// The fixed outer-PI width of the DECOUPLED bilateral aggregation descriptor (Lean
 /// `OuterPi.COUNT` = 23), independent of N — the headline verifier-cost win.
-#[cfg(feature = "prover")]
 const OUTER_PI_COUNT: usize = outer_pi_v2::COUNT;
 
 // ---------------------------------------------------------------------------
@@ -173,7 +170,6 @@ fn pack_expected(
 /// (projected from each WR's bilateral-schedule PI window). The v2 expected counts/roots block is
 /// gone. Returns the rows in `per_cell` order and the dedup'd federation list. Used by
 /// the prover to build the trace.
-#[cfg(feature = "prover")]
 fn build_inner_rows_v2(
     _turn: &Turn,
     per_cell: &[(CellId, WitnessedReceipt)],
@@ -231,7 +227,6 @@ fn build_inner_rows_v2(
 /// to the proof. In v3 the row carries only the schedule block (the expected self-check block is
 /// gone); the schedule's counts/roots are cross-checked against the canonical Turn OFF-AIR by
 /// step 5, which is what binds a divergent schedule.
-#[cfg(feature = "prover")]
 fn build_inner_rows_v2_from_schedule(
     _turn: &Turn,
     cells: &[CellId],
@@ -293,24 +288,9 @@ pub(crate) fn cell_id_to_felts_8(c: &CellId) -> [BabyBear; 8] {
 /// devnet gossip artifact; accepting scope-(1)-only WRs here would make the
 /// aggregate look stronger than the receipt/witness material it summarizes.
 ///
-/// LIVE path: routes through the LEAN-EMITTED descriptor (`recursion` feature). The
-/// `not(recursion)` build (wasm32 / no-lean-link) has no batch prover, so the optional
-/// bilateral-aggregate demo there returns an error and the single-turn proof stands (the
-/// callers — wasm's `prove_bilateral_aggregate` — handle this gracefully).
-#[cfg(not(feature = "prover"))]
-pub fn prove_aggregated_bundle(
-    _turn: &Turn,
-    _per_cell: &[(CellId, WitnessedReceipt)],
-) -> Result<AggregatedBundle, TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "aggregate_bilateral: the descriptor batch prover requires the `recursion` feature \
-         (the bilateral aggregation AIR is emitted from Lean; wasm/no-lean-link verifies but \
-         does not prove it)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
+/// LIVE path: routes through the LEAN-EMITTED descriptor batch prover. A consumer that cannot
+/// prove (wasm32 / no-lean-link) simply does not link `dregg-turn-prover`; there is no in-crate
+/// error stub to fall through to.
 pub fn prove_aggregated_bundle(
     turn: &Turn,
     per_cell: &[(CellId, WitnessedReceipt)],
@@ -354,7 +334,7 @@ pub fn prove_aggregated_bundle(
     // Outer PI (23 felts; the layout is identical between the v1 and v2 outer PI — both pin
     // turn-id 0..13, agent-id 13..21, n_cells 21, consistent 22).
     let (turn_hash_4, effects_hash_global_4, _, prev_receipt_4) =
-        crate::executor::TurnExecutor::compute_turn_identity_pi(turn);
+        dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
     let outer_pi_typed = AggregationOuterPi {
         turn_hash: turn_hash_4,
         effects_hash_global: effects_hash_global_4,
@@ -437,20 +417,8 @@ pub fn prove_aggregated_bundle(
 /// reconstruction (step 4b) so the schedule cross-check in step 5 operates on the exact trace
 /// the proof attests.
 ///
-/// LIVE path: the proof is a `Ir2BatchProof` over the LEAN-EMITTED descriptor, verified
-/// prover-free (the `recursion` feature forwards `dregg-circuit/verifier`). The
-/// `not(recursion)` build has no batch verifier, so it rejects (the only such consumer is the
-/// optional wasm bilateral demo).
-#[cfg(not(feature = "prover"))]
-pub fn verify_aggregated_bundle(_bundle: &AggregatedBundle) -> Result<(), TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "aggregate_bilateral: the descriptor batch verifier requires the `recursion`/`verifier` \
-         feature (the bilateral aggregation AIR is emitted from Lean)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
+/// LIVE path: the proof is a `Ir2BatchProof` over the LEAN-EMITTED descriptor, verified through
+/// `dregg-circuit`'s batch verifier (itself prover-free — it is the verify floor).
 pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnError> {
     // Step 1: outer PI sanity.
     if bundle.outer_pi.len() != OUTER_PI_COUNT {
@@ -473,7 +441,7 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
     // outer PI is rejected because the recomputed turn-identity quad won't
     // match what the bundle declares.
     let (turn_hash_4, effects_hash_global_4, _, prev_receipt_4) =
-        crate::executor::TurnExecutor::compute_turn_identity_pi(&bundle.turn);
+        dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(&bundle.turn);
     let expected_outer = AggregationOuterPi {
         turn_hash: turn_hash_4,
         effects_hash_global: effects_hash_global_4,
@@ -667,7 +635,6 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
 /// the verifier rebuilds the *exact* multiset and the canonical (trace, pi), and the edge-sequence
 /// commitment PI binds the proof to it (together with the in-AIR balance==0 boundary), closing the
 /// missing-peer attack algebraically.
-#[cfg(feature = "prover")]
 fn canonical_half_edges(
     turn: &Turn,
     covered: &std::collections::HashSet<CellId>,
@@ -760,22 +727,6 @@ fn canonical_half_edges(
 /// multi-table batch STARK (the Poseidon2 chip table commits the edge fingerprints, which the
 /// hand-AIR never constrained in-circuit). Fails if the bundle is incomplete (a half-edge's peer
 /// is missing) — the balance is then nonzero and the `balance[last] == 0` boundary is unprovable.
-///
-/// The `not(recursion)` build has no batch prover, so it returns an error (the only such consumer
-/// is the optional wasm bilateral demo, which handles it gracefully).
-#[cfg(not(feature = "prover"))]
-pub fn prove_cross_side_existence(
-    _turn: &Turn,
-    _participating_cells: &[CellId],
-) -> Result<CrossSideExistenceProof, TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "cross_side_existence: the descriptor batch prover requires the `recursion` feature \
-         (the CG-5 AIR is emitted from Lean; wasm/no-lean-link verifies but does not prove it)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
 pub fn prove_cross_side_existence(
     turn: &Turn,
     participating_cells: &[CellId],
@@ -827,22 +778,6 @@ pub fn prove_cross_side_existence(
 ///      without re-executing the trace.
 ///   3. Requires the shipped trace to EQUAL the canonical-multiset trace, so the algebraic balance
 ///      argument operated on exactly the schedule-derived edges (closing forged-edge-row attacks).
-///
-/// The `not(recursion)`/`not(verifier)` build has no batch verifier, so it rejects.
-#[cfg(not(feature = "prover"))]
-pub fn verify_cross_side_existence(
-    _proof: &CrossSideExistenceProof,
-    _turn: &Turn,
-    _participating_cells: &[CellId],
-) -> Result<(), TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "cross_side_existence: the descriptor batch verifier requires the `recursion`/`verifier` \
-         feature (the CG-5 AIR is emitted from Lean)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
 pub fn verify_cross_side_existence(
     proof: &CrossSideExistenceProof,
     turn: &Turn,
@@ -922,7 +857,6 @@ impl AggregatedTree {
 /// Digest a child bundle into a single field element: Poseidon2 over its
 /// outer PI vector. Binds the entire bundle summary (turn hash, effects hash,
 /// agent, n_cells, consistent flag) into one chain element.
-#[cfg(feature = "prover")]
 fn bundle_digest(bundle: &AggregatedBundle) -> BabyBear {
     let pi_bb: Vec<BabyBear> = bundle
         .outer_pi
@@ -937,20 +871,6 @@ fn bundle_digest(bundle: &AggregatedBundle) -> BabyBear {
 /// child), reduced to a digest, and folded via a Poseidon2 hash chain proven
 /// by the LEAN-EMITTED `bundle_tree_fold_descriptor` (law #1). The result verifies in O(1) in the
 /// number of children for the fold step itself.
-///
-/// The `not(recursion)` build has no batch prover, so it returns an error.
-#[cfg(not(feature = "prover"))]
-pub fn prove_aggregated_tree(
-    _children: Vec<AggregatedBundle>,
-) -> Result<AggregatedTree, TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "aggregate_tree: the descriptor batch prover requires the `recursion` feature \
-         (the bundle-tree-fold AIR is emitted from Lean)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
 pub fn prove_aggregated_tree(children: Vec<AggregatedBundle>) -> Result<AggregatedTree, TurnError> {
     if children.is_empty() {
         return Err(TurnError::InvalidExecutionProof(
@@ -1002,18 +922,6 @@ pub fn prove_aggregated_tree(children: Vec<AggregatedBundle>) -> Result<Aggregat
 ///   3. Recompute the fold trace + public inputs from the digests and require
 ///      the outer PI to match (binds the final accumulator to the children).
 ///   4. Verify the outer fold descriptor proof standalone against the digest-derived PI.
-///
-/// The `not(recursion)`/`not(verifier)` build has no batch verifier, so it rejects.
-#[cfg(not(feature = "prover"))]
-pub fn verify_aggregated_tree(_tree: &AggregatedTree) -> Result<(), TurnError> {
-    Err(TurnError::InvalidExecutionProof(
-        "aggregate_tree: the descriptor batch verifier requires the `recursion`/`verifier` \
-         feature (the bundle-tree-fold AIR is emitted from Lean)"
-            .into(),
-    ))
-}
-
-#[cfg(feature = "prover")]
 pub fn verify_aggregated_tree(tree: &AggregatedTree) -> Result<(), TurnError> {
     if tree.children.is_empty() {
         return Err(TurnError::InvalidExecutionProof(
@@ -1102,15 +1010,15 @@ pub fn verify_aggregated_tree(tree: &AggregatedTree) -> Result<(), TurnError> {
 // Tests
 // ---------------------------------------------------------------------------
 
-// The aggregation tests exercise the LEAN-emitted descriptor prove/verify (the live
-// `recursion` path); they are gated accordingly (the `not(recursion)` wasm build neither
-// proves nor verifies the descriptor, so its bundle functions are stubs).
-#[cfg(all(test, feature = "prover"))]
+// The aggregation tests exercise the LEAN-emitted descriptor prove/verify. They are plain
+// `#[cfg(test)]` now: this crate is unconditionally the prover, so there is no feature
+// combination in which the subjects under test are stubs.
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::{ActionBuilder, TurnBuilder};
-    use crate::turn::TurnReceipt;
     use dregg_cell::AuthRequired;
+    use dregg_turn::builder::{ActionBuilder, TurnBuilder};
+    use dregg_turn::turn::TurnReceipt;
 
     fn cid(b: u8) -> CellId {
         CellId::from_bytes([b; 32])
@@ -1152,8 +1060,8 @@ mod tests {
     /// canonical Turn's bilateral schedule. Mirrors
     /// `dregg_verifier::bilateral_pair::fabricate_witnessed_receipt`.
     fn fabricate_wr(turn: &Turn, cell_id: &CellId) -> WitnessedReceipt {
-        use crate::bilateral_schedule::{ExpectedBilateral, project_into_pi};
         use dregg_circuit::effect_vm::pi as p;
+        use dregg_turn::bilateral_schedule::{ExpectedBilateral, project_into_pi};
 
         let sched = ExpectedBilateral::from_turn(turn);
         let counts = sched.counts_for(cell_id);
@@ -1161,7 +1069,7 @@ mod tests {
 
         let mut pi_bb = vec![BabyBear::ZERO; p::ACTIVE_BASE_COUNT];
         // Populate turn-identity slots.
-        let (th, eg, _, prev) = crate::executor::TurnExecutor::compute_turn_identity_pi(turn);
+        let (th, eg, _, prev) = dregg_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
         pi_bb[p::TURN_HASH_BASE..(4 + p::TURN_HASH_BASE)].copy_from_slice(&th);
         pi_bb[p::EFFECTS_HASH_GLOBAL_BASE..(4 + p::EFFECTS_HASH_GLOBAL_BASE)].copy_from_slice(&eg);
         pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE..(4 + p::PREVIOUS_RECEIPT_HASH_BASE)]
@@ -1378,7 +1286,7 @@ mod tests {
             Some(&trace),
         );
         wr.bilateral_schedule =
-            Some(crate::bilateral_schedule::schedule_block_for_cell(turn, cell_id).to_vec());
+            Some(dregg_turn::bilateral_schedule::schedule_block_for_cell(turn, cell_id).to_vec());
         wr
     }
 
@@ -1392,7 +1300,7 @@ mod tests {
         let bob = cid(0xB2);
         let turn = make_transfer_turn(alice, bob, 100, 1);
         for cell in [alice, bob] {
-            let native = crate::bilateral_schedule::schedule_block_for_cell(&turn, &cell);
+            let native = dregg_turn::bilateral_schedule::schedule_block_for_cell(&turn, &cell);
             let projected = honest_schedule_block(&fabricate_wr(&turn, &cell));
             assert_eq!(
                 native, projected,

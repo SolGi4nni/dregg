@@ -2408,7 +2408,7 @@ pub fn prove_turn(handle: usize, turn_hash_hex: &str) -> Result<JsValue, JsError
 ///
 /// This is NOT a tier flip on a single-turn EffectVM proof. It runs the
 /// canonical γ.2 aggregator
-/// (`dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`) over two
+/// (`dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle`) over two
 /// per-cell `WitnessedReceipt`s — alice's OUTGOING transfer + bob's INCOMING
 /// transfer, both projected from the SAME canonical Turn's bilateral schedule —
 /// emitting a real outer STARK over `BilateralAggregationAir`. The bundle is

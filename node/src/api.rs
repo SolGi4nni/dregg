@@ -4231,9 +4231,9 @@ async fn post_aggregate_bundle(
     let n_cells = per_cell.len();
 
     // Real outer STARK proof over the independently-sourced per-cell WRs.
-    match dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle(&turn, &per_cell) {
+    match dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle(&turn, &per_cell) {
         Ok(bundle) => {
-            match dregg_turn::aggregate_bilateral_prover::verify_aggregated_bundle(&bundle) {
+            match dregg_turn_prover::aggregate_bilateral_prover::verify_aggregated_bundle(&bundle) {
                 Ok(()) => Ok(Json(AggregateBundleResponse {
                     aggregated: true,
                     n_cells,

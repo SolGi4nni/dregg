@@ -515,7 +515,7 @@ fn run_rotated_replay_chain(args: &[String]) -> ! {
 
 /// `dregg-verifier aggregated-bundle <bundle.json>`
 ///
-/// Reads a JSON-encoded `dregg_turn::AggregatedBundle` and runs the Phase-2
+/// Reads a JSON-encoded `dregg_turn_prover::AggregatedBundle` and runs the Phase-2
 /// joint aggregation verifier (`STAGE-7-GAMMA-2-PHASE-2-SKETCH.md`).
 /// Exit code: 0 = verified, 1 = rejected, 2 = read / parse error.
 fn run_aggregated_bundle(args: &[String]) -> ! {

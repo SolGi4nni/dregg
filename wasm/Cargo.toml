@@ -44,6 +44,13 @@ dregg-cell-crypto = { path = "../cell-crypto" }
 # Pure-Rust (fips204 + ml-kem + x25519-dalek, all already in this graph), wasm32-safe.
 dregg-pq = { path = "../dregg-pq" }
 dregg-turn = { path = "../turn", default-features = false }
+# The γ.2 bilateral AGGREGATE demo (`prove_bilateral_aggregate`) is proof
+# PRODUCTION, so it links the prover CRATE rather than riding a `prover` feature
+# that this graph never declared (it arrived only through `dregg-sdk`'s forward —
+# exactly the invisible-unification hazard the extraction retires). `dregg-turn`
+# above stays `default-features = false`; `dregg-turn-prover` depends on turn the
+# same way, so this adds no feature pressure to the wasm card.
+dregg-turn-prover = { path = "../turn-prover" }
 # coord / intent are FFI-FREE by construction (they route their verified gates through their
 # `verified_gate` seams, which only a Lean-boundary crate — never depended on here — registers).
 # No feature needed: wasm32 simply doesn't pull a Lean impl, so the native-Rust differential decides.

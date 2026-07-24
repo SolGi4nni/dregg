@@ -28,11 +28,12 @@ use dregg_cell_crypto::PortableNoteProof;
 /// derive-key keeps shielded nullifiers in a disjoint namespace from cleartext
 /// note nullifiers while preserving injectivity for distinct field elements.
 ///
-/// Only the `prover`-enabled executor admits shielded transfers (the hiding
-/// uni-STARK verifier lives in `dregg-circuit-prove`), so this key derivation is
-/// scoped to that build; a verify-only executor fails the effect closed instead.
-#[cfg(feature = "prover")]
-fn shielded_nullifier_key(field_nullifier: u32) -> Nullifier {
+/// `pub` because the derivation is the executor's CANONICAL shielded-nullifier
+/// key space: an out-of-crate prover or indexer that wants to ask "is this hidden
+/// input already spent?" must derive the same key, and re-deriving it by hand is
+/// how two namespaces silently diverge. It is a pure function of the field
+/// element — possessing it authorizes nothing.
+pub fn shielded_nullifier_key(field_nullifier: u32) -> Nullifier {
     let mut hasher = blake3::Hasher::new_derive_key("dregg-shielded-nullifier v1");
     hasher.update(&field_nullifier.to_le_bytes());
     Nullifier(*hasher.finalize().as_bytes())
@@ -1388,7 +1389,6 @@ impl TurnExecutor {
         // has completely applied; ownership moves pending -> applied only immediately before the
         // successful return below. Final producer commitment performs the separate
         // applied -> consumed promotion. Version 2 remains the original decoder/verifier path.
-        #[cfg(feature = "prover")]
         let mut exact_v3_admission = if is_exact_fnsp_v3_carrier(spending_proof) {
             let carrier =
                 crate::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier::decode(
@@ -1503,15 +1503,6 @@ impl TurnExecutor {
             )?;
             None
         };
-        #[cfg(not(feature = "prover"))]
-        self.verify_faithful_note_spend_v2(
-            path,
-            nullifier,
-            note_tree_root,
-            spending_proof,
-            value,
-            asset_type,
-        )?;
         // Insert into the production note-nullifier set with double-spend
         // rejection. This is the ledger-side gate that prevents the same
         // nullifier from being re-presented in a later turn. The insert is
@@ -1566,7 +1557,6 @@ impl TurnExecutor {
             }
         }
 
-        #[cfg(feature = "prover")]
         if let Some(slot) = exact_v3_admission.as_mut() {
             debug_assert!(slot.applied.is_none());
             debug_assert!(slot.consumed.is_none());
@@ -1580,9 +1570,9 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// The deployed strict FNSP-v2 verifier/successor path, kept as one helper so verify-only
-    /// builds and prover builds execute byte-identical legacy admission while only the latter can
-    /// select the exact-v3 opaque-token route.
+    /// The deployed strict FNSP-v2 verifier/successor path, kept as one helper so the legacy
+    /// admission route stays byte-identical whether or not an exact-v3 acceptance token was
+    /// installed; only an installed token can select the exact-v3 route.
     #[allow(clippy::too_many_arguments)]
     fn verify_faithful_note_spend_v2(
         &self,
@@ -1707,87 +1697,52 @@ impl TurnExecutor {
     /// still be re-proved under distinct transcripts. This is the exact remaining
     /// leaf migration, not a claim that the compatibility join is collision-free.
     ///
-    /// Requires a `prover`-enabled build (the hiding uni-STARK verifier lives in
-    /// `dregg-circuit-prove`). A verify-only build fails the effect closed.
-    #[cfg(feature = "prover")]
+    /// ## Where the cryptography lives (the seam)
+    ///
+    /// Gates 1 and 2 are the `dregg-circuit-prove` verifiers, so they are NOT in
+    /// this crate: they are the injected [`crate::shielded_verifier::ShieldedTransferVerifier`],
+    /// implemented by `dregg_turn_prover::CircuitShieldedTransferVerifier`. The trait
+    /// is VERIFY-RETURNS-VALUE — it gets the wire payload and hands back the
+    /// validated nullifiers and output commitments. It never receives `journal`,
+    /// the ledger, or `self`, so `JournalEntry` stays `pub(crate)` and the undo
+    /// log's exhaustive matches stay in-crate. Gates 3 and 4 (the state mutation
+    /// and every journal record) are below, in core, unconditionally.
+    ///
+    /// NOT INJECTED ⇒ the effect fails closed, exactly as the former
+    /// `#[cfg(not(feature = "prover"))]` stub did.
     fn apply_shielded_transfer(
         &self,
         path: &[usize],
         journal: &mut LedgerJournal,
         payload: &crate::action::ShieldedTransferPayload,
     ) -> Result<(), (TurnError, Vec<usize>)> {
-        use dregg_circuit_prove::shielded::{
-            ShieldedTransfer, ShieldedValueLeg, WideValueBindingProof,
-            verify_stark_with_wide_bindings, wide_transfer_message,
-        };
-
         let invalid = |reason: String| (TurnError::InvalidEffect { reason }, path.to_vec());
 
-        // Reconstruct every mandatory full-width proof first. There is no
-        // compatibility fallback: a pre-cutover one-felt-only payload cannot
-        // reach the no-mint verifier.
-        let wide_bindings: Vec<WideValueBindingProof> = payload
-            .inputs
-            .iter()
-            .map(|input| {
-                WideValueBindingProof::from_serialized_parts(
-                    input.legacy_value_binding,
-                    input.wide_value_binding,
-                    &input.wide_value_proof,
-                )
-            })
-            .collect::<Result<_, _>>()
-            .map_err(|e| invalid(format!("shielded wide value binding malformed: {e}")))?;
-
-        // Reconstruct the published shielded transfer from its wire payload,
-        // deserializing each hidden note-spend proof.
-        let leg = |l: &crate::action::ShieldedLeg| ShieldedValueLeg {
-            asset_type: l.asset_type,
-            commitment_bytes: l.commitment_bytes,
+        // FAIL-CLOSED BY ABSENCE: a verify-only executor has no shielded verifier
+        // linked, and must not admit a hidden transfer.
+        let Some(verifier) = self.shielded_transfer_verifier.as_ref() else {
+            return Err(invalid(
+                "shielded transfer requires an injected shielded verifier (no shielded \
+                 verifier linked in this verify-only executor)"
+                    .into(),
+            ));
         };
-        let transfer = ShieldedTransfer::from_serialized_parts(
-            payload.merkle_root,
-            payload
-                .inputs
-                .iter()
-                .map(|i| (i.nullifier, i.legacy_value_binding, i.spend_proof.clone()))
-                .collect(),
-            payload.input_legs.iter().map(leg).collect(),
-            payload.output_legs.iter().map(leg).collect(),
-            payload.output_range_proofs.clone(),
-        )
-        .map_err(|e| invalid(format!("shielded transfer payload malformed: {e}")))?;
 
-        // GATE 1: membership/nullifier plus exactly one canonical full-u64
-        // binding per input. The legacy felt is now only an equality join.
-        verify_stark_with_wide_bindings(&transfer, &wide_bindings)
-            .map_err(|e| invalid(format!("shielded wide STARK verification failed: {e}")))?;
-        // The structural inflation gate: exactly one range proof per output.
-        transfer
-            .check_range_proof_shape()
-            .map_err(|e| invalid(format!("shielded range-proof shape rejected: {e}")))?;
-
-        // GATE 2: the hidden Pedersen side — conservation (Σ in = Σ out) AND each
-        // output's range proof, over the transfer's binding transcript.
-        let message = wide_transfer_message(&transfer, &wide_bindings)
-            .map_err(|e| invalid(format!("shielded wide transcript rejected: {e}")))?;
-        dregg_cell_crypto::value_commitment::verify_full_conservation_bytes(
-            &transfer.input_commitment_bytes(),
-            &transfer.output_commitment_bytes(),
-            &payload.conservation,
-            &transfer.output_range_proofs,
-            &message,
-        )
-        .map_err(|e| invalid(format!("shielded value conservation/range rejected: {e:?}")))?;
+        // GATES 1 + 2, in `dregg-turn-prover`: the wide STARK join, the
+        // range-proof shape, and the Pedersen conservation/range side over the
+        // one binding transcript. Returns ONLY validated data.
+        let verified = verifier
+            .verify(payload)
+            .map_err(|error| (error, path.to_vec()))?;
 
         // GATE 3: consume each input nullifier ONCE in the production set. The
         // shielded nullifier is a BabyBear field element; we domain-separate it to
         // a 32-byte set key so it never collides with the cleartext note-nullifier
         // space. Each insert is journaled so a later-failing turn unwinds the spend.
-        let nullifiers: Vec<Nullifier> = transfer
-            .nullifiers()
+        let nullifiers: Vec<Nullifier> = verified
+            .nullifiers
             .iter()
-            .map(|nf| shielded_nullifier_key(nf.as_u32()))
+            .map(|nf| shielded_nullifier_key(*nf))
             .collect();
         {
             let mut set = self.note_nullifiers.lock().unwrap();
@@ -1845,34 +1800,14 @@ impl TurnExecutor {
         // committed value or proof today — pure additive live executor state.
         {
             let mut set = self.note_shielded.lock().unwrap();
-            for leg in &payload.output_legs {
-                let commitment = ShieldedNoteCommitment(leg.commitment_bytes);
-                set.insert(commitment)
+            for commitment in &verified.output_commitments {
+                set.insert(*commitment)
                     .map_err(|e| invalid(format!("shielded output note append failed: {e}")))?;
-                journal.record_shielded_note_inserted(commitment);
+                journal.record_shielded_note_inserted(*commitment);
             }
         }
 
         Ok(())
-    }
-
-    /// Verify-only builds cannot admit a shielded transfer: the hiding uni-STARK
-    /// verifier lives in `dregg-circuit-prove` (the `prover` surface). Fail closed.
-    #[cfg(not(feature = "prover"))]
-    fn apply_shielded_transfer(
-        &self,
-        path: &[usize],
-        _journal: &mut LedgerJournal,
-        _payload: &crate::action::ShieldedTransferPayload,
-    ) -> Result<(), (TurnError, Vec<usize>)> {
-        Err((
-            TurnError::InvalidEffect {
-                reason: "shielded transfer requires a prover-enabled build (no shielded \
-                         verifier linked in this verify-only executor)"
-                    .into(),
-            },
-            path.to_vec(),
-        ))
     }
 
     // ─── Reactive effects (Track 2): Promise / Notify / React ────────────────
@@ -4948,442 +4883,6 @@ mod react_executor_tests {
             &executor.reactive_nullifiers,
         );
         assert!(executor.reactive_registry.lock().unwrap().is_empty());
-    }
-}
-
-// ─── End-to-end shielded transfer through the executor (privacy M2-a) ─────────
-//
-// The bar: a `ShieldedTransfer` effect driven through the real `apply_effect`
-// dispatch is ADMITTED when (and only when) its hidden STARK side, its Pedersen
-// conservation+range side, and the nullifier gate all pass — and is REJECTED on a
-// forged proof, a non-conserving value set, or a re-presented (double-spent)
-// nullifier. Not a stub: each rejection is the genuine refusal from the real
-// `dregg-circuit-prove` verifier / `dregg-cell-crypto` conservation verifier /
-// `NullifierSet::insert`, observed at the executor entry point.
-#[cfg(all(test, feature = "prover"))]
-mod shielded_executor_tests {
-    use super::*;
-    use crate::action::{Effect, ShieldedInputPayload, ShieldedLeg, ShieldedTransferPayload};
-    use dregg_cell_crypto::value_commitment::{
-        BulletproofRangeProof, ValueCommitment, prove_conservation, scalar_from_blinding_bytes,
-    };
-    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-    use dregg_circuit_prove::shielded::{
-        BINDING_BLIND_LANES, ShieldedSpendWitness, ShieldedTransfer, ShieldedTransferWitness,
-        ShieldedValueLeg, WideValueBindingProof, WideValueBindingWitness, prove_wide_value_binding,
-        wide_transfer_message,
-    };
-
-    const ASSET: u64 = 1;
-
-    fn range_proof_bytes(value: u64, blinding: &[u8; 32]) -> Vec<u8> {
-        BulletproofRangeProof::prove_range(value, &scalar_from_blinding_bytes(blinding)).proof_bytes
-    }
-
-    fn wide_binding(input: &ShieldedTransferWitness, full_value: u64) -> WideValueBindingProof {
-        let binding_blind: [BabyBear; BINDING_BLIND_LANES] =
-            core::array::from_fn(|i| input.spend.randomness + BabyBear::new(0x100 + i as u32));
-        prove_wide_value_binding(&WideValueBindingWitness {
-            value: full_value,
-            asset_type: input.leg.asset_type,
-            legacy_randomness: input.spend.randomness,
-            binding_blind,
-        })
-        .expect("prove mandatory native-wide input binding")
-    }
-
-    /// A shielded-spend witness with a genuine Poseidon2 Merkle path + its leg.
-    fn make_input(
-        leaf_seed: u32,
-        amount: u32,
-        blinding: [u8; 32],
-        key_seed: u32,
-        depth: usize,
-    ) -> ShieldedTransferWitness {
-        let key = [
-            BabyBear::new(key_seed),
-            BabyBear::new(key_seed.wrapping_add(1)),
-            BabyBear::new(key_seed.wrapping_add(2)),
-            BabyBear::new(key_seed.wrapping_add(3)),
-        ];
-        let mut siblings = Vec::with_capacity(depth);
-        let mut positions = Vec::with_capacity(depth);
-        for i in 0..depth {
-            positions.push((i % 4) as u8);
-            siblings.push([
-                BabyBear::new((i as u32) * 7 + 1 + leaf_seed),
-                BabyBear::new((i as u32) * 7 + 2 + leaf_seed),
-                BabyBear::new((i as u32) * 7 + 3 + leaf_seed),
-            ]);
-        }
-        let spend = ShieldedSpendWitness {
-            value: BabyBear::new(amount),
-            asset_type: BabyBear::new(ASSET as u32),
-            owner: BabyBear::new(0x5EED ^ leaf_seed),
-            randomness: BabyBear::new(0xC0FFEE ^ key_seed),
-            key,
-            siblings,
-            positions,
-        };
-        let commitment =
-            ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&blinding));
-        ShieldedTransferWitness {
-            spend,
-            leg: ShieldedValueLeg {
-                asset_type: ASSET,
-                commitment_bytes: commitment.to_bytes().0,
-            },
-        }
-    }
-
-    /// Serialize a built circuit `ShieldedTransfer` + its conservation proof into
-    /// the executor wire payload — exactly what a client would post.
-    fn to_payload(
-        transfer: &ShieldedTransfer,
-        wide_bindings: &[WideValueBindingProof],
-        conservation: dregg_cell_crypto::ConservationProof,
-    ) -> ShieldedTransferPayload {
-        assert_eq!(transfer.inputs.len(), wide_bindings.len());
-        let leg = |l: &ShieldedValueLeg| ShieldedLeg {
-            asset_type: l.asset_type,
-            commitment_bytes: l.commitment_bytes,
-        };
-        ShieldedTransferPayload {
-            merkle_root: transfer.merkle_root.as_u32(),
-            inputs: transfer
-                .inputs
-                .iter()
-                .zip(wide_bindings)
-                .map(|(ip, wide)| ShieldedInputPayload {
-                    nullifier: ip.nullifier.as_u32(),
-                    legacy_value_binding: ip.value_binding.as_u32(),
-                    wide_value_binding: wide.claim.wide_binding.map(BabyBear::as_u32),
-                    spend_proof: ip.proof_bytes(),
-                    wide_value_proof: wide.proof_bytes(),
-                })
-                .collect(),
-            input_legs: transfer.input_legs.iter().map(leg).collect(),
-            output_legs: transfer.output_legs.iter().map(leg).collect(),
-            output_range_proofs: transfer.output_range_proofs.clone(),
-            conservation,
-        }
-    }
-
-    /// A balanced one-in/one-out shielded transfer + the matching payload.
-    fn balanced_payload(leaf_seed: u32, key_seed: u32) -> ShieldedTransferPayload {
-        let amount = 1_000_000u32;
-        // Independent per-note blinding (derived from the seeds): the source of
-        // value-commitment unlinkability — equal amounts still commit distinctly.
-        let mut in_blinding = [3u8; 32];
-        let mut out_blinding = [7u8; 32];
-        in_blinding[..4].copy_from_slice(&leaf_seed.to_le_bytes());
-        out_blinding[..4].copy_from_slice(&key_seed.to_le_bytes());
-        let w = make_input(leaf_seed, amount, in_blinding, key_seed, 4);
-        let wide = wide_binding(&w, amount as u64);
-        let merkle_root = w.spend.merkle_root();
-        let in_c =
-            ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&in_blinding));
-        let out_c =
-            ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&out_blinding));
-        let output_legs = vec![ShieldedValueLeg {
-            asset_type: ASSET,
-            commitment_bytes: out_c.to_bytes().0,
-        }];
-        let output_range_proofs = vec![range_proof_bytes(amount as u64, &out_blinding)];
-        let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
-            merkle_root,
-            &[w],
-            output_legs,
-            output_range_proofs,
-        )
-        .expect("prove balanced shielded transfer");
-        let excess =
-            scalar_from_blinding_bytes(&in_blinding) - scalar_from_blinding_bytes(&out_blinding);
-        let msg = wide_transfer_message(&transfer, core::slice::from_ref(&wide))
-            .expect("build native-wide conservation transcript");
-        let conservation = prove_conservation(&[in_c], &[out_c], &excess, &msg);
-        to_payload(&transfer, &[wide], conservation)
-    }
-
-    fn run(
-        executor: &crate::executor::TurnExecutor,
-        payload: ShieldedTransferPayload,
-        path_idx: usize,
-    ) -> Result<(), (TurnError, Vec<usize>)> {
-        let cell = CellId::from_bytes([0x5A; 32]);
-        let effect = Effect::ShieldedTransfer { payload };
-        let mut ledger = Ledger::new();
-        let mut journal = LedgerJournal::new();
-        executor.apply_effect(
-            &effect,
-            &mut ledger,
-            &[path_idx],
-            &cell,
-            &cell,
-            &mut journal,
-            [0u8; 32],
-        )
-    }
-
-    // ── ACCEPT: a balanced, in-range, well-formed shielded transfer is admitted,
-    //    and its nullifier is now spent in the production set. ──
-    #[test]
-    fn valid_shielded_transfer_is_admitted_and_spends_its_nullifier() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let payload = balanced_payload(11, 0xABCD);
-        let nf = shielded_nullifier_key(payload.inputs[0].nullifier);
-        assert!(!executor.note_nullifiers.lock().unwrap().contains(&nf));
-        run(&executor, payload, 0).expect("a valid shielded transfer must be admitted");
-        assert!(
-            executor.note_nullifiers.lock().unwrap().contains(&nf),
-            "the shielded input's nullifier is now spent in the production set"
-        );
-    }
-
-    // ── ⚑ THE ON-RAMP FALSIFIER (docs/DESIGN-shielded-value-on-ramp.md §3.3) ──
-    //
-    // GATE 4 appends the output leg's bytes VERBATIM FROM THE WIRE, so the
-    // `note_shielded` accumulator — and therefore its `root8()` — is written by
-    // the PROVER, not derived from ledger state. What lands decodes as a
-    // Ristretto `ValueCommitment`: a Pedersen VALUE commitment, not the
-    // Poseidon2 NOTE commitment `hash_fact(value,[asset,owner,randomness])`
-    // that the shielded-spend membership gadget opens (and the transfer
-    // publishes no such note commitment anywhere — the wire has no field for it,
-    // `action.rs` `ShieldedLeg`).
-    //
-    // The consequence, and why this test is armed: `AccumulatorSound` for
-    // `note_shielded.root8()` — the `NoteAccumulatorCR` hypothesis of
-    // `ShieldedSpendPortDischarge.pin_accept_is_note_committed`
-    // (metatheory/Dregg2/Circuit/ShieldedSpendPortDischarge.lean:174,182) — is
-    // FALSE as this set is populated today. That is harmless ONLY because
-    // `root8()` is committed nowhere. Landing it as a carrier base limb (L1) or
-    // pinning membership to it (L4) before the value on-ramp corrects the
-    // appended leaf RELOCATES seam #15 one level up instead of closing it.
-    //
-    // When the on-ramp lands (L0.5: the wire carries a Poseidon2 note
-    // commitment and GATE 4 appends THAT), this test must be rewritten. The
-    // rewrite is the tripwire.
-    #[test]
-    fn shielded_append_is_prover_written_not_ledger_derived() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let payload = balanced_payload(41, 0x4141);
-        let leg_bytes = payload.output_legs[0].commitment_bytes;
-        let leg_count = payload.output_legs.len();
-
-        let empty_root = {
-            let set = executor.note_shielded.lock().unwrap();
-            assert!(set.is_empty(), "the shielded accumulator starts EMPTY");
-            set.root8()
-        };
-
-        run(&executor, payload, 0).expect("a valid shielded transfer must be admitted");
-
-        let set = executor.note_shielded.lock().unwrap();
-        assert!(
-            set.contains(&ShieldedNoteCommitment(leg_bytes)),
-            "GATE 4 appends the PROVER-SUPPLIED wire bytes verbatim — the \
-             accumulator's contents are chosen by the prover, not derived from \
-             ledger state"
-        );
-        assert_eq!(
-            set.len(),
-            leg_count,
-            "nothing but the wire legs lands in the accumulator: there is no \
-             ledger-derived note commitment to append"
-        );
-        assert_ne!(
-            set.root8(),
-            empty_root,
-            "root8() therefore moves to a PROVER-DETERMINED value — this is \
-             exactly why it must not become a committed carrier limb (L1) or a \
-             membership pin (L4) before the on-ramp"
-        );
-        assert!(
-            ValueCommitment::from_bytes(&ValueCommitmentBytes(leg_bytes)).is_some(),
-            "what landed is a PEDERSEN VALUE commitment (a valid Ristretto \
-             point), not the Poseidon2 NOTE commitment \
-             hash_fact(value,[asset,owner,randomness]) the membership gadget \
-             opens — the two encodings are disjoint, so no spend proof could \
-             ever open against this accumulator"
-        );
-    }
-
-    // ── WIDE CUTOVER TOOTH: x and x+p have the same legacy spend binding,
-    //    but distinct native carriers. The genuine x payload is admitted; an
-    //    x+p carrier spliced over its no-mint transcript is refused at the real
-    //    executor entry. This establishes that all sixteen lanes are live in
-    //    Turn acceptance. It does not claim the legacy note leaf precommits
-    //    which of two aliased openings was originally created.
-    #[test]
-    fn modulus_alias_splice_rejects_at_real_executor_no_mint_entry() {
-        let leaf_seed = 31;
-        let key_seed = 0x3131;
-        let amount = 1_000_000u32;
-        let honest_payload = balanced_payload(leaf_seed, key_seed);
-
-        let honest_executor =
-            crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        run(&honest_executor, honest_payload.clone(), 0)
-            .expect("the full-width x carrier must be admitted");
-
-        // Recreate the same spend witness and prove the distinct full-u64
-        // opening x+p. Its compatibility felt is identical by construction.
-        let mut in_blinding = [3u8; 32];
-        in_blinding[..4].copy_from_slice(&leaf_seed.to_le_bytes());
-        let input = make_input(leaf_seed, amount, in_blinding, key_seed, 4);
-        let alias = wide_binding(&input, amount as u64 + BABYBEAR_P as u64);
-        assert_eq!(
-            alias.claim.legacy_binding.as_u32(),
-            honest_payload.inputs[0].legacy_value_binding,
-            "x and x+p must exercise the real old one-felt alias"
-        );
-        assert_ne!(
-            alias.claim.wide_binding.map(BabyBear::as_u32),
-            honest_payload.inputs[0].wide_value_binding,
-            "the native carrier must distinguish x from x+p"
-        );
-
-        let mut alias_payload = honest_payload;
-        alias_payload.inputs[0].wide_value_binding = alias.claim.wide_binding.map(BabyBear::as_u32);
-        alias_payload.inputs[0].wide_value_proof = alias.proof_bytes();
-        let alias_executor =
-            crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let (error, _) = run(&alias_executor, alias_payload, 0)
-            .expect_err("an x+p carrier spliced over x's no-mint transcript must reject");
-        match error {
-            TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("conservation") || reason.contains("range"),
-                "wide splice must reach and fail the live no-mint verifier: {reason}"
-            ),
-            other => panic!("expected InvalidEffect no-mint refusal, got {other:?}"),
-        }
-        assert!(alias_executor.note_nullifiers.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn noncanonical_wide_public_lane_rejects_at_executor_entry() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let mut payload = balanced_payload(32, 0x3232);
-        payload.inputs[0].wide_value_binding[0] = BABYBEAR_P;
-        let (error, _) =
-            run(&executor, payload, 0).expect_err("a noncanonical wide field encoding must reject");
-        match error {
-            TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("not canonical BabyBear"),
-                "wide decoder refusal must be explicit: {reason}"
-            ),
-            other => panic!("expected InvalidEffect canonicality refusal, got {other:?}"),
-        }
-    }
-
-    // ── REJECT (forged membership): a tampered merkle_root breaks the hidden
-    //    STARK side — no fake membership. ──
-    #[test]
-    fn forged_membership_root_rejects() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let mut payload = balanced_payload(12, 0xBEEF);
-        payload.merkle_root = payload.merkle_root.wrapping_add(1);
-        let (err, _) = run(&executor, payload, 0).expect_err("forged root must reject");
-        match err {
-            TurnError::InvalidEffect { reason } => {
-                assert!(reason.contains("STARK"), "got: {reason}")
-            }
-            other => panic!("expected InvalidEffect STARK, got {other:?}"),
-        }
-    }
-
-    // ── REJECT (no double-spend): the SAME shielded transfer presented twice is
-    //    refused by the nullifier gate — the genuine double-spend refusal. ──
-    #[test]
-    fn double_spent_shielded_nullifier_rejects() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let payload = balanced_payload(13, 0xF00D);
-        run(&executor, payload.clone(), 0).expect("first shielded transfer admitted");
-        let (err, _) = run(&executor, payload, 1).expect_err("second presentation must reject");
-        match err {
-            TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("double-spend"),
-                "rejection must be the double-spend refusal, got: {reason}"
-            ),
-            other => panic!("expected InvalidEffect double-spend, got {other:?}"),
-        }
-    }
-
-    // ── REJECT (non-conserving): an output committing to MORE than the input
-    //    (hidden inflation) fails the Pedersen conservation gate — even though the
-    //    STARK membership is genuine. Σδ ≠ 0 ⇒ refused. ──
-    #[test]
-    fn inflating_shielded_transfer_rejects_on_conservation() {
-        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
-        let amount = 1_000_000u32;
-        let inflated = 2_000_000u64;
-        let in_blinding = [3u8; 32];
-        let out_blinding = [7u8; 32];
-        let w = make_input(14, amount, in_blinding, 0x1234, 4);
-        let wide = wide_binding(&w, amount as u64);
-        let merkle_root = w.spend.merkle_root();
-        let in_c =
-            ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&in_blinding));
-        // The output leg commits to the INFLATED value (a real, in-range value, so
-        // its range proof is valid) — only conservation can catch this.
-        let out_c = ValueCommitment::commit(inflated, &scalar_from_blinding_bytes(&out_blinding));
-        let output_legs = vec![ShieldedValueLeg {
-            asset_type: ASSET,
-            commitment_bytes: out_c.to_bytes().0,
-        }];
-        let output_range_proofs = vec![range_proof_bytes(inflated, &out_blinding)];
-        let transfer = dregg_circuit_prove::shielded::transfer_from_witnesses(
-            merkle_root,
-            &[w],
-            output_legs,
-            output_range_proofs,
-        )
-        .expect("STARK builds even for an inflating transfer (caught at conservation)");
-        // The prover still uses the blinding excess; the value imbalance makes the
-        // excess carry a V-component, so the Schnorr-on-R proof cannot answer.
-        let excess =
-            scalar_from_blinding_bytes(&in_blinding) - scalar_from_blinding_bytes(&out_blinding);
-        let msg = wide_transfer_message(&transfer, core::slice::from_ref(&wide))
-            .expect("build native-wide conservation transcript");
-        let conservation = prove_conservation(&[in_c], &[out_c], &excess, &msg);
-        let payload = to_payload(&transfer, &[wide], conservation);
-        let (err, _) =
-            run(&executor, payload, 0).expect_err("an inflating shielded transfer must reject");
-        match err {
-            TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("conservation") || reason.contains("range"),
-                "rejection must be the value-conservation gate, got: {reason}"
-            ),
-            other => panic!("expected InvalidEffect conservation, got {other:?}"),
-        }
-        // Nothing was spent — the transfer was refused before the nullifier gate
-        // could record (the conservation gate precedes the spend).
-        assert!(executor.note_nullifiers.lock().unwrap().is_empty());
-    }
-
-    // ── UNLINKABILITY: two independent shielded transfers of the SAME amount
-    //    produce DIFFERENT nullifiers / commitments / proofs — an observer cannot
-    //    link sender to receiver by the on-wire payload. ──
-    #[test]
-    fn distinct_transfers_are_unlinkable_on_the_wire() {
-        let a = balanced_payload(21, 0x1111);
-        let b = balanced_payload(22, 0x2222);
-        assert_ne!(
-            a.inputs[0].nullifier, b.inputs[0].nullifier,
-            "distinct shielded inputs must reveal distinct nullifiers"
-        );
-        assert_ne!(
-            a.output_legs[0].commitment_bytes, b.output_legs[0].commitment_bytes,
-            "equal amounts must still commit to distinct (blinded) value commitments"
-        );
-        assert_ne!(
-            a.inputs[0].spend_proof, b.inputs[0].spend_proof,
-            "the hidden proofs reveal nothing linking the two transfers"
-        );
-        assert_ne!(
-            a.inputs[0].wide_value_binding, b.inputs[0].wide_value_binding,
-            "the native wide carriers retain fresh hidden blinding"
-        );
     }
 }
 

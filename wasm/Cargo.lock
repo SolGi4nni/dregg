@@ -1966,6 +1966,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-turn-prover"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-turn",
+ "dregg-types",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dregg-types"
 version = "0.1.0"
 dependencies = [
@@ -2020,6 +2034,7 @@ dependencies = [
  "dregg-token",
  "dregg-trace",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-userspace-verify",
  "dreggnet-asset",

@@ -5,8 +5,8 @@
 //! ABI, and one HidingFRI configuration.  In particular, the predicate-less
 //! [`ProofVerifier::verify`] entry point can never accept this proof.
 
-use crate::ProofVerifier;
-use crate::faithful_note_spend::{
+use dregg_turn::ProofVerifier;
+use dregg_turn::faithful_note_spend::{
     FAITHFUL_NOTE_SPEND_PREDICATE, FAITHFUL_NOTE_SPEND_PUBLIC_INPUT_COUNT,
 };
 

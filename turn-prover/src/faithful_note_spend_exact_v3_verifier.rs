@@ -7,12 +7,12 @@
 
 use std::sync::OnceLock;
 
-use crate::ProofVerifier;
-use crate::faithful_note_spend_exact_v3::{
+use dregg_cell::vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical_vk_v2};
+use dregg_turn::ProofVerifier;
+use dregg_turn::faithful_note_spend_exact_v3::{
     FAITHFUL_NOTE_SPEND_EXACT_V3_ACTION, FAITHFUL_NOTE_SPEND_EXACT_V3_PREDICATE,
     FAITHFUL_NOTE_SPEND_EXACT_V3_RESOURCE, FaithfulNoteSpendExactV3PublicStatement,
 };
-use dregg_cell::vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical_vk_v2};
 
 use dregg_circuit_prove::faithful_note_spend_exact_v3_identity as identity;
 
@@ -109,14 +109,14 @@ impl ProofVerifier for FaithfulNoteSpendExactV3Verifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::faithful_note_spend::{
+    use dregg_cell::vk_v2::{VerifierFingerprint, VkComponents, canonical_vk_v2};
+    use dregg_turn::faithful_note_spend::{
         FAITHFUL_NOTE_SPEND_PREDICATE, FAITHFUL_NOTE_SPEND_PUBLIC_INPUT_COUNT,
     };
-    use crate::faithful_note_spend_exact_v3::{
+    use dregg_turn::faithful_note_spend_exact_v3::{
         FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT,
         FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_WIRE_BYTES,
     };
-    use dregg_cell::vk_v2::{VerifierFingerprint, VkComponents, canonical_vk_v2};
 
     #[test]
     fn exact_v3_identity_is_the_staged_code_owned_predicate() {
@@ -302,7 +302,7 @@ mod tests {
             FAITHFUL_NOTE_SPEND_EXACT_V3_RESOURCE,
             &v2_pi,
         ));
-        let v2_verifier = crate::FaithfulNoteSpendVerifier::new();
+        let v2_verifier = crate::faithful_note_spend_verifier::FaithfulNoteSpendVerifier::new();
         assert!(!v2_verifier.verify_with_predicate(
             FAITHFUL_NOTE_SPEND_EXACT_V3_PREDICATE,
             &[1],

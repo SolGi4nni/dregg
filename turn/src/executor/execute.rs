@@ -211,7 +211,6 @@ impl TurnExecutor {
         // Exact FNSP-v3 linearity: a committed token must be extracted before this executor can
         // begin another whole turn.  That makes any consumed token observed below attributable to
         // THIS execution, so every rejection can safely restore it to pending.
-        #[cfg(feature = "prover")]
         {
             if let Err(error) = self.exact_fnsp_v3_admission_ready_for_execute() {
                 return TurnResult::Rejected {
@@ -289,7 +288,6 @@ impl TurnExecutor {
                 if let Some(previous) = factory_registry_checkpoint {
                     *self.factory_registry.borrow_mut() = previous;
                 }
-                #[cfg(feature = "prover")]
                 let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
                 return TurnResult::Rejected {
                     reason,
@@ -297,7 +295,6 @@ impl TurnExecutor {
                 };
             }
         }
-        #[cfg(feature = "prover")]
         if !result.is_committed() {
             let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
         }

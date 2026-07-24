@@ -8,8 +8,6 @@
 //! configuration, and pinned Plonky3 revision as one canonical VK. The registry
 //! never accepts the same descriptor under the non-hiding verifier family.
 
-#![cfg(feature = "prover")]
-
 use std::sync::Arc;
 
 use dregg_cell::custom_effect::{CustomEffectError, CustomEffectRegistry, CustomEffectVerifier};

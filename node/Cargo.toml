@@ -17,6 +17,11 @@ dregg-cell-crypto = { path = "../cell-crypto" }
 # shadow/gate executor, the F-4 admission gate, verified settle, and the captp/coord gates are
 # all compiled in by default — no per-crate enables needed here anymore.
 dregg-turn = { path = "../turn" }
+# The γ.2 bilateral AGGREGATE prover/verifier (`api.rs`, `mcp/handlers_act.rs`,
+# `blocklace_sync.rs`) moved out of `dregg-turn`'s `prover` feature into its own
+# always-compiled crate. The node calls it UNCONDITIONALLY, so this is a plain
+# dependency — the same honesty `dregg-circuit-prove` below already has.
+dregg-turn-prover = { path = "../turn-prover" }
 # The verified-Lean executor cluster (the shadow differential + strict-veto gate + the
 # authoritative `produce_via_lean` state producer). This native crate links `libdregg_lean.a`;
 # the node injects its `LeanShadowObserver` into every executor and calls `produce_via_lean` for

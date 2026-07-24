@@ -6929,6 +6929,7 @@ dependencies = [
  "dregg-storage-templates",
  "dregg-token",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-verifier",
  "ed25519-dalek",
@@ -7429,6 +7430,7 @@ dependencies = [
  "dregg-storage",
  "dregg-token",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-verifier",
  "dregg-wire",
@@ -7589,6 +7591,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-turn-prover"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-cell-crypto",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-turn",
+ "dregg-types",
+ "postcard",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dregg-types"
 version = "0.1.0"
 dependencies = [
@@ -7634,6 +7651,7 @@ dependencies = [
  "dregg-commit",
  "dregg-federation",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "hex",
  "postcard",
@@ -8237,6 +8255,7 @@ dependencies = [
  "dreggnet-offerings",
  "dungeon-on-dregg",
  "hex",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "zeroize",
@@ -8276,6 +8295,7 @@ dependencies = [
  "dregg-dice",
  "dregg-schema",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-zkoracle-prove",
  "dreggnet-asset",

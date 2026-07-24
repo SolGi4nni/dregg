@@ -231,7 +231,9 @@ fn main() {
     println!("   N-cell recursive fold over the `JointTurnAggregationAir` binding leaf — was");
     println!("   dead scaffolding (free-witness bundle digest, zero production callers) and is");
     println!("   gone. Cross-cell aggregation in production is the Lean-emitted BILATERAL");
-    println!("   aggregator (`turn/src/aggregate_bilateral_prover.rs`); per-cell legs remain");
+    println!(
+        "   aggregator (`turn-prover/src/aggregate_bilateral_prover.rs`); per-cell legs remain"
+    );
     println!(
         "   `DescriptorParticipant` minted by `rotation_witness::mint_rotated_participant_leg`"
     );

@@ -7,8 +7,6 @@
 //! `new_root`. A batch is fully verified against a staged head before the real
 //! history changes, so a bad suffix cannot partially land a good prefix.
 
-#![cfg(feature = "prover")]
-
 use dregg_circuit::field::BABYBEAR_P;
 use dregg_circuit_prove::private_graph_rewrite::{
     PrivateGraphRewriteZkProof, PublicStatement, verify_postcard,

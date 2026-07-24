@@ -1,0 +1,42 @@
+[package]
+name = "dregg-turn-prover"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Proof PRODUCTION for dregg turns (bilateral aggregation, Custom-leaf proof verifiers). Depends on dregg-turn's PUBLIC interface; dregg-turn never depends on this crate."
+
+# NO `prover` feature. The crate IS the prover: every item here is compiled
+# unconditionally, so a shape change in `dregg-turn` / `dregg-circuit-prove`
+# (a new enum variant, a new struct field) is a compile error IN THIS CRATE,
+# at the source — not a landmine that only lights up in some downstream
+# crate whose feature resolution happens to select the gated arm.
+[dependencies]
+# `default-features = false` is LOAD-BEARING, not tidiness: it is the structural
+# proof of the design's central claim that this crate rides `dregg-turn`'s PUBLIC,
+# UNGATED interface only. If some item here ever needed `dregg-turn/prover` (or
+# `threshold-sig`), this line would fail the build instead of quietly riding
+# whatever the surrounding graph happened to unify on. It also keeps the wasm
+# card's arkworks-free posture intact when a wasm consumer links this crate.
+dregg-turn = { path = "../turn", default-features = false }
+dregg-cell = { path = "../cell" }
+# The Pedersen conservation / Bulletproof range side of a shielded transfer.
+dregg-cell-crypto = { path = "../cell-crypto" }
+dregg-circuit = { path = "../circuit" }
+dregg-circuit-prove = { path = "../circuit-prove" }
+dregg-types = { path = "../types" }
+postcard = { version = "1", features = ["alloc"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The moved aggregation tests build Turns through `dregg_turn::builder` and
+# arm the permissive `StubVerifier` accept path for plumbing only (the same
+# scoping `dregg-turn`'s own dev-dependencies use).
+dregg-cell = { path = "../cell", features = ["test-stubs"] }
+
+[lints]
+workspace = true

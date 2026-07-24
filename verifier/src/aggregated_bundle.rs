@@ -5,9 +5,9 @@
 //! one-shot `verify_aggregated_bundle_json` entrypoint for the CLI subcommand.
 //!
 //! See `STAGE-7-GAMMA-2-PHASE-2-SKETCH.md` and
-//! `dregg_turn::aggregate_bilateral_prover` for the prover counterpart.
+//! `dregg_turn_prover::aggregate_bilateral_prover` for the prover counterpart.
 
-use dregg_turn::aggregate_bilateral_prover::{AggregatedBundle, verify_aggregated_bundle};
+use dregg_turn_prover::aggregate_bilateral_prover::{AggregatedBundle, verify_aggregated_bundle};
 use serde::{Deserialize, Serialize};
 
 /// Verdict from the `aggregated-bundle` verifier subcommand.
@@ -80,8 +80,8 @@ pub fn verify_aggregated_bundle_struct(bundle: &AggregatedBundle) -> AggregatedB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle;
     use dregg_turn::{ActionBuilder, TurnBuilder, WitnessedReceipt};
+    use dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle;
     use dregg_types::CellId;
 
     fn cid(b: u8) -> CellId {

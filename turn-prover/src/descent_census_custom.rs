@@ -7,8 +7,6 @@
 //! welds the proof's authenticated native-eight `fields_root` to the wide
 //! EffectVM leg, so validators do not trust the host census builder.
 
-#![cfg(feature = "prover")]
-
 use std::sync::Arc;
 
 use dregg_cell::custom_effect::{

@@ -298,9 +298,12 @@ impl FaithfulNoteSpendExactV3PublicStatement {
 
     /// Strictly decode the verifier-facing wire.  This is not an authoring constructor: live
     /// producers must use [`Self::from_signed_effect`] so state fields cannot come from proof bytes.
-    pub(crate) fn decode_verifier_wire(
-        bytes: &[u8],
-    ) -> Result<Self, FaithfulNoteSpendExactV3Error> {
+    ///
+    /// `pub` (was `pub(crate)`) because the ONLY caller is the predicate-specific verifier, which
+    /// now lives in `dregg-turn-prover`.  This widens no authority: it parses attacker-supplied
+    /// bytes into a checked statement and rejects anything non-canonical; a decoded statement is
+    /// not an acceptance and mints no token.
+    pub fn decode_verifier_wire(bytes: &[u8]) -> Result<Self, FaithfulNoteSpendExactV3Error> {
         if bytes.len() != FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_WIRE_BYTES {
             return Err(FaithfulNoteSpendExactV3Error::InvalidPublicWireLength {
                 expected: FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_WIRE_BYTES,

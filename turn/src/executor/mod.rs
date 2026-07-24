@@ -36,7 +36,6 @@
 //! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
 
 use std::collections::HashMap;
-#[cfg(feature = "prover")]
 use std::fmt;
 use std::sync::Mutex;
 
@@ -721,7 +720,6 @@ pub use exact_fnsp_state::{
 /// immediately before executing the authenticated turn, and extracts it from the consumed slot
 /// only after execution returned a genuine receipt.  Refusing replacement in either occupied
 /// state prevents a caller from silently dropping or swapping proof authority.
-#[cfg(feature = "prover")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactFnspV3AdmissionError {
     PendingAlreadyInstalled,
@@ -730,7 +728,6 @@ pub enum ExactFnspV3AdmissionError {
     MutexPoisoned,
 }
 
-#[cfg(feature = "prover")]
 impl fmt::Display for ExactFnspV3AdmissionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -748,10 +745,8 @@ impl fmt::Display for ExactFnspV3AdmissionError {
     }
 }
 
-#[cfg(feature = "prover")]
 impl std::error::Error for ExactFnspV3AdmissionError {}
 
-#[cfg(feature = "prover")]
 #[derive(Default)]
 struct ExactFnspV3AdmissionSlot {
     pending: Option<crate::AcceptedFaithfulNoteSpendExactV3>,
@@ -815,6 +810,19 @@ pub struct TurnExecutor {
     pub rate_limit_sum_counters: Mutex<HashMap<RateLimitSumKey, u64>>,
     /// Optional ZK proof verifier. If None and a cell requires proof auth, the action is rejected.
     pub proof_verifier: Option<Box<dyn ProofVerifier>>,
+    /// Optional shielded-transfer verifier (privacy M2-a). The hiding uni-STARK
+    /// and the Pedersen conservation/range verifiers live in `dregg-circuit-prove`,
+    /// so the implementation ships in `dregg-turn-prover` and is injected here at
+    /// startup — the same dependency-inversion seam `shadow_observer` uses.
+    ///
+    /// `None` ⇒ `Effect::ShieldedTransfer` is refused: byte-for-byte the behavior
+    /// the old `#[cfg(not(feature = "prover"))]` stub gave, now enforced by the type
+    /// system and a crate boundary rather than a cfg matrix.
+    ///
+    /// The trait is VERIFY-RETURNS-VALUE: it never receives the journal or the
+    /// ledger. See [`crate::shielded_verifier`].
+    pub shielded_transfer_verifier:
+        Option<std::sync::Arc<dyn crate::shielded_verifier::ShieldedTransferVerifier>>,
     /// Optional budget gate (Stingray bounded counter).
     /// When present, the executor checks the silo's local budget slice before executing
     /// each turn. If the slice cannot cover the turn fee, the turn is rejected with
@@ -1190,7 +1198,6 @@ pub struct TurnExecutor {
     /// successful application only, moves it into `applied`.  Final producer commitment promotes
     /// it to `consumed`. There is no raw-statement or cloning path: post-commit orchestration can
     /// recover only the exact token the executor used.
-    #[cfg(feature = "prover")]
     exact_fnsp_v3_admission: Mutex<ExactFnspV3AdmissionSlot>,
     /// Additive exact FNSP-v3 nullifier accumulator state.
     ///
@@ -1211,6 +1218,7 @@ impl TurnExecutor {
             rate_limit_counters: Mutex::new(HashMap::new()),
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: None,
+            shielded_transfer_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1248,7 +1256,6 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
-            #[cfg(feature = "prover")]
             exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
@@ -1294,6 +1301,7 @@ impl TurnExecutor {
             rate_limit_counters: Mutex::new(HashMap::new()),
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: None,
+            shielded_transfer_verifier: None,
             budget_gate: Some(Mutex::new(gate)),
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1331,7 +1339,6 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
-            #[cfg(feature = "prover")]
             exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
@@ -1347,6 +1354,7 @@ impl TurnExecutor {
             rate_limit_counters: Mutex::new(HashMap::new()),
             rate_limit_sum_counters: Mutex::new(HashMap::new()),
             proof_verifier: Some(verifier),
+            shielded_transfer_verifier: None,
             budget_gate: None,
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
@@ -1384,7 +1392,6 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
-            #[cfg(feature = "prover")]
             exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
@@ -1400,13 +1407,36 @@ impl TurnExecutor {
         self.proof_verifier = Some(verifier);
     }
 
+    /// Inject the shielded-transfer verifier (privacy M2-a).
+    ///
+    /// The production implementation is
+    /// `dregg_turn_prover::CircuitShieldedTransferVerifier`; a node/SDK installs it
+    /// once at startup. Until it is injected, every `Effect::ShieldedTransfer`
+    /// fails closed — a verify-only executor cannot admit a hidden transfer, which
+    /// is the property the deleted `#[cfg(not(feature = "prover"))]` stub carried.
+    pub fn set_shielded_transfer_verifier(
+        &mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldedTransferVerifier>,
+    ) {
+        self.shielded_transfer_verifier = Some(verifier);
+    }
+
+    /// Builder form of [`Self::set_shielded_transfer_verifier`].
+    #[must_use]
+    pub fn with_shielded_transfer_verifier(
+        mut self,
+        verifier: std::sync::Arc<dyn crate::shielded_verifier::ShieldedTransferVerifier>,
+    ) -> Self {
+        self.shielded_transfer_verifier = Some(verifier);
+        self
+    }
+
     /// Install the single verifier-minted exact FNSP-v3 acceptance which may authorize the next
     /// exact-v3 `NoteSpend` application.
     ///
     /// Installation is replacement-free.  A pending token must first be used (or the executor
     /// dropped), and a consumed token must first be extracted, so callers cannot overwrite either
     /// side of the linear handoff.
-    #[cfg(feature = "prover")]
     pub fn install_exact_fnsp_v3_admission(
         &self,
         accepted: crate::AcceptedFaithfulNoteSpendExactV3,
@@ -1434,7 +1464,6 @@ impl TurnExecutor {
     /// [`Self::promote_applied_exact_fnsp_v3_admission_after_commit`] since the last extraction.
     /// The returned token remains opaque and non-`Clone`; this operation is the only transition
     /// out of the consumed slot.
-    #[cfg(feature = "prover")]
     pub fn take_consumed_exact_fnsp_v3_admission(
         &self,
     ) -> Result<Option<crate::AcceptedFaithfulNoteSpendExactV3>, ExactFnspV3AdmissionError> {
@@ -1452,7 +1481,6 @@ impl TurnExecutor {
     /// node orchestration calls it only inside the final committed arm.  A Lean-final rejection
     /// therefore leaves the token staged and unextractable even if cleanup is accidentally skipped.
     /// Returns `true` when an exact-v3 effect was staged, `false` for a committed turn without one.
-    #[cfg(feature = "prover")]
     pub fn promote_applied_exact_fnsp_v3_admission_after_commit(
         &self,
     ) -> Result<bool, ExactFnspV3AdmissionError> {
@@ -1473,7 +1501,6 @@ impl TurnExecutor {
     /// Refuse a new whole-turn execution while a prior committed exact-v3 token awaits extraction.
     /// This makes rollback attribution unambiguous: a non-empty consumed slot during execution can
     /// only have been produced by that execution.
-    #[cfg(feature = "prover")]
     fn exact_fnsp_v3_admission_ready_for_execute(&self) -> Result<(), ExactFnspV3AdmissionError> {
         let slot = self
             .exact_fnsp_v3_admission
@@ -1492,7 +1519,6 @@ impl TurnExecutor {
     /// gate rejected the turn.  Move its token back to pending in the same slot state machine, so
     /// no rejected turn can expose an extractable consumed acceptance and the authenticated turn
     /// may be retried atomically.
-    #[cfg(feature = "prover")]
     pub fn restore_exact_fnsp_v3_admission_after_rejection(
         &self,
     ) -> Result<(), ExactFnspV3AdmissionError> {
@@ -2429,6 +2455,10 @@ impl TurnExecutor {
 // ─── Decomposed Implementation Modules ──────────────────────────────────────
 
 mod apply;
+/// The canonical shielded-nullifier key derivation. Re-exported so an out-of-crate
+/// prover/indexer derives the SAME 32-byte key the executor consumes, instead of
+/// re-implementing the domain separation and silently forking the namespace.
+pub use apply::shielded_nullifier_key;
 mod authorize;
 mod execute;
 mod execute_tree;

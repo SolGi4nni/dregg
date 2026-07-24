@@ -10130,10 +10130,10 @@ mod tests {
 
         let entries = vec![(alice, materialized_alice), (bob, materialized_bob)];
         let bundle =
-            dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle(&turn, &entries)
+            dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle(&turn, &entries)
                 .expect("cross-sourced WRs must aggregate");
         assert_eq!(bundle.participating_cells.len(), 2);
-        dregg_turn::aggregate_bilateral_prover::verify_aggregated_bundle(&bundle)
+        dregg_turn_prover::aggregate_bilateral_prover::verify_aggregated_bundle(&bundle)
             .expect("aggregated bundle of gossiped WRs must verify");
     }
 

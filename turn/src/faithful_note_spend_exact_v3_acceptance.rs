@@ -16,6 +16,7 @@
 
 use core::fmt;
 use std::error::Error;
+use std::sync::{Arc, OnceLock};
 
 use crate::ProofVerifier;
 use crate::action::Effect;
@@ -26,8 +27,54 @@ use crate::faithful_note_spend_exact_v3::{
     FaithfulNoteSpendExactV3PublicStatement, FaithfulNoteSpendExactV3StateInputs,
 };
 use crate::faithful_note_spend_exact_v3_anchor::ExactFnspV3DurableAnchor;
-use crate::faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
 use dregg_circuit::exact_nullifier_aafi::{ValidatedExactAafiTransition, exact_state_commit};
+
+/// The ONE process-wide exact-v3 proof authority.
+///
+/// The concrete verifier (`FaithfulNoteSpendExactV3Verifier`) checks a HidingFRI
+/// proof against a `dregg-circuit-prove` descriptor, so it lives in
+/// `dregg-turn-prover`, not here. This slot is how the core reaches it.
+///
+/// `OnceLock` is load-bearing, not convenience: the authority is **install-once,
+/// never replaceable**, so the public mint below still takes NO verifier argument
+/// and no caller can swap a permissive verifier in for a single call. Absent an
+/// installed authority the mint FAILS CLOSED
+/// ([`FaithfulNoteSpendExactV3AcceptanceError::ProofAuthorityNotInstalled`]) —
+/// exactly the posture the deleted `#[cfg(not(feature = "prover"))]` build had,
+/// now a runtime fact instead of a cfg fact.
+static EXACT_V3_PROOF_AUTHORITY: OnceLock<Arc<dyn ProofVerifier>> = OnceLock::new();
+
+/// Install the code-owned exact FNSP-v3 proof authority for this process.
+///
+/// Call this once at startup; `dregg_turn_prover::install_code_owned_exact_fnsp_v3_verifier`
+/// is the production caller and installs the real
+/// `FaithfulNoteSpendExactV3Verifier`. Returns `Err` if an authority is already
+/// installed — installation is irreversible on purpose, so a later crate cannot
+/// downgrade proof authority after the node has begun accepting turns.
+pub fn install_exact_fnsp_v3_proof_authority(
+    verifier: Arc<dyn ProofVerifier>,
+) -> Result<(), ExactFnspV3ProofAuthorityAlreadyInstalled> {
+    EXACT_V3_PROOF_AUTHORITY
+        .set(verifier)
+        .map_err(|_| ExactFnspV3ProofAuthorityAlreadyInstalled)
+}
+
+/// Whether an exact-v3 proof authority has been installed in this process.
+pub fn exact_fnsp_v3_proof_authority_installed() -> bool {
+    EXACT_V3_PROOF_AUTHORITY.get().is_some()
+}
+
+/// Refusal of a second [`install_exact_fnsp_v3_proof_authority`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactFnspV3ProofAuthorityAlreadyInstalled;
+
+impl fmt::Display for ExactFnspV3ProofAuthorityAlreadyInstalled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an exact FNSP-v3 proof authority is already installed")
+    }
+}
+
+impl Error for ExactFnspV3ProofAuthorityAlreadyInstalled {}
 
 const PI_HEIGHT: usize = 0;
 const PI_HISTORICAL_ROOT: usize = 4;
@@ -198,8 +245,10 @@ impl FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
 /// not accept an unsigned proof-controlled statement as a substitute.
 ///
 /// This function itself is mutation-free: it does not mutate the exact accumulator or install a
-/// caller-selected verifier. Live exact-v3 dispatch accepts only this opaque result; the v2 route
-/// remains independent.
+/// caller-selected verifier.  The verifier is the ONE install-once process authority
+/// ([`install_exact_fnsp_v3_proof_authority`]); with none installed this fails closed with
+/// [`FaithfulNoteSpendExactV3AcceptanceError::ProofAuthorityNotInstalled`].  Live exact-v3
+/// dispatch accepts only this opaque result; the v2 route remains independent.
 ///
 /// # Fail-closed live-orchestration preconditions
 ///
@@ -221,8 +270,11 @@ pub fn verify_faithful_note_spend_exact_v3_acceptance(
     transition: &ValidatedExactAafiTransition,
     durable_anchor: &ExactFnspV3DurableAnchor,
 ) -> Result<AcceptedFaithfulNoteSpendExactV3, FaithfulNoteSpendExactV3AcceptanceError> {
+    let Some(authority) = EXACT_V3_PROOF_AUTHORITY.get() else {
+        return Err(FaithfulNoteSpendExactV3AcceptanceError::ProofAuthorityNotInstalled);
+    };
     verify_with_code_owned_identity(
-        &FaithfulNoteSpendExactV3Verifier::new(),
+        authority.as_ref(),
         signed_effect,
         transition,
         durable_anchor,
@@ -355,6 +407,12 @@ pub enum FaithfulNoteSpendExactV3AcceptanceError {
     SignedValueMismatch { signed: u64, transition: u64 },
     /// The strict code-owned exact-v3 HidingFRI verifier refused the inner proof.
     ProofRejected,
+    /// FAIL-CLOSED: no exact-v3 proof authority is installed in this process, so
+    /// no proof can be checked and no acceptance token can be minted. This is a
+    /// verify-only deployment that never called
+    /// [`install_exact_fnsp_v3_proof_authority`] (the `dregg-turn-prover` startup
+    /// hook), NOT a statement about the submitted proof.
+    ProofAuthorityNotInstalled,
 }
 
 impl From<FaithfulNoteSpendExactV3Error> for FaithfulNoteSpendExactV3AcceptanceError {
@@ -375,6 +433,9 @@ impl fmt::Display for FaithfulNoteSpendExactV3AcceptanceError {
                 "exact FNSP-v3 signed value {signed} does not match transition value {transition}"
             ),
             Self::ProofRejected => f.write_str("exact FNSP-v3 proof rejected"),
+            Self::ProofAuthorityNotInstalled => {
+                f.write_str("no exact FNSP-v3 proof authority is installed in this process")
+            }
         }
     }
 }
@@ -385,7 +446,8 @@ impl Error for FaithfulNoteSpendExactV3AcceptanceError {
             Self::Statement(error) => Some(error),
             Self::SignedNullifierMismatch
             | Self::SignedValueMismatch { .. }
-            | Self::ProofRejected => None,
+            | Self::ProofRejected
+            | Self::ProofAuthorityNotInstalled => None,
         }
     }
 }
@@ -1225,12 +1287,29 @@ mod tests {
         assert!(verifier.calls().is_empty());
     }
 
+    /// ⚑ FAIL-CLOSED: core `dregg-turn` alone cannot mint an acceptance token.
+    ///
+    /// This test used to assert `ProofRejected` — the code-owned exact-v3 HidingFRI
+    /// verifier refusing a dummy inner proof. That verifier now lives in
+    /// `dregg-turn-prover` (it needs `dregg-circuit-prove`), and core `turn` links
+    /// no prover, so the honest expectation for THIS crate is that the mint refuses
+    /// for want of an authority — never that it silently succeeds.
+    ///
+    /// The other half — "with the real verifier installed, a dummy inner proof is
+    /// REJECTED (not accepted, not short-circuited)" — is
+    /// `turn-prover/tests/exact_v3_authority_installed.rs`
+    /// (`installed_authority_reaches_the_real_verifier_and_refuses_a_bogus_proof`).
+    /// Both halves together are the old assertion, plus the crate boundary.
     #[test]
-    fn dummy_inner_proof_is_rejected_by_code_owned_exact_verifier() {
+    fn core_alone_cannot_mint_an_acceptance_no_proof_authority_is_installed() {
+        assert!(
+            !exact_fnsp_v3_proof_authority_installed(),
+            "core dregg-turn links no prover, so no authority can be installed here"
+        );
         let (transition, anchor, effect) = fixture([0x5a; 32], 0x8877_6655_4433_2211);
         assert_eq!(
             verify_faithful_note_spend_exact_v3_acceptance(&effect, &transition, &anchor),
-            Err(FaithfulNoteSpendExactV3AcceptanceError::ProofRejected)
+            Err(FaithfulNoteSpendExactV3AcceptanceError::ProofAuthorityNotInstalled)
         );
     }
 }

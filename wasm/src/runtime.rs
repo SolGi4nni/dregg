@@ -386,7 +386,7 @@ pub struct TurnProofRecord {
 /// Unlike [`TurnProofRecord`] (a single-turn EffectVM STARK whose γ.2 bilateral
 /// accumulator roots are left as zero sentinels → executor-trusted cross-cell
 /// boundary → SILVER), this record is produced by the canonical γ.2 aggregator
-/// `dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle` over a real
+/// `dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle` over a real
 /// two-cell scenario: alice's OUTGOING transfer and bob's INCOMING transfer,
 /// both projected from the same canonical `Turn`'s bilateral schedule. The
 /// outer STARK (`BilateralAggregationAir`) binds, in one algebraic pass, that
@@ -491,7 +491,7 @@ impl DreggRuntime {
     ///     each projected from the SAME canonical Turn's bilateral schedule
     ///     (`ExpectedBilateral::roots_for`), so the two roots coincide;
     ///   * the canonical aggregator
-    ///     `dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`,
+    ///     `dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle`,
     ///     which builds the outer `BilateralAggregationAir` trace, runs the
     ///     real outer STARK (FRI + Merkle + Fiat-Shamir), and emits an
     ///     `AggregatedBundle`.
@@ -511,10 +511,10 @@ impl DreggRuntime {
         use dregg_circuit::bilateral_aggregation_air as ag;
         use dregg_circuit::effect_vm::pi as p;
         use dregg_circuit::field::BabyBear;
-        use dregg_turn::aggregate_bilateral_prover::{
+        use dregg_turn::bilateral_schedule::{ExpectedBilateral, project_into_pi};
+        use dregg_turn_prover::aggregate_bilateral_prover::{
             prove_aggregated_bundle, verify_aggregated_bundle,
         };
-        use dregg_turn::bilateral_schedule::{ExpectedBilateral, project_into_pi};
 
         if self.bilateral_aggregate.is_some() {
             return Ok(());

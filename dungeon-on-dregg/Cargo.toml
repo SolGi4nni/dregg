@@ -105,6 +105,12 @@ dregg-turn = { path = "../turn" }
 # enabling it; `private-quest` below also activates turn's real proof-history
 # module rather than copying its verifier into the game.
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+# The proof-history module (`private_graph_rewrite_history`) moved OUT of
+# `dregg-turn`'s `prover` feature into the always-compiled `dregg-turn-prover`
+# crate, so `private-quest` now takes a real dependency instead of forwarding a
+# cfg. Optional for the same reason `dregg-circuit-prove` is: default dungeon
+# builds do not compile the producer path.
+dregg-turn-prover = { path = "../turn-prover", optional = true }
 # THE MULTI-PLAYER SHARED-WORLD substrate (the `mud` module). `starbridge_v2::world::World`
 # is the real MULTI-ACTOR ledger: each player is its OWN cell/identity, `World::turn(agent,
 # effects)` builds a turn attributed to that player, and `commit_turn` admits it IFF the
@@ -143,7 +149,7 @@ tlsn-live = ["dregg-zkoracle-prove/tlsn-live"]
 # 4-host-slot / 2-pattern-slot match-driven replacement relation.  This is
 # deliberately not full DPO rewriting.  Heavy HidingFri proof production stays
 # opt-in; default dungeon builds do not compile this module.
-private-quest = ["dep:dregg-circuit-prove", "dregg-turn/prover"]
+private-quest = ["dep:dregg-circuit-prove", "dep:dregg-turn-prover"]
 
 # One-shot private 4-seat/4-role raid matching. The producer sees the private
 # score/admissibility matrix; proof consumers see only its root and the globally
