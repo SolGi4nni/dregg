@@ -111,9 +111,24 @@ def weldedWideRegistryRefusedFirst : List (String × EffectVmDescriptor2) :=
 /-- `deadColsE1 cm 90` with `liveCols` HOISTED (same fast, value-identical form as
 `EmitWideRegistryProbe.deadColsE1Fast` — the proven def rebuilds `liveCols` once per column, which
 the interpreter makes ~1 min/member). -/
-def deadColsE1Fast (cm : EffectVmDescriptor2) : List Nat :=
+def deadColsE1Fast (cm : EffectVmDescriptor2) (ceiling : Nat) : List Nat :=
   let live := Dregg2.Circuit.Emit.RotWideCompactE1.liveCols cm
-  (List.range cm.traceWidth).filter (fun c => decide (90 ≤ c) && !live.contains c)
+  (List.range ceiling).filter (fun c => decide (90 ≤ c) && !live.contains c)
+
+/-- The E1 kill-set CEILING for the WELDED member's S2-compacted `cm`: the pre-append host width, i.e.
+`cm.traceWidth` MINUS the umem leg (`+7`, always) MINUS the gentian floor-refuse block
+(`3·REFUSE_STRIDE`) IFF the member is a bare-cohort route. Both welds ride the TOP of `cm` past the
+wide carriers (refuse at the host width, the umem leg PAST the refuse — `weldRefusedFirst`), and
+NEITHER is emitted by the Rust wide producer: the umem leg is appended by the runtime umem producer and
+the gentian aux is filled at PROVE time (`fill_refuse_aux`). So — exactly as the bare wide registry —
+the E1 kill-set must stay in the HOST region: capping the scan here yields the SAME per-member kill-set
+`deadColsE1 bare 90` the shared Rust producer table (`e1_compact_generated.rs`) carries by key, so the
+runtime `weld_umem_into_wide_descriptor(compactE1(bare+refuse))` composition byte-matches this emit
+(the `wide_umem_weld_registry_parity_and_no_narrowing` tooth). Non-cohort keys carry no gentian, so the
+ceiling only excludes the umem leg. -/
+def e1Ceiling (key : String) (cm : EffectVmDescriptor2) : Nat :=
+  cm.traceWidth - 7
+    - (if bareCohortKeys.contains key then 3 * Dregg2.Deos.BareCohortFloorRefuseDeployed.REFUSE_STRIDE else 0)
 
 def main : IO Unit := do
   for (key, d) in weldedWideRegistryRefusedFirst do
@@ -121,9 +136,11 @@ def main : IO Unit := do
     | .ok (cm, _, _) =>
       -- E1 (the SECOND flag-day): delete the dead v1-face bands at the derived kill-set (floor 90),
       -- gated by the cheap `transitionCeilingOk` (`compactE1Ok_of_ceiling`). Same per-member kill-set
-      -- as the bare wide registry (the refuse/umem welds append live columns strictly PAST it).
+      -- as the bare wide registry — the refuse/umem welds append PAST the host, so the E1 scan is
+      -- capped at the host width (`e1Ceiling`); the kill-set is a subset of `deadColsE1 cm 90`, and a
+      -- subset of a `compactE1Ok`-valid pure-dead kill-set stays `compactE1Ok`-valid.
       if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm 90 then
-        let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm (deadColsE1Fast cm)
+        let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm (deadColsE1Fast cm (e1Ceiling key cm))
         IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"
       else throw (IO.userError
           s!"E1-compact REFUSED for welded {key} — transitionCeilingOk failed (a `.transition` \

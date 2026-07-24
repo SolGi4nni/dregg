@@ -42,6 +42,7 @@ import Dregg2.Circuit.Emit.BridgeActionEmit
 import Dregg2.Circuit.Emit.DerivationEmit
 import Dregg2.Circuit.Emit.DfaRoutingEmit
 import Dregg2.Circuit.Emit.DyckStackEmit
+import Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit
 import Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
 import Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld
 import Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
@@ -206,13 +207,18 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Market.PrivateBookBfvExactPublicConsumer.stage1Descriptor)
   , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage2-exact-public.json",
       Market.PrivateBookBfvExactPublicConsumer.stage2Descriptor)
+  -- THE hidden-span commitment descriptor: the WIDE-BLIND (5-blinding-lane, |R| = p⁵ ≈ 2^154.5)
+  -- form. The narrow single-blinding-felt `guardedHidingSpanDesc` (~31-bit blinding space) was
+  -- DELETED in the felt-width cutover of 2026-07-23 — it must never re-enter this table.
+  , ("guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json",
+      Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit.guardedHidingSpanWideBlindDesc)
   ]
 
-/- The routing table covers the checked-in directory exactly (52 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly (53 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 52
+#guard byNameDescriptors.length == 53
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

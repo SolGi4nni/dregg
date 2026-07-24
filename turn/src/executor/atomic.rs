@@ -283,7 +283,10 @@ impl TurnExecutor {
     /// to a single field element (the `BabyBear` the cross-cell collector
     /// partitions on). A cell absent from the ledger (or with the zero token_id,
     /// the native computron asset) derives a stable class.
-    fn asset_class_for_cell(ledger: &Ledger, cell: &CellId) -> dregg_circuit::field::BabyBear {
+    pub(super) fn asset_class_for_cell(
+        ledger: &Ledger,
+        cell: &CellId,
+    ) -> dregg_circuit::field::BabyBear {
         let token_id: [u8; 32] = ledger.get(cell).map(|c| *c.token_id()).unwrap_or([0u8; 32]);
         Self::fold_token_id_to_asset(&token_id)
     }
@@ -433,7 +436,7 @@ impl TurnExecutor {
     /// bundle path uses THIS variant because it has no ledger; the executor
     /// uses it too (after reconciling the proof-bound class against its trusted
     /// ledger token_id) so both paths partition identically.
-    fn check_per_asset_conservation_by_asset(
+    pub(super) fn check_per_asset_conservation_by_asset(
         entries: &[(dregg_circuit::field::BabyBear, i64)],
         declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {

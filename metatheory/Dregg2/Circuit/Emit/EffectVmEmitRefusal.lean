@@ -40,6 +40,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstateaudit
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRefusal
 
@@ -194,23 +195,33 @@ theorem refusalVm_rejects_nonce_freeze (env : VmRowEnv)
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
   exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonTick hwrong
 
-/-! ## §7 — the commitment binding: A SECURITY REDUCTION, HOSTED DOWNSTREAM. -/
+/-! ## §7 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
-/-! ⚑ **`refusalVm_commit_binds_block_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+theorem refusalVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ refusalHashSites)
+    (hs₂ : siteHoldsAll hash e₂ refusalHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
-That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`.
-True at deployed BabyBear parameters (unlike its `Poseidon2SpongeCR`-carrying predecessor, which the
-deployed compressing sponge REFUTES), but UNCLOSED: a collision EXISTS at those parameters by
-pigeonhole, so the `collides` branch is unconditionally available and the binding never has to hold.
-A disjunction quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
-
-The deployed binding of refusal's absorbed state block is now
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.refusal_commit_binds_block_advantage_bound`
-(`hEff` discharged at `Eff := IsPolyTime` by `refusal_commit_binds_block_from_polyTime`), whose forgery
-game's answers are DEPLOYED refusal ROWS (`refusalVm_row_forgery_is_break`, stated at THIS file's
-`refusalHashSites`). It is hosted DOWNSTREAM because the deployed sponge's keyed family
-(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree — a reduction stated at that
-family cannot be imported by an emission module without a build cycle. -/
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE of the extraction disjunction above** (the honest successor of the
+fraud-deleted `EffectVmCommitReduction` claim, whose `IsPolyTime` floor is REFUTED at deployed
+parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
+(`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every QUERY-BOUNDED forger
+producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
+absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
+(`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
+deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
+deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+theorem refusalVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame refusalHashSites))
+    (hA : NarrowBreakEff refusalHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame refusalHashSites) A) :=
+  narrowStateCommit_binds refusalHashSites rfl Q hQ A hA
 
 /-! ## §8 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -304,20 +315,51 @@ theorem refusalDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-/-! ⚑ **`refusalDescriptor_commit_binds_state_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
-
-That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`
-from two SATISFYING rows sharing a `NEW_COMMIT`. True at deployed BabyBear parameters, but UNCLOSED:
-a collision of the compressing sponge EXISTS there by pigeonhole, so the `collides` branch is
-unconditionally available and the binding never has to hold.
-
-Its per-effect content — the `boundaryLastPins` step that turns a shared published `NEW_COMMIT` into
-a shared `state_commit` COLUMN — survives VERBATIM as the `pinsNewCommit` field of
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.refusalNarrowSpec`. The headline is the reduction
-`EffectVmCommitReduction.refusalDescriptor_commit_binds_state_advantage_bound` (`hEff` discharged by
-`..._from_polyTime`), whose forgery game `narrowDescriptorBreakGame D refusalNarrowSpec` has as its
-answers two rows SATISFYING THIS file's `refusalVmDescriptor`. It is hosted DOWNSTREAM because the deployed
-sponge's keyed family (`Poseidon2KeyedBridge`) transitively imports the effect-emission tree. -/
+theorem refusalDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash refusalVmDescriptor e₁ true true)
+    (hsat₂ : satisfiedVm hash refusalVmDescriptor e₂ true true)
+    -- FIELD-FAITHFUL bridge: the published commitment is a CANONICAL field element (Poseidon2's
+    -- output lives in `[0, p)`). The circuit pins `state_commit ≡ NEW_COMMIT [ZMOD p]`; canonicality
+    -- of the two digest columns lifts that field congruence to the ℤ equality collision-resistance
+    -- needs. An honest side condition (the deployed digest IS reduced), NOT a weakening.
+    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
+      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
+      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
+  have hs₁ : siteHoldsAll hash e₁ refusalHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ refusalHashSites := hsat₂.2.1
+  have hc : ∀ (e : VmRowEnv), satisfiedVm hash refusalVmDescriptor e true true →
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
+    intro e hsat
+    obtain ⟨hcs, _⟩ := hsat
+    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
+      intro c hc
+      have hmem : c ∈ refusalVmDescriptor.constraints := by
+        unfold refusalVmDescriptor
+        simp only [List.mem_append]
+        exact Or.inl (Or.inr hc)
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢
+          exact hh
+    exact (boundaryLast_pins e hlast).1
+  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
+      [ZMOD 2013265921] := by
+    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
+      rw [hpub]; exact (hc e₂ hsat₂).symm
+    exact (hc e₁ hsat₁).trans h2
+  -- canonicality of the two digest columns lifts the mod-p congruence to an ℤ equality
+  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
+    have hdvd := Int.modEq_iff_dvd.mp hmod
+    obtain ⟨l₁, u₁⟩ := hcanon₁
+    obtain ⟨l₂, u₂⟩ := hcanon₂
+    omega
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §10 — CONNECTOR to universe-A `RefusalSpec` via `cellProj`.
 
@@ -520,6 +562,9 @@ theorem staleNonceRefusalRow_rejected :
 #assert_axioms refusalVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms refusalDescriptor_full_sound
+#assert_axioms refusalVm_commit_binds_block_or_collides
+#assert_axioms refusalDescriptor_commit_binds_state_or_collides
+#assert_axioms refusalVm_commit_binds_keyed
 #assert_axioms refusal_balance_frozen
 #assert_axioms descriptor_agrees_with_executor_refusal
 #assert_axioms refusal_offrow_unenforced

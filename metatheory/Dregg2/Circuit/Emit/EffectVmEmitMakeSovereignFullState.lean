@@ -151,27 +151,49 @@ theorem makeSovereign_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : 
 
 /-! ## §6 — THE ANTI-GHOST. -/
 
-/-! ### ⚑ THE WHOLE-STATE ANTI-GHOST IS A SECURITY REDUCTION, AND IT LIVES DOWNSTREAM (07-22).
+/-- **`makeSovereign_runnable_full_commit_binds_or_collides` — the anti-ghost, UNCONDITIONALLY.** Two
+satisfying WIDE makeSovereign rows publishing the SAME `NEW_COMMIT`, whose `sysRootsDigestCol` carriers
+ARE the `systemRootsDigest` of `sr₁`/`sr₂`, EITHER agree on all 12 absorbed state-block columns AND on
+every side-table root, OR exhibit a genuine collision of the deployed sponge — on the state block
+(`WideColl`) or on the ordered root list (`RootsColl`).
 
-`makeSovereign_runnable_full_commit_binds_or_collides` and `makeSovereign_rejects_root_tamper_or_collides` USED TO BE EXPORTED HERE as BARE DISJUNCTIONS —
-`(cols agree ∧ roots agree) ∨ WideColl … ∨ RootsColl …`. True at deployed BabyBear parameters, unlike
-their `Poseidon2SpongeCR`-carrying predecessors (which the deployed compressing sponge REFUTES), but
-still UNCLOSED: a collision of that sponge EXISTS at deployed parameters by pigeonhole, so the right
-branches are unconditionally available and `binds ∨ collides` never has to bind. A disjunction
-quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed BabyBear
+sponge REFUTES, so at deployed parameters it was vacuous. This disjunction is formally weaker and holds
+of the deployed sponge. -/
+theorem makeSovereign_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
+    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash makeSovereignVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash makeSovereignVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
+    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
+    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
+  runnable_full_commit_binds_or_collides (makeSovRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
 
-**BOTH ARE DELETED.** The deployed binding of makeSovereign's wide commitment is now the REDUCTION
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.makeSovereign_wide_binds_full_state_advantage_bound`
-(with `hEff` discharged at `Eff := IsPolyTime` by `makeSovereign_wide_binds_full_state_from_polyTime`): the
-forgery is a `Game` whose answers are DEPLOYED WIDE makeSovereign ROWS
-(`makeSovereign_wide_forgery_is_break` / `makeSovereign_root_tamper_is_break`), the extractor is a MAP OF ADVERSARIES
-into the deployed sponge's collision game, and the conclusion is a NEGLIGIBLE ADVANTAGE under
-`DomainSeparatedCREff`, whose two poles are both proved.
+/-- **`makeSovereign_rejects_root_tamper_or_collides`.** Two satisfying WIDE makeSovereign rows publishing
+the same `NEW_COMMIT` that DISAGREE on some side-table root exhibit a genuine collision of the deployed
+sponge — so a root tamper is UNSAT unless the prover holds a sponge collision.
 
-⚑ It lives in a DOWNSTREAM module, not here, for a hard reason: the deployed sponge's keyed family
-(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree, so a reduction stated at that
-family CANNOT be imported by an emission module without a build cycle. The GAME still names THIS
-file's `makeSovereignVmDescriptorWide` — nothing is stated about an idealised stand-in. -/
+The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
+so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
+sponge. -/
+theorem makeSovereign_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
+    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash makeSovereignVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash makeSovereignVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
+    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
+  wide_rejects_root_tamper_or_collides (makeSovRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
 
 /-! ## §7 — NON-VACUITY. -/
 
@@ -215,6 +237,8 @@ theorem makeSov_clause_rejects_root_drop :
 #assert_axioms intent_to_zeroSpec
 #assert_axioms makeSovGates_give_zeroSpec
 #assert_axioms makeSovereign_runnable_full_sound
+#assert_axioms makeSovereign_runnable_full_commit_binds_or_collides
+#assert_axioms makeSovereign_rejects_root_tamper_or_collides
 #assert_axioms goodMakeSov_realizes
 #assert_axioms makeSov_clause_not_trivial
 #assert_axioms makeSov_clause_rejects_root_drop

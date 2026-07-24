@@ -2239,6 +2239,7 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
             cell,
             index,
             old_value,
+            ..
         } => vec![Touch::At(
             UKey::Field {
                 cell: *cell,

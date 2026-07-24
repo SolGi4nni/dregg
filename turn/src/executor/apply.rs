@@ -546,7 +546,17 @@ impl TurnExecutor {
         if index < STATE_SLOTS as u64 {
             // Fixed register-file slot: the legacy 16-slot path.
             let slot = index as usize;
-            journal.record_set_field(*cell, index, Some(c.state.fields[slot]));
+            // Capture the prior field commitment + visibility BEFORE nulling the
+            // stale commitment, so rollback is a TRUE inverse. Journaling only
+            // the old value would leave `commitments[slot] = None` on rollback of
+            // a SetField-on-a-committed-slot, diverging the state commitment.
+            journal.record_set_field_fixed(
+                *cell,
+                index,
+                Some(c.state.fields[slot]),
+                c.state.commitments[slot],
+                c.state.field_visibility[slot],
+            );
             c.state.fields[slot] = *value;
             // Invalidate stale field commitment (the old hash no longer matches).
             if c.state.commitments[slot].is_some() {

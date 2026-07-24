@@ -1416,7 +1416,7 @@ mod tests {
         let gw1 = ToolGateway::admit_seeded(&rt1, &root1, seeded_grant(), worker_seed, issuer_seed)
             .expect("epoch-1 seeded admit");
         let cell1 = gw1.worker_cell();
-        let issuer1 = gw1.worker_for_test().cap_issuer();
+        let issuer1 = gw1.worker_for_test().cap_issuer;
         let epoch1_credential = gw1.worker_for_test().cap_token().to_vec();
         let vk1 = recorded_verification_key(&rt1, cell1);
         drop(gw1);
@@ -1427,7 +1427,7 @@ mod tests {
             ToolGateway::admit_seeded(&rt2, &root2, seeded_grant(), worker_seed, issuer_seed)
                 .expect("epoch-2 seeded admit");
         let cell2 = gw2.worker_cell();
-        let issuer2 = gw2.worker_for_test().cap_issuer();
+        let issuer2 = gw2.worker_for_test().cap_issuer;
         let vk2 = recorded_verification_key(&rt2, cell2);
 
         // Identical committed identity across epochs.
@@ -1497,8 +1497,8 @@ mod tests {
             "a different worker seed yields a different worker cell"
         );
         assert_eq!(
-            gw_a.worker_for_test().cap_issuer(),
-            gw_b.worker_for_test().cap_issuer(),
+            gw_a.worker_for_test().cap_issuer,
+            gw_b.worker_for_test().cap_issuer,
             "the issuer leg is unchanged when only the worker seed differs"
         );
 
@@ -1513,8 +1513,8 @@ mod tests {
             "the worker leg is unchanged when only the issuer seed differs"
         );
         assert_ne!(
-            gw_a.worker_for_test().cap_issuer(),
-            gw_c.worker_for_test().cap_issuer(),
+            gw_a.worker_for_test().cap_issuer,
+            gw_c.worker_for_test().cap_issuer,
             "a different issuer seed yields a different issuer"
         );
         assert_ne!(
@@ -1538,8 +1538,8 @@ mod tests {
             "random admits must not collide on worker cells"
         );
         assert_ne!(
-            gw1.worker_for_test().cap_issuer(),
-            gw2.worker_for_test().cap_issuer(),
+            gw1.worker_for_test().cap_issuer,
+            gw2.worker_for_test().cap_issuer,
             "random admits must not collide on issuers"
         );
     }

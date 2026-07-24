@@ -1,0 +1,41 @@
+# Trust
+#
+# Assurance projection: what is proven, what is assumed, what is owed.
+# Ground truth: the assurance case in Lean and its prose statement.
+# This map ranks by epistemic weight, not by effort or beauty.
+
+#>spw_trust
+#:topography #!assurance_gradient
+
+^"apex"{
+  @case: ~"../../metatheory/Dregg2/AssuranceCase.lean"
+  @prose: ~"../../docs/ASSURANCE.md"
+  ~#claim: "deployed_system_secure — A authority, B conservation, C integrity, D freshness, E unfoolability, R running entry over execFullForestG itself"
+  ~#weight: "machine-checked over the actual executed function, not a model"
+}
+
+^"floor"{
+  ~#assumed: "Poseidon2 CR, BLAKE3 CR, Ed25519 EUF-CMA, HMAC/PRF, AEAD, FRI/STARK soundness, BLS quorum, post-GST synchrony"
+  ~#form: "typed hypotheses, never axiom"
+  ~#honest: "the floor is stated, not smuggled"
+}
+
+^"open_distance"{
+  ~#largest: "deployed-binary bridge — Lean→C link correspondence + wire-codec translation validation"
+  #[carriers]{ StarkSound RestHashIffFrame }
+  ~#owner: "honest_verification lane; carrier debt goes to proved theorem or genuine floor, nothing named"
+  ~#blunt: "NOT security-critical-ready; no independent audit"
+}
+
+^"below_the_line"{
+  ~#rust_tests: "2500 case tests across core crates — green that gates regressions and proves nothing about all inputs"
+  ~#hand_airs: "hand-written Rust AIRs in circuit: debt under demolition by stark_kill; extending one is the drift"
+  ~#old_docs: "design notes of unknown current validity; when they disagree with code, the code wins"
+  @status: ~"../../STATUS.md"
+}
+
+^"key_leak"{
+  @model: ~"../../metatheory/Metatheory/KeyLeak.lean"
+  ~#stance: "verify the cage, not the animal — a leaked key is a compromised principal the proofs already quantify over"
+  ~#open: "Settlement Soundness — revoke must bind into finalized commitment before settlement"
+}

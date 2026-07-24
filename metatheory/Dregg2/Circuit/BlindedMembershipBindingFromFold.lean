@@ -19,7 +19,7 @@ is executor-attested and, absent the fold edge, unbacked. That is the SAME class
 `MembershipBackingAttack` proves for the sender-membership leg.
 
 This module proves the FOLD edge for the blinded-membership claim, mirroring
-`MembershipBindingFromFold` / `PresentationBindingFromFold`: for the AGGREGATE a light client
+`MembershipBindingFromFold`: for the AGGREGATE a light client
 verifies, the leg's published blinded-membership claim `(blinded_leaf, root)` MUST be backed by a
 verifying blinded-membership sub-proof — with both non-vacuity poles. It builds ON the leaf soundness
 (`BlindedMembershipRefine.blindedMembership_sat_refines` / `BlindedMembershipRung2`): the leaf the

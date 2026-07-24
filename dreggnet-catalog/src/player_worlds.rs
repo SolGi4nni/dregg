@@ -79,23 +79,60 @@ type StoreFactory = dyn Fn(&str) -> Option<Box<dyn SessionResumeStore>>;
 /// earned proofs here).
 type Customizer = dyn Fn(&mut OfferingHost, &str);
 
+/// **The default cap on live in-memory per-identity hosts.** The registry is a bounded LRU cache:
+/// touching a new identity past this many live hosts evicts the least-recently-used one. Eviction is
+/// lossless — a host's durable logs stay, so the next touch rebuilds the identical world by replay
+/// (the same path a process restart takes). This is the memory backstop against a flood of distinct
+/// (and, on the web frontends, unauthenticated `?user=`) identities each minting a full world that
+/// is then cached forever. A frontend expecting a larger legitimate live set raises it with
+/// [`with_capacity`](PlayerWorlds::with_capacity).
+pub const DEFAULT_LIVE_HOST_CAPACITY: usize = 1024;
+
 /// **One persistent RPG world per derived identity.** Hosts are built lazily on first touch
-/// ([`host_mut`](PlayerWorlds::host_mut)) and cached; each is an independent
-/// [`OfferingHost`] carrying the eight [`RPG_KEYS`] surfaces on its own world.
+/// ([`host_mut`](PlayerWorlds::host_mut)) and cached in a **bounded LRU** cache
+/// ([`DEFAULT_LIVE_HOST_CAPACITY`], overridable via [`with_capacity`](PlayerWorlds::with_capacity));
+/// each is an independent [`OfferingHost`] carrying the eight [`RPG_KEYS`] surfaces on its own world.
+///
+/// The bound is what makes materializing a world per identity safe against an adversary who mints
+/// arbitrarily many distinct identities (a raw `?user=` flood on the web catalog): live memory is
+/// capped, and an evicted-then-re-touched identity rebuilds losslessly by replay from its durable
+/// store — an idle world costs nothing but a re-replay, never unbounded RAM.
 ///
 /// Not `Send` — an [`OfferingHost`] holds `!Send` `Rc`-backed sessions, so a frontend confines a
 /// `PlayerWorlds` to one owning thread exactly as it already confines its catalog host (the web /
 /// Telegram `HostThread`, Discord's `rpg-worlds` thread).
-#[derive(Default)]
 pub struct PlayerWorlds {
     hosts: HashMap<String, OfferingHost>,
+    /// Monotone access clock per live identity — the LRU key. `host_mut` bumps the touched
+    /// identity to `clock`; eviction removes the identity with the smallest (oldest) value.
+    touched: HashMap<String, u64>,
+    /// The monotone tick source for `touched`.
+    clock: u64,
+    /// The maximum number of live in-memory hosts. Always `>= 1` (a `0` request is clamped).
+    capacity: usize,
     store_factory: Option<Box<StoreFactory>>,
     customize: Option<Box<Customizer>>,
 }
 
+impl Default for PlayerWorlds {
+    fn default() -> Self {
+        PlayerWorlds {
+            hosts: HashMap::new(),
+            touched: HashMap::new(),
+            clock: 0,
+            capacity: DEFAULT_LIVE_HOST_CAPACITY,
+            store_factory: None,
+            customize: None,
+        }
+    }
+}
+
 impl PlayerWorlds {
     /// A registry whose per-identity hosts are **in-memory only** (no durable store): each world
-    /// is real and isolated, but does not survive a restart.
+    /// is real and isolated, but does not survive a restart. Bounded at
+    /// [`DEFAULT_LIVE_HOST_CAPACITY`] live hosts (LRU); note in-memory eviction is NOT lossless
+    /// here — without a store there is nothing to replay — so a store-backed registry
+    /// ([`with_store`](PlayerWorlds::with_store)) is the durable form.
     pub fn new() -> Self {
         PlayerWorlds::default()
     }
@@ -125,18 +162,61 @@ impl PlayerWorlds {
         self
     }
 
+    /// Set the live-host LRU capacity (clamped to `>= 1`). A frontend expecting more concurrent
+    /// live players than [`DEFAULT_LIVE_HOST_CAPACITY`] raises it here; the durable path means a
+    /// tighter cap only costs re-replay on re-touch, never correctness.
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = capacity.max(1);
+        self
+    }
+
+    /// The current live-host LRU capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     /// **`identity`'s own host**, built on first touch. The build is the lift of Discord's
     /// `build_player_host`: register the eight identity-owned surfaces on a world seeded for
     /// `identity`, run the customizer, then reopen every persisted session by replay.
+    ///
+    /// The cache is a **bounded LRU** ([`capacity`](PlayerWorlds::capacity)): touching a NEW
+    /// identity while the cache is full first evicts the least-recently-used host. That eviction is
+    /// lossless for a store-backed registry — the evicted identity's durable logs stay, so a later
+    /// touch rebuilds the identical world by replay. This is what bounds memory under a flood of
+    /// distinct identities.
     pub fn host_mut(&mut self, identity: &str) -> &mut OfferingHost {
         if !self.hosts.contains_key(identity) {
+            // Make room before minting a new world: while at capacity, drop the least-recently-used
+            // host. Its durable record is untouched, so re-touching it later replays it back.
+            while self.hosts.len() >= self.capacity {
+                let victim = self
+                    .least_recently_used()
+                    .or_else(|| self.hosts.keys().next().cloned());
+                match victim {
+                    Some(id) => {
+                        self.hosts.remove(&id);
+                        self.touched.remove(&id);
+                    }
+                    None => break,
+                }
+            }
             let store = self.store_factory.as_ref().and_then(|f| f(identity));
             let host = build_player_host(identity, store, self.customize.as_deref());
             self.hosts.insert(identity.to_string(), host);
         }
+        self.clock += 1;
+        self.touched.insert(identity.to_string(), self.clock);
         self.hosts
             .get_mut(identity)
             .expect("the host was just inserted")
+    }
+
+    /// The least-recently-touched live identity (the LRU eviction victim), if any host is live.
+    fn least_recently_used(&self) -> Option<String> {
+        self.touched
+            .iter()
+            .min_by_key(|(_, &tick)| tick)
+            .map(|(id, _)| id.clone())
     }
 
     /// `identity`'s host if it is already built (no build-on-touch) — a read for a frontend that
@@ -147,8 +227,10 @@ impl PlayerWorlds {
 
     /// **Drop `identity`'s in-memory host.** Their durable logs stay: the next touch rebuilds the
     /// world by replay — the same path a process restart takes. The eviction lever a long-running
-    /// frontend needs so idle players do not pin memory forever.
+    /// frontend needs so idle players do not pin memory forever. (The registry also self-evicts
+    /// LRU on capacity; this is the explicit, targeted form.)
     pub fn evict(&mut self, identity: &str) -> bool {
+        self.touched.remove(identity);
         self.hosts.remove(identity).is_some()
     }
 
@@ -400,6 +482,79 @@ mod tests {
             .ensure_open("inventory", &primary())
             .expect("inventory opens over the replayed world");
         assert!(rendered(rebuilt, "inventory").contains("Greatblade"));
+    }
+
+    /// **THE DoS FALSIFIER** — a flood of distinct identities (the raw unauthenticated `?user=`
+    /// vector on the web catalog) never grows the live-host cache past its capacity. The registry
+    /// is a bounded LRU, so N ≫ cap distinct touches keep at most `cap` hosts live at once.
+    #[test]
+    fn a_flood_of_distinct_identities_never_grows_past_capacity() {
+        let cap = 8;
+        let mut worlds = PlayerWorlds::new().with_capacity(cap);
+        for n in 0..(cap * 6) {
+            let _ = worlds.host_mut(&format!("flood-{n}"));
+            assert!(
+                worlds.len() <= cap,
+                "the per-identity host cache is hard-bounded at {cap}; saw {}",
+                worlds.len()
+            );
+        }
+        assert_eq!(
+            worlds.len(),
+            cap,
+            "the cache saturates at exactly its capacity, never beyond"
+        );
+    }
+
+    /// A capacity of zero is clamped to one — the cache always holds at least the identity being
+    /// served, so a touch can never fail to yield a live host.
+    #[test]
+    fn a_zero_capacity_is_clamped_so_a_touch_always_yields_a_host() {
+        let mut worlds = PlayerWorlds::new().with_capacity(0);
+        assert_eq!(worlds.capacity(), 1);
+        let host = worlds.host_mut("solo");
+        assert!(
+            host.has("craft"),
+            "the served identity always has a live host"
+        );
+        assert_eq!(worlds.len(), 1);
+    }
+
+    /// **LRU eviction is lossless by replay.** With a small cap, crafting in one identity and then
+    /// touching enough others to evict it drops only its in-memory host; re-touching it rebuilds the
+    /// IDENTICAL world by replay from the durable store — the process-restart path, driven by the
+    /// LRU rather than a manual `evict`.
+    #[test]
+    fn an_lru_evicted_identity_rebuilds_identically_by_replay() {
+        let alice_store = InMemoryResumeStore::new();
+        let mut worlds = PlayerWorlds::with_store({
+            let a = alice_store.clone();
+            move |identity: &str| -> Option<Box<dyn SessionResumeStore>> {
+                (identity == "alice").then(|| Box::new(a.clone()) as Box<dyn SessionResumeStore>)
+            }
+        })
+        .with_capacity(2);
+
+        craft_greatblade(worlds.host_mut("alice"));
+        // Touch two more distinct identities — the LRU eviction drops the now-idle "alice".
+        let _ = worlds.host_mut("b");
+        let _ = worlds.host_mut("c");
+        assert!(worlds.len() <= 2, "the cache never exceeds its capacity");
+        assert!(
+            worlds.get("alice").is_none(),
+            "idle alice was LRU-evicted to make room"
+        );
+
+        // Re-touching alice rebuilds her world by replay from the durable store — lossless.
+        let rebuilt = worlds.host_mut("alice");
+        assert!(rebuilt.is_open("craft", &primary()), "rebuilt by replay");
+        rebuilt
+            .ensure_open("inventory", &primary())
+            .expect("inventory opens over the replayed world");
+        assert!(
+            rendered(rebuilt, "inventory").contains("Greatblade"),
+            "the crafted note survived LRU eviction + replay"
+        );
     }
 
     /// The customizer runs on a freshly-built host and can replace a mounted surface — the seam

@@ -7996,6 +7996,8 @@ dependencies = [
  "dungeon-on-dregg",
  "hex",
  "procgen-dregg",
+ "serde",
+ "serde_json",
  "spween",
  "spween-dregg",
  "ugc-dregg",

@@ -149,6 +149,15 @@ pub enum TurnError {
     /// This violates the conservation law: withdrawals must be matched by deposits.
     ExcessNotZero { excess: i64 },
 
+    /// PER-ASSET conservation violated: one asset class's balance deltas do not
+    /// sum to zero, even though the scalar `excess` (the cross-asset total) did.
+    /// This catches the cross-asset value teleport — a `+N` on a cell of token X
+    /// matched by a `−N` on a self-issued cell of token Y nets the scalar
+    /// `excess` to 0 while minting X out of worthless Y. `asset` is the target
+    /// cell's committed `token_id` folded to its asset class; `imbalance` is that
+    /// asset's signed `Σδ ≠ 0`.
+    PerAssetConservationViolation { asset: u32, imbalance: i64 },
+
     /// A balance_change would underflow the target cell's balance (withdrawal exceeds holdings).
     BalanceChangeUnderflow {
         cell: CellId,
@@ -711,6 +720,14 @@ impl core::fmt::Display for TurnError {
                 write!(
                     f,
                     "excess not zero at turn end: {excess} (conservation law violated)"
+                )
+            }
+            TurnError::PerAssetConservationViolation { asset, imbalance } => {
+                write!(
+                    f,
+                    "per-asset conservation violated: asset {asset} nets to {imbalance} (≠ 0) — \
+                     a cross-asset value teleport (mint one asset against a self-issued burn of \
+                     another) that the scalar excess sum cannot see"
                 )
             }
             TurnError::BalanceChangeUnderflow {

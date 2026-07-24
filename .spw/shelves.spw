@@ -1,0 +1,27 @@
+# Shelves
+#
+# Root-shelf convention for cross-tree references inside breadstuffs.
+
+#>spw_shelves
+#:roots #!convention
+
+^"roots"{
+ @repo: ~".."
+ @spw: ~"."
+ @workbench: ~"./_workbench"
+ @kernel: ~"../metatheory"
+ @circuit: ~"../circuit"
+ @docs: ~"../docs"
+ @spec: ~"../spec"
+ @papers: ~"../papers"
+ @goals: ~"../GOALS-INDEX.md"
+ @status: ~"../STATUS.md"
+ @llms: ~"../README-LLMs.md"
+ @site: ~"../site"
+}
+
+^"shelf_policy"{
+ "Use @roots for cross-tree references.",
+ "Use relative ~\"./...\" only for siblings in the same shelf.",
+ "Every shelf points at a path that exists; families of crates are named in topography, not shelved.",
+}

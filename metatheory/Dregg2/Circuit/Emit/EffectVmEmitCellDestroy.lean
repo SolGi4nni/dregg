@@ -51,6 +51,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.celllifecycle
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCellDestroy
 
@@ -223,24 +224,33 @@ theorem cellDestroyVm_rejects_nonce_freeze (env : VmRowEnv)
     rcases hnoopB with h' | h' <;> rw [h'] <;> norm_num
   exact hwrong (by omega)
 
-/-! ## §7 — the commitment binding: A SECURITY REDUCTION, HOSTED DOWNSTREAM (07-22).
+/-! ## §7 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
-`cellDestroyVm_commit_binds_block_or_collides` USED TO BE EXPORTED HERE as the bare DISJUNCTION
-`absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. True at deployed BabyBear parameters
-(unlike its `Poseidon2SpongeCR`-carrying predecessor, which the deployed sponge REFUTES), but
-UNCLOSED: a collision of the compressing sponge EXISTS at deployed parameters by pigeonhole, so
-`binds ∨ collides` is satisfiable through the `collides` branch WITHOUT `binds` ever holding. It
-quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+theorem cellDestroyVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ cellDestroyHashSites)
+    (hs₂ : siteHoldsAll hash e₂ cellDestroyHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
-**IT IS DELETED.** The deployed binding of the cellDestroy state block is now the REDUCTION
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.cellDestroy_commit_binds_block_advantage_bound`
-(`hEff` discharged at `Eff := IsPolyTime` by `cellDestroy_commit_binds_block_from_polyTime`), whose
-forgery game's answers are DEPLOYED cellDestroy ROWS (`cellDestroyVm_row_forgery_is_break`).
-
-⚑ It is hosted DOWNSTREAM, not here, for a hard reason: the deployed sponge's keyed family
-(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree, so a reduction stated at that
-family CANNOT be imported by an emission module without a build cycle. Nothing is idealised — the
-game names THIS file's `cellDestroyHashSites` and `cellDestroyVmDescriptor`. -/
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE of the extraction disjunction above** (the honest successor of the
+fraud-deleted `EffectVmCommitReduction` claim, whose `IsPolyTime` floor is REFUTED at deployed
+parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
+(`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every QUERY-BOUNDED forger
+producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
+absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
+(`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
+deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
+deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+theorem cellDestroyVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame cellDestroyHashSites))
+    (hA : NarrowBreakEff cellDestroyHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame cellDestroyHashSites) A) :=
+  narrowStateCommit_binds cellDestroyHashSites rfl Q hQ A hA
 
 /-! ## §8 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -336,14 +346,41 @@ theorem cellDestroyDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowE
   rw [← hsaC]
   omega
 
-/-! ⚑ `cellDestroyDescriptor_commit_binds_state_or_collides` — the DESCRIPTOR-level twin of §7's
-disjunction — is likewise DELETED (07-22). Its per-effect content (the `boundaryLastPins` step that
-turns a shared `NEW_COMMIT` into a shared `state_commit` column) survives verbatim as the
-`pinsNewCommit` field of `EffectVmCommitReduction.cellDestroyNarrowSpec`; the headline is the
-reduction `EffectVmCommitReduction.cellDestroyDescriptor_commit_binds_state_advantage_bound`, with
-`hEff` discharged by `..._from_polyTime`, and its forgery game is
-`narrowDescriptorBreakGame D cellDestroyNarrowSpec` — two rows SATISFYING this file's
-`cellDestroyVmDescriptor`. -/
+theorem cellDestroyDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
+    (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hsat₁ : satisfiedVm hash cellDestroyVmDescriptor e₁ true true)
+    (hsat₂ : satisfiedVm hash cellDestroyVmDescriptor e₂ true true)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
+  have hs₁ : siteHoldsAll hash e₁ cellDestroyHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ cellDestroyHashSites := hsat₂.2.1
+  -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
+  -- chains the two commit cells (both canonical) into ℤ equality — no PI canonicality needed.
+  have hc : ∀ (e : VmRowEnv), satisfiedVm hash cellDestroyVmDescriptor e true true →
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
+    intro e hsat
+    obtain ⟨hcs, _⟩ := hsat
+    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
+      intro c hc
+      have hmem : c ∈ cellDestroyVmDescriptor.constraints := by
+        unfold cellDestroyVmDescriptor
+        simp only [List.mem_append]
+        exact Or.inl (Or.inr hc)
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢
+          exact hh
+    exact (boundaryLast_pins e hlast).1
+  have h₁ := hc e₁ hsat₁
+  have h₂ := hc e₂ hsat₂
+  rw [hpub] at h₁
+  have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
+  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §10 — CONNECTOR to universe-A `CellDestroySpec` via `cellProj`.
 
@@ -538,6 +575,9 @@ theorem staleNonceDestroyRow_rejected :
 #assert_axioms cellDestroyVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms cellDestroyDescriptor_full_sound
+#assert_axioms cellDestroyVm_commit_binds_block_or_collides
+#assert_axioms cellDestroyDescriptor_commit_binds_state_or_collides
+#assert_axioms cellDestroyVm_commit_binds_keyed
 #assert_axioms cellDestroy_balance_frozen
 #assert_axioms descriptor_agrees_with_executor_destroy
 #assert_axioms cellDestroy_offrow_unenforced

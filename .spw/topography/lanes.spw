@@ -1,0 +1,32 @@
+# Lanes
+#
+# Excavation projection: the concurrent /goal lanes cutting through the mass.
+# Ground truth is the board at @goals (GOALS-INDEX.md); each lane keeps its
+# own trail file. Missions compressed here; the board wins on disagreement.
+
+#>spw_lanes
+#:topography #!excavation
+
+^"active"{
+  storage_in_lean: ~"../../GOAL.md" .{ cuts: kernel_proofs, mission: "rebuild Rust storage IN LEAN, export back" }
+  distributed_deos: ~"../../GOAL-DISTRIBUTED-DEOS.md" .{ cuts: dark_strata, mission: "the sovereign live image across machines" }
+  fable: ~"../../GOAL-fable.md" .{ cuts: all, mission: "make it real, keep it honest" }
+  federation: ~"../../GOAL-FEDERATION.md" .{ cuts: dark_strata, mission: "the corpus running on the living federation" }
+  stark_kill: ~"../../GOAL-STARK-KILL.md" .{ cuts: kernel_proofs, mission: "re-derive every circuit from Lean; stark.rs already fallen, hand AIRs remain" }
+  no_prequantum: ~"../../GOAL-PQ.md" .{ cuts: guardians, mission: "no classical-only load-bearing crypto standing" }
+  honest_verification: ~"../../GOAL-HONEST-VERIFICATION.md" .{ cuts: kernel_proofs, mission: "retire carrier debt; apex rests only on the true floor" }
+  dreggic_collectivity_web: ~"../../GOAL-COLLECTIVE-FICTION-DEMO.md" .{ cuts: game_engine, mission: "verifiable collective fiction, as good as possible" }
+  arklib_vacuity: ~"../../GOAL-ARKLIB-VACUITY.md" .{ cuts: kernel_proofs, mission: "one sound end-to-end KZG theorem over the real experiment" }
+  greens_that_mean_something: ~"../../GOAL-GREENS-THAT-MEAN-SOMETHING.md" .{ cuts: all, mission: "every green REDS when broken" }
+  multichain_settlement: ~"../../GOAL-MULTICHAIN-SETTLEMENT.md" .{ cuts: guardians, mission: "the trustless plug for every chain" }
+}
+
+^"closed"{
+  pq_frontiers: ~"../../GOAL-PQ-FRONTIERS.md" .{ state: done, note: "every honestly-open frontier formalized, 07-09" }
+  verified_system: ~"../../GOAL-VERIFIED-SYSTEM.md" .{ state: retracted, note: "declared done on NAMED carriers; superseded by honest_verification" }
+}
+
+^"discipline"{
+  ~#shared_tree: "additive-only in swarms; commit surgically; never stage another lane's files"
+  ~#board: "the retraction of verified_system is the most instructive edge in this map — a lane can be undone by honesty"
+}

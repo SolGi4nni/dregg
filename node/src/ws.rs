@@ -128,17 +128,27 @@ enum ServerMessage {
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
 ///
 /// Security: During initial setup (passphrase not yet set), only loopback
-/// connections are allowed to prevent remote passphrase hijacking.
+/// connections are allowed to prevent remote passphrase hijacking. The gate
+/// resolves the EFFECTIVE client IP through the same trusted-proxy /
+/// `X-Forwarded-For` path as `require_auth` and the rate limiters
+/// (`crate::api::effective_client_is_loopback`), so a same-host reverse proxy
+/// cannot make a remote caller look loopback and hijack the pre-passphrase
+/// window.
 pub async fn handle_ws(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
 ) -> impl IntoResponse {
     // Issue 1 (CRITICAL): During initial setup, reject non-loopback connections
-    // to prevent remote passphrase hijacking.
+    // to prevent remote passphrase hijacking. Use the XFF-aware effective-client
+    // resolution shared with `require_auth` so the WS gate and the auth path
+    // agree on who counts as loopback (F-CRIT-1).
     {
         let s = state.read().await;
-        if s.passphrase_hash.is_none() && !addr.ip().is_loopback() {
+        if s.passphrase_hash.is_none()
+            && !crate::api::effective_client_is_loopback(addr.ip(), &headers)
+        {
             drop(s);
             // Return a 403 Forbidden — cannot upgrade to WS from non-local during setup.
             return axum::http::StatusCode::FORBIDDEN.into_response();

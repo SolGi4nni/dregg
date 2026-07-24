@@ -21,12 +21,11 @@ const COOKIE_NAME: &str = "dregg_user";
 const VISITOR_PREFIX: &str = "visitor-";
 const VISITOR_MAX_AGE_SECS: u64 = 365 * 24 * 60 * 60;
 
-/// Resolve an explicitly supplied query/cookie identity, preserving the
-/// catalog's established `?user=`-before-cookie precedence.
-fn explicit_web_user(headers: &HeaderMap, query: &WebQuery) -> Option<String> {
-    if let Some(user) = query.user.as_ref().filter(|user| !user.is_empty()) {
-        return Some(user.clone());
-    }
+/// The durable `dregg_user` cookie label, if the request carries one. This is the ESTABLISHED
+/// identity: the bootstrap middleware mints it for a cookie-less browser and the browser returns it
+/// on every subsequent request, so a normal visitor always has one. A raw `?user=` query param is
+/// NOT this — it is an unauthenticated, unbacked assertion.
+fn cookie_user(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
@@ -38,6 +37,36 @@ fn explicit_web_user(headers: &HeaderMap, query: &WebQuery) -> Option<String> {
                     .map(str::to_string)
             })
         })
+}
+
+/// Resolve an explicitly supplied query/cookie identity, preserving the
+/// catalog's established `?user=`-before-cookie precedence.
+fn explicit_web_user(headers: &HeaderMap, query: &WebQuery) -> Option<String> {
+    if let Some(user) = query.user.as_ref().filter(|user| !user.is_empty()) {
+        return Some(user.clone());
+    }
+    cookie_user(headers)
+}
+
+/// **The asserted web identity PLUS whether it is ESTABLISHED.** The label is the same one
+/// [`web_user`] returns; the bool is `true` only when the label is backed by the durable
+/// `dregg_user` cookie — either because no `?user=` override was supplied (the cookie is the
+/// identity) or because the explicit `?user=` re-asserts the SAME value the cookie already holds.
+///
+/// A raw `?user=` that differs from (or has no) cookie is **unestablished**: it is an
+/// unauthenticated, attacker-choosable label. A caller that materializes an expensive per-identity
+/// resource (a full RPG world) uses this to refuse minting one for an unestablished identity — the
+/// backstop against a `?user=1,2,…,N` flood each caching a world forever.
+pub(crate) fn web_user_established(headers: &HeaderMap, query: &WebQuery) -> (String, bool) {
+    let cookie = cookie_user(headers);
+    if let Some(user) = query.user.as_ref().filter(|user| !user.is_empty()) {
+        let established = cookie.as_deref() == Some(user.as_str());
+        return (user.clone(), established);
+    }
+    match cookie {
+        Some(user) => (user, true),
+        None => ("anon".to_string(), false),
+    }
 }
 
 /// The asserted web identity for handlers that may also be mounted without the

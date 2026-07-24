@@ -1,0 +1,33 @@
+# Valence
+#
+# Material projection: how each mass is changing, in the workbench's pentad.
+# The spec calls these candidate dimensions awaiting measurement definitions,
+# so this map declares its working glosses and stays a projection — bend it.
+
+#>spw_valence
+#:topography #!material_pentad
+
+^"glosses"{
+  boon: "generative — mass that feeds the rest as it grows"
+  bane: "corrosive — mass that damages trust or coherence while it stands"
+  bone: "calcified — load-bearing structure; change means surgery"
+  bonk: "friction — where motion reliably collides"
+  honk: "noise — output unmoored from ground truth"
+}
+
+^"readings"{
+  metatheory: boon .{ why: "the proof mass; every lane that wins deposits here" }
+  circuit_hand_airs: bane=bone .{ why: "load-bearing AND corrosive to the verification story — the polymap's sharpest disagreement, held jointly with trust and strata" }
+  dreggnet_constellation: boon .{ why: "the world grows playfully; coheres locally" }
+  social_surfaces: bonk .{ why: "substantially built, in search of user — motion meets silence" }
+  old_docs: honk .{ why: "aspirational notes of unknown validity, honestly quarantined" }
+  status_md: bone .{ why: "code-verified ground truth; changes only when the tree is re-measured" }
+  goal_board: boon .{ why: "the retraction edge shows the board metabolizes honesty" }
+}
+
+^"wonder"{
+  ?["What would a bane→boon transmutation look like for the hand AIRs?"]{
+    #:ideation #!schizophrenic_ok
+    $%[stark_kill.rungs, lean.emit_path] => ~#transmutation_recipe
+  }
+}

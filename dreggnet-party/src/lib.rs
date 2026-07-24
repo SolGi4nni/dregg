@@ -379,6 +379,20 @@ impl Party {
             );
         }
 
+        // THE FORK GATE is written EXACTLY ONCE. A quorum-certified fork resolves
+        // the winning `path` into this cell ([`PartyFork::resolve_into`]); WriteOnce
+        // then freezes it. A finality tooth: a SECOND `resolve_into` after later
+        // ballots — even one whose live argmax now names a different winner — cannot
+        // overwrite the certified path (the executor refuses the changed write). The
+        // committed fork is a ledger FACT, not a re-tallied argmax, so a "committed"
+        // collective decision is not mutable by later votes.
+        world.set_cell_program(
+            &gate,
+            CellProgram::Predicate(vec![StateConstraint::WriteOnce {
+                index: GATE_SLOT as u8,
+            }]),
+        );
+
         // THE SHARED FOCUS POOL: a cell seeded with the party budget and carrying the
         // real `FieldLteField(spent <= budget)` tooth. Built at genesis with the budget
         // slot pre-set (genesis bypasses the executor, so the predicate bites only on
@@ -1228,6 +1242,74 @@ mod tests {
         // Anti-ghost: the committed split is unchanged.
         assert_eq!(party.loot_share(0), 40, "the original split stands");
         assert_eq!(party.loot_share(3), 10);
+    }
+
+    /// FINALITY — a certified fork is FINAL; later votes cannot rewrite it. Once a fork
+    /// resolves with winner W1, further ballots that would shift the live argmax to a
+    /// different winner W2 change NOTHING: a second `resolve_into` returns the ORIGINAL
+    /// certified winner (persisted by the vote engine), and the fork gate still holds W1's
+    /// path — the gate cell's WriteOnce refuses any different overwrite. The "committed"
+    /// collective decision is a ledger fact, not a re-tallied argmax.
+    #[test]
+    fn a_resolved_fork_is_final_and_later_votes_cannot_rewrite_it() {
+        let mut party = Party::muster();
+        let l = party.layout();
+        // Option 0 = "Right" (path 2), option 1 = "Left" (path 1). We drive LEFT (index 1)
+        // to win certification, then flip the live argmax back toward Right.
+        let mut fork = party
+            .open_fork(
+                "The passage forks — which way does the party go?",
+                vec![
+                    ("Right, the warded arch".into(), 2),
+                    ("Left, the sunken stair".into(), 1),
+                ],
+            )
+            .expect("the fork opens");
+
+        // Reach quorum (M=3) with LEFT (option 1) as the argmax winner: the tank votes
+        // Right (0), the scout + mage vote Left (1) → tally [1, 2], total 3.
+        fork.cast(&party.sign_ballot(&fork, TANK, 0))
+            .expect("the tank's ballot is admitted");
+        fork.cast(&party.sign_ballot(&fork, SCOUT, 1))
+            .expect("the scout's ballot is admitted");
+        fork.cast(&party.sign_ballot(&fork, MAGE, 1))
+            .expect("the mage's ballot is admitted");
+        assert_eq!(fork.tally().expect("tally").per_option, vec![1, 2]);
+
+        // First resolve: LEFT (index 1, path 1) is certified and written into the gate.
+        let res1 = fork
+            .resolve_into(&mut party)
+            .expect("the quorum-certified winner fires");
+        assert_eq!(res1.winner, 1, "Left (index 1) is the certified winner");
+        assert_eq!(res1.path, 1);
+        assert_eq!(
+            party.read_field(l.gate, GATE_SLOT),
+            1,
+            "the gate holds Left's path"
+        );
+
+        // The 4th seat now votes RIGHT (option 0) → tally [2, 2]. A fresh argmax over the
+        // grown board ties and would break to option 0 (Right) — a DIFFERENT winner.
+        fork.cast(&party.sign_ballot(&fork, HEALER, 0))
+            .expect("the healer's late ballot is admitted");
+        assert_eq!(fork.tally().expect("tally").per_option, vec![2, 2]);
+
+        // FINALITY: a second resolve returns the ORIGINAL certified winner (Left, index 1)
+        // — not a re-argmax to Right — and the committed gate is unchanged (WriteOnce
+        // refused any attempt to write a different path).
+        let res2 = fork
+            .resolve_into(&mut party)
+            .expect("an already-resolved fork reports its certified winner");
+        assert_eq!(
+            res2.winner, 1,
+            "the certified winner is FINAL — later votes cannot re-argmax it to Right"
+        );
+        assert_eq!(res2.path, 1, "the certified path is unchanged");
+        assert_eq!(
+            party.read_field(l.gate, GATE_SLOT),
+            1,
+            "the committed fork gate still holds Left's path (WriteOnce refused any overwrite)"
+        );
     }
 
     /// A DUPLICATE ballot by the same seat is refused by the real vote engine (WriteOnce

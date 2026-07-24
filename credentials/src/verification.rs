@@ -254,33 +254,49 @@ fn verify_inner(
             });
         }
 
-        // (iii) Cryptographically verify the predicate STARK. This proves the
-        // WITNESSED STATEMENT — "some fact with commitment `c` satisfies the
-        // predicate" — and rejects a name-only spoof carrying random bytes.
+        // (iii) Cryptographically verify the predicate STARK, BOUND to this
+        // presentation's credential — via the THIRD-PARTY attestation path, NOT the
+        // vacuous `verify_predicate_proof(&candidate.proof, candidate.proof.fact_commitment)`
+        // (x==x) gate it replaces.
         //
-        // ⚠ SOUNDNESS HOLE (LIVE — see the cross_credential_predicate_forgery_rejected
-        // falsifier in credentials/tests/anonymity_soundness.rs, module note (b')):
-        // the expected commitment passed here is the proof's OWN `fact_commitment`,
-        // so the equality gate inside `verify_predicate_proof` is `x == x` — vacuous.
-        // NOTHING binds `c` to (i) THIS presentation's credential / `final_state_root`
-        // or (ii) the requested attribute beyond the holder-controlled
-        // `candidate.attribute` string. A holder can therefore mint a genuine
-        // `Gte(18)` proof from credential X (age 32) and attach it under
-        // `attribute = "age"` to a presentation of credential A (age 15) — the STARK
-        // verifies against its own `c` and the forgery is accepted.
+        // The `state_root` fed to `verify_predicate_proof_third_party` is THIS
+        // presentation's `final_state_root` — a genuine public input of the presentation
+        // STARK, deterministic per token (`bridge/src/present.rs`), and the SAME value the
+        // producer bound each predicate + attestation to (`presentation.rs`). The
+        // attestation STARK forces `candidate.proof.fact_commitment` to be the blinded image
+        // of a fact under that state root, and the predicate descriptor independently welds
+        // `state_root` into the same commitment. So a genuine `Gte(18)` proof minted from a
+        // DIFFERENT credential X (age 32) and attached to a presentation of credential A
+        // (age 15) is REFUSED: X's attestation names X's state root, not A's
+        // `final_state_root`, and the attestation fails closed before the STARK even runs.
+        // That is the cross_credential_predicate_forgery_rejected falsifier, now a red gate.
         //
-        // The SOUND replacement is `verify_predicate_proof_third_party(&candidate.proof,
-        // facts_root, final_state_root)`, which manufactures the expected commitment
-        // from a `BridgeFactAttestation` proving Merkle membership under a `facts_root`
-        // the verifier independently trusts. That routing is BLOCKED on machinery not
-        // yet wired: the presentation STARK exposes no `facts_root` public input, and
-        // the producer (presentation.rs) attaches no attestation. Wiring both is a
-        // circuit-level change tracked by the falsifier above; do NOT drop in the
-        // third-party call before the producer attaches attestations (it would
-        // fail-closed on every legitimate predicate presentation).
-        if !dregg_bridge::present::verify_predicate_proof(
+        // ⚠ RESIDUAL AIR GAP (co-tenant flag — Lean-authored, NOT this crate): `facts_root`
+        // still has no source independent of the proof. The presentation descriptor
+        // (`metatheory/Dregg2/Circuit/Emit` presentation family) does not expose `facts_root`
+        // as a public input, so it is read off `attestation.facts_root` here and the
+        // attestation's root-equality check is vacuous. The STATE-ROOT binding above is real
+        // and closes the cross-credential replay; the FACTS-ROOT binding — which would also
+        // refuse a fact FABRICATED under A's own `final_state_root` but under an INVENTED
+        // `facts_root` — requires the presentation STARK to prove and expose `facts_root` over
+        // the token's real fact set, then passing THAT trusted root here. That AIR change is
+        // the exact residual; it is out of scope for a Rust fix and must be done in Lean.
+        //
+        // HONEST FLOOR: even fully bound, this predicate proof inherits the deployed STARK/FRI
+        // soundness floor (project-fri-soundness-reality) — a proof, not an on-chain-settled
+        // fact. Do NOT read a pass here as "sound".
+        let Some(attestation) = candidate.proof.attestation.as_ref() else {
+            // No attestation ⇒ nothing binds the commitment to this credential at all.
+            // Fail CLOSED rather than fall back to the x==x gate.
+            return Err(VerificationError::PredicateProofInvalid {
+                attribute: expected.attribute.clone(),
+            });
+        };
+        let final_state_root = dregg_bridge::present::bb_from_bytes(&proof.final_state_root);
+        if !dregg_bridge::present::verify_predicate_proof_third_party(
             &candidate.proof,
-            candidate.proof.fact_commitment,
+            attestation.facts_root,
+            final_state_root,
         ) {
             return Err(VerificationError::PredicateProofInvalid {
                 attribute: expected.attribute.clone(),

@@ -410,9 +410,10 @@ mod tests {
     #[test]
     fn an_exhausted_ordinal_refuses_rather_than_wrapping_onto_a_live_cell() {
         let mut roost = CompanionRoost::new();
-        let draw = roll_hatch(&HatchBeacon::from_bytes([7; 32]), "companion:frostwyrm", 0);
-        let warden = roost.hatch("ember", &draw).expect("a fair hatch mints");
-        let consort = roost.hatch("ember", &draw).expect("a fair hatch mints");
+        let draw_w = roll_hatch(&HatchBeacon::from_bytes([7; 32]), "companion:frostwyrm", 0);
+        let draw_c = roll_hatch(&HatchBeacon::from_bytes([7; 32]), "companion:emberling", 0);
+        let warden = roost.hatch("ember", &draw_w).expect("a fair hatch mints");
+        let consort = roost.hatch("ember", &draw_c).expect("a fair hatch mints");
         roost.raise_to(&warden, 2).expect("the warden raises");
 
         // The last available ordinal still attunes...
@@ -426,9 +427,12 @@ mod tests {
         );
 
         // ...and the next one refuses, without minting a second wing on `last`'s cell.
-        let refused = roost
-            .attune_wing("ember", &warden, &consort)
-            .expect_err("an exhausted ordinal must refuse");
+        // (`match`, not `expect_err`: a `Wing` carries live cell/composition state and has no
+        // `Debug`, and the test only needs the error arm.)
+        let refused = match roost.attune_wing("ember", &warden, &consort) {
+            Ok(_) => panic!("an exhausted ordinal must refuse"),
+            Err(e) => e,
+        };
         match refused {
             crate::CompanionError::Ineligible(why) => assert!(
                 why.contains("exhausted"),

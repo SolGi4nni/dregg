@@ -37,19 +37,65 @@ pub struct DatalogVerifyResult {
     pub trace: AuthorizationTrace,
 }
 
+/// Least-privilege dimension enforcement (Phase 2b), shared by BOTH the
+/// trace-producing verifier ([`verify_token_datalog`]) and the clearance-only
+/// verifier ([`verify_token_datalog_full`]).
+///
+/// A token only authorizes requests in dimensions it EXPLICITLY grants:
+/// - a token with an `app` caveat but no `service` caveat DENIES service requests;
+/// - a token with a `service` caveat but no `app` caveat DENIES app requests;
+/// - a token with NEITHER dimension caveat (e.g. confine-user-only, validity-only,
+///   budget-only) DENIES both app and service requests — missing caveats mean DENY;
+/// - only a truly empty (unrestricted root) caveat set is exempt.
+///
+/// **Security**: this MUST run on the trace path as well. The trace path injects
+/// `unrestricted(1)` whenever a token carries no app/service *facts*, which makes
+/// the Datalog engine ALLOW any dimension for a non-dimensional token — a fail-open
+/// that the canonical [`crate::macaroon_backend`] `verify` (via
+/// [`verify_token_datalog_full`]) denies. Enforcing the gate here keeps the SDK
+/// authorize/prove paths in agreement with the canonical verifier.
+fn enforce_least_privilege_dimensions(
+    caveat_set: &CaveatSet,
+    request: &AuthRequest,
+) -> Result<(), TokenError> {
+    let caveats = caveat_set.first_party_caveats();
+    let has_app_caveats = caveats
+        .iter()
+        .any(|wc| wc.caveat_type == crate::dregg_caveats::CAV_APP);
+    let has_service_caveats = caveats
+        .iter()
+        .any(|wc| wc.caveat_type == crate::dregg_caveats::CAV_SERVICE);
+    let is_empty = caveats.is_empty(); // unrestricted root token
+
+    if !is_empty {
+        if request.service.is_some() && !has_service_caveats {
+            return Err(TokenError::Denied(
+                "token does not grant service access".into(),
+            ));
+        }
+        if request.app_id.is_some() && !has_app_caveats {
+            return Err(TokenError::Denied("token does not grant app access".into()));
+        }
+    }
+    Ok(())
+}
+
 /// Verify a token's caveats using Datalog evaluation (canonical semantics).
 ///
 /// This is the ground-truth verifier. It:
 /// 1. Runs pre-evaluation deny checks (time, org, user, machine, etc.)
-/// 2. Decodes the caveat set into a FactSet
-/// 3. Converts the FactSet to trace-format facts
-/// 4. Runs the Datalog evaluator with standard + extended policy
-/// 5. Returns Allow/Deny with a derivation trace
+/// 2. Enforces least-privilege dimension checks (Phase 2b)
+/// 3. Decodes the caveat set into a FactSet
+/// 4. Converts the FactSet to trace-format facts
+/// 5. Runs the Datalog evaluator with standard + extended policy
+/// 6. Returns Allow/Deny with a derivation trace
 ///
 /// The derivation trace can be fed into the STARK prover for trustless verification.
 ///
-/// **Security**: This function always runs deny checks before Datalog evaluation.
-/// There is no public entry point that bypasses deny checks.
+/// **Security**: This function always runs deny checks AND the least-privilege
+/// dimension gate before Datalog evaluation. There is no public entry point that
+/// bypasses either — the trace/prove path (SDK `authorize_*`) therefore agrees
+/// with the canonical [`verify_token_datalog_full`].
 pub fn verify_token_datalog(
     caveat_set: &CaveatSet,
     request: &AuthRequest,
@@ -57,6 +103,13 @@ pub fn verify_token_datalog(
     // Phase 0: Run pre-evaluation deny checks (time, org, user, machine, etc.)
     // These MUST run before any Datalog evaluation to prevent bypasses.
     pre_evaluation_deny_checks(caveat_set, request)?;
+
+    // Phase 2b: Least-privilege dimension enforcement. A non-dimensional token
+    // (confine-user-only, validity-only, budget-only) must NOT authorize an app
+    // or service request even though the trace path would otherwise inject
+    // `unrestricted(1)` and ALLOW it. Runs on this path too so the SDK authorize
+    // paths cannot fail open where the canonical verifier denies.
+    enforce_least_privilege_dimensions(caveat_set, request)?;
 
     // 1. Decode caveats to FactSet + SymbolTable
     let (factset, symbols) = caveat_set_to_factset(caveat_set)?;
@@ -1506,19 +1559,10 @@ pub fn verify_token_datalog_full(
         .any(|wc| wc.caveat_type == crate::dregg_caveats::CAV_SERVICE);
     let is_empty = caveats.is_empty(); // unrestricted root token
 
-    // Phase 2b: Least-privilege dimension enforcement.
+    // Phase 2b: Least-privilege dimension enforcement (shared with the trace path).
     // If the request specifies a dimension that the token does NOT grant, DENY.
     // A token must explicitly grant each dimension it's used for.
-    if !is_empty {
-        if request.service.is_some() && !has_service_caveats {
-            return Err(TokenError::Denied(
-                "token does not grant service access".into(),
-            ));
-        }
-        if request.app_id.is_some() && !has_app_caveats {
-            return Err(TokenError::Denied("token does not grant app access".into()));
-        }
-    }
+    enforce_least_privilege_dimensions(caveat_set, request)?;
 
     // Determine if the request targets a restricted dimension
     let request_targets_restricted_app = request.app_id.is_some() && has_app_caveats;
@@ -2191,6 +2235,69 @@ mod tests {
         assert!(
             result.is_err(),
             "token without app/service grants must deny service requests"
+        );
+    }
+
+    /// Regression (SDK fail-open): the TRACE-producing base verifier
+    /// (`verify_token_datalog`, used by the SDK `authorize_*`/prove paths) MUST
+    /// enforce the same least-privilege dimension gate as the canonical
+    /// `verify_token_datalog_full`. Before the fix the base path injected
+    /// `unrestricted(1)` for a non-dimensional token and ALLOWED an app request
+    /// that the full verifier DENIES — a fail-open the SDK then laundered into a
+    /// STARK proof.
+    #[test]
+    fn test_base_trace_verifier_enforces_least_privilege_like_full() {
+        let mut set = CaveatSet::new();
+        set.push(WireCaveat::new(CAV_CONFINE_USER, encode_string("alice")));
+
+        // App request — user matches (isolates the DIMENSION gate from the user
+        // deny-check), but the token grants no app dimension.
+        let app_request = AuthRequest {
+            app_id: Some("dashboard".into()),
+            action: Some("r".into()),
+            user_id: Some("alice".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        let base = verify_token_datalog(&set, &app_request);
+        let full = verify_token_datalog_full(&set, &app_request);
+        assert!(
+            base.is_err(),
+            "base trace verifier must DENY a confine-user-only token authorizing an app \
+             (regression: it injected unrestricted(1) and ALLOWED)"
+        );
+        assert_eq!(
+            base.is_err(),
+            full.is_err(),
+            "base trace verifier and canonical full verifier must AGREE on the app request"
+        );
+
+        // Service request — same shape, same required agreement.
+        let svc_request = AuthRequest {
+            service: Some("compute-api".into()),
+            action: Some("r".into()),
+            user_id: Some("alice".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        assert!(verify_token_datalog(&set, &svc_request).is_err());
+        assert_eq!(
+            verify_token_datalog(&set, &svc_request).is_err(),
+            verify_token_datalog_full(&set, &svc_request).is_err(),
+            "base and full must AGREE on the service request"
+        );
+
+        // Positive control (no over-denial): a non-dimensional request the
+        // confine-user token legitimately covers still ALLOWs on the base path.
+        let user_request = AuthRequest {
+            action: Some("r".into()),
+            user_id: Some("alice".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        assert!(
+            verify_token_datalog(&set, &user_request).is_ok(),
+            "the dimension gate must not over-deny a request in no restricted dimension"
         );
     }
 

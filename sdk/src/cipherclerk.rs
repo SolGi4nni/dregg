@@ -8198,6 +8198,130 @@ mod tests {
         }
     }
 
+    /// DIFFERENTIAL (SDK fail-open, HIGH): the SDK `authorize()` verdict MUST
+    /// agree with the canonical `verify_token()` (which routes through
+    /// `MacaroonToken::verify` → `verify_token_datalog_full`, the Phase-2b
+    /// least-privilege gate). Before the fix, `authorize()` ran the base
+    /// `verify_token_datalog`, which lacked that gate: a confine-user-only token
+    /// (no app/service grant) would ALLOW an app request that `verify_token()`
+    /// DENIES — and `authorize_private/selective` would emit a STARK proof of
+    /// that fail-open ALLOW.
+    #[test]
+    fn test_authorize_agrees_with_verify_token_on_least_privilege() {
+        let clerk = AgentCipherclerk::new();
+
+        // ---- Leg A: Trusted mode. A token ISSUED already confined to a user,
+        // carrying NO app/service grant, whose HMAC chain verifies under a known
+        // root key (so both the `verify_token` can-mint path and the Trusted
+        // `extract_caveat_set` HMAC path resolve the same caveat set). ----
+        let root_key = [0x71u8; 32];
+        let confine = Attenuation {
+            confine_user: Some("alice".into()),
+            ..Default::default()
+        };
+        let confined_encoded = MacaroonToken::mint(root_key, b"billing:0", "billing")
+            .attenuate(&confine)
+            .unwrap()
+            .to_encoded()
+            .unwrap();
+        let confined_root = HeldToken::new(
+            "root:billing".into(),
+            "billing".into(),
+            confined_encoded,
+            root_key,
+            "billing:0".into(),
+        );
+
+        // App request; the user MATCHES so the least-privilege DIMENSION gate
+        // (not the user deny-check) is the sole discriminator.
+        let app_request = AuthRequest {
+            app_id: Some("billing".into()),
+            action: Some("rw".into()),
+            user_id: Some("alice".into()),
+            now: Some(1_700_000_000),
+            ..Default::default()
+        };
+
+        let canonical_grants = clerk.verify_token(&confined_root, &app_request);
+        let authorize_grants =
+            match clerk.authorize(&confined_root, &app_request, VerificationMode::Trusted) {
+                Ok(AuthorizationPresentation::Trusted { trace, .. }) => {
+                    matches!(trace.conclusion, dregg_trace::Conclusion::Allow { .. })
+                }
+                Ok(_) => true,
+                Err(_) => false,
+            };
+        assert!(
+            !canonical_grants,
+            "canonical verify_token must DENY a confine-user-only token authorizing an app"
+        );
+        assert_eq!(
+            authorize_grants, canonical_grants,
+            "SDK authorize(Trusted) must AGREE with canonical verify_token — both DENY \
+             (regression: the base verifier injected unrestricted(1) and ALLOWED)"
+        );
+
+        // Positive control (no over-denial): a request in NO restricted dimension
+        // that the confine-user token legitimately covers — both must ALLOW.
+        let user_request = AuthRequest {
+            action: Some("r".into()),
+            user_id: Some("alice".into()),
+            now: Some(1_700_000_000),
+            ..Default::default()
+        };
+        let canon_user = clerk.verify_token(&confined_root, &user_request);
+        let auth_user =
+            match clerk.authorize(&confined_root, &user_request, VerificationMode::Trusted) {
+                Ok(AuthorizationPresentation::Trusted { trace, .. }) => {
+                    matches!(trace.conclusion, dregg_trace::Conclusion::Allow { .. })
+                }
+                Ok(_) => true,
+                Err(_) => false,
+            };
+        assert!(
+            canon_user && auth_user,
+            "the dimension gate must not over-deny a request in no restricted dimension \
+             (canonical={canon_user}, authorize={auth_user})"
+        );
+
+        // ---- Leg B: FullyPrivate mode with the DEPLOYED shape — a real
+        // attenuated (zeroed-root-key) confine-user-only token routed through the
+        // proof path. The canonical verifier DENIES; `authorize()` must DENY too,
+        // returning Err BEFORE proving so NO STARK proof of a fail-open ALLOW is
+        // ever emitted. ----
+        let mut minter = AgentCipherclerk::new();
+        let root2 = [0x8Cu8; 32];
+        let root_tok = minter.mint_token(&root2, "billing");
+        let att_confined = minter
+            .attenuate(
+                &root_tok,
+                &Attenuation {
+                    confine_user: Some("bob".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!att_confined.can_mint() && att_confined.can_prove());
+
+        let app_req2 = AuthRequest {
+            app_id: Some("billing".into()),
+            action: Some("rw".into()),
+            user_id: Some("bob".into()),
+            now: Some(1_700_000_000),
+            ..Default::default()
+        };
+        assert!(
+            !minter.verify_token(&att_confined, &app_req2),
+            "canonical verify_token must DENY the attenuated confine-user-only token"
+        );
+        let private = minter.authorize(&att_confined, &app_req2, VerificationMode::FullyPrivate);
+        assert!(
+            private.is_err(),
+            "authorize(FullyPrivate) must DENY (Err) the app request — a STARK proof of the \
+             fail-open ALLOW must NOT be emitted; got: {private:?}"
+        );
+    }
+
     /// FALSIFIER: an attenuated token, verified over the HTTP/ws/mcp `verify_token`
     /// surface (NOT the in-process `.verify` with the real key), must be ACCEPTED for a
     /// request inside its narrowed scope.

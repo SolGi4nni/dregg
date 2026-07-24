@@ -32,16 +32,17 @@ fn tug_hand() -> Vec<(u64, u64)> {
     ]
 }
 
-/// The driven 5x5 automatafl board (matches the game-board crate's own gate).
+/// The driven n=11 automatafl board (the deployed size — the only sizes with an emitted Lean
+/// descriptor are `n ∈ {2, 11}`): the automaton pulled north by an attractor three cells away.
 fn demo_board() -> Board {
-    let n = 5usize;
+    let n = 11usize;
     let mut cells = vec![VAC; n * n];
-    cells[4 * n + 2] = ATT;
-    cells[2 * n + 2] = AUTO;
+    cells[8 * n + 5] = ATT;
+    cells[5 * n + 5] = AUTO;
     Board {
         n,
         cells,
-        auto: (2, 2),
+        auto: (5, 5),
         col_rule: true,
     }
 }

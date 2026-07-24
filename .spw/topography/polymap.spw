@@ -1,0 +1,29 @@
+# Polymap
+#
+# Router for the semantic polymapping: several projections of one territory,
+# each a different answer to "what is this repo?". A crate may appear in
+# every map with a different role — that is the point, not a conflict.
+
+#>spw_polymap
+#:topography #!router
+
+^"projections"{
+  @strata: ~"./strata.spw"     // geology — what layers the mass deposits in
+  @lanes: ~"./lanes.spw"       // excavation — who is digging, where, and why
+  @trust: ~"./trust.spw"       // assurance — what is proven, assumed, owed
+  @valence: ~"./valence.spw"   // material — how each mass is changing
+}
+
+^"discipline"{
+  ~#poly: "projections may disagree; disagreement between maps is signal, not error" #!projections_may_disagree
+  ~#ground: "every ~ ref exists on disk; families are glob-prose; claims trace to the crystal or a trail file"
+  ~#drift: "when the crystal moves, the map that noticed records the move; the others catch up on their own beat"
+  ~#summon: "any projection section should be emittable alone — one screen, one region, one tension"
+}
+
+^"wonder"{
+  ?["Which projection is missing — time? affect? blast radius?"]{
+    #:ideation #!schizophrenic_ok
+    $%[map.axes, corpus.strands] => ~#next_projection
+  }
+}

@@ -1,0 +1,28 @@
+# Summon
+#
+# Exemplar lens: how a surface here loads a latent region compactly.
+# A lens is an attentional substrate — enough named tension that a model
+# ingesting it inhabits the region, without reading the crystal.
+# First specimen: the stark-kill excavation.
+
+#>spw_lens_summon
+#:lens #!attentional_substrate
+
+^"how_to_summon"{
+  ~#move: "name the region, its valence, its live tension, its forbidden shortcut — nothing else"
+  ~#density: "a lens should fit in one screen; if it scrolls, it is documentation wearing a costume"
+  ~#mutability: "lenses are for ideation — bend them, fork them, contradict them; the crystal keeps the truth"
+}
+
+^"lens: stark_kill"{
+  ~#region: "the hand AIRs in circuit/src — stark.rs has already fallen; the constellation around it remains"
+  @canon: ~"../../metatheory"
+  @debt: ~"../../circuit"
+  ~#valence: "bone" // load-bearing, calcified, scheduled for principled demolition
+  ~#tension: "every hand AIR compiles green and proves nothing; the ladder is Rung 1 functional → Rung 2 semantic → Rung 3 fold → apex"
+  ~#forbidden: "extending a Rust AIR because it is right there — that is the drift, not the work"
+  ?["What would this circuit look like if it had been born in Lean?"]{
+    #:ideation #!schizophrenic_ok
+    $%[air.constraint_shape, refinement.rung] => ~#rederivation_sketch
+  }
+}

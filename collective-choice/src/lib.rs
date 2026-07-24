@@ -289,6 +289,13 @@ struct PollRecord {
     receipts: Vec<(usize, u64)>,
     /// Ballots already issued (voter pk → ballot cell), so re-issue is idempotent.
     issued: HashMap<[u8; 32], CellId>,
+    /// The **certified decision** — the winner snapshot the quorum gate admitted,
+    /// captured at certification and FROZEN. `None` until the round first
+    /// resolves. Finality: [`CollectiveChoice::resolve`] returns THIS on every
+    /// later call rather than re-running `argmax` over the (monotonic, since-grown)
+    /// tally — a fresh argmax over more casts could name a different winner and
+    /// shift the reported/committed result away from what was certified.
+    certified: Option<Decision>,
 }
 
 /// The collective-choice engine — one embedded executor hosting every poll,
@@ -609,6 +616,7 @@ impl CollectiveChoice {
                 dynamic_electorate: weighted,
                 receipts: Vec::new(),
                 issued: HashMap::new(),
+                certified: None,
             },
         );
         Ok(PollId(poll_cell))
@@ -861,6 +869,30 @@ impl VoteEngine for CollectiveChoice {
 
     fn resolve(&mut self, poll: PollId) -> Result<Option<Decision>, VoteError> {
         let poll_cell = self.polls.get(&poll.0).ok_or(VoteError::NoSuchPoll)?.cell;
+
+        // FINALITY — a certified decision is FINAL. If this round already
+        // resolved, return the ORIGINAL certified winner, persisted at
+        // certification time. This is the whole idempotent branch now: NEVER
+        // re-run `argmax` over the live tally. Tally slots are `Monotonic`, so
+        // later casts only grow them, and a fresh argmax over the now-larger
+        // board could name a DIFFERENT winner than the quorum certified — the
+        // reported winner (and, downstream, the committed fork gate) would then
+        // diverge from the certified decision. Within an engine's lifetime the
+        // `RESOLVED` slot is set iff this snapshot is present (the decision-turn
+        // below is the only writer), so the persisted decision fully subsumes
+        // the old on-cell `RESOLVED` check.
+        if let Some(decision) = self
+            .polls
+            .get(&poll.0)
+            .expect("poll present")
+            .certified
+            .clone()
+        {
+            return Ok(Some(decision));
+        }
+
+        // Snapshot the winner AT CERTIFICATION — the argmax of the tally in the
+        // same post-state the decision-turn commits over.
         let tally = self.tally(poll)?;
         let (winner, winner_tally) = argmax(&tally.per_option);
         let decision = Decision {
@@ -868,13 +900,6 @@ impl VoteEngine for CollectiveChoice {
             winner_tally,
             total: tally.total,
         };
-
-        // Idempotent: if already resolved, report the decision.
-        if let Some(state) = self.exec.cell_state(poll_cell) {
-            if field_to_u64(&state.fields[RESOLVED_SLOT as usize]) != 0 {
-                return Ok(Some(decision));
-            }
-        }
 
         // Attempt the decision-turn: set RESOLVED := 1. The `CountGe` gate is the
         // REAL quorum gate — the turn must EXHIBIT the distinct quorum-approver
@@ -895,7 +920,14 @@ impl VoteEngine for CollectiveChoice {
         action.witness_blobs = vec![WitnessBlob::new(WitnessKind::Cleartext, blob)];
         let action = self.clerk.sign_action(action);
         match self.exec.submit_action(&self.clerk, action) {
-            Ok(_) => Ok(Some(decision)),
+            Ok(_) => {
+                // FINALITY: freeze the certified winner. Any later `resolve`
+                // (even after more casts have shifted the live argmax) returns
+                // THIS decision, not a fresh one over the grown tally.
+                self.polls.get_mut(&poll.0).expect("poll present").certified =
+                    Some(decision.clone());
+                Ok(Some(decision))
+            }
             Err(_) => Ok(None),
         }
     }

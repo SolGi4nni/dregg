@@ -212,6 +212,65 @@ fn quorum_affine_le_gates_resolution() {
     assert!(e.resolve(poll).unwrap().is_some());
 }
 
+// ── FINALITY: a certified winner is FINAL even if later casts shift argmax ──
+//
+// The flaw: the idempotent `resolve` branch re-ran `argmax` over the live
+// (monotonic, since-grown) tally instead of returning the persisted certified
+// winner. A round certified with winner W1, then more casts that flip the live
+// argmax to W2, produced a SECOND `resolve` reporting W2 — finality was not
+// final. The fix snapshots the winner at certification and returns it verbatim.
+
+#[test]
+fn a_certified_winner_is_final_even_when_later_casts_shift_the_argmax() {
+    let mut e = engine();
+    // M = 2 over a 4-voter electorate; two options.
+    let poll = e
+        .open_poll(spec("finality?", 2, vec![ALICE, BOB, CAROL, DAVE], 2))
+        .unwrap();
+
+    // ALICE + BOB vote option 1 → tally [0, 2], quorum (2) met: option 1 wins.
+    for v in [ALICE, BOB] {
+        let cap = e.issue_ballot(poll, v).unwrap();
+        e.cast(poll, &cap, 1).unwrap();
+    }
+    let certified = e
+        .resolve(poll)
+        .unwrap()
+        .expect("2 distinct voters reach quorum — option 1 is certified");
+    assert_eq!(certified.winner, 1, "option 1 is the certified winner");
+    assert_eq!(certified.winner_tally, 2);
+    assert_eq!(certified.total, 2);
+
+    // Now CAROL + DAVE cast for option 0 → tally [2, 2]. A fresh argmax over the
+    // GROWN board ties and would break to option 0 (the lower index) — a
+    // DIFFERENT winner than was certified.
+    for v in [CAROL, DAVE] {
+        let cap = e.issue_ballot(poll, v).unwrap();
+        e.cast(poll, &cap, 0).unwrap();
+    }
+    assert_eq!(
+        e.tally(poll).unwrap().per_option,
+        vec![2, 2],
+        "the board grew after certification; a live argmax now names option 0"
+    );
+
+    // FINALITY: a second `resolve` returns the ORIGINAL certified decision
+    // (option 1, tally 2, total 2) — NOT a re-argmax over the now-tied board.
+    let again = e
+        .resolve(poll)
+        .unwrap()
+        .expect("an already-resolved round reports its certified winner");
+    assert_eq!(
+        again.winner, 1,
+        "the certified winner is FINAL — later casts cannot re-argmax it to option 0"
+    );
+    assert_eq!(
+        again.winner_tally, 2,
+        "the winning tally is frozen at certification"
+    );
+    assert_eq!(again.total, 2, "the total is frozen at certification");
+}
+
 // ── delegation (liquid democracy): counts once + cannot amplify ─────────────
 
 #[test]

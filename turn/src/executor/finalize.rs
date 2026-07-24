@@ -548,6 +548,7 @@ impl TurnExecutor {
                     cell,
                     index,
                     old_value,
+                    ..
                 } => {
                     if !created_cells.contains(cell) {
                         first_fields.entry((*cell, *index)).or_insert(*old_value);

@@ -48,6 +48,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.sovereigncommitment
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitMakeSovereign
 
@@ -166,21 +167,31 @@ theorem makeSovereignVm_rejects_surviving_balance (env : VmRowEnv)
 
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 
-/-! ⚑ **`makeSovereignVm_commit_binds_block_or_collides` IS DELETED (07-22) — the binding is a SECURITY REDUCTION now, hosted downstream.**
+theorem makeSovereignVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ makeSovereignHashSites)
+    (hs₂ : siteHoldsAll hash e₂ makeSovereignHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
-That theorem exported the bare DISJUNCTION `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`.
-True at deployed BabyBear parameters (unlike its `Poseidon2SpongeCR`-carrying predecessor, which the
-deployed compressing sponge REFUTES), but UNCLOSED: a collision EXISTS at those parameters by
-pigeonhole, so the `collides` branch is unconditionally available and the binding never has to hold.
-A disjunction quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
-
-The deployed binding of makeSovereign's absorbed state block is now
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.makeSovereign_commit_binds_block_advantage_bound`
-(`hEff` discharged at `Eff := IsPolyTime` by `makeSovereign_commit_binds_block_from_polyTime`), whose forgery
-game's answers are DEPLOYED makeSovereign ROWS (`makeSovereignVm_row_forgery_is_break`, stated at THIS file's
-`makeSovereignHashSites`). It is hosted DOWNSTREAM because the deployed sponge's keyed family
-(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree — a reduction stated at that
-family cannot be imported by an emission module without a build cycle. -/
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE of the extraction disjunction above** (the honest successor of the
+fraud-deleted `EffectVmCommitReduction` claim, whose `IsPolyTime` floor is REFUTED at deployed
+parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
+(`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every QUERY-BOUNDED forger
+producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
+absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
+(`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
+deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
+deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+theorem makeSovereignVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame makeSovereignHashSites))
+    (hA : NarrowBreakEff makeSovereignHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame makeSovereignHashSites) A) :=
+  narrowStateCommit_binds makeSovereignHashSites rfl Q hQ A hA
 
 /-! ## §8 — the dropped record carries NO readable balance (the overlap with the executor).
 
@@ -342,6 +353,8 @@ theorem forgedRow_rejected : ¬ (gZero state.BALANCE_LO).holdsVm forgedRow false
 #assert_axioms makeSovereignVm_faithful
 #assert_axioms makeSovereignVm_rejects_nonzero
 #assert_axioms makeSovereignVm_rejects_surviving_balance
+#assert_axioms makeSovereignVm_commit_binds_block_or_collides
+#assert_axioms makeSovereignVm_commit_binds_keyed
 #assert_axioms sovereignRebind_balOf_zero
 #assert_axioms makeSovereign_target_dropped
 #assert_axioms makeSovereign_row_matches_executor

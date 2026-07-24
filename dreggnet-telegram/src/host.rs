@@ -1635,7 +1635,11 @@ impl<T: Transport> TelegramHost<T> {
         // Which surface is being pressed: the press's own message names it; a press that names no
         // message means the chat's most recent surface.
         let surface_sid = match ev.message_id {
-            Some(message_id) => match self.frontend.surface_of_message(MessageId(message_id)) {
+            Some(message_id) => match self.frontend.surface_of_message(
+                ev.chat_id,
+                ev.message_thread_id,
+                MessageId(message_id),
+            ) {
                 Some(surface) => surface.clone(),
                 // A real callback names the message it came from. Unknown messages (including a
                 // companion proof guide) must never fall through to the latest game keyboard.

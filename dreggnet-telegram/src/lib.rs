@@ -217,9 +217,13 @@ pub struct TelegramFrontend<T: Transport> {
     /// can hold several at once; a bare chat-scoped id ([`TelegramFrontend::session_id`]) is the
     /// chat's own single surface, as a lone frontend (no host, one offering) uses it.
     sessions: HashMap<SessionId, TelegramSession>,
-    /// **message id → the surface it belongs to** — how a press on a specific message routes to
-    /// the right offering when several are open in one chat.
-    by_message: HashMap<i64, SessionId>,
+    /// **(chat, topic, message id) → the surface it belongs to** — how a press on a specific
+    /// message routes to the right offering when several are open in one chat. Keyed by the FULL
+    /// chat-scoped address, never the bare `message_id`: a Telegram `message_id` is unique only
+    /// WITHIN a chat, so two different chats routinely mint the same id (chat B's message 2 would
+    /// otherwise overwrite chat A's, and A's press would then resolve B's offering — a dead
+    /// button / cross-chat misroute). The chat context comes straight off the [`CallbackQuery`].
+    by_message: HashMap<(ChatId, Option<i64>, i64), SessionId>,
     /// **chat-scoped id → that chat's MOST RECENTLY presented surface.** The fallback for a press
     /// that names no message (a `/act` command, a Mini App round-trip), and what keeps the
     /// single-offering UX ("the chat's surface") meaningful now that a chat may host several.
@@ -315,8 +319,14 @@ impl<T: Transport> TelegramFrontend<T> {
 
     /// The surface a live message belongs to — how a press on a specific message finds its
     /// offering when a chat hosts several.
-    pub fn surface_of_message(&self, message_id: MessageId) -> Option<&SessionId> {
-        self.by_message.get(&message_id.0)
+    pub fn surface_of_message(
+        &self,
+        chat_id: ChatId,
+        message_thread_id: Option<i64>,
+        message_id: MessageId,
+    ) -> Option<&SessionId> {
+        self.by_message
+            .get(&(chat_id, message_thread_id, message_id.0))
     }
 
     /// The chat's most recently presented surface id, if any.
@@ -456,7 +466,8 @@ impl<T: Transport> TelegramFrontend<T> {
         slot.presented = actions.to_vec();
         // Index the live message → this surface (a press names its message), and record this as
         // the chat's most recent surface (the fallback for a press that names none).
-        self.by_message.insert(message_id.0, session.clone());
+        self.by_message
+            .insert((chat_id, topic, message_id.0), session.clone());
         self.latest
             .insert(Self::session_id(chat_id, topic), session.clone());
         self.last_send_error = None;
@@ -631,7 +642,7 @@ impl<T: Transport> Frontend for TelegramFrontend<T> {
         // live in one chat); a press that names no message falls back to the chat's surface.
         let session = match ev
             .message_id
-            .and_then(|m| self.surface_of_message(MessageId(m)))
+            .and_then(|m| self.surface_of_message(ev.chat_id, ev.message_thread_id, MessageId(m)))
         {
             Some(sid) => sid.clone(),
             None => {
@@ -658,7 +669,8 @@ impl<T: Transport> Frontend for TelegramFrontend<T> {
     fn teardown(&mut self, session: &SessionId) {
         if let Some(slot) = self.sessions.remove(session) {
             if let Some(mid) = slot.message_id {
-                self.by_message.remove(&mid.0);
+                self.by_message
+                    .remove(&(slot.chat_id, slot.message_thread_id, mid.0));
             }
         }
         // Drop the chat's "most recent surface" pointer if it pointed here.

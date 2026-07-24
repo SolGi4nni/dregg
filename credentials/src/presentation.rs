@@ -37,7 +37,7 @@ use thiserror::Error;
 
 use dregg_bridge::present::{
     BridgePredicateProof, BridgePresentationBuilder, BridgePresentationProof, FactTerms,
-    FederationRegistry, prove_predicate_for_fact,
+    FederationRegistry, prove_predicate_for_fact_attested,
 };
 use dregg_circuit::poseidon2;
 use dregg_token::AuthRequest;
@@ -411,11 +411,32 @@ fn present_impl(
             // `hash_4_to_1([fact_hash, state_root, blinding, 0])`, so two showings of the same
             // attribute emit different commitments while the in-circuit weld still binds each to the
             // value it covers.
-            let pred_proof = prove_predicate_for_fact(
+            //
+            // ATTESTED (third-party) shape, NOT the trusted-state `prove_predicate_for_fact`. The
+            // proof now carries a `BridgeFactAttestation` that STARK-proves its `fact_commitment` is
+            // the blinded image of a `fact_hash` sitting under `state_root` (= THIS presentation's
+            // `final_state_root`, a genuine presentation-STARK public input). At verify time that
+            // lets `verify()` route through `verify_predicate_proof_third_party` with the trusted
+            // `final_state_root` instead of the vacuous `verify_predicate_proof(&p, p.fact_commitment)`
+            // (x==x) gate — so a genuine proof minted under a DIFFERENT credential's state root is
+            // refused (the cross_credential_predicate_forgery_rejected falsifier).
+            //
+            // ⚠ RESIDUAL AIR GAP (co-tenant flag, Lean-authored — NOT this crate): the `facts_root`
+            // the attestation names is not yet a public input of the presentation descriptor, so the
+            // verifier has no source for it independent of the proof and reads it off the attestation.
+            // The `state_root` binding is what is genuinely trusted and what closes the cross-credential
+            // forgery; the `facts_root` binding (which would also refuse a fact fabricated under THIS
+            // state root but an INVENTED facts_root) needs the presentation STARK to expose `facts_root`
+            // as a proven PI over the token's real fact set. The co-path here is therefore a
+            // well-formed stand-in that makes the attestation valid and its state-root binding real —
+            // it is not authenticated against a credential-side facts tree, because none is exposed.
+            let siblings = attestation_siblings(attr_symbol, state_root);
+            let pred_proof = prove_predicate_for_fact_attested(
                 predicate_value,
                 binding,
                 dregg_bridge::present::fresh_predicate_blinding(),
                 &req.predicate,
+                &siblings,
             )
             .ok_or_else(|| PresentationError::PredicateProof(req.attribute.clone()))?;
 
@@ -432,6 +453,32 @@ fn present_impl(
         predicate_proofs,
         anonymous,
     })
+}
+
+/// A deterministic depth-2 (`attested_fact_membership::ATTESTED_DEPTH`) co-path for a predicate
+/// fact's attestation.
+///
+/// The credential model keeps no standalone depth-2 4-ary facts tree to draw a real co-path from,
+/// and — the RESIDUAL AIR GAP — the presentation STARK exposes no `facts_root` public input the
+/// verifier could authenticate a co-path against. So this derives a well-formed co-path from the
+/// fact's attribute symbol and the presentation `state_root`. Its only jobs are to make the
+/// attestation STARK well-formed and to carry the REAL, load-bearing binding: the attestation's
+/// `state_root` (= this presentation's `final_state_root`). The `facts_root` it authenticates is NOT
+/// independently trusted by the verifier — see the RESIDUAL AIR GAP note at the call site.
+fn attestation_siblings(
+    attr_symbol: dregg_circuit::field::BabyBear,
+    state_root: dregg_circuit::field::BabyBear,
+) -> Vec<[dregg_circuit::field::BabyBear; 3]> {
+    use dregg_circuit::field::BabyBear;
+    let d = |level: u64, idx: u64| -> BabyBear {
+        poseidon2::hash_many(&[
+            attr_symbol,
+            state_root,
+            BabyBear::from_u64(level),
+            BabyBear::from_u64(idx),
+        ])
+    };
+    vec![[d(0, 1), d(0, 2), d(0, 3)], [d(1, 1), d(1, 2), d(1, 3)]]
 }
 
 /// Recompute the revealed-facts commitment over a list of fact terms.

@@ -1,0 +1,39 @@
+# Index
+#
+# Routing table for the breadstuffs hypersemantic tree.
+
+#>spw_index
+#:index
+
+^"roots"{
+  @readme: ~"./README.md"
+  @poem: ~"./root.spw"
+  @shelves: ~"./shelves.spw"
+  @mount: ~"./mount.spw"
+  @workspace: ~"./workspace.spw"
+  @polymap: ~"./topography/polymap.spw"
+  @strata: ~"./topography/strata.spw"
+  @lanes: ~"./topography/lanes.spw"
+  @trust: ~"./topography/trust.spw"
+  @valence: ~"./topography/valence.spw"
+  @lenses: ~"./lenses/summon.spw"
+}
+
+^"dispatch"{
+  readme: @readme
+  poem: @poem
+  shelves: @shelves
+  mount: @mount
+  workspace: @workspace
+  polymap: @polymap
+  strata: @strata
+  lanes: @lanes
+  trust: @trust
+  valence: @valence
+  lenses: @lenses
+}
+
+^"reading_order"{
+  ~#machine: "poem → polymap → the projection you need → lenses; shelves for navigation"
+  ~#human: "README.md first"
+}

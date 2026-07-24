@@ -507,6 +507,14 @@ impl TurnExecutor {
         path: Vec<usize>,
         journal: &mut LedgerJournal,
         excess: &mut i64,
+        // PER-ASSET conservation accumulator (closes the asset-blind `excess`
+        // hole): every `balance_change` delta is pushed as
+        // `(target-cell asset class, delta)` — the class resolved from the
+        // target's committed `token_id` at APPLY time, while the cell provably
+        // exists. The turn-end gate requires EACH asset's Σδ == 0 independently,
+        // so a cross-asset net-zero teleport is REFUSED even though `excess` sums
+        // to 0.
+        asset_deltas: &mut Vec<(dregg_circuit::field::BabyBear, i64)>,
         turn_nonce: u64,
         turn_agent: &CellId,
         // The turn's pre-execution INPUT hash (`wake.hash()` / `turn.hash()`),
@@ -1028,6 +1036,17 @@ impl TurnExecutor {
                     path.clone(),
                 )
             })?;
+
+            // PER-ASSET conservation: record this delta under the target cell's
+            // committed asset class (`token_id` fold). The scalar `excess` above
+            // is asset-BLIND — a +N on cell(token X) against a −N on a
+            // self-issued cell(token Y) nets `excess` to 0 and would mint X out
+            // of worthless Y. Grouping by asset (resolved from the ledger HERE,
+            // where the target provably exists) lets the turn-end gate reject any
+            // asset whose Σδ ≠ 0 independently. Reuses the atomic path's asset
+            // fold — no second conservation impl.
+            let asset = Self::asset_class_for_cell(ledger, &action.target);
+            asset_deltas.push((asset, delta));
         }
 
         // Cav-Codex Block 1+2: enforce cell program constraints on every
@@ -1312,6 +1331,7 @@ impl TurnExecutor {
                 child_path,
                 journal,
                 excess,
+                asset_deltas,
                 turn_nonce,
                 turn_agent,
                 created_by_turn,

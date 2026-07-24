@@ -8,8 +8,8 @@
 use std::sync::Mutex;
 
 use dregg_cell::{
-    CapabilityRef, Cell, CellId, CellPqIdentity, CellProgram, CommitmentSet, DelegatedRef, Ledger,
-    NoteCommitment, Nullifier, Permissions, RevokedSet, VerificationKey,
+    CapabilityRef, Cell, CellId, CellPqIdentity, CellProgram, CommitmentSet, DelegatedRef,
+    FieldVisibility, Ledger, NoteCommitment, Nullifier, Permissions, RevokedSet, VerificationKey,
     lifecycle::CellLifecycle,
     nullifier_set::NullifierSet,
     permissions::AuthRequired,
@@ -30,6 +30,16 @@ pub(crate) enum JournalEntry {
         cell: CellId,
         index: u64,
         old_value: Option<FieldElement>,
+        /// For a FIXED-SLOT write (`index < STATE_SLOTS`): the prior
+        /// `(commitments[slot], field_visibility[slot])` pair, captured BEFORE
+        /// `apply_set_field` nulls the now-stale field commitment. Rollback
+        /// restores both so the entry is a TRUE inverse of apply — without it a
+        /// SetField on a Committed slot followed by a failing effect rolls back
+        /// with the prior commitment destroyed (`None`), diverging the canonical
+        /// state commitment (`hash_cell_state_into` folds both arrays). `None`
+        /// for a heap write (`index >= STATE_SLOTS`), which touches neither
+        /// array.
+        prior_field_commitment: Option<(Option<[u8; 32]>, FieldVisibility)>,
     },
     /// A cell's balance was changed (by transfer or fee deduction).
     /// Records the old balance. SIGNED (THE EPOCH §5): a well's prior
@@ -274,11 +284,40 @@ impl LedgerJournal {
 
     /// Record a field change. `old_value = None` means the heap key was absent
     /// before this turn; fixed slots are always `Some`.
+    ///
+    /// This variant carries NO prior field commitment/visibility — use it for
+    /// HEAP writes (`index >= STATE_SLOTS`), which never touch the fixed-slot
+    /// `commitments[]` / `field_visibility[]` arrays. A FIXED-SLOT write must use
+    /// [`Self::record_set_field_fixed`] so rollback restores the commitment the
+    /// apply path nulls.
     pub fn record_set_field(&mut self, cell: CellId, index: u64, old_value: Option<FieldElement>) {
         self.entries.push(JournalEntry::SetField {
             cell,
             index,
             old_value,
+            prior_field_commitment: None,
+        });
+    }
+
+    /// Record a FIXED-SLOT (`index < STATE_SLOTS`) field change together with the
+    /// prior `commitments[slot]` and `field_visibility[slot]`, captured BEFORE
+    /// `apply_set_field` nulls the stale commitment. Rollback restores all three
+    /// (value + commitment + visibility), making the entry a true inverse of
+    /// apply — closing the divergence where a rolled-back SetField-on-a-committed
+    /// slot left `commitments[slot] = None` and changed the state commitment.
+    pub fn record_set_field_fixed(
+        &mut self,
+        cell: CellId,
+        index: u64,
+        old_value: Option<FieldElement>,
+        prior_commitment: Option<[u8; 32]>,
+        prior_visibility: FieldVisibility,
+    ) {
+        self.entries.push(JournalEntry::SetField {
+            cell,
+            index,
+            old_value,
+            prior_field_commitment: Some((prior_commitment, prior_visibility)),
         });
     }
 
@@ -495,12 +534,27 @@ impl LedgerJournal {
                     cell,
                     index,
                     old_value,
+                    prior_field_commitment,
                 } => {
                     if let Some(c) = ledger.get_mut(&cell) {
                         if index < STATE_SLOTS as u64 {
-                            c.state.fields[index as usize] = old_value.expect(
+                            let slot = index as usize;
+                            c.state.fields[slot] = old_value.expect(
                                 "fixed-slot SetField rollback always carries the prior value",
                             );
+                            // Restore the field commitment + visibility that
+                            // `apply_set_field` nulled. Without this, rolling back
+                            // a SetField on a Committed slot leaves
+                            // `commitments[slot] = None`, diverging the state
+                            // commitment from its pre-turn value (a true inverse
+                            // must restore every array `hash_cell_state_into`
+                            // folds). Absent on the legacy no-commitment path.
+                            if let Some((prior_commitment, prior_visibility)) =
+                                prior_field_commitment
+                            {
+                                c.state.commitments[slot] = prior_commitment;
+                                c.state.field_visibility[slot] = prior_visibility;
+                            }
                         } else if let Some(v) = old_value {
                             c.state.set_field_ext(index, v);
                         } else {

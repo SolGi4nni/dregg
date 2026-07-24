@@ -100,6 +100,41 @@ impl From<LoweredMembership> for LeafBundle {
     }
 }
 
+impl LeafBundle {
+    /// **A DESCRIPTOR-BACKED LEAF.** The sub-proof IS the PROVEN Lean descriptor `src.descriptor` +
+    /// retained trace `src.base_trace` — the object [`mint_turn`] → `ivc_turn_chain`'s
+    /// `descriptor_state_leaf` arm proves DIRECTLY (never lowering a Rust `CellProgram`). The
+    /// `program`/`witness_values` lowering inputs are unused on that arm, so they are an inert EMPTY
+    /// placeholder — the descriptor is the sole authority. This is the constructor the automatafl
+    /// legs use after the hand-authored Rust AIR was deleted; it replaces the old pattern of riding
+    /// a co-built `Builder` program alongside the descriptor.
+    pub fn descriptor_backed(
+        public_inputs: Vec<BabyBear>,
+        num_rows: usize,
+        src: DescriptorStateLeafSource,
+    ) -> Self {
+        LeafBundle {
+            program: dregg_circuit::dsl::circuit::CellProgram::new(
+                dregg_circuit::dsl::circuit::CircuitDescriptor {
+                    name: "descriptor-backed-leaf-placeholder".to_string(),
+                    trace_width: 1,
+                    max_degree: 1,
+                    columns: Vec::new(),
+                    constraints: Vec::new(),
+                    boundaries: Vec::new(),
+                    public_input_count: 0,
+                    lookup_tables: Vec::new(),
+                },
+                1,
+            ),
+            witness_values: std::collections::HashMap::new(),
+            num_rows,
+            public_inputs,
+            descriptor_state_leaf: Some(src),
+        }
+    }
+}
+
 /// **The hidden-hand tooth → a foldable leaf.** Lower a Phase-2 [`PlayProof`] into the
 /// foldable membership leaf: reconstruct the blinded leaf commitment
 /// ([`card_leaf`]) + the authentication path + the committed root from the proof, then run

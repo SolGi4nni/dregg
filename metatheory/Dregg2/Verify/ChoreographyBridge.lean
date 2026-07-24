@@ -41,7 +41,8 @@ theorem log_mono_blue_forever (s : RecChainedState) (sched : SchedG) :
 
 /-! ## Red — coupled commits: hyperedge CG-5 + gated operational teeth. -/
 
-/-- Demo bilateral HTLC swap (the `ClockDAG/Model` witness). -/
+/-- Demo bilateral HTLC swap witness (originally mirrored from the retired `ClockDAG/Model`
+prototype, which was never wired into the build and is deleted). -/
 def jointDemoSwap : BiTurn :=
   { actorA := 0, srcA := 0, actorB := 7, dstB := 7, amt := 30, sid := 42 }
 

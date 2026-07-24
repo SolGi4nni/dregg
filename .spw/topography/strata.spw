@@ -1,0 +1,53 @@
+# Strata
+#
+# root.spw's four-line poem expanded into the real directory families.
+# This is archaeology: each stratum names its crates, its tension, and the
+# goal lanes currently excavating it. Families are given as glob-prose
+# (dreggnet-*) to stay compact; only definite paths get ~ refs.
+
+#>spw_strata
+#:topography #!archeology
+
+^"kernel_proofs"{
+  // ^ { the kernel is a damn mess; not the semantics but the proofs }
+  ~#sigil: "^"
+  ~#substrate: "Lean 4 at @kernel; Rust callers everywhere else"
+  @home: ~"../../metatheory"
+  #[families]{ metatheory exec-lean circuit circuit-prove constraint-lowering dregg-lean-ffi lightclient grain-verify uc-crypthol }
+  ~#tension: "semantics are settled; the proof ladder is the mess — undischarged floors, hand AIRs"
+  #[lanes]{ stark-kill storage-in-lean honest-verification }
+  =bias: "Lean is canon; a hand-written Rust AIR is debt, not foundation"
+}
+
+^"guardians"{
+  // # { guard we ourselves from the monstres at the gate; guardians }
+  ~#sigil: "#"
+  ~#substrate: "Rust crypto crates, audits, secret hygiene"
+  #[families]{ crypto-hashrand crypto-hermine crypto-tanuki crypto-traccoon crypto-xmvrf pqvrf dregg-pq webauth-core macaroon credentials redteam audit }
+  ~#tension: "post-quantum frontier vs shipping today; guardianship as posture, not paranoia"
+  #[lanes]{ pq pq-frontiers }
+}
+
+^"game_engine"{
+  // * { the game engine has many bits and bobs but coheres locally? }
+  ~#sigil: "*"
+  ~#substrate: "the dreggnet-* constellation"
+  #[families]{ dreggnet-quest dreggnet-saga dreggnet-tavern dreggnet-guild dreggnet-market dreggnet-tournament dreggnet-party dreggnet-faction dungeon-on-dregg mud-dregg procgen-dregg game-turn-slice grain-turn interactive-fiction-demo }
+  ~#tension: "local coherence, global sprawl — many bits and bobs, one world in search of its physics"
+  #[lanes]{ collective-fiction-demo }
+}
+
+^"social_surfaces"{
+  // & { telegram / discord surfaces substantially in search of user }
+  ~#sigil: "&"
+  ~#substrate: "bots, bridges, and the web face"
+  #[families]{ discord-bot discord-values dreggnet-telegram dreggnet-wechat dreggnet-discord-identity dreggnet-web site portal }
+  ~#tension: "substantially built, in search of user — distribution is the unproved theorem"
+}
+
+^"dark_strata"{
+  // what the poem does not yet name
+  ~#note: "unmapped mass, honestly marked"
+  #[unnamed]{ deos federation starbridge blocklace captp grain-commons fhegg sel4 }
+  ~#invitation: "when a dark stratum surfaces in work, give it a line in @spw/root.spw and a section here"
+}

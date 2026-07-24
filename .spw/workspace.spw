@@ -1,0 +1,20 @@
+# Workspace
+#
+#>spw_workspace
+#:workspace
+
+^"roots"{
+  @index: ~"./index.spw"
+  @mount: ~"./mount.spw"
+  @shelves: ~"./shelves.spw"
+  @spw: ~"."
+}
+
+^"settings"{
+  ~#language: "spw"
+  ~#dialect: "v0.3.0"
+}
+
+^"lsp"{
+  ~#roots: [~"./", ~"./index.spw", ~"./mount.spw", ~"./shelves.spw"]
+}

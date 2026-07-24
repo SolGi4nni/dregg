@@ -1526,6 +1526,41 @@ pub fn resolve_client_ip(
     socket_ip
 }
 
+/// Process-wide trusted-proxy set for the pre-passphrase setup gates, memoized
+/// from `DREGG_TRUSTED_PROXIES` so every gate resolves the effective client IP
+/// through the SAME configuration.
+fn setup_gate_trusted_proxies() -> &'static TrustedProxies {
+    static TRUSTED: std::sync::OnceLock<TrustedProxies> = std::sync::OnceLock::new();
+    TRUSTED.get_or_init(TrustedProxies::from_env)
+}
+
+/// Whether the *effective* client of a request is loopback, honoring
+/// `X-Forwarded-For` from `trusted` proxies exactly like the rate limiter's
+/// `resolve_client_ip` (F-1). Pure over its inputs, so it is unit-testable.
+///
+/// Behind a same-host reverse proxy the raw socket IP is ALWAYS loopback; a gate
+/// that trusts the socket IP verbatim would treat the whole internet as local
+/// during the pre-passphrase window (remote passphrase / bearer-seed hijack,
+/// F-CRIT-1). Resolving through the trusted-proxy `X-Forwarded-For` path first
+/// means a remote client behind the proxy is NOT admitted, while a genuine local
+/// caller (no proxy, or an XFF that is itself loopback) still is.
+pub fn effective_client_is_loopback_with(
+    socket_ip: IpAddr,
+    headers: &axum::http::HeaderMap,
+    trusted: &TrustedProxies,
+) -> bool {
+    let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    resolve_client_ip(socket_ip, xff, trusted).is_loopback()
+}
+
+/// The ONE trusted-client-IP decision shared by every pre-passphrase setup gate
+/// — `require_auth`'s no-bearer branch, the HTTP unlock / set-passphrase
+/// endpoints, and the WebSocket setup gate — so they cannot diverge. Uses the
+/// process trusted-proxy set from `DREGG_TRUSTED_PROXIES`.
+pub fn effective_client_is_loopback(socket_ip: IpAddr, headers: &axum::http::HeaderMap) -> bool {
+    effective_client_is_loopback_with(socket_ip, headers, setup_gate_trusted_proxies())
+}
+
 /// Simple in-memory rate limiter: max attempts per window.
 #[derive(Clone)]
 struct RateLimiter {
@@ -1642,14 +1677,7 @@ async fn require_auth(
             req.extensions().get();
         return match connect_info {
             Some(ci) => {
-                static TRUSTED: std::sync::OnceLock<TrustedProxies> = std::sync::OnceLock::new();
-                let trusted = TRUSTED.get_or_init(TrustedProxies::from_env);
-                let xff = req
-                    .headers()
-                    .get("x-forwarded-for")
-                    .and_then(|v| v.to_str().ok());
-                let client_ip = resolve_client_ip(ci.0.ip(), xff, trusted);
-                if client_ip.is_loopback() {
+                if effective_client_is_loopback(ci.0.ip(), req.headers()) {
                     Ok(next.run(req).await)
                 } else {
                     Err(StatusCode::FORBIDDEN)
@@ -4783,9 +4811,14 @@ async fn post_cclerk_unlock(
     // passphrase. Once a passphrase is set, the bearer-token auth on subsequent
     // requests is sufficient; but unlock from the network is acceptable since the
     // attacker must still know the passphrase.
+    //
+    // Resolve the EFFECTIVE client IP the same XFF-aware way as the rate limiter
+    // and `require_auth`: behind a same-host reverse proxy the raw socket is
+    // loopback for every external client, so a raw-socket check would let a
+    // remote caller set the passphrase (remote takeover).
     {
         let s = state.read().await;
-        if s.passphrase_hash.is_none() && !addr.ip().is_loopback() {
+        if s.passphrase_hash.is_none() && !effective_client_is_loopback(addr.ip(), &headers) {
             return Err(StatusCode::FORBIDDEN);
         }
     }
@@ -4860,8 +4893,11 @@ async fn post_set_passphrase(
     // F-CRIT-1: setting the initial passphrase from a non-loopback caller is the
     // remote-takeover bug. Reject. Once the passphrase IS set, this endpoint
     // returns "already set" so the network check below is not load-bearing in
-    // that branch, but we apply it uniformly to avoid an oracle.
-    if !addr.ip().is_loopback() {
+    // that branch, but we apply it uniformly to avoid an oracle. Resolve the
+    // effective client IP the same XFF-aware way as the rate limiter and
+    // `require_auth`, so a same-host reverse proxy cannot make a remote caller
+    // look loopback.
+    if !effective_client_is_loopback(addr.ip(), &headers) {
         return Err(StatusCode::FORBIDDEN);
     }
 
@@ -11023,6 +11059,69 @@ mod tests {
             "F-1 regressed: a second proxied client was throttled by another's quota (shared global bucket)"
         );
         eprintln!("[API ATTACK / F-1] real limiter isolates proxied clients: DEFENDED");
+    }
+
+    // ---- F-CRIT-1: pre-passphrase setup gate must be XFF-aware ------------
+
+    /// ATTACK (F-CRIT-1 / setup gate behind a proxy): the pre-passphrase
+    /// "loopback-only during setup" gate — shared by the HTTP unlock /
+    /// set-passphrase endpoints AND the WebSocket setup gate — must resolve the
+    /// EFFECTIVE client IP the same XFF-aware way as `require_auth` and the rate
+    /// limiter, not trust the raw socket IP. Behind the devnet's same-host
+    /// reverse proxy every external request arrives on a loopback socket; a
+    /// raw-socket gate would treat a REMOTE client as local and let it set the
+    /// passphrase + bearer seed (remote takeover).
+    ///
+    /// DEFENDED: with the loopback proxy trusted, a loopback socket carrying an
+    /// XFF for a REMOTE client resolves to NON-loopback → the gate denies (auth
+    /// required); a genuine local caller (no XFF, or an XFF that is itself
+    /// loopback) still resolves to loopback → admitted. `handle_ws` and the two
+    /// HTTP setup endpoints call the SAME `effective_client_is_loopback`, so the
+    /// two gates provably agree.
+    #[test]
+    fn f_crit_1_setup_gate_is_xff_aware_defended() {
+        use std::net::{IpAddr, Ipv4Addr};
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        // The devnet's same-host reverse proxy connects from loopback.
+        let trusted = TrustedProxies::from_strings([loopback.to_string()]);
+
+        // Remote client behind the trusted loopback proxy → NOT loopback → DENY.
+        let mut remote_hdr = axum::http::HeaderMap::new();
+        remote_hdr.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        assert!(
+            !effective_client_is_loopback_with(loopback, &remote_hdr, &trusted),
+            "F-CRIT-1 regressed: a remote client behind a loopback proxy was treated as local"
+        );
+
+        // Genuine local: no XFF header at all → resolves to the loopback socket → ADMIT.
+        let empty = axum::http::HeaderMap::new();
+        assert!(
+            effective_client_is_loopback_with(loopback, &empty, &trusted),
+            "genuine local caller (no XFF) must still be admitted during setup"
+        );
+
+        // Genuine local forwarded by the proxy as a loopback client → ADMIT.
+        let mut local_hdr = axum::http::HeaderMap::new();
+        local_hdr.insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        assert!(
+            effective_client_is_loopback_with(loopback, &local_hdr, &trusted),
+            "a forwarded loopback client must still be admitted"
+        );
+
+        // Default (no trusted proxies / direct exposure): the XFF is IGNORED and
+        // the raw socket decides — unchanged local-dev behavior, and an unproxied
+        // attacker cannot spoof itself local via the header.
+        let none = TrustedProxies::default();
+        assert!(
+            effective_client_is_loopback_with(loopback, &remote_hdr, &none),
+            "default (no trusted proxy): loopback socket stays local, XFF ignored"
+        );
+        let remote_socket = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        assert!(
+            !effective_client_is_loopback_with(remote_socket, &local_hdr, &none),
+            "F-CRIT-1 regressed: an unproxied attacker spoofed itself loopback via XFF"
+        );
+        eprintln!("[API ATTACK / F-CRIT-1] setup gate resolves effective client IP: DEFENDED");
     }
 
     // ---- F-8: /status private-activity metadata leak ---------------------

@@ -2090,9 +2090,12 @@ impl OfferingHost {
     ///
     /// A log is only re-attempted if its failure applied **nothing** to shared substrate:
     /// [`ResumeError::Deploy`] (the fresh session never opened) or a
-    /// [`ResumeError::Refused`] **at move index 0** (not one logged advance re-landed). A log that
-    /// refused mid-way has already re-driven a prefix into the shared ledger, so re-driving it
-    /// again would double-apply that prefix — it is reported as it stands, never retried.
+    /// [`ResumeError::Refused`] **at move index 0 with no journaled operation at `after_moves == 0`**
+    /// (not one logged advance re-landed and no pre-move-0 operation was restored). A log that
+    /// refused mid-way — or at move 0 *after* an `after_moves == 0` operation already committed to the
+    /// shared ledger — has already re-driven something into the substrate, so re-driving it again
+    /// would double-apply it; it is reported as it stands, never retried. See
+    /// [`retryable_resume_error`].
     ///
     /// Every input log appears exactly once in the result, in the caller's original order.
     pub fn resume_logs(
@@ -2117,7 +2120,7 @@ impl OfferingHost {
                         results[pos] = Some(Ok(id));
                         progressed = true;
                     }
-                    Err(e) if retryable_resume_error(&e) => {
+                    Err(e) if retryable_resume_error(&e, &logs[pos]) => {
                         // Nothing was applied — hold it for a later pass, remembering this refusal
                         // as the verdict should no pass ever unblock it.
                         results[pos] = Some(Err(e));
@@ -2142,22 +2145,39 @@ impl OfferingHost {
     }
 }
 
-/// Whether a failed [`resume`](OfferingHost::resume) applied **nothing** to shared substrate, and
-/// so may safely be re-attempted after other logs have replayed (see
+/// Whether a failed [`resume`](OfferingHost::resume) of `log` applied **nothing** to shared
+/// substrate, and so may safely be re-attempted after other logs have replayed (see
 /// [`resume_logs`](OfferingHost::resume_logs)).
 ///
 /// * [`ResumeError::Deploy`] — the fresh session never opened; no advance re-drove.
-/// * [`ResumeError::Refused`] at index 0 — the FIRST logged advance was refused, so not one move
-///   re-landed and the rolled-back session left the shared ledger untouched.
+/// * [`ResumeError::Refused`] at index 0 — the FIRST logged advance was refused **and no journaled
+///   operation preceded it**: not one move re-landed and no `after_moves == 0` operation was
+///   restored, so the rolled-back session left the shared ledger untouched.
+///
+/// The `after_moves == 0` carve-out is the correction to the naive "index 0 ⇒ nothing landed"
+/// rule. [`resume`](OfferingHost::resume) restores every operation at cursor `n` **before** the
+/// ordinary move at cursor `n`, so a settlement/AMM operation journaled at `after_moves == 0` is
+/// applied to the shared substrate *before* move 0 is even attempted. If move 0 then refuses, the
+/// rollback ([`slot.close`]) drops only the session handle — the operation's shared-ledger write
+/// stands. Retrying such a log on a later fixpoint pass would `restore_binary_operation` that op a
+/// SECOND time: a double-apply. So a `Refused { index: 0 }` is retryable only when the log carries
+/// no operation at `after_moves == 0`; once one does, the refusal is terminal and reported as it
+/// stands — exactly the "a prior op at this cursor already committed" case is NOT "nothing landed".
 ///
 /// Everything else is terminal: a mid-log refusal already re-drove a prefix into the shared ledger
 /// (re-driving it again would double-apply), an [`ResumeError::AlreadyOpen`] id will not free
 /// itself, and an [`ResumeError::UnknownOffering`] key will not appear mid-replay.
-fn retryable_resume_error(e: &ResumeError) -> bool {
-    matches!(
-        e,
-        ResumeError::Deploy(_) | ResumeError::Refused { index: 0, .. }
-    )
+fn retryable_resume_error(e: &ResumeError, log: &SessionMoveLog) -> bool {
+    match e {
+        ResumeError::Deploy(_) => true,
+        ResumeError::Refused { index: 0, .. } => {
+            // Retryable ONLY if nothing was committed before move 0. An operation journaled at
+            // `after_moves == 0` is restored (and its shared-substrate write applied) before move 0
+            // is attempted, so its presence means a re-attempt would double-apply — not retryable.
+            !log.operations.iter().any(|op| op.after_moves == 0)
+        }
+        _ => false,
+    }
 }
 
 /// A deterministic session seed from a session id — `blake3(id)`'s low 8 bytes as a `u64`. The
@@ -3204,6 +3224,97 @@ mod tests {
         }
     }
 
+    /// An offering whose **binary operation** `settle.v1` writes to a SHARED substrate (a cell that
+    /// lives OUTSIDE any one session), and whose ordinary moves ALWAYS refuse. This is the exact
+    /// shape of the resume double-apply bug: a settlement journaled at `after_moves == 0` is restored
+    /// (its shared-cell write applied) BEFORE move 0 is attempted, and the move-0 refusal's rollback
+    /// (`slot.close`) drops only the session handle — never the shared-cell write.
+    struct Settler(SharedCell);
+
+    impl Offering for Settler {
+        type Session = ();
+        fn open(&self, _cfg: SessionConfig) -> Result<(), OfferingError> {
+            Ok(())
+        }
+        fn actions(&self, _s: &()) -> Vec<Action> {
+            Vec::new()
+        }
+        fn advance(&self, _s: &mut (), _input: Action, _actor: DreggIdentity) -> Outcome {
+            // Every ordinary move refuses — the move-0 that follows an already-applied settle.
+            Outcome::Refused("settler moves never land".into())
+        }
+        fn verify(&self, _s: &()) -> VerifyReport {
+            VerifyReport::ok(0)
+        }
+        fn render(&self, _s: &()) -> Surface {
+            Surface(deos_view::ViewNode::Text(format!(
+                "settled {}",
+                self.0.0.get()
+            )))
+        }
+        fn binary_operations(&self, _s: &()) -> Vec<BinaryOperationDescriptor> {
+            vec![BinaryOperationDescriptor {
+                name: "settle.v1".to_string(),
+                title: "settle".to_string(),
+                input_media_type: "application/x-u8".to_string(),
+                max_input_bytes: 1,
+                disclosure: "one public settlement byte".to_string(),
+            }]
+        }
+        fn binary_operation_replay_material(
+            &self,
+            _s: &(),
+            name: &str,
+            payload: &[u8],
+        ) -> Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError> {
+            if name != "settle.v1" {
+                return Err(BinaryOperationError::UnknownOperation(name.to_string()));
+            }
+            if payload.len() != 1 {
+                return Err(BinaryOperationError::Malformed(
+                    "expected one settlement byte".to_string(),
+                ));
+            }
+            Ok(Some(BinaryOperationReplayMaterial::new(
+                payload.to_vec(),
+                "one public settlement byte",
+            )))
+        }
+        fn invoke_binary_operation(
+            &self,
+            _s: &mut (),
+            name: &str,
+            payload: &[u8],
+            _actor: DreggIdentity,
+        ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+            if name != "settle.v1" {
+                return Err(BinaryOperationError::UnknownOperation(name.to_string()));
+            }
+            let amount = *payload.first().ok_or_else(|| {
+                BinaryOperationError::Malformed("missing settlement byte".to_string())
+            })?;
+            if payload.len() != 1 {
+                return Err(BinaryOperationError::Malformed(
+                    "expected one settlement byte".to_string(),
+                ));
+            }
+            // THE SHARED-SUBSTRATE WRITE. `slot.close` never undoes this.
+            self.0.0.set(self.0.0.get() + i64::from(amount));
+            // The receipt commits to the PAYLOAD, not the resulting global balance, so a restore
+            // reproduces the SAME receipt however many times the cell has been touched (a settlement
+            // whose public receipt names its own input, not the world total) — which is precisely
+            // why a double-restore is NOT caught by the receipt comparison and silently doubles.
+            Ok(BinaryOperationReceipt {
+                operation: name.to_string(),
+                receipt_id: *blake3::hash(payload).as_bytes(),
+                public_fields: vec![("amount".to_string(), amount.to_string())],
+            })
+        }
+        fn price(&self, _input: &Action) -> RunCost {
+            RunCost::free()
+        }
+    }
+
     fn mover() -> DreggIdentity {
         DreggIdentity("p".to_string())
     }
@@ -3337,6 +3448,79 @@ mod tests {
             "nothing forged is left live"
         );
         assert!(host.is_open("zz-minter", &id));
+    }
+
+    /// **THE DOUBLE-APPLY FALSIFIER.** A log carries a settlement operation at `after_moves == 0`
+    /// followed by a move-0 that refuses. `resume` restores the settlement (writing the shared cell)
+    /// BEFORE it attempts move 0; the move-0 refusal then rolls back only the session handle, leaving
+    /// that write standing. If the fixpoint re-attempted the log — as it would whenever another log
+    /// makes progress on the same pass — it would restore the settlement a SECOND time. It must not:
+    /// a `Refused { index: 0 }` on a log with an `after_moves == 0` op is NOT "nothing landed", so it
+    /// is terminal, and the shared substrate reflects EXACTLY ONE application.
+    #[test]
+    fn an_after_moves0_operation_before_a_refused_move0_is_not_double_applied_on_retry() {
+        use crate::resume::InMemoryResumeStore;
+        let id = SessionId::new("s");
+
+        // 1. Journal a settle at after_moves == 0 the honest way, and capture the authentic log.
+        let store = InMemoryResumeStore::new();
+        let recording_cell = SharedCell::default();
+        let mut recorder = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+        recorder.register("settle", "Settler", Settler(recording_cell.clone()));
+        recorder
+            .open_session("settle", id.clone(), SessionConfig::default())
+            .expect("settle opens");
+        recorder
+            .invoke_binary_operation("settle", &id, "settle.v1", &[5], mover())
+            .expect("the settle journals at after_moves == 0");
+        assert_eq!(
+            recording_cell.0.get(),
+            5,
+            "the settle applied once while recording"
+        );
+
+        let mut settle_log = store.load("settle", &id).expect("durable settle log");
+        assert_eq!(settle_log.operations.len(), 1);
+        assert_eq!(
+            settle_log.operations[0].after_moves, 0,
+            "the settlement is journaled before any ordinary move"
+        );
+        // Append an ordinary move at index 0 that the offering REFUSES on re-drive.
+        settle_log.record(Action::new("block", "block", 0, true), mover());
+
+        // A benign sibling that resumes Ok, so the fixpoint makes PROGRESS on pass 1 — the condition
+        // under which the pre-fix rule would re-attempt (and thus double-apply) the settle log.
+        let benign_log =
+            SessionMoveLog::new("benign", SessionId::new("b"), SessionConfig::default());
+
+        // 2. Resume both on a FRESH host over a FRESH shared cell (the restart substrate).
+        let live_cell = SharedCell::default();
+        let mut host = OfferingHost::new();
+        host.register("settle", "Settler", Settler(live_cell.clone()));
+        host.register("benign", "Benign", Settler(SharedCell::default()));
+
+        let results = host.resume_logs(vec![settle_log, benign_log]);
+
+        assert!(
+            matches!(results[0].1, Err(ResumeError::Refused { index: 0, .. })),
+            "the settle log fails closed at move 0: {:?}",
+            results[0].1
+        );
+        assert!(
+            results[1].1.is_ok(),
+            "the benign sibling reopened, so the fixpoint DID make progress on pass 1: {:?}",
+            results[1].1
+        );
+        assert_eq!(
+            live_cell.0.get(),
+            5,
+            "the after_moves==0 settlement is applied EXACTLY ONCE — never restored a second time \
+             on a fixpoint retry (the pre-fix bug left this at 10)"
+        );
+        assert!(
+            !host.is_open("settle", &id),
+            "nothing is left live after the fail-closed refusal"
+        );
     }
 
     /// The result is a permutation of the input: every log appears exactly once, in the caller's

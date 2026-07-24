@@ -2084,6 +2084,8 @@ dependencies = [
  "dreggnet-tournament",
  "dungeon-on-dregg",
  "procgen-dregg",
+ "serde",
+ "serde_json",
  "spween",
  "spween-dregg",
  "ugc-dregg",

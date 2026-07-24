@@ -580,33 +580,28 @@ fn hand_built_round(
         return Err("the step leg does not satisfy its Lean descriptor".into());
     }
 
-    // The retained Rust-AIR program rides along exactly as `round_leaves` retains it — it is NOT
-    // the object proven (the descriptor is), but the bundle shape carries it.
-    let r_prog = dregg_automatafl::moves::build_r_honest(start, &mv.0, &mv.1);
-    let a_prog = dregg_automatafl::build_a_honest(leg_a_input);
+    // Descriptor-backed leaves: the PROVEN Lean descriptor + retained trace IS the object folded
+    // (the hand-authored Rust AIR is deleted; `LeafBundle::descriptor_backed` carries the inert
+    // placeholder program the fold's descriptor arm never lowers).
     Ok(vec![
-        LeafBundle {
-            program: r_prog.cellprogram(),
-            witness_values: r_prog.trace_witness(rows),
-            num_rows: rows,
-            public_inputs: rt.public_inputs.clone(),
-            descriptor_state_leaf: Some(DescriptorStateLeafSource {
+        LeafBundle::descriptor_backed(
+            rt.public_inputs.clone(),
+            rows,
+            DescriptorStateLeafSource {
                 descriptor: rdesc,
                 base_trace: rt.base_trace(rows),
                 board_window: Some(rwin),
-            }),
-        },
-        LeafBundle {
-            program: a_prog.cellprogram(),
-            witness_values: a_prog.trace_witness(rows),
-            num_rows: rows,
-            public_inputs: st.public_inputs.clone(),
-            descriptor_state_leaf: Some(DescriptorStateLeafSource {
+            },
+        ),
+        LeafBundle::descriptor_backed(
+            st.public_inputs.clone(),
+            rows,
+            DescriptorStateLeafSource {
                 descriptor: sdesc,
                 base_trace: st.base_trace(rows),
                 board_window: Some(awin),
-            }),
-        },
+            },
+        ),
     ])
 }
 

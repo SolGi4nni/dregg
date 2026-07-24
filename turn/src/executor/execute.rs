@@ -1091,6 +1091,12 @@ impl TurnExecutor {
         let mut computrons_used: u64 = 0;
         let mut all_effects_hashes: Vec<[u8; 32]> = Vec::new();
         let mut excess: i64 = 0; // Mina-style excess: must be zero at turn end.
+        // Per-asset conservation accumulator: `(target-cell asset class, delta)`
+        // for every `balance_change`, grouped by the target's committed
+        // `token_id`. The scalar `excess` only proves the deltas net to zero
+        // ACROSS assets; this is checked per-asset at turn end so a cross-asset
+        // teleport (mint X against burn self-issued Y) is REFUSED.
+        let mut asset_deltas: Vec<(dregg_circuit::field::BabyBear, i64)> = Vec::new();
 
         // Everything from PHASE 1 start through here (incl. sovereign-witness /
         // binding-sweep gates, trivial for the classical forest path) is the
@@ -1119,6 +1125,7 @@ impl TurnExecutor {
                 vec![root_idx],
                 &mut journal,
                 &mut excess,
+                &mut asset_deltas,
                 turn.nonce,
                 &turn.agent,
                 // `created_by_turn`: the pre-execution turn INPUT hash. NOT the
@@ -1243,6 +1250,50 @@ impl TurnExecutor {
             }
             return TurnResult::Rejected {
                 reason: TurnError::ExcessNotZero { excess },
+                at_action: vec![],
+            };
+        }
+
+        // Check PER-ASSET conservation: the scalar `excess == 0` above only
+        // proves the balance deltas sum to zero ACROSS asset classes — a +N on
+        // cell(token X) against a −N on a self-issued cell(token Y) nets `excess`
+        // to 0 yet mints X from worthless Y. Group every delta by its target
+        // cell's committed asset class and require EACH asset's Σδ == 0
+        // independently, through the SAME in-AIR-backed `BlockConservation`
+        // collector the atomic path uses (`check_per_asset_conservation_by_asset`
+        // — no second conservation implementation). A single-asset imbalance was
+        // already caught by `excess != 0` above, so this fires only on the
+        // cross-asset teleport that the scalar sum cannot see.
+        if let Err(err) = Self::check_per_asset_conservation_by_asset(&asset_deltas, &[]) {
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+                &self.note_revoked,
+                &self.reactive_registry,
+                &self.reactive_nullifiers,
+            );
+            for cell_id in &sovereign_cell_ids {
+                ledger.remove(cell_id);
+            }
+            if let (Some(gate_cell), Some((digest, fee))) =
+                (&self.budget_gate, &budget_debit_digest)
+            {
+                gate_cell.lock().unwrap().fast_unlock(*fee, digest);
+            }
+            let reason = match err {
+                super::atomic::AtomicTurnError::PerAssetConservationViolation {
+                    asset,
+                    imbalance,
+                } => TurnError::PerAssetConservationViolation { asset, imbalance },
+                // `check_per_asset_conservation_by_asset` only ever returns
+                // `PerAssetConservationViolation`; any other variant is a
+                // contract break, surfaced as a plain conservation failure.
+                _ => TurnError::ExcessNotZero { excess },
+            };
+            return TurnResult::Rejected {
+                reason,
                 at_action: vec![],
             };
         }

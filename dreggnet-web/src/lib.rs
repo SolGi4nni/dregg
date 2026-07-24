@@ -147,7 +147,33 @@ use dreggnet_catalog::{
     inspect_bound_game_session, is_rpg_key, project_public_game_receipt,
 };
 
-pub(crate) use web_identity_http::web_user;
+pub(crate) use web_identity_http::{web_user, web_user_established};
+
+/// The single shared anonymous world label for UNestablished RPG touches. Every raw `?user=`
+/// assertion that is not backed by a durable `dregg_user` cookie collapses to THIS one identity, so
+/// a `?user=1,2,…,N` flood mints ONE bounded anonymous world (the shared demo world for anonymous
+/// visitors) instead of N private ones — see [`catalog_route_viewer`].
+const ANONYMOUS_RPG_LABEL: &str = "anonymous-visitor-shared-world";
+
+/// **The identity a browser catalog route routes + attributes with.** A per-identity [`is_rpg_key`]
+/// surface materializes a full private world on first touch ([`CatalogState::run_offering`] →
+/// `PlayerWorlds::host_mut`); minting one keyed on a raw, unauthenticated `?user=` param is the
+/// unbounded-host DoS. So for an RPG key touched by an UNestablished identity (a `?user=` not backed
+/// by the durable `dregg_user` cookie), the routing identity collapses to a single shared anonymous
+/// world ([`ANONYMOUS_RPG_LABEL`]) — capped hard, and lossless (the bounded LRU rebuilds it by
+/// replay). An ESTABLISHED (cookie-backed) identity keeps its own world; every NON-RPG shared table
+/// (games / party / services) keeps the real viewer, so per-user attribution (a council member, a
+/// game seat) is never collapsed.
+fn catalog_route_viewer(key: &str, user: &str, established: bool) -> (String, DreggIdentity) {
+    if is_rpg_key(key) && !established {
+        (
+            ANONYMOUS_RPG_LABEL.to_string(),
+            web_identity(ANONYMOUS_RPG_LABEL),
+        )
+    } else {
+        (user.to_string(), web_identity(user))
+    }
+}
 
 /// What the web frontend last presented for a session — the deos [`Surface`] and the cap-gated
 /// [`Action`]s beside it (what it paints as HTML forms). Mirrors `mock::Presented`.
@@ -2073,8 +2099,10 @@ async fn get_offering_session(
     let sid = SessionId::new(id);
     // The viewer's derived identity (the `dregg_user` cookie / `?user=` param) — the SAME identity a
     // POST attributes a turn to. A seated player renders their OWN hidden hand; a spectator sees fog.
-    let user = web_user(&headers, &query);
-    let viewer = web_identity(&user);
+    let (asserted_user, established) = web_user_established(&headers, &query);
+    // An UNestablished raw `?user=` never mints its own RPG world — it collapses to the shared
+    // anonymous world (capped hard), so a `?user=1,2,…,N` flood cannot exhaust memory.
+    let (user, viewer) = catalog_route_viewer(&key, &asserted_user, established);
     // Ensure the session is open (deploy on first touch), then render — LIFECYCLE-AWARE: the
     // viewer identity is the opener attribution (an ADVISORY `Asserted` quota lane — a forgeable
     // cookie; capacity + TTL are the real backstops), a policy refusal answers an honest 4xx
@@ -2216,8 +2244,10 @@ async fn post_offering_act(
     Form(form): Form<OfferingActForm>,
 ) -> Response {
     let sid = SessionId::new(id);
-    let user = web_user(&headers, &query);
-    let actor = web_identity(&user);
+    let (asserted_user, established) = web_user_established(&headers, &query);
+    // Route + attribute an UNestablished RPG touch through the shared anonymous world so a raw
+    // `?user=` flood cannot mint a private per-identity world per value (the unbounded-host DoS).
+    let (user, actor) = catalog_route_viewer(&key, &asserted_user, established);
     let presented_game = if game_kind(&key).is_some() {
         match state.presented_game_action(&key, &sid, &form) {
             Ok(reference) => Some(reference),
@@ -2560,7 +2590,11 @@ async fn get_offering_verify(
     // The viewer's derived identity — for an RPG key the chain being re-verified is THIS viewer's
     // own world (a per-identity session), so verify must route to the same world its turns landed
     // in. A shared table ignores the viewer (one chain for everyone).
-    let viewer = web_identity(&web_user(&headers, &query));
+    // Re-verify against the SAME world the turns landed in. `run_offering` → `host_mut` also
+    // materializes on touch, so an UNestablished RPG `?user=` collapses to the shared anonymous
+    // world here too — verify is never a materialization vector for a raw `?user=` flood.
+    let (asserted_user, established) = web_user_established(&headers, &query);
+    let (_route_user, viewer) = catalog_route_viewer(&key, &asserted_user, established);
     let verify_event = || {
         audit::AuditEvent::new(
             "web",

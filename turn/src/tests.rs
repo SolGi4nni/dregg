@@ -92,6 +92,25 @@ fn make_open_cell(seed: u8, balance: i64) -> (Cell, TestKeypair) {
     (cell, kp)
 }
 
+/// Helper: like [`make_open_cell`] but with a caller-chosen `token_id` (asset
+/// class), for per-asset conservation tests where two cells must hold DISTINCT
+/// assets.
+fn make_open_cell_token(seed: u8, token_id: [u8; 32], balance: i64) -> (Cell, TestKeypair) {
+    let kp = TestKeypair::from_seed(seed);
+    let mut cell = Cell::with_balance(kp.public_key, token_id, balance);
+    cell.permissions = Permissions {
+        send: AuthRequired::None,
+        receive: AuthRequired::None,
+        set_state: AuthRequired::None,
+        set_permissions: AuthRequired::None,
+        set_verification_key: AuthRequired::None,
+        increment_nonce: AuthRequired::None,
+        delegate: AuthRequired::None,
+        access: AuthRequired::None,
+    };
+    (cell, kp)
+}
+
 /// Helper: create a test cell with signature-required permissions and a known keypair.
 fn make_sig_cell(seed: u8, balance: i64) -> (Cell, TestKeypair) {
     let kp = TestKeypair::from_seed(seed);
@@ -4005,6 +4024,205 @@ fn test_unbalanced_excess_rejected() {
     // A's balance should be unchanged (atomicity).
     let a = ledger.get(&a_id).unwrap();
     assert_eq!(a.state.balance(), 1000);
+}
+
+// =============================================================================
+// Test: CROSS-ASSET excess-netting is REFUSED (asset-inflation falsifier)
+//
+// The scalar `excess` gate is asset-BLIND: a +1M deposit on cellA(token X) and
+// a −1M withdraw on a self-issued cellB(token Y) net the scalar `excess` to 0,
+// which the old code accepted — minting 1M of X out of worthless Y. The
+// per-asset conservation gate groups each balance delta by the target cell's
+// committed `token_id` and requires EACH asset's Σδ == 0 independently, so the
+// two distinct assets (X: +1M, Y: −1M) are both nonzero and the turn is REFUSED.
+// =============================================================================
+
+#[test]
+fn test_cross_asset_excess_netting_rejected() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let token_x = [0x11u8; 32];
+    let token_y = [0x22u8; 32];
+    let (cell_a, _) = make_open_cell_token(2, token_x, 0);
+    let (cell_b, _) = make_open_cell_token(3, token_y, 1_000_000);
+    let agent_id = agent.id();
+    let a_id = cell_a.id();
+    let b_id = cell_b.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps.capabilities.grant(a_id, AuthRequired::None);
+    agent_with_caps.capabilities.grant(b_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cell_a).unwrap();
+    ledger.insert_cell(cell_b).unwrap();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    // Mint +1M of asset X on cellA…
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(a_id, "mint_x", agent_id)
+            .with_declared_excess(1_000_000)
+            .build(),
+    );
+    // …against a −1M burn of self-issued asset Y on cellB. Scalar excess nets 0.
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(b_id, "burn_y", agent_id)
+            .with_declared_excess(-1_000_000)
+            .build(),
+    );
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "cross-asset excess-netting must be REFUSED, got: {result:?}"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::PerAssetConservationViolation { imbalance, .. } => {
+            assert!(
+                imbalance == 1_000_000 || imbalance == -1_000_000,
+                "per-asset imbalance is the un-conserved residue, got {imbalance}"
+            );
+        }
+        other => panic!("expected PerAssetConservationViolation, got {other:?}"),
+    }
+
+    // Atomicity: both balances are unchanged (the whole turn rolled back).
+    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 0);
+    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), 1_000_000);
+}
+
+// =============================================================================
+// Test: a genuine SINGLE-ASSET conserving turn still LANDS (no over-rejection)
+//
+// Two cells of the SAME (non-native) asset: withdraw −100 from C, deposit +100
+// into D. The per-asset gate sees one asset netting to 0 and ACCEPTS — the fix
+// tightens conservation without blocking honest same-asset moves.
+// =============================================================================
+
+#[test]
+fn test_single_asset_conserving_turn_lands() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let token = [0x33u8; 32];
+    let (cell_c, _) = make_open_cell_token(2, token, 500);
+    let (cell_d, _) = make_open_cell_token(3, token, 0);
+    let agent_id = agent.id();
+    let c_id = cell_c.id();
+    let d_id = cell_d.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps.capabilities.grant(c_id, AuthRequired::None);
+    agent_with_caps.capabilities.grant(d_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cell_c).unwrap();
+    ledger.insert_cell(cell_d).unwrap();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(c_id, "withdraw", agent_id)
+            .with_declared_excess(-100)
+            .build(),
+    );
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(d_id, "deposit", agent_id)
+            .with_declared_excess(100)
+            .build(),
+    );
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "single-asset conserving turn should commit: {result:?}"
+    );
+    assert_eq!(ledger.get(&c_id).unwrap().state.balance(), 400);
+    assert_eq!(ledger.get(&d_id).unwrap().state.balance(), 100);
+}
+
+// =============================================================================
+// Test: rollback of a SetField on a COMMITTED slot restores the EXACT prior
+// commitment (journal-rollback field-commitment falsifier)
+//
+// `apply_set_field` nulls `commitments[slot]` when overwriting a committed
+// field. The journal must record the prior commitment + visibility so a later
+// failing effect rolls back to a byte-identical pre-turn state commitment. Old
+// code journaled only the value → rollback left `commitments[slot] = None`,
+// diverging the canonical state commitment.
+// =============================================================================
+
+#[test]
+fn test_setfield_committed_slot_rollback_restores_commitment() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let (mut target, _) = make_open_cell(2, 0);
+    let agent_id = agent.id();
+    let target_id = target.id();
+
+    // Install a real commitment on fixed slot 5 (Committed visibility).
+    target.state.fields[5] = [7u8; 32];
+    assert!(
+        target
+            .state
+            .set_field_visibility(5, dregg_cell::FieldVisibility::Committed, 42),
+        "set_field_visibility on a fixed slot must succeed"
+    );
+    let prior_commitment = target.state.commitments[5];
+    assert!(
+        prior_commitment.is_some(),
+        "slot 5 must carry a real commitment before the turn"
+    );
+
+    let mut agent_with_cap = agent;
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_cap).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let pre_turn_commitment = ledger.get(&target_id).unwrap().state_commitment();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        // Effect 1 overwrites the committed slot (nulling its commitment);
+        // effect 2 is a Transfer that FAILS (target has zero balance), forcing
+        // the whole turn to roll back.
+        let action = ActionBuilder::new_unchecked_for_tests(target_id, "set_then_fail", agent_id)
+            .effect_set_field(target_id, 5, [9u8; 32])
+            .effect_transfer(target_id, agent_id, 1_000_000)
+            .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "turn with a failing effect must be rejected, got: {result:?}"
+    );
+
+    let target_after = ledger.get(&target_id).unwrap();
+    assert_eq!(
+        target_after.state.fields[5], [7u8; 32],
+        "field value must be restored on rollback"
+    );
+    assert_eq!(
+        target_after.state.commitments[5], prior_commitment,
+        "field COMMITMENT must be restored on rollback (true inverse)"
+    );
+    assert_eq!(
+        target_after.state.field_visibility[5],
+        dregg_cell::FieldVisibility::Committed,
+        "field visibility must be restored on rollback"
+    );
+    assert_eq!(
+        target_after.state_commitment(),
+        pre_turn_commitment,
+        "canonical state commitment must be byte-identical to pre-turn"
+    );
 }
 
 // =============================================================================

@@ -160,14 +160,14 @@ fn multiway_tug_match_plays_folds_submits_and_ranks() {
 #[test]
 #[ignore = "SLOW: the real deployed recursion fold over the D1 board-transition chain; run with --ignored"]
 fn automatafl_match_plays_folds_submits_and_ranks() {
-    let n = 5usize;
+    let n = 11usize;
     let mut cells = vec![VAC; n * n];
-    cells[4 * n + 2] = ATT;
-    cells[2 * n + 2] = AUTO;
+    cells[8 * n + 5] = ATT;
+    cells[5 * n + 5] = AUTO;
     let start = Board {
         n,
         cells,
-        auto: (2, 2),
+        auto: (5, 5),
         col_rule: true,
     };
     let m = AutomataflMatch::automaton_only(start, 2);
@@ -193,15 +193,15 @@ fn both_games_rank_on_the_same_proof_carrying_registry() {
     }
     .leaves()
     .expect("tug lowers");
-    let n = 5usize;
+    let n = 11usize;
     let mut cells = vec![VAC; n * n];
-    cells[4 * n + 2] = ATT;
-    cells[2 * n + 2] = AUTO;
+    cells[8 * n + 5] = ATT;
+    cells[5 * n + 5] = AUTO;
     let afl = AutomataflMatch::automaton_only(
         Board {
             n,
             cells,
-            auto: (2, 2),
+            auto: (5, 5),
             col_rule: true,
         },
         2,

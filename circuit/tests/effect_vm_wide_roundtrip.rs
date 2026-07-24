@@ -253,12 +253,26 @@ fn assert_executor_anchor(
 /// circuit's published wide commit for the grow-gate shape. The plain `wire_commit_8` still DIVERGES.
 fn assert_executor_anchor_grow_gate(name: &str, trace: &[Vec<BabyBear>]) {
     use dregg_circuit::effect_vm::trace_rotated::{B_IROOT, BEFORE_BASE, NUM_PRE_LIMBS};
+    // E1 compaction (`compact_e1_columns`) deletes the dead v1-face aux band that sits BELOW
+    // `BEFORE_BASE`, so the whole BEFORE block (its `NUM_PRE_LIMBS` pre-limbs + iroot, which S2 leaves
+    // intact — S2 deletes only bands ABOVE `BEFORE_BASE`) is shifted DOWN by the count of E1-killed
+    // columns strictly below `BEFORE_BASE`. Read the block at its POST-E1 base, derived from the
+    // Lean-emitted single-source kill-set (`E1_COMPACT_TABLE`) — never a hardcoded pre-compaction base.
+    let e1_shift: usize = dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, iv)| {
+            iv.iter()
+                .filter(|(_, b)| *b <= BEFORE_BASE)
+                .map(|(a, b)| b - a)
+                .sum()
+        })
+        .unwrap_or(0);
+    let base = BEFORE_BASE - e1_shift;
     // The NUM_PRE_LIMBS BEFORE pre-iroot limbs + iroot the kernel-trusted before-state supplies (the row's own
     // BEFORE block, with the grown-set root override already applied by the grow-gate generator).
-    let before_limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS)
-        .map(|j| trace[0][BEFORE_BASE + j])
-        .collect();
-    let before_iroot = trace[0][BEFORE_BASE + B_IROOT];
+    let before_limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS).map(|j| trace[0][base + j]).collect();
+    let before_iroot = trace[0][base + B_IROOT];
     let anchored = dregg_circuit::poseidon2::wire_commit_8_chip(&before_limbs, before_iroot);
     let circuit_carrier12 = before_commit_8(trace);
     assert_eq!(

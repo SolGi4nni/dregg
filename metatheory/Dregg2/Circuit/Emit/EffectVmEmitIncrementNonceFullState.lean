@@ -154,27 +154,54 @@ theorem incrementNonce_runnable_full_sound (hash : List ℤ → ℤ) (preRoots :
 
 /-! ## §5 — THE ANTI-GHOST: tamper ANY of the 17 fields ⇒ UNSAT (incl. any side-table root). -/
 
-/-! ### ⚑ THE WHOLE-STATE ANTI-GHOST IS A SECURITY REDUCTION, AND IT LIVES DOWNSTREAM (07-22).
+/-- **`incrementNonce_runnable_full_commit_binds_or_collides` — whole-state binding over the WIDE
+commitment.** Two rows satisfying the wide incrementNonce descriptor that publish the SAME `NEW_COMMIT`,
+with `systemRootsDigest` carriers, EITHER agree on EVERY absorbed state-block column AND every side-table
+root, OR exhibit a genuine collision of the deployed sponge (`WideColl` on the two wide preimages, or
+`RootsColl` on the two root lists). So a prover cannot keep `NEW_COMMIT` while tampering ANY of the 17
+fields without producing a collision.
 
-`incrementNonce_runnable_full_commit_binds_or_collides` and `incrementNonce_rejects_root_tamper_or_collides` USED TO BE EXPORTED HERE as BARE DISJUNCTIONS —
-`(cols agree ∧ roots agree) ∨ WideColl … ∨ RootsColl …`. True at deployed BabyBear parameters, unlike
-their `Poseidon2SpongeCR`-carrying predecessors (which the deployed compressing sponge REFUTES), but
-still UNCLOSED: a collision of that sponge EXISTS at deployed parameters by pigeonhole, so the right
-branches are unconditionally available and `binds ∨ collides` never has to bind. A disjunction
-quantifies over SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES.
+The former `incrementNonce_runnable_full_commit_binds` concluded the bare conjunction from
+`Poseidon2SpongeCR hash`. The deployed sponge REFUTES that hypothesis, so at deployed parameters that
+theorem was vacuous. This disjunction is formally weaker, but it HOLDS of the deployed sponge, which the
+old one did not. -/
+theorem incrementNonce_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
+    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash incrementNonceVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash incrementNonceVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
+    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
+    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
+  runnable_full_commit_binds_or_collides (incNonceRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
 
-**BOTH ARE DELETED.** The deployed binding of incrementNonce's wide commitment is now the REDUCTION
-`Dregg2.Circuit.Emit.EffectVmCommitReduction.incrementNonce_wide_binds_full_state_advantage_bound`
-(with `hEff` discharged at `Eff := IsPolyTime` by `incrementNonce_wide_binds_full_state_from_polyTime`): the
-forgery is a `Game` whose answers are DEPLOYED WIDE incrementNonce ROWS
-(`incrementNonce_wide_forgery_is_break` / `incrementNonce_root_tamper_is_break`), the extractor is a MAP OF ADVERSARIES
-into the deployed sponge's collision game, and the conclusion is a NEGLIGIBLE ADVANTAGE under
-`DomainSeparatedCREff`, whose two poles are both proved.
+/-- **`incrementNonce_rejects_root_tamper_or_collides` — the side-table anti-ghost tooth (the gap's
+headline).** Two wide incrementNonce rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
+carriers) but whose side-table sub-blocks DIFFER at some root index `i` (a dropped escrow, an omitted
+nullifier) cannot both satisfy WITHOUT exhibiting a collision of the deployed sponge. The 8 side-table
+roots are bound BY the runnable commitment up to that collision — the Class-C gap cured for
+incrementNonce.
 
-⚑ It lives in a DOWNSTREAM module, not here, for a hard reason: the deployed sponge's keyed family
-(`Poseidon2KeyedBridge`) transitively imports the effect-emission tree, so a reduction stated at that
-family CANNOT be imported by an emission module without a build cycle. The GAME still names THIS
-file's `incrementNonceVmDescriptorWide` — nothing is stated about an idealised stand-in. -/
+The former `incrementNonce_rejects_root_tamper` concluded `False` from `Poseidon2SpongeCR hash`, which
+the deployed sponge REFUTES; at deployed parameters it was vacuous. This disjunction is formally weaker,
+but it HOLDS of the deployed sponge, which the old one did not. -/
+theorem incrementNonce_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
+    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash incrementNonceVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash incrementNonceVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
+    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
+  wide_rejects_root_tamper_or_collides (incNonceRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
 
 /-! ## §6 — NON-VACUITY: a real incrementNonce inhabits the full clause; a forged post is refuted. -/
 
@@ -228,6 +255,8 @@ theorem incNonce_clause_rejects_root_drop :
 
 #assert_axioms incNonceGates_give_cellSpec
 #assert_axioms incrementNonce_runnable_full_sound
+#assert_axioms incrementNonce_runnable_full_commit_binds_or_collides
+#assert_axioms incrementNonce_rejects_root_tamper_or_collides
 #assert_axioms goodIncNonce_realizes
 #assert_axioms incNonce_clause_not_trivial
 #assert_axioms incNonce_clause_rejects_root_drop

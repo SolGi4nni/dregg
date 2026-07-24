@@ -26,15 +26,17 @@ UNCONDITIONAL advantage inequality — the adversary class does not appear in it
 `carrier_binds_advantage_bound` (the conclusion under `FloorGames.HashCRHardQuant (spongeFamily D) Eff`)
 and `carrier_binds_from_polyTime` (`hEff` DISCHARGED at `Eff := IsPolyTime` via `CostTactics.poly_time`).
 
-⚑ Why that spine and not `Circuit.Emit.EffectVmCommitReduction` (a sibling lane's module of the same
-shape): `EffectVmCommitReduction` lands on `Circuit.Poseidon2KeyedBridge`, which sits ABOVE the whole
-`Emit/*` tree in the import graph (`Poseidon2KeyedBridge → FloorRegroundedConsumers →
+⚑ Why that spine and not a reduction hosted at `Circuit.Poseidon2KeyedBridge`: that bridge sits ABOVE
+the whole `Emit/*` tree in the import graph (`Poseidon2KeyedBridge → FloorRegroundedConsumers →
 CommitFaithfulRegrounded → EffectVmEmitRotationR → EffectVmEmitRotation → EffectVmEmitV2 →
-EffectVmEmit*`). Importing it from an emission module is a BUILD CYCLE, which is exactly what the
-tree currently reports. `SpongeCarrierReduction` restates the same keyed sponge low in the graph for
-precisely this reason, and `Crypto.SpongeCarrierBridge` PROVES (by `rfl`) that its family IS
-`Poseidon2KeyedBridge`'s. So this module is landed on the same floor, reachable from where the rows
-live.
+EffectVmEmit*`). Importing it from an emission module is a BUILD CYCLE. (A sibling lane's module of
+the same shape, `Circuit.Emit.EffectVmCommitReduction`, claimed to host such reductions but was
+imported by NOTHING and never elaborated — vapor; it was DELETED 07-23, and the per-effect keystones
+it pretended to replace are restored in their emission files, with their collision branch closed on
+the PROVED keyed floor by `Circuit.Emit.EffectVmKeyedStateCommit`.) `SpongeCarrierReduction` restates
+the same keyed sponge low in the graph for precisely this reason, and `Crypto.SpongeCarrierBridge`
+PROVES (by `rfl`) that its family IS `Poseidon2KeyedBridge`'s. So this module is landed on the same
+floor, reachable from where the rows live.
 
 What THIS module adds, and it is only this:
 

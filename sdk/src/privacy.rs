@@ -765,6 +765,28 @@ pub fn verify_anonymous_presentation(
 /// - **Inherits the deployed STARK/FRI soundness floor**
 ///   (`project-fri-soundness-reality`): it is a real proof, not an on-chain-settled
 ///   fact.
+///
+/// # ⚠ SAFETY — this is a SELF-COMMITMENT check, not a NON-CUSTODIAL verification
+///
+/// `expected_fact_commitment` is read off the proof (`x == x`), so a passing result
+/// means only: *"the value the prover committed to satisfies the predicate."* It does
+/// NOT mean the prover holds a matching issued credential — a malicious prover can
+/// invent a fact, commit to it, and prove a TRUE statement about the invention. This
+/// is sound ONLY where the caller already trusts the prover to have committed to the
+/// real value: the CUSTODIAL flow, where the SAME party mints the proof about state it
+/// controls and immediately checks it (the deployed `/credential verify` path reads the
+/// value out of the subject's own held credential, so the commitment is trustworthy by
+/// custody, not by this function).
+///
+/// A NON-CUSTODIAL verifier — one accepting an `UnlinkablePredicateProof` from an
+/// untrusted party — MUST NOT treat a `true` here as evidence of credential possession.
+/// The sound path for that is
+/// [`crate::verify::verify_disclosure_presentation_third_party`] /
+/// [`dregg_bridge::present::verify_predicate_proof_third_party`], which pins the
+/// expected commitment via a `BridgeFactAttestation` under a `facts_root` the verifier
+/// TRUSTS. This shape carries no attestation and no such root, so that binding is not
+/// available here; closing it end-to-end additionally needs the presentation STARK to
+/// expose `facts_root` as a public input (a Lean-authored AIR change, out of scope).
 pub fn verify_predicate_unlinkable(proof: &UnlinkablePredicateProof) -> bool {
     dregg_bridge::present::verify_predicate_proof(
         &proof.predicate_proof,
