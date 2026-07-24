@@ -146,6 +146,12 @@ fn build_ordering_blocklace(
             // receipt/witnessed artifacts); for ordering we use the signed-turn
             // bytes, mirroring the plain Turn arm.
             Payload::TurnBundle(bundle) => bundle.signed_turn.clone(),
+            // CTM1 (consensus-timed turn, added by the blocklace consensus-time lane): carry the
+            // signed-turn bytes, mirroring `TurnBundle` — the ordering payload IS the turn; the
+            // `consensus_time` header lives in the block's own encoding, not in the ordering lace.
+            // Same arm `dregg-analyzer/src/blocklace.rs` added (ea496b225c); this demo bin was the
+            // one remaining non-exhaustive match breaking the workspace build.
+            Payload::ConsensusTimedTurnV1(bundle) => bundle.signed_turn().to_vec(),
             Payload::Ack => vec![],
             Payload::Checkpoint { root, height } => {
                 let mut buf = Vec::with_capacity(40);
