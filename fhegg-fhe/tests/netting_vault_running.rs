@@ -116,6 +116,72 @@ fn netting_vault_reveals_only_the_net() {
     );
 }
 
+/// Run the full netting over an arbitrary N-party obligation matrix `g` (`g[i][j]` = i owes j), homomorphically:
+/// encrypt the whole gross web, compute every party's net on ciphertexts, decrypt ONLY the nets. Returns the
+/// decrypted net residues (mod t).
+fn run_netting(fx: &mut Fixture, g: &[Vec<i64>]) -> Vec<u64> {
+    let n = g.len();
+    let mut ct: Vec<Vec<Option<Ciphertext>>> =
+        (0..n).map(|_| (0..n).map(|_| None).collect()).collect();
+    for i in 0..n {
+        for j in 0..n {
+            if i != j {
+                ct[i][j] = Some(encrypt(fx, g[i][j] as u64));
+            }
+        }
+    }
+    (0..n)
+        .map(|i| {
+            let owed = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| ct[i][j].as_ref().unwrap())
+                .cloned()
+                .reduce(|a, b| &a + &b)
+                .unwrap();
+            let owing = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| ct[j][i].as_ref().unwrap())
+                .cloned()
+                .reduce(|a, b| &a + &b)
+                .unwrap();
+            decrypt(fx, &(&owed - &owing))
+        })
+        .collect()
+}
+
+/// GUILD SCALE: an 8-party guild with 56 hidden bilateral obligations (8×8 minus the diagonal) nets down to
+/// 8 revealed positions — the "no-viewer multilateral compression" at a real size. Every net is verified vs
+/// the plaintext, conservation holds (Σ nets ≡ 0 mod t), and the gross web of 56 obligations is never opened.
+/// This is the Netting Vault as a real guild settlement: 56 secret debts in, 8 net numbers out, all else dark.
+#[test]
+fn netting_vault_guild_scale_settlement() {
+    let mut fx = fixture(0x090011D);
+    let t = fx.t;
+    let n = 8usize;
+    // A deterministic guild obligation matrix (i owes j); diagonal 0.
+    let mut g: Vec<Vec<i64>> = vec![vec![0i64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            if i != j {
+                g[i][j] = ((i * 13 + j * 7 + 3) % 97) as i64; // small, deterministic, < t/2
+            }
+        }
+    }
+    let nets = run_netting(&mut fx, &g);
+    // validate each party's net vs the plaintext net (centered mod t)
+    for i in 0..n {
+        let owed: i64 = (0..n).map(|j| g[i][j]).sum();
+        let owing: i64 = (0..n).map(|j| g[j][i]).sum();
+        let want = (((owed - owing) % t as i64 + t as i64) % t as i64) as u64;
+        assert_eq!(nets[i], want, "guild net wrong for party {i}");
+    }
+    // conservation at guild scale: the 8 revealed nets sum to 0 mod t.
+    let sum: u64 = nets.iter().fold(0u64, |acc, &x| (acc + x) % t);
+    assert_eq!(sum, 0, "guild-scale netting does not conserve");
+    // compression: 56 hidden obligations -> 8 net settlements (never opened the gross web).
+    assert_eq!(n * (n - 1), 56, "compression count");
+}
+
 /// COMPRESSION (symmetric_obligations_net_zero, running): a SYMMETRIC obligation web (`i` owes `j` exactly
 /// what `j` owes `i`) nets to zero for every party — computed homomorphically, decrypted. The mutual/gross
 /// detail is fully cancelled; only zero crosses the reveal boundary.
