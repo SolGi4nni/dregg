@@ -78,6 +78,67 @@ readiness claim. Captured here so they ride the same campaign.
   `finalSqueezeOnly_still_conflates` (widening ONLY the final squeeze STILL conflates), and the arity
   tooth `seed_arity_injective`. Site #12 is **byte-safe PROVEN** (Rust-fixed + machine-checked).
 
+## Update log — 2026-07-24
+
+- **#20 Spend delegation-ancestor key — NEWLY LOGGED, and the first EARNED
+  `check-no-degraded-felt.sh` suppression in the tree.** `63a5bdd362` (the repair that restored the
+  deployed `noteSpend` prove path, broken since the 07-23 descriptor sweep) threaded the producer
+  half of `7d49b0f449`'s third map-op, `spendAncestorFreshOp`. Its honest "this spend rides no
+  delegated capability" sentinel is `undelegated_spend_ancestor()`
+  (`circuit/src/effect_vm/trace_rotated.rs:1402,1415`) = `fold_bytes32_to_bb(cred_nul(mint_provenance()))`
+  — a 32-byte BLAKE3 nullifier squeezed to ONE felt. The ast-grep gate fired because
+  `trace_rotated.rs` is one of its three scoped files. **The disposition below is a suppression, so
+  it has to be argued, not asserted** — the reasoning, both directions, is at the site.
+
+  - **NOT a commitment position (so not a law violation in the law's own terms).** The felt lands
+    only in `row[PARAM_BASE + 3]` (col 71). The rotated commitment is `recompute_block_commit`'s
+    chain over `row[BEFORE_BASE..]` / `row[AFTER_BASE..]` (bases 188 / 427); no PI binds col 71
+    (`rotateV3WithNullifierPin` pins `prmCol 0` only). It is a map-op KEY in a witness column — the
+    law's own "fine per-effect param projector" case. The ROOT it opens against is already faithful
+    (the producer writes `revoked_tree.root8()` into all 8 lanes of `REVOKED_ROOT_GROUP`).
+  - **Widening is NOT representable producer-side — verified, not assumed.**
+    `Dregg2/Circuit/DescriptorIR2.lean:301-313` types `root, newRoot : Fin 8 → EmittedExpr` but
+    `key : EmittedExpr` — a map-op key is ONE felt by construction, and the deployed op is
+    `key := .var SPEND_ANCESTOR_PARAM_COL` (`EffectVmEmitRotationV3.lean:2410`). The INSERT side is
+    one felt too (`revokedInsertOp` keys `param0` = `child_hash[0]`, `trace.rs:683`), so widening
+    only the open side makes the `.absent` op unopenable rather than safer. 8-felt keys = change
+    `MapOp` + lex-8 sorted/AAFI bracketing = **VK-affecting Lean AIR**, same epoch as #5/#11.
+  - **Soundness: the width buys the attacker NOTHING here. Argued, not waved.** The set is keyed by
+    the SAME projection on both the insert and the open side, and a projection is a function, so
+    `A` revoked ⟹ `key(A) ∈ set` ⟹ the `.absent` open is UNSAT regardless of what collides with it.
+    Collisions only ADD to the set's key-space preimage — they **over**-revoke, never under-revoke.
+    A 31-bit collision cannot make a revoked ancestor look fresh at any width. (This is the *inverse*
+    of the classic degraded-commitment danger, where a collision swaps the committed value; a
+    non-membership op over a same-fold-keyed set has the opposite failure direction. Worth
+    generalizing: not every narrow felt in this catalogue is a soundness felt — #5's key family
+    deserves the same both-sides check before it is priced as a theft vector.)
+  - **Availability: the width IS independently load-bearing, and this one is REAL — ~2^31, cheap,
+    permanent, system-wide.** The revoked set is grow-only and its key domain is attacker-writable:
+    `RevokeDelegation` inserts `hash_to_8(child_id)[0]`, and `CellId::derive_raw`
+    (`types/src/lib.rs:891`) is BLAKE3 over an attacker-chosen `(public_key, token_id)` — so
+    candidates are ground **offline**, no chain interaction until the hit. ~2^31 offline hashes find a
+    child id whose lane 0 equals a chosen target; one legitimate create+delegate+revoke plants it
+    forever. Aimed at THIS sentinel — public, fixed, system-wide — it permanently bricks every
+    undelegated `NoteSpend`. Aimed at a victim's real ancestor id it bricks that lineage. With no
+    adversary, N ancestors × M revocations collide at ≈ N·M/2^31 (~5% at 10^4 × 10^4), which caps the
+    honest registry scale. **It gets worse when we do the right thing next:** today a producer could
+    dodge a poisoned key only by exploiting the unbound-witness hole that `7d49b0f449`'s lineage weld
+    is meant to close.
+  - **Not to be confused with the bigger, separate hole.** Col 71 is an unbound witness column: a
+    prover parks any non-revoked felt (this public constant will do) and the op is satisfied
+    regardless of the exercised lineage. Zero work, pure soundness, `7d49b0f449`'s named follow-up —
+    and **width-independent**, so it neither excuses nor is excused by #20. Both close in the same
+    AIR epoch; neither closes the other.
+  - **Rejected as a repair:** a producer-side "refuse to revoke a child whose key equals the
+    sentinel" guard. It would block the systemic variant *via our own tooling only* — an adversarial
+    prover mints the same trace, because the AIR accepts any key. That is a mitigation that looks like
+    a fix, i.e. the laundering shape this catalogue exists to catch. Named here, deliberately not
+    written.
+  - **Kind D**, severity **HIGH for availability / NONE for soundness**. The 3rd `fold_bytes32_to_bb`
+    the repair added is `cell/src/derivation.rs:1045`, inside `#[cfg(test)]` — the cross-crate domain
+    pin, explicitly out of the law's scope and correct by construction (it must recompute the same
+    value from the authority or the pin is vacuous).
+
 ## Update log — 2026-07-22
 
 - **#18 + #19 zkOracle / render attestation commitments — NEWLY LOGGED, code NOT touched.** Two
@@ -233,6 +294,7 @@ readiness claim. Captured here so they ride the same campaign.
 | 14 | `leg_is_wide` cfg trap — non-prover build forces **every** leg narrow | `sdk/src/full_turn_proof.rs:5144` | verifies ~124-bit anchors at 31 bits | A | [A] wasm verifier is exactly this config; live trap, no current caller |
 | 18 | zkOracle `content_commitment` — the **cross-leg weld** is ONE `BabyBear`, then zero-padded to 32 bytes and bound into a receipt | `zkoracle-prove/src/attestation.rs:47,89`; `dungeon-on-dregg/src/narrator.rs:417-418,1064` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `BabyBear(pub u32)`; `field_from_u64` puts it in the LAST 8 bytes of a `[u8;32]` ⇒ **looks** ~256-bit on the wire, carries ≤31 bits |
 | 19 | `RenderAttestation` — `output_commit` (the verify-gate weld) and `template_commit` (the "generated by THIS template" gate) are both single felts | `zkoracle-prove/src/render.rs:166,198,201` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `verify_render_attestation:295` gates on `output_commit`; `verify_render_reproducible:314` gates on `template_commit` |
+| 20 | Spend delegation-ancestor key — the public, fixed, system-wide "undelegated" sentinel is ONE felt in the grow-only revoked set's key domain | `circuit/src/effect_vm/trace_rotated.rs:1402,1415` | ~2^31 **offline** grind ⇒ permanent DoS on every undelegated `NoteSpend` | D | **[V]** availability HIGH / soundness NONE — same-fold-keyed `.absent` can only over-revoke; `MapOp.key : EmittedExpr` is one felt in the deployed IR ⇒ widening is VK-affecting. **The tree's one EARNED `check-no-degraded-felt` suppression** |
 
 **Tier 2 (~62-bit, 4 felts):** `circuit-prove/src/dsl_leaf_adapter.rs:152` (`DFA_RC_LEN=4`, leaf exposes 8
 on the wire — cheapest real fix), `sovereign_leaf_adapter.rs:85` (`KEY_COMMIT_LEN=4`, authorizes a
@@ -259,7 +321,12 @@ strings / hash-map keys / `#[cfg(test)]` fixtures not itemized.
   And for every one of these: the wide scheme must fold the **REAL PREIMAGES** 8-felt end-to-end —
   re-hashing the existing narrow felt is `finalSqueezeOnly_still_conflates`, proved to still conflate.
 - **D — 31-bit KEYS inside accumulators; widening the root did nothing.** The sorted-tree membership
-  descriptor's key width — also Lean-authored AIR. #5, #9, #11.
+  descriptor's key width — also Lean-authored AIR. #5, #9, #11, #20. The IR-level statement of the
+  whole kind (found while pricing #20): `DescriptorIR2.lean:301-313` gives a `MapOp` 8-felt `root` /
+  `newRoot` groups but a **scalar `key : EmittedExpr`**. That one type line is why every D site is
+  un-widenable producer-side and why they must all ride ONE VK epoch. Price the D sites BOTH
+  directions before calling them theft vectors: a same-fold-keyed `.absent` op can only over-include
+  (availability), while a `.present`/membership-authorizes op is the soundness shape.
 - **E — Narrow signed / PI payloads; wire + Fiat-Shamir changes ⇒ batch into ONE rotation epoch.**
   #1, #2, #9, #11. Cheap now (nothing deployed), only gets more expensive.
 - **F — Generalize the two defenses (the meta-repair; without it we play whack-a-mole).**

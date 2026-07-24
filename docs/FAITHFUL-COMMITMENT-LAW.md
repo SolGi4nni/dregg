@@ -81,7 +81,21 @@ ABOVE, never after the colon.
 
 ### Current allowlisted residuals
 
-**NONE.** The `fields[0..7]` residual is **CLOSED** (v13 fields-octet epoch): the
+**ONE — `trace_rotated.rs::undelegated_spend_ancestor` (felt-width site #20, added 2026-07-24).**
+The spend-side delegation-ancestor sentinel the deployed `spendAncestorFreshOp` opens `.absent`
+against the revoked set. It is **not a commitment**: the felt lands only in param col 71, which the
+rotated commit chain (`recompute_block_commit` over `row[BEFORE_BASE..]`/`row[AFTER_BASE..]`) does
+not cover and no PI binds — the law's own "fine per-effect param projector" case; the gate fired on
+the *pattern* because `trace_rotated.rs` is a scoped file. Widening is **not representable**: the
+deployed IR types a map-op key as one felt (`DescriptorIR2.lean:301-313`, `key : EmittedExpr` beside
+`root : Fin 8 → EmittedExpr`), and the insert side is one felt too, so 8-felt keys are a VK-affecting
+Lean AIR epoch. Soundness-neutral (a same-fold-keyed `.absent` can only over-revoke, never
+under-revoke); the residual is a **real ~2^31-offline-grind availability wound**, argued at the site
+and priced as #20 in `docs/WOUND-felt-width-boundaries-2026-07-19.md`. A suppression is legitimate
+only as the conclusion of an argument — that argument is the doc-comment section on the function, not
+this sentence.
+
+The `fields[0..7]` residual is **CLOSED** (v13 fields-octet epoch): the
 r3..r10 Horner folds in `compute_rotated_pre_limbs` and its `rotation_witness`
 twin are REPLACED by the faithful `Faithful8::from_field_limbs8` 8-lane split
 (lane 0 = the u64-lane lo32 riding the welded limb `4 + i`, lanes 1..7 riding the

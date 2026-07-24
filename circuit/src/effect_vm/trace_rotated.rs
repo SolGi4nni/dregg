@@ -1346,6 +1346,59 @@ pub fn rotated_descriptor_name_for_effect_fee(effect: &Effect) -> Option<&'stati
 /// use. `dregg-cell` depends on `dregg-circuit` (never the reverse), so the agreement cannot be a
 /// call across the edge; it is pinned from the cell side by
 /// `dregg_cell::derivation`'s `undelegated_spend_ancestor_matches_mint_root` test.
+///
+/// # FAITHFUL-COMMITMENT-LAW residual (felt-width site #20, kind D — availability, NOT soundness)
+///
+/// **WHAT IS FOLDED.** A 32-byte BLAKE3 credential-revocation nullifier → ONE BabyBear (~31 bits).
+///
+/// **WHERE IT LANDS — not a commitment.** The returned felt is written to exactly one place:
+/// `row[PARAM_BASE + SPEND_ANCESTOR_PARAM_SLOT]` (col 71) in
+/// `generate_rotated_note_spend_trace_with_nullifier_tree`. Col 71 is a v1 PARAM column; the rotated
+/// state commitment is `recompute_block_commit`'s Horner chain over `row[BEFORE_BASE .. +
+/// NUM_PRE_LIMBS]` / `row[AFTER_BASE .. + NUM_PRE_LIMBS]` (bases 188 / 427), and no PI binds col 71
+/// (`rotateV3WithNullifierPin` pins `prmCol 0` only). So this felt is a **map-op KEY in a witness
+/// column**, never a committed 32-byte component — the case the law itself calls "a fine per-effect
+/// param projector". The accumulator ROOT it opens against IS faithful: the producer writes the
+/// 8-lane `revoked_tree.root8()` into `REVOKED_ROOT_GROUP` of both blocks.
+///
+/// **WHY THE WIDTH IS FORCED (widening is not representable producer-side).** The deployed IR types
+/// a map-op key as ONE felt: `Dregg2/Circuit/DescriptorIR2.lean:301-313` has `root, newRoot : Fin 8
+/// → EmittedExpr` (the 8-felt groups) but `key : EmittedExpr` — a single expression — and the
+/// deployed op is `key := .var SPEND_ANCESTOR_PARAM_COL` (`EffectVmEmitRotationV3.lean:2410`). A
+/// producer physically cannot supply eight felts to a one-felt column. The INSERT side is one felt
+/// too (`revokedInsertOp` keys on `param0` = `child_hash[0]`, `trace.rs:683`), so widening only the
+/// open side would make the `.absent` op unopenable rather than safer. Widening = changing `MapOp`
+/// itself + the sorted-bracket/AAFI gadgets to lex-compare 8-felt keys: **VK-affecting, Lean AIR**,
+/// and it must ride the same epoch as felt-width #5/#11 (the compare gadget already exists —
+/// `Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`; the leaf-schema widening + kernel flip is
+/// the ember-gated part). Not this commit's business.
+///
+/// **WHAT THE ~31 BITS DO NOT BUY (soundness).** A collision cannot make a revoked ancestor look
+/// fresh. The revoked set is keyed by the SAME projection on both sides, and a projection is a
+/// function: `A` revoked ⟹ `key(A)` is IN the set ⟹ the `.absent` open for `key(A)` has no
+/// bracketing witness, whatever else collides with it. Collisions only ever ADD members to the
+/// key-space preimage of the set — they OVER-revoke, never under-revoke. (The real soundness hole on
+/// this op is that col 71 is an unbound witness column — a prover parks any non-revoked felt, e.g.
+/// this public constant, and the op is satisfied regardless of the exercised lineage. That is
+/// `7d49b0f449`'s named follow-up; it costs ZERO work and is unaffected by key width, so widening
+/// alone would not close it either.)
+///
+/// **WHAT THE ~31 BITS DO BUY (availability — the residual's own, real cost).** The revoked set is
+/// GROW-ONLY and its key domain is attacker-writable: `RevokeDelegation` inserts
+/// `hash_to_8(child_id)[0]` and `CellId::derive_raw` is BLAKE3 over an attacker-chosen
+/// `(public_key, token_id)`, so candidate keys are ground OFFLINE. ~2^31 offline hashes find a child
+/// id whose lane-0 equals a chosen 31-bit target; one legitimate create+delegate+revoke then plants
+/// it permanently. Targeted at THIS constant — which is public, fixed, and system-wide — that
+/// permanently bricks every undelegated `NoteSpend` (the guard below starts failing closed, and the
+/// in-circuit `.absent` op is UNSAT). Targeted at a victim's real ancestor id it bricks that lineage.
+/// With no adversary at all, N live ancestors × M revocations collide with probability ≈ N·M/2^31,
+/// which caps the honest scale of the registry. This denial gets HARDER to work around, not easier,
+/// once the lineage weld lands: today a producer could sidestep a poisoned key only by exploiting the
+/// very unbound-witness hole that weld closes.
+///
+/// **WHAT CLOSES IT:** the 8-felt map-op key column (`MapOp.key : Fin 8 → EmittedExpr` + lex-8 sorted
+/// bracketing, both open and insert sides) AND the col-71 lineage weld, as ONE Lean AIR / VK epoch.
+/// Registered as site **#20** in `docs/WOUND-felt-width-boundaries-2026-07-19.md`.
 pub fn undelegated_spend_ancestor() -> BabyBear {
     let mut h = blake3::Hasher::new();
     h.update(b"dregg-cap-mint-root-v1");
@@ -1354,7 +1407,12 @@ pub fn undelegated_spend_ancestor() -> BabyBear {
     h.update(b"dregg-cred-revocation-v1");
     h.update(&mint_provenance);
     let cred_nul: [u8; 32] = *h.finalize().as_bytes();
-    crate::effect_vm::fold_bytes32_to_bb(&cred_nul)
+    // FAITHFUL-COMMITMENT-LAW residual (see the `# FAITHFUL-COMMITMENT-LAW residual` section above,
+    // and wound site #20): this felt is a one-felt MAP-OP KEY in witness column 71, not a committed
+    // component — and the deployed `MapOp.key : EmittedExpr` is one felt, so 8-felt is not
+    // representable without a VK-affecting Lean AIR change. Soundness-neutral (collisions can only
+    // over-revoke); the residual is a ~2^31-grind availability wound, registered and priced.
+    crate::effect_vm::fold_bytes32_to_bb(&cred_nul) // ast-grep-ignore: degraded-felt-commitment
 }
 
 /// The param SLOT the deployed `spendAncestorFreshOp` keys on — Lean

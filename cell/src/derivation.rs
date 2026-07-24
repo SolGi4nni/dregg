@@ -87,7 +87,10 @@ pub fn mint_provenance() -> [u8; 32] {
 /// The DEPLOYED freshness/revocation opens (the limb-26/limb-37 map-ops on the
 /// rotated note-spend descriptor) do NOT recompute this hash in-circuit — they
 /// query a FOLDED field element (`fold_bytes32_to_bb(cred_nul(provenance))`) for
-/// non-membership against the committed accumulator root. So the preimage hash need not be
+/// non-membership against the committed accumulator root. (That fold's ~31-bit width is felt-width
+/// site **#20** — soundness-neutral for a same-fold-keyed `.absent`, a real ~2^31 availability
+/// wound, and un-widenable until `MapOp.key` grows to 8 felts. See
+/// `docs/WOUND-felt-width-boundaries-2026-07-19.md`.) So the preimage hash need not be
 /// arithmetization-friendly; it only needs to agree byte-for-byte between the
 /// on-cap value and any off-chain CDT reconstruction. BLAKE3 is what every
 /// sibling CDT/receipt hash already uses, and provenance MUST equal
@@ -1040,6 +1043,12 @@ mod tests {
     /// (`mint_provenance` ∘ `cred_nul`) and require byte equality, so a domain-string drift on
     /// either side is a RED test rather than a silent divergence between the parked ancestor and
     /// the id a real revoke would insert.
+    ///
+    /// The `fold_bytes32_to_bb` here is the FAITHFUL-COMMITMENT-LAW's explicitly out-of-scope test
+    /// case, and it is correct by construction: the pin is vacuous unless it recomputes the SAME
+    /// one-felt image the producer parks. The width itself is argued and priced as felt-width site
+    /// **#20** (`docs/WOUND-felt-width-boundaries-2026-07-19.md`) — soundness-neutral, a ~2^31
+    /// availability wound, un-widenable until the map-op key column grows to 8 felts.
     #[test]
     fn undelegated_spend_ancestor_matches_mint_root() {
         let authority = dregg_circuit::effect_vm::fold_bytes32_to_bb(&cred_nul(&mint_provenance()));
