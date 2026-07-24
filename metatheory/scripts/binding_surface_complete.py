@@ -316,6 +316,23 @@ def generic_successor_ok(root):
 def main(root):
     files = [os.path.join(dp, f) for dp, dn, fn in os.walk(root)
              if '.lake' not in dp.split(os.sep) for f in fn if f.endswith('.lean')]
+    # ⚑ FAIL-CLOSED.  This is a COMPLETION PREDICATE: exit 0 means "the surface is finished".
+    # It used to take argv[1] unconditionally with no existence check, so pointing it at a
+    # typo'd or nonexistent path scanned zero files, reported every tier 0, and exited 0 --
+    # announcing FINISHED because it had looked at nothing.  That is precisely the
+    # green-that-means-nothing failure this ruler exists to detect, inside the ruler itself,
+    # and any CI wiring of it would have been a no-op waiting to happen.  An empty scan is now
+    # a hard error (exit 2, distinct from both 0=finished and 1=work-remains) -- a measurement
+    # of nothing is never evidence of completion.
+    if not os.path.isdir(root):
+        print(f'FATAL: not a directory: {root!r} -- refusing to report completion on an '
+              f'unscanned tree', file=sys.stderr)
+        return 2
+    if not files:
+        print(f'FATAL: scanned {root!r} and found ZERO .lean files -- refusing to report '
+              f'completion on an empty scan (wrong root?)', file=sys.stderr)
+        return 2
+    print(f'scanned {len(files)} .lean files under {root}')
     A, B, C, D, E = [], [], [], [], []
     a_floor, a_class = Counter(), Counter()
     a_via_var = 0
@@ -374,8 +391,17 @@ def main(root):
                 if not any(n.startswith(stem) and n.endswith('_advantage_bound') for n in names):
                     B.append(f'{rel}:{line} {name}')
             # C -- tier 3: advantage bound without an honest keyed-ROM successor
+            #
+            # ⚑ STEM-MATCHED, not per-file.  Crediting any successor ANYWHERE in the file
+            # discharged every `_advantage_bound` in it, so an unrelated object's successor
+            # "discharged" a bound about a different object (e.g. `heapAddr_binds_rom` was
+            # crediting `heapRoot_/heapFrame_binds_advantage_bound`; an opening successor was
+            # crediting a Merkle-recompute bound).  A discharge must be ABOUT THE SAME OBJECT,
+            # so require the successor to share the bound's stem -- the same test tier B
+            # already applies to its disjunction/bound pairing above.
             if kind in ('theorem', 'lemma') and name.endswith('_advantage_bound'):
-                if succ_names:
+                c_stem = name[:-len('_advantage_bound')]
+                if any(n.startswith(c_stem) for n in succ_names):
                     c_infile += 1
                 else:
                     if raw is None:
