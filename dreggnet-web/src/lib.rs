@@ -64,10 +64,12 @@ pub mod crowd_round;
 /// (`GET /descent/leaderboard`) + a run-card that re-executes the recorded run to PASS/FAIL
 /// (`GET /descent/run/{id}`). Additive; see [`descent::descent_router`].
 pub mod descent;
-/// THE PLAYABLE web front door for *The Descent* (backlog H1): `GET /descent/play` mounts the
-/// already-built `<dregg-descent>` thin-view over the wasm `DescentWorld` on a strict-CSP served
-/// page, so a stranger plays a real, private, replay-verifiable run in the tab — not the
-/// leaderboard. Additive + state-free; see [`descent_play::descent_play_router`].
+/// THE PLAYABLE web front door for *The Descent* (backlog H1): `GET /descent/play` mounts a
+/// same-origin, strict-CSP DOM controller (`NATIVE_PLAY_APP_JS`) over the Lean-native
+/// `NativeDescentWorld` (the wasm `bindings_native_descent` executor) — NOT the `<dregg-descent>`
+/// element and NOT the old procgen wasm `DescentWorld` — so a stranger plays a real, private,
+/// replay-verifiable run in the tab, not the leaderboard. Additive + state-free; see
+/// [`descent_play::descent_play_router`].
 pub mod descent_play;
 /// The durable sqlite (rusqlite) backing for the Descent no-cheat leaderboard: persist a run's
 /// reproducible public input (the day seed + the move sequence), re-verified by REPLAY on boot so
@@ -4605,9 +4607,10 @@ fn make_app_parts_with_catalog(
         .merge(router(web))
         .merge(catalog_router(Arc::clone(&catalog)))
         .merge(descent_router(descent))
-        // THE PLAYABLE web front door (backlog H1): `GET /descent/play` serves the in-tab
-        // `<dregg-descent>` client over the wasm `DescentWorld`. State-free + additive; no route
-        // overlap with `descent_router`'s board/run/submit surface.
+        // THE PLAYABLE web front door (backlog H1): `GET /descent/play` serves an in-tab
+        // same-origin DOM controller over the Lean-native `NativeDescentWorld` (via the wasm
+        // `bindings_native_descent` executor), NOT the `<dregg-descent>` element. State-free +
+        // additive; no route overlap with `descent_router`'s board/run/submit surface.
         .merge(descent_play::descent_play_router())
         .merge(sprite::sprite_router())
         .merge(overlay_router);

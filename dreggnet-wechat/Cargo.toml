@@ -73,6 +73,11 @@ hex = "0.4"
 # asserting the request shape asserts the real wire shape.
 serde = { workspace = true }
 serde_json = { workspace = true }
+# THE LIVE BYTE SEAM — the reqwest-backed `HttpPost` (`reqwest_transport::ReqwestHttpPost`) under
+# `RawWeChatApi`: `post_json` for `custom/send`, `get_json` for the `cgi-bin/token` fetch. Blocking
+# (WeChat is request/response, no long-poll or tokio) + rustls (no OpenSSL link), mirroring the
+# Telegram frontend's `reqwest_transport`. Everything above `HttpPost` stays pure/net-free.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`, not
 # `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone

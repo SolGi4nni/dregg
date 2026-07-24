@@ -29,7 +29,14 @@
 //!   wrapped into the `custom/send` wire request ([`api::build_present_request`]) and sent through
 //!   an INJECTED [`transport::Transport`] — the whole thing drives with [`transport::MockTransport`]
 //!   (no token, no network). The rendered [`deos_view::WeChatMessage`] (its options table) is kept
-//!   per session for the reply.
+//!   per session for the reply. A real deploy sends over [`transport::RawWeChatApi`] backed by the
+//!   reqwest byte seam [`reqwest_transport::ReqwestHttpPost`]: [`transport::WeChatCredentials`]
+//!   (fail-closed `WECHAT_APP_ID`/`WECHAT_APP_SECRET`) → [`transport::fetch_access_token`] →
+//!   [`transport::RawWeChatApi::connect`] → `custom/send`. What is NOT built (it needs a public,
+//!   OA-console-registered callback URL that cannot be exercised in-tree): the INBOUND webhook HTTP
+//!   server (`[[bin]]`) that verifies WeChat's SHA1 request signature over
+//!   `[callback-token, timestamp, nonce]` and decodes the inbound XML into a [`WeChatMessage`] for
+//!   [`collect`](WeChatFrontend::collect); and the token-refresh timer.
 //! - **collect(inbound message) → (SessionId, Action, DreggIdentity).** A user's reply is resolved
 //!   against the presented [`deos_view::WeChatMessage`] ([`deos_view::WeChatMessage::resolve`] — a
 //!   reply number or a `#<turn>:<arg>` marked id), reconstructed into the typed [`Action`], and the
@@ -46,6 +53,7 @@ pub mod api;
 pub mod cipherclerk;
 pub mod host;
 pub mod render;
+pub mod reqwest_transport;
 pub mod seated;
 pub mod transport;
 
