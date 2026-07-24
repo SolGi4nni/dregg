@@ -96,6 +96,73 @@ fn price_quadratic(
     eng.product_sum(&lhs, &rhs).expect("oracle pit price")
 }
 
+/// A public weight `w` as a single-slot plaintext (scales SIMD slot 0 by `w`).
+fn weight_pt(fx: &Fixture, w: u64) -> Plaintext {
+    Plaintext::try_encode(&[w], Encoding::simd(), &fx.params).expect("weight encode")
+}
+
+/// The full parametrized quadratic cost `A·q₁² + B·q₁·q₂ + C·q₂²` with PUBLIC weights, over encrypted
+/// positions: three ct×ct products, each scaled by its public weight plaintext (`&ct * &pt`), then summed.
+/// This is the real Oracle-Pit pricing (an arbitrary quadratic cost matrix), not the unit form.
+fn price_weighted_quadratic(
+    fx: &Fixture,
+    eng: &MulEngine,
+    ct1: &Ciphertext,
+    q1: u64,
+    ct2: &Ciphertext,
+    q2: u64,
+    a: u64,
+    b: u64,
+    c: u64,
+) -> Ciphertext {
+    let p11 = eng
+        .multiply(
+            &BoundedCiphertext::new(ct1.clone(), q1),
+            &BoundedCiphertext::new(ct1.clone(), q1),
+        )
+        .expect("q1^2");
+    let p12 = eng
+        .multiply(
+            &BoundedCiphertext::new(ct1.clone(), q1),
+            &BoundedCiphertext::new(ct2.clone(), q2),
+        )
+        .expect("q1*q2");
+    let p22 = eng
+        .multiply(
+            &BoundedCiphertext::new(ct2.clone(), q2),
+            &BoundedCiphertext::new(ct2.clone(), q2),
+        )
+        .expect("q2^2");
+    let t1 = &p11.ct * &weight_pt(fx, a);
+    let t2 = &p12.ct * &weight_pt(fx, b);
+    let t3 = &p22.ct * &weight_pt(fx, c);
+    &(&t1 + &t2) + &t3
+}
+
+/// A parametrized quadratic prediction market (public cost matrix `A,B,C`) prices hidden positions and
+/// decrypts to EXACTLY `A·q₁² + B·q₁·q₂ + C·q₂²` — the running witness of `quadratic_form_2var_decrypts` with
+/// real public weights. This is the actual Oracle-Pit product, not the unit demo.
+#[test]
+fn oracle_pit_prices_weighted_quadratic() {
+    let mut fx = fixture(0x0AC1E5A1);
+    let eng = engine(&fx);
+    let (q1, q2) = (4u64, 6u64);
+    let (a, b, c) = (2u64, 3u64, 5u64);
+    let ct1 = encrypt(&mut fx, &[q1]);
+    let ct2 = encrypt(&mut fx, &[q2]);
+    let priced = price_weighted_quadratic(&fx, &eng, &ct1, q1, &ct2, q2, a, b, c);
+    let got = decrypt_slots(&fx, &priced, 1)[0];
+    let want = a * q1 * q1 + b * q1 * q2 + c * q2 * q2;
+    assert!(
+        want < fx.t,
+        "test setup: weighted quadratic must stay below t"
+    );
+    assert_eq!(
+        got, want,
+        "weighted Oracle Pit price != plaintext A·q₁²+B·q₁q₂+C·q₂² (fhe.rs oracle)"
+    );
+}
+
 /// THE LOAD-BEARING TOOTH: a quadratic market priced over encrypted positions decrypts to EXACTLY the
 /// plaintext quadratic — the running witness of `OraclePitQuadratic.quadratic_form_2var_decrypts`.
 #[test]
