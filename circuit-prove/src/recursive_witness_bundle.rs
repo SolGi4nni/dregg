@@ -108,7 +108,18 @@ pub const RECURSIVE_VK_PROGRAM_BYTES: &[u8] = b"dregg-effect-vm-recursive-v1";
 /// must be mirrored here, since the proving-system identifier is part of
 /// the recursive VK hash — bumping the rev without bumping this string
 /// would silently let old recursive proofs verify against new code.
-pub const RECURSION_P3_REV: &str = "c14b5fc079af18d7f3ba3f3586f173bd166c7cd4";
+///
+/// LOCKSTEP-ENFORCED by `scripts/check-p3-rev.sh` against `scripts/p3-rev.env`.
+/// That gate FAILS on a mismatch here; it used to only WARN, and this constant
+/// spent 2026-07-15..07-24 stale at `c14b5fc0…` while the workspace actually
+/// resolved `0a4a554e…` — so the VK advertised a proving system 19 fork commits
+/// older than the one that verifies, spanning `993efec` (nondeterministic VK
+/// fingerprint) and `a45ee56` (IVC mixed-root forgery now rejected). Exactly the
+/// "old proofs verify against new code" failure this string exists to prevent.
+/// Reconciled to the rev independently established by `Cargo.lock` (every
+/// `plonky3-recursion` entry) and the `[workspace.dependencies]` pin, which has
+/// no `[patch]`-to-sibling override (`Cargo.toml:157-162`).
+pub const RECURSION_P3_REV: &str = "0a4a554e144f4e60107555ea7a11cd9969d6208b";
 
 /// Returns the verifier-source fingerprint used in the recursive VK
 /// hash. Deterministic: BLAKE3 of a stable string identifying this

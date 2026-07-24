@@ -44,9 +44,13 @@ Two soundness lanes deep-scoped this session (fix-shapes, ready to drive):
   emit pass.
 
 New follow-up lanes surfaced while fixing (each named, none laundered):
-- **RECURSION_P3_REV drift** — the VK-hash constant (`c14b5fc0…`) has ALREADY
-  drifted from the authoritative fork pin (`0a4a554e…`): the VK-custody wound made
-  real. `check-p3-rev.sh` WARNs on it. Fix re-keys the VK → ember's ceremony call.
+- ~~**RECURSION_P3_REV drift**~~ — **CLOSED 2026-07-24.** The VK-hash constant
+  (`c14b5fc0…`) had drifted from the authoritative fork pin (`0a4a554e…`): the
+  VK-custody wound made real. It is reconciled, and `check-p3-rev.sh` now FAILS
+  rather than WARNs — plus it is finally WIRED into CI (`ci.yml` `p3-rev-lockstep`);
+  it had been in NO workflow since it was written, so even its armed half only ran
+  when a human typed it. It turned out NOT to need ember's ceremony call: nothing
+  external pins `compute_recursive_vk_hash()`, and the apex anchor is independent.
 - **bridge must emit `dregg_bridge_conservation_ok`** — the alert is gated on a
   metric `bridge/` does not yet emit (node emits 30 dregg_* metrics, none bridge).
 - **`docs/THE-GRAIN.md` + `docs/ASSURANCE.md`** — dead refs across ~12 grain-*
@@ -174,7 +178,7 @@ Poseidon2 commitment); thread it as a shared witness in the deployed circuit.
 
 ### 11-VK. VK custody folds only ONE content-derived component — CHEAP→LANE ✓verified
 Of the four components folded into the recursive VK hash
-(`recursive_witness_bundle.rs:135-172`), only the AIR descriptor fingerprint is
+(`recursive_witness_bundle.rs:146-183`), only the AIR descriptor fingerprint is
 content-derived. `RECURSION_P3_REV` and the verifier-surface label are
 **hand-mirrored strings** ("bumping the rev without bumping this string would
 silently let old recursive proofs verify against new code"), and

@@ -638,6 +638,24 @@ jobs:
           lfs: true
       - run: bash scripts/check-independence-controls.sh
 
+  p3-rev-lockstep:
+    name: plonky3-recursion rev lockstep (incl. the recursive-VK proving-system id)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The emberian/plonky3-recursion fork rev resolves the compiled recursive verifier.
+    # It is mirrored into CI workflows, wasm/Cargo.toml, and — most load-bearing —
+    # RECURSION_P3_REV, the proving-system id folded into compute_recursive_vk_hash(),
+    # i.e. the value lookup_recursive_vk() accepts on. scripts/check-p3-rev.sh existed
+    # since 2026-07-16 but was wired into NO workflow, so it only ran when a human
+    # typed it; its VK-constant arm additionally exited 0 by construction (WARN-only).
+    # Both are fixed — the gate runs here and FAILS on any drift, including the VK id.
+    # Pure source-text scan: no Rust toolchain, no build.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: bash scripts/check-p3-rev.sh
+
   lean-orphans:
     name: Lean orphan-module coverage gate (no Dregg2 module escapes the build)
     runs-on: ubuntu-latest

@@ -29,26 +29,33 @@ bottom rung is the chain of custody from the verified source to those bytes.
   (`v3_staged_registry_parses_and_covers`, `effect_vm_descriptors.rs:2305`).
 - **The VK pins the bytes — one component by content, three by convention.**
   `compute_recursive_vk_hash`
-  (`circuit-prove/src/recursive_witness_bundle.rs:135`) folds four components
+  (`circuit-prove/src/recursive_witness_bundle.rs:146`) folds four components
   into one hash: the AIR descriptor fingerprint, the constant program-bytes
   label `RECURSIVE_VK_PROGRAM_BYTES` (`:103`), a verifier-surface
-  fingerprint, and the pinned Plonky3 rev; `lookup_recursive_vk` (`:180`)
+  fingerprint, and the pinned Plonky3 rev; `lookup_recursive_vk` (`:191`)
   accepts exactly that hash, the verifier rejects any other
   (`verifier/src/lib.rs:772-776`), and the rejection has a tooth
   (`foreign_circuit_root_is_refused_by_vk_pin`,
   `circuit-prove/tests/ivc_turn_chain_rotated.rs:626`). The verifier-surface
   component is not a hash of the verifier source:
-  `recursive_verifier_source_hash` (`:123`) is BLAKE3 of the constant string
+  `recursive_verifier_source_hash` (`:134`) is BLAKE3 of the constant string
   `"dregg-recursive-witness-bundle-verifier-v1"` — a version label the code
   says to bump "when this module's verifier surface changes meaningfully",
   reserving the git-blob-hash form for "a fuller VK v2 rollout". The Plonky3
-  rev has the same failure mode: `RECURSION_P3_REV` (`:111`) is a
+  rev has the same failure mode: `RECURSION_P3_REV` (`:122`) is a
   hand-mirrored string whose shipped comment says a rev bump "must be
   mirrored here" because "bumping the rev without bumping this string would
   silently let old recursive proofs verify against new code". A
   verifier-source change or a rev bump with a forgotten mirror leaves the VK
   hash unchanged: only the AIR descriptor fingerprint pins by content; the
-  other three components pin by convention.
+  other three components pin by convention. That structural point stands, but
+  the rev component is no longer unguarded: the mirror *was* forgotten for the
+  2026-07-15 bump to `0a4a554e` and sat stale at `c14b5fc0` — 19 fork commits,
+  spanning a nondeterministic-VK-fingerprint fix and an IVC mixed-root forgery
+  fix — until 2026-07-24, when `scripts/check-p3-rev.sh` was re-armed to FAIL on
+  it (it previously only WARNed) and wired into `ci.yml` (`p3-rev-lockstep`).
+  A forgotten rev-mirror is now a red CI check. The verifier-source label
+  (`:134`) and the program-bytes label (`:103`) remain convention-only.
 - **The bytes are a cache of the Lean, and the cache is gated.** A sha256
   rehash proves only self-consistency — a committed file matching the hash
   committed beside it. The gate with teeth is generate-fresh:

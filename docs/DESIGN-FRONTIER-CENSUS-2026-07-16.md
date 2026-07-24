@@ -34,7 +34,7 @@ Each item: **what it is · what EXISTS toward it (anchored) · leverage × readi
 **What.** Before any freeze ceremony pins a recursion VK, every component that
 feeds the VK hash must be *content-derived*, so a change to the verifier can
 never ship under an unchanged VK. **Exists:** `compute_recursive_vk_hash()`
-folds four components (`circuit-prove/src/recursive_witness_bundle.rs:135`), but
+folds four components (`circuit-prove/src/recursive_witness_bundle.rs:146`), but
 only the AIR descriptor fingerprint is content-derived (`:137`). `RECURSION_P3_REV`
 is a **hand-mirrored string** (`:111`, whose own doc-comment admits "bumping the
 rev without bumping this string would silently let old recursive proofs verify

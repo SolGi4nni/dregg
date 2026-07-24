@@ -48,7 +48,7 @@ non-immutable ref (`Cargo.toml:180-181`, `branch = "serde-integration"`); the Le
 verified but **unpublished** (`dregg-lean-ffi/lean-seed.pin` `TAG=` empty), so the
 `lean-marshal-gate` job asserts nothing (`ci.yml:250`); and **there is no bare-clone-into-empty-
 `~/dev` CI gate** — the keystone that would turn "works on my machine" into a red build. The freeze
-half: the recursion VK is a **self-recompute tautology** (`recursive_witness_bundle.rs:180-186`
+half: the recursion VK is a **self-recompute tautology** (`recursive_witness_bundle.rs:191-197`
 returns `Some(())` iff the hash equals `compute_recursive_vk_hash()`), eleven `-staged` descriptor
 names still ship, the 8-felt commitment is tooth-guarded but the 1-felt escape is not yet
 impossible, and Control 4 (the non-regression differential) is design-only
@@ -162,7 +162,7 @@ tracks compose in a fixed order.
   orthogonal to what the other tracks *do* and can start first; its *freeze* half must wait on B
   (below).
 - **B-cutover must precede D-freeze, and they share one event.** The freeze pins a production VK as
-  a hex KAT constant, killing the self-recompute tautology at `recursive_witness_bundle.rs:180`. If
+  a hex KAT constant, killing the self-recompute tautology at `recursive_witness_bundle.rs:191`. If
   D freezes before the FRI cutover, it freezes the `d=4` config; the cutover then forces a
   full VK re-key (the anchor pair `DREGG_APEX_RECURSION_VK`/`DreggApexRecursionVk`, Solidity
   verifier, all fixtures), wasting the multi-GB Groth16 ceremony. **The cutover's Phase-4 re-key IS

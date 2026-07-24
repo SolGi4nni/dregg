@@ -97,7 +97,7 @@ tailnet" — that path is *false at the network layer* (`deploy/README.md:34-37`
 | apex VK pin (Go mirror) | `DreggApexRecursionVk` = `3ad1c9c6…5503` (`chain/gnark/settlement_circuit.go:122`) | re-derive |
 | apex identity fixture | `chain/gnark/fixtures/apex_vk_identity.json` (`FRI-CUTOVER-PLAN.md:125,233`) | regen |
 | on-chain `vk_hash` | `keccak256("dregg-settlement-vk-dev-setup")` (`DEPLOY-SOLANA-COSMOS-TESTNET.md:180-184`) | keccak of MPC VK |
-| recursion VK pin (KAT) | **none yet** — tautology (`recursive_witness_bundle.rs:180-186`, §6.1) | frozen hex constant |
+| recursion VK pin (KAT) | **none yet** — tautology (`recursive_witness_bundle.rs:191-197`, §6.1) | frozen hex constant |
 | audit row | `docs/VK-REGEN-LOG.md` (append-only) | +1 row, `source dirty = no` |
 
 ---
@@ -118,10 +118,13 @@ cargo test -p circuit-prove derive_deployed_apex_vk_identity_and_check_fixture -
 #     lookup_recursive_vk accepts iff hash == compute_recursive_vk_hash().
 sed -n '180,186p' circuit-prove/src/recursive_witness_bundle.rs
 
-# (c) The RECURSION_P3_REV embedded id (":111") vs the real dep rev (Cargo.toml:236).
-#     These are DECOUPLED today and must be reconciled in the same cutover edit (§6.1).
-grep -n 'RECURSION_P3_REV' circuit-prove/src/recursive_witness_bundle.rs   # c14b5fc0…
-grep -n 'plonky3-recursion' Cargo.toml                                     # rev 0a4a554
+# (c) The RECURSION_P3_REV embedded id (":122") vs the real dep rev (Cargo.toml:246).
+#     RECONCILED 2026-07-24 — both now 0a4a554e, and scripts/check-p3-rev.sh FAILS if
+#     they ever diverge again (it only WARNed before, which is how they stayed split
+#     from 2026-07-15). No longer a cutover item; this read should show them EQUAL.
+grep -n 'RECURSION_P3_REV' circuit-prove/src/recursive_witness_bundle.rs   # 0a4a554e…
+grep -n 'plonky3-recursion' Cargo.toml                                     # rev 0a4a554e
+bash scripts/check-p3-rev.sh                                               # must be rc=0
 
 # (d) The append-only regen log the ceremony inherits (last row = the "before").
 tail -3 docs/VK-REGEN-LOG.md
@@ -287,9 +290,9 @@ Do this from a **CLEAN tree** so the `VK-REGEN-LOG` row reads `source dirty = no
 ### 6.1 Kill the recursion self-recompute tautology (the hex-KAT pin)
 
 Today `lookup_recursive_vk(hash)` returns `Some(())` iff `hash == &compute_recursive_vk_hash()`
-(`circuit-prove/src/recursive_witness_bundle.rs:180-186`) — the "registry" recomputes the value
-it checks against from the same inputs (`compute_recursive_vk_hash` at `:135`, derived from
-`RECURSION_P3_REV` at `:111` + the verifier fingerprint). Nothing is pinned to an
+(`circuit-prove/src/recursive_witness_bundle.rs:191-197`) — the "registry" recomputes the value
+it checks against from the same inputs (`compute_recursive_vk_hash` at `:146`, derived from
+`RECURSION_P3_REV` at `:122` + the verifier fingerprint). Nothing is pinned to an
 externally-frozen ceremony output (`REPRODUCIBLE-BUILD-AND-FREEZE.md:94-106`).
 
 Cutover:
@@ -306,9 +309,17 @@ Cutover:
    Keep `compute_recursive_vk_hash()` as a *derivation/self-check* used at pin-derivation
    time, not on the accept path — so a producer that recomputes a *different* hash is now
    **rejected** (the tautology's whole failure mode).
-3. **Reconcile `RECURSION_P3_REV`** (`recursive_witness_bundle.rs:111`, `c14b5fc0…`) with the
-   real dep rev (`Cargo.toml:236`, `0a4a554`) in the *same* edit — they are decoupled today
-   (`REPRODUCIBLE-BUILD-AND-FREEZE.md:99-101`).
+3. ~~**Reconcile `RECURSION_P3_REV`**~~ — **DONE 2026-07-24, ahead of the ceremony.** This
+   step never needed ceremony output: it only needed to know the real dep rev, which
+   `Cargo.lock` independently establishes. Bundling it here is *why* it stayed drifted —
+   it inherited a blocked ceremony's schedule while `check-p3-rev.sh` could only WARN.
+   The constant (`recursive_witness_bundle.rs:122`) now reads `0a4a554e…`, matching
+   `Cargo.toml:246`, and the gate FAILS on divergence. Reconciling re-keyed
+   `compute_recursive_vk_hash()`, which is safe to do outside a ceremony because nothing
+   external pins that value (producer and verifier both recompute it, and no frozen hex
+   KAT of it exists yet — that is what steps 1-2 above introduce). `DREGG_APEX_RECURSION_VK`
+   is a fingerprint of VK *material* (`recursion_vk_fingerprint`) and does not read this
+   constant, so §6.2's anchor pair was untouched.
 
 ### 6.2 Re-key the apex VK anchor pair (one commit)
 
@@ -487,7 +498,7 @@ gates open.
 | Gate 1 = FRI G3 (real `d=8` proof verifies in gnark) | `FRI-CUTOVER-PLAN.md:220-223` |
 | current setup single-party, toxic waste known + cached | `chain/gnark/groth16_cache.go:18-25,83-98` |
 | on-chain dev vk_hash = keccak("dregg-settlement-vk-dev-setup") | `docs/ops/DEPLOY-SOLANA-COSMOS-TESTNET.md:12-14,177-184,434-437` |
-| recursion VK self-recompute tautology | `circuit-prove/src/recursive_witness_bundle.rs:111,135,180-186` |
+| recursion VK self-recompute tautology | `circuit-prove/src/recursive_witness_bundle.rs:122,146,191-197` |
 | apex VK pin pair (`3ad1c9c6…5503`) + fail-closed teeth | `apex_shrink_gnark_export.rs:216-224`; `chain/gnark/settlement_circuit.go:122` |
 | circuit fingerprint = sha256(ccs.WriteTo) 128-bit | `chain/gnark/groth16_cache.go:50-58` |
 | gnark MPC API present (v0.11.0 `mpcsetup`) | `chain/gnark/go.mod:13`; `…/gnark@v0.11.0/backend/groth16/bn254/mpcsetup/{phase1,phase2,setup}.go` |

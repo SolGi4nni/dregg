@@ -2,9 +2,9 @@
 
 Regenerating the circuit descriptors **re-keys the live federation**: the AIR
 fingerprint of the deployed Effect VM descriptor feeds the recursive VK hash
-(`compute_recursive_vk_hash`, `circuit-prove/src/recursive_witness_bundle.rs:135-172`),
+(`compute_recursive_vk_hash`, `circuit-prove/src/recursive_witness_bundle.rs:146-183`),
 every verifier pins that hash (`lookup_recursive_vk`,
-`circuit-prove/src/recursive_witness_bundle.rs:180-186`; rejection at
+`circuit-prove/src/recursive_witness_bundle.rs:191-197`; rejection at
 `verifier/src/lib.rs:773-775`; the pin's tooth is
 `foreign_circuit_root_is_refused_by_vk_pin`,
 `circuit-prove/tests/ivc_turn_chain_rotated.rs:606`), and "distributing the new
@@ -20,7 +20,7 @@ found, the four controls, and what is implemented.
 | Source of truth | Lean emitters, `metatheory/Dregg2/Circuit/Emit/*.lean` (the `EMITTERS` list in `scripts/emit_descriptors.py`) |
 | Regen command | `scripts/emit-descriptors.sh:1-23` → `scripts/emit_descriptors.py` — runs `lake env lean --run` per emitter, routes stdout into `circuit/descriptors/*.{json,tsv}`, re-pins the `*_FP` sha256 constants in five Rust files (the `GUARDED` list, `scripts/check-descriptor-drift.sh:40-47`) |
 | Freshness gate | `scripts/check-descriptor-drift.sh` (regenerate-and-diff), run in CI as the `descriptor-drift` job (`.github/workflows/ci.yml:253-287`) |
-| The deployed VK | Compiled into the binary: `compute_recursive_vk_hash()` = VK-v2 layered hash over program bytes (`recursive_witness_bundle.rs:103`), the AIR fingerprint of `AIR_DESCRIPTOR` (`:137`), the verifier source hash (`:123`), and the pinned Plonky3 rev (`:111`). The registry accepts exactly this one hash (`:180-186`) |
+| The deployed VK | Compiled into the binary: `compute_recursive_vk_hash()` = VK-v2 layered hash over program bytes (`recursive_witness_bundle.rs:103`), the AIR fingerprint of `AIR_DESCRIPTOR` (`:148`), the verifier source hash (`:134`), and the pinned Plonky3 rev (`:122`). The registry accepts exactly this one hash (`:191-197`) |
 | Byte pins at rest | `*_FP` constants + `include_str!` in `circuit/src/effect_vm_descriptors.rs` etc. (self-consistency only — the drift-gate header, `check-descriptor-drift.sh:6-10`, says so plainly); the by-name predicate goldens (`circuit/src/descriptor_by_name.rs:33-40`) are additionally byte-pinned by Lean `#guard`s + `circuit-prove/tests/*_emit_gate.rs` |
 | Deployment | Descriptors are committed in-repo; the flip = push + rebuild (`docs/HANDOFF-v13-VK-EPOCH.md:54-69`). `genesis.json` carries only per-app factory VKs (`node/src/genesis.rs:365-383`), never the circuit VK |
 

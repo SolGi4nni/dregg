@@ -91,14 +91,16 @@ Several P0 items the launch-readiness bullet names as open are, at HEAD, **done*
 
 ### 2.3 Freeze — the four targets, at current resolution
 
-- **The recursion VK is a self-recompute tautology.** `circuit-prove/src/recursive_witness_bundle.rs:180-186`:
+- **The recursion VK is a self-recompute tautology.** `circuit-prove/src/recursive_witness_bundle.rs:191-197`:
   `lookup_recursive_vk(hash)` returns `Some(())` iff `hash == &compute_recursive_vk_hash()` — and
-  `compute_recursive_vk_hash()` (`:135`) derives that hash from `RECURSION_P3_REV` and the verifier
-  fingerprint at call time; the producer sets exactly that value (`:302`) and the verify path checks it
-  (`:363`). Nothing is pinned to an externally-frozen ceremony output; the "registry" has one entry that
-  is recomputed from the same inputs it checks. (Aside: the hashed `RECURSION_P3_REV = "c14b5fc0…"`
-  (`:111`) is a *different* rev than the `Cargo.toml:236` pin `0a4a554` — the embedded proving-system id
-  is decoupled from the actual dep rev, and should be reconciled in the same edit.) The settlement
+  `compute_recursive_vk_hash()` (`:146`) derives that hash from `RECURSION_P3_REV` and the verifier
+  fingerprint at call time; the producer sets exactly that value (`:313`) and the verify path checks it
+  (`:374`). Nothing is pinned to an externally-frozen ceremony output; the "registry" has one entry that
+  is recomputed from the same inputs it checks. (Aside, RESOLVED 2026-07-24: the hashed
+  `RECURSION_P3_REV` (`:122`) was `"c14b5fc0…"`, a *different* rev than the `Cargo.toml:246` pin
+  `0a4a554e` — 19 fork commits stale, spanning a nondeterministic-VK-fingerprint fix and an IVC
+  mixed-root forgery fix. It now matches, and `scripts/check-p3-rev.sh` FAILS on divergence
+  instead of warning. The tautology above is unaffected and remains open.) The settlement
   Groth16 VK *beneath* it IS a real external pin (`DREGG_APEX_RECURSION_VK`,
   `apex_shrink_gnark_export.rs:219-220`, fail-closed by `check_apex_vk_identity_pin`, mirrored by
   `chain/gnark/settlement_circuit.go:122`), but it is produced by a toxic-waste dev ceremony
@@ -235,8 +237,8 @@ gate G3).
    contribution with each transcript + attestation published; a public transcript verifier anyone can run
    to confirm the final key derives from the full contribution chain and no toxic waste survives.
 2. **Kill the tautology:** pin the ceremony output as a hex KAT constant and change `lookup_recursive_vk`
-   (`recursive_witness_bundle.rs:180`) to compare `hash` against that frozen constant instead of
-   `compute_recursive_vk_hash()`; reconcile `RECURSION_P3_REV` (`:111`) with the real dep rev. Re-key the
+   (`recursive_witness_bundle.rs:191`) to compare `hash` against that frozen constant instead of
+   `compute_recursive_vk_hash()`. (`RECURSION_P3_REV` was already reconciled 2026-07-24.) Re-key the
    `DREGG_APEX_RECURSION_VK` / `DreggApexRecursionVk` pinned pair and `fixtures/apex_vk_identity.json` in
    one commit (`FRI-CUTOVER-PLAN.md` §2 Phase 4.2).
 3. **Freeze the rest of genesis:** `federation_id` is already deterministic (`genesis.rs:247`); freeze the
@@ -316,7 +318,7 @@ Other risks, each with its check:
 | no bare-clone gate | NAMED (open) | absence in `.github/workflows/` |
 | local `main` +3 ahead of `origin/main` | operational | `git rev-list --count origin/main..HEAD` |
 | lean-seed `TAG=` empty → gate skips | BUILT, unpublished | `dregg-lean-ffi/lean-seed.pin`; `ci.yml:240-276` |
-| recursion VK self-recompute tautology | BUILT (tautological) | `recursive_witness_bundle.rs:111,135,180-186,302,363` |
+| recursion VK self-recompute tautology | BUILT (tautological) | `recursive_witness_bundle.rs:122,146,191-197,313,374` |
 | apex VK pinned but toxic-waste dev setup | BUILT; ceremony NAMED | `apex_shrink_gnark_export.rs:219-220`; `settlement_circuit.go:122` |
 | 13 `-staged` deployed registries | BUILT | `circuit/descriptors/*staged*`; `docs/VK-REGEN-LOG.md` |
 | 8-felt commitment RUNS + tooth; 1-felt fenced | RUNS | `circuit/src/faithful8.rs`; `ivc.rs:175,184,1423`; `ci.yml:287-299` |

@@ -126,7 +126,7 @@ on every push, and any statement of the form "the deployed VK is X" that survive
 1. **VK ceremony → pinned constant.** Today acceptance is a self-recompute:
    `lookup_recursive_vk` compares the submitted hash against
    `compute_recursive_vk_hash()` computed *in the same binary*
-   (`circuit-prove/src/recursive_witness_bundle.rs:180-186`) — sound as a rejection
+   (`circuit-prove/src/recursive_witness_bundle.rs:191-197`) — sound as a rejection
    filter, tautological as a freeze (whatever the binary computes, it accepts). The gate
    is a production MPC ceremony whose output is pinned as a hex KAT constant, so the
    binary checks against a number it did not derive. The settlement side shares this

@@ -13,12 +13,24 @@
 # `plonky3-recursion` lines (never a blind grep of the whole file). For the CI
 # workflows + wasm/Cargo.toml the only 40-hex tokens present are the fork rev.
 #
-# NOT enforced here (reported as a WARNING, see below): the VK-hash constant
-# RECURSION_P3_REV in circuit-prove/src/recursive_witness_bundle.rs. It is a
-# proving-system identifier folded into the deployed recursive VK hash, so
-# changing it re-keys the VK -- a VK-epoch event on a different governance track
-# than a lockstep gate. This script SURFACES a drift there but does not fail on
-# it, because the fix is deliberately human-gated.
+# ALSO enforced (was WARN-only until 2026-07-24): the VK-hash constant
+# RECURSION_P3_REV in circuit-prove/src/recursive_witness_bundle.rs. It is the
+# proving-system id folded into compute_recursive_vk_hash() -- the value
+# lookup_recursive_vk() accepts on, i.e. the light-client trust anchor.
+#
+# It was excluded as "a VK-epoch event on a human-gated track". That reasoning did
+# not survive contact with the code: compute_recursive_vk_hash() is recomputed by
+# BOTH producer and verifier from this same constant, and NO golden/frozen hash of
+# it exists anywhere in the tree -- so reconciling the string re-keys a value
+# nothing external pins. The apex governance anchor DREGG_APEX_RECURSION_VK is a
+# blake3 fingerprint of VK MATERIAL (recursion_vk_fingerprint) and does not read
+# this constant at all. VK-CEREMONY.md's own cutover lists the reconcile as step
+# (3) of §6.1, independent of ceremony output -- it was bundled into a BLOCKED
+# ceremony, which is how it stayed drifted while the gate could not fail.
+#
+# A gate that cannot fail is not a gate (cf. scripts/check-mirror-gates.sh: "a
+# gate that cannot bark is worse than none"), and this is the one consumer whose
+# drift is directly security-relevant. It FAILS here.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,14 +113,31 @@ else
   fi
 fi
 
-# --- WARN-only: the VK-hash constant (VK-epoch-gated, not a lockstep failure).
+# --- ENFORCED: the VK-hash constant. This is the MOST load-bearing consumer, not
+# the least: RECURSION_P3_REV is folded into compute_recursive_vk_hash(), the value
+# lookup_recursive_vk() accepts on -- the light-client trust anchor's proving-system id.
 vk="$repo_root/circuit-prove/src/recursive_witness_bundle.rs"
-if [[ -f "$vk" ]]; then
+if [[ ! -f "$vk" ]]; then
+  echo "FAIL: VK-hash consumer missing: circuit-prove/src/recursive_witness_bundle.rs" >&2
+  status=1
+else
   vk_rev="$(grep 'RECURSION_P3_REV' "$vk" | grep -ioE '[0-9a-f]{40}' | head -1 || true)"
-  if [[ -n "$vk_rev" && "$vk_rev" != "$P3_REV" ]]; then
-    echo "WARN: RECURSION_P3_REV in recursive_witness_bundle.rs is $vk_rev, not $P3_REV" >&2
-    echo "WARN:   this drifts the deployed VK-hash proving-system id from the actual" >&2
-    echo "WARN:   fork rev. Fixing it re-keys the VK (a VK-epoch event) -- human-gated." >&2
+  if [[ -z "$vk_rev" ]]; then
+    echo "FAIL: RECURSION_P3_REV in recursive_witness_bundle.rs carries no 40-hex rev --" >&2
+    echo "      the VK-hash proving-system id has vanished and this check would otherwise" >&2
+    echo "      PASS having checked nothing (same vanished-pin class as above)." >&2
+    status=1
+  elif [[ "$vk_rev" != "$P3_REV" ]]; then
+    echo "FAIL: RECURSION_P3_REV in recursive_witness_bundle.rs is $vk_rev, not $P3_REV" >&2
+    echo "      The deployed recursive VK hash therefore advertises a proving system that" >&2
+    echo "      is NOT the one compiled in (Cargo.lock resolves $P3_REV). Old recursive" >&2
+    echo "      proofs built against $vk_rev stay indistinguishable-by-VK-hash from" >&2
+    echo "      current ones -- the exact failure this constant exists to prevent." >&2
+    echo "      FIX: reconcile the constant with the rev Cargo.lock establishes." >&2
+    echo "      This re-keys compute_recursive_vk_hash(), which NOTHING external pins" >&2
+    echo "      (lookup_recursive_vk recomputes it; the apex anchor DREGG_APEX_RECURSION_VK" >&2
+    echo "      is a fingerprint of VK MATERIAL and is unaffected). It is not a ceremony." >&2
+    status=1
   fi
 fi
 

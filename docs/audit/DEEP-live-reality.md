@@ -221,7 +221,7 @@ The memory's "green is a self-recompute tautology" is **too pessimistic for the 
   covers the root workspace only; the full `--workspace` build is `workflow_dispatch`-only.)
 - **TAUTOLOGY — the recursion VK.** `lookup_recursive_vk` returns `Some` iff the hash equals
   `compute_recursive_vk_hash()` — producer and verifier call the same function; nothing pinned externally
-  (`circuit-prove/src/recursive_witness_bundle.rs:180-181, 135-172, 302, 363`). Catches a stale-rev proof,
+  (`circuit-prove/src/recursive_witness_bundle.rs:191-192, 146-183, 313, 374`). Catches a stale-rev proof,
   not a forged VK.
 - **FROZEN CONSTANT but NOT CI-exercised — the apex settlement VK.** `DREGG_APEX_RECURSION_VK` is a committed
   hex constant compared against a runtime-derived fingerprint, fail-closed
