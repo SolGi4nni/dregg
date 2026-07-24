@@ -58,3 +58,26 @@ CPU+MPC (`FHEGG-RESIDENT-CROSSING-ANALYSIS.md`), so GPU-residency is a clear-tie
 *One honest negative measurement is not a thesis about a system.* The fold losing on GPU almost shipped as
 "GPU is marginal for fhEgg" — when the operation DrEX actually spends its time on (the multiply) wins an order
 of magnitude. Measure the real op, on the real hardware, before concluding.
+
+---
+
+## 5. Continuation (Opus 5, after disk cleanup + ember "keep pursuing visions")
+
+- **Disk unblocked** (ember's ask): removed 297 stale build dirs → hbox 26G→255G, persvati 12G→784G free
+  (codex's `breadstuffs`/`datacake` untouched). This reopened the `tfhe-integer` crossover frontier.
+- **The dark-tier bombshell, MEASURED:** the TFHE bootstrap core op (external product) crosses over to GPU at
+  **N=4096, the deployed degree** — persvati iGPU exact-RNS-NTT path **2.55× vs CPU**, bit-exact. So the
+  dark-tier oblivious-argmax crossing CAN be GPU-accelerated at the size that matters; "house-blind AND fast"
+  is a measured possibility. (hbox 6750 XT discrete number pending — expected higher.) Below N=4096 the op is
+  too small (launch overhead), consistent with every kernel here.
+- **§3.2 malicious-share security, now theorems** (`DarkBazaarShareValidity.lean`, 5 keystones): `ShareValid`
+  (a share must be its VSS-committed contribution + safe noise); `unvalidated_shift_breaks_opening` (an
+  UNvalidated share can move the message — the ZK check is necessary); `valid_shares_reconstruct_honest_key`
+  (validated shares reconstruct the honest collective key `(Σsᵢ)·c1` — a malicious party bound by validity
+  can only inject bounded noise, never shift the key). The same-opening apex is now **10 files**.
+
+**Revised priority given the measurements:** the dark tier is perf-viable (bootstrap wins at deployed size)
+AND theory-complete (soundness + hiding + necessity + malicious-security are theorems). The gap is the LIVE
+construction — the runtime same-opening emitter + the distributed prover (§3.3) + wiring — which is codex's
+circuit-prove/product turf. Two dragons: the theory + perf foundation is proved and measured on our lane; the
+live wiring is codex's. When they meet, the dark clearing is real.
