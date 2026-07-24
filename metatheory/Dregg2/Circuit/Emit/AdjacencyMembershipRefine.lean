@@ -58,7 +58,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt Lookup TableId
-   WindowConstraint WindowExpr ChipTableSound chip_lookup_sound chipLookupTuple CHIP_RATE
+   WindowConstraint WindowExpr ChipTableSound chipLookupTupleNarrow poseidon2narrow CHIP_RATE
    memLog mapLog)
 open Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eqToModEq gate_modEq_iff pPrimeInt)
@@ -209,14 +209,17 @@ on ANY row (the lookup is not gated). This is where the Poseidon2 CR carrier ent
 theorem lookupChip {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (j : Nat) (hj : j < t.rows.length) (left right par : Nat) (lanes : List Nat)
-    (hmem : VmConstraint2.lookup ⟨TableId.poseidon2,
-              chipLookupTuple [.var left, .var right] par lanes⟩ ∈ adjacencyDesc.constraints) :
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
+    (j : Nat) (hj : j < t.rows.length) (left right par : Nat)
+    (hmem : VmConstraint2.lookup ⟨poseidon2narrow,
+              chipLookupTupleNarrow [.var left, .var right] par⟩ ∈ adjacencyDesc.constraints) :
     (envAt t j).loc par = hash [(envAt t j).loc left, (envAt t j).loc right] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var left, .var right] par lanes (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+  rw [hwire] at h
+  have hs := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
+    (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var left, .var right] par (by show (2 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared first-row PI binding pins `loc[col] = pub[k]` on row 0. -/
@@ -299,15 +302,16 @@ facts (discharged by `adj_mem` at the call). -/
 theorem step_of_sat {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (cur sib dir left right par : Nat) (lanes : List Nat)
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
+    (cur sib dir left right par : Nat)
     (hcanon : PathCanon t cur sib dir left right par)
     (memDir : VmConstraint2.base (.gate (dirBinaryBody dir)) ∈ adjacencyDesc.constraints)
     (memLeft : VmConstraint2.base (.gate (leftOrderBody cur sib dir left))
                  ∈ adjacencyDesc.constraints)
     (memRight : VmConstraint2.base (.gate (rightOrderBody cur sib dir right))
                  ∈ adjacencyDesc.constraints)
-    (memLook : VmConstraint2.lookup ⟨TableId.poseidon2,
-                 chipLookupTuple [.var left, .var right] par lanes⟩
+    (memLook : VmConstraint2.lookup ⟨poseidon2narrow,
+                 chipLookupTupleNarrow [.var left, .var right] par⟩
                  ∈ adjacencyDesc.constraints)
     (memChain : VmConstraint2.windowGate (copyWindow cur par) ∈ adjacencyDesc.constraints) :
     ∀ j, j + 1 < t.rows.length →
@@ -328,7 +332,7 @@ theorem step_of_sat {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
     (activeGateZero hsat j hj hlast _ memDir)
     (activeGateZero hsat j hj hlast _ memLeft)
     (activeGateZero hsat j hj hlast _ memRight)
-    (lookupChip hsat hChip j hj left right par lanes memLook)
+    (lookupChip hsat hChip hwire j hj left right par memLook)
   rw [hchain]; exact hcombine
 
 /-! ## §5 — the whole-descriptor refinement (SAT_IMPLIES_SEM), and the named residual. -/
@@ -395,13 +399,14 @@ theorem adjacency_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : AdjacencyCanon t) :
     AdjacencyAuthFragment hash t := by
   have hLlt : t.rows.length - 1 < t.rows.length := by omega
   -- the two authentic folds (to the top spine node), leaf pinned to its PI.
-  have hstepL := step_of_sat hsat hChip L_CUR L_SIB L_DIR L_LEFT L_RIGHT L_PAR L_PAR_LANES
+  have hstepL := step_of_sat hsat hChip hwire L_CUR L_SIB L_DIR L_LEFT L_RIGHT L_PAR
     hc.pathL (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
-  have hstepU := step_of_sat hsat hChip U_CUR U_SIB U_DIR U_LEFT U_RIGHT U_PAR U_PAR_LANES
+  have hstepU := step_of_sat hsat hChip hwire U_CUR U_SIB U_DIR U_LEFT U_RIGHT U_PAR
     hc.pathU (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
   have hfoldL := fold_generic hash t L_CUR L_DIR L_SIB hstepL _ hLlt
   have hfoldU := fold_generic hash t U_CUR U_DIR U_SIB hstepU _ hLlt
@@ -420,8 +425,8 @@ theorem adjacency_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
   have hidxL := lastPi hsat hlen L_IDX_OUT PI_IDX_LOWER (by adj_mem)
   have hidxU := lastPi hsat hlen U_IDX_OUT PI_IDX_UPPER (by adj_mem)
   -- root is a genuine hash of the last-row (left,right) pair (the lookup fires on every row).
-  have hhashL := lookupChip hsat hChip _ hLlt L_LEFT L_RIGHT L_PAR L_PAR_LANES (by adj_mem)
-  have hhashU := lookupChip hsat hChip _ hLlt U_LEFT U_RIGHT U_PAR U_PAR_LANES (by adj_mem)
+  have hhashL := lookupChip hsat hChip hwire _ hLlt L_LEFT L_RIGHT L_PAR (by adj_mem)
+  have hhashU := lookupChip hsat hChip hwire _ hLlt U_LEFT U_RIGHT U_PAR (by adj_mem)
   -- consecutiveness: the last-row catch tooth (mod p) + the two index pins, lifted by canonicality.
   have hcons0 := lastBoundaryZero hsat hlen consecutiveBody (by adj_mem)
   have hconsC : (envAt t (t.rows.length - 1)).loc U_IDX_OUT
@@ -471,11 +476,12 @@ theorem adjacency_full_bridge {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : AdjacencyCanon t)
     (htop : TopLevelOrdered hash t) :
     AdjacentLeavesUnderRoot hash (t.pub PI_LEAF_LOWER) (t.pub PI_LEAF_UPPER)
       (t.pub PI_ROOT) (t.pub PI_IDX_LOWER) (t.pub PI_IDX_UPPER) := by
-  have frag := adjacency_sat_refines hlen hsat hChip hc
+  have frag := adjacency_sat_refines hlen hsat hChip hwire hc
   obtain ⟨stepsL, hfoldL⟩ := frag.foldLower
   obtain ⟨stepsU, hfoldU⟩ := frag.foldUpper
   obtain ⟨htopL, htopU⟩ := htop
@@ -544,7 +550,10 @@ private def cTbl : List (List ℤ) :=
 
 private def cTrace : VmTrace :=
   { rows := [cRow], pub := cPub
-    tf := fun tid => match tid with | .poseidon2 => cTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => cTbl
+      | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable cTbl
+      | _ => [] }
 
 /-- The concrete chip table is genuinely SOUND (every row is a real `chipRow` of `cHash`) — so the
 NAMED carrier `ChipTableSound` is realizable, not just assumed. -/
@@ -612,7 +621,7 @@ theorem concrete_canon : AdjacencyCanon cTrace := by
 /-- The bridge genuinely APPLIES to the concrete inhabited instance: all FOUR hypotheses
 (`Satisfied2`, `ChipTableSound`, `0 < length`, the canonicality envelope) are jointly satisfied. -/
 example : AdjacencyAuthFragment cHash cTrace :=
-  adjacency_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
+  adjacency_sat_refines (by decide) concrete_sat concrete_chipSound (by rfl) concrete_canon
 
 /-- The FAILING trace: identical, but `U_IDX_OUT = 2` breaks the internalized consecutiveness catch
 tooth (`2 - 0 - 1 = 1 ≠ 0`). -/

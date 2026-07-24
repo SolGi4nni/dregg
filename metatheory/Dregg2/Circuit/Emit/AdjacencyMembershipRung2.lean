@@ -82,7 +82,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt Lookup TableId
-   WindowConstraint WindowExpr ChipTableSound chip_lookup_sound chipLookupTuple CHIP_RATE
+   WindowConstraint WindowExpr ChipTableSound chipLookupTupleNarrow poseidon2narrow CHIP_RATE
    chipRow memLog mapLog memCheck_nil)
 open Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 open Dregg2.Circuit.Emit.AdjacencyMembershipRefine
@@ -131,6 +131,7 @@ theorem topLevelOrdered_of_lastRowOrdered {hash : List ℤ → ℤ} {minit : ℤ
     {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hlen : 0 < t.rows.length)
     (hc : AdjacencyCanon t)
     (hlro : LastRowOrdered t) :
@@ -143,11 +144,11 @@ theorem topLevelOrdered_of_lastRowOrdered {hash : List ℤ → ℤ} {minit : ℤ
   · exact combine_of_gates hash (envAt t (t.rows.length - 1)).loc
       L_CUR L_SIB L_DIR L_LEFT L_RIGHT L_PAR
       hcDirL hcCurL hcSibL hcLeftL hcRightL hdL hlL hrL
-      (lookupChip hsat hChip _ hLlt L_LEFT L_RIGHT L_PAR L_PAR_LANES (by adj_mem))
+      (lookupChip hsat hChip hwire _ hLlt L_LEFT L_RIGHT L_PAR (by adj_mem))
   · exact combine_of_gates hash (envAt t (t.rows.length - 1)).loc
       U_CUR U_SIB U_DIR U_LEFT U_RIGHT U_PAR
       hcDirU hcCurU hcSibU hcLeftU hcRightU hdU hlU hrU
-      (lookupChip hsat hChip _ hLlt U_LEFT U_RIGHT U_PAR U_PAR_LANES (by adj_mem))
+      (lookupChip hsat hChip hwire _ hLlt U_LEFT U_RIGHT U_PAR (by adj_mem))
 
 /-- **`adjacency_rung2_closes` — THE RUNG-2 DISCHARGE (semantic form).** A trace that `Satisfied2`s the
 emitted `adjacencyDesc`, rides the NAMED Poseidon2 chip carrier, and additionally has the last-row
@@ -160,12 +161,13 @@ theorem adjacency_rung2_closes {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : AdjacencyCanon t)
     (hlro : LastRowOrdered t) :
     AdjacentLeavesUnderRoot hash (t.pub PI_LEAF_LOWER) (t.pub PI_LEAF_UPPER)
       (t.pub PI_ROOT) (t.pub PI_IDX_LOWER) (t.pub PI_IDX_UPPER) :=
-  adjacency_full_bridge hlen hsat hChip hc
-    (topLevelOrdered_of_lastRowOrdered hsat hChip hlen hc hlro)
+  adjacency_full_bridge hlen hsat hChip hwire hc
+    (topLevelOrdered_of_lastRowOrdered hsat hChip hwire hlen hc hlro)
 
 /-! ## §3 — THE EMIT-FIX (`adjLastOrderFix`, now LANDED in `AdjacencyMembershipEmit`), proven to
 ENFORCE `LastRowOrdered`.
@@ -234,11 +236,12 @@ theorem adjacency_rung2_fixed_closes {hash : List ℤ → ℤ} {minit : ℤ → 
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : AdjacencyCanon t) :
     AdjacentLeavesUnderRoot hash (t.pub PI_LEAF_LOWER) (t.pub PI_LEAF_UPPER)
       (t.pub PI_ROOT) (t.pub PI_IDX_LOWER) (t.pub PI_IDX_UPPER) := by
   have hlro : LastRowOrdered t := lastRowOrdered_of_fix hsat hlen adjLastOrderFix_subset
-  exact adjacency_rung2_closes hlen hsat hChip hc hlro
+  exact adjacency_rung2_closes hlen hsat hChip hwire hc hlro
 
 /-! ## §5 — What the CR carrier DOES buy (and honestly, what it does NOT). -/
 
@@ -259,6 +262,7 @@ theorem topPair_no_forgery {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : AdjacencyCanon t)
     (cf : @CollisionFree ℤ _ (dfaPrims hash))
     (gL gR : ℤ)
@@ -266,7 +270,7 @@ theorem topPair_no_forgery {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin
     (envAt t (t.rows.length - 1)).loc L_LEFT = gL
     ∧ (envAt t (t.rows.length - 1)).loc L_RIGHT = gR := by
   letI := dfaPrims hash
-  have frag := adjacency_sat_refines hlen hsat hChip hc
+  have frag := adjacency_sat_refines hlen hsat hChip hwire hc
   have heq : CryptoPrimitives.compress ((envAt t (t.rows.length - 1)).loc L_LEFT)
                 ((envAt t (t.rows.length - 1)).loc L_RIGHT)
            = CryptoPrimitives.compress gL gR := by
@@ -312,7 +316,10 @@ private def wTbl : List (List ℤ) :=
 
 private def wTrace : VmTrace :=
   { rows := [wRow], pub := wPub
-    tf := fun tid => match tid with | .poseidon2 => wTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => wTbl
+      | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable wTbl
+      | _ => [] }
 
 /-- The concrete chip table is genuinely SOUND (every row is a real `chipRow` of `mHash`). -/
 theorem wtChipSound : ChipTableSound mHash (wTrace.tf .poseidon2) := by
@@ -385,7 +392,7 @@ reaching the shared root `1020` at consecutive indices `0, 1`. -/
 theorem wtTrace_rung2_fires :
     AdjacentLeavesUnderRoot mHash (wTrace.pub PI_LEAF_LOWER) (wTrace.pub PI_LEAF_UPPER)
       (wTrace.pub PI_ROOT) (wTrace.pub PI_IDX_LOWER) (wTrace.pub PI_IDX_UPPER) :=
-  adjacency_rung2_closes (by decide) wtSat wtChipSound wtCanon wtLastRowOrdered
+  adjacency_rung2_closes (by decide) wtSat wtChipSound (by rfl) wtCanon wtLastRowOrdered
 
 /-- The recovered spec is over the genuine public values (leaves `10,20`; root `1020`; indices `0,1`) —
 a real adjacency, not a constant. -/
@@ -422,7 +429,10 @@ private def fTbl : List (List ℤ) :=
 
 private def fTrace : VmTrace :=
   { rows := [fRow], pub := fPub
-    tf := fun tid => match tid with | .poseidon2 => fTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => fTbl
+      | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable fTbl
+      | _ => [] }
 
 theorem fChipSound : ChipTableSound mHash (fTrace.tf .poseidon2) := by
   intro r hr
@@ -600,7 +610,10 @@ private def gTbl : List (List ℤ) :=
 
 private def gTrace : VmTrace :=
   { rows := [gRow], pub := gPub
-    tf := fun tid => match tid with | .poseidon2 => gTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => gTbl
+      | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable gTbl
+      | _ => [] }
 
 theorem gChipSound : ChipTableSound mHash (gTrace.tf .poseidon2) := by
   intro r hr
