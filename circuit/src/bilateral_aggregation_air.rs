@@ -5,20 +5,29 @@
 //! This module collapses Phase 1's "N per-cell STARK proofs + Rust cross-cell
 //! match loop" into a single outer AIR whose public input is the reduced
 //! bundle-level summary. The outer trace has one row per inner per-cell proof
-//! (padded to a power of two). Each row carries that proof's complete
-//! active PI v3 vector (`inner_pi::ACTIVE_BASE_COUNT` felts) lifted into trace
-//! columns, plus an identically-shaped "expected" projection derived from the
-//! bilateral schedule (`turn::bilateral_schedule::ExpectedBilateral::roots_for/counts_for`
-//! over the row's owner-cell). The AIR's constraints then enforce, in one
-//! algebraic pass, every check the Rust loop performs today:
+//! (padded to a power of two). Each row carries that proof's decoupled 49-felt
+//! bilateral-schedule block (`Sched.*`) lifted into trace columns plus 3
+//! accumulators (width **52** in the compacted v3 layout). The AIR's constraints
+//! then enforce, in one algebraic pass:
 //!
-//!   CG-2  turn-identity agreement
-//!         per-row PI slots [TURN_HASH, EFFECTS_HASH_GLOBAL, ACTOR_NONCE,
-//!         PREVIOUS_RECEIPT_HASH] equal the outer PI's matching slots.
+//!   CG-2  turn-identity agreement (per-row, IN-CIRCUIT in v3)
+//!         The FIRST row's identity slots [TURN_HASH, EFFECTS_HASH_GLOBAL,
+//!         ACTOR_NONCE, PREVIOUS_RECEIPT_HASH] are pinned to the outer PI by
+//!         `pi_binding`, and 13 identity-carry `window_gate`s force
+//!         `next[c] == local[c]` on every transition — so EVERY row's identity
+//!         slots equal the published turn identity. (v2 bound only the first +
+//!         last rows, leaving the middle rows' identity columns in-AIR
+//!         unconstrained — the gap `BilateralAggregationCompact.gapTrace`
+//!         exhibits; v3 closes it, proven `compact_identity_every_row`.)
 //!
-//!   CG-3  schedule replay
-//!         per-row PI counts + roots equal the per-cell "expected" columns
-//!         the prover populated from the schedule.
+//!   CG-3  schedule replay — RETIRED in v3.
+//!         v2 spent 35 gates on `sched[13+k] == expected[49+k]` where BOTH
+//!         blocks were prover-filled from the same row, so the block was a
+//!         tautological self-check that pinned nothing (any trace satisfied it
+//!         by copying). Those 35 gates + their 35 dead expected columns are
+//!         DELETED. The schedule block's counts/roots are bound to the canonical
+//!         Turn OFF-AIR (`verify_aggregated_bundle` step 5, `schedule.counts_for`
+//!         / `roots_for`) — that is the real closure, not the deleted self-check.
 //!
 //!   CG-4  IS_AGENT_CELL accounting
 //!         running cumulative sum of IS_AGENT_CELL across rows. Boundary:
@@ -57,18 +66,26 @@
 //! to the per-cell proofs the prover ran in (1). A consumer downstream needs
 //! only (3) + the outer PI to know the bundle is bilaterally consistent.
 //!
-//! ## Trace layout
+//! ## Trace layout (DEPLOYED — the decoupled v3 `agg::*` layout)
 //!
-//! `width = AGG_WIDTH` columns. Per row:
+//! `width = agg::WIDTH` = **52** columns. Per row:
 //!
 //! ```text
-//!  [0  .. 74)   inner_pi_buffer       — the cell's full γ.2 PI vector
-//!  [74 .. 81)   expected_counts       — 7 count fields from the schedule
-//!  [81 ..109)   expected_roots        — 7 × 4-felt root fields
-//!  [109]        is_agent_cumulative   — running sum of IS_AGENT_CELL
-//!  [110]        consistent_indicator  — bool 1 = this row's checks pass
-//!  [111]        n_cells_active        — running active-row counter
+//!  [0  .. 13)   schedule turn-identity  — 4 turn-hash + 4 effects-hash + nonce
+//!                                          + 4 previous-receipt (the 13 slots the
+//!                                          identity-carry window gates pin)
+//!  [13 .. 20)   schedule counts         — 7 bilateral count fields
+//!  [20 .. 48)   schedule roots          — 7 × 4-felt root fields
+//!  [48]         is_agent_cell           — bool: this row is the agent cell
+//!  [49]         is_agent_cumulative     — running sum of IS_AGENT_CELL
+//!  [50]         consistent_indicator    — bool 1 = this row's checks pass
+//!  [51]         n_cells_active          — running active-row counter
 //! ```
+//!
+//! (v2 also carried a 35-felt `expected_counts`/`expected_roots` block at
+//! `[49, 84)` and 35 gates checking `schedule == expected`; both sides were
+//! prover-filled, so the block was a tautology — DELETED in v3, which is
+//! −40% committed columns.)
 //!
 //! Boundary constraints:
 //! - `is_agent_cumulative[last] == 1`
@@ -102,19 +119,25 @@ use crate::field::BabyBear;
 // `EffectVmDescriptor2` (`Dregg2/Circuit/Emit/EffectVmEmitBilateralAgg.lean`).
 // ---------------------------------------------------------------------------
 
-/// The byte-pinned Lean emission of the bilateral aggregation descriptor
-/// (`emitVmJson2 bilateralAggDescriptor`). The schedule contract is DECOUPLED from the v1
-/// `effect_vm::pi` buffer: the descriptor's main trace carries a standalone 49-felt schedule
-/// block (`Sched.*`), 35 expected columns, and 3 accumulators (width 87); the outer PI is a
-/// fixed 23 felts independent of N. The two cumulative-sum transitions are the new `windowGate`
-/// (two-row) constraint kind. Re-emit via `lake env lean --run` over a driver printing
-/// `emitVmJson2 bilateralAggDescriptor`; the SHA is pinned by
-/// `bilateral_aggregation_descriptor_matches_lean_pin`.
+/// The byte-pinned Lean emission of the COMPACTED bilateral aggregation descriptor
+/// (`emitVmJson2 bilateralAggDescriptorV3`, `BilateralAggregationCompact.lean`). The schedule
+/// contract is DECOUPLED from the v1 `effect_vm::pi` buffer: the descriptor's main trace carries a
+/// standalone 49-felt schedule block (`Sched.*`) and 3 accumulators (width **52**); the outer PI is
+/// a fixed 23 felts independent of N. The 35 prover-filled `sched[13+k] == expected[49+k]`
+/// self-check gates (and their 35 dead columns) that v2 carried are DELETED — both sides were
+/// prover-filled, so the block was a tautology that pinned nothing; 13 identity-carry `windowGate`s
+/// now pin the per-row turn-identity slots constant, which + the first-row PI bindings forces EVERY
+/// row onto the published turn identity (v2 bound only first/last — the middle-row gap `gapTrace`
+/// exhibits). Lean proves v3 accepts a STRICT subset of v2 against the deployed `Satisfied2`
+/// (`expand_satisfies` + `gapTrace_contract_not_v3`). The two cumulative-sum transitions remain the
+/// `windowGate` (two-row) kind (now 15 window gates total: 13 identity + 2 cumulative). Re-emit via
+/// `lake env lean --run EmitBilateralLegs.lean`; the SHA is pinned by
+/// `bilateral_aggregation_descriptor_matches_lean_pin` and the Lean `#guard`.
 pub const BILATERAL_AGGREGATION_DESCRIPTOR_JSON: &str =
-    include_str!("../descriptors/dregg-bilateral-aggregation-v2.json");
+    include_str!("../descriptors/dregg-bilateral-aggregation-v3.json");
 
-/// The descriptor's wire identity (matches `bilateralAggDescriptor.name`).
-pub const BILATERAL_AGGREGATION_DESCRIPTOR_NAME: &str = "dregg-bilateral-aggregation-v2";
+/// The descriptor's wire identity (matches `bilateralAggDescriptorV3.name`).
+pub const BILATERAL_AGGREGATION_DESCRIPTOR_NAME: &str = "dregg-bilateral-aggregation-v3";
 
 /// Parse the byte-pinned Lean descriptor into an [`EffectVmDescriptor2`]. The aggregation
 /// prover/verifier route through `descriptor_ir2::{prove,verify}_vm_descriptor2` against THIS
@@ -161,24 +184,21 @@ pub mod sched {
     pub const WIDTH: usize = 49;
 }
 
-/// The aggregation main trace: schedule block + expected cols + accumulators (Lean `Agg.*`).
+/// The COMPACTED (v3) aggregation main trace: schedule block + accumulators (Lean `AggC.*`,
+/// `BilateralAggregationCompact.lean`). The v2 `expected_counts`/`expected_roots` self-check block
+/// is DELETED (it was prover-filled on both sides — a tautology pinning nothing), so the three
+/// accumulators sit directly after the 49-felt schedule block (width 52, was 87).
 pub mod agg {
     use super::sched;
     /// The schedule block occupies `[0, Sched::WIDTH)`.
     pub const SCHED_BASE: usize = 0;
-    /// The per-cell EXPECTED counts (CG-3 replay target).
-    pub const EXPECTED_COUNTS_BASE: usize = sched::WIDTH;
-    pub const EXPECTED_COUNTS_LEN: usize = 7;
-    /// The per-cell EXPECTED roots (7 × 4).
-    pub const EXPECTED_ROOTS_BASE: usize = EXPECTED_COUNTS_BASE + EXPECTED_COUNTS_LEN;
-    pub const EXPECTED_ROOTS_LEN: usize = 28;
-    /// Running cumulative of `IS_AGENT_CELL`.
-    pub const IS_AGENT_CUMULATIVE_COL: usize = EXPECTED_ROOTS_BASE + EXPECTED_ROOTS_LEN;
-    /// Per-row "this row's checks passed" boolean.
+    /// Running cumulative of `IS_AGENT_CELL` (was col 84 in v2; the 35 expected cols are gone).
+    pub const IS_AGENT_CUMULATIVE_COL: usize = sched::WIDTH;
+    /// Per-row "this row's checks passed" boolean (was col 85).
     pub const CONSISTENT_INDICATOR_COL: usize = IS_AGENT_CUMULATIVE_COL + 1;
-    /// Running active-row counter.
+    /// Running active-row counter (was col 86).
     pub const N_CELLS_ACTIVE_COL: usize = CONSISTENT_INDICATOR_COL + 1;
-    /// Total main width.
+    /// Total main width: 49 + 3 = 52 (was 87).
     pub const WIDTH: usize = N_CELLS_ACTIVE_COL + 1;
     /// Absolute column of a schedule field.
     pub const fn sch_col(off: usize) -> usize {
@@ -331,20 +351,20 @@ impl AggregationOuterPi {
 
 pub struct AggregationInnerRowV2 {
     /// The decoupled bilateral-schedule block (`Sched::WIDTH` felts; see
-    /// [`schedule_block_from_inner_pi`]).
+    /// [`schedule_block_from_inner_pi`]). The v2 `expected_counts`/`expected_roots` fields are
+    /// GONE in the compacted v3 layout — the self-check they fed was a prover-filled tautology
+    /// (see [`BILATERAL_AGGREGATION_DESCRIPTOR_JSON`]); the schedule's counts/roots are bound to
+    /// the canonical Turn OFF-AIR by the aggregate verifier.
     pub schedule: [BabyBear; sched::WIDTH],
-    /// 7 expected counts, canonical order.
-    pub expected_counts: [BabyBear; 7],
-    /// 7 expected roots, each 4 felts, canonical order.
-    pub expected_roots: [[BabyBear; 4]; 7],
 }
 
-/// Build the DECOUPLED v2 aggregation trace (width [`agg::WIDTH`] = 87) from an ordered list of
-/// inner rows. Row layout mirrors Lean `Agg.*`: schedule block `[0, 49)`, expected counts
-/// `[49, 56)`, expected roots `[56, 84)`, `is_agent_cumulative` 84, `consistent_indicator` 85,
-/// `n_cells_active` 86. Active rows carry `consistent = 1`; padding rows (to the next power of
-/// two) carry `0` and forward the cumulatives + the turn-identity slots (so CG-2's last-boundary
-/// `pi_binding` holds when the last row is padding).
+/// Build the DECOUPLED v3 aggregation trace (width [`agg::WIDTH`] = 52) from an ordered list of
+/// inner rows. Row layout mirrors Lean `AggC.*`: schedule block `[0, 49)`, `is_agent_cumulative`
+/// 49, `consistent_indicator` 50, `n_cells_active` 51. Active rows carry `consistent = 1`; padding
+/// rows (to the next power of two) carry `0` and forward the cumulatives + the turn-identity slots.
+/// The identity mirror on padding rows is LOAD-BEARING in v3: the identity-carry window gates fire
+/// on the padding transitions too, so a padding row that did not mirror the turn identity would
+/// break the carry chain (in v2 it only satisfied the last-row `pi_binding`).
 pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<BabyBear>> {
     assert!(!rows.is_empty(), "aggregation needs at least one inner row");
     let n_active = rows.len();
@@ -359,13 +379,6 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
         for (j, &v) in row.schedule.iter().enumerate() {
             t[agg::sch_col(j)] = v;
         }
-        t[agg::EXPECTED_COUNTS_BASE..agg::EXPECTED_COUNTS_BASE + 7]
-            .copy_from_slice(&row.expected_counts);
-        for k in 0..7 {
-            for off in 0..4 {
-                t[agg::EXPECTED_ROOTS_BASE + k * 4 + off] = row.expected_roots[k][off];
-            }
-        }
         let is_agent_u = row.schedule[sched::IS_AGENT_CELL].as_u32();
         cum_agent += is_agent_u;
         n_cells_active += 1;
@@ -375,8 +388,9 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
         trace.push(t);
     }
 
-    // Padding rows: cumulative + n_cells_active carry forward; the turn-identity schedule
-    // fields mirror the first active row so the last-row CG-2 `pi_binding` is satisfied.
+    // Padding rows: cumulative + n_cells_active carry forward; the turn-identity schedule fields
+    // mirror the first active row so the identity-carry window gates hold across the padding
+    // transitions (and the last-row CG-2 `pi_binding` is satisfied).
     while trace.len() < n_padded {
         let mut t = vec![BabyBear::ZERO; agg::WIDTH];
         t[agg::IS_AGENT_CUMULATIVE_COL] = BabyBear::new(cum_agent);
@@ -403,7 +417,7 @@ pub fn build_aggregation_trace_v2(rows: &[AggregationInnerRowV2]) -> Vec<Vec<Bab
 }
 
 /// Prove the DECOUPLED bilateral aggregation through the Lean-emitted descriptor (law #1): the
-/// 87-col trace satisfies `bilateral_aggregation_descriptor()` against the 23-felt outer PI,
+/// 52-col trace satisfies `bilateral_aggregation_descriptor()` against the 23-felt outer PI,
 /// via the multi-table batch prover. No tables/memory/maps are committed (the descriptor is
 /// pure row-window arithmetic). The caller serialises the returned `Ir2BatchProof` with
 /// `postcard`, exactly as the rotated effect-vm leg does.
@@ -578,15 +592,23 @@ pub fn verify_tree_fold_v2(
 // `id_a != id_b`), or the prover must fabricate an `edge_id`/`sign` that
 // disagrees with the canonical schedule.
 //
-// The first is a Poseidon2 collision (~124-bit hard). The second is closed by
-// the verifier: it re-derives the *exact* multiset of canonical half-edges
-// (id, sign, self-in-bundle) from the Turn and requires the proof-bound trace
-// rows to equal it. So a malicious prover cannot drop a half-edge, flip a
-// sign, or invent an edge id: the balance constraint then provably fails.
+// The first — collision of two distinct canonical edge ids under `edge_fp` — is
+// NOT ~124-bit hard here: `edge_fp` is a SINGLE BabyBear image (one 31-bit felt),
+// so its collision resistance is only ~31-bit (birthday ~2^15.5). The in-circuit
+// balance == 0 boundary therefore is NOT, on its own, a cryptographic missing-peer
+// detector. The REAL closure is OFF-AIR (the "second" clause below): the verifier
+// re-derives the *exact* multiset of canonical half-edges (id, sign, self-in-bundle)
+// from the Turn and requires the proof-bound trace rows to equal it. So a malicious
+// prover cannot drop a half-edge, flip a sign, or invent an edge id — an
+// uncancelled term cannot be papered over by a felt-collision because the trace
+// multiset is pinned to the canonical schedule. (To make the in-circuit balance
+// itself a cryptographic detector, `edge_fp` would need widening to 4 felts; the
+// off-AIR multiset re-derivation is what closes it today.)
 //
 // This is a genuine in-circuit replacement for the Rust existence loop: the
 // uncancelled-term detection is performed by the STARK over the committed
-// trace (FRI + boundary opening), not by a Rust `HashSet`.
+// trace (FRI + boundary opening) BOUND to the off-AIR canonical multiset, not by
+// a Rust `HashSet` alone.
 //
 // ## Trace layout (`CSE_WIDTH` columns)
 //
@@ -1034,17 +1056,18 @@ pub fn build_tree_fold_trace(child_digests: &[BabyBear]) -> (Vec<Vec<BabyBear>>,
 mod tests {
     use super::*;
 
-    /// The byte-pinned descriptor parses and carries the Lean-pinned shape (`#guard`s in
-    /// `EffectVmEmitBilateralAgg.lean`): width 87, PI 23, 70 constraints, EXACTLY two window
-    /// gates, name `dregg-bilateral-aggregation-v2`. This is the law-#1 tooth — the Rust
-    /// aggregation reads ONLY this descriptor; a drift from the Lean golden is a hard failure.
+    /// The byte-pinned descriptor parses and carries the Lean-pinned COMPACTED (v3) shape
+    /// (`#guard`s in `BilateralAggregationCompact.lean`): width 52, PI 23, 48 constraints, EXACTLY
+    /// 15 window gates (13 identity-carry + 2 cumulative), name `dregg-bilateral-aggregation-v3`.
+    /// This is the law-#1 tooth — the Rust aggregation reads ONLY this descriptor; a drift from the
+    /// Lean golden is a hard failure.
     #[test]
     fn bilateral_descriptor_parses_with_lean_pinned_shape() {
         use crate::descriptor_ir2::VmConstraint2;
         let d = bilateral_aggregation_descriptor();
         assert_eq!(d.name, BILATERAL_AGGREGATION_DESCRIPTOR_NAME);
         assert_eq!(d.trace_width, agg::WIDTH);
-        assert_eq!(d.trace_width, 87);
+        assert_eq!(d.trace_width, 52);
         assert_eq!(d.public_input_count, outer_pi_v2::COUNT);
         assert_eq!(d.public_input_count, 23);
         assert!(
@@ -1053,8 +1076,9 @@ mod tests {
         );
         assert_eq!(
             d.constraints.len(),
-            70,
-            "the Lean #guard pins 70 constraints"
+            48,
+            "the Lean #guard pins 48 constraints (v2's 70, minus the 35 CG-3 self-checks, plus 13 \
+             identity-carry gates)"
         );
         let window_gates = d
             .constraints
@@ -1062,8 +1086,8 @@ mod tests {
             .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
             .count();
         assert_eq!(
-            window_gates, 2,
-            "exactly the two cumulative-sum window gates"
+            window_gates, 15,
+            "13 identity-carry + 2 cumulative-sum window gates"
         );
     }
 

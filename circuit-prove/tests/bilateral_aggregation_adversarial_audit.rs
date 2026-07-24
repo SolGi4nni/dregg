@@ -1,5 +1,5 @@
 //! ADVERSARIAL AUDIT (additive, read-only re: the emit) — extra isolating tampers the implementer
-//! did NOT write, to refute vacuity / a dropped constraint. Reuses the byte-identical golden.
+//! did NOT write, to refute vacuity / a dropped constraint. Reuses the byte-identical v3 golden.
 
 use std::panic::AssertUnwindSafe;
 
@@ -10,16 +10,17 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 
 const GOLDEN_JSON: &str =
-    include_str!("../../circuit/descriptors/dregg-bilateral-aggregation-v2.json");
+    include_str!("../../circuit/descriptors/dregg-bilateral-aggregation-v3.json");
 
-const AGG_WIDTH: usize = 87;
+const AGG_WIDTH: usize = 52;
+const ACTOR_NONCE: usize = 8;
 const COUNTS_BASE: usize = 13;
 const ROOTS_BASE: usize = 20;
 const IS_AGENT_CELL: usize = 48;
-const EXPECTED_COUNTS_BASE: usize = 49;
-const IS_AGENT_CUMULATIVE_COL: usize = 84;
-const CONSISTENT_INDICATOR_COL: usize = 85;
-const N_CELLS_ACTIVE_COL: usize = 86;
+// v3: the 35 expected columns are gone; the accumulators sit directly after the schedule block.
+const IS_AGENT_CUMULATIVE_COL: usize = 49;
+const CONSISTENT_INDICATOR_COL: usize = 50;
+const N_CELLS_ACTIVE_COL: usize = 51;
 const PI_N_CELLS: usize = 21;
 const PI_BILATERAL_CONSISTENT: usize = 22;
 const OUTER_PI_COUNT: usize = 23;
@@ -31,11 +32,9 @@ fn active_row(is_agent: u32, cum: u32, n: u32) -> Vec<BabyBear> {
     }
     for k in 0..7 {
         r[COUNTS_BASE + k] = BabyBear::new(500 + k as u32);
-        r[EXPECTED_COUNTS_BASE + k] = BabyBear::new(500 + k as u32);
     }
     for k in 0..28 {
         r[ROOTS_BASE + k] = BabyBear::new(600 + k as u32);
-        r[56 + k] = BabyBear::new(600 + k as u32);
     }
     r[IS_AGENT_CELL] = BabyBear::new(is_agent);
     r[IS_AGENT_CUMULATIVE_COL] = BabyBear::new(cum);
@@ -80,10 +79,12 @@ fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]
     matches!(r, Err(_) | Ok(Err(_)))
 }
 
-/// NEW TAMPER 1 — the CG-3 ROOTS leg (implementer only bit the counts leg). A carried root column
-/// (col 20) bumped off its expected column (col 56) must be REJECTED.
+/// NEW TAMPER 1 (v3) — the identity-carry gate on the ACTOR_NONCE slot (col 8), a DIFFERENT identity
+/// column than the emit-gate canary's turn_hash[0]. Refutes a dropped identity-carry gate for the
+/// nonce slot: forge row-1's ACTOR_NONCE off the shared identity. Rows 0 and 3 stay honest (so both
+/// PI bindings hold); only the row0→row1 identity carry on col 8 is unsatisfied.
 #[test]
-fn root_replay_mismatch_refuses() {
+fn identity_carry_nonce_slot_refuses() {
     let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
     let (trace, pi) = honest();
     assert!(
@@ -91,10 +92,10 @@ fn root_replay_mismatch_refuses() {
         "honest must accept (non-vacuous)"
     );
     let mut bad = trace.clone();
-    bad[0][ROOTS_BASE] = bad[0][ROOTS_BASE] + BabyBear::ONE;
+    bad[1][ACTOR_NONCE] = bad[1][ACTOR_NONCE] + BabyBear::new(9);
     assert!(
         rejects(&desc, &bad, &pi),
-        "root replay mismatch must be REJECTED (CG-3 roots)"
+        "a forged middle-row ACTOR_NONCE must be REJECTED (identity-carry, col 8)"
     );
 }
 
@@ -114,9 +115,7 @@ fn last_row_n_pi_binding_refuses() {
 }
 
 /// NEW TAMPER 3 — the firstNSeed boundary (n - consistent == 0 at row 0), which NO canary isolates.
-/// Bump row-0 n to 5 and move pi[21] to 5 (so the last-row binding still holds after the window
-/// carries it) — but the window gate carries n forward, so to isolate the row-0 seed we instead
-/// forge row-0 n while keeping consistency: set row0 n=5. This breaks firstNSeed (5 - 1 != 0).
+/// Bump row-0 n to 5 while keeping consistency: set row0 n=5. This breaks firstNSeed (5 - 1 != 0).
 #[test]
 fn first_n_seed_boundary_refuses() {
     let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");

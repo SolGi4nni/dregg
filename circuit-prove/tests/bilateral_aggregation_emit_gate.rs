@@ -1,31 +1,32 @@
-//! # The emit-from-Lean EQUALITY GATE — the BILATERAL-BUNDLE AGGREGATION outer AIR (law #1).
+//! # The emit-from-Lean EQUALITY GATE — the COMPACTED (v3) BILATERAL-BUNDLE AGGREGATION outer AIR (law #1).
 //!
 //! The aggregation descriptor is AUTHORED in Lean (`metatheory/Dregg2/Circuit/Emit/
-//! EffectVmEmitBilateralAgg.lean`, `bilateralAggDescriptor`) and its wire string is byte-pinned
-//! there (`metatheory/Dregg2/Circuit/Emit/BilateralAggregationEmit.lean`, the
-//! `#guard emitVmJson2 bilateralAggDescriptor == GOLDEN`). This test embeds that EXACT string
-//! ([`GOLDEN_JSON`], byte-identical to `circuit/descriptors/dregg-bilateral-aggregation-v2.json`,
+//! BilateralAggregationCompact.lean`, `bilateralAggDescriptorV3`) and its wire string is byte-pinned
+//! there (the `#guard emitVmJson2 bilateralAggDescriptorV3 == GOLDEN`). This test embeds that EXACT
+//! string ([`GOLDEN_JSON`], byte-identical to `circuit/descriptors/dregg-bilateral-aggregation-v3.json`,
 //! which `bilateral_aggregation_air.rs` `include_str!`s), and:
 //!
 //!   1. DECODES it via [`parse_vm_descriptor2`] and asserts the decode equals an independently
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
 //!      breaks this OR the Lean `#guard`);
-//!   2. proves an HONEST bundle witness (one agent cell + padding, the 87-column decoupled trace)
+//!   2. proves an HONEST bundle witness (one agent cell + padding, the 52-column decoupled trace)
 //!      through [`prove_vm_descriptor2`], asserts ACCEPT, and re-verifies the proof;
 //!   3. the MUTATION CANARIES — each tampers the witness so exactly one hand-AIR constraint family
 //!      bites, and asserts the prove-or-verify REFUSES (real UNSAT):
 //!        (a) a forged outer turn-identity PI      → CG-2 `pi_binding`  (turn-identity agreement),
-//!        (b) a carried count ≠ its expected column → CG-3 `gate`       (schedule replay),
+//!        (b) a forged MIDDLE-row turn identity     → the identity-carry `window_gate` (the v3
+//!            strengthening — v2 left the middle rows' identity in-AIR unconstrained; this is the
+//!            Rust twin of `BilateralAggregationCompact.gapTrace`),
 //!        (c) TWO agent cells in one bundle         → CG-4 `boundary`   (`cum == 1`, the
 //!            cross-federation double-spend rejection),
-//!        (d) a forged running active-row counter   → the `window_gate` (the two-row cumulative
-//!            primitive).
+//!        (d) a forged running active-row counter   → the cumulative `window_gate` (the two-row
+//!            cumulative primitive).
 //!
 //! The canaries are NON-VACUOUS by construction: each first asserts the honest witness is ACCEPTED
 //! (so the negative pole is not spuriously green), then asserts the tampered witness is REJECTED.
-//! These are the same rejections the Lean teeth prove over the emitted descriptor
-//! (`agg_rejects_turn_mismatch` / `BilateralAggregationEmit.agg_rejects_count_mismatch` /
-//! `agg_rejects_bad_agent_count`) and the `teasting/multi_cell_cross_fed_binding` gauntlet drives.
+//! Canary (b) is what E8 buys over v2: the 35 tautological CG-3 `sched == expected` self-check gates
+//! are DELETED (both sides were prover-filled — they pinned nothing), and 13 identity-carry gates
+//! now force every row onto the published turn identity (`compact_identity_every_row`).
 
 use std::panic::AssertUnwindSafe;
 
@@ -37,27 +38,27 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 use dregg_circuit::refusal::{Outcome, classify};
 
-/// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 bilateralAggDescriptor` emits (pinned by the
-/// `#guard` in `BilateralAggregationEmit.lean`, and equal to the `include_str!`ed golden). If Lean
+/// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 bilateralAggDescriptorV3` emits (pinned by the
+/// `#guard` in `BilateralAggregationCompact.lean`, and equal to the `include_str!`ed golden). If Lean
 /// drifts, that `#guard` fails; if this literal drifts, the `decoded == hand_built` assertion fails.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-bilateral-aggregation-v2","ir":2,"trace_width":87,"public_input_count":23,"tables":[],"constraints":[{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11},{"t":"pi_binding","row":"first","col":12,"pi_index":12},{"t":"pi_binding","row":"last","col":0,"pi_index":0},{"t":"pi_binding","row":"last","col":1,"pi_index":1},{"t":"pi_binding","row":"last","col":2,"pi_index":2},{"t":"pi_binding","row":"last","col":3,"pi_index":3},{"t":"pi_binding","row":"last","col":4,"pi_index":4},{"t":"pi_binding","row":"last","col":5,"pi_index":5},{"t":"pi_binding","row":"last","col":6,"pi_index":6},{"t":"pi_binding","row":"last","col":7,"pi_index":7},{"t":"pi_binding","row":"last","col":8,"pi_index":8},{"t":"pi_binding","row":"last","col":9,"pi_index":9},{"t":"pi_binding","row":"last","col":10,"pi_index":10},{"t":"pi_binding","row":"last","col":11,"pi_index":11},{"t":"pi_binding","row":"last","col":12,"pi_index":12},{"t":"gate","body":{"t":"add","l":{"t":"var","v":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":49}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":50}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":51}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":52}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":17},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":53}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":18},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":54}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":19},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":55}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":20},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":56}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":21},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":57}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":22},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":58}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":23},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":59}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":24},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":60}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":25},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":61}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":26},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":62}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":27},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":63}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":28},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":64}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":29},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":65}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":30},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":66}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":31},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":67}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":32},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":68}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":33},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":69}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":34},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":70}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":35},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":71}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":36},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":72}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":37},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":73}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":38},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":74}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":39},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":75}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":40},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":76}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":41},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":77}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":42},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":78}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":43},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":79}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":44},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":80}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":45},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":81}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":46},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":82}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":47},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":83}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":48},"r":{"t":"add","l":{"t":"var","v":48},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":85},"r":{"t":"add","l":{"t":"var","v":85},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":85}}},"r":{"t":"var","v":48}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":84},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":84}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":48}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":86},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":86}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":85}}}}},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":84},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":48}}}},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":86},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":85}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":84},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":86,"pi_index":21}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-bilateral-aggregation-v3","ir":2,"trace_width":52,"public_input_count":23,"tables":[],"constraints":[{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2},{"t":"pi_binding","row":"first","col":3,"pi_index":3},{"t":"pi_binding","row":"first","col":4,"pi_index":4},{"t":"pi_binding","row":"first","col":5,"pi_index":5},{"t":"pi_binding","row":"first","col":6,"pi_index":6},{"t":"pi_binding","row":"first","col":7,"pi_index":7},{"t":"pi_binding","row":"first","col":8,"pi_index":8},{"t":"pi_binding","row":"first","col":9,"pi_index":9},{"t":"pi_binding","row":"first","col":10,"pi_index":10},{"t":"pi_binding","row":"first","col":11,"pi_index":11},{"t":"pi_binding","row":"first","col":12,"pi_index":12},{"t":"pi_binding","row":"last","col":0,"pi_index":0},{"t":"pi_binding","row":"last","col":1,"pi_index":1},{"t":"pi_binding","row":"last","col":2,"pi_index":2},{"t":"pi_binding","row":"last","col":3,"pi_index":3},{"t":"pi_binding","row":"last","col":4,"pi_index":4},{"t":"pi_binding","row":"last","col":5,"pi_index":5},{"t":"pi_binding","row":"last","col":6,"pi_index":6},{"t":"pi_binding","row":"last","col":7,"pi_index":7},{"t":"pi_binding","row":"last","col":8,"pi_index":8},{"t":"pi_binding","row":"last","col":9,"pi_index":9},{"t":"pi_binding","row":"last","col":10,"pi_index":10},{"t":"pi_binding","row":"last","col":11,"pi_index":11},{"t":"pi_binding","row":"last","col":12,"pi_index":12},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":1}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":3}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":6}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":8}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":9},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":9}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":10},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":10}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":11},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":11}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":12},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":48},"r":{"t":"add","l":{"t":"var","v":48},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":50},"r":{"t":"add","l":{"t":"var","v":50},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":50}}},"r":{"t":"var","v":48}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":49},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":49}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":48}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":51},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":51}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":50}}}}},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":49},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":48}}}},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":51},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":50}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":49},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":51,"pi_index":21}],"hash_sites":[],"ranges":[]}"#;
 
-// --- Trace column layout (must match `EffectVmEmitBilateralAgg.lean` Sched.* / Agg.*). ---
+// --- Trace column layout (must match `BilateralAggregationCompact.lean` Sched.* / AggC.*). ---
 const TURN_HASH_BASE: usize = 0;
 const EFFECTS_HASH_GLOBAL_BASE: usize = 4;
 const ACTOR_NONCE: usize = 8;
 const PREVIOUS_RECEIPT_HASH_BASE: usize = 9;
+const IDENTITY_LEN: usize = 13;
 const COUNTS_BASE: usize = 13;
 const COUNTS_LEN: usize = 7;
 const ROOTS_BASE: usize = 20;
 const ROOTS_LEN: usize = 28;
 const IS_AGENT_CELL: usize = 48;
-const EXPECTED_COUNTS_BASE: usize = 49;
-const EXPECTED_ROOTS_BASE: usize = 56;
-const IS_AGENT_CUMULATIVE_COL: usize = 84;
-const CONSISTENT_INDICATOR_COL: usize = 85;
-const N_CELLS_ACTIVE_COL: usize = 86;
-const AGG_WIDTH: usize = 87;
+// v3: the 35 expected columns are gone; the accumulators sit directly after the schedule block.
+const IS_AGENT_CUMULATIVE_COL: usize = 49;
+const CONSISTENT_INDICATOR_COL: usize = 50;
+const N_CELLS_ACTIVE_COL: usize = 51;
+const AGG_WIDTH: usize = 52;
 
 // --- Outer PI layout (Lean OuterPi.*). ---
 const PI_N_CELLS: usize = 21;
@@ -66,16 +67,8 @@ const OUTER_PI_COUNT: usize = 23;
 
 // ---------------------------------------------------------------------------
 // The independently hand-built twin of the Lean descriptor (mirrors the Lean
-// constraint builders 1:1, in the same order `aggConstraints` assembles them).
+// constraint builders 1:1, in the same order `aggConstraintsC` assembles them).
 // ---------------------------------------------------------------------------
-
-/// `colEqCol a b` — `gate (var a - var b)`.
-fn col_eq_col(a: usize, b: usize) -> VmConstraint2 {
-    VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
-        LeanExpr::Var(a),
-        LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(b)),
-    )))
-}
 
 fn pi_bind(row: VmRow, col: usize, pi_index: usize) -> VmConstraint2 {
     VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
@@ -89,7 +82,7 @@ fn bool_gate(c: usize) -> VmConstraint2 {
     )))
 }
 
-/// `paddingGate` — `gate ((1 - consistent) * is_agent)`.
+/// `paddingGateC` — `gate ((1 - consistent) * is_agent)`.
 fn padding_gate() -> VmConstraint2 {
     VmConstraint2::Base(VmConstraint::Gate(LeanExpr::mul(
         LeanExpr::add(
@@ -115,6 +108,21 @@ fn cum_transition(cum: usize, contribution: usize) -> VmConstraint2 {
                     Box::new(WindowExpr::Const(-1)),
                     Box::new(WindowExpr::Nxt(contribution)),
                 )),
+            )),
+        ),
+    })
+}
+
+/// `identityCarry c` — the v3 strengthening: `window_gate (on_transition) next[c] - local[c]`,
+/// pinning identity slot `c` constant across every transition.
+fn identity_carry(c: usize) -> VmConstraint2 {
+    VmConstraint2::WindowGate(WindowGateSpec {
+        on_transition: true,
+        body: WindowExpr::Add(
+            Box::new(WindowExpr::Nxt(c)),
+            Box::new(WindowExpr::Mul(
+                Box::new(WindowExpr::Const(-1)),
+                Box::new(WindowExpr::Loc(c)),
             )),
         ),
     })
@@ -148,16 +156,10 @@ fn turn_id_bindings(row: VmRow) -> Vec<VmConstraint2> {
     v
 }
 
-/// `scheduleReplay` — 7 count + 28 root `col == expected` gates.
-fn schedule_replay() -> Vec<VmConstraint2> {
-    let mut v = Vec::new();
-    for k in 0..COUNTS_LEN {
-        v.push(col_eq_col(COUNTS_BASE + k, EXPECTED_COUNTS_BASE + k));
-    }
-    for k in 0..ROOTS_LEN {
-        v.push(col_eq_col(ROOTS_BASE + k, EXPECTED_ROOTS_BASE + k));
-    }
-    v
+/// `identityCarryAll` — the 13 identity-carry window gates (one per identity slot 0..12). These
+/// REPLACE v2's 35 `schedule_replay` self-check gates.
+fn identity_carry_all() -> Vec<VmConstraint2> {
+    (0..IDENTITY_LEN).map(identity_carry).collect()
 }
 
 fn hand_built_desc() -> EffectVmDescriptor2 {
@@ -165,8 +167,8 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
     // CG-2 (turn identity, first AND last rows).
     constraints.extend(turn_id_bindings(VmRow::First));
     constraints.extend(turn_id_bindings(VmRow::Last));
-    // CG-3 (schedule replay).
-    constraints.extend(schedule_replay());
+    // The v3 identity carries (replace v2's schedule replay).
+    constraints.extend(identity_carry_all());
     // CG-4 (agent accounting): booleans + padding + the two cumulative window transitions.
     constraints.push(bool_gate(IS_AGENT_CELL));
     constraints.push(bool_gate(CONSISTENT_INDICATOR_COL));
@@ -195,7 +197,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
     constraints.push(pi_bind(VmRow::Last, N_CELLS_ACTIVE_COL, PI_N_CELLS));
 
     EffectVmDescriptor2 {
-        name: "dregg-bilateral-aggregation-v2".to_string(),
+        name: "dregg-bilateral-aggregation-v3".to_string(),
         trace_width: AGG_WIDTH,
         public_input_count: OUTER_PI_COUNT,
         tables: vec![],
@@ -206,7 +208,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 }
 
 // ---------------------------------------------------------------------------
-// Honest witness construction (the 87-column decoupled trace).
+// Honest witness construction (the 52-column decoupled trace).
 // ---------------------------------------------------------------------------
 
 fn turn_id_fixture() -> [BabyBear; 13] {
@@ -231,9 +233,9 @@ fn roots_fixture(base: u32) -> [BabyBear; 28] {
     a
 }
 
-/// An ACTIVE inner row: schedule turn-id + counts + roots + is_agent, with the EXPECTED columns
-/// equal to the carried counts/roots (CG-3 replay holds), consistent = 1, and the two running
-/// cumulatives (`cum`, `n`) explicit.
+/// An ACTIVE inner row: schedule turn-id + counts + roots + is_agent, consistent = 1, and the two
+/// running cumulatives (`cum`, `n`) explicit. (v3 carries NO expected columns — the schedule's
+/// counts/roots live only in the schedule block and are bound to the Turn OFF-AIR.)
 fn active_row(
     turn_id: &[BabyBear; 13],
     counts: &[BabyBear; 7],
@@ -246,11 +248,9 @@ fn active_row(
     r[..13].copy_from_slice(&turn_id[..13]);
     for k in 0..COUNTS_LEN {
         r[COUNTS_BASE + k] = counts[k];
-        r[EXPECTED_COUNTS_BASE + k] = counts[k];
     }
     for k in 0..ROOTS_LEN {
         r[ROOTS_BASE + k] = roots[k];
-        r[EXPECTED_ROOTS_BASE + k] = roots[k];
     }
     r[IS_AGENT_CELL] = BabyBear::new(is_agent);
     r[IS_AGENT_CUMULATIVE_COL] = BabyBear::new(cum);
@@ -259,8 +259,9 @@ fn active_row(
     r
 }
 
-/// A PADDING row: mirrors the turn-identity fields (so the last-row CG-2 `pi_binding` holds), carries
-/// the cumulatives forward, and sets consistent = 0 (so the padding `gate` and CG-4 booleans hold).
+/// A PADDING row: mirrors the turn-identity fields (so the identity-carry gates hold across the
+/// padding transitions AND the last-row CG-2 `pi_binding` holds), carries the cumulatives forward,
+/// and sets consistent = 0 (so the padding `gate` and CG-4 booleans hold).
 fn padding_row(turn_id: &[BabyBear; 13], cum: u32, n: u32) -> Vec<BabyBear> {
     let mut r = vec![BabyBear::ZERO; AGG_WIDTH];
     r[..13].copy_from_slice(&turn_id[..13]);
@@ -329,7 +330,7 @@ fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]
 }
 
 /// STEP 1 — the emitted descriptor decodes and equals the hand-built twin, with the Lean-pinned
-/// shape (width 87, PI 23, 70 constraints, exactly two window gates, no tables).
+/// shape (width 52, PI 23, 48 constraints, exactly 15 window gates, no tables).
 #[test]
 fn bilateral_aggregation_emit_decodes_to_hand_built() {
     let decoded = parse_vm_descriptor2(GOLDEN_JSON).expect("the Lean-emitted golden JSON decodes");
@@ -338,14 +339,14 @@ fn bilateral_aggregation_emit_decodes_to_hand_built() {
         decoded, hand,
         "the Lean-emitted descriptor must equal the independently hand-built descriptor"
     );
-    assert_eq!(decoded.name, "dregg-bilateral-aggregation-v2");
+    assert_eq!(decoded.name, "dregg-bilateral-aggregation-v3");
     assert_eq!(decoded.trace_width, AGG_WIDTH);
     assert_eq!(decoded.public_input_count, OUTER_PI_COUNT);
     assert!(decoded.tables.is_empty(), "pure row-window AIR: no tables");
     assert_eq!(
         decoded.constraints.len(),
-        70,
-        "the Lean #guard pins 70 constraints"
+        48,
+        "the Lean #guard pins 48 constraints"
     );
     let window_gates = decoded
         .constraints
@@ -353,8 +354,8 @@ fn bilateral_aggregation_emit_decodes_to_hand_built() {
         .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
         .count();
     assert_eq!(
-        window_gates, 2,
-        "exactly the two cumulative-sum window gates"
+        window_gates, 15,
+        "13 identity-carry + 2 cumulative-sum window gates"
     );
     let pins = decoded
         .constraints
@@ -396,10 +397,13 @@ fn forged_turn_identity_pi_refuses() {
     );
 }
 
-/// STEP 3b — MUTATION CANARY (CG-3 schedule replay): the active row's carried `counts[0]` is bumped
-/// off its `expected_counts[0]` column → the replay `gate` (col 13 − col 49) is nonzero → UNSAT.
+/// STEP 3b — MUTATION CANARY (the v3 identity-carry `window_gate`): a MIDDLE row's turn-identity
+/// slot is forged off the published identity. In v2 this was ACCEPTED (CG-2 bound only first/last;
+/// the tautological CG-3 self-check pinned nothing) — `BilateralAggregationCompact.gapTrace` is the
+/// exhibit. In v3 the identity-carry gate on the transition into the forged row no longer vanishes
+/// (`next[0] - local[0] = forged - honest ≠ 0`) → UNSAT. This is the E8 strengthening.
 #[test]
-fn schedule_count_mismatch_refuses() {
+fn forged_middle_row_identity_refuses() {
     let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
     let (trace, pi) = honest_single_agent();
     assert!(
@@ -407,10 +411,13 @@ fn schedule_count_mismatch_refuses() {
         "honest witness must be accepted"
     );
     let mut bad = trace.clone();
-    bad[0][COUNTS_BASE] = bad[0][COUNTS_BASE] + BabyBear::ONE; // carried count now ≠ expected
+    // Row 1 is a middle (padding) row; forge its turn_hash[0] off the honest, shared identity.
+    // The first row's PI binding + the last row's PI binding still hold (rows 0 and 3 are honest),
+    // so the ONLY unsatisfied constraint is the identity carry across the row0→row1 transition.
+    bad[1][TURN_HASH_BASE] = bad[1][TURN_HASH_BASE] + BabyBear::new(7);
     assert!(
         rejects(&desc, &bad, &pi),
-        "a carried count that disagrees with its expected column must be REJECTED (CG-3 replay)"
+        "a forged middle-row turn identity must be REJECTED (the identity-carry window gate)"
     );
 }
 
@@ -435,7 +442,7 @@ fn two_agent_cells_refuse() {
 /// STEP 3d — MUTATION CANARY (the two-row window gate): the last row's running active-row counter is
 /// forged (and pi[N_CELLS] moved to match, so the `n == pi` binding still holds) — the
 /// `cumActiveTransition` window gate (`next[n] − local[n] − next[consistent]`) no longer vanishes on
-/// the last transition → UNSAT. The NEW two-row cumulative primitive genuinely gates.
+/// the last transition → UNSAT. The two-row cumulative primitive genuinely gates.
 #[test]
 fn forged_active_counter_refuses() {
     let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");

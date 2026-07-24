@@ -83,10 +83,10 @@ pub struct AggregatedBundle {
     /// Merkle + Fiat-Shamir proof over the aggregation AIR; verified standalone
     /// by `dregg_circuit::stark::verify` against `outer_pi`.
     pub outer_proof_bytes: Vec<u8>,
-    /// The outer aggregation trace (rows × `AGG_WIDTH`), canonical-BabyBear u32
+    /// The outer aggregation trace (rows × `agg::WIDTH` = 52), canonical-BabyBear u32
     /// cells. Shipped so the verifier can (a) bind it to the proof via
     /// `stark::recompute_trace_commitment` == `proof.trace_commitment` and
-    /// (b) cross-check each row's `expected_*` columns against the
+    /// (b) cross-check each row's schedule counts/roots columns against the
     /// schedule the canonical Turn predicts. The STARK proof guarantees this
     /// exact trace satisfies the aggregation constraints; the trace is not
     /// trusted on its own.
@@ -139,8 +139,9 @@ impl AggregatedBundle {
 // Schedule → AIR row projection
 // ---------------------------------------------------------------------------
 
-/// Pack a `(BilateralCounts, BilateralRoots)` pair into the AIR row's
-/// `expected_counts` + `expected_roots` blocks. Canonical order
+/// Pack a `(BilateralCounts, BilateralRoots)` pair into the canonical counts/roots arrays the
+/// verifier compares against the trace's schedule block (v3 has no in-trace expected columns; this
+/// is the OFF-AIR schedule cross-check of `verify_aggregated_bundle` step 5). Canonical order
 /// (`bilateral_aggregation_air` module docs).
 fn pack_expected(
     counts: BilateralCounts,
@@ -168,17 +169,15 @@ fn pack_expected(
     )
 }
 
-/// Build the DECOUPLED v2 inner rows from `(turn, per_cell)`: the standalone 49-felt schedule
-/// block (projected from each WR's bilateral-schedule PI window) + the schedule-derived expected
-/// counts/roots. Returns the rows in `per_cell` order and the dedup'd federation list. Used by
+/// Build the DECOUPLED v3 inner rows from `per_cell`: the standalone 49-felt schedule block
+/// (projected from each WR's bilateral-schedule PI window). The v2 expected counts/roots block is
+/// gone. Returns the rows in `per_cell` order and the dedup'd federation list. Used by
 /// the prover to build the trace.
 #[cfg(feature = "prover")]
 fn build_inner_rows_v2(
-    turn: &Turn,
+    _turn: &Turn,
     per_cell: &[(CellId, WitnessedReceipt)],
 ) -> Result<(Vec<AggregationInnerRowV2>, Vec<[u8; 32]>), TurnError> {
-    let schedule = ExpectedBilateral::from_turn(turn);
-    let actor_nonce = turn.nonce;
     let mut rows: Vec<AggregationInnerRowV2> = Vec::with_capacity(per_cell.len());
     let mut federation_ids_seen: Vec<[u8; 32]> = Vec::new();
     for (cid, wr) in per_cell {
@@ -215,14 +214,8 @@ fn build_inner_rows_v2(
             }
         };
 
-        let counts = schedule.counts_for(cid);
-        let roots = schedule.roots_for(cid, actor_nonce);
-        let (expected_counts, expected_roots) = pack_expected(counts, roots);
-
         rows.push(AggregationInnerRowV2 {
             schedule: schedule_block,
-            expected_counts,
-            expected_roots,
         });
 
         let fed = wr.receipt.federation_id;
@@ -234,31 +227,20 @@ fn build_inner_rows_v2(
 }
 
 /// The VERIFIER-side row rebuild: take each row's CLAIMED schedule block (from the shipped
-/// trace) and pair it with the canonical Turn's `expected_*` projection. Used by step 4b to
-/// re-derive the canonical 87-col trace and bind it to the proof. (The prover's
-/// `build_inner_rows_v2` pairs the WR-claimed schedule with the same canonical expected; in the
-/// honest case the two agree, and a divergent schedule cannot satisfy CG-3, so it never proves.)
+/// trace) into a v3 inner row. Used by step 4b to re-derive the canonical 52-col trace and bind it
+/// to the proof. In v3 the row carries only the schedule block (the expected self-check block is
+/// gone); the schedule's counts/roots are cross-checked against the canonical Turn OFF-AIR by
+/// step 5, which is what binds a divergent schedule.
 #[cfg(feature = "prover")]
 fn build_inner_rows_v2_from_schedule(
-    turn: &Turn,
+    _turn: &Turn,
     cells: &[CellId],
     schedules: &[[BabyBear; sched::WIDTH]],
 ) -> Vec<AggregationInnerRowV2> {
-    let schedule = ExpectedBilateral::from_turn(turn);
-    let actor_nonce = turn.nonce;
     cells
         .iter()
         .zip(schedules.iter())
-        .map(|(cid, blk)| {
-            let counts = schedule.counts_for(cid);
-            let roots = schedule.roots_for(cid, actor_nonce);
-            let (expected_counts, expected_roots) = pack_expected(counts, roots);
-            AggregationInnerRowV2 {
-                schedule: *blk,
-                expected_counts,
-                expected_roots,
-            }
-        })
+        .map(|(_cid, blk)| AggregationInnerRowV2 { schedule: *blk })
         .collect()
 }
 
@@ -385,7 +367,7 @@ pub fn prove_aggregated_bundle(
     let outer_pi_bb = outer_pi_typed.to_vec();
     debug_assert_eq!(outer_pi_bb.len(), OUTER_PI_COUNT);
 
-    // Run the LEAN-EMITTED descriptor prover (law #1): the 87-col trace satisfies
+    // Run the LEAN-EMITTED descriptor prover (law #1): the 52-col trace satisfies
     // `bilateral_aggregation_descriptor()` (a proved Lean `EffectVmDescriptor2`) against the
     // 23-felt outer PI, via the multi-table batch STARK. No Rust-authored constraint semantics:
     // every CG-2/CG-3/CG-4 relation + the two cumulative `windowGate`s come from the verified
@@ -442,9 +424,9 @@ pub fn prove_aggregated_bundle(
 /// - Tampered trace: caught two ways — the recomputed trace commitment no
 ///   longer matches the proof's `trace_commitment` (step 4b), and the real
 ///   STARK proof (FRI + constraint consistency) does not verify against a
-///   trace that violates the aggregation AIR's CG-2/CG-3/CG-4 constraints.
+///   trace that violates the aggregation AIR's CG-2/CG-4 constraints.
 /// - Tampered participating_cells order: caught by the per-row schedule
-///   projection mismatching the trace's `expected_*` block (step 5).
+///   counts/roots mismatching the canonical Turn's projection (step 5).
 /// - Forged "consistent" flag: pinned to 1 by the AIR's BILATERAL_CONSISTENT
 ///   constraint and rejected up front (`outer_pi[OUTER_BILATERAL_CONSISTENT]
 ///   != 1`).
@@ -540,11 +522,11 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
     })?;
 
     // Step 4b: bind the shipped trace to the proof BY CANONICAL RECONSTRUCTION. The batch STARK
-    // commits its own main trace; here we re-derive the EXACT canonical 87-col trace the proof
+    // commits its own main trace; here we re-derive the EXACT canonical 52-col trace the proof
     // must attest, from `(turn, participating_cells)` + the bundle's own schedule blocks, and
     // require the shipped `outer_trace` to equal it. This is strictly stronger than a commitment
-    // match: it pins every column (schedule + expected + accumulators) to the canonical Turn, so
-    // a prover cannot present a different trace than the one the schedule predicts.
+    // match: it pins every column (schedule + accumulators) to the canonical Turn, so a prover
+    // cannot present a different trace than the one the schedule predicts.
     if bundle.outer_trace.len() < bundle.participating_cells.len() {
         return Err(TurnError::InvalidExecutionProof(
             "aggregate_bilateral: outer_trace has fewer rows than participating_cells".into(),
@@ -592,11 +574,11 @@ pub fn verify_aggregated_bundle(bundle: &AggregatedBundle) -> Result<(), TurnErr
     }
 
     // Step 5: per-row schedule correspondence to participating_cells. For each active row, the
-    // schedule's counts + roots must equal the canonical Turn's projection for the
-    // corresponding cell, and `is_agent` must truthfully reflect `cell == turn.agent`. CG-3
-    // (verified in step 4) binds each row's schedule block to its `expected_*` columns; here we
-    // re-derive `expected_*` from the canonical Turn and confirm equality — so a prover cannot
-    // fabricate `expected_*` that satisfy CG-3 against a forged schedule but disagree with it.
+    // schedule's counts + roots must equal the canonical Turn's projection for the corresponding
+    // cell, and `is_agent` must truthfully reflect `cell == turn.agent`. In v3 the in-trace
+    // expected self-check block is GONE (it was a prover-filled tautology), so THIS off-AIR
+    // re-derivation from the canonical Turn is the SOLE binding of the schedule's counts/roots — a
+    // prover cannot present a forged schedule that disagrees with what the Turn predicts.
     let schedule = ExpectedBilateral::from_turn(&bundle.turn);
     let actor_nonce = bundle.turn.nonce;
     for (i, cid) in bundle.participating_cells.iter().enumerate() {
@@ -1322,9 +1304,13 @@ mod tests {
         verify_aggregated_bundle(&bundle).expect("verify native-schedule bundle");
     }
 
-    /// ANTI-GHOST (Wall B): a TAMPERED native schedule block is rejected. The corrupted
-    /// schedule disagrees with the canonical Turn's expected counts/roots, so the in-circuit
-    /// CG-3 (schedule-vs-expected) constraint is unsatisfiable and the bundle never proves.
+    /// ANTI-GHOST (Wall B): a TAMPERED native schedule block yields NO VERIFIABLE bundle. In v3 the
+    /// tautological in-circuit CG-3 (schedule-vs-expected) self-check is DELETED — the schedule's
+    /// correspondence to the canonical Turn is bound OFF-AIR (`verify_aggregated_bundle` step 5). So
+    /// a forged native COUNTS felt (with an honest PI, so `verify_bilateral_chain` passes on the PI)
+    /// is no longer caught at PROVE time, but the resulting bundle FAILS to VERIFY: step 5 re-derives
+    /// the canonical counts from the Turn and rejects the disagreement. The anti-ghost guarantee
+    /// holds end-to-end at the verifier, which is the E8 posture (the self-check was a no-op).
     #[test]
     fn tampered_native_schedule_is_rejected() {
         let alice = cid(0xA1);
@@ -1344,19 +1330,26 @@ mod tests {
         let mut alice_wr = fabricate_wr(&turn, &alice);
         let bob_wr = fabricate_wr(&turn, &bob);
 
-        // Forge the schedule's bilateral-counts region — a non-trivial CG-3 input. The PI stays
-        // honest (so the upstream PI cross-check passes); only the NATIVE block is corrupted,
-        // so the rejection is attributable to the schedule `build_inner_rows_v2` consumed.
+        // Forge the schedule's bilateral-counts region. The PI stays honest (so `verify_bilateral_chain`
+        // passes on the PI); only the NATIVE block `build_inner_rows_v2` consumes is corrupted.
         let mut block = honest_schedule_block(&alice_wr);
         block[sched::COUNTS_BASE] += BabyBear::new(7);
         alice_wr.bilateral_schedule = Some(block.to_vec());
 
         let entries = vec![(alice, alice_wr), (bob, bob_wr)];
-        let result = prove_aggregated_bundle(&turn, &entries);
-        assert!(
-            result.is_err(),
-            "ANTI-GHOST: a tampered native schedule must not aggregate, got {result:?}"
-        );
+        // A tampered native schedule must not yield a VERIFIABLE bundle. In v3 the reject is at the
+        // verifier (step-5 schedule cross-check), not the prover (CG-3 is gone); either way, no
+        // verifiable bundle results.
+        match prove_aggregated_bundle(&turn, &entries) {
+            Ok(bundle) => {
+                let res = verify_aggregated_bundle(&bundle);
+                assert!(
+                    res.is_err(),
+                    "ANTI-GHOST: a tampered native schedule must not VERIFY (step-5 cross-check), got {res:?}"
+                );
+            }
+            Err(_) => { /* also a reject — the bundle is not even producible */ }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1780,25 +1773,26 @@ mod tests {
         let bundle = prove_aggregated_bundle(&turn, &entries).expect("prove consistent");
         verify_aggregated_bundle(&bundle).expect("consistent aggregated proof must verify");
 
-        // (b) Tampered cross-cell agreement. Bob is row 1; forge his INCOMING_TRANSFER_ROOT in
-        // BOTH the decoupled schedule block AND the matching expected_roots column so CG-3 still
-        // holds in-trace, then re-prove THROUGH THE DESCRIPTOR. The forged root no longer matches
-        // the schedule the Turn predicts, so step-4b's canonical reconstruction + step-5's
-        // Turn-derived cross-check reject.
+        // (b) Tampered cross-cell agreement. Bob is row 1; forge his INCOMING_TRANSFER_ROOT in the
+        // decoupled schedule block, then re-prove THROUGH THE DESCRIPTOR. In v3 the schedule
+        // counts/roots are NOT gated in-AIR (the tautological expected self-check was deleted), so
+        // the tampered trace still satisfies the descriptor and proves — but the forged root no
+        // longer matches the schedule the Turn predicts, so step-5's Turn-derived cross-check
+        // rejects (step 4b copies the claimed schedule, so in v3 the closure is step 5). This is
+        // exactly the E8 posture: the schedule's correspondence to the Turn is an OFF-AIR binding,
+        // not an in-circuit self-check.
         let mut trace_bb: Vec<Vec<BabyBear>> = bundle
             .outer_trace
             .iter()
             .map(|row| row.iter().map(|&v| BabyBear::new_canonical(v)).collect())
             .collect();
-        // INCOMING_TRANSFER_ROOT is the schedule-roots index k=1 (and expected-roots index k=1).
+        // INCOMING_TRANSFER_ROOT is the schedule-roots index k=1.
         let sched_base = agg::sch_col(sched::ROOTS_BASE + 1 * 4);
-        let exp_base = agg::EXPECTED_ROOTS_BASE + 1 * 4;
         for off in 0..4 {
             let forged = BabyBear::new((0x0BAD_C0DE + off as u32) & 0x7FFF_FFFF);
             trace_bb[1][sched_base + off] = forged;
-            trace_bb[1][exp_base + off] = forged;
         }
-        // Re-prove over the tampered (but internally CG-3-consistent) trace via the descriptor.
+        // Re-prove over the tampered (still descriptor-satisfying) trace via the descriptor.
         let outer_pi_bb: Vec<BabyBear> = bundle
             .outer_pi
             .iter()

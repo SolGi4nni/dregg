@@ -25,7 +25,7 @@
   "generated_utc": "2026-07-23T06:17:46Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
-    "dregg-bilateral-aggregation-v2.json": "47222a8cbc3e7809e3a6dc15e5c01faa09eba3bd244f52eb45003fc5fb77277d",
+    "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
     "dregg-bundle-tree-fold-v2.json": "11ea27299b5f22def5fc253df30801cd925ca1e1ceb9d5c7ea39e1f8fc7e873c",
     "dregg-cert-f-ir2.json": "8f104012760b24ccda1065ed4b559a0c9c10188acd5523298bfb77a5095ab0cc",
     "dregg-cert-f-market4-ir2.json": "15d421d24c725da84f2c67061a171a9b4f5c37323f94b662cec590974e2e1520",
@@ -157,7 +157,7 @@
     "turn-chain-binding.json": "aced3a62aeae772bf0a1f2c4cbf2be7f26686358ca3376af594b2368176e217f"
   },
   "fp_file_sha256": {
-    "circuit/src/bilateral_aggregation_air.rs": "dc75ef5362eca39d32aa672c3ed9184d671bfc1feb6a5019773c7f8796763b91",
+    "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "f634f39e6d96cec52c1cfea9851611a0e77de73f3bf28b6dad5f41c2ed17bd85",
     "circuit/src/cap_reshape_descriptor.rs": "58cfdabae8f78b683d60dd90da1a4b587992b4498f8d63722653ed7343fd2873",
     "circuit/src/effect_vm_descriptors.rs": "888567f5185d93cc89262ecfe665379af0310fbd0a917f487de0ab91dccc9878",
