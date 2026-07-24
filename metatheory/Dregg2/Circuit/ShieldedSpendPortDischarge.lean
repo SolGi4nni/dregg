@@ -33,15 +33,26 @@ hypothesis into a theorem about that object (at the resolution the single emitte
 ∀-leaf accumulator collision-resistance is reduced to a precisely-named floor, not assumed away):
 
   * **§A — #15 / `AccumulatorSound`.** `Hair` realizes the abstract per-level fold `H` as the emitted
-    `lkParent` Poseidon2 site (`emitted_fold_step_row0`). `IsCommittedNote` realizes the abstract
-    `IsCommitted` as the emitted C6 note-commitment shape (a genuine — non-free — note the prover can
-    open). **`emitted_accept_is_committed`** proves, WITH NO `AccumulatorSound` hypothesis, that a
-    satisfying `shieldedSpendDesc` trace's accepted leaf IS an `IsCommittedNote`, its membership chain
-    folds to the COMMITTED-accumulator PI, and the claim-root slot cannot decouple from it: the
-    emitted C6a/C6b constraints deliver DIRECTLY the "committed" conclusion the abstract module could
-    only assume. `NoteAccumulatorCR` names the residual ∀-leaf floor (the deferred multi-row
-    fold-walk + Poseidon2 CR), and `pin_accept_is_note_committed` composes the abstract keystone at the
-    faithful realization with that floor NAMED — no blanket abstract assumption.
+    `lkParent` Poseidon2 site (`emitted_fold_step_row0`). `OpensAs` realizes the abstract
+    `IsCommitted` as the emitted C6 note-commitment shape AT THE TRACE'S OWN CELLS.
+    **`emitted_accept_is_committed`** proves, WITH NO `AccumulatorSound` hypothesis, that a satisfying
+    `shieldedSpendDesc` trace's accepted leaf is the C6 commitment of row 0's opening cells, its
+    membership chain folds to the COMMITTED-accumulator PI, and the claim-root slot cannot decouple
+    from it: the emitted C6a/C6b constraints deliver DIRECTLY the "committed" conclusion the abstract
+    module could only assume. `NoteAccumulatorCR` names the residual ∀-leaf floor (the deferred
+    multi-row fold-walk + Poseidon2 CR), and `pin_accept_is_note` composes the abstract keystone at
+    the faithful realization with that floor NAMED — no blanket abstract assumption.
+
+    ⚠ **CORRECTED 2026-07-24 (the ∃-image sweep, `Verify.ExistsImageVacuity`).** `IsCommittedNote` is
+    an ∃-IMAGE: under `ShieldedOnRampPin.C6Surjective` — expected of a real Poseidon2 with four free
+    field inputs onto ~2^31 — it holds of EVERY felt, so a conclusion stated at it excludes nothing.
+    The cell-pinned `OpensAs` is what this AIR actually forces and is strictly stronger
+    (`isCommittedNote_does_not_pin_the_opening`); the theorems still stated at `IsCommittedNote`
+    (`emitted_leaf_isCommittedNote`, `pin_accept_is_note_committed`) are labeled weakenings kept for
+    downstream, each carrying the reason it is NOT strengthened to the authorization-carrying
+    `ShieldedOnRampPin.IsLedgerNote:237` — **this AIR does not force authorization and could not**;
+    that conjunct is supplied by the accumulator/on-ramp side and enters through `pin_accept_is_note`'s
+    floor.
   * **§B — #16 / `linkHolds`.** `emitted_conserved_is_leaf_bound` proves the value that CONSERVES
     (`valAt = rowAt · cVAL`) is, on every row, the SAME cell hashed into the published `leaf_commit`
     and `value_binding` — leg and leaf are ONE in-AIR cell, so the deployed `legValue ≠ leafValue`
@@ -100,14 +111,58 @@ emitted object are one hash — no re-authored mirror. -/
 def Hair (hash : List ℤ → ℤ) (cur : ℤ) (lvl : Level) : ℤ :=
   hash [cur, lvl.sib0, lvl.sib1, lvl.sib2, lvl.pos, NS_FACT_MARK, 1]
 
-/-- A leaf is a **genuine committed note** (mod p) iff it is the Poseidon2 note commitment of some
-preimage `(value, asset, owner, randomness)` — the emitted AIR's C6 shape
-`hash_fact(value, [asset, owner, randomness])`. NON-VACUOUS: not every field element is a note
-commitment. This realizes the abstract `ShieldedMerkleRootPin.IsCommitted` with the "not a free
-forgeable cell" content — the value-theft tooth C6 — that the abstract module could only ASSUME via
-`AccumulatorSound`. -/
+/-- A leaf is a **committed note** (mod p) iff it is the Poseidon2 note commitment of SOME preimage
+`(value, asset, owner, randomness)` — the emitted AIR's C6 shape
+`hash_fact(value, [asset, owner, randomness])`. This realizes the abstract
+`ShieldedMerkleRootPin.IsCommitted` at the emitted site.
+
+⚠ **CORRECTED 2026-07-24 — this predicate is an ∃-IMAGE and is VACUOUS at the deployed parameters.**
+The docstring it replaces called it *"NON-VACUOUS: not every field element is a note commitment"*.
+That is false of a real Poseidon2: the C6 site has FOUR free field inputs onto a ~2^31 codomain, so it
+is expected to be surjective mod p, and then `IsCommittedNote hash leaf` holds of EVERY leaf —
+`ShieldedOnRampPin.isCommittedNote_of_c6Surjective` /
+`noteAccumulatorCR_vacuous_of_c6Surjective:363`, abstracted as `Verify.ExistsImageVacuity`
+§1. Counting can never refute that surjectivity (`counting_is_silent_when_domain_dominates`), so the
+predicate must be read as carrying NO exclusion power on its own.
+
+The two things that DO carry content, and where each lives:
+
+  * **the OPENING is pinned to the trace's own cells** — `OpensAs` below. That is what the emitted AIR
+    actually forces (`emitted_leaf_opensAs_row0`), and it is strictly stronger than the ∃-image
+    (`isCommittedNote_does_not_pin_the_opening`): the cells it names are the same cells the nullifier
+    (C4) and the value-link (C7a) consume, so the opening cannot be an unrelated witness.
+  * **AUTHORIZATION** — `ShieldedOnRampPin.IsLedgerNote:237`, `∃ n, auth n ∧ leaf ≡ noteLeaf hash n`.
+    This AIR does NOT force it and cannot: nothing in a satisfying trace mentions any ledger gate. It
+    is supplied by the ACCUMULATOR side (the Shield-A append, `shieldAppend_is_ledger_note`), and it
+    reaches a spend through the floor of `pin_accept_is_note` below. -/
 def IsCommittedNote (hash : List ℤ → ℤ) (leaf : ℤ) : Prop :=
   ∃ v as ow rd : ℤ, leaf ≡ hash [v, as, ow, rd, 0, NS_FACT_MARK, 1] [ZMOD P]
+
+/-- **The WITNESSED form (`OpensAs`): the leaf is the C6 commitment of THESE cells** — not merely of
+some opening. This is the content the emitted AIR forces; `IsCommittedNote` is its ∃-image weakening.
+Naming the cells is what ties the leaf to the rest of the trace: the same `v` is the value the C7a
+value-binding site hashes and the conservation block sums, the same leaf is what C4 derives the
+nullifier from. -/
+def OpensAs (hash : List ℤ → ℤ) (leaf v as ow rd : ℤ) : Prop :=
+  leaf ≡ hash [v, as, ow, rd, 0, NS_FACT_MARK, 1] [ZMOD P]
+
+/-- The ∃-image is the forgetful image of the witnessed form. -/
+theorem isCommittedNote_of_opensAs (hash : List ℤ → ℤ) {leaf v as ow rd : ℤ}
+    (h : OpensAs hash leaf v as ow rd) : IsCommittedNote hash leaf :=
+  ⟨v, as, ow, rd, h⟩
+
+/-- **⚑ THE ∃-IMAGE IS STRICTLY WEAKER (`isCommittedNote_does_not_pin_the_opening`).** At a site whose
+C6 arm returns its first input — surjective, exactly the regime the deployed Poseidon2 is in —
+EVERY leaf is an `IsCommittedNote` while `OpensAs` at a mismatched value cell is FALSE. So the gap
+between "some opening exists" and "these cells open it" is real and inhabited, at this module's own
+predicate and not merely in the abstract. -/
+theorem isCommittedNote_does_not_pin_the_opening :
+    (∀ leaf : ℤ, IsCommittedNote (fun xs => xs.headD 0) leaf)
+    ∧ ¬ OpensAs (fun xs => xs.headD 0) 1 0 0 0 0 := by
+  refine ⟨fun leaf => ⟨leaf, 0, 0, 0, Int.ModEq.refl _⟩, ?_⟩
+  intro h
+  have h' : (1 : ℤ) % P = (0 : ℤ) % P := h
+  norm_num [P] at h'
 
 /-- **The emitted AIR realizes the abstract per-level fold.** On row 0 of a satisfying trace, the
 membership fold `parent` cell IS `Hair hash current level` — the abstract `H` and the emitted chip
@@ -123,17 +178,20 @@ theorem emitted_fold_step_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (
   have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
   exact hrel.1
 
-/-- **⚑ THE #15 DISCHARGE (`emitted_leaf_isCommittedNote`).** A satisfying `shieldedSpendDesc` trace
-(under the chip AIR's own soundness) forces the accepted membership leaf `current` to be a GENUINE
-committed note — `IsCommittedNote` — with NO `AccumulatorSound` hypothesis: C6a recomputes the note
-commitment and C6b (`spend_relation_row0`'s `cCUR ≡ cLEAF`) pins the leaf to it. The abstract
-`pinned_accept_is_committed` needed `AccumulatorSound` to reach "committed"; the emitted C6
-constraints deliver it directly for the accepted instance. -/
-theorem emitted_leaf_isCommittedNote (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
+/-- **⚑ THE #15 DISCHARGE, AT THE CELLS (`emitted_leaf_opensAs_row0`).** A satisfying
+`shieldedSpendDesc` trace (under the chip AIR's own soundness) forces the accepted membership leaf
+`current` to be the C6 commitment of **row 0's OWN opening cells** `(cVAL, cASSET, cOWNER, cRAND)` —
+with NO `AccumulatorSound` hypothesis: C6a recomputes the note commitment from those cells and C6b
+(`spend_relation_row0`'s `cCUR ≡ cLEAF`) pins the leaf to it. This is the load-bearing form: the cells
+it names are the ones C4 derives the nullifier from and C7a hashes into the value binding, so the
+opening cannot be an unrelated witness. -/
+theorem emitted_leaf_opensAs_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
-    IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cCUR) := by
+    OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
+      ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
+      ((t.rows.getD 0 zeroAsg) cRAND) := by
   have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
   have hLeaf : (t.rows.getD 0 zeroAsg) cLEAF
       = hash [(t.rows.getD 0 zeroAsg) cVAL, (t.rows.getD 0 zeroAsg) cASSET,
@@ -141,28 +199,56 @@ theorem emitted_leaf_isCommittedNote (hash : List ℤ → ℤ) (minit : ℤ → 
     hrel.2.2.1
   have hCurLeaf : (t.rows.getD 0 zeroAsg) cCUR ≡ (t.rows.getD 0 zeroAsg) cLEAF [ZMOD P] :=
     hrel.2.2.2.2.1
-  refine ⟨(t.rows.getD 0 zeroAsg) cVAL, (t.rows.getD 0 zeroAsg) cASSET,
-          (t.rows.getD 0 zeroAsg) cOWNER, (t.rows.getD 0 zeroAsg) cRAND, ?_⟩
   rw [hLeaf] at hCurLeaf
   exact hCurLeaf
 
+/-- **The #15 discharge at the ∃-image (`emitted_leaf_isCommittedNote`)** — the forgetful weakening of
+`emitted_leaf_opensAs_row0`, kept because downstream modules consume it in this shape
+(`ShieldedSpendPortResidual`, `ShieldedSpendFoldReachRealized`).
+
+⚠ **HONEST WEAKENING, not a strengthening we could make.** This conclusion is an ∃-image and is
+VACUOUS at the deployed parameters: under `ShieldedOnRampPin.C6Surjective` it holds of EVERY felt, so
+by itself it excludes nothing (`Verify.ExistsImageVacuity.inImage_vacuous_of_surjective`). It is NOT
+strengthened to the authorization-carrying `ShieldedOnRampPin.IsLedgerNote:237` because **this AIR
+does not force authorization and could not**: a satisfying `shieldedSpendDesc` trace mentions no
+ledger gate, no `Shield` entry and no committed set — the C6/C6b constraints relate cells to cells.
+The authorization conjunct is supplied on the ACCUMULATOR side (`shieldAppend_is_ledger_note`, a
+construction fact of the Shield-A append) and reaches a spend through `pin_accept_is_note`'s floor;
+manufacturing it here would be a claim the emitted object does not support. Use
+`emitted_leaf_opensAs_row0` where content is needed. -/
+theorem emitted_leaf_isCommittedNote (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
+    (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cCUR) :=
+  isCommittedNote_of_opensAs hash
+    (emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip)
+
 /-- **⚑ THE #15 KEYSTONE (`emitted_accept_is_committed`).** The whole shape at once, WITH NO
-`AccumulatorSound` hypothesis: a satisfying trace's accepted leaf is a genuine committed note, its
-membership chain (the last row's `parent`) folds to the COMMITTED-accumulator PI, its row-0 claim lane
-is that same PI, and the claim-root slot cannot decouple from the committed root. This is exactly what
-`ShieldedMerkleRootPin.deployed_admits_but_pin_rejects` said the DEPLOYED predicate failed to force —
-now forced, in-AIR, by the emitted object; the abstract module's floating hypothesis is discharged
-for the accepted instance. -/
+`AccumulatorSound` hypothesis: a satisfying trace's accepted leaf is the C6 commitment of row 0's own
+opening cells, its membership chain (the last row's `parent`) folds to the COMMITTED-accumulator PI,
+its row-0 claim lane is that same PI, and the claim-root slot cannot decouple from the committed root.
+This is exactly what `ShieldedMerkleRootPin.deployed_admits_but_pin_rejects` said the DEPLOYED
+predicate failed to force — now forced, in-AIR, by the emitted object; the abstract module's floating
+hypothesis is discharged for the accepted instance.
+
+⚑ **STRENGTHENED 2026-07-24**: the first conjunct was the ∃-image `IsCommittedNote hash cCUR`, which
+is vacuous under `ShieldedOnRampPin.C6Surjective`; it is now the cell-pinned `OpensAs`, from which the
+∃-image follows by `isCommittedNote_of_opensAs`. ⚠ What is still NOT here, and cannot be: the note is
+not shown LEDGER-AUTHORIZED (`ShieldedOnRampPin.IsLedgerNote`) — see `emitted_leaf_isCommittedNote`'s
+note for why the AIR cannot supply that conjunct and which object does. -/
 theorem emitted_accept_is_committed (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
-    IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cCUR)
+    OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
+      ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
+      ((t.rows.getD 0 zeroAsg) cRAND)
     ∧ ((t.rows.getD (t.rows.length - 1) zeroAsg) cPAR ≡ t.pub piCOMMITTED [ZMOD P])
     ∧ ((t.rows.getD 0 zeroAsg) cROOT ≡ t.pub piCOMMITTED [ZMOD P])
     ∧ (t.pub piROOT ≡ t.pub piCOMMITTED [ZMOD P]) := by
   have hpin := root_is_pinned hash minit mfin maddrs t hne hsat
-  exact ⟨emitted_leaf_isCommittedNote hash minit mfin maddrs t hne hsat hChip,
+  exact ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip,
          hpin.2.1, hpin.1, hpin.2.2⟩
 
 /-- The residual **accumulator collision-resistance floor**, NAMED precisely (never axiomatized):
@@ -170,20 +256,46 @@ the abstract `ShieldedMerkleRootPin.AccumulatorSound` at the FAITHFUL realizatio
 `Hair hash` (the emitted `lkParent` site), "committed" = `IsCommittedNote hash` (the emitted C6
 shape). This is the ∀-leaf statement the single emitted trace does NOT give — the deferred multi-row
 Merkle fold-walk (recomposing the per-row AIR chain into `foldPath`) plus Poseidon2 CR — exactly as
-`ShieldedTransferStark.starkResidual_of_floor` names its FRI `extract`. -/
+`ShieldedTransferStark.starkResidual_of_floor` names its FRI `extract`.
+
+⚠ At the ∃-image note predicate this floor is itself vacuous under C6 surjectivity
+(`ShieldedOnRampPin.noteAccumulatorCR_vacuous_of_c6Surjective:363`): it holds for EVERY root,
+including one the prover wrote. The floor that PRICES something is the same shape at an
+authorization-carrying note predicate — `AccumulatorSound (Hair hash) (IsLedgerNote hash auth)`, which
+`pin_accept_is_note` below takes directly. -/
 def NoteAccumulatorCR (hash : List ℤ → ℤ) (committedRoot : ℤ) : Prop :=
   AccumulatorSound (Hair hash) (IsCommittedNote hash) committedRoot
 
-/-- **The abstract keystone at the faithful realization, floor NAMED.** A pinned-membership payload
-(supplied root = committed root) spends a genuine committed note — the abstract
-`pinned_accept_is_committed` with its blanket `AccumulatorSound` hypothesis replaced by the concretely
-named `NoteAccumulatorCR` floor over the emitted fold `Hair`. The abstract theft-closure now stands
-over the SAME hash the emitted object hashes. -/
+/-- **⚑ THE KEYSTONE AT WHATEVER THE FLOOR CARRIES (`pin_accept_is_note`, ADDED 2026-07-24).** A
+pinned-membership payload (supplied root = committed root) spends a leaf satisfying **the accumulator
+floor's own note predicate** — the abstract `pinned_accept_is_committed` at the faithful `Hair`
+realization, kept parametric in `note` instead of hard-wired to the ∃-image.
+
+This is the honest strengthening of `pin_accept_is_note_committed`: the conclusion is exactly as
+strong as the floor supplied, and NOTHING in the argument wanted the ∃-image specifically. Instantiate
+`note := ShieldedOnRampPin.IsLedgerNote hash auth` and the conclusion is that the spend spends a note
+the LEDGER AUTHORIZED (`ShieldedOnRampPin.shieldA_pin_spends_authorized`, whose floor the Shield-A
+append discharges by construction); instantiate `note := IsCommittedNote hash` and you get the old,
+vacuous-at-deployed-parameters statement. The authorization was never derivable from the AIR — it
+comes in through the floor, and this signature is where it enters. -/
+theorem pin_accept_is_note (hash : List ℤ → ℤ) (note : ℤ → Prop) (committedRoot : ℤ)
+    (floor : AccumulatorSound (Hair hash) note committedRoot) (p : Payload)
+    (h : acceptsPinned (Hair hash) committedRoot p) :
+    note p.leaf :=
+  pinned_accept_is_committed (Hair hash) note committedRoot p floor h
+
+/-- **The abstract keystone at the ∃-image note predicate** — `pin_accept_is_note` instantiated at
+`IsCommittedNote`, kept because downstream consumes it in this shape
+(`ShieldedOnRampPin.shieldA_pin_closes_15`).
+
+⚠ **HONEST WEAKENING.** Under `ShieldedOnRampPin.C6Surjective` both the floor and the conclusion are
+vacuous, so this instance prices nothing on its own; the ledger-strength instance of the SAME theorem
+is what closes seam #15. -/
 theorem pin_accept_is_note_committed (hash : List ℤ → ℤ) (committedRoot : ℤ)
     (floor : NoteAccumulatorCR hash committedRoot) (p : Payload)
     (h : acceptsPinned (Hair hash) committedRoot p) :
     IsCommittedNote hash p.leaf :=
-  pinned_accept_is_committed (Hair hash) (IsCommittedNote hash) committedRoot p floor h
+  pin_accept_is_note hash (IsCommittedNote hash) committedRoot floor p h
 
 /-! ### §A.1 — non-vacuity: the discharge FIRES on the emit module's explicit satisfying witness. -/
 
@@ -196,15 +308,23 @@ theorem zTf_sound : ChipTableSound hzero (zTrace.tf TableId.poseidon2) := by
   exact ⟨[0, 0, 0, 0, 0, 64207, 1], [0, 0, 0, 0, 0, 0, 0], by decide, by decide, by decide⟩
 
 /-- **The discharge is not vacuous** — it FIRES on the emit module's explicit all-zero satisfying
-trace (`zero_witness_satisfies`): the accepted leaf really is an `IsCommittedNote`, so the theorem is
-about an inhabited relation, not an empty one. -/
-theorem discharge_fires_on_witness : IsCommittedNote hzero ((zTrace.rows.getD 0 zeroAsg) cCUR) :=
-  emitted_leaf_isCommittedNote hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
+trace (`zero_witness_satisfies`): the accepted leaf really is opened by row 0's own cells, so the
+theorem is about an inhabited relation, not an empty one. Stated at the cell-pinned `OpensAs` (the
+∃-image version would fire on anything). -/
+theorem discharge_fires_on_witness :
+    OpensAs hzero ((zTrace.rows.getD 0 zeroAsg) cCUR) ((zTrace.rows.getD 0 zeroAsg) cVAL)
+      ((zTrace.rows.getD 0 zeroAsg) cASSET) ((zTrace.rows.getD 0 zeroAsg) cOWNER)
+      ((zTrace.rows.getD 0 zeroAsg) cRAND) :=
+  emitted_leaf_opensAs_row0 hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
     (by simp [zTrace]) zero_witness_satisfies zTf_sound
 
 #assert_axioms emitted_fold_step_row0
+#assert_axioms isCommittedNote_of_opensAs
+#assert_axioms isCommittedNote_does_not_pin_the_opening
+#assert_axioms emitted_leaf_opensAs_row0
 #assert_axioms emitted_leaf_isCommittedNote
 #assert_axioms emitted_accept_is_committed
+#assert_axioms pin_accept_is_note
 #assert_axioms pin_accept_is_note_committed
 #assert_axioms zTf_sound
 #assert_axioms discharge_fires_on_witness

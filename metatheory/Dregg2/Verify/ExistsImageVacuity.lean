@@ -44,39 +44,45 @@ And the counting rule that decides "is `f` plausibly surjective at deployed para
     (`exists_not_inImage_of_card_lt`, `narrow_into_wide_is_nonvacuous`), so those sites are NOT
     instances of the class.
 
-## §5 — the second live instance: `ShieldedTransferStark.StarkResidual`
+## §5 — the second live instance: `ShieldedTransferStark`'s residual (FOUND HERE, REPAIRED 07-24)
 
-`Dregg2.Circuit.ShieldedTransferStark.StarkResidual:181` is the NAMED obligation of the deployed
+`Dregg2.Circuit.ShieldedTransferStark`'s residual is the NAMED obligation of the deployed
 `ShieldedTransfer` effect's `verify_stark_side` (`circuit-prove/src/shielded/transfer.rs:146`) over
-the deployed 3-slot public-input tuple `[nullifier, merkle_root, value_binding]`:
+the deployed 3-slot public-input tuple `[nullifier, merkle_root, value_binding]`. **As stated before
+2026-07-24** — and preserved verbatim there as `StarkResidualUntied`, because the teeth below are
+theorems about THAT object — it read:
 
-    def StarkResidual (H : List Int → Int) (member : Int → Int → Prop) (pi : ShieldedSpendPI) : Prop :=
+    def StarkResidualUntied (H : List Int → Int) (member : Int → Int → Prop)
+        (pi : ShieldedSpendPI) : Prop :=
       ∃ (commitment key value randomness : Int),
         member commitment pi.merkleRoot
         ∧ pi.nullifier    = H [commitment, key]
         ∧ pi.valueBinding = H [value, randomness]
         ∧ 0 ≤ value
 
-Its docstring reads the third conjunct as *"value-binding is the committed leaf value (C7a)"* and the
-fourth as *"value is range-valid"*. Neither is what the `Prop` says. `value` and `randomness` occur
+Its docstring read the third conjunct as *"value-binding is the committed leaf value (C7a)"* and the
+fourth as *"value is range-valid"*. Neither is what that `Prop` says. `value` and `randomness` occur
 in **no conjunct that mentions `commitment`** — the only other place `value` occurs is its own
-`0 ≤ value`, which the existential picks it to satisfy. So the bound value is tied neither to the
-member commitment nor to the member leaf, and the range conjunct ranges over a value nothing pins:
+`0 ≤ value`, which the existential picks it to satisfy. So the bound value was tied neither to the
+member commitment nor to the member leaf, and the range conjunct ranged over a value nothing pinned:
 
   * `starkResidual_indep_of_valueBinding` — under `C7aSurjective` (the two-free-input analogue of
-    `ShieldedOnRampPin.C6Surjective`), the residual's truth value does not depend on `pi[2]` at all:
-    the deployed public input `value_binding` is unconstrained by the obligation.
+    `ShieldedOnRampPin.C6Surjective`), the untied residual's truth value does not depend on `pi[2]` at
+    all: the deployed public input `value_binding` is unconstrained by that obligation.
   * `starkResidual_vacuous` — at any root that has ONE member whose nullifier site is surjective in
-    its free `key`, `StarkResidual` holds for **EVERY** public-input triple, forged ones included, and
-    `starkResidual_floor_prices_nothing` inhabits `starkResidual_of_floor`'s `extract` premise with no
-    crypto whatsoever.
-  * `StarkResidualTied` is the corrected shape — ONE opening `(value, asset, owner, rand)` both
-    commits the member leaf AND opens the value binding — with
-    `starkResidualTied_implies_starkResidual` (a refinement) and `starkResidual_not_tied` (strict:
-    a concrete `H`/`member`/`pi` satisfying the residual and refuting the tied one).
+    its free `key`, the untied residual holds for **EVERY** public-input triple, forged ones included,
+    and `starkResidual_floor_prices_nothing` inhabits `starkResidual_of_floor`'s `extract` premise
+    with no crypto whatsoever.
 
-This is NOT a rewrite of `ShieldedTransferStark`: the corrected predicate is authored alongside, and
-§6 names the sites to fix.
+**THE REPAIR (landed in `ShieldedTransferStark`, 2026-07-24 — this is the launchpad→closure step).**
+`StarkResidual` is now the TIED form: ONE opening `(value, asset, owner, randomness)` commits the
+member leaf, derives the nullifier FROM that leaf, and opens the published value binding.
+`ShieldedTransferStark.starkResidual_untied_of_starkResidual` proves the strengthening loses nothing;
+`forged_valueBinding_now_refused` / `starkResidual_sees_valueBinding` are its teeth (a forged `pi[2]`
+is now refused where it previously passed); that module's §5 floor list carries the tie as a FOURTH
+named floor, whose absence is exactly how the vacuity hid. Here, `starkResidual_not_tied` keeps the
+strictness on the record at a SECOND, independent site: a concrete `H`/`member`/`pi` satisfying the
+untied residual and refuting the repaired one.
 
 ## Scope
 
@@ -226,11 +232,16 @@ theorem property_transfers_of_injective {α : Type u} {β : Type v} {f : α → 
     (hinj : Function.Injective f) (P : α → Prop) {w w' : α} (hP : P w) (h : f w' = f w) : P w' := by
   rwa [hinj h]
 
-/-! ## §5 — THE SECOND LIVE INSTANCE: `ShieldedTransferStark.StarkResidual`. -/
+/-! ## §5 — THE SECOND INSTANCE, FOUND HERE AND SINCE REPAIRED: `ShieldedTransferStark`'s residual.
+
+Every theorem in this section is stated over `StarkResidualUntied` — the shape the module carried
+before the 2026-07-24 repair, kept there verbatim precisely so these teeth stay true of the object
+they were proved about. `starkResidual_not_tied` closes the section by separating that shape from the
+repaired `StarkResidual`. -/
 
 section StarkResidualInstance
 
-open Dregg2.Circuit.ShieldedTransferStark (ShieldedSpendPI StarkResidual)
+open Dregg2.Circuit.ShieldedTransferStark (ShieldedSpendPI StarkResidual StarkResidualUntied)
 
 /-- **The C7a site's surjectivity** — the two-free-input analogue of
 `ShieldedOnRampPin.C6Surjective`. `value_binding = hash_fact(value, [randomness, 0, 0])` is a
@@ -247,69 +258,61 @@ def C7aSurjective (H : List Int → Int) : Prop :=
 def NullifierSiteSurjectiveAt (H : List Int → Int) (member : Int → Int → Prop) (root : Int) : Prop :=
   ∃ c : Int, member c root ∧ ∀ y : Int, ∃ key : Int, y = H [c, key]
 
-/-- **⚑ THE RESIDUAL DOES NOT SEE `pi[2]` (`starkResidual_indep_of_valueBinding`).** Under
-`C7aSurjective`, `StarkResidual` has the same truth value at any two public-input triples agreeing on
-`nullifier` and `merkleRoot`. The deployed `value_binding` public input is therefore unconstrained by
-the obligation the STARK is said to discharge: the docstring's *"value-binding is the committed leaf
-value"* and *"value is range-valid"* are claims the `Prop` does not make. -/
+/-- **⚑ THE UNTIED RESIDUAL DOES NOT SEE `pi[2]` (`starkResidual_indep_of_valueBinding`).** Under
+`C7aSurjective`, `StarkResidualUntied` has the same truth value at any two public-input triples
+agreeing on `nullifier` and `merkleRoot`. The deployed `value_binding` public input was therefore
+unconstrained by the obligation the STARK was said to discharge: the docstring's *"value-binding is
+the committed leaf value"* and *"value is range-valid"* were claims that `Prop` did not make. The
+repaired `StarkResidual` refutes this shape — `ShieldedTransferStark.starkResidual_sees_valueBinding`
+exhibits two triples agreeing on `pi[0]`/`pi[1]`, one accepted and one refused. -/
 theorem starkResidual_indep_of_valueBinding {H : List Int → Int} {member : Int → Int → Prop}
     (hsurj : C7aSurjective H) (pi pi' : ShieldedSpendPI)
     (hn : pi.nullifier = pi'.nullifier) (hr : pi.merkleRoot = pi'.merkleRoot)
-    (h : StarkResidual H member pi) : StarkResidual H member pi' := by
+    (h : StarkResidualUntied H member pi) : StarkResidualUntied H member pi' := by
   obtain ⟨c, key, _, _, hmem, hnf, _, _⟩ := h
   obtain ⟨v', r', hv0, hy⟩ := hsurj pi'.valueBinding
   exact ⟨c, key, v', r', hr ▸ hmem, hn ▸ hnf, hy, hv0⟩
 
 /-- The same statement in the form that names the slot: swapping the published `value_binding` for an
-arbitrary felt `y` preserves the residual, both ways. -/
+arbitrary felt `y` preserves the untied residual, both ways. -/
 theorem starkResidual_valueBinding_carries_nothing {H : List Int → Int}
     {member : Int → Int → Prop} (hsurj : C7aSurjective H) (pi : ShieldedSpendPI) (y : Int) :
-    StarkResidual H member pi ↔ StarkResidual H member { pi with valueBinding := y } :=
+    StarkResidualUntied H member pi ↔ StarkResidualUntied H member { pi with valueBinding := y } :=
   ⟨starkResidual_indep_of_valueBinding hsurj pi _ rfl rfl,
    starkResidual_indep_of_valueBinding hsurj _ pi rfl rfl⟩
 
 /-- **⚑ THE VACUITY (`starkResidual_vacuous`).** At any root with ONE member whose nullifier site is
-surjective, `StarkResidual` holds for **EVERY** public-input triple — a forged nullifier and a forged
-value binding included. The mirror of `noteAccumulatorCR_vacuous_of_c6Surjective`, at the deployed
-`ShieldedTransfer` obligation. -/
+surjective, `StarkResidualUntied` holds for **EVERY** public-input triple — a forged nullifier and a
+forged value binding included. The mirror of `noteAccumulatorCR_vacuous_of_c6Surjective`, at the
+`ShieldedTransfer` obligation as it was stated before the repair. -/
 theorem starkResidual_vacuous {H : List Int → Int} {member : Int → Int → Prop}
     (hsurj : C7aSurjective H) (pi : ShieldedSpendPI)
-    (hnf : NullifierSiteSurjectiveAt H member pi.merkleRoot) : StarkResidual H member pi := by
+    (hnf : NullifierSiteSurjectiveAt H member pi.merkleRoot) : StarkResidualUntied H member pi := by
   obtain ⟨c, hmem, hall⟩ := hnf
   obtain ⟨key, hk⟩ := hall pi.nullifier
   obtain ⟨v, r, hv0, hvb⟩ := hsurj pi.valueBinding
   exact ⟨c, key, v, r, hmem, hk, hvb, hv0⟩
 
-/-- **⚑ THE FLOOR PRICES NOTHING (`starkResidual_floor_prices_nothing`).**
-`ShieldedTransferStark.starkResidual_of_floor` takes `extract : accepted → StarkResidual H member pi`
-as the FRI/AIR floor at the hiding uni-STARK config. Under the two surjectivities that premise is
-INHABITED with no crypto at all, for every `accepted` — so the floor, as stated, certifies nothing
-about the nullifier or the value binding. What it can still certify is the membership conjunct, which
-is why the repair is the tie, not the deletion. -/
+/-- **⚑ THE FLOOR PRICED NOTHING (`starkResidual_floor_prices_nothing`).**
+`ShieldedTransferStark.starkResidual_of_floor` takes `extract : accepted → …` as the FRI/AIR floor at
+the hiding uni-STARK config. With the UNTIED residual as its conclusion, that premise is INHABITED
+under the two surjectivities with no crypto at all, for every `accepted` — so the floor, as stated,
+certified nothing about the nullifier or the value binding. What it could still certify is the
+membership conjunct, which is why the repair is the tie, not the deletion. Post-repair the same
+theorem's premise is the TIED residual, and this inhabitation no longer types. -/
 theorem starkResidual_floor_prices_nothing {H : List Int → Int} {member : Int → Int → Prop}
     (hsurj : C7aSurjective H) (pi : ShieldedSpendPI)
     (hnf : NullifierSiteSurjectiveAt H member pi.merkleRoot) (accepted : Prop) :
-    accepted → StarkResidual H member pi :=
+    accepted → StarkResidualUntied H member pi :=
   fun _ => starkResidual_vacuous hsurj pi hnf
 
-/-- **THE CORRECTED SHAPE (`StarkResidualTied`).** ONE opening `(value, asset, owner, rand)` does all
-the work: it commits the leaf `H [value, asset, owner, rand]` that is a `member` of the tree, that
-leaf is what the nullifier is derived from, and the SAME `value`/`rand` open the published value
-binding. This is what the C6/C7a constraints of `spend_circuit.rs` actually relate; the free-witness
-version drops the ties. -/
-def StarkResidualTied (H : List Int → Int) (member : Int → Int → Prop) (pi : ShieldedSpendPI) : Prop :=
-  ∃ (value asset owner rand key : Int),
-    member (H [value, asset, owner, rand]) pi.merkleRoot
-    ∧ pi.nullifier = H [H [value, asset, owner, rand], key]
-    ∧ pi.valueBinding = H [value, rand]
-    ∧ 0 ≤ value
-
-/-- The corrected shape REFINES the deployed one: every tied residual is a residual, so nothing
-proved downstream of `StarkResidual` is lost by strengthening to `StarkResidualTied`. -/
-theorem starkResidualTied_implies_starkResidual {H : List Int → Int} {member : Int → Int → Prop}
-    (pi : ShieldedSpendPI) (h : StarkResidualTied H member pi) : StarkResidual H member pi := by
-  obtain ⟨value, asset, owner, rand, key, hmem, hnf, hvb, hv0⟩ := h
-  exact ⟨H [value, asset, owner, rand], key, value, rand, hmem, hnf, hvb, hv0⟩
+/-- The repaired shape REFINES the pre-repair one — restated here as the local check that this
+section's teeth lose nothing. The proof is
+`ShieldedTransferStark.starkResidual_untied_of_starkResidual`; the corrected `Prop` lives THERE now,
+not as a second copy here. -/
+theorem starkResidual_implies_untied {H : List Int → Int} {member : Int → Int → Prop}
+    (pi : ShieldedSpendPI) (h : StarkResidual H member pi) : StarkResidualUntied H member pi :=
+  Dregg2.Circuit.ShieldedTransferStark.starkResidual_untied_of_starkResidual pi h
 
 /-- A separating site: a 2-argument hash that hits `7` and a 4-argument hash that never does. -/
 def sepH : List Int → Int := fun xs => if xs.length = 2 then 7 else 0
@@ -321,12 +324,15 @@ def sepMember : Int → Int → Prop := fun c r => c = 7 ∧ r = 1
 /-- The separating public inputs: nullifier `7`, root `1`, value binding `7`. -/
 def sepPi : ShieldedSpendPI := ⟨7, 1, 7⟩
 
-/-- **⚑ STRICTLY STRONGER, CONCRETELY (`starkResidual_not_tied`).** The deployed residual HOLDS at
-`(sepH, sepMember, sepPi)` while the tied residual FAILS: the free `value`/`randomness` satisfy the
-value-binding conjunct through a 2-argument image, but no note opening commits a member leaf. So the
-gap between the two predicates is real and inhabited — the ties are not a notational nicety. -/
+/-- **⚑ STRICTLY STRONGER, CONCRETELY (`starkResidual_not_tied`).** The pre-repair residual HOLDS at
+`(sepH, sepMember, sepPi)` while the repaired `StarkResidual` FAILS: the free `value`/`randomness`
+satisfy the value-binding conjunct through a 2-argument image, but no note opening commits a member
+leaf. So the gap between the two predicates is real and inhabited — the ties are not a notational
+nicety. A SECOND site, independent of `ShieldedTransferStark.forged_valueBinding_now_refused`: there
+the tie refuses a forged `pi[2]` at a tree the opening CAN reach; here it refuses an opening that
+reaches no member at all. -/
 theorem starkResidual_not_tied :
-    StarkResidual sepH sepMember sepPi ∧ ¬ StarkResidualTied sepH sepMember sepPi := by
+    StarkResidualUntied sepH sepMember sepPi ∧ ¬ StarkResidual sepH sepMember sepPi := by
   constructor
   · exact ⟨7, 0, 0, 0, ⟨rfl, rfl⟩, by decide, by decide, by decide⟩
   · rintro ⟨value, asset, owner, rand, key, ⟨hc, _⟩, _, _, _⟩
@@ -347,13 +353,19 @@ end StarkResidualInstance
      `ShieldedSpendPortDischarge.pin_accept_is_note_committed:182`,
      `ShieldedSpendPortResidual.emitted_membership_chain:281`,
      `ShieldedSpendPortResidual.noteAccumulatorCR_of_hashFloor:319`.
-  2. `Dregg2.Circuit.ShieldedTransferStark.StarkResidual:181` — §5 above. The `value`/`randomness`
-     witnesses appear in no other conjunct; the `key` witness appears in no other conjunct. Sites to
-     fix: the `def` itself (strengthen to `StarkResidualTied`, or carry the tie as a separate named
-     conjunct), and `starkResidual_of_floor:194`, whose `extract` premise is inhabited without crypto
-     under `starkResidual_floor_prices_nothing`. The §5 floor list at `ShieldedTransferStark.lean:205`
-     should gain the tie as a fourth named floor; it currently names only StarkSound,
-     Pedersen/Bulletproofs, blake3-CR and the leaf↔leg link.
+  2. `Dregg2.Circuit.ShieldedTransferStark.StarkResidualUntied` — §5 above; **REPAIRED 2026-07-24**.
+     The `value`/`randomness` witnesses appeared in no other conjunct, and neither did the `key`
+     witness. All four named sites are fixed: the `def` now carries the tie (`StarkResidual`, one
+     opening commits the member leaf ∧ derives the nullifier ∧ opens the value binding);
+     `starkResidual_of_floor`'s `extract` premise is that tied obligation, so
+     `starkResidual_floor_prices_nothing` no longer types at it; the §5 floor list gained the tie as
+     its FOURTH named floor (with the honest status split — a THEOREM for the Lean-emitted objects
+     via `ShieldedSpendPortDischarge.emitted_conserved_is_leaf_bound`, a faithfulness CLAIM for the
+     deployed hand-written Rust AIR); and the misleading docstring is corrected. Teeth:
+     `starkResidual_untied_of_starkResidual` (refinement — nothing lost),
+     `forged_valueBinding_now_refused` + `starkResidual_sees_valueBinding` (non-vacuity — a forged
+     `pi[2]` is refused where it previously passed), `starkResidual_not_tied` (this module, second
+     site).
 
 **(b) SAVED BY CONTEXT — the missing content is supplied at the use site.**
 
@@ -432,7 +444,7 @@ end StarkResidualInstance
 #assert_axioms starkResidual_valueBinding_carries_nothing
 #assert_axioms starkResidual_vacuous
 #assert_axioms starkResidual_floor_prices_nothing
-#assert_axioms starkResidualTied_implies_starkResidual
+#assert_axioms starkResidual_implies_untied
 #assert_axioms starkResidual_not_tied
 
 end Dregg2.Verify.ExistsImageVacuity

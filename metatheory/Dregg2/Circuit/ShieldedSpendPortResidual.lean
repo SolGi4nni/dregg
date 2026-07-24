@@ -48,18 +48,39 @@ the floor:
   * **`emitted_chain_continuity`** — the C5 `chainWindow` forces `current[i+1] ≡ parent[i] [ZMOD p]`
     on every transition.
   * **`emitted_membership_chain`** — THE RECOMPOSITION: the emitted per-row chain IS an abstract
-    Merkle fold — leaf `current[0]` is an `IsCommittedNote`, each step `current[i+1] ≡ Hair hash
-    current[i] level[i] [ZMOD p]`, and the final fold `Hair hash current[last] level[last] ≡ the
-    committed-accumulator PI`. The per-row AIR chain (C3 chip + C5 window) genuinely composes into the
-    `foldPath` reaching the committed root (field-faithful mod-p at the junctions — a BabyBear Merkle
-    proof IS a chain of mod-p equalities).
-  * **`noteAccumulatorCR_of_hashFloor`** — THE FLOOR REDUCTION: `NoteAccumulatorCR` follows from the
-    SINGLE Poseidon2 second-preimage floor `FoldReachIsMember` (only a genuinely-committed member folds
-    to the committed root — the standard Merkle-root binding, the SAME shape as the deployed
-    `SpineCommits8`/`Compress8CR` floor) PLUS the honest construction `members_are_notes` (the
-    accumulator only inserts note-shaped commitments). The ∀-leaf assumption is no longer unbounded —
-    it is factored into a bounded hash-CR floor over the accumulator's own committed set + a non-crypto
-    construction fact.
+    Merkle fold — leaf `current[0]` `OpensAs` row 0's own opening cells, each step `current[i+1] ≡
+    Hair hash current[i] level[i] [ZMOD p]`, and the final fold `Hair hash current[last] level[last] ≡
+    the committed-accumulator PI`. The per-row AIR chain (C3 chip + C5 window) genuinely composes into
+    the `foldPath` reaching the committed root (field-faithful mod-p at the junctions — a BabyBear
+    Merkle proof IS a chain of mod-p equalities).
+  * **`accumulatorSound_of_hashFloor`** — THE FLOOR REDUCTION: accumulator soundness at ANY note
+    predicate follows from the SINGLE Poseidon2 second-preimage floor `FoldReachIsMember` (only a
+    member folds to the committed root — the standard Merkle-root binding, the SAME shape as the
+    deployed `SpineCommits8`/`Compress8CR` floor) PLUS the honest construction fact that members
+    satisfy that predicate. The ∀-leaf assumption is no longer unbounded — it is factored into a
+    bounded hash-CR floor over the accumulator's own committed set + a non-crypto construction fact.
+    `noteAccumulatorCR_of_hashFloor` is its instance at `IsCommittedNote`.
+
+## ⚑ ∃-IMAGE SWEEP CORRECTIONS (2026-07-24) — read `Dregg2.Verify.ExistsImageVacuity` first.
+
+`IsCommittedNote` is an ∃-IMAGE: with four free field inputs onto ~2^31, the C6 site is expected to be
+mod-p surjective, and then the predicate holds of EVERY felt — so a conclusion stated at it excludes
+nothing. Two of this module's conclusions were stated there, and both are repaired at the resolution
+the AIR actually supports:
+
+  * `emitted_membership_chain` (i) and `emitted_nullifier_is_committed_note_nullifier` (1) now conclude
+    at the CELL-PINNED `ShieldedSpendPortDischarge.OpensAs` — the opening is row 0's own cells, the
+    ones C4 and C7a consume — which is strictly stronger and not vacuated by surjectivity.
+  * `noteAccumulatorCR_of_hashFloor` is generalized to `accumulatorSound_of_hashFloor`, parametric in
+    the note predicate, so the AUTHORIZATION-carrying instance (`ShieldedOnRampPin.IsLedgerNote`) is
+    reachable through the same reduction.
+
+⚠ **NOT strengthened to `IsLedgerNote` here, and why.** No trace-level theorem in this module can
+conclude that the spent note was ledger-AUTHORIZED: a satisfying `shieldedSpendDesc` trace mentions no
+ledger gate, no `Shield` entry, no committed set — the AIR relates cells to cells. Authorization is a
+property of what the ACCUMULATOR contains, supplied by `ShieldedOnRampPin.shieldAppend_is_ledger_note`
+(a construction fact of the Shield-A append) and carried into a spend by `accumulatorSound_of_hashFloor`
+at the ledger predicate. Claiming it here would be manufacturing strength the emitted object lacks.
 
 ## §C — the mod-p → ℤ conservation range-lift
 
@@ -140,8 +161,8 @@ private theorem modeq_of_sub' {x y : ℤ} (h : x + -1 * y ≡ 0 [ZMOD P]) : x �
 section SpendCore
 
 open Dregg2.Circuit.Emit.ShieldedSpendDescriptor
-open Dregg2.Circuit.ShieldedSpendPortDischarge (Hair IsCommittedNote NoteAccumulatorCR
-  emitted_leaf_isCommittedNote)
+open Dregg2.Circuit.ShieldedSpendPortDischarge (Hair IsCommittedNote OpensAs NoteAccumulatorCR
+  emitted_leaf_isCommittedNote emitted_leaf_opensAs_row0 isCommittedNote_of_opensAs)
 open Dregg2.Exec.NullifierAccumulator (NfAccWitness present_no_witness)
 open Dregg2.Circuit.SortedTreeNonMembershipHeap8 (keysOf8)
 open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
@@ -151,15 +172,24 @@ open Dregg2.Circuit.DeployedCapTree (Digest8)
 
 /-- **⚑ THE #A DISCHARGE (`emitted_nullifier_is_committed_note_nullifier`).** On a satisfying
 `shieldedSpendDesc` trace (under the chip AIR's own soundness) the published nullifier is bound to the
-ACTUAL spent leaf, which is a GENUINE committed note — not a free value: the row-0 `leaf_commit` is an
-`IsCommittedNote` (C6a); the nullifier cell is `hash_fact(leaf_commit, key[0..4])` (C4′); the
-membership `current ≡ leaf_commit` (C6b); and the published nullifier PI ≡ that cell. A replayed or
-forged nullifier is therefore the nullifier OF a committed note the spender opened. -/
+ACTUAL spent leaf, which is the C6 commitment of row 0's OWN opening cells — not a free value: the
+row-0 `leaf_commit` `OpensAs` `(cVAL, cASSET, cOWNER, cRAND)` (C6a); the nullifier cell is
+`hash_fact(leaf_commit, key[0..4])` (C4′); the membership `current ≡ leaf_commit` (C6b); and the
+published nullifier PI ≡ that cell. A replayed or forged nullifier is therefore the nullifier OF the
+note whose opening the spender exhibited in-trace.
+
+⚑ **STRENGTHENED 2026-07-24** (same class as the five sites the ∃-image sweep named, found in this
+file): conjunct 1 was the ∃-image `IsCommittedNote hash cLEAF`, vacuous under
+`ShieldedOnRampPin.C6Surjective`; it is now the cell-pinned `OpensAs`, whose cells are the ones the
+value-link block also consumes. ⚠ Authorization is still NOT here — see
+`ShieldedSpendPortDischarge.emitted_leaf_isCommittedNote` for why the AIR cannot force it. -/
 theorem emitted_nullifier_is_committed_note_nullifier (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
-    IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cLEAF)
+    OpensAs hash ((t.rows.getD 0 zeroAsg) cLEAF) ((t.rows.getD 0 zeroAsg) cVAL)
+      ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
+      ((t.rows.getD 0 zeroAsg) cRAND)
     ∧ (t.rows.getD 0 zeroAsg) cNUL
         = hash [(t.rows.getD 0 zeroAsg) cLEAF, (t.rows.getD 0 zeroAsg) cKEY0,
                 (t.rows.getD 0 zeroAsg) cKEY1, (t.rows.getD 0 zeroAsg) cKEY2,
@@ -168,8 +198,7 @@ theorem emitted_nullifier_is_committed_note_nullifier (hash : List ℤ → ℤ) 
     ∧ (t.pub piNUL ≡ (t.rows.getD 0 zeroAsg) cNUL [ZMOD P]) := by
   have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
   refine ⟨?_, hrel.2.1, hrel.2.2.2.2.1, (hrel.2.2.2.2.2.1).symm⟩
-  refine ⟨(t.rows.getD 0 zeroAsg) cVAL, (t.rows.getD 0 zeroAsg) cASSET,
-          (t.rows.getD 0 zeroAsg) cOWNER, (t.rows.getD 0 zeroAsg) cRAND, ?_⟩
+  unfold OpensAs
   rw [hrel.2.2.1]
 
 /-- **⚑ REPLAY DETERMINISM (`emitted_nullifier_determined`).** Two satisfying spends of the SAME note
@@ -273,16 +302,27 @@ theorem emitted_chain_continuity (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
 
 /-- **⚑ THE #B RECOMPOSITION (`emitted_membership_chain`).** The emitted per-row Merkle chain (C3 chip
 + C5 window) IS an abstract `foldPath` reaching the committed-accumulator root: (i) the leaf
-`current[0]` is a GENUINE `IsCommittedNote`; (ii) each step `current[i+1] ≡ Hair hash current[i]
-level[i] [ZMOD p]` — the fold advances by one `Hair` per level; (iii) the final fold `Hair hash
-current[last] level[last] ≡ pi[committed_root] [ZMOD p]`. The deferred multi-row fold-walk the discharge
-module named is now recomposed — field-faithful mod-p at the junctions (a BabyBear Merkle proof IS a
-chain of mod-p equalities). -/
+`current[0]` is the C6 commitment of row 0's OWN opening cells; (ii) each step `current[i+1] ≡ Hair
+hash current[i] level[i] [ZMOD p]` — the fold advances by one `Hair` per level; (iii) the final fold
+`Hair hash current[last] level[last] ≡ pi[committed_root] [ZMOD p]`. The deferred multi-row fold-walk
+the discharge module named is now recomposed — field-faithful mod-p at the junctions (a BabyBear Merkle
+proof IS a chain of mod-p equalities).
+
+⚑ **STRENGTHENED 2026-07-24 (∃-image sweep).** Conjunct (i) was the ∃-image `IsCommittedNote hash
+current[0]`, which under `ShieldedOnRampPin.C6Surjective` holds of every felt and so excluded nothing;
+it is now the cell-pinned `OpensAs`, from which the ∃-image follows by `isCommittedNote_of_opensAs`.
+⚠ It is NOT strengthened to `ShieldedOnRampPin.IsLedgerNote`, because the chain establishes REACH — the
+leaf folds to the committed root — and reach only carries authorization when the ACCUMULATOR is sound
+at an authorization-carrying note predicate. That is exactly what `accumulatorSound_of_hashFloor` below
+supplies and what `ShieldedOnRampPin.shieldA_pin_spends_authorized` instantiates; no rearrangement of
+this trace-level statement can produce it. -/
 theorem emitted_membership_chain (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
-    IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cCUR)
+    OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
+      ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
+      ((t.rows.getD 0 zeroAsg) cRAND)
     ∧ (∀ i, i + 1 < t.rows.length →
         (t.rows.getD (i + 1) zeroAsg) cCUR ≡ Hair hash (curAt t i) (levelAt t i) [ZMOD P])
     ∧ (Hair hash (curAt t (t.rows.length - 1)) (levelAt t (t.rows.length - 1))
@@ -291,7 +331,7 @@ theorem emitted_membership_chain (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
     cases hr : t.rows with
     | nil => exact absurd hr hne
     | cons a l => simp
-  refine ⟨emitted_leaf_isCommittedNote hash minit mfin maddrs t hne hsat hChip, ?_, ?_⟩
+  refine ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip, ?_, ?_⟩
   · intro i hi
     have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip i (by omega)
     have hcont := emitted_chain_continuity hash minit mfin maddrs t hsat i hi
@@ -310,28 +350,55 @@ NOT an unbounded per-leaf assumption. -/
 def FoldReachIsMember (hash : List ℤ → ℤ) (committedRoot : ℤ) (member : ℤ → Prop) : Prop :=
   ∀ leaf path, foldPath (Hair hash) leaf path = committedRoot → member leaf
 
-/-- **⚑ THE #B FLOOR REDUCTION (`noteAccumulatorCR_of_hashFloor`).** The discharge module's ∀-leaf
-floor `NoteAccumulatorCR` (`AccumulatorSound` at the faithful `Hair` realization) FOLLOWS FROM the
-single Poseidon2-CR floor `FoldReachIsMember` (bounded, over the accumulator's own committed set) PLUS
-the honest construction `members_are_notes` (the accumulator only inserts note-shaped commitments — no
-crypto). The ∀-leaf assumption is thereby factored into a legitimate hash-CR floor + a construction
-fact; it is no longer an unbounded per-leaf assumption. -/
+/-- **⚑ THE #B FLOOR REDUCTION (`accumulatorSound_of_hashFloor`, GENERALIZED 2026-07-24).** The
+discharge module's ∀-leaf floor (`AccumulatorSound` at the faithful `Hair` realization) FOLLOWS FROM
+the single Poseidon2-CR floor `FoldReachIsMember` (bounded, over the accumulator's own committed set)
+PLUS the honest construction fact that every member satisfies the note predicate (the accumulator only
+inserts leaves it built — no crypto). The ∀-leaf assumption is thereby factored into a legitimate
+hash-CR floor + a construction fact; it is no longer an unbounded per-leaf assumption.
+
+The note predicate is a PARAMETER, because nothing in the argument ever wanted the ∃-image: the
+conclusion is exactly as strong as the construction fact supplied. Instantiate `note :=
+ShieldedOnRampPin.IsLedgerNote hash auth` — whose construction fact is
+`ShieldedOnRampPin.shieldAppend_is_ledger_note`, true by construction of the Shield-A append — and the
+accumulator is sound at the AUTHORIZATION-carrying predicate, which is what
+`ShieldedOnRampPin.shieldA_pin_spends_authorized` then spends against. Instantiate it at
+`IsCommittedNote` and you get `noteAccumulatorCR_of_hashFloor`, which is vacuous under
+`ShieldedOnRampPin.C6Surjective` (it holds at every root, including a prover-written one). -/
+theorem accumulatorSound_of_hashFloor (hash : List ℤ → ℤ) (committedRoot : ℤ) (member note : ℤ → Prop)
+    (members_are_notes : ∀ leaf, member leaf → note leaf)
+    (floor : FoldReachIsMember hash committedRoot member) :
+    AccumulatorSound (Hair hash) note committedRoot := by
+  intro leaf path hfold
+  exact members_are_notes leaf (floor leaf path hfold)
+
+/-- **The floor reduction at the ∃-image note predicate** — `accumulatorSound_of_hashFloor`
+instantiated at `IsCommittedNote`, kept because downstream consumes it in this shape
+(`ShieldedOnRampPin.shieldA_noteAccumulatorCR`, `ShieldedSpendFoldReachRealized.noteAccumulatorCR_realized`).
+
+⚠ **HONEST WEAKENING.** The conclusion `NoteAccumulatorCR` is vacuous at the deployed parameters
+(`ShieldedOnRampPin.noteAccumulatorCR_vacuous_of_c6Surjective:363`); this instance therefore prices
+nothing on its own. The instance that prices something is the same theorem at
+`note := IsLedgerNote hash auth`. -/
 theorem noteAccumulatorCR_of_hashFloor (hash : List ℤ → ℤ) (committedRoot : ℤ) (member : ℤ → Prop)
     (members_are_notes : ∀ leaf, member leaf → IsCommittedNote hash leaf)
     (floor : FoldReachIsMember hash committedRoot member) :
-    NoteAccumulatorCR hash committedRoot := by
-  intro leaf path hfold
-  exact members_are_notes leaf (floor leaf path hfold)
+    NoteAccumulatorCR hash committedRoot :=
+  accumulatorSound_of_hashFloor hash committedRoot member (IsCommittedNote hash)
+    members_are_notes floor
 
 /-! ### §B.1 — non-vacuity: the recomposition FIRES on the discharge module's explicit witness. -/
 
 open Dregg2.Circuit.ShieldedSpendPortDischarge (zTf_sound)
 
 /-- **The recomposition is not vacuous** — it FIRES on the discharge module's all-zero satisfying trace
-(`zero_witness_satisfies`): the leaf really is an `IsCommittedNote`, so the membership chain is about an
-inhabited relation. -/
+(`zero_witness_satisfies`): the leaf really is opened by row 0's own cells, so the membership chain is
+about an inhabited relation. Stated at the cell-pinned `OpensAs`; the ∃-image version would fire on
+anything. -/
 theorem membership_chain_fires_on_witness :
-    IsCommittedNote hzero ((zTrace.rows.getD 0 zeroAsg) cCUR)
+    OpensAs hzero ((zTrace.rows.getD 0 zeroAsg) cCUR) ((zTrace.rows.getD 0 zeroAsg) cVAL)
+      ((zTrace.rows.getD 0 zeroAsg) cASSET) ((zTrace.rows.getD 0 zeroAsg) cOWNER)
+      ((zTrace.rows.getD 0 zeroAsg) cRAND)
     ∧ (Hair hzero (curAt zTrace (zTrace.rows.length - 1)) (levelAt zTrace (zTrace.rows.length - 1))
         ≡ zTrace.pub piCOMMITTED [ZMOD P]) := by
   have h := emitted_membership_chain hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
@@ -344,6 +411,7 @@ theorem membership_chain_fires_on_witness :
 #assert_axioms emitted_fold_step_all_rows
 #assert_axioms emitted_chain_continuity
 #assert_axioms emitted_membership_chain
+#assert_axioms accumulatorSound_of_hashFloor
 #assert_axioms noteAccumulatorCR_of_hashFloor
 #assert_axioms membership_chain_fires_on_witness
 

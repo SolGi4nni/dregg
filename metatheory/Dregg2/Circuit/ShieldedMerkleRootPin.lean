@@ -24,13 +24,15 @@ never committed → theft / inflation.** As the decision brief puts it
 (`docs/DECISION-shielded-redesign-2026-07-20.md` #15) this is *"larger than any felt-width birthday
 collision; the ~31-bit width is the entry point, not the wound."*
 
-**Where the metatheory was blind.** `Dregg2.Circuit.ShieldedTransferStark.StarkResidual`
-(`ShieldedTransferStark.lean:181`) states the deployed STARK's obligation as
-`∃ commitment …, member commitment pi.merkleRoot ∧ …` — membership against `pi.merkleRoot`, the
-WIRE root — and its §5 "full floor list" names StarkSound, Pedersen/Bulletproofs, blake3-CR, and the
-value-link (#16) as the open residual. The `merkleRoot = committedRoot` PIN is **absent from that
-list**: the abstract `member commitment pi.merkleRoot` silently assumes `pi.merkleRoot` is the right
-root. This module supplies exactly the invariant that assumption papers over.
+**Where the metatheory was blind.** `Dregg2.Circuit.ShieldedTransferStark.StarkResidual` states the
+deployed STARK's obligation as `∃ …, member (H [value, asset, owner, randomness]) pi.merkleRoot ∧ …`
+— membership against `pi.merkleRoot`, the WIRE root — and its §5 "full floor list" names StarkSound,
+Pedersen/Bulletproofs, blake3-CR, the C6↔C7a one-opening tie, and the value-link (#16) as the open
+residual. The `merkleRoot = committedRoot` PIN is **absent from that list**: the abstract
+`member … pi.merkleRoot` silently assumes `pi.merkleRoot` is the right root. This module supplies
+exactly the invariant that assumption papers over. (That residual carried a SECOND blindness of the
+same family — its value witness was tied to nothing, `Verify.ExistsImageVacuity` §5 — repaired
+2026-07-24 by the tie now quoted above; the pin remains this module's business.)
 
 **What is proved here** (theorems over ALL inputs; the model is faithful to the fold, HASH-AGNOSTIC —
 it uses no property of the per-level hash beyond determinism, so it holds for the real Poseidon2):
