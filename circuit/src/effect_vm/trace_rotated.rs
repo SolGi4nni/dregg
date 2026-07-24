@@ -152,6 +152,50 @@ pub fn avail_pad_for_descriptor_name(name: &str) -> usize {
     }
 }
 
+/// **The availability pad a COMMITTED WIDE REGISTRY MEMBER demands of its per-family producer.**
+///
+/// A per-family wide producer (heapWrite / supplyMint / the turn-bound cap-open) is NOT reached by
+/// the effect→descriptor resolver, so it never sees a parsed descriptor and cannot call
+/// [`avail_pad_for_descriptor_name`] on `desc.name` the way the dispatcher does. It must still lay
+/// the face its committed member was emitted at: resolve the member's WIRE NAME out of
+/// [`crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV`] (field 1 of `key\tname\tjson`) and read
+/// the pad off it — derived from the committed bytes, never a literal beside them.
+///
+/// CROSS-CHECKED AGAINST THE COMPACTION GEOMETRY, and FAIL-CLOSED. The S2 table records each
+/// member's block base `bb` — the width of the v1 face its rotated BEFORE limbs sit at — and that is
+/// exactly `V1_WIDTH + avail_pad`. If the two disagree the producer would compact the RIGHT column
+/// COUNT out of the WRONG BANDS (the avail-shift trap: an honest proof that is silently UNSAT), so
+/// this refuses instead of emitting such a row.
+pub fn wide_member_avail_pad(registry_key: &str) -> Result<usize, String> {
+    let name = crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            if it.next() == Some(registry_key) {
+                it.next()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            format!("wide_member_avail_pad: {registry_key} not in WIDE_REGISTRY_STAGED_TSV")
+        })?;
+    let pad = avail_pad_for_descriptor_name(name);
+    let (_, bb, _) = super::s2_compact_generated::S2_COMPACT_TABLE
+        .iter()
+        .find(|(k, _, _)| *k == registry_key)
+        .ok_or_else(|| format!("wide_member_avail_pad: {registry_key} not in S2_COMPACT_TABLE"))?;
+    if *bb != V1_WIDTH + pad {
+        return Err(format!(
+            "wide_member_avail_pad: {registry_key} ('{name}') resolves avail pad {pad} (v1 face \
+             {}) but its S2 block base is {bb} — the producer would compact the right column COUNT \
+             out of the WRONG BANDS and leave the honest proof UNSAT; refusing",
+            V1_WIDTH + pad
+        ));
+    }
+    Ok(pad)
+}
+
 /// Fill one row's availability-weld witness columns (`[V1_WIDTH, V1_WIDTH + pad)`) from the row's
 /// OWN v1 state/param columns: the 15-bit operand limb decompositions + the borrow (and, for
 /// transfer, credit-carry; for the fee'd member, MID/fee) bits. Runs on EVERY row — the weld's
@@ -4957,18 +5001,27 @@ pub fn generate_rotated_heap_write_wide(
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
 
-/// **THE WIDE TURN-BOUND CAP-OPEN trace generator (`transferCapOpenTBVmDescriptor2R24` wide member,
-/// 1029-wide / 65-PI).**
+/// **THE WIDE TURN-BOUND CAP-OPEN trace generator (`transferCapOpenTBVmDescriptor2R24` wide member).**
 ///
 /// The wide twin of the #225 turn-identity weld (Lean `CapOpenTurnPins.effCapOpenV3TB`): it builds the
-/// LIVE rotated transfer base, widens it to the turn-bound cap-open shape ([`widen_to_cap_open_tb`] —
-/// the 91 cap-membership columns + the two `actor`/`dst` turn-identity columns), publishes the 49-PI
+/// LIVE rotated transfer base, widens it to the turn-bound cap-open shape ([`widen_to_cap_open_tb_avail`]
+/// — the cap-membership columns + the two `actor`/`dst` turn-identity columns), publishes the 49-PI
 /// turn-bound vector ([`cap_open_tb_dpis`]: 46 rotated + `src`/`actor`/`dst` at 46/47/48), and then
-/// appends the BEFORE/AFTER `WIDE_NUM_CARRIERS`×8 wide carriers + 16 wide commit PIs at the cap-open-TB host width
-/// (`CAP_OPEN_TB_WIDTH = 821`). The cap-membership host columns, the turn-identity pins, and the live
+/// appends the BEFORE/AFTER `WIDE_NUM_CARRIERS`×8 wide carriers + 16 wide commit PIs at the
+/// cap-open-TB host width. The cap-membership host columns, the turn-identity pins, and the live
 /// 1-felt carriers are CARRIED UNCHANGED — the wide append is purely additive, preserving the 8-felt
 /// before/after anchors. The verifier ANCHORS the three turn-identity PIs to the trusted turn
 /// ([`anchor_cap_open_turn_pins`]) exactly as on the narrow path; a forged published identity is UNSAT.
+///
+/// THE FACE IS THE COMMITTED MEMBER'S, NOT THE BARE ONE. `transferCapOpenTBVmDescriptor2R24` is
+/// emitted at the AVAIL-HARDENED transfer v1 face (`dregg-effectvm-transfer-v1-avail-…-capopen-eff-tb`,
+/// S2 block base 198 = `V1_WIDTH + TRANSFER_AVAIL_PAD`), so the whole stack — base trace, cap-open
+/// widen, turn-identity columns, wide-carrier host, re-absorbed limb bases — rides that pad, read off
+/// the committed registry by [`wide_member_avail_pad`]. Laying the BARE face here and compacting at the
+/// member's avail-shifted bands is the avail-shift trap: the same column count out of the wrong bands,
+/// which leaves the honest proof UNSAT (`p3: constraints not satisfied on row 0`) with nothing to point
+/// at. This mirrors the live SDK cap-open route (`sdk::full_turn_proof`, which derives the same pad from
+/// the resolved descriptor's name).
 ///
 /// `cap_open` MUST be a genuine transfer-conferring cap-membership witness whose leaf `target` IS the
 /// turn's `src` (the `targetBind` gate roots it); `actor`/`dst` are the published turn identity the
@@ -4986,8 +5039,18 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
     actor: BabyBear,
     dst: BabyBear,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
-    let (mut trace, base_pis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+    const TB_KEY: &str = "transferCapOpenTBVmDescriptor2R24";
+    // The committed member's v1 face, read off its own registry name and cross-checked against its S2
+    // block base (refuses rather than mis-compacting; see `wide_member_avail_pad`).
+    let avail_pad = wide_member_avail_pad(TB_KEY)?;
+    let (mut trace, base_pis) = generate_rotated_effect_vm_trace_avail(
+        avail_pad,
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+    )?;
     if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
             "cap-open-TB wide generator: base PI vector {} != {} (the base generator emits the \
@@ -4997,18 +5060,19 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
             ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
-    widen_to_cap_open_tb(&mut trace, cap_open, actor, dst)
+    widen_to_cap_open_tb_avail(&mut trace, cap_open, actor, dst, avail_pad)
         .map_err(|e| format!("cap-open-TB wide widen: {e}"))?;
     let tb_pis = cap_open_tb_dpis(&base_pis, src, actor, dst);
     debug_assert_eq!(tb_pis.len(), CAP_OPEN_TB_PI_BASE + 3); // 49
-    let dpis = append_wide_carriers(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH);
+    let dpis =
+        append_wide_carriers_avail(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH + avail_pad, avail_pad);
     debug_assert_eq!(
         trace[0].len(),
-        CAP_OPEN_TB_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
-    ); // 2824
+        CAP_OPEN_TB_WIDTH + avail_pad + 2 * WIDE_NUM_CARRIERS * 8
+    );
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE + 3 + 16); // 65
-    compact_s2_columns(&mut trace, "transferCapOpenTBVmDescriptor2R24")?;
-    compact_e1_columns(&mut trace, "transferCapOpenTBVmDescriptor2R24")?;
+    compact_s2_columns(&mut trace, TB_KEY)?;
+    compact_e1_columns(&mut trace, TB_KEY)?;
     Ok((trace, dpis))
 }
 

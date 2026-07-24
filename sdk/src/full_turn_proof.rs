@@ -3234,9 +3234,10 @@ fn build_effect_vm_cap_open_leg(
         if go_wide {
             // THE WIDE TB LIFT: append the two 13×8 BEFORE/AFTER wide carriers PAST the cap-open-TB host
             // (`append_wide_carriers_avail` at `CAP_OPEN_TB_WIDTH + avail_pad` — the hardened
-            // `…-v1-avail` TB member's host width and rotated limb bases ride the availability pad;
-            // 0 for the bare member = geometry-identical to
-            // `generate_rotated_transfer_cap_open_tb_wide`) + the 16 wide commit PIs. The cap-membership
+            // `…-v1-avail` TB member's host width and rotated limb bases ride the availability pad,
+            // resolved here from the descriptor name and in the standalone reference producer
+            // `generate_rotated_transfer_cap_open_tb_wide` from the committed registry entry — the two
+            // routes agree on the face by construction) + the 16 wide commit PIs. The cap-membership
             // host columns AND the two turn-identity columns are CARRIED UNCHANGED; the carriers re-absorb
             // the SAME limbs into the 8-felt commit, so the leg publishes the full ~124-bit before/after
             // anchor at its LAST 16 PIs (the wide anchor `verify_full_turn_bound` binds) WHILE preserving

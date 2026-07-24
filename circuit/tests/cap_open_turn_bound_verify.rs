@@ -1,7 +1,7 @@
 //! # THE TURN-IDENTITY WELD (#225) — the LEDGERLESS LIGHT CLIENT'S forcing tooth.
 //!
 //! The Lean keystone `Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB` (descriptor
-//! `transferCapOpenTBVmDescriptor2R24`, trace_width 409, public_input_count 49) is the LIVE transfer
+//! `transferCapOpenTBVmDescriptor2R24`, public_input_count 49) is the LIVE transfer
 //! cap-open PLUS two turn-identity columns (`actor`/`dst`) and three appended `.piBinding .last` gates
 //! welding the cap-open `src`/`actor`/`dst` columns to NEW public-input slots (`src → PI[46]`, `actor →
 //! PI[47]`, `dst → PI[48]`). The verifier ANCHORS those three PIs to the TRUSTED turn it holds
@@ -38,8 +38,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::trace_rotated::{
     CAP_OPEN_TB_ACTOR_COL, CAP_OPEN_TB_DST_COL, CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST,
     CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CapOpenWitness, FACET_MASK_HI, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins, cap_open_tb_dpis,
-    generate_rotated_effect_vm_trace, transfer_caveat_manifest, widen_to_cap_open_tb,
+    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins, avail_pad_for_descriptor_name,
+    cap_open_tb_dpis, generate_rotated_effect_vm_trace_avail, transfer_caveat_manifest,
+    widen_to_cap_open_tb_avail,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
@@ -95,7 +96,13 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 /// Build a proven rotated TRANSFER base trace + 46 PIs (a debit transfer — `direction = 1`), the live
 /// rotated cohort path the deployed transfer cap-open widens. NO attenuate phase-B patch (transfer is
 /// directly valid), the two-domain transfer caveat manifest (matching the live route).
-fn build_transfer_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+///
+/// `avail_pad` is the AVAILABILITY-WELD face the TARGET DESCRIPTOR was emitted at, derived by the
+/// caller from the committed member's own name — the committed TB member is the hardened
+/// `…-transfer-v1-avail-…` one, so a `0` here would lay the BARE v1 face and every appendix base
+/// (cap-open columns, turn-identity columns, the pinned last-row reads) would sit `pad` columns
+/// below where the descriptor's gates read them.
+fn build_transfer_base(avail_pad: usize) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let before_balance: i64 = 100_000;
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![Effect::Transfer {
@@ -132,7 +139,8 @@ fn build_transfer_base() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     );
 
     let caveat = transfer_caveat_manifest();
-    let (trace, pis) = generate_rotated_effect_vm_trace(
+    let (trace, pis) = generate_rotated_effect_vm_trace_avail(
+        avail_pad,
         &st,
         &effects,
         &bridge(&before_w),
@@ -176,10 +184,27 @@ fn cap_open_witness() -> CapOpenWitness {
 fn cap_open_turn_bound_verifier_forces_published_identity() {
     let desc =
         parse_vm_descriptor2(reg_json(CAP_OPEN_TB_KEY)).expect("TB cap-open descriptor parses");
-    assert_eq!(desc.trace_width, CAP_OPEN_TB_WIDTH, "TB width 409");
+    // THE FACE, DERIVED FROM THE COMMITTED MEMBER'S OWN NAME. The deployed TB member is the
+    // AVAILABILITY-HARDENED transfer face (`…-transfer-v1-avail-…-capopen-eff-tb`), so its width is
+    // the bare turn-bound cap-open host PLUS that pad, and every column below rides the same shift.
+    // Pinning the bare `CAP_OPEN_TB_WIDTH` here (and laying the bare face) was the avail-shift trap:
+    // the honest prover cannot produce the committed member's row at all.
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    if desc.name.contains("-v1-avail") {
+        assert!(
+            pad > 0,
+            "the hardened TB member must derive a NONZERO availability pad from its own name"
+        );
+    }
+    assert_eq!(
+        desc.trace_width,
+        CAP_OPEN_TB_WIDTH + pad,
+        "TB width = the bare turn-bound cap-open host + this member's own availability pad"
+    );
     assert_eq!(
         desc.public_input_count, 49,
-        "TB carries 49 PIs (46 rotated + 3 turn-identity)"
+        "TB carries 49 PIs (46 rotated + 3 turn-identity) regardless of the pad — the pad shifts \
+         COLUMNS, never PI indices"
     );
 
     // The TRUSTED turn the light client holds. `src` IS the cap-leaf target the targetBind roots; the
@@ -190,14 +215,21 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
 
     // The HONEST prover: build the transfer base, widen with the TB cap-open (fills src/actor/dst
     // columns), publish the 49-PI vector with the prover's OWN (honest) identity.
-    let (mut trace, base_pis) = build_transfer_base();
+    let (mut trace, base_pis) = build_transfer_base(pad);
     let w = cap_open_witness();
-    widen_to_cap_open_tb(&mut trace, &w, trusted_actor, trusted_dst).expect("TB widen");
+    widen_to_cap_open_tb_avail(&mut trace, &w, trusted_actor, trusted_dst, pad).expect("TB widen");
     let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src, trusted_actor, trusted_dst);
     assert_eq!(honest_pis.len(), 49);
-    // The published columns are pinned on the last row; sanity-check the fill landed.
-    assert_eq!(trace[0][CAP_OPEN_TB_ACTOR_COL], trusted_actor);
-    assert_eq!(trace[0][CAP_OPEN_TB_DST_COL], trusted_dst);
+    assert_eq!(
+        trace[0].len(),
+        desc.trace_width,
+        "the widened row must equal the committed member's width — a shortfall of exactly the pad \
+         means the bare v1 face was laid for the AVAIL-hardened committed member"
+    );
+    // The published columns are pinned on the last row; sanity-check the fill landed (at the
+    // avail-shifted turn-identity columns the hardened member declares).
+    assert_eq!(trace[0][CAP_OPEN_TB_ACTOR_COL + pad], trusted_actor);
+    assert_eq!(trace[0][CAP_OPEN_TB_DST_COL + pad], trusted_dst);
 
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
