@@ -3,7 +3,7 @@
 # THE HOLE THIS CLOSES. `#[ignore]` in this tree does not mean "broken" — it means "a real
 # recursion fold that takes minutes". But nothing ran the ignored set: `ci.yml` runs
 # `cargo test --workspace` (which by definition never runs ignored tests) and no script passed
-# `--ignored`. So all 8 `circuit-prove/tests/*_binding_deployed_tooth.rs` files — the DEPLOYED
+# `--ignored`. So EVERY `circuit-prove/tests/*_binding_deployed_tooth.rs` file — the DEPLOYED
 # light-client binding teeth, each of which builds a SPECIFIC forged witness (a claim no leg's
 # published teeth back) and requires the deployed recursion fold to refuse it — provided ZERO
 # assurance. They were documentation that compiled.
@@ -123,15 +123,29 @@ jobs:
       # them again. Fix the producer/descriptor pair.
       - name: Arm the deployed binding teeth
         run: |
+          set -euo pipefail
+          # DERIVED FROM THE TOOTH FILES, NOT TRANSCRIBED. This was eight hand-typed `--test`
+          # flags: right the day they were written, and one new tooth file away from a tooth that
+          # runs NOWHERE with nothing red — which is precisely the hole this workflow exists to
+          # close (a tooth nothing runs provides zero assurance; they were documentation that
+          # compiled). A transcription of a growing set cannot go red, it just covers less, so the
+          # arming list is not allowed to be one.
+          shopt -s nullglob
+          TEETH=()
+          for f in circuit-prove/tests/*_binding_deployed_tooth.rs; do
+            TEETH+=(--test "$(basename "$f" .rs)")
+          done
+          if [ "${#TEETH[@]}" -eq 0 ]; then
+            echo "armed-teeth: FATAL — derived NO binding teeth from" >&2
+            echo "  circuit-prove/tests/*_binding_deployed_tooth.rs. Arming nothing would make" >&2
+            echo "  this lane GREEN having run zero adversarial tests — the exact failure it" >&2
+            echo "  exists to prevent. Re-point the glob; never let it come back empty." >&2
+            exit 1
+          fi
+          echo "armed-teeth: arming $(( ${#TEETH[@]} / 2 )) deployed binding teeth:"
+          printf '  %s\n' "${TEETH[@]}" | paste - - | sed 's/--test\t*//'
           cargo test -p dregg-circuit-prove --release --no-fail-fast \
-            --test bridge_binding_deployed_tooth \
-            --test custom_binding_deployed_tooth \
-            --test deco_binding_deployed_tooth \
-            --test dsl_binding_deployed_tooth \
-            --test factory_binding_deployed_tooth \
-            --test hatchery_binding_deployed_tooth \
-            --test membership_binding_deployed_tooth \
-            --test sovereign_binding_deployed_tooth \
+            "${TEETH[@]}" \
             -- --ignored --nocapture
 
   # THE HARD-MODE LANE. Every load-bearing verified-gate test in `dregg-node` opens with

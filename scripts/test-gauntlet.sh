@@ -18,7 +18,7 @@
 # "Expensive" must mean "runs nightly", never "runs never." A large set of this
 # tree's most adversarial tests are `#[ignore]`d because they are minute-scale
 # REAL recursion folds — and NOTHING ran them: `cargo test --workspace` (ci.yml)
-# never runs ignored tests, and nothing here passed `--ignored` either. All 8
+# never runs ignored tests, and nothing here passed `--ignored` either. EVERY
 # `circuit-prove/tests/*_binding_deployed_tooth.rs` — the DEPLOYED light-client
 # binding teeth, each forging a specific witness and requiring the fold to refuse
 # it — were dead in automation. They were documentation.
