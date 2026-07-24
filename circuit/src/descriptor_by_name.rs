@@ -501,7 +501,8 @@ mod tests {
     use super::*;
     use crate::descriptor_ir2::{
         CHIP_OUT_LANES, CHIP_RATE, CHIP_TUPLE_LEN, LookupSpec, MemBoundaryWitness, TID_P2,
-        VmConstraint2, check_descriptor2_wellformed, prove_vm_descriptor2, verify_vm_descriptor2,
+        TID_P2_NARROW, VmConstraint2, check_descriptor2_wellformed, prove_vm_descriptor2,
+        verify_vm_descriptor2,
     };
     use crate::field::BabyBear;
     use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
@@ -855,17 +856,18 @@ mod tests {
 
     /// THE DYCK LOADER FLIP: `dregg-dyck-parse-v1` dispatches to the Lean-emitted, byte-pinned
     /// golden (`DyckStackEmit.dyckParseDesc`), decodes well-formed, and carries the emitted shape
-    /// (38 wide, 4 PIs, the two Poseidon2 chip lookups — the arity-4 entry hash and the arity-2
-    /// running-hash step). A regression to the hand-authored Rust AIR (23 wide, zero lookups)
-    /// fails HERE, not silently at verify time.
+    /// (24 wide after the E7 narrowing, 4 PIs, the two NARROW-bus Poseidon2 chip lookups — the
+    /// arity-4 entry hash and the arity-2 running-hash step). A regression to the hand-authored
+    /// Rust AIR (23 wide, zero lookups) fails HERE, not silently at verify time.
     #[test]
     fn dyck_parse_dispatches_to_the_lean_emitted_golden() {
         let desc = descriptor_by_name("dregg-dyck-parse-v1")
             .expect("the Dyck parse descriptor must dispatch");
         assert_eq!(desc.name, "dregg-dyck-parse-v1");
         assert_eq!(
-            desc.trace_width, 38,
-            "the Lean-emitted width (23 base + ACC + 14 lanes)"
+            desc.trace_width, 24,
+            "the Lean-emitted width (23 base + ACC); E7 narrowed both chip lookups, deleting the \
+             two trailing 7-lane blocks [24, 38)"
         );
         assert_eq!(desc.public_input_count, 4);
         check_descriptor2_wellformed(&desc).expect("the emitted Dyck descriptor is well-formed");
@@ -873,7 +875,7 @@ mod tests {
             .constraints
             .iter()
             .filter_map(|c| match c {
-                VmConstraint2::Lookup(l) if l.table == TID_P2 => match l.tuple.first() {
+                VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW => match l.tuple.first() {
                     Some(LeanExpr::Const(v)) => Some(*v),
                     _ => None,
                 },
@@ -884,6 +886,13 @@ mod tests {
             arities,
             vec![4, 2],
             "the entry-hash (arity 4) and running-hash (arity 2) chip lookups, in emit order"
+        );
+        assert!(
+            !desc
+                .constraints
+                .iter()
+                .any(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2)),
+            "no WIDE-bus chip lookup may survive the E7 narrowing"
         );
     }
 
@@ -1130,7 +1139,9 @@ mod tests {
     const DFA_RUNNING_HASH: usize = 4;
     const DFA_IS_FIRST: usize = 5;
     const DFA_ACC: usize = 7;
-    const DFA_WIDTH: usize = 22;
+    /// E7 narrowed both chip lookups onto the NARROW bus (`DfaRoutingEmit.lean`), deleting the two
+    /// trailing 7-lane blocks `[8, 22)`. Pure tail truncation — no semantic column moved.
+    const DFA_WIDTH: usize = 8;
 
     /// Build the honest 4-row toggle-DFA routing witness (`step(s,y) = s XOR y`): start state, a
     /// symbol at row 0, self-loops after, with the genuine `hash_4_to_1` entry hashes and the

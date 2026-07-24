@@ -7,13 +7,15 @@
 //!
 //! `[old_root, new_root, acc_in, acc_out, idx, is_real, real_count]`
 //!
-//! followed by the seven nonzero-index output lanes of the shared Poseidon2 chip. Real rows are
+//! and NOTHING else: E7 narrowed the descriptor's chip lookup onto the NARROW bus
+//! (`chipLookupTupleNarrow`, wire `TID_P2_NARROW`), so out0 (`ACC_OUT`) alone serves it and the
+//! seven nonzero-index Poseidon2 output lanes no longer ride the main trace. Real rows are
 //! padded to a power of two with `(old_root, new_root) = (final_root, final_root)`, a continuing
 //! positional index, a frozen real-row count, and a genuinely continued hash chain. This is the
 //! production padding contract that makes the emitted `on_transition := true` continuity and index
 //! gates sound across real-to-padding and padding-to-padding boundaries.
 
-use crate::descriptor_ir2::{CHIP_OUT_LANES, chip_absorb_all_lanes};
+use crate::descriptor_ir2::chip_absorb_all_lanes;
 use crate::field::BabyBear;
 
 /// Dispatch name of the Lean-emitted descriptor.
@@ -27,8 +29,9 @@ pub const ACC_OUT: usize = 3;
 pub const IDX: usize = 4;
 pub const IS_REAL: usize = 5;
 pub const REAL_COUNT: usize = 6;
-pub const LANE1: usize = 7;
-pub const TURN_CHAIN_BINDING_WIDTH: usize = LANE1 + (CHIP_OUT_LANES - 1);
+/// Total main-trace width: the 7 scalar columns. E7 deleted the trailing 7-lane block `[7, 14)` —
+/// a pure tail truncation, so no scalar column moved.
+pub const TURN_CHAIN_BINDING_WIDTH: usize = REAL_COUNT + 1; // 7
 
 /// Public-input layout `[genesis_root, final_root, num_turns, chain_digest]`.
 pub const PI_GENESIS_ROOT: usize = 0;
@@ -47,10 +50,9 @@ fn binding_row(
     real_count: BabyBear,
 ) -> (BabyBear, Vec<BabyBear>) {
     // The arity-4 chip row is exactly the emitted lookup preimage
-    // `[acc_in, old_root, new_root, idx]`. Lane 0 is ACC_OUT; lanes 1..7 occupy the
-    // descriptor's appended witness columns.
-    let lanes = chip_absorb_all_lanes(4, &[acc_in, old_root, new_root, idx]);
-    let acc_out = lanes[0];
+    // `[acc_in, old_root, new_root, idx]`. Lane 0 is ACC_OUT; on the NARROW bus that is the whole
+    // of the tuple's output, so lanes 1..7 are computed and discarded.
+    let acc_out = chip_absorb_all_lanes(4, &[acc_in, old_root, new_root, idx])[0];
     let mut row = vec![BabyBear::ZERO; TURN_CHAIN_BINDING_WIDTH];
     row[OLD_ROOT] = old_root;
     row[NEW_ROOT] = new_root;
@@ -63,7 +65,6 @@ fn binding_row(
         BabyBear::ZERO
     };
     row[REAL_COUNT] = real_count;
-    row[LANE1..LANE1 + CHIP_OUT_LANES - 1].copy_from_slice(&lanes[1..]);
     (acc_out, row)
 }
 

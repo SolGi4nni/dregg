@@ -11,7 +11,7 @@
 //! (the analog of [`crate::membership_descriptor_general::membership_witness`]) that consumers of
 //! [`crate::descriptor_by_name::descriptor_by_name`] could call. This module is that builder.
 //!
-//! [`adjacency_witness`] emits the 32-column trace (one binary-tree level per row: two parallel
+//! [`adjacency_witness`] emits the 18-column trace (one binary-tree level per row: two parallel
 //! authentication paths lower ‖ upper + the shared power-of-two index accumulator) and the 5-element
 //! public-input vector `[root, leaf_lower, leaf_upper, idx_lower, idx_upper]` the descriptor pins. It
 //! is purely mechanical — it does NOT enforce consecutiveness or equal roots; the DESCRIPTOR's
@@ -41,8 +41,10 @@ const U_IDX_IN: usize = 14;
 const U_IDX_OUT: usize = 15;
 const POW: usize = 16;
 const POW2: usize = 17;
-/// Total main-trace width (18 semantic + two 7-lane chip blocks).
-pub const ADJ_WIDTH: usize = 32;
+/// Total main-trace width: the 18 semantic columns. E7 narrowed the descriptor's two chip lookups
+/// to the NARROW bus (`chipLookupTupleNarrow`, `AdjacencyMembershipEmit.lean`), deleting the two
+/// trailing 7-lane blocks `[18, 32)` — a pure tail truncation, so no semantic index moved.
+pub const ADJ_WIDTH: usize = 18;
 
 // --- PI indices (`adj_pi`). ---
 /// PI slot: the shared committed root.
@@ -92,14 +94,15 @@ pub fn adjacency_walk(leaf: BabyBear, path: &[AdjWitnessStep]) -> (BabyBear, u64
     (cur, idx)
 }
 
-/// Build the 32-column adjacency trace + the 5-element public-input vector
+/// Build the 18-column adjacency trace + the 5-element public-input vector
 /// `[root, leaf_lower, leaf_upper, idx_lower, idx_upper]` for the emitted
 /// `dregg-membership-adjacency::poseidon2-v1` descriptor.
 ///
 /// `lower_path` / `upper_path` are the leaf→root authentication paths of the two neighbor leaves in
 /// a shared binary-Poseidon2 tree (`hash_2_to_1` nodes). Both paths must have the same power-of-two
-/// depth ≥ 2. The 14 chip-lane columns are left zero (`prove_vm_descriptor2`'s `trace_with_chip_lanes`
-/// fills them). The published root (`pis[PI_ROOT]`) is the LOWER path's authenticated root; if the two
+/// depth ≥ 2. Since E7 the descriptor's two chip lookups ride the NARROW bus, so out0 alone serves
+/// them and there is no lane column left to fill. The published root (`pis[PI_ROOT]`) is the LOWER
+/// path's authenticated root; if the two
 /// paths do not reach the same root the descriptor's Last-row `U_PAR == PI_ROOT` pin rejects, and if
 /// the indices are not consecutive the internalized catch tooth rejects — this builder does not
 /// pre-judge either.

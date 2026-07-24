@@ -24,13 +24,13 @@
 //! | 4,5   | b0,b1       | the two position bits (`position = b0 + 2·b1 ∈ {0,1,2,3}`)         |
 //! | 6..9  | c0..c3      | the ordered children (`children[position] = cur`, siblings fill)  |
 //! | 10    | par         | parent digest = `hash_4_to_1(c0,c1,c2,c3)` (chip out0)             |
-//! | 11..17| lanes       | the 7 witnessed permutation lanes 1..7 of `par`                   |
 //!
 //! Position is carried as TWO binary bits rather than one `{0,1,2,3}` felt so the child-selection
 //! gates have INTEGER coefficients (the Lagrange indicators `Lk` become bit products, degree ≤ 3 —
 //! no field-inverse constants) while computing the IDENTICAL arrangement production's
 //! Lagrange-on-`position` selection does (`poseidon2_air.rs::MerklePoseidon2StarkAir`,
-//! `child0..child3`). The four ordered children feed a `TID_P2` arity-4 chip lookup, so a forged
+//! `child0..child3`). The four ordered children feed a NARROW-bus (`TID_P2_NARROW`, E7) arity-4
+//! chip lookup carrying out0 alone, so a forged
 //! digest has no serving chip row → UNSAT (the FAITHFUL, non-lossy Poseidon2 binding). Row 0 binds
 //! `cur == leaf` (PI 0); the last row binds `par == root` (PI 1). The per-row bit-binary and
 //! child-selection gates are TRANSITION constraints (vacuous on the last row), so they are
@@ -66,10 +66,16 @@ pub const C2: usize = 8;
 pub const C3: usize = 9;
 /// Parent digest (chip out0).
 pub const PAR: usize = 10;
-/// First of the 7 witnessed permutation lanes 1..7 of `par`.
+/// Where a WIDE-bus consumer of this column block puts the 7 permutation lanes 1..7 of `par`.
+///
+/// The GENERAL 4-ary descriptor no longer has them: E7 narrowed its parent lookup onto the NARROW
+/// chip bus (`chipLookupTupleNarrow`, `MerkleMembership4aryEmit.lean`), deleting the trailing block
+/// `[11, 18)`. The constant survives for
+/// [`crate::blinded_membership_witness::blinded_membership_witness_4ary`], whose descriptor
+/// (`blinded-membership-4ary-depth*`) is NOT yet narrowed and still carries the lanes here.
 pub const LANE_BASE: usize = 11;
-/// Total main-trace width: 11 semantic columns + 7 chip lanes.
-pub const MEMBERSHIP_4ARY_WIDTH: usize = LANE_BASE + (CHIP_OUT_LANES - 1); // 18
+/// Total main-trace width: the 11 semantic columns (E7 tail-truncated the 7 chip lanes).
+pub const MEMBERSHIP_4ARY_WIDTH: usize = LANE_BASE; // 11
 
 /// PI slot: the membership leaf (row-0 `cur`).
 pub const PI_LEAF: usize = 0;
@@ -140,10 +146,10 @@ pub fn membership_root_4ary(
 
 /// Build the depth-`d` **4-ary** membership base trace + public inputs `[leaf, root]`.
 ///
-/// One row per level; every row carries the two position bits, the genuine ordered children,
-/// the `hash_4_to_1` parent digest, and the 7 witnessed permutation lanes (the prover's
-/// `trace_with_chip_lanes` re-fills lanes 1..7, so they need not be pre-filled — but we fill them so
-/// the trace is self-describing). `siblings.len()` must equal `positions.len()`, each position must
+/// One row per level; every row carries the two position bits, the genuine ordered children, and
+/// the `hash_4_to_1` parent digest. Since E7 the descriptor's parent lookup rides the NARROW chip
+/// bus, so out0 alone serves it and no permutation lane rides in the main trace.
+/// `siblings.len()` must equal `positions.len()`, each position must
 /// be `< 4`, and the depth must be a power of two ≥ 2 (the trace-height requirement). The produced
 /// root (`pis[1]`) is BYTE-EQUAL to `generate_merkle_poseidon2_trace(leaf, siblings, positions)`'s
 /// root for power-of-two depth.
@@ -171,8 +177,8 @@ pub fn membership_witness_4ary(
             return Err(format!("position {pos} must be < 4"));
         }
         let children = arrange_children(cur, sibs, pos);
-        let lanes = chip4(&children);
-        let par = lanes[0];
+        // The NARROW bus carries out0 alone; lanes 1..7 no longer ride the main trace.
+        let par = chip4(&children)[0];
         let mut row = vec![BabyBear::ZERO; MEMBERSHIP_4ARY_WIDTH];
         row[CUR] = cur;
         row[SIB0] = sibs[0];
@@ -185,9 +191,6 @@ pub fn membership_witness_4ary(
         row[C2] = children[2];
         row[C3] = children[3];
         row[PAR] = par;
-        for j in 0..(CHIP_OUT_LANES - 1) {
-            row[LANE_BASE + j] = lanes[j + 1];
-        }
         trace.push(row);
         cur = par;
     }
@@ -201,7 +204,7 @@ pub fn membership_witness_4ary(
 mod tests {
     use super::*;
     use crate::descriptor_ir2::{
-        CHIP_TUPLE_LEN, LookupSpec, MemBoundaryWitness, TID_P2, VmConstraint2,
+        CHIP_RATE, LookupSpec, MemBoundaryWitness, TID_P2, TID_P2_NARROW, VmConstraint2,
         prove_vm_descriptor2, verify_vm_descriptor2,
     };
     use crate::dsl::membership::{create_test_witness, generate_merkle_poseidon2_trace};
@@ -374,18 +377,33 @@ mod tests {
         assert_eq!(d.trace_width, MEMBERSHIP_4ARY_WIDTH);
         assert_eq!(d.public_input_count, MEMBERSHIP_4ARY_PI_COUNT);
         assert!(d.tables.is_empty());
-        // exactly one arity-4 chip lookup (the single per-row parent hash).
+        // Exactly one arity-4 chip lookup (the single per-row parent hash), counted on the bus the
+        // descriptor NOW uses: E7 moved it onto the NARROW bus (`TID_P2_NARROW`, the 18-wide
+        // `[arity, ins, out0]` tuple), served by the SAME chip rows.
         let chips: Vec<&LookupSpec> = d
             .constraints
             .iter()
             .filter_map(|c| match c {
-                VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
+                VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW => Some(l),
                 _ => None,
             })
             .collect();
         assert_eq!(chips.len(), 1);
         assert_eq!(chips[0].tuple[0], LeanExpr::Const(4), "arity-4 tag");
-        assert_eq!(chips[0].tuple.len(), CHIP_TUPLE_LEN);
+        assert_eq!(
+            chips[0].tuple.len(),
+            1 + CHIP_RATE + 1,
+            "the NARROW tuple shape"
+        );
+        // BUS IDENTITY — the narrowing is a CUTOVER, not an addition (7 lane columns deleted).
+        assert_eq!(
+            d.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+                .count(),
+            0,
+            "no WIDE-bus chip lookup may survive the E7 narrowing"
+        );
         // one continuity window gate.
         let win = d
             .constraints

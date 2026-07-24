@@ -449,18 +449,22 @@ fn table_commitment_of() -> BabyBear {
 pub const V2_ACC: usize = DYCK_WIDTH;
 
 /// The Lean-emitted IR-v2 trace width: the 23 base columns ([`DYCK_WIDTH`], index for index the
-/// `col` layout above) + [`V2_ACC`] + 2×7 exposed chip lanes (filled by the descriptor prover).
-pub const DYCK_V2_WIDTH: usize = DYCK_WIDTH + 1 + 14;
+/// `col` layout above) + [`V2_ACC`]. The two chip lookups are now NARROW (`chipLookupTupleNarrow`,
+/// `DyckStackEmit.lean` §5), so the descriptor no longer exposes 2×7 lane columns in the main
+/// trace — E7 deleted `[24, 38)` as a pure tail truncation. [`V2_ACC`] = 23 sits BELOW the kill-set
+/// and does not move (machine-checked Lean-side by `#guard ACC == 23`).
+pub const DYCK_V2_WIDTH: usize = DYCK_WIDTH + 1;
 
 /// Lift a base-width witness (from [`build_witness`] / [`build_brackets_witness`] /
 /// [`build_nested_witness`]) to the base trace of the Lean-emitted IR-v2 descriptor
 /// (`descriptor_by_name("dregg-dyck-parse-v1")`, authored in `DyckStackEmit.lean`).
 ///
 /// The v2 base columns `0..23` are the v1 columns index for index, so the lift is: widen each row
-/// to [`DYCK_V2_WIDTH`] and fill [`V2_ACC`] with the copy-forward chain
-/// (`acc[0] = table_commitment`, `acc[i+1] = running[i]`). The 14 chip-lane columns are left zero —
-/// `prove_vm_descriptor2` derives them from the descriptor's chip lookups (`trace_with_chip_lanes`),
-/// exactly as every other emitted family's producer does.
+/// to [`DYCK_V2_WIDTH`] (= 24) and fill [`V2_ACC`] with the copy-forward chain
+/// (`acc[0] = table_commitment`, `acc[i+1] = running[i]`). The descriptor's two chip lookups are
+/// NARROW, so there are no exposed lane columns to leave for the prover — `prove_vm_descriptor2`
+/// still derives the chip outputs from the descriptor's lookups (`trace_with_chip_lanes`), it just
+/// no longer needs 14 main-trace columns to publish them.
 pub fn lift_witness_to_v2(trace: &[Vec<BabyBear>]) -> Vec<Vec<BabyBear>> {
     let mut acc = dyck_rule_table_commitment();
     trace
@@ -506,7 +510,7 @@ mod tests {
 
     /// The v2 lift is the copy-forward accumulator chain the emitted descriptor's
     /// single-row hash step reads: `acc[0] = table_commitment`, `acc[i+1] = running[i]`,
-    /// rows widened to the emitted 38 with the chip lanes left for the prover.
+    /// rows widened to the emitted 24 (the narrow-chip descriptor exposes no lane columns).
     #[test]
     fn lift_carries_the_acc_chain() {
         let (trace, pi_vals) = build_brackets_witness();

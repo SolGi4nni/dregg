@@ -30,13 +30,12 @@
 //! | 9       | `PARENT1`           | `hash_4_to_1(cur1, sib1…)` = the ROOT (chip out0); PI-pinned  |
 //! | 10      | `BLINDING`          | the fresh `blinding_factor` (HIDDEN — this gives unlinkability)|
 //! | 11      | `BLINDED_LEAF`      | `hash_2_to_1(leaf, blinding)` = blind chip out0; PI-pinned    |
-//! | 12..18  | `LEVEL0_LANES`      | the 7 witnessed level-0 permutation lanes 1..7               |
-//! | 19..25  | `LEVEL1_LANES`      | the 7 witnessed level-1 permutation lanes 1..7               |
-//! | 26..32  | `BLIND_LANES`       | the 7 witnessed blind (arity-2) permutation lanes 1..7       |
 //!
-//! Every chip lane is GENUINE Poseidon2 permutation output ([`chip_absorb_all_lanes`]): out0 (the
-//! digest columns `PARENT0`/`PARENT1`/`BLINDED_LEAF`) plus its seven exposed lanes, so each of the
-//! three `TID_P2` chip lookups is SERVED — a forged digest, lane, blinding factor, or member has no
+//! E7 narrowed all three lookups onto the NARROW chip bus (`chipLookupTupleNarrow`,
+//! `BlindedMembershipEmit.lean`), deleting the three trailing 7-lane blocks `[12, 33)`. Each
+//! digest column (`PARENT0`/`PARENT1`/`BLINDED_LEAF`) is still GENUINE Poseidon2 out0
+//! ([`chip_absorb_all_lanes`]), and each `TID_P2_NARROW` lookup is SERVED by the 18-prefix of the
+//! SAME chip rows (`ChipNarrowLookup.lean`) — a forged digest, blinding factor, or member has no
 //! serving chip row → UNSAT. The two PIs are `[blinded_leaf, root]`; the member `leaf_hash` and the
 //! `blinding_factor` are DELIBERATELY hidden (unlinkability): the same member blinded with two
 //! factors publishes two DIFFERENT `blinded_leaf`, each a genuine Poseidon2 image of the SAME member
@@ -56,7 +55,9 @@ use crate::descriptor_ir2::{
     CHIP_OUT_LANES, EffectVmDescriptor2, chip_absorb_all_lanes, parse_vm_descriptor2,
 };
 use crate::field::BabyBear;
-use crate::membership_descriptor_4ary::{CUR, MEMBERSHIP_4ARY_WIDTH, membership_witness_4ary};
+use crate::membership_descriptor_4ary::{
+    C0, C1, C2, C3, CUR, LANE_BASE, MEMBERSHIP_4ARY_WIDTH, membership_witness_4ary,
+};
 
 // ---- Column layout (mirror `BlindedMembershipEmit.lean` §1). ----
 /// Level-0 path element = the member `leaf_hash` (HIDDEN; also the blinding tooth's input 0).
@@ -80,15 +81,9 @@ pub const BLINDING: usize = 10;
 /// The published blinded leaf = `hash_2_to_1(leaf_hash, blinding)`; pinned to `BLINDED_LEAF_PI`.
 pub const BLINDED_LEAF: usize = 11;
 
-/// First of the 7 witnessed level-0 Poseidon2 chip output lanes 1..7.
-pub const LEVEL0_LANE_BASE: usize = 12;
-/// First of the 7 witnessed level-1 Poseidon2 chip output lanes 1..7.
-pub const LEVEL1_LANE_BASE: usize = 19;
-/// First of the 7 witnessed blinding (arity-2) Poseidon2 chip output lanes 1..7.
-pub const BLIND_LANE_BASE: usize = 26;
-
-/// Total main-trace width: 12 base columns + 7·3 chip lane blocks.
-pub const BLINDED_WIDTH: usize = 33;
+/// Total main-trace width: the 12 base columns. E7's narrow-bus cutover deleted the three
+/// trailing 7-lane chip blocks `[12, 33)` — a pure tail truncation, so no base index moved.
+pub const BLINDED_WIDTH: usize = BLINDED_LEAF + 1; // 12
 
 /// PI slot 0: the published `blinded_leaf` (the unlinkable commitment).
 pub const BLINDED_LEAF_PI: usize = 0;
@@ -190,11 +185,6 @@ pub fn blinded_membership_witness(
     row[PARENT1] = root;
     row[BLINDING] = blinding_factor;
     row[BLINDED_LEAF] = published_blinded_leaf;
-    for j in 0..(CHIP_OUT_LANES - 1) {
-        row[LEVEL0_LANE_BASE + j] = level0[j + 1];
-        row[LEVEL1_LANE_BASE + j] = level1[j + 1];
-        row[BLIND_LANE_BASE + j] = blind[j + 1];
-    }
 
     let trace: Vec<Vec<BabyBear>> = (0..BLINDED_MEMBERSHIP_HEIGHT)
         .map(|_| row.clone())
@@ -235,14 +225,24 @@ pub fn blinded_membership_witness(
 // | 19      | `BLINDED_LEAF_COL_4ARY`  | `hash_2_to_1(cur, blinding)` (chip out0); row-0 PI-pinned     |
 // | 20..26  | blind lanes              | the 7 witnessed permutation lanes of the blinding tooth       |
 
+/// The 4-ary PATH block this family's descriptor carries: the 11 semantic columns PLUS the 7
+/// witnessed `PAR` permutation lanes at `[LANE_BASE, 18)`.
+///
+/// DELIBERATELY NOT `MEMBERSHIP_4ARY_WIDTH`. E7 narrowed the GENERAL 4-ary descriptor onto the
+/// narrow chip bus (18 → 11), but `blinded-membership-4ary-depth*` was NOT in that batch — it is
+/// still emitted WIDE, so its blinding tooth still starts at 18 and the path lanes still ride the
+/// trace. Deriving these indices from the general width would silently RENUMBER this family's
+/// columns the moment the general one shrank. They re-couple when the blinded-4ary pair is
+/// narrowed (the E7 renumbering set).
+pub const PATH_BLOCK_4ARY: usize = LANE_BASE + (CHIP_OUT_LANES - 1); // 18
 /// The fresh blinding factor column (HIDDEN).
-pub const BLINDING_4ARY: usize = MEMBERSHIP_4ARY_WIDTH; // 18
+pub const BLINDING_4ARY: usize = PATH_BLOCK_4ARY; // 18
 /// The published blinded-leaf column (`hash_2_to_1(cur, blinding)`; row-0 pinned to `PI_BLINDED_LEAF_4ARY`).
-pub const BLINDED_LEAF_COL_4ARY: usize = MEMBERSHIP_4ARY_WIDTH + 1; // 19
+pub const BLINDED_LEAF_COL_4ARY: usize = PATH_BLOCK_4ARY + 1; // 19
 /// First of the 7 witnessed blinding (arity-2) Poseidon2 chip output lanes 1..7.
-pub const BLIND_LANE_BASE_4ARY: usize = MEMBERSHIP_4ARY_WIDTH + 2; // 20
+pub const BLIND_LANE_BASE_4ARY: usize = PATH_BLOCK_4ARY + 2; // 20
 /// Total main-trace width: the 18 path columns + the blinding tooth's 2 semantic + 7 lane columns.
-pub const BLINDED_4ARY_WIDTH: usize = MEMBERSHIP_4ARY_WIDTH + 2 + (CHIP_OUT_LANES - 1); // 27
+pub const BLINDED_4ARY_WIDTH: usize = PATH_BLOCK_4ARY + 2 + (CHIP_OUT_LANES - 1); // 27
 
 /// PI slot 0: the published `blinded_leaf` (the unlinkable commitment).
 pub const PI_BLINDED_LEAF_4ARY: usize = 0;
@@ -316,6 +316,14 @@ pub fn blinded_membership_witness_4ary(
         let blind = chip_absorb_all_lanes(2, &[cur, blinding_factor]);
         let mut row = vec![BabyBear::ZERO; BLINDED_4ARY_WIDTH];
         row[..MEMBERSHIP_4ARY_WIDTH].copy_from_slice(prow);
+        // `membership_witness_4ary` no longer carries the `PAR` permutation lanes (E7 narrowed the
+        // GENERAL descriptor). THIS family's descriptor is still WIDE, so re-derive them here from
+        // the same ordered children the path row carries — the arity-4 chip absorb whose out0 is
+        // `prow[PAR]`. A forged child or digest therefore still has no serving chip row → UNSAT.
+        let path_lanes = chip_absorb_all_lanes(4, &[prow[C0], prow[C1], prow[C2], prow[C3]]);
+        for k in 0..(CHIP_OUT_LANES - 1) {
+            row[LANE_BASE + k] = path_lanes[k + 1];
+        }
         row[BLINDING_4ARY] = blinding_factor;
         row[BLINDED_LEAF_COL_4ARY] = blind[0];
         for k in 0..(CHIP_OUT_LANES - 1) {
@@ -338,7 +346,7 @@ mod tests {
     use super::*;
     use crate::descriptor_by_name::descriptor_by_name;
     use crate::descriptor_ir2::{
-        EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2, VmConstraint2,
+        EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2, TID_P2_NARROW, VmConstraint2,
         parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
     };
     use crate::lean_descriptor_air::LeanExpr;
@@ -393,12 +401,14 @@ mod tests {
             via, golden,
             "descriptor_by_name must serve the byte-pinned emitted golden verbatim"
         );
-        // three chip lookups: two arity-4 Merkle levels + one arity-2 blinding tooth.
+        // Three chip lookups: two arity-4 Merkle levels + one arity-2 blinding tooth — counted on
+        // the bus the descriptor NOW uses. E7 moved all three onto the NARROW bus
+        // (`TID_P2_NARROW`, the 18-wide `[arity, ins, out0]` tuple), served by the SAME chip rows.
         let chip: Vec<&LookupSpec> = via
             .constraints
             .iter()
             .filter_map(|c| match c {
-                VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
+                VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW => Some(l),
                 _ => None,
             })
             .collect();
@@ -406,6 +416,17 @@ mod tests {
         assert_eq!(chip[0].tuple[0], LeanExpr::Const(4), "level-0 arity-4");
         assert_eq!(chip[1].tuple[0], LeanExpr::Const(4), "level-1 arity-4");
         assert_eq!(chip[2].tuple[0], LeanExpr::Const(2), "blinding arity-2");
+        // BUS IDENTITY — the narrowing is a CUTOVER, not an addition. Without this leg the count
+        // above would pass on a re-widened descriptor that merely added narrow lookups beside the
+        // wide ones, and the 21 deleted lane columns would silently come back.
+        assert_eq!(
+            via.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+                .count(),
+            0,
+            "no WIDE-bus chip lookup may survive the E7 narrowing"
+        );
     }
 
     /// STEP 1 — THE POSITIVE POLE: an honest blinded membership proves through the DISPATCHED

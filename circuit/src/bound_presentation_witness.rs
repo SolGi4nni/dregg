@@ -26,13 +26,14 @@
 //! | 19      | final_root        | HIDDEN witness (tag preimage); NOT a PI                       |
 //! | 20      | randomness        | HIDDEN witness (unlinkability); NOT a PI                      |
 //! | 21      | verifier_nonce    | PI 19 (`PI_NONCE`) — the verifier's public challenge          |
-//! | 22..28  | tag_lanes         | the 7 witnessed Poseidon2 chip output lanes 1..7 of the tag   |
 //!
 //! `presentation_tag` (col 10) is the arity-4 chip absorb out0 of
-//! `[final_root, randomness, verifier_nonce, DSK]`; cols 22..28 are the genuine permutation lanes
-//! 1..7 of the same absorb, so the descriptor's `TID_P2` lookup is SERVED (a forged tag or lane has
-//! no serving chip row → UNSAT — the FAITHFUL, non-lossy Poseidon2 binding). The tag PI copy binds
-//! `pi[10] == loc[10]`, so the PUBLIC tag equals the genuine Poseidon2 image.
+//! `[final_root, randomness, verifier_nonce, DSK]`, and E7 narrowed that lookup onto the NARROW
+//! chip bus (`TID_P2_NARROW` / `chipLookupTupleNarrow`), so the tuple carries out0 ALONE and the
+//! seven permutation lanes no longer ride in the main trace. The lookup is SERVED exactly as
+//! before (a forged tag has no serving chip row → UNSAT — the FAITHFUL, non-lossy Poseidon2
+//! binding); the narrow bus is the 18-prefix of the SAME chip rows (`ChipNarrowLookup.lean`). The
+//! tag PI copy binds `pi[10] == loc[10]`, so the PUBLIC tag equals the genuine Poseidon2 image.
 
 use crate::descriptor_ir2::{CHIP_OUT_LANES, chip_absorb_all_lanes};
 use crate::field::BabyBear;
@@ -57,10 +58,12 @@ pub const FINAL_ROOT: usize = 19;
 pub const RANDOMNESS: usize = 20;
 /// Tag-binding col 21: `verifier_nonce` — the verifier's challenge; a PUBLIC input (`PI_NONCE`).
 pub const VERIFIER_NONCE: usize = 21;
-/// First of the 7 witnessed Poseidon2 chip output lanes 1..7 of the tag.
-pub const TAG_LANE_BASE: usize = 22;
-/// Total base-trace width: 19 summary + `final_root` + `randomness` + `verifier_nonce` + 7 lanes.
-pub const BOUND_PRES_WIDTH: usize = TAG_LANE_BASE + (CHIP_OUT_LANES - 1); // 29
+/// Total base-trace width: 19 summary + `final_root` + `randomness` + `verifier_nonce`.
+///
+/// E7 narrowed the descriptor's tag lookup onto the NARROW chip bus
+/// (`chipLookupTupleNarrow`, `BoundPresentationEmit.lean`), which deleted the trailing 7-lane
+/// block `[22, 29)`. Pure tail truncation — every semantic column above keeps its index.
+pub const BOUND_PRES_WIDTH: usize = VERIFIER_NONCE + 1; // 22
 
 /// PI slot for the `verifier_nonce` challenge (after the 19 summary PIs).
 pub const PI_NONCE: usize = 19;
@@ -113,8 +116,8 @@ pub fn bound_presentation_tag(
 ///
 /// The summary columns copy the caller's public fields; `presentation_tag` (col 10) is computed as
 /// the genuine arity-4 Poseidon2 chip absorb out0 of `[final_root, randomness, verifier_nonce, DSK]`
-/// and cols 22..28 are its 7 witnessed permutation lanes, so the descriptor's `TID_P2` tag lookup is
-/// SERVED. `final_root` and `randomness` ride as HIDDEN witness columns (19, 20); `verifier_nonce`
+/// so the descriptor's NARROW `TID_P2` tag lookup is SERVED without any lane column in the main
+/// trace. `final_root` and `randomness` ride as HIDDEN witness columns (19, 20); `verifier_nonce`
 /// (col 21) is PI-bound. The trace is `height` identical rows; `height` must be a power of two ≥ 2
 /// (the per-row PiBindings + the row-uniform chip lookup hold identically on every row).
 ///
@@ -150,9 +153,6 @@ pub fn bound_presentation_witness(
     row[FINAL_ROOT] = final_root;
     row[RANDOMNESS] = randomness;
     row[VERIFIER_NONCE] = verifier_nonce;
-    for j in 0..(CHIP_OUT_LANES - 1) {
-        row[TAG_LANE_BASE + j] = lanes[j + 1];
-    }
 
     let trace: Vec<Vec<BabyBear>> = (0..height).map(|_| row.clone()).collect();
 
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use crate::descriptor_by_name::descriptor_by_name;
     use crate::descriptor_ir2::{
-        EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2, VmConstraint2,
+        EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2, TID_P2_NARROW, VmConstraint2,
         parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
     };
     use crate::lean_descriptor_air::LeanExpr;
@@ -255,17 +255,28 @@ mod tests {
             via, golden,
             "descriptor_by_name must serve the byte-pinned emitted golden verbatim"
         );
-        // exactly one arity-4 chip lookup (the internalized tag-binding tooth).
+        // Exactly one arity-4 chip lookup (the internalized tag-binding tooth), counted on the bus
+        // the descriptor NOW uses: E7 moved it onto the NARROW bus (`TID_P2_NARROW`), served by the
+        // SAME chip rows.
         let chip: Vec<&LookupSpec> = via
             .constraints
             .iter()
             .filter_map(|c| match c {
-                VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
+                VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW => Some(l),
                 _ => None,
             })
             .collect();
         assert_eq!(chip.len(), 1, "the single tag-binding chip lookup");
         assert_eq!(chip[0].tuple[0], LeanExpr::Const(4), "arity-4 tag");
+        // BUS IDENTITY — the narrowing is a CUTOVER, not an addition (see the 7 deleted lanes).
+        assert_eq!(
+            via.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+                .count(),
+            0,
+            "no WIDE-bus chip lookup may survive the E7 narrowing"
+        );
     }
 
     /// STEP 1 — THE POSITIVE POLE: an honest bound presentation proves through the DISPATCHED
