@@ -4900,11 +4900,14 @@ pub(crate) fn merge_clean_handoff_segment_proofs(
 /// is TERMINAL (its mixed exposure is read by the verifier's segment tooth, never re-merged).
 ///
 /// The caller supplies the handoff (18 = `board ‖ marks` at n = 11). This returns the mixed ROOT;
-/// wrapping it into a verifying [`WholeChainProof`] additionally needs (a) the whole-turn segment
-/// host mirror folded in THIS shape (conflict sub-seg ∘ clean sub-seg, not the flat
-/// [`compute_root_segment`]) and (b) the carried board window from
-/// [`board_window_of_chain_with_clean_handoff`] — the honest residual, alongside the resolve-marks
-/// 20-lane clean leaf that mints the clean sub-chain (Lean-authored, being emitted separately).
+/// [`prove_clean_handoff_chain_recursive`] wraps it into a verifying [`WholeChainProof`] — it folds
+/// the whole-turn segment host mirror in THIS shape (`combine_seg(fold(conflict), fold(clean))`, not
+/// the flat [`compute_root_segment`]), carries the mixed board window from
+/// [`clean_handoff_chain_claim`] / [`board_window_of_chain_with_clean_handoff`], and attaches the
+/// Lean-emitted binding proof. The one REMAINING residual is the resolve-marks 20-lane clean leaf
+/// that mints a UNIFORM clean sub-chain (a marks-carrying step descriptor, Lean-authored, being
+/// emitted separately) — until it lands the clean sub-chain is mixed-width (Leg RM 20 ∘ Leg A 11) and
+/// the assembler's host board-window mirror refuses it fail-closed.
 pub fn fold_clean_handoff_root(
     conflict_leaves: Vec<RecursionOutput<DreggRecursionConfig>>,
     clean_leaves: Vec<RecursionOutput<DreggRecursionConfig>>,
@@ -4936,6 +4939,261 @@ pub fn fold_clean_handoff_root(
         backend,
         params,
     )
+}
+
+/// **THE HOST-SIDE CLAIM a clean-handoff root will EXPOSE** — the four segment fields plus the
+/// mixed board window a [`WholeChainProof`] built by [`prove_clean_handoff_chain_recursive`] carries.
+///
+/// Computed WITHOUT the recursion fold (no proving): the segment is the shaped fold
+/// `combine(fold(conflict), fold(clean))`, and the board window is the mixed
+/// `[C_first.IN(l_window) ‖ R_last.OUT(r_window)]` — exactly what the verifier's segment + board-window
+/// teeth ([`verify_turn_chain_recursive_from_parts_with_board_window`] (4)+(5)) compare the root's
+/// exposure against. Separated from the fold so a fast structural test can assert the assembler's
+/// carried claim without the tens-of-minutes real fold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanHandoffChainClaim {
+    /// The chain's 8-felt genesis anchor — the FIRST conflict turn's `first_old8`.
+    pub genesis_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    /// The chain's 8-felt final anchor — the LAST clean turn's `last_new8`.
+    pub final_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    /// The 8-felt ordered-history digest `H(conflict.acc ++ clean.acc)` — the shaped-tree fold.
+    pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
+    /// The total folded turns — `conflict.len() + clean.len()`.
+    pub num_turns: usize,
+    /// The MIXED board window `[C_first.IN(l_window) ‖ R_last.OUT(r_window)]` — the genesis RoundState
+    /// (32 lanes at n = 11) and the clean round's narrower final state.
+    pub board_window: BoardWindow,
+}
+
+/// **THE MIXED BOARD WINDOW a clean-handoff root exposes, from the per-turn declared windows** — the
+/// PURE host mirror the fast structural test drives with no leg minting and no proving.
+///
+/// `windows` are the chain's per-turn `(IN, OUT)` windows in order (the conflict braid's uniform
+/// `l_window`-lane RoundState windows, then the clean sub-chain's uniform `r_window`-lane windows).
+/// Folds them through the SAME [`fold_declared_windows`] core the assembler's host claim
+/// ([`clean_handoff_chain_claim`]) uses, allowing the ONE `C_last → R` width change where only the
+/// leading `handoff` `board ‖ marks` lanes are compared. Returns `[first.IN ‖ last.OUT]`.
+///
+/// This is what makes the assembler's window logic testable in milliseconds: fill the conflict Leg C
+/// traces + the clean Leg RM trace directly (no door mint), extract their declared windows, and assert
+/// the mixed `[32 ‖ r_window]` result — the exact seam the in-circuit
+/// [`segment_combine_expose_with_clean_handoff`] connects, surfaced without the real fold.
+pub fn clean_handoff_root_board_window(
+    windows: &[(Vec<BabyBear>, Vec<BabyBear>)],
+    handoff: usize,
+) -> Result<BoardWindow, TurnChainError> {
+    if windows.len() < 2 {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "clean-handoff window fold needs at least 2 turns (a conflict round and a clean \
+                 round); got {}",
+                windows.len()
+            ),
+        });
+    }
+    fold_declared_windows(windows, Some(handoff))
+        .map_err(|reason| TurnChainError::RecursionFailed { reason })
+}
+
+/// **THE HOST CLAIM a clean-handoff `WholeChainProof` will carry** — the segment (genesis / final /
+/// digest / count) and the mixed board window, computed from the conflict + clean turns WITHOUT
+/// proving.
+///
+/// The shaped tree is `[fold(conflict)] --clean-handoff-- [fold(clean)]`, so its exposed segment is
+/// `combine_seg(compute_root_segment(conflict), compute_root_segment(clean))` — the SAME segment math
+/// the top [`segment_combine_expose_with_clean_handoff`] node runs (count additivity, ordered-digest
+/// fold, span `[C.first_old8 ‖ R.last_new8]`). The board window is the mixed
+/// `[C_first.IN ‖ R_last.OUT]` from [`compute_root_board_window_inner`], which allows the ONE C→R
+/// width change.
+///
+/// Fail-closed BEFORE any proving on: a broken whole-chain door continuity (the `C_last → R` segment
+/// seam the top node's tooth (1) enforces in-circuit), a chain whose clean sub-chain is NOT uniform
+/// width (more than one board-window width change ⇒ the clean sub-chain is not yet the uniform
+/// `r_window` interface — the blocked-on-step-marks residual), or a board-or-marks prefix mismatch at
+/// the handoff.
+pub fn clean_handoff_chain_claim(
+    conflict_turns: &[&FinalizedTurn],
+    clean_turns: &[&FinalizedTurn],
+    handoff: usize,
+) -> Result<CleanHandoffChainClaim, TurnChainError> {
+    if conflict_turns.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff claim: the conflict braid has no turns".to_string(),
+        });
+    }
+    if clean_turns.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff claim: the clean round has no turns".to_string(),
+        });
+    }
+    // The whole chain in order — continuity, the segment, and the board window all span it.
+    let all: Vec<&FinalizedTurn> = conflict_turns
+        .iter()
+        .copied()
+        .chain(clean_turns.iter().copied())
+        .collect();
+
+    // The whole-chain door continuity (`prev.new_root8 == next.old_root8`), INCLUDING the C_last → R
+    // boundary the top clean-handoff node's tooth (1) enforces in-circuit. Fail-closed here so a
+    // broken seam costs milliseconds, not the real fold.
+    generate_chain_trace_rotated_continuity(&all)?;
+
+    // The shaped root segment: fold each sub-chain uniformly, then combine (the SAME math the top
+    // node runs — count additivity + ordered-digest fold over the two sub-roots' segments).
+    let conflict_seg = compute_root_segment(conflict_turns);
+    let clean_seg = compute_root_segment(clean_turns);
+    let root_seg = combine_seg(conflict_seg, clean_seg);
+
+    // The mixed board window `[C_first.IN ‖ R_last.OUT]` (fail-closed on >1 width change / broken
+    // handoff prefix). `None` would mean no turn declares a window — a multi-round automatafl turn
+    // always does, so a `None` here is a malformed chain.
+    let board_window = compute_root_board_window_inner(&all, Some(handoff))?.ok_or_else(|| {
+        TurnChainError::RecursionFailed {
+            reason:
+                "clean-handoff claim: no turn declares a board window (a multi-round automatafl \
+                     turn must carry the RoundState / board||marks windows)"
+                    .to_string(),
+        }
+    })?;
+
+    Ok(CleanHandoffChainClaim {
+        genesis_root: root_seg.first_old8,
+        final_root: root_seg.last_new8,
+        chain_digest: root_seg.acc,
+        num_turns: all.len(),
+        board_window,
+    })
+}
+
+/// **THE CLEAN-HANDOFF WHOLE-CHAIN ASSEMBLER — the sibling of [`prove_turn_chain_recursive`] for a
+/// MULTI-ROUND automatafl turn.** Fold a conflict braid (uniform `l_window` RoundState Leg C leaves)
+/// and its terminating clean round (uniform `r_window` `[board ‖ marks ‖ …]` leaves) into ONE
+/// verifiable [`WholeChainProof`] whose ROOT is the mixed-width clean-handoff node.
+///
+/// This is the prover-side glue the M7 finding named as absent (`MultiRoundTurn` type doc, residual
+/// (2)): [`fold_clean_handoff_root`] yields only a bare `RecursionOutput`, and the light client
+/// already accepts a mixed-width board window
+/// ([`verify_turn_chain_recursive_from_parts_with_board_window`] tooth (5)) — this assembles the
+/// root + the shaped-tree host claim + the binding descriptor proof into the whole artifact, exactly
+/// as [`prove_chain_core_rotated_with_fold`] does for the uniform fold, but with the shaped tree and
+/// the mixed window.
+///
+/// The tail MIRRORS `prove_chain_core_rotated_with_fold` (host admission, the retained
+/// Lean-emitted binding proof over the whole chain, the `WholeChainProof` assembly), differing only
+/// in the TREE SHAPE: the two sub-chains fold UNIFORMLY through the deployed width-generic
+/// [`aggregate_tree`], and the ONE new [`merge_clean_handoff_segment_proofs`] top node stitches their
+/// shared `board ‖ marks` prefix (`handoff` = 18 at n = 11). Every host claim is computed fail-closed
+/// by [`clean_handoff_chain_claim`] BEFORE a single leaf is proven.
+///
+/// The clean leaves MUST already be doored at the GLOBAL nonce offset (continuing the conflict
+/// braid's nonce run) so the `C_last → R` segment continuity holds — [`fold_clean_handoff_root`]'s
+/// top node connects `conflict_root.last_new8 == clean_root.first_old8`, the fixture legs' linear
+/// chain. The caller ([`dregg_multiway_tug::fold::fold_clean_handoff_match`]) mints them so.
+///
+/// SLOW (the deployed recursive fold). BLOCKED at the host board-window mirror TODAY when the clean
+/// sub-chain is MIXED-width (Leg RM 20-lane ∘ Leg A 11-lane) — [`compute_root_board_window_inner`]
+/// refuses the second width change — until the marks-carrying step descriptor lands and the clean
+/// sub-chain is uniform `r_window` = 20. That refusal is the honest blocked-on-step-marks signal,
+/// not a fake green.
+pub fn prove_clean_handoff_chain_recursive(
+    conflict_turns: &[FinalizedTurn],
+    clean_turns: &[FinalizedTurn],
+    handoff: usize,
+) -> Result<WholeChainProof, TurnChainError> {
+    if conflict_turns.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff fold: the conflict braid has no turns".to_string(),
+        });
+    }
+    if clean_turns.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff fold: the clean round has no turns".to_string(),
+        });
+    }
+
+    // (1) HOST ADMISSION — descriptor-verify every turn, selector-bound (identical discipline to
+    // `prove_turn_chain_recursive`; the rotated leaf re-proof is the soundness boundary).
+    for (i, t) in conflict_turns.iter().enumerate() {
+        verify_descriptor_participant(&t.participant)
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+    }
+    for (j, t) in clean_turns.iter().enumerate() {
+        verify_descriptor_participant(&t.participant).map_err(|reason| {
+            TurnChainError::TurnProofInvalid {
+                index: conflict_turns.len() + j,
+                reason,
+            }
+        })?;
+    }
+
+    // CODEX #5 count-lane bound (num_turns < p so the exposed count lane cannot wrap mod p).
+    let num_turns = conflict_turns.len() + clean_turns.len();
+    if (num_turns as u64) >= BABY_BEAR_MODULUS as u64 {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "num_turns {num_turns} >= BabyBear modulus {BABY_BEAR_MODULUS} (count lane would \
+                 wrap mod p)"
+            ),
+        });
+    }
+
+    // (2) THE HOST CLAIM the mixed root will expose — the shaped-tree segment + the mixed board
+    // window, all fail-closed BEFORE any proving (a broken C→R seam, a non-uniform clean sub-chain,
+    // or a broken handoff prefix is caught here in milliseconds).
+    let conflict_refs: Vec<&FinalizedTurn> = conflict_turns.iter().collect();
+    let clean_refs: Vec<&FinalizedTurn> = clean_turns.iter().collect();
+    let claim = clean_handoff_chain_claim(&conflict_refs, &clean_refs, handoff)?;
+
+    // The ONE FRI engine the whole rotated tree runs at (inner proof + leaf-wrap + aggregation).
+    let config = ir2_leaf_wrap_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // (3) THE RETAINED binding proof over the WHOLE chain — carried for the byte envelope / struct
+    // API (and its scalar genesis/final/count tooth), NOT a soundness dependency (the segment tooth
+    // over the root's exposure is what binds the claim). Identical role to the uniform fold.
+    let all: Vec<&FinalizedTurn> = conflict_refs
+        .iter()
+        .copied()
+        .chain(clean_refs.iter().copied())
+        .collect();
+    let binding_proof = prove_chain_binding_descriptor_rotated(&all)?;
+
+    // (4) MINT each sub-chain's leaves at its GLOBAL chain position (so the state-binding node's door
+    // matches the leg the fold mints), then fold the SHAPED tree: each sub-chain UNIFORMLY through
+    // the deployed width-generic `aggregate_tree`, then the ONE mixed-width clean-handoff top node.
+    let mut conflict_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
+        Vec::with_capacity(conflict_turns.len());
+    for (i, t) in conflict_turns.iter().enumerate() {
+        conflict_leaves.push(mint_rotated_turn_leaf(i, t, &config)?);
+    }
+    let mut clean_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
+        Vec::with_capacity(clean_turns.len());
+    for (j, t) in clean_turns.iter().enumerate() {
+        clean_leaves.push(mint_rotated_turn_leaf(
+            conflict_turns.len() + j,
+            t,
+            &config,
+        )?);
+    }
+    let root = fold_clean_handoff_root(
+        conflict_leaves,
+        clean_leaves,
+        handoff,
+        &config,
+        &backend,
+        &params,
+    )?;
+
+    Ok(WholeChainProof {
+        root,
+        binding_proof,
+        genesis_root: claim.genesis_root,
+        final_root: claim.final_root,
+        chain_digest: claim.chain_digest,
+        num_turns: claim.num_turns,
+        board_window: Some(claim.board_window),
+    })
 }
 
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.

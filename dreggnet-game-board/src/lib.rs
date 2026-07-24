@@ -86,7 +86,9 @@ use dregg_multiway_tug::hidden_hand::HandTree;
 
 pub mod native_descent_board;
 
-pub use dregg_multiway_tug::fold::{LeafBundle, fold_match, membership_leaf_for_play};
+pub use dregg_multiway_tug::fold::{
+    LeafBundle, fold_clean_handoff_match, fold_match, membership_leaf_for_play,
+};
 pub use ugc_dregg::{
     Accepted, Entry, ProofAnchor, ProofCompletion, Registry, RejectReason, Universe, UniverseId,
     WinCondition,
@@ -589,20 +591,22 @@ impl AutomataflMatch {
 ///    so the top `merge_clean_handoff_segment_proofs` refuses it. Folding the automaton step into the
 ///    marks-carrying clean sub-chain needs a marks-carrying step descriptor emitted in Lean (or the
 ///    clean round modeled as ONE resolve+step leaf) — Lean-authored AIR, not Rust.
-/// 2. **No `WholeChainProof` assembly exists for the clean-handoff root.**
-///    [`fold_clean_handoff_root`](dregg_circuit_prove) produces the mixed root
-///    `RecursionOutput`, and the light-client verifier ALREADY accepts a mixed-width board window
-///    (`verify_turn_chain_recursive_from_parts_with_board_window` tooth (5)) plus
-///    [`board_window_of_chain_with_clean_handoff`] computes the carried window — but the prover-side
-///    glue that assembles the root + the clean-handoff-shaped segment host mirror + the binding
-///    descriptor proof into a verifiable `WholeChainProof` is not built (the uniform `fold_match`
-///    path is the only assembler today). This is `dregg-circuit-prove` systems work, orthogonal to
-///    residual (1).
+/// 2. **The `WholeChainProof` assembler for the clean-handoff root is now BUILT.**
+///    [`fold_clean_handoff_root`](dregg_circuit_prove) produces the mixed root `RecursionOutput`;
+///    `dregg_circuit_prove::ivc_turn_chain::prove_clean_handoff_chain_recursive` (called by
+///    [`dregg_multiway_tug::fold::fold_clean_handoff_match`], which [`MultiRoundTurn::prove`] drives)
+///    wraps it into a verifiable `WholeChainProof` — the clean-handoff-shaped segment host mirror
+///    (`combine(fold(conflict), fold(clean))`), the mixed board window from
+///    [`board_window_of_chain_with_clean_handoff`], and the Lean-emitted binding proof — which the
+///    light client accepts (`verify_turn_chain_recursive_from_parts_with_board_window` tooth (5)
+///    already reads the mixed-width window). This residual is CLOSED.
 ///
 /// So [`MultiRoundTurn::conflict_leaves`] and the marks-carrying [`MultiRoundTurn::clean_leaves`] are
-/// foldable, self-contained, mint-coherent artifacts (the `board ‖ marks` handoff and the
-/// terminating marks-legality now hold at mint level); welding the WHOLE turn — conflict braid ∘ Leg
-/// RM ∘ Leg A — into ONE verifying root is BLOCKED on residuals (1) and (2).
+/// foldable, self-contained, mint-coherent artifacts, and the whole-turn ASSEMBLER exists
+/// ([`MultiRoundTurn::prove`]). Welding the WHOLE turn — conflict braid ∘ Leg RM ∘ Leg A — into ONE
+/// verifying root is BLOCKED on residual (1) ALONE: the clean sub-chain is mixed-width (Leg RM 20 ∘
+/// Leg A 11) until a marks-carrying step descriptor is emitted (Lean-authored AIR), so the
+/// assembler's host board-window mirror refuses it fail-closed — surfaced, not faked.
 #[derive(Clone, Debug)]
 pub struct MultiRoundTurn {
     /// The turn-start board — FROZEN across the whole conflict braid.
@@ -865,7 +869,51 @@ impl MultiRoundTurn {
 
         Ok(out)
     }
+
+    /// **FOLD THE WHOLE MULTI-ROUND TURN INTO ONE VERIFIABLE PROOF.** Lower the conflict braid + the
+    /// terminating clean round, then assemble ONE `WholeChainProof` a pure light client attests
+    /// (self-attested here before returning). The dispatch:
+    ///
+    /// * **NO conflict rounds** ⇒ the plain two-leg clean round (Leg R ∘ Leg A, marks = ∅) folds
+    ///   through the UNIFORM [`fold_match`] — identical to [`AutomataflMatch`]'s two-leg fold.
+    /// * **WITH conflict rounds** ⇒ the SHAPED [`fold_clean_handoff_match`]: the conflict sub-tree
+    ///   (uniform 32-lane RoundState Leg C leaves) and the clean sub-tree (uniform `r_window`
+    ///   `[board ‖ marks ‖ …]` leaves) fold to two sub-roots, welded at the ONE `C_last → R`
+    ///   clean-handoff node over the shared `board ‖ marks` prefix (18 lanes).
+    ///
+    /// SLOW (the deployed recursive fold). With conflict rounds this is currently BLOCKED at the
+    /// assembler's host board-window mirror — the clean sub-chain is MIXED-width (Leg RM 20 ∘ Leg A
+    /// 11) until the marks-carrying step descriptor lands and it is uniform `r_window` = 20 — and the
+    /// returned error is the honest blocked-on-step-marks signal, never a fake green.
+    pub fn prove(&self) -> Result<MatchProof, ProveError> {
+        if self.conflict_subs.is_empty() {
+            // No conflict ⇒ the plain two-leg clean round ⇒ the uniform fold_match path.
+            let leaves = self.clean_leaves().map_err(ProveError::Match)?;
+            return prove_match(Game::Automatafl, &leaves);
+        }
+        let conflict = self.conflict_leaves().map_err(ProveError::Match)?;
+        let clean = self.clean_leaves().map_err(ProveError::Match)?;
+        let whole = fold_clean_handoff_match(&conflict, &clean, CLEAN_HANDOFF_LANES)
+            .map_err(ProveError::Fold)?;
+        let vk = whole.root_vk_fingerprint();
+        let proof_bytes = whole.to_bytes();
+        // Prover-side self-attestation through the SAME mixed-width verifier the board runs (the v5
+        // envelope carries the mixed `[first.IN(32) ‖ last.OUT(20)]` window).
+        let attested = verify_history_bytes(&proof_bytes, &vk).map_err(ProveError::SelfAttest)?;
+        Ok(MatchProof {
+            game: Game::Automatafl,
+            proof_bytes,
+            attested,
+            vk,
+        })
+    }
 }
+
+/// The shared `board ‖ marks` prefix width the `C_last → R` clean-handoff node connects at n = 11
+/// (`roundstate_window_n11::HANDOFF_LANES` = `board(9) ‖ marks(9)`); `locked ‖ waiting ‖ auto` are
+/// consumed at the clean round and dropped.
+pub const CLEAN_HANDOFF_LANES: usize =
+    dregg_circuit::effect_vm::custom_state_binding::roundstate_window_n11::HANDOFF_LANES;
 
 /// Decode a Leg C trace's per-cell `marksOut` overlay into a coordinate list (the next round's
 /// `marksIn`). A cell is marked iff its `c_marks_out_cell` column is `1`.

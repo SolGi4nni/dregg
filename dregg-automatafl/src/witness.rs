@@ -75,7 +75,7 @@ pub fn placeholder_roots() -> ([BabyBear; 8], [BabyBear; 8]) {
 }
 
 /// A signed integer lifted into BabyBear.
-fn bb(x: i64) -> BabyBear {
+pub(crate) fn bb(x: i64) -> BabyBear {
     if x >= 0 {
         BabyBear::from_u64(x as u64)
     } else {
@@ -84,7 +84,7 @@ fn bb(x: i64) -> BabyBear {
 }
 
 /// Set a column iff it is currently unfilled.
-fn set_if_none(vals: &mut [Option<BabyBear>], col: usize, v: BabyBear) {
+pub(crate) fn set_if_none(vals: &mut [Option<BabyBear>], col: usize, v: BabyBear) {
     if vals[col].is_none() {
         vals[col] = Some(v);
     }
@@ -185,7 +185,11 @@ impl StepTrace {
 /// coordinate decompositions, the auto/ipw/inw/hit one-hots, the `cond_nonzero` inverses, the
 /// decision fields, and every `forced_ge0` range block — is placed here; the affine remainder is
 /// left for [`rule_l_pass`]. `Err` is fail-closed (an out-of-range distance/coordinate).
-fn seed_step(l: &StepLayout, old: &Board, vals: &mut [Option<BabyBear>]) -> Result<(), String> {
+pub(crate) fn seed_step(
+    l: &StepLayout,
+    old: &Board,
+    vals: &mut [Option<BabyBear>],
+) -> Result<(), String> {
     let n = l.n;
     let ni = n as i64;
 
@@ -434,7 +438,9 @@ pub fn automatafl_step_trace(old: &Board, desc: &EffectVmDescriptor2) -> Result<
 
 /// The descriptor's own first-row `PiBinding` map (`pi_index -> trace column`) — the ABI read
 /// that keeps this generator shape-independent under APPEND-ONLY descriptor growth.
-fn pi_binding_cols(desc: &EffectVmDescriptor2) -> std::collections::BTreeMap<usize, usize> {
+pub(crate) fn pi_binding_cols(
+    desc: &EffectVmDescriptor2,
+) -> std::collections::BTreeMap<usize, usize> {
     use dregg_circuit::descriptor_ir2::VmConstraint2;
     use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
     let mut out = std::collections::BTreeMap::new();

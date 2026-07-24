@@ -48,14 +48,15 @@
 //! `marksIn` equals the conflict `marksOut`, a dropped round breaks the MARKS seam, and a clean-round
 //! move onto a mark is UNSAT.
 //!
-//! **WHAT WELDING THE WHOLE TURN INTO ONE ROOT STILL NEEDS (residuals, not faked).** (1) The clean
-//! sub-chain is mixed-width — Leg RM is 20-lane, Leg A (the step) publishes no marks so it is 11-lane
-//! `[board ‖ auto]` — so it cannot fold through the deployed uniform `aggregate_tree`; folding the
-//! automaton step into the marks-carrying clean chain needs a marks-carrying step descriptor
-//! (Lean-authored AIR). (2) No `WholeChainProof` assembly exists for the clean-handoff root
-//! (`fold_clean_handoff_root` yields a bare `RecursionOutput`; the verifier already accepts a
-//! mixed-width board window, but the prover-side assembler is `dregg-circuit-prove` work). See
-//! `MultiRoundTurn`'s type doc.
+//! **WHAT WELDING THE WHOLE TURN INTO ONE ROOT STILL NEEDS (residuals, not faked).** (2) The
+//! `WholeChainProof` assembler for the clean-handoff root is now BUILT (`fold_clean_handoff_match` /
+//! `prove_clean_handoff_chain_recursive`, driven by `MultiRoundTurn::prove`) — the clean-handoff
+//! section (d) below drives its host claim (the mixed `[32 ‖ 20]` window + turn count) fast. (1) The
+//! clean sub-chain is STILL mixed-width — Leg RM is 20-lane, Leg A (the step) publishes no marks so it
+//! is 11-lane `[board ‖ auto]` — so it cannot fold through the deployed uniform `aggregate_tree`, and
+//! the assembler's host board-window mirror REFUSES it (tested in (d)); folding the automaton step
+//! into the marks-carrying clean chain needs a marks-carrying step descriptor (Lean-authored AIR).
+//! The whole-turn end-to-end is BLOCKED on residual (1) alone. See `MultiRoundTurn`'s type doc.
 
 use dregg_automatafl::legc_layout::LegCLayout;
 use dregg_automatafl::legc_witness::{
@@ -65,12 +66,17 @@ use dregg_automatafl::reference::{ATT, AUTO, Board, Coord, Move, VAC};
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::effect_vm::custom_state_binding::{
-    extract_custom_pi_board_window, leg_c_roundstate_window_n11,
+    extract_custom_pi_board_window, leg_c_roundstate_window_n11, roundstate_window_n11,
 };
 use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::ivc_turn_chain::clean_handoff_root_board_window;
 use dreggnet_game_board::MultiRoundTurn;
 
 const N: usize = 11;
+
+/// The shared `board ‖ marks` prefix the `C_last → R` clean handoff connects (18 = board(9) ‖
+/// marks(9) at n = 11).
+const HANDOFF: usize = roundstate_window_n11::HANDOFF_LANES;
 
 // The 32-lane RoundState sub-window offsets (the layout `leg_c_roundstate_window_n11` extracts in
 // order): board ‖ marks ‖ locked ‖ waiting ‖ auto.
@@ -747,5 +753,253 @@ fn the_honest_conflict_braid_folds_and_the_light_client_reads_the_roundstate_end
         attested.board_final.as_deref().map(<[BabyBear]>::len),
         Some(32),
         "the attested final RoundState is 32 lanes"
+    );
+}
+
+// ============================================================================
+// (d) THE CLEAN-HANDOFF ASSEMBLER — the whole turn (conflict braid ∘ clean round) as ONE artifact
+// ============================================================================
+//
+// The prover-side glue (residual (2) of `MultiRoundTurn`): `fold_clean_handoff_match` /
+// `prove_clean_handoff_chain_recursive` assemble the conflict sub-tree, the clean sub-tree, and the
+// ONE mixed-width `C_last → R` node into ONE verifiable `WholeChainProof` whose root exposes the mixed
+// `[C_first.IN(32) ‖ R_last.OUT(20)]` window.
+//
+// The FAST tests below drive the assembler's HOST CLAIM (the mixed board window it carries + the
+// turn count) through `clean_handoff_root_board_window` — the pure window fold, no leg minting, no
+// proving — so the seam the in-circuit `segment_combine_expose_with_clean_handoff` connects is
+// exercised in milliseconds. The tier-3 end-to-end (the real fold) is `#[ignore]`d and BLOCKED on the
+// marks-carrying step descriptor: today the clean sub-chain is MIXED-width (Leg RM 20 ∘ Leg A 11), so
+// the assembler's host board-window mirror refuses it — surfaced, not faked (see the negative below).
+
+/// The real 11-lane Leg A (automaton step) `(IN, OUT)` window for the clean round — the current
+/// clean sub-chain's SECOND leg. It is 11-lane `[board ‖ auto]` (no marks PIs), which is why the clean
+/// sub-chain is mixed-width (Leg RM 20 ∘ Leg A 11) and the whole-turn weld is blocked until the
+/// marks-carrying step descriptor lands (a uniform 20-lane Leg A).
+fn clean_step_window(
+    start: &Board,
+    subs: &[Move; 2],
+    marks: &[Coord],
+) -> (Vec<BabyBear>, Vec<BabyBear>) {
+    use dregg_automatafl::resolve_marks_layout::ResolveMarksLayout;
+    use dregg_automatafl::resolve_marks_witness::{
+        automatafl_resolve_marks_trace, resolve_marks_descriptor_ident,
+    };
+    use dregg_automatafl::witness::{
+        automatafl_step_trace, step_board_window, step_descriptor_name,
+    };
+    let rmdesc =
+        descriptor_by_name(resolve_marks_descriptor_ident(N)).expect("resolve-marks descriptor");
+    let rt = automatafl_resolve_marks_trace(start, subs, marks, &rmdesc)
+        .expect("the clean resolve-marks fills");
+    let mid = rt.mid_board(&ResolveMarksLayout::new(N));
+    let sdesc = descriptor_by_name(&step_descriptor_name(N)).expect("the step descriptor");
+    let st = automatafl_step_trace(&mid, &sdesc).expect("the clean step fills");
+    let swin = step_board_window(N, &sdesc).expect("the 11-lane step window");
+    extract_custom_pi_board_window(&st.public_inputs, &swin).expect("11-lane window")
+}
+
+/// **THE ASSEMBLER CARRIES THE MIXED WINDOW + THE RIGHT TURN COUNT (fast, no proving).** The conflict
+/// braid's 32-lane RoundState windows fold with the clean round's 20-lane Leg RM window through the
+/// SAME `fold_declared_windows` core the assembler's host claim uses, and the root window is the mixed
+/// `[C_0.IN(32) ‖ R_last.OUT(20)]` — the genesis RoundState and the clean round's final state, the
+/// exact `[first.IN ‖ last.OUT]` the verifier's board-window tooth (5) compares the root's exposure
+/// against. The clean sub-chain is modeled by its ONE emitted 20-lane leaf (Leg RM); appending the
+/// marks-carrying step (also 20-lane, once emitted) keeps this shape — see the uniform-20 case below.
+#[test]
+fn the_clean_handoff_assembler_carries_the_mixed_window_and_num_turns() {
+    let turn = three_conflict_turn(); // 3 conflict rounds + a clean round
+    let conflict_wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> =
+        conflict_traces(&turn).iter().map(legc_window).collect();
+    let marks = turn
+        .accumulated_marks()
+        .expect("the braid accumulates marks");
+    let clean = turn.clean_subs.expect("the turn carries a clean round");
+    let (rm_in, rm_out) = clean_rm_window(&turn.start, &clean, &marks);
+
+    // The uniform-20 clean sub-chain interface, modeled by the ONE real 20-lane leaf (Leg RM).
+    let mut windows = conflict_wins.clone();
+    windows.push((rm_in.clone(), rm_out.clone()));
+
+    let bw = clean_handoff_root_board_window(&windows, HANDOFF)
+        .expect("the conflict∘clean windows fold to a mixed root window");
+
+    // THE MIXED WINDOW: 32-lane genesis RoundState ‖ 20-lane clean final. The halves DIFFER in width
+    // (this is the whole point of the clean-handoff node — a uniform merge refuses it).
+    assert_eq!(bw.first_in.len(), 32, "genesis is the 32-lane RoundState");
+    assert_eq!(
+        bw.last_out.len(),
+        20,
+        "clean final is the 20-lane [board ‖ marks ‖ auto]"
+    );
+    assert_eq!(bw.first_in, conflict_wins[0].0, "genesis IS C_0.IN");
+    assert_eq!(bw.last_out, rm_out, "final IS the clean round's OUT");
+
+    // THE RIGHT TURN COUNT: the whole chain the assembler folds is k conflict Leg C turns + the clean
+    // sub-chain's turns — the `num_turns` the root's segment tooth (4) carries. Here that is the
+    // window count (one window per folded turn).
+    assert_eq!(
+        windows.len(),
+        turn.conflict_subs.len() + 1,
+        "the clean-handoff chain folds k conflict turns + the (modeled) clean turn"
+    );
+
+    // THE FULL UNIFORM-20 CLEAN SUB-CHAIN (Leg RM ∘ the marks-carrying step, both 20-lane): appending
+    // a second uniform-20 leaf whose IN == RM.OUT (the clean→clean seam) keeps EXACTLY one width
+    // change (C→clean) and the SAME mixed [32 ‖ 20] shape. This is the interface the emitted
+    // step-marks descriptor will complete; the assembler is built against it.
+    let step_marks_uniform20 = (rm_out.clone(), rm_out.clone());
+    let mut windows_full = conflict_wins.clone();
+    windows_full.push((rm_in.clone(), rm_out.clone()));
+    windows_full.push(step_marks_uniform20);
+    let bw_full = clean_handoff_root_board_window(&windows_full, HANDOFF)
+        .expect("a uniform-20 clean sub-chain (RM ∘ step-marks) folds to the mixed root window");
+    assert_eq!(bw_full.first_in.len(), 32, "genesis still 32-lane");
+    assert_eq!(bw_full.last_out.len(), 20, "clean final still 20-lane");
+    assert_eq!(bw_full.first_in, conflict_wins[0].0, "genesis unchanged");
+}
+
+/// **THE BLOCKED-ON-STEP-MARKS RESIDUAL, SURFACED NOT FAKED.** The CURRENT clean sub-chain is
+/// mixed-width — Leg RM (20-lane `[board ‖ marks ‖ auto]`) then Leg A (11-lane `[board ‖ auto]`, no
+/// marks PIs) — so appending the real Leg A window makes TWO board-window width changes (C→RM and
+/// RM→A). The assembler's host board-window mirror models a SINGLE `C_last → R` boundary and REFUSES
+/// the second change fail-closed. This is exactly why the whole-turn weld is blocked until the
+/// marks-carrying step descriptor (a uniform 20-lane Leg A) is emitted — the refusal is a real,
+/// tested error, not a hidden gap.
+#[test]
+fn the_current_mixed_width_clean_sub_chain_is_refused_blocked_on_step_marks() {
+    let turn = three_conflict_turn();
+    let conflict_wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> =
+        conflict_traces(&turn).iter().map(legc_window).collect();
+    let marks = turn.accumulated_marks().expect("marks accumulate");
+    let clean = turn.clean_subs.unwrap();
+    let (rm_in, rm_out) = clean_rm_window(&turn.start, &clean, &marks);
+    let (a_in, a_out) = clean_step_window(&turn.start, &clean, &marks);
+    assert_eq!(
+        a_in.len(),
+        11,
+        "the real Leg A window is 11-lane (no marks PIs)"
+    );
+    assert_eq!(a_out.len(), 11);
+
+    // The REAL current clean sub-chain: Leg RM (20) then Leg A (11) — mixed width.
+    let mut windows = conflict_wins;
+    windows.push((rm_in, rm_out));
+    windows.push((a_in, a_out));
+
+    let err = clean_handoff_root_board_window(&windows, HANDOFF)
+        .expect_err("a mixed-width clean sub-chain (RM 20 ∘ A 11) must be refused, not folded");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("more than one window-width change"),
+        "the refusal names the second width change (the blocked-on-step-marks residual), got: {msg}"
+    );
+}
+
+/// **A DROPPED CONFLICT ROUND BREAKS THE CLEAN-HANDOFF SEAM IN THE ASSEMBLER.** The clean round's Leg
+/// RM enters with the FULL-braid accumulated marks; if the conflict chain handed off is SHORTENED (a
+/// dropped round), the last conflict round's `C_last.OUT[board ‖ marks]` no longer equals the clean
+/// RM's IN prefix. The assembler's window fold catches it at the C→R boundary — the in-circuit
+/// `board_window_clean_handoff_connects` would be UNSAT (no root). Isolates the marks half: the board
+/// stays frozen, only the marks prefix diverges.
+#[test]
+fn a_dropped_conflict_round_breaks_the_assemblers_clean_handoff_seam() {
+    let turn = three_conflict_turn();
+    let conflict_wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> =
+        conflict_traces(&turn).iter().map(legc_window).collect();
+    let clean = turn.clean_subs.unwrap();
+    // The HONEST clean round consumes the FULL-braid marks — but the prover presents a SHORTENED
+    // conflict chain (drop the last round C_2). Its C_last is now C_1, whose OUT marks lack C_2's clash.
+    let full_marks = turn.accumulated_marks().expect("full braid marks");
+    let (rm_in, rm_out) = clean_rm_window(&turn.start, &clean, &full_marks);
+
+    // Control: against the FULL conflict chain the handoff holds and the mixed window folds.
+    let mut honest = conflict_wins.clone();
+    honest.push((rm_in.clone(), rm_out.clone()));
+    clean_handoff_root_board_window(&honest, HANDOFF)
+        .expect("control: the full conflict chain ∘ clean round folds");
+
+    // DROP C_2 — the chain is [C_0, C_1, RM]; C_1.OUT.marks lacks C_2's clash the clean RM.IN expects.
+    let mut dropped: Vec<(Vec<BabyBear>, Vec<BabyBear>)> = conflict_wins[..2].to_vec();
+    dropped.push((rm_in, rm_out));
+    let err = clean_handoff_root_board_window(&dropped, HANDOFF)
+        .expect_err("a dropped last conflict round breaks the clean handoff — no root");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("clean-handoff seam broken"),
+        "the refusal names the broken board||marks handoff prefix, got: {msg}"
+    );
+}
+
+/// An honest 2-conflict-round turn (two forks at disjoint coordinates, then a clean round moving
+/// never-marked attractors) — the smaller turn the tier-3 end-to-end fold drives.
+fn two_conflict_turn() -> MultiRoundTurn {
+    let start = board_with((10, 10), &[(0, 0), (5, 5), (0, 7), (7, 0)]);
+    let conflict_subs = vec![
+        [mv(0, (0, 0), (0, 2)), mv(1, (0, 0), (2, 0))], // fork at (0,0)
+        [mv(0, (5, 5), (5, 7)), mv(1, (5, 5), (7, 5))], // fork at (5,5)
+    ];
+    let clean = [mv(0, (0, 7), (2, 7)), mv(1, (7, 0), (7, 2))];
+    MultiRoundTurn::new(start, conflict_subs, clean)
+}
+
+/// **TIER-3 END-TO-END — the whole multi-round turn assembles to ONE verifying `WholeChainProof`.**
+/// `MultiRoundTurn::prove` lowers the conflict braid + the clean round and assembles them through the
+/// SHAPED clean-handoff fold; the light client ACCEPTS, the root decodes to `[genesis RoundState(32) ‖
+/// clean final(20)]`, and a dropped / substituted / marked-move turn FAILS (the seam / descriptor
+/// bite ⇒ no root ⇒ no verifying artifact).
+///
+/// BLOCKED, `#[ignore]`d — and NOT a fake green. Today the clean sub-chain is MIXED-width (Leg RM
+/// 20-lane ∘ Leg A 11-lane), so `prove` fails at the assembler's host board-window mirror with the
+/// "more than one window-width change" refusal (`the_current_mixed_width_clean_sub_chain_is_refused_
+/// blocked_on_step_marks` tests that refusal, fast). This test will PASS only once the marks-carrying
+/// step descriptor is emitted (a uniform 20-lane Leg A) — at which point the clean sub-chain is
+/// uniform-20 and this fold produces one verifying root. Run with `--ignored` ONLY after that lands.
+#[test]
+#[ignore = "BLOCKED on the marks-carrying step descriptor: the clean sub-chain is mixed-width today \
+            (Leg RM 20 ∘ Leg A 11), so the assembler's host board-window mirror refuses it (tested \
+            fast by `the_current_mixed_width_clean_sub_chain_is_refused_blocked_on_step_marks`). It \
+            ALSO carries the deployed prover cost (Leg C + Leg RM + Leg A leaves, each \
+            recursion-wrapped — tens of minutes). Un-ignore once a uniform 20-lane Leg A is emitted."]
+fn the_whole_multi_round_turn_folds_to_one_verifying_proof() {
+    use dregg_lightclient::verify_history_bytes;
+
+    let turn = two_conflict_turn();
+    let proof = turn
+        .prove()
+        .expect("the honest multi-round turn assembles to ONE WholeChainProof");
+
+    // The board REJECTS nothing it should accept: self-attested already inside `prove`, re-verify the
+    // over-wire envelope against the fold's own VK anchor.
+    let attested = verify_history_bytes(&proof.proof_bytes, &proof.vk)
+        .expect("the light client ACCEPTS the clean-handoff artifact");
+
+    // The whole turn folded: 2 conflict Leg C turns + the clean round's 2 legs.
+    assert_eq!(
+        attested.num_turns,
+        turn.conflict_subs.len() + 2,
+        "num_turns == k conflict Leg C turns + Leg RM + the (uniform-20) step"
+    );
+    // The mixed endpoints decode in the clear (pack is injective): 32-lane genesis, 20-lane final.
+    assert_eq!(
+        attested.board_genesis.as_deref().map(<[BabyBear]>::len),
+        Some(32),
+        "the attested genesis is the 32-lane RoundState"
+    );
+    assert_eq!(
+        attested.board_final.as_deref().map(<[BabyBear]>::len),
+        Some(20),
+        "the attested final is the 20-lane clean [board ‖ marks ‖ auto]"
+    );
+
+    // A DROPPED conflict round FAILS: shorten the braid, feed the clean round the full-braid marks.
+    // The clean handoff seam is UNSAT ⇒ no root ⇒ `prove` errors (never a verifying artifact).
+    let mut shortened = two_conflict_turn();
+    shortened.conflict_subs.pop(); // drop the last conflict round
+    // (The clean round still consumes the full-braid marks accumulated over the ORIGINAL braid — a
+    // dropped round makes `marksIn` disagree with the shortened chain's `marksOut`.)
+    assert!(
+        shortened.prove().is_err(),
+        "a dropped conflict round leaves a broken clean handoff — no verifying root"
     );
 }

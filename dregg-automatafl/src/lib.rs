@@ -34,6 +34,8 @@ pub mod resolve_marks_layout;
 pub mod resolve_marks_witness;
 pub mod resolve_witness;
 pub mod step_layout;
+pub mod step_marks_layout;
+pub mod step_marks_witness;
 pub mod surface;
 pub mod witness;
 

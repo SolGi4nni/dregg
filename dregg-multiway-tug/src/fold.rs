@@ -852,5 +852,81 @@ pub fn fold_match(
     prove_turn_chain_recursive(&turns).map_err(|e| format!("match fold failed: {e}"))
 }
 
+/// **THE CLEAN-HANDOFF MATCH FOLD — the sibling of [`fold_match`] for a MULTI-ROUND automatafl turn.**
+/// Fold a conflict braid (uniform `l_window` RoundState Leg C leaves) and its terminating clean round
+/// (uniform `r_window` `[board ‖ marks ‖ …]` leaves) into ONE verifiable `WholeChainProof` whose ROOT
+/// is the mixed-width clean-handoff node
+/// ([`dregg_circuit_prove::ivc_turn_chain::prove_clean_handoff_chain_recursive`]).
+///
+/// Where [`fold_match`] mints a FLAT chain `build_match_turns(bundles)`, this mints the SHAPED chain
+/// the clean-handoff root folds: the conflict leaves keep their in-vec doors (the linear fixture-leg
+/// run at nonces `0..k`), and the clean leaves are RE-DOORED at the global nonce offset `k` (via
+/// [`build_clean_handoff_tail_turns`]) so the `C_last → R` segment continuity holds — the top merge
+/// node connects `conflict_root.last_new8 == clean_root.first_old8`, and both are the SAME linear
+/// fixture leg chain (`new8(k-1) == old8(k)`).
+///
+/// `handoff` is the shared `board ‖ marks` prefix width the C→R node connects (18 at n = 11 —
+/// `roundstate_window_n11::HANDOFF_LANES`); `locked ‖ waiting ‖ auto` are consumed at the clean round
+/// and dropped.
+///
+/// SLOW (the deployed recursive fold). BLOCKED at the assembler's host board-window mirror TODAY when
+/// the clean sub-chain is MIXED-width (Leg RM 20-lane ∘ Leg A 11-lane) — the honest
+/// blocked-on-step-marks signal — until the marks-carrying step descriptor lands and the clean
+/// sub-chain is uniform `r_window` = 20.
+pub fn fold_clean_handoff_match(
+    conflict_bundles: &[LeafBundle],
+    clean_bundles: &[LeafBundle],
+    handoff: usize,
+) -> Result<dregg_circuit_prove::ivc_turn_chain::WholeChainProof, String> {
+    if conflict_bundles.is_empty() {
+        return Err("clean-handoff match: the conflict braid has no leaves".to_string());
+    }
+    if clean_bundles.is_empty() {
+        return Err("clean-handoff match: the clean round has no leaves".to_string());
+    }
+    let k = conflict_bundles.len();
+    // Conflict leaves keep their in-vec doors (nonces 0..k) — the linear fixture leg run.
+    let conflict_turns = build_match_turns(conflict_bundles);
+    // Clean leaves are RE-DOORED at the global offset k so the whole conflict∘clean chain is ONE
+    // linear fixture leg run (the `C_last → R` segment continuity then holds).
+    let clean_turns = build_clean_handoff_tail_turns(clean_bundles, k as u64);
+    dregg_circuit_prove::ivc_turn_chain::prove_clean_handoff_chain_recursive(
+        &conflict_turns,
+        &clean_turns,
+        handoff,
+    )
+    .map_err(|e| format!("clean-handoff match fold failed: {e}"))
+}
+
+/// Build the terminating clean round's turns for a clean-handoff fold, RE-DOORING each clean leaf at
+/// the GLOBAL nonce `offset + j`.
+///
+/// The conflict braid runs on nonces `0..offset`; the clean leaves' own bundles were doored from 0
+/// (their in-vec index, correct only for a NO-conflict turn). Overwrite each clean bundle's
+/// `[old8 ‖ new8]` door (PI[0..16], the FREE state-binding prefix — no AIR boundary binds it, the
+/// fold does) with `fixture_rotated_roots(offset + j)` — the REAL rotated roots of the leg
+/// [`mint_turn`] mints for that global position — then bind it there. This makes the whole
+/// conflict∘clean chain one linear fixture leg run, so the top clean-handoff node's continuity tooth
+/// (`conflict_root.last_new8 == clean_root.first_old8`) is SAT (`new8(offset-1) == old8(offset)`).
+fn build_clean_handoff_tail_turns(bundles: &[LeafBundle], offset: u64) -> Vec<FinalizedTurn> {
+    bundles
+        .iter()
+        .enumerate()
+        .map(|(j, b)| {
+            let nonce = offset + j as u64;
+            let (old8, new8) = fixture_rotated_roots(nonce);
+            let mut b = b.clone();
+            assert!(
+                b.public_inputs.len() >= CUSTOM_PI_STATE_PREFIX_LEN,
+                "a state-binding clean leaf publishes the {CUSTOM_PI_STATE_PREFIX_LEN}-felt \
+                 [old8 ‖ new8] door"
+            );
+            b.public_inputs[..8].copy_from_slice(&old8);
+            b.public_inputs[8..16].copy_from_slice(&new8);
+            mint_turn(&b, nonce)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

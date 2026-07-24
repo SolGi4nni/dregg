@@ -38,6 +38,7 @@ import Dregg2.Circuit.Emit.AutomataflStepEmit
 import Dregg2.Circuit.Emit.AutomataflNGenGolden
 import Dregg2.Circuit.Emit.AutomataflLegCEmit
 import Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone
+import Dregg2.Circuit.Emit.AutomataflStepMarksGolden
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
@@ -127,6 +128,10 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone.automataflResolveMarksDescN 2)
   , ("automatafl-resolve-marks-n11.json",
       Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone.automataflResolveMarksDescN 11)
+  , ("automatafl-step-marks-n2.json",
+      Dregg2.Circuit.Emit.AutomataflStepMarksCapstone.automataflStepMarksDescN 2)
+  , ("automatafl-step-marks-n11.json",
+      Dregg2.Circuit.Emit.AutomataflStepMarksCapstone.automataflStepMarksDescN 11)
   , ("blinded-membership-4ary-depth2.json",
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 2)
   , ("blinded-membership-4ary-depth8.json",
@@ -224,11 +229,11 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit.guardedHidingSpanWideBlindDesc)
   ]
 
-/- The routing table covers the checked-in directory exactly (53 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly. A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 57
+#guard byNameDescriptors.length == 59
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

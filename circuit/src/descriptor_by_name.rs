@@ -193,6 +193,27 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-automatafl-resolve-marks-n11",
         AUTOMATAFL_RESOLVE_MARKS_N11_JSON,
     ),
+    // The automatafl STEP-MARKS (Leg A for a CLEAN ROUND: the automaton step carrying a FROZEN marks
+    // window) descriptors — the Lean-emitted `automataflStepMarksDescN {2,11}`
+    // (`AutomataflStepMarksCapstone.lean`): the step descriptor `automataflStepDescN` VERBATIM plus one
+    // marks window (the accumulated `marksIn` commitment `marksCommitFamilyAt` at fresh columns above
+    // `A_WIDTH_N n`). This makes Leg A's OUT window 20-lane `[board(9) ‖ marks(9) ‖ auto(2)]` so the
+    // clean sub-chain `RM(20) → A(20)` is UNIFORM-WIDTH. PROVEN: the emitted `new` board IS
+    // `AutomataflRules.automatonStepCfg`'s cell at ANY marks (`astep_marks_sat_imp_automatonStepCfgN`,
+    // marks-independent, reusing the step capstone via `stepMarks_restrict`); the published `marksIn`
+    // window is the base-4-injective pack of the decoded indicator (`stepMarks_marksIn_pi_of_sat`); and
+    // marks are FROZEN (`stepMarks_marksOut_eq_marksIn`: one published window, so `marksOut = marksIn`).
+    // Byte-pinned in `AutomataflStepMarksGolden`; this makes the marks-carrying clean-round automaton-step
+    // leaf MINTABLE (`dregg-automatafl/src/step_marks_witness.rs`, M6′->deploy). HASH-FREE, ZERO lookups.
+    // n=2 is the minimal instance (261w/23pi/415c); n=11 the deployed stock game (810w/47pi/1213c).
+    (
+        "dregg-automatafl-step-marks-n2",
+        AUTOMATAFL_STEP_MARKS_N2_JSON,
+    ),
+    (
+        "dregg-automatafl-step-marks-n11",
+        AUTOMATAFL_STEP_MARKS_N11_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -349,6 +370,15 @@ const AUTOMATAFL_RESOLVE_MARKS_N2_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-resolve-marks-n2.json");
 const AUTOMATAFL_RESOLVE_MARKS_N11_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-resolve-marks-n11.json");
+/// The automatafl STEP-MARKS (Leg A, clean round: the automaton step carrying a FROZEN marks window)
+/// descriptors (Lean `automataflStepMarksDescN {2,11}`), byte-pinned by their `emitVmJson2` `#guard` in
+/// `AutomataflStepMarksGolden` and re-derived onto `by-name/` by `EmitByName.lean`. The step descriptor
+/// plus one marks window; n=2 is the minimal instance (261w/23pi), n=11 the deployed stock game
+/// (810w/47pi).
+const AUTOMATAFL_STEP_MARKS_N2_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-step-marks-n2.json");
+const AUTOMATAFL_STEP_MARKS_N11_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-step-marks-n11.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
