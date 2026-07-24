@@ -51,12 +51,14 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv holdsVm_boundaryLast_true)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace TraceFamily TableId envAt Lookup
-   ChipTableSound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES memLog mapLog memCheck_nil)
+   ChipTableSound chipLookupTupleNarrow poseidon2narrow chipRow CHIP_RATE CHIP_OUT_LANES
+   memLog mapLog memCheck_nil)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (blindedMembershipDesc level0Lookup level1Lookup blindLookup continuityGate continuityLastFix
    rootPin blindedLeafPin contBody continuity_body_zero_iff
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 BLINDING BLINDED_LEAF
-   LEVEL0_LANES LEVEL1_LANES BLIND_LANES ROOT_PI BLINDED_LEAF_PI)
+   ROOT_PI BLINDED_LEAF_PI)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine (merkleFold2 MerkleMembers2 Canon eq_of_modEq_canon)
 open Dregg2.Circuit.Emit.BlindedMembershipRefine
   (BlindedMembers BlindedCanon lookupChip4 lookupChip2 firstPi activeGateZero)
@@ -116,6 +118,7 @@ theorem blindedMembership_no_forgery {hash : List ℤ → ℤ} {t : VmTrace} {mi
     (hpos : 0 < t.rows.length)
     (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (hc : BlindedCanon t) :
     BlindedMembers hash
       (t.pub BLINDED_LEAF_PI)
@@ -129,16 +132,16 @@ theorem blindedMembership_no_forgery {hash : List ℤ → ℤ} {t : VmTrace} {mi
         (firstPi hsat hpos BLINDED_LEAF BLINDED_LEAF_PI (by bm_mem))
     have hblind : (envAt t 0).loc BLINDED_LEAF
         = hash [(envAt t 0).loc LEAF, (envAt t 0).loc BLINDING] :=
-      lookupChip2 hsat hChip 0 hpos LEAF BLINDING BLINDED_LEAF BLIND_LANES (by bm_mem)
+      lookupChip2 hsat hChip hwire 0 hpos LEAF BLINDING BLINDED_LEAF (by bm_mem)
     rw [← hbleaf]; exact hblind
   · have hp0 : (envAt t 0).loc PARENT0
         = hash [(envAt t 0).loc LEAF, (envAt t 0).loc SIB0A, (envAt t 0).loc SIB0B,
                 (envAt t 0).loc SIB0C] :=
-      lookupChip4 hsat hChip 0 hpos LEAF SIB0A SIB0B SIB0C PARENT0 LEVEL0_LANES (by bm_mem)
+      lookupChip4 hsat hChip hwire 0 hpos LEAF SIB0A SIB0B SIB0C PARENT0 (by bm_mem)
     have hp1 : (envAt t 0).loc PARENT1
         = hash [(envAt t 0).loc CUR1, (envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B,
                 (envAt t 0).loc SIB1C] :=
-      lookupChip4 hsat hChip 0 hpos CUR1 SIB1A SIB1B SIB1C PARENT1 LEVEL1_LANES (by bm_mem)
+      lookupChip4 hsat hChip hwire 0 hpos CUR1 SIB1A SIB1B SIB1C PARENT1 (by bm_mem)
     have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 :=
       contAtRow0 hpos hsat hc.cur1 hc.parent0
     have hroot : (envAt t 0).loc PARENT1 = t.pub ROOT_PI :=
@@ -173,7 +176,10 @@ private def fTbl : List (List ℤ) :=
 /-- The concrete HEIGHT-1 forging trace (`rows = [fRow]`, row 0 is BOTH first and last). -/
 private def fTrace : VmTrace :=
   { rows := [fRow], pub := fPub
-    tf := fun tid => match tid with | .poseidon2 => fTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => fTbl
+      | .custom 3  => narrowTable fTbl
+      | _ => [] }
 
 /-- **The forge's chip table is genuinely SOUND** — each row is a real `chipRow fHash`. The rejection
 is NOT a malformed table; it is precisely the level-tie the fix restored. -/
@@ -268,7 +274,10 @@ private def gTbl : List (List ℤ) :=
 
 private def gTrace : VmTrace :=
   { rows := [gRow], pub := gPub
-    tf := fun tid => match tid with | .poseidon2 => gTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => gTbl
+      | .custom 3  => narrowTable gTbl
+      | _ => [] }
 
 /-- The blinding-forge chip table is genuinely SOUND for `fHash`. -/
 theorem gTf_chipSound : ChipTableSound fHash (gTrace.tf .poseidon2) := by
@@ -286,7 +295,7 @@ genuine Poseidon2 image, i.e. `777 = 18` — false. The unlinkable commitment ca
 theorem forge_blinded_leaf_rejected :
     ¬ Satisfied2 fHash blindedMembershipDesc (fun _ => 0) (fun _ => (0, 0)) [] gTrace := by
   intro h
-  have hblind := lookupChip2 h gTf_chipSound 0 (by decide) LEAF BLINDING BLINDED_LEAF BLIND_LANES
+  have hblind := lookupChip2 h gTf_chipSound (by rfl) 0 (by decide) LEAF BLINDING BLINDED_LEAF
     (by bm_mem)
   revert hblind
   simp only [gTrace, envAt]
@@ -314,7 +323,10 @@ private def hTbl : List (List ℤ) :=
 
 private def hTrace : VmTrace :=
   { rows := [hRow], pub := hPub
-    tf := fun tid => match tid with | .poseidon2 => hTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => hTbl
+      | .custom 3  => narrowTable hTbl
+      | _ => [] }
 
 theorem hTf_chipSound : ChipTableSound fHash (hTrace.tf .poseidon2) := by
   intro r hr
@@ -369,7 +381,7 @@ theorem honest_height1_fires :
       ((envAt hTrace 0).loc SIB0A) ((envAt hTrace 0).loc SIB0B) ((envAt hTrace 0).loc SIB0C)
       ((envAt hTrace 0).loc SIB1A) ((envAt hTrace 0).loc SIB1B) ((envAt hTrace 0).loc SIB1C)
       (hTrace.pub ROOT_PI) :=
-  blindedMembership_no_forgery (by decide) honest_satisfied2 hTf_chipSound hCanon
+  blindedMembership_no_forgery (by decide) honest_satisfied2 hTf_chipSound (by rfl) hCanon
 
 /-! ## §5 — THE UNLINKABILITY POLE: two shows of ONE credential publish DIFFERENT blinded leaves,
 both accepted (the in-circuit twin of `credentials/tests/anonymity_soundness.rs`). -/
@@ -393,7 +405,10 @@ private def hTbl2 : List (List ℤ) :=
 
 private def hTrace2 : VmTrace :=
   { rows := [hRow2], pub := hPub2
-    tf := fun tid => match tid with | .poseidon2 => hTbl2 | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => hTbl2
+      | .custom 3  => narrowTable hTbl2
+      | _ => [] }
 
 /-- Show #2's chip table is SOUND. -/
 theorem honest_satisfied2_show2 :
@@ -537,7 +552,10 @@ private def aTbl : List (List ℤ) :=
    chipRow gHashR [1234, 8] (List.replicate 7 0)]
 private def aTrace : VmTrace :=
   { rows := [aRow0, aRow1], pub := aPub
-    tf := fun tid => match tid with | .poseidon2 => aTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => aTbl
+      | .custom 3  => narrowTable aTbl
+      | _ => [] }
 
 /-- Show B — the SAME member `1` under the SAME root, but a fresh blinding factor `9` (blinded leaf
 `gHashR [1,9] = 19 ≠ 18`). -/
@@ -562,7 +580,10 @@ private def bTbl : List (List ℤ) :=
    chipRow gHashR [1234, 9] (List.replicate 7 0)]
 private def bTrace : VmTrace :=
   { rows := [bRow0, bRow1], pub := bPub
-    tf := fun tid => match tid with | .poseidon2 => bTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => bTbl
+      | .custom 3  => narrowTable bTbl
+      | _ => [] }
 
 theorem aChipSound : ChipTableSound gHashR (aTrace.tf .poseidon2) := by
   intro r hr

@@ -61,12 +61,13 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt Lookup TableId
-   ChipTableSound chip_lookup_sound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES
+   ChipTableSound chipLookupTupleNarrow poseidon2narrow chipRow CHIP_RATE CHIP_OUT_LANES
    memLog mapLog memCheck_nil)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.BoundPresentationEmit
   (boundPresentationDesc summaryPins noncePin tagLookup
    FEDERATION_ROOT REQUEST_PREDICATE_BASE TIMESTAMP PRESENTATION_TAG REVEALED_FACTS_BASE
-   SUMMARY_WIDTH FINAL_ROOT RANDOMNESS VERIFIER_NONCE TAG_LANES BOUND_PRES_WIDTH
+   SUMMARY_WIDTH FINAL_ROOT RANDOMNESS VERIFIER_NONCE BOUND_PRES_WIDTH
    PI_NONCE PI_COUNT PRESENTATION_TAG_DSK)
 
 set_option autoImplicit false
@@ -131,16 +132,18 @@ the tag column to be the genuine Poseidon2 image of `[final_root, randomness, ve
 on row 0. This is where the Poseidon2 CR carrier enters, through `chip_lookup_sound`. -/
 theorem tagSound {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash boundPresentationDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) (hlen : 0 < t.rows.length) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2)) (hlen : 0 < t.rows.length) :
     (envAt t 0).loc PRESENTATION_TAG
       = hash [(envAt t 0).loc FINAL_ROOT, (envAt t 0).loc RANDOMNESS,
               (envAt t 0).loc VERIFIER_NONCE, PRESENTATION_TAG_DSK] := by
   have h := hsat.rowConstraints 0 hlen _ (by bp_mem :
     tagLookup ∈ boundPresentationDesc.constraints)
   simp only [tagLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
+  rw [hwire] at h
+  have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t 0).loc
     [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE, .const PRESENTATION_TAG_DSK]
-    PRESENTATION_TAG TAG_LANES (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    PRESENTATION_TAG (by show (4 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
 /-! ## §3 — the whole-descriptor refinement (SAT_IMPLIES_SEM). -/
@@ -155,6 +158,7 @@ theorem boundPresentation_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash boundPresentationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (hcanon : BoundPresCanon t) :
     BoundPresentation hash (envAt t 0).loc t.pub := by
   refine ⟨?_, ?_, ?_⟩
@@ -166,7 +170,7 @@ theorem boundPresentation_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
     exact eq_of_modEq_of_canon (firstPiG hsat hlen VERIFIER_NONCE PI_NONCE (by bp_mem))
       hcanon.2.1 hcanon.2.2
   · -- the tag PI is the genuine Poseidon2 image
-    have htag := tagSound hsat hChip hlen
+    have htag := tagSound hsat hChip hwire hlen
     have h10 : (envAt t 0).loc PRESENTATION_TAG = t.pub PRESENTATION_TAG :=
       eq_of_modEq_of_canon
         (firstPiG hsat hlen PRESENTATION_TAG PRESENTATION_TAG
@@ -207,7 +211,15 @@ private def hTbl : List (List ℤ) :=
 /-- The concrete HEIGHT-1 honest trace (`rows = [hRow]`). -/
 private def hTrace : VmTrace :=
   { rows := [hRow], pub := hPub
-    tf := fun tid => match tid with | .poseidon2 => hTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => hTbl
+      | .custom 3  => narrowTable hTbl
+      | _ => [] }
+
+/-- **The concrete family wires the NARROW bus to the 18-prefix of the wide chip table** — ONE
+physical chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem concrete_narrow_wire :
+    hTrace.tf poseidon2narrow = narrowTable (hTrace.tf .poseidon2) := rfl
 
 /-- **The honest chip table is genuinely SOUND** — its one row is a real `chipRow cHash`, so the
 NAMED carrier is realizable, not just assumed. -/
@@ -263,7 +275,8 @@ theorem hTrace_canon : BoundPresCanon hTrace := by
 
 /-- **The bridge fires end-to-end on the concrete inhabited witness** (SAT ⟹ SEM, non-vacuously). -/
 theorem witness_spec : BoundPresentation cHash (envAt hTrace 0).loc hTrace.pub :=
-  boundPresentation_sat_refines (by decide) concrete_sat concrete_chipSound hTrace_canon
+  boundPresentation_sat_refines (by decide) concrete_sat concrete_chipSound concrete_narrow_wire
+    hTrace_canon
 
 /-- **Witness TRUE — the spec is INHABITED (closed form).** The tag clause is the concrete, nontrivial
 identity `cGenuineTag = cHash [1,2,3,DSK]`. -/
@@ -293,7 +306,10 @@ private def hRowBadTag : Assignment := fun c => if c = PRESENTATION_TAG then 999
 private def hPubBadTag : Assignment := fun k => if k = PRESENTATION_TAG then 999 else hPub k
 private def hTraceBadTag : VmTrace :=
   { rows := [hRowBadTag], pub := hPubBadTag
-    tf := fun tid => match tid with | .poseidon2 => hTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => hTbl
+      | .custom 3  => narrowTable hTbl
+      | _ => [] }
 
 /-- **The descriptor genuinely REJECTS a forged tag (tag chip lookup BITES).** No `Satisfied2` exists
 for the forged-tag trace: the tag lookup tuple carries out0 = `999`, but the only sound chip row
@@ -318,6 +334,7 @@ theorem concrete_fail_tag :
 #assert_axioms tagSound
 #assert_axioms boundPresentation_sat_refines
 #assert_axioms concrete_chipSound
+#assert_axioms concrete_narrow_wire
 #assert_axioms concrete_sat
 #assert_axioms witness_spec
 #assert_axioms spec_false

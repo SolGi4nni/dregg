@@ -49,7 +49,7 @@ Because the chip lookup binds `loc PRESENTATION_TAG` to the hash AND the summary
 Definitional descriptor + a byte-pinned `#guard` on its wire string + a genuinely-proven,
 non-vacuous shape lemma. `#assert_axioms` ⊆ {}. NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.ChipNarrowLookup
 
 namespace Dregg2.Circuit.Emit.BoundPresentationEmit
 
@@ -57,8 +57,8 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
-  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple CHIP_RATE CHIP_OUT_LANES
-   emitVmJson2)
+  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTupleNarrow poseidon2narrow
+   CHIP_RATE CHIP_OUT_LANES emitVmJson2)
 
 set_option autoImplicit false
 
@@ -88,11 +88,11 @@ def RANDOMNESS : Nat := 20
 /-- Tag-binding col 21: `verifier_nonce` — the verifier's challenge; a PUBLIC input (`PI_NONCE`). -/
 def VERIFIER_NONCE : Nat := 21
 
-/-- The seven exposed Poseidon2 chip output lanes 1..7 (out0 is `PRESENTATION_TAG`). -/
-def TAG_LANES : List Nat := [22, 23, 24, 25, 26, 27, 28]
-
-/-- Total base-trace width: 19 summary + `final_root` + `randomness` + `verifier_nonce` + 7 lanes. -/
-def BOUND_PRES_WIDTH : Nat := 29
+/-- Total base-trace width: 19 summary + `final_root` + `randomness` + `verifier_nonce`. The seven
+exposed Poseidon2 chip output lanes 1..7 the WIDE `TID_P2` tuple carried are GONE (E7 narrowing,
+`ChipNarrowLookup.lean`) — they sat at lane positions 18..24 of the 25-wide tuple and entered no
+soundness conclusion. -/
+def BOUND_PRES_WIDTH : Nat := 22
 
 /-- Public-input slot for the `verifier_nonce` (after the 19 summary PIs). -/
 def PI_NONCE : Nat := 19
@@ -118,19 +118,20 @@ def summaryPins : List VmConstraint2 :=
 /-- The `verifier_nonce` public-input pin: `loc[VERIFIER_NONCE] == pi[PI_NONCE]` (first row). -/
 def noncePin : VmConstraint2 := .base (.piBinding VmRow.first VERIFIER_NONCE PI_NONCE)
 
-/-- **The tag-binding chip lookup** — an arity-4 `TID_P2` Poseidon2 lookup absorbing
+/-- **The tag-binding chip lookup** — an arity-4 `TID_P2_NARROW` Poseidon2 lookup absorbing
 `[final_root, presentation_randomness, verifier_nonce, DSK]`, binding out0 to `PRESENTATION_TAG`.
 This is the in-circuit tooth that forces the narrow tag to be the genuine Poseidon2 image of its
 preimage (the gap `presentationFreshnessDesc` left to a named STARK leaf). Fires on EVERY row
 (a lookup is never gated), so it also binds the single deployed summary row. -/
 def tagLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE, .const PRESENTATION_TAG_DSK]
-      PRESENTATION_TAG TAG_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow
+      [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE, .const PRESENTATION_TAG_DSK]
+      PRESENTATION_TAG⟩
 
 /-- **`boundPresentationDesc`** — the presentation summary with the presentation-tag PI CONSTRAINED
 in-circuit. Constraints: the 19 summary PiBindings, the verifier-nonce PI pin, and the tag-binding
-chip lookup. The chip table (`TID_P2`) is IMPLICITLY present (Presence-detected from the lookup), so
+chip lookup. The chip table (`TID_P2_NARROW`) is IMPLICITLY present (Presence-detected from the lookup), so
 `tables` is empty exactly as `merkleMembershipDesc` leaves it. -/
 def boundPresentationDesc : EffectVmDescriptor2 :=
   { name        := "dregg-bound-presentation::v1"
@@ -144,20 +145,24 @@ def boundPresentationDesc : EffectVmDescriptor2 :=
 /-! ## §3 — the byte-pinned wire golden (the decoder ingests THIS string). -/
 
 #guard emitVmJson2 boundPresentationDesc ==
-  "{\"name\":\"dregg-bound-presentation::v1\",\"ir\":2,\"trace_width\":29,\"public_input_count\":20,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":19},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"const\",\"v\":1066441253},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-bound-presentation::v1\",\"ir\":2,\"trace_width\":22,\"public_input_count\":20,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":19},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"const\",\"v\":1066441253},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":10}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — shape pins (genuinely-proven, non-vacuous) + axiom hygiene. -/
 
-/-- The tag-binding chip tuple has the canonical chip width `arity + CHIP_RATE + CHIP_OUT_LANES`
+/-- The tag-binding chip tuple has the NARROW chip width `arity + CHIP_RATE + 1`
 (the arity tag, the rate-padded 4-input preimage, out0 = the tag, and the 7 lanes). -/
 theorem tagLookup_tuple_width :
-    (chipLookupTuple [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE,
-        .const PRESENTATION_TAG_DSK] PRESENTATION_TAG TAG_LANES).length
-      = 1 + CHIP_RATE + CHIP_OUT_LANES := by
-  simp [chipLookupTuple, Dregg2.Circuit.DescriptorIR2.padToE, CHIP_RATE, CHIP_OUT_LANES, TAG_LANES]
+    (chipLookupTupleNarrow [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE,
+        .const PRESENTATION_TAG_DSK] PRESENTATION_TAG).length
+      = 1 + CHIP_RATE + 1 := by
+  simp [chipLookupTupleNarrow, Dregg2.Circuit.DescriptorIR2.padToE, CHIP_RATE]
 
 -- Shape pins.
 #guard boundPresentationDesc.traceWidth == BOUND_PRES_WIDTH
+-- The narrowing dropped exactly CHIP_OUT_LANES - 1 = 7 main columns for the same forced tag
+-- equation.
+#guard BOUND_PRES_WIDTH + (CHIP_OUT_LANES - 1) == 29
+#guard poseidon2narrow.wireId == 8
 #guard boundPresentationDesc.piCount == PI_COUNT
 #guard boundPresentationDesc.constraints.length == SUMMARY_WIDTH + 2
 #guard boundPresentationDesc.tables.length == 0

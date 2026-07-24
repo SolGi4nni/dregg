@@ -43,7 +43,7 @@ in-circuit PIs (chip lookups + a Merkle chip chain), re-verifiable from the desc
 Definitional descriptor + a byte-pinned `#guard` on its wire string + a genuinely-proven, non-vacuous
 shape lemma. `#assert_axioms` ⊆ {}. NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.ChipNarrowLookup
 
 namespace Dregg2.Circuit.Emit.BlindedMembershipEmit
 
@@ -51,8 +51,8 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
-  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple CHIP_RATE CHIP_OUT_LANES
-   emitVmJson2 WindowExpr WindowConstraint)
+  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple chipLookupTupleNarrow
+   poseidon2narrow CHIP_RATE CHIP_OUT_LANES emitVmJson2 WindowExpr WindowConstraint)
 
 set_option autoImplicit false
 
@@ -83,13 +83,10 @@ def BLINDING : Nat := 10
 /-- The published blinded leaf = `hash_2_to_1(leaf_hash, blinding)`; pinned to `BLINDED_LEAF_PI`. -/
 def BLINDED_LEAF : Nat := 11
 
-/-- The seven exposed permutation lane columns 1..7 of each chip lookup (out0 is the digest above). -/
-def LEVEL0_LANES : List Nat := [12, 13, 14, 15, 16, 17, 18]
-def LEVEL1_LANES : List Nat := [19, 20, 21, 22, 23, 24, 25]
-def BLIND_LANES  : List Nat := [26, 27, 28, 29, 30, 31, 32]
-
-/-- Total main-trace width: 12 base columns + 7·3 chip lane blocks. -/
-def BLINDED_WIDTH : Nat := 33
+/-- Total main-trace width: 12 base columns. The 3 × 7 exposed permutation lane columns the WIDE
+`TID_P2` tuples carried are GONE (E7 narrowing, `ChipNarrowLookup.lean`) — they sat at lane positions
+18..24 of the 25-wide tuples and entered no soundness conclusion. -/
+def BLINDED_WIDTH : Nat := 12
 
 /-- PI slot 0: the published `blinded_leaf` (the unlinkable commitment). -/
 def BLINDED_LEAF_PI : Nat := 0
@@ -103,22 +100,22 @@ def PI_COUNT : Nat := 2
 /-- Level-0 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing `[leaf, sib0a, sib0b, sib0c]`,
 binding out0 to `PARENT0`. -/
 def level0Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0⟩
 
 /-- Level-1 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing `[cur1, sib1a, sib1b, sib1c]`,
 binding out0 to `PARENT1` (the root). -/
 def level1Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1 LEVEL1_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1⟩
 
-/-- **The blinding tooth** — an arity-2 `TID_P2` Poseidon2 lookup absorbing `[leaf_hash, blinding]`,
+/-- **The blinding tooth** — an arity-2 `TID_P2_NARROW` Poseidon2 lookup absorbing `[leaf_hash, blinding]`,
 binding out0 to `BLINDED_LEAF`. The in-circuit twin of `blinded_leaf = hash_2_to_1(leaf_hash,
 blinding_factor)` (`poseidon2_air.rs:720`). `leaf_hash` is the SAME `LEAF` column the Merkle path
 proves under `root`, so the published `blinded_leaf` commits to a genuine member. -/
 def blindLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var LEAF, .var BLINDING] BLINDED_LEAF BLIND_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var LEAF, .var BLINDING] BLINDED_LEAF⟩
 
 /-- The chain-continuity gate body: `CUR1 - PARENT0` (the next level's path input equals this level's
 parent — the emitted twin of `poseidon2_air.rs`'s chain-continuity constraint). -/
@@ -162,7 +159,7 @@ Written verbatim to `circuit/descriptors/by-name/blinded-membership.json`; `pars
 ingests it. A drift on either side breaks THIS `#guard`. -/
 
 #guard emitVmJson2 blindedMembershipDesc ==
-  "{\"name\":\"dregg-blinded-membership::v1\",\"ir\":2,\"trace_width\":33,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":26},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-blinded-membership::v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — a genuinely-proven, non-vacuous semantic lemma + shape pins + axiom hygiene. -/
 
@@ -173,12 +170,12 @@ theorem continuity_body_zero_iff (a : Assignment) :
   simp only [contBody, EmittedExpr.eval]
   constructor <;> intro h <;> omega
 
-/-- The blinding chip tuple has the canonical chip width `1 + CHIP_RATE + CHIP_OUT_LANES` (arity tag,
-the rate-padded 2-input preimage, out0 = the blinded leaf, and the 7 lanes). -/
+/-- The blinding chip tuple has the NARROW chip width `1 + CHIP_RATE + 1` (arity tag, the
+rate-padded 2-input preimage, out0 = the blinded leaf — the 7 lanes are gone). -/
 theorem blindLookup_tuple_width :
-    (chipLookupTuple [.var LEAF, .var BLINDING] BLINDED_LEAF BLIND_LANES).length
-      = 1 + CHIP_RATE + CHIP_OUT_LANES := by
-  simp [chipLookupTuple, Dregg2.Circuit.DescriptorIR2.padToE, CHIP_RATE, CHIP_OUT_LANES, BLIND_LANES]
+    (chipLookupTupleNarrow [.var LEAF, .var BLINDING] BLINDED_LEAF).length
+      = 1 + CHIP_RATE + 1 := by
+  simp [chipLookupTupleNarrow, Dregg2.Circuit.DescriptorIR2.padToE, CHIP_RATE]
 
 -- Non-vacuity witnesses: the gate ACCEPTS a chained assignment and REJECTS an unchained one.
 #guard decide (contBody.eval (fun i => if i = CUR1 ∨ i = PARENT0 then 7 else 0) = 0)
@@ -189,8 +186,12 @@ theorem blindLookup_tuple_width :
 #guard blindedMembershipDesc.piCount == PI_COUNT
 #guard blindedMembershipDesc.constraints.length == 7
 #guard blindedMembershipDesc.tables.length == 0
-#guard (chipLookupTuple [.var LEAF, .var BLINDING] BLINDED_LEAF BLIND_LANES).length
-         == 1 + CHIP_RATE + CHIP_OUT_LANES
+#guard (chipLookupTupleNarrow [.var LEAF, .var BLINDING] BLINDED_LEAF).length
+         == 1 + CHIP_RATE + 1
+-- The narrowing dropped exactly 3 × (CHIP_OUT_LANES − 1) = 21 main columns for the same three
+-- forced digest equations.
+#guard BLINDED_WIDTH + 3 * (CHIP_OUT_LANES - 1) == 33
+#guard poseidon2narrow.wireId == 8
 
 #assert_axioms continuity_body_zero_iff
 

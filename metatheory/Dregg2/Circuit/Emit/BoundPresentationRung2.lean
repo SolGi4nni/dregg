@@ -43,11 +43,13 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace TableId envAt Lookup
-   ChipTableSound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES memLog mapLog memCheck_nil)
+   ChipTableSound chipLookupTupleNarrow poseidon2narrow chipRow CHIP_RATE CHIP_OUT_LANES
+   memLog mapLog memCheck_nil)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable)
 open Dregg2.Circuit.Emit.BoundPresentationEmit
   (boundPresentationDesc summaryPins noncePin tagLookup
    REQUEST_PREDICATE_BASE PRESENTATION_TAG REVEALED_FACTS_BASE SUMMARY_WIDTH
-   FINAL_ROOT RANDOMNESS VERIFIER_NONCE TAG_LANES PI_NONCE PRESENTATION_TAG_DSK)
+   FINAL_ROOT RANDOMNESS VERIFIER_NONCE PI_NONCE PRESENTATION_TAG_DSK)
 open Dregg2.Circuit.Emit.BoundPresentationRefine
   (BoundPresentation BoundPresCanon boundPresentation_sat_refines firstPiG summaryPin_mem tagSound)
 
@@ -89,7 +91,15 @@ private def honestTbl : List (List ℤ) :=
 
 private def honestTrace : VmTrace :=
   { rows := [honestRow], pub := honestPub
-    tf := fun tid => match tid with | .poseidon2 => honestTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => honestTbl
+      | .custom 3  => narrowTable honestTbl
+      | _ => [] }
+
+/-- The honest family wires the NARROW bus to the 18-prefix of its wide chip table — ONE physical
+chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem honest_narrow_wire :
+    honestTrace.tf poseidon2narrow = narrowTable (honestTrace.tf .poseidon2) := rfl
 
 /-- The honest chip table is genuinely SOUND (its one row is a real `chipRow fHash`). -/
 theorem honest_chipSound : ChipTableSound fHash (honestTrace.tf .poseidon2) := by
@@ -145,7 +155,8 @@ theorem honest_canon : BoundPresCanon honestTrace := by
 /-- **The whole-descriptor bridge FIRES on the honest trace** — the genuine `BoundPresentation`
 relation is DERIVED (SAT ⟹ SEM, non-vacuously). -/
 theorem honest_fires : BoundPresentation fHash (envAt honestTrace 0).loc honestTrace.pub :=
-  boundPresentation_sat_refines (by decide) honest_satisfied2 honest_chipSound honest_canon
+  boundPresentation_sat_refines (by decide) honest_satisfied2 honest_chipSound honest_narrow_wire
+    honest_canon
 
 /-! ## §1 — forge (a): a forged `action_binding` witness column is REJECTED. -/
 
@@ -202,7 +213,10 @@ private def forgeTagRow : Assignment := fun c => if c = PRESENTATION_TAG then 99
 private def forgeTagPub : Assignment := fun k => if k = PRESENTATION_TAG then 999 else honestPub k
 private def forgeTagTrace : VmTrace :=
   { rows := [forgeTagRow], pub := forgeTagPub
-    tf := fun tid => match tid with | .poseidon2 => honestTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => honestTbl
+      | .custom 3  => narrowTable honestTbl
+      | _ => [] }
 
 /-- **The forged tag is genuinely NOT the hash** — `999 ≠ Poseidon2[1,2,3,DSK] = 1067461553`. -/
 theorem forge_tag_nonhash : (999 : ℤ) ≠ fHash [1, 2, 3, PRESENTATION_TAG_DSK] := by
@@ -247,6 +261,7 @@ theorem forge_tag_was_rejected :
 #guard decide (fHash [1, 2, 3, PRESENTATION_TAG_DSK] = genuineTag)
 #guard decide (fHash [1, 2, 3, PRESENTATION_TAG_DSK] ≠ 999)
 
+#assert_axioms honest_narrow_wire
 #assert_axioms honest_chipSound
 #assert_axioms honest_satisfied2
 #assert_axioms honest_fires

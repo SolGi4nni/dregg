@@ -63,13 +63,15 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt Lookup TableId
-   ChipTableSound chip_lookup_sound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES
+   ChipTableSound chip_lookup_sound chipLookupTuple chipLookupTupleNarrow poseidon2narrow
+   chipRow CHIP_RATE CHIP_OUT_LANES
    memLog mapLog memCheck_nil)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (blindedMembershipDesc level0Lookup level1Lookup blindLookup continuityGate continuityLastFix
    rootPin blindedLeafPin contBody continuity_body_zero_iff
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 BLINDING BLINDED_LEAF
-   LEVEL0_LANES LEVEL1_LANES BLIND_LANES ROOT_PI BLINDED_LEAF_PI)
+   ROOT_PI BLINDED_LEAF_PI)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine
   (merkleFold2 MerkleMembers2 MembersUnderRoot4 foldNode4 merkleMembers2_as_fold
    Canon eq_of_modEq_canon)
@@ -103,17 +105,19 @@ the genuine Poseidon2 hash of the four evaluated inputs — on ANY row (lookups 
 theorem lookupChip4 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (j : Nat) (hj : j < t.rows.length)
-    (i0 i1 i2 i3 digestCol : Nat) (lanes : List Nat)
-    (hmem : VmConstraint2.lookup ⟨TableId.poseidon2,
-              chipLookupTuple [.var i0, .var i1, .var i2, .var i3] digestCol lanes⟩
+    (i0 i1 i2 i3 digestCol : Nat)
+    (hmem : VmConstraint2.lookup ⟨poseidon2narrow,
+              chipLookupTupleNarrow [.var i0, .var i1, .var i2, .var i3] digestCol⟩
               ∈ blindedMembershipDesc.constraints) :
     (envAt t j).loc digestCol
       = hash [(envAt t j).loc i0, (envAt t j).loc i1, (envAt t j).loc i2, (envAt t j).loc i3] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1, .var i2, .var i3] digestCol lanes (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+  rw [hwire] at h
+  have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var i0, .var i1, .var i2, .var i3] digestCol (by show (4 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared arity-2 chip lookup forces the digest column to be the genuine Poseidon2 `hash_2_to_1`
@@ -121,16 +125,18 @@ of the two evaluated inputs — the blinding tooth (`blinded_leaf = hash [leaf_h
 theorem lookupChip2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (j : Nat) (hj : j < t.rows.length)
-    (i0 i1 digestCol : Nat) (lanes : List Nat)
-    (hmem : VmConstraint2.lookup ⟨TableId.poseidon2,
-              chipLookupTuple [.var i0, .var i1] digestCol lanes⟩
+    (i0 i1 digestCol : Nat)
+    (hmem : VmConstraint2.lookup ⟨poseidon2narrow,
+              chipLookupTupleNarrow [.var i0, .var i1] digestCol⟩
               ∈ blindedMembershipDesc.constraints) :
     (envAt t j).loc digestCol = hash [(envAt t j).loc i0, (envAt t j).loc i1] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1] digestCol lanes (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+  rw [hwire] at h
+  have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var i0, .var i1] digestCol (by show (2 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared `.gate` body vanishes mod `p` on any ACTIVE (non-last) row — the `when_transition`
@@ -184,6 +190,7 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (hc : BlindedCanon t) :
     BlindedMembers hash
       (t.pub BLINDED_LEAF_PI)
@@ -202,17 +209,17 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
         (firstPi hsat hlen0 BLINDED_LEAF BLINDED_LEAF_PI (by bm_mem))
     have hblind : (envAt t 0).loc BLINDED_LEAF
         = hash [(envAt t 0).loc LEAF, (envAt t 0).loc BLINDING] :=
-      lookupChip2 hsat hChip 0 hlen0 LEAF BLINDING BLINDED_LEAF BLIND_LANES (by bm_mem)
+      lookupChip2 hsat hChip hwire 0 hlen0 LEAF BLINDING BLINDED_LEAF (by bm_mem)
     rw [← hbleaf]; exact hblind
   · -- the membership half: root = hash [hash [leaf, s0*], s1*].
     have hp0 : (envAt t 0).loc PARENT0
         = hash [(envAt t 0).loc LEAF, (envAt t 0).loc SIB0A, (envAt t 0).loc SIB0B,
                 (envAt t 0).loc SIB0C] :=
-      lookupChip4 hsat hChip 0 hlen0 LEAF SIB0A SIB0B SIB0C PARENT0 LEVEL0_LANES (by bm_mem)
+      lookupChip4 hsat hChip hwire 0 hlen0 LEAF SIB0A SIB0B SIB0C PARENT0 (by bm_mem)
     have hp1 : (envAt t 0).loc PARENT1
         = hash [(envAt t 0).loc CUR1, (envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B,
                 (envAt t 0).loc SIB1C] :=
-      lookupChip4 hsat hChip 0 hlen0 CUR1 SIB1A SIB1B SIB1C PARENT1 LEVEL1_LANES (by bm_mem)
+      lookupChip4 hsat hChip hwire 0 hlen0 CUR1 SIB1A SIB1B SIB1C PARENT1 (by bm_mem)
     -- chain continuity: CUR1 = PARENT0. The gate binds mod p; both cells are canonical, so this
     -- lifts to a genuine ℤ equality (load-bearing: CUR1 is RE-HASHED into the level-1 digest,
     -- where a mod-p congruence cannot thread).
@@ -234,11 +241,12 @@ theorem blindedMembership_exists_hidden {hash : List ℤ → ℤ} {t : VmTrace} 
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (hc : BlindedCanon t) :
     ∃ (leaf_hash blinding : ℤ) (steps : List (ℤ × ℤ × ℤ)),
       t.pub BLINDED_LEAF_PI = hash [leaf_hash, blinding]
         ∧ MembersUnderRoot4 hash leaf_hash (t.pub ROOT_PI) steps := by
-  obtain ⟨hblind, hmem⟩ := blindedMembership_sat_refines hlen hsat hChip hc
+  obtain ⟨hblind, hmem⟩ := blindedMembership_sat_refines hlen hsat hChip hwire hc
   refine ⟨(envAt t 0).loc LEAF, (envAt t 0).loc BLINDING,
     [((envAt t 0).loc SIB0A, (envAt t 0).loc SIB0B, (envAt t 0).loc SIB0C),
      ((envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B, (envAt t 0).loc SIB1C)], hblind, ?_⟩
@@ -292,7 +300,15 @@ private def cTbl : List (List ℤ) :=
 /-- The concrete two-row satisfying trace (padded height ≥ 2 makes row 0 a genuine transition row). -/
 private def cTrace : VmTrace :=
   { rows := [cRow, cRow], pub := cPub
-    tf := fun tid => match tid with | .poseidon2 => cTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => cTbl
+      | .custom 3  => narrowTable cTbl
+      | _ => [] }
+
+/-- **The concrete family wires the NARROW bus to the 18-prefix of the wide chip table** — ONE
+physical chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem concrete_narrow_wire :
+    cTrace.tf poseidon2narrow = narrowTable (cTrace.tf .poseidon2) := rfl
 
 /-- **The concrete chip table is genuinely SOUND** for `cHash` — each row is a real `chipRow`, so the
 NAMED carrier `ChipTableSound` is realizable, not just assumed. -/
@@ -347,7 +363,8 @@ theorem witness_spec : BlindedMembers cHash
     ((envAt cTrace 0).loc SIB0A) ((envAt cTrace 0).loc SIB0B) ((envAt cTrace 0).loc SIB0C)
     ((envAt cTrace 0).loc SIB1A) ((envAt cTrace 0).loc SIB1B) ((envAt cTrace 0).loc SIB1C)
     (cTrace.pub ROOT_PI) :=
-  blindedMembership_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
+  blindedMembership_sat_refines (by decide) concrete_sat concrete_chipSound concrete_narrow_wire
+    concrete_canon
 
 /-- The fired witness IS the closed-form true instance. -/
 theorem witness_spec_is_closed :
@@ -409,6 +426,7 @@ theorem concrete_fail_blind :
 #assert_axioms lookupChip2
 #assert_axioms blindedMembership_sat_refines
 #assert_axioms blindedMembership_exists_hidden
+#assert_axioms concrete_narrow_wire
 #assert_axioms concrete_chipSound
 #assert_axioms concrete_sat
 #assert_axioms concrete_canon
