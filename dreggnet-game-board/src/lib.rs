@@ -562,51 +562,54 @@ impl AutomataflMatch {
 /// produced) or a SUBSTITUTED round (a forged `marksOut`) is a broken seam — a `WitnessConflict`,
 /// a witness that does not exist, not a soft constraint.
 ///
-/// ## The `C_last → R` handoff now connects `board ‖ marks` (the marks half is CLOSED at mint)
+/// ## The `C_last → R` handoff connects `board ‖ marks`, and the clean sub-chain is UNIFORM-20
 ///
 /// The terminating clean round consumes the ACCUMULATED marks: [`MultiRoundTurn::clean_leaves`]
-/// mints the marks-aware **Leg RM** (`automataflResolveMarksDescN 11` — now EMITTED as
+/// mints the marks-aware **Leg RM** (`automataflResolveMarksDescN 11` — EMITTED as
 /// `automatafl-resolve-marks-n11.json`, filled by
-/// [`dregg_automatafl::resolve_marks_witness::automatafl_resolve_marks_trace`]) then the automaton
-/// **Leg A** step. Leg RM declares the 20-lane `[board(9) ‖ marks(9) ‖ auto(2)]` window
-/// ([`resolve_marks_board_window`](dregg_automatafl::resolve_marks_witness::resolve_marks_board_window)),
-/// whose `board ‖ marks` prefix (18 lanes) is laid out identically to the conflict rounds' RoundState
-/// window. So the handoff primitive
-/// [`board_window_clean_handoff_connects`](dregg_circuit_prove) welds the FULL 18-lane
-/// `board ‖ marks` (not board-only): `marksIn` on the clean side is read back from the conflict
-/// chain's `marksOut`, and a dropped / substituted conflict round makes it disagree — a broken seam.
-/// Leg RM ALSO re-checks that the terminating move avoids an accumulated mark
-/// (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6, PROVEN in Lean — the legality NOR
-/// pin), so the move-vs-marks legality is attested at the terminating move, not only at the conflict
-/// rounds.
+/// [`dregg_automatafl::resolve_marks_witness::automatafl_resolve_marks_trace`]) then the marks-carrying
+/// automaton **Leg A** step (`automataflStepMarksDescN 11` — EMITTED as `automatafl-step-marks-n11.json`,
+/// filled by [`dregg_automatafl::step_marks_witness::automatafl_step_marks_trace`]). BOTH legs declare
+/// the 20-lane `[board(9) ‖ marks(9) ‖ auto(2)]` window, so the clean sub-chain `RM(20) → A(20)` is
+/// UNIFORM: Leg A carries the `marksIn` FROZEN (`RM.OUT == A.IN` lane-for-lane; the step changes the
+/// board + auto, never the marks), so it folds through the deployed width-generic `aggregate_tree` with
+/// no M7-specific prover code. The 18-lane `board ‖ marks` prefix is laid out identically to the
+/// conflict rounds' RoundState window, so the handoff primitive
+/// [`board_window_clean_handoff_connects`](dregg_circuit_prove) welds the FULL 18-lane `board ‖ marks`:
+/// `marksIn` on the clean side is read back from the conflict chain's `marksOut`, and a dropped /
+/// substituted conflict round makes it disagree — a broken seam. Leg RM ALSO re-checks that the
+/// terminating move avoids an accumulated mark
+/// (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6, PROVEN in Lean — the legality NOR pin),
+/// so the move-vs-marks legality is attested at the terminating move, not only at the conflict rounds.
 ///
-/// ## What is STILL a residual (welding to ONE verifying root), surfaced not faked
+/// ## The WHOLE turn welds to ONE verifying root (both residuals CLOSED)
 ///
-/// 1. **The clean sub-chain is not uniform-width, so it cannot fold through the deployed
-///    `aggregate_tree`.** Leg RM is 20-lane `[board ‖ marks ‖ auto]`; Leg A (the automaton step,
-///    `automataflStepDescN 11`) publishes NO marks PIs, so its window is the 11-lane `[board ‖ auto]`
-///    — the step descriptor has no marks columns to expose. `aggregate_tree` /
-///    `merge_two_segment_proofs` refuse a mixed 20/11 chain, and a nested clean-handoff sub-root
-///    `[RM.IN(20) ‖ A.OUT(11)]` is not the uniform `SEG + 2W` shape [`exposed_board_window`] reads —
-///    so the top `merge_clean_handoff_segment_proofs` refuses it. Folding the automaton step into the
-///    marks-carrying clean sub-chain needs a marks-carrying step descriptor emitted in Lean (or the
-///    clean round modeled as ONE resolve+step leaf) — Lean-authored AIR, not Rust.
-/// 2. **The `WholeChainProof` assembler for the clean-handoff root is now BUILT.**
+/// 1. **The clean sub-chain is now uniform-width (20-lane), so it folds through the deployed
+///    `aggregate_tree`.** Both Leg RM and the marks-carrying Leg A declare the same 20-lane
+///    `[board ‖ marks ‖ auto]` window, so the whole conflict∘clean window chain has EXACTLY ONE
+///    width change — the `C_last → R` clean-handoff boundary (32 → 20) — which
+///    [`compute_root_board_window_inner`](dregg_circuit_prove) allows; the RM → A seam is a uniform
+///    intra-side seam. The former mixed 20/11 refusal is now a REGRESSION guard on the retired 11-lane
+///    plain step. This residual is CLOSED.
+/// 2. **The `WholeChainProof` assembler for the clean-handoff root is BUILT.**
 ///    [`fold_clean_handoff_root`](dregg_circuit_prove) produces the mixed root `RecursionOutput`;
 ///    `dregg_circuit_prove::ivc_turn_chain::prove_clean_handoff_chain_recursive` (called by
 ///    [`dregg_multiway_tug::fold::fold_clean_handoff_match`], which [`MultiRoundTurn::prove`] drives)
 ///    wraps it into a verifiable `WholeChainProof` — the clean-handoff-shaped segment host mirror
 ///    (`combine(fold(conflict), fold(clean))`), the mixed board window from
 ///    [`board_window_of_chain_with_clean_handoff`], and the Lean-emitted binding proof — which the
-///    light client accepts (`verify_turn_chain_recursive_from_parts_with_board_window` tooth (5)
-///    already reads the mixed-width window). This residual is CLOSED.
+///    light client accepts (`verify_turn_chain_recursive_from_parts_with_board_window` tooth (5) reads
+///    the mixed-width window). This residual is CLOSED.
 ///
 /// So [`MultiRoundTurn::conflict_leaves`] and the marks-carrying [`MultiRoundTurn::clean_leaves`] are
-/// foldable, self-contained, mint-coherent artifacts, and the whole-turn ASSEMBLER exists
-/// ([`MultiRoundTurn::prove`]). Welding the WHOLE turn — conflict braid ∘ Leg RM ∘ Leg A — into ONE
-/// verifying root is BLOCKED on residual (1) ALONE: the clean sub-chain is mixed-width (Leg RM 20 ∘
-/// Leg A 11) until a marks-carrying step descriptor is emitted (Lean-authored AIR), so the
-/// assembler's host board-window mirror refuses it fail-closed — surfaced, not faked.
+/// foldable, mint-coherent artifacts, and [`MultiRoundTurn::prove`] welds the WHOLE turn — conflict
+/// braid ∘ Leg RM ∘ Leg A — into ONE `WholeChainProof` a pure light client attests. What a light client
+/// then reads for a COMPLETE multi-round automatafl turn: `num_turns == k + 2`, the genesis 32-lane
+/// RoundState (`[pack(start) ‖ ∅ ‖ …]`) and the 20-lane clean final (`[pack(final) ‖ pack(marks) ‖
+/// auto]`) both decoding in the clear, and NO satisfying fold for a turn that drops a conflict round,
+/// forges a `marksOut`, or terminates onto an accumulated mark. (Succinct, not hiding — the moves are
+/// a data-availability privacy property, not a cryptographic one; the STARK inherits the undischarged
+/// FRI/STARK floor.)
 #[derive(Clone, Debug)]
 pub struct MultiRoundTurn {
     /// The turn-start board — FROZEN across the whole conflict braid.
@@ -773,13 +776,16 @@ impl MultiRoundTurn {
     /// **THE TERMINATING CLEAN-ROUND LEAVES.** With prior CONFLICT rounds: the marks-aware **Leg RM**
     /// ([`automatafl_resolve_marks_trace`](dregg_automatafl::resolve_marks_witness::automatafl_resolve_marks_trace),
     /// 20-lane `[board ‖ marks ‖ auto]`) consuming the [`accumulated_marks`](MultiRoundTurn::accumulated_marks),
-    /// then the automaton **Leg A** step (11-lane `[board ‖ auto]`). With NO prior conflict: the plain
-    /// two-leg round (Leg R resolve + Leg A step), since there are no accumulated marks to consume.
-    /// `None` clean submissions ⇒ [`MatchError::Empty`].
+    /// then the marks-carrying automaton **Leg A** step
+    /// ([`automatafl_step_marks_trace`](dregg_automatafl::step_marks_witness::automatafl_step_marks_trace),
+    /// ALSO 20-lane `[board ‖ marks ‖ auto]`, carrying the same `marks` FROZEN). Both legs are 20-lane,
+    /// so the clean sub-chain `RM → A` is UNIFORM-width and folds through the deployed `aggregate_tree`.
+    /// With NO prior conflict: the plain two-leg round (Leg R resolve + plain Leg A step), since there
+    /// are no accumulated marks to consume. `None` clean submissions ⇒ [`MatchError::Empty`].
     ///
     /// Leg RM re-checks the terminating move against the marks (the M6 legality NOR pin) and exposes
     /// the FULL `board ‖ marks` handoff prefix — the marks half of the `C_last → R` handoff is closed
-    /// here (see the type doc for the fold-assembly residuals that remain).
+    /// here; Leg A carries that same marks window frozen, so the whole clean sub-chain is uniform-20.
     pub fn clean_leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
         let subs = self.clean_subs.ok_or(MatchError::Empty)?;
         if self.conflict_subs.is_empty() {
@@ -791,10 +797,12 @@ impl MultiRoundTurn {
         self.resolve_marks_clean_leaves(subs, &marks)
     }
 
-    /// Mint the marks-aware clean round: Leg RM (`old → cMidV4`, consuming `marks`) then Leg A
-    /// (`cMidV4 → new`, the automaton). Both carry a state door of the REAL rotated roots the fold
-    /// mints for that chain position and are gated by the fail-closed witness-gen canary before
-    /// folding — identical discipline to [`AutomataflMatch::round_leaves`]. `marks` is passed
+    /// Mint the marks-aware clean round: Leg RM (`old → cMidV4`, consuming `marks`) then the
+    /// marks-carrying Leg A (`cMidV4 → new`, the automaton step carrying the SAME `marks` frozen — so
+    /// both legs are the 20-lane `[board ‖ marks ‖ auto]` window and the clean sub-chain is uniform).
+    /// Both carry a state door of the REAL rotated roots the fold mints for that chain position and are
+    /// gated by the fail-closed witness-gen canary before folding — identical discipline to
+    /// [`AutomataflMatch::round_leaves`]. `marks` is passed
     /// explicitly (rather than always the honest [`accumulated_marks`](MultiRoundTurn::accumulated_marks))
     /// so a canary can hand it a full-braid `marksIn` against a shortened conflict chain and watch the
     /// handoff seam break.
@@ -808,8 +816,9 @@ impl MultiRoundTurn {
             automatafl_resolve_marks_trace, resolve_marks_board_window,
             resolve_marks_descriptor_ident, resolve_marks_trace_accepts,
         };
-        use dregg_automatafl::witness::{
-            automatafl_step_trace, step_board_window, step_descriptor_name, step_trace_accepts,
+        use dregg_automatafl::step_marks_witness::{
+            automatafl_step_marks_trace, step_marks_board_window, step_marks_descriptor_ident,
+            step_marks_trace_accepts,
         };
         use dregg_circuit::descriptor_by_name::descriptor_by_name;
         use dregg_circuit_prove::joint_turn_aggregation::DescriptorStateLeafSource;
@@ -818,12 +827,15 @@ impl MultiRoundTurn {
         let n = self.start.n;
         let rmdesc = descriptor_by_name(resolve_marks_descriptor_ident(n))
             .ok_or_else(|| MatchError::NoDescriptor(n, "resolve-marks".to_string()))?;
-        let sdesc = descriptor_by_name(&step_descriptor_name(n))
-            .ok_or_else(|| MatchError::NoDescriptor(n, "step".to_string()))?;
+        // Leg A is the marks-carrying step (`automataflStepMarksDescN n`), so the clean sub-chain
+        // RM(20) → A(20) is UNIFORM-width `[board(9) ‖ marks(9) ‖ auto(2)]` — the mixed 20/11 seam the
+        // deployed `aggregate_tree` refused is gone.
+        let smdesc = descriptor_by_name(step_marks_descriptor_ident(n))
+            .ok_or_else(|| MatchError::NoDescriptor(n, "step-marks".to_string()))?;
         let rmwin = resolve_marks_board_window(n, &rmdesc)
             .map_err(|e| MatchError::NoDescriptor(n, format!("resolve-marks window: {e}")))?;
-        let awin = step_board_window(n, &sdesc)
-            .map_err(|e| MatchError::NoDescriptor(n, format!("step window: {e}")))?;
+        let awin = step_marks_board_window(n, &smdesc)
+            .map_err(|e| MatchError::NoDescriptor(n, format!("step-marks window: {e}")))?;
         let layout = ResolveMarksLayout::new(n);
         let rows = 2usize;
         let mut out: Vec<LeafBundle> = Vec::with_capacity(2);
@@ -849,19 +861,21 @@ impl MultiRoundTurn {
             },
         ));
 
-        // ---- Leg A: step the automaton, cMidV4 -> new (11-lane pack||auto window). ----
-        let mut st = automatafl_step_trace(&mid, &sdesc)
-            .map_err(|e| MatchError::Lowering(format!("clean step witness-gen: {e}")))?;
+        // ---- Leg A: marks-carrying automaton step, cMidV4 -> new (20-lane [board ‖ marks ‖ auto]).
+        // The step CARRIES the accumulated `marks` FROZEN (it steps board + auto, never touches marks),
+        // so its window is the SAME 20-lane shape as Leg RM — the clean sub-chain is uniform. ----
+        let mut st = automatafl_step_marks_trace(&mid, marks, &smdesc)
+            .map_err(|e| MatchError::Lowering(format!("clean step-marks witness-gen: {e}")))?;
         let (a_old8, a_new8) = fixture_rotated_roots(out.len() as u64);
         set_state_door(&mut st.public_inputs, a_old8, a_new8);
-        if !step_trace_accepts(&sdesc, &st) {
+        if !step_marks_trace_accepts(&smdesc, &st) {
             return Err(MatchError::D1Refused(0));
         }
         out.push(LeafBundle::descriptor_backed(
             st.public_inputs.clone(),
             rows,
             DescriptorStateLeafSource {
-                descriptor: sdesc.clone(),
+                descriptor: smdesc.clone(),
                 base_trace: st.base_trace(rows),
                 board_window: Some(awin.clone()),
             },
@@ -877,14 +891,15 @@ impl MultiRoundTurn {
     /// * **NO conflict rounds** ⇒ the plain two-leg clean round (Leg R ∘ Leg A, marks = ∅) folds
     ///   through the UNIFORM [`fold_match`] — identical to [`AutomataflMatch`]'s two-leg fold.
     /// * **WITH conflict rounds** ⇒ the SHAPED [`fold_clean_handoff_match`]: the conflict sub-tree
-    ///   (uniform 32-lane RoundState Leg C leaves) and the clean sub-tree (uniform `r_window`
-    ///   `[board ‖ marks ‖ …]` leaves) fold to two sub-roots, welded at the ONE `C_last → R`
-    ///   clean-handoff node over the shared `board ‖ marks` prefix (18 lanes).
+    ///   (uniform 32-lane RoundState Leg C leaves) and the clean sub-tree (uniform 20-lane
+    ///   `[board ‖ marks ‖ auto]` Leg RM ∘ marks-carrying Leg A leaves) fold to two sub-roots, welded at
+    ///   the ONE `C_last → R` clean-handoff node over the shared `board ‖ marks` prefix (18 lanes).
     ///
-    /// SLOW (the deployed recursive fold). With conflict rounds this is currently BLOCKED at the
-    /// assembler's host board-window mirror — the clean sub-chain is MIXED-width (Leg RM 20 ∘ Leg A
-    /// 11) until the marks-carrying step descriptor lands and it is uniform `r_window` = 20 — and the
-    /// returned error is the honest blocked-on-step-marks signal, never a fake green.
+    /// SLOW (the deployed recursive fold). Now that the clean sub-chain is uniform-20 (the marks-carrying
+    /// step descriptor is emitted), the whole turn welds to ONE verifying `WholeChainProof`: the light
+    /// client attests `num_turns == k + 2` and the mixed `[first.IN(32) ‖ last.OUT(20)]` window. A turn
+    /// that drops a conflict round / forges a `marksOut` / terminates onto an accumulated mark has NO
+    /// satisfying fold and returns `Err` (surfaced, never a fake green).
     pub fn prove(&self) -> Result<MatchProof, ProveError> {
         if self.conflict_subs.is_empty() {
             // No conflict ⇒ the plain two-leg clean round ⇒ the uniform fold_match path.
