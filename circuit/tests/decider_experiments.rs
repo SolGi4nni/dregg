@@ -43,9 +43,10 @@ use dregg_circuit::descriptor_ir2::{
     fill_chip_lanes, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::Effect;
+use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
 use dregg_circuit::effect_vm::trace_rotated::{
-    RotatedBlockWitness, generate_rotated_effect_vm_descriptor_and_trace_wide,
-    transfer_caveat_manifest,
+    GRAD_ROT_WIDTH, RotatedBlockWitness, TRANSFER_AVAIL_PAD, WIDE_CARRIER_APPENDIX,
+    generate_rotated_effect_vm_descriptor_and_trace_wide, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
@@ -346,6 +347,34 @@ fn next_pow2(n: usize) -> usize {
     n.next_power_of_two().max(1)
 }
 
+/// Total columns this member's OWN E1 kill-set (the Epoch-1 SECOND flag-day) deletes, summed from
+/// the Lean-emitted single source `E1_COMPACT_TABLE` — exactly what `compact_e1_columns` drains.
+fn e1_deleted_cols(key: &str) -> usize {
+    dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
+        .unwrap_or_else(|| panic!("{key} not in E1_COMPACT_TABLE"))
+}
+
+/// **THE COMPACTED PRODUCER ROW of the deployed wide transfer, DERIVED** — the AVAIL-hardened
+/// graduated rotated host PLUS the wide-carrier appendix, MINUS the S2 stratum (Epoch 1) and MINUS
+/// this member's own E1 kill-set, both read from the Lean-emitted tables the deployed producer
+/// drains. This is what the descriptor DECLARES as its main-table arity; the committed
+/// `trace_width` rides higher by the spliced teeth and the prover-filled refuse block.
+fn compacted_producer_width() -> usize {
+    GRAD_ROT_WIDTH + TRANSFER_AVAIL_PAD + WIDE_CARRIER_APPENDIX
+        - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS
+        - e1_deleted_cols(KEY)
+}
+
+/// The COMMITTED `trace_width` of the deployed wide transfer: the compacted producer row + the 2
+/// spliced membership-claim teeth + the top-of-trace refuse-weld footprint (this member's refuse
+/// block sits at the very top, so it carries no dead stride-tail).
+fn committed_wide_transfer_width() -> usize {
+    compacted_producer_width() + 2 + refuse::REFUSE_WELD_WIDEN
+}
+
 // ===========================================================================
 // D1 + D2
 // ===========================================================================
@@ -353,7 +382,11 @@ fn next_pow2(n: usize) -> usize {
 #[test]
 fn d1_d2_chip_census_and_logup_aux_provenance() {
     let (desc, mut trace, pis, heaps, mem) = honest_wide_transfer();
-    assert_eq!(desc.trace_width, 2664, "deployed wide transfer width");
+    assert_eq!(
+        desc.trace_width,
+        committed_wide_transfer_width(),
+        "deployed wide transfer width"
+    );
     assert_eq!(desc.public_input_count, 68);
 
     // Grow producer rows to trace_width and run the DEPLOYED lane weld (pub API), so every
@@ -366,7 +399,18 @@ fn d1_d2_chip_census_and_logup_aux_provenance() {
     }
 
     let sites = chip_sites(&desc);
-    assert_eq!(sites.len(), 254, "254 chip lookups at HEAD");
+    // A MEASURED census, deliberately kept a literal: unlike a width it is not a function of the
+    // Lean-emitted deletion tables, and a change in it SHOULD be a flag-day someone reads — not a
+    // number that silently follows a regen. It moved 254 → 134 when the S2 flag-day deleted the
+    // graduated chip-lane stratum; the relation below anchors the literal to that Lean-emitted
+    // table so an S2 span change fails loudly here instead of leaving a floating count.
+    assert_eq!(sites.len(), 134, "chip lookups at HEAD (was 254 pre-S2)");
+    assert_eq!(
+        sites.len() + dregg_circuit::effect_vm::s2_compact_generated::S2_LANE_SPAN / 7,
+        254,
+        "the S2 flag-day deleted exactly the graduated chip-lane sites (S2_LANE_SPAN spans 7 lanes \
+         per site), taking the deployed census 254 → 134"
+    );
 
     // -- tag / var-arity histograms --
     let mut tag_hist: BTreeMap<i64, usize> = BTreeMap::new();
@@ -771,10 +815,22 @@ fn d3_declared_main_arity_is_inert_in_the_rust_realization() {
     let deployed = parse_vm_descriptor2(member_json(KEY)).unwrap();
     assert_eq!(desc.name, deployed.name);
     assert_eq!(
-        deployed.tables[0].arity, 2617,
-        "declared main arity at HEAD"
+        deployed.tables[0].arity,
+        compacted_producer_width(),
+        "declared main arity at HEAD == the COMPACTED PRODUCER row (the teeth + the prover-filled \
+         refuse block ride ABOVE it, which is exactly why the declared arity != trace_width)"
     );
-    assert_eq!(deployed.trace_width, 2664, "trace_width at HEAD");
+    assert_eq!(
+        deployed.trace_width,
+        committed_wide_transfer_width(),
+        "trace_width at HEAD"
+    );
+    assert_eq!(
+        deployed.trace_width - deployed.tables[0].arity,
+        2 + refuse::REFUSE_WELD_WIDEN,
+        "the gap between the declared main arity and trace_width is exactly the 2 spliced \
+         membership teeth + the refuse-weld footprint"
+    );
 
     let proof_a = prove_vm_descriptor2(&desc, &trace, &pis, &mem, &heaps).expect("baseline proves");
     // Committed main width = trace_width + range-decomposition appendage (the third width).

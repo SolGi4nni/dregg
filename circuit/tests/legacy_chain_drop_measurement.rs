@@ -184,7 +184,7 @@ fn s2_deletion_yield_measurement() {
         .expect("transfer in E1_COMPACT_TABLE");
     assert_eq!(
         deployed.trace_width,
-        BASELINE_WIDTH - 960 - e1_drop,
+        BASELINE_WIDTH - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS - e1_drop,
         "compact width"
     );
     assert_eq!(
@@ -195,7 +195,14 @@ fn s2_deletion_yield_measurement() {
 
     // THE ABSENCE GATE: no poseidon2 lookup's out0 lands in the retired 1-felt carrier bands
     // (the S2 stratum is GONE from the committed member, not merely unread).
-    let (bb, lane) = (198usize, 747usize); // transfer: Lean-emitted s2_compact_generated table
+    // READ from the Lean-emitted s2_compact_generated table — never transcribed, so a regen that
+    // moves this member's block base cannot leave the band arithmetic below pointing at stale
+    // columns.
+    let (bb, lane) = dregg_circuit::effect_vm::s2_compact_generated::S2_COMPACT_TABLE
+        .iter()
+        .find(|(k, _, _)| *k == "transferVmDescriptor2R24")
+        .map(|(_, bb, lane)| (*bb, *lane))
+        .expect("transfer in S2_COMPACT_TABLE");
     let dead = |c: usize| {
         (bb + 179 - 60..bb + 179).contains(&c) // compact coords: the bands were REMOVED, so
     };

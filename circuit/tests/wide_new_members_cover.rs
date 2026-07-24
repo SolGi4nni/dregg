@@ -13,15 +13,21 @@ use dregg_circuit::descriptor_ir2::chip_absorb_all_lanes;
 use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
+use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CAP_OPEN_TB_PI_SRC, CapOpenWitness, FACET_MASK_HI,
-    RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins,
-    empty_caveat_manifest, generate_rotated_effect_vm_descriptor_and_trace_wide,
-    generate_rotated_heap_write_wide, generate_rotated_transfer_cap_open_tb_wide,
-    transfer_caveat_manifest,
+    CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH,
+    CapOpenWitness, FACET_MASK_HI, GRAD_ROT_WIDTH, HEAP_WRITE_HOST_WIDTH, RotatedBlockWitness,
+    SIGNATURE_AUTH_TAG, TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_CARRIER_APPENDIX, WRITE_MASK_LO,
+    anchor_cap_open_turn_pins, avail_pad_for_descriptor_name, empty_caveat_manifest,
+    generate_rotated_effect_vm_descriptor_and_trace_wide, generate_rotated_heap_write_wide,
+    generate_rotated_transfer_cap_open_tb_wide, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
+
+/// The two membership-claim teeth columns the wide dispatcher splices onto a transfer leg's producer
+/// row (paired 1:1 with the 2 claim PIs by the teeth-column exclusion).
+const MEMBERSHIP_TEETH_COLS: usize = 2;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_turn::rotation_witness as rw;
@@ -39,6 +45,51 @@ fn wide_json(name: &str) -> &'static str {
             }
         })
         .unwrap_or_else(|| panic!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+}
+
+/// Total columns a member's OWN E1 kill-set (the Epoch-1 SECOND flag-day) deletes, summed from the
+/// Lean-emitted single source `E1_COMPACT_TABLE` — exactly what `compact_e1_columns` drains.
+fn e1_deleted_cols(key: &str) -> usize {
+    dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
+        .unwrap_or_else(|| panic!("{key} not in E1_COMPACT_TABLE"))
+}
+
+/// **THE COMMITTED WIDE WIDTH, DERIVED — never a transcribed pre-compaction literal.** A wide
+/// member's committed `trace_width` is its pre-wide HOST width PLUS the wide-carrier appendix,
+/// MINUS the S2 stratum (Epoch 1: the two rotated 1-felt Merkle–Damgård chain carrier bands and
+/// their 840 graduated chip-lane columns) MINUS the member's own E1 kill-set. Both deletions are
+/// read from the Lean-emitted tables `compact_s2_columns` / `compact_e1_columns` drain, so the next
+/// compaction moves this pin WITH the bytes instead of rotting it into a dead gate. This is the
+/// COMPACTED PRODUCER row — a gentian refuse-welded member carries a further prover-filled aux
+/// block on top (see the two call sites that add it).
+fn wide_width(key: &str, host: usize) -> usize {
+    host + WIDE_CARRIER_APPENDIX
+        - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS
+        - e1_deleted_cols(key)
+}
+
+/// **THE BAND SELF-CHECK — count is not enough.** A member's S2 kill-set is not a column COUNT, it
+/// is three named bands measured from that member's OWN block base `bb`; an availability-hardened
+/// member is shifted by its weld pad, so the base cohort's bands and the avail cohort's bands are
+/// DIFFERENT columns at the SAME count. Compacting the right number of columns from the wrong bands
+/// leaves the honest proof UNSAT, so a table regen that moves a member's base must fail HERE — at
+/// the assert that names it — rather than passing a width check while proving nothing.
+fn assert_s2_bands_are_this_members_own(key: &str, desc_name: &str) {
+    let bb = dregg_circuit::effect_vm::s2_compact_generated::S2_COMPACT_TABLE
+        .iter()
+        .find(|(k, _, _)| *k == key)
+        .map(|(_, bb, _)| *bb)
+        .unwrap_or_else(|| panic!("{key} not in S2_COMPACT_TABLE"));
+    assert_eq!(
+        bb,
+        V1_WIDTH + avail_pad_for_descriptor_name(desc_name),
+        "{key}: the S2 bands MUST be measured from this member's own availability-shifted block \
+         base (V1_WIDTH + its avail pad) — compacting the avail-shifted bands off the base-cohort \
+         row is the same column COUNT at the WRONG columns, which leaves the honest proof UNSAT"
+    );
 }
 
 fn open_permissions() -> Permissions {
@@ -70,17 +121,25 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 /// Every new member carries 16 wide-commit PiBindings (the 8-felt before/after anchors).
 #[test]
 fn new_wide_members_carry_16_commit_pis() {
-    // The committed post-v2-carrier-rotation shapes (the registry drift pins): the TB host +
-    // membership columns (wide 2938), heapWrite carries the OPTION-I after-spine host (wide 3065),
-    // supplyMint rides the transfer-shape host (wide 2607 = WIDE_WIDTH) at the UNWRAPPED 62 PIs
-    // (never rc-wrapped, like cap-open). Widths read directly from the committed wide registry rows.
-    for (name, want_w, want_pi) in [
-        ("transferCapOpenTBVmDescriptor2R24", 2938usize, 65usize),
-        ("heapWriteVmDescriptor2R24", 3065, 20),
-        ("supplyMintVmDescriptor2R24", 2607, 62),
+    // The committed post-v2-carrier-rotation shapes (the registry drift pins), each DERIVED from
+    // its own pre-wide HOST width through `wide_width` rather than transcribed — the TB host is the
+    // turn-bound cap-open width on the AVAIL-hardened transfer face, heapWrite carries the OPTION-I
+    // after-spine host, and supplyMint rides the BARE graduated rotated host at the UNWRAPPED 62 PIs
+    // (never rc-wrapped, like cap-open).
+    for (name, host, want_pi) in [
+        (
+            "transferCapOpenTBVmDescriptor2R24",
+            CAP_OPEN_TB_WIDTH + TRANSFER_AVAIL_PAD,
+            65usize,
+        ),
+        ("heapWriteVmDescriptor2R24", HEAP_WRITE_HOST_WIDTH, 20),
+        ("supplyMintVmDescriptor2R24", GRAD_ROT_WIDTH, 62),
     ] {
         let d = parse_vm_descriptor2(wide_json(name)).unwrap();
+        let want_w = wide_width(name, host);
         assert_eq!(d.trace_width, want_w, "{name} wide width");
+        // The width alone is a COUNT; pin the BANDS the count came from too.
+        assert_s2_bands_are_this_members_own(name, &d.name);
         assert_eq!(d.public_input_count, want_pi, "{name} wide PI count");
         // the top 16 PIs are the wide commit anchors: piCount-16 .. piCount must each be bound.
         let mut top_pis = std::collections::BTreeSet::new();
@@ -166,8 +225,11 @@ fn wide_supply_mint_proves_and_verifies() {
         parse_vm_descriptor2(wide_json(name)).unwrap().name
     );
     assert_eq!(
-        desc.trace_width, 2607,
-        "supplyMint wide width 2607 (committed wide supplyMintVmDescriptor2R24)"
+        desc.trace_width,
+        wide_width(name, GRAD_ROT_WIDTH),
+        "supplyMint wide width = the BARE graduated rotated host + the wide-carrier appendix, \
+         MINUS the S2 stratum and this member's own E1 kill-set (committed wide \
+         supplyMintVmDescriptor2R24)"
     );
     assert_eq!(
         desc.public_input_count, 62,
@@ -255,8 +317,11 @@ fn wide_heap_write_proves_and_verifies() {
 
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
     assert_eq!(
-        desc.trace_width, 3065,
-        "heapWrite wide width 3065 (OPTION I after-spine, committed wide heapWriteVmDescriptor2R24)"
+        desc.trace_width,
+        wide_width(name, HEAP_WRITE_HOST_WIDTH),
+        "heapWrite wide width = the OPTION-I after-spine host + the wide-carrier appendix, MINUS \
+         the S2 stratum and this member's own E1 kill-set (committed wide \
+         heapWriteVmDescriptor2R24)"
     );
     assert_eq!(desc.public_input_count, 20, "heapWrite wide 20 PIs");
     assert_eq!(trace[0].len(), desc.trace_width);
@@ -352,11 +417,26 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
 
     let desc = parse_vm_descriptor2(wide_json(name)).unwrap();
     assert_eq!(
-        desc.trace_width, 2938,
-        "transferCapOpenTB wide width 2938 (committed wide transferCapOpenTBVmDescriptor2R24)"
+        desc.trace_width,
+        wide_width(name, CAP_OPEN_TB_WIDTH + TRANSFER_AVAIL_PAD),
+        "transferCapOpenTB wide width = the turn-bound cap-open host on the AVAIL-hardened transfer \
+         face + the wide-carrier appendix, MINUS the S2 stratum and this member's own E1 kill-set \
+         (committed wide transferCapOpenTBVmDescriptor2R24)"
     );
     assert_eq!(desc.public_input_count, 65, "transferCapOpenTB wide 65 PIs");
-    assert_eq!(trace[0].len(), desc.trace_width);
+    // PRODUCER ≡ DESCRIPTOR. A shortfall of exactly TRANSFER_AVAIL_PAD means the producer laid the
+    // BARE transfer face and appended its wide carriers at `CAP_OPEN_TB_WIDTH`, while the COMMITTED
+    // member is the AVAIL-hardened one (`…-transfer-v1-avail-…`) whose host is `CAP_OPEN_TB_WIDTH +
+    // TRANSFER_AVAIL_PAD` and whose S2 block base is correspondingly shifted (`bb = 198`, not 188).
+    // That is the avail-shift trap on the DEPLOYED producer, not a test pin: the same column COUNT
+    // compacted from the WRONG bands.
+    assert_eq!(
+        trace[0].len(),
+        desc.trace_width,
+        "the cap-open-TB producer's compacted row must equal the committed member's width \
+         (a shortfall of exactly TRANSFER_AVAIL_PAD = {TRANSFER_AVAIL_PAD} means the producer laid \
+         the BARE transfer face for an AVAIL-hardened committed member)"
+    );
     assert_eq!(dpis.len(), desc.public_input_count);
     // The published turn identity rides the three TB PIs.
     assert_eq!(dpis[CAP_OPEN_TB_PI_SRC], src);
@@ -458,8 +538,27 @@ fn wide_transfer_membership_leg_mints_through_refuse_weld() {
         desc.name
     );
     assert_eq!(
-        desc.trace_width, 2664,
-        "deployed avail-hardened refuse-welded transfer wide width"
+        desc.trace_width,
+        wide_width(
+            "transferVmDescriptor2R24",
+            GRAD_ROT_WIDTH + TRANSFER_AVAIL_PAD
+        ) + MEMBERSHIP_TEETH_COLS
+            + refuse::REFUSE_WELD_WIDEN,
+        "deployed avail-hardened refuse-welded transfer wide width = the COMPACTED PRODUCER row \
+         (avail host + carriers − S2 − its own E1) + the 2 spliced membership teeth + the \
+         refuse-weld footprint. This member's refuse block sits at the very TOP of the trace, so \
+         its widen is REFUSE_WELD_WIDEN (the block span with the last stride-tail unallocated) — \
+         NOT the full per-tag stride the teeth-less members carry"
+    );
+    // The geometry-CLASS self-check: assert the committed member really is the top-of-trace shape
+    // whose widen the width above assumed, recovered from its OWN committed floor-refuse gates. A
+    // regen that gives this member the dead stride-tail fails here instead of silently shifting the
+    // refuse block under a width pin that still adds up.
+    assert_eq!(
+        refuse::refuse_weld_widen(&desc),
+        refuse::REFUSE_WELD_WIDEN,
+        "the avail-hardened transfer's refuse block rides at the TOP of the trace (no dead \
+         stride-tail above it)"
     );
     assert_eq!(
         desc.public_input_count, 68,
@@ -478,14 +577,16 @@ fn wide_transfer_membership_leg_mints_through_refuse_weld() {
     // (45) = 2 = pi_tail`. With the stale 48 this underflowed (47 < 48) and the mint refused.
     let post_teeth_tail = desc.trace_width - trace[0].len();
     assert_eq!(
-        post_teeth_tail, 45,
-        "past the teeth-carrying producer row sit exactly the 45 refuse-weld aux columns"
+        post_teeth_tail,
+        refuse::REFUSE_WELD_WIDEN,
+        "past the teeth-carrying producer row sit exactly the refuse-weld aux columns"
     );
-    let internal_raw_col_tail = post_teeth_tail + 2; // pre-teeth raw_col_tail the exclusion sees
+    // pre-teeth raw_col_tail the exclusion sees
+    let internal_raw_col_tail = post_teeth_tail + MEMBERSHIP_TEETH_COLS;
     assert_eq!(
-        internal_raw_col_tail - 45,
-        2,
-        "the fixed exclusion pairs the 2 teeth 1:1 with the 2 claim PIs (col_tail == pi_tail)"
+        internal_raw_col_tail - refuse::REFUSE_WELD_WIDEN,
+        MEMBERSHIP_TEETH_COLS,
+        "the exclusion pairs the 2 teeth 1:1 with the 2 claim PIs (col_tail == pi_tail)"
     );
     // The 2 spliced teeth carry the honest pair (the exclusion's 1:1 pairing held).
     assert!(
@@ -558,7 +659,23 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
                  raw_col_tail 48 − 48 = 0 = pi_tail; the stale fixed 45 gave 3 ≠ 0)",
             );
         assert!(desc.name.contains("incrementNonce"));
-        assert_eq!(desc.trace_width, 2655, "wide incrementNonce width");
+        assert_eq!(
+            desc.trace_width,
+            wide_width("incrementNonceVmDescriptor2R24", GRAD_ROT_WIDTH)
+                + refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE,
+            "wide incrementNonce width = the COMPACTED PRODUCER row (bare graduated host + \
+             carriers − S2 − its own E1) + the FULL per-tag refuse stride block. This teeth-less \
+             member carries a 3-column dead stride-tail ABOVE the decode block, so its widen is the \
+             whole CAPACITY_TAGS·REFUSE_STRIDE — not the top-of-trace REFUSE_WELD_WIDEN the \
+             avail-hardened transfer/burn members get"
+        );
+        // The geometry-CLASS self-check, recovered from the member's OWN committed floor-refuse
+        // gates: this is the dead-stride-tail shape, and the width above depends on that choice.
+        assert_eq!(
+            refuse::refuse_weld_widen(&desc),
+            refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE,
+            "the teeth-less incrementNonce carries the dead stride-tail above its refuse block"
+        );
         assert_eq!(desc.public_input_count, 66);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)
@@ -617,7 +734,21 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
             )
             .expect("Transfer avail fresh leaf MUST dispatch (widen 45 + 2 teeth)");
         assert!(desc.name.contains("transfer-v1-avail"));
-        assert_eq!(desc.trace_width, 2664, "wide avail transfer width");
+        assert_eq!(
+            desc.trace_width,
+            wide_width(
+                "transferVmDescriptor2R24",
+                GRAD_ROT_WIDTH + TRANSFER_AVAIL_PAD
+            ) + MEMBERSHIP_TEETH_COLS
+                + refuse::REFUSE_WELD_WIDEN,
+            "wide avail transfer width = the COMPACTED PRODUCER row + the 2 spliced membership \
+             teeth + the top-of-trace refuse-weld footprint"
+        );
+        assert_eq!(
+            refuse::refuse_weld_widen(&desc),
+            refuse::REFUSE_WELD_WIDEN,
+            "the avail-hardened transfer's refuse block rides at the TOP of the trace"
+        );
         assert_eq!(desc.public_input_count, 68);
         assert_eq!(dpis.len(), desc.public_input_count);
         let proof =
