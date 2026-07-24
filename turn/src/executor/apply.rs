@@ -5140,6 +5140,74 @@ mod shielded_executor_tests {
         );
     }
 
+    // ── ⚑ THE ON-RAMP FALSIFIER (docs/DESIGN-shielded-value-on-ramp.md §3.3) ──
+    //
+    // GATE 4 appends the output leg's bytes VERBATIM FROM THE WIRE, so the
+    // `note_shielded` accumulator — and therefore its `root8()` — is written by
+    // the PROVER, not derived from ledger state. What lands decodes as a
+    // Ristretto `ValueCommitment`: a Pedersen VALUE commitment, not the
+    // Poseidon2 NOTE commitment `hash_fact(value,[asset,owner,randomness])`
+    // that the shielded-spend membership gadget opens (and the transfer
+    // publishes no such note commitment anywhere — the wire has no field for it,
+    // `action.rs` `ShieldedLeg`).
+    //
+    // The consequence, and why this test is armed: `AccumulatorSound` for
+    // `note_shielded.root8()` — the `NoteAccumulatorCR` hypothesis of
+    // `ShieldedSpendPortDischarge.pin_accept_is_note_committed`
+    // (metatheory/Dregg2/Circuit/ShieldedSpendPortDischarge.lean:174,182) — is
+    // FALSE as this set is populated today. That is harmless ONLY because
+    // `root8()` is committed nowhere. Landing it as a carrier base limb (L1) or
+    // pinning membership to it (L4) before the value on-ramp corrects the
+    // appended leaf RELOCATES seam #15 one level up instead of closing it.
+    //
+    // When the on-ramp lands (L0.5: the wire carries a Poseidon2 note
+    // commitment and GATE 4 appends THAT), this test must be rewritten. The
+    // rewrite is the tripwire.
+    #[test]
+    fn shielded_append_is_prover_written_not_ledger_derived() {
+        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let payload = balanced_payload(41, 0x4141);
+        let leg_bytes = payload.output_legs[0].commitment_bytes;
+        let leg_count = payload.output_legs.len();
+
+        let empty_root = {
+            let set = executor.note_shielded.lock().unwrap();
+            assert!(set.is_empty(), "the shielded accumulator starts EMPTY");
+            set.root8()
+        };
+
+        run(&executor, payload, 0).expect("a valid shielded transfer must be admitted");
+
+        let set = executor.note_shielded.lock().unwrap();
+        assert!(
+            set.contains(&ShieldedNoteCommitment(leg_bytes)),
+            "GATE 4 appends the PROVER-SUPPLIED wire bytes verbatim — the \
+             accumulator's contents are chosen by the prover, not derived from \
+             ledger state"
+        );
+        assert_eq!(
+            set.len(),
+            leg_count,
+            "nothing but the wire legs lands in the accumulator: there is no \
+             ledger-derived note commitment to append"
+        );
+        assert_ne!(
+            set.root8(),
+            empty_root,
+            "root8() therefore moves to a PROVER-DETERMINED value — this is \
+             exactly why it must not become a committed carrier limb (L1) or a \
+             membership pin (L4) before the on-ramp"
+        );
+        assert!(
+            ValueCommitment::from_bytes(&ValueCommitmentBytes(leg_bytes)).is_some(),
+            "what landed is a PEDERSEN VALUE commitment (a valid Ristretto \
+             point), not the Poseidon2 NOTE commitment \
+             hash_fact(value,[asset,owner,randomness]) the membership gadget \
+             opens — the two encodings are disjoint, so no spend proof could \
+             ever open against this accumulator"
+        );
+    }
+
     // ── WIDE CUTOVER TOOTH: x and x+p have the same legacy spend binding,
     //    but distinct native carriers. The genuine x payload is admitted; an
     //    x+p carrier spliced over its no-mint transcript is refused at the real
