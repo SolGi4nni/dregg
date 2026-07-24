@@ -76,7 +76,9 @@ static NOTE_SPEND_CACHE: LazyLock<Option<EffectVmDescriptor2>> =
 static DELEGATE_CACHE: LazyLock<EffectVmDescriptor2> = LazyLock::new(delegate_binding_descriptor);
 
 /// The (name → byte-pinned golden JSON) table — the single source of truth shared by the cache and
-/// the round-trip test, so no name can drift between dispatch and validation.
+/// the table-DERIVED cover test [`tests::every_static_golden_decodes_and_dispatches`], so no name
+/// can drift between dispatch and validation. That test walks THIS table (not a transcribed name
+/// list), so a row that lands is checked the moment it lands.
 const STATIC_GOLDENS: &[(&str, &str)] = &[
     ("dfa-routing-toggle-2state::poseidon2-v1", DFA_ROUTING_JSON),
     (
@@ -447,8 +449,9 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
 /// [`crate::dsl::descriptors::circuit_for_air_name`], in the IR-v2 descriptor world.
 ///
 /// A miss is `None` (fail-closed) — NEVER a stand-in descriptor. A known name whose byte-pinned
-/// golden fails to decode is also `None` (fail-closed, not a silent accept); the round-trip test
-/// guarantees every known golden decodes, so a `None` here always means an unknown predicate.
+/// golden fails to decode is also `None` (fail-closed, not a silent accept); the table-derived
+/// cover [`tests::every_static_golden_decodes_and_dispatches`] guarantees every known golden
+/// decodes, so a `None` here always means an unknown predicate.
 ///
 /// The depth-GENERAL Merkle-membership family is dispatched by the `merkle-membership::poseidon2-
 /// binary-general-depth{N}` name form (parsed to a depth and built by
@@ -536,6 +539,171 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// **THE DISPATCH-SURFACE COVER — DERIVED FROM THE TABLE, NEVER TRANSCRIBED.**
+    ///
+    /// `dispatch_names_decode_and_check` above walks [`descriptor_names_for_kind`]: a HAND-KEPT
+    /// name list that grows only when whoever lands a golden also remembers to extend it. It
+    /// reaches 15 of `STATIC_GOLDENS`' rows. The rest — both `faithful-note-spend` planes, the ten
+    /// DEPLOYED automatafl leaves, dyck-parse, derivation, bound-presentation, blinded-membership,
+    /// presentation-freshness, turn-chain-binding — are deliberately absent from every
+    /// `PredicateKind` family (they are re-provable recursion-leaf relations dispatched by exact
+    /// name, not predicates), so nothing in this crate ever checked that they decode, self-name, or
+    /// dispatch at all. `STATIC_GOLDENS`' own doc-comment named a "round-trip test" that did not
+    /// exist: `STATIC_GOLDENS` had exactly ONE reader, the cache.
+    ///
+    /// That is load-bearing because [`GOLDEN_CACHE`] is built with `filter_map(… .ok())` — a golden
+    /// whose bytes stop decoding is SILENTLY DROPPED from the map and `descriptor_by_name` answers
+    /// `None` for it. Fail-closed on the wire, but the dispatch surface loses a member with nothing
+    /// red; a mis-keyed row is worse still, since dispatch would then serve a DIFFERENT AIR than the
+    /// caller named. This is the by-name route the module header already records losing once, when
+    /// `predicate-arith` drifted to a 5-wide re-authoring with both Poseidon2 weld legs missing.
+    ///
+    /// The gate walks the TABLE, so it covers a row the moment that row lands — no list to keep in
+    /// step. It also bites on a SHRUNK surface: leg 4 is a TWO-WAY cover between the by-name
+    /// goldens this module EMBEDS and the rows the table WIRES, read out of this module's own
+    /// source rather than copied, so deleting a row to quiet a red reds here instead.
+    ///
+    /// AT ITS OWN RESOLUTION: this is a cover of the DISPATCH SURFACE, not of the golden's CONTENT.
+    /// A golden re-authored under its own name into a weaker-but-well-formed AIR still passes here
+    /// (measured — a `constraints`-truncated `automatafl-legc-n5` is green). The content gate is the
+    /// generate-fresh `scripts/check-descriptor-drift.sh` re-derivation from the Lean author plus
+    /// the `PROVENANCE.json` stamp; this gate's job is that no member of the surface goes
+    /// unexercised, mis-keyed, or silently un-dispatchable.
+    #[test]
+    fn every_static_golden_decodes_and_dispatches() {
+        use std::collections::BTreeSet;
+
+        // ---- Leg 1: the table is a FUNCTION — no key served by two different goldens. ----
+        let keys: BTreeSet<&str> = STATIC_GOLDENS.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            keys.len(),
+            STATIC_GOLDENS.len(),
+            "duplicate key in STATIC_GOLDENS — the name would resolve to whichever row the cache \
+             happened to insert last"
+        );
+
+        // ---- Leg 2: EVERY row decodes, self-names, structurally checks, and is exactly what
+        // ---- dispatch serves for that key.
+        for (key, json) in STATIC_GOLDENS {
+            let decoded = parse_vm_descriptor2(json).unwrap_or_else(|e| {
+                panic!(
+                    "golden {key}: the byte-pinned JSON must decode — the cache's \
+                     `filter_map(… .ok())` would have dropped it silently and dispatch would \
+                     answer None: {e}"
+                )
+            });
+            assert_eq!(
+                &decoded.name, key,
+                "golden {key}: the emitted descriptor names itself {:?} — dispatch would serve a \
+                 DIFFERENT AIR than the caller asked for",
+                decoded.name
+            );
+            check_descriptor2_wellformed(&decoded).unwrap_or_else(|e| {
+                panic!("golden {key} must pass the structural gate prove/verify run first: {e}")
+            });
+            let served = descriptor_by_name(key).unwrap_or_else(|| {
+                panic!("golden {key} must dispatch to Some — a table row nothing serves")
+            });
+            assert_eq!(
+                served, decoded,
+                "golden {key}: dispatch serves something other than its own table row"
+            );
+        }
+
+        // ---- Leg 3: the parse-once cache DROPS NOTHING. ----
+        assert_eq!(
+            GOLDEN_CACHE.len(),
+            STATIC_GOLDENS.len(),
+            "the golden cache is smaller than the table — `filter_map(… .ok())` swallowed a decode \
+             failure, so that name now dispatches to None with nothing else red"
+        );
+
+        // ---- Leg 4: TWO-WAY COVER, embedded bytes ↔ wired rows. ----
+        // Read out of this module's OWN source, so neither side is a second hand-maintained list.
+        const SELF_SRC: &str = include_str!("descriptor_by_name.rs");
+
+        /// The `*_JSON` identifiers a block of source REFERENCES, skipping comments and
+        /// `::`-qualified paths (a row served from another module's const is not embedded here).
+        fn bare_json_idents(block: &str) -> BTreeSet<&str> {
+            let mut out = BTreeSet::new();
+            for line in block.lines() {
+                let code = match line.find("//") {
+                    Some(i) => &line[..i],
+                    None => line,
+                };
+                let b = code.as_bytes();
+                let mut i = 0usize;
+                while i < b.len() {
+                    if b[i].is_ascii_alphabetic() || b[i] == b'_' {
+                        let s = i;
+                        while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                            i += 1;
+                        }
+                        let tok = &code[s..i];
+                        if tok.ends_with("_JSON") && !code[..s].ends_with("::") {
+                            out.insert(tok);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            out
+        }
+
+        let table_block = {
+            let s = SELF_SRC
+                .find("const STATIC_GOLDENS")
+                .expect("this module defines STATIC_GOLDENS");
+            let rest = &SELF_SRC[s..];
+            let e = rest
+                .find("\n];")
+                .expect("the STATIC_GOLDENS array literal is terminated");
+            &rest[..e]
+        };
+        let wired = bare_json_idents(table_block);
+
+        // The by-name goldens this module EMBEDS. The needle is assembled at runtime so this scan
+        // does not match its own source text.
+        let needle = format!("include_str!(\"..{}descriptors/by-name/", '/');
+        let mut embedded: BTreeSet<&str> = BTreeSet::new();
+        let mut cursor = 0usize;
+        while let Some(off) = SELF_SRC[cursor..].find(needle.as_str()) {
+            let at = cursor + off;
+            let head = &SELF_SRC[..at];
+            let cs = head.rfind("\nconst ").unwrap_or_else(|| {
+                panic!("an embedded by-name golden must bind to a module-level `const`")
+            });
+            let ident = SELF_SRC[cs + "\nconst ".len()..at]
+                .split(':')
+                .next()
+                .expect("a const declaration names an identifier")
+                .trim();
+            embedded.insert(ident);
+            cursor = at + needle.len();
+        }
+
+        // NON-VACUITY: either scan coming back empty (a spelling this leg keys on moved) would
+        // make the cover trivially true. Fail loudly instead — re-point the scan, never delete it.
+        assert!(
+            !embedded.is_empty(),
+            "the by-name `include_str!` scan found NOTHING — the spelling it keys on moved. \
+             Re-point it; an empty scan makes this leg vacuous."
+        );
+        assert!(
+            !wired.is_empty(),
+            "the STATIC_GOLDENS `*_JSON` scan found NOTHING — the table literal's shape moved. \
+             Re-point it; an empty scan makes this leg vacuous."
+        );
+        assert_eq!(
+            embedded, wired,
+            "the embedded by-name goldens and the STATIC_GOLDENS rows have diverged. A const in \
+             `embedded` but not `wired` is a golden this crate ships bytes for and dispatch never \
+             serves; one in `wired` but not `embedded` is a row pointing at bytes this module does \
+             not embed. Wire it or drop it — do not leave the two lists to drift."
+        );
     }
 
     #[test]
