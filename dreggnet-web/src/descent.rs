@@ -534,6 +534,63 @@ impl DescentState {
         self.settle_target.route(&submitted)
     }
 
+    /// **Anchor a crowned native run's terminal settlement on the devnet node** — the native-lane
+    /// analogue of [`settle_run`](Self::settle_run), so the flagship's in-tab runs anchor exactly
+    /// as the procgen lane does. Fail-closed and non-vacuous, with the SAME routing:
+    /// * `Local` (the default): a no-op — `Ok(None)`, nothing leaves the process (the committed
+    ///   tests + node-free demo are byte-identical);
+    /// * `Federation` (a `DREGG_NODE_URL` node): submit the run's terminal journal head — the
+    ///   un-retconnable tip of the actor-bound hash chain the admitted record attests
+    ///   (`completion.root_hex`) — under the day's stable scene topic, AND confirm it landed on the
+    ///   node's finalized log (`GET /api/receipts`). `Ok(Some(Landed))` iff the node accepted +
+    ///   finalized it; `Err` on a rejected / unreachable / non-landing submit.
+    ///
+    /// This settles only a run ALREADY admitted to the native lane — one that passed
+    /// [`submit_native_record`](Self::submit_native_record)'s exact-replay gate — and only a
+    /// **crowned** one (the settlement that ranks). A forged / non-crowned / prefix run is refused
+    /// before it can rank, so it never reaches here; the node is never touched for a cheat, exactly
+    /// as the procgen lane.
+    ///
+    /// [`submit_native_record`]: Self::submit_native_record
+    pub fn settle_native_run(
+        &self,
+        day_key: &str,
+        run_id: &str,
+    ) -> Result<Option<Landed>, NodeError> {
+        let submitted = {
+            let inner = self.inner.lock().unwrap();
+            let run = inner.native_runs.get(run_id).ok_or_else(|| {
+                NodeError::Rejected(format!("no such native run to settle: {run_id}"))
+            })?;
+            let day = inner.days.get(day_key).ok_or_else(|| {
+                NodeError::Rejected(format!("no such day to settle against: {day_key}"))
+            })?;
+            let completion = run.record.completion.as_ref().ok_or_else(|| {
+                NodeError::Rejected(format!(
+                    "native run {run_id} has no terminal settlement to anchor"
+                ))
+            })?;
+            if !completion.crowned {
+                return Err(NodeError::Rejected(format!(
+                    "native run {run_id} did not crown — only a crowned exit ranks and anchors"
+                )));
+            }
+            // The commitment = the terminal journal head (the tip of the actor-bound hash chain
+            // the admitted record attests). The topic = the day's stable scene id, shared with the
+            // procgen lane; the commitments never collide (a native root ≠ a procgen turn-hash).
+            let commitment = decode_hex32(&completion.root_hex).ok_or_else(|| {
+                NodeError::Rejected(format!(
+                    "native run {run_id} settlement root is not 32 hex-encoded bytes"
+                ))
+            })?;
+            let domain = day.scene.meta.id.to_string();
+            SubmittedTurn::new(domain, commitment)
+        };
+        // Same fail-closed routing as the procgen lane: Local = Ok(None) no-op; Federation =
+        // submit + confirm landed on the node's finalized log.
+        self.settle_target.route(&submitted)
+    }
+
     /// Re-record + re-verify a move sequence against the day's published universe, and — only if it
     /// re-executes to the win — ingest it (in-RAM). The verify-gate shared by [`submit_run`] (which
     /// also persists) and [`load_from_store`] (which does not re-persist). `Err` on any refusal:
@@ -900,24 +957,65 @@ async fn post_native_submit(
             } else {
                 "exact native replay accepted; shareable, but only a crowned settlement ranks"
             };
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "verified": true,
-                    "ranked": ranked,
-                    "kind": "exact-native-replay",
-                    "run_id": run_id,
-                    "share": native_run_share_path(&run_id),
-                    "day": day,
-                    "actor": verified.actor,
-                    "turns": verified.turns,
-                    "root": verified.root_hex,
-                    "banked_relics": banked_relics,
-                    "banked_notes": banked_notes,
-                    "durable": durable,
-                    "detail": detail,
-                })),
-            )
+            let mut resp = serde_json::json!({
+                "verified": true,
+                "ranked": ranked,
+                "kind": "exact-native-replay",
+                "run_id": run_id,
+                "share": native_run_share_path(&run_id),
+                "day": day,
+                "actor": verified.actor,
+                "turns": verified.turns,
+                "root": verified.root_hex,
+                "banked_relics": banked_relics,
+                "banked_notes": banked_notes,
+                "durable": durable,
+                "detail": detail,
+            });
+            // AUTO-ANCHOR THE NATIVE LANE. A crowned run already ranks in-process; if a devnet is
+            // opted in (`DREGG_NODE_URL`), ALSO anchor its terminal journal head on the running
+            // node's ledger — the native-lane analogue of the procgen `post_submit` settle, so the
+            // flagship's in-tab runs reach the node on completion instead of never anchoring. Local
+            // mode is a no-op (`Ok(None)`), so this branch is byte-identical for the demo/tests.
+            // Only a crowned run (the one that ranks) is anchored; a non-crowned settlement is
+            // shareable but never touches the node.
+            if ranked && state.settles_to_a_node() {
+                let st = state.clone();
+                let day2 = day.clone();
+                let rid = run_id.clone();
+                let settled =
+                    tokio::task::spawn_blocking(move || st.settle_native_run(&day2, &rid))
+                        .await
+                        .unwrap_or_else(|e| {
+                            Err(NodeError::Transport(format!(
+                                "native settle task join: {e}"
+                            )))
+                        });
+                match settled {
+                    Ok(Some(landed)) => {
+                        resp["settled"] = serde_json::json!(true);
+                        resp["node_turn_hash"] = serde_json::json!(hex32(&landed.node_turn_hash));
+                        resp["detail"] = serde_json::json!(
+                            "exact native replay accepted; crowned, ranked, AND anchored on the devnet node's ledger"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // The run still ranks in-process; the on-chain anchor FAILED. A node was
+                        // configured, so silence would read as success — surface it honestly:
+                        // flip `settled` false, carry the error, and REWRITE `detail` so it no
+                        // longer claims the anchor landed, exactly as the procgen lane does.
+                        crate::metrics::inc_anchor_failure();
+                        resp["settled"] = serde_json::json!(false);
+                        resp["settle_error"] = serde_json::json!(e.to_string());
+                        resp["detail"] = serde_json::json!(
+                            "exact native replay accepted; crowned + ranked in-process, but the \
+                             devnet-node anchor FAILED (settled:false) — the run is NOT on the node ledger"
+                        );
+                    }
+                }
+            }
+            (StatusCode::OK, Json(resp))
         }
         Err(error) => native_submit_refused(error),
     }

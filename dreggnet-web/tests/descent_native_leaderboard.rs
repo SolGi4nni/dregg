@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use dregg_node_target::{NodeTarget, StubNode};
 use dreggnet_offerings::native_descent::{
     MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
 };
@@ -699,6 +700,176 @@ async fn sqlite_restart_drops_a_tampered_native_record_instead_of_resurrecting_i
 
     drop(app);
     let _ = std::fs::remove_file(&db_path);
+}
+
+/// ⚑ THE CANARY, driven end-to-end: a native run PLAYED TO COMPLETION auto-anchors — it ranks on
+/// the day's leaderboard AND lands on the devnet node's ledger — without a separate procgen-style
+/// submit. The browser fires this same POST on the terminal settlement; here the completed record
+/// is submitted directly to the same endpoint against a `Federation` StubNode, so the whole
+/// play -> rank -> anchor chain is exercised in-process.
+///
+/// The commitment the lane anchors is the run's terminal journal head (the un-retconnable tip of
+/// the actor-bound hash chain the record attests), taken verbatim as the node's turn id by the
+/// modeled stub — so `stub.contains(root)` is the on-ledger membership proof, not a stored flag.
+#[tokio::test]
+async fn native_crowned_completion_auto_anchors_on_the_node_and_ranks() {
+    let day_seed = daily_seed(&[120; 32]);
+    let stub: Arc<StubNode> = StubNode::new();
+    let target = NodeTarget::federation(stub.clone());
+    let state = Arc::new(DescentState::new().with_node_target(target));
+    assert!(state.settles_to_a_node(), "Federation target opted in");
+    state.open_day("anchor-day", day_seed);
+    let app = descent_router(state);
+
+    let native_record = crowned_record(&day_seed, "web:auto-anchor");
+    let completion_root = native_record
+        .completion
+        .as_ref()
+        .expect("crowned run settled")
+        .root;
+    let record = portable(&native_record);
+
+    // The node is untouched until the run completes and is submitted.
+    assert!(stub.is_empty(), "node touched before any run submitted");
+
+    let (status, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "anchor-day", "record": record }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["verified"], true, "{accepted}");
+    assert_eq!(accepted["ranked"], true, "a crowned exit ranks: {accepted}");
+
+    // ANCHORED: the native lane settled the run onto the node, exactly as the procgen lane does.
+    assert_eq!(
+        accepted["settled"], true,
+        "crowned run anchored: {accepted}"
+    );
+    assert_eq!(
+        accepted["node_turn_hash"],
+        serde_json::json!(hex(&completion_root)),
+        "the anchored commitment is the run's terminal journal head: {accepted}"
+    );
+    // The on-ledger membership proof — the commitment is present on the node's finalized log.
+    assert!(
+        stub.contains(&completion_root),
+        "the run's terminal journal head is on the node's finalized log"
+    );
+    assert_eq!(stub.len(), 1, "exactly one turn anchored");
+
+    // RANKED + REPLAY-VERIFIABLE: the run appears on the day's leaderboard and its share card
+    // re-verifies by fresh replay.
+    let (_, board) = get(&app, "/descent/leaderboard?day=anchor-day").await;
+    assert!(
+        board.contains("web:auto-anchor"),
+        "run ranks on the board: {board}"
+    );
+    let share = accepted["share"].as_str().expect("native share path");
+    let (card_status, card) = get(&app, share).await;
+    assert_eq!(card_status, StatusCode::OK);
+    assert!(card.contains("Independent verification — PASS"), "{card}");
+    assert!(card.contains("CROWNED"), "{card}");
+}
+
+/// A non-crowned settlement is shareable but does not rank — and therefore does NOT touch the node
+/// (the anchor is the crowned/ranked leg only, mirroring the procgen lane's "only a ranked run
+/// settles").
+#[tokio::test]
+async fn native_non_crowned_settlement_does_not_anchor_the_node() {
+    let day_seed = daily_seed(&[121; 32]);
+    let stub: Arc<StubNode> = StubNode::new();
+    let target = NodeTarget::federation(stub.clone());
+    let state = Arc::new(DescentState::new().with_node_target(target));
+    state.open_day("no-crown-day", day_seed);
+    let app = descent_router(state);
+
+    let record = portable(&settled_without_crown(&day_seed, "web:turned-back"));
+    let (status, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "no-crown-day", "record": record }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["verified"], true, "{accepted}");
+    assert_eq!(accepted["ranked"], false, "not crowned: {accepted}");
+    // No anchor for a non-ranked run.
+    assert!(
+        accepted.get("settled").is_none(),
+        "non-crowned run must not anchor: {accepted}"
+    );
+    assert!(
+        stub.is_empty(),
+        "the node was never touched for a non-crowned run"
+    );
+}
+
+/// NO-CHEAT, at the node boundary: a forged native record is refused by the exact-replay gate
+/// before it can rank, so the node is NEVER touched for a cheat — unchanged from the board's
+/// existing fail-closed semantics, now also true of the anchor leg.
+#[tokio::test]
+async fn a_forged_native_record_never_reaches_the_node() {
+    let day_seed = daily_seed(&[122; 32]);
+    let stub: Arc<StubNode> = StubNode::new();
+    let target = NodeTarget::federation(stub.clone());
+    let state = Arc::new(DescentState::new().with_node_target(target));
+    state.open_day("forge-day", day_seed);
+    let app = descent_router(state);
+
+    let mut forged = portable(&crowned_record(&day_seed, "web:forger"));
+    forged["events"][0]["rootHex"] = serde_json::json!("00".repeat(32));
+    let (status, refused) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "forge-day", "record": forged }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(refused["verified"], false, "{refused}");
+    assert_eq!(refused["ranked"], false, "{refused}");
+    assert!(stub.is_empty(), "a forged run must never touch the node");
+
+    // And it does not appear on the leaderboard.
+    let (_, board) = get(&app, "/descent/leaderboard?day=forge-day").await;
+    assert!(!board.contains("web:forger"), "forged run ranked: {board}");
+}
+
+/// The default `Local` target keeps the native lane in-process: a crowned run still ranks, but the
+/// response carries NO `settled` field and `settle_native_run` is an `Ok(None)` no-op — so the
+/// committed suite + node-free demo are byte-identical (the non-vacuity control for the anchor).
+#[tokio::test]
+async fn local_native_submit_ranks_but_does_not_anchor() {
+    let day_seed = daily_seed(&[123; 32]);
+    let state = Arc::new(DescentState::new()); // NodeTarget::Local by default
+    assert!(!state.settles_to_a_node(), "Local is the default");
+    state.open_day("local-day", day_seed);
+
+    let record = portable(&crowned_record(&day_seed, "web:local"));
+    let app = descent_router(state.clone());
+    let (status, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": "local-day", "record": record }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["ranked"], true, "{accepted}");
+    assert!(
+        accepted.get("settled").is_none(),
+        "Local mode adds no anchor field: {accepted}"
+    );
+
+    // The method is a direct Ok(None) no-op — nothing leaves the process.
+    let run_id = accepted["run_id"].as_str().expect("run id").to_string();
+    let landed = state
+        .settle_native_run("local-day", &run_id)
+        .expect("Local native settle never errors");
+    assert!(
+        landed.is_none(),
+        "Local mode keeps the native run in-process"
+    );
 }
 
 #[tokio::test]
