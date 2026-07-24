@@ -63,9 +63,10 @@
 //! `BOT_SECRET` are all set — one log line either way, every existing deployment untouched. The
 //! cross-platform `/da/link` ceremony (design §5) is the next follow-up (the `/tg/link` twin).
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "hosted-binary-operations")]
 use axum::extract::Query;
@@ -149,6 +150,259 @@ fn da_token_concurrency_from_env() -> usize {
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DEFAULT_DA_TOKEN_CONCURRENCY)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The `/da/token` outbound-exchange RATE guard.
+//
+// The concurrency semaphore ([`DiscordActivityState::token_gate`]) bounds only how many exchanges
+// run AT ONCE — a sequential stream of fast-failing bad codes (each releasing its permit on return)
+// still sustains a continuous outbound POST to Discord's `oauth2/token`, throttling the app's shared
+// OAuth client and self-DoS-ing every legitimate Activity open. A concurrency bound is not a RATE
+// bound. This guard adds the missing RATE bound: a per-source + global token bucket charged BEFORE
+// the outbound call, plus a negative cache that short-circuits a repeated already-rejected code with
+// no outbound call at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Tunable knobs for the `/da/token` outbound-exchange guard: the per-source and global token-bucket
+/// rate caps (burst = bucket capacity, refill = sustained rate), the negative-code cache TTL, and the
+/// per-source table bound. Defaults are sized so a legitimate Activity open (ONE exchange per session)
+/// never trips them, while a sustained bad-code flood is capped at the refill rate.
+#[derive(Debug, Clone, Copy)]
+pub struct DaTokenGuardConfig {
+    /// Per-source bucket capacity (the immediate burst one source may spend).
+    pub per_source_burst: f64,
+    /// Per-source sustained refill (tokens/second) once the burst is spent.
+    pub per_source_refill_per_sec: f64,
+    /// Global bucket capacity across ALL sources (the shared outbound OAuth budget).
+    pub global_burst: f64,
+    /// Global sustained refill (tokens/second) — the ceiling on the total outbound exchange rate.
+    pub global_refill_per_sec: f64,
+    /// How long a rejected code is remembered so a replay of it short-circuits (seconds).
+    pub neg_cache_ttl_secs: u64,
+    /// Cap on distinct tracked source buckets (memory bound; a full table fails a NEW source closed).
+    pub max_sources: usize,
+}
+
+/// Env override for [`DaTokenGuardConfig`] fields (each optional; unset ⇒ the default below).
+pub const DA_TOKEN_PER_SOURCE_BURST_ENV: &str = "DA_TOKEN_PER_SOURCE_BURST";
+pub const DA_TOKEN_PER_SOURCE_REFILL_ENV: &str = "DA_TOKEN_PER_SOURCE_REFILL_PER_SEC";
+pub const DA_TOKEN_GLOBAL_BURST_ENV: &str = "DA_TOKEN_GLOBAL_BURST";
+pub const DA_TOKEN_GLOBAL_REFILL_ENV: &str = "DA_TOKEN_GLOBAL_REFILL_PER_SEC";
+pub const DA_TOKEN_NEG_CACHE_TTL_ENV: &str = "DA_TOKEN_NEG_CACHE_TTL_SECS";
+
+impl Default for DaTokenGuardConfig {
+    fn default() -> Self {
+        DaTokenGuardConfig {
+            per_source_burst: 5.0,
+            per_source_refill_per_sec: 1.0,
+            global_burst: 30.0,
+            global_refill_per_sec: 5.0,
+            neg_cache_ttl_secs: 30,
+            max_sources: 4096,
+        }
+    }
+}
+
+impl DaTokenGuardConfig {
+    /// Read the guard config from env, falling back to [`Default`] per field. A non-parsing or
+    /// non-positive value keeps the default (fail-safe: a typo never disables the guard).
+    fn from_env() -> Self {
+        fn env_pos_f64(name: &str, default: f64) -> f64 {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|n| n.is_finite() && *n > 0.0)
+                .unwrap_or(default)
+        }
+        let d = DaTokenGuardConfig::default();
+        DaTokenGuardConfig {
+            per_source_burst: env_pos_f64(DA_TOKEN_PER_SOURCE_BURST_ENV, d.per_source_burst),
+            per_source_refill_per_sec: env_pos_f64(
+                DA_TOKEN_PER_SOURCE_REFILL_ENV,
+                d.per_source_refill_per_sec,
+            ),
+            global_burst: env_pos_f64(DA_TOKEN_GLOBAL_BURST_ENV, d.global_burst),
+            global_refill_per_sec: env_pos_f64(DA_TOKEN_GLOBAL_REFILL_ENV, d.global_refill_per_sec),
+            neg_cache_ttl_secs: std::env::var(DA_TOKEN_NEG_CACHE_TTL_ENV)
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(d.neg_cache_ttl_secs),
+            max_sources: d.max_sources,
+        }
+    }
+}
+
+/// A monotonic-clock token bucket: `capacity` tokens, refilled at `refill_per_sec`. A `refill_per_sec`
+/// of `0.0` yields a fixed budget of `capacity` (no replenishment) — the deterministic shape the
+/// rate canary drives.
+struct TokenBucket {
+    capacity: f64,
+    refill_per_sec: f64,
+    tokens: f64,
+    last: Instant,
+}
+
+impl TokenBucket {
+    fn new(capacity: f64, refill_per_sec: f64) -> Self {
+        TokenBucket {
+            capacity,
+            refill_per_sec,
+            tokens: capacity,
+            last: Instant::now(),
+        }
+    }
+
+    /// Replenish for the time elapsed since the last touch (monotonic; a non-advancing clock is a
+    /// no-op).
+    fn refill(&mut self, now: Instant) {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        if elapsed > 0.0 {
+            self.tokens = (self.tokens + elapsed * self.refill_per_sec).min(self.capacity);
+            self.last = now;
+        }
+    }
+
+    /// Take one token at `now`; `true` iff one was available (after refill).
+    fn try_take(&mut self, now: Instant) -> bool {
+        self.refill(now);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A fully-replenished bucket carries no outstanding rate debt — dropping it and recreating it
+    /// yields an identical full bucket, so it is safe to evict for memory bounding.
+    fn is_full(&self) -> bool {
+        self.tokens >= self.capacity
+    }
+}
+
+/// The per-source + global token-bucket RATE limiter charged once BEFORE each outbound exchange.
+/// Per-source is checked FIRST so an over-budget source never drains the shared global budget from
+/// everyone else; global is the ceiling on the total outbound OAuth rate (the self-DoS guard).
+struct TokenRateLimiter {
+    config: DaTokenGuardConfig,
+    global: Mutex<TokenBucket>,
+    sources: Mutex<HashMap<String, TokenBucket>>,
+}
+
+impl TokenRateLimiter {
+    fn new(config: DaTokenGuardConfig) -> Self {
+        TokenRateLimiter {
+            global: Mutex::new(TokenBucket::new(
+                config.global_burst,
+                config.global_refill_per_sec,
+            )),
+            sources: Mutex::new(HashMap::new()),
+            config,
+        }
+    }
+
+    /// Charge one outbound-exchange token for `source` at `now`. `None` ⇒ allowed; `Some(reason)` ⇒
+    /// denied (the audit reason). Per-source table growth is bounded: when full, fully-refilled
+    /// buckets are evicted first (lossless), and if still full a NEW source is failed closed so a
+    /// flood of fresh keys can neither exhaust memory NOR win a free burst by table churn.
+    fn check(&self, source: &str, now: Instant) -> Option<&'static str> {
+        {
+            let mut map = self.sources.lock().unwrap();
+            if !map.contains_key(source) && map.len() >= self.config.max_sources {
+                map.retain(|_, b| {
+                    b.refill(now);
+                    !b.is_full()
+                });
+                if map.len() >= self.config.max_sources {
+                    return Some("rate_source_table_saturated");
+                }
+            }
+            let bucket = map.entry(source.to_string()).or_insert_with(|| {
+                TokenBucket::new(
+                    self.config.per_source_burst,
+                    self.config.per_source_refill_per_sec,
+                )
+            });
+            if !bucket.try_take(now) {
+                return Some("rate_limited_source");
+            }
+        }
+        if !self.global.lock().unwrap().try_take(now) {
+            return Some("rate_limited_global");
+        }
+        None
+    }
+}
+
+/// A bounded, TTL'd cache of codes Discord has already REJECTED, so a client replaying the same bad
+/// code short-circuits to a fast refusal with NO outbound call. Only Discord-rejected codes are
+/// cached (never a transport failure — that is OUR connectivity, not a bad code).
+struct NegativeCodeCache {
+    ttl: Duration,
+    max: usize,
+    inner: Mutex<HashMap<String, Instant>>,
+}
+
+impl NegativeCodeCache {
+    fn new(ttl_secs: u64, max: usize) -> Self {
+        NegativeCodeCache {
+            ttl: Duration::from_secs(ttl_secs),
+            max,
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Is `code` a still-valid rejected entry at `now`? Expired entries are dropped as they are seen.
+    fn contains(&self, code: &str, now: Instant) -> bool {
+        let mut m = self.inner.lock().unwrap();
+        match m.get(code) {
+            Some(&exp) if exp > now => true,
+            Some(_) => {
+                m.remove(code);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Remember `code` as rejected until `now + ttl`. Bounded: when full, expired entries are pruned
+    /// first; if still full the insert is skipped (a full cache only weakens the short-circuit — the
+    /// RATE limiter is the load-bearing bound, never this cache).
+    fn insert(&self, code: String, now: Instant) {
+        let mut m = self.inner.lock().unwrap();
+        if m.len() >= self.max {
+            m.retain(|_, &mut exp| exp > now);
+            if m.len() >= self.max {
+                return;
+            }
+        }
+        m.insert(code, now + self.ttl);
+    }
+}
+
+/// The request's rate-limiting source key: the leftmost `X-Forwarded-For` hop (the original client
+/// as set by the trusted gateway), else `X-Real-IP`, else a shared `"unknown"` bucket (still under
+/// the global cap). Best-effort — the GLOBAL bucket, not this key, is the hard outbound ceiling.
+fn source_key(headers: &HeaderMap) -> String {
+    fn first_hop(v: &str) -> &str {
+        v.split(',').next().unwrap_or(v).trim()
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(first_hop)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// The minimum decoded ticket length: `uid(8) ‖ minted_at(8) ‖ HMAC(32)` — a nonce of length ≥ 0
@@ -431,6 +685,14 @@ impl OAuthError {
         }
     }
 
+    /// Did Discord authoritatively reject the `code` ITSELF (invalid/expired at `oauth2/token`)?
+    /// Only this is monotonic ("a bad code stays bad") and safe to negative-cache — the other
+    /// variants are our transport, upstream shape drift, or a POST-token failure where the code was
+    /// actually accepted, none of which a code replay should short-circuit.
+    fn is_bad_code(&self) -> bool {
+        matches!(self, OAuthError::TokenStatus(_))
+    }
+
     /// The machine reason for the audit trail — `oauth:<gate>`.
     fn reason(&self) -> &'static str {
         match self {
@@ -667,8 +929,16 @@ pub struct DiscordActivityState {
     link_replay: webauth_core::replay::NonceCache,
     /// Bounds concurrent `POST /da/token` OAuth exchanges — the one unauthenticated endpoint that
     /// makes an outbound Discord call per request. A request that cannot immediately acquire a
-    /// permit is refused `429` (see [`post_da_token`]).
+    /// permit is refused `429` (see [`post_da_token`]). Concurrency ONLY — the RATE bound is
+    /// [`token_rate`](Self::token_rate).
     token_gate: Arc<tokio::sync::Semaphore>,
+    /// Bounds the outbound-exchange RATE (per-source + global token bucket), charged BEFORE the
+    /// outbound call. The semaphore caps simultaneous exchanges; a sequential bad-code stream slips
+    /// past it (each permit released on return) — this bucket is what caps that stream.
+    token_rate: TokenRateLimiter,
+    /// Short-circuits a replayed already-rejected code with no outbound call (see
+    /// [`NegativeCodeCache`]).
+    neg_code_cache: NegativeCodeCache,
 }
 
 impl DiscordActivityState {
@@ -691,7 +961,8 @@ impl DiscordActivityState {
     }
 
     /// Assemble the state with an INJECTED code-exchange backend — the ctor tests use to drive the
-    /// whole `/da/token` + ticket-gated catalog flow with a stub (no live Discord app or secret).
+    /// whole `/da/token` + ticket-gated catalog flow with a stub (no live Discord app or secret). The
+    /// outbound-exchange guard is read from env ([`DaTokenGuardConfig::from_env`]).
     pub fn with_oauth(
         catalog: Arc<CatalogState>,
         client_id: impl Into<String>,
@@ -699,6 +970,29 @@ impl DiscordActivityState {
         bot_secret: [u8; 32],
         max_age_secs: u64,
         oauth: Arc<dyn DiscordTokenExchange>,
+    ) -> Self {
+        Self::with_oauth_and_guard(
+            catalog,
+            client_id,
+            client_secret,
+            bot_secret,
+            max_age_secs,
+            oauth,
+            DaTokenGuardConfig::from_env(),
+        )
+    }
+
+    /// As [`with_oauth`](Self::with_oauth), but with an EXPLICIT outbound-exchange guard config — the
+    /// seam the rate/negative-cache canaries use to drive the token bucket deterministically (a tiny
+    /// burst, zero refill) instead of the env/production defaults.
+    pub fn with_oauth_and_guard(
+        catalog: Arc<CatalogState>,
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        bot_secret: [u8; 32],
+        max_age_secs: u64,
+        oauth: Arc<dyn DiscordTokenExchange>,
+        guard: DaTokenGuardConfig,
     ) -> Self {
         DiscordActivityState {
             catalog,
@@ -710,6 +1004,8 @@ impl DiscordActivityState {
             oauth,
             link_replay: webauth_core::replay::NonceCache::new(true, 8192),
             token_gate: Arc::new(tokio::sync::Semaphore::new(da_token_concurrency_from_env())),
+            neg_code_cache: NegativeCodeCache::new(guard.neg_cache_ttl_secs, 8192),
+            token_rate: TokenRateLimiter::new(guard),
         }
     }
 
@@ -959,15 +1255,61 @@ pub struct TokenRequest {
 /// [`seed_for`] (called, never mirrored); the client never supplies an identity.
 async fn post_da_token(
     State(state): State<Arc<DiscordActivityState>>,
+    headers: HeaderMap,
     Json(req): Json<TokenRequest>,
 ) -> Response {
     let corr = audit::correlation_id();
     let route = "POST /da/token";
+    let charged_at = Instant::now();
+    let source = source_key(&headers);
 
-    // RATE LIMIT — this unauthenticated endpoint makes an outbound Discord call per request. Bound
-    // the concurrent exchanges: a request that cannot immediately acquire a permit is refused `429`
-    // rather than piling another outbound call onto Discord. The permit is held (via `_permit`)
-    // until this handler returns, i.e. across the whole exchange.
+    // NEGATIVE-CODE SHORT-CIRCUIT — a code Discord already REJECTED stays rejected; replaying it
+    // costs NO outbound call and NO rate token (a fast, fail-closed refusal). This blunts a
+    // same-code replay flood; the RATE bucket below blunts a distinct-code flood.
+    if state.neg_code_cache.contains(&req.code, charged_at) {
+        audit::log().emit(
+            audit::AuditEvent::new(
+                "discord-activity",
+                audit::Actor::unattributed(),
+                audit::Surface::Http,
+                audit::Input::new(route, serde_json::json!({ "status": 401 })),
+            )
+            .correlated(&corr)
+            .decided("gated", "oauth:cached_bad_code"),
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            "token exchange refused: this code was already rejected — re-authorize for a fresh one",
+        )
+            .into_response();
+    }
+
+    // RATE LIMIT (the outbound self-DoS guard) — the concurrency semaphore below bounds only
+    // SIMULTANEOUS exchanges; a sequential stream of fast-failing bad codes (each releasing its
+    // permit on return) sustains a continuous outbound POST to Discord's token endpoint, throttling
+    // the app's shared OAuth client. Charge a per-source + global token BEFORE the outbound call so
+    // that stream is capped by RATE, not just concurrency; over-budget ⇒ a fast `429`.
+    if let Some(reason) = state.token_rate.check(&source, charged_at) {
+        audit::log().emit(
+            audit::AuditEvent::new(
+                "discord-activity",
+                audit::Actor::unattributed(),
+                audit::Surface::Http,
+                audit::Input::new(route, serde_json::json!({ "status": 429 })),
+            )
+            .correlated(&corr)
+            .decided("gated", reason),
+        );
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "token exchange rate limit — retry shortly",
+        )
+            .into_response();
+    }
+
+    // CONCURRENCY BOUND — cap simultaneous in-flight exchanges. The permit is held (via `_permit`)
+    // until this handler returns, i.e. across the whole exchange; a request that cannot immediately
+    // acquire one is refused `429` rather than piling another concurrent outbound call onto Discord.
     let _permit = match Arc::clone(&state.token_gate).try_acquire_owned() {
         Ok(p) => p,
         Err(_) => {
@@ -1002,6 +1344,12 @@ async fn post_da_token(
     let verified = match exchanged {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
+            // Remember a Discord-rejected code so a replay of it short-circuits with no outbound
+            // call (only `TokenStatus` — the monotonic "this code is invalid/expired"; never a
+            // transport/shape-drift/post-token failure, where the code may be fine on retry).
+            if e.is_bad_code() {
+                state.neg_code_cache.insert(req.code.clone(), charged_at);
+            }
             audit::log().emit(
                 audit::AuditEvent::new(
                     "discord-activity",
@@ -3095,6 +3443,175 @@ mod tests {
         assert!(
             cat.contains(&expected[..16]),
             "the listing names the verified identity: {cat}"
+        );
+    }
+
+    // ── The /da/token outbound-exchange RATE guard (self-DoS closure). ──
+    //
+    // FLAW: the concurrency semaphore releases each permit on return, so a SEQUENTIAL stream of
+    // fast-failing bad codes reaches the outbound Discord exchange once per request — a self-DoS on
+    // the app's shared OAuth client. The guard adds a RATE bound (token bucket) + a negative-code
+    // short-circuit BEFORE the outbound call. These canaries pin that the outbound `exchange` is not
+    // reached past the bucket.
+
+    use std::sync::atomic::AtomicUsize;
+
+    /// A code-exchange stub that COUNTS calls and always reports a Discord-rejected code — so a test
+    /// can assert exactly how many requests reached the outbound exchange.
+    struct CountingRejectExchange {
+        calls: Arc<AtomicUsize>,
+    }
+    impl DiscordTokenExchange for CountingRejectExchange {
+        fn exchange(
+            &self,
+            _client_id: &str,
+            _client_secret: &str,
+            _code: &str,
+        ) -> Result<DiscordCodeExchange, OAuthError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(OAuthError::TokenStatus(401))
+        }
+    }
+
+    /// Build a `/da/token` app over the counting stub with an EXPLICIT guard config, returning the
+    /// call counter so a canary can read how many requests reached the outbound exchange.
+    fn rate_guard_app(guard: DaTokenGuardConfig) -> (Router, Arc<AtomicUsize>) {
+        let catalog = Arc::new(CatalogState::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let state = Arc::new(DiscordActivityState::with_oauth_and_guard(
+            Arc::clone(&catalog),
+            "1234567890",
+            "test-client-secret",
+            BOT_SECRET,
+            86_400,
+            Arc::new(CountingRejectExchange {
+                calls: Arc::clone(&calls),
+            }),
+            guard,
+        ));
+        (discord_activity_router(state), calls)
+    }
+
+    async fn post_token(app: &Router, code: &str) -> StatusCode {
+        let (st, _body) = send(
+            app,
+            "POST",
+            "/da/token",
+            None,
+            Some("application/json"),
+            Some(&format!(r#"{{"code":"{code}"}}"#)),
+        )
+        .await;
+        st
+    }
+
+    /// CANARY — sustained bad codes are capped by RATE (a fast `429`), and the outbound exchange is
+    /// NOT reached past the token bucket.
+    ///
+    /// Guard: per-source burst 2, zero refill, wide-open global — so exactly the first 2 SEQUENTIAL
+    /// requests may reach the outbound call; the rest are refused by rate. Codes are all DISTINCT so
+    /// the negative cache never short-circuits — this isolates the RATE bucket as the thing firing.
+    ///
+    /// FAIL-BEFORE (old concurrency-only code): with no rate bucket, every sequential request would
+    /// acquire-then-release a permit and reach the exchange → `calls == 6` (≠ 2) and every status
+    /// `401` (never `429`). Both assertions below are therefore RED on the old code and GREEN on the
+    /// fixed code — the mutation the guard is load-bearing for. (Established by reasoning, not
+    /// `git stash`: stashing the working tree is not swarm-safe here, and the companion test
+    /// `da_token_without_a_rate_cap_reaches_the_outbound_on_every_sequential_request` empirically
+    /// reproduces the `calls == 6` old behavior by opening the burst wide.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn da_token_caps_the_outbound_exchange_by_rate_not_concurrency() {
+        let guard = DaTokenGuardConfig {
+            per_source_burst: 2.0,
+            per_source_refill_per_sec: 0.0,
+            global_burst: 1_000.0,
+            global_refill_per_sec: 0.0,
+            neg_cache_ttl_secs: 30,
+            max_sources: 4096,
+        };
+        let (app, calls) = rate_guard_app(guard);
+
+        let mut statuses = Vec::new();
+        for i in 0..6 {
+            statuses.push(post_token(&app, &format!("bad-{i}")).await);
+        }
+
+        // Exactly the burst (2) reached the outbound exchange; the rest never did.
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "only the burst of 2 may reach the outbound Discord exchange; the flood must not"
+        );
+        // The first 2 pass the bucket (and get the stub's 401); requests 3..6 are refused by RATE.
+        assert_eq!(
+            statuses,
+            vec![
+                StatusCode::UNAUTHORIZED,
+                StatusCode::UNAUTHORIZED,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+            ],
+            "sustained bad codes are 429'd by RATE past the bucket, not served"
+        );
+    }
+
+    /// The companion that empirically reproduces the OLD (pre-fix) self-DoS: with the burst opened
+    /// wide (so the RATE bucket never fires) every sequential request reaches the outbound exchange —
+    /// `calls == 6`. This is exactly what the concurrency-only semaphore allowed, and precisely what
+    /// the canary above caps at 2. Together they show the `429`s above come from the RATE cap.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn da_token_without_a_rate_cap_reaches_the_outbound_on_every_sequential_request() {
+        let guard = DaTokenGuardConfig {
+            per_source_burst: 1_000.0,
+            per_source_refill_per_sec: 0.0,
+            global_burst: 1_000.0,
+            global_refill_per_sec: 0.0,
+            neg_cache_ttl_secs: 30,
+            max_sources: 4096,
+        };
+        let (app, calls) = rate_guard_app(guard);
+
+        for i in 0..6 {
+            assert_eq!(
+                post_token(&app, &format!("bad-{i}")).await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            6,
+            "with the rate cap opened wide every sequential bad code reaches the outbound exchange \
+             — the self-DoS the rate bucket closes"
+        );
+    }
+
+    /// The negative-code cache short-circuits a REPLAYED already-rejected code with no outbound call:
+    /// the same bad code sent 4 times reaches the exchange exactly once, the rest short-circuit to a
+    /// fast `401`. (Burst opened wide so the rate bucket is not what is firing here.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn da_token_negative_cache_short_circuits_a_replayed_bad_code() {
+        let guard = DaTokenGuardConfig {
+            per_source_burst: 1_000.0,
+            per_source_refill_per_sec: 0.0,
+            global_burst: 1_000.0,
+            global_refill_per_sec: 0.0,
+            neg_cache_ttl_secs: 30,
+            max_sources: 4096,
+        };
+        let (app, calls) = rate_guard_app(guard);
+
+        for _ in 0..4 {
+            assert_eq!(
+                post_token(&app, "same-bad-code").await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a replayed rejected code reaches the outbound exchange once, then short-circuits"
         );
     }
 
