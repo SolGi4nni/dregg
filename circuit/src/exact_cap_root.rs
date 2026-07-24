@@ -523,8 +523,9 @@ mod tests {
             CanonicalExactCapTree8::try_new(
                 vec![leaf(7, [3; 32], None), leaf(7, [3; 32], None)],
                 DEPTH
-            ),
-            Err(ExactCapTreeError::DuplicateSlot(7))
+            )
+            .expect_err("two leaves on slot 7 must REFUSE tree construction"),
+            ExactCapTreeError::DuplicateSlot(7)
         );
     }
     #[test]

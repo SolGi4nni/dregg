@@ -6480,6 +6480,11 @@ mod tests {
                     Ir2Air::UMemory => "umemory",
                     Ir2Air::UMemBoundary => "umem_boundary",
                     Ir2Air::UMemBoundaryCohort => "umem_boundary_cohort",
+                    // One instance PER MANIFEST ROW, so this label is shared by all of a
+                    // descriptor's exact-public row instances (they are the same AIR shape,
+                    // hence the same degree). Deliberately no `_ =>` arm: a new `Ir2Air`
+                    // variant must fail HERE, not slip through under a catch-all.
+                    Ir2Air::ExactPublicRow { .. } => "exact_public_row",
                 };
                 (name.to_string(), deg)
             })
