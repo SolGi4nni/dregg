@@ -80,6 +80,31 @@ theorem TableId.wireId_injective : Function.Injective TableId.wireId := by
   intro a b h
   cases a <;> cases b <;> simp_all [TableId.wireId] <;> omega
 
+/-- The EPOCH table roster: every `TableId` that is not a `custom` collection id.
+
+Named, so a check ABOUT the five tables can range over it instead of retyping it. The §10 wire-id
+`#guard` used to transcribe this list INSIDE itself
+(`([TableId.main, .poseidon2, …].map wireId).dedup.length == 5`), which is the shape that never
+rots because it can never go RED: a sixth EPOCH constructor would leave it green forever while it
+covered strictly less. `epochTables_complete` moves the failure to where a new constructor
+actually is. -/
+def TableId.epochTables : List TableId := [.main, .poseidon2, .range, .memory, .mapOps]
+
+/-- TOTALITY: every `TableId` is either a roster member or a `custom` collection id — the roster
+misses nothing. THIS is the tooth. A new nullary `TableId` constructor leaves `cases` with an
+unsolved goal here, so it cannot slip past the checks that quantify over `epochTables`; adding it
+to the roster then moves `epochTables.length == 5` in §10, deliberately and visibly, which is what
+a new EPOCH table should be. -/
+theorem TableId.epochTables_complete (t : TableId) :
+    t ∈ TableId.epochTables ∨ ∃ n, t = .custom n := by
+  cases t
+  case main => exact .inl (by simp [TableId.epochTables])
+  case poseidon2 => exact .inl (by simp [TableId.epochTables])
+  case range => exact .inl (by simp [TableId.epochTables])
+  case memory => exact .inl (by simp [TableId.epochTables])
+  case mapOps => exact .inl (by simp [TableId.epochTables])
+  case custom n => exact .inr ⟨n, rfl⟩
+
 /-- What a row of the table MEANS (the semantic tag the Lean denotation dispatches on). -/
 inductive RowSemantics where
   /-- One row per effect: selectors, register deltas, PI bindings (the thin post-LogUp main). -/
@@ -1655,8 +1680,15 @@ theorem demoPublic_extra_refused :
 #guard poseidon2ChipTableDef.arity == CHIP_RATE + 1 + CHIP_OUT_LANES
 #guard poseidon2ChipTableDef.arity == 25
 #guard (chipRow (fun _ => 0) [1, 2] [0, 0, 0, 0, 0, 0, 0]).length == CHIP_RATE + 1 + CHIP_OUT_LANES
--- The five table ids are distinct on the wire.
-#guard ([TableId.main, .poseidon2, .range, .memory, .mapOps].map TableId.wireId).dedup.length == 5
+-- The EPOCH table ids are distinct on the wire. Stated over the NAMED roster and against the
+-- roster's OWN length, so it is a distinctness check rather than a count: it can no longer be
+-- satisfied by a list that is simply shorter than the type. The old form transcribed the list
+-- inside the guard (`[TableId.main, .poseidon2, …]` literally, `== 5`), so a sixth EPOCH
+-- constructor left it GREEN FOREVER while it covered strictly less — a guard that cannot go red
+-- is not a guard. `TableId.epochTables_complete` is what now makes the roster total, and the
+-- length pin below a REAL flag-day pin rather than a restatement of the literal above it.
+#guard (TableId.epochTables.map TableId.wireId).dedup.length == TableId.epochTables.length
+#guard TableId.epochTables.length == 5
 
 -- Range-by-lookup: in-range row PRESENT, out-of-range row ABSENT (the rangeTable for 2 bits).
 #guard ([3] : List ℤ) ∈ rangeRows 2
