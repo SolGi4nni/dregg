@@ -24,13 +24,12 @@ hash collision-resistance, nothing more.
   length-prefixed `ml` make distinct `(ed, ml)` pairs distinct pre-images (`Function.Injective2`).
 * `verify_committed cr frame id ed ml := commit cr frame ed ml = id` — mirrors the Rust `==` gate.
 
-## The floor (the two theorems the re-basing rests on)
-* `id_commitment_binds` — under `HashCR`, an id determines its `(ed25519, ml_dsa)` pair UNIQUELY:
-  two verifying pairs give `commit = id = commit`, hence (by `HashCR` + injective framing) the same
-  pair. So a self-supplied pair that does not match the enrolled one cannot pass the gate.
-* `attacker_key_not_committed` (THE TEETH) — an attacker who keeps the honest `ed25519` but swaps in
-  their OWN `ml_dsa` is REJECTED (`¬ verify_committed`), unless they find a hash collision. This is
-  exactly the guarantee `cell-crypto` / `captp` / `wire` rely on.
+## The floor (⚑ regrounded 2026-07-24)
+The old deterministic exports `id_commitment_binds` / `attacker_key_not_committed` are DELETED — their
+`HashCR` hypothesis (pure injectivity) is refuted at every compressing commitment
+(`hashCR_false_of_compressing`), the deployed BLAKE3 id included. The binding now lives as
+`IdentityCommitmentRegrounded`'s keyed-ROM opening bound (floor PROVED — `keyedRom_hard`); this file
+keeps the deterministic `¬ HashCR`-conclusion extractor witnesses and the concrete teeth.
 
 ## The reduction
 `distinct_verifying_pairs_break_hashcr` / `commit_collision_is_hash_collision`: two DISTINCT
@@ -63,44 +62,32 @@ def verify_committed (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → P
     (id : Id) (ed : Ed) (ml : MlDsa) : Prop :=
   commit cr frame ed ml = id
 
-/-- **BINDING — the id determines its key pair UNIQUELY (the floor).** Under `HashCR` (hash
-collision-resistance) and an injective framing, if two key pairs `(ed, ml)` and `(ed', ml')` BOTH
-verify against the same id, they are equal. Both verify ⇒ `commit(ed,ml) = id = commit(ed',ml')` ⇒ (by
-`HashCR` on the combine, then injectivity of the length-framed encoding) `(ed, ml) = (ed', ml')`. So a
-self-supplied pair that differs from the enrolled one CANNOT pass the gate without a hash collision. -/
-theorem id_commitment_binds (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → Pre)
-    (hframe : Function.Injective2 frame) (hcr : HashCR cr)
-    (id : Id) (ed ed' : Ed) (ml ml' : MlDsa)
-    (h : verify_committed cr frame id ed ml) (h' : verify_committed cr frame id ed' ml') :
-    (ed, ml) = (ed', ml') := by
-  unfold verify_committed commit at h h'
-  have hcol : cr.H () (frame ed ml) = cr.H () (frame ed' ml') := h.trans h'.symm
-  obtain ⟨he, hm⟩ := hframe (hcr () (frame ed ml) (frame ed' ml') hcol)
-  subst he; subst hm; rfl
-
-/-- **THE TEETH — an attacker's own ML-DSA key is REJECTED.** Keeping the honest `ed25519` key but
-swapping in a DIFFERENT ml_dsa key `(ed, ml) ≠ (ed, ml_attacker)` fails the gate: the attacker key is
-NOT committed. Under `HashCR`, passing the gate with a non-enrolled pair would (by `id_commitment_binds`)
-force it EQUAL to the enrolled pair — contradiction. This is the exact `cell-crypto`/`captp`/`wire`
-guarantee: a self-carried PQ key cannot impersonate the enrolled one without a hash collision. -/
-theorem attacker_key_not_committed (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → Pre)
-    (hframe : Function.Injective2 frame) (hcr : HashCR cr)
-    (id : Id) (ed : Ed) (ml ml_attacker : MlDsa)
-    (hne : (ed, ml) ≠ (ed, ml_attacker))
-    (h : verify_committed cr frame id ed ml) :
-    ¬ verify_committed cr frame id ed ml_attacker :=
-  fun hatt => hne (id_commitment_binds cr frame hframe hcr id ed ed ml ml_attacker h hatt)
+/-! ⚑ **The old exports `id_commitment_binds` (`HashCR → (ed,ml) = (ed',ml')`) and
+`attacker_key_not_committed` (`HashCR → ¬ verify_committed`) are DELETED** — each carried
+`hcr : HashCR cr`, pure INJECTIVITY of the id-commitment hash, PROVED FALSE for every compressing
+commitment by `HashFloorHonesty.hashCR_false_of_compressing` (the deployed `hybrid_id_commitment` is
+BLAKE3 over an unbounded length-framed pre-image into a fixed-width digest — compressing). Both
+transported nothing at deployed parameters. Their content survives as the `¬ HashCR`-conclusion
+extractor witnesses below (`distinct_verifying_pairs_break_hashcr`,
+`commit_collision_is_hash_collision`); the DISCHARGED successor is
+`IdentityCommitmentRegrounded`'s keyed-ROM binding — the id-commitment OPENING game at the SAMPLED
+keyed oracle (the published id IN the win relation), every query-bounded enrollment-equivocator's
+advantage NEGLIGIBLE on the PROVED floor `KeyedRomFloor.keyedRom_hard` (the birthday bound). The
+attacker-rejection reading is the same bound: an attacker pair `(ed, ml') ≠ (ed, ml)` passing the
+gate at the enrolled id IS an opening-game win. -/
 
 /-- **The reduction — distinct verifying pairs BREAK `HashCR`.** If two DISTINCT key pairs both verify
-against one id, `HashCR` cannot hold: it is exactly a hash collision. The contrapositive of
-`id_commitment_binds` — an attacker who forges a colliding enrollment has, definitionally, broken hash
-collision-resistance. This is what grounds the whole id re-basing in the ONE standard carrier `HashCR`. -/
+against one id, `HashCR` cannot hold: it is exactly a hash collision. Retained ONLY as the reduction's
+deterministic extractor witness (a `¬ HashCR` CONCLUSION), never re-exported as a floor. -/
 theorem distinct_verifying_pairs_break_hashcr (cr : CommitReveal Unit Pre Id)
     (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame)
     (id : Id) (ed ed' : Ed) (ml ml' : MlDsa) (hne : (ed, ml) ≠ (ed', ml'))
     (h : verify_committed cr frame id ed ml) (h' : verify_committed cr frame id ed' ml') :
-    ¬ HashCR cr :=
-  fun hcr => hne (id_commitment_binds cr frame hframe hcr id ed ed' ml ml' h h')
+    ¬ HashCR cr := by
+  intro hcr
+  unfold verify_committed commit at h h'
+  obtain ⟨he, hm⟩ := hframe (hcr () (frame ed ml) (frame ed' ml') (h.trans h'.symm))
+  subst he; subst hm; exact hne rfl
 
 /-- **A `commit`-collision IS an `H`-collision (the length-framing is faithful).** Distinct key pairs
 that hash to the SAME id yield two DISTINCT pre-images (`frame ed ml ≠ frame ed' ml'`, by injectivity of
@@ -116,8 +103,6 @@ theorem commit_collision_is_hash_collision (cr : CommitReveal Unit Pre Id)
 
 end Model
 
-#assert_axioms id_commitment_binds
-#assert_axioms attacker_key_not_committed
 #assert_axioms distinct_verifying_pairs_break_hashcr
 #assert_axioms commit_collision_is_hash_collision
 
@@ -159,10 +144,11 @@ def exId : List ℕ := commit exCR exFrame 1 [2, 3]
 theorem honest_verifies : verify_committed exCR exFrame exId 1 [2, 3] := rfl
 
 /-- **THE TEETH FIRE.** The attacker keeps the honest `ed = 1` but swaps in their OWN ml_dsa `[9]`:
-`attacker_key_not_committed` REJECTS it — `¬ verify_committed`. The self-carried PQ key cannot pass. -/
+the gate REJECTS it — `¬ verify_committed`. (Formerly routed through the deleted
+`attacker_key_not_committed`; on the concrete injective instance the rejection is decidable.) The
+self-carried PQ key cannot pass. -/
 theorem attacker_ml_rejected : ¬ verify_committed exCR exFrame exId 1 [9] :=
-  attacker_key_not_committed exCR exFrame exFrame_inj exCR_hashcr exId 1 [2, 3] [9]
-    (by decide) honest_verifies
+  fun h => absurd (show exFrame 1 [9] = exFrame 1 [2, 3] from h) (by decide)
 
 -- The honest commitment is the length-framed hash of both keys.
 #guard exFrame 1 [2, 3] = [1, 2, 2, 3]

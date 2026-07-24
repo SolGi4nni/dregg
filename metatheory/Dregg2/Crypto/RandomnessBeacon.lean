@@ -17,20 +17,21 @@ party / contribution / output types so a hash-based instantiation plugs in:
    contributions, distinct honest contributions give distinct outputs (`honest_makes_unbiasable`), so the
    adversary that committed its part first cannot pin the output — the honest contribution moves it. A
    "bias" (making the output insensitive to a distinct honest contribution) is exactly a hash collision
-   (`bias_breaks_honest_slot_cr`). The honest-slot carrier `HonestSlotCR` is NOT bespoke: it is DISCHARGED
-   by the imported `HashCR` (`honestSlotCR_of_hashcr` — hash collision-resistance of the combine plus
-   multiset cons-cancellation), and against `HashCR` the reduction is direct (`unbiasable_of_hashcr`):
-   distinct honest reveals hash to distinct outputs.
+   (`bias_breaks_honest_slot_cr`). ⚑ The old `HashCR`-conditioned exports (`honestSlotCR_of_hashcr`,
+   `unbiasable_of_hashcr`) are DELETED (2026-07-24) — `HashCR` is refuted at every compressing combine
+   (`hashCR_false_of_compressing`); the discharged successors are
+   `RandomnessBeaconRegrounded.beacon_binding_rom` / `hashrand_output_binding_rom` (keyed-ROM floor,
+   PROVED), and the deterministic residue is `prediction_matching_two_reveals_breaks_hashcr`.
 
 2. **UNPREDICTABILITY.** The output is unpredictable before the honest contributions are revealed. We model
    commit-then-reveal (each party commits `cmᵢ = H(i, cᵢ)` then reveals `cᵢ`; the output depends on all
-   revealed `cᵢ`) with the SAME imported `CommitReveal`/`HashCR` structure. Binding
-   (`commit_binds_contribution` = `HermineHintMLWE.commitment_binding`) pins the honest party to one `cᵢ`;
-   the output hash is injective in the honest reveal (`output_unpredictable_before_reveal`), so any a-priori
-   prediction matches at most ONE honest contribution — a prediction correct for two distinct
-   committed-consistent reveals BREAKS `HashCR` (`prediction_matching_two_reveals_breaks_hashcr`). Without a
-   revealed honest `cᵢ` the adversary is reduced to guessing it through the commitment, i.e. inverting the
-   hash. Both properties therefore reduce to the ONE named carrier `HashCR`.
+   revealed `cᵢ`) with the SAME imported `CommitReveal` structure. ⚑ The old `HashCR`-conditioned
+   binding exports (`commit_binds_contribution`, `output_unpredictable_before_reveal`) are DELETED
+   (2026-07-24, refuted floor); the discharged successors are
+   `RandomnessBeaconRegrounded.hashrand_commit_binding_rom` and `beacon_binding_rom` (keyed-ROM floor,
+   PROVED). A prediction correct for two distinct committed-consistent reveals still BREAKS `HashCR`
+   (`prediction_matching_two_reveals_breaks_hashcr` — the retained extractor witness). Both properties
+   now price on the PROVED keyed-ROM floor instead of the refuted injectivity carrier.
 
 3. **Monte-Carlo boundary (documented, not a proof gap).** A HashRand-style beacon runs asynchronous
    approximate agreement, which terminates with a small tunable failure probability `δ` PER BEACON (the
@@ -134,14 +135,14 @@ via the imported `CommitReveal` hash. `beaconViaHash cr i adv c = H(i, (c, adv))
 def beaconViaHash {Idx Ct Adv O : Type*} (cr : CommitReveal Idx (Ct × Adv) O)
     (i : Idx) (adv : Adv) (c : Ct) : O := cr.H i (c, adv)
 
-/-- **UNBIASABILITY reduces to `HashCR`.** Under collision-resistance of the combine hash, distinct honest
-contributions `c ≠ c'` produce distinct beacon outputs, for ANY fixed adversary aggregate `adv`. So the
-adversary cannot steer the output: it would need a hash collision. This is the honest-slot injectivity of
-`HonestSlotCR`, derived from the ONE named carrier `HashCR`. -/
-theorem unbiasable_of_hashcr {Idx Ct Adv O : Type*} (cr : CommitReveal Idx (Ct × Adv) O)
-    (hcr : HashCR cr) (i : Idx) (adv : Adv) (c c' : Ct) (hne : c ≠ c') :
-    beaconViaHash cr i adv c ≠ beaconViaHash cr i adv c' :=
-  fun h => hne (congrArg Prod.fst (hcr i (c, adv) (c', adv) h))
+/-! ⚑ **The old export `unbiasable_of_hashcr` (`HashCR → distinct outputs`) is DELETED** — its
+`hcr : HashCR` hypothesis is pure INJECTIVITY of the combine hash, PROVED FALSE for every compressing
+combine by `HashFloorHonesty.hashCR_false_of_compressing` (the deployed combine maps long framed
+pre-images to a fixed-width digest — compressing). It steered nothing at deployed parameters. Its
+content survives as `prediction_matching_two_reveals_breaks_hashcr` below (the `¬ HashCR`-conclusion
+extractor witness); the DISCHARGED successor is `RandomnessBeaconRegrounded.beacon_binding_rom` — the
+beacon-steering OPENING game at the SAMPLED keyed oracle, every query-bounded steering adversary's
+advantage NEGLIGIBLE on the PROVED floor `KeyedRomFloor.keyedRom_hard` (the birthday bound). -/
 
 /-! ### `HonestSlotCR` is NOT a bespoke carrier — it REDUCES to the standard `HashCR`.
 
@@ -157,15 +158,15 @@ committed domain `Multiset Ct`). This is the honest realization of the abstract 
 def beaconOfHash {Ct O : Type*} (cr : CommitReveal Unit (Multiset Ct) O) : Beacon Ct O :=
   ⟨fun cs => cr.H () cs⟩
 
-/-- **`HonestSlotCR` REDUCES to the imported `HashCR`.** When the beacon combine is a collision-resistant
-hash over the committed multiset, honest-slot injectivity is NOT a fresh assumption: it is exactly hash
-collision-resistance (`HashCR`) — distinct committed multisets hash to distinct outputs — composed with
-multiset cons-left-cancellation (`Multiset.cons_inj_left`, a pure fact). So `HonestSlotCR` bottoms out at
-the SAME `HashCR` carrier the concurrent-signature argument uses, the true floor, with no bespoke beacon
-carrier. -/
-theorem honestSlotCR_of_hashcr {Ct O : Type*} (cr : CommitReveal Unit (Multiset Ct) O)
-    (hcr : HashCR cr) : HonestSlotCR (beaconOfHash cr) := fun rest c c' h =>
-  (Multiset.cons_inj_left rest).mp (hcr () (c ::ₘ rest) (c' ::ₘ rest) h)
+/-! ⚑ **The old export `honestSlotCR_of_hashcr` (`HashCR → HonestSlotCR`) is DELETED** — a
+FALSE→FALSE bridge: BOTH ends are refuted floors at deployed parameters
+(`hashCR_false_of_compressing` for the hypothesis;
+`BeaconSlotRegrounded.honestSlotCR_false_of_compressing` for the conclusion), so it transported
+nothing. `BeaconSlotRegrounded.honestSlotCR_of_injective` keeps the same bridge content restated over
+the deployment for its vacuity-dissection; the mathematical content (`Multiset.cons_inj_left`
+composed with the hash) survives, DISCHARGED, in
+`RandomnessBeaconRegrounded.hashrand_output_binding_rom` — the honest-slot binding at the sampled
+oracle, floor PROVED. -/
 
 end HashReduction
 
@@ -178,47 +179,33 @@ contribution. Both facts reuse the imported `HermineHintMLWE` machinery. -/
 
 section Unpredictability
 
-/-- **BINDING (reused).** Under `HashCR` of the commitment hash, an honest party cannot open one commitment
-`cm` to two different contributions — it is pinned to the `cᵢ` it committed. This is exactly
-`HermineHintMLWE.commitment_binding`; it is what makes the reveal FORCED, so the output is determined only
-at reveal time. -/
-theorem commit_binds_contribution {Idx Ct C : Type*} (cmCR : CommitReveal Idx Ct C)
-    (hcr : HashCR cmCR) (cm : C) (i : Idx) (c c' : Ct)
-    (ho : cmCR.opens cm i c) (ho' : cmCR.opens cm i c') : c = c' :=
-  commitment_binding cmCR hcr cm i c c' ho ho'
-
-/-- **UNPREDICTABILITY (the core).** Before the honest contribution is revealed, the adversary holds only
-the commitment; the output hash is INJECTIVE in the honest reveal, so distinct possible honest
-contributions produce distinct outputs. Hence no single value is the output for more than one honest
-contribution: the adversary is reduced to GUESSING the committed `cᵢ` (inverting the commitment) — it cannot
-predict the output. Same math as `unbiasable_of_hashcr`, read as the guessing (not steering) game. -/
-theorem output_unpredictable_before_reveal {Idx Ct Adv O : Type*}
-    (outCR : CommitReveal Idx (Ct × Adv) O) (hout : HashCR outCR)
-    (i : Idx) (adv : Adv) (c c' : Ct) (hne : c ≠ c') :
-    beaconViaHash outCR i adv c ≠ beaconViaHash outCR i adv c' :=
-  unbiasable_of_hashcr outCR hout i adv c c' hne
+/-! ⚑ **The old exports `commit_binds_contribution` (`HashCR → c = c'`) and
+`output_unpredictable_before_reveal` (`HashCR → distinct outputs`) are DELETED** — the same refuted
+injectivity floor. The commitment-pinning content survives, DISCHARGED, as
+`RandomnessBeaconRegrounded.hashrand_commit_binding_rom` (the commit-opening game at the sampled
+oracle — an honest party is pinned to ONE contribution except with negligible probability, floor
+PROVED) and `HermineRomBinding.commitReveal_binds_rom` (the generic commit-reveal form); the
+unpredictability content as `beacon_binding_rom` (a published prediction opened by two distinct
+reveals IS a beacon-steering win). The deterministic residue is
+`prediction_matching_two_reveals_breaks_hashcr` below — the extractor witness. -/
 
 /-- **A CORRECT EARLY PREDICTION BREAKS `HashCR`.** If an a-priori prediction `o` (fixed before reveal)
 equals the real output for TWO distinct committed-consistent honest reveals `c ≠ c'`, that is a collision on
 the output hash — it BREAKS `HashCR`. So a prediction can match at most one honest contribution; the
-adversary that predicts the beacon without a revealed honest `cᵢ` has broken the hash. The reduction of
-unpredictability to the named carrier. -/
+adversary that predicts the beacon without a revealed honest `cᵢ` has broken the hash. Retained ONLY
+as the reduction's deterministic extractor witness (a `¬ HashCR` CONCLUSION), never re-exported. -/
 theorem prediction_matching_two_reveals_breaks_hashcr {Idx Ct Adv O : Type*}
     (outCR : CommitReveal Idx (Ct × Adv) O) (i : Idx) (adv : Adv) (o : O)
     (c c' : Ct) (hne : c ≠ c')
     (hpred : beaconViaHash outCR i adv c = o) (hpred' : beaconViaHash outCR i adv c' = o) :
     ¬ HashCR outCR :=
-  fun hcr => (unbiasable_of_hashcr outCR hcr i adv c c' hne) (hpred.trans hpred'.symm)
+  fun hcr => hne (congrArg Prod.fst (hcr i (c, adv) (c', adv) (hpred.trans hpred'.symm)))
 
 end Unpredictability
 
 #assert_axioms beacon_output_determined
 #assert_axioms honest_makes_unbiasable
 #assert_axioms bias_breaks_honest_slot_cr
-#assert_axioms unbiasable_of_hashcr
-#assert_axioms honestSlotCR_of_hashcr
-#assert_axioms commit_binds_contribution
-#assert_axioms output_unpredictable_before_reveal
 #assert_axioms prediction_matching_two_reveals_breaks_hashcr
 
 /-! ## Teeth — the properties FIRE on concrete data (non-vacuity).
@@ -272,11 +259,12 @@ def exBeaconHash : CommitReveal ℕ (ℤ × ℤ) (ℕ × ℤ × ℤ) := ⟨fun i
 
 theorem exBeaconHash_hashcr : HashCR exBeaconHash := fun _ _ _ h => (Prod.ext_iff.mp h).2
 
-/-- **THE HASH REDUCTION FIRES.** Under `HashCR`, distinct honest contributions `5 ≠ 6` (same adversary
-aggregate `1`) hash to distinct beacon outputs — unbiasability from the named carrier, non-vacuously. -/
+/-- **THE HASH REDUCTION FIRES.** Distinct honest contributions `5 ≠ 6` (same adversary aggregate `1`)
+hash to distinct beacon outputs on the injective instance. (Formerly routed through the deleted
+`unbiasable_of_hashcr`; on the concrete instance the distinctness is decidable.) -/
 theorem hash_beacon_unbiasable :
-    beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) ≠ beaconViaHash exBeaconHash 0 (1 : ℤ) (6 : ℤ) :=
-  unbiasable_of_hashcr exBeaconHash exBeaconHash_hashcr 0 1 5 6 (by decide)
+    beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) ≠ beaconViaHash exBeaconHash 0 (1 : ℤ) (6 : ℤ) := by
+  decide
 
 #guard beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) = (0, 5, 1)
 #guard beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) ≠ beaconViaHash exBeaconHash 0 (1 : ℤ) (6 : ℤ)
@@ -286,11 +274,12 @@ def idMultisetHash : CommitReveal Unit (Multiset ℤ) (Multiset ℤ) := ⟨fun _
 
 theorem idMultisetHash_hashcr : HashCR idMultisetHash := fun _ _ _ h => h
 
-/-- **`HonestSlotCR` FROM `HashCR` FIRES.** The beacon induced by a collision-resistant multiset-hash
-satisfies `HonestSlotCR` via `honestSlotCR_of_hashcr` — the honest-slot carrier discharged by the standard
-`HashCR`, non-vacuously (no bespoke carrier assumed). -/
+/-- **`HonestSlotCR` FIRES on the identity multiset-hash.** The beacon induced by the injective
+multiset-hash satisfies `HonestSlotCR` directly (`Multiset.cons_inj_left` on the identity hash) —
+non-vacuously, no bespoke carrier assumed. (Formerly routed through the deleted
+`honestSlotCR_of_hashcr`.) -/
 theorem hashBeacon_honest_slot_cr : HonestSlotCR (beaconOfHash idMultisetHash) :=
-  honestSlotCR_of_hashcr idMultisetHash idMultisetHash_hashcr
+  fun rest c c' h => (Multiset.cons_inj_left rest).mp h
 
 -- The discharged honest slot moves the output: distinct honest contributions give distinct beacons.
 #guard (beaconOfHash idMultisetHash).combine (5 ::ₘ ({1} : Multiset ℤ))

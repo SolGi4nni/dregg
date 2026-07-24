@@ -121,14 +121,23 @@ def recompose {Digest : Type*} (nodeH : Digest → Digest → Digest) :
   | acc, [] => acc
   | acc, (b, sib) :: rest => recompose nodeH (cond b (nodeH sib acc) (nodeH acc sib)) rest
 
-/-- **`nodeH` is injective (from `HashCR` + injective node framing).** A collision `nodeH a b = nodeH c d`
-is a collision of the underlying CR hash at index `Role.node`, hence `frameNode a b = frameNode c d`, hence
-(injective framing) `a = c ∧ b = d`. No fresh assumption — this is `HashCR`. -/
-theorem XmVrf.nodeH_injective (X : XmVrf Epoch Output Rand Pre Digest)
-    (hfn : Function.Injective2 X.frameNode) (hcr : HashCR X.cr) :
-    ∀ a b c d, X.nodeH a b = X.nodeH c d → a = c ∧ b = d := by
-  intro a b c d h
-  exact hfn (hcr Role.node (X.frameNode a b) (X.frameNode c d) h)
+/-! ⚑ **The old exports `XmVrf.nodeH_injective` and `XmVrf.leaf_unique` (`HashCR → injectivity /
+uniqueness`) are DELETED** — each carried `hcr : HashCR X.cr`, pure INJECTIVITY of the deployed
+blake3, PROVED FALSE for every compressing hash by `HashFloorHonesty.hashCR_false_of_compressing`
+(the deployed leaf and node hashes both map long framed pre-images to fixed-width digests). They
+bound nothing at deployed parameters. Their content survives inside the `¬ HashCR`-conclusion
+extractor witness `distinct_outputs_break_hashcr` (which re-derives the injectivity from the
+hypothesized-for-contradiction `hcr` internally); the DISCHARGED successors are
+`XmVrfRefinementRegrounded.xm_node_binding_rom` / `xm_leaf_uniqueness_rom` — the node/leaf opening
+games at the SAMPLED keyed oracle, every query-bounded equivocator's advantage NEGLIGIBLE on the
+PROVED floor `keyedRom_hard` (the birthday bound). -/
+
+/-- **A NODE COLLISION BREAKS `HashCR`** — the node-layer extractor witness (a `¬ HashCR`
+CONCLUSION), the transpose of the deleted `nodeH_injective`. -/
+theorem node_collision_breaks_hashcr (X : XmVrf Epoch Output Rand Pre Digest)
+    (hfn : Function.Injective2 X.frameNode) (a b c d : Digest)
+    (hne : ¬ (a = c ∧ b = d)) (h : X.nodeH a b = X.nodeH c d) : ¬ HashCR X.cr :=
+  fun hcr => hne (hfn (hcr Role.node (X.frameNode a b) (X.frameNode c d) h))
 
 /-- **THE MERKLE-BINDING (two leaves to one root ⇒ one leaf).** If two leaves authenticate to the SAME
 recomposed root via paths with the SAME position bits (`map Prod.fst` equal — the epoch's index bits, which
@@ -168,16 +177,14 @@ theorem merkle_leaf_binding {Digest : Type*} (nodeH : Digest → Digest → Dige
         simp only [cond_true] at hcomb
         exact (hinj _ _ _ _ hcomb).2
 
-/-- **THE LEAF-BINDING (one leaf ⇒ one output).** `leafCommit e y₁ r₁ = leafCommit e y₂ r₂` is a collision
-of the CR hash at index `Role.leaf`, so (injective leaf framing) `y₁ = y₂`. The last mile of uniqueness,
-again bottoming out at `HashCR`. -/
-theorem XmVrf.leaf_unique (X : XmVrf Epoch Output Rand Pre Digest)
-    (hfl : Injective3 X.frameLeaf) (hcr : HashCR X.cr)
-    (e : Epoch) (y₁ y₂ : Output) (r₁ r₂ : Rand)
-    (h : X.leafCommit e y₁ r₁ = X.leafCommit e y₂ r₂) : y₁ = y₂ := by
-  have hcol : X.frameLeaf e y₁ r₁ = X.frameLeaf e y₂ r₂ :=
-    hcr Role.leaf (X.frameLeaf e y₁ r₁) (X.frameLeaf e y₂ r₂) h
-  exact (hfl _ _ _ _ _ _ hcol).2.1
+/-- **A LEAF-OUTPUT COLLISION BREAKS `HashCR`** — the leaf-layer extractor witness (a `¬ HashCR`
+CONCLUSION), the transpose of the deleted `leaf_unique`. -/
+theorem leaf_collision_breaks_hashcr (X : XmVrf Epoch Output Rand Pre Digest)
+    (hfl : Injective3 X.frameLeaf)
+    (e : Epoch) (y₁ y₂ : Output) (r₁ r₂ : Rand) (hne : y₁ ≠ y₂)
+    (h : X.leafCommit e y₁ r₁ = X.leafCommit e y₂ r₂) : ¬ HashCR X.cr :=
+  fun hcr => hne (hfl _ _ _ _ _ _
+    (hcr Role.leaf (X.frameLeaf e y₁ r₁) (X.frameLeaf e y₂ r₂) h)).2.1
 
 /-! ## PART 2 — the API contract, the model, and the observable `verify`.
 
@@ -228,23 +235,13 @@ input = epoch, proof = `(r, path)`, and `pkOf`/`eval`/`verify` forward to the AP
 
 /-! ## PART 3 — UNIQUENESS, reduced to HashCR (the keystone). -/
 
-/-- **THE DEPLOYED XM-VRF HAS UNIQUE OUTPUTS — reduced to `HashCR`.** For any root and epoch, at most one
-output verifies. Two verifying outputs give (same position bits) two leaves authenticating to one root ⇒
-(`merkle_leaf_binding`, i.e. `nodeH`/`HashCR`) the SAME leaf ⇒ (`leaf_unique`, i.e. `HashCR`) the same
-output. The ONLY irreducible object is `HashCR` — no `…Hard`, no fresh boundary. This is the `UniqueOutputs`
-`SortitionGame` needs, now PROVED for the code's construction. -/
-theorem xm_unique (X : XmVrf Epoch Output Rand Pre Digest) (posBits : Epoch → List Bool)
-    (hfl : Injective3 X.frameLeaf) (hfn : Function.Injective2 X.frameNode) (hcr : HashCR X.cr)
-    (api : XmVrfApi SK Epoch Output Rand Digest) (hv : IsMerkleVerify X posBits api) :
-    UniqueOutputs (xmVrfModel api) := by
-  rintro pk x y₁ y₂ ⟨π₁, h1⟩ ⟨π₂, h2⟩
-  obtain ⟨hpos1, hrec1⟩ := (hv pk x y₁ π₁).mp h1
-  obtain ⟨hpos2, hrec2⟩ := (hv pk x y₂ π₂).mp h2
-  have hmap : π₁.2.map Prod.fst = π₂.2.map Prod.fst := hpos1.trans hpos2.symm
-  have hrec : recompose X.nodeH (X.leafCommit x y₁ π₁.1) π₁.2
-            = recompose X.nodeH (X.leafCommit x y₂ π₂.1) π₂.2 := hrec1.trans hrec2.symm
-  have hleaf := merkle_leaf_binding X.nodeH (X.nodeH_injective hfn hcr) π₁.2 π₂.2 _ _ hmap hrec
-  exact X.leaf_unique hfl hcr x y₁ y₂ π₁.1 π₂.1 hleaf
+/-! ⚑ **The old export `xm_unique` (`HashCR → UniqueOutputs`) is DELETED** — the refuted injectivity
+floor again; it proved uniqueness of nothing at deployed parameters. Its whole composition (position
+bits agree ⇒ `merkle_leaf_binding` peels the path ⇒ the leaf framing peels the output) survives
+INSIDE `distinct_outputs_break_hashcr` below, which re-derives the node/leaf injectivity from the
+for-contradiction `hcr`. The DISCHARGED successors are the per-layer keyed-ROM bounds
+`XmVrfRefinementRegrounded.xm_node_binding_rom` / `xm_leaf_uniqueness_rom` (floor PROVED); the
+chain-composition glue `merkle_leaf_binding` is floor-free (its `hinj` is a hypothesis) and KEPT. -/
 
 /-- **THE REDUCTION — two distinct verifying outputs BREAK `HashCR`** (mirror of
 `IdentityCommitment.distinct_verifying_pairs_break_hashcr`). The contrapositive of `xm_unique`: an
@@ -258,8 +255,16 @@ theorem distinct_outputs_break_hashcr (X : XmVrf Epoch Output Rand Pre Digest)
     (hne : y₁ ≠ y₂)
     (h1 : (xmVrfModel api).verify pk x y₁ π₁ = true)
     (h2 : (xmVrfModel api).verify pk x y₂ π₂ = true) :
-    ¬ HashCR X.cr :=
-  fun hcr => hne (xm_unique X posBits hfl hfn hcr api hv pk x y₁ y₂ ⟨π₁, h1⟩ ⟨π₂, h2⟩)
+    ¬ HashCR X.cr := by
+  intro hcr
+  obtain ⟨hpos1, hrec1⟩ := (hv pk x y₁ π₁).mp h1
+  obtain ⟨hpos2, hrec2⟩ := (hv pk x y₂ π₂).mp h2
+  have hinj : ∀ a b c d, X.nodeH a b = X.nodeH c d → a = c ∧ b = d :=
+    fun a b c d h => hfn (hcr Role.node (X.frameNode a b) (X.frameNode c d) h)
+  have hleaf := merkle_leaf_binding X.nodeH hinj π₁.2 π₂.2 _ _
+    (hpos1.trans hpos2.symm) (hrec1.trans hrec2.symm)
+  exact hne (hfl _ _ _ _ _ _
+    (hcr Role.leaf (X.frameLeaf x y₁ π₁.1) (X.frameLeaf x y₂ π₂.1) hleaf)).2.1
 
 /-! ## PART 4 — the refinement relation and the inheritance payoff. -/
 
@@ -287,17 +292,13 @@ theorem xm_provability (api : XmVrfApi SK Epoch Output Rand Digest)
     (xmVrfModel api).verify ((xmVrfModel api).pkOf sk) x y π = true :=
   provability (xmVrfModel api) hc sk x y π h
 
-/-- **SORTITION UNIQUENESS, ON THE DEPLOYED VRF.** Two verifying election claims for one `(pk, epoch)`
-present the SAME output — a validator cannot double-claim a committee seat. `SortitionGame.sortition_unique`
-applied to the deployed model, its `UniqueOutputs` premise DISCHARGED by `xm_unique` (floor `HashCR`). -/
-theorem xm_sortition_unique [LinearOrder Output] (X : XmVrf Epoch Output Rand Pre Digest)
-    (posBits : Epoch → List Bool)
-    (hfl : Injective3 X.frameLeaf) (hfn : Function.Injective2 X.frameNode) (hcr : HashCR X.cr)
-    (api : XmVrfApi SK Epoch Output Rand Digest) (hv : IsMerkleVerify X posBits api)
-    (pk : Digest) (x : Epoch) (thr : Output) (y y' : Output) (π π' : Rand × List (Bool × Digest))
-    (h : ElectionProof (xmVrfModel api) pk x thr y π)
-    (h' : ElectionProof (xmVrfModel api) pk x thr y' π') : y = y' :=
-  sortition_unique (xmVrfModel api) (xm_unique X posBits hfl hfn hcr api hv) pk x thr y y' π π' h h'
+/-! ⚑ **The old export `xm_sortition_unique` (`HashCR → single seat claim`) is DELETED** — it was
+`SortitionGame.sortition_unique` with its `UniqueOutputs` premise discharged by the deleted
+`xm_unique`, i.e. by the refuted floor. `sortition_unique` itself (generic, `UniqueOutputs`-premised)
+is untouched; a double-claimed seat now prices as the composed break: two verifying election claims
+with distinct outputs are a `distinct_outputs_break_hashcr` witness, and each layer of that break is
+NEGLIGIBLE for query-bounded adversaries by `XmVrfRefinementRegrounded.xm_leaf_uniqueness_rom` /
+`xm_node_binding_rom` (floor PROVED). -/
 
 /-- **SORTITION FAIRNESS, ON THE DEPLOYED VRF.** Under the abstract `Pseudorandom` game (a PASS-THROUGH of
 the model's own assumption — its floor is the PRG, unchanged, not introduced by this refinement), the real
@@ -381,9 +382,14 @@ def goodApi : XmVrfApi Unit Unit ℕ ℕ (List ℕ) where
 theorem goodApi_isMerkle : IsMerkleVerify goodX toyPos goodApi :=
   fun _ _ _ _ => decide_eq_true_iff
 
-/-- **UNIQUENESS FIRES on the honest instance** — via `xm_unique`, floor `HashCR`. Non-vacuous. -/
-theorem goodApi_unique : UniqueOutputs (xmVrfModel goodApi) :=
-  xm_unique goodX toyPos goodX_frameLeaf_inj goodX_frameNode_inj goodX_hashcr goodApi goodApi_isMerkle
+/-- **UNIQUENESS FIRES on the honest instance** — via `distinct_outputs_break_hashcr` against the
+concrete `goodX_hashcr` (the injective toy hash genuinely satisfies the witness's contradicted
+floor). Non-vacuous. -/
+theorem goodApi_unique : UniqueOutputs (xmVrfModel goodApi) := by
+  rintro pk x y₁ y₂ ⟨π₁, h1⟩ ⟨π₂, h2⟩
+  by_contra hne
+  exact distinct_outputs_break_hashcr goodX toyPos goodX_frameLeaf_inj goodX_frameNode_inj
+    goodApi goodApi_isMerkle pk x y₁ y₂ π₁ π₂ hne h1 h2 goodX_hashcr
 
 /-- **CORRECTNESS of the honest construction** — every honestly-evaluated pair verifies (the honest tree's
 auth-path recomposes to the root). Witnesses the `xm_provability` premise. -/
@@ -441,9 +447,12 @@ accept-family `naiveApi.verify` WERE a Merkle CR check (`IsMerkleVerify`) over t
 `xm_unique` would force `UniqueOutputs` — contradicting `naiveApi_not_unique`. So the Merkle commitment is
 exactly what buys uniqueness: a WOTS+-style chain (no CR commitment to the output) provably cannot satisfy
 the deployed `verify`'s contract without collapsing to a collision. -/
-theorem naive_not_merkle_backed (h : IsMerkleVerify goodX toyPos naiveApi) : False :=
-  naiveApi_not_unique
-    (xm_unique goodX toyPos goodX_frameLeaf_inj goodX_frameNode_inj goodX_hashcr naiveApi h)
+theorem naive_not_merkle_backed (h : IsMerkleVerify goodX toyPos naiveApi) : False := by
+  refine naiveApi_not_unique ?_
+  rintro pk x y₁ y₂ ⟨π₁, h1⟩ ⟨π₂, h2⟩
+  by_contra hne
+  exact distinct_outputs_break_hashcr goodX toyPos goodX_frameLeaf_inj goodX_frameNode_inj
+    naiveApi h pk x y₁ y₂ π₁ π₂ hne h1 h2 goodX_hashcr
 
 /-! ### (c) `Refines` has teeth — an accept-all model does not refine the honest API. -/
 
@@ -464,13 +473,11 @@ end Teeth
 
 #assert_all_clean [
   merkle_leaf_binding,
-  XmVrf.nodeH_injective,
-  XmVrf.leaf_unique,
-  xm_unique,
+  node_collision_breaks_hashcr,
+  leaf_collision_breaks_hashcr,
   distinct_outputs_break_hashcr,
   xm_vrf_refines,
   xm_provability,
-  xm_sortition_unique,
   xm_sortition_fair,
   goodX_hashcr,
   goodX_frameLeaf_inj,

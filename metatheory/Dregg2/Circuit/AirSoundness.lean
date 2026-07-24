@@ -3,8 +3,9 @@
 effect-VM execution. This is UNIT 2a, the first half of discharging `CircuitSound`.
 
 `Circuit.lean` proves the SINGLE-step bridge `satisfied kernelCircuit (encode s t s') ↔ fullStepInv s t s'`
-(the four conjuncts as arithmetic gates) and, in `section DigestBinding`, that the Rust prover's CR-hash
-digest BINDS the chain trace (`chain_digest_binds` / `chain_digest_binds_chainOk`, reduced to `HashCR`).
+(the four conjuncts as arithmetic gates) and, in `ChainDigestRomBinding`, that the Rust prover's
+digest BINDS the chain trace (`chain_digest_binds_rom`, on the PROVED keyed-ROM floor — the old
+`HashCR`-conditioned forms are deleted, their floor refuted).
 `Crypto/TurnSoundness.lean` carries the honest boundary hypothesis `CircuitSound applyEff checks`:
 `∀ π old eff new, checks π old eff new → new = applyEff eff old`.
 
@@ -40,14 +41,16 @@ i.e. *acceptance of the low-degree/query verifier `verifyLD` on `(π, com)` impl
 that the commitment opens to satisfies the transition constraints.* Unit 2b PROVES this from the FRI
 soundness bound; this file never assumes it as closed — it is carried as an explicit hypothesis exactly
 like `CircuitSound` is in `TurnSoundness`, and named so 2b has a precise target. The Merkle *binding* leg
-(the opened trace is UNIQUE for a commitment/digest) is already `Circuit.chain_digest_binds` (→ `HashCR`),
-re-exposed here as `committed_trace_pinned`.
+(the opened trace is UNIQUE for a commitment/digest) is `ChainDigestRomBinding.chain_digest_binds_rom` — the
+keyed-ROM digest-opening bound on the PROVED floor `keyedRom_hard`; the old deterministic re-exposure
+(`committed_trace_pinned`, `HashCR`-conditioned) is DELETED, its floor refuted at every compressing
+digest (`hashCR_false_of_compressing`).
 
 ## Residual
 
-`HashCR` (Merkle/digest binding — the hash floor, via `Circuit.chain_digest_binds`) + the named
-`FriProximity` interface (low-degree proximity — to be PROVED by unit 2b, never assumed forever). No
-`…Hard` carrier, no `:= True`, no laundered assumption.
+The keyed-ROM digest binding (`ChainDigestRomBinding.chain_digest_binds_rom` — a labelled random-oracle MODELLING
+step, floor PROVED) + the named `FriProximity` interface (low-degree proximity — to be PROVED by unit
+2b, never assumed forever). No `…Hard` carrier, no `:= True`, no laundered assumption.
 
 ## Teeth (all load-bearing, both instances exhibited)
 
@@ -237,7 +240,8 @@ accepted proof forces `new = applyEff eff old`. Chain: `airChecks` acceptance �
 single-row trace satisfies the transition constraints ⇒ (its boundary is the public `old`/`new`) it
 satisfies ALL constraints ⇒ (`air_sound_single`) `new = applyEff eff old`. This is unit 2a's contribution
 to discharging the `CircuitSound` hypothesis of `Crypto.TurnSoundness.turn_sound`; the only residual is
-the named `FriProximity` (unit 2b) and, for Merkle binding, `HashCR` (`committed_trace_pinned`). -/
+the named `FriProximity` (unit 2b) and, for Merkle binding, the keyed-ROM digest binding
+(`ChainDigestRomBinding.chain_digest_binds_rom` — the deleted `committed_trace_pinned`'s successor, §6). -/
 theorem circuit_sound_via_fri (applyEff : Effect → State → State)
     (verifyLD : Proof → Commitment → Prop)
     (openTr : Commitment → Step State Effect × List (Step State Effect))
@@ -253,33 +257,31 @@ theorem circuit_sound_via_fri (applyEff : Effect → State → State)
     ⟨htrans, rfl, rfl⟩
   exact air_sound_single applyEff old eff new hfull
 
-/-! ## §6 — Merkle binding leg: the digest pins the committed trace (reuse `Circuit.chain_digest_binds`).
+/-! ## §6 — Merkle binding leg: the digest pins the committed trace (keyed-ROM successor).
 
 `FriProximity` gives "the committed trace satisfies the constraints". The companion guarantee — the
-committed trace is UNIQUE for its digest (the prover can't open one commitment to two traces) — is exactly
-`Circuit.chain_digest_binds`, already reduced to `HashCR` in `Circuit.lean`'s `section DigestBinding`. We
-re-expose it here on the AIR trace type so the two legs sit together: FRI proximity (2b) + Merkle binding
-(`HashCR`) ⇒ the digest the verifier checks pins the exact trace `air_sound` reasons about. -/
+committed trace is UNIQUE for its digest (the prover can't open one commitment to two traces) — is
+`ChainDigestRomBinding.chain_digest_binds_rom` (its own leaf module, downstream of the ROM kit): FRI proximity (2b) +
+the keyed-ROM digest binding ⇒ the digest the verifier checks pins the exact trace `air_sound`
+reasons about, except with negligible probability. -/
 
-/-- **`committed_trace_pinned` — the digest binds the AIR trace UNIQUELY (→ `HashCR`).** Instantiates
-`Circuit.chain_digest_binds` at the AIR trace type: under `HashCR` and an injective framing, two traces
-that both recompute the claimed digest are equal. So a prover cannot serve one digest for two different
-committed traces — the trace `air_sound` consumes is the one the verifier's digest check pins. -/
-theorem committed_trace_pinned {Pre Dig : Type*}
-    (cr : CommitReveal Unit Pre Dig)
-    (frame : (Step State Effect × List (Step State Effect)) → Pre)
-    (hinj : Function.Injective frame) (hcr : HashCR cr) (dig : Dig)
-    (tr tr' : Step State Effect × List (Step State Effect))
-    (h : Dregg2.Circuit.verifyDigest cr frame dig tr)
-    (h' : Dregg2.Circuit.verifyDigest cr frame dig tr') : tr = tr' :=
-  Dregg2.Circuit.chain_digest_binds cr frame hinj hcr dig tr tr' h h'
+/-! ⚑ **The old export `committed_trace_pinned` (`HashCR → tr = tr'`) is DELETED** — it instantiated
+`Circuit.chain_digest_binds` (itself deleted) at the AIR trace type, and its `HashCR` hypothesis is
+pure injectivity of the digest hash, PROVED FALSE for every compressing digest
+(`HashFloorHonesty.hashCR_false_of_compressing`), so it pinned nothing at deployed parameters. Its
+deterministic content survives as `Circuit.distinct_traces_break_hashcr` (a `¬ HashCR`-conclusion
+extractor witness, at any framed trace type); the DISCHARGED successor is
+`ChainDigestRomBinding.chain_digest_binds_rom` — the digest-opening game at the SAMPLED keyed oracle, every
+query-bounded trace-equivocator's advantage NEGLIGIBLE on the PROVED floor `keyedRom_hard` (the
+birthday bound), with the AIR trace entering through the honest finite truncation
+(`RomCarrierSites.BVec`, lossless by `bvecOfList_inj`). The trace `air_sound` consumes is pinned by
+the verifier's digest check except with negligible probability, in that model. -/
 
 #assert_axioms lastPost_eq_vmResult
 #assert_axioms air_sound
 #assert_axioms air_sound_new_eq_run
 #assert_axioms air_sound_single
 #assert_axioms circuit_sound_via_fri
-#assert_axioms committed_trace_pinned
 
 /-! ## §7 — TEETH (all load-bearing, both instances exhibited).
 

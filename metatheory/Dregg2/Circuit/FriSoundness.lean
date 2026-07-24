@@ -31,8 +31,9 @@ proximity-gaps refinement of Ben-Sasson, Carmon, Ishai, Kopparty, Saraf, FOCS 20
 
 4. **SOUNDNESS + the reduction** (`§4`). `query_sound_of_cover` (a query set covering the
    disagreement forces the committed next-oracle to equal the true fold), the Merkle
-   binding (`HashCR`: the committed root binds the oracle, `oracle_binding` /
-   `equivocation_breaks_binding`), and `fri_fold_soundness` — an accepting-yet-far
+   binding (the `¬ HashCR`-conclusion witness `equivocation_breaks_binding`; the discharged
+   keyed-ROM successor is `FloorRegroundedConsumers.friOracle_binding_binds_rom` — the old
+   `HashCR`-conditioned `oracle_binding` is DELETED, floor refuted), and `fri_fold_soundness` — an accepting-yet-far
    transcript forces the challenge into the `≤1`-element exceptional set OR a hash
    collision. `FriProximity` + `friProximity_discharge` is the interface the AIR-soundness
    unit (2a) consumes: an accepted oracle is δ-close to a low-degree codeword, so the
@@ -45,7 +46,8 @@ challenge (`α = 4`) and the fold at a bad challenge (`α = 0`) leaves the code 
 LEMMA bound witnessed non-vacuously. The Merkle binding is load-bearing: a colliding
 commitment lets the prover equivocate the oracle (`equivocation_breaks_binding`).
 
-Residual: `HashCR` (the standard hash-collision floor) + the field/rate parameters.
+Residual: the keyed-ROM Merkle binding (`friOracle_binding_binds_rom`, floor PROVED — the old
+`HashCR` residual is deleted, refuted at every compressing commitment) + the field/rate parameters.
 The tight proximity-gaps constant (no `4×` loss, up to the Johnson bound) is a QUANTITATIVE
 improvement over the elementary two-point constant proved here — noted, not open.
 -/
@@ -333,10 +335,11 @@ values. Two ingredients close soundness:
   `disagree(f', Fold α f)` and every check passes, the committed next-oracle EQUALS the
   true fold. (The probabilistic "coverage w.h.p." is the `(1-γ)ˢ` soundness term; here it
   is the deterministic core.)
-* **Merkle binding** (`oracle_binding`, reusing `HashCR`): the committed root binds the
-  oracle — the prover cannot open one root to two different functions, so the queried
-  values ARE `f`'s / `f'`'s values (no equivocation). Without `HashCR` the prover
-  equivocates (`equivocation_breaks_binding`) and soundness FAILS. -/
+* **Merkle binding**: the committed root binds the oracle — the prover cannot open one
+  root to two different functions, so the queried values ARE `f`'s / `f'`'s values (no
+  equivocation). The deterministic `¬ HashCR` witness is `equivocation_breaks_binding`;
+  the DISCHARGED bound is `FloorRegroundedConsumers.friOracle_binding_binds_rom` (keyed-ROM
+  floor, PROVED — the old `HashCR`-conditioned `oracle_binding` is deleted, floor refuted). -/
 
 /-- **Query soundness (coverage core).** If the query set `Q` covers `disagree(f', Fold α f)`
 and every queried point passes the fold check, then `f' = Fold α f` as functions. -/
@@ -355,13 +358,15 @@ theorem query_sound_of_cover {f : ι → F} {f' : κ → F} {α : F} (Q : Finset
 says `f` is the committed function. -/
 abbrev OracleCR (F ι Digest : Type*) := CommitReveal Unit (ι → F) Digest
 
-/-- **MERKLE BINDING (reused `HashCR`).** Under collision resistance, the committed root
-binds the oracle: two functions opening the same root are equal. The prover cannot
-equivocate the values the verifier queries. -/
-theorem oracle_binding {Digest : Type*} (cr : OracleCR F ι Digest) (hcr : HashCR cr)
-    {root : Digest} {f f' : ι → F}
-    (ho : cr.opens root () f) (ho' : cr.opens root () f') : f = f' :=
-  Dregg2.Crypto.HermineHintMLWE.commitment_binding cr hcr root () f f' ho ho'
+/-! ⚑ **The old export `oracle_binding` (`HashCR → f = f'`) is DELETED** — its `hcr : HashCR`
+hypothesis is pure injectivity of the root hash, PROVED FALSE for every compressing commitment
+(`HashFloorHonesty.hashCR_false_of_compressing`), so it bound nothing at deployed parameters. Its
+deterministic content survives as `equivocation_breaks_binding` below (a `¬ HashCR` CONCLUSION —
+retained ONLY as the reduction's extractor witness, never re-exported as a floor). The DISCHARGED
+successor is `FloorRegroundedConsumers.friOracle_binding_binds_rom`: the per-query FRI layer opening
+at the SAMPLED keyed oracle, every query-bounded equivocator's advantage NEGLIGIBLE on the PROVED
+floor `KeyedRomFloor.keyedRom_hard` (the birthday bound), with the extractor re-walking the path and
+PAYING its `2·depth` queries (`Crypto.RomMerkleOpening`). -/
 
 /-- **Equivocation BREAKS binding.** If the prover opens ONE root to two DISTINCT oracles
 `f ≠ f'`, it witnesses a hash collision — `HashCR` fails. This is the load-bearing role of
@@ -603,9 +608,10 @@ theorem badOracle_equivocates : ¬ HashCR badOracleCR := by
 
 end Teeth
 
-/-! ## §6. Axiom hygiene — the theorems rest only on the standard kernel axioms plus the
-`HashCR` floor (entering as a hypothesis on `oracle_binding`, never an `axiom`). No `sorry`,
-no `def …Hard`, no smuggled hardness. -/
+/-! ## §6. Axiom hygiene — the theorems rest only on the standard kernel axioms. `HashCR`
+appears only in CONCLUSION position (`equivocation_breaks_binding`, the extractor witness) —
+never as a floor hypothesis and never an `axiom`. No `sorry`, no `def …Hard`, no smuggled
+hardness. -/
 
 #assert_axioms fold_close_of_two_alpha
 #assert_axioms good_alpha_subsingleton
@@ -615,7 +621,6 @@ no `def …Hard`, no smuggled hardness. -/
 #assert_axioms friProximity_discharge
 #assert_axioms air_binds_of_proximity
 #assert_axioms far_propagates_chain
-#assert_axioms oracle_binding
 #assert_axioms equivocation_breaks_binding
 
 end Dregg2.Circuit.FriSoundness

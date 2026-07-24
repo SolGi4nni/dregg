@@ -52,6 +52,7 @@ Mirrors `CapabilityChain.lean`'s style throughout (the `honestDelegation` invari
 -/
 import Dregg2.Crypto.HybridCombiner
 import Dregg2.Crypto.HermineHintMLWE
+import Dregg2.Crypto.HermineRomBinding
 import Dregg2.Tactics
 import Mathlib.Data.Finset.Basic
 
@@ -86,41 +87,40 @@ def Absent (tree : CommitReveal Unit (Finset Id) Digest) (root : Digest) (id : I
 
 /-! ### Merkle binding — a root determines its member set. -/
 
-/-- **`merkle_root_binds`.** Under `HashCR`, equal roots force equal member sets: the root is a binding
-commitment to the revoked set. This is exactly `HashCR` on the committed domain. -/
-theorem merkle_root_binds (tree : CommitReveal Unit (Finset Id) Digest) (hcr : HashCR tree)
-    (s s' : Finset Id) (h : tree.H () s = tree.H () s') : s = s' :=
-  hcr () s s' h
+/-! ⚑ **The old exports `merkle_root_binds` (`HashCR → s = s'`), `revoked_cannot_prove_absence` and
+`absence_excludes_membership` (`HashCR → False`) are DELETED** — each carried `hcr : HashCR tree`,
+pure INJECTIVITY of the root hash on the (unbounded) committed set domain, PROVED FALSE for every
+compressing commitment by `HashFloorHonesty.hashCR_false_of_compressing` (a fixed-width Merkle root
+over arbitrarily many revoked-set states IS compressing). They transported nothing at deployed
+parameters. Their deterministic content survives as the `¬ HashCR`-conclusion extractor witnesses
+below; the DISCHARGED successors are §ROM's `revocationRoot_binds_rom` — the root-opening game at the
+SAMPLED keyed oracle, every query-bounded set-equivocator's advantage NEGLIGIBLE on the PROVED floor
+`KeyedRomFloor.keyedRom_hard` (the birthday bound), with `hidden_revocation_is_break` transporting
+the hide-a-revocation break into that game. -/
 
-/-- **Distinct member sets with the same root ARE a hash collision** — the contrapositive of
-`merkle_root_binds`: two different revoked sets hashing to one root break `HashCR`. -/
+/-- **Distinct member sets with the same root ARE a hash collision.** Retained ONLY as the reduction's
+deterministic extractor witness (a `¬ HashCR` CONCLUSION), never re-exported as a floor. -/
 theorem distinct_sets_collide (tree : CommitReveal Unit (Finset Id) Digest)
     (s s' : Finset Id) (hne : s ≠ s') (h : tree.H () s = tree.H () s') : ¬ HashCR tree :=
-  fun hcr => hne (merkle_root_binds tree hcr s s' h)
+  fun hcr => hne (hcr () s s' h)
 
-/-- **`revoked_cannot_prove_absence` (THE CORE) — you cannot hide a revocation.** If `id ∈ revoked`
-(hence in the tree under the honest root `tree.H () revoked`), then NO absence witness against that same
-root can exist while `HashCR` holds: such a witness would open the root to a set `s` with `id ∉ s`, but
-binding forces `s = revoked ∋ id` — a contradiction. Presenting a valid absence for a revoked id against
-its own root is exactly a hash collision. -/
-theorem revoked_cannot_prove_absence (tree : CommitReveal Unit (Finset Id) Digest) (hcr : HashCR tree)
+/-- **An absence witness for a REVOKED id IS a hash collision** — the extractor witness carrying the
+deleted `revoked_cannot_prove_absence`'s content: an absence witness against the honest root opens it
+to a set omitting `id`, which differs from `revoked ∋ id`, so the two openings collide. -/
+theorem absence_for_revoked_breaks_hashcr (tree : CommitReveal Unit (Finset Id) Digest)
     (revoked : Finset Id) (id : Id) (hin : id ∈ revoked)
-    (hAbs : Absent tree (tree.H () revoked) id) : False := by
+    (hAbs : Absent tree (tree.H () revoked) id) : ¬ HashCR tree := by
   obtain ⟨s, hopen, hnotin⟩ := hAbs
-  have hs : s = revoked := merkle_root_binds tree hcr s revoked hopen
-  rw [hs] at hnotin
-  exact hnotin hin
+  exact distinct_sets_collide tree s revoked (fun hc => hnotin (by rw [hc]; exact hin)) hopen
 
-/-- **`absence_excludes_membership`.** Under `HashCR`, no root admits BOTH an absence witness and a
-membership proof for the same id: they would open the root to one set both containing and not containing
-`id`. (A client that accepts an absence proof is sound against a concurrent membership claim.) -/
-theorem absence_excludes_membership (tree : CommitReveal Unit (Finset Id) Digest) (hcr : HashCR tree)
-    (root : Digest) (id : Id) (hAbs : Absent tree root id) (hMem : Members tree root id) : False := by
+/-- **An absence witness AND a membership proof at one root ARE a hash collision** — the extractor
+witness carrying the deleted `absence_excludes_membership`'s content. -/
+theorem absence_and_membership_break_hashcr (tree : CommitReveal Unit (Finset Id) Digest)
+    (root : Digest) (id : Id) (hAbs : Absent tree root id) (hMem : Members tree root id) :
+    ¬ HashCR tree := by
   obtain ⟨s, hs, hns⟩ := hAbs
   obtain ⟨s', hs', hms⟩ := hMem
-  have : s = s' := merkle_root_binds tree hcr s s' (hs.trans hs'.symm)
-  rw [this] at hns
-  exact hns hms
+  exact distinct_sets_collide tree s s' (fun hc => hns (by rw [hc]; exact hms)) (hs.trans hs'.symm)
 
 /-- **A genuinely-absent id has an absence witness** — the completeness/liveness direction: if
 `id ∉ revoked`, the client legitimately accepts non-revocation against the honest root (the honest
@@ -224,31 +224,20 @@ theorem forged_non_revocation_breaks_cr_or_forges
     intro hcr
     have hr : att.root = tree.H () (trueRevoked att.epoch) := honest _ _ hq
     have hopen' : tree.H () witnessSet = tree.H () (trueRevoked att.epoch) := by rw [hopen, hr]
-    have hs : witnessSet = trueRevoked att.epoch := merkle_root_binds tree hcr _ _ hopen'
+    have hs : witnessSet = trueRevoked att.epoch := hcr () _ _ hopen'
     rw [hs] at habsent
     exact habsent hrevoked
   · -- Never-signed: the accepted attestation is a fresh forgery.
     exact Or.inr (forged_attestation_is_a_signature_forgery S bodyEnc authorityPk Q att hverify hq)
 
-/-- **`revocation_sound` — under `HashCR` AND the authority's `EufCma`, no revoked token is accepted as
-un-revoked.** The contrapositive of the dichotomy: if the Merkle tree is collision-resistant and the
-authority's signature is unforgeable, a client CANNOT be made to accept a genuinely-revoked id. This is
-revocation soundness relative to the two named carriers. -/
-theorem revocation_sound
-    (S : SigScheme SK PK Msg Sig) (tree : CommitReveal Unit (Finset Id) Digest)
-    (bodyEnc : Digest → Epoch → Msg) (authorityPk : PK) (Q : Msg → Prop)
-    (trueRevoked : Epoch → Finset Id)
-    (hcr : HashCR tree) (heuf : EufCma S authorityPk Q)
-    (honest : HonestAttestation tree bodyEnc Q trueRevoked)
-    (att : AttestedRoot Digest Epoch Sig) (witnessSet : Finset Id) (id : Id)
-    (hverify : verifyAttested S bodyEnc authorityPk att)
-    (hrevoked : id ∈ trueRevoked att.epoch)
-    (hopen : tree.H () witnessSet = att.root)
-    (habsent : id ∉ witnessSet) :
-    False :=
-  (forged_non_revocation_breaks_cr_or_forges S tree bodyEnc authorityPk Q trueRevoked honest
-      att witnessSet id hverify hrevoked hopen habsent).elim
-    (fun hbreak => hbreak hcr) heuf
+/-! ⚑ **The old export `revocation_sound` (`HashCR ∧ EufCma → False`) is DELETED** — its
+`hcr : HashCR tree` hypothesis is refuted at every compressing root hash, so the deterministic
+soundness held vacuously at deployed parameters. What survives and what replaces it: the DICHOTOMY
+`forged_non_revocation_breaks_cr_or_forges` above (NO floor hypothesis — the reduction core: a forged
+non-revocation IS a `¬ HashCR` witness OR a signature `Forgery`); the hash horn DISCHARGED on the
+proved keyed-ROM floor (§ROM below, `revocationRoot_binds_rom`); and the signature horn exactly where
+it was (`EufCma`, discharged by `HybridCombiner`'s forking reductions — not a hash floor, untouched by
+this campaign). -/
 
 /-! ## ANCHORING — revocation soundness reduces to `HashCR ∨ (SchnorrDLHard ∨ MSISHard)`.
 
@@ -258,42 +247,72 @@ Module-SIS floor, exactly as `CapabilityChain.chain_unforgeable_under_hybrid_flo
 chain's keys. Revocation soundness therefore holds if `HashCR` holds AND EITHER cryptographic floor
 does — the last protocol game bottoming out at the SAME floors as the whole tree. -/
 
-/-- **THE HEADLINE — `revocation_sound_under_floor`.** With the per-key forking reductions (a hybrid
-forgery ⟹ a `DLSolver` on the classical side, two SelfTargetMSIS solutions on the pq side — the
-`HybridCombiner` reductions, not carriers), a client cannot accept a genuinely-revoked id as un-revoked
-provided `HashCR tree` holds AND `SchnorrDLHard C G ∨ MSISHard (augmented A t) …`. The authority's
-`EufCma` is produced by `hybrid_secure_if_either_floor`; the ONLY irreducible objects are the tree's
-`HashCR` and the discrete-log / Module-SIS floors. This CLOSES the crypto tree: forging non-revocation
-requires breaking the Merkle hash OR the hybrid signature, and the latter needs BOTH the discrete-log
-and lattice floors to fall. -/
-theorem revocation_sound_under_floor
-    {SKc PKc Sigc SKp PKp Sigp : Type*}
-    (Cl : SigScheme SKc PKc Msg Sigc) (Pq : SigScheme SKp PKp Msg Sigp)
-    (pkc : PKc) (pkp : PKp)
-    (C : CurveGroup) (G : C.Pt)
-    {Rq : Type*} [CommRing Rq] [ShortNorm Rq]
-    {Mo : Type*} [AddCommGroup Mo] [Module Rq Mo] [ShortNorm Mo]
-    {No : Type*} [AddCommGroup No] [Module Rq No] [ShortNorm No]
-    (A : Mo →ₗ[Rq] No) (t : No) (β : ℕ)
-    (tree : CommitReveal Unit (Finset Id) Digest) (bodyEnc : Digest → Epoch → Msg)
-    (Q : Msg → Prop) (trueRevoked : Epoch → Finset Id)
-    (dlFork : Forgery Cl pkc Q → DLSolver C G)
-    (msisFork : Forgery Pq pkp Q →
-      ∃ (w : No) (c c' : Rq) (z z' : Mo), c ≠ c' ∧
-        IsSelfTargetMSISSolution A t β z c w ∧ IsSelfTargetMSISSolution A t β z' c' w)
-    (hcr : HashCR tree)
-    (hfloor : SchnorrDLHard C G ∨ MSISHard (augmented A t) ((β + β) + (β + β)))
-    (honest : HonestAttestation tree bodyEnc Q trueRevoked)
-    (att : AttestedRoot Digest Epoch (Sigc × Sigp)) (witnessSet : Finset Id) (id : Id)
-    (hverify : verifyAttested (hybrid Cl Pq) bodyEnc (pkc, pkp) att)
-    (hrevoked : id ∈ trueRevoked att.epoch)
-    (hopen : tree.H () witnessSet = att.root)
-    (habsent : id ∉ witnessSet) :
-    False := by
-  have heuf : EufCma (hybrid Cl Pq) (pkc, pkp) Q :=
-    hybrid_secure_if_either_floor Cl Pq pkc pkp Q C G A t β dlFork msisFork hfloor
-  exact revocation_sound (hybrid Cl Pq) tree bodyEnc (pkc, pkp) Q trueRevoked hcr heuf honest
-    att witnessSet id hverify hrevoked hopen habsent
+/-! ⚑ **The old headline `revocation_sound_under_floor` is DELETED with it** — it was
+`revocation_sound` with the `EufCma` leg discharged through `hybrid_secure_if_either_floor`, still
+carrying the refuted `hcr : HashCR` AND the Boolean existence floors `SchnorrDLHard`/`MSISHard`.
+Its honest residue is the dichotomy plus the per-horn discharges named in the deletion note above;
+recomposing them into one deterministic `False` needs the refuted deterministic hash floor, which is
+exactly what cannot be had. -/
+
+/-! ## §ROM — the root binding, DISCHARGED on the keyed-ROM floor (the successor).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)**, exactly `Crypto.RomCarrierSites`' header: the fixed
+deployed root hash is idealised as a SAMPLED keyed random oracle over the (finite) revoked-set domain
+at an ASYMPTOTIC digest width `Fin (2 ^ l)` — a deliberate labelled idealisation, NOT a derivation
+about the fixed hash. What it buys: the floor under the binding is `keyedRom_hard` (the birthday
+bound, a THEOREM). What it does not buy: any statement about the fixed public hash itself. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv)
+open Dregg2.Crypto.RomCarrierSites (romOpenGame RomOpenEff rom_open_binds romOpen_forger_excluded)
+open Dregg2.Crypto.HermineRomBinding (crRomFamily crRomCarrier crRomFamily_card_R)
+
+variable (IdT : Type) [Fintype IdT] [DecidableEq IdT] [Nonempty IdT]
+
+/-- **THE ROOT-OPENING GAME AT THE SAMPLED ORACLE.** The adversary publishes a root and two revoked
+sets; it WINS iff the sets are DISTINCT and BOTH open the published root. -/
+abbrev revocationRootRomGame : Game :=
+  romOpenGame (crRomFamily Unit (Finset IdT)) (crRomCarrier Unit (Finset IdT))
+
+/-- **THE DEPLOYED BREAK IS A WIN** — `distinct_sets_collide`, restated at the sampled oracle. -/
+theorem revocationRoot_equivocation_is_break (l : ℕ)
+    (H : (revocationRootRomGame IdT).Inst l) (root : Fin (2 ^ l)) {s s' : Finset IdT}
+    (hne : s ≠ s') (h : H ((), s) = root) (h' : H ((), s') = root) :
+    (revocationRootRomGame IdT).wins l H (root, ((), ()), s, s') :=
+  ⟨hne, h, h'⟩
+
+/-- **HIDING A REVOCATION IS A WIN** — the successor shape of the deleted
+`revoked_cannot_prove_absence`: the honest revoked set (containing `id`) and an absence set
+(omitting `id`) both opening one published root are a win, because the sets differ at `id`. -/
+theorem hidden_revocation_is_break (l : ℕ) (H : (revocationRootRomGame IdT).Inst l)
+    (root : Fin (2 ^ l)) {revoked s : Finset IdT} {id : IdT}
+    (hin : id ∈ revoked) (hout : id ∉ s)
+    (h : H ((), revoked) = root) (h' : H ((), s) = root) :
+    (revocationRootRomGame IdT).wins l H (root, ((), ()), revoked, s) :=
+  ⟨fun hc => hout (by have hc' : revoked = s := hc; rw [← hc']; exact hin), h, h'⟩
+
+/-- **⚑⚑ THE ROOT BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`merkle_root_binds` / `revoked_cannot_prove_absence` / `absence_excludes_membership`: every
+query-bounded adversary that opens one published revocation root with two distinct sets has
+NEGLIGIBLE advantage, in the keyed ROM model of the §-header. Nothing refutable carried. -/
+theorem revocationRoot_binds_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (revocationRootRomGame IdT))
+    (hA : RomOpenEff (crRomFamily Unit (Finset IdT)) (crRomCarrier Unit (Finset IdT)) Q A) :
+    Negl (gameAdv (revocationRootRomGame IdT) A) :=
+  rom_open_binds _ _ Q hQ (crRomFamily_card_R Unit (Finset IdT)) A hA
+
+/-- **(TOOTH — a non-negligible set-equivocator is OUTSIDE the class.)** -/
+theorem revocationRoot_forger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (revocationRootRomGame IdT))
+    (hnn : ¬ Negl (gameAdv (revocationRootRomGame IdT) A)) :
+    ¬ RomOpenEff (crRomFamily Unit (Finset IdT)) (crRomCarrier Unit (Finset IdT)) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (crRomFamily_card_R Unit (Finset IdT)) A hnn
+
+end RomSuccessor
 
 /-! ## Teeth — the guarantees FIRE on concrete data, and each carrier is load-bearing.
 
@@ -320,11 +339,11 @@ theorem bindTree_hashcr : HashCR bindTree := fun _ _ _ h => h
 theorem tooth_nonrevoked_accepted : Absent bindTree (bindTree.H () ({1} : Finset ℕ)) 2 :=
   nonrevoked_has_absence bindTree {1} 2 (by decide)
 
-/-- **Revoked id's absence-proof REJECTED (the `HashCR` tooth fires).** With `1 ∈ {1}` revoked, NO
-absence witness against the honest root can exist — `revoked_cannot_prove_absence` turns any such
+/-- **Revoked id's absence-proof REJECTED (the tooth fires).** With `1 ∈ {1}` revoked, NO absence
+witness against the honest root can exist — `absence_for_revoked_breaks_hashcr` turns any such
 witness into a collision, contradicting `bindTree_hashcr`. You cannot hide the revocation of `1`. -/
 theorem tooth_revoked_no_absence : ¬ Absent bindTree (bindTree.H () ({1} : Finset ℕ)) 1 :=
-  fun h => revoked_cannot_prove_absence bindTree bindTree_hashcr {1} 1 (by decide) h
+  fun h => absence_for_revoked_breaks_hashcr bindTree {1} 1 (by decide) h bindTree_hashcr
 
 /-- A COLLIDING revocation tree: `H () s = 0` for every set — every root is `0`, so distinct sets
 collide (`equivocation`-style, à la `HermineHintMLWE.badCR`). -/
@@ -398,16 +417,17 @@ end Teeth
 /-! ### Axiom hygiene. -/
 
 #assert_all_clean [
-  merkle_root_binds,
   distinct_sets_collide,
-  revoked_cannot_prove_absence,
-  absence_excludes_membership,
+  absence_for_revoked_breaks_hashcr,
+  absence_and_membership_break_hashcr,
   nonrevoked_has_absence,
   forged_attestation_is_a_signature_forgery,
   wrong_root_for_epoch_is_forgery,
   forged_non_revocation_breaks_cr_or_forges,
-  revocation_sound,
-  revocation_sound_under_floor,
+  revocationRoot_equivocation_is_break,
+  hidden_revocation_is_break,
+  revocationRoot_binds_rom,
+  revocationRoot_forger_excluded,
   bindTree_hashcr,
   tooth_nonrevoked_accepted,
   tooth_revoked_no_absence,

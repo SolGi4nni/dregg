@@ -103,8 +103,7 @@ import Dregg2.Crypto.FloorGames
 namespace Dregg2.Crypto.BeaconSlotRegrounded
 
 open Dregg2.Crypto.RandomnessBeacon
-  (Beacon HonestSlotCR honest_makes_unbiasable bias_breaks_honest_slot_cr beaconOfHash
-   honestSlotCR_of_hashcr)
+  (Beacon HonestSlotCR honest_makes_unbiasable bias_breaks_honest_slot_cr beaconOfHash)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR

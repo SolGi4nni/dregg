@@ -38,11 +38,12 @@ The `AcceptedHistory` structure IS what the light client builds as it folds. The
    (same object), and — `lightclient_no_fork` — the accepted history never contains two conflicting
    blocks at one height (`consensus_safe_under_floor`), so the light client and a full node never
    disagree.
-4. **`no_long_range`** — a history signed by a NON-ENROLLED committee is REJECTED: an attacker who
-   keeps the honest ids but swaps in its OWN ml_dsa keys fails the enrollment gate
-   (`attacker_key_not_committed`), because the ids do not commit those keys; and accepting it would
-   exhibit a hash collision (`accepting_long_range_breaks_hashcr`, `distinct_verifying_pairs_break_
-   hashcr`). This is the anti-long-range / anti-pale-ghost tooth.
+4. **ANTI-LONG-RANGE** — a history signed by a NON-ENROLLED committee: accepting an attacker who
+   keeps the honest ids but swaps in its OWN ml_dsa keys EXHIBITS a hash collision
+   (`accepting_long_range_breaks_hashcr`, the `¬ HashCR`-conclusion extractor witness). ⚑ The old
+   deterministic `no_long_range` (`HashCR`-conditioned rejection) is DELETED (floor refuted at every
+   compressing commitment); the discharged successor is `IdentityCommitmentRegrounded`'s keyed-ROM
+   opening bound (floor PROVED). This is the anti-long-range / anti-pale-ghost tooth.
 
 ## No named-carrier laundering
 
@@ -251,18 +252,15 @@ theorem lightclient_no_fork
 
 /-! ## §5. `no_long_range` — a non-enrolled committee is REJECTED by the id-commitment. -/
 
-/-- **`no_long_range` — THE ANTI-LONG-RANGE TOOTH.** An attacker who reuses the honest ids and
-`ed25519` keys but swaps in its OWN `ml_dsa` key `mlAtt m₀ ≠ mlPk m₀` for a member is REJECTED by the
-enrollment gate: `verify_committed (id m₀) (edPk m₀) (mlAtt m₀)` FAILS. Under `HashCR`, passing it
-would (by `id_commitment_binds`) force `(edPk, mlAtt) = (edPk, mlPk)`, contradicting the swap. So a
-history signed by a non-enrolled committee cannot even be admitted: the ids do NOT commit those keys. -/
-theorem no_long_range
-    (R : @Roster PKc PKp Member Pre IdT) (henroll : Enrolled R) (hcr : HashCR R.cr)
-    (mlAtt : Member → PKp) (m₀ : Member) (hm₀ : m₀ ∈ R.committee)
-    (hdiff : R.mlPk m₀ ≠ mlAtt m₀) :
-    ¬ verify_committed R.cr R.frame (R.id m₀) (R.edPk m₀) (mlAtt m₀) :=
-  attacker_key_not_committed R.cr R.frame R.hframe hcr (R.id m₀) (R.edPk m₀)
-    (R.mlPk m₀) (mlAtt m₀) (fun h => hdiff (congrArg Prod.snd h)) (henroll m₀ hm₀)
+/-! ⚑ **The old export `no_long_range` (`HashCR → ¬ verify_committed`) is DELETED** — its
+`hcr : HashCR` hypothesis is pure injectivity of the id-commitment hash, PROVED FALSE for every
+compressing commitment (`HashFloorHonesty.hashCR_false_of_compressing`), so it rejected nothing at
+deployed parameters. Its content survives as `accepting_long_range_breaks_hashcr` below (the
+`¬ HashCR`-conclusion extractor witness: an ADMITTED non-enrolled key IS a hash collision); the
+DISCHARGED successor is `IdentityCommitmentRegrounded`'s keyed-ROM opening bound — a query-bounded
+adversary that opens one enrolled id with a second key pair has NEGLIGIBLE advantage on the PROVED
+floor `keyedRom_hard`, so a long-range committee swap is rejected except with negligible
+probability, in the keyed ROM model. -/
 
 /-- **`accepting_long_range_breaks_hashcr` — the reduction.** If a light client nonetheless ACCEPTS
 the attacker's non-enrolled key (its enrollment gate passes for `(edPk m₀, mlAtt m₀)`), that is a hash
@@ -353,11 +351,12 @@ theorem tooth_forged_vote_is_forgery :
   ⟨toyVoteMsg 0 7, (1 + toyVoteMsg 0 7, 1 + toyVoteMsg 0 7), by decide, rfl, rfl⟩
 
 /-- **(c) A NON-COMMITTED ATTACKER KEY IS REJECTED.** The attacker keeps member `1`'s honest `ed = 1`
-but swaps in its OWN `ml_dsa = 9 ≠ 1`. `no_long_range` REJECTS it: `¬ verify_committed (id 1)(ed 1)(9)`
-— the id `[1,1]` does not commit `9`. The self-carried PQ key cannot pass the enrollment gate. -/
+but swaps in its OWN `ml_dsa = 9 ≠ 1`: `¬ verify_committed (id 1)(ed 1)(9)` — the id `[1,1]` does not
+commit `9`. (Formerly routed through the deleted `no_long_range`; on the concrete injective instance
+the rejection is direct.) The self-carried PQ key cannot pass the enrollment gate. -/
 theorem tooth_attacker_key_rejected :
     ¬ verify_committed toyRoster.cr toyRoster.frame (toyRoster.id 1) (toyRoster.edPk 1) 9 :=
-  no_long_range toyRoster (fun _ _ => rfl) toyCR_hashcr (fun _ => 9) 1 (by decide) (by decide)
+  fun h => absurd (show toyRoster.frame 1 9 = toyRoster.frame 1 1 from h) (by decide)
 
 -- The honest hybrid vote verifies under the member's committed key…
 #guard decide ((hybrid toyS toyS).verify (memberPk toyRoster 1) (toyVoteMsg 0 5)
@@ -378,7 +377,6 @@ end Teeth
   accepting_forged_history_breaks_floor,
   lightclient_agrees_with_full_node,
   lightclient_no_fork,
-  no_long_range,
   accepting_long_range_breaks_hashcr,
   toyCR_hashcr,
   toyFrame_inj,

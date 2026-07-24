@@ -196,8 +196,14 @@ theorem downgrade_resistant_under_floor_discharged
 
 /-! ## §5 — `RevocationSoundness` — a revoked token cannot pass as un-revoked. -/
 
-/-- **`revocation_sound_under_floor`, DISCHARGED.** No `dlFork`, no `msisFork`; `HashCR` is untouched (a
-collision-resistance carrier, not a forking argument). -/
+/-- **`revocation_sound_under_floor`, DISCHARGED (forking legs).** No `dlFork`, no `msisFork`. ⚑ NB
+(2026-07-24): the underlying `RevocationSoundness.revocation_sound`/`revocation_sound_under_floor`
+are DELETED (their `HashCR` hypothesis is refuted at every compressing root hash —
+`hashCR_false_of_compressing`); this composition now routes through the KEPT dichotomy
+`forged_non_revocation_breaks_cr_or_forges` and still carries `hcr : HashCR` — a refuted-floor
+hypothesis this forking-lane composition inherits. Its hash horn's honest discharge is
+`RevocationSoundness.revocationRoot_binds_rom` (keyed-ROM floor, PROVED); the deterministic composite
+here survives only as the forking-discharge exemplar, vacuous at deployed hash parameters. -/
 theorem revocation_sound_under_floor_discharged
     {Id Digest Epoch Msg : Type*}
     {SKc PKc Sigc SKp PKp Sigp : Type*} [DecidableEq Id]
@@ -221,10 +227,11 @@ theorem revocation_sound_under_floor_discharged
     (hopen : tree.H () witnessSet = att.root)
     (habsent : id ∉ witnessSet) :
     False :=
-  RevocationSoundness.revocation_sound (hybrid Cl Pq) tree bodyEnc (pkc, pkp) Q trueRevoked hcr
+  (RevocationSoundness.forged_non_revocation_breaks_cr_or_forges (hybrid Cl Pq) tree bodyEnc
+      (pkc, pkp) Q trueRevoked honest att witnessSet id hverify hrevoked hopen habsent).elim
+    (fun hbreak => hbreak hcr)
     (hybrid_secure_if_either_floor_discharged Cl Pq pkc pkp Q g A t β Ωc Ωp
       hΩc hΩp hF hC hrealCl hrealPq hfloor)
-    honest att witnessSet id hverify hrevoked hopen habsent
 
 /-! ## §6 — `ConsensusSafety` — QUANTUM-SAFE FINALITY. -/
 
@@ -283,8 +290,13 @@ theorem no_forged_block_under_floor_discharged
 
 /-! ## §8 — `WireAke` — the authenticated key exchange. -/
 
-/-- **`ake_authentication_grounded`, DISCHARGED.** No `dlFork`, no `msisFork`; `HashCR` on the identity
-commitment is untouched. -/
+/-- **`ake_authentication_grounded`, DISCHARGED (forking legs).** No `dlFork`, no `msisFork`. ⚑ NB
+(2026-07-24): the underlying `WireAke.ake_authentication`/`ake_authentication_grounded` are DELETED
+(their `HashCR` hypothesis is refuted — `hashCR_false_of_compressing`); this composition now routes
+through the KEPT dichotomy `accept_without_match_breaks_auth` and still carries `hcr : HashCR` — a
+refuted-floor hypothesis this forking-lane composition inherits. The id horn's honest discharge is
+`IdentityCommitmentRegrounded`'s keyed-ROM binding; the deterministic composite here survives only as
+the forking-discharge exemplar, vacuous at deployed hash parameters. -/
 theorem ake_authentication_grounded_discharged
     {SKc PKc Msg Sigc SKp PKp Sigp Pre Id : Type*}
     (Cl : SigScheme SKc PKc Msg Sigc) (Pq : SigScheme SKp PKp Msg Sigp)
@@ -301,10 +313,13 @@ theorem ake_authentication_grounded_discharged
     (ed' : PKc) (ml' : PKp) (c : Msg) (σ : Sigc × Sigp)
     (hacc : WireAke.SessionAccepts Cl Pq cr frame id ed' ml' c σ) :
     WireAke.MatchingSession Q c :=
-  WireAke.ake_authentication Cl Pq cr frame hframe hcr id edP mlP Q hcommitP
-    (hybrid_secure_if_either_floor_discharged Cl Pq edP mlP Q g A t β Ωc Ωp
-      hΩc hΩp hF hC hrealCl hrealPq hfloor)
-    ed' ml' c σ hacc
+  by
+  by_contra hnomatch
+  rcases WireAke.accept_without_match_breaks_auth Cl Pq cr frame hframe id edP mlP Q hcommitP
+    ed' ml' c σ hacc hnomatch with hforge | hnhcr
+  · exact hybrid_secure_if_either_floor_discharged Cl Pq edP mlP Q g A t β Ωc Ωp
+      hΩc hΩp hF hC hrealCl hrealPq hfloor hforge
+  · exact hnhcr hcr
 
 /-! ## §9 — `UcSignature` — the UC realization (single- and multi-session). -/
 

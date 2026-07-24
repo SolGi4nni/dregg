@@ -15,9 +15,11 @@ Three corrections to the earlier overclaims:
   (`SelfTargetMSIS.selftarget_extract_nonzero`) REQUIRES two accepting transcripts on a common `w` with
   `c ≠ c'` — that is forking-shaped, and the two-transcript hypothesis is ASSUMED here, never PRODUCED from
   a single forger.
-* **The full concurrent game is NOT reduced.** `concurrent_unforgeable_reduces` COMPOSES three
-  individually-valid pillars around named carriers; it does NOT model the signing oracle or the t−1
-  static corruption that a TS-UF-0 proof requires.
+* **The full concurrent game is NOT reduced.** The old headline `concurrent_unforgeable_reduces`
+  (DELETED — it carried the refuted injective `HashCR` floor; its keyed-ROM successor is
+  `HermineRomBinding.hermine_concurrent_forgery_rom`) COMPOSED three individually-valid pillars around
+  named carriers; it did NOT model the signing oracle or the t−1 static corruption that a TS-UF-0
+  proof requires.
 No exploit is evident and each pillar below is sound; but closing the gap means EITHER re-implementing
 toward Tanuki/Ringtail's algebraic `b`-aggregation (a different construction) OR completing a TRaccoon-style
 game-based proof for the commit-then-reveal variant (formalize the rewinding that yields the two
@@ -39,7 +41,7 @@ renamed) is the PROVED statistical core the reduction rides on, grounded in `Smu
 
 CLOSED SINCE (2026-07-09) in `Dregg2.Crypto.HermineTSUF` — SEE THERE: the full concurrent TS-UF-0 game is
 now modeled and reduced to `MSISHard ∨ MLWESearchHard ∨ HashCR`. `HermineTSUF.concurrent_ts_uf_0_reduces`
-SUPERSEDES `concurrent_unforgeable_reduces` below: it models the signing oracle (simulated secret-free,
+SUPERSEDES the deleted `concurrent_unforgeable_reduces`: it models the signing oracle (simulated secret-free,
 grounded in MLWE by `hint_mlwe_reduces_to_mlwe`), the t−1 static corruption (challenge-independent by
 `ShamirPrivacy`), and PRODUCES the two SelfTargetMSIS transcripts by an explicit rewind
 (`HermineTSUF.Forger.rewind` + `fork_preserves_commitment` DERIVE the shared commitment; `fork_produces_msis`
@@ -69,26 +71,32 @@ the JOINT transcript TV, not merely the per-session union bound.
    tightens the `Q`-session cost from `Q·ε` to `≈ √Q`.
 2. **COMMIT-THEN-REVEAL (binding).** Each signer commits `cmᵢ = H(i, wᵢ)` BEFORE revealing `wᵢ`, so a
    rushing adversary cannot adaptively choose its `wⱼ` after seeing the honest commitments — it is BOUND by
-   `cmⱼ`. Under collision-resistance (`HashCR`) a signer cannot open one commitment to two different `wᵢ`
-   (`commitment_binding`); an equivocating opening BREAKS `HashCR` (`equivocation_breaks_hashcr`). This is
-   the rushing defense's teeth: it is what forces the two forgery transcripts to share ONE commitment `w`.
+   `cmⱼ`. An equivocating opening IS a hash collision (`equivocation_breaks_hashcr`, the deterministic
+   extractor — a `¬ HashCR` conclusion, retained ONLY as the reduction's witness). ⚑ The old export
+   `commitment_binding` (which CONSUMED `HashCR` — pure injectivity, PROVED FALSE for every compressing
+   commitment by `HashFloorHonesty.hashCR_false_of_compressing`) is DELETED; the binding now lives as
+   `HermineRomBinding.commitReveal_binds_rom` on the PROVED keyed-ROM floor. This is the rushing
+   defense's teeth: it is what forces the two forgery transcripts to share ONE commitment `w`.
 3. **SelfTargetMSIS.** A forgery bound to its commitment still yields an MSIS solution via the committed
    `Dregg2.Crypto.HermineSelfTargetMSIS.no_forgery_under_msis_selftarget` — `c ≠ c'` alone gives the
    nonzero short solution on the augmented map `[A | t]`, no invertibility, no MLWE-lossiness.
 
-**THE HEADLINE** `concurrent_unforgeable_reduces`: a concurrent (rushing) forger who opens a common
-commitment and outputs two accepting SelfTargetMSIS solutions with `c ≠ c'` cannot exist under
-`HashCR ∧ MSISHard` — binding forces the shared commitment `w`, SelfTargetMSIS closes it. The dichotomy
-`concurrent_forgery_breaks_hashcr_or_msis` shows the rushing forger breaks HashCR (equivocation) OR
-MSIS (bound forgery); `leakage_exceeds_budget_breaks_hint_mlwe` is the masking-pillar break (it learned
-the secret from the hints). The proof COMPOSES the three pillars — no forking lemma, no ROS bound.
+**THE HEADLINE lives elsewhere now.** The old `concurrent_unforgeable_reduces` ("cannot exist under
+`HashCR ∧ MSISHard`") is DELETED: its `HashCR` hypothesis is refuted at every compressing commitment
+and its `MSISHard` is a Boolean existence floor, so the export was vacuous at deployed parameters. The
+surviving content here is the dichotomy `concurrent_forgery_breaks_hashcr_or_msis` (no floor
+hypothesis — the case split itself: the rushing forger equivocates OR hands over an MSIS solution);
+`leakage_exceeds_budget_breaks_hint_mlwe` is the masking-pillar break (it learned the secret from the
+hints). The discharged successors are `HermineRomBinding.commitReveal_binds_rom` (binding, keyed-ROM
+floor PROVED) and `HermineRomBinding.hermine_concurrent_forgery_rom` (the rushing bound, equivocation
+horn on the proved floor, MSIS horn honestly parametric at `MSISHardQuant`).
 
 This composes a TRaccoon-FAMILY concurrency ARGUMENT (masking + commit-reveal + SelfTargetMSIS) — see the
 HONEST BOUNDARY at the top of this file: it is NOT a cited instance of a proven scheme, and the FULL
 concurrent game is NOT closed. What IS now on the true floor: pillar 1's masking carrier is REDUCED to
 `MLWESearchHard` (`hint_mlwe_reduces_to_mlwe`), no assumed Hint-MLWE carrier. What remains open: the
-two-transcript hypothesis of `concurrent_unforgeable_reduces` is ASSUMED (forking-shaped, not produced from
-a single forger), and the signing-oracle + t−1-corruption TS-UF-0 game is unmodeled. The "no forking lemma"
+two-transcript hypothesis of the rushing composition is ASSUMED (forking-shaped, not produced from
+a single forger), and the signing-oracle + t−1-corruption TS-UF-0 game is unmodeled here. The "no forking lemma"
 phrasing above describes only that the *composition* has no forking step — the forking is hidden in the
 assumed hypothesis, which is exactly the gap to close. (It does correctly supersede the FROST-binding-factor
 / ROS framing, a group-setting mis-model.)
@@ -354,22 +362,22 @@ proved (the Poseidon2/hash floor `Dregg2` already carries). -/
 def HashCR {Idx W C : Type*} (cr : CommitReveal Idx W C) : Prop :=
   ∀ (i : Idx) (w w' : W), cr.H i w = cr.H i w' → w = w'
 
-/-- **COMMITMENT BINDING (the rushing teeth).** Under `HashCR`, a signer cannot open one commitment `cm`
-to two different reveals: if `w` and `w'` both open `cm` at index `i`, then `w = w'`. So a rushing
-adversary is BOUND to the `wⱼ` it committed — it cannot adaptively swap its commitment after seeing the
-honest ones. This is the property that pins the two forgery transcripts to a SINGLE commitment `w`. -/
-theorem commitment_binding {Idx W C : Type*} (cr : CommitReveal Idx W C) (hcr : HashCR cr)
-    (cm : C) (i : Idx) (w w' : W) (ho : cr.opens cm i w) (ho' : cr.opens cm i w') : w = w' := by
-  unfold CommitReveal.opens CommitReveal.commit at ho ho'
-  exact hcr i w w' (ho.trans ho'.symm)
+/-- ⚑ **The old export `commitment_binding` (`HashCR → w = w'`) is DELETED** — its `HashCR` hypothesis
+is pure injectivity, PROVED FALSE for every compressing commitment
+(`HashFloorHonesty.hashCR_false_of_compressing`), so the export transported nothing at deployed
+parameters. Its content survives as the extractor witness below and as the discharged successor
+`HermineRomBinding.commitReveal_binds_rom` (keyed-ROM floor, PROVED — the birthday bound).
 
-/-- **An equivocating opening BREAKS `HashCR`.** Two DISTINCT reveals `w ≠ w'` of the SAME commitment `cm`
-witness a collision — so `HashCR` cannot hold. The contrapositive of `commitment_binding`: equivocation is
-exactly a hash collision, the concrete break of pillar 2. -/
+**An equivocating opening BREAKS `HashCR`.** Two DISTINCT reveals `w ≠ w'` of the SAME commitment `cm`
+witness a collision — so `HashCR` cannot hold. Equivocation is exactly a hash collision, the concrete
+break of pillar 2. Retained ONLY as the reduction's deterministic witness (a `¬ HashCR` CONCLUSION),
+never re-exported as a floor. -/
 theorem equivocation_breaks_hashcr {Idx W C : Type*} (cr : CommitReveal Idx W C)
     (cm : C) (i : Idx) (w w' : W) (hne : w ≠ w')
-    (ho : cr.opens cm i w) (ho' : cr.opens cm i w') : ¬ HashCR cr :=
-  fun hcr => hne (commitment_binding cr hcr cm i w w' ho ho')
+    (ho : cr.opens cm i w) (ho' : cr.opens cm i w') : ¬ HashCR cr := by
+  intro hcr
+  unfold CommitReveal.opens CommitReveal.commit at ho ho'
+  exact hne (hcr i w w' (ho.trans ho'.symm))
 
 end CommitReveal
 
@@ -411,36 +419,20 @@ theorem concurrent_forgery_breaks_hashcr_or_msis {Idx C : Type*}
   · -- EQUIVOCATED: two distinct reveals of one commitment — a HashCR collision.
     exact Or.inl (equivocation_breaks_hashcr cr cm i w w' hww ho ho')
 
-/-- **THE HEADLINE — `concurrent_unforgeable_reduces`.** Under the three pillars — `HashCR` (binding),
-`MSISHard` (the augmented lattice floor), and Hint-MLWE (masking, established as the honest generalization
-of key-hiding by `hint_mlwe_of_smudge`, which lets the reduction run secret-free) — a concurrent forger who
-opens a common commitment `cm` at index `i` and outputs two accepting SelfTargetMSIS solutions with
-`c ≠ c'` CANNOT EXIST. Straight-line composition: binding (`commitment_binding`) forces the two reveals to
-the same lattice commitment `w`; the shared `w` with `c ≠ c'` hands SelfTargetMSIS a nonzero short MSIS
-solution (`no_forgery_under_msis_selftarget`), contradicting `MSISHard`. No forking lemma, no ROS bound. -/
-theorem concurrent_unforgeable_reduces {Idx C : Type*}
-    (cr : CommitReveal Idx N C) (A : M →ₗ[Rq] N) (t : N) (β : ℕ)
-    (cm : C) (i : Idx) (w w' : N) (ho : cr.opens cm i w) (ho' : cr.opens cm i w')
-    (c c' : Rq) (z z' : M) (hne : c ≠ c')
-    (hf : IsSelfTargetMSISSolution A t β z c w)
-    (hf' : IsSelfTargetMSISSolution A t β z' c' w')
-    (hbind : HashCR cr)
-    (hard : MSISHard (augmented A t) ((β + β) + (β + β))) : False := by
-  -- Pillar 2: binding pins both reveals to ONE commitment `w`.
-  have hw : w = w' := commitment_binding cr hbind cm i w w' ho ho'
-  subst hw
-  -- Pillar 3: the shared commitment + `c ≠ c'` → MSIS solution, contradicting `MSISHard`.
-  exact no_forgery_under_msis_selftarget A t w c c' z z' β hne hf hf' hard
-
+/-! ⚑ **The old headline `concurrent_unforgeable_reduces` is DELETED.** It concluded `False` from
+`HashCR cr` (refuted at every compressing commitment) AND the Boolean existence floor
+`MSISHard` — a doubly-vacuous export at deployed parameters. Its surviving honest content is
+`concurrent_forgery_breaks_hashcr_or_msis` above (the dichotomy, NO floor hypothesis); the discharged
+successor is `HermineRomBinding.hermine_concurrent_forgery_rom` — the rushing forger as a first-class
+game over the SAMPLED keyed oracle, the equivocation horn's floor PROVED by
+`KeyedRomFloor.keyedRom_hard`, the MSIS horn honestly parametric at `MSISHardQuant`. -/
 end Composition
 
 #assert_axioms hint_mlwe_of_smudge
 #assert_axioms hint_mlwe_hybrid_leakage
 #assert_axioms leakage_exceeds_budget_breaks_hint_mlwe
-#assert_axioms commitment_binding
 #assert_axioms equivocation_breaks_hashcr
 #assert_axioms concurrent_forgery_breaks_hashcr_or_msis
-#assert_axioms concurrent_unforgeable_reduces
 
 /-! ## Teeth — the pillars FIRE on concrete data.
 

@@ -118,26 +118,31 @@ def HashRand.beacon (X : HashRand Party Ct Pre Digest) : Beacon (Party × Ct) Di
 
 /-! ## PART 1 — binding and honest-slot collision-resistance, each reduced to `HashCR`. -/
 
-/-- **COMMIT-BINDING (one commitment ⇒ one contribution).** `commitH i c = commitH i c'` is a collision of
-the CR hash at index `Role.commit`, so (injective index-bound framing) `c = c'`. The last mile of
-unpredictability, bottoming out at `HashCR` — this is `HermineHintMLWE.commitment_binding` for the deployed
-`commit`. -/
-theorem HashRand.commit_binds (X : HashRand Party Ct Pre Digest)
-    (hfc : Function.Injective2 X.frameCommit) (hcr : HashCR X.cr)
-    (i : Party) (c c' : Ct) (h : X.commitH i c = X.commitH i c') : c = c' :=
-  (hfc (hcr Role.commit (X.frameCommit i c) (X.frameCommit i c') h)).2
+/-! ⚑ **The old exports `HashRand.commit_binds` (`HashCR → c = c'`) and `HashRand.honestSlot`
+(`HashCR → HonestSlotCR`) are DELETED** — each carried `hcr : HashCR X.cr`, pure INJECTIVITY of the
+deployed blake3, PROVED FALSE for every compressing hash by
+`HashFloorHonesty.hashCR_false_of_compressing` (the deployed commit and combine both map long framed
+pre-images to fixed-width digests). They pinned nothing at deployed parameters. Their content
+survives as the `¬ HashCR`-conclusion extractor witnesses below; the DISCHARGED successors are
+`RandomnessBeaconRegrounded.hashrand_commit_binding_rom` / `hashrand_output_binding_rom` — the
+deployed commit/combine opening games at the SAMPLED keyed oracle (`Role`-keyed family), every
+query-bounded equivocator's advantage NEGLIGIBLE on the PROVED floor `keyedRom_hard`. -/
 
-/-- **HONEST-SLOT COLLISION-RESISTANCE of the deployed combine (from `HashCR`).** Fixing the adversarial
-contributions `rest`, distinct honest contributions give distinct outputs: a collision
-`combine (c ::ₘ rest) = combine (c' ::ₘ rest)` is a collision of the CR hash at index `Role.output`, hence
-(injective `frameOutput`) `c ::ₘ rest = c' ::ₘ rest`, hence (`Multiset.cons_inj_left`) `c = c'`. So the
-model's `HonestSlotCR` carrier is DISCHARGED for the deployed combine by the standard `HashCR` — no bespoke
-beacon carrier. -/
-theorem HashRand.honestSlot (X : HashRand Party Ct Pre Digest)
-    (hfo : Function.Injective X.frameOutput) (hcr : HashCR X.cr) : HonestSlotCR X.beacon := by
-  intro rest c c' h
-  have h1 : X.frameOutput (c ::ₘ rest) = X.frameOutput (c' ::ₘ rest) := hcr Role.output _ _ h
-  exact (Multiset.cons_inj_left rest).mp (hfo h1)
+/-- **A COMMIT EQUIVOCATION IS A HASH COLLISION** — the deterministic extractor witness carrying the
+deleted `commit_binds`' content (a `¬ HashCR` CONCLUSION, never re-exported as a floor). -/
+theorem HashRand.commit_equivocation_breaks_hashcr (X : HashRand Party Ct Pre Digest)
+    (hfc : Function.Injective2 X.frameCommit)
+    (i : Party) (c c' : Ct) (hne : c ≠ c') (h : X.commitH i c = X.commitH i c') : ¬ HashCR X.cr :=
+  fun hcr => hne (hfc (hcr Role.commit (X.frameCommit i c) (X.frameCommit i c') h)).2
+
+/-- **AN HONEST-SLOT COLLISION IS A HASH COLLISION** — the deterministic extractor witness carrying
+the deleted `honestSlot`'s content (`Multiset.cons_inj_left` composed with the injective framing;
+a `¬ HashCR` CONCLUSION, never re-exported as a floor). -/
+theorem HashRand.slot_collision_breaks_hashcr (X : HashRand Party Ct Pre Digest)
+    (hfo : Function.Injective X.frameOutput)
+    (rest : Multiset (Party × Ct)) (c c' : Party × Ct) (hne : c ≠ c')
+    (h : X.combineH (c ::ₘ rest) = X.combineH (c' ::ₘ rest)) : ¬ HashCR X.cr :=
+  fun hcr => hne ((Multiset.cons_inj_left rest).mp (hfo (hcr Role.output _ _ h)))
 
 /-! ## PART 2 — the API contract, the observable capture, and the modeled beacon.
 
@@ -183,19 +188,12 @@ def IsHashRandCombine (X : HashRand Party Ct Pre Digest)
 
 /-! ## PART 3 — UNBIASABILITY and UNPREDICTABILITY inherited, reduced to `HashCR`. -/
 
-/-- **THE DEPLOYED BEACON IS UNBIASABLE — reduced to `HashCR`.** With the adversary's contributions `rest`
-fixed (committed behind the barrier), distinct honest contributions `c ≠ c'` produce distinct beacon outputs
-— the honest contribution MOVES the beacon, so no coalition below threshold can pin the output. Via
-`RandomnessBeacon.honest_makes_unbiasable` on the honest slot `HashRand.honestSlot`; the ONLY irreducible
-object is `HashCR`. -/
-theorem hashrand_unbiasable (X : HashRand Party Ct Pre Digest)
-    (api : HashRandApi Party Ct Digest Digest) (hcomb : IsHashRandCombine X api)
-    (hfo : Function.Injective X.frameOutput) (hcr : HashCR X.cr)
-    (rest : Multiset (Party × Ct)) (c c' : Party × Ct) (hne : c ≠ c') :
-    (hashRandBeacon api).combine (c ::ₘ rest) ≠ (hashRandBeacon api).combine (c' ::ₘ rest) := by
-  show api.combine (c ::ₘ rest) ≠ api.combine (c' ::ₘ rest)
-  rw [hcomb (c ::ₘ rest), hcomb (c' ::ₘ rest)]
-  exact honest_makes_unbiasable X.beacon (X.honestSlot hfo hcr) rest c c' hne
+/-! ⚑ **The old exports `hashrand_unbiasable` / `deployed_unbiasable` (`HashCR → distinct outputs`)
+are DELETED** — the refuted injectivity floor again. The surviving deterministic form is
+`hashrand_bias_breaks_hashcr` (the `¬ HashCR` witness); the DISCHARGED successor is
+`RandomnessBeaconRegrounded.hashrand_output_binding_rom` (the honest contribution moves the beacon
+except with negligible probability, floor PROVED). -/
+/- (deleted — see the §-note above; the surviving form is `hashrand_bias_breaks_hashcr`.) -/
 
 /-- **A BIAS BREAKS `HashCR`** (mirror of `IdentityCommitment.distinct_verifying_pairs_break_hashcr`). The
 contrapositive of `hashrand_unbiasable`: if the beacon is INSENSITIVE to a distinct honest contribution (two
@@ -207,19 +205,17 @@ theorem hashrand_bias_breaks_hashcr (X : HashRand Party Ct Pre Digest)
     (hfo : Function.Injective X.frameOutput)
     (rest : Multiset (Party × Ct)) (c c' : Party × Ct) (hne : c ≠ c')
     (hbias : (hashRandBeacon api).combine (c ::ₘ rest) = (hashRandBeacon api).combine (c' ::ₘ rest)) :
-    ¬ HashCR X.cr :=
-  fun hcr => hashrand_unbiasable X api hcomb hfo hcr rest c c' hne hbias
+    ¬ HashCR X.cr := by
+  have hb : X.combineH (c ::ₘ rest) = X.combineH (c' ::ₘ rest) := by
+    have h1 := hcomb (c ::ₘ rest); have h2 := hcomb (c' ::ₘ rest)
+    exact h1 ▸ h2 ▸ hbias
+  exact X.slot_collision_breaks_hashcr hfo rest c c' hne hb
 
-/-- **THE DEPLOYED BEACON IS UNPREDICTABLE — commit-binding, reduced to `HashCR`.** Before the honest
-contribution is revealed the adversary holds only the commitment; commit-binding pins the honest party to the
-ONE `cᵢ` it committed. Two reveals that BOTH open one commitment are equal — the adversary is reduced to
-guessing (inverting) the committed `cᵢ`. Via `HashRand.commit_binds`; floor `HashCR`. -/
-theorem hashrand_commit_binds (X : HashRand Party Ct Pre Digest)
-    (api : HashRandApi Party Ct Digest Digest) (hopen : IsHashRandOpen X api)
-    (hfc : Function.Injective2 X.frameCommit) (hcr : HashCR X.cr)
-    (i : Party) (cm : Digest) (c c' : Ct)
-    (h : api.verifyOpening i cm c = true) (h' : api.verifyOpening i cm c' = true) : c = c' :=
-  X.commit_binds hfc hcr i c c' (((hopen i cm c).mp h).trans ((hopen i cm c').mp h').symm)
+/-! ⚑ **The old exports `hashrand_commit_binds` / `deployed_commit_binds` (`HashCR → c = c'`) are
+DELETED** — the refuted floor again. The surviving deterministic form is
+`hashrand_equivocation_breaks_hashcr`; the DISCHARGED successor is
+`RandomnessBeaconRegrounded.hashrand_commit_binding_rom`. -/
+/- (deleted — see the §-note above; the surviving form is `hashrand_equivocation_breaks_hashcr`.) -/
 
 /-- **AN EQUIVOCATION BREAKS `HashCR`** (mirror of `distinct_verifying_pairs_break_hashcr`). If two DISTINCT
 contributions `c ≠ c'` BOTH open one commitment `cm`, that is a collision on the commit hash — the deployed
@@ -230,7 +226,8 @@ theorem hashrand_equivocation_breaks_hashcr (X : HashRand Party Ct Pre Digest)
     (hfc : Function.Injective2 X.frameCommit)
     (i : Party) (cm : Digest) (c c' : Ct) (hne : c ≠ c')
     (h : api.verifyOpening i cm c = true) (h' : api.verifyOpening i cm c' = true) : ¬ HashCR X.cr :=
-  fun hcr => hne (hashrand_commit_binds X api hopen hfc hcr i cm c c' h h')
+  X.commit_equivocation_breaks_hashcr hfc i c c' hne
+    (((hopen i cm c).mp h).trans ((hopen i cm c').mp h').symm)
 
 /-- **A CORRECT EARLY PREDICTION BREAKS `HashCR`.** If an a-priori prediction `o` (fixed before reveal)
 equals the real beacon output for TWO distinct honest reveals `c ≠ c'` at fixed `rest`, that is a collision
@@ -267,26 +264,13 @@ theorem hashrand_refines (X : HashRand Party Ct Pre Digest) [DecidableEq Digest]
     Refines (hashRandApiOf X) X :=
   ⟨fun _ _ => rfl, fun _ _ _ => decide_eq_true_iff, fun _ => rfl⟩
 
-/-- **UNBIASABILITY, ON THE DEPLOYED BEACON.** A refining beacon inherits unbiasability: with the adversary's
-contributions fixed, a distinct honest contribution moves the output. `hashrand_unbiasable` on the deployed
-model, its `IsHashRandCombine` premise DISCHARGED by `Refines`; floor `HashCR`. -/
-theorem deployed_unbiasable (X : HashRand Party Ct Pre Digest)
-    (api : HashRandApi Party Ct Digest Digest) (href : Refines api X)
-    (hfo : Function.Injective X.frameOutput) (hcr : HashCR X.cr)
-    (rest : Multiset (Party × Ct)) (c c' : Party × Ct) (hne : c ≠ c') :
-    (hashRandBeacon api).combine (c ::ₘ rest) ≠ (hashRandBeacon api).combine (c' ::ₘ rest) :=
-  hashrand_unbiasable X api href.2.2 hfo hcr rest c c' hne
-
-/-- **UNPREDICTABILITY (commit-binding), ON THE DEPLOYED BEACON.** A refining beacon inherits commit-binding:
-a party is pinned to the one contribution it committed, so the honest reveal is FORCED and the output is
-unpredictable before it. `hashrand_commit_binds` on the deployed model, its `IsHashRandOpen` premise
-DISCHARGED by `Refines`; floor `HashCR`. -/
-theorem deployed_commit_binds (X : HashRand Party Ct Pre Digest)
-    (api : HashRandApi Party Ct Digest Digest) (href : Refines api X)
-    (hfc : Function.Injective2 X.frameCommit) (hcr : HashCR X.cr)
-    (i : Party) (cm : Digest) (c c' : Ct)
-    (h : api.verifyOpening i cm c = true) (h' : api.verifyOpening i cm c' = true) : c = c' :=
-  hashrand_commit_binds X api href.2.1 hfc hcr i cm c c' h h'
+/-! ⚑ **The old inheritance exports `deployed_unbiasable` / `deployed_commit_binds` are DELETED**
+(refuted `HashCR` floor). A refining beacon inherits the DISCHARGED keyed-ROM bounds instead: the
+`Refines` clauses pin the API's observable `commit`/`combine` to the hash surface, and the surface's
+opening games are priced by `RandomnessBeaconRegrounded.hashrand_commit_binding_rom` /
+`hashrand_output_binding_rom` (floor PROVED). The deterministic witnesses
+`hashrand_bias_breaks_hashcr` / `hashrand_equivocation_breaks_hashcr` apply to any refining API
+verbatim (their `IsHashRand…` premises are `Refines`' clauses). -/
 
 /-- **CEREMONY AGREEMENT, ON THE DEPLOYED BEACON.** Every honest party combining the SAME verified reveal
 multiset assembles the SAME output — the ceremony's agreement. `RandomnessBeacon.beacon_output_determined`
@@ -296,32 +280,29 @@ theorem ceremony_agrees (api : HashRandApi Party Ct Digest Digest)
     (hashRandBeacon api).combine cs = (hashRandBeacon api).combine cs' :=
   congrArg (hashRandBeacon api).combine h
 
-/-- **THE EQUIVOCATION CATCH, ON THE DEPLOYED CEREMONY.** A reveal `c' ≠ c` against the FROZEN commitment
-`commit i c` CANNOT verify — the deployed `run_beacon_ceremony`'s `BeaconError::Equivocation` fires. If it
-did verify, the genuine reveal `c` (which opens `commit i c`) and `c'` would both open one commitment, so
-commit-binding (floor `HashCR`) forces `c = c'`, contradicting `c ≠ c'`. -/
-theorem ceremony_catches_equivocation (X : HashRand Party Ct Pre Digest)
+/-- **A VERIFYING EQUIVOCATED REVEAL IS A HASH COLLISION — the ceremony-catch witness.** ⚑ The old
+export `ceremony_catches_equivocation` (`HashCR → ¬ verify`) is DELETED (refuted floor); this is its
+retained `¬ HashCR`-conclusion form: a reveal `c' ≠ c` that VERIFIES against the frozen commitment
+`commit i c` exhibits a collision (the genuine reveal `c` also opens it). The deployed
+`BeaconError::Equivocation` catch is priced by `hashrand_commit_binding_rom` — a passing equivocation
+happens only with negligible probability, in the keyed ROM model. -/
+theorem ceremony_equivocation_breaks_hashcr (X : HashRand Party Ct Pre Digest)
     (api : HashRandApi Party Ct Digest Digest) (hcommit : IsHashRandCommit X api)
-    (hopen : IsHashRandOpen X api) (hfc : Function.Injective2 X.frameCommit) (hcr : HashCR X.cr)
-    (i : Party) (c c' : Ct) (hne : c ≠ c') :
-    api.verifyOpening i (api.commit i c) c' ≠ true := by
-  intro hpass
+    (hopen : IsHashRandOpen X api) (hfc : Function.Injective2 X.frameCommit)
+    (i : Party) (c c' : Ct) (hne : c ≠ c')
+    (hpass : api.verifyOpening i (api.commit i c) c' = true) : ¬ HashCR X.cr := by
   have hself : api.verifyOpening i (api.commit i c) c = true := by
     rw [hcommit i c]; exact (hopen i (X.commitH i c) c).mpr rfl
-  exact hne (hashrand_commit_binds X api hopen hfc hcr i (api.commit i c) c c' hself hpass)
+  exact hashrand_equivocation_breaks_hashcr X api hopen hfc i (api.commit i c) c c' hne hself hpass
 
-#assert_axioms HashRand.commit_binds
-#assert_axioms HashRand.honestSlot
-#assert_axioms hashrand_unbiasable
+#assert_axioms HashRand.commit_equivocation_breaks_hashcr
+#assert_axioms HashRand.slot_collision_breaks_hashcr
 #assert_axioms hashrand_bias_breaks_hashcr
-#assert_axioms hashrand_commit_binds
 #assert_axioms hashrand_equivocation_breaks_hashcr
 #assert_axioms hashrand_prediction_breaks_hashcr
 #assert_axioms hashrand_refines
-#assert_axioms deployed_unbiasable
-#assert_axioms deployed_commit_binds
 #assert_axioms ceremony_agrees
-#assert_axioms ceremony_catches_equivocation
+#assert_axioms ceremony_equivocation_breaks_hashcr
 
 /-! ## Teeth — an honest ceremony (respecting), the HashCR-violating bias (violating), refinement teeth.
 
@@ -374,14 +355,15 @@ def goodApi : HashRandApi ℕ ℕ ((ℕ × ℕ) ⊕ Multiset (ℕ × ℕ)) ((ℕ
 /-- `goodApi` refines `goodX` — the honest instance is one connected object with the model. -/
 theorem goodApi_refines : Refines goodApi goodX := hashrand_refines goodX
 
-/-- **UNBIASABILITY FIRES on the honest ceremony.** With the adversary's contribution `{(2,1)}` fixed, the
-honest values `(1,5) ≠ (1,6)` produce distinct beacon outputs — the honest contribution moves it. Via
-`deployed_unbiasable`, floor `HashCR`, non-vacuously. -/
+/-- **UNBIASABILITY FIRES on the honest ceremony.** With the adversary's contribution `{(2,1)}` fixed,
+the honest values `(1,5) ≠ (1,6)` produce distinct beacon outputs — the honest contribution moves it.
+(Formerly routed through the deleted `deployed_unbiasable`; on the concrete injective instance a
+collision would break `goodCR_hashcr` via `hashrand_bias_breaks_hashcr`.) -/
 theorem good_unbiasable :
     (hashRandBeacon goodApi).combine ((1, 5) ::ₘ ({(2, 1)} : Multiset (ℕ × ℕ)))
       ≠ (hashRandBeacon goodApi).combine ((1, 6) ::ₘ ({(2, 1)} : Multiset (ℕ × ℕ))) :=
-  deployed_unbiasable goodX goodApi goodApi_refines goodX_frameOutput_inj goodCR_hashcr
-    ({(2, 1)} : Multiset (ℕ × ℕ)) (1, 5) (1, 6) (by decide)
+  fun h => hashrand_bias_breaks_hashcr goodX goodApi goodApi_refines.2.2 goodX_frameOutput_inj
+    ({(2, 1)} : Multiset (ℕ × ℕ)) (1, 5) (1, 6) (by decide) h goodCR_hashcr
 
 -- The honest contribution is BAKED IN: distinct honest contributions give distinct beacon outputs…
 #guard (hashRandBeacon goodApi).combine ((1, 5) ::ₘ ({(2, 1)} : Multiset (ℕ × ℕ)))
@@ -394,10 +376,11 @@ theorem good_unbiasable :
      = (hashRandBeacon goodApi).combine ((2, 1) ::ₘ ({(1, 5)} : Multiset (ℕ × ℕ)))
 
 /-- **EQUIVOCATION IS CAUGHT on the honest ceremony.** The reveal `6 ≠ 5` against the frozen commitment
-`commit 1 5` CANNOT verify — `ceremony_catches_equivocation`, floor `HashCR`, non-vacuously. -/
+`commit 1 5` CANNOT verify — a pass would break `goodCR_hashcr` via
+`ceremony_equivocation_breaks_hashcr`, non-vacuously. -/
 theorem good_catches_equivocation : goodApi.verifyOpening 1 (goodApi.commit 1 5) 6 ≠ true :=
-  ceremony_catches_equivocation goodX goodApi goodApi_refines.1 goodApi_refines.2.1
-    goodX_frameCommit_inj goodCR_hashcr 1 5 6 (by decide)
+  fun hpass => ceremony_equivocation_breaks_hashcr goodX goodApi goodApi_refines.1
+    goodApi_refines.2.1 goodX_frameCommit_inj 1 5 6 (by decide) hpass goodCR_hashcr
 
 -- The genuine opening verifies; the equivocated reveal is REJECTED (the commit-binding tooth).
 #guard goodApi.verifyOpening 1 (goodApi.commit 1 5) 5 = true

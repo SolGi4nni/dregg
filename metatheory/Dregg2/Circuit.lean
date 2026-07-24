@@ -315,34 +315,27 @@ def verifyDigest {Trace Pre Dig : Type*} (cr : CommitReveal Unit Pre Dig) (frame
     (dig : Dig) (tr : Trace) : Prop :=
   chainDigest cr frame tr = dig
 
-/-- **DIGEST BINDING — the digest determines its trace UNIQUELY (the floor).** Under `HashCR` and an
-injective framing, if two traces both verify against the same digest they are equal. Both verify ⇒
-`H(frame tr) = dig = H(frame tr')` ⇒ (by `HashCR`, then injectivity of the length-framing)
-`tr = tr'`. So a prover cannot serve one digest for two different chains without a hash collision. -/
-theorem chain_digest_binds {Trace Pre Dig : Type*} (cr : CommitReveal Unit Pre Dig)
-    (frame : Trace → Pre) (hinj : Function.Injective frame) (hcr : HashCR cr)
-    (dig : Dig) (tr tr' : Trace)
-    (h : verifyDigest cr frame dig tr) (h' : verifyDigest cr frame dig tr') : tr = tr' := by
-  unfold verifyDigest chainDigest at h h'
-  exact hinj (hcr () (frame tr) (frame tr') (h.trans h'.symm))
+/-! ⚑ **The old exports `chain_digest_binds` / `chain_digest_binds_indicator` are DELETED** — each
+carried `hcr : HashCR cr`, pure injectivity of the digest hash, PROVED FALSE for every compressing
+digest by `HashFloorHonesty.hashCR_false_of_compressing` (the deployed `CryptoKernel.hash` maps
+unbounded framed chains into a fixed-width digest, so it IS compressing). The exports transported
+nothing at deployed parameters. Their content survives as the `¬ HashCR`-conclusion extractor
+witnesses below (`distinct_traces_break_hashcr`, `digest_collision_is_hash_collision`) and their
+discharged successors are `section RomDigestBinding`'s `chain_digest_binds_rom` /
+`chainDigestRom_indicator_break` — the SAME binding on the keyed, query-counted random-oracle floor
+`KeyedRomFloor.keyedRom_hard` (the birthday bound, a THEOREM, nothing refutable carried). -/
 
-/-- **The digest binds ANY indicator of the trace** — in particular the `chainOk` value. If two traces
-verify against the same digest, every function of the trace (any indicator `ind`) agrees on them. This is
-the general form of "the digest binds `chainOk`": `chainOk` is one such indicator. -/
-theorem chain_digest_binds_indicator {Trace Pre Dig β : Type*} (cr : CommitReveal Unit Pre Dig)
-    (frame : Trace → Pre) (ind : Trace → β) (hinj : Function.Injective frame) (hcr : HashCR cr)
-    (dig : Dig) (tr tr' : Trace)
-    (h : verifyDigest cr frame dig tr) (h' : verifyDigest cr frame dig tr') : ind tr = ind tr' :=
-  congrArg ind (chain_digest_binds cr frame hinj hcr dig tr tr' h h')
-
-/-- **The reduction — distinct traces sharing a digest BREAK `HashCR`.** The contrapositive of
-`chain_digest_binds`: two DISTINCT chains verifying one digest cannot coexist with collision-resistance.
-This is what grounds the §8 binding in the one standard carrier `HashCR`. -/
+/-- **The reduction — distinct traces sharing a digest BREAK `HashCR`.** Two DISTINCT chains verifying
+one digest cannot coexist with collision-resistance. Retained ONLY as the reduction's deterministic
+extractor witness (a `¬ HashCR` CONCLUSION), never re-exported as a floor; the discharged successor is
+`chain_digest_binds_rom` below. -/
 theorem distinct_traces_break_hashcr {Trace Pre Dig : Type*} (cr : CommitReveal Unit Pre Dig)
     (frame : Trace → Pre) (hinj : Function.Injective frame) (dig : Dig) (tr tr' : Trace)
     (hne : tr ≠ tr') (h : verifyDigest cr frame dig tr) (h' : verifyDigest cr frame dig tr') :
-    ¬ HashCR cr :=
-  fun hcr => hne (chain_digest_binds cr frame hinj hcr dig tr tr' h h')
+    ¬ HashCR cr := by
+  intro hcr
+  unfold verifyDigest chainDigest at h h'
+  exact hne (hinj (hcr () (frame tr) (frame tr') (h.trans h'.symm)))
 
 /-- **A digest-collision IS an `H`-collision (the length-framing is faithful).** Distinct traces hashing
 to the same digest give two DISTINCT pre-images (by injectivity of the framing) mapping to one hash
@@ -354,14 +347,10 @@ theorem digest_collision_is_hash_collision {Trace Pre Dig : Type*} (cr : CommitR
     ∃ p p' : Pre, p ≠ p' ∧ cr.H () p = cr.H () p' :=
   ⟨frame tr, frame tr', fun hp => hne (hinj hp), h⟩
 
-/-- **A false chain is REJECTED by the honest digest (the teeth of binding).** If the honest trace `tr`
-verifies the digest, any DIFFERENT trace `tr'` does NOT — passing would force `tr' = tr` by
-`chain_digest_binds`, contradiction. So a digest opens for exactly its chain, no other. -/
-theorem false_chain_not_bound {Trace Pre Dig : Type*} (cr : CommitReveal Unit Pre Dig)
-    (frame : Trace → Pre) (hinj : Function.Injective frame) (hcr : HashCR cr)
-    (dig : Dig) (tr tr' : Trace) (hne : tr ≠ tr') (h : verifyDigest cr frame dig tr) :
-    ¬ verifyDigest cr frame dig tr' :=
-  fun h' => hne (chain_digest_binds cr frame hinj hcr dig tr tr' h h')
+/-! ⚑ **The old export `false_chain_not_bound` (`HashCR → ¬ verifyDigest … tr'`) is DELETED** — the
+same refuted `HashCR` hypothesis. The honest false-chain-rejection statement is now probabilistic:
+`chain_digest_binds_rom` below bounds every query-bounded equivocator's advantage, so a digest opens
+for exactly one chain except with negligible probability, in the keyed ROM model. -/
 
 /-! ### Tying the binding to the ACTUAL `chainOk` wire. -/
 
@@ -370,17 +359,18 @@ theorem false_chain_not_bound {Trace Pre Dig : Type*} (cr : CommitReveal Unit Pr
 def traceChainOk : List Turn × Turn × List Turn → Bool
   | (pre, tn, post) => decide (post = tn :: pre)
 
-/-- **THE §8 BINDING LAW — the digest binds `chainOk` (reduced to `HashCR`).** For any injective framing
-of the chain trace, if two traces verify the same digest they carry the SAME `chainOk` value. This is the
-formerly-`PRIMITIVE` obligation, now a theorem: the Rust prover's CR-hash digest cannot serve one digest
-for a valid chain (`chainOk = true`) and an invalid one (`chainOk = false`) — that would be a hash
-collision. Reduced to `HashCR`, no assumed carrier. -/
-theorem chain_digest_binds_chainOk {Pre Dig : Type*} (cr : CommitReveal Unit Pre Dig)
-    (frame : List Turn × Turn × List Turn → Pre) (hinj : Function.Injective frame) (hcr : HashCR cr)
-    (dig : Dig) (tr tr' : List Turn × Turn × List Turn)
-    (h : verifyDigest cr frame dig tr) (h' : verifyDigest cr frame dig tr') :
-    traceChainOk tr = traceChainOk tr' :=
-  chain_digest_binds_indicator cr frame traceChainOk hinj hcr dig tr tr' h h'
+/-! ⚑ **The old export `chain_digest_binds_chainOk` (`HashCR → traceChainOk tr = traceChainOk tr'`)
+is DELETED** — the refuted `HashCR` hypothesis again. The §8 binding law's honest form is now
+probabilistic: a prover serving one digest for a valid chain (`chainOk = true`) AND an invalid one
+(`chainOk = false`) is a `chainDigestRomGame` win (`chainDigestRom_indicator_break` at
+`ind := traceChainOk` — a `chainOk`-equivocation IS a trace-equivocation), and every query-bounded
+such prover has NEGLIGIBLE advantage (`chain_digest_binds_rom`), on the PROVED keyed-ROM floor. -/
+
+/-- A `chainOk`-equivocation IS a trace-equivocation: two traces disagreeing on `chainOk` are
+distinct. The (trivial, floor-free) bridge the ROM successor consumes at `ind := traceChainOk`. -/
+theorem chainOk_ne_imp_trace_ne (tr tr' : List Turn × Turn × List Turn)
+    (h : traceChainOk tr ≠ traceChainOk tr') : tr ≠ tr' :=
+  fun hc => h (congrArg traceChainOk hc)
 
 /-- **`traceChainOk` IS the `vChainOk` wire.** The trace indicator on `(s.log, t, s'.log)`, as a {0,1}
 field element, equals the `encode … vChainOk` wire value `propBit (s'.log = t :: s.log)`. So
@@ -393,12 +383,15 @@ theorem traceChainOk_eq_wire (s : ChainedState) (t : Turn) (s' : ChainedState) :
 
 end DigestBinding
 
-#assert_axioms chain_digest_binds
-#assert_axioms chain_digest_binds_indicator
+/-! ⚑ The DISCHARGED successors of the deleted exports live in
+`Dregg2.Circuit.ChainDigestRomBinding` (`chain_digest_binds_rom`,
+`chainDigestRom_indicator_break`, teeth) — a separate leaf module because the keyed-ROM kit's
+closure (`Crypto.RomCarrierSites` → `HashFloorHonesty` → `Poseidon2Binding` → `StateCommit` →
+`Transfer`) imports THIS file, so the successor cannot live here without an import cycle. -/
+
 #assert_axioms distinct_traces_break_hashcr
 #assert_axioms digest_collision_is_hash_collision
-#assert_axioms false_chain_not_bound
-#assert_axioms chain_digest_binds_chainOk
+#assert_axioms chainOk_ne_imp_trace_ne
 #assert_axioms traceChainOk_eq_wire
 
 /-! ## Teeth — the digest binding FIRES, and its `HashCR` hypothesis is LOAD-BEARING.
@@ -453,11 +446,10 @@ def exIdd : List ℕ := chainDigest exCRd exTraceFrame exGood
 theorem honest_digest_verifies : verifyDigest exCRd exTraceFrame exIdd exGood := rfl
 
 /-- **THE TEETH FIRE.** The invalid chain `exBad` (whose `chainOk` is `false`) is REJECTED by the honest
-digest: `false_chain_not_bound` gives `¬ verifyDigest`. The prover cannot pass off a broken chain under
-the honest digest without a hash collision. -/
+digest — its framed pre-image hashes elsewhere. (Formerly routed through the deleted
+`false_chain_not_bound`; on the concrete injective instance the rejection is decidable.) -/
 theorem false_chain_rejected : ¬ verifyDigest exCRd exTraceFrame exIdd exBad :=
-  false_chain_not_bound exCRd exTraceFrame exTraceFrame_inj exCRd_hashcr exIdd exGood exBad
-    (by decide) honest_digest_verifies
+  fun h => absurd (show exTraceFrame exBad = exTraceFrame exGood from h) (by decide)
 
 -- The valid chain's `chainOk` is `true`; the invalid chain's is `false`; their framings differ.
 #guard toyChainOk exGood = true
@@ -474,9 +466,10 @@ theorem badCRd_not_hashcr : ¬ HashCR badCRd :=
 
 /-- **BINDING FAILS WITHOUT `HashCR` (load-bearing).** Under the colliding `badCRd`, the VALID chain
 `exGood` (`chainOk = true`) and the INVALID chain `exBad` (`chainOk = false`) BOTH verify against the empty
-digest `[]` — distinct traces, DIFFERENT `chainOk`, one digest. So `chain_digest_binds_chainOk`'s
-conclusion is FALSE here: its `HashCR` hypothesis is genuinely load-bearing — without collision-resistance
-the digest no longer binds `chainOk`. -/
+digest `[]` — distinct traces, DIFFERENT `chainOk`, one digest. So the deterministic binding conclusion
+(the deleted `chain_digest_binds_chainOk`'s) is FALSE here: collision-resistance is genuinely
+load-bearing — without it the digest no longer binds `chainOk`, which is exactly why the honest
+successor (`chain_digest_binds_rom`) must be probabilistic over a SAMPLED oracle. -/
 theorem digest_binding_needs_hashcr :
     verifyDigest badCRd exTraceFrame [] exGood ∧ verifyDigest badCRd exTraceFrame [] exBad
       ∧ exGood ≠ exBad ∧ toyChainOk exGood ≠ toyChainOk exBad :=

@@ -41,25 +41,28 @@ session key or a random string and must not distinguish them.
   out at `MLWESearchHard` (ML-KEM, via `MlKemIndCca`/`FoQrom`) and `SchnorrDLHard` (X25519 DH) — proven in
   the model, inherited here, never re-asserted.
 
-* **`ake_authentication`** (IMPERSONATION-RESISTANCE). A session that ACCEPTS peer `P` has a MATCHING
-  session at `P` (`P` really signed the challenge) — UNLESS the adversary forged `P`'s hybrid signature or
-  presented an ML-DSA key not committed by `P`'s hybrid id. `accept_without_match_breaks_auth` makes the
-  dichotomy explicit: an accepting session with no match is EITHER a hybrid `Forgery` (→ `EufCma` →
+* **AUTHENTICATION (impersonation-resistance).** `accept_without_match_breaks_auth` — the dichotomy,
+  NO floor hypothesis: an accepting session with no match is EITHER a hybrid `Forgery` (→ `EufCma` →
   `SchnorrDLHard ∨ MSISHard`, via `HybridCombiner.hybrid_secure_if_either_floor`) OR a distinct committed
-  key pair (→ `¬ HashCR`, via `IdentityCommitment.distinct_verifying_pairs_break_hashcr`). So impersonation
-  reduces to the floor.
+  key pair (→ `¬ HashCR`, via `IdentityCommitment.distinct_verifying_pairs_break_hashcr`). ⚑ The old
+  deterministic composites `ake_authentication`/`ake_authentication_grounded` are DELETED (2026-07-24):
+  they carried `hcr : HashCR`, pure injectivity of the id-commitment hash, PROVED FALSE for every
+  compressing commitment (`hashCR_false_of_compressing`). The id-equivocation horn's discharged
+  successor is `IdentityCommitmentRegrounded`'s keyed-ROM binding (floor PROVED — `keyedRom_hard`).
 
-* **`channel_binding`** (NO UKS / KEY-REUSE). The session key BINDS the transcript — the concat-KDF input
-  includes it — so two sessions sharing a key share a transcript; a key-reuse / unknown-key-share attack
-  therefore requires a TRANSCRIPT COLLISION (→ `¬ HashCR`, `uks_breaks_hashcr`).
+* **CHANNEL BINDING (no UKS / key-reuse).** The session key BINDS the transcript — a key-reuse across
+  distinct transcripts is a TRANSCRIPT COLLISION (`uks_breaks_hashcr`, the retained `¬ HashCR`-conclusion
+  extractor witness). ⚑ The old deterministic `channel_binding`/`channel_binding_transcript` are
+  DELETED (same refuted floor); the discharged successor is `WireAkeRegrounded.channel_binding_rom`
+  (keyed-ROM floor, PROVED).
 
 ## No named-carrier laundering
 
-No `def …Hard` is introduced OR taken as a hypothesis. `ake_authentication` is conditioned on `EufCma` and
-`HashCR`; `ake_authentication_grounded` DISCHARGES the `EufCma` through the PROVED forking reductions of
-`HybridCombiner` to leave ONLY `SchnorrDLHard ∨ MSISHard` and `HashCR`. Key secrecy INHERITS the proved
-KEM combiner. Every residual is the standard floor: `MLWESearchHard`, `SchnorrDLHard`, `MSISHard`, `HashCR`
-— nothing more.
+No `def …Hard` is introduced OR taken as a hypothesis. `HashCR` appears only in CONCLUSION position
+(the extractor witnesses); the hash-binding legs are discharged on the keyed-ROM floor in the
+`*Regrounded` successors. Key secrecy INHERITS the proved KEM combiner. Every residual is the standard
+floor: `MLWESearchHard`, `SchnorrDLHard`, `MSISHard`, and the labelled keyed-ROM modelling step —
+nothing more.
 
 Cite: Bellare–Rogaway (Entity Authentication and Key Distribution, CRYPTO'93); LaMacchia–Lauter–Mityagin
 (Stronger Security of Authenticated Key Exchange, ProvSec'07, the eCK model); X-Wing
@@ -147,24 +150,21 @@ theorem accept_without_match_breaks_auth
     exact Or.inr
       (distinct_verifying_pairs_break_hashcr cr frame hframe id ed' edP ml' mlP hkeys hcommit' hcommitP)
 
-/-- **AKE AUTHENTICATION (conditioned on the games).** Under `HashCR` (id-commitment binding) and `EufCma`
-of `P`'s hybrid signature over its signed set `Q`, a session that ACCEPTS peer `P` HAS a matching session
-at `P` (`Q c`). No impersonation without breaking one of the two games. -/
-theorem ake_authentication
-    (Cl : SigScheme SKc PKc Msg Sigc) (Pq : SigScheme SKp PKp Msg Sigp)
-    (cr : CommitReveal Unit Pre Id) (frame : PKc → PKp → Pre)
-    (hframe : Function.Injective2 frame) (hcr : HashCR cr)
-    (id : Id) (edP : PKc) (mlP : PKp) (Q : Msg → Prop)
-    (hcommitP : verify_committed cr frame id edP mlP)
-    (heuf : EufCma (hybrid Cl Pq) (edP, mlP) Q)
-    (ed' : PKc) (ml' : PKp) (c : Msg) (σ : Sigc × Sigp)
-    (hacc : SessionAccepts Cl Pq cr frame id ed' ml' c σ) :
-    MatchingSession Q c := by
-  by_contra hnomatch
-  rcases accept_without_match_breaks_auth Cl Pq cr frame hframe id edP mlP Q hcommitP
-    ed' ml' c σ hacc hnomatch with hforge | hnhcr
-  · exact heuf hforge
-  · exact hnhcr hcr
+/-! ⚑ **The old export `ake_authentication` (`HashCR ∧ EufCma → MatchingSession`) is DELETED** — its
+`hcr : HashCR` hypothesis is pure injectivity of the id-commitment hash, PROVED FALSE for every
+compressing commitment (`HashFloorHonesty.hashCR_false_of_compressing`; the deployed
+`hybrid_id_commitment` is BLAKE3, compressing), so the export authenticated nothing at deployed
+parameters. What survives and what replaces it:
+
+  * the DICHOTOMY `accept_without_match_breaks_auth` above — the reduction core, NO floor
+    hypothesis: an accepting-but-unmatched session IS a hybrid `Forgery` OR a `¬ HashCR` witness;
+  * the id-equivocation horn, DISCHARGED on the PROVED keyed-ROM floor:
+    `IdentityCommitmentRegrounded`'s keyed-ROM binding (the id-commitment opening game at the
+    SAMPLED oracle, every query-bounded equivocator negligible — `keyedRom_hard`, the birthday
+    bound);
+  * the signature horn, exactly where it was: `EufCma` discharged by `HybridCombiner`'s forking
+    reductions to `SchnorrDLHard ∨ MSISHard` (`ForkingDischarge`/`HermineTSUF`), untouched by this
+    campaign (it is not a hash floor). -/
 
 /-! ### Grounding authentication in the floor — discharge `EufCma` to `SchnorrDLHard ∨ MSISHard`.
 
@@ -173,32 +173,13 @@ theorem ake_authentication
 MSISHard` into `EufCma` of the hybrid signature. Feeding that here leaves exactly two residuals:
 `SchnorrDLHard ∨ MSISHard` (authentication of the signature) and `HashCR` (the id commitment). -/
 
-/-- **AKE AUTHENTICATION, GROUNDED IN THE FLOOR.** With the ed25519→DL and ML-DSA→MSIS forking reductions
-in hand, an accepting session has a matching session at `P` provided `HashCR` holds and EITHER the
-discrete-log floor `SchnorrDLHard` OR the Module-SIS floor `MSISHard` holds. Impersonation reduces to
-`(SchnorrDLHard ∨ MSISHard) ∧ HashCR` — nothing above the standard floor. -/
-theorem ake_authentication_grounded
-    (Cl : SigScheme SKc PKc Msg Sigc) (Pq : SigScheme SKp PKp Msg Sigp)
-    (cr : CommitReveal Unit Pre Id) (frame : PKc → PKp → Pre)
-    (hframe : Function.Injective2 frame) (hcr : HashCR cr)
-    (id : Id) (edP : PKc) (mlP : PKp) (Q : Msg → Prop)
-    (hcommitP : verify_committed cr frame id edP mlP)
-    (C : CurveGroup) (G : C.Pt)
-    {Rq : Type*} [CommRing Rq] [ShortNorm Rq]
-    {MM : Type*} [AddCommGroup MM] [Module Rq MM] [ShortNorm MM]
-    {NN : Type*} [AddCommGroup NN] [Module Rq NN] [ShortNorm NN]
-    (A : MM →ₗ[Rq] NN) (t : NN) (β : ℕ)
-    (dlFork : Forgery Cl edP Q → DLSolver C G)
-    (msisFork : Forgery Pq mlP Q →
-      ∃ (w : NN) (cc cc' : Rq) (z z' : MM), cc ≠ cc' ∧
-        IsSelfTargetMSISSolution A t β z cc w ∧ IsSelfTargetMSISSolution A t β z' cc' w)
-    (hfloor : SchnorrDLHard C G ∨ MSISHard (augmented A t) ((β + β) + (β + β)))
-    (ed' : PKc) (ml' : PKp) (c : Msg) (σ : Sigc × Sigp)
-    (hacc : SessionAccepts Cl Pq cr frame id ed' ml' c σ) :
-    MatchingSession Q c :=
-  ake_authentication Cl Pq cr frame hframe hcr id edP mlP Q hcommitP
-    (hybrid_secure_if_either_floor Cl Pq edP mlP Q C G A t β dlFork msisFork hfloor)
-    ed' ml' c σ hacc
+/-! ⚑ **The old export `ake_authentication_grounded` is DELETED with it** — it was
+`ake_authentication` with the `EufCma` leg discharged through `hybrid_secure_if_either_floor`, still
+carrying the refuted `hcr : HashCR` AND the Boolean existence floors `SchnorrDLHard`/`MSISHard`. The
+honest state of each leg is named in the deletion note above; composing them back into one
+deterministic `MatchingSession` conclusion would require the refuted deterministic hash floor, which
+is exactly what cannot be had — the composed statement's honest form is the probabilistic dichotomy,
+horn by horn. -/
 
 /-! ## PART 3 — KEY SECRECY: the session key is IND-CCA if EITHER component is.
 
@@ -248,42 +229,27 @@ def sessionKey {SS Tr K : Type*} (cr : CommitReveal Unit Pre K) (frameK : SS × 
     (ssx sspq : SS) (tr : Tr) : K :=
   cr.H () (frameK (ssx, sspq, tr))
 
-/-- **CHANNEL BINDING (the floor).** Under `HashCR` and an injective framing, two session keys that are
-EQUAL come from the SAME `(ss_x, ss_pq, transcript)` triple. The key determines its transcript: no
-key-reuse across distinct transcripts. -/
-theorem channel_binding {SS Tr K : Type*} (cr : CommitReveal Unit Pre K)
-    (frameK : SS × SS × Tr → Pre) (hf : Function.Injective frameK) (hcr : HashCR cr)
-    (ssx sspq : SS) (tr : Tr) (ssx' sspq' : SS) (tr' : Tr)
-    (h : sessionKey cr frameK ssx sspq tr = sessionKey cr frameK ssx' sspq' tr') :
-    (ssx, sspq, tr) = (ssx', sspq', tr') :=
-  hf (hcr () _ _ h)
-
-/-- **CHANNEL BINDING (transcript projection).** Equal session keys ⟹ equal transcripts — the precise
-anti-UKS statement: a shared key pins a shared channel. -/
-theorem channel_binding_transcript {SS Tr K : Type*} (cr : CommitReveal Unit Pre K)
-    (frameK : SS × SS × Tr → Pre) (hf : Function.Injective frameK) (hcr : HashCR cr)
-    (ssx sspq : SS) (tr : Tr) (ssx' sspq' : SS) (tr' : Tr)
-    (h : sessionKey cr frameK ssx sspq tr = sessionKey cr frameK ssx' sspq' tr') :
-    tr = tr' :=
-  congrArg (fun p => p.2.2) (channel_binding cr frameK hf hcr ssx sspq tr ssx' sspq' tr' h)
+/-! ⚑ **The old exports `channel_binding` / `channel_binding_transcript` (`HashCR → equal triples /
+equal transcripts`) are DELETED** — the refuted `HashCR` hypothesis again (the deployed concat-KDF is
+compressing). Their content survives as `uks_breaks_hashcr` below (a `¬ HashCR` CONCLUSION — retained
+ONLY as the reduction's extractor witness); the DISCHARGED successor is
+`WireAkeRegrounded.channel_binding_rom` — the UKS/opening game at the SAMPLED keyed oracle, every
+query-bounded key-reuse adversary's advantage NEGLIGIBLE on the PROVED floor `keyedRom_hard`. -/
 
 /-- **THE UKS REDUCTION.** A key-reuse / unknown-key-share attack — one session key shared across DISTINCT
-transcripts `tr ≠ tr'` — BREAKS `HashCR`. It is exactly a transcript collision on the concat-KDF hash: the
-contrapositive of `channel_binding`. This grounds channel binding in the single carrier `HashCR`. -/
+transcripts `tr ≠ tr'` — BREAKS `HashCR`. It is exactly a transcript collision on the concat-KDF hash.
+Retained ONLY as the deterministic extractor witness (a `¬ HashCR` CONCLUSION), never re-exported as a
+floor; the discharged successor is `WireAkeRegrounded.channel_binding_rom`. -/
 theorem uks_breaks_hashcr {SS Tr K : Type*} (cr : CommitReveal Unit Pre K)
     (frameK : SS × SS × Tr → Pre) (hf : Function.Injective frameK)
     (ssx sspq : SS) (tr : Tr) (ssx' sspq' : SS) (tr' : Tr) (hdiff : tr ≠ tr')
     (h : sessionKey cr frameK ssx sspq tr = sessionKey cr frameK ssx' sspq' tr') :
     ¬ HashCR cr :=
-  fun hcr => hdiff (channel_binding_transcript cr frameK hf hcr ssx sspq tr ssx' sspq' tr' h)
+  fun hcr => hdiff (congrArg (fun p => p.2.2) (hf (hcr () _ _ h)))
 
 #assert_axioms accept_without_match_breaks_auth
-#assert_axioms ake_authentication
-#assert_axioms ake_authentication_grounded
 #assert_axioms ake_session_key_secure
 #assert_axioms ake_session_key_secure_kdf
-#assert_axioms channel_binding
-#assert_axioms channel_binding_transcript
 #assert_axioms uks_breaks_hashcr
 
 /-! ## TEETH — an honest handshake matches + keys securely; an uncommitted key is rejected; a
@@ -336,11 +302,12 @@ theorem honest_accepts :
     SessionAccepts clSig pqSig exCR exFrame exId 1 [2, 3] true (true, true) :=
   ⟨honest_verifies, ⟨rfl, rfl⟩, ⟨rfl, rfl⟩⟩
 
-/-- **HONEST ⟹ MATCHING (the tooth fires).** `ake_authentication` turns the honest accepting session into a
-matching session at `P` — `sigQ true`, i.e. `P` really signed the challenge. -/
-theorem honest_yields_matching : MatchingSession sigQ true :=
-  ake_authentication clSig pqSig exCR exFrame exFrame_inj exCR_hashcr exId 1 [2, 3] sigQ
-    honest_committed honest_euf 1 [2, 3] true (true, true) honest_accepts
+/-- **HONEST ⟹ MATCHING (the tooth fires).** The honest accepting session has a matching session at
+`P` — `sigQ true`, i.e. `P` really signed the challenge. (Formerly routed through the deleted
+`ake_authentication`; on the concrete instance the matching conversation is direct. The dichotomy
+route stays live: `accept_without_match_breaks_auth` on `honest_accepts` with a hypothetical
+no-match yields a forgery `honest_euf` refutes.) -/
+theorem honest_yields_matching : MatchingSession sigQ true := rfl
 
 /-- **HONEST ⟹ SECURE KEY (the tooth fires).** With an unpredictable X25519 source (`id`), the good
 dual-PRF `goodKDF` gives an IND-CCA session key — `ake_session_key_secure_kdf` through the classical
@@ -406,12 +373,8 @@ end Teeth
 
 #assert_all_clean [
   accept_without_match_breaks_auth,
-  ake_authentication,
-  ake_authentication_grounded,
   ake_session_key_secure,
   ake_session_key_secure_kdf,
-  channel_binding,
-  channel_binding_transcript,
   uks_breaks_hashcr,
   honest_committed,
   honest_euf,
