@@ -295,3 +295,49 @@ line-point-LDT paper.
 > `hasseDeriv`, `Squarefree`, `Henselian`, `schwartz_zippel`. Take decoding radius r = 7340028
 > (= e*−4, the intrinsic Θ(1/n) shave below δ_code/2). Forbid vacuous/tautological statements; each
 > lemma must be the real statement over `Polynomial F` / `MvPolynomial (Fin 2) F` / `Finset`.
+
+---
+
+## 8. INTERFACE PINNED (2026-07-24, later) — what L1–L6 must actually deliver
+
+`Dregg2/Circuit/CorrelatedAgreement/Interface.lean` (green, 3187 jobs, 30 keystones kernel-clean)
+states the round-by-round FS soundness theorem with CA as an explicit hypothesis, over the
+already-existing `Strategy`/`fsRun`/`winProb` layer. Its findings change the target in two ways.
+
+**Regime verdict: UD-regime is correct; Johnson is NOT required; the base-field collapse does NOT apply.**
+
+- `FriExtChallengeCollapse.extChallenge_forces_correlatedAgreement` is real and unconditional, but its
+  words are typed `κ → K` (BASE field), and the consumer's are not. Verified in the deployed reduction
+  (`vendor/plonky3-fri-82cfad73/src/verifier.rs:617-640`): `ro` is `Challenge`-typed
+  (`or_insert((Challenge::ONE, Challenge::ZERO))`), `quotient = (*z - x).inverse()` is `Challenge`, and
+  `(p_at_z - p_at_x) * quotient` is extension-valued BEFORE `alpha_pow` multiplies. The only base-field
+  words (the committed trace columns) go to the unique decode, which needs no CA.
+- Dimension count seals it against re-architecture: one quartic challenge exposes `[L:K] = 4`
+  coordinates per point, while the deployed fold arity is `8 > 4` (and the RLC carries `4·numCols`).
+  A single challenge cannot separate them.
+- The collapse's real value: it removes the base-field corner from the counterexample search space.
+- Johnson-regime enters only at the ledger's per-fold-BITS column (`FriJohnsonRadiusGap`), a separate
+  and non-comparable object; it would not close `DecodedLdtLink` either.
+
+**Refinement 1 — L5/L6 must deliver the GENERIC-PARAMETER (Param) form, not the single instance.**
+CA is consumed at EVERY layer of the fold tower at `(nᵢ, rᵢ)` with schedule `m·rᵢ₊₁ ≤ rᵢ`, so the top
+radius composes as `m^depth · r_last` (depth-5 illustration: `8⁵·220 = 7208960 ≤ 7340028`). A single
+`(n = 2²⁴, r = 7340028)` statement is NOT enough.
+
+**Refinement 2 — the deployed instantiation is at the QUARTIC EXTENSION.** Words are `ι → L`; the RS
+code over `L` on the base domain is the `extCode` of the base RS code. The Param form is field-generic
+so this costs the formalization nothing, but it must be stated.
+
+**Scope reduction (good news): the weighted / constrained / mutual strengthenings (Kopparty §4.2–4.3)
+are NOT required** for the tree's current round-by-round shape — the chain propagates plain farness
+(`chain_far_survival_idx`) and fold-consistency deviation is the query phase's job (the L6 dichotomy).
+If the assembly is ever reshaped to weight-tracking, Thm 4.5 becomes the ask; scope it then.
+
+**Variants needed:** `CorrelatedAgreementCurveUDParam` at `m = 8` (fold arity, every layer) and
+`m = numCols` (RLC batch width, top layer); `CorrelatedAgreementPairUDParam` for the DEEP two-term split.
+Threshold `(m−1)(r+1)` throughout.
+
+**Honest bit accounting — do not merge columns.** The UD route's per-fold count is `(m−1)(r+1)`
+≈ 2^22.6 bad challenges at the top layer, ≈ **101 bits** over `|L| ≈ 2^123.6`. That is NOT the ledger's
+~109.84 (arity-8 `FriArityTransfer`) or ~111 (`FriJohnsonRadiusGap`). Different objects, different
+radii; they are not comparable and must not be quoted as one number.
