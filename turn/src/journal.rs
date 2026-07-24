@@ -9,7 +9,8 @@ use std::sync::Mutex;
 
 use dregg_cell::{
     CapabilityRef, Cell, CellId, CellPqIdentity, CellProgram, CommitmentSet, DelegatedRef,
-    FieldVisibility, Ledger, NoteCommitment, Nullifier, Permissions, RevokedSet, VerificationKey,
+    FieldVisibility, Ledger, NoteCommitment, Nullifier, Permissions, RevokedSet,
+    ShieldedNoteCommitment, ShieldedNoteSet, VerificationKey,
     lifecycle::CellLifecycle,
     nullifier_set::NullifierSet,
     permissions::AuthRequired,
@@ -135,6 +136,13 @@ pub(crate) enum JournalEntry {
     /// turn that revoked it did not commit). The REVOCATION-side dual of
     /// `NoteNullifierInserted` / `NoteCommitmentInserted`.
     RevocationInserted { revocation_key: [u8; 32] },
+    /// A shielded output note's hiding commitment was appended to the executor's
+    /// production `note_shielded` accumulator by an `Effect::ShieldedTransfer`. On
+    /// rollback this commitment must be REMOVED so a failed turn does not leave a
+    /// phantom shielded note in the accumulator (which would later be spendable
+    /// against a root no honest re-executor reproduces). The SHIELDED-side dual of
+    /// `NoteCommitmentInserted`.
+    ShieldedNoteInserted { commitment: ShieldedNoteCommitment },
     /// Exact pre-turn image of the durable reactive promise registry.
     ///
     /// Only the first reactive mutation in a turn records this entry. Restoring
@@ -273,7 +281,8 @@ impl LedgerJournal {
                 | JournalEntry::NoteNullifierInserted { .. }
                 | JournalEntry::ReactiveNullifierInserted { .. }
                 | JournalEntry::NoteCommitmentInserted { .. }
-                | JournalEntry::RevocationInserted { .. } => continue,
+                | JournalEntry::RevocationInserted { .. }
+                | JournalEntry::ShieldedNoteInserted { .. } => continue,
             };
             if !out.contains(&cell) {
                 out.push(cell);
@@ -486,6 +495,15 @@ impl LedgerJournal {
             .push(JournalEntry::RevocationInserted { revocation_key });
     }
 
+    /// Record that a shielded output note's hiding commitment was appended to the
+    /// executor's production `note_shielded` accumulator. On rollback, this
+    /// commitment will be removed so a failed turn doesn't leave a phantom
+    /// shielded note in the accumulator.
+    pub fn record_shielded_note_inserted(&mut self, commitment: ShieldedNoteCommitment) {
+        self.entries
+            .push(JournalEntry::ShieldedNoteInserted { commitment });
+    }
+
     /// Record a cell-lifecycle change (Seal/Unseal/Destroy/Archive).
     pub fn record_set_lifecycle(&mut self, cell: CellId, old_lifecycle: CellLifecycle) {
         self.entries.push(JournalEntry::SetLifecycle {
@@ -525,6 +543,7 @@ impl LedgerJournal {
         note_nullifiers: &Mutex<NullifierSet>,
         note_commitments: &Mutex<CommitmentSet>,
         note_revoked: &Mutex<RevokedSet>,
+        note_shielded: &Mutex<ShieldedNoteSet>,
         reactive_registry: &Mutex<PendingTurnRegistry>,
         reactive_nullifiers: &Mutex<ReactiveNullifierSet>,
     ) {
@@ -658,6 +677,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::RevocationInserted { revocation_key } => {
                     note_revoked.lock().unwrap().remove(&revocation_key);
+                }
+                JournalEntry::ShieldedNoteInserted { commitment } => {
+                    note_shielded.lock().unwrap().remove(&commitment);
                 }
                 JournalEntry::ReactiveRegistrySnapshot { previous } => {
                     *reactive_registry.lock().unwrap() = *previous;

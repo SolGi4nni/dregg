@@ -2370,7 +2370,11 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
         | JournalEntry::NoteCommitmentInserted { .. }
         | JournalEntry::ReactiveRegistrySnapshot { .. }
         | JournalEntry::ReactiveNullifierInserted { .. }
-        | JournalEntry::RevocationInserted { .. } => vec![],
+        | JournalEntry::RevocationInserted { .. }
+        // A shielded-note append into `note_shielded` commits via its own
+        // accumulator root8() (L1 carrier limb), not walked by
+        // `project_executor_state` — a no-touch marker like its siblings.
+        | JournalEntry::ShieldedNoteInserted { .. } => vec![],
         JournalEntry::EventEmitted { .. } => vec![],
         // NAMED SEAM: a MakeSovereign REMOVES a hosted cell (lifts its whole state
         // out of the ledger). That is a multi-key erasure (every UKey of the cell

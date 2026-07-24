@@ -637,7 +637,11 @@ impl TurnExecutor {
                 // bookkeeping (undone by `LedgerJournal::rollback`); it commits
                 // via the rotated `revoked_root` group, not the LedgerDelta —
                 // the revocation-side sibling of the nullifier/commitment inserts.
-                | JournalEntry::RevocationInserted { .. } => {}
+                | JournalEntry::RevocationInserted { .. }
+                // A shielded-note append into `note_shielded` is likewise
+                // rollback-only bookkeeping; its `root8()` lands in the committed
+                // carrier at L1 (a VK epoch), not the LedgerDelta.
+                | JournalEntry::ShieldedNoteInserted { .. } => {}
                 // Lifecycle / capability narrowing: rollback-only — no
                 // separate LedgerDelta field today. On commit the cell's
                 // CellLifecycle / CapabilityRef change is read off the

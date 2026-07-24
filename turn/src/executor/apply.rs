@@ -1825,6 +1825,34 @@ impl TurnExecutor {
             journal.record_note_spend(*nf);
         }
 
+        // GATE 4 (L0 SHIELDED ACCUMULATOR, byte-safe — DESIGN §3 R1): land each
+        // output note's HIDING commitment in the committed-capable `note_shielded`
+        // accumulator, journaled for rollback. This is the STATE half that closes
+        // the placeholder above: before it, a shielded transfer's outputs landed
+        // NOWHERE committed, so `merkle_root` (#15) had no committed root to pin
+        // to. Now a shielded output IS in a grow-only accumulator whose `root8()`
+        // is the future `piCOMMITTED` source (L4) and future carrier limb (L1).
+        //
+        // ⚑ HONEST ENCODING SCOPE: we append the commitment the deployed transfer
+        // produces TODAY — the output leg's Pedersen `commitment_bytes` (itself a
+        // hiding commitment). The design is explicit that this Ristretto leg is
+        // NOT yet the Poseidon2 `shieldedSpendDesc` membership-leaf image; WHICH
+        // 32-byte commitment becomes the canonical membership leaf is the single
+        // committed-tree ENCODING decision of L2 (in-AIR append grow-gate) / L4
+        // (membership pin) — DESIGN §7 Q2. L0 provides the accumulator + append +
+        // rollback only; it does NOT pin membership, nor commit `root8()` into the
+        // rotation carrier (L1, a VK epoch). The append thus has ZERO effect on any
+        // committed value or proof today — pure additive live executor state.
+        {
+            let mut set = self.note_shielded.lock().unwrap();
+            for leg in &payload.output_legs {
+                let commitment = ShieldedNoteCommitment(leg.commitment_bytes);
+                set.insert(commitment)
+                    .map_err(|e| invalid(format!("shielded output note append failed: {e}")))?;
+                journal.record_shielded_note_inserted(commitment);
+            }
+        }
+
         Ok(())
     }
 
@@ -4882,6 +4910,7 @@ mod react_executor_tests {
             &executor.note_nullifiers,
             &executor.note_commitments,
             &executor.note_revoked,
+            &executor.note_shielded,
             &executor.reactive_registry,
             &executor.reactive_nullifiers,
         );
@@ -4914,6 +4943,7 @@ mod react_executor_tests {
             &executor.note_nullifiers,
             &executor.note_commitments,
             &executor.note_revoked,
+            &executor.note_shielded,
             &executor.reactive_registry,
             &executor.reactive_nullifiers,
         );

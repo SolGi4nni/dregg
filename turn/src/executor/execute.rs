@@ -1145,6 +1145,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.note_shielded,
                     &self.reactive_registry,
                     &self.reactive_nullifiers,
                 );
@@ -1178,6 +1179,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.note_shielded,
                 &self.reactive_registry,
                 &self.reactive_nullifiers,
             );
@@ -1208,6 +1210,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.note_shielded,
                 &self.reactive_registry,
                 &self.reactive_nullifiers,
             );
@@ -1237,6 +1240,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.note_shielded,
                 &self.reactive_registry,
                 &self.reactive_nullifiers,
             );
@@ -1271,6 +1275,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.note_shielded,
                 &self.reactive_registry,
                 &self.reactive_nullifiers,
             );
@@ -1311,6 +1316,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.note_shielded,
                     &self.reactive_registry,
                     &self.reactive_nullifiers,
                 );
@@ -1344,6 +1350,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.note_shielded,
                     &self.reactive_registry,
                     &self.reactive_nullifiers,
                 );

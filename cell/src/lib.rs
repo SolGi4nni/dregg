@@ -60,6 +60,7 @@ pub mod program;
 pub mod revocation_channel;
 pub mod revoked_set;
 pub mod ring_closure;
+pub mod shielded_note_set;
 pub mod state;
 pub mod tee_attest;
 /// γ.2 unilateral binding (1-arity sibling) — plain data type used by
@@ -155,7 +156,9 @@ pub use membrane::{
     CompositionPolicy, HeldFacet, Membrane, MembraneCap, MembraneError, Presentation,
     SealedMembrane, compose_both,
 };
-pub use note::{Note, NoteBatcher, NoteCommitment, NoteError, Nullifier, PositionedNote};
+pub use note::{
+    Note, NoteBatcher, NoteCommitment, NoteError, Nullifier, PositionedNote, ShieldedNoteCommitment,
+};
 pub use nullifier_set::{MerkleMembershipProof, NonMembershipProof, NullifierSet};
 pub use obligation_standing::{
     Discharge, ObligationError as StandingObligationError,
@@ -186,6 +189,7 @@ pub use ring_closure::{
     ClosureProofKind, RingClosureAttestation, RingClosureError, RingLegPi,
     canonical_silver_commitment,
 };
+pub use shielded_note_set::ShieldedNoteSet;
 pub use state::{
     CellState, FIELD_ZERO, FIELDS_ROOT_CONTEXT, FieldElement, FieldVisibility, PublicFieldView,
     STATE_SLOTS, compute_fields_root, compute_heap_root, empty_fields_root, empty_heap_root,

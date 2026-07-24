@@ -45,7 +45,7 @@ use tracing::info;
 
 use dregg_cell::{
     AuthRequired, Cell, CellId, CellStateDelta, CommitmentSet, FIELD_ZERO, FieldElement, Ledger,
-    LedgerDelta, RevocationChannelSet, RevokedSet,
+    LedgerDelta, RevocationChannelSet, RevokedSet, ShieldedNoteSet,
     note::NoteError,
     nullifier_set::NullifierSet,
     preconditions::EvalContext,
@@ -877,6 +877,28 @@ pub struct TurnExecutor {
     /// instance and `chan_nul(channel_id)` for a batch channel trip. The gate (stage
     /// E, `authorize.rs`) checks non-membership of BOTH.
     pub note_revoked: Mutex<RevokedSet>,
+    /// Production SHIELDED-note accumulator (shielded-apex redesign, L0): every
+    /// **hiding** output-note commitment appended by a successful
+    /// `Effect::ShieldedTransfer`. Append-only (GROW-ONLY) with duplicate
+    /// rejection (`ShieldedNoteSet::insert` errors on re-append). Rolled back via
+    /// `JournalEntry::ShieldedNoteInserted` if the turn fails after the append.
+    ///
+    /// The SHIELDED-side sibling of `note_nullifiers` / `note_commitments` /
+    /// `note_revoked`, and the committed STATE half that makes the already-proven
+    /// shielded spend descriptor's `NoteAccumulatorCR` hypothesis true in reality:
+    /// before it existed, a shielded transfer's outputs landed NOWHERE committed
+    /// (the `apply_shielded_transfer` placeholder), so `merkle_root` (#15) was
+    /// pinned to nothing. Its leaf is HIDING — the folded commitment with a ZERO
+    /// value column, NOT a cleartext-value leaf — so it reveals nothing about
+    /// values or owners; see [`ShieldedNoteSet`].
+    ///
+    /// ⚑ L0 IS BYTE-SAFE: this field, its append, and its rollback carry ZERO
+    /// VK/descriptor/AIR cost. Its `root8()` is NOT YET in the committed rotation
+    /// carrier — landing it as a carrier base limb (so the circuit commits it
+    /// cross-turn) is L1, a VK epoch precedented by `revoked_root`; sourcing it as
+    /// `piCOMMITTED` to pin membership is L4. It is deliberately ABSENT from
+    /// `consensus_ctx` here for that reason.
+    pub note_shielded: Mutex<ShieldedNoteSet>,
     /// REACTIVE registry (Track 2): the executor's promise-hole store. An
     /// `Effect::Promise`/`Effect::Notify` deposits a kernel-backed pending entry
     /// (the standing commitment / wake) here; an `Effect::React` discharges it.
@@ -1196,6 +1218,7 @@ impl TurnExecutor {
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
+            note_shielded: Mutex::new(ShieldedNoteSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),
@@ -1278,6 +1301,7 @@ impl TurnExecutor {
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
+            note_shielded: Mutex::new(ShieldedNoteSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),
@@ -1330,6 +1354,7 @@ impl TurnExecutor {
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
+            note_shielded: Mutex::new(ShieldedNoteSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),

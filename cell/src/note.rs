@@ -30,6 +30,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteCommitment(pub [u8; 32]);
 
+/// A **shielded** note commitment — a *hiding* 32-byte commitment to a shielded
+/// output note. Distinct domain from [`NoteCommitment`]: a `NoteCommitment`
+/// carries a note whose value is committed alongside a *cleartext* `NOTE_VALUE_LO`
+/// leaf column (the cleartext-value IMT leaf), whereas a `ShieldedNoteCommitment`
+/// is HIDING — its value lives inside the commitment and MUST NOT appear as a
+/// public leaf column. The accumulator over these ([`crate::shielded_note_set::ShieldedNoteSet`])
+/// therefore keys a value-less (hiding) leaf, unlike the value-carrying
+/// [`crate::commitment_set::CommitmentSet`]. The separate newtype prevents a
+/// hiding shielded commitment from ever being fed to a cleartext-value leaf, and
+/// vice-versa, at the type level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ShieldedNoteCommitment(pub [u8; 32]);
+
 /// A nullifier (published when spending a note).
 /// nullifier = H("dregg-note nullifier v1", commitment || spending_key || creation_nonce)
 /// Only the owner can compute this. Publishing it "spends" the note.
@@ -86,6 +99,11 @@ pub enum NoteError {
     /// grow-only revoked-credential accumulator (the revocation-side dual of
     /// `DoubleSpend`/`DuplicateCommitment` — a credential cannot be revoked twice).
     AlreadyRevoked { credential_nullifier: [u8; 32] },
+    /// Attempted to append a shielded output note whose hiding commitment is
+    /// already present in the grow-only shielded-note accumulator (the
+    /// shielded-side dual of `DuplicateCommitment` — a shielded note commitment
+    /// cannot be created twice).
+    DuplicateShieldedNote { commitment: ShieldedNoteCommitment },
     /// Conservation law violated: inputs do not equal outputs for an asset type.
     ConservationViolation {
         asset_type: u64,
@@ -118,6 +136,13 @@ impl core::fmt::Display for NoteError {
                     f,
                     "already revoked: credential nullifier {:?} already recorded",
                     &credential_nullifier[..4]
+                )
+            }
+            NoteError::DuplicateShieldedNote { commitment } => {
+                write!(
+                    f,
+                    "duplicate shielded note: {:?} already appended",
+                    &commitment.0[..4]
                 )
             }
             NoteError::ConservationViolation {
