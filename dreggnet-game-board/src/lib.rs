@@ -160,6 +160,11 @@ pub enum MatchError {
     /// A two-leg round's RESOLVE leg (Leg R, `old → mid`) did not satisfy the PROVEN Lean
     /// resolve descriptor — an illegal / unresolvable move pair, refused before any proving.
     ResolveRefused(usize),
+    /// A CONFLICT round's Leg C (`roundStep`'s `.again` branch) did not satisfy the PROVEN Lean
+    /// `automataflLegCDescN` — a non-clashing pair (UNSAT: `cSurv` is pinned to 0), a submission
+    /// naming an accumulated mark (the `marksIn`-legality pin), or a mis-fill — refused before any
+    /// proving (the fail-closed witness-gen canary).
+    ConflictRefused(usize),
     /// The board size has no emitted Lean descriptor for one of the two legs (the n = 5 case).
     /// BLOCKED, not faked: a two-leg round cannot be attested at a size the Lean AIR is not
     /// emitted for.
@@ -177,6 +182,11 @@ impl fmt::Display for MatchError {
             MatchError::ResolveRefused(i) => write!(
                 f,
                 "automatafl round {i}: the RESOLVE leg did not satisfy the Lean resolve descriptor"
+            ),
+            MatchError::ConflictRefused(i) => write!(
+                f,
+                "automatafl conflict round {i}: Leg C did not satisfy the Lean automataflLegCDescN \
+                 (non-clash, a submission on an accumulated mark, or a mis-fill)"
             ),
             MatchError::NoDescriptor(n, which) => write!(
                 f,
@@ -524,6 +534,210 @@ impl AutomataflMatch {
         }
         Ok(out)
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// (1b) A MULTI-ROUND automatafl turn: the CONFLICT BRAID (a Leg C chain) + the clean round.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **A MULTI-ROUND automatafl turn** — `k` CONFLICT rounds (each a `roundStep` `.again` re-entry: a
+/// fork/collide marks the clashed coordinate, FREEZES the board, and re-enters) then the
+/// terminating CLEAN round (the resolve that settles the turn).
+///
+/// ## The conflict braid folds as a UNIFORM 32-lane RoundState chain (fully wired)
+///
+/// Every conflict round lowers to ONE Leg C leaf (`automataflLegCDescN 11`, HASH-FREE, ZERO
+/// lookups) that declares the whole 32-lane RoundState window
+/// `[board(9) ‖ marks(9) ‖ locked(10) ‖ waiting(2) ‖ auto(2)]`
+/// ([`leg_c_roundstate_window_n11`](dregg_circuit::effect_vm::custom_state_binding::leg_c_roundstate_window_n11)).
+/// The ONLY cross-leaf rule is `C_i.OUT == C_{i+1}.IN`, which the DEPLOYED `aggregate_tree`
+/// connects lane-by-lane — the merge auto-derives the width from the exposed shape
+/// (`SEG_WIDTH + 2·32 = 89`), so a same-width Leg C chain folds through the existing
+/// [`prove_match`] path with NO M7-specific prover code. The chain accumulates the marks overlay:
+/// `marksIn_0 = ∅` and `marksIn_{i+1}` is the marks `C_i` produced (`marksOut = marksIn ∨ clash`,
+/// read back from the Leg C trace itself, not re-derived). Because `pack` is injective and the
+/// seam is a lane-for-lane `connect`, a DROPPED round (a downstream `marksIn` the upstream never
+/// produced) or a SUBSTITUTED round (a forged `marksOut`) is a broken seam — a `WitnessConflict`,
+/// a witness that does not exist, not a soft constraint.
+///
+/// ## The `C_last → R` handoff is BOARD-only here (the named residual, not faked)
+///
+/// The clean round is the existing two-leg round ([`AutomataflMatch::round_leaves`]: Leg R resolve
+/// + Leg A step, 11-lane `pack ‖ auto` window). The handoff primitive
+/// [`board_window_clean_handoff_connects`](dregg_circuit_prove) connects the leading
+/// `board ‖ marks` (18 lanes) and drops `locked ‖ waiting ‖ auto`. This producer supplies the
+/// BOARD half (the frozen turn-start board, equal on both sides). The MARKS half — and the
+/// clean-round re-check that a *terminating* move avoids an accumulated mark
+/// (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6, PROVEN in Lean) — need the
+/// marks-aware resolve descriptor `automataflResolveMarksDescN`, which **M6 landed in Lean but did
+/// NOT emit / register / give a Rust witness-gen** (it is not in `EmitByName.lean`, there is no
+/// `automatafl-resolve-marks-n11.json`, and no `automatafl_resolve_marks_trace`). Two consequences,
+/// both surfaced rather than papered over:
+///
+/// 1. the clean round's move-vs-marks legality is attested only at the CONFLICT rounds (Leg C's own
+///    `marksIn`-legality pin), never at the terminating move;
+/// 2. the `C_last → R` merge is MIXED-width (32 → 20), and the deployed `merge_two_segment_proofs`
+///    / [`board_window_of_chain`] both refuse a mixed-width chain — the clean-handoff *merge node*
+///    (wiring [`board_window_clean_handoff_connects`] into a parent-segment producer) + its host
+///    mirror are not built. `board_window_clean_handoff_connects` is exercised only at the bare
+///    connect level today (`dregg-circuit-prove::board_window_seam_tests`).
+///
+/// So [`MultiRoundTurn::conflict_leaves`] is a foldable, self-contained artifact; welding it to the
+/// clean round into ONE root is BLOCKED on the M6 descriptor emission + the mixed-width merge node.
+#[derive(Clone, Debug)]
+pub struct MultiRoundTurn {
+    /// The turn-start board — FROZEN across the whole conflict braid.
+    pub start: Board,
+    /// The `k` conflict rounds' submissions, in re-entry order. Each MUST clash (fork/collide); a
+    /// non-clashing pair is UNSAT as a Leg C (`cSurv` pinned to 0). Round `i+1` is entered with the
+    /// marks round `i` produced, so a submission naming an accumulated mark is refused.
+    pub conflict_subs: Vec<[Move; 2]>,
+    /// The terminating CLEAN round's submissions (resolve then step). `None` folds the conflict
+    /// braid alone (the self-contained uniform-32 segment).
+    pub clean_subs: Option<[Move; 2]>,
+}
+
+impl MultiRoundTurn {
+    /// A turn from its conflict rounds and terminating clean round.
+    pub fn new(
+        start: Board,
+        conflict_subs: Vec<[Move; 2]>,
+        clean_subs: [Move; 2],
+    ) -> MultiRoundTurn {
+        MultiRoundTurn {
+            start,
+            conflict_subs,
+            clean_subs: Some(clean_subs),
+        }
+    }
+
+    /// A turn's conflict braid alone (no terminating clean round) — the foldable uniform-32
+    /// segment.
+    pub fn conflict_only(start: Board, conflict_subs: Vec<[Move; 2]>) -> MultiRoundTurn {
+        MultiRoundTurn {
+            start,
+            conflict_subs,
+            clean_subs: None,
+        }
+    }
+
+    /// **THE CONFLICT-BRAID LEAVES** — one Leg C leaf per conflict round, chained on the RoundState
+    /// seam. Round `i` is filled by [`dregg_automatafl::legc_witness::automatafl_legc_trace`] over
+    /// `RoundStateIn { board: start (frozen), marks: marksIn_i }`, verified against the PROVEN
+    /// `automataflLegCDescN 11` by the fail-closed canary
+    /// [`legc_trace_accepts`](dregg_automatafl::legc_witness::legc_trace_accepts) BEFORE it is
+    /// folded; `marksIn_{i+1}` is the `marksOut` the round produced (read back from the trace).
+    /// Every leaf declares the 32-lane RoundState window so the fold connects `C_i.OUT == C_{i+1}.IN`.
+    ///
+    /// The leaf's `[old8 ‖ new8]` door is the REAL rotated roots of the leg the fold mints for that
+    /// chain position ([`fixture_rotated_roots`](dregg_multiway_tug::fold::fixture_rotated_roots)),
+    /// so the deployed state tooth holds — identical to [`AutomataflMatch::round_leaves`].
+    ///
+    /// Emitted only at `n = 11` (the sole RoundState-window instantiation); another size is
+    /// BLOCKED-not-faked ([`MatchError::NoDescriptor`]).
+    pub fn conflict_leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
+        use dregg_automatafl::legc_layout::LegCLayout;
+        use dregg_automatafl::legc_witness::{
+            RoundStateIn, automatafl_legc_trace, legc_descriptor_ident, legc_round_state_window,
+            legc_trace_accepts,
+        };
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+        use dregg_circuit::effect_vm::custom_state_binding::{
+            BoardWindowBinding, leg_c_roundstate_window_n11,
+        };
+        use dregg_circuit_prove::joint_turn_aggregation::DescriptorStateLeafSource;
+        use dregg_multiway_tug::fold::fixture_rotated_roots;
+
+        if self.conflict_subs.is_empty() {
+            return Err(MatchError::Empty);
+        }
+        let n = self.start.n;
+        let cdesc = descriptor_by_name(&legc_descriptor_ident(n))
+            .ok_or_else(|| MatchError::NoDescriptor(n, "legc".to_string()))?;
+
+        // The 32-lane RoundState window. `leg_c_roundstate_window_n11` is the pinned n = 11 layout;
+        // cross-check it against the descriptor-derived window (fail-closed at any other size).
+        let derived: BoardWindowBinding = {
+            let (in_slices, out_slices) = legc_round_state_window(n, &cdesc)
+                .map_err(|e| MatchError::NoDescriptor(n, format!("legc window: {e}")))?;
+            BoardWindowBinding {
+                in_slices,
+                out_slices,
+            }
+        };
+        let window = leg_c_roundstate_window_n11();
+        if window != derived {
+            return Err(MatchError::NoDescriptor(
+                n,
+                "the pinned n=11 RoundState window disagrees with the descriptor's PI layout"
+                    .to_string(),
+            ));
+        }
+
+        let layout = LegCLayout::new(n);
+        let rows = 2usize;
+        let mut out: Vec<LeafBundle> = Vec::with_capacity(self.conflict_subs.len());
+        let mut marks: Vec<dregg_automatafl::reference::Coord> = Vec::new(); // marksIn_0 = ∅
+
+        for (i, subs) in self.conflict_subs.iter().enumerate() {
+            let rs = RoundStateIn {
+                board: self.start.clone(),
+                marks: marks.clone(),
+            };
+            let mut tr = automatafl_legc_trace(&rs, subs, &cdesc).map_err(|e| {
+                MatchError::Lowering(format!("conflict round {i} legc witness-gen: {e}"))
+            })?;
+            let (old8, new8) = fixture_rotated_roots(out.len() as u64);
+            set_state_door(&mut tr.public_inputs, old8, new8);
+            // Fail-closed canary: the generated trace must satisfy the Lean Leg C descriptor
+            // (the real Ir2Air row-local evaluator) before it is folded.
+            if !legc_trace_accepts(&cdesc, &tr) {
+                return Err(MatchError::ConflictRefused(i));
+            }
+            // marksIn for the next round = the marksOut this round produced (ground truth, read off
+            // the trace's per-cell marksOut column — never re-derived from a reference oracle).
+            marks = decode_marks_out(&tr.row, &layout, n);
+            out.push(LeafBundle::descriptor_backed(
+                tr.public_inputs.clone(),
+                rows,
+                DescriptorStateLeafSource {
+                    descriptor: cdesc.clone(),
+                    base_trace: tr.base_trace(rows),
+                    board_window: Some(window.clone()),
+                },
+            ));
+        }
+        Ok(out)
+    }
+
+    /// **THE TERMINATING CLEAN-ROUND LEAVES** — Leg R (resolve) then Leg A (step), the existing
+    /// two-leg seam, over the frozen turn-start board. `None` if the turn carries no clean round.
+    ///
+    /// ⚠ This is the PLAIN 11-lane `pack ‖ auto` resolve — it does NOT consume the accumulated
+    /// marks (see the type doc: the marks-aware `automataflResolveMarksDescN` is Lean-only). So the
+    /// terminating move's legality-vs-marks is UNATTESTED at this leaf; the clean board it produces
+    /// is sound, the marks re-check is the residual.
+    pub fn clean_leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
+        match self.clean_subs {
+            Some(subs) => {
+                AutomataflMatch::played(self.start.clone(), vec![(subs[0], subs[1])]).round_leaves()
+            }
+            None => Err(MatchError::Empty),
+        }
+    }
+}
+
+/// Decode a Leg C trace's per-cell `marksOut` overlay into a coordinate list (the next round's
+/// `marksIn`). A cell is marked iff its `c_marks_out_cell` column is `1`.
+fn decode_marks_out(
+    row: &[BabyBear],
+    layout: &dregg_automatafl::legc_layout::LegCLayout,
+    n: usize,
+) -> Vec<dregg_automatafl::reference::Coord> {
+    (0..n * n)
+        .filter(|&c| row[layout.c_marks_out_cell(c)] == BabyBear::ONE)
+        .map(|c| ((c % n) as i32, (c / n) as i32))
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
