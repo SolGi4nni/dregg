@@ -241,7 +241,13 @@ fn predicate_age_gte_18_without_cleartext_disclosure() {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
         ..Default::default()
     };
-    verify(&presentation, &verify_opts).expect("predicate-only verification must succeed");
+    // FAIL-CLOSED (2026-07-24): predicate accept is REFUSED until the facts_root AIR binding lands
+    // (credentials/src/verification.rs). Assert the honest refusal; restore success when the
+    // presentation STARK exposes facts_root as a public input.
+    assert!(
+        verify(&presentation, &verify_opts).is_err(),
+        "predicate-only verification is fail-closed pending the facts_root AIR binding"
+    );
 }
 
 #[test]

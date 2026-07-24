@@ -265,11 +265,11 @@ fn verify_inner(
         // producer bound each predicate + attestation to (`presentation.rs`). The
         // attestation STARK forces `candidate.proof.fact_commitment` to be the blinded image
         // of a fact under that state root, and the predicate descriptor independently welds
-        // `state_root` into the same commitment. So a genuine `Gte(18)` proof minted from a
-        // DIFFERENT credential X (age 32) and attached to a presentation of credential A
-        // (age 15) is REFUSED: X's attestation names X's state root, not A's
-        // `final_state_root`, and the attestation fails closed before the STARK even runs.
-        // That is the cross_credential_predicate_forgery_rejected falsifier, now a red gate.
+        // `state_root` into the same commitment. That state_root binding closes cross-credential
+        // REPLAY — but NOT the falsifier's attack: a fact FABRICATED under A's own
+        // `final_state_root` with an INVENTED `facts_root`. verify() ACCEPTED that forgery under the
+        // third_party call (the falsifier cross_credential_predicate_forgery_rejected proved it), so
+        // the accept path below now FAIL-CLOSES rather than trust the prover-supplied facts_root.
         //
         // ⚠ RESIDUAL AIR GAP (co-tenant flag — Lean-authored, NOT this crate): `facts_root`
         // still has no source independent of the proof. The presentation descriptor
@@ -285,23 +285,18 @@ fn verify_inner(
         // HONEST FLOOR: even fully bound, this predicate proof inherits the deployed STARK/FRI
         // soundness floor (project-fri-soundness-reality) — a proof, not an on-chain-settled
         // fact. Do NOT read a pass here as "sound".
-        let Some(attestation) = candidate.proof.attestation.as_ref() else {
-            // No attestation ⇒ nothing binds the commitment to this credential at all.
-            // Fail CLOSED rather than fall back to the x==x gate.
-            return Err(VerificationError::PredicateProofInvalid {
-                attribute: expected.attribute.clone(),
-            });
-        };
-        let final_state_root = dregg_bridge::present::bb_from_bytes(&proof.final_state_root);
-        if !dregg_bridge::present::verify_predicate_proof_third_party(
-            &candidate.proof,
-            attestation.facts_root,
-            final_state_root,
-        ) {
-            return Err(VerificationError::PredicateProofInvalid {
-                attribute: expected.attribute.clone(),
-            });
-        }
+        // FAIL-CLOSED (2026-07-24): predicate accept is UNSOUND in Rust today, so we REFUSE.
+        // The only `facts_root` available is `attestation.facts_root` — PROVER-SUPPLIED — so binding
+        // against it is vacuous (a forger mints an attestation whose facts_root makes their fabricated
+        // fact a member). The falsifier `cross_credential_predicate_forgery_rejected` proved verify()
+        // ACCEPTED the forgery under the old `verify_predicate_proof_third_party` call: the trusted
+        // state_root binding alone cannot refuse a fact fabricated under THIS state_root with an
+        // INVENTED facts_root. A SOUND accept needs a TRUSTED facts_root exposed as a
+        // presentation-STARK public input (the AIR residual named above, Lean-authored — out of scope
+        // for this crate). Until it lands, refuse beats accept-forgery.
+        return Err(VerificationError::PredicateProofInvalid {
+            attribute: expected.attribute.clone(),
+        });
     }
 
     // 6. Federation root check.

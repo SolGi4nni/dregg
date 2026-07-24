@@ -427,7 +427,15 @@ fn matching_predicate_proof_accepted() {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
         ..Default::default()
     };
-    verify(&presentation, &verify_opts).expect("genuine matching predicate proof must verify");
+    // FAIL-CLOSED (2026-07-24): even a GENUINE matching predicate proof is refused today — predicate
+    // accept is fail-closed until the facts_root AIR binding lands (credentials/src/verification.rs;
+    // its paired falsifier cross_credential_predicate_forgery_rejected shows the old accept was
+    // vacuous). This positive control asserts the honest refusal for now; RESTORE it to
+    // `.expect("...must verify")` when the presentation STARK exposes facts_root as a public input.
+    assert!(
+        verify(&presentation, &verify_opts).is_err(),
+        "predicate accept is fail-closed pending the facts_root AIR binding (positive control disabled)"
+    );
 }
 
 // ── (c) two anonymous presentations are unlinkable ────────────────────────────

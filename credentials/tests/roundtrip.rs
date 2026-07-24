@@ -200,7 +200,15 @@ fn predicate_request_attaches_predicate_proof() {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
         ..Default::default()
     };
-    verify(&presentation, &verify_options).expect("verification must succeed");
+    // FAIL-CLOSED (2026-07-24): predicate accept is REFUSED until the facts_root AIR binding lands
+    // (credentials/src/verification.rs — the only facts_root today is prover-supplied, so accept is
+    // vacuous and accepts forgeries; the cross_credential_predicate_forgery_rejected falsifier proved
+    // it). Assert the honest refusal; restore the success assertion when the presentation STARK
+    // exposes facts_root as a public input.
+    assert!(
+        verify(&presentation, &verify_options).is_err(),
+        "predicate verification is fail-closed pending the facts_root AIR binding"
+    );
 }
 
 #[test]
