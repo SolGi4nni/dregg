@@ -323,54 +323,20 @@ impl TurnExecutor {
         entries: &[(CellId, i64)],
         declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
-        use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
-        use dregg_circuit::field::BabyBear;
-
-        let mut block = BlockConservation::new();
-        for (cell_id, delta) in entries {
-            let asset = Self::asset_class_for_cell(ledger, cell_id);
-            // Re-express the proven signed i64 delta as the collector's signed
-            // (mag, sign) contribution — the exact shape the per-cell proof's
-            // (NET_DELTA_MAG, NET_DELTA_SIGN) PI carries (sign 0 = credit/+,
-            // 1 = debit/−).
-            let sign_credit = *delta >= 0;
-            block.add_contribution(PerCellContribution {
-                asset,
-                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
-                net_delta_sign: if sign_credit {
-                    BabyBear::ZERO
-                } else {
-                    BabyBear::ONE
-                },
-            });
-        }
-        for s in declared_supply {
-            block.add_supply_change(*s);
-        }
-
-        // The per-asset signed-sum gate: EXACTLY the arithmetic the committed
-        // per-asset `cross_cell_conservation_air` forces (its `balance[last]==0`
-        // boundary, computed by `cross_cell_balance` over each asset's grouped
-        // signed deltas). Fail-closed on the first imbalanced asset. The full
-        // per-asset STARK (`BlockConservation::prove_and_verify`) is the
-        // light-client-side realization of this same boundary — the executor
-        // already trusts the per-cell proofs + the ledger token_ids, so it runs
-        // the boundary arithmetic directly (re-proving every turn on the hot path
-        // would be redundant); the light client runs `verify_with_proofs` over
-        // the carried per-asset proofs. The new test exercises the full
-        // prove+verify to witness the in-AIR property end-to-end.
-        if let Err(dregg_circuit::block_conservation::BlockConservationError::AssetImbalanced {
-            asset,
-            imbalance,
-        }) = block.check()
-        {
-            return Err(AtomicTurnError::PerAssetConservationViolation {
-                asset: asset.0,
-                imbalance,
-            });
-        }
-
-        Ok(())
+        // ── House Law #1: the LEDGER path routes through the verified Lean conservation oracle too ──
+        // Resolve each cell's TRUSTED ledger asset class, then delegate to
+        // `check_per_asset_conservation_by_asset`, which decides the per-asset Σδ=0 verdict via the
+        // PROVEN Lean `dregg_cross_cell_conserves` when the conservation oracle is installed (dregg-node
+        // registers it at startup) — NOT the hand-written `BlockConservation` twin (which drifted once
+        // into the asset-blind inflation bug). The ledger path partitions identically to the by-asset
+        // path; it just resolves the asset class from the trusted ledger token_id rather than a
+        // proof-bound PI. `BlockConservation` now lives ONLY in `unverified_rust_conservation_fallback`
+        // (the labeled no-Lean-guest degradation, reached only when no oracle is installed).
+        let by_asset: Vec<(dregg_circuit::field::BabyBear, i64)> = entries
+            .iter()
+            .map(|(cell_id, delta)| (Self::asset_class_for_cell(ledger, cell_id), *delta))
+            .collect();
+        Self::check_per_asset_conservation_by_asset(&by_asset, declared_supply)
     }
 
     /// Resolve the per-cell ASSET CLASS for the per-asset conservation gate on
