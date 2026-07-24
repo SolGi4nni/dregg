@@ -74,15 +74,46 @@ deployed verifier; §3′ RETYPES it (`DeployedFriSampledEmbedding`):
     passing a non-covering sample against a genuine codeword).
 
 §2/§7 are KEPT (nine downstream consumers speak `DeployedFriEmbedding`) but DEMOTED to the cover
-idealization; the acceptance bar for the decode rungs is §3′. **Per-rung owes-statement:**
+idealization; the acceptance bar for the decode rungs is §3′.
+
+## ⚑ L5 SHARED RUNG (2026-07-24): §3′ RETYPED single-column word → the deployed BATCHED
+MULTI-COLUMN commitment
+
+§3′'s oracle was `Fin 16 → BabyBear` — ONE committed column. The deployed plonky3 FRI commits a
+BATCHED MULTI-COLUMN LDE MATRIX (rows = the evaluation domain, columns = the committed trace/poly
+columns) and each query opens ONE ROW — all columns at the sampled row — through a single Merkle
+path (`p3_commit::BatchOpening.opened_values : Vec<Vec<T>>`, pinned rev `82cfad7`,
+`commit/src/mmcs.rs:163-169`; one `verify_batch` per commitment, `fri/src/verifier.rs:590-597`;
+the in-tree verifier model already carries the row: `FriVerifier.LayerOpening.leaf : List F`,
+`FriVerifier.lean:277`, Merkle-checked whole by `friQueryCheck`, `:337-346`). The R4a
+(codeword → trace columns) and R4b rungs both need that matrix shape, so it is done ONCE here:
+`FriBatchedOracle.MatrixOracle` is the reusable shape, and §3′ is retyped onto it —
+`oracle : … → MatrixOracle (Fin 16) numCols BabyBear`, `qsample` SHARED across columns (one
+Merkle path per row ⟹ every column is spot-checked at the SAME positions), `foldWord`/
+`accept_folds_sampled`/`foldWord_mem` PER COLUMN, `decode_trace` consuming EVERY column
+`4`-close (`MatrixOracle.ColsClose`). What is deliberately NOT modeled: the α-RLC input
+reduction (`fri/src/verifier.rs:620-640`) that collapses the opened rows into the deployed
+single fold-input word — that is the FRI FOLD's input-reduction seam (BCIKS correlated
+agreement), SEPARATE from the commitment, and it stays a NAMED residual connecting the deployed
+one-word fold to these per-column hypothesis fields. NOTHING REGRESSES: single-column is the
+`numCols = 1` special case — `DeployedFriSampledEmbedding.ofWord` (constructor bridge),
+`positiveRadiusTraceDecode_ofWord_iff` / `accept_folds_sampled_word` / `decode_trace_word`
+(projection bridges), and the L4 keystone (`verifyAlgo_concreteFri_opened_positions`) and L6
+dichotomy (`accept_close_or_paid`) are UNTOUCHED, with the L6 wire now per column
+(`sampled_embedding_close_or_paid`) plus the whole-matrix dichotomy
+(`sampled_embedding_matrix_close_or_paid`).
+
+**Per-rung owes-statement:**
   * **L4** = the deterministic opened-positions-agree map. Verifier-syntax half PROVEN here
     (`verifyAlgo_concreteFri_opened_positions`: an accepting `concreteFriChecks` run passes
     `friQueryCheck` at every transcript-sampled index with the index binding). NAMED residual: the
     Merkle log-decode identification — `friQueryCheck = true` at the sampled index ⟺ the opened
     leaves agree with `Fold` on the `RomQueryLog`-decoded word (extraction-as-data,
     except-with-εMerkle).
-  * **L5** = `PositiveRadiusTraceDecode` at a REALISTIC multi-layer `FriSetupK` instance (named, NOT
-    proven, used as a hypothesis nowhere in this file's theorems). `friProximityK8_discharge0` is
+  * **L5** = `PositiveRadiusTraceDecode` — now typed over the BATCHED MULTI-COLUMN commitment
+    (every committed column `dRad`-close ⟹ the trace decodes; see the retype block above) — at a
+    REALISTIC multi-layer `FriSetupK` instance (named, NOT proven, used as a hypothesis nowhere in
+    this file's theorems). `friProximityK8_discharge0` is
     ONLY the `d = 0` size-16 toy (`FriBridgeDeployedArity.lean:111`);
     `FriPositiveRadiusPayment.positive_radius_payment_vacuous_at_friSetupK8` proves the size-16
     domain CANNOT exhibit a positive radius — the realistic instance (`|ι| ≥ 2^22`-class, multi-layer
@@ -102,6 +133,7 @@ apex modules (`StarkSoundReduction`, `FriBridgeDeployedArity`, …) are imported
 import Dregg2.Circuit.StarkSoundReduction
 import Dregg2.Circuit.FriBridgeDeployedArity
 import Dregg2.Circuit.FriQuerySoundness
+import Dregg2.Circuit.FriBatchedOracle
 import Dregg2.Circuit.FieldIntegerLift
 
 namespace Dregg2.Circuit.DeployedTraceExtract
@@ -127,6 +159,7 @@ open Dregg2.Circuit.FriQuerySoundness
   (Accepts accept_prob_le_of_farN gZero gZero_mem far_accepted_by_missing_query)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.FriBridgeDeployedArity (FriProximityK friProximityK8_discharge0)
+open Dregg2.Circuit.FriBatchedOracle (MatrixOracle)
 open Dregg2.Crypto
 
 /-! ## §1 — `TraceWitnessed` : the per-batch tail of `DeployedTraceExtract`, as a standalone `Prop`.
@@ -237,9 +270,12 @@ deployed sampling. This section is the deployed bar, per rung:
     identification — `friQueryCheck = true` at the sampled index ⟺ the opened leaves agree with
     `Fold` on the `RomQueryLog`-decoded word (extraction-as-data, except-with-εMerkle).
   * **L5 — the positive-radius decoder.** `PositiveRadiusTraceDecode` (the retyped `decode_trace`
-    input): the trace decoder must consume a `dRad`-CLOSE oracle, NOT `∈ C` exactly — the assembly
-    only ever delivers closeness except-with-`epsQuery`. At `friSetupK8` the radius is `4` (the
-    `[16,8]`-RS unique-decoding radius `⌊(9−1)/2⌋`). **The honest L5 target** (named, NOT faked
+    input): the trace decoder must consume a `dRad`-CLOSE **batched multi-column** oracle — EVERY
+    committed column close (`MatrixOracle.ColsClose`), NOT `∈ C` exactly and NOT one designated
+    column — the assembly
+    only ever delivers closeness except-with-`epsQuery`, and the decode must read EVERY trace
+    column out of the matrix the verifier Merkle-opens per row. At `friSetupK8` the radius is `4`
+    (the `[16,8]`-RS unique-decoding radius `⌊(9−1)/2⌋`). **The honest L5 target** (named, NOT faked
     here): exhibit a realistic multi-layer instance `S_prod : FriSetupK BabyBear ι κ 8` with
     `|ι| ≥ 2^22`-class domain and fold tower, and prove
     `PositiveRadiusTraceDecode hash R perm RATE toNat params vk checks initState logN view S_prod
@@ -294,10 +330,17 @@ theorem verifyAlgo_concreteFri_opened_positions
         exact hall qe hqe
 
 /-- **L5's named input type — `PositiveRadiusTraceDecode`.** The codeword-decode retyped to consume
-a `dRad`-CLOSE oracle (positive-radius unique decoding) instead of `oracle ∈ C` exactly. Generic
-over the FRI setup `S` so the SAME `Prop` states both the `friSetupK8`/`dRad = 4` field below and
-the honest L5 target at a realistic multi-layer instance (see the section header — that instance
-is the to-do; it is NOT stubbed here). -/
+a `dRad`-CLOSE **batched multi-column** oracle — EVERY committed column `dRad`-close
+(`MatrixOracle.ColsClose`, positive-radius unique decoding per column) instead of `oracle ∈ C`
+exactly. The oracle is the matrix the deployed verifier Merkle-opens PER ROW (rows = the domain
+`ι`, columns = the `numCols` committed trace/poly columns —
+`p3_commit::BatchOpening.opened_values`, `commit/src/mmcs.rs:163-169` at rev `82cfad7`); the
+decode must recover the trace from ALL of them, so one designated column's closeness is NOT
+enough. Generic over the FRI setup `S` AND `numCols`, so the SAME `Prop` states both the
+`friSetupK8`/`dRad = 4` field below and the honest L5 target at a realistic multi-layer,
+realistic-width instance (see the section header — that instance is the to-do; it is NOT stubbed
+here). The single-column shape is the `numCols = 1` special case
+(`positiveRadiusTraceDecode_ofWord_iff`). -/
 def PositiveRadiusTraceDecode
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
@@ -305,65 +348,190 @@ def PositiveRadiusTraceDecode
     (initState : List Int) (logN : Nat) (view : ProofView)
     {F ι κ : Type*} [Field F] [DecidableEq F]
     [Fintype ι] [DecidableEq ι] [Fintype κ] [DecidableEq κ] {n : ℕ}
-    (S : FriSetupK F ι κ n)
-    (oracle : BatchPublicInputs → BatchProof → (ι → F)) (dRad : ℕ) : Prop :=
+    (S : FriSetupK F ι κ n) {numCols : ℕ}
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle ι numCols F) (dRad : ℕ) : Prop :=
   ∀ (pi : BatchPublicInputs) (π : BatchProof),
     verifyAlgo perm RATE toNat params vk checks initState logN
         (view pi π).1 (view pi π).2 = true →
-    closeN S.C dRad (oracle pi π) →
+    MatrixOracle.ColsClose S.C dRad (oracle pi π) →
     TraceWitnessed hash (R pi.effect) pi
 
-/-- **`DeployedFriSampledEmbedding` — the §2 structure RETYPED to the deployed sampling.** The
-acceptance bar for the decode rungs. Differences from `DeployedFriEmbedding`:
+/-- **The `numCols = 1` bridge (decode side) — nothing regresses.** At a one-column matrix
+(`MatrixOracle.ofWord`), the multi-column `PositiveRadiusTraceDecode` is EXACTLY the pre-retype
+single-column statement (the right-hand side is the old definition body verbatim). -/
+theorem positiveRadiusTraceDecode_ofWord_iff
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    {F ι κ : Type*} [Field F] [DecidableEq F]
+    [Fintype ι] [DecidableEq ι] [Fintype κ] [DecidableEq κ] {n : ℕ}
+    (S : FriSetupK F ι κ n)
+    (w : BatchPublicInputs → BatchProof → (ι → F)) (dRad : ℕ) :
+    PositiveRadiusTraceDecode hash R perm RATE toNat params vk checks initState logN view S
+        (fun pi π => MatrixOracle.ofWord (w pi π)) dRad ↔
+      ∀ (pi : BatchPublicInputs) (π : BatchProof),
+        verifyAlgo perm RATE toNat params vk checks initState logN
+            (view pi π).1 (view pi π).2 = true →
+        closeN S.C dRad (w pi π) →
+        TraceWitnessed hash (R pi.effect) pi := by
+  constructor
+  · intro h pi π hacc hclose
+    exact h pi π hacc ((MatrixOracle.colsClose_ofWord_iff S.C dRad (w pi π)).mpr hclose)
+  · intro h pi π hacc hcols
+    exact h pi π hacc ((MatrixOracle.colsClose_ofWord_iff S.C dRad (w pi π)).mp hcols)
+
+/-- **`DeployedFriSampledEmbedding` — the §2 structure RETYPED to the deployed sampling AND the
+deployed BATCHED MULTI-COLUMN commitment (the L5 shared rung).** The acceptance bar for the
+decode rungs.
+
+**What the multi-column oracle now MODELS that the single-column word did not**: the deployed
+plonky3 FRI commits ONE batched LDE matrix per commitment — rows = the evaluation domain,
+columns = ALL committed trace/poly columns — and a query opens the ENTIRE row at the sampled
+position through a single Merkle path (`p3_commit::BatchOpening.opened_values : Vec<Vec<T>>`,
+rev `82cfad7` `commit/src/mmcs.rs:163-169`; one `verify_batch` per commitment,
+`fri/src/verifier.rs:590-597`; in-tree, `FriVerifier.LayerOpening.leaf : List F` at
+`FriVerifier.lean:277` IS that opened row and `friQueryCheck` Merkle-checks it whole). So the
+committed object R4a must decode trace columns from is a `MatrixOracle (Fin 16) numCols
+BabyBear`, `qsample` is SHARED across columns (every column is spot-checked at the SAME sampled
+rows — row samples are never independent per-column draws), and the decode input is EVERY
+column close, not one designated word.
+
+Differences from `DeployedFriEmbedding`:
   * `accept_folds` is REPLACED by `accept_folds_sampled` — agreement between the true fold and the
     committed next-layer word `foldWord` AT the `numQueries` transcript-sampled folded positions
-    `qsample` (each the log-decoded folded position of a transcript query). This is what
-    `foldConsistent` spot-checks — provable-in-principle from
+    `qsample` (each the log-decoded folded position of a transcript query), PER COLUMN. This is
+    what `foldConsistent` spot-checks — provable-in-principle from
     `verifyAlgo_concreteFri_opened_positions` + the Merkle log-decode identification (the L4
     residual), with NO universal membership claim;
-  * `foldWord_mem` — the committed next-layer word is a codeword. Deterministic at THIS single-fold
-    resolution only because the last FRI layer is sent in the clear (`finalPoly`,
+  * `foldWord_mem` — the committed next-layer word is a codeword, per column. Deterministic at
+    THIS single-fold resolution only because the last FRI layer is sent in the clear (`finalPoly`,
     `log_final_poly_len = 0`); at a multi-layer instance the intermediate layers' membership itself
     moves into the probabilistic assembly (part of the L5/L6 engineering);
   * `decode_trace` is retyped to `PositiveRadiusTraceDecode … friSetupK8 oracle 4` — the decoder
-    consumes a `4`-close oracle, never `∈ C` exactly. -/
+    consumes a matrix with EVERY column `4`-close, never `∈ C` exactly.
+
+**NAMED residual, not smuggled**: the deployed verifier folds ONE word — the α-RLC reduction of
+the opened rows (`fri/src/verifier.rs:620-640`) — not each column separately. The per-column
+fold fields here are the shape the codeword→trace-columns decode consumes; connecting them to
+the deployed single-word fold is the RLC input-reduction seam (BCIKS correlated agreement), a
+SEPARATE concern deliberately NOT typed into the commitment. These are hypothesis fields — the
+structure is an explicit residual, and at `numCols = 1` (`.ofWord` below) it degenerates to
+exactly the pre-retype single-column bar, so nothing is weakened. -/
 structure DeployedFriSampledEmbedding
+    (numCols : ℕ)
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
     (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
     (initState : List Int) (logN : Nat) (view : ProofView) : Type where
-  /-- The committed BabyBear column oracle the deployed proof exposes. -/
-  oracle : BatchPublicInputs → BatchProof → (Fin 16 → BabyBear)
+  /-- The committed BATCHED MULTI-COLUMN BabyBear oracle the deployed proof exposes: the matrix
+  the verifier Merkle-opens per ROW (all `numCols` columns at each sampled row). -/
+  oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin 16) numCols BabyBear
   /-- The `8` FRI fold challenges of the transcript. -/
   chal : BatchPublicInputs → BatchProof → (Fin 8 → BabyBear)
   /-- The `8` challenges are DISTINCT (arity-8 Vandermonde inverts). -/
   chal_inj : ∀ pi π, Function.Injective (chal pi π)
   /-- The `numQueries` transcript-sampled FOLDED-domain positions (with replacement — faithful to
   the deployed independent draws): the log-decoded folded position (`index / arity`) of each
-  transcript query. -/
+  transcript query. ONE sample stream for the whole matrix — a single Merkle path opens every
+  column at the sampled row, so columns are never sampled independently. -/
   qsample : BatchPublicInputs → BatchProof → (Fin params.numQueries → Fin 2)
-  /-- The committed next-layer word per challenge (read from the proof's `finalPoly` at this
-  single-fold resolution). -/
-  foldWord : BatchPublicInputs → BatchProof → (Fin 8 → (Fin 2 → BabyBear))
-  /-- The committed next-layer word IS a codeword of the folded code — deterministic here ONLY
-  because the final layer is sent in the clear (see structure docstring). -/
+  /-- The committed next-layer word per challenge AND per column (read from the proof's
+  `finalPoly` at this single-fold resolution). -/
+  foldWord : BatchPublicInputs → BatchProof → Fin 8 → Fin numCols → (Fin 2 → BabyBear)
+  /-- The committed next-layer word IS a codeword of the folded code, per column — deterministic
+  here ONLY because the final layer is sent in the clear (see structure docstring). -/
   foldWord_mem : ∀ (pi : BatchPublicInputs) (π : BatchProof),
     verifyAlgo perm RATE toNat params vk checks initState logN
         (view pi π).1 (view pi π).2 = true →
-    ∀ i, foldWord pi π i ∈ friSetupK8.C'
+    ∀ i j, foldWord pi π i j ∈ friSetupK8.C'
   /-- **THE RETYPED VERIFIER-DECODE (deterministic part)** — on accept, at every SAMPLED folded
-  position the true fold of the committed oracle agrees with the committed next-layer word. NO
-  membership conclusion: that is `accept_close_or_paid`'s probabilistic dichotomy. -/
+  position the true fold of EACH committed column agrees with that column's committed next-layer
+  word. NO membership conclusion: that is `accept_close_or_paid`'s probabilistic dichotomy. -/
   accept_folds_sampled : ∀ (pi : BatchPublicInputs) (π : BatchProof),
     verifyAlgo perm RATE toNat params vk checks initState logN
         (view pi π).1 (view pi π).2 = true →
-    ∀ i, Accepts (Fold friSetupK8.geom (chal pi π i) (oracle pi π))
-      (foldWord pi π i) (qsample pi π)
+    ∀ i j, Accepts (Fold friSetupK8.geom (chal pi π i) ((oracle pi π).col j))
+      (foldWord pi π i j) (qsample pi π)
   /-- **THE RETYPED CODEWORD-DECODE** — positive-radius unique decoding at the `[16,8]`-RS
-  unique-decoding radius `4`. -/
+  unique-decoding radius `4`, consuming EVERY committed column `4`-close. -/
   decode_trace :
     PositiveRadiusTraceDecode hash R perm RATE toNat params vk checks initState logN view
       friSetupK8 oracle 4
+
+/-- **The `numCols = 1` bridge (constructor) — the OLD single-column §3′ fields assemble the
+one-column instance verbatim.** Anything that could supply the pre-retype single-column
+`DeployedFriSampledEmbedding` supplies the retyped structure at `numCols = 1`; nothing
+regresses. -/
+def DeployedFriSampledEmbedding.ofWord
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → (Fin 16 → BabyBear))
+    (chal : BatchPublicInputs → BatchProof → (Fin 8 → BabyBear))
+    (chal_inj : ∀ pi π, Function.Injective (chal pi π))
+    (qsample : BatchPublicInputs → BatchProof → (Fin params.numQueries → Fin 2))
+    (foldWord : BatchPublicInputs → BatchProof → (Fin 8 → (Fin 2 → BabyBear)))
+    (foldWord_mem : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      ∀ i, foldWord pi π i ∈ friSetupK8.C')
+    (accept_folds_sampled : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      ∀ i, Accepts (Fold friSetupK8.geom (chal pi π i) (oracle pi π))
+        (foldWord pi π i) (qsample pi π))
+    (decode_trace : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      closeN friSetupK8.C 4 (oracle pi π) →
+      TraceWitnessed hash (R pi.effect) pi) :
+    DeployedFriSampledEmbedding 1 hash R perm RATE toNat params vk checks initState logN view where
+  oracle := fun pi π => MatrixOracle.ofWord (oracle pi π)
+  chal := chal
+  chal_inj := chal_inj
+  qsample := qsample
+  foldWord := fun pi π i _ => foldWord pi π i
+  foldWord_mem := fun pi π hacc i _ => foldWord_mem pi π hacc i
+  accept_folds_sampled := fun pi π hacc i _ => accept_folds_sampled pi π hacc i
+  decode_trace := fun pi π hacc hcols =>
+    decode_trace pi π hacc
+      ((MatrixOracle.colsClose_ofWord_iff friSetupK8.C 4 (oracle pi π)).mp hcols)
+
+/-- **The `numCols = 1` bridge (fold-side projection) — nothing regresses.** A one-column
+instance yields the OLD single-word sampled agreement verbatim on its word. -/
+theorem DeployedFriSampledEmbedding.accept_folds_sampled_word
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (semb : DeployedFriSampledEmbedding 1 hash R perm RATE toNat params vk checks initState
+      logN view)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true) (i : Fin 8) :
+    Accepts (Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).toWord))
+      (semb.foldWord pi π i 0) (semb.qsample pi π) := by
+  have h := semb.accept_folds_sampled pi π hacc i 0
+  rwa [MatrixOracle.col_zero_eq_toWord] at h
+
+/-- **The `numCols = 1` bridge (decode-side projection) — nothing regresses.** A one-column
+instance yields the OLD single-word positive-radius decode verbatim on its word. -/
+theorem DeployedFriSampledEmbedding.decode_trace_word
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (semb : DeployedFriSampledEmbedding 1 hash R perm RATE toNat params vk checks initState
+      logN view)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true)
+    (hclose : closeN friSetupK8.C 4 ((semb.oracle pi π).toWord)) :
+    TraceWitnessed hash (R pi.effect) pi :=
+  semb.decode_trace pi π hacc
+    ((MatrixOracle.colsClose_one_iff friSetupK8.C 4 (semb.oracle pi π)).mpr hclose)
 
 /-- **L6 (per-run dichotomy, PROVEN, generic)** — `accept_close_or_paid`. For any arity-`n` setup,
 `n` distinct challenges, and committed folded codewords `g i`: EITHER every fold is `d`-close to
@@ -394,66 +562,112 @@ theorem accept_close_or_paid
   · obtain ⟨i, hi⟩ := not_forall.mp hall
     exact Or.inr ⟨i, hi, accept_prob_le_of_farN k hκ hδ0 (hg i) hi hδd⟩
 
-/-- **L6 wired onto the sampled embedding at the deployed instance.** On an accepting run, the
-committed oracle is `64·d`-close, or some fold is `d`-far and its sampled-agreement mass is paid.
-HONEST caveat (not hidden): at `friSetupK8` the paid branch is uninhabited for `d ≥ 1` — this
-instantiation is the WIRE, non-vacuous only at the L5 realistic instance. -/
+/-- **L6 wired onto the sampled embedding at the deployed instance, PER COLUMN.** On an accepting
+run, EACH committed column is `64·d`-close, or one of its folds is `d`-far and its
+sampled-agreement mass is paid. The proven generic `accept_close_or_paid` is applied verbatim to
+the column word — the retype does not weaken the wire (the old single-column statement is the
+`numCols = 1`, `j = 0` case, `MatrixOracle.col_zero_eq_toWord`). HONEST caveat (not hidden): at
+`friSetupK8` the paid branch is uninhabited for `d ≥ 1` — this instantiation is the WIRE,
+non-vacuous only at the L5 realistic instance. -/
 theorem sampled_embedding_close_or_paid
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
     (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
-    (initState : List Int) (logN : Nat) (view : ProofView)
-    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (initState : List Int) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (semb : DeployedFriSampledEmbedding numCols hash R perm RATE toNat params vk checks
+      initState logN view)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true)
+    (j : Fin numCols)
+    (d k : ℕ) {δ : ℝ} (hδ0 : 0 ≤ δ) (hδd : δ * 2 ≤ (d : ℝ)) :
+    closeN friSetupK8.C (64 * d) ((semb.oracle pi π).col j) ∨
+      ∃ i, farN friSetupK8.C' d
+          (Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col j)) ∧
+        ((Finset.univ.filter (fun Q : Fin k → Fin 2 =>
+              Accepts (Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col j))
+                (semb.foldWord pi π i j) Q)).card : ℝ)
+            / ((Fintype.card (Fin 2) : ℝ) ^ k)
+          ≤ (1 - δ) ^ k := by
+  have h := accept_close_or_paid (f := (semb.oracle pi π).col j) friSetupK8
+    (semb.chal_inj pi π) (fun i => semb.foldWord_mem pi π hacc i j) d k (by simp) hδ0
+    (by simpa using hδd)
+  rwa [show (8 : ℕ) ^ 2 * d = 64 * d by norm_num] at h
+
+/-- **L6 at the WHOLE MATRIX — the dichotomy the multi-column decode consumes.** On an accepting
+run, EITHER every committed column is `64·d`-close (exactly `decode_trace`'s
+`MatrixOracle.ColsClose` input shape, at radius `64·d`) OR some column has a `d`-far fold whose
+sampled-agreement mass is paid. This is what the retype buys that the single-column shape could
+not state: closeness of the ENTIRE batched commitment — every column the deployed verifier
+Merkle-opens per row — or a paid event, in one dichotomy. -/
+theorem sampled_embedding_matrix_close_or_paid
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (semb : DeployedFriSampledEmbedding numCols hash R perm RATE toNat params vk checks
+      initState logN view)
     (pi : BatchPublicInputs) (π : BatchProof)
     (hacc : verifyAlgo perm RATE toNat params vk checks initState logN
         (view pi π).1 (view pi π).2 = true)
     (d k : ℕ) {δ : ℝ} (hδ0 : 0 ≤ δ) (hδd : δ * 2 ≤ (d : ℝ)) :
-    closeN friSetupK8.C (64 * d) (semb.oracle pi π) ∨
-      ∃ i, farN friSetupK8.C' d
-          (Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π)) ∧
+    MatrixOracle.ColsClose friSetupK8.C (64 * d) (semb.oracle pi π) ∨
+      ∃ (j : Fin numCols) (i : Fin 8), farN friSetupK8.C' d
+          (Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col j)) ∧
         ((Finset.univ.filter (fun Q : Fin k → Fin 2 =>
-              Accepts (Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π))
-                (semb.foldWord pi π i) Q)).card : ℝ)
+              Accepts (Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col j))
+                (semb.foldWord pi π i j) Q)).card : ℝ)
             / ((Fintype.card (Fin 2) : ℝ) ^ k)
           ≤ (1 - δ) ^ k := by
-  have h := accept_close_or_paid (f := semb.oracle pi π) friSetupK8 (semb.chal_inj pi π)
-    (semb.foldWord_mem pi π hacc) d k (by simp) hδ0 (by simpa using hδd)
-  rwa [show (8 : ℕ) ^ 2 * d = 64 * d by norm_num] at h
+  by_cases hall : ∀ j, closeN friSetupK8.C (64 * d) ((semb.oracle pi π).col j)
+  · exact Or.inl hall
+  · obtain ⟨j, hj⟩ := not_forall.mp hall
+    rcases sampled_embedding_close_or_paid hash R perm RATE toNat params vk checks initState
+        logN view semb pi π hacc j d k hδ0 hδd with hclose | ⟨i, hfar, hmass⟩
+    · exact absurd hclose hj
+    · exact Or.inr ⟨j, i, hfar, hmass⟩
 
 /-- **The §2 bar RECOVERED under full cover** — `deployedFriEmbedding_of_sampled_cover`. When the
 sample COVERS the folded domain (`hcover`), sampled agreement is agreement EVERYWHERE, so the true
 fold EQUALS the committed codeword `foldWord` and §2's deterministic `accept_folds` follows; and
 the positive-radius decoder consumes exact membership via `closeN`-weakening (`∈ C` ⟹ `0`-close ⟹
-`4`-close). So the OLD bar is exactly the full-cover idealization of the sampled bar — it was never
+`4`-close). Stated at `numCols = 1` because §2's `DeployedFriEmbedding` is the KEPT single-column
+idealization its nine consumers speak — the single-column §3′ statement this recovers is exactly
+the pre-retype one (the `numCols = 1` bridge in action); the MULTI-COLUMN cover payoff goes
+straight to the full extraction instead (`deployedTraceExtract_of_sampled_cover`, any `numCols`).
+So the OLD bar is exactly the full-cover idealization of the sampled bar — it was never
 the deployed bar, whose sample of `k = 38` positions does not cover a `2^22`-class domain. -/
 def deployedFriEmbedding_of_sampled_cover
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
     (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
     (initState : List Int) (logN : Nat) (view : ProofView)
-    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (semb : DeployedFriSampledEmbedding 1 hash R perm RATE toNat params vk checks initState
+      logN view)
     (hcover : ∀ (pi : BatchPublicInputs) (π : BatchProof),
       verifyAlgo perm RATE toNat params vk checks initState logN
           (view pi π).1 (view pi π).2 = true →
       ∀ y : Fin 2, ∃ q, semb.qsample pi π q = y) :
     DeployedFriEmbedding hash R perm RATE toNat params vk checks initState logN view where
-  oracle := semb.oracle
+  oracle := fun pi π => (semb.oracle pi π).toWord
   chal := semb.chal
   chal_inj := semb.chal_inj
   accept_folds := by
     intro pi π hacc i
-    have hagree := semb.accept_folds_sampled pi π hacc i
-    have heq : Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π)
-        = semb.foldWord pi π i := by
+    rw [← MatrixOracle.col_zero_eq_toWord]
+    have hagree := semb.accept_folds_sampled pi π hacc i 0
+    have heq : Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col 0)
+        = semb.foldWord pi π i 0 := by
       funext y
       obtain ⟨q, hq⟩ := hcover pi π hacc y
       have h := hagree q
       rwa [hq] at h
     rw [heq]
-    exact semb.foldWord_mem pi π hacc i
+    exact semb.foldWord_mem pi π hacc i 0
   decode_trace := by
     intro pi π hacc hmem
-    refine semb.decode_trace pi π hacc ?_
+    refine semb.decode_trace pi π hacc
+      ((MatrixOracle.colsClose_one_iff friSetupK8.C 4 (semb.oracle pi π)).mpr ?_)
     obtain ⟨g, hgC, hcard⟩ := closeN_zero_iff_mem.mpr hmem
     exact ⟨g, hgC, le_trans hcard (by norm_num)⟩
 
@@ -476,8 +690,13 @@ theorem sampled_pass_not_membership :
 #assert_axioms verifyAlgo_concreteFri_opened_positions
 #assert_axioms accept_close_or_paid
 #assert_axioms sampled_embedding_close_or_paid
+#assert_axioms sampled_embedding_matrix_close_or_paid
 #assert_axioms deployedFriEmbedding_of_sampled_cover
 #assert_axioms sampled_pass_not_membership
+#assert_axioms positiveRadiusTraceDecode_ofWord_iff
+#assert_axioms DeployedFriSampledEmbedding.ofWord
+#assert_axioms DeployedFriSampledEmbedding.accept_folds_sampled_word
+#assert_axioms DeployedFriSampledEmbedding.decode_trace_word
 
 /-! ## §3 — THE TRANSPORT : the proven arity-8 proximity, wired between the two maps. -/
 
@@ -503,22 +722,40 @@ theorem deployedTraceExtract_of_embedding
   -- CODEWORD-DECODE: the low-degree codeword decodes to the deployed trace.
   exact emb.decode_trace pi π hacc hlow
 
-/-- The full `DeployedTraceExtract` from the SAMPLED embedding (§3′) under full cover — the
-idealized pipeline still closes end-to-end, showing the retype loses nothing at the idealization. -/
+/-- The full `DeployedTraceExtract` from the SAMPLED embedding (§3′) under full cover, at ANY
+column count — the idealized pipeline still closes end-to-end at the deployed batched
+multi-column shape, showing the retype loses nothing at the idealization (and the `numCols = 1`
+instance is exactly the pre-retype statement). Proof: under cover, EACH column's sampled fold
+agreement is agreement everywhere, so each column's folds land in `friSetupK8.C'`; the PROVEN
+arity-8 keystone `friProximityK8_discharge0` then makes EVERY column a genuine codeword, whence
+`0`-close, whence `4`-close (`MatrixOracle.colsClose_of_forall_mem`) — exactly `decode_trace`'s
+multi-column input. The FRI proximity theorem stays load-bearing, once per column. -/
 theorem deployedTraceExtract_of_sampled_cover
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
     (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
-    (initState : List Int) (logN : Nat) (view : ProofView)
-    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (initState : List Int) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (semb : DeployedFriSampledEmbedding numCols hash R perm RATE toNat params vk checks
+      initState logN view)
     (hcover : ∀ (pi : BatchPublicInputs) (π : BatchProof),
       verifyAlgo perm RATE toNat params vk checks initState logN
           (view pi π).1 (view pi π).2 = true →
       ∀ y : Fin 2, ∃ q, semb.qsample pi π q = y) :
-    DeployedTraceExtract hash R perm RATE toNat params vk checks initState logN view :=
-  deployedTraceExtract_of_embedding hash R perm RATE toNat params vk checks initState logN view
-    (deployedFriEmbedding_of_sampled_cover hash R perm RATE toNat params vk checks initState
-      logN view semb hcover)
+    DeployedTraceExtract hash R perm RATE toNat params vk checks initState logN view := by
+  intro pi π hacc
+  refine semb.decode_trace pi π hacc
+    (MatrixOracle.colsClose_of_forall_mem (fun j => ?_) 4)
+  refine closeN_zero_iff_mem.mp
+    (friProximityK8_discharge0 (semb.chal_inj pi π) (fun i => ?_))
+  have hagree := semb.accept_folds_sampled pi π hacc i j
+  have heq : Fold friSetupK8.geom (semb.chal pi π i) ((semb.oracle pi π).col j)
+      = semb.foldWord pi π i j := by
+    funext y
+    obtain ⟨q, hq⟩ := hcover pi π hacc y
+    have h := hagree q
+    rwa [hq] at h
+  rw [heq]
+  exact semb.foldWord_mem pi π hacc i j
 
 #assert_axioms deployedTraceExtract_of_sampled_cover
 
