@@ -37,3 +37,35 @@ ciphertext = 196608 B (deg-4096 × 3 RNS × 2 polys).*
 The resident GPU fold is a real, bit-exact win on the deployed AMD hardware — modest at K=8, and the clear
 next stones (chunked arena for large-N; keeping the whole clearing pipeline resident) are exactly where the
 larger wins live. The one-shot fold should NEVER be used (it loses); DrEX must drive the resident arena.
+
+---
+
+## UPDATE — the streaming single-clear LOSES (measured hbox 6750 XT): the fold is NOT the GPU win
+
+Extended the bench to drive the production chunked path (`FoldEngine::fold` / `fold_streaming`) at large N —
+a SINGLE aggregation of N orders (the real DrEX fold hot path), GPU vs CPU, BIT-EXACT. Result on the 6750 XT:
+
+| N | ciphertext data | CPU fold | GPU stream | gpu/cpu | plan |
+|---|---|---|---|---|---|
+| 16384 | 3.0 GB | 259.8ms | 779.6ms | **0.33× (LOSES)** | 2 chunks, 1 reduction |
+| 32768 | 6.0 GB | 521.5ms | 2120ms | **0.25×** | 4 chunks |
+| 65536 | 12 GB | 1037ms | 4368ms | **0.24×** | 7 chunks |
+| 100000 | 18.75 GB | 1552ms | 6947ms | **0.22×** | 10 chunks |
+
+(500k/1M not run: N ciphertexts at 196 KB each is 93 GB / 187 GB of host RAM — a real host-memory ceiling, an
+honest bench limit, not a GPU result.)
+
+**The decisive correction to the perf story:** chunking is correct and works (GpuResident, exact plan), but a
+SINGLE fold of N orders is one upload-bound streaming pass with NO reuse — and the single-threaded CPU fold is
+a fast memory-streaming add with no PCIe transfer. So **the fold, done once, loses on the GPU at every size.**
+The GPU win requires one of:
+1. **REUSE** — keep the uploaded ciphertexts resident and do MANY ops on them (the K=8 resident bench wins
+   2.65-2.72× precisely because it amortizes one upload over 8 folds);
+2. **COMPUTE-BOUND ops** — the crossing/argmax HISTOGRAM won 11.4× at N=1M earlier this session; ct×ct
+   multiply (NTT-bound) is the other. These are arithmetic-intensity-high, not memory-streaming.
+
+**Implication for DrEX:** do NOT GPU-accelerate the fold in isolation — the CPU fold is fine and often faster.
+The GPU pays only for the WHOLE resident clearing pipeline (upload once → fold → crossing/argmax → convex →
+multiply, all on-device, then one download), where the many compute-bound ops amortize the upload. The
+`DREX-GPU-RESIDENCY-PLAN.md` residency plan is therefore the real lever; a fold-only GPU path is a
+de-optimization. Honest, measured, and it saves us from shipping a slower "GPU fold."
