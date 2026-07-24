@@ -1,5 +1,16 @@
 # AUTOMATAFL — THE MULTI-ROUND CONFLICT BRAID: folding the fork/collide re-entry protocol
 
+> **⚑ CORRECTION (2026-07-24, ember): THE 4-PLAYER SCOPE IN THIS DOC IS PHANTOM.**
+> There is **no canonical 4-player automatafl ruleset** and no intent to implement one. The
+> deployed game is the stock **two-player** 11×11 game (`reference.rs::stock_two_player`,
+> `GOAL_CORNERS_2P`). This doc's **M9 ("4-player: locked/waiting seat-indexed windows +
+> P²-pairwise clash")**, and every "P>2 / needs Leg S / 3–4-player work" caveat below, were
+> extrapolated from the spec's *unused* `GoalAssignment.WellFormed4` / `stockGoals4`
+> predicates — they are **not** real scope and should not be read as pending debt. **P=2 is
+> the game**, so M0–M7 covers it *completely*; `hseat0` is decidable at `stockGoals2`
+> (seats = `[0,1]`) rather than a Leg-S residual. Treat M9 as **struck**.
+
+
 **Status:** DESIGN ONLY (2026-07-23). Nothing here is landed. This is the last game-completeness
 piece for automatafl: the two-leg fold (`AUTOMATAFL-TWO-LEG-FOLD-DESIGN.md`) attests a **clean**
 turn end-to-end (Leg R resolve ∘ Leg A step, seamed and chained). A turn that hits a **fork/collide**
