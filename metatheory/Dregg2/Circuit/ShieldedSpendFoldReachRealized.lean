@@ -372,6 +372,8 @@ theorem emitted_prefix_fold (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfi
     (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2))
     (hcT : CanonicalCells t) (hcH : CanonicalHash hash) :
     ∀ j, j < t.rows.length →
       foldPath (Hair hash) (curAt t 0) ((List.range j).map (levelAt t)) = curAt t j := by
@@ -383,7 +385,7 @@ theorem emitted_prefix_fold (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfi
     have hj : j < t.rows.length := by omega
     simp only [List.range_succ, List.map_append, List.map_cons, List.map_nil]
     rw [foldPath_concat, ih hj]
-    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip j hj
+    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip hwire j hj
     have hcont := emitted_chain_continuity hash minit mfin maddrs t hsat j hj1
     rw [hstep] at hcont
     exact (modp_eq_of_bounds _ _ (hcT.1 (j + 1) hj1).1 (hcT.1 (j + 1) hj1).2
@@ -398,6 +400,8 @@ theorem emitted_chain_is_exact_foldPath (hash : List ℤ → ℤ) (minit : ℤ �
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2))
     (hcT : CanonicalCells t) (hcH : CanonicalHash hash) :
     foldPath (Hair hash) (curAt t 0) (emittedPath t) = t.pub piCOMMITTED := by
   have hpos : 0 < t.rows.length := by
@@ -411,9 +415,9 @@ theorem emitted_chain_is_exact_foldPath (hash : List ℤ → ℤ) (minit : ℤ �
     omega
   simp only [emittedPath]
   rw [hsplit, List.map_append, List.map_cons, List.map_nil, foldPath_concat,
-    emitted_prefix_fold hash minit mfin maddrs t hsat hChip hcT hcH
+    emitted_prefix_fold hash minit mfin maddrs t hsat hChip hwire hcT hcH
       (t.rows.length - 1) (by omega)]
-  have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip
+  have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip hwire
     (t.rows.length - 1) (by omega)
   have hpin := (root_is_pinned hash minit mfin maddrs t hne hsat).2.1
   rw [hstep] at hpin
@@ -432,6 +436,8 @@ theorem emitted_accept_is_committed_member_or_break (hash : List ℤ → ℤ) (m
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2))
     (hcT : CanonicalCells t) (hcH : CanonicalHash hash)
     (acc : CommittedChain) (hroot : chainRoot hash acc = t.pub piCOMMITTED) :
     chainMember hash acc (curAt t 0)
@@ -443,14 +449,14 @@ theorem emitted_accept_is_committed_member_or_break (hash : List ℤ → ℤ) (m
     | cons x l => simp
   have hfold : foldPath (Hair hash) (curAt t 0) (emittedPath t) = chainRoot hash acc := by
     rw [hroot]
-    exact emitted_chain_is_exact_foldPath hash minit mfin maddrs t hne hsat hChip hcT hcH
+    exact emitted_chain_is_exact_foldPath hash minit mfin maddrs t hne hsat hChip hwire hcT hcH
   rcases foldReach_trichotomy hash acc _ _ hfold with hm | ⟨Q₁, hQ, hg⟩ | hbr
   · exact Or.inl hm
   · refine Or.inr (Or.inl ?_)
     rcases Q₁.eq_nil_or_concat' with rfl | ⟨Q₂, lst, rfl⟩
     · -- degenerate descent: the accepted leaf IS the raw atom — its C6 opening is the preimage.
       have hg0 : curAt t 0 = acc.value := hg
-      have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
+      have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip hwire
       have hLEAFc : 0 ≤ (t.rows.getD 0 zeroAsg) cLEAF
           ∧ (t.rows.getD 0 zeroAsg) cLEAF < P := by
         rw [hrel.2.2.1]; exact hcH _
@@ -483,6 +489,8 @@ theorem emitted_accept_spends_note_in_committed_set (hash : List ℤ → ℤ) (m
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2))
     (hcT : CanonicalCells t) (hcH : CanonicalHash hash)
     (acc : CommittedChain) (hroot : chainRoot hash acc = t.pub piCOMMITTED)
     (S8 : Heap8Scheme) (root8 : Digest8) (spine : List ℤ)
@@ -493,7 +501,7 @@ theorem emitted_accept_spends_note_in_committed_set (hash : List ℤ → ℤ) (m
     ∨ properAncestor hash acc (curAt t 0)
     ∨ (∃ w l, Hair hash w l = acc.value)
     ∨ HairBreak hash := by
-  rcases emitted_accept_is_committed_member_or_break hash minit mfin maddrs t hne hsat hChip
+  rcases emitted_accept_is_committed_member_or_break hash minit mfin maddrs t hne hsat hChip hwire
     hcT hcH acc hroot with hm | hp | hb
   · obtain ⟨P₀, P₁, hsplit, hfold⟩ := hm
     by_cases hP0 : P₀ = []
@@ -548,7 +556,7 @@ theorem capstone_runs_on_witness :
     ∨ (∃ w l, Hair hzero w l = zChain.value)
     ∨ HairBreak hzero :=
   emitted_accept_is_committed_member_or_break hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
-    (by simp [zTrace]) zero_witness_satisfies zTf_sound zTrace_canonical hzero_canonical
+    (by simp [zTrace]) zero_witness_satisfies zTf_sound (by rfl) zTrace_canonical hzero_canonical
     zChain zChain_root
 
 /-! ## §11 — axiom hygiene. -/

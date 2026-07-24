@@ -16,9 +16,10 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (Satisfied2 VmTrace envAt VmConstraint2 Lookup TableId ChipTableSound chip_lookup_sound
-   chipLookupTuple CHIP_RATE memLog mapLog memCheck_nil WindowConstraint WindowExpr)
+   chipLookupTuple chipLookupTupleNarrow poseidon2narrow CHIP_RATE memLog mapLog memCheck_nil
+   WindowConstraint WindowExpr)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
-  (gPerRowBodies gPerRowGates gLastRowBoundaries gParentLookup gContinuity gContWindow
+  (gPerRowBodies gPerRowGates gLastRowBoundaries gParentLookupNarrow gContinuity gContWindow
    gCUR gSIB0 gSIB1 gSIB2 gB0 gB1 gC0 gC1 gC2 gC3 gPAR gPATH_LANES
    gArrangeList bitBinaryBody child0Body child1Body child2Body child3Body)
 open Dregg2.Circuit.Emit.BlindedMembershipRefine
@@ -87,16 +88,21 @@ theorem arrangeAt (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t
 
 /-- The emitted Poseidon2 lookup binds the parent digest on every row. -/
 theorem parentAt (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) (j : Nat) (hj : j < t.rows.length) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
+    (j : Nat) (hj : j < t.rows.length) :
     (envAt t j).loc gPAR =
       hash [(envAt t j).loc gC0, (envAt t j).loc gC1,
         (envAt t j).loc gC2, (envAt t j).loc gC3] := by
-  have hmem : gParentLookup ∈ membership4aryDesc.constraints := by
+  have hmem : gParentLookupNarrow ∈ membership4aryDesc.constraints := by
     simp [membership4aryDesc, membership4aryConstraints]
   have h := hsat.rowConstraints j hj _ hmem
-  simp only [gParentLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var gC0, .var gC1, .var gC2, .var gC3] gPAR gPATH_LANES
+  simp only [gParentLookupNarrow, VmConstraint2.holdsAt, Lookup.holdsAt] at h
+  rw [hwire] at h
+  have hs := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
+    (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var gC0, .var gC1, .var gC2, .var gC3] gPAR
     (by show (4 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
@@ -144,7 +150,10 @@ theorem rootPi (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
 /-- Cross-row induction: the public-leaf row value folds through every emitted
 level to each row's parent. -/
 theorem foldsTo (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) (hcanon : MembershipCanon t) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
+    (hcanon : MembershipCanon t) :
     ∀ j, j < t.rows.length →
       gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t (j + 1)) =
         (envAt t j).loc gPAR := by
@@ -158,7 +167,7 @@ theorem foldsTo (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
           ((envAt t 0).loc gB0) ((envAt t 0).loc gB1)) := by
       simp only [gStepsOf, List.range_one, List.map_cons, List.map_nil, gFoldPos,
         List.foldl_cons, List.foldl_nil, gStep]
-    rw [key, ← arrangeAt hsat hcanon 0 hj0, ← parentAt hsat hChip 0 hj0]
+    rw [key, ← arrangeAt hsat hcanon 0 hj0, ← parentAt hsat hChip hwire 0 hj0]
   | succ j ih =>
     intro hj
     have hjS : j < t.rows.length := by omega
@@ -179,19 +188,21 @@ theorem foldsTo (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
       rw [show j + 1 + 1 = j + 2 from rfl, hsteps, gFoldPos_concat, ih hjS]
       simp only [gStep]
     rw [key, ← hcont, ← arrangeAt hsat hcanon (j + 1) hj,
-      ← parentAt hsat hChip (j + 1) hj]
+      ← parentAt hsat hChip hwire (j + 1) hj]
 
 /-- THE WHOLE-DESCRIPTOR BRIDGE: IR2 satisfaction implies genuine membership. -/
 theorem membership4ary_sat_refines
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hcanon : MembershipCanon t) :
     Membership4ary hash (t.pub PI_LEAF) (t.pub PI_ROOT) (gStepsOf t t.rows.length) := by
   have hleaf : (envAt t 0).loc gCUR = t.pub PI_LEAF :=
     eq_of_modEq_canon (hcanon.rows 0 hlen).cur hcanon.leaf (leafPi hsat hlen)
   have hj : t.rows.length - 1 < t.rows.length := by omega
-  have hfold := foldsTo hsat hChip hcanon (t.rows.length - 1) hj
+  have hfold := foldsTo hsat hChip hwire hcanon (t.rows.length - 1) hj
   rw [Nat.sub_add_cancel hlen] at hfold
   unfold Membership4ary
   rw [← hleaf, hfold]
@@ -222,7 +233,16 @@ private def tbl : List (List ℤ) :=
 
 private def trace : VmTrace :=
   { rows := [row0, row1], pub := pub
-    tf := fun tid => match tid with | .poseidon2 => tbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => tbl
+      | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable tbl
+      | _ => [] }
+
+/-- **The concrete family wires the NARROW bus to the 18-prefix of the wide chip table** — ONE
+physical chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem concrete_narrow_wire :
+    trace.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (trace.tf .poseidon2) := rfl
 
 theorem concrete_chipSound : ChipTableSound demoHash (trace.tf .poseidon2) := by
   intro r hr
@@ -266,7 +286,8 @@ theorem concrete_canon : MembershipCanon trace := by
 theorem witness_spec :
     Membership4ary demoHash (trace.pub PI_LEAF) (trace.pub PI_ROOT)
       (gStepsOf trace trace.rows.length) :=
-  membership4ary_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
+  membership4ary_sat_refines (by decide) concrete_sat concrete_chipSound concrete_narrow_wire
+    concrete_canon
 
 theorem witness_spec_closed :
     Membership4ary demoHash 1 2134567 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
@@ -286,6 +307,7 @@ theorem witness_wrong_root_rejected :
 #assert_axioms rootPi
 #assert_axioms foldsTo
 #assert_axioms membership4ary_sat_refines
+#assert_axioms concrete_narrow_wire
 #assert_axioms concrete_chipSound
 #assert_axioms concrete_sat
 #assert_axioms concrete_canon

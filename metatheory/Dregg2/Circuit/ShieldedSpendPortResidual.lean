@@ -186,7 +186,9 @@ value-link block also consumes. ⚠ Authorization is still NOT here — see
 theorem emitted_nullifier_is_committed_note_nullifier (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     OpensAs hash ((t.rows.getD 0 zeroAsg) cLEAF) ((t.rows.getD 0 zeroAsg) cVAL)
       ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
       ((t.rows.getD 0 zeroAsg) cRAND)
@@ -196,7 +198,7 @@ theorem emitted_nullifier_is_committed_note_nullifier (hash : List ℤ → ℤ) 
                 (t.rows.getD 0 zeroAsg) cKEY3, NS_FACT_MARK, 1]
     ∧ ((t.rows.getD 0 zeroAsg) cCUR ≡ (t.rows.getD 0 zeroAsg) cLEAF [ZMOD P])
     ∧ (t.pub piNUL ≡ (t.rows.getD 0 zeroAsg) cNUL [ZMOD P]) := by
-  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
+  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip hwire
   refine ⟨?_, hrel.2.1, hrel.2.2.2.2.1, (hrel.2.2.2.2.2.1).symm⟩
   unfold OpensAs
   rw [hrel.2.2.1]
@@ -211,15 +213,19 @@ theorem emitted_nullifier_determined (hash : List ℤ → ℤ)
     (hsat₁ : Satisfied2 hash shieldedSpendDesc minit₁ mfin₁ maddrs₁ t₁)
     (hsat₂ : Satisfied2 hash shieldedSpendDesc minit₂ mfin₂ maddrs₂ t₂)
     (hChip₁ : ChipTableSound hash (t₁.tf TableId.poseidon2))
+    (hwire₁ : t₁.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₁.tf TableId.poseidon2))
     (hChip₂ : ChipTableSound hash (t₂.tf TableId.poseidon2))
+    (hwire₂ : t₂.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₂.tf TableId.poseidon2))
     (hLeaf : (t₂.rows.getD 0 zeroAsg) cLEAF = (t₁.rows.getD 0 zeroAsg) cLEAF)
     (hk0 : (t₂.rows.getD 0 zeroAsg) cKEY0 = (t₁.rows.getD 0 zeroAsg) cKEY0)
     (hk1 : (t₂.rows.getD 0 zeroAsg) cKEY1 = (t₁.rows.getD 0 zeroAsg) cKEY1)
     (hk2 : (t₂.rows.getD 0 zeroAsg) cKEY2 = (t₁.rows.getD 0 zeroAsg) cKEY2)
     (hk3 : (t₂.rows.getD 0 zeroAsg) cKEY3 = (t₁.rows.getD 0 zeroAsg) cKEY3) :
     (t₂.rows.getD 0 zeroAsg) cNUL = (t₁.rows.getD 0 zeroAsg) cNUL := by
-  have e1 := (spend_relation_row0 hash minit₁ mfin₁ maddrs₁ t₁ hne₁ hsat₁ hChip₁).2.1
-  have e2 := (spend_relation_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂).2.1
+  have e1 := (spend_relation_row0 hash minit₁ mfin₁ maddrs₁ t₁ hne₁ hsat₁ hChip₁ hwire₁).2.1
+  have e2 := (spend_relation_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂ hwire₂).2.1
   rw [e2, e1, hLeaf, hk0, hk1, hk2, hk3]
 
 /-- **⚑ THE #A COMPOSITION (`emitted_nullifier_double_spend_refused`).** The full double-spend closure:
@@ -235,7 +241,11 @@ theorem emitted_nullifier_double_spend_refused (hash : List ℤ → ℤ)
     (hsat₁ : Satisfied2 hash shieldedSpendDesc minit₁ mfin₁ maddrs₁ t₁)
     (hsat₂ : Satisfied2 hash shieldedSpendDesc minit₂ mfin₂ maddrs₂ t₂)
     (hChip₁ : ChipTableSound hash (t₁.tf TableId.poseidon2))
+    (hwire₁ : t₁.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₁.tf TableId.poseidon2))
     (hChip₂ : ChipTableSound hash (t₂.tf TableId.poseidon2))
+    (hwire₂ : t₂.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₂.tf TableId.poseidon2))
     (hLeaf : (t₂.rows.getD 0 zeroAsg) cLEAF = (t₁.rows.getD 0 zeroAsg) cLEAF)
     (hk0 : (t₂.rows.getD 0 zeroAsg) cKEY0 = (t₁.rows.getD 0 zeroAsg) cKEY0)
     (hk1 : (t₂.rows.getD 0 zeroAsg) cKEY1 = (t₁.rows.getD 0 zeroAsg) cKEY1)
@@ -245,7 +255,7 @@ theorem emitted_nullifier_double_spend_refused (hash : List ℤ → ℤ)
     (hspent : (t₁.rows.getD 0 zeroAsg) cNUL ∈ keysOf8 S8 root) :
     IsEmpty (NfAccWitness S8 root ((t₂.rows.getD 0 zeroAsg) cNUL)) := by
   have hdet := emitted_nullifier_determined hash minit₁ minit₂ mfin₁ mfin₂ maddrs₁ maddrs₂
-    t₁ t₂ hne₁ hne₂ hsat₁ hsat₂ hChip₁ hChip₂ hLeaf hk0 hk1 hk2 hk3
+    t₁ t₂ hne₁ hne₂ hsat₁ hsat₂ hChip₁ hwire₁ hChip₂ hwire₂ hLeaf hk0 hk1 hk2 hk3
   rw [hdet]
   exact present_no_witness hspent
 
@@ -266,7 +276,9 @@ table. -/
 theorem emitted_fold_step_all_rows (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     ∀ i, i < t.rows.length →
       (t.rows.getD i zeroAsg) cPAR = Hair hash (curAt t i) (levelAt t i) := by
   intro i hi
@@ -275,8 +287,9 @@ theorem emitted_fold_step_all_rows (hash : List ℤ → ℤ) (minit : ℤ → �
   simp only [lkParent, Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
     Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] at hkP
   have hlen5 : (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]).length ≤ CHIP_RATE := by decide
-  have eP := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t i).loc)
-    _ cPAR (laneCols LANE_PAR) hlen5 hkP
+  rw [hwire] at hkP
+  have eP := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
+    (t.tf TableId.poseidon2) hChip ((envAt t i).loc) _ cPAR hlen5 hkP
   rw [factIns_eval_5] at eP
   simpa [Hair, curAt, levelAt, envAt] using eP
 
@@ -319,7 +332,9 @@ this trace-level statement can produce it. -/
 theorem emitted_membership_chain (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
       ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
       ((t.rows.getD 0 zeroAsg) cRAND)
@@ -331,14 +346,14 @@ theorem emitted_membership_chain (hash : List ℤ → ℤ) (minit : ℤ → ℤ)
     cases hr : t.rows with
     | nil => exact absurd hr hne
     | cons a l => simp
-  refine ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip, ?_, ?_⟩
+  refine ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip hwire, ?_, ?_⟩
   · intro i hi
-    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip i (by omega)
+    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip hwire i (by omega)
     have hcont := emitted_chain_continuity hash minit mfin maddrs t hsat i hi
     rw [hstep] at hcont
     exact hcont
   · have hlast := (root_is_pinned hash minit mfin maddrs t hne hsat).2.1
-    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip
+    have hstep := emitted_fold_step_all_rows hash minit mfin maddrs t hsat hChip hwire
       (t.rows.length - 1) (by omega)
     rw [hstep] at hlast
     exact hlast
@@ -402,7 +417,7 @@ theorem membership_chain_fires_on_witness :
     ∧ (Hair hzero (curAt zTrace (zTrace.rows.length - 1)) (levelAt zTrace (zTrace.rows.length - 1))
         ≡ zTrace.pub piCOMMITTED [ZMOD P]) := by
   have h := emitted_membership_chain hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
-    (by simp [zTrace]) zero_witness_satisfies zTf_sound
+    (by simp [zTrace]) zero_witness_satisfies zTf_sound (by rfl)
   exact ⟨h.1, h.2.2⟩
 
 #assert_axioms emitted_nullifier_is_committed_note_nullifier

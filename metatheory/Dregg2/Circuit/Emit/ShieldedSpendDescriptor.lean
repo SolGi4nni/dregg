@@ -94,8 +94,9 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow VmRowEnv VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId Table TraceFamily VmTrace zeroAsg envAt
-   Satisfied2 chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE CHIP_OUT_LANES padToE
+   Satisfied2 chipLookupTupleNarrow poseidon2narrow ChipTableSound CHIP_RATE CHIP_OUT_LANES padToE
    emitVmJson2 WindowExpr WindowConstraint memLog mapLog memOpsOf mapOpsOf)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit (ev ek eadd emul eneg esub)
 
 set_option autoImplicit false
@@ -138,15 +139,11 @@ def cVBP1 : Nat := 18
 carried constant across rows and pinned to BOTH `pi[1]` and `pi[3]` (the #15 fix). -/
 def cROOT : Nat := 19
 
-/-- The four fact-chip lane blocks (`CHIP_OUT_LANES − 1 = 7` exposed permutation lanes each,
-exactly the Rust `alloc_lanes()` discipline of `shielded_ring_clearing_nleg_air.rs`). -/
-def LANE_PAR : Nat := 20
-def LANE_NUL : Nat := 27
-def LANE_LEAF : Nat := 34
-def LANE_VB : Nat := 41
-
-/-- Main-trace width: the 20 spend columns + 4 × 7 chip lanes. -/
-def SPEND_WIDTH : Nat := 48
+/-- Main-trace width: the 20 spend columns. The four `CHIP_OUT_LANES − 1 = 7` fact-chip lane
+blocks the WIDE `TID_P2` tuples carried (the Rust `alloc_lanes()` discipline of
+`shielded_ring_clearing_nleg_air.rs`) are GONE (E7 narrowing, `ChipNarrowLookup.lean`) — they sat
+at lane positions 18..24 of the 25-wide tuples and entered no soundness conclusion. -/
+def SPEND_WIDTH : Nat := 20
 
 /-- PI 0: the published nullifier. -/
 def piNUL : Nat := 0
@@ -173,9 +170,6 @@ literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-ter
 def factIns (cols : List Nat) : List EmittedExpr :=
   padToE 5 (cols.map .var) ++ [.const NS_FACT_MARK, .const 1]
 
-/-- The 7 lane columns of a fact site's chip lookup (the `lane_base + j, j ∈ 0..7` block). -/
-def laneCols (base : Nat) : List Nat := (List.range (CHIP_OUT_LANES - 1)).map (base + ·)
-
 /-- A 5-input fact absorb evaluates to `[x, f0, f1, f2, f3, MARK, 1]`. -/
 theorem factIns_eval_5 (a : Assignment) (c0 c1 c2 c3 c4 : Nat) :
     (factIns [c0, c1, c2, c3, c4]).map (·.eval a)
@@ -198,28 +192,28 @@ def posBody : EmittedExpr :=
 /-- C3: the Merkle fold — `parent = hash_fact(current, [sib0, sib1, sib2, position])`,
 every row (forward-chained padding keeps it satisfiable on pad rows, the deployed shape). -/
 def lkParent : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]) cPAR (laneCols LANE_PAR)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]) cPAR⟩
 
 /-- C4′: the nullifier — `nullifier = hash_fact(leaf_commit, key[0..4])`, every row. Hashing
 the RECOMPUTED commitment (C6a's output) instead of the `is_leaf`-gated `current` binds the
 same relation with an exact ℤ-link to the note commitment; row 0's C6b boundary ties
 `current ≡ leaf_commit`, so the membership leaf is that same commitment. -/
 def lkNullifier : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cLEAF, cKEY0, cKEY1, cKEY2, cKEY3]) cNUL (laneCols LANE_NUL)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cLEAF, cKEY0, cKEY1, cKEY2, cKEY3]) cNUL⟩
 
 /-- C6a: the note-commitment recompute — `leaf_commit = hash_fact(value, [asset, owner,
 randomness])`, every row. -/
 def lkLeafCommit : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cVAL, cASSET, cOWNER, cRAND]) cLEAF (laneCols LANE_LEAF)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cVAL, cASSET, cOWNER, cRAND]) cLEAF⟩
 
 /-- C7a: the value-binding recompute — `value_binding = hash_fact(value, [asset, randomness,
 pad0])`, every row, from the SAME cells C6a binds into the leaf. -/
 def lkValueBinding : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB (laneCols LANE_VB)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB⟩
 
 /-- C5: chain continuity `next.current − this.parent` (transition window). -/
 def chainWindow : WindowExpr := .add (.nxt cCUR) (.mul (.const (-1)) (.loc cPAR))
@@ -271,15 +265,17 @@ def shieldedSpendDesc : EffectVmDescriptor2 :=
   , ranges      := [] }
 
 -- Non-vacuous structural pins.
-#guard shieldedSpendDesc.traceWidth == 48
+#guard shieldedSpendDesc.traceWidth == 20
 #guard shieldedSpendDesc.piCount == 4
 #guard shieldedSpendDesc.constraints.length == 19
 #guard (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]).length == 7
 #guard (factIns [cVAL, cASSET, cOWNER, cRAND]).length == 7
-#guard (chipLookupTuple (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]) cPAR (laneCols LANE_PAR)).length
-  == 1 + CHIP_RATE + CHIP_OUT_LANES
-#guard laneCols LANE_PAR == [20, 21, 22, 23, 24, 25, 26]
-#guard laneCols LANE_VB == [41, 42, 43, 44, 45, 46, 47]
+#guard (chipLookupTupleNarrow (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]) cPAR).length
+  == 1 + CHIP_RATE + 1
+-- The narrowing dropped exactly 4 × (CHIP_OUT_LANES − 1) = 28 main columns for the same four
+-- forced `hash_fact` equations.
+#guard SPEND_WIDTH + 4 * (CHIP_OUT_LANES - 1) == 48
+#guard poseidon2narrow.wireId == 8
 
 -- Window canaries: the chain window vanishes iff next.current = this.parent.
 #guard decide (chainWindow.eval
@@ -375,7 +371,8 @@ is the recomputed note commitment, and the nullifier / value-binding PIs are pin
 theorem spend_relation_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf TableId.poseidon2)) :
     let a := t.rows.getD 0 zeroAsg
     a cPAR = hash [a cCUR, a cSIB0, a cSIB1, a cSIB2, a cPOS, NS_FACT_MARK, 1]
     ∧ a cNUL = hash [a cLEAF, a cKEY0, a cKEY1, a cKEY2, a cKEY3, NS_FACT_MARK, 1]
@@ -401,18 +398,19 @@ theorem spend_relation_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfi
   simp only [lkParent, lkNullifier, lkLeafCommit, lkValueBinding,
     Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
     Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] at hkP hkN hkL hkV
+  rw [hwire] at hkP hkN hkL hkV
   have hlen5 : (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]).length ≤ CHIP_RATE := by decide
   have hlenN : (factIns [cLEAF, cKEY0, cKEY1, cKEY2, cKEY3]).length ≤ CHIP_RATE := by decide
   have hlenL : (factIns [cVAL, cASSET, cOWNER, cRAND]).length ≤ CHIP_RATE := by decide
   have hlenV : (factIns [cVAL, cASSET, cRAND, cVBP0]).length ≤ CHIP_RATE := by decide
-  have eP := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t 0).loc)
-    _ cPAR (laneCols LANE_PAR) hlen5 hkP
-  have eN := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t 0).loc)
-    _ cNUL (laneCols LANE_NUL) hlenN hkN
-  have eL := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t 0).loc)
-    _ cLEAF (laneCols LANE_LEAF) hlenL hkL
-  have eV := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t 0).loc)
-    _ cVB (laneCols LANE_VB) hlenV hkV
+  have eP := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+    ((envAt t 0).loc) _ cPAR hlen5 hkP
+  have eN := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+    ((envAt t 0).loc) _ cNUL hlenN hkN
+  have eL := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+    ((envAt t 0).loc) _ cLEAF hlenL hkL
+  have eV := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+    ((envAt t 0).loc) _ cVB hlenV hkV
   rw [factIns_eval_5] at eP eN
   rw [factIns_eval_4] at eL eV
   -- C6b (row-0 boundary) + the two PI pins
@@ -442,7 +440,12 @@ def zChipRow : List ℤ :=
 def zTf : TraceFamily := fun tid =>
   match tid with
   | .poseidon2 => [zChipRow]
+  | .custom 3  => narrowTable [zChipRow]
   | _ => []
+
+/-- The zero-witness family wires the NARROW bus to the 18-prefix of its wide chip table — ONE
+physical chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem zTf_narrow_wire : zTf poseidon2narrow = narrowTable (zTf TableId.poseidon2) := rfl
 
 /-- The all-zero 1-row witness (row 0 is both first and last; every PI is 0). -/
 def zTrace : VmTrace := { rows := [zeroAsg], pub := zeroAsg, tf := zTf }
@@ -513,7 +516,7 @@ the Rust decoder ingests THIS string at the coordinated integrator step). -/
 /-- Exact emitted-wire golden (generated via `#eval repr (emitVmJson2 shieldedSpendDesc)`).
 Rust includes these bytes verbatim at the coordinated integrator step. -/
 def SHIELDED_SPEND_PINNED_ROOT_GOLDEN : String :=
-  "{\"name\":\"dregg-shielded-spend-pinned-root::v1\",\"ir\":2,\"trace_width\":48,\"public_input_count\":4,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":2}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":3}}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":17}},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":18}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":34},{\"t\":\"var\",\"v\":35},{\"t\":\"var\",\"v\":36},{\"t\":\"var\",\"v\":37},{\"t\":\"var\",\"v\":38},{\"t\":\"var\",\"v\":39},{\"t\":\"var\",\"v\":40}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":17},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":41},{\"t\":\"var\",\"v\":42},{\"t\":\"var\",\"v\":43},{\"t\":\"var\",\"v\":44},{\"t\":\"var\",\"v\":45},{\"t\":\"var\",\"v\":46},{\"t\":\"var\",\"v\":47}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":19},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":19}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":2}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":3}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":17}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":18}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":5,\"pi_index\":3}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-shielded-spend-pinned-root::v1\",\"ir\":2,\"trace_width\":20,\"public_input_count\":4,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":2}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":3}}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":17}},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":18}},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":17},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":16}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":5}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":19},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":19}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":1}}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":2}}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"const\",\"v\":3}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":17}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":18}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":5,\"pi_index\":3}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 shieldedSpendDesc == SHIELDED_SPEND_PINNED_ROOT_GOLDEN
 
@@ -523,6 +526,7 @@ def SHIELDED_SPEND_PINNED_ROOT_GOLDEN : String :=
 #assert_axioms self_chosen_tree_unsat
 #assert_axioms chain_root_forge_unsat
 #assert_axioms wire_root_decoupled_unsat
+#assert_axioms zTf_narrow_wire
 #assert_axioms spend_relation_row0
 #assert_axioms zero_witness_satisfies
 #assert_axioms forged_zero_trace_refused

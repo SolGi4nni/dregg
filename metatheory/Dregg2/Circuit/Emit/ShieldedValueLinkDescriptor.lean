@@ -81,8 +81,9 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow VmRowEnv VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId Table TraceFamily VmTrace zeroAsg envAt
-   Satisfied2 chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE CHIP_OUT_LANES padToE
+   Satisfied2 chipLookupTupleNarrow poseidon2narrow ChipTableSound CHIP_RATE CHIP_OUT_LANES padToE
    emitVmJson2 WindowExpr WindowConstraint memLog mapLog memOpsOf mapOpsOf)
+open Dregg2.Circuit.ChipNarrowLookup (chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit (ev ek eadd emul eneg esub)
 
 set_option autoImplicit false
@@ -112,13 +113,11 @@ def cOUT : Nat := 7
 /-- The running conservation accumulator `Σ (value − out_val)` up to this row. -/
 def cACC : Nat := 8
 
-/-- The two fact-chip lane blocks (`CHIP_OUT_LANES − 1 = 7` exposed permutation lanes each,
-the Rust `alloc_lanes()` discipline of `shielded_ring_clearing_nleg_air.rs`). -/
-def LANE_LEAF : Nat := 9
-def LANE_VB : Nat := 16
-
-/-- Main-trace width: the 9 clearing columns + 2 × 7 chip lanes. -/
-def VLINK_WIDTH : Nat := 23
+/-- Main-trace width: the 9 clearing columns. The two `CHIP_OUT_LANES − 1 = 7` fact-chip lane
+blocks the WIDE `TID_P2` tuples carried (the Rust `alloc_lanes()` discipline of
+`shielded_ring_clearing_nleg_air.rs`) are GONE (E7 narrowing, `ChipNarrowLookup.lean`) — they sat
+at lane positions 18..24 of the 25-wide tuples and entered no soundness conclusion. -/
+def VLINK_WIDTH : Nat := 9
 
 /-- PI 0: the published `value_binding` (the claim slot the apex `connect`s). -/
 def piVB : Nat := 0
@@ -139,9 +138,6 @@ literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-ter
 def factIns (cols : List Nat) : List EmittedExpr :=
   padToE 5 (cols.map .var) ++ [.const NS_FACT_MARK, .const 1]
 
-/-- The 7 lane columns of a fact site's chip lookup (the `lane_base + j, j ∈ 0..7` block). -/
-def laneCols (base : Nat) : List Nat := (List.range (CHIP_OUT_LANES - 1)).map (base + ·)
-
 /-- A 4-input fact absorb evaluates to `[x, f0, f1, f2, 0, MARK, 1]` (the padded 5th slot). -/
 theorem factIns_eval_4 (a : Assignment) (c0 c1 c2 c3 : Nat) :
     (factIns [c0, c1, c2, c3]).map (·.eval a)
@@ -153,15 +149,15 @@ theorem factIns_eval_4 (a : Assignment) (c0 c1 c2 c3 : Nat) :
 /-- The leaf-commit recompute — `leaf_commit = hash_fact(value, [asset, owner, randomness])`,
 every row (the fact site the membership leaf commits; lane 1's C6a shape). -/
 def lkLeafCommit : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cVAL, cASSET, cOWNER, cRAND]) cLEAF (laneCols LANE_LEAF)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cVAL, cASSET, cOWNER, cRAND]) cLEAF⟩
 
 /-- The value-binding recompute — `value_binding = hash_fact(value, [asset, randomness,
 pad0])`, every row, from the SAME cells `lkLeafCommit` binds into the leaf (the
 `nleg_air.rs:436-451` fusion anchor). -/
 def lkValueBinding : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB (laneCols LANE_VB)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB⟩
 
 /-- `a − b` over a row window. -/
 def wsub (a b : WindowExpr) : WindowExpr := .add a (.mul (.const (-1)) b)
@@ -212,15 +208,17 @@ def shieldedValueLinkDesc : EffectVmDescriptor2 :=
   , ranges      := [] }
 
 -- Non-vacuous structural pins.
-#guard shieldedValueLinkDesc.traceWidth == 23
+#guard shieldedValueLinkDesc.traceWidth == 9
 #guard shieldedValueLinkDesc.piCount == 2
 #guard shieldedValueLinkDesc.constraints.length == 9
 #guard (factIns [cVAL, cASSET, cRAND, cVBP0]).length == 7
 #guard (factIns [cVAL, cASSET, cOWNER, cRAND]).length == 7
-#guard (chipLookupTuple (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB (laneCols LANE_VB)).length
-  == 1 + CHIP_RATE + CHIP_OUT_LANES
-#guard laneCols LANE_LEAF == [9, 10, 11, 12, 13, 14, 15]
-#guard laneCols LANE_VB == [16, 17, 18, 19, 20, 21, 22]
+#guard (chipLookupTupleNarrow (factIns [cVAL, cASSET, cRAND, cVBP0]) cVB).length
+  == 1 + CHIP_RATE + 1
+-- The narrowing dropped exactly 2 × (CHIP_OUT_LANES − 1) = 14 main columns for the same two
+-- forced `hash_fact` equations.
+#guard VLINK_WIDTH + 2 * (CHIP_OUT_LANES - 1) == 23
+#guard poseidon2narrow.wireId == 8
 
 -- Window canaries: the conservation step vanishes iff the accumulator threads the net.
 #guard decide (accWindow.eval
@@ -354,7 +352,9 @@ ZMOD 2013265921). The value that conserves (§7) is provably the value bound int
 theorem value_link_bound (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedValueLinkDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     (∀ i, i < t.rows.length →
         rowAt t i cVB
           = hash [rowAt t i cVAL, rowAt t i cASSET, rowAt t i cRAND, rowAt t i cVBP0,
@@ -379,12 +379,13 @@ theorem value_link_bound (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin :
     simp only [lkValueBinding, lkLeafCommit,
       Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
       Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] at hkV hkL
+    rw [hwire] at hkV hkL
     have hlenV : (factIns [cVAL, cASSET, cRAND, cVBP0]).length ≤ CHIP_RATE := by decide
     have hlenL : (factIns [cVAL, cASSET, cOWNER, cRAND]).length ≤ CHIP_RATE := by decide
-    have eV := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t i).loc)
-      _ cVB (laneCols LANE_VB) hlenV hkV
-    have eL := chip_lookup_sound hash (t.tf TableId.poseidon2) hChip ((envAt t i).loc)
-      _ cLEAF (laneCols LANE_LEAF) hlenL hkL
+    have eV := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+      ((envAt t i).loc) _ cVB hlenV hkV
+    have eL := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
+      ((envAt t i).loc) _ cLEAF hlenL hkL
     rw [factIns_eval_4] at eV eL
     exact ⟨eV, eL, pad_zero hsat hi⟩
   · have h0 := hsat.rowConstraints 0 hpos (.base (.piBinding .first cVB piVB))
@@ -407,12 +408,14 @@ leaf value) is unrepresentable against this descriptor. -/
 theorem value_decoupled_unsat (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2))
     (hforge : ¬ (t.pub piVB
       ≡ hash [rowAt t 0 cVAL, rowAt t 0 cASSET, rowAt t 0 cRAND, rowAt t 0 cVBP0,
           0, NS_FACT_MARK, 1] [ZMOD 2013265921])) :
     ¬ Satisfied2 hash shieldedValueLinkDesc minit mfin maddrs t := by
   intro hsat
-  obtain ⟨hrows, hpin, _⟩ := value_link_bound hash minit mfin maddrs t hne hsat hChip
+  obtain ⟨hrows, hpin, _⟩ := value_link_bound hash minit mfin maddrs t hne hsat hChip hwire
   have hpos : 0 < t.rows.length := by
     cases hr : t.rows with
     | nil => exact absurd hr hne
@@ -488,10 +491,19 @@ def chipV1 : List ℤ :=
   [7, 3, 2, 6, 0, 0, 64207, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 /-- The witness trace family: the chip table carries exactly the four genuine rows. -/
+def honChipTbl : List (List ℤ) := [chipL0, chipV0, chipL1, chipV1]
+
 def honTf : TraceFamily := fun tid =>
   match tid with
-  | .poseidon2 => [chipL0, chipV0, chipL1, chipV1]
+  | .poseidon2 => honChipTbl
+  | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable honChipTbl
   | _ => []
+
+/-- The honest family wires the NARROW bus to the 18-prefix of its wide chip table — ONE physical
+chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem honTf_narrow_wire :
+    honTf poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (honTf TableId.poseidon2) := rfl
 
 /-- The honest balanced 2-row witness: 5 + 3 in ≡ 4 + 4 out. -/
 def honestTrace : VmTrace := { rows := [honRow0, honRow1], pub := zeroAsg, tf := honTf }
@@ -502,7 +514,7 @@ def honestTrace : VmTrace := { rows := [honRow0, honRow1], pub := zeroAsg, tf :=
 /-- The witness chip table is SOUND: every row is a genuine `chipRow hzero` tuple. -/
 theorem honTf_sound : ChipTableSound hzero (honTf TableId.poseidon2) := by
   intro r hr
-  simp only [honTf, List.mem_cons, List.not_mem_nil, or_false] at hr
+  simp only [honTf, honChipTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl
   · exact ⟨[5, 2, 9, 3, 0, 64207, 1], [0, 0, 0, 0, 0, 0, 0], by decide, by decide, by decide⟩
   · exact ⟨[5, 2, 3, 0, 0, 64207, 1], [0, 0, 0, 0, 0, 0, 0], by decide, by decide, by decide⟩
@@ -588,7 +600,7 @@ genuine digest ⇒ refused). -/
 theorem decoupled_refused :
     ¬ Satisfied2 hzero shieldedValueLinkDesc (fun _ => 0) (fun _ => (0, 0)) [] decoupledTrace :=
   value_decoupled_unsat hzero (fun _ => 0) (fun _ => (0, 0)) [] decoupledTrace
-    (by simp [decoupledTrace]) honTf_sound (by decide)
+    (by simp [decoupledTrace]) honTf_sound (by rfl) (by decide)
 
 /-! ## §9 — the byte-pinned wire golden (generated once via `#eval repr (emitVmJson2 …)`;
 the Rust decoder ingests THIS string at the coordinated integrator step). -/
@@ -596,12 +608,13 @@ the Rust decoder ingests THIS string at the coordinated integrator step). -/
 /-- Exact emitted-wire golden (generated via `#eval repr (emitVmJson2 shieldedValueLinkDesc)`).
 Rust includes these bytes verbatim at the coordinated integrator step. -/
 def SHIELDED_VALUE_LINK_CONSERVE_GOLDEN : String :=
-  "{\"name\":\"dregg-shielded-value-link-conserve::v1\",\"ir\":2,\"trace_width\":23,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":8},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":7}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":8}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-shielded-value-link-conserve::v1\",\"ir\":2,\"trace_width\":9,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":8},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":7}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":8}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 shieldedValueLinkDesc == SHIELDED_VALUE_LINK_CONSERVE_GOLDEN
 
 /-! ## §10 — axiom hygiene on the keystones. -/
 
+#assert_axioms honTf_narrow_wire
 #assert_axioms value_link_bound
 #assert_axioms value_decoupled_unsat
 #assert_axioms conservation_holds

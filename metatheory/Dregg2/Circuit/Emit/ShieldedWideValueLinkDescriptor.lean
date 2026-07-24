@@ -106,13 +106,14 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow VmRowEnv VmConstraint VmRange)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId Table TraceFamily VmTrace zeroAsg envAt
-   Satisfied2 chipLookupTuple ChipTableSound chip_lookup_sound chipRow
+   Satisfied2 chipLookupTupleNarrow poseidon2narrow ChipTableSound chipRow
    chipLookupTupleN ChipTableSoundN chip_lookup_sound_N chipRowN
    CHIP_RATE CHIP_OUT_LANES padToE padTo emitVmJson2 WindowExpr WindowConstraint
    memLog mapLog)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit (ev ek eadd emul eneg esub)
 open Dregg2.Circuit.Emit.ShieldedValueLinkDescriptor
-  (factIns NS_FACT_MARK laneCols rowAt prefixSum factIns_eval_4 hzero)
+  (factIns NS_FACT_MARK rowAt prefixSum factIns_eval_4 hzero)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR (Poseidon2Width8)
 
 set_option autoImplicit false
@@ -140,11 +141,12 @@ def cOUT : Nat := 13
 def cACC : Nat := 14
 /-- The 8 WIDE value-binding digest lanes (the full squeezed permutation output). -/
 def cWB (j : Nat) : Nat := 15 + j
-/-- The narrow leaf fact site's 7 chip lanes (the `alloc_lanes()` discipline). -/
-def LANE_LEAF : Nat := 23
-
-/-- Main-trace width: 15 clearing columns + 8 wide digest lanes + 7 leaf chip lanes. -/
-def WVL_WIDTH : Nat := 30
+/-- Main-trace width: 15 clearing columns + 8 wide digest lanes. The leaf fact site's 7 chip lane
+columns (the Rust `alloc_lanes()` discipline) are GONE (E7 narrowing, `ChipNarrowLookup.lean`) — they
+were the trailing suffix `[23, 30)` and entered no soundness conclusion. The WIDE value-binding site
+(`chipLookupTupleN`, the `chip_lookup_sound_N` lever) is NOT narrowed: its 8 squeezed lanes ARE its
+conclusion, not exposed padding. -/
+def WVL_WIDTH : Nat := 23
 
 /-- PIs 0..7: the published WIDE `value_binding` (all 8 lanes). PI 8: the leaf commit. -/
 def piLEAF : Nat := 8
@@ -178,8 +180,8 @@ def wideBindLookup : VmConstraint2 :=
 randomness])`, every row: the deployed narrow fact site (lane 1's C6a shape), over the SAME
 recomposed cells the wide binding's limbs pin. -/
 def lkLeafCommit : VmConstraint2 :=
-  .lookup ⟨.poseidon2,
-    chipLookupTuple (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF (laneCols LANE_LEAF)⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF⟩
 
 /-- `Σ 2^{16i}·limb_i` over the 4-limb block at `base` (little-endian `u64_recompose`). -/
 def limbRecompE (base : Nat) : EmittedExpr :=
@@ -254,15 +256,18 @@ def shieldedWideValueLinkDesc : EffectVmDescriptor2 :=
   , ranges      := limbRanges }
 
 -- Non-vacuous structural pins.
-#guard shieldedWideValueLinkDesc.traceWidth == 30
+#guard shieldedWideValueLinkDesc.traceWidth == 23
 #guard shieldedWideValueLinkDesc.piCount == 9
 #guard shieldedWideValueLinkDesc.constraints.length == 18
 #guard shieldedWideValueLinkDesc.ranges.length == 8
 #guard wideBindIns.length == 11
 #guard (chipLookupTupleN wideBindIns wideCols).length == 1 + CHIP_RATE + 8
-#guard (chipLookupTuple (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF (laneCols LANE_LEAF)).length
-  == 1 + CHIP_RATE + CHIP_OUT_LANES
-#guard laneCols LANE_LEAF == [23, 24, 25, 26, 27, 28, 29]
+#guard (chipLookupTupleNarrow (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF).length
+  == 1 + CHIP_RATE + 1
+-- The narrowing dropped exactly CHIP_OUT_LANES − 1 = 7 main columns for the same forced leaf
+-- equation; the WIDE 8-lane binding site is untouched.
+#guard WVL_WIDTH + (CHIP_OUT_LANES - 1) == 30
+#guard poseidon2narrow.wireId == 8
 #guard wideCols == (List.range 8).map cWB
 
 -- Window canaries: the conservation step vanishes iff the accumulator threads the net.
@@ -472,6 +477,7 @@ theorem wide_digest_forced (permOut : List ℤ → List ℤ)
 permutation) of the recomposed value/asset cells + owner + randomness. -/
 theorem leaf_forced (permOut : List ℤ → List ℤ) (hW : Poseidon2Width8 permOut)
     (hChipW : ChipTableSoundN permOut (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf TableId.poseidon2))
     (hsat : Satisfied2 hash shieldedWideValueLinkDesc minit mfin maddrs t)
     {i : Nat} (hi : i < t.rows.length) :
     rowAt t i cLEAF
@@ -481,12 +487,15 @@ theorem leaf_forced (permOut : List ℤ → List ℤ) (hW : Poseidon2Width8 perm
   have hrow := hsat.rowConstraints i hi lkLeafCommit
     (by simp [shieldedWideValueLinkDesc, wideLinkClearConstraints, wideLinkConstraints,
       conservationConstraints, claimPins])
-  have hmem : (chipLookupTuple (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF
-      (laneCols LANE_LEAF)).map (·.eval (rowAt t i)) ∈ t.tf TableId.poseidon2 := by
-    simpa only [lkLeafCommit, Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
-      Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt, envAt, rowAt] using hrow
-  have h := chip_lookup_sound (headHash permOut) (t.tf TableId.poseidon2) hChip (rowAt t i)
-    _ cLEAF (laneCols LANE_LEAF) (by decide) hmem
+  have hmem : (chipLookupTupleNarrow (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF).map
+      (·.eval (rowAt t i)) ∈ narrowTable (t.tf TableId.poseidon2) := by
+    have h0 : (chipLookupTupleNarrow (factIns [cVMOD, cAMOD, cOWNER, cRAND]) cLEAF).map
+        (·.eval (rowAt t i)) ∈ t.tf poseidon2narrow := by
+      simpa only [lkLeafCommit, Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
+        Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt, envAt, rowAt] using hrow
+    rwa [hwire] at h0
+  have h := chip_lookup_narrow_sound_of_wide_table (headHash permOut) (t.tf TableId.poseidon2)
+    hChip (rowAt t i) _ cLEAF (by decide) hmem
   rw [factIns_eval_4] at h
   exact h
 
@@ -563,7 +572,8 @@ theorem wide_value_link_bound (permOut : List ℤ → List ℤ) (hW : Poseidon2W
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedWideValueLinkDesc minit mfin maddrs t)
-    (hChipW : ChipTableSoundN permOut (t.tf TableId.poseidon2)) :
+    (hChipW : ChipTableSoundN permOut (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf TableId.poseidon2)) :
     (∀ i, i < t.rows.length →
         wideCols.map (rowAt t i) = permOut (wideAbsorb (openingAt t i))
         ∧ rowAt t i cLEAF
@@ -582,7 +592,7 @@ theorem wide_value_link_bound (permOut : List ℤ → List ℤ) (hW : Poseidon2W
     | cons a l => simp
   refine ⟨fun i hi => ?_, fun j hj => ?_, ?_⟩
   · exact ⟨wide_digest_forced permOut hChipW hsat hi,
-      leaf_forced permOut hW hChipW hsat hi,
+      leaf_forced permOut hW hChipW hwire hsat hi,
       recomp_value hsat hi, recomp_asset hsat hi,
       fun c hc => limbs_canonical hsat hi hc⟩
   · rcases (by omega : j = 0 ∨ j = 1 ∨ j = 2 ∨ j = 3 ∨ j = 4 ∨ j = 5 ∨ j = 6 ∨ j = 7) with
@@ -602,12 +612,13 @@ theorem wide_decoupled_unsat (permOut : List ℤ → List ℤ) (hW : Poseidon2Wi
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hChipW : ChipTableSoundN permOut (t.tf TableId.poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf TableId.poseidon2))
     (hforge : ¬ (t.pub 0
       ≡ (permOut (wideAbsorb (openingAt t 0))).getD 0 0 [ZMOD 2013265921])) :
     ¬ Satisfied2 hash shieldedWideValueLinkDesc minit mfin maddrs t := by
   intro hsat
   obtain ⟨hrows, hpins, _⟩ := wide_value_link_bound permOut hW hash minit mfin maddrs t hne
-    hsat hChipW
+    hsat hChipW hwire
   have hpos : 0 < t.rows.length := by
     cases hr : t.rows with
     | nil => exact absurd hr hne
@@ -781,6 +792,8 @@ theorem wide_binding_binds (permOut : List ℤ → List ℤ) (hW : Poseidon2Widt
     (hsat₂ : Satisfied2 hash₂ shieldedWideValueLinkDesc minit₂ mfin₂ maddrs₂ t₂)
     (hChipW₁ : ChipTableSoundN permOut (t₁.tf TableId.poseidon2))
     (hChipW₂ : ChipTableSoundN permOut (t₂.tf TableId.poseidon2))
+    (hwire₁ : t₁.tf poseidon2narrow = narrowTable (t₁.tf TableId.poseidon2))
+    (hwire₂ : t₂.tf poseidon2narrow = narrowTable (t₂.tf TableId.poseidon2))
     (hRand₁ : 0 ≤ rowAt t₁ 0 cRAND ∧ rowAt t₁ 0 cRAND < 2013265921)
     (hRand₂ : 0 ≤ rowAt t₂ 0 cRAND ∧ rowAt t₂ 0 cRAND < 2013265921)
     (hPub : ∀ j, j < 8 → t₁.pub j = t₂.pub j)
@@ -796,9 +809,9 @@ theorem wide_binding_binds (permOut : List ℤ → List ℤ) (hW : Poseidon2Widt
     | nil => exact absurd hr hne₂
     | cons a l => simp
   obtain ⟨hrows₁, hpins₁, _⟩ := wide_value_link_bound permOut hW hash₁ minit₁ mfin₁ maddrs₁ t₁
-    hne₁ hsat₁ hChipW₁
+    hne₁ hsat₁ hChipW₁ hwire₁
   obtain ⟨hrows₂, hpins₂, _⟩ := wide_value_link_bound permOut hW hash₂ minit₂ mfin₂ maddrs₂ t₂
-    hne₂ hsat₂ hChipW₂
+    hne₂ hsat₂ hChipW₂ hwire₂
   have hl₁ := (hrows₁ 0 hpos₁).1
   have hl₂ := (hrows₂ 0 hpos₂).1
   -- each lane is canonical (it sits in a permOut image)…
@@ -919,10 +932,18 @@ def leafChip1 : List ℤ :=
    0, 0, 0, 0, 0, 0, 0, 0]
 
 /-- The witness trace family: the chip table carries exactly the four genuine wide rows. -/
+def honChipTbl : List (List ℤ) := [wideChip0, leafChip0, wideChip1, leafChip1]
+
 def honTf : TraceFamily := fun tid =>
   match tid with
-  | .poseidon2 => [wideChip0, leafChip0, wideChip1, leafChip1]
+  | .poseidon2 => honChipTbl
+  | .custom 3  => narrowTable honChipTbl
   | _ => []
+
+/-- The honest family wires the NARROW bus to the 18-prefix of its wide chip table — ONE physical
+chip serving both buses, exactly the deployed Rust `narrow_hist` serving (definitional). -/
+theorem honTf_narrow_wire :
+    honTf poseidon2narrow = narrowTable (honTf TableId.poseidon2) := rfl
 
 /-- The honest balanced 2-row witness: 5 + 3 in ≡ 4 + 4 out. -/
 def honestTrace : VmTrace := { rows := [honRow0, honRow1], pub := zeroAsg, tf := honTf }
@@ -933,7 +954,7 @@ def honestTrace : VmTrace := { rows := [honRow0, honRow1], pub := zeroAsg, tf :=
 /-- The witness chip table is WIDE-sound: every row is a genuine `chipRowN permOut0` tuple. -/
 theorem honTf_soundN : ChipTableSoundN permOut0 (honTf TableId.poseidon2) := by
   intro r hr
-  simp only [honTf, List.mem_cons, List.not_mem_nil, or_false] at hr
+  simp only [honTf, honChipTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl
   · exact ⟨[1447185968, 5, 0, 0, 0, 2, 0, 0, 0, 3, 0], by decide, by decide⟩
   · exact ⟨[5, 2, 9, 3, 0, 64207, 1], by decide, by decide⟩
@@ -1029,7 +1050,7 @@ theorem decoupled_refused :
     ¬ Satisfied2 hzero shieldedWideValueLinkDesc (fun _ => 0) (fun _ => (0, 0)) []
       decoupledTrace :=
   wide_decoupled_unsat permOut0 permOut0_width8 hzero (fun _ => 0) (fun _ => (0, 0)) []
-    decoupledTrace (by simp [decoupledTrace]) honTf_soundN (by decide)
+    decoupledTrace (by simp [decoupledTrace]) honTf_soundN (by rfl) (by decide)
 
 /-- **The headline fires on concrete carriers**: the inhabited floor (`packPerm`) against the
 all-zero legacy binding — the collision pair exists, the wide binding separates it. -/
@@ -1047,12 +1068,13 @@ the Rust decoder ingests THIS string at the coordinated integrator step). -/
 `#eval repr (emitVmJson2 shieldedWideValueLinkDesc)`). Rust includes these bytes verbatim at
 the coordinated integrator step. -/
 def SHIELDED_WIDE_VALUE_LINK_CONSERVE_GOLDEN : String :=
-  "{\"name\":\"dregg-shielded-wide-value-link-conserve::v1\",\"ir\":2,\"trace_width\":30,\"public_input_count\":9,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":3}}}}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":7}}}}}}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"var\",\"v\":29}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":11},{\"t\":\"const\",\"v\":1447185968},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":9},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":3}}}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":7}}}}}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":14},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":13}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":14}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":8}],\"hash_sites\":[],\"ranges\":[{\"wire\":0,\"bits\":16},{\"wire\":1,\"bits\":16},{\"wire\":2,\"bits\":16},{\"wire\":3,\"bits\":16},{\"wire\":4,\"bits\":16},{\"wire\":5,\"bits\":16},{\"wire\":6,\"bits\":16},{\"wire\":7,\"bits\":16}]}"
+  "{\"name\":\"dregg-shielded-wide-value-link-conserve::v1\",\"ir\":2,\"trace_width\":23,\"public_input_count\":9,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":3}}}}}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":7}}}}}}}},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":11},{\"t\":\"const\",\"v\":1447185968},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":9},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":2}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":3}}}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":65536},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":4294967296},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":281474976710656},\"r\":{\"t\":\"var\",\"v\":7}}}}}}}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":14},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":13}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":14}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":8}],\"hash_sites\":[],\"ranges\":[{\"wire\":0,\"bits\":16},{\"wire\":1,\"bits\":16},{\"wire\":2,\"bits\":16},{\"wire\":3,\"bits\":16},{\"wire\":4,\"bits\":16},{\"wire\":5,\"bits\":16},{\"wire\":6,\"bits\":16},{\"wire\":7,\"bits\":16}]}"
 
 #guard emitVmJson2 shieldedWideValueLinkDesc == SHIELDED_WIDE_VALUE_LINK_CONSERVE_GOLDEN
 
 /-! ## §10 — axiom hygiene on the keystones. -/
 
+#assert_axioms honTf_narrow_wire
 #assert_axioms wide_value_link_bound
 #assert_axioms wide_decoupled_unsat
 #assert_axioms wide_conservation_holds

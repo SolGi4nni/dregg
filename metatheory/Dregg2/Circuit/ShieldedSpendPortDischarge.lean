@@ -170,12 +170,14 @@ site coincide. -/
 theorem emitted_fold_step_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     (t.rows.getD 0 zeroAsg) cPAR
       = Hair hash ((t.rows.getD 0 zeroAsg) cCUR)
           ⟨(t.rows.getD 0 zeroAsg) cSIB0, (t.rows.getD 0 zeroAsg) cSIB1,
            (t.rows.getD 0 zeroAsg) cSIB2, (t.rows.getD 0 zeroAsg) cPOS⟩ := by
-  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
+  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip hwire
   exact hrel.1
 
 /-- **⚑ THE #15 DISCHARGE, AT THE CELLS (`emitted_leaf_opensAs_row0`).** A satisfying
@@ -188,11 +190,13 @@ opening cannot be an unrelated witness. -/
 theorem emitted_leaf_opensAs_row0 (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
       ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
       ((t.rows.getD 0 zeroAsg) cRAND) := by
-  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip
+  have hrel := spend_relation_row0 hash minit mfin maddrs t hne hsat hChip hwire
   have hLeaf : (t.rows.getD 0 zeroAsg) cLEAF
       = hash [(t.rows.getD 0 zeroAsg) cVAL, (t.rows.getD 0 zeroAsg) cASSET,
               (t.rows.getD 0 zeroAsg) cOWNER, (t.rows.getD 0 zeroAsg) cRAND, 0, NS_FACT_MARK, 1] :=
@@ -219,10 +223,12 @@ manufacturing it here would be a claim the emitted object does not support. Use
 theorem emitted_leaf_isCommittedNote (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     IsCommittedNote hash ((t.rows.getD 0 zeroAsg) cCUR) :=
   isCommittedNote_of_opensAs hash
-    (emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip)
+    (emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip hwire)
 
 /-- **⚑ THE #15 KEYSTONE (`emitted_accept_is_committed`).** The whole shape at once, WITH NO
 `AccumulatorSound` hypothesis: a satisfying trace's accepted leaf is the C6 commitment of row 0's own
@@ -240,7 +246,9 @@ note for why the AIR cannot supply that conjunct and which object does. -/
 theorem emitted_accept_is_committed (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedSpendDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     OpensAs hash ((t.rows.getD 0 zeroAsg) cCUR) ((t.rows.getD 0 zeroAsg) cVAL)
       ((t.rows.getD 0 zeroAsg) cASSET) ((t.rows.getD 0 zeroAsg) cOWNER)
       ((t.rows.getD 0 zeroAsg) cRAND)
@@ -248,7 +256,7 @@ theorem emitted_accept_is_committed (hash : List ℤ → ℤ) (minit : ℤ → �
     ∧ ((t.rows.getD 0 zeroAsg) cROOT ≡ t.pub piCOMMITTED [ZMOD P])
     ∧ (t.pub piROOT ≡ t.pub piCOMMITTED [ZMOD P]) := by
   have hpin := root_is_pinned hash minit mfin maddrs t hne hsat
-  exact ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip,
+  exact ⟨emitted_leaf_opensAs_row0 hash minit mfin maddrs t hne hsat hChip hwire,
          hpin.2.1, hpin.1, hpin.2.2⟩
 
 /-- The residual **accumulator collision-resistance floor**, NAMED precisely (never axiomatized):
@@ -316,7 +324,7 @@ theorem discharge_fires_on_witness :
       ((zTrace.rows.getD 0 zeroAsg) cASSET) ((zTrace.rows.getD 0 zeroAsg) cOWNER)
       ((zTrace.rows.getD 0 zeroAsg) cRAND) :=
   emitted_leaf_opensAs_row0 hzero (fun _ => 0) (fun _ => (0, 0)) [] zTrace
-    (by simp [zTrace]) zero_witness_satisfies zTf_sound
+    (by simp [zTrace]) zero_witness_satisfies zTf_sound (by rfl)
 
 #assert_axioms emitted_fold_step_row0
 #assert_axioms isCommittedNote_of_opensAs
@@ -346,14 +354,16 @@ published `leaf_commit` and `value_binding` (under the chip AIR's soundness). Th
 theorem emitted_conserved_is_leaf_bound (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
     (maddrs : List ℤ) (t : VmTrace) (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash shieldedValueLinkDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf TableId.poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf TableId.poseidon2))
+    (hwire : t.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf TableId.poseidon2)) :
     ∀ i, i < t.rows.length →
       rowAt t i cLEAF
         = hash [valAt t i, rowAt t i cASSET, rowAt t i cOWNER, rowAt t i cRAND, 0, NS_FACT_MARK, 1]
       ∧ rowAt t i cVB
         = hash [valAt t i, rowAt t i cASSET, rowAt t i cRAND, rowAt t i cVBP0, 0, NS_FACT_MARK, 1] := by
   intro i hi
-  obtain ⟨hVB, hLEAF, _⟩ := (value_link_bound hash minit mfin maddrs t hne hsat hChip).1 i hi
+  obtain ⟨hVB, hLEAF, _⟩ := (value_link_bound hash minit mfin maddrs t hne hsat hChip hwire).1 i hi
   exact ⟨hLEAF, hVB⟩
 
 /-- **⚑ THE #16 KEYSTONE (`emitted_minted_equals_bound_spent`).** The minted total equals the real
@@ -401,7 +411,8 @@ theorem link_discharge_fires_on_witness :
       = hzero [valAt honestTrace 0, rowAt honestTrace 0 cASSET, rowAt honestTrace 0 cOWNER,
                rowAt honestTrace 0 cRAND, 0, NS_FACT_MARK, 1] :=
   (emitted_conserved_is_leaf_bound hzero (fun _ => 0) (fun _ => (0, 0)) [] honestTrace
-    (by simp [honestTrace]) honest_balanced_satisfies honTf_sound 0 (by simp [honestTrace])).1
+    (by simp [honestTrace]) honest_balanced_satisfies honTf_sound (by rfl) 0
+    (by simp [honestTrace])).1
 
 #assert_axioms emitted_conserved_is_leaf_bound
 #assert_axioms emitted_minted_equals_bound_spent

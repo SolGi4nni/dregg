@@ -474,7 +474,7 @@ theorem descriptor_has_complete_shape :
 -- The staged-additive adjacency: the deployed narrow descriptor this file replaces-at-cutover
 -- pins ONE felt each for leaf and root; the wide twin pins 8 + 8. Distinct names, distinct VKs.
 #guard membership4aryDesc.piCount == 2
-#guard membership4aryDesc.traceWidth == 18
+#guard membership4aryDesc.traceWidth == 11
 #guard membership4aryDesc.name != merkleMembership4aryWideDesc.name
 
 -- Continuity non-vacuity: lane 0 accepts a chained window and rejects an unchained one.

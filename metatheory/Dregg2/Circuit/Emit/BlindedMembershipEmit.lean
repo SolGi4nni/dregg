@@ -353,6 +353,20 @@ def gParentLookup : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2,
     chipLookupTuple [.var gC0, .var gC1, .var gC2, .var gC3] gPAR gPATH_LANES⟩
 
+/-- The NARROW arity-4 parent chip lookup: the same forced digest equation on the 18-wide
+`poseidon2narrow` bus (wire 8 = Rust `TID_P2_NARROW`), served by the 18-prefix of the SAME chip rows.
+
+Why a SEPARATE def from `gParentLookup`: the two descriptors built from this shared block narrow on
+DIFFERENT schedules. `merkle-membership-4ary-general` is a pure TAIL truncation (kill-set `[11, 18)`
+is the trailing suffix, 18 → 11) and narrows NOW; the blinded 4-ary family (`gWIDTH = 27`) has an
+INTERIOR kill-set (`gBLINDING`/`gBLINDED_LEAF` sit at 18/19, past the path lanes) and belongs to the
+E7 RENUMBER group. Narrowing the shared `gParentLookup` would change the blinded family's bytes for
+ZERO column savings. When the renumber pass lands, that family switches to this def and
+`gParentLookup` dies. -/
+def gParentLookupNarrow : VmConstraint2 :=
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var gC0, .var gC1, .var gC2, .var gC3] gPAR⟩
+
 /-- The arity-2 blinding tooth: `hash_2_to_1(cur, blinding)` → `gBLINDED_LEAF`, blind lanes witnessed.
 The row-0 `cur` is the hidden `leaf_hash`, so the published `blinded_leaf` commits to the member. -/
 def gBlindLookup : VmConstraint2 :=

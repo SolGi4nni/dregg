@@ -114,7 +114,11 @@ def shieldedValueLinkRangedDesc : EffectVmDescriptor2 :=
   , ranges      := [] }
 
 -- Non-vacuous structural pins; the BabyBear identity making 15 the exact no-wrap width.
-#guard shieldedValueLinkRangedDesc.traceWidth == 23
+#guard shieldedValueLinkRangedDesc.traceWidth == 9
+-- E7 narrowing: the two `hash_fact` sites ride the 18-wide `TID_P2_NARROW` bus, so the 2 x 7
+-- exposed permutation lane columns are gone (pure tail truncation, no index moved).
+#guard shieldedValueLinkRangedDesc.traceWidth
+         + 2 * (Dregg2.Circuit.DescriptorIR2.CHIP_OUT_LANES - 1) == 23
 #guard shieldedValueLinkRangedDesc.piCount == 2
 #guard shieldedValueLinkRangedDesc.constraints.length == 11
 #guard decide ((MAX_CLEARING_ROWS : ℤ) * 2 ^ VALUE_BITS + 1 = P)
@@ -296,11 +300,25 @@ leaf/binding site (value 0, all facts 0). -/
 def wrapChipRow : List ℤ :=
   [7, 0, 0, 0, 0, 0, 64207, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-/-- The canary trace family: honest + wrap chip rows, and the genuine 27-bit range table. -/
+/-- The WIDE physical Poseidon2 chip rows the canary families name. -/
+def rangedChipTbl : List (List ℤ) := [chipL0, chipV0, chipL1, chipV1, wrapChipRow]
+
+/-- The canary trace family: honest + wrap chip rows on ONE physical chip serving TWO buses (the
+narrow bus is the 18-prefix, exactly the deployed Rust `narrow_hist`), and the genuine 27-bit range
+table. `LEX_RANGE_TID = 27` never collides with `poseidon2narrow = .custom 3`. -/
 def rangedTf : TraceFamily := fun tid =>
   if tid = TableId.custom LEX_RANGE_TID then rangeRows VALUE_BITS
-  else if tid = TableId.poseidon2 then [chipL0, chipV0, chipL1, chipV1, wrapChipRow]
+  else if tid = TableId.poseidon2 then rangedChipTbl
+  else if tid = Dregg2.Circuit.DescriptorIR2.poseidon2narrow then
+    Dregg2.Circuit.ChipNarrowLookup.narrowTable rangedChipTbl
   else []
+
+/-- The canary family wires the NARROW bus to the 18-prefix of its wide chip table
+(definitional). -/
+theorem rangedTf_narrow_wire :
+    rangedTf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (rangedTf TableId.poseidon2) := by
+  simp [rangedTf, Dregg2.Circuit.DescriptorIR2.poseidon2narrow, LEX_RANGE_TID]
 
 /-- The honest balanced 2-row witness (5+3 in ≡ 4+4 out) over the ranged trace family. -/
 def honestRangedTrace : VmTrace := { rows := [honRow0, honRow1], pub := zeroAsg, tf := rangedTf }
@@ -366,7 +384,10 @@ theorem honest_ranged_satisfies :
           Dregg2.Circuit.DescriptorIR2.WindowConstraint.holdsAt,
           Dregg2.Circuit.Emit.EffectVmEmit.VmConstraint.holdsVm,
           Dregg2.Circuit.DescriptorIR2.WindowExpr.eval,
-          envAt, honestRangedTrace, rangedTf, EmittedExpr.eval,
+          envAt, honestRangedTrace, rangedTf, rangedChipTbl,
+          Dregg2.Circuit.DescriptorIR2.poseidon2narrow,
+          Dregg2.Circuit.ChipNarrowLookup.narrowTable,
+          Dregg2.Circuit.ChipNarrowLookup.narrowRow, EmittedExpr.eval,
           List.length_cons, List.length_nil,
           Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
         decide
@@ -443,7 +464,10 @@ theorem wraparound_mint_accepted_by_base :
         Dregg2.Circuit.DescriptorIR2.WindowConstraint.holdsAt,
         Dregg2.Circuit.Emit.EffectVmEmit.VmConstraint.holdsVm,
         Dregg2.Circuit.DescriptorIR2.WindowExpr.eval,
-        envAt, wrapMintTrace, rangedTf, EmittedExpr.eval,
+        envAt, wrapMintTrace, rangedTf, rangedChipTbl,
+        Dregg2.Circuit.DescriptorIR2.poseidon2narrow,
+        Dregg2.Circuit.ChipNarrowLookup.narrowTable,
+        Dregg2.Circuit.ChipNarrowLookup.narrowRow, EmittedExpr.eval,
         List.length_cons, List.length_nil,
         Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide
@@ -478,7 +502,7 @@ theorem wraparound_mint_refused_by_ranged :
 /-- Exact emitted-wire golden (generated via `emitVmJson2 shieldedValueLinkRangedDesc`).
 Rust includes these bytes verbatim at the coordinated integrator step. -/
 def SHIELDED_VALUE_LINK_RANGED_GOLDEN : String :=
-  "{\"name\":\"dregg-shielded-value-link-conserve-ranged::v1\",\"ir\":2,\"trace_width\":23,\"public_input_count\":2,\"tables\":[{\"id\":32,\"name\":\"lex_range_27\",\"arity\":1,\"sem\":\"range\",\"bits\":27}],\"constraints\":[{\"t\":\"lookup\",\"table\":32,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"lookup\",\"table\":32,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":8},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":7}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":8}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-shielded-value-link-conserve-ranged::v1\",\"ir\":2,\"trace_width\":9,\"public_input_count\":2,\"tables\":[{\"id\":32,\"name\":\"lex_range_27\",\"arity\":1,\"sem\":\"range\",\"bits\":27}],\"constraints\":[{\"t\":\"lookup\",\"table\":32,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"lookup\",\"table\":32,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"gate\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":6}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":4}},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":8},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"nxt\",\"c\":7}}}}}}},{\"t\":\"boundary\",\"row\":\"first\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"var\",\"v\":8}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
 
 #guard emitVmJson2 shieldedValueLinkRangedDesc == SHIELDED_VALUE_LINK_RANGED_GOLDEN
 
