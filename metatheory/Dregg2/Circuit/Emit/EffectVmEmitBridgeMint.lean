@@ -49,6 +49,7 @@ import Dregg2.Circuit.Spec.supplycreation
 -- (`MintASpec`), so the per-entry credit is the validated `recTransferBal_correct` dst clause.
 -- (`supplycreation` does NOT transitively bring `balancemovement`; import it for the lemma.)
 import Dregg2.Circuit.Spec.balancemovement
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitBridgeMint
 
@@ -764,5 +765,76 @@ theorem bridgeMint_wide_roots_clause_refutable :
 #assert_axioms bridgeMint_wide_realizes
 #assert_axioms bridgeMint_wide_clause_refutable
 #assert_axioms bridgeMint_wide_roots_clause_refutable
+
+/-! ## §ROM — ⚡ THE ROM SUCCESSORS: the commitment legs as REDUCTIONS on the PROVED
+keyed floor.
+
+⚡ STATUS (2026-07-24). The `…_or_collides` exportS above carry TWO kinds of content: the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ the shared published commit and the
+absorbed columns — circuit content, not a security claim) and the collision pricing, which as a
+bare disjunction was a SHIRK — at deployed BabyBear parameters a sponge collision EXISTS by
+pigeonhole, so the disjunction holds through its right branch with NO binding. The security
+statementS are THIS section's reductionS: the deployed absorb schedule at this site is the
+keystone chain (`bridgeMint_sites_eq` + the wide runnable schedule), so the site's commitment equivocation at the SAMPLED oracle
+IS the row ROM forgery, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM. NO refuted floor, NO cost model;
+the modelling step is `RomCarrierSites`' labelled idealisation (ideal `Fin (2 ^ l)` digest vs the
+deployed ~31-bit felt, said out loud). The disjunctionS stay as the deterministic
+extractor/constraint machinery the downstream consumers `rcases` on. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (narrowRomFamily effectVmNarrowRomForgery narrowRow_binds_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (wideRomFamily wideRomBreakGame effectVmWideRomForgery wideRow_binds_rom
+   effectVmWideRomStateTamper wide_state_tamper_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+
+/-- **⚡⚡ THE BRIDGE-MINT COMMIT BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM
+successor of `bridgeMintDescriptor_commit_binds_state_or_collides` (`bridgeMint_sites_eq`:
+the hash sites ARE the keystone chain): every query-bounded forger of the 13-column commitment
+has NEGLIGIBLE advantage (`narrowRow_binds_rom`). -/
+theorem bridgeMintDescriptor_commit_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
+
+/-- **⚡ THE BRIDGE-MINT STATE-TAMPER TOOTH, DISCHARGED** — the ROM successor of
+`bridgeMint_wide_rejects_state_tamper_or_collides`: a query-bounded adversary cannot keep the
+published wide `NEW_COMMIT` while tampering an absorbed state block, except with negligible
+probability (`wide_state_tamper_rom`). -/
+theorem bridgeMint_wide_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
+
+/-- **⚡ THE BRIDGE-MINT SIDE-TABLE TOOTH, DISCHARGED** — the ROM successor of
+`bridgeMint_wide_rejects_root_tamper_or_collides`: forging a side-table root under a kept wide
+commitment succeeds with negligible probability (`wide_root_tamper_rom`). -/
+theorem bridgeMint_wide_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms bridgeMintDescriptor_commit_binds_state_rom
+#assert_axioms bridgeMint_wide_rejects_state_tamper_rom
+#assert_axioms bridgeMint_wide_rejects_root_tamper_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitBridgeMint

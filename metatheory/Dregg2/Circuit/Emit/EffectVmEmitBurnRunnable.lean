@@ -49,6 +49,7 @@ Imports are read-only; this module owns only its declarations.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitBurn
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitBurnRunnable
 
@@ -254,5 +255,58 @@ theorem burnFullClause_not_trivial :
 
 #assert_axioms burnWide_constraints_eq
 #assert_axioms burnGates_give_cellSpec
+
+/-! ## §ROM — ⚡ THE ROM SUCCESSORS: the commitment legs as REDUCTIONS on the PROVED
+keyed floor.
+
+⚡ STATUS (2026-07-24). The `…_or_collides` exportS above carry TWO kinds of content: the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ the shared published commit and the
+absorbed columns — circuit content, not a security claim) and the collision pricing, which as a
+bare disjunction was a SHIRK — at deployed BabyBear parameters a sponge collision EXISTS by
+pigeonhole, so the disjunction holds through its right branch with NO binding. The security
+statementS are THIS section's reductionS: the deployed absorb schedule at this site is the
+keystone chain (the wide runnable schedule (`burnVmDescriptorWide` rides `wideHashSites`)), so the site's commitment equivocation at the SAMPLED oracle
+IS the row ROM forgery, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM. NO refuted floor, NO cost model;
+the modelling step is `RomCarrierSites`' labelled idealisation (ideal `Fin (2 ^ l)` digest vs the
+deployed ~31-bit felt, said out loud). The disjunctionS stay as the deterministic
+extractor/constraint machinery the downstream consumers `rcases` on. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (wideRomFamily wideRomBreakGame effectVmWideRomForgery wideRow_binds_rom
+   effectVmWideRomStateTamper wide_state_tamper_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+
+/-- **⚡ THE BURN STATE-TAMPER TOOTH, DISCHARGED** — the ROM successor of
+`burn_rejects_state_tamper_or_collides`: a query-bounded adversary cannot keep the published wide
+`NEW_COMMIT` while tampering an absorbed state block, except with negligible probability
+(`wide_state_tamper_rom`). -/
+theorem burn_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
+
+/-- **⚡ THE BURN SIDE-TABLE TOOTH, DISCHARGED** — the ROM successor of
+`burn_rejects_root_tamper_or_collides`: a dropped escrow or omitted nullifier that survives the
+published wide commitment succeeds with negligible probability (`wide_root_tamper_rom`). -/
+theorem burn_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms burn_rejects_state_tamper_rom
+#assert_axioms burn_rejects_root_tamper_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitBurnRunnable

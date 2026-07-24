@@ -49,6 +49,7 @@ NOOP, in-field nonce tick — the deployed range-check invariant), witnessed sat
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCellUnseal
 
@@ -597,5 +598,56 @@ theorem staleNonceUnsealRow_rejected :
 #assert_axioms goodUnsealRow_canonical
 #assert_axioms badUnsealRow_rejected
 #assert_axioms staleNonceUnsealRow_rejected
+
+/-! ## §ROM — ⚡ THE ROM SUCCESSORS: the commitment legs as REDUCTIONS on the PROVED
+keyed floor.
+
+⚡ STATUS (2026-07-24). The `…_or_collides` exportS above carry TWO kinds of content: the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ the shared published commit and the
+absorbed columns — circuit content, not a security claim) and the collision pricing, which as a
+bare disjunction was a SHIRK — at deployed BabyBear parameters a sponge collision EXISTS by
+pigeonhole, so the disjunction holds through its right branch with NO binding. The security
+statementS are THIS section's reductionS: the deployed absorb schedule at this site is the
+keystone chain (the wide runnable schedule (`cellUnsealVmDescriptorWide` rides `wideHashSites`; `cellUnsealHashSites := transferHashSites`)), so the site's commitment equivocation at the SAMPLED oracle
+IS the row ROM forgery, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM. NO refuted floor, NO cost model;
+the modelling step is `RomCarrierSites`' labelled idealisation (ideal `Fin (2 ^ l)` digest vs the
+deployed ~31-bit felt, said out loud). The disjunctionS stay as the deterministic
+extractor/constraint machinery the downstream consumers `rcases` on. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (wideRomFamily wideRomBreakGame effectVmWideRomForgery wideRow_binds_rom
+   effectVmWideRomStateTamper wide_state_tamper_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+
+/-- **⚡⚡ THE CELL-UNSEAL FULL-STATE BINDING, DISCHARGED** — the ROM successor of
+`cellUnseal_runnable_full_commit_binds_or_collides`: every query-bounded forger that equivocates
+the whole 17-field nested wide commitment has NEGLIGIBLE advantage (`wideRow_binds_rom`). -/
+theorem cellUnseal_runnable_full_commit_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
+
+/-- **⚡ THE CELL-UNSEAL SIDE-TABLE TOOTH, DISCHARGED** — the ROM successor of
+`cellUnseal_rejects_root_tamper_or_collides` (`wide_root_tamper_rom`). -/
+theorem cellUnseal_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms cellUnseal_runnable_full_commit_binds_rom
+#assert_axioms cellUnseal_rejects_root_tamper_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitCellUnseal

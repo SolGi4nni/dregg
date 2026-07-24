@@ -47,6 +47,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.accountgrowth
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCreateCell
 
@@ -477,5 +478,45 @@ theorem createCellActor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
 
 #assert_axioms createCellActor_faithful
 #assert_axioms createCellActor_full_sound
+
+/-! ## §ROM — ⚡ THE ROM SUCCESSOR: the commitment leg as REDUCTION on the PROVED
+keyed floor.
+
+⚡ STATUS (2026-07-24). The `…_or_collides` export above carries TWO kinds of content: the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ the shared published commit and the
+absorbed columns — circuit content, not a security claim) and the collision pricing, which as a
+bare disjunction was a SHIRK — at deployed BabyBear parameters a sponge collision EXISTS by
+pigeonhole, so the disjunction holds through its right branch with NO binding. The security
+statement is THIS section's reduction: the deployed absorb schedule at this site is the
+keystone chain (`createCellHashSites := transferHashSites`, definitionally), so the site's commitment equivocation at the SAMPLED oracle
+IS the row ROM forgery, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM. NO refuted floor, NO cost model;
+the modelling step is `RomCarrierSites`' labelled idealisation (ideal `Fin (2 ^ l)` digest vs the
+deployed ~31-bit felt, said out loud). The disjunction stays as the deterministic
+extractor/constraint machinery the downstream consumers `rcases` on. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (narrowRomFamily effectVmNarrowRomForgery narrowRow_binds_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+
+/-- **⚡⚡ THE BORN-EMPTY BLOCK BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor
+of `createCellVm_commit_binds_block_or_collides`: a query-bounded forger cannot keep the published
+`state_commit` while tampering ANY absorbed column of the born-empty block, except with negligible
+probability (`narrowRow_binds_rom`; `createCellHashSites := transferHashSites` definitionally). -/
+theorem createCellVm_commit_binds_block_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms createCellVm_commit_binds_block_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitCreateCell

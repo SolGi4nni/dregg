@@ -538,4 +538,72 @@ per-tag `_write_forge_rejected` (update-at-key) and the load-bearing membership 
 #assert_axioms revoke_spec_and_remove_realized
 #assert_axioms revokeDelegation_spec_and_remove_realized
 
+/-! ## §ROM — ⚑ THE ROM SUCCESSORS: the write-gate anti-forge legs as REDUCTIONS on the PROVED
+keyed floor.
+
+⚑ STATUS (2026-07-24). The seven `…_or_collides` exports of this file
+(`capWrite8_afterRoot_binds_leaf`, `capWriteDecode_afterRoot_binds` /
+`capWriteDecode_forge_rejected`, and their attenuate/refresh spec-named instances) are ONE
+cap-open equivocation stated at three altitudes — all of them `Cap8Scheme.capOpen8Find` peels whose
+exported form is a bare disjunction: at deployed BabyBear parameters a chip collision EXISTS by
+pigeonhole, so each holds through its right branch with NO binding. They are RETAINED as the
+deterministic extractor/decode machinery (the `CapWriteDecode` welds and the `⟺`-of-noColl forms
+carry genuine circuit content). The SECURITY statements are `DeployedCapTree` §7R's reductions,
+re-exported here at the write-gate site: the forger is an oracle program fixed before the sampled
+tag-separated oracle, and the floor is `KeyedRomFloor.keyedRom_hard` (the birthday bound, a
+THEOREM). The modelling step is §7R's note verbatim. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomHashedLeafOpening
+open Dregg2.Circuit.DeployedCapTree
+  (CapLeafRomBlock capRomFamily capOpen8_binds_leaf_rom capOpenRoot8_binds_rom)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+
+/-- **⚑⚑ THE WRITE-GATE ANTI-FORGE, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor of
+`capWrite8_afterRoot_binds_leaf_or_collides`, of `capWriteDecode_afterRoot_binds_or_collides`, and
+of the spec-named `attenuate_afterRoot_binds_or_collides_spec` /
+`refresh_afterRoot_binds_or_collides_spec` (one equivocation, three altitudes): a query-bounded
+prover that opens one published after cap-root to two DISTINCT after-leaves along one committed
+membership path has NEGLIGIBLE advantage. `capOpen8_binds_leaf_rom` (the paying walk, `Q + 2·d + 2`
+queries), named at the write gate. -/
+theorem capWrite8_afterRoot_binds_leaf_rom (Key : Type) (kF : Fintype Key)
+    (kD : DecidableEq Key) (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Key kF kD kN)
+      (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  capOpen8_binds_leaf_rom Key kF kD kN dep Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE FORGE-REJECTION TOOTH, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor of
+`capWriteDecode_forge_rejected_or_collides` and its `attenuate_write_forge_rejected_or_collides` /
+`refresh_write_forge_rejected_or_collides` instances: the forge-rejection is the PUBLISHED-ROOT
+opening game (the decode's genuine after-leaf and the forged candidate BOTH open the published
+after cap-root), and a query-bounded forger of it has NEGLIGIBLE advantage
+(`capOpenRoot8_binds_rom`, the root-dropping `mapOut` reduction). -/
+theorem capWrite_forge_rejected_rom (Key : Type) (kF : Fintype Key)
+    (kD : DecidableEq Key) (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Key kF kD kN)
+      (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  capOpenRoot8_binds_rom Key kF kD kN dep Q Q' hle hQ' A hA
+
+end RomSuccessor
+
+#assert_axioms capWrite8_afterRoot_binds_leaf_rom
+#assert_axioms capWrite_forge_rejected_rom
+
 end Dregg2.Circuit.Emit.EffectVmCapFamilyComplete

@@ -85,6 +85,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitCapReshape
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.attenuateA
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
 
@@ -1259,5 +1260,108 @@ theorem capWide_roots_clause_not_trivial :
 #guard attenuateVmDescriptorWide.constraints.length == 13 + 14 + 4
 
 end CapGraphWide
+
+/-! ## §ROM — ⚑ THE ROM SUCCESSORS: the cap-graph wide commitment legs as REDUCTIONS on the
+PROVED keyed floor.
+
+⚑ STATUS (2026-07-24). The three `cap_runnable_…_or_collides` exports above carry the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ shared commit + absorbed columns —
+circuit content) plus collision pricing that, as a bare disjunction, was a SHIRK: at deployed
+BabyBear parameters a sponge collision EXISTS by pigeonhole, so each disjunction holds through its
+right branch with NO binding. The security statements are THIS section's reductions: the cap-graph
+wide schedule is the keystone wide schedule (`attenuateVmDescriptorWide.hashSites = wideHashSites`,
+rfl above; `attenuateHashSites_eq`), so the site's equivocations at the SAMPLED oracle are the wide
+row ROM forgeries, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` (the birthday bound, a THEOREM). The moved `cap_root` additionally
+gets its own LOCALIZED slot tamper (block C, slot 3 — absorbed column 11), reduced into the full
+wide forgery. NO refuted floor; the modelling step is `RomCarrierSites`' labelled idealisation.
+The disjunctions stay as the deterministic extractor/constraint machinery. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (wideRomFamily WideRomVal wideRomCommit wideRomBreakGame effectVmWideRomForgery
+   wideRow_binds_rom effectVmWideRomStateTamper wide_state_tamper_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgery RomForgeryEff)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv gameAdv_mem_unit)
+
+/-- **⚑⚑ THE CAP-GRAPH FULL-STATE BINDING, DISCHARGED** — the ROM successor of
+`cap_runnable_binds_full_state_or_collides`: every query-bounded forger that equivocates the whole
+17-field nested wide commitment (the moved `cap_root` included) has NEGLIGIBLE advantage
+(`wideRow_binds_rom`). -/
+theorem cap_runnable_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
+
+/-- **⚑ THE CAP-GRAPH STATE-TAMPER TOOTH, DISCHARGED** — the ROM successor of
+`cap_runnable_rejects_cap_root_tamper_or_collides` (whose tamper hypothesis is a disagreement
+anywhere in the absorbed state blocks, the `cap_root` column included): negligible advantage,
+`wide_state_tamper_rom`. -/
+theorem cap_runnable_rejects_cap_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
+
+/-- **⚑ THE CAP-GRAPH SIDE-TABLE TOOTH, DISCHARGED** — the ROM successor of
+`cap_runnable_rejects_root_tamper_or_collides` (`wide_root_tamper_rom`). -/
+theorem cap_runnable_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+/-- **THE CAP-ROOT SLOT ROM TAMPER** — the cap-graph headline disagreement LOCALIZED to the moved
+`cap_root` slot itself (block C, slot 3 — absorbed column 11): a forged openable c-list root under
+a kept wide commitment. -/
+def capRootWideRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    a.2.1.1.2.2 3 ≠ a.2.2.1.2.2 3
+      ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- **⚑⚑ THE MOVED `cap_root` IS BOUND, AS A REDUCTION ON THE PROVED FLOOR** — the sharpest form
+of the cap-graph headline: a query-bounded adversary that keeps the published wide `NEW_COMMIT`
+while moving ONLY the `cap_root` slot has NEGLIGIBLE advantage. A slot disagreement is payload
+distinctness, so the localized tamperer IS a full wide forger and `wideRow_binds_rom` kills it. -/
+theorem cap_runnable_rejects_cap_root_slot_tamper_rom (D : SpongeKeyed)
+    (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (capRootWideRomTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (capRootWideRomTamper D tagDec) Q A) :
+    Negl (gameAdv (capRootWideRomTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (wideRomBreakGame D tagDec)
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec))) :=
+    wideRow_binds_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec)) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (capRootWideRomTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _ ((capRootWideRomTamper D tagDec).game.instFin l) _ _
+    (fun H hH => ?_)
+  rw [Dregg2.Crypto.FloorGames.Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrArg (fun v : WideRomVal => v.1.2.2 3) hc), heq⟩
+
+end RomSuccessor
+
+#assert_axioms cap_runnable_binds_full_state_rom
+#assert_axioms cap_runnable_rejects_cap_root_tamper_rom
+#assert_axioms cap_runnable_rejects_root_tamper_rom
+#assert_axioms cap_runnable_rejects_cap_root_slot_tamper_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitAttenuateA

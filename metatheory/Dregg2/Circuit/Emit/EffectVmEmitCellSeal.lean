@@ -47,6 +47,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.celllifecycle
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCellSeal
 
@@ -579,5 +580,48 @@ theorem staleNonceSealRow_rejected :
 #assert_axioms goodSealRow_canonical
 #assert_axioms badSealRow_rejected
 #assert_axioms staleNonceSealRow_rejected
+
+/-! ## §ROM — ⚡ THE ROM SUCCESSORS: the commitment legs as REDUCTIONS on the PROVED
+keyed floor.
+
+⚡ STATUS (2026-07-24). The `…_or_collides` exportS above carry TWO kinds of content: the
+DETERMINISTIC constraint-side extraction (`satisfiedVm` ⇒ the shared published commit and the
+absorbed columns — circuit content, not a security claim) and the collision pricing, which as a
+bare disjunction was a SHIRK — at deployed BabyBear parameters a sponge collision EXISTS by
+pigeonhole, so the disjunction holds through its right branch with NO binding. The security
+statementS are THIS section's reductionS: the deployed absorb schedule at this site is the
+keystone chain (`cellSealHashSites := transferHashSites`, definitionally), so the site's commitment equivocation at the SAMPLED oracle
+IS the row ROM forgery, priced by `EffectVmRowCommitReduction`'s union bound on
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM. NO refuted floor, NO cost model;
+the modelling step is `RomCarrierSites`' labelled idealisation (ideal `Fin (2 ^ l)` digest vs the
+deployed ~31-bit felt, said out loud). The disjunctionS stay as the deterministic
+extractor/constraint machinery the downstream consumers `rcases` on. -/
+
+section RomSuccessor
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (narrowRomFamily effectVmNarrowRomForgery narrowRow_binds_rom)
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+
+/-- **⚡⚡ THE CELL-SEAL COMMIT BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor
+of BOTH `cellSealVm_commit_binds_block_or_collides` and
+`cellSealDescriptor_commit_binds_state_or_collides` (the two disjunctions differ only in how the
+shared published commit is DERIVED from `satisfiedVm` — deterministic constraint content that
+stays with them; the priced object, the 13-column commitment equivocation, is ONE game): every
+query-bounded forger has NEGLIGIBLE advantage (`narrowRow_binds_rom`;
+`cellSealHashSites := transferHashSites` definitionally). -/
+theorem cellSeal_commit_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms cellSeal_commit_binds_rom
 
 end Dregg2.Circuit.Emit.EffectVmEmitCellSeal

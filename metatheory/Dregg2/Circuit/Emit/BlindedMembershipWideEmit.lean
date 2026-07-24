@@ -757,4 +757,208 @@ def laneZero : Digest8 := fun _ => 0
 #assert_axioms interior_forge_narrow_admits_wide_refuses
 #assert_axioms blinded_leaf_forge_narrow_admits_wide_refuses
 
+/-! ## §ROM — ⚑ THE ROM SUCCESSORS: the wide blinded surface as REDUCTIONS on the PROVED keyed
+floor.
+
+⚑ STATUS (2026-07-24). `wideFold4_binds_or_collides` and `wideBlind_binds_or_collides` are
+EXTRACTOR WITNESSES (each hands back the specific colliding pair; the anti-masquerade teeth
+`rcases` on them), but as EXPORTED security statements they are shirks: at deployed BabyBear
+parameters a chip collision EXISTS by pigeonhole, so each disjunction holds through its right
+branch with NO binding. The security statements are THIS section's reductions over ONE sampled
+tag-separated oracle (`Crypto.RomHashedLeafOpening.hlFam` with the blinded-leaf block as the leaf
+message): `wideBlind_binds_rom` is the single-absorb LEAF carrier binding (the 9-felt
+`leaf8 ‖ blinding` block at the ideal width — member digest AND blinding factor both bound), and
+`wideFold4_binds_rom` is the TWO-LEVEL 4-ary fold as a chained forgery, closed by the union bound
+(`chained_rom_binds`) with the node carrier on BOTH legs — outer pair differs ⇒ outer node
+equivocation (the extractor re-queries the two inner digests per side, budget `Q + 4`); outer pair
+agrees ⇒ the first differing inner child pair is an inner node equivocation (`mapOut`, budget
+`Q`). Floor: `keyedRom_hard` (the birthday bound, a THEOREM). NO refuted floor, NO bare
+disjunction; the modelling step is `RomCarrierSites`' labelled idealisation — one 8-felt child
+digest is ONE ideal `Fin (2 ^ l)` value, the ~124-bit reading carried in prose, said out loud. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomHashedLeafOpening
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+  (RomCarrier romCarrierGame RomCarrierEff RomCarrierComp romCarrierAdv)
+open Dregg2.Crypto.RomCarrierSites
+  (RomForgery RomForgeryEff chained_rom_binds polyBounded_sq_add_two babyBearP babyBearP_pos)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv gameAdv_mem_unit)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+
+/-- The truncated blinded-leaf block at the ideal width: ONE member digest (an ideal value — the
+8-felt `leaf8` idealised, the §-header modelling step) and the BabyBear blinding felt. The
+`packBlind leaf r = leaf8 ‖ [r]` layout content: both coordinates bound, by constructor. -/
+abbrev BlindLeafRomBlock (l : ℕ) : Type := Fin (2 ^ l) × Fin babyBearP
+
+/-- **THE BLINDED-MEMBERSHIP ROM FAMILY** at tag space `Key`: blinded-leaf blocks ⊕ ordered
+node pairs (the deployed 9-vs-16 arity separation, by constructor). -/
+abbrev blindRomFamily (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : KeyedRomFamily :=
+  hlFam Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- **⚑⚑ THE WIDE BLINDED-LEAF BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor
+of `wideBlind_binds_or_collides`: every query-bounded forger that equivocates one published
+blinded commitment between two DISTINCT `(member digest, blinding)` blocks has NEGLIGIBLE
+advantage. The single-absorb leaf carrier (`hlLeaf_binds_rom`); both the member digest AND the
+blinding factor are bound. -/
+theorem wideBlind_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (blindRomFamily Key kF kD kN)
+      (hlLeafCarrier Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance)
+        (fun _ => inferInstance))))
+    (hA : RomCarrierEff (blindRomFamily Key kF kD kN)
+      (hlLeafCarrier Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance)
+        (fun _ => inferInstance)) Q A) :
+    Negl (gameAdv (romCarrierGame (blindRomFamily Key kF kD kN)
+      (hlLeafCarrier Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance)
+        (fun _ => inferInstance))) A) :=
+  hlLeaf_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- The node carrier of the blinded family (the `pack8` two-child absorb at the ideal width). -/
+abbrev blindNodeCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (blindRomFamily Key kF kD kN) :=
+  hlNodeCarrier Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- **THE TWO-LEVEL 4-ARY FOLD AT THE SAMPLED ORACLE** — the ROM restatement of
+`wideFold4 absorb c0 c1 c2 c3 = absorb (pack8 (absorb (pack8 c0 c1)) (absorb (pack8 c2 c3)))`:
+the two inner node digests are genuinely re-absorbed by the outer node query. -/
+def fold4Rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key) (kN : Nonempty Key)
+    (l : ℕ)
+    (H : (blindRomFamily Key kF kD kN).toRomFamily.D l
+      → (blindRomFamily Key kF kD kN).toRomFamily.R l)
+    (t : Key) (q : Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l)) :
+    (blindRomFamily Key kF kD kN).toRomFamily.R l :=
+  H (t, Sum.inr (H (t, Sum.inr (q.1, q.2.1)), H (t, Sum.inr (q.2.2.1, q.2.2.2))))
+
+/-- **THE WIDE-FOLD ROM FORGERY** — two DISTINCT child quadruples, one nested wide parent, at the
+sampled oracle. -/
+def wideFold4RomForgery (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomForgery (blindRomFamily Key kF kD kN) where
+  Ans := fun l => Key × (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+    × (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+  wins := fun l H a =>
+    a.2.1 ≠ a.2.2 ∧ fold4Rom Key kF kD kN l H a.1 a.2.1 = fold4Rom Key kF kD kN l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((blindRomFamily Key kF kD kN).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- The inner-leg selection — the first differing inner child pair (a pure post-map; whether it
+actually collides is decided by the sampled oracle in the union bound's case split). -/
+def fold4InnerSelect (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key) (kN : Nonempty Key)
+    (l : ℕ) (a : (wideFold4RomForgery Key kF kD kN).Ans l) :
+    (blindNodeCarrier Key kF kD kN).Ctx l
+      × (blindNodeCarrier Key kF kD kN).Val l × (blindNodeCarrier Key kF kD kN).Val l :=
+  if (a.2.1.1, a.2.1.2.1) ≠ (a.2.2.1, a.2.2.2.1)
+  then ((a.1, ()), (a.2.1.1, a.2.1.2.1), (a.2.2.1, a.2.2.2.1))
+  else ((a.1, ()), (a.2.1.2.2.1, a.2.1.2.2.2), (a.2.2.2.2.1, a.2.2.2.2.2))
+
+/-- The outer-leg extraction — run the forger, re-query the four inner node points, answer with
+the two outer pairs (`bindComp`, budget `Q + 4`). -/
+def fold4OuterComp (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key) (kN : Nonempty Key)
+    (M : ∀ l, OracleComp ((blindRomFamily Key kF kD kN).toRomFamily.D l)
+      ((blindRomFamily Key kF kD kN).toRomFamily.R l)
+      ((wideFold4RomForgery Key kF kD kN).Ans l)) :
+    RomCarrierComp (blindRomFamily Key kF kD kN) (blindNodeCarrier Key kF kD kN) :=
+  fun l => Dregg2.Crypto.RomCarrierSites.OracleComp.bindComp (M l) (fun a =>
+    OracleComp.query (a.1, Sum.inr (a.2.1.1, a.2.1.2.1)) (fun d₁ =>
+    OracleComp.query (a.1, Sum.inr (a.2.1.2.2.1, a.2.1.2.2.2)) (fun d₂ =>
+    OracleComp.query (a.1, Sum.inr (a.2.2.1, a.2.2.2.1)) (fun e₁ =>
+    OracleComp.query (a.1, Sum.inr (a.2.2.2.2.1, a.2.2.2.2.2)) (fun e₂ =>
+    OracleComp.pure ((a.1, ()), (d₁, d₂), (e₁, e₂)))))))
+
+/-- **⚑⚑ THE WIDE 4-ARY FOLD BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor of
+`wideFold4_binds_or_collides`: every query-bounded forger that equivocates one nested wide parent
+between two DISTINCT child quadruples has NEGLIGIBLE advantage. The union bound over ONE sampled
+oracle, node carrier on both legs: outer pairs differ → outer equivocation (re-queried, `Q + 4`);
+outer pairs agree → the first differing inner pair is an inner equivocation (`mapOut`, `Q`). -/
+theorem wideFold4_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideFold4RomForgery Key kF kD kN).game)
+    (hA : RomForgeryEff (blindRomFamily Key kF kD kN) (wideFold4RomForgery Key kF kD kN) Q A) :
+    Negl (gameAdv (wideFold4RomForgery Key kF kD kN).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine chained_rom_binds (wideFold4RomForgery Key kF kD kN)
+    (blindNodeCarrier Key kF kD kN) (blindNodeCarrier Key kF kD kN)
+    Q (fun l => Q l + 2 + 2) hQ
+    (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ hQ))
+    (hlFam_card_R Key kF kD kN BlindLeafRomBlock (fun _ => inferInstance)
+      (fun _ => inferInstance)) A
+    (romCarrierAdv _ _ (fun l => Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut
+      (fold4InnerSelect Key kF kD kN l) (M l)))
+    (romCarrierAdv _ _ (fold4OuterComp Key kF kD kN M))
+    ?_
+    ⟨fun l => Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut
+        (fold4InnerSelect Key kF kD kN l) (M l),
+      fun l => Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut_queryBounded _ (hM l),
+      fun _ _ => rfl⟩
+    ⟨fold4OuterComp Key kF kD kN M,
+      fun l => (Dregg2.Crypto.RomCarrierSites.OracleComp.bindComp_queryBounded (hM l)
+        (fun a => QueryBounded.query 3 _ _ (fun _ => QueryBounded.query 2 _ _
+          (fun _ => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+          (fun _ => QueryBounded.pure 0 _)))))).mono
+        (by show Q l + 4 ≤ Q l + 2 + 2; omega),
+      fun _ _ => rfl⟩
+  intro l H hwin
+  have hArun : A.run l H = (M l).eval H := hrun l H
+  set a := A.run l H with ha
+  obtain ⟨hne, heq⟩ := hwin
+  have hB₁run : (romCarrierAdv _ _ (fun l => Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut
+      (fold4InnerSelect Key kF kD kN l) (M l))).run l H
+      = fold4InnerSelect Key kF kD kN l a := by
+    show (Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut
+      (fold4InnerSelect Key kF kD kN l) (M l)).eval H = _
+    rw [Dregg2.Crypto.RomBindingReduction.OracleComp.mapOut_eval, ← hArun]
+  have hB₂run : (romCarrierAdv _ _ (fold4OuterComp Key kF kD kN M)).run l H
+      = ((a.1, ()),
+          (H (a.1, Sum.inr (a.2.1.1, a.2.1.2.1)), H (a.1, Sum.inr (a.2.1.2.2.1, a.2.1.2.2.2))),
+          (H (a.1, Sum.inr (a.2.2.1, a.2.2.2.1)),
+            H (a.1, Sum.inr (a.2.2.2.2.1, a.2.2.2.2.2)))) := by
+    show (fold4OuterComp Key kF kD kN M l).eval H = _
+    unfold fold4OuterComp
+    rw [Dregg2.Crypto.RomCarrierSites.OracleComp.bindComp_eval, ← hArun]
+    rfl
+  by_cases hT :
+      ((H (a.1, Sum.inr (a.2.1.1, a.2.1.2.1)), H (a.1, Sum.inr (a.2.1.2.2.1, a.2.1.2.2.2)))
+        : Fin (2 ^ l) × Fin (2 ^ l))
+      = (H (a.1, Sum.inr (a.2.2.1, a.2.2.2.1)), H (a.1, Sum.inr (a.2.2.2.2.1, a.2.2.2.2.2)))
+  · -- the outer pairs AGREE: both inner digests collide pairwise; the first differing inner
+    -- child pair is a genuine inner node equivocation.
+    refine Or.inl ?_
+    rw [hB₁run]
+    have h1 : H (a.1, Sum.inr (a.2.1.1, a.2.1.2.1)) = H (a.1, Sum.inr (a.2.2.1, a.2.2.2.1)) :=
+      congrArg Prod.fst hT
+    have h2 : H (a.1, Sum.inr (a.2.1.2.2.1, a.2.1.2.2.2))
+        = H (a.1, Sum.inr (a.2.2.2.2.1, a.2.2.2.2.2)) := congrArg Prod.snd hT
+    unfold fold4InnerSelect
+    by_cases hL : ((a.2.1.1, a.2.1.2.1) : Fin (2 ^ l) × Fin (2 ^ l))
+        ≠ (a.2.2.1, a.2.2.2.1)
+    · rw [if_pos hL]
+      exact ⟨hL, h1⟩
+    · rw [if_neg hL]
+      push_neg at hL
+      have hR : ((a.2.1.2.2.1, a.2.1.2.2.2) : Fin (2 ^ l) × Fin (2 ^ l))
+          ≠ (a.2.2.2.2.1, a.2.2.2.2.2) := by
+        intro hr
+        apply hne
+        have h01 := congrArg Prod.fst hL
+        have h02 := congrArg Prod.snd hL
+        have h03 := congrArg Prod.fst hr
+        have h04 := congrArg Prod.snd hr
+        exact Prod.ext h01 (Prod.ext h02 (Prod.ext h03 h04))
+      exact ⟨hR, h2⟩
+  · -- the outer pairs DIFFER: the two outer node messages are distinct with one digest.
+    refine Or.inr ?_
+    rw [hB₂run]
+    exact ⟨hT, heq⟩
+
+end RomSuccessor
+
+#assert_axioms wideBlind_binds_rom
+#assert_axioms wideFold4_binds_rom
+
 end Dregg2.Circuit.Emit.BlindedMembershipWideEmit
