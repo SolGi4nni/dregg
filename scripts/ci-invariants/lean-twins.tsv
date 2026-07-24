@@ -1,0 +1,66 @@
+# lean-twins.tsv — THE RUST-TWIN REGRESSION GUARD that scripts/ci-invariants.sh enforces.
+#
+# A "twin" = a Rust function that DECIDES accept/admit/conserve/finalize where a
+# Lean `@[export]` proves the same property, so the two can DRIFT. The asset-inflation
+# CRITICAL *was* the per-asset-conservation twin drifting. The twin-deletion campaign
+# (docs/TWIN-DELETION-MAP-2026-07-23.md) routed all 11 live decisions through the proven
+# `@[export]` (fail-CLOSED when absent) and left each Rust sibling only under `#[cfg(test)]`
+# as a differential mirror. This registry is the STRUCTURAL CANARY that keeps it that way.
+#
+# It is a heuristic grep-lint (v1), NOT a theorem: it reads the source at HEAD and asserts
+# the shape of each twin site is intact. It cannot prove semantic equivalence — it prevents
+# the KNOWN regressions (a native/rust/mirror sibling re-appearing on the live path, or the
+# route-through to Lean being ripped out and the decision inlined in Rust).
+#
+# COLUMNS (tab-separated; blank lines and #-comments ignored):
+#   guard   one of:
+#     route    -> `pattern` MUST be present in `file` (the live decider still calls the
+#                 verified export / fail-closed disposition; if it vanishes, a twin was inlined)
+#     forbid   -> `pattern` MUST NOT be present in `file` (a deleted Rust twin decider reappeared)
+#     cfgtest  -> `fn <pattern>` in `file` MUST be `#[cfg(test)]`-gated (the differential
+#                 sibling may exist, but only in test builds — never on a live path)
+#   file      the source file that owns the live decision (FATAL if it moved — re-point the row)
+#   pattern   a regex (route/forbid) or a bare fn name (cfgtest)
+#   note      one line — which twin (# from the map) and what the guard protects
+#
+# TO EXTEND (a new twin, or a new @[export] to guard): add rows. To enumerate the export
+# surface this guards, see docs/CI-INVARIANTS.md (the `verified_*`/`shadow_*` FFI bridges).
+#
+# guard	file	pattern	note
+
+# ── twin#1 per-asset conservation (the highest-drift-risk twin; inflation boundary) ──
+route	turn/src/executor/atomic.rs	dregg_cross_cell_conserves	twin#1 per-asset conservation routes through the @[export] dregg_cross_cell_conserves
+
+# ── twin#2 cell StateConstraint eval (native fail-closed when no oracle) ─────────────
+route	cell/src/program/eval.rs	no_oracle_subset_disposition	twin#2 a subset constraint with no oracle fails closed to the verified dregg_constraint_admits
+
+# ── twin#3 coord 2PC decide ──────────────────────────────────────────────────────────
+route	coord/src/atomic.rs	verified_decision	twin#3 the 2PC live path routes through the verified Lean gate
+cfgtest	coord/src/atomic.rs	evaluate_votes_native	twin#3 the native 2PC sibling is test-only (never a live decider)
+
+# ── twin#4 coord causal happened-before ──────────────────────────────────────────────
+route	coord/src/causal.rs	verified_happened_before	twin#4 causal order routes through the verified export
+
+# ── twin#5 coord shared-budget resolve ───────────────────────────────────────────────
+route	coord/src/shared_budget.rs	verified_resolve_ordering	twin#5 shared-budget resolve routes through the verified export
+cfgtest	coord/src/shared_budget.rs	resolve_ordered_native	twin#5 the native tau-resolution fold is test-only
+
+# ── twin#6 captp handoff non-amplification ───────────────────────────────────────────
+route	captp/src/handoff.rs	verified_non_amplifying	twin#6 handoff non-amplification routes through the verified export
+forbid	captp/src/handoff.rs	rust_non_amplifying	twin#6 the deleted Rust lattice twin must not reappear as a live fallback
+
+# ── twin#7 strand admission (F-4) ────────────────────────────────────────────────────
+route	federation/src/admission.rs	lean_admitted	twin#7 strand admission routes through the verified export
+cfgtest	federation/src/admission.rs	admitted_rust	twin#7 the native admission sibling is test-only
+
+# ── twin#8 finality tau order ────────────────────────────────────────────────────────
+route	node/src/finality_gate.rs	verified_tau_order	twin#8 finality tau order routes through the verified export
+
+# ── twin#9 deploy refinement ─────────────────────────────────────────────────────────
+route	dregg-deploy/src/refine.rs	shadow_decide_refines	twin#9 deploy refinement routes through the verified export
+
+# ── twin#10 intent per-leg settle (FFI is authoritative, not a skippable cross-check) ─
+route	intent/src/verified_settle.rs	settle_leg_authoritative	twin#10 per-leg settle is decided by the authoritative FFI column
+
+# ── twin#11 finalization quorum ──────────────────────────────────────────────────────
+route	node/src/finalization_votes.rs	verified_finalization_quorum	twin#11 the live record() quorum decision routes through the verified export
