@@ -58,9 +58,10 @@ the deployed 3-slot public-input tuple `[nullifier, merkle_root, value_binding]`
         ∧ 0 ≤ value
 
 Its docstring reads the third conjunct as *"value-binding is the committed leaf value (C7a)"* and the
-fourth as *"value is range-valid"*. Neither is what the `Prop` says. `value` and `randomness` are
-existentially free and **appear in no other conjunct** — they are tied neither to `commitment` nor to
-the member leaf. So:
+fourth as *"value is range-valid"*. Neither is what the `Prop` says. `value` and `randomness` occur
+in **no conjunct that mentions `commitment`** — the only other place `value` occurs is its own
+`0 ≤ value`, which the existential picks it to satisfy. So the bound value is tied neither to the
+member commitment nor to the member leaf, and the range conjunct ranges over a value nothing pins:
 
   * `starkResidual_indep_of_valueBinding` — under `C7aSurjective` (the two-free-input analogue of
     `ShieldedOnRampPin.C6Surjective`), the residual's truth value does not depend on `pi[2]` at all:
