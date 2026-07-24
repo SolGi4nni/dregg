@@ -118,7 +118,7 @@ impl BlindedMembershipInput {
         Ok(self.build()?.1)
     }
 
-    /// The blinded-membership base trace (width `BLINDED_WIDTH` = 33).
+    /// The blinded-membership base trace (width `BLINDED_WIDTH` = 12 since the E7 narrowing).
     pub fn generate_trace(&self) -> Result<Vec<Vec<BabyBear>>, String> {
         Ok(self.build()?.0)
     }

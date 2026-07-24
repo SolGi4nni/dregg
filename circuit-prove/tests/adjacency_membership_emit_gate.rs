@@ -9,7 +9,7 @@
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
 //!      breaks this OR the Lean `#guard`);
 //!   2. KATs the arity-2 chip mapping: `chip_absorb_all_lanes(2, [a,b])[0] == hash_2_to_1(a,b)`
-//!      (a `TID_P2` lookup with arity tag 2 IS `hash_2_to_1`, the binary Merkle-node hash);
+//!      (a `TID_P2_NARROW` lookup with arity tag 2 IS `hash_2_to_1`, the binary Merkle-node hash);
 //!   3. proves an HONEST adjacency witness (two consecutive leaves, genuine dual authentication
 //!      paths to a shared root, indices reconstructed in-circuit) through [`prove_vm_descriptor2`],
 //!      asserts ACCEPT, and re-verifies;
@@ -31,9 +31,9 @@
 use std::panic::AssertUnwindSafe;
 
 use dregg_circuit::descriptor_ir2::{
-    CHIP_OUT_LANES, CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness,
-    TID_P2, VmConstraint2, WindowExpr, WindowGateSpec, chip_absorb_all_lanes, parse_vm_descriptor2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    CHIP_OUT_LANES, CHIP_RATE, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2,
+    TID_P2_NARROW, VmConstraint2, WindowExpr, WindowGateSpec, chip_absorb_all_lanes,
+    parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
@@ -43,7 +43,7 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 adjacencyDesc` emits (pinned by the `#guard`
 /// in `AdjacencyMembershipEmit.lean`). If Lean's emitter drifts that `#guard` fails; if this
 /// literal drifts the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-membership-adjacency::poseidon2-v1","ir":2,"trace_width":32,"public_input_count":5,"tables":[],"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":5},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20},{"t":"var","v":21},{"t":"var","v":22},{"t":"var","v":23},{"t":"var","v":24}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":11},{"t":"var","v":12},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":13},{"t":"var","v":25},{"t":"var","v":26},{"t":"var","v":27},{"t":"var","v":28},{"t":"var","v":29},{"t":"var","v":30},{"t":"var","v":31}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":17},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"var","v":16}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":17}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":1},{"t":"pi_binding","row":"first","col":8,"pi_index":2},{"t":"pi_binding","row":"last","col":5,"pi_index":0},{"t":"pi_binding","row":"last","col":13,"pi_index":0},{"t":"pi_binding","row":"last","col":7,"pi_index":3},{"t":"pi_binding","row":"last","col":15,"pi_index":4},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}},{"t":"boundary","row":"first","body":{"t":"var","v":6}},{"t":"boundary","row":"first","body":{"t":"var","v":14}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-membership-adjacency::poseidon2-v1","ir":2,"trace_width":18,"public_input_count":5,"tables":[],"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"lookup","table":8,"tuple":[{"t":"const","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":5}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":6},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":7}}}},{"t":"gate","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"lookup","table":8,"tuple":[{"t":"const","v":2},{"t":"var","v":11},{"t":"var","v":12},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":13}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":8},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":13}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":14},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":15}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":17},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"var","v":16}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":16},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":17}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":1},{"t":"pi_binding","row":"first","col":8,"pi_index":2},{"t":"pi_binding","row":"last","col":5,"pi_index":0},{"t":"pi_binding","row":"last","col":13,"pi_index":0},{"t":"pi_binding","row":"last","col":7,"pi_index":3},{"t":"pi_binding","row":"last","col":15,"pi_index":4},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":16},"r":{"t":"const","v":-1}}},{"t":"boundary","row":"first","body":{"t":"var","v":6}},{"t":"boundary","row":"first","body":{"t":"var","v":14}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":7}},"r":{"t":"const","v":-1}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":2}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":2}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":3},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":4},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":1}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":0}}},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":1}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":10}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":10}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":8}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":9}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":8}}},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":9}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":7},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":6}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":2},"r":{"t":"var","v":16}}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":15},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":14}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"mul","l":{"t":"var","v":10},"r":{"t":"var","v":16}}}}}}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `AdjacencyMembershipEmit.lean` §1). ---
 const L_CUR: usize = 0;
@@ -64,9 +64,10 @@ const U_IDX_IN: usize = 14;
 const U_IDX_OUT: usize = 15;
 const POW: usize = 16;
 const POW2: usize = 17;
-const L_PAR_LANE_BASE: usize = 18;
-const U_PAR_LANE_BASE: usize = 25;
-const ADJ_WIDTH: usize = 32;
+/// The E7 narrowing (`ChipNarrowLookup.lean`) deleted the 2 x 7 exposed permutation-lane columns:
+/// the descriptor is 18 wide, not 32, and both chip lookups ride the NARROW bus.
+const ADJ_WIDTH: usize = 18;
+const NARROW_TUPLE_LEN: usize = 1 + CHIP_RATE + 1;
 
 // --- PI indices (`adj_pi`). ---
 const PI_ROOT: usize = 0;
@@ -81,13 +82,14 @@ fn neg(e: LeanExpr) -> LeanExpr {
     LeanExpr::mul(LeanExpr::Const(-1), e)
 }
 
-/// An arity-2 `TID_P2` chip lookup absorbing `[a, b]` (`hash_2_to_1`), binding out0 to `out_col`
-/// and lanes 1..7 to `lane_base..lane_base+7`. Built EXACTLY as Lean's `chipLookupTuple` (arity
-/// tag = 2, `CHIP_RATE` zero-padded inputs, then out0 :: 7 lanes).
-fn chip2_lookup(a: usize, b: usize, out_col: usize, lane_base: usize) -> VmConstraint2 {
+/// An arity-2 NARROW (`TID_P2_NARROW`) chip lookup absorbing `[a, b]` (`hash_2_to_1`), binding out0
+/// to `out_col`. Built EXACTLY as Lean's `chipLookupTupleNarrow` (arity tag = 2, `CHIP_RATE`
+/// zero-padded inputs, then out0 — and NO output lanes: the narrow bus is served by the 18-prefix
+/// of the SAME chip rows, `ChipNarrowLookup.lean`).
+fn chip2_lookup(a: usize, b: usize, out_col: usize) -> VmConstraint2 {
     let inputs = [a, b];
-    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-    tuple.push(LeanExpr::Const(2)); // arity tag (= ins.length in Lean's chipLookupTuple)
+    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(NARROW_TUPLE_LEN);
+    tuple.push(LeanExpr::Const(2)); // arity tag (= ins.length in Lean's chipLookupTupleNarrow)
     for i in 0..CHIP_RATE {
         tuple.push(match inputs.get(i) {
             Some(&c) => LeanExpr::Var(c),
@@ -95,12 +97,9 @@ fn chip2_lookup(a: usize, b: usize, out_col: usize, lane_base: usize) -> VmConst
         });
     }
     tuple.push(LeanExpr::Var(out_col)); // out0 = the parent digest
-    for j in 0..(CHIP_OUT_LANES - 1) {
-        tuple.push(LeanExpr::Var(lane_base + j));
-    }
-    assert_eq!(tuple.len(), CHIP_TUPLE_LEN);
+    assert_eq!(tuple.len(), NARROW_TUPLE_LEN);
     VmConstraint2::Lookup(LookupSpec {
-        table: TID_P2,
+        table: TID_P2_NARROW,
         tuple,
     })
 }
@@ -176,13 +175,12 @@ fn path_block(
     par: usize,
     idx_in: usize,
     idx_out: usize,
-    lane_base: usize,
 ) -> Vec<VmConstraint2> {
     vec![
         VmConstraint2::Base(VmConstraint::Gate(dir_binary_body(dir))),
         VmConstraint2::Base(VmConstraint::Gate(left_order_body(cur, sib, dir, left))),
         VmConstraint2::Base(VmConstraint::Gate(right_order_body(cur, sib, dir, right))),
-        chip2_lookup(left, right, par, lane_base),
+        chip2_lookup(left, right, par),
         VmConstraint2::Base(VmConstraint::Gate(idx_step_body(dir, idx_in, idx_out))),
         copy_window(cur, par),
         copy_window(idx_in, idx_out),
@@ -193,26 +191,10 @@ fn path_block(
 fn hand_built_desc() -> EffectVmDescriptor2 {
     let mut constraints = Vec::new();
     constraints.extend(path_block(
-        L_CUR,
-        L_SIB,
-        L_DIR,
-        L_LEFT,
-        L_RIGHT,
-        L_PAR,
-        L_IDX_IN,
-        L_IDX_OUT,
-        L_PAR_LANE_BASE,
+        L_CUR, L_SIB, L_DIR, L_LEFT, L_RIGHT, L_PAR, L_IDX_IN, L_IDX_OUT,
     ));
     constraints.extend(path_block(
-        U_CUR,
-        U_SIB,
-        U_DIR,
-        U_LEFT,
-        U_RIGHT,
-        U_PAR,
-        U_IDX_IN,
-        U_IDX_OUT,
-        U_PAR_LANE_BASE,
+        U_CUR, U_SIB, U_DIR, U_LEFT, U_RIGHT, U_PAR, U_IDX_IN, U_IDX_OUT,
     ));
     // pow2 - 2*pow
     constraints.push(VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
@@ -496,11 +478,22 @@ fn adjacency_emit_decodes_to_hand_built() {
     let chip_lookups = decoded
         .constraints
         .iter()
-        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW))
         .count();
     assert_eq!(
         chip_lookups, 2,
         "two child→parent chip lookups (lower ‖ upper)"
+    );
+    // BUS IDENTITY: the E7 narrowing is a CUTOVER, not an addition — no 25-wide chip tuple may
+    // survive, so the two deleted 7-lane blocks cannot silently come back.
+    assert_eq!(
+        decoded
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+            .count(),
+        0,
+        "no WIDE-bus chip lookup may survive the E7 narrowing"
     );
     let window_gates = decoded
         .constraints
@@ -531,7 +524,7 @@ fn adjacency_emit_decodes_to_hand_built() {
     );
 }
 
-/// STEP 2 — the family-wide chip mapping: an arity-2 `TID_P2` absorb IS `hash_2_to_1`, and both
+/// STEP 2 — the family-wide chip mapping: an arity-2 `TID_P2_NARROW` absorb IS `hash_2_to_1`, and both
 /// children are load-bearing (perturbing either changes the digest AND every lane).
 #[test]
 fn arity2_chip_lookup_is_hash_2_to_1() {

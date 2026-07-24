@@ -35,7 +35,8 @@ const U_IDX_IN: usize = 14;
 const U_IDX_OUT: usize = 15;
 const POW: usize = 16;
 const POW2: usize = 17;
-const ADJ_WIDTH: usize = 32;
+/// E7 narrowed both chip lookups onto the NARROW bus, deleting the 2 x 7 lane columns.
+const ADJ_WIDTH: usize = 18;
 
 // The DEPLOYED adjacency AIR is loaded here through the production `descriptor_by_name` path — the
 // same loader the per-verify path uses (`bridge/src/verifier.rs`), reading the Lean-emitted by-name

@@ -53,7 +53,9 @@ fn honest_merkle(
 }
 
 // ---- DFA toggle routing honest witness (mirrors the golden). ----
-const DFA_WIDTH: usize = 22;
+/// E7 narrowed the DFA descriptor's two chip lookups onto the NARROW bus (`DfaRoutingEmit.lean`),
+/// deleting the two trailing 7-lane blocks `[8, 22)`. Pure tail truncation — no column moved.
+const DFA_WIDTH: usize = 8;
 fn dfa_honest(start: u32, sym0: u32, seed: BabyBear) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let symbols = [sym0, 0, 0, 0];
     let mut cur = start;

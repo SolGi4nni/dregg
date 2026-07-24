@@ -143,7 +143,7 @@ impl BoundPresentationInput {
         Ok(self.build()?.1)
     }
 
-    /// The bound-presentation base trace (width `BOUND_PRES_WIDTH` = 29).
+    /// The bound-presentation base trace (width `BOUND_PRES_WIDTH` = 22 since the E7 narrowing).
     pub fn generate_trace(&self) -> Result<Vec<Vec<BabyBear>>, String> {
         Ok(self.build()?.0)
     }

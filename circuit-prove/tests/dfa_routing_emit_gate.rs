@@ -8,7 +8,7 @@
 //!   1. DECODES it via [`parse_vm_descriptor2`] and asserts the decode equals an independently
 //!      hand-built `EffectVmDescriptor2` (Lean emit ≡ Rust builder — a byte drift on either side
 //!      breaks this OR the Lean `#guard`);
-//!   2. KATs the two chip mappings this family needs: an arity-4 `TID_P2` absorb IS `hash_4_to_1`
+//!   2. KATs the two chip mappings this family needs: an arity-4 `TID_P2_NARROW` absorb IS `hash_4_to_1`
 //!      (the entry hash) and an arity-2 absorb IS `hash_2_to_1` (the running-hash step);
 //!   3. proves an HONEST routing witness (a real toggle-DFA run whose per-step `(state, symbol,
 //!      next)` chain is committed by a rolling Poseidon2 route commitment) through
@@ -35,9 +35,8 @@
 use std::panic::AssertUnwindSafe;
 
 use dregg_circuit::descriptor_ir2::{
-    CHIP_OUT_LANES, CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness,
-    TID_P2, VmConstraint2, chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2,
-    verify_vm_descriptor2,
+    CHIP_RATE, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2_NARROW, VmConstraint2,
+    chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
@@ -47,7 +46,7 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 dfaRoutingDesc` emits (pinned by the `#guard`
 /// in `DfaRoutingEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this literal drifts,
 /// the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dfa-routing-toggle-2state::poseidon2-v1","ir":2,"trace_width":22,"public_input_count":4,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":6},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":3},{"t":"var","v":8},{"t":"var","v":9},{"t":"var","v":10},{"t":"var","v":11},{"t":"var","v":12},{"t":"var","v":13},{"t":"var","v":14}]},{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":7},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4},{"t":"var","v":15},{"t":"var","v":16},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20},{"t":"var","v":21}]},{"t":"gate","body":{"t":"var","v":6}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":1},"r":{"t":"add","l":{"t":"var","v":1},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"first","col":7,"pi_index":2},{"t":"pi_binding","row":"last","col":2,"pi_index":1},{"t":"pi_binding","row":"last","col":4,"pi_index":3}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dfa-routing-toggle-2state::poseidon2-v1","ir":2,"trace_width":8,"public_input_count":4,"tables":[],"constraints":[{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":6},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":3}]},{"t":"lookup","table":8,"tuple":[{"t":"const","v":2},{"t":"var","v":7},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4}]},{"t":"gate","body":{"t":"var","v":6}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":5},"r":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":1},"r":{"t":"add","l":{"t":"var","v":1},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}},"r":{"t":"mul","l":{"t":"const","v":-2},"r":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":2}}}},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"nxt","c":7},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":4}}}},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"boundary","row":"first","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"first","col":7,"pi_index":2},{"t":"pi_binding","row":"last","col":2,"pi_index":1},{"t":"pi_binding","row":"last","col":4,"pi_index":3}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `DfaRoutingEmit.lean` §1). ---
 const CURRENT: usize = 0;
@@ -58,9 +57,10 @@ const RUNNING_HASH: usize = 4;
 const IS_FIRST: usize = 5;
 const ZERO_LANE: usize = 6;
 const ACC: usize = 7;
-const ENTRY_LANE_BASE: usize = 8;
-const RUNNING_LANE_BASE: usize = 15;
-const DFA_WIDTH: usize = 22;
+/// The E7 narrowing (`ChipNarrowLookup.lean`) deleted the 2 x 7 exposed permutation-lane columns:
+/// the descriptor is 8 wide, not 22, and its two chip lookups ride the NARROW bus.
+const DFA_WIDTH: usize = 8;
+const NARROW_TUPLE_LEN: usize = 1 + CHIP_RATE + 1;
 
 // --- Public-input layout. ---
 const PI_INITIAL: usize = 0;
@@ -68,11 +68,12 @@ const PI_FINAL: usize = 1;
 const PI_TABLE: usize = 2;
 const PI_ROUTE: usize = 3;
 
-/// A `TID_P2` chip lookup absorbing `input_cols` (arity = `input_cols.len()`), binding out0 to
-/// `out_col` and lanes 1..7 to `lane_base..lane_base+7`. Built EXACTLY as Lean's `chipLookupTuple`
-/// (arity tag = number of inputs, `CHIP_RATE` zero-padded inputs, then out0 :: 7 lanes).
-fn chip_lookup(input_cols: &[usize], out_col: usize, lane_base: usize) -> VmConstraint2 {
-    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+/// A NARROW (`TID_P2_NARROW`) chip lookup absorbing `input_cols` (arity = `input_cols.len()`) and
+/// binding out0 to `out_col`. Built EXACTLY as Lean's `chipLookupTupleNarrow` (arity tag = number of
+/// inputs, `CHIP_RATE` zero-padded inputs, then out0 — and NO output lanes: the narrow bus is served
+/// by the 18-prefix of the SAME chip rows, `ChipNarrowLookup.lean`).
+fn chip_lookup(input_cols: &[usize], out_col: usize) -> VmConstraint2 {
+    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(NARROW_TUPLE_LEN);
     tuple.push(LeanExpr::Const(input_cols.len() as i64)); // arity tag (= ins.length in Lean)
     for i in 0..CHIP_RATE {
         tuple.push(match input_cols.get(i) {
@@ -81,12 +82,9 @@ fn chip_lookup(input_cols: &[usize], out_col: usize, lane_base: usize) -> VmCons
         });
     }
     tuple.push(LeanExpr::Var(out_col)); // out0 = the digest
-    for j in 0..(CHIP_OUT_LANES - 1) {
-        tuple.push(LeanExpr::Var(lane_base + j));
-    }
-    assert_eq!(tuple.len(), CHIP_TUPLE_LEN);
+    assert_eq!(tuple.len(), NARROW_TUPLE_LEN);
     VmConstraint2::Lookup(LookupSpec {
-        table: TID_P2,
+        table: TID_P2_NARROW,
         tuple,
     })
 }
@@ -135,12 +133,8 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         public_input_count: 4,
         tables: vec![],
         constraints: vec![
-            chip_lookup(
-                &[CURRENT, SYMBOL, NEXT, ZERO_LANE],
-                ENTRY_HASH,
-                ENTRY_LANE_BASE,
-            ),
-            chip_lookup(&[ACC, ENTRY_HASH], RUNNING_HASH, RUNNING_LANE_BASE),
+            chip_lookup(&[CURRENT, SYMBOL, NEXT, ZERO_LANE], ENTRY_HASH),
+            chip_lookup(&[ACC, ENTRY_HASH], RUNNING_HASH),
             g(LeanExpr::Var(ZERO_LANE)),
             is_first_bool,
             state_grid,
@@ -183,7 +177,7 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 /// decoding a one-constraint golden is the stable public path to the same value).
 fn window_gate(loc_col: usize, nxt_col: usize) -> VmConstraint2 {
     let json = format!(
-        r#"{{"name":"w","ir":2,"trace_width":22,"public_input_count":0,"tables":[],"constraints":[{{"t":"window_gate","on_transition":true,"body":{{"t":"add","l":{{"t":"nxt","c":{nxt_col}}},"r":{{"t":"mul","l":{{"t":"const","v":-1}},"r":{{"t":"loc","c":{loc_col}}}}}}}}}],"hash_sites":[],"ranges":[]}}"#
+        r#"{{"name":"w","ir":2,"trace_width":8,"public_input_count":0,"tables":[],"constraints":[{{"t":"window_gate","on_transition":true,"body":{{"t":"add","l":{{"t":"nxt","c":{nxt_col}}},"r":{{"t":"mul","l":{{"t":"const","v":-1}},"r":{{"t":"loc","c":{loc_col}}}}}}}}}],"hash_sites":[],"ranges":[]}}"#
     );
     parse_vm_descriptor2(&json)
         .expect("window-gate golden decodes")
@@ -202,8 +196,8 @@ fn step(s: u32, y: u32) -> u32 {
 
 /// Build an honest 4-row routing trace + public inputs from a start state, a symbol at row 0, and a
 /// running-hash seed (the "table commitment"). Rows 1..3 self-loop under symbol 0. Fills the entry
-/// hash, running-hash chain, and the copy-forward `acc` column (the chip LANE columns 8..21 are left
-/// zero — the prover's `trace_with_chip_lanes` fills them from the genuine permutation). Returns
+/// hash, running-hash chain, and the copy-forward `acc` column — since E7 the two lookups ride the
+/// NARROW bus, so there are no chip LANE columns left to fill. Returns
 /// `(trace, pis)` with `pis = [initial, final, seed, route_commitment]`.
 fn honest_witness(start: u32, sym0: u32, seed: BabyBear) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let n = 4usize;
@@ -325,9 +319,21 @@ fn dfa_routing_emit_decodes_to_hand_built() {
     let chip_lookups = decoded
         .constraints
         .iter()
-        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW))
         .count();
     assert_eq!(chip_lookups, 2, "entry-hash + running-hash chip lookups");
+    // BUS IDENTITY: the E7 narrowing is a CUTOVER, not an addition — no 25-wide chip tuple may
+    // survive. Without this the count above would pass on a re-widened descriptor that merely
+    // ADDED the two narrow lookups beside the wide ones.
+    assert_eq!(
+        decoded
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == dregg_circuit::descriptor_ir2::TID_P2))
+            .count(),
+        0,
+        "no WIDE-bus chip lookup may survive the E7 narrowing"
+    );
     let window_gates = decoded
         .constraints
         .iter()

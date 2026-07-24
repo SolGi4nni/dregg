@@ -73,7 +73,11 @@ const NROW_AFTER_NESTED_PUSH: usize = 3;
 fn emitted_desc() -> EffectVmDescriptor2 {
     let desc = descriptor_by_name(NAME)
         .expect("the deployed by-name dispatch must serve the Lean-emitted Dyck descriptor");
-    assert_eq!(desc.trace_width, DYCK_V2_WIDTH, "the emitted 38-wide shape");
+    assert_eq!(
+        desc.trace_width, DYCK_V2_WIDTH,
+        "the emitted 24-wide shape (E7 narrowed \
+             both chip lookups, deleting the 2 x 7 lane columns)"
+    );
     desc
 }
 
