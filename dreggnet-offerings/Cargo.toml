@@ -102,6 +102,15 @@ dregg-types = { path = "../types" }
 # dungeon-on-dregg (same path pin) — no new compilation.
 dreggnet-asset = { path = "../dreggnet-asset" }
 
+# THE PORTABLE-RECORD WIRE (`native_descent_wire`). The exported record's JSON shape lives with
+# the offering that owns it rather than being re-declared by every consumer — that mirror is what
+# dropped `banked_notes` at the browser->server boundary. `serde_json::Value` carries the complete
+# executor receipt verbatim (compared, never installed); already in the build graph via
+# dregg-app-framework / spween-dregg — no new compilation. Both `serde` and `serde_json` are
+# wasm32-clean, which this crate must stay (the browser binding depends on it).
+serde = { workspace = true }
+serde_json = { workspace = true }
+
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent
 # driven test seeds "today's dungeon" from (genuine drand interop for the beacon leg).

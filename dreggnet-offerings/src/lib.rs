@@ -79,6 +79,13 @@ pub mod mock;
 /// HP/gold loop: every affordance drives custody, light, carrying attenuation,
 /// keys, relic provenance, and terminal banking on the native game.
 pub mod native_descent;
+/// THE ONE portable-record wire for [`native_descent`] — the exact JSON a browser exports and a
+/// server admits, plus the single exact-replay gate that admits it. It lives HERE, at the
+/// offering that owns the record, because the producer (`wasm`) and the consumer
+/// (`dreggnet-web`) previously declared it separately: two `deny_unknown_fields` structs with no
+/// shared code, which is how the settled run's minted `banked_notes` stopped at the process
+/// boundary. One type, two consumers, no mirror to keep in step.
+pub mod native_descent_wire;
 /// Transport-bearing deos affordances: one opaque binary operation descriptor
 /// and execution shape shared by every frontend adapter.
 pub mod operation;

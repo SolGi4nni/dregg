@@ -125,7 +125,7 @@ async fn get_play_actions_js() -> impl IntoResponse {
 /// `no-store`: the day rolls at UTC midnight, and a cached descriptor would pin a stale world.
 async fn get_play_day_json() -> Response {
     let day = crate::descent::todays_day();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "key": day.key,
         "uri": day.descent_uri(),
         // Full committed-day provenance. The native game does not consume this as a procgen scene;
@@ -138,9 +138,22 @@ async fn get_play_day_json() -> Response {
         "nativeSeed": native_seed_for_day(&day),
         "utcDay": day.utc_day,
         // HONEST PROVENANCE, carried so the surface can never render the offline day as a fresh
-        // reveal: `beacon` = a BLS-verified live drand round, `offline-date` = the date-derived day.
+        // reveal: `beacon` = a BLS-verified drand round, `offline-date` = the date-derived day.
         "source": if day.source.is_live_beacon() { "beacon" } else { "offline-date" },
     });
+    // ⚑ BEACON-BIND THE TAB. When today resolved to a verified beacon, hand the browser the raw
+    // drand `(round, signature)` pair so it opens `NativeDescentWorld.fromBeacon` and runs the BLS
+    // pairing check ITSELF (fail-closed) — the run's banked-relic provenance root is then bound to
+    // a revealed round, unpredictable until it matured, instead of the pre-computable deploy seed.
+    // Absent (the offline day) the fields are omitted and the tab opens the seed-derived practice
+    // world under its honest `offline-date` label. The signature is not trusted: a forged pair does
+    // not verify in the tab, so there is no world and no day (exactly the offering's own tooth).
+    if day.source.is_live_beacon() {
+        if let Some(beacon) = crate::descent::todays_live_beacon() {
+            body["round"] = serde_json::json!(beacon.round);
+            body["signatureHex"] = serde_json::json!(lower_hex(&beacon.signature));
+        }
+    }
     (
         [
             (header::CONTENT_TYPE, "application/json; charset=utf-8"),
@@ -154,6 +167,16 @@ async fn get_play_day_json() -> Response {
 fn native_seed_for_day(day: &procgen_dregg::descent_day::DescentDay) -> u32 {
     let bytes = day.seed.as_bytes();
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// Lowercase-hex encode the day's beacon signature for the tab's `fromBeacon` call.
+fn lower_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble is a hex digit"));
+        out.push(char::from_digit(u32::from(byte & 0x0f), 16).expect("nibble is a hex digit"));
+    }
+    out
 }
 
 /// `GET /descent/play/static/dregg_wasm.js` — the vendored wasm glue (`wasm-pack --target web`).
@@ -302,6 +325,22 @@ let lastMessage = "A fresh run is ready. The first landed move binds it to this 
 let lastKind = "";
 let lastShare = null;
 let lastShareRanked = false;
+// Today's verified drand pair, when day.json resolved a beacon day. A fresh open then goes through
+// `fromBeacon`, which runs the BLS pairing check in this tab (fail-closed): the run's banked-relic
+// provenance root binds to the revealed round instead of the pre-computable deploy seed. Null on
+// the offline day, where a fresh open falls back to the seed-derived practice world.
+let dayBeaconRound = null;
+let dayBeaconSig = null;
+
+// Open a FRESH world for `seed` — beacon-bound when today is a live beacon (verified in-tab), else
+// the seed-derived practice world. Restore-from-record is a separate path: a portable record
+// carries its own day-seed and re-derives under it.
+function openFreshWorld(seed) {
+  if (dayBeaconRound !== null && dayBeaconSig) {
+    return NativeDescentWorld.fromBeacon(seed, BigInt(dayBeaconRound), dayBeaconSig);
+  }
+  return new NativeDescentWorld(seed);
+}
 
 function notice(msg) {
   const p = document.createElement("p");
@@ -492,7 +531,7 @@ function render() {
     }
     storedRemove(recordKey);
     try { world.free(); } catch (_) {}
-    world = new NativeDescentWorld(Number(root.dataset.nativeSeed));
+    world = openFreshWorld(Number(root.dataset.nativeSeed));
     lastShare = null;
     lastKind = "";
     lastMessage = "Fresh run opened. No previous record was installed.";
@@ -547,20 +586,31 @@ async function boot() {
   }
   root.dataset.dayKey = dayKey;
   root.dataset.nativeSeed = String(nativeSeed);
+  // A verified beacon day carries its raw drand pair; a fresh open then binds the run's provenance
+  // to that revealed round through `fromBeacon` (the in-tab BLS check). The offline day omits it.
+  if (today && today.source === "beacon"
+      && Number.isInteger(today.round) && typeof today.signatureHex === "string"
+      && today.signatureHex.length > 0) {
+    dayBeaconRound = today.round;
+    dayBeaconSig = today.signatureHex;
+  } else {
+    dayBeaconRound = null;
+    dayBeaconSig = null;
+  }
   actor = browserActor();
   recordKey = "dregg.native-descent.record.v1:" + dayKey;
   const retained = storedGet(recordKey);
   try {
     world = retained
       ? NativeDescentWorld.fromRecordJson(retained)
-      : new NativeDescentWorld(nativeSeed);
+      : openFreshWorld(nativeSeed);
     const snapshot = JSON.parse(world.stateJson());
     const expected = (nativeSeed % 251) + 1;
     if (snapshot.seed !== expected) throw new Error("retained record belongs to another native day");
     if (retained) lastMessage = "Local record restored only after exact native replay.";
   } catch (e) {
     storedRemove(recordKey);
-    try { world = new NativeDescentWorld(nativeSeed); }
+    try { world = openFreshWorld(nativeSeed); }
     catch (openError) { notice("Native world deployment refused: " + errorText(openError)); return; }
     lastKind = "bad";
     lastMessage = "A retained record was refused and discarded: " + errorText(e);

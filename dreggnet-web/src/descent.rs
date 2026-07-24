@@ -36,7 +36,7 @@
 //! putting [`run_share_path`] in its result embed.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
     Json, Router,
@@ -45,16 +45,22 @@ use axum::{
     response::Html,
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use dregg_node_target::{Landed, NodeError, NodeTarget, SubmittedTurn};
 use dreggnet_offerings::daily_descent::{DAILY_DEPLOY_SEED, DailyDescent, HOARD_GOLD, daily_scene};
-use dreggnet_offerings::native_descent::{
-    MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
-    Rarity,
+use dreggnet_offerings::native_descent::Rarity;
+// ⚑ THE WIRE IS NOT DECLARED HERE. `dreggnet_offerings::native_descent_wire` owns the ONE
+// portable-record type and the ONE exact-replay gate; `wasm/src/bindings_native_descent.rs` is the
+// browser producer of that same type and this module is the server consumer. The hand-mirrored
+// pair (`PortableRecord` there, `NativePortableRecord` here — same format string, same version,
+// both `deny_unknown_fields`, no shared code) is DELETED: it was the mechanism that kept the
+// settled run's minted `banked_notes` from ever crossing the browser->server boundary.
+use dreggnet_offerings::native_descent_wire::{
+    MAX_PORTABLE_RECORD_BYTES, PortableCompletion, PortableRecord, replay_portable_record,
 };
-use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use procgen_dregg::CommittedSeed;
+use procgen_dregg::beacon::DailyBeacon;
 use procgen_dregg::descent_day::{self, DescentDay};
 use spween_dregg::{
     PASSAGE_ENDED, PASSAGE_SLOT, Playthrough, Scene, WorldCell, compile_scene, parse, verify,
@@ -70,20 +76,74 @@ use crate::{document, esc};
 const DAY_AUTHOR: &str = "the-descent";
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// THE DAY — resolved from the SAME helper the Discord bot resolves its day from.
+// THE DAY — beacon-then-offline, the SAME resolution the Discord bot runs.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// **Today's descent day** — [`procgen_dregg::descent_day`], the one seed selection this process and
-/// the Discord bot share. The procgen board + `/descent/submit` open THIS world, so a run played in
-/// Discord re-executes here instead of failing against a fixture day. `/descent/play` uses the same
-/// committed day descriptor to seed a distinct Lean-native world and publishes its records through
-/// the explicitly separate `/descent/native/submit` verifier.
+/// **The live daily beacon this web process fetched + BLS-verified**, armed at boot and re-armed
+/// hourly by [`arm_todays_descent_day`](crate::arm_todays_descent_day). It is exactly the beacon
+/// whose seed that same arm publishes for [`dreggnet_catalog::DescentDayBinding::Live`], so the
+/// relic-minting catalog open (`/offerings/descent`) and the board / play / leaderboard here
+/// resolve the *identical* day — never one beacon-bound world scoring another.
 ///
-/// This process has no drand reveal cron, so it resolves the OFFLINE date-derived day — a real daily
-/// rotation, honestly not a fresh beacon reveal. When the bot's cron HAS a live round, the bot sends
-/// that day's key and [`resolve_submitted_day`] re-derives it by fetching and BLS-verifying the very
-/// round the key names, so the two still meet in one world.
+/// This is the web analogue of the Discord bot's `LIVE_BEACON` cell (populated by its reveal
+/// cron); [`todays_day`] resolves the beacon day from it exactly as the bot's `resolve_todays_day`
+/// does, and `/descent/play`'s `day.json` hands its raw drand `(round, signature)` pair to the tab
+/// so the browser opens `NativeDescentWorld.fromBeacon` and runs the BLS check itself (fail-closed).
+static WEB_LIVE_BEACON: OnceLock<Mutex<Option<(u64, DailyBeacon)>>> = OnceLock::new();
+
+fn web_live_beacon_cell() -> &'static Mutex<Option<(u64, DailyBeacon)>> {
+    WEB_LIVE_BEACON.get_or_init(|| Mutex::new(None))
+}
+
+/// **Cache the verified live beacon for `utc_day`** — called by
+/// [`arm_todays_descent_day`](crate::arm_todays_descent_day) with the very beacon it fetched and
+/// published to the catalog. The beacon handed here is already BLS-verified (a fetched live round
+/// that failed the pairing check is a hard error and never reaches this point; a transport outage
+/// yields the pinned published round, itself a real re-verified reveal). [`todays_day`] re-checks
+/// via [`descent_day::beacon_day`] before serving it, so a cache that somehow no longer verifies
+/// degrades to the offline day rather than seeding a run.
+pub fn set_web_live_beacon(utc_day: u64, beacon: DailyBeacon) {
+    *web_live_beacon_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((utc_day, beacon));
+}
+
+/// Today's cached verified beacon, if this process has armed one for the current UTC day. The raw
+/// `(round, signature)` pair `/descent/play`'s `day.json` hands the tab.
+pub(crate) fn todays_live_beacon() -> Option<DailyBeacon> {
+    let today = procgen_dregg::beacon::current_utc_day();
+    web_live_beacon_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .and_then(|(day, beacon)| (*day == today).then(|| beacon.clone()))
+}
+
+/// **Today's descent day** — the one seed selection the live `/descent` surfaces (board / play /
+/// today / share) share, resolved exactly as the Discord bot's `resolve_todays_day` resolves it:
+///
+/// * this process armed today's verified beacon ([`set_web_live_beacon`], from
+///   [`arm_todays_descent_day`](crate::arm_todays_descent_day)) ⇒ that beacon's day
+///   ([`descent_day::beacon_day`], keyed `d{utc}-r{round}`). `beacon_day` derives the seed through
+///   [`DailyBeacon::seed`], which runs the BLS pairing check FIRST, so a cached beacon that no
+///   longer verifies falls through to the offline day rather than seeding a run;
+/// * no beacon armed yet (fresh boot before the first fetch, or no egress on the very first arm)
+///   ⇒ the OFFLINE, date-derived day ([`descent_day::todays_offline_day`], keyed `d{utc}-off`) —
+///   a real daily rotation, honestly not a fresh reveal.
+///
+/// Both branches use `procgen_dregg::descent_day`, the SAME helper the Discord bot resolves through
+/// (its live cache is fed by its reveal cron, this one by the hourly arm), so when both processes
+/// are online they play the byte-identical beacon world, and when neither has a round they play the
+/// byte-identical offline world. A Discord-originated submit that names `d{utc}-r{round}` is
+/// re-derived here by [`resolve_submitted_day`] fetching + BLS-verifying that exact round, so the
+/// two still meet in one world across the process boundary.
 pub fn todays_day() -> DescentDay {
+    let today = procgen_dregg::beacon::current_utc_day();
+    if let Some(beacon) = todays_live_beacon() {
+        if let Ok(resolved) = descent_day::beacon_day(today, &beacon) {
+            return resolved;
+        }
+    }
     descent_day::todays_offline_day()
 }
 
@@ -143,147 +203,23 @@ struct Run {
 struct NativeRun {
     id: String,
     day_key: String,
-    record: NativePortableRecord,
+    record: PortableRecord,
 }
 
-const NATIVE_PORTABLE_FORMAT: &str = "dregg.native-descent.record";
-/// v2 carried `daySeedHex` — the run day-seed the browser session deployed on. v1 could only
-/// ever describe a seed-derived (pre-computable) day and there is no honest upgrade of one, so
-/// a v1 submission is refused rather than silently re-pointed at another day's provenance.
-///
-/// v3 carries `completion.bankedNotes` — the real owned `dreggnet_asset` notes the banked
-/// relics minted at settlement (asset id, canonical rarity tag, owner pubkey), which the v2
-/// mirror dropped. The notes are part of the settled completion the exact-replay envelope
-/// attests, so a v2 envelope no longer says everything this boundary compares; it is refused
-/// (the browser re-exports the same run from replay) rather than compared partially.
-const NATIVE_PORTABLE_VERSION: u32 = 3;
-const MAX_NATIVE_PORTABLE_BYTES: usize = 8 * 1024 * 1024;
+/// The size bound `POST /descent/native/submit` enforces on the record itself — pinned to the
+/// SAME [`MAX_PORTABLE_RECORD_BYTES`] the browser's import/export contract carries, because it is
+/// now literally the same constant rather than a number copied between two crates.
+const MAX_NATIVE_PORTABLE_BYTES: usize = MAX_PORTABLE_RECORD_BYTES;
 // HTTP wraps the portable object in `{day,record}`. Leave bounded room for that envelope while the
-// record itself remains pinned to wasm's 8 MiB import/export contract below.
+// record itself remains pinned to the wire's 8 MiB import/export contract above.
 const MAX_NATIVE_SUBMIT_BODY_BYTES: usize = MAX_NATIVE_PORTABLE_BYTES + 64 * 1024;
-
-/// The exact public wire emitted by `wasm::NativeDescentWorld`. This deliberately lives at the
-/// compatibility boundary instead of being coerced into [`SubmitRun`]'s unrelated procgen tape.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativePortableRecord {
-    format: String,
-    version: u32,
-    seed: u8,
-    /// **The run day-seed the browser session deployed on** — its banked-relic provenance root,
-    /// folded into the genesis journal root. Untrusted like the rest of the record: it is not
-    /// believed, it is the root the re-execution below is DONE UNDER, and the byte-for-byte
-    /// envelope comparison is what accepts or rejects it. Without it, a beacon-bound run could
-    /// not be re-verified here at all (replay would deploy on the seed-derived root and nothing
-    /// would re-derive).
-    day_seed_hex: String,
-    actor: Option<String>,
-    events: Vec<NativePortableEvent>,
-    root_hex: String,
-    checkpoint: Option<NativeCheckpointWire>,
-    completion: Option<NativeCompletionWire>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativePortableEvent {
-    revision: u64,
-    actor: String,
-    turn: String,
-    arg: i64,
-    receipt: serde_json::Value,
-    post: NativeSimWire,
-    root_hex: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeSimWire {
-    depth: u64,
-    spent: u64,
-    wounds: u64,
-    fate: u64,
-    ways: [u64; 3],
-    custody: Vec<u64>,
-    pack: u64,
-    banked: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeCheckpointWire {
-    actor: String,
-    revision: u64,
-    root_hex: String,
-    state: NativeSimWire,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeCompletionWire {
-    actor: String,
-    revision: u64,
-    root_hex: String,
-    settlement_receipt_hash_hex: String,
-    /// Stable wire indices. Never expose Rust's platform-sized `usize` in a persisted/browser
-    /// artifact; upstream native state may use either `usize` or `u64` internally.
-    banked_relics: Vec<u64>,
-    /// The real owned notes the banked relics minted at settlement, in the same slot order as
-    /// `banked_relics` (empty exactly when the run banked nothing). Untrusted like the rest of
-    /// the record: replay re-mints every note from the record's day-seed + committed custody,
-    /// and a note that does not re-derive byte-identically is refused by name.
-    banked_notes: Vec<NativeBankedNoteWire>,
-    crowned: bool,
-}
-
-/// One banked relic's minted owned-note as it crosses the wire — the transport of the
-/// offering's `NativeDescentBankedNote`. The asset id content-addresses (run day-seed, custody
-/// slot, player key), so carrying it unchanged is what "the banked note survives the process
-/// boundary" means.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeBankedNoteWire {
-    /// The stable relic identifier (the custody slot the relic banked in).
-    relic: u64,
-    /// The minted note's content-addressed asset id (64 hex chars).
-    asset_id_hex: String,
-    /// The canonical [`Rarity::tag`] byte — the committed wire encoding of the tier.
-    rarity: u8,
-    /// The owning player's pubkey at mint (64 hex chars).
-    owner_hex: String,
-}
-
-impl NativeBankedNoteWire {
-    /// Structural fail-closed decode gate, refusing a malformed note BY NAME before replay.
-    fn validate(&self) -> Result<(), String> {
-        if decode_hex32(&self.asset_id_hex).is_none() {
-            return Err(format!(
-                "banked note (relic {}) asset id is not 64 hex chars",
-                self.relic
-            ));
-        }
-        if decode_hex32(&self.owner_hex).is_none() {
-            return Err(format!(
-                "banked note (relic {}) owner is not 64 hex chars",
-                self.relic
-            ));
-        }
-        if Rarity::from_tag(self.rarity).is_none() {
-            return Err(format!(
-                "banked note (relic {}) rarity tag {} is not canonical",
-                self.relic, self.rarity
-            ));
-        }
-        Ok(())
-    }
-}
 
 #[derive(Clone, Debug)]
 struct VerifiedNativeRun {
     actor: String,
     turns: usize,
     root_hex: String,
-    completion: Option<NativeCompletionWire>,
+    completion: Option<PortableCompletion>,
 }
 
 impl VerifiedNativeRun {
@@ -488,7 +424,7 @@ impl DescentState {
     fn submit_native_record(
         &self,
         day_key: &str,
-        record: NativePortableRecord,
+        record: PortableRecord,
     ) -> Result<(String, VerifiedNativeRun, bool), String> {
         let (expected_seed, stored_day) = {
             let inner = self.inner.lock().unwrap();
@@ -672,7 +608,7 @@ impl DescentState {
             if r.record_json.len() > MAX_NATIVE_PORTABLE_BYTES {
                 continue;
             }
-            let Ok(record) = serde_json::from_str::<NativePortableRecord>(&r.record_json) else {
+            let Ok(record) = serde_json::from_str::<PortableRecord>(&r.record_json) else {
                 continue;
             };
             // The row key is content-derived. A DB edit cannot rename one authentic record into a
@@ -803,24 +739,22 @@ fn native_seed_for_committed_day(seed: &CommittedSeed) -> u8 {
     ((u64::from(input) % 251) + 1) as u8
 }
 
-/// Replay the complete browser record and compare its receipt/state/root envelope exactly. This is
-/// intentionally native verification, not a lossy adapter into procgen choice indices.
+/// **Admit one untrusted browser record**, through the SAME exact-replay gate the browser's own
+/// import runs ([`replay_portable_record`]). The wire type and the gate both live in
+/// `dreggnet_offerings::native_descent_wire`; this function adds only the one thing that is a
+/// property of THIS surface rather than of the record — that the record's normalized seed is the
+/// seed the requested day commits to.
+///
+/// Everything else is the shared gate: format/version, seed range, event bound, malformed banked
+/// notes BY NAME, deployment on the record's OWN run day-seed (a beacon-bound run only re-derives
+/// on the day-seed it names), exact command re-drive, `Offering::verify`, the re-minted-note
+/// comparison, and the byte-for-byte envelope comparison.
 fn verify_native_record(
     expected_seed: u8,
-    expected: &NativePortableRecord,
+    expected: &PortableRecord,
 ) -> Result<VerifiedNativeRun, String> {
-    if expected.format != NATIVE_PORTABLE_FORMAT {
-        return Err(format!(
-            "unsupported native Descent record format {:?}",
-            expected.format
-        ));
-    }
-    if expected.version != NATIVE_PORTABLE_VERSION {
-        return Err(format!(
-            "unsupported native Descent record version {}",
-            expected.version
-        ));
-    }
+    // The day binding, checked BEFORE the (more expensive) replay: a record from another day's
+    // world is refused here rather than being re-executed and then failing anonymously.
     if expected.seed == 0 || expected.seed > 251 {
         return Err("native Descent seed is outside 1..=251".to_string());
     }
@@ -830,67 +764,9 @@ fn verify_native_record(
             expected.seed
         ));
     }
-    if expected.events.len() > MAX_NATIVE_DESCENT_EVENTS {
-        return Err(format!(
-            "{} events exceeds the native Descent bound",
-            expected.events.len()
-        ));
-    }
-    for note in expected
-        .completion
-        .iter()
-        .flat_map(|completion| &completion.banked_notes)
-    {
-        note.validate()?;
-    }
 
-    // ⚑ REPLAY UNDER THE RECORD'S OWN DAY. The run day-seed is folded into the genesis root, so
-    // a beacon-bound run only re-derives when the fresh session deploys on the same root; a
-    // `NativeDescentOffering::new()` here would refuse every live daily run as forged.
-    let day_seed = CommittedSeed::from_bytes(
-        decode_hex32(&expected.day_seed_hex).ok_or("native record day seed is not 64 hex chars")?,
-    );
-    let offering = NativeDescentOffering::on_run_day_seed(day_seed);
-    let mut session = offering
-        .open(SessionConfig::with_seed(u64::from(expected.seed - 1)))
-        .map_err(|error| format!("native deployment failed: {error}"))?;
-    for event in &expected.events {
-        let action = Action::new(&event.turn, &event.turn, event.arg, true);
-        match offering.advance(&mut session, action, DreggIdentity(event.actor.clone())) {
-            Outcome::Landed { .. } => {}
-            Outcome::Refused(reason) => {
-                return Err(format!(
-                    "native event {} refused on replay: {reason}",
-                    event.revision
-                ));
-            }
-        }
-    }
-    let report = offering.verify(&session);
-    if !report.verified {
-        return Err(format!(
-            "native replay verification failed: {}",
-            report.detail
-        ));
-    }
-
-    let actual = native_portable_from_record(&session.export_record());
-    // Refuse a forged NOTE by name before the anonymous whole-envelope mismatch: the replay
-    // above re-minted the banked notes from the record's own day-seed + committed custody, so
-    // a note whose asset id / rarity / owner does not re-derive is a forgery.
-    if actual.completion.as_ref().map(|c| &c.banked_notes)
-        != expected.completion.as_ref().map(|c| &c.banked_notes)
-    {
-        return Err(
-            "banked notes do not re-mint from the record's day-seed and committed custody"
-                .to_string(),
-        );
-    }
-    if &actual != expected {
-        return Err(
-            "native record differs from exact action/receipt/state/root replay".to_string(),
-        );
-    }
+    let (_offering, session) = replay_portable_record(expected)?;
+    let actual = PortableRecord::from_record(&session.export_record());
     Ok(VerifiedNativeRun {
         actor: actual
             .actor
@@ -900,102 +776,6 @@ fn verify_native_record(
         root_hex: actual.root_hex,
         completion: actual.completion,
     })
-}
-
-fn native_portable_from_record(record: &NativeDescentRecord) -> NativePortableRecord {
-    NativePortableRecord {
-        format: NATIVE_PORTABLE_FORMAT.to_string(),
-        version: NATIVE_PORTABLE_VERSION,
-        seed: record.seed,
-        day_seed_hex: hex32(record.day_seed.as_bytes()),
-        actor: record
-            .actor
-            .as_ref()
-            .map(|actor| actor.as_str().to_string()),
-        events: record
-            .events
-            .iter()
-            .map(|event| {
-                let (turn, arg) = native_move_wire(event.command);
-                NativePortableEvent {
-                    revision: event.revision,
-                    actor: event.actor.as_str().to_string(),
-                    turn: turn.to_string(),
-                    arg,
-                    receipt: serde_json::to_value(&event.receipt)
-                        .expect("native receipt is serializable"),
-                    post: native_sim_wire(&event.post),
-                    root_hex: hex32(&event.root),
-                }
-            })
-            .collect(),
-        root_hex: hex32(&record.root),
-        checkpoint: record
-            .checkpoint
-            .as_ref()
-            .map(|checkpoint| NativeCheckpointWire {
-                actor: checkpoint.actor.as_str().to_string(),
-                revision: checkpoint.revision,
-                root_hex: hex32(&checkpoint.root),
-                state: native_sim_wire(&checkpoint.state),
-            }),
-        completion: record
-            .completion
-            .as_ref()
-            .map(|completion| NativeCompletionWire {
-                actor: completion.actor.as_str().to_string(),
-                revision: completion.revision,
-                root_hex: hex32(&completion.root),
-                settlement_receipt_hash_hex: hex32(&completion.settlement_receipt_hash),
-                banked_relics: completion
-                    .banked_relics
-                    .iter()
-                    .map(|&relic| {
-                        u64::try_from(relic).expect("native relic index fits the stable wire")
-                    })
-                    .collect(),
-                banked_notes: completion
-                    .banked_notes
-                    .iter()
-                    .map(|note| NativeBankedNoteWire {
-                        relic: note.relic,
-                        asset_id_hex: hex32(&note.asset_id.bytes()),
-                        rarity: note.rarity.tag(),
-                        owner_hex: hex32(&note.owner),
-                    })
-                    .collect(),
-                crowned: completion.crowned,
-            }),
-    }
-}
-
-fn native_sim_wire(sim: &dungeon_on_dregg::descent::Sim) -> NativeSimWire {
-    NativeSimWire {
-        depth: sim.depth,
-        spent: sim.spent,
-        wounds: sim.wounds,
-        fate: sim.fate,
-        ways: sim.ways,
-        custody: sim.custody.to_vec(),
-        pack: sim.pack(),
-        banked: sim.bank(),
-    }
-}
-
-fn native_move_wire(command: NativeDescentMove) -> (&'static str, i64) {
-    match command {
-        NativeDescentMove::Delve => ("delve", 0),
-        NativeDescentMove::Unlock { way } => (
-            "unlock",
-            i64::try_from(way).expect("native way index fits the action wire"),
-        ),
-        NativeDescentMove::Smite => ("smite", 0),
-        NativeDescentMove::Loot { relic } => (
-            "loot",
-            i64::try_from(relic).expect("native relic index fits the action wire"),
-        ),
-        NativeDescentMove::Flee => ("flee", 0),
-    }
 }
 
 impl Default for DescentState {
@@ -1096,7 +876,7 @@ async fn post_native_submit(
             "native Descent record exceeds the {MAX_NATIVE_PORTABLE_BYTES} byte bound"
         ));
     }
-    let record: NativePortableRecord = match serde_json::from_value(body.record) {
+    let record: PortableRecord = match serde_json::from_value(body.record) {
         Ok(record) => record,
         Err(error) => return native_submit_refused(format!("native record JSON: {error}")),
     };
@@ -1332,7 +1112,7 @@ fn stable_move_indices(moves: &[u64]) -> Result<Vec<usize>, String> {
         .collect()
 }
 
-fn derive_native_run_id(day: &str, record: &NativePortableRecord) -> String {
+fn derive_native_run_id(day: &str, record: &PortableRecord) -> String {
     let record_json = serde_json::to_vec(record).unwrap_or_default();
     let mut h = blake3::Hasher::new();
     h.update(b"dregg.native-descent.share.v1");
@@ -1700,7 +1480,7 @@ fn native_run_card_page(
     run_id: &str,
     day_key: &str,
     title: &str,
-    record: &NativePortableRecord,
+    record: &PortableRecord,
     replay: Result<VerifiedNativeRun, String>,
 ) -> String {
     let (verified, actor, turns, root, banked, notes, crowned, detail) = match replay {

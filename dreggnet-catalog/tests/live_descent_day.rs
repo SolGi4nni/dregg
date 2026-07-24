@@ -79,11 +79,15 @@ fn the_live_catalog_opens_the_descent_on_the_verified_beacon_day_and_fails_close
         todays_descent_day().is_none(),
         "no day may be resolved before one is published"
     );
-    let refusal = live
+    // `match`, not `expect_err`: a landed `NativeDescentSession` carries live game state and has no
+    // `Debug`, so the test names the error arm directly rather than asking to format the Ok value.
+    let refusal = match live
         .native_descent()
         .open(SessionConfig::with_seed(RAW_SEED))
-        .expect_err("an unresolved live day must refuse to open");
-    let refusal = refusal.to_string();
+    {
+        Ok(_) => panic!("an unresolved live day must refuse to open"),
+        Err(refusal) => refusal.to_string(),
+    };
     assert!(
         refusal.contains("live daily beacon") && refusal.contains("refusing"),
         "the refusal must SAY it is refusing on the missing day, not fail vaguely: {refusal}"

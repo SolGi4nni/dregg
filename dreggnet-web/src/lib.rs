@@ -1972,10 +1972,20 @@ fn web_catalog_config() -> dreggnet_catalog::CatalogConfig {
 }
 
 /// **Arm (and re-arm) the day the web surface's Descent mints relics under.** Fetches today's
-/// drand round, BLS-verifies it, and publishes it process-wide for
-/// [`dreggnet_catalog::DescentDayBinding::Live`]. Blocking — call it from `spawn_blocking`, at boot and
-/// on a timer, because a rolled UTC day makes the published day stale and every Descent open
-/// then REFUSES (fail-closed, by design).
+/// drand round, BLS-verifies it, and arms it in TWO places from that one fetch:
+///
+/// 1. **the catalog's process-wide published day** ([`dreggnet_catalog::publish_todays_descent_day`]),
+///    the [`dreggnet_catalog::DescentDayBinding::Live`] source the relic-minting `/offerings/descent`
+///    open resolves — until one is published, opening the Descent REFUSES rather than serving the
+///    pre-computable deploy-seed-derived root;
+/// 2. **the web's own live-beacon cache** ([`crate::descent::set_web_live_beacon`]), which
+///    [`crate::descent::todays_day`] resolves the board / play / leaderboard day from.
+///
+/// Arming both from the SAME verified beacon is what keeps the catalog host and the board on the
+/// identical world: a run opened through `/offerings/descent` re-verifies on the board, and
+/// `/descent/play` plays the world the board scores. Blocking — call it from `spawn_blocking`, at
+/// boot and on a timer, because a rolled UTC day makes the day stale and every mint-open then
+/// REFUSES (fail-closed, by design) until the next arm.
 ///
 /// The returned [`dreggnet_catalog::BeaconSource`] says whether the day is today's live round or
 /// the explicitly-labeled pinned published round standing in for a transport outage. Log it: the
@@ -1983,7 +1993,17 @@ fn web_catalog_config() -> dreggnet_catalog::CatalogConfig {
 /// relic provenance is predictable to anyone who knows the pinned round.
 pub fn arm_todays_descent_day()
 -> Result<dreggnet_catalog::BeaconSource, dreggnet_catalog::FetchError> {
-    dreggnet_catalog::refresh_todays_descent_day(dreggnet_catalog::DRAND_API_BASE)
+    let resolved = procgen_dregg::beacon::todays_beacon(
+        &dreggnet_catalog::HttpRoundFetch,
+        dreggnet_catalog::DRAND_API_BASE,
+    )?;
+    let utc_day = procgen_dregg::beacon::current_utc_day();
+    // Publish the seed for the catalog's Live day binding (the relic-minting open), then cache the
+    // SAME verified beacon web-side for the board/play/leaderboard — so all three resolve one day.
+    dreggnet_catalog::publish_todays_descent_day(utc_day, &resolved.beacon)
+        .map_err(dreggnet_catalog::FetchError::Verify)?;
+    crate::descent::set_web_live_beacon(utc_day, resolved.beacon);
+    Ok(resolved.source)
 }
 
 /// **The default catalog host** — registers the full shared DreggNet portfolio through
@@ -4328,8 +4348,11 @@ pub fn build_demo_descent(
     // TODAY'S REAL WORLD, not a hardcoded demo epoch. This board used to open
     // `daily_seed(&[3; 32])` — a fixed fixture day — while the Discord bot played the day
     // `procgen_dregg::descent_day` resolves. Two different worlds: the bot's submitted moves could
-    // never re-execute here, so `ranked` was always false and the share link never emitted. Both
-    // processes now resolve their day from the SAME helper.
+    // never re-execute here, so `ranked` was always false and the share link never emitted. Now
+    // both processes resolve their day through the SAME `procgen_dregg::descent_day` helper — the
+    // web from the beacon it arms at boot + hourly (`arm_todays_descent_day` →
+    // `descent::todays_day`), the bot from its reveal cron — so when both are online they open the
+    // byte-identical beacon world, and when neither has a round they open the identical offline day.
     let seed = crate::descent::todays_day().seed;
     let (win_moves, win_level, win_class) = demo_win_for_seed(seed);
     let off = DailyDescentOffering::new(InMemoryCharacterStore::new());

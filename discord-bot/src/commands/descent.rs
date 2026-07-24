@@ -211,14 +211,17 @@ pub fn todays_beacon_status() -> BeaconStatus {
 /// This is the SINGLE seed-selection the live `/descent` surfaces (play / board / today / share)
 /// share, so the played world, the board universe, the shown seed, and the world the WEB re-executes
 /// a shared run in all agree. It is [`procgen_dregg::descent_day`] — the same helper `dreggnet-web`
-/// resolves its day from — so the two processes agree by construction rather than by coincidence:
+/// resolves its day through (`dreggnet_web::descent::todays_day`, off the beacon that surface arms
+/// at boot + hourly). Both processes therefore agree by construction rather than by coincidence:
 ///
-/// * the reveal cron has fetched + BLS-verified today's live drand round ⇒ that beacon's day
-///   ([`BeaconStatus::Live`]), keyed `d{utc_day}-r{round}` (the web re-derives it by fetching and
-///   re-verifying that exact round);
-/// * otherwise the OFFLINE, date-derived day ([`procgen_dregg::descent_day::offline_day`]) labeled
-///   [`BeaconStatus::PinnedFallback`] — honestly "not beacon-verified fresh" — keyed
-///   `d{utc_day}-off`, which the web re-derives purely.
+/// * a fetched + BLS-verified live drand round for today ⇒ that beacon's day
+///   ([`BeaconStatus::Live`]), keyed `d{utc_day}-r{round}`. Both surfaces arm this independently
+///   (this bot from its reveal cron, the web from its hourly arm) so they open the byte-identical
+///   world; and a run cross-posted with this key is re-derived on the other by fetching and
+///   re-verifying that exact round;
+/// * no live round on either ⇒ the OFFLINE, date-derived day
+///   ([`procgen_dregg::descent_day::offline_day`]) labeled [`BeaconStatus::PinnedFallback`] —
+///   honestly "not beacon-verified fresh" — keyed `d{utc_day}-off`, which both derive purely.
 ///
 /// [`resolve_todays_beacon`] remains the beacon-verifying anchor the tests + `open_core` drive;
 /// production play resolves the served day here.
