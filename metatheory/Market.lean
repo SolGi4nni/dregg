@@ -46,6 +46,7 @@ import Market.DarkBazaarCollectiveOpening
 import Market.DarkBazaarQuorumNecessity
 import Market.DarkBazaarShareValidity
 import Market.OraclePitQuadratic
+import Market.NettingVault
 import Market.DarkBazaarCollectiveOpeningPoly
 import Market.PrivateBookEncryptionBinding
 import Market.DarkAmmPrivateSwap
