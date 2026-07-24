@@ -47,8 +47,8 @@ use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_CAVEAT_COMMIT,
     CAVEAT_BASE, GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, avail_pad_for_descriptor_name,
     empty_caveat_manifest, generate_rotated_effect_vm_trace,
-    generate_rotated_effect_vm_trace_avail, generate_rotated_refusal_trace_with_fields_tree,
-    rotated_descriptor_name_for_effect, transfer_caveat_manifest,
+    generate_rotated_effect_vm_trace_avail, rotated_descriptor_name_for_effect,
+    transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
@@ -116,6 +116,55 @@ fn rotated_descriptor_json(name: &str) -> &'static str {
         .unwrap_or_else(|| panic!("{name} not in V3_STAGED_REGISTRY_TSV"))
 }
 
+/// Resolve a WIDE-registry descriptor JSON by registry key. The deployed exact-fields refusal
+/// member lives only here: the exact FLD2/FLN2 cutover re-emitted the refusal descriptor into the
+/// wide registries (`…-v4-write-exact-fields-…`) and left the narrow `V3_STAGED_REGISTRY_TSV` row at
+/// the retired scalar-`map_op` shape, which no producer at HEAD can fill.
+fn wide_descriptor_json(name: &str) -> &'static str {
+    dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _ = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("{name} not in WIDE_REGISTRY_STAGED_TSV"))
+}
+
+/// The columns a member's OWN E1 kill-set deletes, summed from the Lean-emitted `E1_COMPACT_TABLE`
+/// — the same single source `compact_e1_columns` drains from.
+fn e1_killed_cols(key: &str) -> usize {
+    dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
+        .unwrap_or_else(|| panic!("{key} not in E1_COMPACT_TABLE"))
+}
+
+/// The exact-fields refusal producer's row width AFTER both flag-day deletions — what
+/// `compact_s2_columns` + `compact_e1_columns` leave for the prover.
+fn exact_refusal_compacted_producer_width() -> usize {
+    use dregg_circuit::effect_vm::trace_rotated::{
+        REFUSAL_WRITE_HOST_WIDTH, WIDE_CARRIER_APPENDIX,
+    };
+    REFUSAL_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX
+        - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS
+        - e1_killed_cols("refusalVmDescriptor2R24")
+}
+
+/// The COMMITTED width of the deployed exact-fields refusal member, DERIVED from the Lean-emitted
+/// sources: the compacted producer row PLUS the gentian floor-refuse aux block, which the PROVER
+/// fills (`fill_refuse_aux`, after the producer's `compact_e1`) and the producer never emits. The
+/// bare-cohort emit allocates that block a full `CAPACITY_TAGS · REFUSE_STRIDE`.
+fn exact_refusal_committed_width() -> usize {
+    use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
+    exact_refusal_compacted_producer_width() + refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE
+}
+
 fn open_permissions() -> Permissions {
     Permissions {
         send: AuthRequired::None,
@@ -166,7 +215,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
         desc.public_input_count, 50,
@@ -480,7 +529,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(desc.public_input_count, 50);
     // The deployed burn member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 8 — debit-only, no
@@ -608,7 +657,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
         desc.public_input_count, 51,
@@ -659,7 +708,11 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &caveat,
     )
     .expect("live rotated generator must produce a note-spend trace + 51 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH,
+        "the un-graduated ROT_WIDTH rotated trace"
+    );
 
     // THE FIFTH PI: 51 elements, and PI[46] == the row-0 spend's folded nullifier (param0).
     assert_eq!(
@@ -1135,7 +1188,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
         desc.public_input_count, 51,
@@ -1192,7 +1245,11 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
         &before_accounts,
     )
     .expect("accounts-tree wiring must produce a deployment-real createCell trace");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH,
+        "the un-graduated ROT_WIDTH rotated trace"
+    );
 
     // THE FIFTH PI: 51 elements, and PI[46] == the row-0 new-cell key (param0 for createCell).
     assert_eq!(
@@ -1521,7 +1578,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         assert_eq!(
             desc.trace_width,
             expected_rot_width(&desc),
-            "graduated rotated width 608"
+            "the graduated rotated width + the gentian refuse extent"
         );
         assert_eq!(
             desc.public_input_count, 50,
@@ -1571,7 +1628,11 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             &caveat,
         )
         .expect("live rotated generator must produce a setField trace + 46 PIs");
-        assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+        assert_eq!(
+            trace[0].len(),
+            ROT_WIDTH,
+            "the un-graduated ROT_WIDTH rotated trace"
+        );
 
         // THE NONCE TICK (the runtime ground truth): the rotated r1 weld carries before+1.
         let r0 = &trace[0];
@@ -1643,7 +1704,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         assert_eq!(
             desc.trace_width,
             expected_rot_width(&desc),
-            "graduated rotated width 608"
+            "the graduated rotated width + the gentian refuse extent"
         );
         assert_eq!(
             desc.public_input_count, 51,
@@ -2497,7 +2558,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
         desc.public_input_count, 51,
@@ -2553,7 +2614,11 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
         &caveat,
     )
     .expect("live rotated generator must produce a cellSeal trace + 51 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH,
+        "the un-graduated ROT_WIDTH rotated trace"
+    );
 
     // THE FIFTH PI: 51 elements, and PI[46] == the LAST row's AFTER lifecycle limb (the
     // correctly-written sealed post the verifier recomputes), the column the pin binds.
@@ -2664,7 +2729,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
     assert_eq!(
         desc.public_input_count, 50,
@@ -2823,7 +2888,12 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
 /// unchanged record digest, FAILS the pin, and is UNSAT — the gap closed for the LIVE descriptor.
 #[test]
 fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
-    use dregg_circuit::effect_vm::trace_rotated::{B_LIFECYCLE, B_RECORD_DIGEST};
+    use dregg_circuit::effect_vm::trace_rotated::{
+        B_LIFECYCLE, B_RECORD_DIGEST, DFA_RC_LEN, REFUSAL_EXACT_AUDIT_PI_LEN,
+        REFUSAL_WRITE_HOST_WIDTH, ROT_PI_COUNT, WIDE_CARRIER_APPENDIX, WIDE_CARRIER_BLOCK_SPAN,
+        WIDE_COMMIT_CARRIER, compact_e1_columns, compact_s2_columns,
+        generate_rotated_refusal_write_wide,
+    };
 
     // An out-of-`fields[0..16]` audit key: writing it via `set_field_ext` lands in the cell's
     // `fields_root` (the named-field map), exactly where the `"refusal"` audit slot lives — so the
@@ -2856,19 +2926,48 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             .expect("audit effect is a rotated cohort member");
         assert_eq!(name, expect_name);
 
-        let json = rotated_descriptor_json(name);
+        // **WHICH DEPLOYED MEMBER EACH ARM RIDES.** The exact-fields refusal cutover
+        // (`3db1a25da3`, 07-22) replaced the refusal producer's legacy ONE-FELT `fields_root`
+        // `map_op` with the first-class FLD2/FLN2 state16 opening — and re-emitted the refusal
+        // descriptor ONLY into the wide registries (`…-v4-write-exact-fields-…`). The narrow
+        // `V3_STAGED_REGISTRY_TSV` row was left at the retired scalar shape (1692 / 58 PIs, one
+        // `map_op`) and has NO producer at HEAD, so this arm rides the DEPLOYED exact member — the
+        // one `turn::executor::proof_verify` and `sdk::cipherclerk` actually prove refusals through.
+        // The archive arm is unaffected and stays on the narrow 1-felt registry.
+        let exact_refusal = pin_limb == B_RECORD_DIGEST;
+        let json = if exact_refusal {
+            wide_descriptor_json(name)
+        } else {
+            rotated_descriptor_json(name)
+        };
         let desc = parse_vm_descriptor2(json).expect("rotated audit descriptor parses");
-        assert_eq!(
-            desc.trace_width,
-            expected_rot_width(&desc),
-            "graduated rotated width 608"
-        );
+        if exact_refusal {
+            // DERIVED, not a literal: the exact wide host after the S2 + E1 deletions plus the
+            // prover-filled gentian block. Every term is Lean-emitted, so a kill-set / stride /
+            // carrier-block change moves this tooth with it.
+            assert_eq!(
+                desc.trace_width,
+                exact_refusal_committed_width(),
+                "{name}: the exact wide host MINUS the S2 + E1 kill-sets PLUS the prover-filled \
+                 gentian floor-refuse block"
+            );
+        } else {
+            assert_eq!(
+                desc.trace_width,
+                expected_rot_width(&desc),
+                "{name}: the graduated rotated width + the gentian refuse extent"
+            );
+        }
         // H1: a record-digest mover (refusal, pin offset `B_RECORD_DIGEST`) pins ALL 8 faithful
-        // authority limbs (record-pin8 at PI 46..53) + the withDfaRcPins rc tail at PI 54..57
-        // → 58 PIs; a lifecycle mover (archive, `B_LIFECYCLE`) keeps the single record-forcing
-        // pin at PI 46 + the rc tail at PI 47..50 → 51 PIs. (Registry: refusal 58, receiptArchive
-        // 51.)
-        let expect_pis = if pin_limb == B_RECORD_DIGEST { 58 } else { 51 };
+        // authority limbs (record-pin8 at PI 46..53); on the DEPLOYED exact member its ABI then
+        // continues `audit16 || dfa4 || before_commit8 || after_commit8` → 90 PIs. A lifecycle
+        // mover (archive, `B_LIFECYCLE`) keeps the single record-forcing pin at PI 46 + the rc
+        // tail at PI 47..50 → 51 PIs. PI[46] is the AFTER pinned limb in BOTH ABIs.
+        let expect_pis = if exact_refusal {
+            ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN + 16
+        } else {
+            51
+        };
         assert_eq!(
             desc.public_input_count, expect_pis,
             "{name} carries the appended record-forcing pin(s) ({expect_pis} PIs)"
@@ -2947,11 +3046,13 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         );
 
         let caveat = empty_caveat_manifest();
-        // Refusal now carries the in-circuit `fields_root` `.write` map-op (the light-client close):
-        // its trace must thread the openable fields tree + the audit value, and the prover threads the
-        // BEFORE leaf set as `map_heaps`. ReceiptArchive rides the bare generator (no fields write).
+        // Refusal carries the in-circuit EXACT `fields_root` write (the light-client close): its
+        // trace threads the openable FLD2/FLN2 fields tree + the raw 32-byte audit value through the
+        // state16 appendix and carries the faithful wide carriers the deployed member pins. The
+        // legacy scalar `map_op` is GONE, so no map heap is threaded. ReceiptArchive rides the bare
+        // 1-felt generator (no fields write).
         let mut refusal_map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-        let (trace, dpis) = if expect_name == "refusalVmDescriptor2R24" {
+        let (mut trace, dpis) = if exact_refusal {
             let before_leaves =
                 dregg_cell::state::exact_fields_root_leaves(&before_cell.state.fields_map);
             let audit_value = after_cell
@@ -2960,7 +3061,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                 .get(&AUDIT_KEY)
                 .copied()
                 .expect("the refused after-cell carries the audit slot");
-            let (t, d, mh) = generate_rotated_refusal_trace_with_fields_tree(
+            let (t, d, mh) = generate_rotated_refusal_write_wide(
                 &st,
                 &effects,
                 &bridge(&before_w),
@@ -2969,7 +3070,11 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                 &before_leaves,
                 audit_value,
             )
-            .unwrap_or_else(|e| panic!("live rotated refusal fields-tree generator: {e}"));
+            .unwrap_or_else(|e| panic!("live exact rotated refusal wide generator: {e}"));
+            assert!(
+                mh.is_empty(),
+                "the exact refusal epoch must not use scalar map-op heaps"
+            );
             refusal_map_heaps = mh;
             (t, d)
         } else {
@@ -2984,17 +3089,29 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                 panic!("live rotated generator must produce a {name} trace + 51 PIs: {e}")
             })
         };
-        assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+        // The PRE-compaction producer geometry (the old-geometry row every family producer lays).
+        assert_eq!(
+            trace[0].len(),
+            if exact_refusal {
+                REFUSAL_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX
+            } else {
+                ROT_WIDTH
+            },
+            "{name}: the producer's raw rotated row"
+        );
 
         // THE RECORD-FORCING PI(s): a record-digest mover (refusal) pins all 8 authority limbs
-        // (PI[46..53], + rc at 54..57 = 58); a lifecycle mover (archive) keeps the single pin
-        // (PI[46], + rc at 47..50 = 51). PI[46] is the LAST row's AFTER record-digest / lifecycle
-        // limb in both cases.
+        // (PI[46..53]); a lifecycle mover (archive) keeps the single pin (PI[46], + rc at 47..50 =
+        // 51). PI[46] is the LAST row's AFTER record-digest / lifecycle limb in both cases — the
+        // exact refusal ABI splices its 16 raw-audit limbs AFTER the authority octet, so the pin
+        // index is unmoved.
         assert_eq!(
             dpis.len(),
             expect_pis,
             "{name} rotated PI is {expect_pis} (the record-forcing slot(s) appended)"
         );
+        // Read on the RAW row: `AFTER_BASE` / `BEFORE_BASE` are UNCOMPACTED Lean coordinates, and
+        // the S2/E1 deletions below are value-preserving on every published PI.
         let last = &trace[trace.len() - 1];
         assert_eq!(
             dpis[46],
@@ -3006,11 +3123,67 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
             dpis[46], after_w.pre_limbs[pin_limb],
             "PI 46 = the post-state producer witness's pinned limb"
         );
-        assert_eq!(
-            dpis[42],
-            trace[0][BEFORE_BASE + B_STATE_COMMIT],
-            "PI 42 = rotated OLD commit"
-        );
+        if exact_refusal {
+            // On the WIDE path the two 1-felt rotated commit PIs are RETIRED (`append_wide_carriers`
+            // zeroes them; the S2 flag-day deleted the 1-felt chain they read). The FAITHFUL 8-felt
+            // anchors are the sole commit binding, so the tooth moves up to them — 8 felts of
+            // BEFORE + 8 of AFTER instead of the single ~31-bit felt it used to read.
+            assert_eq!(
+                (dpis[42], dpis[43]),
+                (BabyBear::ZERO, BabyBear::ZERO),
+                "{name}: the retired 1-felt commit PI slots must be ZERO on the wide path (producer \
+                 and executor must agree on them — Fiat–Shamir absorbs every PI)"
+            );
+            let anchor_base = ROT_PI_COUNT + 8 + REFUSAL_EXACT_AUDIT_PI_LEN + DFA_RC_LEN;
+            let before_commit_base = REFUSAL_WRITE_HOST_WIDTH + 8 * WIDE_COMMIT_CARRIER;
+            let after_commit_base = before_commit_base + WIDE_CARRIER_BLOCK_SPAN;
+            for j in 0..8 {
+                assert_eq!(
+                    dpis[anchor_base + j],
+                    trace[0][before_commit_base + j],
+                    "{name}: PI {} = the row-0 BEFORE 8-felt commit felt {j}",
+                    anchor_base + j
+                );
+                assert_eq!(
+                    dpis[anchor_base + 8 + j],
+                    last[after_commit_base + j],
+                    "{name}: PI {} = the last-row AFTER 8-felt commit felt {j}",
+                    anchor_base + 8 + j
+                );
+            }
+        } else {
+            assert_eq!(
+                dpis[42],
+                trace[0][BEFORE_BASE + B_STATE_COMMIT],
+                "PI 42 = rotated OLD commit"
+            );
+        }
+
+        // **THE CENTRAL FORGERY, BUILT ON THE RAW ROW.** FREEZE the AFTER record-digest limb to the
+        // PRE value — the audit-slot-NOT-written post the deployed circuit USED to accept — while
+        // PI[46] stays the honest written felt. It is a PRODUCER-level forgery, so it is written at
+        // the uncompacted `AFTER_BASE + pin_limb` and then carried through the SAME compaction the
+        // honest row takes (the deleted bands would otherwise renumber the column out from under it).
+        let mut frozen = trace.clone();
+        let frozen_last = frozen.len() - 1;
+        frozen[frozen_last][AFTER_BASE + pin_limb] = before_w.pre_limbs[pin_limb];
+
+        // **THE S2 + E1 BOUNDARY** (exact refusal only): the committed wide member is the
+        // `compactS2 ∘ compactE1` object, so the producer rows are compacted here — the same
+        // boundary `sdk::full_turn_proof` / `turn::executor::proof_verify` apply before pairing a
+        // row with its committed descriptor. The remaining gap to `desc.trace_width` is the gentian
+        // floor-refuse aux block, which `prove_vm_descriptor2` fills.
+        if exact_refusal {
+            for t in [&mut trace, &mut frozen] {
+                compact_s2_columns(t, name).expect("exact refusal S2 compaction");
+                compact_e1_columns(t, name).expect("exact refusal E1 compaction");
+            }
+            assert_eq!(
+                trace[0].len(),
+                exact_refusal_compacted_producer_width(),
+                "{name}: the compacted producer row (the gentian columns are prover-filled)"
+            );
+        }
 
         let mem_boundary = MemBoundaryWitness::default();
         let map_heaps = refusal_map_heaps;
@@ -3048,27 +3221,22 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
                  UNSAT (the record pin)"
             );
         }
-        // (b) THE CENTRAL FORGERY: FREEZE the AFTER record-digest limb to the PRE value — the
-        //     audit-slot-NOT-written post the deployed circuit USED to accept (claiming a refusal /
-        //     archive that did not happen) — while PI[46] stays the honest written felt. UNSAT.
-        {
-            let mut t = trace.clone();
-            let last_row = t.len() - 1;
-            t[last_row][AFTER_BASE + pin_limb] = before_w.pre_limbs[pin_limb]; // frozen
-            assert!(
-                refused(&t, &dpis),
-                "{name}: FREEZING the AFTER record-digest limb (audit-slot-NOT-written post) while \
-                 claiming the written PI[46] MUST be UNSAT — the forged refusal / archive a prover \
-                 could previously publish (the commitment did not even bind the audit write) is now \
-                 rejected in the LIVE deployed descriptor"
-            );
-        }
+        // (b) THE CENTRAL FORGERY (built above, on the raw row, then compacted with the honest one):
+        //     the audit-slot-NOT-written post — a refusal / archive that did not happen — claimed
+        //     against the honest written PI[46]. UNSAT.
+        assert!(
+            refused(&frozen, &dpis),
+            "{name}: FREEZING the AFTER record-digest limb (audit-slot-NOT-written post) while \
+             claiming the written PI[46] MUST be UNSAT — the forged refusal / archive a prover \
+             could previously publish (the commitment did not even bind the audit write) is now \
+             rejected in the LIVE deployed descriptor"
+        );
 
         eprintln!(
-            "ROTATED AUDIT RECORD-PIN ({name}, R=24, 39-PI, LIVE-GENERATED): PROVED + VERIFIED; \
-             the committed record-digest limb (r23, folding the audit slot via fields_root) is \
-             FORCED at PI[46], and a FROZEN-audit-slot forgery is UNSAT — the field-NOT-bound \
-             deployment gap is closed."
+            "ROTATED AUDIT RECORD-PIN ({name}, R=24, {expect_pis}-PI, LIVE-GENERATED): PROVED + \
+             VERIFIED; the committed record-digest limb (r23, folding the audit slot via \
+             fields_root) is FORCED at PI[46], and a FROZEN-audit-slot forgery is UNSAT — the \
+             field-NOT-bound deployment gap is closed."
         );
     }
 }
@@ -3139,7 +3307,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "graduated rotated width 608"
+        "the graduated rotated width + the gentian refuse extent"
     );
 
     // A real note-create turn (EffectVM credits balance by `value`, the shielding convention).
@@ -3195,7 +3363,11 @@ fn note_create_pins_commitments_and_refuses_tamper() {
         &before_commitments,
     )
     .expect("the commitments-tree wiring builds a genuine grown-set noteCreate trace");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH,
+        "the un-graduated ROT_WIDTH rotated trace"
+    );
 
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps).expect(
         "note-create PROVES on a GENUINE grown commitments-set witness — the gate is honored",
@@ -3266,7 +3438,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     assert_eq!(
         desc.trace_width,
         expected_rot_width(&desc),
-        "fee'd transfer keeps the graduated rotated width 608"
+        "the fee'd transfer keeps the graduated rotated width"
     );
     assert_eq!(
         desc.public_input_count, 51,
@@ -3433,7 +3605,8 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
 }
 
 /// **THE FAITHFUL 8-FELT WIDE TRANSFER ROUNDTRIP (STAGED-ADDITIVE slice).** The first REAL
-/// Plonky3 prove+verify at the wide geometry (`transferVmDescriptor2R24Wide`, width `WIDE_WIDTH`
+/// Plonky3 prove+verify at the wide geometry (`transferVmDescriptor2R24Wide`, producer width
+/// `WIDE_WIDTH` compacted to the committed `WIDE_WIDTH − S2_DELETED_COLS`
 /// / PI `WIDE_PI_COUNT` = 46 + 4 rc + 16):
 /// the parallel wide producer (`generate_rotated_transfer_wide`) fills the two 13×8 wide
 /// commitment carriers (BEFORE + AFTER) re-absorbing the SAME rotated limbs the 1-felt block lays,
@@ -3445,9 +3618,11 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
 /// ADDITIVE: the live 1-felt path is untouched; this rides the wide descriptor beside it.
 #[test]
 fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
+    use dregg_circuit::effect_vm::s2_compact_generated::{S2_COMPACT_TABLE, S2_DELETED_COLS};
     use dregg_circuit::effect_vm::trace_rotated::{
-        DFA_RC_LEN, ROT_PI_COUNT, WIDE_AFTER_CBASE, WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER,
-        WIDE_PI_COUNT, WIDE_WIDTH, generate_rotated_transfer_wide,
+        DFA_RC_LEN, ROT_PI_COUNT, TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_AFTER_CBASE,
+        WIDE_BEFORE_CBASE, WIDE_COMMIT_CARRIER, WIDE_PI_COUNT, WIDE_WIDTH, compact_s2_columns,
+        generate_rotated_transfer_wide,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_TRANSFER_STAGED_TSV;
 
@@ -3467,9 +3642,18 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         it.next().expect("wide json column")
     };
     let desc = parse_vm_descriptor2(json).expect("wide transfer descriptor parses");
+    // **THE COMMITTED PROBE IS S2-COMPACTED — the pin is the RELATION, not the old literal.**
+    // This assert used to read `desc.trace_width == WIDE_WIDTH` (2607), the UNCOMPACTED Lean wide
+    // geometry. The S2 flag-day regen (`4dd3273bd2`, 07-18) re-emitted this single-line probe with
+    // the dead S2 stratum deleted — 2607 → 1647, exactly `S2_DELETED_COLS` — and the tooth was
+    // never re-derived, so it had been asserting a geometry the committed bytes left behind (it was
+    // invisible only because the crate did not compile). The later E1 cutover (`bd21266e6b`)
+    // re-emitted only the two REGISTRIES, so this probe carries the S2 deletion and no other.
+    // Both terms are Lean-emitted, so a carrier-block / kill-set change moves this tooth with it.
     assert_eq!(
-        desc.trace_width, WIDE_WIDTH,
-        "wide transfer width WIDE_WIDTH"
+        desc.trace_width,
+        WIDE_WIDTH - S2_DELETED_COLS,
+        "the committed plain wide probe is the Lean wide geometry MINUS exactly the dead S2 stratum"
     );
     assert_eq!(
         desc.public_input_count, WIDE_PI_COUNT,
@@ -3520,7 +3704,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
     );
     let caveat = transfer_caveat_manifest();
 
-    let (trace, dpis) = generate_rotated_transfer_wide(
+    let (mut trace, dpis) = generate_rotated_transfer_wide(
         &st,
         &effects,
         &bridge(&before_w),
@@ -3528,7 +3712,13 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         &caveat,
     )
     .expect("wide transfer generator produces a WIDE_WIDTH-col trace + WIDE_PI_COUNT PIs");
-    assert_eq!(trace[0].len(), WIDE_WIDTH, "WIDE_WIDTH-col wide trace");
+    // The producer lays the OLD-geometry row first (every family producer does); the S2 deletion is
+    // applied below, at the same boundary the production dispatcher applies it.
+    assert_eq!(
+        trace[0].len(),
+        WIDE_WIDTH,
+        "pre-compaction WIDE_WIDTH-col wide trace"
+    );
     assert_eq!(dpis.len(), WIDE_PI_COUNT, "66 PIs (46 + 4 rc + 16)");
 
     // The 16 wide commit PIs are the BEFORE first-row + AFTER last-row 8-felt commit-carrier
@@ -3553,17 +3743,66 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
         );
     }
 
+    // **THE S2 BOUNDARY.** The committed TSV is the authoritative `compactS2` object, so the
+    // producer's old-geometry row is compacted here — the same boundary the production dispatcher
+    // (`sdk::full_turn_proof`) applies before pairing a row with its committed descriptor. The
+    // anchor identities above were read on the RAW row because `WIDE_*_CBASE` are UNCOMPACTED Lean
+    // coordinates; the deletion is value-preserving on every published PI.
+    //
+    // The plain single-line probe is the BARE transfer face (`…-transfer-v1-rot24-v3-staged`, avail
+    // pad 0), so its S2 bands are the base-cohort geometry `bb = V1_WIDTH`. The registry's OWN
+    // `transferVmDescriptor2R24` row is the AVAILABILITY-HARDENED face (`bb = V1_WIDTH +
+    // TRANSFER_AVAIL_PAD`) and is deliberately NOT this probe's compaction source;
+    // `mintVmDescriptor2R24` is the Lean-emitted table's base-cohort representative (the same idiom
+    // as `trace_rotated::wide_chip_lookups_are_self_consistent_after_lane_fill`). The block below
+    // makes that choice SELF-CHECKING: a table regen that moves either row — or that gives the
+    // probe an availability pad — fails HERE instead of silently compacting the wrong bands.
+    const BARE_S2_KEY: &str = "mintVmDescriptor2R24";
+    {
+        let row = |k: &str| -> (usize, usize) {
+            let (_, bb, lane) = S2_COMPACT_TABLE
+                .iter()
+                .find(|(t, _, _)| *t == k)
+                .unwrap_or_else(|| panic!("{k} not in S2_COMPACT_TABLE"));
+            (*bb, *lane)
+        };
+        assert_eq!(
+            avail_pad_for_descriptor_name(&desc.name),
+            0,
+            "the plain wide probe is the BARE transfer face — an avail pad would move its S2 bands"
+        );
+        let (bare_bb, bare_lane) = row(BARE_S2_KEY);
+        let (avail_bb, avail_lane) = row("transferVmDescriptor2R24");
+        assert_eq!(
+            bare_bb, V1_WIDTH,
+            "{BARE_S2_KEY} is the base-cohort S2 row (bb = V1_WIDTH) the bare probe compacts through"
+        );
+        assert_eq!(
+            (avail_bb, avail_lane),
+            (bare_bb + TRANSFER_AVAIL_PAD, bare_lane + TRANSFER_AVAIL_PAD),
+            "the registry transfer row is exactly the bare row shifted by the availability pad"
+        );
+    }
+    compact_s2_columns(&mut trace, BARE_S2_KEY)
+        .expect("the Lean-emitted base-cohort S2 geometry compacts the plain wide-transfer row");
+    assert_eq!(
+        trace[0].len(),
+        desc.trace_width,
+        "the compacted producer row matches the committed descriptor geometry"
+    );
+
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
 
-    // -- (1) THE REAL WIDE ROUNDTRIP: prove + verify at width 816. --
+    // -- (1) THE REAL WIDE ROUNDTRIP: prove + verify at the committed S2-compacted wide geometry. --
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
         .expect("WIDE transfer must prove end-to-end (WIDE_WIDTH / 66-PI)");
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .expect("WIDE transfer proof must verify independently");
     eprintln!(
-        "WIDE TRANSFER (R=24, width {WIDE_WIDTH}, {WIDE_PI_COUNT} PIs, FAITHFUL 8-felt commit): \
-         PROVED + VERIFIED — the first real Plonky3 roundtrip at the wide geometry."
+        "WIDE TRANSFER (R=24, committed width {}, {WIDE_PI_COUNT} PIs, FAITHFUL 8-felt commit): \
+         PROVED + VERIFIED — the first real Plonky3 roundtrip at the wide geometry.",
+        desc.trace_width
     );
 
     // -- (2) THE LIVE COLLISION TOOTH (high-position, NO executor): a transfer state B differing

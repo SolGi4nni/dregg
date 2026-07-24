@@ -193,9 +193,13 @@ fn refusal_exact_statement_is_raw_state16_and_nonlegacy() {
     compact_e1_columns(&mut trace, "refusalVmDescriptor2R24").expect("exact refusal E1 compaction");
     let desc = parse_vm_descriptor2(wide_json("refusalVmDescriptor2R24"))
         .expect("exact refusal descriptor parses");
-    assert_eq!(desc.trace_width, 2097);
+    assert_eq!(desc.trace_width, exact_refusal_committed_width());
     assert_eq!(desc.public_input_count, 90);
-    assert_eq!(trace[0].len(), 2155, "48 Gentian columns are prover-filled");
+    assert_eq!(
+        trace[0].len(),
+        exact_refusal_compacted_producer_width(),
+        "the gentian floor-refuse columns are prover-filled, not producer-emitted"
+    );
     assert!(
         desc.tables
             .iter()
@@ -382,6 +386,39 @@ fn lifecycle_payload_forge_rejected_by_hash_gate_anchor_disabled() {
     );
 }
 
+/// The number of columns THIS member's own E1 kill-set deletes, summed from the Lean-emitted
+/// `E1_COMPACT_TABLE` (the single source `compact_e1_columns` itself drains).
+fn e1_killed(key: &str) -> usize {
+    dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
+        .unwrap_or_else(|| panic!("{key} not in E1_COMPACT_TABLE"))
+}
+
+/// The exact refusal producer's row width AFTER both flag-day deletions — what
+/// `compact_s2_columns` + `compact_e1_columns` leave behind.
+fn exact_refusal_compacted_producer_width() -> usize {
+    REFUSAL_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX
+        - dregg_circuit::effect_vm::s2_compact_generated::S2_DELETED_COLS
+        - e1_killed("refusalVmDescriptor2R24")
+}
+
+/// The COMMITTED width of the deployed exact refusal member, DERIVED rather than hand-pinned: the
+/// compacted producer row PLUS the gentian floor-refuse aux block, which the PROVER fills
+/// (`fill_refuse_aux`, after the producer's `compact_e1`) and the producer never emits. The
+/// bare-cohort emit allocates the block a full `CAPACITY_TAGS · REFUSE_STRIDE` (48) — three
+/// columns past the 45 the last block's `floor_col` actually reaches.
+///
+/// This USED to be the literal `2097`, and it was WRONG at HEAD by exactly the amount our own
+/// `3ebf42e25f` narrowed the E1 kill-set (106 → 94 columns): a hand-pinned literal over a surface
+/// two flag-days move. Every term now comes from its own Lean-emitted source, so a stride / kill-set
+/// / carrier-block change moves this tooth with it instead of stranding it.
+fn exact_refusal_committed_width() -> usize {
+    use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
+    exact_refusal_compacted_producer_width() + refuse::CAPACITY_TAGS.len() * refuse::REFUSE_STRIDE
+}
+
 /// Resolve a WIDE-registry descriptor JSON by registry KEY (col 0) from the committed staged TSV.
 fn wide_json(name: &str) -> &'static str {
     dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV
@@ -465,15 +502,15 @@ fn wide_fields_write_proves_and_verifies() {
     compact_s2_columns(&mut trace, name).expect("exact refusal S2 compaction");
     compact_e1_columns(&mut trace, name).expect("exact refusal E1 compaction");
     assert_eq!(
-        desc.trace_width, 2097,
-        "exact host 2155 after S2 compaction + 48 Gentian refuse columns (2203) MINUS the E1 dead \
-         v1-face bands (106, Epoch-1 SECOND flag-day)"
+        desc.trace_width,
+        exact_refusal_committed_width(),
+        "the exact wide host after the S2 + E1 deletions, plus the prover-filled gentian block"
     );
     assert_eq!(
         desc.public_input_count, 90,
         "46 rotated + 8 authority + 16 raw-audit + 4 DFA + 16 wide anchors"
     );
-    assert_eq!(trace[0].len(), 2155);
+    assert_eq!(trace[0].len(), exact_refusal_compacted_producer_width());
     assert_eq!(dpis.len(), 90);
     assert!(map_heaps.is_empty());
 
