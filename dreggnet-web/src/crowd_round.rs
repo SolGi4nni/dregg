@@ -376,29 +376,48 @@ impl CrowdRound {
         &self.landed
     }
 
-    /// **Aggregate the window to one ballot per distinct voter.** Each voter's per-option weights
-    /// are summed and the voter is assigned the option they backed hardest (max summed weight; on
-    /// a tie the higher option index wins — deterministic). This collapses a viewer who chatted the
-    /// same option twice, and resolves a viewer who flip-flopped to their strongest signal. The
-    /// returned weights are pre-cap (the cap is applied when seats are materialized).
+    /// **Aggregate the window to one ballot per distinct voter.** Each voter's PAID per-option
+    /// weights are summed (paying more, or again, buys more influence), while all of a voter's
+    /// UNPAID chats for one option collapse to a single unit — so chat-spam VOLUME can never stack
+    /// into influence. The voter is then assigned the option they backed hardest (on a tie the
+    /// higher option index wins — deterministic). This collapses a viewer who chatted the same
+    /// option twice, and resolves a viewer who flip-flopped to their strongest signal. The returned
+    /// weights are pre-cap (the cap is applied when seats are materialized).
     fn aggregate(&self) -> Vec<WeightedBallot> {
         let opts = self.option_keywords();
-        let raw = events_to_ballots(&self.buffer, &opts);
-        // voter → (option index → summed weight)
-        let mut per_voter: BTreeMap<String, BTreeMap<usize, u64>> = BTreeMap::new();
-        for b in raw {
-            *per_voter
-                .entry(b.voter)
-                .or_default()
-                .entry(b.option_idx)
-                .or_default() += b.weight;
+        // voter → option index → (Σ PAID weight, saw ≥1 UNPAID vote). Paid and unpaid votes are
+        // aggregated DIFFERENTLY: paid SUMS, unpaid DEDUPS to a single unit, so repeated free chats
+        // from one voter can never decide the vote (only paid weight, bounded by the per-voter cap,
+        // accumulates).
+        let mut per_voter: BTreeMap<String, BTreeMap<usize, (u64, bool)>> = BTreeMap::new();
+        for e in &self.buffer {
+            // Reuse the crate's canonical option matching by mapping this single event — recovering
+            // its option + weight WITHOUT reimplementing `match_option`, while keeping the event
+            // KIND that `events_to_ballots` discards.
+            for b in events_to_ballots(std::slice::from_ref(e), &opts) {
+                let slot = per_voter
+                    .entry(b.voter)
+                    .or_default()
+                    .entry(b.option_idx)
+                    .or_default();
+                if e.kind.is_paid() {
+                    slot.0 += b.weight;
+                } else {
+                    slot.1 = true;
+                }
+            }
         }
         per_voter
             .into_iter()
             .filter_map(|(voter, opts)| {
-                // max_by_key keeps the LAST max on a tie; BTreeMap iterates options ascending, so
-                // a tie resolves to the higher option index — deterministic.
-                let (option_idx, weight) = opts.into_iter().max_by_key(|&(_, w)| w)?;
+                // Combine each option's paid sum with a single unpaid unit, then pick the option the
+                // voter backed hardest. max_by_key keeps the LAST max; BTreeMap iterates options
+                // ascending, so a per-voter tie still resolves to the higher option index —
+                // unchanged, deterministic.
+                let (option_idx, weight) = opts
+                    .into_iter()
+                    .map(|(idx, (paid, unpaid))| (idx, paid + u64::from(unpaid)))
+                    .max_by_key(|&(_, w)| w)?;
                 Some(WeightedBallot {
                     voter,
                     option_idx,
@@ -422,15 +441,23 @@ impl CrowdRound {
                 total += w;
             }
         }
-        let leader = votes
-            .iter()
-            .enumerate()
-            .max_by_key(|&(_, &v)| v)
-            .and_then(|(i, &v)| {
+        // Break ties to the LOWEST option index — the SAME rule collective-choice's `argmax` uses
+        // to snapshot the certified winner (strict `v > best`). `max_by_key` keeps the LAST max
+        // (the HIGHEST index), so on a tie the overlay would announce the OPPOSITE option to the one
+        // the certified TurnReceipt executes; the differential canary pins the two equal.
+        let leader = {
+            let mut best: Option<(usize, u64)> = None;
+            for (i, &v) in votes.iter().enumerate() {
+                if best.map_or(true, |(_, bv)| v > bv) {
+                    best = Some((i, v));
+                }
+            }
+            best.and_then(|(i, v)| {
                 (v > 0).then(|| {
                     u64::try_from(i).expect("the bounded crowd option list fits the stable wire")
                 })
-            });
+            })
+        };
         let options = self
             .proposals
             .iter()
@@ -599,18 +626,72 @@ mod tests {
 
         let p = round.preview();
         assert_eq!(p.voters, 3, "A/B/C are three distinct voters");
-        // press on: A's max option is press-on (weight 2 summed). trade blows: B(5) + C(1) = 6.
+        // press on: A's two UNPAID chats DEDUP to weight 1 (chat-spam cannot stack). trade blows:
+        // B's $5 (paid) + C's one free chat = 6.
         assert_eq!(
-            p.options[1].votes, 2,
-            "A's two press-on chats sum to weight 2"
+            p.options[1].votes, 1,
+            "A's two unpaid press-on chats dedup to weight 1"
         );
         assert_eq!(
             p.options[0].votes, 6,
             "B's $5 + C's chat = 6 on trade blows"
         );
-        assert_eq!(p.total, 8);
+        assert_eq!(p.total, 7);
         assert_eq!(p.leader, Some(0), "trade blows leads");
-        assert!(p.quorum_met(), "8 ≥ quorum 3");
+        assert!(p.quorum_met(), "7 ≥ quorum 3");
+    }
+
+    /// **CANARY — the overlay leader and the certified winner break a tie the SAME way.** On a
+    /// dead 3-3 split the engine's `argmax` certifies the LOWEST option index (option 0); the
+    /// preview's leader must announce the SAME option, or the OBS overlay would flash the OPPOSITE
+    /// winner at the exact moment the certified `TurnReceipt` executes option 0. The old preview
+    /// used `max_by_key` (LAST/highest-index max) and announced option 1 — this differential pins
+    /// the overlay leader to the engine's certified winner INDEX, so they can never diverge.
+    #[test]
+    fn tie_preview_leader_matches_the_certified_argmax_winner() {
+        let scene = keep_scene();
+        let mut world = deploy_keep(36);
+        world.seed_var("hp", Value::Int(50));
+
+        let mut round = keep_round(3); // weight quorum 3; total 6 clears it.
+        // A dead-even 3-3 split across SIX distinct voters (clears the distinct floor), all unpaid
+        // (weight 1 each): option 0 = 3, option 1 = 3.
+        for v in ["a0", "a1", "a2"] {
+            round.ingest(chat(v, "trade blows"));
+        }
+        for v in ["b0", "b1", "b2"] {
+            round.ingest(chat(v, "press on"));
+        }
+
+        let preview = round.preview();
+        assert_eq!(preview.options[0].votes, 3, "option 0 has weight 3");
+        assert_eq!(
+            preview.options[1].votes, 3,
+            "option 1 has weight 3 — a dead tie"
+        );
+        assert_eq!(
+            preview.leader,
+            Some(0),
+            "the overlay breaks the tie to the LOWEST index, like the engine's argmax"
+        );
+
+        let cert = round
+            .close_into_world(&world, &scene)
+            .expect("a 3-3 tie still clears quorum 3 and certifies");
+
+        // THE DIFFERENTIAL: the option the overlay announced as leader is EXACTLY the option index
+        // the engine's argmax certified — never the opposite. (Old code: leader = Some(1) here,
+        // while the cert executes option 0 → this assertion fails, which is what makes it a canary.)
+        assert_eq!(
+            preview.leader,
+            Some(u64::try_from(cert.decision.winner).expect("winner index fits the wire")),
+            "the overlay leader must name the certified winner's option on a tie"
+        );
+        assert_eq!(
+            cert.command,
+            Command::trade_blows(),
+            "the certified turn executes option 0 (trade blows)"
+        );
     }
 
     #[test]
