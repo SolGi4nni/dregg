@@ -391,7 +391,184 @@ theorem badFieldsScheme8_has_coll8 : Coll8 badFieldsScheme8.chipAbsorb8 ([0], [1
 
 end Reference8
 
+/-! ### §F.ROM — ⚑ THE ROM SUCCESSORS: the fields-tree binding surface as REDUCTIONS on the
+PROVED keyed floor.
+
+⚑ STATUS OF THE `…_binds_or_collides` FAMILY (2026-07-24). The §F.X disjunctions are EXTRACTOR
+MACHINERY (each hands back the specific colliding pair its reduction consumes), but as EXPORTED
+security statements they are shirks: at deployed BabyBear parameters a collision EXISTS by
+pigeonhole, so each disjunction is satisfiable through its right branch with NO binding. The
+security statements are THIS section's `…_binds_rom` reductions on
+`Crypto.RomHashedLeafOpening`'s kit — forger an ORACLE PROGRAM fixed before the oracle is sampled,
+closed from `keyedRom_hard` (the birthday bound, a THEOREM), queries PAID, no refuted floor. The
+disjunctions are RETAINED for their downstream `rcases` consumers (`VacuitySweepTeeth`,
+`Emit.EffectVmEmitRotationV3`, `RotatedKernelRefinementCapFamily`, `InjectiveFloorRegrounded`),
+whose re-point is the remaining mechanical work. The modelling step is the cap tree's §7R note
+verbatim: one 8-felt child digest = ONE ideal `Fin (2 ^ l)` value; the fixed public chip's own
+collision resistance stays a conjecture. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomHashedLeafOpening
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Circuit.DeployedCapTree (feltTrunc feltTrunc_inj)
+
+/-- The truncated LINKED IMT fields-leaf block `(addr, value, nextAddr)` at the deployed BabyBear
+range — the `[addr, value, nextAddr]` absorb of `heap_root.rs::HeapLeaf::digest8` over a
+`fields_root_leaves` entry. -/
+abbrev FieldsLeafRomBlock : Type :=
+  Fin Dregg2.Crypto.RomCarrierSites.babyBearP × Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+    × Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+
+/-- **THE FIELDS-TREE ROM FAMILY** at tag space `Key`: truncated 3-limb IMT leaf blocks ⊕ ordered
+ideal-digest node pairs (the deployed 3-vs-16 arity separation, by constructor). -/
+abbrev fieldsRomFamily (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  hlFam Key kF kD kN (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- The fields-leaf carrier — the leaf digest binds the WHOLE linked triple: the hashed field KEY,
+the folded VALUE, and the sorted-chain IMT POINTER. -/
+abbrev fieldsLeafRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (fieldsRomFamily Key kF kD kN) :=
+  hlLeafCarrier Key kF kD kN (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- The fields-node carrier — the `node8` digest binds BOTH ordered children. -/
+abbrev fieldsNodeRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (fieldsRomFamily Key kF kD kN) :=
+  hlNodeCarrier Key kF kD kN (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- **⚑⚑ THE FIELDS-LEAF BINDING, AS A REDUCTION** — ROM successor of
+`fieldsLeafDigest8_binds_or_collides`'s left disjunct: a query-bounded forger that equivocates one
+leaf digest between two DISTINCT linked triples has NEGLIGIBLE advantage. In particular the IMT
+POINTER is bound: relinking the sorted chain under a fixed `(key, value)` is an equivocation. -/
+theorem fieldsLeafDigest8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (fieldsRomFamily Key kF kD kN)
+      (fieldsLeafRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (fieldsRomFamily Key kF kD kN)
+      (fieldsLeafRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (fieldsRomFamily Key kF kD kN)
+      (fieldsLeafRomCarrier Key kF kD kN)) A) :=
+  hlLeaf_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE FIELDS-NODE BINDING, AS A REDUCTION** — ROM successor of
+`fieldsNodeOf8_binds_or_collides`'s left disjunct. -/
+theorem fieldsNodeOf8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (fieldsRomFamily Key kF kD kN)
+      (fieldsNodeRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (fieldsRomFamily Key kF kD kN)
+      (fieldsNodeRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (fieldsRomFamily Key kF kD kN)
+      (fieldsNodeRomCarrier Key kF kD kN)) A) :=
+  hlNode_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE FIELDS SPINE BINDING, AS A REDUCTION** — ROM successor of
+`recomposeUp8_binds_or_collides`: two DISTINCT starting digests folding one SHARED schedule to one
+root cost an interior node collision, found by the paying walk. -/
+theorem fieldsRecomposeUp8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * dep l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlPathForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (fieldsRomFamily Key kF kD kN)
+      (hlPathForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlPathForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlPathRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE GENTIAN CLOSE, AS A REDUCTION** — ROM successor of
+`fieldsOpen8_binds_leaf_or_collides` (and of its deployed instantiation
+`deployed_fieldsOpen8_binds_leaf_or_collides` — the ROM statement is about the SAMPLED oracle, so
+the ∀-scheme and at-the-inhabitant forms collapse into one): a query-bounded forger that opens one
+8-felt fields root to two DISTINCT linked leaves along one shared path has NEGLIGIBLE advantage.
+The lane-0 forge the GENTIAN weld exhibits is priced here as a genuine attack on the model, not
+excluded by a refuted premise. -/
+theorem fieldsOpen8_binds_leaf_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (fieldsRomFamily Key kF kD kN)
+      (hlOpenForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑ THE PUBLISHED-ROOT FORM** — ROM successor of
+`membersAt8_functional_on_path_or_collides`: two query-bounded openings of ONE published root to
+two DISTINCT linked leaves succeed with negligible probability. -/
+theorem fieldsMembersAt8_functional_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenRootForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (fieldsRomFamily Key kF kD kN)
+      (hlOpenRootForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenRootForgery Key kF kD kN (fun _ => FieldsLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRootRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- The truncation pin: a range-bounded deployed IMT triple embeds LOSSLESSLY, so a distinct pair
+of deployed leaves stays a distinct pair of ROM payloads. -/
+def fieldsLeafRomBlockOf (e : ℤ × ℤ × ℤ) : FieldsLeafRomBlock :=
+  (feltTrunc e.1, feltTrunc e.2.1, feltTrunc e.2.2)
+
+theorem fieldsLeafRomBlockOf_inj {e₁ e₂ : ℤ × ℤ × ℤ}
+    (h₁ : ∀ x ∈ [e₁.1, e₁.2.1, e₁.2.2], 0 ≤ x ∧ x < BABYBEAR_P)
+    (h₂ : ∀ x ∈ [e₂.1, e₂.2.1, e₂.2.2], 0 ≤ x ∧ x < BABYBEAR_P)
+    (h : fieldsLeafRomBlockOf e₁ = fieldsLeafRomBlockOf e₂) : e₁ = e₂ := by
+  obtain ⟨ha0, ha1⟩ := h₁ e₁.1 (by simp)
+  obtain ⟨hb0, hb1⟩ := h₁ e₁.2.1 (by simp)
+  obtain ⟨hc0, hc1⟩ := h₁ e₁.2.2 (by simp)
+  obtain ⟨hd0, hd1⟩ := h₂ e₂.1 (by simp)
+  obtain ⟨he0, he1⟩ := h₂ e₂.2.1 (by simp)
+  obtain ⟨hf0, hf1⟩ := h₂ e₂.2.2 (by simp)
+  refine Prod.ext ?_ (Prod.ext ?_ ?_)
+  · exact feltTrunc_inj ha0 ha1 hd0 hd1 (congrArg Prod.fst h)
+  · exact feltTrunc_inj hb0 hb1 he0 he1 (congrArg (fun p => p.2.1) h)
+  · exact feltTrunc_inj hc0 hc1 hf0 hf1 (congrArg (fun p => p.2.2) h)
+
+/-- The deployed single-tag instantiation elaborates (`Key := Unit`) — the inhabitation tooth. -/
+theorem deployedShape_fieldsOpen8_binds_leaf_rom (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (fieldsRomFamily Unit inferInstance inferInstance inferInstance)
+      (hlOpenForgery Unit inferInstance inferInstance inferInstance
+        (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep)
+      Q A) :
+    Negl (gameAdv (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => FieldsLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game
+      A) :=
+  fieldsOpen8_binds_leaf_rom Unit inferInstance inferInstance inferInstance dep Q Q' hle hQ' A hA
+
+end RomSuccessor
+
 /-! ### §F.A — Axiom hygiene. -/
+-- §F.ROM — the ROM successors (reductions on the proved keyed floor; no bare disjunction).
+#assert_axioms fieldsLeafDigest8_binds_rom
+#assert_axioms fieldsNodeOf8_binds_rom
+#assert_axioms fieldsRecomposeUp8_binds_rom
+#assert_axioms fieldsOpen8_binds_leaf_rom
+#assert_axioms fieldsMembersAt8_functional_rom
+#assert_axioms fieldsLeafRomBlockOf_inj
+#assert_axioms deployedShape_fieldsOpen8_binds_leaf_rom
 
 #assert_axioms Fields8Scheme.fieldsLeafBlock_inj
 #assert_axioms Fields8Scheme.fieldsLeafDigest8_binds_or_collides

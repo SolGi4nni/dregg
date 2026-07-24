@@ -392,7 +392,173 @@ theorem badHeapScheme8_has_coll8 : Coll8 badHeapScheme8.chipAbsorb8 ([0], [1]) :
 
 end Reference8
 
+/-! ### §H.ROM — ⚑ THE ROM SUCCESSORS: the heap-tree binding surface as REDUCTIONS on the PROVED
+keyed floor.
+
+⚑ STATUS OF THE `…_binds_or_collides` FAMILY (2026-07-24). The §H.X disjunctions are EXTRACTOR
+MACHINERY (each hands back the specific colliding pair its reduction consumes), but as EXPORTED
+security statements they are shirks: at deployed BabyBear parameters a collision EXISTS by
+pigeonhole, so each disjunction holds through its right branch with NO binding. The security
+statements are THIS section's `…_binds_rom` reductions on `Crypto.RomHashedLeafOpening`'s kit —
+forger an ORACLE PROGRAM fixed before the oracle is sampled, closed from `keyedRom_hard` (the
+birthday bound, a THEOREM), queries PAID, no refuted floor. The disjunctions are RETAINED for
+their downstream `rcases` consumers (`VacuitySweepTeeth`, `MapMerkleRoot`,
+`Emit.HeapLeafWideEmit`, `Emit.EffectVmEmitRotationV3`, `RotatedKernelRefinementCapFamily`,
+`Deos.DocSubstrateSound`), whose re-point is the remaining mechanical work. The modelling step is
+the cap tree's §7R note verbatim. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomHashedLeafOpening
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Circuit.DeployedCapTree (feltTrunc feltTrunc_inj)
+
+/-- The truncated LINKED IMT heap-leaf block `(addr, value, nextAddr)` at the deployed BabyBear
+range (`heap_root.rs::HeapLeaf::digest8`'s 3-limb absorb). -/
+abbrev HeapLeafRomBlock : Type :=
+  Fin Dregg2.Crypto.RomCarrierSites.babyBearP × Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+    × Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+
+/-- **THE HEAP-TREE ROM FAMILY** at tag space `Key`: truncated 3-limb IMT leaf blocks ⊕ ordered
+ideal-digest node pairs (the deployed 3-vs-16 arity separation, by constructor). -/
+abbrev heapRomFamily (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  hlFam Key kF kD kN (fun _ => HeapLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- The heap-leaf carrier — the leaf digest binds the WHOLE linked triple (addr, value, and the
+IMT pointer the 1-felt commitment was blind to). -/
+abbrev heapLeafRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (heapRomFamily Key kF kD kN) :=
+  hlLeafCarrier Key kF kD kN (fun _ => HeapLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- The heap-node carrier — the `node8` digest binds BOTH ordered children. -/
+abbrev heapNodeRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (heapRomFamily Key kF kD kN) :=
+  hlNodeCarrier Key kF kD kN (fun _ => HeapLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- **⚑⚑ THE HEAP-LEAF BINDING, AS A REDUCTION** — ROM successor of
+`heapLeafDigest8_binds_or_collides`'s left disjunct. -/
+theorem heapLeafDigest8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (heapRomFamily Key kF kD kN)
+      (heapLeafRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (heapRomFamily Key kF kD kN) (heapLeafRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (heapRomFamily Key kF kD kN)
+      (heapLeafRomCarrier Key kF kD kN)) A) :=
+  hlLeaf_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE HEAP-NODE BINDING, AS A REDUCTION** — ROM successor of
+`heapNodeOf8_binds_or_collides`'s left disjunct. -/
+theorem heapNodeOf8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (heapRomFamily Key kF kD kN)
+      (heapNodeRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (heapRomFamily Key kF kD kN) (heapNodeRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (heapRomFamily Key kF kD kN)
+      (heapNodeRomCarrier Key kF kD kN)) A) :=
+  hlNode_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE HEAP SPINE BINDING, AS A REDUCTION** — ROM successor of
+`recomposeUp8_binds_or_collides`. -/
+theorem heapRecomposeUp8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * dep l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlPathForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (heapRomFamily Key kF kD kN)
+      (hlPathForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlPathForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlPathRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE HEAP GENTIAN CLOSE, AS A REDUCTION** — ROM successor of
+`heapOpen8_binds_leaf_or_collides` (and of its deployed instantiation
+`deployed_heapOpen8_binds_leaf_or_collides` — the ROM statement is about the SAMPLED oracle, so
+the ∀-scheme and at-the-inhabitant forms collapse into one). -/
+theorem heapOpen8_binds_leaf_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (heapRomFamily Key kF kD kN)
+      (hlOpenForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑ THE PUBLISHED-ROOT FORM** — ROM successor of
+`membersAt8_functional_on_path_or_collides`: two query-bounded openings of ONE published heap root
+to two DISTINCT linked leaves succeed with negligible probability. -/
+theorem heapMembersAt8_functional_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenRootForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (heapRomFamily Key kF kD kN)
+      (hlOpenRootForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenRootForgery Key kF kD kN (fun _ => HeapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRootRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- The truncation pin: a range-bounded deployed IMT triple embeds LOSSLESSLY into the ROM block. -/
+def heapLeafRomBlockOf (e : ℤ × ℤ × ℤ) : HeapLeafRomBlock :=
+  (feltTrunc e.1, feltTrunc e.2.1, feltTrunc e.2.2)
+
+theorem heapLeafRomBlockOf_inj {e₁ e₂ : ℤ × ℤ × ℤ}
+    (h₁ : ∀ x ∈ [e₁.1, e₁.2.1, e₁.2.2], 0 ≤ x ∧ x < BABYBEAR_P)
+    (h₂ : ∀ x ∈ [e₂.1, e₂.2.1, e₂.2.2], 0 ≤ x ∧ x < BABYBEAR_P)
+    (h : heapLeafRomBlockOf e₁ = heapLeafRomBlockOf e₂) : e₁ = e₂ := by
+  obtain ⟨ha0, ha1⟩ := h₁ e₁.1 (by simp)
+  obtain ⟨hb0, hb1⟩ := h₁ e₁.2.1 (by simp)
+  obtain ⟨hc0, hc1⟩ := h₁ e₁.2.2 (by simp)
+  obtain ⟨hd0, hd1⟩ := h₂ e₂.1 (by simp)
+  obtain ⟨he0, he1⟩ := h₂ e₂.2.1 (by simp)
+  obtain ⟨hf0, hf1⟩ := h₂ e₂.2.2 (by simp)
+  refine Prod.ext ?_ (Prod.ext ?_ ?_)
+  · exact feltTrunc_inj ha0 ha1 hd0 hd1 (congrArg Prod.fst h)
+  · exact feltTrunc_inj hb0 hb1 he0 he1 (congrArg (fun p => p.2.1) h)
+  · exact feltTrunc_inj hc0 hc1 hf0 hf1 (congrArg (fun p => p.2.2) h)
+
+/-- The deployed single-tag instantiation elaborates (`Key := Unit`) — the inhabitation tooth. -/
+theorem deployedShape_heapOpen8_binds_leaf_rom (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => HeapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (heapRomFamily Unit inferInstance inferInstance inferInstance)
+      (hlOpenForgery Unit inferInstance inferInstance inferInstance
+        (fun _ => HeapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep)
+      Q A) :
+    Negl (gameAdv (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => HeapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game
+      A) :=
+  heapOpen8_binds_leaf_rom Unit inferInstance inferInstance inferInstance dep Q Q' hle hQ' A hA
+
+end RomSuccessor
+
 /-! ### §H.A — Axiom hygiene. -/
+-- §H.ROM — the ROM successors (reductions on the proved keyed floor; no bare disjunction).
+#assert_axioms heapLeafDigest8_binds_rom
+#assert_axioms heapNodeOf8_binds_rom
+#assert_axioms heapRecomposeUp8_binds_rom
+#assert_axioms heapOpen8_binds_leaf_rom
+#assert_axioms heapMembersAt8_functional_rom
+#assert_axioms heapLeafRomBlockOf_inj
+#assert_axioms deployedShape_heapOpen8_binds_leaf_rom
 
 #assert_axioms Heap8Scheme.heapLeafBlock_inj
 #assert_axioms Heap8Scheme.heapLeafDigest8_binds_or_collides

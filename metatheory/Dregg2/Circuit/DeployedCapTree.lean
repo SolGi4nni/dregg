@@ -54,6 +54,7 @@ import Dregg2.Exec.Kernel
 import Dregg2.Exec.FacetAuthority
 import Dregg2.Circuit.Emit.EffectVmEmitCapReshape
 import Dregg2.Circuit.CapMerkleGeneric
+import Dregg2.Crypto.RomHashedLeafOpening
 
 namespace Dregg2.Circuit.DeployedCapTree
 
@@ -1233,6 +1234,251 @@ theorem empty_caps_unauthorized :
     authorizedFacetB (fun _ => []) .signature { actor := 5, src := 9, dst := 0, amt := 0 } = false := by
   decide
 
+/-! ## §7R — ⚑ THE ROM SUCCESSORS: the cap-tree binding surface as REDUCTIONS on the PROVED
+keyed floor.
+
+⚑ STATUS OF THE `…_binds_or_collides` FAMILY (2026-07-24). The §5b.X disjunctions are EXTRACTOR
+MACHINERY — each hands back the specific pair a break would collide at, which is exactly what a
+reduction consumes — but as EXPORTED security statements they are shirks: at deployed BabyBear
+parameters a collision EXISTS by pigeonhole (`VacuitySweepTeeth.compress8CR_false_babyBear`), so
+each disjunction is satisfiable through its right branch with NO binding. The security statements
+are THIS section's `…_binds_rom` reductions: the forger is an ORACLE PROGRAM fixed before the
+tag-separated oracle is sampled, and every export closes from `KeyedRomFloor.keyedRom_hard` (the
+birthday bound — a THEOREM), with no refuted floor, no cost model, and the extractor's queries PAID.
+The disjunctions are RETAINED below them as the reduction-internal witnesses and for their
+downstream `rcases` consumers (`VacuitySweepTeeth`, `Emit.EffectVmEmitRotationV3`,
+`RotatedKernelRefinementCapFamily`, `Emit.MerkleMembership4aryWideEmit`,
+`Emit.EffectVmCapFamilyComplete`, `InjectiveFloorRegrounded`), whose re-point is the remaining
+mechanical work — deleting them before that re-point would break files owned by other lanes.
+
+⚑ THE MODELLING STEP, STATED (the `Crypto.RomCarrierSites` header discipline, not smuggled): the
+fixed public 8-output chip is idealised as a keyed random oracle into `Fin (2 ^ l)`; an 8-felt child
+digest is ONE sampled ideal value, and the ordered node PAIR `(x, y)` carries exactly the layout
+content `pack8` carries (order preserved, both children bound — compare `InjectiveFloorRegrounded`'s
+`node8RomCarrier`, which states the SAME node binding at the 16-felt packed-block truncation). There
+is NO `l` at which `Fin (2 ^ l)` is the deployed 8×~31-bit digest; at the deployed width the honest
+reading stays "binds exactly as well as ~124 bits allow". Collision resistance of the fixed public
+chip itself remains a conjecture, not a Lean theorem. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomHashedLeafOpening
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+
+/-- The truncated 7-field cap-leaf block — the `leafFields` image at the deployed BabyBear range
+(`cap_root.rs::CapLeaf`'s seven felts, in order). -/
+abbrev CapLeafRomBlock : Type := Fin 7 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+
+/-- **THE CAP-TREE ROM FAMILY** at domain-separation tag space `Key`: messages are truncated
+7-field leaf blocks ⊕ ordered ideal-digest node pairs, the ROM image of the deployed chip's
+7-vs-16 arity separation. -/
+abbrev capRomFamily (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key) (kN : Nonempty Key) :
+    Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  hlFam Key kF kD kN (fun _ => CapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The cap-leaf carrier — `H (t, inl block)` binds all seven leaf fields. -/
+abbrev capLeafRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (capRomFamily Key kF kD kN) :=
+  hlLeafCarrier Key kF kD kN (fun _ => CapLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- The cap-node carrier — `H (t, inr (l, r))` binds BOTH ordered 8-felt children (the `pack8`
+layout content at the ideal width). -/
+abbrev capNodeRomCarrier (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) : RomCarrier (capRomFamily Key kF kD kN) :=
+  hlNodeCarrier Key kF kD kN (fun _ => CapLeafRomBlock) (fun _ => inferInstance)
+    (fun _ => inferInstance)
+
+/-- **⚑⚑ THE CAP-LEAF BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor of
+`capLeafDigest8_binds_or_collides`'s left disjunct: every query-bounded forger that equivocates one
+leaf digest between two DISTINCT 7-field blocks has NEGLIGIBLE advantage. NO bare disjunction, NO
+refuted floor — `flatSite_binds`, hence `keyedRom_hard` (the birthday bound). -/
+theorem capLeafDigest8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (capRomFamily Key kF kD kN)
+      (capLeafRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (capRomFamily Key kF kD kN) (capLeafRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (capRomFamily Key kF kD kN)
+      (capLeafRomCarrier Key kF kD kN)) A) :=
+  hlLeaf_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE CAP-NODE BINDING, AS A REDUCTION ON THE PROVED FLOOR** — the ROM successor of
+`nodeOf8_binds_or_collides`'s left disjunct (the "SOLE width-specific obligation" the native-8-felt
+tree rides): every query-bounded forger that equivocates one `node8` digest between two DISTINCT
+ordered child pairs has NEGLIGIBLE advantage. -/
+theorem capNodeOf8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (capRomFamily Key kF kD kN)
+      (capNodeRomCarrier Key kF kD kN)))
+    (hA : RomCarrierEff (capRomFamily Key kF kD kN) (capNodeRomCarrier Key kF kD kN) Q A) :
+    Negl (gameAdv (romCarrierGame (capRomFamily Key kF kD kN)
+      (capNodeRomCarrier Key kF kD kN)) A) :=
+  hlNode_binds_rom Key kF kD kN _ _ _ Q hQ A hA
+
+/-- **⚑⚑ THE SPINE BINDING, AS A REDUCTION** — the ROM successor of
+`recomposeUp8_binds_or_collides`: a query-bounded forger that folds two DISTINCT starting digests
+up one SHARED `(sibling, direction)` schedule (`CapMerkleGeneric.StepG`'s `(sib, dir)`, as the
+kit's `(bit, sibling)` blocks) to one root has NEGLIGIBLE advantage; the extractor re-walks the
+schedule, `2·depth` queries PAID (`hlPathRom_binds`). -/
+theorem capRecomposeUp8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * dep l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlPathForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Key kF kD kN)
+      (hlPathForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlPathForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlPathRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE CAP-OPEN ANTI-GHOST, AS A REDUCTION** — the ROM successor of
+`capOpen8_binds_leaf_or_collides` (and, since the ROM statement is about the SAMPLED oracle rather
+than a scheme value, of its `deployed_capOpen8_binds_leaf_or_collides` instantiation too): a
+query-bounded forger that opens one root to two DISTINCT 7-field leaves along one shared path has
+NEGLIGIBLE advantage. The extractor queries both leaf points and walks the shared schedule —
+`Q + 2·depth + 2` queries, PAID. -/
+theorem capOpen8_binds_leaf_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Key kF kD kN)
+      (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-- **⚑ THE PUBLISHED-ROOT FORM** — the `MembersAt8`-functional shape: two query-bounded openings
+of ONE published root to two DISTINCT leaves succeed with negligible probability. -/
+theorem capOpenRoot8_binds_rom (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Key kF kD kN)
+      (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenRootForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+      (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  hlOpenRootRom_binds Key kF kD kN _ _ _ dep Q Q' hle hQ' A hA
+
+/-! ### The truncation pin — the deployed range-bounded leaf embeds LOSSLESSLY, so a distinct pair
+of deployed leaves stays a distinct pair of ROM payloads (the `bvecOfList_inj` discipline). -/
+
+/-- Truncate a range-bounded deployed felt into the ROM alphabet. Injective on `[0, p)` —
+`feltTrunc_inj`; the `%` keeps it TOTAL off-range, where the injectivity claim is not made. -/
+def feltTrunc (x : ℤ) : Fin Dregg2.Crypto.RomCarrierSites.babyBearP :=
+  ⟨x.toNat % Dregg2.Crypto.RomCarrierSites.babyBearP,
+    Nat.mod_lt _ (by norm_num [Dregg2.Crypto.RomCarrierSites.babyBearP])⟩
+
+theorem feltTrunc_inj {x y : ℤ} (hx0 : 0 ≤ x) (hx1 : x < BABYBEAR_P) (hy0 : 0 ≤ y)
+    (hy1 : y < BABYBEAR_P) (h : feltTrunc x = feltTrunc y) : x = y := by
+  have hv : x.toNat % Dregg2.Crypto.RomCarrierSites.babyBearP
+      = y.toNat % Dregg2.Crypto.RomCarrierSites.babyBearP := congrArg Fin.val h
+  have hbb : Dregg2.Crypto.RomCarrierSites.babyBearP = 2013265921 := rfl
+  have hBB : BABYBEAR_P = (2013265921 : ℤ) := rfl
+  rw [hbb] at hv
+  rw [hBB] at hx1 hy1
+  omega
+
+/-- The deployed 7-field cap leaf, truncated into the ROM leaf block (field order preserved). -/
+def capLeafRomBlockOf (leaf : CapLeaf) : CapLeafRomBlock :=
+  ![feltTrunc leaf.slot_hash, feltTrunc leaf.target, feltTrunc leaf.auth_tag,
+    feltTrunc leaf.mask_lo, feltTrunc leaf.mask_hi, feltTrunc leaf.expiry,
+    feltTrunc leaf.breadstuff]
+
+/-- **THE TRUNCATION LOSES NOTHING** — two range-bounded deployed leaves with one ROM block are
+EQUAL, so the ROM forgery games quantify over everything the deployed prover can absorb. -/
+theorem capLeafRomBlockOf_inj {l₁ l₂ : CapLeaf}
+    (h₁ : ∀ x ∈ leafFields l₁, 0 ≤ x ∧ x < BABYBEAR_P)
+    (h₂ : ∀ x ∈ leafFields l₂, 0 ≤ x ∧ x < BABYBEAR_P)
+    (h : capLeafRomBlockOf l₁ = capLeafRomBlockOf l₂) : l₁ = l₂ := by
+  have hmem : ∀ l : CapLeaf, ∀ x ∈ [l.slot_hash, l.target, l.auth_tag, l.mask_lo, l.mask_hi,
+      l.expiry, l.breadstuff], x ∈ leafFields l := by
+    intro l x hx
+    simpa [leafFields] using hx
+  have hf : ∀ (f : CapLeaf → ℤ) (i : Fin 7),
+      (∀ l, capLeafRomBlockOf l i = feltTrunc (f l)) →
+      f l₁ ∈ leafFields l₁ → f l₂ ∈ leafFields l₂ → f l₁ = f l₂ := by
+    intro f i hproj hm₁ hm₂
+    obtain ⟨ha0, ha1⟩ := h₁ _ hm₁
+    obtain ⟨hb0, hb1⟩ := h₂ _ hm₂
+    refine feltTrunc_inj ha0 ha1 hb0 hb1 ?_
+    rw [← hproj l₁, ← hproj l₂, h]
+  apply leafFields_inj
+  have h0 := hf (fun l => l.slot_hash) 0 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h1 := hf (fun l => l.target) 1 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h2 := hf (fun l => l.auth_tag) 2 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h3 := hf (fun l => l.mask_lo) 3 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h4 := hf (fun l => l.mask_hi) 4 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h5 := hf (fun l => l.expiry) 5 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  have h6 := hf (fun l => l.breadstuff) 6 (fun _ => rfl)
+    (hmem l₁ _ (by simp)) (hmem l₂ _ (by simp))
+  simp [leafFields, h0, h1, h2, h3, h4, h5, h6]
+
+/-! ### Deployed-shape instantiation + teeth: the ∀-key surface is INHABITED at the deployed
+single-tag shape, the game is winnable, and the admitted refuter-shape is DEFANGED. -/
+
+/-- The deployed cap tree runs ONE domain-separated absorb family (no adversary-chosen tag), so the
+deployed-shape instantiation pins `Key := Unit`. The tooth: the whole ∀-key export elaborates at a
+concrete value. -/
+theorem deployedShape_capOpen8_binds_leaf_rom (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => CapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game)
+    (hA : RomForgeryEff (capRomFamily Unit inferInstance inferInstance inferInstance)
+      (hlOpenForgery Unit inferInstance inferInstance inferInstance (fun _ => CapLeafRomBlock)
+        (fun _ => inferInstance) (fun _ => inferInstance) dep) Q A) :
+    Negl (gameAdv (hlOpenForgery Unit inferInstance inferInstance inferInstance
+      (fun _ => CapLeafRomBlock) (fun _ => inferInstance) (fun _ => inferInstance) dep).game A) :=
+  capOpen8_binds_leaf_rom Unit inferInstance inferInstance inferInstance dep Q Q' hle hQ' A hA
+
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED at the cap open, not excluded.)** The
+`0`-query constant answerer — the exact shape that wins probability `1` against the FIXED chip and
+refutes the `IsPolyTime` floors — is IN the class, WINS at the constant oracle on distinct leaves
+(positive advantage), and is NEGLIGIBLE against the sampled oracle. -/
+theorem capOpenRom_constAnswer_defanged (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key)
+    (kN : Nonempty Key) (dep Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * dep l + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (c : ∀ l, Key × (Fin (dep l) → Bool × Fin (2 ^ l))) (v w : ∀ l, CapLeafRomBlock)
+    (hvw : ∀ l, v l ≠ w l) :
+    RomForgeryEff (capRomFamily Key kF kD kN)
+        (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep) Q
+        (hlConstOpenAdv Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep c v w)
+      ∧ Negl (gameAdv (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep).game
+        (hlConstOpenAdv Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep c v w))
+      ∧ ∀ l, 0 < gameAdv (hlOpenForgery Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep).game
+        (hlConstOpenAdv Key kF kD kN (fun _ => CapLeafRomBlock)
+          (fun _ => inferInstance) (fun _ => inferInstance) dep c v w) l :=
+  ⟨hlConstOpenAdv_in_eff Key kF kD kN _ _ _ dep c v w Q,
+   hlConstOpenAdv_negl Key kF kD kN _ _ _ dep Q Q' hle hQ' c v w,
+   fun l => hlConstOpenAdv_gameAdv_pos Key kF kD kN _ _ _ dep c v w l (hvw l)⟩
+
+end RomSuccessor
+
 /-! ## §8 — Axiom hygiene. -/
 
 #assert_axioms CapHashScheme.capLeafDigest_injective
@@ -1273,5 +1519,15 @@ theorem empty_caps_unauthorized :
 #assert_axioms deployedEncodes_inhabited
 #assert_axioms bridge_fires
 #assert_axioms empty_caps_unauthorized
+-- §7R — the ROM successors (reductions on the proved keyed floor; no bare disjunction).
+#assert_axioms capLeafDigest8_binds_rom
+#assert_axioms capNodeOf8_binds_rom
+#assert_axioms capRecomposeUp8_binds_rom
+#assert_axioms capOpen8_binds_leaf_rom
+#assert_axioms capOpenRoot8_binds_rom
+#assert_axioms feltTrunc_inj
+#assert_axioms capLeafRomBlockOf_inj
+#assert_axioms deployedShape_capOpen8_binds_leaf_rom
+#assert_axioms capOpenRom_constAnswer_defanged
 
 end Dregg2.Circuit.DeployedCapTree
