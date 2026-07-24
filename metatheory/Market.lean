@@ -44,6 +44,7 @@ import Market.DarkBazaarSameOpeningGadgetPoly
 import Market.EmitSameOpeningGadget
 import Market.DarkBazaarCollectiveOpening
 import Market.DarkBazaarQuorumNecessity
+import Market.DarkBazaarCollectiveOpeningPoly
 import Market.PrivateBookEncryptionBinding
 import Market.DarkAmmPrivateSwap
 import Market.DarkAmmPrivateReceipt
