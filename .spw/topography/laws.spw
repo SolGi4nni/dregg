@@ -1,0 +1,27 @@
+# Laws
+#
+# Constitutional projection: the ember-set non-negotiables, and the one
+# sentence everything else is algebra for. Source: README-LLMs.md section 3.
+# These are not descriptions of the repo; they are the repo's will.
+
+#>spw_laws
+#:topography #!constitution
+
+^"one_sentence"{
+  ~#turn: "the exercise of an attenuable, proof-carrying token over owned state, leaving a verifiable receipt"
+  ~#corollary: "the Lean kernel IS the executor the node runs; all circuits are emitted from Lean; Rust authors zero constraint semantics"
+}
+
+^"laws"{
+  zero_rust_constraints: "all circuits emitted from Lean as byte-pinned descriptors; Rust only interprets" =tripwire
+  green_or_bust: "no CI fallbacks, no last-good pins, no continue-on-error; fail loudly, fix the root"
+  rise_to_meet_the_claim: "an overclaim found = fix the text AND open the closure lane in the same breath"
+  teach_what_is: "outward docs in present tense from first principles; trajectory narration banned; history lives in git"
+  correspondence_is_half: "the deployed system must sit inside the theorems' hypotheses; seams tracked, not assumed away"
+  we_do_not_name_we_ship: "a logged gap is never a deliverable; every caveat arrives with its closure lane running"
+  conservation_is_not_correctness: "specs must be sufficient, not merely true; prove every load-bearing spec non-vacuous"
+}
+
+^"drift"{
+  ~#reorient: "README-LLMs points to a root REORIENT.md that does not exist — the constitution's own pointer has drifted" #!observed_2026_07
+}

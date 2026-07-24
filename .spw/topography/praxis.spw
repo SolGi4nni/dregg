@@ -1,0 +1,35 @@
+# Praxis
+#
+# Working-discipline projection: how this repo actually does its work,
+# cross-cut from the ledgers (HORIZONLOG, TESTQALOG, GOAL trails, CORE-AUDIT).
+
+#>spw_praxis
+#:topography #!methodology
+
+^"the_distinction"{
+  ~#verification: "Lean proves the model coherent — says nothing about whether the deployed artifact matches"
+  ~#validation: "the running artifact against the model — TESTQALOG's whole reason to exist, append-only, many agents concurrent"
+  @qa_ledger: ~"../../TESTQALOG.md"
+}
+
+^"antibodies"{
+  rig_it: "every assumption gets a test that flags RED if broken; mutations must be BITTEN"
+  forge_detectors: "every tree-write effect gets a non-vacuous forge-detector"
+  false_cognates: "a constraint PROVER that proves nothing gets renamed VALIDATOR — names must not outrun deeds"
+  mock_lies: "a suite named soundness certifying a MOCK is the canonical sin; big test count is not power"
+}
+
+^"swarm_discipline"{
+  ~#shared_tree: "append-only ledgers, path-specific commits, guards held dirty by another lane are respected"
+  ~#hazard: "the FFI archive is a shared mutable file — concurrent feature-set builds race"
+  ~#audit_form: "adversarial lanes: find, refute, keep survivors — 21 raised, 19 survived, each Where/Claim/Failure/Verifier/Fix"
+  @audit: ~"../../CORE-AUDIT.md"
+}
+
+^"direction_of_travel"{
+  ~#rebuild_in_lean: "storage, the Descent, the note-tree accumulator — the Rust retires as the Lean lands"
+  ~#hatchery: "the planned proof-automation toolkit: prove one step, get all-time safety free; the tooling IS the userspace offering"
+  @hatchery: ~"../../HATCHERY.md"
+  ~#wellspring: "a scraped copy of Houyhnhnm Computing rides at repo root — copying is an act of love"
+  @houyhnhnm: ~"../../houyhnhnm.total.txt"
+}

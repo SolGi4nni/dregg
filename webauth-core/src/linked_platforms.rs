@@ -64,12 +64,25 @@ pub const ATTR_HAS_DISCORD: &str = "has_discord";
 pub const ATTR_HAS_TELEGRAM: &str = "has_telegram";
 /// `1` iff a web account is currently linked.
 pub const ATTR_HAS_WEB: &str = "has_web";
-/// `blake3(discord_uid)` — a hiding commitment to the Discord uid, never the uid.
+/// `blake3(uid_salt ‖ discord_uid)` — a SALTED commitment to the Discord uid.
+/// Hiding holds ONLY while [`ATTR_UID_SALT`] stays undisclosed: the 32-byte
+/// per-credential salt has 256 bits of entropy, so a verifier cannot brute-force
+/// the (enumerable, < 2^40) snowflake without it. See [`uid_commitment`].
 pub const ATTR_DISCORD_UID_COMMIT: &str = "discord_uid_commit";
-/// `blake3(telegram_uid)` — a hiding commitment to the Telegram uid.
+/// `blake3(uid_salt ‖ telegram_uid)` — a SALTED commitment to the Telegram uid
+/// (see [`ATTR_DISCORD_UID_COMMIT`]).
 pub const ATTR_TELEGRAM_UID_COMMIT: &str = "telegram_uid_commit";
 /// K's inception-derived stable account id (32 bytes) — the human's join key.
 pub const ATTR_ACCOUNT_ID: &str = "account_id";
+/// The per-credential, issuer-drawn 32-byte salt that blinds the uid commitments.
+///
+/// It is a disclosable attribute so a verifier the holder CHOOSES can recompute
+/// `blake3(uid_salt ‖ candidate_uid)` and check it against the disclosed
+/// commitment — but it is HIDDEN by default (never in a plain presentation), which
+/// is what makes the commitments hiding against a brute-force over the small
+/// snowflake space. A fresh salt per issuance also makes two credentials for the
+/// SAME uid carry DIFFERENT commitments, so they are not equality-linkable.
+pub const ATTR_UID_SALT: &str = "uid_salt";
 
 // ── the platform labels the schema knows (must match the memo `platform` field
 //    in [`crate::link_kel`]). ──
@@ -92,6 +105,7 @@ pub fn schema_attributes() -> Vec<&'static str> {
         ATTR_DISCORD_UID_COMMIT,
         ATTR_TELEGRAM_UID_COMMIT,
         ATTR_ACCOUNT_ID,
+        ATTR_UID_SALT,
     ]
 }
 
@@ -122,29 +136,38 @@ pub struct LinkedPlatformsAttributes {
     pub has_telegram: bool,
     /// A web account is currently linked.
     pub has_web: bool,
-    /// `blake3(discord_uid)` if a Discord account is linked, else `None`.
+    /// `blake3(uid_salt ‖ discord_uid)` if a Discord account is linked, else `None`.
     pub discord_uid_commit: Option<[u8; 32]>,
-    /// `blake3(telegram_uid)` if a Telegram account is linked, else `None`.
+    /// `blake3(uid_salt ‖ telegram_uid)` if a Telegram account is linked, else `None`.
     pub telegram_uid_commit: Option<[u8; 32]>,
     /// K's inception-derived stable account id (the raw 32-byte cell id).
     pub account_id: [u8; 32],
+    /// The per-credential, issuer-drawn 32-byte salt blinding the uid commitments
+    /// (see [`ATTR_UID_SALT`]). Fresh per issuance; disclosed only on demand.
+    pub uid_salt: [u8; 32],
 }
 
 impl LinkedPlatformsAttributes {
-    /// Build the attribute set from a folded [`LinkResolution`]. `None` if the
-    /// resolution carries no account id (an empty event list) or its account-id
-    /// hex is malformed. This is the **pure, node-free** half of the issuer flow
-    /// — the issuer additionally runs `verify_export` before trusting the fold.
-    pub fn from_resolution(res: &LinkResolution) -> Option<LinkedPlatformsAttributes> {
+    /// Build the attribute set from a folded [`LinkResolution`], blinding the uid
+    /// commitments with `uid_salt`. `None` if the resolution carries no account id
+    /// (an empty event list) or its account-id hex is malformed. This is the
+    /// **pure, node-free** half of the issuer flow — the issuer draws a FRESH
+    /// random `uid_salt` per issuance (so it stays out of this deterministic
+    /// builder) and additionally runs `verify_export` before trusting the fold.
+    pub fn from_resolution(
+        res: &LinkResolution,
+        uid_salt: [u8; 32],
+    ) -> Option<LinkedPlatformsAttributes> {
         let account_id = decode32(res.account_id.as_deref()?)?;
         Some(LinkedPlatformsAttributes {
             platforms_count: res.linked_platform_count() as u64,
             has_discord: res.has_platform(PLATFORM_DISCORD),
             has_telegram: res.has_platform(PLATFORM_TELEGRAM),
             has_web: res.has_platform(PLATFORM_WEB),
-            discord_uid_commit: uid_commit(res, PLATFORM_DISCORD),
-            telegram_uid_commit: uid_commit(res, PLATFORM_TELEGRAM),
+            discord_uid_commit: uid_commit(res, PLATFORM_DISCORD, &uid_salt),
+            telegram_uid_commit: uid_commit(res, PLATFORM_TELEGRAM, &uid_salt),
             account_id,
+            uid_salt,
         })
     }
 

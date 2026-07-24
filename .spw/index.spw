@@ -11,29 +11,38 @@
   @shelves: ~"./shelves.spw"
   @mount: ~"./mount.spw"
   @workspace: ~"./workspace.spw"
+}
+
+^"projections"{
   @polymap: ~"./topography/polymap.spw"
   @strata: ~"./topography/strata.spw"
   @lanes: ~"./topography/lanes.spw"
   @trust: ~"./topography/trust.spw"
   @valence: ~"./topography/valence.spw"
-  @lenses: ~"./lenses/summon.spw"
+  @laws: ~"./topography/laws.spw"
+  @horizon: ~"./topography/horizon.spw"
+  @praxis: ~"./topography/praxis.spw"
+  @chronicle: ~"./topography/chronicle.spw"
+  @shadow: ~"./topography/shadow.spw"
 }
 
-^"dispatch"{
-  readme: @readme
-  poem: @poem
-  shelves: @shelves
-  mount: @mount
-  workspace: @workspace
-  polymap: @polymap
-  strata: @strata
-  lanes: @lanes
-  trust: @trust
-  valence: @valence
-  lenses: @lenses
+^"regions"{
+  @kernel: ~"./regions/kernel.spw"
+  @metatheory: ~"./regions/metatheory.spw"
+  @guardians: ~"./regions/guardians.spw"
+  @settlement: ~"./regions/settlement.spw"
+  @deos: ~"./regions/deos.spw"
+  @mesh: ~"./regions/mesh.spw"
+  @dreggnet: ~"./regions/dreggnet.spw"
+  @intellect: ~"./regions/intellect.spw"
+}
+
+^"lenses"{
+  @summon: ~"./lenses/summon.spw"
+  @hoardlight: ~"./lenses/hoardlight.spw"
 }
 
 ^"reading_order"{
-  ~#machine: "poem → polymap → the projection you need → lenses; shelves for navigation"
+  ~#machine: "poem → polymap → the projection you need → the region it names → a lens to inhabit it"
   ~#human: "README.md first"
 }

@@ -1,0 +1,39 @@
+# Region: Intellect
+#
+# Summonable card for the papers, docs, specs, audits — the written mind.
+
+#>spw_region_intellect
+#:region #!summonable
+
+^"papers"{
+  @record: ~"../../paper/dregg.typ"
+  ~#thesis: "a light client checking one aggregate root learns the whole history was authorized, conserved, committed — re-executing nothing"
+  @stranded_twin: ~"../../paper2"
+  ~#drift: "paper2's README still claims content-of-record while paper/ is the paper of record — reconcile or retire"
+  @arithmetization: ~"../../papers/direct-logic-arithmetization"
+  ~#note: "corrects an unsound public BitLogic arithmetization and keeps the failing counterexample suite"
+}
+
+^"docs_topology"{
+  @assurance: ~"../../docs/ASSURANCE.md"
+  @overview: ~"../../docs/OVERVIEW.md"
+  @reference: ~"../../docs/reference"
+  @living_audits: ~"../../docs/audit"
+  @superseded: ~"../../docs/SUPERSEDED"
+  ~#shape: "reference/ is durable, audit/ is living, SUPERSEDED/ is honestly dead with named successors; the deos corpus (238 entries) is the largest doc subtree"
+}
+
+^"other_minds"{
+  @tla: ~"../../spec/CellModel.tla"
+  ~#tla_role: "a deliberately small TLA+ model kept as an outside auditor of the cell semantics"
+  @audits: ~"../../audits"
+  ~#audit_state: "a coordinated May sweep, mostly unrefreshed since — point-in-time baselines, two July refreshes"
+  @redteam: ~"../../redteam"
+  ~#redteam_bar: "distinguish Lean-proves-X from running-Rust-enforces-X — Byzantine chaos against a live devnet"
+}
+
+^"quarantine"{
+  #[historical]{ old-docs docs-old site-old-scavenge ts-sdk.archived }
+  ~#plans: "plans/ is mostly a frozen May snapshot; proof-statements-catalog is the fresh exception"
+  ~#surprise: "hints/ and audit/ are Rust crates wearing documentation names"
+}

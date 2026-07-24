@@ -1,0 +1,36 @@
+# Horizon
+#
+# Frontier projection, mined from the 11,573-line burn-down ledger.
+# The log's own grammar: ⚑ named-follow-up, ✅ landed, ⚠ correction,
+# ◻ open bug, 🟥 critical. Roughly 109 flags open, 39 landed, at mining time.
+
+#>spw_horizon
+#:topography #!frontier
+
+^"ledger"{
+  @log: ~"../../HORIZONLOG.md"
+  ~#role: "the named-follow-up burn-down — every gap that got a name, and what landed against it"
+  ~#span: "2026-06-14 onward, newest at top; the July 22 authority alert is the current pointer of record"
+}
+
+^"clusters"{
+  circuit_soundness: "~80 entries — forge-detectors, VK epochs, obligation discharge; the antibody factory"
+  lean_metatheory: "~60 — storage-in-lean, the Descent, the Foundational Reckoning"
+  deos_cockpit: "~70 — web cockpit, panes, membrane multiplayer, seL4 render"
+  crypto_settlement: "~50 — WRAP capstone, EVM/Solana legs, no-prequantum sweep"
+  fhegg_game: "~15, newest — the current cut"
+  infra_rot: "~20 — orphan gate, FFI archive race, enmeshment strikes"
+}
+
+^"load_bearing"{
+  reckoning: "Satisfied2 does NOT denote the deployed verifier; the proofs are ungrounded — refined next day to three specific divergent legs" .{ date: "2026-06-19" }
+  orphan_gate: "103 Lean modules built by NOTHING, 28 rotted — green by absence" .{ state: open }
+  wrap_capstone: "a real apex shrunk BN254-native, confirmed end-to-end" .{ state: landed }
+  state_binding_flip: "prover now requires the in-circuit state weld; three STILL-OWED residuals named" .{ state: "landed + 3 owed" }
+  green_that_lies: "MCP submit-turn DROPS the effects array — the exemplar of the genre" .{ state: open }
+}
+
+^"honesty_mechanics"{
+  ~#pattern: "closed-then-qualified — a CLOSED flag gets a next-day correction narrowing the claim; the retraction spawns a debt ledger instead of a deletion"
+  ~#reading: "the horizon does not move by conquest; it moves by naming"
+}

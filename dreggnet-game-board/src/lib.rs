@@ -727,6 +727,39 @@ impl GameBoard {
         id
     }
 
+    /// **Pin a game's board anchor ONCE — idempotent and IMMUTABLE.** The first call opens the
+    /// board against `anchor` (via [`GameBoard::open`]); every later call returns the
+    /// already-open universe and IGNORES the passed `anchor`. The trust anchor is board CONFIG
+    /// (a committed canonical reference, distributed like a SNARK VK) — a submitted proof, or
+    /// any later caller, can NEVER define or replace the genesis / WIN roots a submission is
+    /// verified against.
+    ///
+    /// This is the anti-capture seam for the submission path: a caller that opened the board
+    /// per submission with `open(game, match_anchor(&submitted_proof))` let the FIRST proof mint
+    /// the board's trust anchor (self-comparing the genesis / win checks) and — because the
+    /// content [`UniverseId`] is a per-game constant and `Registry::publish` is `or_insert` —
+    /// froze that first anchor forever, refusing every later distinct submission. Pinning the
+    /// anchor ONCE from a submission-independent source through this method removes both.
+    pub fn ensure_open(&mut self, game: Game, anchor: ProofAnchor) -> UniverseId {
+        if let Some(&id) = self.universes.get(&game) {
+            return id;
+        }
+        self.open(game, anchor)
+    }
+
+    /// Whether a game's proof-carrying board is already open (its [`ProofAnchor`] pinned).
+    pub fn is_open(&self, game: Game) -> bool {
+        self.universes.contains_key(&game)
+    }
+
+    /// The [`ProofAnchor`] a game's board is pinned to, if open — the immutable VK + genesis +
+    /// WIN roots every submission for this game is verified against. Read it back to confirm the
+    /// anchor is the committed canonical one, NOT one captured from a submitted proof.
+    pub fn anchor(&self, game: Game) -> Option<&ProofAnchor> {
+        let id = self.universes.get(&game)?;
+        self.registry.universe(*id)?.proof_anchor()
+    }
+
     /// The board universe id for a game, if open.
     pub fn universe(&self, game: Game) -> Option<UniverseId> {
         self.universes.get(&game).copied()

@@ -1,0 +1,34 @@
+# Region: Metatheory
+#
+# Summonable card for the Lean massif — the largest single mass in the repo.
+
+#>spw_region_metatheory
+#:region #!summonable
+
+^"scale"{
+  ~#census: "1,876 lean files, ~807k lines; Dregg2 alone ~744k"
+  ~#relief: "Circuit 349 files · Crypto 231 · Exec 118 · Apps 61 · Verify 44 · Deos 44 · Authority 34 · Games 20 — plus Market, Polis, Bfv ranges"
+  @root: ~"../../metatheory"
+}
+
+^"anchors"{
+  @assurance_lean: ~"../../metatheory/Dregg2/AssuranceCase.lean"
+  @assurance_prose: ~"../../docs/ASSURANCE.md"
+  ~#pair: "the authoritative pair — if they disagree, the Lean file wins"
+  @claims: ~"../../metatheory/Dregg2/Claims.lean"
+  @claims_prose: ~"../../metatheory/CLAIMS.md"
+  ~#keystone: "the assert-axioms ledger — the build fails if any keystone regresses"
+  @ffi: ~"../../metatheory/Dregg2/Exec/FFI.lean"
+}
+
+^"peaks"{
+  effect_vm_emit: "the largest single proof file — Effect-VM rotation-v3 circuit emission, ~6.4k lines"
+  automatafl: "a verified game where a whole turn is a theorem; its refinement capstones are among the biggest files in the tree"
+  mlkem_ntt: "ML-KEM and NTT faithfulness — the post-quantum floor being proved, not cited"
+  constructive_knowledge: "authority as constructive knowledge — the philosophical spine, in Lean and prose"
+}
+
+^"weather"{
+  ~#orphans: "103 modules built by nothing, 28 rotted — the orphan gate is open weather, see horizon"
+  ~#emitters: "~35 top-level Emit*.lean — the one-way doors from proof to deployed descriptor"
+}

@@ -1,0 +1,32 @@
+# Region: Settlement
+#
+# Summonable card for the chain-facing edge: dregg as the trustless plug.
+# Inbound legs verify other chains; outbound legs let other chains verify us.
+
+#>spw_region_settlement
+#:region #!summonable
+
+^"inbound"{
+  cosmos: "Tendermint SignedHeader ≥2/3 voting power + ICS-23 membership"
+  ethereum: "Altair sync-committee BLS12-381 + SSZ committee rotation"
+  ~#shape: "light-client verify cores — dregg watches other chains without trusting them"
+}
+
+^"outbound"{
+  cosmwasm: "Groth16 BN254 proof over the pinned 25-lane circuit, verified on Cosmos"
+  solana: "BN254 Groth16 verify of the whole-history proof, on-chain"
+  evm: "Solidity contracts + gnark wrap prover (pending) — the STARK→EVM squeeze"
+  ~#shape: "the same whole-history proof, dressed for each chain's verifier"
+}
+
+^"spine"{
+  lightclient: "verify ONE succinct IVC aggregate and obtain the verdict — re-witnessing nothing"
+  ~#lane: "multichain_settlement — proof-carrying settlement, non-custodial proof-of-holdings governance"
+}
+
+^"strange_attractors"{
+  zkoracle: "attestation that an Anthropic API TLS session was authentic, well-formed, injection-free — the repo proves things about talking to LLMs"
+  deco: "zkTLS Stripe money-in — notary-attested payment facts become proof-carrying deposits"
+  tee: "Nitro enclave attestation producer, scaffold with a live NSM backend"
+  ~#wonder: "?[what else becomes settleable when a TLS transcript is a provable object]"
+}

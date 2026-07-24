@@ -46,8 +46,8 @@
 }
 
 ^"dark_strata"{
-  // what the poem does not yet name
-  ~#note: "unmapped mass, honestly marked"
-  #[unnamed]{ deos federation starbridge blocklace captp grain-commons fhegg sel4 }
-  ~#invitation: "when a dark stratum surfaces in work, give it a line in @spw/root.spw and a section here"
+  // what the poem does not yet name — since mapped by the mining of 07-23
+  ~#note: "the former dark mass now has cards: deos, mesh (federation, blocklace, captp, grain), and the fhegg island — see @spw/regions"
+  #[still_dim]{ sel4 realm-model durable-workflow }
+  ~#invitation: "the poem itself still speaks only four lines; when a fifth line arrives, it should name the userlayer or the mesh"
 }

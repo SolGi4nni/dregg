@@ -1,0 +1,32 @@
+# Shadow
+#
+# The undocumented-mass projection: what the repo's self-description omits.
+# README-LLMs' crate map covers a fraction of 293 top-level entries; this
+# map names what lives outside the light. A shadow is not a fault — it is
+# where the tree grew faster than its own story.
+
+#>spw_shadow
+#:topography #!undocumented_mass
+
+^"unmapped_groups"{
+  #[absent_from_crate_map]{ grain fhegg dfa-federation intent attested-dm durable-workflow realm-model }
+  ~#deos_gap: "8 of 12 deos crates undocumented; starbridge-apps is 30 crates where the map says 21"
+}
+
+^"tricksters"{
+  harness: "not a test harness — a Minecraft Mineflayer bot driven by a Claude agent loop, gated by the verified polis governor"
+  launchpad_web: "a pump.fun-parity memecoin launchpad inside a formal-verification repo"
+  hints: "a Rust benchmark crate wearing a documentation name"
+  audit_dir: "also a crate; the audit DOCUMENTS live in audits/ and docs/audit/"
+  houyhnhnm: "43k words of scraped computing philosophy riding at repo root as inspiration ballast"
+}
+
+^"sediment"{
+  #[checked_in_artifacts]{ deos-native-full-windows-x86_64.zip deos-thin-windows-arm64.zip }
+  ~#archives: "old-docs, docs-old, site-old-scavenge, ts-sdk.archived, a .docs-history dir of 135 entries — quarantined pasts, honestly named"
+  ~#paper_twin: "paper2 still claims content-of-record while paper/ IS the record — one small unreconciled shadow"
+}
+
+^"reading"{
+  ~#norm: "when work touches a shadow, give it a line in the crate map or a card in regions/ — shadows shrink by naming, the same way the horizon moves"
+}

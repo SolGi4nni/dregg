@@ -1305,7 +1305,11 @@ impl BlocklaceHandle {
     ///
     /// Returns all actionable finalized blocks (turns, membership votes, checkpoints).
     /// Ack and Data payloads are skipped as they need no consensus-level processing.
-    pub async fn poll_finalized_blocks(&self) -> Vec<FinalizedBlock> {
+    ///
+    /// `state` is the COMMITTED consensus state, read to project the tau participant
+    /// set from the agreed roster (`NodeState::ml_dsa_key_for`) rather than any
+    /// node-local key view — see the participant-projection block below (F-CO-1).
+    pub async fn poll_finalized_blocks(&self, state: &NodeState) -> Vec<FinalizedBlock> {
         // SNAPSHOT the lace and RELEASE the read lock immediately. The verified-Lean
         // tau-order FFI (`VerifiedFinality::compute_order`) and the finality-gate FFI
         // (`VerifiedFinality::compute`) below are O(history) and run on EVERY finality
@@ -1350,43 +1354,47 @@ impl BlocklaceHandle {
             );
         }
 
-        // ── HYBRID-ID PARTICIPANT PROJECTION (surface-3: no live path keys identity by raw ed25519) ──
+        // ── HYBRID-ID PARTICIPANT PROJECTION — FROM COMMITTED STATE, NEVER NODE-LOCAL KEY VIEW ──
         // The finality `Block::creator` is the HYBRID id `H(ed25519 ‖ ml_dsa)` (committed surface-3:
         // `dregg_types::hybrid_id_commitment` / `verify_committed_ml_dsa`), and the roster, tips,
         // finalization votes, and gossip `NodeId` are all keyed by it. The verified finalizer
-        // (`ordering::tau` / `VerifiedFinality::compute_order` / `compute`) identifies each wave's
-        // leader by MATCHING the participant set against each block's `creator`, so the participant
-        // set the executor projects consensus over MUST be keyed by the SAME hybrid id — NOT the raw
-        // ed25519 identity the constitution stores. (Feeding ed25519 keys here after the creator went
-        // hybrid makes every honest block's creator an unrecognized "extra" — no leader is ever
-        // matched and nothing finalizes.) Map each admitted ed25519 member to its hybrid id via the
-        // enrolled ML-DSA roster — the vote collector's `pq_committee`, the SAME genesis-published +
-        // self key set that pins block ingest (`receive_block_pinned`) and gates finalization quorum.
-        // A member whose ML-DSA key is not enrolled is DROPPED from the projection — fail-closed and
-        // consistent with the ingest pin (its hybrid-creator blocks could never be received, so it can
-        // neither lead nor finalize), never an ed25519-only downgrade. This closes the last live path
-        // that keyed the executor's participant set by raw ed25519; it now keys by the hybrid id the
-        // committed `creator == federation_id` roster does.
-        let participants: Vec<[u8; 32]> = {
-            let votes = self.votes.read().await;
-            admitted
-                .iter()
-                .filter_map(|ed25519| {
-                    votes.pq_key(ed25519).map(|ml_dsa| {
-                        dregg_blocklace::finality::Block::hybrid_id_from_parts(
-                            ed25519,
-                            &dregg_blocklace::pq::MlDsaPublicKey(ml_dsa.0),
-                        )
-                    })
-                })
-                .collect()
-        };
+        // (`ordering::tau` / `VerifiedFinality::compute_order` / `compute`) picks each wave's leader
+        // by MATCHING the participant set against each block's `creator` AND by the round-robin
+        // `participants[wave % n]` (Lean `waveLeader`) — so the finalized order is a pure function of
+        // the EXACT hybrid-id participant set and its length `n`. The set MUST therefore be keyed by
+        // the same hybrid id as `creator` (NOT the raw ed25519 the constitution stores), AND it MUST
+        // be BYTE-IDENTICAL on every honest node — or two honest nodes compute DIFFERENT leader
+        // schedules over the SAME lace and finalize DIVERGENT orders with no detection: a silent fork.
+        //
+        // CONSENSUS-SAFETY (F-CO-1 — cross-node tau participant-set divergence): each member's ML-DSA
+        // half is read from COMMITTED consensus state (`NodeState::ml_dsa_key_for` — the genesis-
+        // published, index-aligned `known_federation_keys`/`known_federation_ml_dsa_keys` roster),
+        // which is the SAME value on every node with the same genesis. It is DELIBERATELY NOT read
+        // from the vote collector's `pq_committee` (`votes.pq_key`): that map is NODE-LOCAL — a node
+        // self-inserts its OWN key and learns peers' keys piecemeal as they propagate — so projecting
+        // through it let a node that had learned a joined validator J's key project {A,B,C,J} (n=4)
+        // while a peer that had not projected {A,B,C} (n=3); both pass a bare non-degeneracy guard and
+        // run tau over DIFFERENT participant sets ⇒ different leaders ⇒ different finalized order ⇒
+        // fork. Sourcing the key from committed state makes this projection a deterministic function
+        // of committed state alone, so every honest node with the same finalized prefix projects the
+        // IDENTICAL set (and order). A member whose ML-DSA key is not in committed state is DROPPED
+        // here and the poll then FAILS CLOSED below (it does NOT silently order over a subset): an
+        // under-committed key stalls finality (liveness) rather than forking it (safety). Vote
+        // VERIFICATION legitimately still uses `votes.pq_key` (a node must learn a peer's key to check
+        // its vote) — set-MEMBERSHIP for the order is the only thing that must come from committed
+        // state. (Residual: a live-JOINED validator's key is not yet committed on-chain — the Join
+        // payload carries only its ed25519 key — so its key must be added to committed state, e.g.
+        // via genesis roster or an on-chain-key Join, before it can lead/finalize; until then every
+        // node deterministically halts rather than forking.)
+        let participants: Vec<[u8; 32]> = project_committed_participants(state, &admitted).await;
         if participants.len() != admitted.len() {
             warn!(
                 projected = participants.len(),
                 admitted = admitted.len(),
-                "hybrid-id participant projection dropped admitted members with no enrolled ML-DSA \
-                 key (fail-closed: their hybrid-creator blocks cannot be ingested or finalized)"
+                "hybrid-id participant projection dropped admitted current participants with no \
+                 COMMITTED ML-DSA key — finality will FAIL CLOSED this poll (halts rather than \
+                 ordering over a subset). Commit the missing member's ML-DSA key (genesis roster / \
+                 on-chain join); never a node-local key view (that would fork)."
             );
         }
 
@@ -1399,20 +1407,24 @@ impl BlocklaceHandle {
         // gate only ever admits the whole Lean order back) — halving the executor's
         // O(history) Lean work per poll, which is the dominant cost as the chain grows.
         let mut ordered_from_lean = false;
-        // CONSENSUS-SAFETY: the solo-vs-consensus decision keys on the RAW ADMITTED
-        // participant count — NOT the PQ-projected `participants` set. `participants`
-        // drops any admitted member whose ML-DSA key is not yet enrolled (a live-JOINED
-        // validator that never published its ML-DSA key — an acknowledged intended
-        // state), so a genuine n>=2 federation with any un-keyed member projects to <=1
-        // hybrid ids. Keying the solo shortcut on that projection would enter SOLO and
-        // finalize every actionable block in bare `seq` order with the quorum belt
-        // DISARMED (fail-OPEN) — and when the peer's PQ key is later learned and the node
-        // flips multi-party, those solo turns were never quorum-attested ⇒ divergence
-        // (the `TauPrefixMonotone` hazard). So: genuine solo (`admitted <= 1`) orders by
-        // seq; a genuine n>1 federation whose PQ committee is unconfigured for a live
-        // member (`admitted > 1` but projection <= 1) fails CLOSED — finalizes NOTHING
-        // this poll and warns; only a fully-projected n>1 committee runs the verified
-        // tau order.
+        // CONSENSUS-SAFETY (F-CO-1): the solo-vs-consensus decision keys on the RAW
+        // ADMITTED participant count (`admitted.len()`), and multi-party tau runs ONLY
+        // when the committed-state projection covers EVERY admitted participant
+        // (`participants.len() == admitted.len()`). Three arms:
+        //   * `admitted <= 1` → genuine solo: order by `seq` (no leader schedule, no
+        //     projection needed).
+        //   * `admitted > 1` but the projection dropped ≥1 admitted member (a current
+        //     participant with no COMMITTED ML-DSA key) → FAIL CLOSED, finalize NOTHING.
+        //     A node must NEVER order over a proper subset of the committed set: because
+        //     the projection is a function of committed state, every node that DOES order
+        //     uses the identical full set (identical tau leader schedule ⇒ identical
+        //     order), while a node missing any committed key HALTS (liveness) instead of
+        //     ordering over a smaller set that would diverge from a peer holding the full
+        //     set (safety). This strictly subsumes the old fail-open solo hole: an
+        //     `admitted > 1` federation whose projection collapses can never enter the
+        //     seq-only solo arm with the quorum belt disarmed (the `TauPrefixMonotone`
+        //     hazard) — nor run tau over a subset (the divergence hazard).
+        //   * projection covers all admitted → run the verified multi-party tau order.
         let ordered = if admitted.len() <= 1 {
             // Solo: all actionable blocks are ordered by sequence.
             let mut all_blocks: Vec<(u64, BlockId)> = lace
@@ -1428,23 +1440,23 @@ impl BlocklaceHandle {
                 .collect();
             all_blocks.sort_by_key(|(seq, _)| *seq);
             all_blocks.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
-        } else if participants.len() <= 1 {
-            // FAIL-CLOSED: a genuine n>1 federation (`admitted > 1`) whose hybrid-id
-            // projection collapsed to <=1 has one or more live members with no enrolled
-            // ML-DSA key. It CANNOT run the multi-party tau order (the projected
-            // participant set is degenerate), and it must NOT solo-finalize (that is the
-            // fail-open hole). Finalize NOTHING this poll and warn — finality HALTS until
-            // the committee's PQ keys are configured, which is the safe posture (a solo
-            // turn finalized here would never be quorum-attested once the node flips
-            // multi-party). Liveness is preserved: as soon as the peer PQ keys are
-            // learned, the projection fills and finalization resumes.
+        } else if participants.len() != admitted.len() {
+            // FAIL-CLOSED: at least one admitted CURRENT participant has no COMMITTED
+            // ML-DSA key, so its hybrid id — and thus the exact tau participant set and
+            // leader schedule — cannot be reconstructed the SAME on every node. Ordering
+            // over the surviving subset would diverge from any node that holds the full
+            // committed key set: a silent fork. Finalize NOTHING this poll and warn;
+            // finality HALTS until the missing member's ML-DSA key is committed (genesis
+            // roster / on-chain join), at which point every node's projection fills to the
+            // full agreed set and finalization resumes over ONE order. This also covers
+            // the degenerate `participants.len() <= 1` case (any drop below `admitted`).
             warn!(
                 admitted = admitted.len(),
                 projected = participants.len(),
-                "FAIL-CLOSED: a genuine n>1 federation projected to <=1 hybrid participants \
-                 (a live member's ML-DSA key is not enrolled) — HALTING finality this poll \
-                 rather than taking the fail-open solo shortcut. Configure the committee's \
-                 ML-DSA keys to resume multi-party finalization."
+                "FAIL-CLOSED: an admitted current participant has no COMMITTED ML-DSA key \
+                 (projected < admitted) — HALTING finality this poll rather than ordering \
+                 over a subset (which would fork against a node holding the full set). \
+                 Commit the missing ML-DSA key (genesis roster / on-chain join) to resume."
             );
             Vec::new()
         } else {
@@ -2330,6 +2342,33 @@ async fn pq_committee_for_participants(
         }
     }
     map
+}
+
+/// Project the canonical ed25519 participant set (`admitted`, from the committed
+/// constitution) to the HYBRID-id set tau orders over, reading each member's ML-DSA
+/// half from COMMITTED consensus state (`NodeState::ml_dsa_key_for`) — NEVER from
+/// node-local vote-collector knowledge (`votes.pq_key`).
+///
+/// This is the F-CO-1 fix boundary: the result is a deterministic function of
+/// `(admitted, committed roster)` alone — `votes` is not an input — so two honest
+/// nodes with the same committed roster but DIFFERENT per-node ML-DSA-key knowledge
+/// project the BYTE-IDENTICAL participant set (hence the identical tau leader
+/// schedule and finalized order). A member with no committed ML-DSA key is DROPPED;
+/// the caller MUST fail closed when the projection does not cover every admitted
+/// member (never order over a subset — see `poll_finalized_blocks`).
+async fn project_committed_participants(state: &NodeState, admitted: &[[u8; 32]]) -> Vec<[u8; 32]> {
+    let s = state.read().await;
+    admitted
+        .iter()
+        .filter_map(|ed25519| {
+            s.ml_dsa_key_for(ed25519).map(|ml_dsa| {
+                dregg_blocklace::finality::Block::hybrid_id_from_parts(
+                    ed25519,
+                    &dregg_blocklace::pq::MlDsaPublicKey(ml_dsa.0),
+                )
+            })
+        })
+        .collect()
 }
 
 pub async fn run_blocklace_sync(
@@ -4502,7 +4541,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             tokio::time::sleep(Duration::from_millis(150)).await;
 
             // Process all newly finalized blocks (turns, membership, checkpoints).
-            let finalized_blocks = handle.poll_finalized_blocks().await;
+            let finalized_blocks = handle.poll_finalized_blocks(&state).await;
 
             if finalized_blocks.is_empty() {
                 continue;

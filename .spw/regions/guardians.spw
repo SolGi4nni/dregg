@@ -1,0 +1,31 @@
+# Region: Guardians
+#
+# Summonable card for the crypto stratum. Its voice is uniform and honest:
+# spec-faithful REFERENCE, pinned to a Lean security framework, pre-audit,
+# NOT deployment-grade — the guardians never oversell the gate.
+
+#>spw_region_guardians
+#:region #!summonable
+
+^"specimens"{
+  hashrand: "post-quantum randomness beacon, hash-only commit-then-reveal; unbiasability reduced to HashCR in Lean; async liveness layer FLAGGED, not faked"
+  hermine: "lattice threshold signature, self-argued, hardened path with constant-time Gaussian sampler"
+  tanuki: "cited-proven 2-round reference — exists to benchmark hermine against"
+  traccoon: "cited-proven 3-round reference — the other calibration specimen"
+  xmvrf: "key-updatable hash-based VRF for leader sortition; fixes the uniqueness break of X-VRF; proofs in Lean"
+  pq_leaf: "dregg-pq, the ONE shared post-quantum leaf crate — hybridization routes through it"
+}
+
+^"epistemics"{
+  ~#pattern: "every implementation pins to metatheory/Dregg2/Crypto; cited proofs are marked CITED, self-argued proofs keep cited comparanda in the same repo"
+  @frameworks: ~"../../metatheory"
+  ~#honesty: "pre-audit and NOT deployment-grade appear in the crates' own descriptions — the valence map's honest floor"
+  ~#lane: "no_prequantum — no classical-only load-bearing crypto standing; ed25519∧ML-DSA, X25519+ML-KEM"
+}
+
+^"edge_posts"{
+  webauth: "capability forward-auth for the web edge — offline verdicts, stateless PoP login"
+  macaroon: "caveat chains; holding a capability = exhibiting the witness"
+  credentials: "issue, present, verify, revoke — lifted from bridge::present"
+  ~#poem_line: "guard we ourselves from the monstres at the gate; guardians"
+}

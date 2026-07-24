@@ -1,0 +1,30 @@
+# Region: Mesh
+#
+# Summonable card for consensus, transport, and the hosted-agent grain stack.
+
+#>spw_region_mesh
+#:region #!summonable
+
+^"consensus"{
+  blocklace: "the live consensus engine — a DAG for BFT with cordial dissemination"
+  federation_ghost: "the federation crate's own doc admits its BFT soul moved to blocklace; what remains is revocation attestation — yet four crates still depend on the ghost"
+  coord: "two-layer turn coordination — causal chaining plus atomic multi-party turns"
+  captp: "the capability transport for the federation; a MIXED trust model, executor-trusted sessions"
+}
+
+^"grain"{
+  @doc: ~"../../docs/THE-GRAIN.md"
+  commons: "the agent commons — an app store for shareable, pedigreed agents"
+  jail: "an OS-jailed subprocess agent body behind the AgentBrain seam"
+  turn_minter: "drives hosted-agent actions through real ToolGateway turns"
+  fork: "fork and branch-and-stitch a hosted agent grain's mind"
+  crown_weld: "grain-verify re-witnesses what a hosted agent did — including IN THE RENTER'S BROWSER via wasm"
+  ~#reading: "rentable, verifiable, forkable agent minds — the repo's quietest radical idea"
+}
+
+^"islands"{
+  fhegg: "the FHE dark-pool — untrusted solver emits a certificate a Lean-verified checker validates; stage two clears on TFHE ciphertexts, nobody decrypts the orders; fhegg-rtl is a Lean-to-Verilog spine, explicitly not yet the accelerator"
+  attested_dm: "proof-carrying narration, feeding the game region"
+  durable_workflow: "crash-resumable exactly-once metered execution"
+  ~#note: "fhegg links to nothing outside itself — a true island, and the newest horizon cluster"
+}

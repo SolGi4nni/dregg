@@ -1,0 +1,28 @@
+# Region: Kernel
+#
+# Summonable card for the verified core. One screen loads the region.
+
+#>spw_region_kernel
+#:region #!summonable
+
+^"substance"{
+  ~#cell: "the unit of isolation, holding four substances — value, state, authority, evidence — plus a program predicate over its own transitions"
+  ~#verbs: "create write move grant revoke shield/unshield lifecycle exercise — machine-checked minimal and complete; everything else is a cell-program pattern"
+  @verb_registry: ~"../../metatheory/Dregg2/Substrate/VerbRegistry.lean"
+  ~#turn: "an atomic capability-gated transition shaped as a forest of effects; delegation only attenuates, granted ≤ held"
+  ~#pred_algebra: "caveat, program, precondition, intent-demand — four guard polarities, one predicate language; the kernel checks the witness, never the caller's word"
+}
+
+^"execution"{
+  ~#executor: "execFullForestG compiled to libdregg_lean.a and linked into the node — not a model of the node, the function the node calls"
+  @ffi: ~"../../dregg-lean-ffi/src"
+  ~#memory: "every field projects onto one tagged address space; a verb's effect provably equals the fold of its memory trace — tampering makes the turn unprovable"
+  ~#witness_modes: "symbolic defers the witness, never the admission gates; collapse is the only path to a publishable receipt"
+  @collapse: ~"../../turn/src/collapse.rs"
+  @refinement: ~"../../metatheory/Dregg2/Spec/ExecRefinement.lean"
+}
+
+^"tension"{
+  ~#poem_line: "the kernel is a damn mess; not the semantics but the proofs"
+  ~#reading: "the semantics are settled algebra; the mess is carrier debt and the deployed-binary bridge — see trust map, honest_verification lane"
+}

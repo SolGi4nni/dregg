@@ -8,10 +8,21 @@
 #:topography #!router
 
 ^"projections"{
-  @strata: ~"./strata.spw"     // geology — what layers the mass deposits in
-  @lanes: ~"./lanes.spw"       // excavation — who is digging, where, and why
-  @trust: ~"./trust.spw"       // assurance — what is proven, assumed, owed
-  @valence: ~"./valence.spw"   // material — how each mass is changing
+  @strata: ~"./strata.spw"       // geology — what layers the mass deposits in
+  @lanes: ~"./lanes.spw"         // excavation — who is digging, where, and why
+  @trust: ~"./trust.spw"         // assurance — what is proven, assumed, owed
+  @valence: ~"./valence.spw"     // material — how each mass is changing
+  @laws: ~"./laws.spw"           // constitution — the ember-set non-negotiables
+  @horizon: ~"./horizon.spw"     // frontier — the named-follow-up burn-down
+  @praxis: ~"./praxis.spw"       // methodology — how the work actually works
+  @chronicle: ~"./chronicle.spw" // time — nine days that contain two months
+  @shadow: ~"./shadow.spw"       // undocumented mass — what the story omits
+}
+
+^"regions"{
+  ~#role: "summonable one-screen cards, one per territory — the projections say where and why; the regions say what"
+  #[cards]{ kernel metatheory guardians settlement deos mesh dreggnet intellect }
+  @dir: ~"../regions"
 }
 
 ^"discipline"{

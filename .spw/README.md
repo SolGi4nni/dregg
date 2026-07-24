@@ -9,9 +9,15 @@ names, strata, tensions, valences, wonder.
 Read order for a machine visitor:
 
 1. `root.spw` — the four-line poem-map. The whole repo in four operators.
-2. `topography/strata.spw` — the poem expanded into real directory families.
-3. `lenses/` — attentional substrates: each lens loads one region for ideation.
-4. `index.spw` — routing table; `shelves.spw` — `@root` aliases for navigation.
+2. `topography/polymap.spw` — the router of projections: strata (geology),
+   lanes (excavation), trust (assurance), valence (material), laws
+   (constitution), horizon (frontier), praxis (methodology), chronicle
+   (time), shadow (undocumented mass). Projections may disagree; that is
+   signal.
+3. `regions/` — summonable one-screen cards, one per territory: kernel,
+   metatheory, guardians, settlement, deos, mesh, dreggnet, intellect.
+4. `lenses/` — attentional substrates: each lens loads one region for ideation.
+5. `index.spw` — routing table; `shelves.spw` — `@root` aliases for navigation.
 
 The workbench is mounted at `_workbench/`. Sense loop from there:
 

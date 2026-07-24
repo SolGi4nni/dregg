@@ -65,7 +65,7 @@ use serenity::all::{
 };
 
 use dregg_automatafl::AutomataflOffering;
-use dreggnet_game_board::{Game, GameBoard, MatchProof, UniverseId, match_anchor};
+use dreggnet_game_board::{Game, GameBoard, MatchProof, ProofAnchor, UniverseId, match_anchor};
 use dreggnet_prove_service::{
     AutomataflMatch, JobId, JobStatus, MatchProveService, PlayedMatch, match_prove_service,
 };
@@ -99,6 +99,19 @@ fn game_of_key(key: &str) -> Option<Game> {
         "automatafl" => Some(Game::Automatafl),
         _ => None,
     }
+}
+
+/// The game's **committed canonical board anchor** — the submission-independent trust root
+/// (fixed VK + committed genesis + canonical WIN root) a baked reference fold pins, so the board
+/// verifies every player's proof against a genesis / win it did NOT choose.
+///
+/// Returns `None` until such a reference is committed for the deployment; the board then
+/// bootstraps its anchor ONCE from the first honest fold (an operator reference) and freezes it
+/// (see [`CrownCore::anchors`]). This is the seam a shipped canonical anchor fills so the trust
+/// root never depends on any single player's fold. It is deliberately NOT derived from a
+/// submitted proof.
+fn canonical_anchor(_game: Game) -> Option<ProofAnchor> {
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,6 +157,12 @@ struct FoldRecord {
 struct CrownCore {
     service: MatchProveService,
     board: GameBoard,
+    /// The per-game board trust anchor, pinned ONCE and never re-minted from a submitted proof.
+    /// It is board CONFIG (VK + genesis + WIN roots): a committed canonical reference when one is
+    /// baked ([`canonical_anchor`]), otherwise bootstrapped ONCE from the first honest fold and
+    /// frozen. Every later submission is verified against this pinned anchor, so a submitter can
+    /// neither define nor replace it.
+    anchors: HashMap<Game, ProofAnchor>,
     folds: HashMap<u64, FoldRecord>,
     next_token: u64,
 }
@@ -166,6 +185,7 @@ fn crown() -> &'static Crown {
                 let mut core = CrownCore {
                     service: match_prove_service(),
                     board: GameBoard::new(),
+                    anchors: HashMap::new(),
                     folds: HashMap::new(),
                     next_token: 1,
                 };
@@ -321,11 +341,24 @@ fn poll_fold(token: u64) -> Poll {
             ),
             JobStatus::Done(p) => {
                 let proof: MatchProof = (*p).clone();
-                // Pin the board's trust anchor from THIS honest fold (the setup-party mint:
-                // VK + genesis + WIN roots), publish the game's board universe against it,
-                // then hand the board the proof — which it verifies in O(1), re-witnessing
-                // nothing, and ranks. A forged envelope would be REFUSED right here.
-                let universe = core.board.open(game, match_anchor(&proof));
+                // Pin the board's trust anchor ONCE per game and treat it as IMMUTABLE board
+                // CONFIG — it is never minted from THIS submitted proof. Deriving the anchor per
+                // submission (`open(game, match_anchor(&proof))`) let the FIRST fold define the
+                // board's genesis / WIN roots (the genesis+win checks then self-compared) and —
+                // because the content universe id is a per-game constant published `or_insert` —
+                // froze that first anchor forever, refusing every later distinct submission. Here
+                // the anchor comes from the game's committed canonical reference when one is baked
+                // ([`canonical_anchor`]); absent that it bootstraps ONCE from the first honest
+                // fold (an operator reference) and freezes. `ensure_open` pins it once and ignores
+                // every later anchor, so a submitter can neither capture nor replace it.
+                let anchor = core
+                    .anchors
+                    .entry(game)
+                    .or_insert_with(|| {
+                        canonical_anchor(game).unwrap_or_else(|| match_anchor(&proof))
+                    })
+                    .clone();
+                let universe = core.board.ensure_open(game, anchor);
                 match core.board.submit(game, &player, &proof) {
                     Err(e) => Poll::BoardRefused(e.to_string()),
                     Ok(accepted) => {

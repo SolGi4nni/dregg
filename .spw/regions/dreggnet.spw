@@ -1,0 +1,40 @@
+# Region: Dreggnet
+#
+# Summonable card for the game world — verifiable play on the real substrate.
+# The house thesis: forgery is not against the rules, it is a refused turn.
+
+#>spw_region_dreggnet
+#:region #!summonable
+
+^"spines"{
+  offerings: "the Offering/Frontend traits — one core, every surface (web, telegram, wechat, discord) a thin frontend; ~22 crates hang off it"
+  catalog: "the ONE registrar of the offering portfolio, built to kill four silently-disagreeing per-frontend lists"
+  world_cell: "spween-dregg's WorldCell is the de-facto world substrate; each choice a turn, the playthrough un-retconnable"
+  saga: "exists purely to prove the feature crates compose — one Completion, one AssetId, threaded through everything"
+}
+
+^"currencies"{
+  completion: "the run currency — quest, cheevo, guild all consume the SAME verified completion"
+  asset_id: "the item currency — craft, trade, market move the SAME 32-byte lineage-carrying id"
+}
+
+^"verified_play"{
+  replay: "a leaderboard entry counts only if a stranger re-executes the seeded universe to the same WIN"
+  stark_board: "a match folds to ONE proof; moves never posted; verified O(1)"
+  fair_dice: "committed seeds; a legendary drop is a re-derivable 3% flex"
+  attested_dm: "every narration a receipted turn — authentic, well-formed, injection-free; structural, not un-jailbreakable"
+  lean_law: "the Descent's transition program is emitted from Lean; game laws are theorems in Dregg2/Games"
+}
+
+^"lore"{
+  @vision: ~"../../docs/vision/VISION-living-world.md"
+  ~#world: "Hoardlight; the Descent; Hearthspire; the Reliquary; seasons ride VK-epochs"
+  @dungeons: ~"../../attested-dm/dungeons"
+  ~#adventures: "hand-authored .dungeon files — the Clockwork Orchard, the Lantern of the Fen, the Venom Warren"
+}
+
+^"seams"{
+  ~#count_drift: "vision says 18 offerings live, catalog says 23 — a built-vs-catalog gap"
+  ~#two_worldcells: "attested-dm keeps an earlier toy WorldCell beside the real one"
+  ~#air_debt: "dregg-automatafl's Rust AIR is named debt awaiting the Foundry — the lanes map and the laws agree"
+}

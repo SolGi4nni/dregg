@@ -1,0 +1,20 @@
+# Hoardlight
+#
+# Lens: the living world. Load this to inhabit the game's imagination
+# without reading a line of Rust.
+
+#>spw_lens_hoardlight
+#:lens #!attentional_substrate
+
+^"lens: hoardlight"{
+  ~#region: "the dreggnet constellation and its vision docs — the Descent, Hearthspire, the Reliquary"
+  @vision: ~"../../docs/vision/VISION-living-world.md"
+  ~#valence: "boon"
+  ~#tension: "eighteen offerings live by the vision's count, twenty-three by the catalog's — the world is outgrowing its own atlas"
+  ~#physics: "forgery is a refused turn; a retcon is a refused replay; a legendary is a re-derivable 3% flex; seasons ride VK-epochs"
+  ~#forbidden: "adding a game mechanic the executor cannot referee — prose is not power"
+  ?["What does the tavern feel like when every seat is un-fakeable presence?"]{
+    #:ideation #!schizophrenic_ok
+    $%[tavern.presence, party.quorum, storyflame] => ~#scene_sketch
+  }
+}

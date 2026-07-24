@@ -1,0 +1,31 @@
+# Region: Deos
+#
+# Summonable card for the agentic desktop userlayer — the same proofs, lived in.
+
+#>spw_region_deos
+#:region #!summonable
+
+^"cockpit"{
+  starbridge_v2: "the native gpui master interface — a live verified ocap world, someday an seL4 component; the dependency hub of the whole userlayer"
+  web_surface: "the embedded web surface as a cap-confined cell — the WebViewDelegate IS the cap gate; a link is a capability; a fetch is a verified turn"
+  ~#apps: "30 starbridge apps, each a factory-born verified cell demonstrating one pattern — sealed auctions, agent mandates, escrow markets, councils, a rentable dregg computer"
+}
+
+^"dev_loop"{
+  zed: "a real code editor as a deos surface; deos-zed-full mounts the REAL Zed over a cell-ledger fs, feature-flagged dormant"
+  terminal: "a real terminal emulator rendered as a gpui view"
+  matrix: "native Matrix client core; deos-homeserver embeds a whole homeserver fork as the self-hosted membrane"
+  hermes: "the confined agent — every tool-call a cap-gated, metered, receipted turn through the ToolGateway"
+  js: "a deos-native JS scripting surface driving sovereign-cell applets via verified turns"
+  reflect: "cap-bounded attested reflection — crawl cells, build the ocap graph, project a per-viewer frustum"
+}
+
+^"below"{
+  ~#sel4: "protection domains — the executor PD is the firmament's heart embedding the Lean executor; a verifier PD checks STARKs on-device; m0-hello is the Robigalia v0 boot proof"
+  ~#firmament: "one (target, rights) handle, two backings — seL4 syscall or real dregg turn — the local-to-distributed cap gradation"
+}
+
+^"tension"{
+  ~#breadth: "twelve deos crates, most absent from the crate map — the userlayer grows faster than its own self-description"
+  ~#lane: "distributed_deos — the sovereign live image, across machines"
+}

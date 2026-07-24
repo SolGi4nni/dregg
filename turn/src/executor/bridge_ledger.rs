@@ -348,7 +348,17 @@ impl TurnExecutor {
                 .state
                 .get_field(LIVE_FIELD)
                 .expect("fixed slot 1 always present");
-            journal.record_set_field(req.ledger_cell, LIVE_FIELD as u64, Some(old_live));
+            // `set_field` nulls any stale commitment on this fixed slot, so a
+            // true-inverse rollback must restore the prior commitment +
+            // visibility (same class as `apply_set_field`); use the fixed-slot
+            // recorder.
+            journal.record_set_field_fixed(
+                req.ledger_cell,
+                LIVE_FIELD as u64,
+                Some(old_live),
+                cell.state.commitments[LIVE_FIELD],
+                cell.state.field_visibility[LIVE_FIELD],
+            );
             cell.state.set_field(LIVE_FIELD, encode_u64(new_live));
         }
 
@@ -457,7 +467,17 @@ impl TurnExecutor {
                 .state
                 .get_field(LOCKED_FIELD)
                 .expect("fixed slot 0 always present");
-            journal.record_set_field(req.ledger_cell, LOCKED_FIELD as u64, Some(old_locked));
+            // `set_field` nulls any stale commitment on this fixed slot, so a
+            // true-inverse rollback must restore the prior commitment +
+            // visibility (same class as `apply_set_field`); use the fixed-slot
+            // recorder.
+            journal.record_set_field_fixed(
+                req.ledger_cell,
+                LOCKED_FIELD as u64,
+                Some(old_locked),
+                cell.state.commitments[LOCKED_FIELD],
+                cell.state.field_visibility[LOCKED_FIELD],
+            );
             cell.state.set_field(LOCKED_FIELD, encode_u64(new_locked));
         }
 

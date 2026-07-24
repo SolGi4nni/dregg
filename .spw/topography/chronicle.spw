@@ -1,0 +1,36 @@
+# Chronicle
+#
+# Time projection, mined from git. Caveat first: the history is itself a
+# construction — all 1,583 commits carry commit-dates in a nine-day window
+# (July 15-23) because the repo was born as a fresh cut; author-dates reach
+# back to late May. The chronicle reads the nine days as they present.
+
+#>spw_chronicle
+#:topography #!time
+
+^"eras"{
+  fresh_cut: "07-15 — born as an honest snapshot; the first act is a numbered honesty sweep deleting known-false sentences"
+  destaling: "07-16/17 — peak volume; LAW #1 becomes a gate not prose; 166 stale files rewritten to truth by a 42-lane swarm; HOARDLIGHT vision opens"
+  lean_campaigns: "07-18/19 — automatafl legs proven; own claims REFUTED and fixed; grounded deep-reads of what was ACTUALLY built"
+  pq_hardening: "07-20/21 — the ★ milestone sigil appears; no-silent-fallback gates; fhegg FHE clearing lands"
+  keccak_and_retraction: "07-22 — the Keccak floor closed ★★★, SHAKE provably refines FIPS 202; the premature orb genesis import is retracted, 1,819 files"
+  axiom_clean: "07-23 — the last native_decide dies; certified optimizer finale, proven == measured; then: start .spw"
+}
+
+^"campaigns"{
+  vacuity: "~171 commits — assertions that cannot fail get made falsifiable"
+  teeth: "~142 — dormant checks armed until they bite; 4 bite, 4 are RED is a reportable state"
+  fri: "~140 — the low-degree floor, fold by fold; at Johnson it is FALSE is a finding, not a failure"
+  stark_kill: "~85 — the last first-party hand-authored circuit retired 07-16"
+  retraction: "~7 — including retracting a finding for naming another lane's transient"
+}
+
+^"voices"{
+  ~#sigils: "★/★★/★★★ grade proof milestones; ALLCAPS verbs — PROVEN, REFUTED, BITE, DOA — carry the affect"
+  ~#agents: "749 commits co-authored by Claude (Opus 4.8: 406, Fable 5: 343), plus codex; lanes and swarms reconciled by hand"
+  ~#tenderness: "the maintainer apologizes to the agents in sweep commits — sorry claudes — the repo's most human ligature"
+}
+
+^"lesson"{
+  ~#arc: "genesis overclaimed, was retracted in seven days, and the tree got stronger — the chronicle agrees with the lanes map: this repo metabolizes honesty"
+}
