@@ -1486,6 +1486,21 @@ impl BlocklaceHandle {
                 .filter_map(|ordering_id| id_map.get(&ordering_id).copied())
                 .collect();
 
+            // ── TWIN-DELETION (#8): the Rust `ordering::tau` twin must NEVER decide finality on a
+            // live full node. It may serve as the finalized order ONLY when there is no verified
+            // archive to route to at all (`!tau_order_available()` — a genuinely no-Lean build, which
+            // a full node is REFUSED to start on at `lib.rs`'s hard-check unless the operator opted
+            // in), OR the operator explicitly accepts unverified consensus
+            // (`DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, the same labeled-unaudited escape). Otherwise a
+            // poll whose verified `dregg_tau_order` FFI is unavailable / returns ERR / exceeds the
+            // per-poll budget FAILS CLOSED (finalizes NOTHING this poll and re-attempts on a later
+            // poll) rather than silently running the unverified twin — the same halt-not-fork posture
+            // the F-CO-1 committed-key projection above uses.
+            let allow_rust_fallback = rust_tau_fallback_allowed(
+                dregg_lean_ffi::tau_order_available(),
+                allow_unverified_consensus(),
+            );
+
             let order_gate_armed = crate::finality_gate::finality_gate_enabled();
             // Run the verified-Lean tau-order FFI on a BLOCKING thread (`spawn_blocking`), never inline
             // on this tokio worker. The verified ordering is O(history) and — even with the memoized
@@ -1603,18 +1618,41 @@ impl BlocklaceHandle {
                                 Some(order)
                             }
                             None => {
-                                // FFI unavailable (stale archive / ERR) or over-budget: use the
-                                // edge-faithful Rust `tau` order for this poll. Cache it under the
-                                // finality fingerprint so an identical next poll does not re-pay the
-                                // slow/failing FFI — SOUND because the topological `build_ordering_
-                                // blocklace` makes `rust_order == compute_order(lace)` on the same
-                                // lace. A `timed_out` fallback still re-attempts the FFI whenever
-                                // finality next moves (the fingerprint changes).
+                                // FFI unavailable (stale archive / ERR) or over-budget.
                                 let _ = timed_out;
-                                *self.last_order_fingerprint.write().await =
-                                    Some(order_fingerprint);
-                                *self.last_lean_order.write().await = Some(rust_order.clone());
-                                Some(rust_order.clone())
+                                if allow_rust_fallback {
+                                    // LABELED-UNAUDITED (no verified archive linked, or
+                                    // DREGG_ALLOW_UNVERIFIED_CONSENSUS=1): use the edge-faithful Rust
+                                    // `tau` order for this poll and cache it under the finality
+                                    // fingerprint so an identical next poll does not re-pay the
+                                    // slow/failing FFI — SOUND because the topological
+                                    // `build_ordering_blocklace` makes `rust_order ==
+                                    // compute_order(lace)` on the same lace. A `timed_out` fallback
+                                    // still re-attempts the FFI whenever finality next moves (the
+                                    // fingerprint changes).
+                                    *self.last_order_fingerprint.write().await =
+                                        Some(order_fingerprint);
+                                    *self.last_lean_order.write().await = Some(rust_order.clone());
+                                    Some(rust_order.clone())
+                                } else {
+                                    // FAIL CLOSED (#8): the verified `dregg_tau_order` export IS
+                                    // linked (this is a live full node) but this poll's FFI was
+                                    // unavailable / ERR / over-budget. NEVER run the unverified Rust
+                                    // twin as the live finalized order — finalize NOTHING this poll
+                                    // (a later in-budget / non-ERR poll produces the verified order).
+                                    // Do NOT cache: caching the Rust order would poison the cache with
+                                    // an unverified order a later hit would serve as authoritative.
+                                    warn!(
+                                        fingerprint = order_fingerprint,
+                                        "verified tau-order FFI unavailable/ERR/over-budget on a \
+                                         Lean-linked full node — FAILING CLOSED (finalize nothing this \
+                                         poll) rather than running the unverified Rust `ordering::tau` \
+                                         twin. A later poll re-attempts the verified order. Set \
+                                         DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to deliberately accept the \
+                                         Rust order, or raise DREGG_FINALITY_ORDER_TIMEOUT_MS."
+                                    );
+                                    None
+                                }
                             }
                         }
                     }
@@ -1668,16 +1706,37 @@ impl BlocklaceHandle {
                     lean_order
                 }
                 None => {
-                    if order_gate_armed {
+                    if allow_rust_fallback {
+                        // LABELED-UNAUDITED: no verified archive linked (a genuinely no-Lean build /
+                        // guest), or the operator set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1, or the
+                        // finality gate is disarmed (`DREGG_FINALITY_GATE=0`) on such a build. The
+                        // Rust `ordering::tau` order decides this poll.
+                        if order_gate_armed {
+                            warn!(
+                                "verified consensus order UNAVAILABLE (Lean archive missing \
+                                 `dregg_tau_order` or wire returned ERR) — FALLING BACK to the Rust \
+                                 `ordering::tau` order for this poll (labeled-unaudited: no verified \
+                                 archive linked or DREGG_ALLOW_UNVERIFIED_CONSENSUS set). Rebuild the \
+                                 node with the verified archive to make the verified rule authoritative."
+                            );
+                        }
+                        rust_order
+                    } else {
+                        // FAIL CLOSED (#8): a live full node with the verified `dregg_tau_order`
+                        // export linked has no verified order this poll (finality gate disarmed via
+                        // DREGG_FINALITY_GATE=0, or the FFI failed). NEVER run the unverified Rust
+                        // twin as the live finalized order — finalize NOTHING this poll. To run the
+                        // Rust ordering on a Lean-linked node, set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1
+                        // (a deliberate, labeled acceptance of unverified consensus).
                         warn!(
-                            "verified consensus order UNAVAILABLE (Lean archive missing \
-                             `dregg_tau_order` or wire returned ERR) — FALLING BACK to the Rust \
-                             `ordering::tau` order for this poll. Rebuild the node with the verified \
-                             archive (it splices Dregg2.Distributed.FinalityGate) to make the verified \
-                             rule authoritative."
+                            "no verified consensus order this poll on a Lean-linked full node \
+                             (finality gate disarmed or verified FFI failed) — FAILING CLOSED \
+                             (finalize nothing) rather than running the unverified Rust \
+                             `ordering::tau` twin. Set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to accept \
+                             the Rust order deliberately."
                         );
+                        Vec::new()
                     }
-                    rust_order
                 }
             }
         };
@@ -2133,6 +2192,32 @@ fn verified_order_ffi_timeout() -> Duration {
         .filter(|v| *v > 0)
         .unwrap_or(2500);
     Duration::from_millis(ms)
+}
+
+/// The `DREGG_ALLOW_UNVERIFIED_CONSENSUS` labeled-unaudited escape hatch (the SAME variable the
+/// startup marshal-only tripwire and the verified-consensus hard-check in `lib.rs` read). Running the
+/// un-verified Rust `ordering::tau` twin as the live finalized order is a DELIBERATE opt-in — this
+/// returns `true` only when the operator explicitly set the variable to a truthy value.
+fn allow_unverified_consensus() -> bool {
+    matches!(
+        std::env::var("DREGG_ALLOW_UNVERIFIED_CONSENSUS")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    )
+}
+
+/// TWIN-DELETION (#8): whether the Rust `ordering::tau` twin may serve as the live finalized order.
+///
+/// It is allowed ONLY when there is no verified `dregg_tau_order` archive to route to at all
+/// (`!tau_order_available` — a genuinely no-Lean build, on which a full node is REFUSED to start at
+/// the `lib.rs` verified-consensus hard-check unless the operator opted in), OR the operator
+/// explicitly accepts unverified consensus (`DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`). On a Lean-linked
+/// full node WITHOUT the escape it is FORBIDDEN — a poll with no verified order then FAILS CLOSED
+/// (finalizes nothing) instead of silently running the twin. So on the deployed verified-role node
+/// the Rust twin never decides finality.
+fn rust_tau_fallback_allowed(tau_order_available: bool, allow_unverified: bool) -> bool {
+    !tau_order_available || allow_unverified
 }
 
 /// Build a `dregg_blocklace::Blocklace` (the ordering-compatible type) from
@@ -11742,6 +11827,34 @@ mod tests {
             "a joined validator with no COMMITTED ML-DSA key must be dropped deterministically \
              (every node drops it identically) — leaving exactly the committed set"
         );
+    }
+
+    /// TWIN-DELETION (#8) FAIL-CLOSED: on a Lean-linked full node the Rust `ordering::tau` twin is
+    /// FORBIDDEN as the live finalized order — a poll with no verified order fails closed instead of
+    /// running it. The twin is allowed ONLY on a genuinely no-Lean build (no `dregg_tau_order` export,
+    /// which a full node is refused to start on) or under the explicit
+    /// `DREGG_ALLOW_UNVERIFIED_CONSENSUS` escape. This pins the exact gate `poll_finalized_blocks`
+    /// uses (`allow_rust_fallback`).
+    #[test]
+    fn rust_tau_twin_forbidden_on_verified_full_node() {
+        // Live verified-role node: the verified `dregg_tau_order` export IS linked, no escape.
+        assert!(
+            !rust_tau_fallback_allowed(true, false),
+            "the Rust ordering::tau twin must NEVER decide finality on a Lean-linked full node \
+             without the escape — the poll must fail closed"
+        );
+        // Deliberate opt-in to unverified consensus: the twin is a labeled fallback.
+        assert!(
+            rust_tau_fallback_allowed(true, true),
+            "DREGG_ALLOW_UNVERIFIED_CONSENSUS deliberately permits the Rust order as a labeled fallback"
+        );
+        // Genuinely no-Lean build (no verified order to route to): the Rust order is the honest
+        // decider (a full node is refused to start in this state unless it opted in).
+        assert!(
+            rust_tau_fallback_allowed(false, false),
+            "with no verified archive linked the Rust ordering::tau is the only decider available"
+        );
+        assert!(rust_tau_fallback_allowed(false, true));
     }
 
     /// F-CO-1 FALSIFIER (the fork the fix closes): two poll passes over the SAME lace

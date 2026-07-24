@@ -1768,6 +1768,18 @@ mod ffi {
         Err("Lean static lib not linked".into())
     }
 
+    // No-Lean stub for the verified cross-cell per-asset conservation decision (twin #1). The
+    // `#[cfg(lean_lib_present)]` module implements these over the archive; the guest/marshal-only
+    // build reports the export absent (⇒ `cross_cell_conserves_available()` is false and the
+    // conservation gate fails closed), mirroring `constraint_admits_present`/`lean_constraint_admits`.
+    pub fn cross_cell_conserves_present() -> bool {
+        false
+    }
+
+    pub fn lean_cross_cell_conserves(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
     pub fn fips204_verify_present() -> bool {
         false
     }

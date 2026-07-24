@@ -413,13 +413,111 @@ impl VoteCollector {
         if already {
             return RecordOutcome::AlreadyQuorum { distinct_votes };
         }
-        if distinct_votes >= self.quorum_threshold {
+        // TWIN-DELETION (#11): the AUTHORITATIVE consensus-attested decision is the VERIFIED
+        // finalization-quorum rule (`Dregg2.Distributed.FinalizationQuorum.quorumRoot` — a
+        // supermajority of DISTINCT signers agreeing on ONE finalized root, carried by the
+        // `quorum_no_conflict` safety theorem), routed through the proven
+        // `verified_finalization_quorum` export — NOT the bare `distinct_votes >= threshold` count,
+        // which ignores root agreement (the "attested on distinct count while ignoring root
+        // agreement" finding). `distinct_votes >= quorum_threshold` is a cheap NECESSARY pre-check
+        // (below it no single root can reach threshold), so the verified gate is queried only when a
+        // quorum could actually exist — no per-vote FFI below threshold.
+        if distinct_votes >= self.quorum_threshold && self.verified_quorum_reached(&vote.block_id) {
             self.attested.insert(vote.block_id);
             RecordOutcome::ReachedQuorum { distinct_votes }
         } else {
             RecordOutcome::Counted { distinct_votes }
         }
     }
+
+    /// Whether the VERIFIED finalization-quorum rule (`FinalizationQuorum.quorumRoot`) declares a
+    /// consensus quorum for `block_id` — a supermajority of distinct committee signers agreeing on
+    /// ONE finalized `merkle_root`. The block's already-deduped tally (first-write-wins per signer,
+    /// exactly `record`'s `or_insert`) is marshalled to the Lean wire and decided by the proven
+    /// `verified_finalization_quorum` export (`Ok(Some(root))` ⇒ quorum; `Ok(None)` ⇒ no quorum:
+    /// split roots or below threshold).
+    ///
+    /// FAIL-CLOSED / labeled-unaudited when the archive lacks the export (`Err`): the Rust
+    /// root-agreement sibling [`Self::assembled_quorum`] decides ONLY on a genuinely no-Lean build
+    /// (`!finalization_quorum_available()` — a full node is refused to start on this at the `lib.rs`
+    /// verified-consensus hard-check) or under the explicit `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`
+    /// escape; otherwise NO quorum is declared. On the deployed verified-role node the export is
+    /// present, so the bare-Rust twin never decides consensus attestation.
+    fn verified_quorum_reached(&self, block_id: &BlockId) -> bool {
+        let Some(wire) = self.marshal_quorum_wire(block_id) else {
+            return false;
+        };
+        match dregg_lean_ffi::distributed_ffi::verified_finalization_quorum(&wire) {
+            // The verified `quorumRoot` reached a supermajority on one root (consensus-attested).
+            Ok(Some(_root)) => true,
+            // The verified rule declined: below threshold, or votes split across roots (no fork
+            // attestation) — `quorum_no_conflict` guarantees at most one root can ever cross.
+            Ok(None) => false,
+            // Archive lacks the finalization-quorum export.
+            Err(_) => {
+                if quorum_rust_fallback_allowed(
+                    dregg_lean_ffi::distributed_ffi::finalization_quorum_available(),
+                    allow_unverified_consensus(),
+                ) {
+                    // Labeled-unaudited (no-Lean build / operator opt-in): the Rust root-agreement
+                    // sibling — the differential twin of `quorumRoot` — decides.
+                    self.assembled_quorum(block_id).is_some()
+                } else {
+                    // FAIL CLOSED on a live full node: no verified quorum decision ⇒ no attestation.
+                    false
+                }
+            }
+        }
+    }
+
+    /// Marshal `block_id`'s deduped tally to the verified-quorum wire
+    /// (`"n=<committee>;V=<signer>:<root>,..."`, the grammar `FinalizationQuorum.decodeQuorumWire`
+    /// mirrors). `n` is the committee size (the Lean gate derives `superMajority(n)` from it — the
+    /// SAME threshold `quorum_threshold` carries). Each distinct signer gets a unique wire id, and
+    /// roots are interned to ids by first appearance; the decision depends only on which signers share
+    /// a root (root EQUALITY), so any injective interning yields the identical verdict. `None` when
+    /// no votes are recorded for the block. The tally is already committee-filtered (non-members are
+    /// rejected in `record` before insertion) and deduped (first-write-wins per signer).
+    fn marshal_quorum_wire(&self, block_id: &BlockId) -> Option<String> {
+        let signers = self.votes.get(block_id)?;
+        let mut root_ids: HashMap<[u8; 32], u64> = HashMap::new();
+        let mut entries: Vec<String> = Vec::with_capacity(signers.len());
+        for (signer_id, (_voter, (_sig, root, _pq))) in signers.iter().enumerate() {
+            let next_root = root_ids.len() as u64;
+            let root_id = *root_ids.entry(*root).or_insert(next_root);
+            entries.push(format!("{signer_id}:{root_id}"));
+        }
+        Some(format!(
+            "n={};V={}",
+            self.committee.len(),
+            entries.join(",")
+        ))
+    }
+}
+
+/// The `DREGG_ALLOW_UNVERIFIED_CONSENSUS` labeled-unaudited escape (the SAME variable the node's
+/// startup marshal-only tripwire and verified-consensus hard-check read). Deciding the finalization
+/// quorum with the un-verified Rust `VoteCollector` tally instead of the proven `quorumRoot` is a
+/// DELIBERATE opt-in — `true` only when the operator set it to a truthy value.
+fn allow_unverified_consensus() -> bool {
+    matches!(
+        std::env::var("DREGG_ALLOW_UNVERIFIED_CONSENSUS")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    )
+}
+
+/// TWIN-DELETION (#11): whether the Rust `VoteCollector` root-agreement decision may stand in for the
+/// verified `quorumRoot` when the export is absent. Allowed ONLY on a genuinely no-Lean build
+/// (`!finalization_quorum_available` — a full node is refused to start in this state at the `lib.rs`
+/// hard-check unless opted in) OR under `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`. On a Lean-linked full
+/// node the export is present, so this path is unreachable and the verified gate always decides.
+fn quorum_rust_fallback_allowed(
+    finalization_quorum_available: bool,
+    allow_unverified: bool,
+) -> bool {
+    !finalization_quorum_available || allow_unverified
 }
 
 #[cfg(test)]
@@ -898,6 +996,78 @@ mod tests {
             col.record(&signed_vote(3, blk, FinalityLevel::Ordered, TEST_ROOT)),
             RecordOutcome::ReachedQuorum { distinct_votes: 3 }
         ));
+    }
+
+    /// TWIN-DELETION (#11) FAIL-CLOSED gate: on a Lean-linked full node the Rust `VoteCollector`
+    /// root-agreement twin is FORBIDDEN as the quorum decider (the verified `quorumRoot` export
+    /// decides); it stands in ONLY on a genuinely no-Lean build (no `dregg_finalization_quorum`
+    /// export, which a full node is refused to start on) or under the explicit
+    /// `DREGG_ALLOW_UNVERIFIED_CONSENSUS` escape. Pins the exact gate `record` uses on the no-export
+    /// branch.
+    #[test]
+    fn rust_quorum_twin_forbidden_on_verified_full_node() {
+        // Live verified-role node: the verified `dregg_finalization_quorum` export IS linked, no
+        // escape — the Rust twin must not decide, so a no-export branch would fail closed.
+        assert!(
+            !quorum_rust_fallback_allowed(true, false),
+            "the Rust VoteCollector quorum twin must NEVER decide consensus attestation on a \
+             Lean-linked full node without the escape"
+        );
+        // Deliberate opt-in: the Rust twin is a labeled fallback.
+        assert!(quorum_rust_fallback_allowed(true, true));
+        // Genuinely no-Lean build: the Rust root-agreement decision is the only decider available.
+        assert!(quorum_rust_fallback_allowed(false, false));
+        assert!(quorum_rust_fallback_allowed(false, true));
+    }
+
+    /// TWIN-DELETION (#11) — the LIVE `record()` decision now enforces ROOT AGREEMENT (the
+    /// `quorum_no_conflict` safety property `quorumRoot` proves), not the bare distinct-signer count.
+    /// Distinct signers split across two roots — enough distinct votes to clear the threshold count,
+    /// but NO single root reaching it — must NOT mark the block consensus-attested. Before the twin
+    /// deletion `record` marked attested on `distinct_votes >= threshold` alone (ignoring root
+    /// agreement); now the attested transition routes through the verified quorum rule (here, under
+    /// `no-lean-link`, its Rust root-agreement sibling), so the split does NOT attest and only a
+    /// genuine single-root supermajority does.
+    #[test]
+    fn record_requires_root_agreement_not_bare_distinct_count() {
+        // n=4, threshold superMajority(4) = 3.
+        let (committee, pq) = committee_of(&[1, 2, 3, 4]);
+        let quorum = dregg_blocklace::ordering::supermajority_threshold(4);
+        assert_eq!(quorum, 3);
+        let mut col = VoteCollector::new(committee, pq, quorum);
+        let blk = BlockId([0xC0; 32]);
+        let root_x = [0x11; 32];
+        let root_y = [0x22; 32];
+
+        // Three DISTINCT signers (>= threshold 3 by count) but SPLIT 2/1 across roots.
+        assert!(matches!(
+            col.record(&signed_vote(1, blk, FinalityLevel::Ordered, root_x)),
+            RecordOutcome::Counted { distinct_votes: 1 }
+        ));
+        assert!(matches!(
+            col.record(&signed_vote(2, blk, FinalityLevel::Ordered, root_x)),
+            RecordOutcome::Counted { distinct_votes: 2 }
+        ));
+        let split = col.record(&signed_vote(3, blk, FinalityLevel::Ordered, root_y));
+        assert_eq!(
+            split,
+            RecordOutcome::Counted { distinct_votes: 3 },
+            "3 distinct signers split 2/1 across roots must NOT reach quorum — no single root has a \
+             supermajority (the old bare-count `>= threshold` would have WRONGLY attested here)"
+        );
+        assert!(
+            !col.is_consensus_attested(&blk),
+            "root-split votes must never mark a block consensus-attested"
+        );
+
+        // A third signer AGREEING on root_x completes a genuine single-root supermajority.
+        let crossed = col.record(&signed_vote(4, blk, FinalityLevel::Ordered, root_x));
+        assert_eq!(
+            crossed,
+            RecordOutcome::ReachedQuorum { distinct_votes: 4 },
+            "three distinct signers agreeing on ONE root (root_x) is the verified quorum"
+        );
+        assert!(col.is_consensus_attested(&blk));
     }
 
     /// PIECE-2B — THE NO-DRIFT DIFFERENTIAL. The Rust `VoteCollector`'s quorum

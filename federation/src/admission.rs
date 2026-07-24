@@ -296,12 +296,15 @@ impl AdmissionRegistry {
         self.vouched_by(strand) >= self.vouch_threshold
     }
 
-    /// The PURE-RUST hybrid admission gate — the DIFFERENTIAL SIBLING of the verified Lean rule.
+    /// The PURE-RUST hybrid admission gate — the DIFFERENTIAL SIBLING of the verified Lean rule,
+    /// retained ONLY under `cfg(test)` so it is cross-checked against `StrandAdmission.admitted`
+    /// (the in-crate F-4 differential tests) and can NEVER decide on a live path.
     ///
     /// `admitted = is_seed ∨ vouched_to_threshold ∨ has_valid_bond` — the exact Lean
-    /// `StrandAdmission.admitted`. This is `dreggrs`'s Rust heritage gate: it is kept as the
-    /// differential reference (Lean == Rust on the same registry) and as the fallback when the Lean
-    /// archive is not linked. [`Self::admitted`] prefers the VERIFIED Lean export when available.
+    /// `StrandAdmission.admitted`. This was `dreggrs`'s Rust heritage gate and the old live fallback;
+    /// the twin-deletion removed it from the live path ([`Self::admitted`] now FAILS CLOSED to
+    /// seeds-only when the verified export is absent, never running this sibling).
+    #[cfg(test)]
     pub fn admitted_rust(&self, strand: &StrandId) -> bool {
         self.is_seed(strand) || self.vouched_to_threshold(strand) || self.has_valid_bond(strand)
     }
@@ -309,19 +312,40 @@ impl AdmissionRegistry {
     /// **THE HYBRID ADMISSION GATE (F-4).** A strand is admitted iff it is a seed, OR it is bonded
     /// (stake path), OR it is vouched to threshold by rooted members (vouch path).
     ///
-    /// On every native build (Lean unconditional), when the Lean archive exports `dregg_strand_admit`,
-    /// this routes the verdict through the VERIFIED Lean rule
-    /// `Dregg2.Distributed.StrandAdmission.admitted` (the `dregg_strand_admit` export): the F-4 gate
-    /// the federation runs IS the verified gate, carried by the Lean theorem `strand_admit_eq_admitted`
-    /// (the export's `"1"`/`"0"` is definitionally the verified `admitted`). When the archive is
-    /// absent (marshal-only / wasm build) it FAILS BACK to the pure-Rust [`Self::admitted_rust`] — so
-    /// the gate is never broken, only un-verified. The Rust path remains the differential sibling.
+    /// The AUTHORITATIVE verdict is the VERIFIED Lean rule
+    /// `Dregg2.Distributed.StrandAdmission.admitted` (the `dregg_strand_admit` export), routed through
+    /// the [`crate::verified_gate`] seam: the F-4 gate the federation runs IS the verified gate,
+    /// carried by the Lean theorem `strand_admit_eq_admitted` (the export's `"1"`/`"0"` is
+    /// definitionally the verified `admitted`).
+    ///
+    /// When no verified gate is registered (a native node that never installed the `dregg-exec-lean`
+    /// gate, or an archive lacking the export) the live path FAILS CLOSED via [`Self::admitted_no_gate`]
+    /// — only genesis SEEDS are admitted; a non-seed with vouch/bond standing is REJECTED rather than
+    /// silently running an unverified Rust decider. A production node MUST install the gate; refusing
+    /// non-seed admission is the safe verdict when it is absent.
     pub fn admitted(&self, strand: &StrandId) -> bool {
         if let Some(verdict) = self.lean_admitted(strand) {
             return verdict;
         }
-        // No verified gate registered / archive missing the export ⇒ fall through to the Rust gate
-        // (never break the live path).
+        self.admitted_no_gate(strand)
+    }
+
+    /// The live-path disposition when the verified strand-admission gate is unavailable: FAIL CLOSED.
+    /// Only SEEDS (the bootstrap trust root, admitted by construction — a local, deterministic check
+    /// that needs no Lean) are admitted; a non-seed with vouch/bond standing is REJECTED rather than
+    /// trusting the un-verified Rust computation. This is the deployed node's path (`dregg-exec-lean`
+    /// registers the gate at startup, so a missing verdict means a stale archive → fail closed).
+    #[cfg(not(test))]
+    fn admitted_no_gate(&self, strand: &StrandId) -> bool {
+        self.is_seed(strand)
+    }
+
+    /// `cfg(test)` differential builds keep the native sibling reachable so the in-crate F-4 tests
+    /// cross-check `admitted` against [`Self::admitted_rust`]. It is NOT on any live (release/consumer)
+    /// path — the integration test `tests/twin_fail_closed.rs` (compiled without `cfg(test)`) asserts
+    /// the release path fails closed.
+    #[cfg(test)]
+    fn admitted_no_gate(&self, strand: &StrandId) -> bool {
         self.admitted_rust(strand)
     }
 
@@ -329,10 +353,10 @@ impl AdmissionRegistry {
     /// pubkeys to the small `AuthorId` indices the Lean wire uses (the same interning discipline the
     /// finality gate applies), builds the wire `StrandAdmission.encodeAdmitWire` mirrors, calls the
     /// `dregg_strand_admit` export, and decodes the `"1"`/`"0"` verdict. Returns `None` when the
-    /// archive lacks the export (so [`Self::admitted`] falls back to the Rust gate); a malformed wire
-    /// (`ERR`) decodes fail-closed to `Some(false)` — the verified rule's "not admitted". Routes
-    /// through the [`crate::verified_gate`] seam; returns `None` when no verified gate is registered
-    /// (every FFI-free target).
+    /// archive lacks the export (so [`Self::admitted`] fails closed to seeds-only via
+    /// [`Self::admitted_no_gate`]); a malformed wire (`ERR`) decodes fail-closed to `Some(false)` — the
+    /// verified rule's "not admitted". Routes through the [`crate::verified_gate`] seam; returns `None`
+    /// when no verified gate is registered (every FFI-free target).
     fn lean_admitted(&self, strand: &StrandId) -> Option<bool> {
         let gate = crate::verified_gate::gate()?;
         if !gate.strand_admit_available() {

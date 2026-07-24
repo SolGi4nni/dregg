@@ -1694,35 +1694,52 @@ async fn run_node(
     // deliberately accepts the un-verified Rust ordering proceed (e.g. a dev box with
     // a marshal-only archive). It is opt-IN — the default for a full-mode node is to
     // refuse.
-    if !is_solo_mode && !dregg_lean_ffi::tau_order_available() {
+    // The full-mode consensus role needs BOTH verified exports: `dregg_tau_order` (the finalized
+    // ORDER, twin #8) AND `dregg_finalization_quorum` (the consensus-attested QUORUM decision,
+    // twin #11). They are co-located in `Dregg2.Distributed.FinalityGate` (present together), but are
+    // probed independently so a future split cannot silently route a live node onto the un-verified
+    // Rust `VoteCollector` quorum twin. Requiring both here is what makes the per-vote quorum fallback
+    // in `finalization_votes::record` unreachable on a live full node (the export is always present),
+    // so the Rust `distinct_votes >= threshold` twin never decides consensus attestation.
+    let consensus_exports_linked = dregg_lean_ffi::tau_order_available()
+        && dregg_lean_ffi::distributed_ffi::finalization_quorum_available();
+    if !is_solo_mode && !consensus_exports_linked {
         // Reuses the `allow_unverified` escape hatch parsed above (the same
         // DREGG_ALLOW_UNVERIFIED_CONSENSUS variable governs both gates).
         if allow_unverified {
             tracing::warn!(
+                tau_order = dregg_lean_ffi::tau_order_available(),
+                finalization_quorum =
+                    dregg_lean_ffi::distributed_ffi::finalization_quorum_available(),
                 "VERIFIED-CONSENSUS HARD-CHECK OVERRIDDEN: this node is in FULL (multi-party BFT) \
-                 mode but the Lean verified-consensus archive is NOT linked (`dregg_tau_order` \
-                 absent). DREGG_ALLOW_UNVERIFIED_CONSENSUS is set, so the node will proceed on the \
-                 UN-VERIFIED Rust `ordering::tau` — its finality is NOT shadowed by the verified \
-                 rule. Do not use this in a federation that expects verified consensus."
+                 mode but the Lean verified-consensus archive is NOT fully linked (`dregg_tau_order` \
+                 and/or `dregg_finalization_quorum` absent). DREGG_ALLOW_UNVERIFIED_CONSENSUS is set, \
+                 so the node will proceed on the UN-VERIFIED Rust `ordering::tau` / `VoteCollector` \
+                 twins — its finality is NOT shadowed by the verified rule. Do not use this in a \
+                 federation that expects verified consensus."
             );
         } else {
             error!(
+                tau_order = dregg_lean_ffi::tau_order_available(),
+                finalization_quorum =
+                    dregg_lean_ffi::distributed_ffi::finalization_quorum_available(),
                 "REFUSING TO START: this node is configured for VERIFIED consensus (federation \
                  mode FULL — multi-party BFT finality), but the Lean verified-consensus archive is \
-                 not linked: `dregg_lean_ffi::tau_order_available()` is false (the build lacks the \
-                 `dregg_tau_order` export, e.g. a marshal-only / stale archive). A verified-role \
-                 node MUST NOT silently fall back to the un-verified Rust ordering. Rebuild the \
-                 node against the closure-complete verified archive (it splices \
-                 Dregg2.Distributed.FinalityGate), run this node in `--federation-mode solo` if it \
-                 is not meant to finalize, or set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to explicitly \
-                 accept un-verified ordering."
+                 not fully linked: `dregg_tau_order` (finalized order) and/or \
+                 `dregg_finalization_quorum` (consensus-attested quorum) is absent (e.g. a \
+                 marshal-only / stale archive). A verified-role node MUST NOT silently fall back to \
+                 the un-verified Rust ordering / quorum twins. Rebuild the node against the \
+                 closure-complete verified archive (it splices Dregg2.Distributed.FinalityGate), run \
+                 this node in `--federation-mode solo` if it is not meant to finalize, or set \
+                 DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to explicitly accept un-verified consensus."
             );
             std::process::exit(1);
         }
     } else if !is_solo_mode {
         info!(
-            "verified-consensus hard-check passed: the Lean `dregg_tau_order` archive is linked — \
-             this full-mode node finalizes over the VERIFIED ordering rule"
+            "verified-consensus hard-check passed: the Lean `dregg_tau_order` + \
+             `dregg_finalization_quorum` archive is linked — this full-mode node finalizes over the \
+             VERIFIED ordering + quorum rules"
         );
     }
 
