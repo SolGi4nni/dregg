@@ -37,15 +37,30 @@ discipline (`SortedKeys`) keeps the entry list canonical, so the heap MEANING (`
 — only the COMMITMENT FUNCTION moves from the flat sponge to the binary fold. The named CR floor is the
 SAME `Poseidon2SpongeCR`, now used at the 2-to-1 node (`mapNode`) and the leaf (`leafOf`).
 
+## ⚑ The exported §5b binding is a REDUCTION on the keyed-ROM floor (07-24)
+
+The §5b `…_binds_or_collides` forms are DEMOTED to exact-Prop skeletons: a bare
+`binds ∨ Coll8 (extracted pair)` quantifies over SOLUTIONS, and at deployed BabyBear parameters a
+chip collision EXISTS by pigeonhole (`VacuitySweepTeeth.compress8CR_false_babyBear`), so each
+disjunction is satisfiable through the collides branch with `binds` never holding.  Cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES.  The exported binding of the depth-`d` heap tree
+is §RomSuccessor's `heapTreeRoot_binds_rom`: the whole-tree equivocation is a first-class
+`RomForgery` at a SAMPLED role-keyed oracle, the extractor RE-WALKS both trees as an oracle
+program (`heapFindComp`, `2^(d+2) − 2` queries, additive accounting), and the floor is
+`KeyedRomFloor.keyedRom_hard` — the birthday bound, a THEOREM.  The skeletons are RETAINED (not
+deleted) because `Deos.DocSubstrateSound` still consumes them one layer up (its two composition
+theorems are the next repoint site of this class); the reduction consumes NONE of them.
+
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Crypto
 enters ONLY as the named `Poseidon2SpongeCR` floor (at the node + leaf), the SAME floor the whole
-commitment tower carries. NEW file; imports read-only.
+commitment tower carries — and, in §RomSuccessor, as the PROVED keyed-ROM floor.
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.DeployedHeapTree
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Circuit.MapMerkleRoot
 
@@ -507,7 +522,12 @@ a total extractor hands back, and it is REFUTABLE (`mapRootColl_refutable_of_inj
 def MapRootColl (d : Nat) (h₁ h₂ : Heap.FeltHeap) : Prop :=
   Coll8 S8.chipAbsorb8 (mapRoot8Find S8 d h₁ h₂)
 
-/-- **⚑ THE 8-FELT ROOT BINDS THE WHOLE HEAP, UNCONDITIONAL** (replaces `mapRoot8_injective`). Two
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE BINDING ANY MORE (see §RomSuccessor's
+`heapTreeRoot_binds_rom`).** At deployed parameters a chip collision EXISTS by pigeonhole, so this
+disjunction is satisfiable through the collides branch; the exported binding is the keyed-ROM
+reduction.  Retained because `Deos.DocSubstrateSound` consumes it (the next repoint site).
+
+(Replaces `mapRoot8_injective`.) Two
 depth-`d` `2^d`-leaf heaps publishing the SAME 8-felt root are EITHER the same heap, OR the deployed chip
 genuinely collides at the two blocks `mapRoot8Find` hands back.
 
@@ -650,6 +670,370 @@ theorem writesToMerkle8_functional_of_injective (hCR : Compress8CR S8.chipAbsorb
 
 end Faithful8
 
+/-! ## ⚑ §RomSuccessor — the depth-`d` tree binding, DISCHARGED on the PROVED keyed-ROM floor.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)**, the `RomCarrierSites` discipline:
+
+  * the sampled `H : Role × Msg → Fin (2 ^ l)` idealises the deployed arity-16 `node8` chip at an
+    ASYMPTOTIC digest width — there is NO `l` at which `Fin (2 ^ l)` is the deployed 8-felt
+    (~124-bit) digest;
+  * the message domain is the TRUNCATED deployed absorb schedule: the linked arity-3 IMT leaf
+    block `(addr, value, next)` at BabyBear range (`HeapLeaf::digest8`), and the two-child node
+    block (a pair of digests — `heap_root.rs`'s `hash_fact(l, [r])` fold node), domain-separated
+    by the ROLE key where the deployed chip separates by absorb arity (3 vs 16 felts);
+  * the tree SHAPE is the deployed one: the bottom-up adjacent-pair fold of `perfectRoot8` IS the
+    top-down contiguous-halves recursion `romFold` (level-`k` node `j` covers leaves
+    `j·2^k … (j+1)·2^k − 1` in both presentations).
+
+The forger equivocates the WHOLE `2^d`-leaf tree; the extractor RE-WALKS both trees as an oracle
+program (`heapFindComp` — the ROM successor of the total extractor `mapRoot8Find`), paying
+`2^(d+2) − 2` queries with ADDITIVE accounting, and names the shallowest layer at which the two
+trees' absorbed blocks differ.  Every case is a win of ONE carrier at the sampled oracle;
+`romCarrier_binds` (hence `keyedRom_hard`, the birthday bound) kills it.  What this section does
+NOT carry: the ℤ-heap range bridge (`linkHeap` payloads are in-range felts on every deployed
+heap) stays at the fixed-hash layer above — the ROM payload is the truncated linked-leaf
+schedule itself. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv gameAdv_mem_unit)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomCarrierSites
+
+/-- The two deployed absorb roles: the arity-3 linked leaf and the arity-16 two-child node. -/
+abbrev HeapRole : Type := Fin 2
+
+/-- The leaf role (`HeapLeaf::digest8`'s absorb). -/
+def heapLeafRole : HeapRole := 0
+/-- The node role (`hash_fact(l, [r])`'s absorb). -/
+def heapNodeRole : HeapRole := 1
+
+/-- The truncated linked IMT leaf block: `(addr, value, next_addr)`, three BabyBear-range felts. -/
+abbrev HeapLeafBlock : Type := Fin babyBearP × Fin babyBearP × Fin babyBearP
+
+/-- **THE ORACLE MESSAGE DOMAIN** — a linked leaf block or a two-child node block. -/
+abbrev HeapRomMsg (l : ℕ) : Type := HeapLeafBlock ⊕ (Fin (2 ^ l) × Fin (2 ^ l))
+
+/-- **THE HEAP-TREE KEYED ROM FAMILY** — keyed by the two deployed roles. -/
+def heapRomFamily : KeyedRomFamily :=
+  flatFamily HeapRole inferInstance inferInstance ⟨0⟩ HeapRomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩)⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem heapRomFamily_card_R (l : ℕ) :
+    letI := heapRomFamily.rFin l
+    Fintype.card (heapRomFamily.R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE TREE CARRIER** — the identity carrier over the tree's own message shape, role in the
+context: every tree layer's equivocation is a win of THIS carrier at its role. -/
+def heapRomCarrier : RomCarrier heapRomFamily :=
+  taggedCarrier _ (fun _ => Unit) (fun l => HeapRomMsg l)
+    (fun _ => inferInstance)
+    (fun _ _ v => v)
+    (fun _ _ _ _ h => h)
+
+/-- The left-half embedding of leaf positions (level split, contiguous halves). -/
+def finL (n : ℕ) (i : Fin (2 ^ n)) : Fin (2 ^ (n + 1)) :=
+  ⟨i.val, by have h := i.isLt; rw [pow_succ]; omega⟩
+
+/-- The right-half embedding of leaf positions. -/
+def finR (n : ℕ) (i : Fin (2 ^ n)) : Fin (2 ^ (n + 1)) :=
+  ⟨2 ^ n + i.val, by have h := i.isLt; rw [pow_succ]; omega⟩
+
+/-- A `2^(n+1)`-vector is determined by its two contiguous halves. -/
+theorem halves_ext {n : ℕ} {α : Type} {u v : Fin (2 ^ (n + 1)) → α}
+    (hL : (fun i => u (finL n i)) = (fun i => v (finL n i)))
+    (hR : (fun i => u (finR n i)) = (fun i => v (finR n i))) : u = v := by
+  funext i
+  by_cases h : i.val < 2 ^ n
+  · have hi : finL n ⟨i.val, h⟩ = i := Fin.val_injective rfl
+    have := congrFun hL ⟨i.val, h⟩
+    simpa [hi] using this
+  · have hle : 2 ^ n ≤ i.val := Nat.le_of_not_lt h
+    have hlt : i.val - 2 ^ n < 2 ^ n := by
+      have h2 : i.val < 2 ^ (n + 1) := i.isLt
+      have h3 : (2 : ℕ) ^ (n + 1) = 2 * 2 ^ n := by rw [pow_succ]; ring
+      omega
+    have hi : finR n ⟨i.val - 2 ^ n, hlt⟩ = i := by
+      apply Fin.val_injective
+      show 2 ^ n + (i.val - 2 ^ n) = i.val
+      omega
+    have := congrFun hR ⟨i.val - 2 ^ n, hlt⟩
+    simpa [hi] using this
+
+/-- **THE PERFECT-TREE FOLD AT THE SAMPLED ORACLE** — contiguous-halves recursion; the deployed
+`perfectRoot8` tree shape (`foldLevel8`'s bottom-up adjacent pairing folds exactly this tree). -/
+def romFold (l : ℕ) (H : HeapRole × HeapRomMsg l → Fin (2 ^ l)) :
+    (n : ℕ) → (Fin (2 ^ n) → Fin (2 ^ l)) → Fin (2 ^ l)
+  | 0, v => v ⟨0, by positivity⟩
+  | n + 1, v =>
+      H (heapNodeRole, Sum.inr
+        (romFold l H n (fun i => v (finL n i)), romFold l H n (fun i => v (finR n i))))
+
+/-- **THE DEPLOYED HEAP ROOT AT THE SAMPLED ORACLE** — digest each linked leaf block at the leaf
+role, fold the perfect node tree.  The ROM restatement of `mapRoot8`. -/
+def romHeapRoot (l : ℕ) (H : HeapRole × HeapRomMsg l → Fin (2 ^ l)) (d : ℕ)
+    (b : Fin (2 ^ d) → HeapLeafBlock) : Fin (2 ^ l) :=
+  romFold l H d (fun i => H (heapLeafRole, Sum.inl (b i)))
+
+/-- **THE TREE-WALK SELECTION (pure)** — the ROM successor of the total extractor `mapRoot8Find`:
+descend from the root, at each level naming the shallowest absorbed-block disagreement.  Pure —
+`heapFindComp` below pays its queries. -/
+def heapFindSpec (l : ℕ) (H : HeapRole × HeapRomMsg l → Fin (2 ^ l)) :
+    (n : ℕ) → (bu bv : Fin (2 ^ n) → HeapLeafBlock) →
+      (HeapRole × Unit) × HeapRomMsg l × HeapRomMsg l
+  | 0, bu, bv =>
+      ((heapLeafRole, ()), Sum.inl (bu ⟨0, by positivity⟩), Sum.inl (bv ⟨0, by positivity⟩))
+  | n + 1, bu, bv =>
+      if ((romHeapRoot l H n (fun i => bu (finL n i)), romHeapRoot l H n (fun i => bu (finR n i)))
+          : Fin (2 ^ l) × Fin (2 ^ l))
+        ≠ (romHeapRoot l H n (fun i => bv (finL n i)), romHeapRoot l H n (fun i => bv (finR n i)))
+      then ((heapNodeRole, ()),
+        Sum.inr (romHeapRoot l H n (fun i => bu (finL n i)),
+                 romHeapRoot l H n (fun i => bu (finR n i))),
+        Sum.inr (romHeapRoot l H n (fun i => bv (finL n i)),
+                 romHeapRoot l H n (fun i => bv (finR n i))))
+      else if (fun i => bu (finL n i)) ≠ (fun i => bv (finL n i))
+      then heapFindSpec l H n (fun i => bu (finL n i)) (fun i => bv (finL n i))
+      else heapFindSpec l H n (fun i => bu (finR n i)) (fun i => bv (finR n i))
+
+/-- **⚑ THE WALK WINS** — two DISTINCT leaf-block vectors with ONE tree root at the sampled
+oracle: whatever the selection names is a genuine carrier equivocation.  The win-preservation
+core, by induction on the depth: the root absorbs differ (a node-role win through the shared
+root), or they agree and a half with differing blocks recurses through its shared sub-root, until
+a single differing leaf block wins at the leaf role through its shared leaf digest. -/
+theorem heapFindSpec_wins (l : ℕ) (H : HeapRole × HeapRomMsg l → Fin (2 ^ l)) :
+    ∀ (n : ℕ) (bu bv : Fin (2 ^ n) → HeapLeafBlock), bu ≠ bv →
+      romHeapRoot l H n bu = romHeapRoot l H n bv →
+      (romCarrierGame heapRomFamily heapRomCarrier).wins l H (heapFindSpec l H n bu bv) := by
+  intro n
+  induction n with
+  | zero =>
+      intro bu bv hne hroot
+      have hb : bu ⟨0, by positivity⟩ ≠ bv ⟨0, by positivity⟩ := by
+        intro hc
+        apply hne
+        funext i
+        have h1 : (2 : ℕ) ^ 0 = 1 := pow_zero 2
+        have hi : i = ⟨0, by positivity⟩ := by
+          apply Fin.val_injective
+          have := i.isLt
+          omega
+        rw [hi]
+        exact hc
+      exact ⟨fun hc => hb (Sum.inl_injective hc), hroot⟩
+  | succ n ih =>
+      intro bu bv hne hroot
+      unfold heapFindSpec
+      split_ifs with hT hL
+      · -- the two root absorbs DIFFER under the shared root digest.
+        exact ⟨fun hc => hT (Sum.inr_injective hc), hroot⟩
+      · -- left halves differ under the shared left sub-root.
+        exact ih _ _ hL (congrArg Prod.fst (not_not.mp hT))
+      · -- left halves agree, so the right halves must differ, under the shared right sub-root.
+        have hR : (fun i => bu (finR n i)) ≠ (fun i => bv (finR n i)) := by
+          intro hc
+          exact hne (halves_ext (not_not.mp hL) hc)
+        exact ih _ _ hR (congrArg Prod.snd (not_not.mp hT))
+
+/-- **THE WALK, AS AN ORACLE PROGRAM** — re-derive every leaf digest and node digest of BOTH
+trees by querying the sampled oracle (`2^(n+2) − 2` queries), returning the two roots and the
+selection.  This is what prices the extraction: the walk is not free, and its cost is counted. -/
+def heapFindComp (l : ℕ) :
+    (n : ℕ) → (bu bv : Fin (2 ^ n) → HeapLeafBlock) →
+      OracleComp (heapRomFamily.toRomFamily.D l) (heapRomFamily.toRomFamily.R l)
+        (Fin (2 ^ l) × Fin (2 ^ l) × ((HeapRole × Unit) × HeapRomMsg l × HeapRomMsg l))
+  | 0, bu, bv =>
+      OracleComp.query (heapLeafRole, Sum.inl (bu ⟨0, by positivity⟩)) (fun du =>
+      OracleComp.query (heapLeafRole, Sum.inl (bv ⟨0, by positivity⟩)) (fun dv =>
+      OracleComp.pure (du, dv,
+        ((heapLeafRole, ()),
+         Sum.inl (bu ⟨0, by positivity⟩), Sum.inl (bv ⟨0, by positivity⟩)))))
+  | n + 1, bu, bv =>
+      OracleComp.bindComp
+        (heapFindComp l n (fun i => bu (finL n i)) (fun i => bv (finL n i))) (fun pL =>
+      OracleComp.bindComp
+        (heapFindComp l n (fun i => bu (finR n i)) (fun i => bv (finR n i))) (fun pR =>
+      OracleComp.query (heapNodeRole, Sum.inr (pL.1, pR.1)) (fun ru =>
+      OracleComp.query (heapNodeRole, Sum.inr (pL.2.1, pR.2.1)) (fun rv =>
+      OracleComp.pure (ru, rv,
+        if ((pL.1, pR.1) : Fin (2 ^ l) × Fin (2 ^ l)) ≠ (pL.2.1, pR.2.1)
+        then ((heapNodeRole, ()), Sum.inr (pL.1, pR.1), Sum.inr (pL.2.1, pR.2.1))
+        else if (fun i => bu (finL n i)) ≠ (fun i => bv (finL n i))
+        then pL.2.2 else pR.2.2)))))
+
+/-- The program computes exactly the two tree roots and the pure selection. -/
+theorem heapFindComp_eval (l : ℕ) (H : heapRomFamily.toRomFamily.D l → heapRomFamily.toRomFamily.R l) :
+    ∀ (n : ℕ) (bu bv : Fin (2 ^ n) → HeapLeafBlock),
+      (heapFindComp l n bu bv).eval H
+        = (romHeapRoot l H n bu, romHeapRoot l H n bv, heapFindSpec l H n bu bv) := by
+  intro n
+  induction n with
+  | zero => intro bu bv; rfl
+  | succ n ih =>
+      intro bu bv
+      show (OracleComp.bindComp _ _).eval H = _
+      simp only [OracleComp.bindComp_eval]
+      rw [ih, ih]
+      rfl
+
+/-- The walk's query budget: `2^(n+2) − 2` — two full trees, one query per absorb. -/
+theorem heapFindComp_queryBounded (l : ℕ) :
+    ∀ (n : ℕ) (bu bv : Fin (2 ^ n) → HeapLeafBlock),
+      QueryBounded (2 ^ (n + 2) - 2) (heapFindComp l n bu bv) := by
+  intro n
+  induction n with
+  | zero =>
+      intro bu bv
+      exact QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+        (fun _ => QueryBounded.pure 0 _))
+  | succ n ih =>
+      intro bu bv
+      refine (OracleComp.bindComp_queryBounded (ih _ _) (fun pL =>
+        OracleComp.bindComp_queryBounded (ih _ _) (fun pR =>
+          QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+            (fun _ => QueryBounded.pure 0 _))))).mono ?_
+      have h1 : (2 : ℕ) ^ (n + 1 + 2) = 2 * 2 ^ (n + 2) := by rw [pow_succ]; ring
+      have h2 : (2 : ℕ) ≤ 2 ^ (n + 2) := by
+        calc (2 : ℕ) = 2 ^ 1 := (pow_one 2).symm
+        _ ≤ 2 ^ (n + 2) := Nat.pow_le_pow_right (by norm_num) (by omega)
+      omega
+
+/-- A `Q + c` budget stays polynomial, for ANY constant `c` — the accounting fact a depth-`d`
+tree walk needs (`polyBounded_sq_add_two` generalized off the `+2` special case). -/
+theorem polyBounded_sq_add_const (c : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    PolyBounded (fun l => (((Q l + c : ℕ) : ℝ) * ((Q l + c : ℕ) : ℝ) + 1)) := by
+  obtain ⟨e, C, h⟩ := hQ
+  refine ⟨e, (2 * ((c : ℝ) + 1) ^ 2 + 1) * C, ?_⟩
+  filter_upwards [h] with n hn
+  have hq : (0 : ℝ) ≤ (Q n : ℝ) := Nat.cast_nonneg _
+  have hc : (0 : ℝ) ≤ (c : ℝ) := Nat.cast_nonneg _
+  have h1 : |((Q n : ℝ) * (Q n : ℝ) + 1)| = (Q n : ℝ) * (Q n : ℝ) + 1 :=
+    abs_of_nonneg (by positivity)
+  have h2 : |(((Q n + c : ℕ) : ℝ) * ((Q n + c : ℕ) : ℝ) + 1)|
+      = ((Q n : ℝ) + c) * ((Q n : ℝ) + c) + 1 := by
+    push_cast
+    exact abs_of_nonneg (by positivity)
+  rw [h2]
+  rw [h1] at hn
+  have hkey : ((Q n : ℝ) + c) * ((Q n : ℝ) + c) + 1
+      ≤ (2 * ((c : ℝ) + 1) ^ 2 + 1) * ((Q n : ℝ) * (Q n : ℝ) + 1) := by
+    nlinarith [sq_nonneg ((Q n : ℝ) - c), sq_nonneg (Q n : ℝ), hq, hc,
+      mul_nonneg (mul_nonneg hc hc) (sq_nonneg (Q n : ℝ)),
+      mul_nonneg hc (sq_nonneg (Q n : ℝ))]
+  have hmul : (2 * ((c : ℝ) + 1) ^ 2 + 1) * ((Q n : ℝ) * (Q n : ℝ) + 1)
+      ≤ (2 * ((c : ℝ) + 1) ^ 2 + 1) * (C * (n : ℝ) ^ e) :=
+    mul_le_mul_of_nonneg_left hn (by positivity)
+  calc ((Q n : ℝ) + c) * ((Q n : ℝ) + c) + 1
+      ≤ (2 * ((c : ℝ) + 1) ^ 2 + 1) * ((Q n : ℝ) * (Q n : ℝ) + 1) := hkey
+    _ ≤ (2 * ((c : ℝ) + 1) ^ 2 + 1) * (C * (n : ℝ) ^ e) := hmul
+    _ = (2 * ((c : ℝ) + 1) ^ 2 + 1) * C * (n : ℝ) ^ e := by ring
+
+/-- **THE WHOLE-TREE ROM FORGERY** — two DISTINCT `2^d`-leaf linked-block vectors whose tree
+roots agree at the sampled oracle.  The ROM restatement of the `mapRoot8` equivocation. -/
+def heapRomForgery (d : ℕ) : RomForgery heapRomFamily where
+  Ans := fun _ => (Fin (2 ^ d) → HeapLeafBlock) × (Fin (2 ^ d) → HeapLeafBlock)
+  wins := fun l H p => p.1 ≠ p.2 ∧ romHeapRoot l H d p.1 = romHeapRoot l H d p.2
+  winsDec := fun _ _ _ => instDecidableAnd
+
+/-- The whole-tree break game at depth `d` (deployed `d = HEAP_TREE_DEPTH = 16`). -/
+abbrev heapRomBreakGame (d : ℕ) : Game := (heapRomForgery d).game
+
+/-- **THE EXTRACTOR, AS AN ORACLE PROGRAM** — run the forger, then hand its two leaf-block
+vectors to the priced tree walk and keep the selection (`mapOut` drops the recomputed roots
+without adding queries). -/
+def heapExtractComp (d : ℕ)
+    (M : ∀ l, OracleComp (heapRomFamily.toRomFamily.D l) (heapRomFamily.toRomFamily.R l)
+      ((heapRomForgery d).Ans l)) :
+    RomCarrierComp heapRomFamily heapRomCarrier :=
+  fun l => OracleComp.bindComp (M l)
+    (fun a => OracleComp.mapOut (fun r => r.2.2) (heapFindComp l d a.1 a.2))
+
+/-- **⚑⚑ THE DEPTH-`d` TREE BINDING, DISCHARGED ON THE PROVED FLOOR** — the exported successor of
+the demoted `mapRoot8_binds_or_collides` / `perfectRoot8_binds_or_collides` /
+`foldLevel8_binds_or_collides` / `map_leaf8_binds_or_collides` skeletons: every query-bounded
+forger that equivocates the depth-`d` heap tree between two DISTINCT leaf-block vectors has
+NEGLIGIBLE advantage.  The extractor is the priced tree walk (`Q + 2^(d+2)` queries, additive);
+the floor is `keyedRom_hard` (the birthday bound).  NO floor hypothesis, NO escape branch. -/
+theorem heapTreeRoot_binds_rom (d : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (heapRomBreakGame d))
+    (hA : RomForgeryEff heapRomFamily (heapRomForgery d) Q A) :
+    Negl (gameAdv (heapRomBreakGame d) A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine negl_of_le (fun l => (gameAdv_mem_unit (heapRomBreakGame d) A l).1)
+    (fun l => ?_)
+    (romCarrier_binds heapRomFamily heapRomCarrier (fun l => Q l + 2 ^ (d + 2))
+      (polyBounded_sq_add_const (2 ^ (d + 2)) Q hQ)
+      heapRomFamily_card_R
+      (romCarrierAdv _ _ (heapExtractComp d M))
+      ⟨heapExtractComp d M,
+        fun l => (OracleComp.bindComp_queryBounded (hM l)
+          (fun a => OracleComp.mapOut_queryBounded _
+            (heapFindComp_queryBounded l d a.1 a.2))).mono
+          (by
+            show Q l + (2 ^ (d + 2) - 2) ≤ Q l + 2 ^ (d + 2)
+            have h2 : (2 : ℕ) ≤ 2 ^ (d + 2) := by
+              calc (2 : ℕ) = 2 ^ 1 := (pow_one 2).symm
+              _ ≤ 2 ^ (d + 2) := Nat.pow_le_pow_right (by norm_num) (by omega)
+            omega),
+        fun _ _ => rfl⟩)
+  refine @winProb_le_of_imp _ ((heapRomBreakGame d).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, hroot⟩ := hH
+  have hBrun : (romCarrierAdv _ _ (heapExtractComp d M)).run l H
+      = heapFindSpec l H d (A.run l H).1 (A.run l H).2 := by
+    show (heapExtractComp d M l).eval H = _
+    unfold heapExtractComp
+    rw [OracleComp.bindComp_eval, ← hrun l H, OracleComp.mapOut_eval, heapFindComp_eval]
+  rw [hBrun]
+  exact heapFindSpec_wins l H d (A.run l H).1 (A.run l H).2 hne hroot
+
+/-- The tree root at a CONSTANT oracle is that constant — every absorb answers it. -/
+theorem romHeapRoot_const (l : ℕ) (r : Fin (2 ^ l)) (d : ℕ) (b : Fin (2 ^ d) → HeapLeafBlock) :
+    romHeapRoot l (fun _ => r) d b = r := by
+  cases d with
+  | zero => rfl
+  | succ n => rfl
+
+/-- **(TOOTH — the game is WINNABLE and the admitted refuter-shape is DEFANGED.)** The `0`-query
+constant answerer with two DISTINCT fixed leaf-block vectors is IN the class, WINS at the
+constant oracle (both roots are the constant), and is NEGLIGIBLE by the bound — the pigeonhole
+strategy that made the demoted disjunctions free passes dies at the sampled oracle. -/
+theorem heapRom_constAnswer_defanged (d : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (v w : Fin (2 ^ d) → HeapLeafBlock) (hvw : v ≠ w) :
+    (RomForgeryEff heapRomFamily (heapRomForgery d) Q
+        ⟨fun l _ => ((v, w) : (heapRomForgery d).Ans l)⟩)
+      ∧ (∀ l, 0 < gameAdv (heapRomBreakGame d) ⟨fun l _ => ((v, w) : (heapRomForgery d).Ans l)⟩ l)
+      ∧ Negl (gameAdv (heapRomBreakGame d) ⟨fun l _ => ((v, w) : (heapRomForgery d).Ans l)⟩) := by
+  have hmem : RomForgeryEff heapRomFamily (heapRomForgery d) Q
+      ⟨fun l _ => ((v, w) : (heapRomForgery d).Ans l)⟩ :=
+    ⟨fun l => OracleComp.pure (v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩
+  refine ⟨hmem, fun l => ?_, heapTreeRoot_binds_rom d Q hQ _ hmem⟩
+  refine @winProb_pos_of_witness _ ((heapRomBreakGame d).instFin l) _
+    (fun _ => ⟨0, by positivity⟩) ?_
+  refine (Adversary.hit_eq_true _ l _).mpr ⟨hvw, ?_⟩
+  exact (romHeapRoot_const l _ d _).trans (romHeapRoot_const l _ d _).symm
+
+/-- **(TOOTH — a non-negligible tree equivocator is OUTSIDE the class.)** -/
+theorem heapRom_nonNegl_forger_excluded (d : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (heapRomBreakGame d))
+    (hnn : ¬ Negl (gameAdv (heapRomBreakGame d) A)) :
+    ¬ RomForgeryEff heapRomFamily (heapRomForgery d) Q A :=
+  fun hA => hnn (heapTreeRoot_binds_rom d Q hQ A hA)
+
+end RomSuccessor
+
 /-! ## §6 — Axiom hygiene. -/
 
 #assert_axioms mapNode_injective
@@ -677,5 +1061,16 @@ end Faithful8
 #assert_axioms opensToMerkle8_functional_of_injective
 #assert_axioms opensToMerkle8_some_excludes_none_of_injective
 #assert_axioms writesToMerkle8_functional_of_injective
+-- §RomSuccessor — the EXPORTED binding: the depth-`d` tree equivocation as a reduction on the
+-- PROVED keyed-ROM floor, with the tree walk priced as an oracle program.
+#assert_axioms halves_ext
+#assert_axioms heapRomFamily_card_R
+#assert_axioms heapFindSpec_wins
+#assert_axioms heapFindComp_eval
+#assert_axioms heapFindComp_queryBounded
+#assert_axioms polyBounded_sq_add_const
+#assert_axioms heapTreeRoot_binds_rom
+#assert_axioms heapRom_constAnswer_defanged
+#assert_axioms heapRom_nonNegl_forger_excluded
 
 end Dregg2.Circuit.MapMerkleRoot

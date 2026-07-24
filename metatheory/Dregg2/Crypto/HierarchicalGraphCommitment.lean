@@ -15,12 +15,34 @@ graph commitment.  This module deliberately stops before any ZK/PCD claim:
   memoized semantic proof can therefore be rebound at distinct occurrences,
   while consuming one occurrence twice fails closed.
 
-Hash binding is stated in the same honest style as `PrivateGraphRewrite`: any
-two different accepted preimages for one eight-lane digest produce an explicit
-`DigestCollision`.  No mathematical injectivity of a compressing hash is
-assumed.
+## ⚑ The semantic-root binding is a REDUCTION on the keyed-ROM floor (07-24)
+
+The former "collision-explicit faithfulness" section exported bare disjunctions
+(`digest_eq_preimage_or_collision`, `genericRoot_eq_preimages_or_collision`,
+`semanticRoot_eq_graph_or_collision`) whose escape branch was `DigestCollision H = ∃ collision`.
+At any deployed compressing hash a collision EXISTS by pigeonhole, so each disjunction was
+satisfiable through the collides branch with the binding never holding — a statement about
+SOLUTIONS where hardness quantifies over EFFICIENT ADVERSARIES.  They are DELETED, replaced by
+the §RomSuccessor reduction: the two-level tree commitment is restated at a SAMPLED keyed oracle
+(roles LEAF/PAIR/ROOT as the key space), a root equivocation between two DISTINCT bounded graphs
+is a first-class `RomForgery`, the extractor re-walks the fixed 14-node tree paying 12 queries
+(`bindComp`, additive budget), and `semanticRoot_binds_rom` closes from the PROVED birthday floor
+(`KeyedRomFloor.keyedRom_hard` via `romCarrier_binds`) — no floor hypothesis, no escape branch.
+
+⚑ THE MODELLING STEP, STATED (`RomCarrierSites` header discipline): the sampled
+`H : Role × Msg → Fin (2 ^ l)` idealises the fixed deployed eight-lane digest at an ASYMPTOTIC
+width; nothing is claimed about the fixed public hash — CR of a fixed function is a conjecture,
+not a Lean theorem.  What the reduction buys over the deleted disjunctions: the floor under it is
+a THEOREM about the model instead of an escape branch that is unconditionally available at the
+deployed object.
+
+The retained `two_occurrence_openings_yield_collision` / `occurrenceId_alias_yields_collision`
+are extraction teeth (they PRODUCE the collision witness from deployed check-passes), not
+exported bindings; the flat occurrence absorb is a single-carrier site of
+`SpongeForgeReduction.codeForge_binds_rom`'s generic shape.
 -/
 import Dregg2.Crypto.PrivateGraphRewrite
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Tactics
 import Mathlib.Tactic.FinCases
 
@@ -281,88 +303,288 @@ theorem updateLeaf_checks (H : Hash) (g : BoundedGraph) (index : Fin 4)
   · exact decide_eq_true (congrArg digestFields hbeforeRoot)
   · exact decide_eq_true (congrArg digestFields hafterRoot')
 
-/-! ## Collision-explicit faithfulness -/
+/-! ## ⚑ §RomSuccessor — the semantic-root binding, DISCHARGED on the PROVED keyed-ROM floor.
 
-theorem digest_eq_preimage_or_collision (H : Hash) {left right : List Int}
-    (h : digest8 H left = digest8 H right) : left = right ∨ DigestCollision H := by
-  by_cases heq : left = right
-  · exact Or.inl heq
-  · exact Or.inr ⟨left, right, heq, h⟩
+The deleted `digest_eq_preimage_or_collision` → `genericRoot_eq_preimages_or_collision` →
+`semanticRoot_eq_graph_or_collision` chain exported `binds ∨ DigestCollision H` — an escape
+branch that is unconditionally available at any deployed compressing hash (pigeonhole), so the
+exported binding held through the collides branch without binding anything.  The successor is a
+REDUCTION (header): the forger is an ORACLE PROGRAM over the sampled role-keyed oracle, the
+extractor re-walks the fixed two-level tree paying 12 queries, and the floor is
+`keyedRom_hard` — the birthday bound, a THEOREM. -/
 
-def genericLeafRoot (H : Hash) (preimages : Fin 4 → List Int) (index : Fin 4) : Digest8 :=
-  digest8 H (preimages index)
+section RomSuccessor
 
-def genericLeftPair (H : Hash) (preimages : Fin 4 → List Int) : Digest8 :=
-  nodeDigest H PAIR_TAG (genericLeafRoot H preimages 0) (genericLeafRoot H preimages 1)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv gameAdv_mem_unit)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomCarrierSites
 
-def genericRightPair (H : Hash) (preimages : Fin 4 → List Int) : Digest8 :=
-  nodeDigest H PAIR_TAG (genericLeafRoot H preimages 2) (genericLeafRoot H preimages 3)
+/-- The three deployed domain-separation roles of the two-level tree — the key space of the
+sampled oracle (the ROM face of the absorbed `LEAF_TAG`/`PAIR_TAG`/`ROOT_TAG` prefixes). -/
+abbrev HgcRole : Type := Fin 3
 
-def genericRoot (H : Hash) (preimages : Fin 4 → List Int) : Digest8 :=
-  nodeDigest H ROOT_TAG (genericLeftPair H preimages) (genericRightPair H preimages)
+/-- The leaf role (`LEAF_TAG`'s key). -/
+def hgcLeafRole : HgcRole := 0
+/-- The pair-node role (`PAIR_TAG`'s key). -/
+def hgcPairRole : HgcRole := 1
+/-- The root-node role (`ROOT_TAG`'s key). -/
+def hgcRootRole : HgcRole := 2
 
-private theorem pair_preimages_eq_or_collision (H : Hash)
-    {a0 a1 b0 b1 : List Int}
-    (h : nodeDigest H PAIR_TAG (digest8 H a0) (digest8 H a1) =
-      nodeDigest H PAIR_TAG (digest8 H b0) (digest8 H b1)) :
-    (a0 = b0 ∧ a1 = b1) ∨ DigestCollision H := by
-  rcases digest_eq_preimage_or_collision H h with hnode | hcollision
-  · have hpairs : (digest8 H a0, digest8 H a1) = (digest8 H b0, digest8 H b1) := by
-      apply nodeInputs_injective PAIR_TAG
-      exact hnode
-    have h0 := congrArg Prod.fst hpairs
-    have h1 := congrArg Prod.snd hpairs
-    rcases digest_eq_preimage_or_collision H h0 with hpre0 | hcollision
-    · rcases digest_eq_preimage_or_collision H h1 with hpre1 | hcollision
-      · exact Or.inl ⟨hpre0, hpre1⟩
-      · exact Or.inr hcollision
-    · exact Or.inr hcollision
-  · exact Or.inr hcollision
+/-- One committed edge slot as finite data — exactly the `leafInputs` payload after the tag and
+index: activity bit, label, and the two endpoints. -/
+abbrev SlotEnc : Type := Bool × Label × Node × Node
 
-/-- Equal four-leaf roots authenticate every leaf preimage, unless they expose
-an explicit collision somewhere in the two-level tree. -/
-theorem genericRoot_eq_preimages_or_collision (H : Hash)
-    {left right : Fin 4 → List Int} (hroot : genericRoot H left = genericRoot H right) :
-    (∀ i, left i = right i) ∨ DigestCollision H := by
-  rcases digest_eq_preimage_or_collision H hroot with htop | hcollision
-  · have hpairs :
-        (genericLeftPair H left, genericRightPair H left) =
-          (genericLeftPair H right, genericRightPair H right) := by
-      apply nodeInputs_injective ROOT_TAG
-      exact htop
-    have hleft := congrArg Prod.fst hpairs
-    have hright := congrArg Prod.snd hpairs
-    rcases pair_preimages_eq_or_collision H hleft with hl | hcollision
-    · rcases pair_preimages_eq_or_collision H hright with hr | hcollision
-      · left
-        intro i
-        fin_cases i
-        · exact hl.1
-        · exact hl.2
-        · exact hr.1
-        · exact hr.2
-      · exact Or.inr hcollision
-    · exact Or.inr hcollision
-  · exact Or.inr hcollision
+/-- The lossless slot encoding (the `leafInputs` fields, minus the constant tag). -/
+def slotEnc (s : HostEdgeSlot) : SlotEnc := (s.active, s.label, s.src, s.dst)
 
-theorem semanticRoot_eq_graph_or_collision (H : Hash) {left right : BoundedGraph}
-    (hroot : semanticRoot H left = semanticRoot H right) :
-    left = right ∨ DigestCollision H := by
-  have hgeneric :
-      genericRoot H (fun i => leafInputs i (left.slots i)) =
-        genericRoot H (fun i => leafInputs i (right.slots i)) := by
-    simpa [semanticRoot, leftPair, rightPair, genericRoot, genericLeftPair,
-      genericRightPair, genericLeafRoot, leafDigest, nodeDigest] using hroot
-  rcases genericRoot_eq_preimages_or_collision H hgeneric with hpre | hcollision
-  · left
-    cases left with
-    | mk leftSlots leftCanonical =>
-      cases right with
-      | mk rightSlots rightCanonical =>
-        congr
-        funext i
-        exact leafInputs_injective i (hpre i)
-  · exact Or.inr hcollision
+/-- `slotEnc` loses nothing — the ROM leaf payload identifies the deployed slot. -/
+theorem slotEnc_injective : Function.Injective slotEnc := by
+  intro a b h
+  cases a; cases b
+  simp only [slotEnc, Prod.mk.injEq] at h
+  obtain ⟨h1, h2, h3, h4⟩ := h
+  simp_all
+
+/-- A bounded graph's committed payload: its four indexed slots. -/
+abbrev GraphSlots : Type := Fin 4 → SlotEnc
+
+/-- The graph payload encoding — the four slots, in leaf order. -/
+def graphEnc (g : BoundedGraph) : GraphSlots := fun i => slotEnc (g.slots i)
+
+/-- `graphEnc` loses nothing: two distinct bounded graphs stay distinct ROM payloads (the
+canonical-padding field is propositional, so the slots determine the graph). -/
+theorem graphEnc_injective : Function.Injective graphEnc := by
+  intro g₁ g₂ h
+  cases g₁ with
+  | mk s₁ c₁ =>
+    cases g₂ with
+    | mk s₂ c₂ =>
+      have hs : s₁ = s₂ := funext fun i => slotEnc_injective (congrFun h i)
+      subst hs
+      rfl
+
+/-- **THE ORACLE MESSAGE DOMAIN** — the deployed absorb schedule, domain-separated by
+constructor: `inl` an indexed leaf block (the `leafInputs` payload), `inr` a two-child node
+block (a pair of digests — the `nodeInputs` payload; whether it is a PAIR or the ROOT absorb is
+carried by the KEY).  ⚑ The digest space `Fin (2 ^ l)` is the labelled modelling step: the
+deployed eight-lane digest is idealised at asymptotic width. -/
+abbrev HgcRomMsg (l : ℕ) : Type := (Fin 4 × SlotEnc) ⊕ (Fin (2 ^ l) × Fin (2 ^ l))
+
+/-- **THE TREE'S KEYED ROM FAMILY** — keyed by the three deployed roles. -/
+def hgcRomFamily : KeyedRomFamily :=
+  flatFamily HgcRole inferInstance inferInstance ⟨0⟩ HgcRomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (0, false, 0, 0, 0)⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem hgcRomFamily_card_R (l : ℕ) :
+    letI := hgcRomFamily.rFin l
+    Fintype.card (hgcRomFamily.R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE TREE CARRIER** — the identity carrier over the tree's own message shape, tag in the
+context: one commitment = one oracle query at a role-tagged block.  All three tree layers
+(leaf, pair, root) are equivocations of THIS carrier at their role. -/
+def hgcRomCarrier : RomCarrier hgcRomFamily :=
+  taggedCarrier _ (fun _ => Unit) (fun l => HgcRomMsg l)
+    (fun _ => inferInstance)
+    (fun _ _ v => v)
+    (fun _ _ _ _ h => h)
+
+/-- **THE SEMANTIC ROOT AT THE SAMPLED ORACLE** — the ROM restatement of `semanticRoot`:
+`H (ROOT, [H (PAIR, [H (LEAF, leaf₀), H (LEAF, leaf₁)]), H (PAIR, [H (LEAF, leaf₂),
+H (LEAF, leaf₃)])])`, the two-level tree with the inner digests genuinely re-absorbed. -/
+def hgcRomRoot (l : ℕ) (H : HgcRole × HgcRomMsg l → Fin (2 ^ l)) (g : GraphSlots) :
+    Fin (2 ^ l) :=
+  H (hgcRootRole, Sum.inr
+    (H (hgcPairRole, Sum.inr
+        (H (hgcLeafRole, Sum.inl (0, g 0)), H (hgcLeafRole, Sum.inl (1, g 1)))),
+     H (hgcPairRole, Sum.inr
+        (H (hgcLeafRole, Sum.inl (2, g 2)), H (hgcLeafRole, Sum.inl (3, g 3))))))
+
+/-- **THE SEMANTIC-ROOT FORGERY** — two DISTINCT graph payloads whose tree roots agree at the
+sampled oracle.  The break is IN the win relation, checked against the sampled oracle. -/
+def hgcRomForgery : RomForgery hgcRomFamily where
+  Ans := fun _ => GraphSlots × GraphSlots
+  wins := fun l H p => p.1 ≠ p.2 ∧ hgcRomRoot l H p.1 = hgcRomRoot l H p.2
+  winsDec := fun _ _ _ => instDecidableAnd
+
+/-- The semantic-root break game. -/
+abbrev hgcRomBreakGame : Game := hgcRomForgery.game
+
+/-- **⚑ THE OBJECT-LEVEL FORGERY IS A WIN** — two DISTINCT `BoundedGraph`s whose ROM semantic
+roots agree are a game win (`graphEnc_injective` keeps them distinct as payloads).  The successor
+shape of the deleted `semanticRoot_eq_graph_or_collision`'s binding branch. -/
+theorem hgcRom_graph_forgery_is_break (l : ℕ) (H : hgcRomBreakGame.Inst l)
+    {g₁ g₂ : BoundedGraph} (hne : g₁ ≠ g₂)
+    (heq : hgcRomRoot l H (graphEnc g₁) = hgcRomRoot l H (graphEnc g₂)) :
+    hgcRomBreakGame.wins l H (graphEnc g₁, graphEnc g₂) :=
+  ⟨fun h => hne (graphEnc_injective h), heq⟩
+
+/-- **THE TREE-WALK SELECTION** — given the forger's two payloads and the re-queried digests of
+both trees, name the shallowest layer at which the two trees' absorbed blocks differ.  Pure: the
+queries were already paid by `hgcExtractComp`. -/
+def hgcSelect (l : ℕ) (a : GraphSlots × GraphSlots)
+    (l0 l1 l2 l3 m0 m1 m2 m3 pL pR qL qR : Fin (2 ^ l)) :
+    hgcRomCarrier.Ctx l × hgcRomCarrier.Val l × hgcRomCarrier.Val l :=
+  if ((pL, pR) : Fin (2 ^ l) × Fin (2 ^ l)) ≠ (qL, qR) then
+    ((hgcRootRole, ()), Sum.inr (pL, pR), Sum.inr (qL, qR))
+  else if ((l0, l1) : Fin (2 ^ l) × Fin (2 ^ l)) ≠ (m0, m1) then
+    ((hgcPairRole, ()), Sum.inr (l0, l1), Sum.inr (m0, m1))
+  else if ((l2, l3) : Fin (2 ^ l) × Fin (2 ^ l)) ≠ (m2, m3) then
+    ((hgcPairRole, ()), Sum.inr (l2, l3), Sum.inr (m2, m3))
+  else if a.1 0 ≠ a.2 0 then ((hgcLeafRole, ()), Sum.inl (0, a.1 0), Sum.inl (0, a.2 0))
+  else if a.1 1 ≠ a.2 1 then ((hgcLeafRole, ()), Sum.inl (1, a.1 1), Sum.inl (1, a.2 1))
+  else if a.1 2 ≠ a.2 2 then ((hgcLeafRole, ()), Sum.inl (2, a.1 2), Sum.inl (2, a.2 2))
+  else ((hgcLeafRole, ()), Sum.inl (3, a.1 3), Sum.inl (3, a.2 3))
+
+/-- **THE EXTRACTOR, AS AN ORACLE PROGRAM** — run the forger's program, then RE-WALK both trees
+(eight leaf queries, four pair queries — the fixed 12-query overhead), then select the colliding
+layer.  `bindComp` keeps the accounting additive: a `Q`-query forger yields a `Q + 12`-query
+carrier equivocator. -/
+def hgcExtractComp
+    (M : ∀ l, OracleComp (hgcRomFamily.toRomFamily.D l) (hgcRomFamily.toRomFamily.R l)
+      (hgcRomForgery.Ans l)) :
+    RomCarrierComp hgcRomFamily hgcRomCarrier :=
+  fun l => OracleComp.bindComp (M l) (fun a =>
+    OracleComp.query (hgcLeafRole, Sum.inl (0, a.1 0)) (fun l0 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (1, a.1 1)) (fun l1 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (2, a.1 2)) (fun l2 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (3, a.1 3)) (fun l3 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (0, a.2 0)) (fun m0 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (1, a.2 1)) (fun m1 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (2, a.2 2)) (fun m2 =>
+    OracleComp.query (hgcLeafRole, Sum.inl (3, a.2 3)) (fun m3 =>
+    OracleComp.query (hgcPairRole, Sum.inr (l0, l1)) (fun pL =>
+    OracleComp.query (hgcPairRole, Sum.inr (l2, l3)) (fun pR =>
+    OracleComp.query (hgcPairRole, Sum.inr (m0, m1)) (fun qL =>
+    OracleComp.query (hgcPairRole, Sum.inr (m2, m3)) (fun qR =>
+    OracleComp.pure (hgcSelect l a l0 l1 l2 l3 m0 m1 m2 m3 pL pR qL qR))))))))))))))
+
+/-- **⚑⚑ THE SEMANTIC-ROOT BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the
+deleted `semanticRoot_eq_graph_or_collision` (and through `hgcRom_graph_forgery_is_break`, of
+the whole deleted `_or_collision` chain): every query-bounded forger that equivocates the
+two-level tree root between two DISTINCT bounded-graph payloads has NEGLIGIBLE advantage.
+
+The peel is the tree walk: the root absorb differs (a root-role carrier equivocation), or the
+root absorb agrees and some pair absorb differs (a pair-role equivocation through the shared
+root digest), or all node absorbs agree and the first differing slot is a leaf-role
+equivocation through the shared leaf digest.  Every case is a win of ONE carrier at the SAMPLED
+oracle, and `romCarrier_binds` (hence `keyedRom_hard`, the birthday bound) kills it.  NO floor
+hypothesis, NO escape branch. -/
+theorem semanticRoot_binds_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary hgcRomBreakGame)
+    (hA : RomForgeryEff hgcRomFamily hgcRomForgery Q A) :
+    Negl (gameAdv hgcRomBreakGame A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine negl_of_le (fun l => (gameAdv_mem_unit hgcRomBreakGame A l).1)
+    (fun l => ?_)
+    (romCarrier_binds hgcRomFamily hgcRomCarrier
+      (fun l => Q l + 2 + 2 + 2 + 2 + 2 + 2)
+      (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ (polyBounded_sq_add_two _
+        (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ hQ))))))
+      hgcRomFamily_card_R
+      (romCarrierAdv _ _ (hgcExtractComp M))
+      ⟨hgcExtractComp M,
+        fun l => (OracleComp.bindComp_queryBounded (hM l)
+          (fun a => QueryBounded.query 11 _ _ (fun _ => QueryBounded.query 10 _ _
+            (fun _ => QueryBounded.query 9 _ _ (fun _ => QueryBounded.query 8 _ _
+            (fun _ => QueryBounded.query 7 _ _ (fun _ => QueryBounded.query 6 _ _
+            (fun _ => QueryBounded.query 5 _ _ (fun _ => QueryBounded.query 4 _ _
+            (fun _ => QueryBounded.query 3 _ _ (fun _ => QueryBounded.query 2 _ _
+            (fun _ => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+            (fun _ => QueryBounded.pure 0 _)))))))))))))).mono
+          (by show Q l + 12 ≤ Q l + 2 + 2 + 2 + 2 + 2 + 2; omega),
+        fun _ _ => rfl⟩)
+  refine @winProb_le_of_imp _ (hgcRomBreakGame.instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  have hArun : A.run l H = (M l).eval H := hrun l H
+  set a := A.run l H with ha
+  have hBrun : (romCarrierAdv _ _ (hgcExtractComp M)).run l H
+      = hgcSelect l a
+          (H (hgcLeafRole, Sum.inl (0, a.1 0))) (H (hgcLeafRole, Sum.inl (1, a.1 1)))
+          (H (hgcLeafRole, Sum.inl (2, a.1 2))) (H (hgcLeafRole, Sum.inl (3, a.1 3)))
+          (H (hgcLeafRole, Sum.inl (0, a.2 0))) (H (hgcLeafRole, Sum.inl (1, a.2 1)))
+          (H (hgcLeafRole, Sum.inl (2, a.2 2))) (H (hgcLeafRole, Sum.inl (3, a.2 3)))
+          (H (hgcPairRole, Sum.inr
+            (H (hgcLeafRole, Sum.inl (0, a.1 0)), H (hgcLeafRole, Sum.inl (1, a.1 1)))))
+          (H (hgcPairRole, Sum.inr
+            (H (hgcLeafRole, Sum.inl (2, a.1 2)), H (hgcLeafRole, Sum.inl (3, a.1 3)))))
+          (H (hgcPairRole, Sum.inr
+            (H (hgcLeafRole, Sum.inl (0, a.2 0)), H (hgcLeafRole, Sum.inl (1, a.2 1)))))
+          (H (hgcPairRole, Sum.inr
+            (H (hgcLeafRole, Sum.inl (2, a.2 2)), H (hgcLeafRole, Sum.inl (3, a.2 3))))) := by
+    show (hgcExtractComp M l).eval H = _
+    unfold hgcExtractComp
+    rw [OracleComp.bindComp_eval, ← hArun]
+    rfl
+  rw [hBrun]
+  unfold hgcSelect
+  split_ifs with hRoot hL hR h0 h1 h2
+  · -- root absorbs DIFFER under the shared root digest (`heq` IS the root equality).
+    exact ⟨fun hc => hRoot (Sum.inr_injective hc), heq⟩
+  · -- left pair absorb DIFFERS under the shared left-pair digest.
+    exact ⟨fun hc => hL (Sum.inr_injective hc), congrArg Prod.fst (not_not.mp hRoot)⟩
+  · -- right pair absorb DIFFERS under the shared right-pair digest.
+    exact ⟨fun hc => hR (Sum.inr_injective hc), congrArg Prod.snd (not_not.mp hRoot)⟩
+  · -- slot 0 differs under the shared leaf-0 digest.
+    exact ⟨fun hc => h0 (congrArg Prod.snd (Sum.inl_injective hc)),
+      congrArg Prod.fst (not_not.mp hL)⟩
+  · -- slot 1 differs under the shared leaf-1 digest.
+    exact ⟨fun hc => h1 (congrArg Prod.snd (Sum.inl_injective hc)),
+      congrArg Prod.snd (not_not.mp hL)⟩
+  · -- slot 2 differs under the shared leaf-2 digest.
+    exact ⟨fun hc => h2 (congrArg Prod.snd (Sum.inl_injective hc)),
+      congrArg Prod.fst (not_not.mp hR)⟩
+  · -- slots 0-2 agree, so slot 3 must differ (the payloads are distinct).
+    have h3 : a.1 3 ≠ a.2 3 := by
+      intro hc
+      apply hne
+      funext i
+      fin_cases i
+      · exact not_not.mp h0
+      · exact not_not.mp h1
+      · exact not_not.mp h2
+      · exact hc
+    exact ⟨fun hc => h3 (congrArg Prod.snd (Sum.inl_injective hc)),
+      congrArg Prod.snd (not_not.mp hR)⟩
+
+/-- **(TOOTH — the game is WINNABLE and the admitted refuter-shape is DEFANGED.)** The `0`-query
+constant answerer with two DISTINCT fixed payloads is IN the class, WINS at the constant oracle
+(every digest coincides, so the two roots agree), and its advantage is NEGLIGIBLE by the bound —
+the binding prices something genuinely nonzero, and the pigeonhole strategy that made the deleted
+disjunction a free pass dies at the sampled oracle. -/
+theorem hgcRom_constAnswer_defanged (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (v w : GraphSlots) (hvw : v ≠ w) :
+    (RomForgeryEff hgcRomFamily hgcRomForgery Q
+        ⟨fun l _ => ((v, w) : hgcRomForgery.Ans l)⟩)
+      ∧ (∀ l, 0 < gameAdv hgcRomBreakGame ⟨fun l _ => ((v, w) : hgcRomForgery.Ans l)⟩ l)
+      ∧ Negl (gameAdv hgcRomBreakGame ⟨fun l _ => ((v, w) : hgcRomForgery.Ans l)⟩) := by
+  have hmem : RomForgeryEff hgcRomFamily hgcRomForgery Q
+      ⟨fun l _ => ((v, w) : hgcRomForgery.Ans l)⟩ :=
+    ⟨fun l => OracleComp.pure (v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩
+  refine ⟨hmem, fun l => ?_, semanticRoot_binds_rom Q hQ _ hmem⟩
+  obtain ⟨r₀⟩ : Nonempty (Fin (2 ^ l)) := ⟨⟨0, by positivity⟩⟩
+  refine @winProb_pos_of_witness _ (hgcRomBreakGame.instFin l) _ (fun _ => r₀) ?_
+  exact (Adversary.hit_eq_true _ l _ ).mpr ⟨hvw, rfl⟩
+
+/-- **(TOOTH — a non-negligible root equivocator is OUTSIDE the class.)** -/
+theorem hgcRom_nonNegl_forger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary hgcRomBreakGame)
+    (hnn : ¬ Negl (gameAdv hgcRomBreakGame A)) :
+    ¬ RomForgeryEff hgcRomFamily hgcRomForgery Q A :=
+  fun hA => hnn (semanticRoot_binds_rom Q hQ A hA)
+
+end RomSuccessor
 
 /-! ## Session-bound occurrence wrappers -/
 
@@ -568,9 +790,13 @@ end Reference
   openRedex2_checks,
   pathFor_replaceSlot,
   updateLeaf_checks,
-  digest_eq_preimage_or_collision,
-  genericRoot_eq_preimages_or_collision,
-  semanticRoot_eq_graph_or_collision,
+  slotEnc_injective,
+  graphEnc_injective,
+  hgcRomFamily_card_R,
+  hgcRom_graph_forgery_is_break,
+  semanticRoot_binds_rom,
+  hgcRom_constAnswer_defanged,
+  hgcRom_nonNegl_forger_excluded,
   openOccurrence_checks,
   two_occurrence_openings_yield_collision,
   occurrenceId_alias_yields_collision,
