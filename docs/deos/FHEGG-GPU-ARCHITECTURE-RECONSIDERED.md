@@ -148,3 +148,26 @@ pattern amortizes further — like the BFV multiply that hit 3.35× batched on t
 the deployed size — modestly on the mobile iGPU (2.55×), more on a discrete GPU (the 6750 XT, pending) and at
 batch. So "the house is blind AND the clearing is fast" is a measured possibility, not just an aspiration —
 the dark-tier op the fold-only analysis would have dismissed wins at the size that matters.
+
+### hbox RX 6750 XT (discrete, the primary target) — the full picture, and an adapter-specific kernel choice
+
+Disk freed (07-24), rsynced, measured. Bit-exact throughout.
+
+**Multiply (convex/dark-AMM op), 6750 XT GPU/CPU:** batch 16 1.17×, 64 2.49×, 256 4.02×, 512 4.84×, **1024
+5.13× (peak)**, 2048 3.44×. Exactly the predicted ~5× — between the iGPU (3.35×) and Metal (10×). The NTT
+forward peaks ~2.4×, inverse ~3.2×.
+
+**TFHE bootstrap external-product crossover, 6750 XT, at N=4096 (deployed degree):**
+`cpu=10.985ms | coefficient-gpu=3.819ms (2.88×) | exact-rns-ntt-gpu=4.786ms (2.30×)`. Below N=4096 CPU wins
+(op too small). **The dark-tier bootstrap core op wins 2.88× on the discrete 6750 XT at the deployed degree.**
+
+**The adapter-specific finding (new architectural lever):** the 6750 XT wins MORE with the COEFFICIENT-domain
+path (2.88×) than the NTT path (2.30×); the persvati iGPU is the opposite — NTT wins (2.55× vs coefficient
+1.48×). The discrete GPU's raw ALU throughput favors the simpler, more-parallel coefficient kernel; the
+bandwidth-limited iGPU favors the NTT's fewer memory ops. **Pick the bootstrap kernel to the adapter** — the
+same "size the work to the hardware" lesson as batch-to-cache.
+
+**Dark-tier verdict, both AMD targets:** the bootstrap core op wins **2.3–2.9× at the deployed degree** (best
+path per adapter), and a full bootstrap runs many external products (batchable). So the house-blind dark
+clearing is measurably GPU-accelerable on the real hardware — not doomed to be slow. The fold-only analysis
+would have missed the entire dark-tier acceleration story.
