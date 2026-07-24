@@ -200,6 +200,13 @@ tampered sibling / forged claimed root / forged PI teeth ALL still bite), 5/5
 came from the machine-checked `#guard` pins, never a sweep). Drift class: GEOMETRY-WIDEN (both moves
 are SHRINKS). Remaining members below.
 
+**MEASURED deltas** (not estimated): descriptor bytes 2,325 → 1,932 B (−393, −16.9%); serialized
+proof bytes at the gates' minimum 4-row height, honest witness, prove+verify green both sides —
+poseidon2 88,091 → 87,274 B (−817), merkle-depth2 90,283 → 88,843 B (−1,440), total −2,257 B
+(−1.3%, ≈107 B per deleted column at height 4). That per-column figure is HEIGHT-DEPENDENT and is
+NOT the S2 calibrant (188 B/col, measured on the deployed rotated member at production height); a
+production-height reading for these members has not been taken.
+
 **RECIPE REFINEMENT found by the cutover lane (2026-07-24): step 1's "renumber densely" is
 UNNECESSARY for 11 of the 21 remaining members.** A fresh per-column parse of the deployed bytes
 re-derives the census EXACTLY (366 killable columns remain + the 21 already deleted = the pinned
