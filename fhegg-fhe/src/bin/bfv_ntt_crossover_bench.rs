@@ -132,6 +132,48 @@ fn main() {
             cpu_inv_ms / gpu_inv_ms
         );
     }
-    println!("\n(g/c > 1 = GPU faster. Forward+inverse odd NTT over the deployed q0/q1/q2 set, batch-parallel,");
-    println!(" bit-exact vs the CPU engine. This is the compute-bound kernel the fold analysis ignored.)");
+    // ── The FULL RNS multiply (forward NTT -> pointwise -> inverse NTT): the actual op the convex engine and
+    // dark-AMM hammer (bfv_mul.rs: "the NTT the convex engine will hammer"). This is the real DrEX compute op,
+    // not just the NTT primitive. BIT-EXACT: GPU multiply_batch == CPU multiply_batch.
+    println!("\n=== full RNS multiply (NTT + pointwise + iNTT), GPU vs CPU — the convex-engine / dark-AMM op ===");
+    println!(
+        "{:>6} {:>8} | {:>11} {:>11} | {:>9}",
+        "batch", "MiB", "CPU mul", "GPU mul", "mul g/c"
+    );
+    for &batch in BATCH_SIZES {
+        let lhs: Vec<RnsPoly> = (0..batch)
+            .map(|i| deployed_poly(0xAA00 + i as u64))
+            .collect();
+        let rhs: Vec<RnsPoly> = (0..batch)
+            .map(|i| deployed_poly(0xBB00 + i as u64))
+            .collect();
+        let cpu_ref = cpu
+            .multiply_batch(&lhs, &rhs, &FOLD_MODULI)
+            .expect("cpu multiply batch");
+        let gpu_res = gpu
+            .multiply_batch(&lhs, &rhs, &FOLD_MODULI)
+            .expect("gpu multiply batch");
+        assert_eq!(
+            gpu_res.polynomials, cpu_ref.polynomials,
+            "GPU multiply diverged from CPU at batch={batch}"
+        );
+        let mib = (3 * DEG * 8 * batch) as f64 / (1024.0 * 1024.0);
+        let cpu_ms = best_ms(|| {
+            let _ = cpu.multiply_batch(&lhs, &rhs, &FOLD_MODULI).unwrap();
+        });
+        let gpu_ms = best_ms(|| {
+            let _ = gpu.multiply_batch(&lhs, &rhs, &FOLD_MODULI).unwrap();
+        });
+        println!(
+            "{:>6} {:>8.2} | {:>9.3}ms {:>9.3}ms | {:>7.2}x  BIT-EXACT",
+            batch,
+            mib,
+            cpu_ms,
+            gpu_ms,
+            cpu_ms / gpu_ms
+        );
+    }
+
+    println!("\n(g/c > 1 = GPU faster. Forward+inverse odd NTT + full multiply over the deployed q0/q1/q2 set,");
+    println!(" batch-parallel, bit-exact vs the CPU engine. The compute-bound kernels the fold analysis ignored.)");
 }
