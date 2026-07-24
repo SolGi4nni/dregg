@@ -37,15 +37,25 @@
 //! 3. **Deployed prover, whole braid (`#[ignore]`d, NOT RUN).** A real conflict-chain fold, tens of
 //!    minutes.
 //!
-//! **THE CLEAN-ROUND RESIDUAL, NAMED (not faked).** The terminating clean round is the existing
-//! plain two-leg round (11-lane `pack ‖ auto`); its `C_last → R` handoff is wired here on the BOARD
-//! half only. The MARKS half of the handoff and the clean-round re-check that a terminating move
-//! avoids an accumulated mark (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6, PROVEN in
-//! Lean) need the marks-aware resolve descriptor `automataflResolveMarksDescN`, which **M6 landed in
-//! Lean but did NOT emit / register / give a Rust witness-gen**. So the move-vs-marks legality is
-//! attested at the CONFLICT rounds (Leg C's `marksIn`-legality pin) but NOT at the terminating move,
-//! and welding the braid to the clean round into ONE root is BLOCKED on that emission + a
-//! mixed-width clean-handoff merge node. See `MultiRoundTurn`'s type doc.
+//! **THE CLEAN-ROUND HANDOFF — the marks half is now CLOSED at mint.** The terminating clean round
+//! is the marks-aware **Leg RM** (`automataflResolveMarksDescN 11`, now EMITTED as
+//! `automatafl-resolve-marks-n11.json` + `automatafl_resolve_marks_trace`) then the automaton **Leg
+//! A** step. `MultiRoundTurn::clean_leaves` mints it with `marksIn` = the conflict chain's
+//! `marksOut`; Leg RM declares the 20-lane `[board(9) ‖ marks(9) ‖ auto(2)]` window whose 18-lane
+//! `board ‖ marks` prefix matches the conflict rounds' RoundState handoff lanes. So BOTH halves of
+//! the `C_last → R` handoff line up here, and Leg RM re-checks the terminating move against the
+//! accumulated marks (the M6 legality NOR pin). The canaries below assert the marks half holds, the
+//! `marksIn` equals the conflict `marksOut`, a dropped round breaks the MARKS seam, and a clean-round
+//! move onto a mark is UNSAT.
+//!
+//! **WHAT WELDING THE WHOLE TURN INTO ONE ROOT STILL NEEDS (residuals, not faked).** (1) The clean
+//! sub-chain is mixed-width — Leg RM is 20-lane, Leg A (the step) publishes no marks so it is 11-lane
+//! `[board ‖ auto]` — so it cannot fold through the deployed uniform `aggregate_tree`; folding the
+//! automaton step into the marks-carrying clean chain needs a marks-carrying step descriptor
+//! (Lean-authored AIR). (2) No `WholeChainProof` assembly exists for the clean-handoff root
+//! (`fold_clean_handoff_root` yields a bare `RecursionOutput`; the verifier already accepts a
+//! mixed-width board window, but the prover-side assembler is `dregg-circuit-prove` work). See
+//! `MultiRoundTurn`'s type doc.
 
 use dregg_automatafl::legc_layout::LegCLayout;
 use dregg_automatafl::legc_witness::{
@@ -264,57 +274,103 @@ fn the_conflict_chain_exposes_first_in_and_last_out() {
     );
 }
 
-/// **THE BOARD HALF OF THE `C_last → R` HANDOFF.** The clean round starts from the SAME frozen
-/// turn-start board, so `C_last.OUT` board(9) equals the clean Leg R's IN board(9) — the board lanes
-/// the `board_window_clean_handoff_connects` prefix connects.
-///
-/// ⚠ THE MARKS HALF IS BLOCKED. The plain Leg R publishes `pack(board) ‖ auto`, NOT a marks window,
-/// so the handoff's marks lanes (`[9,18)`) have no counterpart on the clean side — that needs the
-/// marks-aware `automataflResolveMarksDescN` (M6, Lean-only). Asserted here: the board half holds;
-/// the marks half is the named residual.
-#[test]
-fn the_board_half_of_the_clean_handoff_holds() {
-    use dregg_automatafl::resolve_witness::{
-        automatafl_resolve_trace, resolve_board_window, resolve_descriptor_ident,
-        resolve_trace_accepts,
+/// Fill the terminating clean round's marks-aware **Leg RM** directly (no leg mint) with the given
+/// `marks`, and read its 20-lane `[board(9) ‖ marks(9) ‖ auto(2)]` `(IN, OUT)` window through the
+/// SAME extractor the fold uses. Panics if the marks-illegal fill is refused (callers pass a
+/// marks-legal clean pair).
+fn clean_rm_window(
+    start: &Board,
+    subs: &[Move; 2],
+    marks: &[Coord],
+) -> (Vec<BabyBear>, Vec<BabyBear>) {
+    use dregg_automatafl::resolve_marks_witness::{
+        automatafl_resolve_marks_trace, resolve_marks_board_window, resolve_marks_descriptor_ident,
+        resolve_marks_trace_accepts,
     };
+    let rmdesc =
+        descriptor_by_name(resolve_marks_descriptor_ident(N)).expect("the n=11 resolve-marks desc");
+    let rt = automatafl_resolve_marks_trace(start, subs, marks, &rmdesc)
+        .expect("the terminating clean round fills");
+    assert!(
+        resolve_marks_trace_accepts(&rmdesc, &rt),
+        "a marks-LEGAL terminating clean round must satisfy the resolve-marks descriptor"
+    );
+    let rmwin = resolve_marks_board_window(N, &rmdesc).expect("the resolve-marks board window");
+    extract_custom_pi_board_window(&rt.public_inputs, &rmwin).expect("20-lane window")
+}
 
+/// **THE FULL `board ‖ marks` HALF OF THE `C_last → R` HANDOFF.** The clean round consumes the
+/// accumulated marks: `MultiRoundTurn::accumulated_marks` reads them off the conflict chain, and Leg
+/// RM's 20-lane IN window carries `board(9) ‖ marks(9) ‖ auto(2)`. Both halves of the 18-lane handoff
+/// prefix line up — `C_last.OUT[board ‖ marks] == R.IN[board ‖ marks]` — the exact lanes
+/// `board_window_clean_handoff_connects` welds.
+#[test]
+fn the_board_and_marks_halves_of_the_clean_handoff_hold() {
     let turn = three_conflict_turn();
     let c_last_out = legc_window(conflict_traces(&turn).last().unwrap()).1;
 
-    // Fill the terminating clean Leg R directly (no mint) and read its 11-lane IN = pack(9) ‖ auto.
     let clean = turn.clean_subs.expect("the turn carries a clean round");
-    let rdesc = descriptor_by_name(resolve_descriptor_ident(N)).expect("resolve descriptor");
-    let rt = automatafl_resolve_trace(&turn.start, &clean, &rdesc)
-        .expect("the terminating clean round fills");
-    assert!(
-        resolve_trace_accepts(&rdesc, &rt),
-        "the terminating clean round satisfies the plain Lean resolve descriptor"
+    let marks = turn
+        .accumulated_marks()
+        .expect("the conflict braid accumulates marks");
+    // The braid marked all three fork sources.
+    assert_eq!(
+        marks.len(),
+        3,
+        "three conflict forks accumulate three marks"
     );
-    let rwin = resolve_board_window(N, &rdesc).expect("the resolve board window");
-    let (r_in, _) =
-        extract_custom_pi_board_window(&rt.public_inputs, &rwin).expect("11-lane window");
 
+    let (rm_in, _rm_out) = clean_rm_window(&turn.start, &clean, &marks);
     assert_eq!(
-        r_in.len(),
-        11,
-        "the plain clean Leg R IN is pack(9) ‖ auto(2)"
+        rm_in.len(),
+        20,
+        "clean Leg RM IN is board(9) ‖ marks(9) ‖ auto(2)"
+    );
+
+    // (a) the BOARD half — both sides the frozen turn-start board.
+    assert_eq!(
+        c_last_out[BOARD], rm_in[BOARD],
+        "C_last.OUT board(9) == clean RM.IN board(9)"
     );
     assert_eq!(
-        c_last_out[BOARD],
-        r_in[0..9],
-        "C_last.OUT board(9) == clean R.IN board(9) — the BOARD half of the handoff"
-    );
-    assert_eq!(
-        &c_last_out[BOARD],
+        &rm_in[BOARD],
         pack(&turn.start).as_slice(),
-        "both sides are the frozen turn-start board"
+        "the clean round starts from the frozen turn-start board"
     );
-    // The marks the braid accumulated exist on C_last.OUT but have NOWHERE to land on the plain
-    // clean leg — the residual, made visible.
+    // (b) the MARKS half — non-vacuous (the braid grew 3 marks), and it MATCHES.
     assert!(
-        c_last_out[MARKS].iter().any(|m| *m != BabyBear::ZERO),
-        "C_last.OUT carries accumulated marks the plain clean Leg R cannot consume (M6 residual)"
+        rm_in[MARKS].iter().any(|m| *m != BabyBear::ZERO),
+        "the clean round enters with the accumulated marks (non-empty)"
+    );
+    assert_eq!(
+        c_last_out[MARKS], rm_in[MARKS],
+        "C_last.OUT marks(9) == clean RM.IN marks(9) — the MARKS half of the handoff, now closed"
+    );
+    // Together: the whole 18-lane board||marks prefix the clean handoff connects.
+    assert_eq!(
+        c_last_out[0..18],
+        rm_in[0..18],
+        "the full board ‖ marks handoff prefix agrees lane-for-lane"
+    );
+}
+
+/// **`marksIn` IS THE CONFLICT CHAIN'S `marksOut`.** The clean round's `marksIn` (packed into Leg
+/// RM's marks window) equals the marks the LAST conflict round produced — read back from the trace,
+/// not re-derived. This is the datum the handoff binds; the next canary shows dropping a round makes
+/// it disagree.
+#[test]
+fn the_clean_marks_in_equals_the_conflict_chain_marks_out() {
+    let turn = three_conflict_turn();
+    let wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> =
+        conflict_traces(&turn).iter().map(legc_window).collect();
+    let c_last_marks_out = &wins.last().unwrap().1[MARKS];
+
+    let marks = turn.accumulated_marks().expect("marks accumulate");
+    let clean = turn.clean_subs.unwrap();
+    let (rm_in, _) = clean_rm_window(&turn.start, &clean, &marks);
+    assert_eq!(
+        &rm_in[MARKS], c_last_marks_out,
+        "clean RM.IN marks(9) IS pack(C_last.marksOut) — the accumulated overlay, read off the trace"
     );
 }
 
@@ -351,6 +407,96 @@ fn a_dropped_conflict_round_breaks_the_roundstate_seam() {
     assert_eq!(
         c0_out[BOARD], c2_in[BOARD],
         "the board is still frozen — only the marks seam catches the drop"
+    );
+}
+
+/// **A DROPPED CONFLICT ROUND BREAKS THE `C_last → R` CLEAN HANDOFF (the marks half).** The clean
+/// round's `marksIn` was accumulated over the WHOLE braid `[C_0, C_1, C_2]`; a prover who drops the
+/// last round `C_2` presents `C_1` as `C_last`, whose `marksOut` LACKS `C_2`'s clash. The clean Leg
+/// RM's IN marks — the full-braid overlay — then disagrees with the shortened chain's `C_last.OUT`
+/// marks on the handoff prefix, so `board_window_clean_handoff_connects` is UNSAT (no root). The
+/// board half stays equal (the board is frozen across the whole braid), so ONLY the marks half of the
+/// handoff catches the drop — which is exactly why the marks must be in the handoff window.
+#[test]
+fn a_dropped_conflict_round_breaks_the_clean_handoff_marks_seam() {
+    let turn = three_conflict_turn();
+    // The honest clean round consumes the FULL-braid accumulated marks.
+    let full_marks = turn.accumulated_marks().expect("full braid marks");
+    let clean = turn.clean_subs.unwrap();
+    let (rm_in, _) = clean_rm_window(&turn.start, &clean, &full_marks);
+
+    let wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> =
+        conflict_traces(&turn).iter().map(legc_window).collect();
+
+    // CONTROL: against the honest last round C_2, the whole 18-lane prefix agrees.
+    assert_eq!(
+        wins[2].1[0..18],
+        rm_in[0..18],
+        "control: the honest C_2.OUT board||marks == clean RM.IN board||marks"
+    );
+
+    // DROP C_2: the shortened chain's last round is C_1. Its board||marks prefix now disagrees with
+    // the clean round's full-braid marksIn — the broken clean handoff.
+    let dropped_last_out = &wins[1].1;
+    assert_ne!(
+        dropped_last_out[0..18],
+        rm_in[0..18],
+        "a dropped last round leaves a broken clean handoff (no witness in the fold)"
+    );
+    // It is the MARKS half that diverges; the board is frozen so its half still matches.
+    assert_ne!(
+        dropped_last_out[MARKS], rm_in[MARKS],
+        "C_1.OUT.marks lacks C_2's clash that the clean round's marksIn expects"
+    );
+    assert_eq!(
+        dropped_last_out[BOARD], rm_in[BOARD],
+        "the board half stays equal (frozen) — only the marks half catches the drop"
+    );
+}
+
+/// **THE CLEAN-ROUND MARKS RE-CHECK (M6) — a terminating move onto an accumulated mark is UNSAT.**
+/// Now reachable because the marks-aware Leg RM is emitted. A DIFFERENTIAL isolating marks as the
+/// sole cause: the honest clean pair `[(0,7)→(2,7), (7,0)→(7,2)]` SATISFIES against marks that avoid
+/// its endpoints, but the SAME pair against marks that additionally include move 0's destination
+/// `(2,7)` is REJECTED — the only thing that changed is the mark set, so the rejection IS the M6
+/// legality NOR pin (`roundStep`'s fresh filter refusing a move onto a mark), the terminating-move
+/// re-check that was the named residual.
+#[test]
+fn a_clean_round_move_onto_an_accumulated_mark_is_unsat() {
+    use dregg_automatafl::resolve_marks_witness::{
+        automatafl_resolve_marks_trace, resolve_marks_descriptor_ident, resolve_marks_trace_accepts,
+    };
+    let turn = three_conflict_turn();
+    let clean = turn.clean_subs.unwrap();
+    let base_marks = turn.accumulated_marks().expect("marks accumulate");
+    // The clean endpoints are (0,7),(2,7),(7,0),(7,2); the accumulated marks {(0,0),(5,5),(8,8)}
+    // avoid them all.
+    for e in [(0, 7), (2, 7), (7, 0), (7, 2)] {
+        assert!(
+            !base_marks.contains(&e),
+            "the honest marks avoid the clean endpoints"
+        );
+    }
+    let rmdesc =
+        descriptor_by_name(resolve_marks_descriptor_ident(N)).expect("resolve-marks descriptor");
+
+    // CONTROL: the clean pair against the honest (endpoint-avoiding) marks SATISFIES.
+    let ok = automatafl_resolve_marks_trace(&turn.start, &clean, &base_marks, &rmdesc)
+        .expect("the honest clean round fills");
+    assert!(
+        resolve_marks_trace_accepts(&rmdesc, &ok),
+        "control: the clean pair against endpoint-avoiding marks is marks-LEGAL"
+    );
+
+    // ONLY-CHANGE: add move 0's DESTINATION (2,7) to the marks — now the SAME pair is UNSAT.
+    let mut marked = base_marks.clone();
+    marked.push((2, 7));
+    let bad = automatafl_resolve_marks_trace(&turn.start, &clean, &marked, &rmdesc)
+        .expect("the trace still FILLS (geometry unchanged); the legality gate bites on accept");
+    assert!(
+        !resolve_marks_trace_accepts(&rmdesc, &bad),
+        "the SAME clean pair against marks that include a move's destination is REJECTED — the M6 \
+         marks re-check, isolated (only the mark set changed)"
     );
 }
 
@@ -395,10 +541,9 @@ fn a_substituted_round_with_a_forged_marks_out_is_unsat() {
 /// 1` pin fails, `automataflLegCDescN` is UNSAT. This is the marks re-check the braid enforces at
 /// EVERY conflict round.
 ///
-/// ⚠ It is the CONFLICT-round re-check, not the CLEAN-round one. The terminating-move re-check
-/// (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6) needs the marks-aware clean resolve
-/// descriptor `automataflResolveMarksDescN`, which is Lean-only — that leaf-level negative is the
-/// named residual (see the module and `MultiRoundTurn` docs).
+/// This is the CONFLICT-round re-check. Its CLEAN-round twin — the terminating-move re-check
+/// (`AutomataflResolveMarksCapstone.resolveMarksMoveLegal`, M6) — is now also live via the emitted
+/// marks-aware Leg RM (`a_clean_round_move_onto_an_accumulated_mark_is_unsat`).
 #[test]
 fn a_submission_onto_a_marked_square_is_refused_at_the_conflict_recheck() {
     let cdesc = legc_desc();
@@ -486,6 +631,75 @@ fn conflict_leaves_mints_a_foldable_leg_c_leaf() {
     assert_eq!(win_out.len(), 32);
 }
 
+/// **THE DEPLOYED CLEAN-ROUND PRODUCER.** `clean_leaves` mints the marks-aware Leg RM (20-lane
+/// `[board ‖ marks ‖ auto]`, proving `automatafl-resolve-marks-n11`) then Leg A (11-lane
+/// `[board ‖ auto]`, proving `automatafl-step-n11`). Its Leg RM IN window's `board ‖ marks` prefix
+/// equals the conflict chain's `C_last.OUT` prefix — the deployed producer wires the FULL handoff.
+/// Both legs are `descriptor_backed` (no proving here — the fill + bundle build).
+#[test]
+fn clean_leaves_mints_the_resolve_marks_leg_and_the_step_leg() {
+    use dregg_automatafl::resolve_marks_witness::resolve_marks_board_window;
+
+    let turn = three_conflict_turn();
+    let leaves = turn.clean_leaves().expect("the clean round mints");
+    assert_eq!(leaves.len(), 2, "clean round == Leg RM + Leg A");
+
+    // Leg RM: proves the resolve-marks descriptor and declares the 20-lane window.
+    let rm = &leaves[0];
+    let rm_src = rm
+        .descriptor_state_leaf
+        .as_ref()
+        .expect("Leg RM carries a descriptor source");
+    assert!(
+        rm_src.descriptor.name.contains("resolve-marks"),
+        "Leg RM proves the marks-aware resolve descriptor, got {}",
+        rm_src.descriptor.name
+    );
+    assert_eq!(
+        rm_src
+            .board_window
+            .as_ref()
+            .expect("RM declares a window")
+            .window_len(),
+        20,
+        "Leg RM declares the 20-lane board ‖ marks ‖ auto window"
+    );
+
+    // Leg A: proves the step descriptor, 11-lane window (no marks — the width residual).
+    let step_src = leaves[1]
+        .descriptor_state_leaf
+        .as_ref()
+        .expect("Leg A carries a descriptor source");
+    assert!(
+        step_src.descriptor.name.contains("step"),
+        "Leg A proves the automaton step descriptor"
+    );
+    assert_eq!(
+        step_src
+            .board_window
+            .as_ref()
+            .expect("A declares a window")
+            .window_len(),
+        11,
+        "Leg A is the 11-lane board ‖ auto window (no marks PIs — the mixed-width residual)"
+    );
+
+    // The minted Leg RM's board||marks prefix lines up with the conflict chain's C_last.OUT.
+    let rmdesc = descriptor_by_name(
+        dregg_automatafl::resolve_marks_witness::resolve_marks_descriptor_ident(N),
+    )
+    .unwrap();
+    let rmwin = resolve_marks_board_window(N, &rmdesc).unwrap();
+    let (rm_in, _) =
+        extract_custom_pi_board_window(&rm.public_inputs, &rmwin).expect("20-lane window");
+    let c_last_out = legc_window(conflict_traces(&turn).last().unwrap()).1;
+    assert_eq!(
+        c_last_out[0..18],
+        rm_in[0..18],
+        "the minted Leg RM IN board ‖ marks prefix == C_last.OUT board ‖ marks"
+    );
+}
+
 // ============================================================================
 // (c) THE DEPLOYED FOLD — a real conflict-chain fold. SLOW; `#[ignore]`d.
 // ============================================================================
@@ -493,9 +707,18 @@ fn conflict_leaves_mints_a_foldable_leg_c_leaf() {
 /// **THE HONEST CONFLICT-BRAID FOLD.** The uniform 32-lane Leg C chain folds through the DEPLOYED
 /// recursive fold (`fold_match` → `aggregate_tree`, width auto-derived from the exposed 89-lane
 /// shape — no M7-specific prover code), the light client ACCEPTS, and the attestation carries
-/// `[first.IN ‖ last.OUT]` (the genesis RoundState and the accumulated-marks RoundState). Welding
-/// the terminating clean round onto this root is the mixed-width `C_last → R` handoff — the named
-/// residual (M6 marks descriptor + a clean-handoff merge node).
+/// `[first.IN ‖ last.OUT]` (the genesis RoundState and the accumulated-marks RoundState).
+///
+/// Welding the terminating clean round onto this root into ONE `WholeChainProof` is BLOCKED on two
+/// residuals, both surfaced not faked (see the module + `MultiRoundTurn` docs): (1) the clean
+/// sub-chain Leg RM(20) ∘ Leg A(11) is MIXED-width — the step descriptor has no marks PIs — so it
+/// cannot fold through the uniform `aggregate_tree`, and a nested clean-handoff sub-root is not the
+/// `SEG + 2W` shape the top merge reads; folding the step into the marks chain needs a marks-carrying
+/// step descriptor (Lean). (2) No `WholeChainProof` assembler exists for the clean-handoff root
+/// (`fold_clean_handoff_root` yields a bare `RecursionOutput`; the verifier's board-window tooth
+/// ALREADY accepts a mixed-width `[first.IN(32) ‖ last.OUT(20)]` window, but the prover-side glue is
+/// `dregg-circuit-prove` work). The `board ‖ marks` handoff and the terminating marks-legality are
+/// closed at MINT level by the fast canaries above.
 #[test]
 #[ignore = "SLOW: a real n=11 conflict-chain fold (3 × 1208-col Leg C leaves, each recursion-wrapped, \
             plus the tree) is tens of minutes. It uses the DEPLOYED path unchanged (uniform 32-lane \

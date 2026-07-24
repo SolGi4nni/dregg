@@ -48,6 +48,61 @@ pub fn resolve_marks_descriptor_ident(n: usize) -> &'static str {
     resolve_marks_descriptor_name(n)
 }
 
+/// **LEG RM's BOARD-STATE WINDOW** — the marks-carrying clean-round window the multi-round braid's
+/// `C_last → R` handoff connects. `IN = pack(old) ‖ pack(marksIn) ‖ (ax, ay)`,
+/// `OUT = pack(cMidV4) ‖ pack(marksIn) ‖ (ax, ay)` — 20 lanes at `n = 11`
+/// (`board(9) ‖ marks(9) ‖ auto(2)`).
+///
+/// Its leading `board(9) ‖ marks(9)` prefix (18 lanes) is EXACTLY
+/// [`roundstate_window_n11::HANDOFF_LANES`](dregg_circuit::effect_vm::custom_state_binding::roundstate_window_n11),
+/// laid out in the SAME `board`-then-`marks` order as the conflict rounds' 32-lane RoundState
+/// window, so the deployed clean-handoff connect (`board_window_clean_handoff_connects`) welds
+/// `C_last.OUT[board ‖ marks] == R.IN[board ‖ marks]`. `marks` is FROZEN through the resolution
+/// (the marks carry gates legality, never the resolution board — see the module doc), so IN and OUT
+/// both point at the single published `pack(marksIn)` PI window; `auto` likewise (resolution never
+/// moves the automaton).
+///
+/// `Err` (fail-closed) if the loaded descriptor's PI count is not the resolve-marks layout for `n`,
+/// or the window is not expressible in it — a size the marks descriptor is not emitted for is
+/// BLOCKED, not faked.
+pub fn resolve_marks_board_window(
+    n: usize,
+    desc: &EffectVmDescriptor2,
+) -> Result<dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::BoardWindowBinding;
+    let l = ResolveMarksLayout::new(n);
+    if l.pi_count() != desc.public_input_count {
+        return Err(format!(
+            "resolve-marks board window: layout PI count {} ≠ descriptor '{}' public_input_count {}",
+            l.pi_count(),
+            desc.name,
+            desc.public_input_count
+        ));
+    }
+    let rfc = l.r.rfc;
+    let b = BoardWindowBinding {
+        // board(pack_old) ‖ marks(pack_marksIn) ‖ auto.
+        in_slices: vec![
+            (l.r.pack_in_pi_base(), rfc),
+            (l.pi_marks_in(), rfc),
+            (l.r.auto_pi_base(), 2),
+        ],
+        // board(pack_cMidV4) ‖ marks(pack_marksIn, frozen) ‖ auto (unmoved).
+        out_slices: vec![
+            (l.r.pack_out_pi_base(), rfc),
+            (l.pi_marks_in(), rfc),
+            (l.r.auto_pi_base(), 2),
+        ],
+    };
+    if !b.is_well_formed() || desc.public_input_count < b.pi_end() {
+        return Err(format!(
+            "resolve-marks board window {b:?} is not expressible in descriptor '{}' ({} PIs)",
+            desc.name, desc.public_input_count
+        ));
+    }
+    Ok(b)
+}
+
 /// The generated single-row trace + public inputs for the Lean resolve-marks descriptor.
 #[derive(Clone, Debug)]
 pub struct ResolveMarksTrace {
@@ -453,6 +508,55 @@ mod tests {
         assert!(
             !resolve_marks_trace_accepts(&desc, &tr),
             "a tampered marksIn indicator cell must fail its base-4 pack gate"
+        );
+    }
+
+    /// **THE 20-LANE CLEAN-ROUND WINDOW.** `resolve_marks_board_window` declares
+    /// `board(9) ‖ marks(9) ‖ auto(2)` with the `board ‖ marks` prefix (18) matching the conflict
+    /// rounds' RoundState handoff lanes, and the extracted window reads the REAL packed board / marks
+    /// / auto values off an honest clean-round trace.
+    #[test]
+    fn resolve_marks_window_is_the_20_lane_board_marks_auto() {
+        use dregg_circuit::effect_vm::custom_state_binding::{
+            extract_custom_pi_board_window, roundstate_window_n11,
+        };
+        let desc = desc11();
+        let l = ResolveMarksLayout::new(11);
+        let win = resolve_marks_board_window(11, &desc).expect("the n=11 clean-round window");
+        assert_eq!(win.window_len(), 20, "board(9) ‖ marks(9) ‖ auto(2)");
+        assert_eq!(
+            roundstate_window_n11::HANDOFF_LANES,
+            18,
+            "the handoff prefix is board(9) ‖ marks(9)"
+        );
+
+        let old = stock_two_player();
+        let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
+        let marks: Vec<Coord> = vec![(5, 5), (9, 9)];
+        let tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).expect("clean fill");
+        let (win_in, win_out) =
+            extract_custom_pi_board_window(&tr.public_inputs, &win).expect("window expressible");
+        assert_eq!(win_in.len(), 20);
+        assert_eq!(win_out.len(), 20);
+        // The IN board(9) is pack(old); OUT board(9) is pack(cMidV4); marks(9) equal both sides
+        // (frozen); auto(2) equal both sides (unmoved).
+        assert_eq!(
+            &win_in[0..9],
+            &tr.public_inputs[l.r.pack_in_pi_base()..l.r.pack_in_pi_base() + 9]
+        );
+        assert_eq!(
+            &win_out[0..9],
+            &tr.public_inputs[l.r.pack_out_pi_base()..l.r.pack_out_pi_base() + 9]
+        );
+        assert_eq!(
+            win_in[9..18],
+            win_out[9..18],
+            "marks are frozen through resolve"
+        );
+        assert_eq!(
+            win_in[18..20],
+            win_out[18..20],
+            "auto is unmoved by resolve"
         );
     }
 
