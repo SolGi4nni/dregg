@@ -230,6 +230,16 @@ theorem gates_force_holdsKindW_absent (hash : List ℤ → ℤ) (hCR : Poseidon2
     HoldsKindW (opensAtW hash E dep) r r' k v MapOpKind.absent :=
   absentGatesW_force_keysOfW_absence hash hCR E dep r k v r' hg
 
+/-- The `.read` leg of `HoldsKindW`, at the CONCRETE opening predicate, forced by the gate. This
+one is `reconcileGatesW_force_openingW` unchanged — `HoldsKindW`'s `.read` body IS
+`opensAtW hash E dep pre (k, v) ∧ post = pre` definitionally, which is exactly what the widened
+MapOps law already delivers. Recorded so the per-kind coverage of §1b is complete, not partial. -/
+theorem gates_force_holdsKindW_read (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (E : LaneEnc Digest8Key) (dep : Nat) (r : ℤ) (k : Digest8Key) (v r' : ℤ)
+    (hg : ReconcileGatesAtW hash E dep r k v r' MapOpKind.read) :
+    HoldsKindW (opensAtW hash E dep) r r' k v MapOpKind.read :=
+  reconcileGatesW_force_openingW hash hCR E dep r k v r' MapOpKind.read hg
+
 /-- **★ THE FINDING: A MAP-TREE WRITE PINS ITS KEY ALREADY COMMITTED.** `writesToMerkleW` demands
 the post-heap still hold `2 ^ dep` leaves; `Heap.length_set_fresh` grows an absent-key write by
 exactly one leaf, so the only satisfiable case is `k ∈ Heap.keys h`. Consequence: at the MAP-TREE
@@ -648,6 +658,7 @@ existing named `Poseidon2SpongeCR` floor. No new floor was introduced. -/
 #assert_axioms concrete_gap_forces_opensNone
 #assert_axioms absentGatesW_force_keysOfW_absence
 #assert_axioms gates_force_holdsKindW_absent
+#assert_axioms gates_force_holdsKindW_read
 #assert_axioms writesToMerkleW_forces_present
 #assert_axioms writesToMerkleW_forces_keysOfW_membership
 #assert_axioms writesToMerkleW_forces_growth
