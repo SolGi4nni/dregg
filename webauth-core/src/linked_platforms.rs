@@ -199,21 +199,34 @@ impl LinkedPlatformsAttributes {
                 LinkedAttrValue::Bytes32(self.telegram_uid_commit.unwrap_or([0u8; 32])),
             ),
             (ATTR_ACCOUNT_ID, LinkedAttrValue::Bytes32(self.account_id)),
+            (ATTR_UID_SALT, LinkedAttrValue::Bytes32(self.uid_salt)),
         ]
     }
 }
 
-/// The hiding commitment to a platform uid: `blake3(uid)`. The credential never
-/// carries the uid, only this.
-pub fn uid_commitment(platform_uid: &str) -> [u8; 32] {
-    *blake3::hash(platform_uid.as_bytes()).as_bytes()
+/// The salted, hiding commitment to a platform uid: `blake3(uid_salt ‖ uid)`.
+///
+/// The credential never carries the uid, only this commitment. Unlike a plain
+/// `blake3(uid)`, the 32-byte per-credential `uid_salt` (256 bits of entropy)
+/// defeats a brute-force over the small, enumerable (< 2^40) Discord/Telegram
+/// snowflake space: without the salt a verifier cannot recover WHICH account the
+/// commitment binds. A fresh salt per credential also makes two credentials for
+/// the same uid produce different commitments, so they are not equality-linkable.
+/// The property holds only while the salt is undisclosed — disclosing it (an
+/// explicit holder choice via [`ATTR_UID_SALT`]) lets a chosen verifier check a
+/// candidate uid.
+pub fn uid_commitment(uid_salt: &[u8; 32], platform_uid: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(uid_salt);
+    hasher.update(platform_uid.as_bytes());
+    *hasher.finalize().as_bytes()
 }
 
-/// `blake3(uid)` of the first active link on `platform`, if any.
-fn uid_commit(res: &LinkResolution, platform: &str) -> Option<[u8; 32]> {
+/// `blake3(uid_salt ‖ uid)` of the first active link on `platform`, if any.
+fn uid_commit(res: &LinkResolution, platform: &str, uid_salt: &[u8; 32]) -> Option<[u8; 32]> {
     res.active_links()
         .find(|a| a.platform == platform)
-        .map(|a| uid_commitment(&a.platform_uid))
+        .map(|a| uid_commitment(uid_salt, &a.platform_uid))
 }
 
 /// Decode 64 hex chars into 32 bytes; `None` on malformation.
@@ -263,19 +276,26 @@ mod tests {
                 signed_memo(&sk, LinkVerb::Link, PLATFORM_TELEGRAM, "222", "custT", "c1"),
             ),
         ];
+        let salt = [7u8; 32];
         let res = fold_link_events(&events).unwrap();
-        let attrs = LinkedPlatformsAttributes::from_resolution(&res).expect("has account id");
+        let attrs = LinkedPlatformsAttributes::from_resolution(&res, salt).expect("has account id");
 
         assert_eq!(attrs.platforms_count, 2);
         assert!(attrs.has_discord && attrs.has_telegram && !attrs.has_web);
-        assert_eq!(attrs.discord_uid_commit, Some(uid_commitment("111")));
-        assert_eq!(attrs.telegram_uid_commit, Some(uid_commitment("222")));
+        assert_eq!(attrs.uid_salt, salt);
+        assert_eq!(attrs.discord_uid_commit, Some(uid_commitment(&salt, "111")));
+        assert_eq!(
+            attrs.telegram_uid_commit,
+            Some(uid_commitment(&salt, "222"))
+        );
         // the account id IS K's inception-derived cell id
         let want = hex::decode(account_id_hex(&sk.verifying_key().to_bytes())).unwrap();
         assert_eq!(attrs.account_id.to_vec(), want);
-        // the commit hides the uid — it is blake3(uid), not the uid bytes
-        assert_eq!(attrs.discord_uid_commit, Some(uid_commitment("111")));
-        assert_ne!(uid_commitment("111"), uid_commitment("112"));
+        // the commit is blake3(salt ‖ uid): it differs from the OLD, brute-forceable
+        // unsalted blake3(uid), and distinct uids under the same salt still differ.
+        let unsalted_old = *blake3::hash("111".as_bytes()).as_bytes();
+        assert_ne!(attrs.discord_uid_commit, Some(unsalted_old));
+        assert_ne!(uid_commitment(&salt, "111"), uid_commitment(&salt, "112"));
     }
 
     /// The credential pairs are the schema attributes, in order, correctly typed;
@@ -295,8 +315,9 @@ mod tests {
                 "c0",
             ),
         )];
+        let salt = [9u8; 32];
         let res = fold_link_events(&events).unwrap();
-        let attrs = LinkedPlatformsAttributes::from_resolution(&res).unwrap();
+        let attrs = LinkedPlatformsAttributes::from_resolution(&res, salt).unwrap();
         let pairs = attrs.to_credential_pairs();
 
         let names: Vec<&str> = pairs.iter().map(|(n, _)| *n).collect();
@@ -309,6 +330,8 @@ mod tests {
             pairs[4],
             (ATTR_DISCORD_UID_COMMIT, LinkedAttrValue::Bytes32([0u8; 32]))
         );
+        // the salt rides as the last (disclose-on-demand) pair
+        assert_eq!(pairs[7], (ATTR_UID_SALT, LinkedAttrValue::Bytes32(salt)));
     }
 
     /// An UNLINK drops the platform from the count and clears its flag/commit —
@@ -338,9 +361,80 @@ mod tests {
             ),
         ];
         let res = fold_link_events(&events).unwrap();
-        let attrs = LinkedPlatformsAttributes::from_resolution(&res).unwrap();
+        let attrs = LinkedPlatformsAttributes::from_resolution(&res, [1u8; 32]).unwrap();
         assert_eq!(attrs.platforms_count, 1);
         assert!(!attrs.has_discord && attrs.has_telegram);
         assert_eq!(attrs.discord_uid_commit, None);
+    }
+
+    /// UNLINKABILITY: two credentials issued for the SAME human/uid but with
+    /// different issuer-drawn salts carry DIFFERENT uid commitments, so a verifier
+    /// cannot equality-link the two presentations to the same account.
+    #[test]
+    fn two_credentials_same_uid_produce_different_commitments() {
+        let sk = SigningKey::from_bytes(&[6u8; 32]);
+        let events = vec![LinkEvent::new(
+            0,
+            signed_memo(&sk, LinkVerb::Link, PLATFORM_DISCORD, "999", "custD", "c0"),
+        )];
+        let res = fold_link_events(&events).unwrap();
+
+        // Same folded resolution (same uid), two separate issuances → two salts.
+        let cred_a = LinkedPlatformsAttributes::from_resolution(&res, [0xA1; 32]).unwrap();
+        let cred_b = LinkedPlatformsAttributes::from_resolution(&res, [0xB2; 32]).unwrap();
+
+        assert_ne!(cred_a.uid_salt, cred_b.uid_salt);
+        assert!(cred_a.discord_uid_commit.is_some());
+        assert_ne!(
+            cred_a.discord_uid_commit, cred_b.discord_uid_commit,
+            "two credentials for the SAME uid must NOT share a commitment (unlinkable)"
+        );
+    }
+
+    /// DEANONYMIZATION RESISTANCE: a verifier that holds only the disclosed
+    /// commitment, and brute-forces the entire enumerable snowflake space, does
+    /// NOT recover the uid without the salt — but WITH the disclosed salt the
+    /// intended check succeeds. The OLD unsalted `blake3(uid)` would fall to this
+    /// exact scan.
+    #[test]
+    fn brute_force_over_uid_space_does_not_recover_uid_without_salt() {
+        let secret_uid = "4242";
+        let salt = [0x5Au8; 32];
+        let commit = uid_commitment(&salt, secret_uid);
+
+        // The attacker enumerates the whole (here tiny, stand-in) snowflake space
+        // and tries the ONLY hash they can form without the salt: blake3(candidate).
+        let mut recovered_unsalted = false;
+        for candidate in 0u64..10_000 {
+            let guess = candidate.to_string();
+            if *blake3::hash(guess.as_bytes()).as_bytes() == commit {
+                recovered_unsalted = true;
+                break;
+            }
+        }
+        assert!(
+            !recovered_unsalted,
+            "unsalted brute-force must NOT recover the salted commitment"
+        );
+
+        // Sanity: had the credential used the OLD unsalted scheme, the SAME scan
+        // WOULD have recovered it — proving the scan is real, not a no-op.
+        let old_commit = *blake3::hash(secret_uid.as_bytes()).as_bytes();
+        let mut old_recovered = false;
+        for candidate in 0u64..10_000 {
+            if *blake3::hash(candidate.to_string().as_bytes()).as_bytes() == old_commit {
+                old_recovered = candidate.to_string() == secret_uid;
+                break;
+            }
+        }
+        assert!(
+            old_recovered,
+            "control: the OLD unsalted commitment is recoverable by the same scan"
+        );
+
+        // With the disclosed salt, the intended verification still works: the
+        // holder can prove their uid to a chosen verifier.
+        assert_eq!(uid_commitment(&salt, secret_uid), commit);
+        assert_ne!(uid_commitment(&salt, "4243"), commit);
     }
 }
