@@ -115,13 +115,17 @@ RestartSec=5
 # --- security hardening (user-unit-safe subset) ---------------------------
 # NO ProtectHome: both the binary (%h/dev/breadstuffs/...) and the data dir
 # (%h/.local/state/dregg-node) live under $HOME, same as dregg-web-games-funnel.
+#
+# HBOX USER-MANAGER SAFE SUBSET (fix, 2026-07-23): the hbox `systemctl --user`
+# manager cannot set up the mount/capability sandbox, so ProtectSystem=strict /
+# ProtectKernelTunables / ProtectKernelModules / ProtectControlGroups fail the unit
+# at start (exit 218/CAPABILITIES) — the node was DOA on hbox. The sibling hbox user
+# units (dregg-discord-bot, dregg-telegram-bot) already learned this and kept ONLY
+# NoNewPrivileges. Match them. The FULL hardening (ProtectSystem=strict,
+# ReadWritePaths=%h/.local/state/dregg-node, PrivateTmp, ProtectKernel*, seccomp)
+# belongs in a SYSTEM-manager drop-in (see deploy/hbox/hardening/*.hardening.conf),
+# not this user unit — re-adding it here 218-DOAs the node again.
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=%h/.local/state/dregg-node
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
 
 # --- resource caps (co-tenant box — deploy/PRACTICES.md §1) ---------------
 # Bound the prove-pool so it can never OOM-spiral the shared box. These are
