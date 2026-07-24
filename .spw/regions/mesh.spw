@@ -23,8 +23,7 @@
 }
 
 ^"islands"{
-  fhegg: "the FHE dark-pool — untrusted solver emits a certificate a Lean-verified checker validates; stage two clears on TFHE ciphertexts, nobody decrypts the orders; fhegg-rtl is a Lean-to-Verilog spine, explicitly not yet the accelerator"
+  fhegg: "the FHE dark bazaar — promoted to its own card, see @spw/regions/fhegg.spw"
   attested_dm: "proof-carrying narration, feeding the game region"
   durable_workflow: "crash-resumable exactly-once metered execution"
-  ~#note: "fhegg links to nothing outside itself — a true island, and the newest horizon cluster"
 }

@@ -1,0 +1,38 @@
+# System: the production law — form register
+#
+# Authority is what you can re-prove at the point of use.
+# ^ assign · ! gate · # set · = narrow · * witness · $ floor · ? want
+
+#>spw_form_production
+#:system #!fluid
+
+^"assign"{
+  @holder: "any principal, opaque"
+  #clist: "the capability tree @holder can discharge"
+  $forge: "what the floor forbids — counterfeit witnesses"
+}
+
+&[produce]{
+  @holder => ![exhibit]{ *witness }
+  ![verify]{ *witness $sig } => #clist
+  #conferred = #clist
+  ![amplify]{ #conferred > #clist } => &refuse
+}
+
+&[delegate]{
+  @holder => @delegate
+  #granted = #held =narrow
+  => *[receipt]{ ~edge .authority }
+}
+
+&[leak]{
+  @thief #stolen
+  => #reach = #stolen..closure
+  ![mint]{ _ } => &refuse
+  !revoke => #reach = 0
+}
+
+?[four_ways]{
+  "biscuit · macaroon · cap · zk — one narrowing, four coats; today welded by AND, not by arrow"
+  $%[chainGate, capAuthority] => ~#one_proven_production =owed
+}

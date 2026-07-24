@@ -400,6 +400,14 @@ fn build_dregg2_archive(
         // It is outside the ordinary FFI closure, so build it explicitly for the
         // archive splice and gate its bridge on the exported symbol below.
         "Dregg2.Exec.DeployedConstraint",
+        // CROSS-CELL CONSERVATION decision extraction: the runtime-callable per-asset `Σδ=0`
+        // decision (`@[export] dregg_cross_cell_conserves` over `Dregg2.Circuit.CrossCellConserveDecision`,
+        // Init-only), proved to equal the committed `Dregg2.Circuit.CrossCellConservation` boundary by
+        // `CrossCellConserveRefine.decision_conserves_iff_air_boundary` / `satisfied_imp_decision_conserves`.
+        // OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice picks up the export.
+        // The Rust `turn/src/executor/atomic.rs` per-asset conservation gate routes through it
+        // (via `dregg-exec-lean`'s conservation oracle) instead of the hand-written `BlockConservation` twin.
+        "Dregg2.Circuit.CrossCellConserveDecision",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1586,6 +1594,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_constraint_admits_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_cross_cell_conserves_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1934,6 +1943,26 @@ fn main() {
              the verified deployed-constraint evaluator bridge is compiled out (the ConstraintOracle \
              install is unavailable; the pure-subset admission stays on the Rust guest-path evaluator). \
              Rebuild the archive to run the proven Lean evaluator."
+        );
+    }
+
+    // `Dregg2.Circuit.CrossCellConserveDecision` (the runtime per-asset `Σδ=0` conservation decision)
+    // is outside the main FFI import closure. Probe before emitting the Rust extern + C bridge so a stale
+    // archive lacking the export leaves the CONSERVATION ORACLE uninstallable — and the deployed
+    // executor's conservation gate fails CLOSED (`PerAssetConservationViolation`) on a full node rather
+    // than silently reviving the hand-written Rust `BlockConservation` twin. Its refinement against the
+    // committed AIR is `CrossCellConserveRefine.decision_conserves_iff_air_boundary`.
+    let cross_cell_conserves_present =
+        archive_exports(&build_archive, "dregg_cross_cell_conserves");
+    if cross_cell_conserves_present {
+        println!("cargo:rustc-cfg=dregg_cross_cell_conserves_present");
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_cross_cell_conserves` — \
+             the verified cross-cell conservation decision bridge is compiled out (the conservation \
+             oracle is uninstallable; a full node's per-asset Σδ=0 gate fails closed). Rebuild the \
+             archive (it splices Dregg2.Circuit.CrossCellConserveDecision) to run the proven Lean \
+             conservation decision."
         );
     }
 
@@ -2339,6 +2368,11 @@ fn main() {
     }
     if constraint_admits_present {
         shim.define("DREGG_CONSTRAINT_ADMITS", None);
+    }
+    // CROSS-CELL CONSERVATION: its own module `Dregg2.Circuit.CrossCellConserveDecision`, so
+    // DREGG_CROSS_CELL_CONSERVES gates BOTH the `_str` bridge AND the module initializer.
+    if cross_cell_conserves_present {
+        shim.define("DREGG_CROSS_CELL_CONSERVES", None);
     }
     // We drive the link with `rustc-link-lib` / `rustc-link-search` directives, NOT
     // `rustc-link-arg`. WHY: with the package's `links = "dregg_lean"` key, build-script

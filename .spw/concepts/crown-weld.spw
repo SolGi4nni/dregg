@@ -1,0 +1,11 @@
+# Concept: crowns and welds
+
+#>spw_concept_crown_weld
+#:concept =moving
+
+^"card"{
+  ~#what: "a CROWN is a completed proof-to-deployment column (CellNullifier, CellCommit, Identity — the standing regression suite); a WELD joins a crown to a consumer so the guarantee transfers — grain-verify is the crown weld on the consumer side, even in the renter's browser"
+  ~#why_hard: "a crown without a weld guarantees nothing to anyone downstream; the weld is where verification becomes a product feature"
+  ~#stitches: "mesh.grain (rentable minds are welded crowns) ↔ hatchery (each phase gated on reproducing a crown's proof) ↔ game verified-completion (the replay boundary is a weld)"
+  ~#trap: "shipping the crown and narrating the weld — the wasm verifier in the browser exists precisely so the renter needs no narration"
+}

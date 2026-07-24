@@ -49,6 +49,49 @@ Everything between them — the arity-8 proximity, the unique-decoding collapse 
 PROVED theorem chained here. This is the honest verdict the brief asked for: the math is done, the
 transport is engineered, and the seam is now two named structure-maps, not one opaque research Prop.
 
+## ⚑ §3′ DESIGN-BUG REPAIR (2026-07-23): the §2 bar was FALSE-AS-TYPED at deployed sampling
+
+`accept_folds` as typed below concludes DETERMINISTIC membership `Fold … ∈ friSetupK8.C'` for EVERY
+fold on EVERY accepting run. The deployed verifier does NOT check that: `FriChecks.foldConsistent`
+(`FriVerifier.lean:636`, discharged by `concreteFriChecks`) spot-checks fold consistency at the
+`k = numQueries` TRANSCRIPT-SAMPLED positions only. "The spot-checks pass ⟹ the fold is a codeword"
+is NOT a theorem at deployed sampling — a far word survives `k` samples with probability `(1−δ)^k`,
+which is exactly what `epsQuery` pays for (`FriPositiveRadiusPayment` §1–2; `FriFarnessReconcile`
+names the deterministic collapse as the residual). So §2's bar was unprovable-as-typed against the
+deployed verifier; §3′ RETYPES it (`DeployedFriSampledEmbedding`):
+
+  * the DETERMINISTIC part of `accept_folds` is `accept_folds_sampled` — the SAMPLED positions agree
+    with `Fold` on the log-decoded word (provable from the sampled checks; the concrete
+    verifier-syntax half is PROVEN, `verifyAlgo_concreteFri_opened_positions`);
+  * the MEMBERSHIP conclusion moves to the PROBABILISTIC assembly, holding only
+    except-with-`epsQuery` (`accept_close_or_paid`, proven generically);
+  * `decode_trace` now takes a POSITIVE-RADIUS-close word (`closeN … dRad`, `dRad ≤ 4` = the
+    `[16,8]`-RS unique-decoding radius `⌊(9−1)/2⌋`), not `∈ C` exactly —
+    `PositiveRadiusTraceDecode` is the named input type;
+  * the OLD §2 bar is exactly the FULL-COVER idealization: DERIVABLE from the sampled bar when the
+    sample covers the folded domain (`deployedFriEmbedding_of_sampled_cover`), and the inference it
+    needs WITHOUT cover is REFUTED at a witness (`sampled_pass_not_membership` — a non-codeword
+    passing a non-covering sample against a genuine codeword).
+
+§2/§7 are KEPT (nine downstream consumers speak `DeployedFriEmbedding`) but DEMOTED to the cover
+idealization; the acceptance bar for the decode rungs is §3′. **Per-rung owes-statement:**
+  * **L4** = the deterministic opened-positions-agree map. Verifier-syntax half PROVEN here
+    (`verifyAlgo_concreteFri_opened_positions`: an accepting `concreteFriChecks` run passes
+    `friQueryCheck` at every transcript-sampled index with the index binding). NAMED residual: the
+    Merkle log-decode identification — `friQueryCheck = true` at the sampled index ⟺ the opened
+    leaves agree with `Fold` on the `RomQueryLog`-decoded word (extraction-as-data,
+    except-with-εMerkle).
+  * **L5** = `PositiveRadiusTraceDecode` at a REALISTIC multi-layer `FriSetupK` instance (named, NOT
+    proven, used as a hypothesis nowhere in this file's theorems). `friProximityK8_discharge0` is
+    ONLY the `d = 0` size-16 toy (`FriBridgeDeployedArity.lean:111`);
+    `FriPositiveRadiusPayment.positive_radius_payment_vacuous_at_friSetupK8` proves the size-16
+    domain CANNOT exhibit a positive radius — the realistic instance (`|ι| ≥ 2^22`-class, multi-layer
+    fold tower, `e` inside the true UD radius) is the heavy engineering.
+  * **L6** = the probabilistic membership except-with-`epsQuery`. The per-run dichotomy is PROVEN
+    generically here (`accept_close_or_paid`: all folds `d`-close — whence `n²·d`-closeness by the
+    keystone — OR some far fold whose sampled-agreement event has probability `≤ (1−δ)^k`); the
+    run-level composition into `epsFri` is `FriVerifierCompose`'s assembly.
+
 ## Discipline
 
 Sorry-free; no `def …Sound`/`…Hard` carrier; no `axiom`; the residual enters as an explicit
@@ -58,6 +101,7 @@ apex modules (`StarkSoundReduction`, `FriBridgeDeployedArity`, …) are imported
 -/
 import Dregg2.Circuit.StarkSoundReduction
 import Dregg2.Circuit.FriBridgeDeployedArity
+import Dregg2.Circuit.FriQuerySoundness
 import Dregg2.Circuit.FieldIntegerLift
 
 namespace Dregg2.Circuit.DeployedTraceExtract
@@ -66,16 +110,22 @@ open Dregg2.Circuit.StarkSoundReduction
   (DeployedTraceExtract RSProximityCore RSProximityResearchLemma starkSound_of_core
    core_of_research_and_refines starkSound_of_research_and_refines)
 open Dregg2.Circuit.FriVerifierBridge (ProofView DeployedRefines)
-open Dregg2.Circuit.FriVerifier (verifyAlgo FriParams RecursionVk FriChecks)
+open Dregg2.Circuit.FriVerifier
+  (verifyAlgo FriParams RecursionVk FriChecks FriCore concreteFriChecks friQueryCheck
+   deriveTranscript deriveTranscript_qidx_length BatchProofData WrapPublics)
 open Dregg2.Circuit.CircuitSoundness
   (Registry BatchPublicInputs BatchProof EffectIdx tracePublishedCommit StarkSound)
 open Dregg2.Circuit.DescriptorIR2
   (Satisfied2 VmTrace EffectVmDescriptor2 envAt memLog mapLog opRow VmConstraint2)
 open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept MainAirAcceptF isArith)
 open Dregg2.Circuit.Emit.EffectVmEmit (siteHoldsAll)
-open Dregg2.Circuit.FriSoundness (closeN closeN_zero_iff_mem)
+open Dregg2.Circuit.FriSoundness (closeN closeN_zero_iff_mem farN)
 open Dregg2.Circuit.FriFoldArity
-  (friSetupK8 Fold f0 f0_no_injective_good fHon8 fHon8_fold_complete chal8 chal8_inj)
+  (FriSetupK friSetupK8 Fold fold_close_of_arity_challenges
+   f0 f0_no_injective_good fHon8 fHon8_fold_complete chal8 chal8_inj)
+open Dregg2.Circuit.FriQuerySoundness
+  (Accepts accept_prob_le_of_farN gZero gZero_mem far_accepted_by_missing_query)
+open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.FriBridgeDeployedArity (FriProximityK friProximityK8_discharge0)
 open Dregg2.Crypto
 
@@ -138,7 +188,14 @@ two maps:
   * `decode_trace` — CODEWORD-DECODE: on accept AND the committed oracle being a genuine low-degree
     codeword, an opened deployed `VmTrace` witnesses `TraceWitnessed hash (R pi.effect) pi`.
 `decode_trace` is genuinely WEAKER than raw extraction: the FRI math (`§3`) supplies its
-`oracle pi π ∈ friSetupK8.C` hypothesis, so the decoder never faces an unresolved-degree oracle. -/
+`oracle pi π ∈ friSetupK8.C` hypothesis, so the decoder never faces an unresolved-degree oracle.
+
+⚠ **DEMOTED (§3′)**: `accept_folds` as typed here is the FULL-COVER idealization — the deployed
+verifier only spot-checks folds at sampled positions, so this deterministic membership bar is
+unprovable against it (`sampled_pass_not_membership` refutes the needed inference). The acceptance
+bar for the decode rungs is `DeployedFriSampledEmbedding` (§3′); this structure is KEPT for its
+nine downstream consumers and is derivable from §3′ under full cover
+(`deployedFriEmbedding_of_sampled_cover`). -/
 structure DeployedFriEmbedding
     (hash : List Int → Int) (R : Registry)
     (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
@@ -164,6 +221,264 @@ structure DeployedFriEmbedding
     oracle pi π ∈ friSetupK8.C →
     TraceWitnessed hash (R pi.effect) pi
 
+/-! ## §3′ — THE SAMPLED ACCEPTANCE BAR : §2 retyped to what the deployed verifier CHECKS.
+
+§2's `accept_folds` concludes DETERMINISTIC membership `Fold … ∈ friSetupK8.C'` for EVERY fold on
+EVERY accepting run. The deployed verifier does not check that: `concreteFriChecks.foldConsistent`
+spot-checks fold consistency at the `params.numQueries` transcript-sampled positions ONLY, and a
+far word survives `k` samples with probability `(1−δ)^k` (`accept_prob_le_of_farN` — exactly the
+mass `epsQuery` pays for). So the §2 bar is the FULL-COVER idealization, unprovable-as-typed at
+deployed sampling. This section is the deployed bar, per rung:
+
+  * **L4 — deterministic sampled agreement.** `verifyAlgo_concreteFri_opened_positions` (PROVEN):
+    an accepting `verifyAlgo (concreteFriChecks core)` run passes `friQueryCheck` at every
+    transcript-sampled index, with the opened index BOUND to the transcript and the query count
+    bound to `numQueries`. NAMED residual (the `accept_folds_sampled` field): the Merkle log-decode
+    identification — `friQueryCheck = true` at the sampled index ⟺ the opened leaves agree with
+    `Fold` on the `RomQueryLog`-decoded word (extraction-as-data, except-with-εMerkle).
+  * **L5 — the positive-radius decoder.** `PositiveRadiusTraceDecode` (the retyped `decode_trace`
+    input): the trace decoder must consume a `dRad`-CLOSE oracle, NOT `∈ C` exactly — the assembly
+    only ever delivers closeness except-with-`epsQuery`. At `friSetupK8` the radius is `4` (the
+    `[16,8]`-RS unique-decoding radius `⌊(9−1)/2⌋`). **The honest L5 target** (named, NOT faked
+    here): exhibit a realistic multi-layer instance `S_prod : FriSetupK BabyBear ι κ 8` with
+    `|ι| ≥ 2^22`-class domain and fold tower, and prove
+    `PositiveRadiusTraceDecode hash R perm RATE toNat params vk checks initState logN view S_prod
+    oracle e` for `e` inside `S_prod`'s true unique-decoding radius with `8²·d ≤ e`.
+    `friProximityK8_discharge0` is ONLY the `d = 0` size-16 toy, and
+    `FriPositiveRadiusPayment.positive_radius_payment_vacuous_at_friSetupK8` PROVES the size-16
+    domain cannot exhibit a positive radius — the realistic instance is heavy engineering, not a
+    stub.
+  * **L6 — probabilistic membership.** `accept_close_or_paid` (PROVEN, generic): per run, either
+    ALL folds are `d`-close — whence the oracle is `n²·d`-close by the keystone — or SOME fold is
+    `d`-far and its sampled-agreement event has mass `≤ (1−δ)^k`. The run-level composition of the
+    paid branch into `epsFri` is `FriVerifierCompose`'s assembly, not re-proved here.
+  * **The §2 bar is EXACTLY the full-cover idealization**: derivable from the sampled bar when the
+    sample covers the folded domain (`deployedFriEmbedding_of_sampled_cover`), and the inference it
+    needs WITHOUT cover — "sampled pass ⟹ membership" — is REFUTED at a witness
+    (`sampled_pass_not_membership`). -/
+
+/-- **L4 (verifier-syntax half, PROVEN)** — an accepting `verifyAlgo` run with the concrete FRI
+checks OPENS the sampled positions correctly: the final poly is nonempty (head = the FRI final
+constant), the opened-query count equals `numQueries` (via the transcript,
+`deriveTranscript_qidx_length`), and EVERY opened query has its domain index bound to the
+transcript-derived index and passes the per-query Merkle+fold-chain check `friQueryCheck`. This is
+the DETERMINISTIC content the deployed verifier actually checks — membership of the fold in
+`friSetupK8.C'` is NOT among it (that moves to `accept_close_or_paid`). -/
+theorem verifyAlgo_concreteFri_opened_positions
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (core : FriCore Int)
+    (initState : List Int) (logN : Nat)
+    (proof : BatchProofData Int) (pub : WrapPublics Int)
+    (hacc : verifyAlgo perm RATE toNat params vk
+        (concreteFriChecks core) initState logN proof pub = true) :
+    ∃ finalConst rest, proof.finalPoly = finalConst :: rest ∧
+      proof.queries.length = params.numQueries ∧
+      ∀ qe ∈ proof.queries.zip
+          (deriveTranscript perm RATE toNat params initState logN proof pub).qidx,
+        qe.1.index = qe.2 ∧
+        friQueryCheck core proof.traceCommit proof.friCommitments finalConst qe.1 = true := by
+  unfold verifyAlgo at hacc
+  simp only [Bool.and_eq_true] at hacc
+  obtain ⟨⟨⟨⟨⟨-, hfold⟩, -⟩, -⟩, -⟩, -⟩ := hacc
+  unfold concreteFriChecks at hfold
+  dsimp only at hfold
+  cases hfp : proof.finalPoly with
+  | nil => rw [hfp] at hfold; simp at hfold
+  | cons finalConst rest =>
+      rw [hfp] at hfold
+      simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at hfold
+      obtain ⟨hlen, hall⟩ := hfold
+      refine ⟨finalConst, rest, rfl, ?_, ?_⟩
+      · rw [hlen, deriveTranscript_qidx_length]
+      · intro qe hqe
+        exact hall qe hqe
+
+/-- **L5's named input type — `PositiveRadiusTraceDecode`.** The codeword-decode retyped to consume
+a `dRad`-CLOSE oracle (positive-radius unique decoding) instead of `oracle ∈ C` exactly. Generic
+over the FRI setup `S` so the SAME `Prop` states both the `friSetupK8`/`dRad = 4` field below and
+the honest L5 target at a realistic multi-layer instance (see the section header — that instance
+is the to-do; it is NOT stubbed here). -/
+def PositiveRadiusTraceDecode
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    {F ι κ : Type*} [Field F] [DecidableEq F]
+    [Fintype ι] [DecidableEq ι] [Fintype κ] [DecidableEq κ] {n : ℕ}
+    (S : FriSetupK F ι κ n)
+    (oracle : BatchPublicInputs → BatchProof → (ι → F)) (dRad : ℕ) : Prop :=
+  ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true →
+    closeN S.C dRad (oracle pi π) →
+    TraceWitnessed hash (R pi.effect) pi
+
+/-- **`DeployedFriSampledEmbedding` — the §2 structure RETYPED to the deployed sampling.** The
+acceptance bar for the decode rungs. Differences from `DeployedFriEmbedding`:
+  * `accept_folds` is REPLACED by `accept_folds_sampled` — agreement between the true fold and the
+    committed next-layer word `foldWord` AT the `numQueries` transcript-sampled folded positions
+    `qsample` (each the log-decoded folded position of a transcript query). This is what
+    `foldConsistent` spot-checks — provable-in-principle from
+    `verifyAlgo_concreteFri_opened_positions` + the Merkle log-decode identification (the L4
+    residual), with NO universal membership claim;
+  * `foldWord_mem` — the committed next-layer word is a codeword. Deterministic at THIS single-fold
+    resolution only because the last FRI layer is sent in the clear (`finalPoly`,
+    `log_final_poly_len = 0`); at a multi-layer instance the intermediate layers' membership itself
+    moves into the probabilistic assembly (part of the L5/L6 engineering);
+  * `decode_trace` is retyped to `PositiveRadiusTraceDecode … friSetupK8 oracle 4` — the decoder
+    consumes a `4`-close oracle, never `∈ C` exactly. -/
+structure DeployedFriSampledEmbedding
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView) : Type where
+  /-- The committed BabyBear column oracle the deployed proof exposes. -/
+  oracle : BatchPublicInputs → BatchProof → (Fin 16 → BabyBear)
+  /-- The `8` FRI fold challenges of the transcript. -/
+  chal : BatchPublicInputs → BatchProof → (Fin 8 → BabyBear)
+  /-- The `8` challenges are DISTINCT (arity-8 Vandermonde inverts). -/
+  chal_inj : ∀ pi π, Function.Injective (chal pi π)
+  /-- The `numQueries` transcript-sampled FOLDED-domain positions (with replacement — faithful to
+  the deployed independent draws): the log-decoded folded position (`index / arity`) of each
+  transcript query. -/
+  qsample : BatchPublicInputs → BatchProof → (Fin params.numQueries → Fin 2)
+  /-- The committed next-layer word per challenge (read from the proof's `finalPoly` at this
+  single-fold resolution). -/
+  foldWord : BatchPublicInputs → BatchProof → (Fin 8 → (Fin 2 → BabyBear))
+  /-- The committed next-layer word IS a codeword of the folded code — deterministic here ONLY
+  because the final layer is sent in the clear (see structure docstring). -/
+  foldWord_mem : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true →
+    ∀ i, foldWord pi π i ∈ friSetupK8.C'
+  /-- **THE RETYPED VERIFIER-DECODE (deterministic part)** — on accept, at every SAMPLED folded
+  position the true fold of the committed oracle agrees with the committed next-layer word. NO
+  membership conclusion: that is `accept_close_or_paid`'s probabilistic dichotomy. -/
+  accept_folds_sampled : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true →
+    ∀ i, Accepts (Fold friSetupK8.geom (chal pi π i) (oracle pi π))
+      (foldWord pi π i) (qsample pi π)
+  /-- **THE RETYPED CODEWORD-DECODE** — positive-radius unique decoding at the `[16,8]`-RS
+  unique-decoding radius `4`. -/
+  decode_trace :
+    PositiveRadiusTraceDecode hash R perm RATE toNat params vk checks initState logN view
+      friSetupK8 oracle 4
+
+/-- **L6 (per-run dichotomy, PROVEN, generic)** — `accept_close_or_paid`. For any arity-`n` setup,
+`n` distinct challenges, and committed folded codewords `g i`: EITHER every fold is `d`-close to
+the folded code — whence the oracle is `n²·d`-close to the domain code by the PROVED keystone
+`fold_close_of_arity_challenges` — OR some fold is `d`-FAR, and the event that a `k`-sample agrees
+with its committed codeword everywhere has mass `≤ (1−δ)^k` (`accept_prob_le_of_farN`). This is
+exactly the split the §2 bar collapsed: membership holds only except-with-the-paid-mass. At
+`friSetupK8` the far branch is UNINHABITED for `d ≥ 1`
+(`FriPositiveRadiusPayment.positive_radius_payment_vacuous_at_friSetupK8`) — the size-16 toy
+cannot pay a positive radius; the realistic instance is the L5 engineering. -/
+theorem accept_close_or_paid
+    {F : Type*} [Field F] [DecidableEq F]
+    {ι : Type*} [Fintype ι] [DecidableEq ι]
+    {κ : Type*} [Fintype κ] [DecidableEq κ] {n : ℕ}
+    (S : FriSetupK F ι κ n) {f : ι → F} {α : Fin n → F}
+    (hα : Function.Injective α) {g : Fin n → κ → F}
+    (hg : ∀ i, g i ∈ S.C') (d k : ℕ) {δ : ℝ}
+    (hκ : 0 < Fintype.card κ) (hδ0 : 0 ≤ δ)
+    (hδd : δ * (Fintype.card κ : ℝ) ≤ (d : ℝ)) :
+    closeN S.C (n ^ 2 * d) f ∨
+      ∃ i, farN S.C' d (Fold S.geom (α i) f) ∧
+        ((Finset.univ.filter (fun Q : Fin k → κ =>
+              Accepts (Fold S.geom (α i) f) (g i) Q)).card : ℝ)
+            / ((Fintype.card κ : ℝ) ^ k)
+          ≤ (1 - δ) ^ k := by
+  by_cases hall : ∀ i, closeN S.C' d (Fold S.geom (α i) f)
+  · exact Or.inl (fold_close_of_arity_challenges S hα hall)
+  · obtain ⟨i, hi⟩ := not_forall.mp hall
+    exact Or.inr ⟨i, hi, accept_prob_le_of_farN k hκ hδ0 (hg i) hi hδd⟩
+
+/-- **L6 wired onto the sampled embedding at the deployed instance.** On an accepting run, the
+committed oracle is `64·d`-close, or some fold is `d`-far and its sampled-agreement mass is paid.
+HONEST caveat (not hidden): at `friSetupK8` the paid branch is uninhabited for `d ≥ 1` — this
+instantiation is the WIRE, non-vacuous only at the L5 realistic instance. -/
+theorem sampled_embedding_close_or_paid
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true)
+    (d k : ℕ) {δ : ℝ} (hδ0 : 0 ≤ δ) (hδd : δ * 2 ≤ (d : ℝ)) :
+    closeN friSetupK8.C (64 * d) (semb.oracle pi π) ∨
+      ∃ i, farN friSetupK8.C' d
+          (Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π)) ∧
+        ((Finset.univ.filter (fun Q : Fin k → Fin 2 =>
+              Accepts (Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π))
+                (semb.foldWord pi π i) Q)).card : ℝ)
+            / ((Fintype.card (Fin 2) : ℝ) ^ k)
+          ≤ (1 - δ) ^ k := by
+  have h := accept_close_or_paid (f := semb.oracle pi π) friSetupK8 (semb.chal_inj pi π)
+    (semb.foldWord_mem pi π hacc) d k (by simp) hδ0 (by simpa using hδd)
+  rwa [show (8 : ℕ) ^ 2 * d = 64 * d by norm_num] at h
+
+/-- **The §2 bar RECOVERED under full cover** — `deployedFriEmbedding_of_sampled_cover`. When the
+sample COVERS the folded domain (`hcover`), sampled agreement is agreement EVERYWHERE, so the true
+fold EQUALS the committed codeword `foldWord` and §2's deterministic `accept_folds` follows; and
+the positive-radius decoder consumes exact membership via `closeN`-weakening (`∈ C` ⟹ `0`-close ⟹
+`4`-close). So the OLD bar is exactly the full-cover idealization of the sampled bar — it was never
+the deployed bar, whose sample of `k = 38` positions does not cover a `2^22`-class domain. -/
+def deployedFriEmbedding_of_sampled_cover
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (hcover : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      ∀ y : Fin 2, ∃ q, semb.qsample pi π q = y) :
+    DeployedFriEmbedding hash R perm RATE toNat params vk checks initState logN view where
+  oracle := semb.oracle
+  chal := semb.chal
+  chal_inj := semb.chal_inj
+  accept_folds := by
+    intro pi π hacc i
+    have hagree := semb.accept_folds_sampled pi π hacc i
+    have heq : Fold friSetupK8.geom (semb.chal pi π i) (semb.oracle pi π)
+        = semb.foldWord pi π i := by
+      funext y
+      obtain ⟨q, hq⟩ := hcover pi π hacc y
+      have h := hagree q
+      rwa [hq] at h
+    rw [heq]
+    exact semb.foldWord_mem pi π hacc i
+  decode_trace := by
+    intro pi π hacc hmem
+    refine semb.decode_trace pi π hacc ?_
+    obtain ⟨g, hgC, hcard⟩ := closeN_zero_iff_mem.mpr hmem
+    exact ⟨g, hgC, le_trans hcard (by norm_num)⟩
+
+/-- **The coverless inference is REFUTED at a witness** — `sampled_pass_not_membership`. The
+inference the §2 bar needed WITHOUT cover — "the sampled positions agree with a genuine codeword ⟹
+the word IS a codeword" — is FALSE: over the rate-`1/2` `ZMod 5` Reed–Solomon instance, the far
+word `fFar ∉ C` passes a NON-COVERING one-point sample against the genuine codeword `gZero ∈ C`.
+So the §2→§3′ retype is forced, not stylistic: no theorem can conclude deterministic membership
+from spot-checks at deployed sampling. -/
+theorem sampled_pass_not_membership :
+    ∃ (f g : Fin 4 → ZMod 5) (Q : Fin 1 → Fin 4),
+      g ∈ Dregg2.Circuit.FriSoundness.rsSetup.C ∧
+      Accepts f g Q ∧
+      (¬ ∀ y : Fin 4, ∃ q : Fin 1, Q q = y) ∧
+      f ∉ Dregg2.Circuit.FriSoundness.rsSetup.C :=
+  ⟨Dregg2.Circuit.FriSoundness.fFar, gZero, ![1], gZero_mem,
+   far_accepted_by_missing_query, by decide,
+   Dregg2.Circuit.FriSoundness.fFar_not_mem⟩
+
+#assert_axioms verifyAlgo_concreteFri_opened_positions
+#assert_axioms accept_close_or_paid
+#assert_axioms sampled_embedding_close_or_paid
+#assert_axioms deployedFriEmbedding_of_sampled_cover
+#assert_axioms sampled_pass_not_membership
+
 /-! ## §3 — THE TRANSPORT : the proven arity-8 proximity, wired between the two maps. -/
 
 /-- **`deployedTraceExtract_of_embedding` — `DeployedTraceExtract` DERIVED, FRI math load-bearing.**
@@ -187,6 +502,25 @@ theorem deployedTraceExtract_of_embedding
       (friProximityK8_discharge0 (emb.chal_inj pi π) (emb.accept_folds pi π hacc))
   -- CODEWORD-DECODE: the low-degree codeword decodes to the deployed trace.
   exact emb.decode_trace pi π hacc hlow
+
+/-- The full `DeployedTraceExtract` from the SAMPLED embedding (§3′) under full cover — the
+idealized pipeline still closes end-to-end, showing the retype loses nothing at the idealization. -/
+theorem deployedTraceExtract_of_sampled_cover
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (semb : DeployedFriSampledEmbedding hash R perm RATE toNat params vk checks initState logN view)
+    (hcover : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      ∀ y : Fin 2, ∃ q, semb.qsample pi π q = y) :
+    DeployedTraceExtract hash R perm RATE toNat params vk checks initState logN view :=
+  deployedTraceExtract_of_embedding hash R perm RATE toNat params vk checks initState logN view
+    (deployedFriEmbedding_of_sampled_cover hash R perm RATE toNat params vk checks initState
+      logN view semb hcover)
+
+#assert_axioms deployedTraceExtract_of_sampled_cover
 
 /-! ## §4 — Composition to `RSProximityCore` and `StarkSound` (the opaque residual eliminated). -/
 

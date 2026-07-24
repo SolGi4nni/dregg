@@ -18,6 +18,7 @@
   ~#assumed: "Poseidon2 CR, BLAKE3 CR, Ed25519 EUF-CMA, HMAC/PRF, AEAD, FRI/STARK soundness, BLS quorum, post-GST synchrony"
   ~#form: "typed hypotheses, never axiom"
   ~#honest: "the floor is stated, not smuggled"
+  ~#fri_update: "the ~130-bit capacity conjecture is REFUTED in the literature and demoted to a drift canary; the per-fold figures speak of near-capacity words, not the operating radius; no 2^-128 headline exists — see the linking tower for the six-item entitlement" #!observed_2026_07_24
 }
 
 ^"open_distance"{

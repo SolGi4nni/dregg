@@ -1,0 +1,52 @@
+# Concepts
+#
+# The stitching layer: one card per hard-to-communicate idea. This is the
+# tracking system's unit of account — a concept has a STATUS, and status
+# changes are the project moving.
+
+#>spw_concepts_index
+#:concepts #!stitching_layer
+
+^"statuses"{
+  settled: "the concept is stable; the card prevents misreading, not drift"
+  moving: "under active excavation by a lane; expect the card to lag the crystal"
+  owed: "the concept names a debt; its closure condition is stated in a lane or ledger"
+  contested: "the concept is a live argument; the card records the tension, not a resolution"
+}
+
+^"cards"{
+  @anti_ghost: ~"./anti-ghost-tooth.spw"
+  @witness_collapse: ~"./witness-collapse.spw"
+  @descriptor_emission: ~"./descriptor-emission.spw"
+  @carrier_debt: ~"./carrier-debt.spw"
+  @vacuity: ~"./vacuity.spw"
+  @forge_detector: ~"./forge-detector.spw"
+  @refinement_ladder: ~"./refinement-ladder.spw"
+  @the_wrap: ~"./the-wrap.spw"
+  @attenuation: ~"./attenuation.spw"
+  @eight_verbs: ~"./eight-verbs.spw"
+  @crown_weld: ~"./crown-weld.spw"
+  @green_that_lies: ~"./green-that-lies.spw"
+  @keystone_ledger: ~"./keystone-ledger.spw"
+  @vk_epoch: ~"./vk-epoch.spw"
+  @orphan_rot: ~"./orphan-rot.spw"
+  @confinement: ~"./confinement.spw"
+  @hypotheses_not_free: ~"./hypotheses-are-not-free.spw"
+  @faithful_commitment: ~"./faithful-commitment.spw"
+  @receipt_discipline: ~"./receipt-discipline.spw"
+  @verify_ladder: ~"./verify-ladder.spw"
+}
+
+^"joints"{
+  proof_to_deploy: #[cards]{ descriptor-emission carrier-debt keystone-ledger refinement-ladder }
+  honesty_machinery: #[cards]{ vacuity forge-detector green-that-lies orphan-rot }
+  authority_algebra: #[cards]{ attenuation eight-verbs confinement anti-ghost-tooth }
+  edges_and_eras: #[cards]{ the-wrap vk-epoch crown-weld witness-collapse }
+  ~#reading: "a joint is where cards load together; summon a joint, not a card, when the work crosses a seam"
+}
+
+^"discipline"{
+  ~#birth: "a concept earns a card when it is explained for the third time in a commit body, ledger entry, or conversation"
+  ~#death: "a card whose status has been settled for a season may compress into a region card"
+  ~#stitch: "every card names what it stitches — cards with no stitches are trivia, not concepts"
+}

@@ -1,0 +1,13 @@
+# Concept: hypotheses are not free
+
+#>spw_concept_hypotheses_not_free
+#:concept =settled
+
+^"card"{
+  ~#what: "axiom-clean certifies the PROOF TERM, never the premise list — assert-axioms walks the axiom closure; a def consumed as a hypothesis is an assumption however clean the report; the linking tower exists to name premises rung by rung"
+  ~#why_hard: "the green of an axiom report reads as unconditional truth; the entire trust gradient lives in the gap between axiom-clean and hypothesis-free"
+  ~#instruments: "the keystone audit demands every apex theorem carry a SATISFIABLE honest instance and discriminating TEETH — 110 pins classified into six shapes summing exactly, campaign closed; the impossibility shape is audited by its own proof, since a satisfiable witness would contradict it"
+  ~#hygiene: "the namespace batch-pin proved STRONGER than curated lists — batching found dozens of proved-but-never-listed theorems; verbosity was hiding incomplete coverage"
+  ~#stitches: "linking-tower ↔ keystone-ledger ↔ carrier-debt ↔ trust.open_distance"
+  ~#trap: "waving at an axiom report when asked what a theorem assumes — the report cannot answer that question, by construction"
+}

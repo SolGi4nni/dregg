@@ -1,0 +1,12 @@
+# Concept: vacuity
+
+#>spw_concept_vacuity
+#:concept =moving
+
+^"card"{
+  ~#what: "a spec or gate that cannot be false proves nothing; every load-bearing spec must be shown able to be both true AND false — conservation is not correctness, sufficiency is the bar"
+  ~#why_hard: "vacuous things are GREEN; the failure mode is invisible by construction, which is why it took a ~171-commit campaign and an INHABITED sweep"
+  ~#instruments: "non-vacuity manifests, falsifiability rigs, the arklib KZG vacuity repair — one sound end-to-end theorem over the real experiment"
+  ~#stitches: "laws.conservation_is_not_correctness ↔ greens_that_mean_something lane ↔ praxis.antibodies ↔ arklib_vacuity lane"
+  ~#trap: "adding a test to prove a property when the property cannot fail — you added green, not knowledge"
+}

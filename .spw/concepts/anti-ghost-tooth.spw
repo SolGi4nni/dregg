@@ -1,0 +1,12 @@
+# Concept: the anti-ghost tooth
+
+#>spw_concept_anti_ghost
+#:concept =settled
+
+^"card"{
+  ~#what: "a receipt binds the WHOLE post-state constructively — tampering any field the effect did not legitimately touch makes the turn unprovable"
+  ~#why_hard: "sounds like a checksum; it is actually the memory-trace fold — a verb's effect provably equals the fold of its emitted trace, so ghosts have nowhere to live"
+  ~#where: "circuit and executor provably produce the same receipt; guarantee C of the assurance case"
+  ~#stitches: "kernel region ↔ trust apex ↔ every no-cheat game mechanic — the leaderboard's honesty is this tooth wearing a costume"
+  ~#trap: "believing integrity is per-field; it is per-STATE — partial binding would readmit the ghosts"
+}

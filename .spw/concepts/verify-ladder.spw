@@ -1,0 +1,12 @@
+# Concept: the verify ladder
+
+#>spw_concept_verify_ladder
+#:concept =moving
+
+^"card"{
+  ~#what: "verification reported as LEVELS, never one green check — L0 the chain is untampered; L1 every effect re-executes to the recorded one (the AI narrated, the WORLD resolved); L2 the roll is not grindable (commit-reveal → post-quantum lattice VRF with Module-SIS uniqueness proved in Lean → hybrid beacon with timeout-no-reroll); L3 succinct in-circuit proof — designed, NOT built"
+  ~#why_hard: "each rung catches what the one below misses — a hand-built chain passes L0 with a forged effect and L1 catches exactly that; collapsing the ladder into verified is the marketing lie the doc exists to prevent"
+  ~#honest_caveats: "the attestation's authentic leg is policy-graded (self-signed fixture refused under the strict policy; only the live TLS paths prove a real model produced the bytes); the quorum votes are real machinery over demo identities"
+  ~#stitches: "dreggnet.verified_play ↔ attested-dm ↔ trust map (the game-facing projection of the same gradient)"
+  ~#trap: "reporting the ladder as one boolean — the report type returns the rungs separately on purpose"
+}

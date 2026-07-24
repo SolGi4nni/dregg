@@ -257,6 +257,92 @@ pub fn shadow_constraint_admits(wire: &str) -> Result<String, String> {
     ffi::lean_constraint_admits(wire)
 }
 
+/// Whether the linked archive exports the verified cross-cell per-asset conservation decision
+/// (`dregg_cross_cell_conserves`, the C-ABI entry over
+/// `Dregg2.Circuit.CrossCellConserveDecision.conservesFFI` — proved EQUAL to the committed Σδ=0 AIR
+/// boundary by `CrossCellConserveRefine.decision_conserves_iff_air_boundary`). When false, the
+/// conservation oracle cannot be installed and a full node's per-asset conservation gate fails closed.
+pub fn cross_cell_conserves_available() -> bool {
+    ffi::cross_cell_conserves_present() && lean_init_once().is_ok()
+}
+
+/// The verdict of the verified cross-cell per-asset conservation decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossCellVerdict {
+    /// Every asset's signed delta sum is zero — the block conserves (ADMIT).
+    Conserves,
+    /// Asset `asset` nets to `imbalance != 0` (the first imbalanced asset in ascending key order) —
+    /// REFUSE with a hidden mint/burn.
+    Imbalanced { asset: u32, imbalance: i64 },
+}
+
+/// Run the VERIFIED, Lean-authored cross-cell per-asset conservation decision `@[export]
+/// dregg_cross_cell_conserves` over the turn's `(asset, delta)` rows + declared mint/burn supply rows.
+///
+/// This is the object `turn/src/executor/atomic.rs`'s per-asset conservation gate routes through (via
+/// `dregg-exec-lean`'s conservation oracle) so the deployed executor's `Σδ=0`-per-asset decision is
+/// COMPUTED BY the proven Lean decision — NOT the hand-written Rust `BlockConservation` twin. The
+/// decision is proved to equal the committed `Dregg2.Circuit.CrossCellConservation` AIR boundary
+/// (`creditSum = debitSum` per asset), so the route-through and the proof the prover commits to cannot
+/// drift.
+///
+/// `rows`: `(asset_class, signed_net_delta)` per verified per-cell contribution. `supply`:
+/// `(asset_class, signed_declared_supply_change)` (a mint is `+mag`, a burn `-mag`) — the executor's
+/// live paths pass an empty slice. Returns `Err` if the archive lacks the export (the caller then fails
+/// closed) or the wire round-trip fails.
+pub fn shadow_cross_cell_conserves(
+    rows: &[(u32, i64)],
+    supply: &[(u32, i64)],
+) -> Result<CrossCellVerdict, String> {
+    ensure_lean_init()?;
+    // Build the canonical wire: `nRows [asset delta]* nSupply [asset mag mint]*`. A signed supply
+    // delta is re-expressed as (magnitude, mint?) so the Lean codec folds it back to the same signed
+    // row (mint = credit = positive).
+    let mut wire = String::new();
+    wire.push_str(&rows.len().to_string());
+    for (asset, delta) in rows {
+        wire.push(' ');
+        wire.push_str(&asset.to_string());
+        wire.push(' ');
+        wire.push_str(&delta.to_string());
+    }
+    wire.push(' ');
+    wire.push_str(&supply.len().to_string());
+    for (asset, delta) in supply {
+        wire.push(' ');
+        wire.push_str(&asset.to_string());
+        wire.push(' ');
+        wire.push_str(&delta.unsigned_abs().to_string());
+        wire.push(' ');
+        wire.push_str(if *delta >= 0 { "1" } else { "0" });
+    }
+    let out = ffi::lean_cross_cell_conserves(&wire)?;
+    let mut toks = out.split_whitespace();
+    match toks.next() {
+        Some("1") => Ok(CrossCellVerdict::Conserves),
+        Some("0") => {
+            // `"0"` bare = malformed wire (fail-closed); `"0 <asset> <imbalance>"` = a real imbalance.
+            match (toks.next(), toks.next()) {
+                (Some(a), Some(i)) => {
+                    let asset = a
+                        .parse::<u32>()
+                        .map_err(|e| format!("cross-cell verdict asset not u32: {e}"))?;
+                    let imbalance = i
+                        .parse::<i64>()
+                        .map_err(|e| format!("cross-cell verdict imbalance not i64: {e}"))?;
+                    Ok(CrossCellVerdict::Imbalanced { asset, imbalance })
+                }
+                _ => Err(format!(
+                    "cross-cell conservation decision refused a malformed wire (fail-closed): {out:?}"
+                )),
+            }
+        }
+        _ => Err(format!(
+            "unexpected cross-cell conservation verdict wire: {out:?}"
+        )),
+    }
+}
+
 /// Whether the linked archive exports the extracted, Lean-verified ML-DSA verify core
 /// (`dregg_fips204_verify`, the C-ABI entry over `Dregg2.Crypto.Fips204Verify.verifyFFI` =
 /// `Fips204Spec.verifyB` at the deployed ML-DSA-65 parameters). When false, a caller must fall back to
@@ -742,6 +828,12 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_cross_cell_conserves_present)]
+        fn dregg_cross_cell_conserves_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
         #[cfg(dregg_storage_content_root_present)]
         fn dregg_storage_content_root_str(
             in_utf8: *const c_char,
@@ -984,6 +1076,33 @@ mod ffi {
     #[cfg(not(dregg_constraint_admits_present))]
     pub fn lean_constraint_admits(_wire: &str) -> Result<String, String> {
         Err("dregg_constraint_admits not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    #[cfg(dregg_cross_cell_conserves_present)]
+    pub fn cross_cell_conserves_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_cross_cell_conserves_present))]
+    pub fn cross_cell_conserves_present() -> bool {
+        false
+    }
+
+    #[cfg(dregg_cross_cell_conserves_present)]
+    pub fn lean_cross_cell_conserves(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_cross_cell_conserves_str,
+            "dregg_cross_cell_conserves_str",
+        )
+    }
+
+    #[cfg(not(dregg_cross_cell_conserves_present))]
+    pub fn lean_cross_cell_conserves(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_cross_cell_conserves not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
     }
 
     /// STORAGE-IN-LEAN EXTRACTION — run the VERIFIED Lean content-root over the deployed Poseidon2.

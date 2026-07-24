@@ -25,6 +25,18 @@
   @dir: ~"../regions"
 }
 
+^"concepts"{
+  ~#role: "the stitching layer — one card per hard-to-communicate idea, with a tracked status; joints group cards that load together"
+  @index: ~"../concepts/index.spw"
+  @gauge: ~"./gauge.spw"
+}
+
+^"system"{
+  ~#role: "the enacted-form layer — dregg's own structures written IN the operator algebra, zero formal content, Lean stays canon"
+  @charter: ~"../system/notation.spw"
+  ~#rule: "read-first: no form surface without its source read in full; every abstract form keeps a transcribed specimen"
+}
+
 ^"discipline"{
   ~#poly: "projections may disagree; disagreement between maps is signal, not error" #!projections_may_disagree
   ~#ground: "every ~ ref exists on disk; families are glob-prose; claims trace to the crystal or a trail file"

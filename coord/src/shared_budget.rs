@@ -576,14 +576,17 @@ impl SharedResourceBudget {
             })
             .collect();
 
-        // STRONG-FORM swap: get the per-debit accept/reject verdicts + remaining balance from the
-        // VERIFIED Lean tau-resolution gate when linked (every native build;
-        // `dregg_coord_shared_budget` = `SharedBudgetDynamics.resolveOrdered`), which carries
-        // `resolveOrdered_accepted_le_balance` (Σ accepted ≤ balance). The native first-wins fold
-        // [`resolve_ordered_native`] is the DIFFERENTIAL sibling and the fallback.
+        // The per-debit accept/reject verdicts + remaining balance are AUTHORITATIVELY decided by
+        // the VERIFIED Lean tau-resolution gate (`dregg_coord_shared_budget` =
+        // `SharedBudgetDynamics.resolveOrdered`), which carries `resolveOrdered_accepted_le_balance`
+        // (Σ accepted ≤ balance) by construction. When no verified gate is registered the live path
+        // FAILS CLOSED ([`resolve_ordering_no_gate`] rejects every debit and leaves the balance
+        // untouched) rather than silently running an unverified Rust fold — a production node MUST
+        // install the `dregg-exec-lean` gate. (`cfg(test)` differential builds keep the native fold
+        // reachable so `coord_diff.rs` cross-checks it against the Lean model.)
         let amounts: Vec<ResourceAmount> = ordered_debits.iter().map(|(_, a)| *a).collect();
         let (verdicts, remaining_balance) = verified_resolve_ordering(self.total_balance, &amounts)
-            .unwrap_or_else(|| resolve_ordered_native(self.total_balance, &amounts));
+            .unwrap_or_else(|| resolve_ordering_no_gate(self.total_balance, &amounts));
 
         for ((block_id, _amount), accepted) in ordered_debits.iter().zip(verdicts.iter()) {
             self.resolutions.insert(
@@ -798,11 +801,33 @@ const DEBIT_PAYLOAD_MIN_SIZE: usize = 1 + 32 + 8;
 ///
 /// Returns `Some(amount)` if the block's payload is a Turn containing a debit
 /// for the given resource_id. Returns `None` otherwise.
-/// The NATIVE Rust tau-resolution fold (the differential sibling of the verified Lean
-/// `SharedBudgetDynamics.resolveOrdered`). Fold the tau-ordered `amounts` through `balance`: accept
-/// iff `amount ≤ remaining`, subtract on accept, reject otherwise (first-come-wins). Returns the
-/// per-debit accept verdicts (in order) and the final remaining balance — byte-for-byte the gate's
-/// semantics, kept distinct so it can be cross-checked against the Lean verdict.
+/// The live-path disposition when the verified shared-budget gate is unavailable: FAIL CLOSED.
+/// Reject EVERY debit (verdicts all `false`) and leave the balance untouched — never silently run
+/// an unverified Rust fold on the live path. `cfg(test)` differential builds instead use the native
+/// sibling [`resolve_ordered_native`] so `coord_diff.rs` can cross-check it against
+/// `SharedBudgetDynamics.resolveOrdered`.
+#[cfg(not(test))]
+fn resolve_ordering_no_gate(
+    balance: ResourceAmount,
+    amounts: &[ResourceAmount],
+) -> (Vec<bool>, ResourceAmount) {
+    (vec![false; amounts.len()], balance)
+}
+
+/// `cfg(test)` differential builds keep the native fold reachable (cross-checked in `coord_diff.rs`).
+#[cfg(test)]
+fn resolve_ordering_no_gate(
+    balance: ResourceAmount,
+    amounts: &[ResourceAmount],
+) -> (Vec<bool>, ResourceAmount) {
+    resolve_ordered_native(balance, amounts)
+}
+
+/// The NATIVE Rust tau-resolution fold — the DIFFERENTIAL sibling of the verified Lean
+/// `SharedBudgetDynamics.resolveOrdered`, retained ONLY under `cfg(test)` so it is cross-checked in
+/// `coord_diff.rs` and can NEVER decide on a live path. Fold the tau-ordered `amounts` through
+/// `balance`: accept iff `amount ≤ remaining`, subtract on accept, reject otherwise (first-come-wins).
+#[cfg(test)]
 fn resolve_ordered_native(
     balance: ResourceAmount,
     amounts: &[ResourceAmount],
@@ -822,8 +847,9 @@ fn resolve_ordered_native(
 
 /// Decide the tau-resolution verdicts via the VERIFIED Lean export `dregg_coord_shared_budget`
 /// (= `Dregg2.Coord.SharedBudgetDynamics.resolveOrdered`). Returns `Some((verdicts, remaining))` when
-/// the gate ran, or `None` when the verified gate is unavailable (feature off / archive lacks the
-/// export) so the caller falls back to [`resolve_ordered_native`]. The wire is
+/// the gate ran, or `None` when the verified gate is unavailable (archive lacks the export / no gate
+/// registered) — in which case [`SharedResourceBudget::resolve_with_ordering`] FAILS CLOSED via
+/// [`resolve_ordering_no_gate`] (reject every debit) on the live path. The wire is
 /// `"B=<balance>;D=<amt,amt,...>"`; the gate replies `"R=<v,v,...>;b=<remaining>;a=<accepted>"`
 /// (v: 1=accepted 0=rejected). Carries `resolveOrdered_accepted_le_balance` (Σ accepted ≤ balance) by
 /// construction. Routes through the [`crate::verified_gate`] seam; returns `None` when no verified
@@ -848,7 +874,7 @@ fn verified_resolve_ordering(
 
 /// Parse the `dregg_coord_shared_budget` reply `"R=<v,v,...>;b=<remaining>;a=<accepted>"` into
 /// `(per-debit accept verdicts, remaining balance)`. Returns `None` on the `"ERR"` sentinel or any
-/// malformed body / verdict-count mismatch (fail-closed — the caller then uses the native fold).
+/// malformed body / verdict-count mismatch — the caller then FAILS CLOSED (rejects every debit).
 fn parse_budget_reply(out: &str, expected: usize) -> Option<(Vec<bool>, ResourceAmount)> {
     // Sections: "R=<verdicts>", "b=<remaining>", "a=<accepted>".
     let mut parts = out.split(';');

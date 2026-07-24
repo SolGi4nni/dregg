@@ -53,7 +53,7 @@
 //! integration report); the win-moment offer is posted by `commands::offering`'s ended-match
 //! hook calling [`offer_fold`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
@@ -162,7 +162,7 @@ struct CrownCore {
     /// baked ([`canonical_anchor`]), otherwise bootstrapped ONCE from the first honest fold and
     /// frozen. Every later submission is verified against this pinned anchor, so a submitter can
     /// neither define nor replace it.
-    anchors: HashMap<Game, ProofAnchor>,
+    anchors: BTreeMap<Game, ProofAnchor>,
     folds: HashMap<u64, FoldRecord>,
     next_token: u64,
 }
@@ -185,7 +185,7 @@ fn crown() -> &'static Crown {
                 let mut core = CrownCore {
                     service: match_prove_service(),
                     board: GameBoard::new(),
-                    anchors: HashMap::new(),
+                    anchors: BTreeMap::new(),
                     folds: HashMap::new(),
                     next_token: 1,
                 };

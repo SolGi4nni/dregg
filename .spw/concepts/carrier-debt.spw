@@ -1,0 +1,12 @@
+# Concept: carrier debt
+
+#>spw_concept_carrier_debt
+#:concept =owed
+
+^"card"{
+  ~#what: "a NAMED hypothesis standing where a proved theorem should — DEBT-A (StarkSound), DEBT-B (finite-map / RestHashIffFrame); the apex must come to rest only on the true floor"
+  ~#why_hard: "a carrier looks exactly like an honest assumption; the discipline distinguishes the floor (crypto hypotheses that are genuinely assumed) from debt (things we could prove and have not)"
+  ~#ledger: "CARRIER-CENSUS in docs/reference; the retraction of verified_system is this concept enforcing itself"
+  ~#stitches: "trust.open_distance ↔ honest_verification lane ↔ the Foundational Reckoning in horizon"
+  ~#trap: "counting a named carrier as closed — named, characterized, honest-about is NOT closed"
+}

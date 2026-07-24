@@ -21,9 +21,11 @@ postcard = { version = "1", features = ["alloc"] }
 
 # FFI-FREE BY CONSTRUCTION: the coordinator's 2PC / causal-order / shared-budget decisions route
 # through the `verified_gate` SEAM (`CoordVerifiedGate`), never `dregg-lean-ffi` directly. A native
-# node installs the Lean-backed gate (from `dregg-exec-lean`) once at startup; an FFI-free target
-# (wasm / verifier-PD / pg) simply never registers one and the native-Rust differential sibling
-# decides. The deleted `no-lean-link` feature is now a dependency choice, not a flag.
+# node installs the Lean-backed gate (from `dregg-exec-lean`) once at startup. When no gate is
+# registered the live path FAILS CLOSED (2PC ⇒ Abort, causal ⇒ not-ordered, shared-budget ⇒ reject
+# all debits) — never a silent native decision. The native Rust deciders survive ONLY under
+# `cfg(test)` as the `coord_diff.rs` differential siblings; they are absent from any release/consumer
+# build. `tests/twin_fail_closed.rs` pins the fail-closed refusal on the non-cfg-test path.
 
 [lints]
 workspace = true

@@ -38,13 +38,13 @@ current tree supports:
   * No probability bound is proven here. The failure probability of `AvoidsBad` is EXACTLY what
     `FriVerifierCompose.hit_cond` prices (`≤ n·b/|R|` for `b`-capped bad sets), via
     `fsRun_queryBounded`; the two-line corollary
-    `winProb (¬ far terminal) ≤ n·b/|R|` is deliberately NOT landed here because
-    `FriVerifierCompose`'s import closure is RED at HEAD (`SpongeForgeReduction.lean:324,329`
-    references `effFloor_top_false_babyBear`/`effFloor_bot_vacuous` without importing
+    `winProb (¬ far terminal) ≤ n·b/|R|` was deliberately NOT landed here because at authoring
+    time `FriVerifierCompose`'s import closure was RED (`SpongeForgeReduction.lean:324,329`
+    referenced `effFloor_top_false_babyBear`/`effFloor_bot_vacuous` without importing
     `DomainSeparatedCREffRegrounded` — an unpropagated regrounding rename, independently found by
-    the concurrent `DeployedProximitySoundnessSampler` lane). This module imports ONLY the green
-    `RomOracle` substrate; the connection corollary is ladder stage L2's first item once the
-    upstream repair lands.
+    the concurrent `DeployedProximitySoundnessSampler` lane). THAT REPAIR LANDED (2026-07-23, E1)
+    and the closure rebuilds green from source. This module imports ONLY the green `RomOracle`
+    substrate; the connection corollary is ladder stage L2's first item, now unblocked.
   * `Strategy` does not model the query phase (the Merkle-opened leaves). That is the extraction
     substrate's job (`RomQueryLog` + `FriVerifierMerkle.findCollisionZ` — state-as-data, nothing
     to falsify), and the committed-word-from-query-log definition is ladder stage L4.

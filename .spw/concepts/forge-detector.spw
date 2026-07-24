@@ -1,0 +1,12 @@
+# Concept: forge detector
+
+#>spw_concept_forge_detector
+#:concept =moving
+
+^"card"{
+  ~#what: "for every tree-write effect, a non-vacuous test that a FORGED variant is rejected — the antibody pattern: prove the attack fails, not that the honest path succeeds"
+  ~#why_hard: "positive tests feel like coverage; only the refused forgery demonstrates the gate exists — 4 bite, 4 are RED is a more honest report than 8 green"
+  ~#specimens: "slashing equivocation exhibit, forged quorum co-signature, VRF pubkey unbound, ballot-unbound tally — each proven as a forgery then rigged to stay red"
+  ~#stitches: "praxis.antibodies ↔ horizon.circuit_soundness cluster ↔ redteam's Lean-proves-X vs Rust-enforces-X bar"
+  ~#trap: "writing the detector vacuously — a forge detector that cannot fire is the very green-that-lies it hunts"
+}

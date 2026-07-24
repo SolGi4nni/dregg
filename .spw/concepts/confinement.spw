@@ -1,0 +1,12 @@
+# Concept: confinement
+
+#>spw_concept_confinement
+#:concept =settled
+
+^"card"{
+  ~#what: "an agent acts only through the cap-gated ToolGateway; the polis governor referees; membranes isolate; the claim is always structural — verify the cage, not the animal"
+  ~#why_hard: "it is the repo's answer to AI safety and it refuses the popular framing: attested-dm explicitly claims injection-free BYTES, never un-jailbreakable MODEL; the boundary of the claim is the concept"
+  ~#specimens: "deos-hermes (every tool call a receipted turn), grain-jail (OS-jailed body behind the brain seam), the Minecraft polis harness (a Claude in a governed cage, as play)"
+  ~#stitches: "mesh.grain ↔ deos.dev_loop ↔ trust.key_leak's cage stance ↔ dreggnet.attested_dm"
+  ~#trap: "letting the claim inflate to the animal — the whole architecture is honest because the cage is the theorem"
+}

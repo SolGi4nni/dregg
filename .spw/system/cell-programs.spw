@@ -1,0 +1,29 @@
+# System: the cell-program language
+#
+# The cell's law — a decidable predicate over its own transitions, evaluated
+# by the verified executor every turn. From the formal reference (read in full).
+
+#>spw_system_cell_programs
+#:system #!form
+
+^"substrate"{
+  ~#records: "state is named typed fields, not bit-positioned slots — reads are Option-valued and FAIL CLOSED; an unevaluable constraint rejects; flatten-width is a function of schema alone, which is what makes circuits over records well-defined"
+  @grammar: ~"../../metatheory/Dregg2/Exec/Program.lean"
+}
+
+^"catalog"{
+  ~#shapes: "single-field (equals/bounds/immutable/writeOnce/monotonic/delta/memberOf/prefixOf), cross-field affine (sums, state machines, affine ≤/=/delta), lattice (clearance, DAG-reachability), the Heyting fragment (anyOf, not)"
+  ~#turn_context: "senderIs and kin, sealed-balance bounds and rates, preimage gates, delegation epochs, M-of-N over an exhibited set — a conservative extension: the empty context recovers the ctx-less evaluator definitionally"
+  ~#actor_binding: "anyOf [immutable f, senderIs k] — leaving the slot alone is open to all; FLIPPING it demands the sender; capability possession alone cannot flip another member's slot"
+}
+
+^"depth"{
+  ~#closure: "behind the atoms sits one Boolean algebra of affine half-spaces — any decidable relation from combining them, not a fixed menu; bounded RelPreds compile to bounded circuit constraints, and what lies outside (unbounded quantification, non-affine, history) routes to a witnessed circuit — the boundary is a THEOREM"
+  ~#affine_bridge: "two readers, one form — proved to coincide on the common domain, and proved to genuinely differ off it; the unification is honest about its scope"
+  ~#imports: "a program cannot read another cell LIVE (that is coordination, always); it imports a receipt-cited past value — i-confluent, non-forgeable, stale-but-visibly-dated, never silent"
+  ~#wake_weld: "wakeOnResolve — a resolving transition must have emitted its wake or it is rejected; the obligation moved from documentation into the law"
+}
+
+^"discipline"{
+  ~#non_vacuity: "every atom admits a real transition AND rejects an adversarial one — nothing in the language is a True-carrier"
+}

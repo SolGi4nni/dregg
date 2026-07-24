@@ -1,0 +1,11 @@
+# Concept: the wrap
+
+#>spw_concept_the_wrap
+#:concept =settled
+
+^"card"{
+  ~#what: "the STARK→SNARK squeeze: the whole-history STARK proof shrunk to a BN254-native Groth16 artifact that EVM, Solana, and CosmWasm verifiers can afford to check"
+  ~#why_hard: "it crosses three proof systems and four chains; the capstone claim — a real apex shrunk BN254-native, confirmed end-to-end — is easy to say and was landed, then had an apex-VK forgery confirmed by a third critic and repaired"
+  ~#stitches: "settlement region (every outbound leg is a dressed wrap) ↔ multichain_settlement lane ↔ chronicle.pq_hardening era"
+  ~#trap: "treating the wrap as a bridge — it carries a PROOF, not trust; the chain verifies, it does not believe"
+}

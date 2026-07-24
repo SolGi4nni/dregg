@@ -11640,67 +11640,213 @@ mod tests {
         }
     }
 
-    // ─── CONSENSUS-SAFETY: the solo shortcut must key on the RAW admitted count ──
+    // ─── CONSENSUS-SAFETY (F-CO-1): tau participant set from COMMITTED state ──────
 
-    /// FAIL-OPEN FALSIFIER (fail-closed after the fix): a GENUINE n=2 federation
-    /// with one un-keyed live member must NOT take the solo shortcut and finalize
-    /// without quorum.
-    ///
-    /// The solo-vs-consensus branch in `poll_finalized_blocks` keys on the RAW
-    /// ADMITTED participant count (`admitted.len()`), never the PQ-projected
-    /// `participants` set. `participants` includes a member ONLY if its ML-DSA key
-    /// is enrolled; a live-JOINED validator whose ML-DSA key was never published gets
-    /// NO entry (the acknowledged intended state). Keying the shortcut on that
-    /// PROJECTION let a genuine n>=2 federation with any un-keyed member project to
-    /// <=1 hybrid ids → enter SOLO → finalize every actionable block in bare `seq`
-    /// order with the quorum belt DISARMED — fail-OPEN. When the peer's PQ key is
-    /// later learned and the node flips multi-party, those solo turns were never
-    /// quorum-attested ⇒ divergence (the `TauPrefixMonotone` hazard). The fix fails
-    /// CLOSED: `admitted > 1` but the projection collapses to <=1 finalizes NOTHING.
-    ///
-    /// This exercises the EXECUTION path (`poll_finalized_blocks`), the layer the
-    /// vote-collector-only `missing_pq_committee_key_fail_closed` never covered.
+    /// Build a committed-roster `NodeState` for `members` (ed25519 signing keys), with
+    /// each member's ML-DSA half = `from_seed(member_ed_seed)` — the SAME value
+    /// `Block::new` stamps into `creator`, so the projected hybrid ids match the lace.
+    /// The returned `TempDir` must be kept alive for the state's lifetime.
+    async fn committed_state_for(
+        members: &[ed25519_dalek::SigningKey],
+    ) -> (tempfile::TempDir, crate::state::NodeState) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let eds: Vec<dregg_types::PublicKey> = members
+            .iter()
+            .map(|k| dregg_types::PublicKey(k.verifying_key().to_bytes()))
+            .collect();
+        let mls: Vec<dregg_federation::frost::MlDsaPublicKey> = members
+            .iter()
+            .map(|k| dregg_federation::frost::MlDsaSigningKey::from_seed(&k.to_bytes()).0)
+            .collect();
+        {
+            let mut s = state.write().await;
+            s.set_federation_keys_hybrid(eds, mls);
+        }
+        (tmp, state)
+    }
+
+    /// A 3-round, fully cross-linked finality lace over `members` (the `trace3` shape):
+    /// each round references ALL of the previous round; every block carries a Turn.
+    /// Finalizes under `ordering::tau` with the members' hybrid ids as participants.
+    fn cross_linked_finality_lace(
+        members: &[ed25519_dalek::SigningKey],
+        quorum: usize,
+    ) -> Blocklace {
+        let mut lace = Blocklace::new(members[0].clone(), quorum);
+        let mut round_prev: Vec<BlockId> = Vec::new();
+        for round in 0u64..=2 {
+            let mut this_round = Vec::new();
+            for (i, k) in members.iter().enumerate() {
+                let b = Block::new(
+                    k,
+                    round,
+                    Payload::Turn(vec![(round * 10) as u8 + i as u8]),
+                    round_prev.clone(),
+                );
+                this_round.push(b.id());
+                lace.receive_block(b).expect("block insert");
+            }
+            round_prev = this_round;
+        }
+        lace
+    }
+
+    fn finalized_order_ids(blocks: &[FinalizedBlock]) -> Vec<BlockId> {
+        blocks
+            .iter()
+            .map(|b| match b {
+                FinalizedBlock::Turn { block_id, .. }
+                | FinalizedBlock::Membership { block_id, .. }
+                | FinalizedBlock::Checkpoint { block_id, .. }
+                | FinalizedBlock::Inert { block_id } => *block_id,
+            })
+            .collect()
+    }
+
+    /// F-CO-1 UNIT: the tau participant projection is a function of COMMITTED state
+    /// alone — `project_committed_participants` takes NO node-local `votes` — so two
+    /// honest nodes with the SAME committed roster project the BYTE-IDENTICAL set, and
+    /// a live-joined validator absent from committed state is dropped identically on
+    /// every node (deterministic, never a per-node divergence).
     #[tokio::test]
-    async fn genuine_federation_with_unkeyed_member_does_not_solo_finalize() {
-        // PeerNode::new needs a rustls CryptoProvider (idempotent).
+    async fn committed_participant_projection_ignores_node_local_key_view() {
+        let members: Vec<ed25519_dalek::SigningKey> = [[0x21u8; 32], [0x22u8; 32], [0x23u8; 32]]
+            .iter()
+            .map(ed25519_dalek::SigningKey::from_bytes)
+            .collect();
+        let eds: Vec<[u8; 32]> = members
+            .iter()
+            .map(|k| k.verifying_key().to_bytes())
+            .collect();
+        let (_tmp, state) = committed_state_for(&members).await;
+
+        // Expected hybrid ids, derived independently from the committed keys.
+        let expected: Vec<[u8; 32]> = members.iter().map(Block::hybrid_id).collect();
+
+        let projected = project_committed_participants(&state, &eds).await;
+        assert_eq!(
+            projected, expected,
+            "the tau participant projection must be exactly the committed-roster hybrid ids \
+             (a pure function of committed state, independent of any node's vote-collector view)"
+        );
+
+        // A joined validator with no committed ML-DSA key is dropped — the SAME drop on
+        // every node (no fork), leaving exactly the committed set.
+        let joined = ed25519_dalek::SigningKey::from_bytes(&[0x9Fu8; 32]);
+        let mut admitted_with_j = eds.clone();
+        admitted_with_j.push(joined.verifying_key().to_bytes());
+        let projected_j = project_committed_participants(&state, &admitted_with_j).await;
+        assert_eq!(
+            projected_j, expected,
+            "a joined validator with no COMMITTED ML-DSA key must be dropped deterministically \
+             (every node drops it identically) — leaving exactly the committed set"
+        );
+    }
+
+    /// F-CO-1 FALSIFIER (the fork the fix closes): two poll passes over the SAME lace
+    /// and the SAME committed roster but with DIFFERENT node-local vote-collector key
+    /// knowledge compute the IDENTICAL finalized order — no cross-node divergence.
+    ///
+    /// Pass 1 has the full ML-DSA committee in `votes`; pass 2 has an EMPTY `votes`
+    /// committee (modelling a peer that has learned NO keys yet). Before the fix the
+    /// projection read `votes.pq_key`, so pass 2 would project the empty set → HALT,
+    /// diverging from pass 1's full order — a silent fork between two honest nodes.
+    /// After the fix the projection reads committed state, so both passes project the
+    /// full {A,B,C} set and finalize the identical order.
+    ///
+    /// Mutation canary: revert the projection to read `votes.pq_key` and pass 2 returns
+    /// EMPTY while pass 1 is non-empty ⇒ this asserts RED.
+    #[tokio::test]
+    async fn divergent_vote_key_knowledge_yields_identical_finalized_order() {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        // A live n=2 federation: self + one peer, both genesis-trusted members.
-        let (_sk_self, pk_self) = dregg_types::generate_keypair();
-        let (_sk_peer, pk_peer) = dregg_types::generate_keypair();
+        let members: Vec<ed25519_dalek::SigningKey> = [[0x31u8; 32], [0x32u8; 32], [0x33u8; 32]]
+            .iter()
+            .map(ed25519_dalek::SigningKey::from_bytes)
+            .collect();
+        let eds: Vec<[u8; 32]> = members
+            .iter()
+            .map(|k| k.verifying_key().to_bytes())
+            .collect();
+        let quorum = dregg_blocklace::supermajority_threshold(members.len());
 
-        let handle = test_handle_with_committee(pk_self.0, vec![pk_self.0, pk_peer.0]).await;
+        let (_tmp, state) = committed_state_for(&members).await;
+        let handle = test_handle_with_committee(eds[0], eds.clone()).await;
+        *handle.lace.write().await = cross_linked_finality_lace(&members, quorum);
 
-        // The PQ committee knows SELF's ML-DSA key but NOT the peer's (the peer joined
-        // live and never published its ML-DSA key). ⇒ admitted = 2, yet the hybrid-id
-        // projection collapses to exactly ONE — the precondition that used to route
-        // straight into the fail-open solo branch.
+        // PASS 1 — full node-local key knowledge in the vote collector.
         {
-            let self_pq = dregg_federation::frost::MlDsaSigningKey::from_seed(&[0x11u8; 32]).0;
             let mut pq = HashMap::new();
-            pq.insert(pk_self.0, self_pq);
-            let mut votes = handle.votes.write().await;
-            votes.set_committee(vec![pk_self.0, pk_peer.0], pq);
+            for k in &members {
+                pq.insert(
+                    k.verifying_key().to_bytes(),
+                    dregg_federation::frost::MlDsaSigningKey::from_seed(&k.to_bytes()).0,
+                );
+            }
+            handle.votes.write().await.set_committee(eds.clone(), pq);
         }
+        let order1 = finalized_order_ids(&handle.poll_finalized_blocks(&state).await);
+        assert!(
+            !order1.is_empty(),
+            "the 3-node cross-linked lace must finalize a non-empty order (else the falsifier is \
+             vacuous)"
+        );
 
-        // One real, signed, actionable Turn block sits in the lace.
-        {
-            let mut lace = handle.lace.write().await;
-            lace.add_block(Payload::Turn(vec![1, 2, 3, 4]));
-        }
+        // PASS 2 — DIFFERENT node's view: an EMPTY vote-collector committee (no keys
+        // learned). Reset the execution cursor so the poll re-serves the whole order.
+        *handle.cursor.write().await = crate::execution_cursor::ExecutionCursor::new();
+        handle
+            .votes
+            .write()
+            .await
+            .set_committee(eds.clone(), HashMap::new());
+        let order2 = finalized_order_ids(&handle.poll_finalized_blocks(&state).await);
 
-        let finalized = handle.poll_finalized_blocks().await;
+        assert_eq!(
+            order1, order2,
+            "two honest nodes with the SAME committed roster but DIFFERENT vote-collector key \
+             knowledge must finalize the IDENTICAL order — the participant set (hence the tau \
+             leader schedule) is a function of committed state, never node-local key knowledge. \
+             A divergence here is the silent consensus fork F-CO-1."
+        );
+    }
 
-        // FAIL-CLOSED: a genuine n>1 federation whose PQ committee is unconfigured for
-        // a live member must HALT finality this poll — never solo-finalize the Turn
-        // without quorum. (Before the fix this returned the Turn, keyed on the collapsed
-        // projection; the mutation canary is: revert the branch to `participants.len()`
-        // and this asserts RED again.)
+    /// F-CO-1 GUARD: a live-JOINED validator whose ML-DSA key is NOT in committed state
+    /// makes the committed projection cover fewer than all admitted participants, so the
+    /// poll FAILS CLOSED (halts) rather than ordering over the surviving subset — which
+    /// would fork against a node holding the full committed set.
+    ///
+    /// Mutation canary: revert the guard to `participants.len() <= 1` and this reddens —
+    /// the projection {A,B} (2 > 1) would fall through to tau over the subset and finalize.
+    #[tokio::test]
+    async fn joined_validator_without_committed_key_halts_finality() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Committed genesis roster {A, B}; J joins the constitution but its ML-DSA key
+        // is never committed (the Join payload carries only ed25519).
+        let ab: Vec<ed25519_dalek::SigningKey> = [[0x41u8; 32], [0x42u8; 32]]
+            .iter()
+            .map(ed25519_dalek::SigningKey::from_bytes)
+            .collect();
+        let ed_a = ab[0].verifying_key().to_bytes();
+        let ed_b = ab[1].verifying_key().to_bytes();
+        let ed_j = ed25519_dalek::SigningKey::from_bytes(&[0x4Au8; 32])
+            .verifying_key()
+            .to_bytes();
+
+        let (_tmp, state) = committed_state_for(&ab).await;
+        // Constitution {A, B, J}; the lace finalizes under tau over {A, B}.
+        let handle = test_handle_with_committee(ed_a, vec![ed_a, ed_b, ed_j]).await;
+        let quorum = dregg_blocklace::supermajority_threshold(2);
+        *handle.lace.write().await = cross_linked_finality_lace(&ab, quorum);
+
+        let finalized = handle.poll_finalized_blocks(&state).await;
         assert!(
             finalized.is_empty(),
-            "a genuine n=2 federation with an un-keyed live member must finalize NOTHING \
-             (fail-CLOSED), not solo-finalize without quorum — got {} finalized block(s), \
-             the fail-open solo shortcut fired",
+            "admitted = {{A,B,J}} but J has no COMMITTED ML-DSA key ⇒ the projection covers only \
+             {{A,B}} ⇒ finality must FAIL CLOSED (halt), never order over the subset (which would \
+             fork against a node holding J's key) — got {} finalized block(s)",
             finalized.len()
         );
     }
@@ -11708,20 +11854,22 @@ mod tests {
     /// LIVENESS COMPANION: a GENUINE solo node (`admitted == 1`) still finalizes its
     /// actionable blocks in `seq` order. Guards the fail-closed fix above against an
     /// over-aggressive mutation (e.g. "always halt") — the fail-closed arm must fire
-    /// ONLY when a genuine n>1 federation's projection collapses, never for real solo.
+    /// ONLY when a genuine n>1 federation's projection is incomplete, never for real solo.
     #[tokio::test]
     async fn genuine_solo_node_still_finalizes() {
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         let (_sk_self, pk_self) = dregg_types::generate_keypair();
         let handle = test_handle_with_committee(pk_self.0, vec![pk_self.0]).await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
 
         {
             let mut lace = handle.lace.write().await;
             lace.add_block(Payload::Turn(vec![9, 9, 9]));
         }
 
-        let finalized = handle.poll_finalized_blocks().await;
+        let finalized = handle.poll_finalized_blocks(&state).await;
         assert_eq!(
             finalized.len(),
             1,

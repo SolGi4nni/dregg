@@ -17,36 +17,40 @@ pub use dregg_types::CausalDag;
 
 // ─── Verified happened-before (STRONG-FORM swap) ───────────────────────────────
 
-/// Decide `ancestor` happened-before `descendant` on a `CausalDag`, STRONG-FORM swap: when the
-/// verified Lean causal-order gate is linked (every native build;
-/// `Dregg2.Exec.DistributedExports::dregg_coord_causal_order` = `CausalOrder.happenedBefore` decided
-/// via `hbBool`), the AUTHORITATIVE verdict comes from the verified Lean — so the causal layer
-/// inherits the partial-order guarantees (`hb_irrefl` / `hb_trans` / `hb_asymm`) by construction. The
-/// native `CausalDag::happened_before` stays as the DIFFERENTIAL sibling and the fallback when the
-/// archive is not linked / the gate is unavailable.
+/// Decide `ancestor` happened-before `descendant` on a `CausalDag`. The AUTHORITATIVE verdict is the
+/// verified Lean causal-order gate (`Dregg2.Exec.DistributedExports::dregg_coord_causal_order` =
+/// `CausalOrder.happenedBefore` decided via `hbBool`), routed through the [`crate::verified_gate`]
+/// seam — so the causal layer inherits the partial-order guarantees (`hb_irrefl` / `hb_trans` /
+/// `hb_asymm`) by construction.
+///
+/// FAIL CLOSED: when the verified gate is unavailable (no gate registered / archive lacks the export
+/// / an endpoint is absent from the DAG / a wire error), this returns `false` — "not ordered" — the
+/// conservative verdict, rather than silently running the native `CausalDag::happened_before` decider
+/// on the live path. A production node MUST install the `dregg-exec-lean` gate for a positive
+/// happened-before verdict. (`CausalDag::happened_before` remains available as the DAG's own method
+/// and is exercised directly by the `coord_diff.rs` differential against the Lean partial order; it is
+/// simply no longer the fallback decider here.)
 ///
 /// The DAG is interned to the gate's wire by assigning each turn a small `id` = its position in
 /// `topological_order()` (a deterministic linear extension of happened-before, so a dep always
 /// carries a strictly-smaller id — the insertion-order discipline the Lean DAG `wf` expects), then
 /// emitting `"G=<id:deps|...>;a=<id>;b=<id>"`. The Lean `hbBool` is the transitive closure of the same
-/// dependency edges, so the interned verdict equals the native one (the differential checks this).
+/// dependency edges.
 pub fn verified_happened_before(
     dag: &CausalDag,
     ancestor: &[u8; 32],
     descendant: &[u8; 32],
 ) -> bool {
-    let native = dag.happened_before(ancestor, descendant);
-    match lean_happened_before(dag, ancestor, descendant) {
-        Some(verified) => verified,
-        // Gate unavailable (feature off / archive not linked / endpoint absent) ⇒ native decides.
-        None => native,
-    }
+    // Route-through-or-fail-closed: only a positive verdict from the verified Lean gate orders the
+    // pair; anything else (gate unavailable / endpoint absent / wire error) is treated as unordered.
+    lean_happened_before(dag, ancestor, descendant).unwrap_or(false)
 }
 
 /// Query the verified Lean causal-order gate `dregg_coord_causal_order` through the
 /// [`crate::verified_gate`] seam. Returns `Some(verdict)` when the gate ran, or `None` when it is
 /// unavailable (no gate registered — every FFI-free target / archive lacks the export / either
-/// endpoint absent from the DAG) so [`verified_happened_before`] falls back to the native Rust.
+/// endpoint absent from the DAG) — in which case [`verified_happened_before`] FAILS CLOSED to
+/// `false` (not-ordered), never a native decision.
 fn lean_happened_before(
     dag: &CausalDag,
     ancestor: &[u8; 32],

@@ -1,0 +1,12 @@
+# Concept: the receipt discipline
+
+#>spw_concept_receipt_discipline
+#:concept =settled
+
+^"card"{
+  ~#what: "a receipt IS prev-hash-chained + signed (or QC-bearing) + re-witnessable — or a typed VIEW carrying the hash it projects; anything else is a LOG and must not be called a receipt"
+  ~#why_hard: "the receipt is the offchain-coordination primitive — parties exchange receipts and settle on-chain only at real boundaries; that only works if a party who was NOT THERE can verify, so a producer-rewritable log wearing the name breaks the whole economy"
+  ~#exemplars: "TurnReceipt (ed25519, chain tamper-evidence proven in Lean — two well-linked chains agreeing at the head agree everywhere) and BridgeReceipt (BLS threshold QC, two federations minting across a boundary with NO shared ledger — the high-water mark)"
+  ~#stitches: "anti-ghost-tooth (what the receipt binds) ↔ settlement region ↔ praxis (the naming antibody: false cognates)"
+  ~#trap: "letting a struct named Receipt be neither the record nor a view — the discipline is a naming law with teeth"
+}

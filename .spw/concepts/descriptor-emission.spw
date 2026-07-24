@@ -1,0 +1,12 @@
+# Concept: descriptor emission
+
+#>spw_concept_descriptor_emission
+#:concept =settled
+
+^"card"{
+  ~#what: "all constraint semantics are EMITTED from Lean as byte-pinned, SHA-fingerprinted descriptor artifacts; Rust only interprets them; drift is rejected in CI"
+  ~#why_hard: "the pipeline is invisible in any one file — a proved Lean module, ~35 Emit*.lean doors, a fingerprint registry, and a Rust interpreter must be held together to see LAW #1 as a mechanism rather than a slogan"
+  ~#history: "the last first-party hand-authored circuit was retired 2026-07-16; the law became a gate, not prose"
+  ~#stitches: "laws.zero_rust_constraints ↔ metatheory emitters ↔ stark_kill lane ↔ the automatafl Rust AIR named as debt"
+  ~#trap: "extending a Rust AIR because it is right there — the drift the whole pipeline exists to make impossible"
+}

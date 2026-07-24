@@ -26,7 +26,7 @@ use dregg_turn::action::Effect;
 use crate::catalog::{RulesetCatalog, catalog_key, listed_value};
 use crate::identity::{
     CanonicalIdentity, HybridKey, HybridSig, SuccessionKind, SuccessionRecord, SurfaceRef,
-    field as idfield, guardian_ext_key, succession_message,
+    commit_hybrid, field as idfield, guardian_ext_key, succession_message,
 };
 use crate::instance::{Instance, InstanceStatus, field as ifield};
 use crate::realm::{Membrane, Realm, field as rfield};
@@ -100,6 +100,11 @@ pub enum Refused {
     Ledger(String),
     /// The cited identity cell is not known to this world.
     UnknownIdentity(CellId),
+    /// A mint would land on an identity cell that is ALREADY a registered
+    /// identity (same birth commitment ⇒ same durable cell). Refused so a second
+    /// mint cannot silently clobber an existing identity's committed key +
+    /// succession chain. A fresh birth key yields a fresh cell.
+    IdentityExists(CellId),
     /// A succession (rotation) was NOT signed by the identity's CURRENT key —
     /// the signer's key commitment does not equal the cell's committed key. This
     /// is the stolen-identity refusal: a wrong key cannot succeed the identity.
@@ -264,9 +269,69 @@ impl RealmWorld {
         Ok(identity)
     }
 
+    /// Mint a canonical identity NON-CUSTODIALLY — the DEFAULT mint. The holder
+    /// generates the birth hybrid key ([`HybridKey`], ed25519 + ML-DSA-65) OFF
+    /// node and supplies only its PUBLIC halves; the node NEVER sees seed material.
+    ///
+    /// The birth commitment is [`commit_hybrid`] over the PUBLIC keys — byte
+    /// identical to what a succession's [`HybridSig::signer_commitment`] recomputes
+    /// — so a later rotation signed by the holder's birth key matches the committed
+    /// current key EXACTLY (the same anti-forgery tooth the succession path uses).
+    /// The durable identity cell-id is derived from that PUBLIC commitment, never
+    /// from a seed the node does not hold; genesis seeds the succession chain at
+    /// epoch 1, identically to the custodial [`RealmWorld::mint_identity`].
+    ///
+    /// Refuses ([`Refused::IdentityExists`]) a birth key whose commitment already
+    /// names a registered identity (a re-mint would strand its succession chain).
+    pub fn mint_identity_from_pubkey(
+        &mut self,
+        label: &str,
+        ed_pk: &[u8; 32],
+        ml_pk: &[u8],
+    ) -> Result<CanonicalIdentity, Refused> {
+        // The birth commitment binds the PUBLIC keys (never the seed) — the same
+        // value the succession gate verifies a signer against.
+        let birth_commit = commit_hybrid(ed_pk, ml_pk);
+
+        // Durable cell-id from the PUBLIC commitment. Distinct domain prefix so a
+        // non-custodial id never collides with a custodial `realm-identity:{seed}`.
+        let cell_seed = format!("realm-identity-pk:{}", hex_bytes32(&birth_commit));
+        let id = derive_cell_id(&cell_seed);
+        if self.identities.contains_key(&id) {
+            return Err(Refused::IdentityExists(id));
+        }
+        let id = self.spawn_cell(&cell_seed)?;
+
+        // Stamp the durable identity record: succession epoch 1, current key.
+        self.write_field(&id, idfield::EPOCH, pack_u64(1))?;
+        self.write_field(&id, idfield::KEY_COMMIT, birth_commit)?;
+        self.write_field(&id, idfield::GUARDIAN_COUNT, pack_u64(0))?;
+        self.write_field(&id, idfield::GUARDIAN_THRESHOLD, pack_u64(0))?;
+
+        let identity = CanonicalIdentity {
+            id,
+            principal_pk: *ed_pk,
+            birth_key_commit: birth_commit,
+            label: label.to_string(),
+        };
+        self.identities.insert(id, identity.clone());
+        self.succession.insert(
+            id,
+            vec![SuccessionRecord {
+                epoch: 1,
+                from: [0u8; 32],
+                to: birth_commit,
+                kind: SuccessionKind::Genesis,
+            }],
+        );
+        Ok(identity)
+    }
+
     /// The birth hybrid key of an identity minted from `principal_seed` — the
     /// deterministic reconstruction a holder (or a driven test) uses to SIGN a
     /// succession while it is still the current key. Derives, does not read state.
+    /// Custodial-only: a NON-custodially minted identity has no node-known seed;
+    /// its holder keeps the birth key off-node.
     pub fn birth_key(&self, principal_seed: &str) -> HybridKey {
         HybridKey::from_principal_seed(principal_seed)
     }
@@ -916,6 +981,14 @@ fn hex(id: &CellId) -> String {
     let mut s = String::with_capacity(64);
     for b in id.as_bytes() {
         s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn hex_bytes32(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for x in b {
+        s.push_str(&format!("{x:02x}"));
     }
     s
 }

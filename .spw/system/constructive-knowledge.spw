@@ -1,0 +1,41 @@
+# System: constructive knowledge
+#
+# The actual metatheory — the logic dregg is a witness OF. Transcribed from
+# metatheory/CONSTRUCTIVE-KNOWLEDGE.md (read in full). Candidate-independent
+# by design: it would be the metatheory of any system built this way.
+
+#>spw_system_constructive_knowledge
+#:system #!form
+
+^"thesis"{
+  ~#law: "a principal's authority over a resource is exactly its ability to constructively exhibit a witness the kernel accepts — production under non-forgeability"
+  ~#correction: "authority is NOT affine descent — it does not deplete by use; it is constituted by what you can prove, every time, at the point of use; the drain reading forbids exactly the generative patterns that give ocaps their power"
+  ~#asymmetry: "proof-checking is cheap and trusted; proof-search is undecidable and untrusted — the whole edifice organizes around this"
+  @source: ~"../../metatheory/CONSTRUCTIVE-KNOWLEDGE.md"
+}
+
+^"four_knowledges"{
+  // the substances, read epistemically
+  .{
+    value: "conserved knowledge — cannot be created or destroyed, only moved; you cannot know yourself into more money"
+    state: "revisable knowledge — a cell's beliefs about itself, nonce as the freshness coordinate"
+    authority: "productive knowledge — what this cell can construct a witness for; the others are what is known, this is what can be DONE with what is known"
+    evidence: "the constructive-knowledge ledger itself — appending invalidates no prior knowledge, and forgetting is provably NOT a frame-preserving update"
+  }
+}
+
+^"production_law"{
+  ~#gate: "one fail-closed conjunction on every action — WHO the credential verifies, WHAT granted is a genuine subset of held, HOW every caveat discharges and the edge is unrevoked"
+  ~#receipt: "a constructive witness in the strictest sense — the post-state projection equals the fold of the trace the verb emitted, computed blind; you cannot witness knowledge you did not construct"
+  ~#lightclient: "accept implies a genuine kernel transition exists — the pale ghost, a forged history that type-checks, cannot be produced because its witness does not exist"
+  ~#adversary: "a leaked key bounds the attacker to the attenuation-closure of what it stole — the adversary's constructive knowledge is bounded by its theft"
+}
+
+^"open_frontier"{
+  ~#macaroon_cap: "one authority seen four ways — biscuit policy, macaroon caveat-chain, kernel cap, zk proof — today joined by CONJUNCTION, not a proven arrow; the missing theorem is chainGateG implies capAuthorityG; non-amplification is told twice in two lattices welded by and" =owed
+  ~#settlement: "BindsLiveAuthority is a typed hypothesis awaiting its deployed discharge — the same theorem the time-travel and membrane-merge frontiers converge on" =owed
+}
+
+^"rename"{
+  ~#insight: "the metatheory is the PREDICATE, the verification is the WITNESS — dregg2 is real precisely because it can produce the witness the predicate demands; conflating them under one name hid the actual metatheory"
+}

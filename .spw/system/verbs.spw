@@ -1,0 +1,39 @@
+# System: the survivor verbs
+#
+# Transcribed from the reified source of truth. Every claim below has a
+# theorem or #guard behind it in the registry; nothing is composed.
+
+#>spw_system_verbs
+#:system #!form
+
+^"signature"{
+  @truth: ~"../../metatheory/Dregg2/Substrate/VerbRegistry.lean"
+  ~#count: "SEVEN constructors; the human-facing EIGHT counts shield and unshield as two directions of one evidence verb"
+  ~#not_verbs: "exercise is USING a cap (the eval map); refusal is an outcome; nonce is prologue; pipelining is composition — TurnStructure, kept in the term language"
+}
+
+^"behavior_key"{
+  // minimality is injectivity of (substance × polarity) — theorem `minimality`
+  create: .{ substance: birth, polarity: introduce }        // mint the four-substance bundle
+  write: .{ substance: state, polarity: neutral }           // guarded in-place update under the frame
+  move: .{ substance: value, polarity: neutral }            // exchange, sum identically zero
+  grant: .{ substance: authority, polarity: introduce }     // authorized production along ONE edge
+  revoke: .{ substance: authority, polarity: eliminate }    // epoch-narrowing stales held authority
+  shield_unshield: .{ substance: evidence, polarity: introduce }  // the ledger only grows
+  lifecycle: .{ substance: retirement, polarity: eliminate }      // seal/destroy/sovereign custody automaton
+}
+
+^"cover"{
+  ~#wire: "36 live Effect variants, each classified survivor-or-turnStructure; the Lean match's exhaustiveness IS the completeness proof, and a Rust gate pins the roster from the other side"
+  ~#mint_is_move: "Mint is the sign-flipped dual of Burn — issuer well debited negative-capably, sum exactly zero; the legacy supply-increment mint provably breaks conservation"
+  ~#reactive_rides_evidence: "a promise-hole IS a nullifier; to React is to SPEND the hole — Promise/Notify shield, React unshields, same monotone ledger"
+  ~#custom_is_write: "the custom-VK door is a proof-guarded sovereign-state advance — a write whose guard is a full VK"
+}
+
+^"doomed_families"{
+  ~#census: "25 variants deleted, semantics re-provided as verified factory-born cell programs — escrow, obligation, queue, inbox, pubsub, bridge, caps-in-slots; no live tag classifies factory (the lockstep tooth)"
+}
+
+^"drift"{
+  ~#found: "README-LLMs section 2 lists exercise as the eighth verb; the registry it cites refutes this — exercise is TurnStructure" #!observed_2026_07_23
+}

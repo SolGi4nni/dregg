@@ -1,0 +1,12 @@
+# Concept: the faithful-commitment law
+
+#>spw_concept_faithful_commitment
+#:concept =settled
+
+^"card"{
+  ~#what: "every 32-byte component flowing into the deployed state commitment binds its SOURCE at ~124 bits (8 felts) — never a lossy 1-felt fold (~31 bits, grindable collisions)"
+  ~#why_hard: "a faithful 8-felt binding and a degraded fold are the SAME TYPE — the lossy fold slid in silently and was found by a bit-audit months later; write-time catch costs one CI second, the alternative cost weeks"
+  ~#enforcement: "two complementary walls — an ast-grep CI gate catches the degraded PATTERN in producer files; the Faithful8 newtype (private inner, constructors-only) makes a degraded VALUE in a typed sink a compile error; the greppable DANGER hatch is the burn-down list, currently EMPTY"
+  ~#stitches: "linking-tower rung 3 ↔ green-that-lies (the same-type invisibility is the genre) ↔ laws.green_or_bust"
+  ~#trap: "trusting a bare felt array in a commitment position — the type must carry the faithfulness, because the value cannot"
+}

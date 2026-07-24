@@ -440,6 +440,59 @@ impl TurnExecutor {
         entries: &[(dregg_circuit::field::BabyBear, i64)],
         declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
     ) -> Result<(), AtomicTurnError> {
+        // ── House Law #1: route the per-asset Σδ=0 decision through the verified Lean AIR ──
+        // When a conservation oracle is installed (`dregg-node` via `dregg-exec-lean`), the deployed
+        // executor's per-asset conservation verdict is COMPUTED BY the Lean-authored, PROVEN
+        // `dregg_cross_cell_conserves` (`Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`) — which
+        // `CrossCellConserveRefine.decision_conserves_iff_air_boundary` proves EQUAL to the committed
+        // `CrossCellConservation` AIR boundary (`creditSum = debitSum` per asset). Not the hand-written
+        // Rust `BlockConservation` twin (which drifted once into the asset-blind inflation bug).
+        //
+        // `turn` compiles to wasm32 + the zkVM guest (no `libdregg_lean.a`), so this is a runtime seam,
+        // not a direct FFI call. When NO oracle is installed the LABELED Rust fallback below decides —
+        // the no-Lean-guest degradation and the interim until the archive relink is verified to fire the
+        // oracle. See `super::conservation_oracle`.
+        let rows: Vec<(u32, i64)> = entries.iter().map(|(a, d)| (a.0, *d)).collect();
+        let supply_rows: Vec<(u32, i64)> = declared_supply
+            .iter()
+            .map(|s| {
+                (
+                    s.asset.0,
+                    if s.mint {
+                        s.magnitude as i64
+                    } else {
+                        -(s.magnitude as i64)
+                    },
+                )
+            })
+            .collect();
+
+        if let Some(oracle) = super::conservation_oracle::installed_conservation_oracle() {
+            return match oracle.conserves(&rows, &supply_rows) {
+                Ok(()) => Ok(()),
+                Err((asset, imbalance)) => {
+                    Err(AtomicTurnError::PerAssetConservationViolation { asset, imbalance })
+                }
+            };
+        }
+
+        Self::unverified_rust_conservation_fallback(entries, declared_supply)
+    }
+
+    /// The LABELED, NON-VERIFIED Rust per-asset conservation arithmetic — the `dregg_circuit`
+    /// `BlockConservation` collector's `Σδ=0`-per-asset decision. This is NOT "the check": on a
+    /// deployed native node the verified Lean decision is installed as the conservation oracle
+    /// ([`check_per_asset_conservation_by_asset`] routes through it), so this fallback runs ONLY on the
+    /// no-Lean guest (wasm32 / zkVM, which cannot link `libdregg_lean.a`) and as the interim before the
+    /// oracle install is verified. It computes the SAME arithmetic the committed
+    /// `Dregg2.Circuit.CrossCellConservation` AIR forces (proved equal by
+    /// `CrossCellConserveRefine.decision_conserves_iff_air_boundary`), so it is not an independent twin —
+    /// but it remains DEBT to delete once the archive relink is confirmed to fire the oracle, at which
+    /// point the native no-oracle path flips to fail-CLOSED.
+    fn unverified_rust_conservation_fallback(
+        entries: &[(dregg_circuit::field::BabyBear, i64)],
+        declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],
+    ) -> Result<(), AtomicTurnError> {
         use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
         use dregg_circuit::field::BabyBear;
 

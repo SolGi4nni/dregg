@@ -1,0 +1,11 @@
+# Concept: orphan rot
+
+#>spw_concept_orphan_rot
+#:concept =owed
+
+^"card"{
+  ~#what: "a module built by NOTHING is green by absence — 103 Lean modules were outside the build graph, 28 had rotted; the enmeshment strike pulled 72 back in; the orphan gate keeps the census"
+  ~#why_hard: "rot is silent precisely where attention is not; the build graph is the only witness that a proof still holds, so an orphaned proof is a claim slowly becoming fiction"
+  ~#stitches: "metatheory.weather ↔ green-that-lies (the by-absence species) ↔ praxis (a ratchet that cannot compile cannot bite)"
+  ~#trap: "measuring health by what builds — the question is what DOESN'T build and still gets cited"
+}

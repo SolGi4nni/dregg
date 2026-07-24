@@ -160,6 +160,18 @@ extern lean_object *initialize_Dregg2_Dregg2_Exec_DeployedConstraint(uint8_t bui
 extern lean_object *dregg_constraint_admits(lean_object *input);
 #endif
 
+/* The exported Lean `String -> String` cross-cell per-asset conservation decision
+ * (`Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`): parses the `(asset, delta)` rows +
+ * declared mint/burn supply, ADMITS iff every asset's signed sum is zero, else refuses with the first
+ * imbalanced asset. Proved EQUAL to the committed Σδ=0 AIR boundary by
+ * `CrossCellConserveRefine.decision_conserves_iff_air_boundary`. GATED on DREGG_CROSS_CELL_CONSERVES
+ * (the module is OUTSIDE the FFI closure; build.rs probes + defines it, and dregg_ffi_init runs its
+ * initializer). */
+#ifdef DREGG_CROSS_CELL_CONSERVES
+extern lean_object *initialize_Dregg2_Dregg2_Circuit_CrossCellConserveDecision(uint8_t builtin);
+extern lean_object *dregg_cross_cell_conserves(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` VERIFIED ML-DSA VERIFY CORE
  * (`Dregg2.Crypto.Fips204Verify.verifyFFI`): decodes the wire `"thi μ c̃ z h"`, runs the extracted,
  * spec-agreeing `verifyCore` (= `Fips204Spec.MlDsaParams.verifyB` at the deployed ML-DSA-65 parameters —
@@ -458,6 +470,15 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(cares);
 #endif
+#ifdef DREGG_CROSS_CELL_CONSERVES
+    lean_object *cccres = initialize_Dregg2_Dregg2_Circuit_CrossCellConserveDecision(1);
+    if (!lean_io_result_is_ok(cccres)) {
+        lean_io_result_show_error(cccres);
+        lean_dec_ref(cccres);
+        return 1;
+    }
+    lean_dec_ref(cccres);
+#endif
 #if defined(DREGG_FIPS204_VERIFY) || defined(DREGG_FIPS204_VERIFY_REAL)
     /* The verified ML-DSA verify-core module is OUTSIDE the FFI closure; initialize it explicitly so
      * `dregg_fips204_verify` AND the full-byte `dregg_fips204_verify_real` (BRICK 8, same module) are
@@ -656,6 +677,28 @@ size_t dregg_constraint_admits_str(const char *in_utf8, char *out, size_t out_ca
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_constraint_admits(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+/* dregg_cross_cell_conserves_str — the C string bridge over the exported Lean `String -> String`
+ * cross-cell per-asset conservation decision (`CrossCellConserveDecision.conservesFFI`). Input: the
+ * `(asset, delta)` rows + declared supply wire; output: `"1"` (conserves / ADMIT), `"0 <asset>
+ * <imbalance>"` (first imbalanced asset / REFUSE), or `"0"` (malformed / fail-closed REFUSE). Same
+ * return contract as the bridges above. */
+#ifdef DREGG_CROSS_CELL_CONSERVES
+size_t dregg_cross_cell_conserves_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_cross_cell_conserves(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

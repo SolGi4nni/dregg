@@ -1,0 +1,14 @@
+# Concept: witness collapse
+
+#>spw_concept_witness_collapse
+#:concept =settled
+
+^"card"{
+  ~#what: "a turn's state transition applies independently of materializing its witness; Symbolic defers the Merkle/commitment layer, collapse re-runs deferred turns to materialize exact witnesses on demand"
+  ~#why_hard: "sounds like an optimization; it is a semantic split grounded in Exec ⊑ Abstract — the abstract state is witness-free, and the deferred layer is exactly what the refinement throws away"
+  ~#never: "admission gates — authority, conservation, freshness — are NEVER deferred; only the witness"
+  @home: ~"../../turn/src/collapse.rs"
+  @ground: ~"../../metatheory/Dregg2/Spec/ExecRefinement.lean"
+  ~#stitches: "kernel region ↔ deos UI latency (local turns pay zero hashing) ↔ publishability (a symbolic turn is structurally unpublishable)"
+  ~#trap: "thinking a symbolic turn is a fake turn; it is a real turn that has not yet paid its witness bill"
+}

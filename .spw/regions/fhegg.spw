@@ -1,0 +1,27 @@
+# Region: Fhegg
+#
+# Summonable card for the dark bazaar — FHE batch clearing plus the typed
+# order language. The newest horizon cluster; the July 22 authority alert
+# points here. Promoted from a line in mesh.islands after a real read.
+
+#>spw_region_fhegg
+#:region #!summonable
+
+^"stages"{
+  solver: "Stage 1 — fast UNTRUSTED clearing: uniform-price aggregation + PDHG flow-LP, emitting the Cert-F primal-dual certificate a Lean-verified checker validates; trust the certificate, never the solver"
+  fhe: "Stage 2 — NO-VIEWER clearing: the batch auction cleared entirely on TFHE ciphertexts; nobody decrypts the orders; real tfhe-rs, measured"
+  rtl: "Stage 3 — a Lean-to-Verilog spine toward the FPGA accelerator; scaffolding with a hardware dir, self-labeled NOT the accelerator yet"
+}
+
+^"fhir"{
+  @dsl: ~"../../fhir"
+  ~#thesis: "fhIR-0 — admissible iff it compiles: a product's TYPE carries its convex-program shape (matrices flagged public vs private), its privacy tier, and the certificate kind it compiles to"
+  #[tiers]{ dark shielded open }
+  ~#boundary: "the cheap-regime line is the matrices must be PUBLIC — not merely convex; the type system holds that line"
+}
+
+^"character"{
+  ~#island: "no dependency edges out to the kernel crates — a self-contained island, staged trust from untrusted-but-certified to no-viewer to hardware"
+  ~#resonance: "the same epistemics as the guardians — the checker is trusted, the solver is not; Cert-F is the crown weld of the bazaar"
+  ~#lane: "the current cut — dirty frontend and game work WIP per the authority alert"
+}

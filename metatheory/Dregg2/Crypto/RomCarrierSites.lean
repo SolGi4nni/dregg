@@ -315,6 +315,241 @@ theorem chained_rom_binds {F : KeyedRomFamily} (P : RomForgery F)
     (negl_add (romCarrier_binds F C₁ Q₁ hQ₁ hw B₁ hB₁)
       (romCarrier_binds F C₂ Q₂ hQ₂ hw B₂ hB₂))
 
+/-! ## §6 — two more carrier constructors: a PINNED tag, and a KEY-DEPENDENT encoder.
+
+`taggedCarrier` lets the adversary choose the tag in its context.  Two deployed shapes need more:
+
+  * a site that attacks ONE fixed role (the XM-VRF leaf layer is `Role.leaf`, never a chosen tag) pins
+    the tag in the ENCODING — `fixedTagCarrier`;
+  * a site whose deployed serialization READS the key (`EncodedBindingReduction`'s
+    `enc : ∀ l, Key l → α → Input`) carries the key in the context and the encoder consumes it —
+    `keyedEncCarrier`.
+
+Both are still just `RomCarrier`s: no new game, no new floor. -/
+
+/-- **A CARRIER AT A PINNED TAG.** The site always absorbs under ONE role; the adversary keeps its own
+opening context `Ctx'` but cannot move the tag. -/
+def fixedTagCarrier (F : KeyedRomFamily) (t : ∀ l, F.Key l) (Ctx' Val : ℕ → Type)
+    (valDec : ∀ l, DecidableEq (Val l))
+    (emb : ∀ l, Ctx' l → Val l → F.D l)
+    (emb_inj : ∀ l (c : Ctx' l) (a b : Val l), emb l c a = emb l c b → a = b) :
+    RomCarrier F where
+  Ctx := Ctx'
+  Val := Val
+  valDec := valDec
+  encode := fun l c v => (t l, emb l c v)
+  encode_inj := fun l c a b h => emb_inj l c a b (congrArg Prod.snd h)
+
+/-- **A CARRIER WHOSE ENCODER READS THE KEY** — the `EncodedBindingReduction` shape
+`enc : ∀ l, Key → α → Input`, with the key in the context (the adversary may choose which tag to
+attack; the sampled oracle over the tag-separated domain is what it cannot choose). -/
+def keyedEncCarrier (F : KeyedRomFamily) (Val : ℕ → Type)
+    (valDec : ∀ l, DecidableEq (Val l))
+    (emb : ∀ l, F.Key l → Val l → F.D l)
+    (emb_inj : ∀ l (k : F.Key l) (a b : Val l), emb l k a = emb l k b → a = b) :
+    RomCarrier F where
+  Ctx := F.Key
+  Val := Val
+  valDec := valDec
+  encode := fun l k v => (k, emb l k v)
+  encode_inj := fun l k a b h => emb_inj l k a b (congrArg Prod.snd h)
+
+/-! ## §7 — the OPENING game: the PUBLISHED commitment IN the win relation.
+
+`romCarrierGame` compares the two commitments to EACH OTHER.  The deployed break the
+`commitOpenGame`-shaped sites state (`HermineHashCRRegrounded` §2 and its six instantiations) is
+stronger in SHAPE: the adversary PUBLISHES a value and exhibits two DISTINCT payloads that BOTH open
+it — the published value is part of the forgery, exactly as a beacon output, a session key or an
+enrollment id is published on the wire.  This section is that game at the SAMPLED oracle, closed from
+the SAME proved floor: the extractor DROPS the published value (`mapOut`, budget preserved) and the
+two openings collide through it. -/
+
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp)
+
+/-- **THE OPENING-BREAK GAME AT THE SAMPLED ORACLE.** The adversary outputs a PUBLISHED digest
+together with a context and two payloads; it WINS iff the payloads are DISTINCT and BOTH commitments
+equal the published value.  The deployed break — one published beacon output / session key /
+enrollment id opened two ways — is the win relation itself. -/
+def romOpenGame (F : KeyedRomFamily) (C : RomCarrier F) : Game where
+  Inst := fun l => F.toRomFamily.D l → F.toRomFamily.R l
+  Ans := fun l => F.toRomFamily.R l × C.Ctx l × C.Val l × C.Val l
+  instFin := fun l => (romCarrierGame F C).instFin l
+  instNe := fun l => (romCarrierGame F C).instNe l
+  wins := fun l H p =>
+    p.2.2.1 ≠ p.2.2.2 ∧ C.enc l H p.2.1 p.2.2.1 = p.1 ∧ C.enc l H p.2.1 p.2.2.2 = p.1
+  winsDec := fun l H p => by
+    letI := C.valDec l; letI := (F.toRomFamily).rDec l; infer_instance
+
+/-- **THE PROBLEM IS IN THE STATEMENT** — a win unfolds, by `Iff.rfl`, to two distinct payloads both
+opening the published commitment at the sampled oracle. -/
+theorem romOpenGame_wins_iff (F : KeyedRomFamily) (C : RomCarrier F) (l : ℕ)
+    (H : (romOpenGame F C).Inst l) (p : (romOpenGame F C).Ans l) :
+    (romOpenGame F C).wins l H p ↔
+      (p.2.2.1 ≠ p.2.2.2 ∧ C.enc l H p.2.1 p.2.2.1 = p.1 ∧ C.enc l H p.2.1 p.2.2.2 = p.1) :=
+  Iff.rfl
+
+/-- An opening forger, as an oracle program: one query tree per parameter, answering with the
+published digest, the context and the two payloads. -/
+abbrev RomOpenComp (F : KeyedRomFamily) (C : RomCarrier F) : Type :=
+  ∀ l, OracleComp (F.toRomFamily.D l) (F.toRomFamily.R l) ((romOpenGame F C).Ans l)
+
+/-- The ordinary adversary an opening query tree induces. -/
+def romOpenAdv (F : KeyedRomFamily) (C : RomCarrier F) (M : RomOpenComp F C) :
+    Adversary (romOpenGame F C) where
+  run := fun l H => (M l).eval H
+
+/-- **THE QUERY-BOUNDED OPENING CLASS** — the fixed `Eff` at the opening layer: the forger factors
+through a `Q`-query tree fixed before the oracle is sampled.  The honest successor to the deleted
+`IsPolyTime` discharges of the `commitOpenGame` sites. -/
+def RomOpenEff (F : KeyedRomFamily) (C : RomCarrier F) (Q : ℕ → ℕ) :
+    Adversary (romOpenGame F C) → Prop := fun A =>
+  ∃ M : RomOpenComp F C, (∀ l, QueryBounded (Q l) (M l)) ∧
+    ∀ l (H : (romOpenGame F C).Inst l), A.run l H = (M l).eval H
+
+/-- **THE EXTRACTOR** — drop the published value, keep the context and the two payloads. -/
+def openToEquiv (F : KeyedRomFamily) (C : RomCarrier F) (A : Adversary (romOpenGame F C)) :
+    Adversary (romCarrierGame F C) where
+  run := fun l H => let p := A.run l H; (p.2.1, p.2.2.1, p.2.2.2)
+
+/-- **WIN-PRESERVATION.** Two payloads that both open ONE published value carry EQUAL commitments, so
+an opening win is an equivocation win of the carrier game at the same oracle. -/
+theorem romOpen_wins_imp (F : KeyedRomFamily) (C : RomCarrier F)
+    (A : Adversary (romOpenGame F C)) (l : ℕ) (H : (romOpenGame F C).Inst l)
+    (hwin : (romOpenGame F C).wins l H (A.run l H)) :
+    (romCarrierGame F C).wins l H ((openToEquiv F C A).run l H) := by
+  obtain ⟨hne, h1, h2⟩ := hwin
+  exact ⟨hne, h1.trans h2.symm⟩
+
+/-- **THE ADVANTAGE INEQUALITY** — unconditional, over ALL adversaries; the class enters only when
+the floor is applied. -/
+theorem romOpen_adv_le (F : KeyedRomFamily) (C : RomCarrier F)
+    (A : Adversary (romOpenGame F C)) (l : ℕ) :
+    gameAdv (romOpenGame F C) A l ≤ gameAdv (romCarrierGame F C) (openToEquiv F C A) l := by
+  refine @winProb_le_of_imp _ ((romOpenGame F C).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  exact romOpen_wins_imp F C A l H hH
+
+/-- **THE EXTRACTED EQUIVOCATOR IS QUERY-BOUNDED** — the extractor is a `mapOut` post-composition,
+which adds no queries.  This is what replaces the `poly_time` answer-size discharges. -/
+theorem openToEquiv_in_carrierEff (F : KeyedRomFamily) (C : RomCarrier F) (Q : ℕ → ℕ)
+    (A : Adversary (romOpenGame F C)) (hA : RomOpenEff F C Q A) :
+    RomCarrierEff F C Q (openToEquiv F C A) := by
+  obtain ⟨M, hMQ, hrun⟩ := hA
+  refine ⟨fun l => OracleComp.mapOut (fun p => (p.2.1, p.2.2.1, p.2.2.2)) (M l), ?_, ?_⟩
+  · exact fun l => OracleComp.mapOut_queryBounded _ (hMQ l)
+  · intro l H
+    show (let p := A.run l H; (p.2.1, p.2.2.1, p.2.2.2))
+      = (OracleComp.mapOut (fun p => (p.2.1, p.2.2.1, p.2.2.2)) (M l)).eval H
+    rw [OracleComp.mapOut_eval, hrun l H]
+
+/-- **⚑⚑ THE OPENING BINDING, FROM THE PROVED FLOOR.** A query-bounded opening forger has NEGLIGIBLE
+advantage: the published commitment opens to ONE payload except with negligible probability, in the
+keyed ROM model of the header.  NO `IsPolyTime` hypothesis, NO refutable floor — `keyedRom_hard`
+(the birthday bound) closes it through `romCarrier_binds`. -/
+theorem rom_open_binds (F : KeyedRomFamily) (C : RomCarrier F) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (A : Adversary (romOpenGame F C)) (hA : RomOpenEff F C Q A) :
+    Negl (gameAdv (romOpenGame F C) A) :=
+  negl_of_le (fun l => (gameAdv_mem_unit (romOpenGame F C) A l).1)
+    (romOpen_adv_le F C A)
+    (romCarrier_binds F C Q hQ hw (openToEquiv F C A) (openToEquiv_in_carrierEff F C Q A hA))
+
+/-- The flat-family specialization: `rom_open_binds` with the width obligation closed by
+construction, so a site over `flatFamily` states nothing but its query budget. -/
+theorem flat_open_binds (Key : Type) (kF : Fintype Key) (kD : DecidableEq Key) (kN : Nonempty Key)
+    (Msg : ℕ → Type) (mF : ∀ l, Fintype (Msg l)) (mD : ∀ l, DecidableEq (Msg l))
+    (mN : ∀ l, Nonempty (Msg l))
+    (C : RomCarrier (flatFamily Key kF kD kN Msg mF mD mN))
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romOpenGame (flatFamily Key kF kD kN Msg mF mD mN) C))
+    (hA : RomOpenEff (flatFamily Key kF kD kN Msg mF mD mN) C Q A) :
+    Negl (gameAdv (romOpenGame (flatFamily Key kF kD kN Msg mF mD mN) C) A) :=
+  rom_open_binds _ C Q hQ (flatFamily_card_R Key kF kD kN Msg mF mD mN) A hA
+
+/-- **A NON-NEGLIGIBLE OPENER IS OUTSIDE THE CLASS** — the counterexample dying at the opening
+layer: the strategy that refutes the `IsPolyTime` floors cannot produce a member of this class. -/
+theorem romOpen_forger_excluded (F : KeyedRomFamily) (C : RomCarrier F) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (A : Adversary (romOpenGame F C)) (hnn : ¬ Negl (gameAdv (romOpenGame F C) A)) :
+    ¬ RomOpenEff F C Q A :=
+  fun hA => hnn (rom_open_binds F C Q hQ hw A hA)
+
+/-- **(CANARY — the opening bound does NOT follow from the floor applied at ANOTHER adversary.)**
+`romCarrier_binds` at some OTHER carrier adversary `B` bounds a DIFFERENT ensemble; only
+`romOpen_adv_le` connects the extracted equivocator to the opening game. -/
+example (F : KeyedRomFamily) (C : RomCarrier F) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (A : Adversary (romOpenGame F C))
+    (B : Adversary (romCarrierGame F C)) (hB : RomCarrierEff F C Q B) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (romOpenGame F C) A) := romCarrier_binds F C Q hQ hw B hB)
+  trivial
+
+/-! ### Opening-layer non-vacuity teeth: the constant answerer is ADMITTED, WINS somewhere, and is
+DEFANGED — the transplant of §4's triple at the published-value shape. -/
+
+/-- The `0`-query constant opener: a fixed published digest, context and payload pair. -/
+def constOpenComp (F : KeyedRomFamily) (C : RomCarrier F)
+    (r : ∀ l, F.toRomFamily.R l) (c : ∀ l, C.Ctx l) (v w : ∀ l, C.Val l) : RomOpenComp F C :=
+  fun l => OracleComp.pure (r l, c l, v l, w l)
+
+/-- The constant opener is `0`-query, hence in the class at EVERY budget. -/
+theorem constOpen_in_eff (F : KeyedRomFamily) (C : RomCarrier F)
+    (r : ∀ l, F.toRomFamily.R l) (c : ∀ l, C.Ctx l) (v w : ∀ l, C.Val l) (Q : ℕ → ℕ) :
+    RomOpenEff F C Q (romOpenAdv F C (constOpenComp F C r c v w)) :=
+  ⟨constOpenComp F C r c v w, fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩
+
+/-- **THE OPENING GAME IS WINNABLE** — at the constant oracle everything hashes to the published
+value, so the constant opener wins somewhere and the binding bounds a genuinely nonzero advantage. -/
+theorem constOpen_gameAdv_pos (F : KeyedRomFamily) (C : RomCarrier F)
+    (r : ∀ l, F.toRomFamily.R l) (c : ∀ l, C.Ctx l) (v w : ∀ l, C.Val l)
+    (l : ℕ) (hne : v l ≠ w l) :
+    0 < gameAdv (romOpenGame F C) (romOpenAdv F C (constOpenComp F C r c v w)) l := by
+  refine @winProb_pos_of_witness _ ((romOpenGame F C).instFin l) _ (fun _ => r l) ?_
+  exact ((romOpenAdv F C (constOpenComp F C r c v w)).hit_eq_true l _).mpr ⟨hne, rfl, rfl⟩
+
+/-- **THE ADMITTED SHAPE IS DEFANGED, NOT EXCLUDED** — admitted by the class, positive advantage,
+negligible advantage: the `IsPolyTime` refuter's shape dies at the sampled oracle. -/
+theorem constOpen_binds (F : KeyedRomFamily) (C : RomCarrier F)
+    (r : ∀ l, F.toRomFamily.R l) (c : ∀ l, C.Ctx l) (v w : ∀ l, C.Val l) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l) :
+    Negl (gameAdv (romOpenGame F C) (romOpenAdv F C (constOpenComp F C r c v w))) :=
+  rom_open_binds F C Q hQ hw _ (constOpen_in_eff F C r c v w Q)
+
+/-! ## §8 — BOUNDED VECTORS: the truncated deployed LIST shape, and its lossless embedding.
+
+Deployed sites absorb variable-length limb lists (`List ℤ`).  A ROM message domain must be FINITE, so
+the honest truncation is "length at most `m`, limbs in range" — the `SysRomMsg` move of
+`Exec.SystemRootsBindingReduction` §7, supplied here once as a reusable shape.  `bvecOfList` embeds a
+bounded list; `bvecOfList_inj` is the losslessness tooth: NOTHING the deployed prover can absorb (at
+the truncation bound) is identified. -/
+
+/-- **A LENGTH-TAGGED BOUNDED VECTOR** — a declared length `≤ m` and a padded entry table.  Finite,
+decidable and inhabited whenever the alphabet is, by construction. -/
+abbrev BVec (E : Type) (m : ℕ) : Type := Fin (m + 1) × (Fin m → Option E)
+
+/-- Embed a list of length `≤ m` as its length tag and entry table. -/
+def bvecOfList {E : Type} (m : ℕ) (xs : List E) (hl : xs.length ≤ m) : BVec E m :=
+  (⟨xs.length, Nat.lt_succ_of_le hl⟩, fun i => xs[i.val]?)
+
+/-- **THE TRUNCATION LOSES NOTHING** — two bounded lists with one embedding are EQUAL, so a distinct
+pair of deployed absorbed lists stays a distinct pair of ROM payloads. -/
+theorem bvecOfList_inj {E : Type} {m : ℕ} {xs ys : List E}
+    (hx : xs.length ≤ m) (hy : ys.length ≤ m)
+    (h : bvecOfList m xs hx = bvecOfList m ys hy) : xs = ys := by
+  have hlen : xs.length = ys.length :=
+    congrArg (fun p : BVec E m => p.1.val) h
+  refine List.ext_getElem? (fun n => ?_)
+  by_cases hn : n < m
+  · exact congrFun (congrArg Prod.snd h) ⟨n, hn⟩
+  · have hx' : xs.length ≤ n := le_trans hx (Nat.le_of_not_lt hn)
+    have hy' : ys.length ≤ n := le_trans hy (Nat.le_of_not_lt hn)
+    rw [List.getElem?_eq_none hx', List.getElem?_eq_none hy']
+
 /-! ## Kernel-clean keystones. -/
 
 #assert_all_clean [
@@ -328,7 +563,18 @@ theorem chained_rom_binds {F : KeyedRomFamily} (P : RomForgery F)
   constTriple_gameAdv_pos,
   constTriple_binds,
   chained_rom_adv_le,
-  chained_rom_binds
+  chained_rom_binds,
+  romOpenGame_wins_iff,
+  romOpen_wins_imp,
+  romOpen_adv_le,
+  openToEquiv_in_carrierEff,
+  rom_open_binds,
+  flat_open_binds,
+  romOpen_forger_excluded,
+  constOpen_in_eff,
+  constOpen_gameAdv_pos,
+  constOpen_binds,
+  bvecOfList_inj
 ]
 
 end Dregg2.Crypto.RomCarrierSites

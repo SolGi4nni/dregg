@@ -1,0 +1,41 @@
+# System: the turn — written in the operator algebra
+#
+# Legend is local: this surface ASSIGNS the sigils, then speaks them.
+# ^ seed/birth · & integrate/turn · ! gate · * witness · # granted-set
+# ~ address · @ principal · $ substrate-floor · = attenuation · . substance
+
+#>spw_form_turn
+#:system #!fluid
+
+^"assign"{
+  @actor: "the one who exhibits"
+  #held: "what @actor can re-prove"
+  $floor: "what nobody proves — Poseidon2, lattice, leanc"
+}
+
+&[turn]{
+  .{ value state authority evidence }
+
+  ![who]{ @actor $sig }
+  ![what]{ #granted = #held }
+  ![how]{ ~caveats.. => discharged }
+
+  &[forest]{
+    ^create .birth
+    &write .state
+    &move .value => 0
+    #grant .authority =narrow
+    !revoke .authority =stale
+    ~shield .evidence =grow
+    *lifecycle .retirement
+  }
+
+  => *[receipt]{ .post $chain ~prev }
+}
+
+![refused]{ _ } => &[outcome]{ *refusal }
+
+?[wonder]{
+  "a turn that cannot exhibit does not execute — where else does ! carry the whole constitution?"
+  $%[gate.conjunction, forest.edges] => ~#one_law
+}

@@ -1,0 +1,12 @@
+# Concept: attenuation
+
+#>spw_concept_attenuation
+#:concept =settled
+
+^"card"{
+  ~#what: "delegation only narrows: granted ≤ held, always; authority is HELD, never owed, and a chain of delegations is a chain of subsets"
+  ~#why_hard: "the security consequence is global from a local rule — a leaked key's blast radius is the attenuation-closure of its c-list, so key compromise is a bounded event the existing proofs already quantify over (verify the cage, not the animal)"
+  @model: ~"../../metatheory/Metatheory/KeyLeak.lean"
+  ~#stitches: "kernel.turn ↔ trust.key_leak ↔ every starbridge mandate app (worker mandates, tool delegation, edge mandates are attenuation worn as products)"
+  ~#trap: "designing an amplifying convenience — any path where granted exceeds held un-bounds every blast radius at once"
+}

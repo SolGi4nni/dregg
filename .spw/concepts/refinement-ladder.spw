@@ -1,0 +1,11 @@
+# Concept: the refinement ladder
+
+#>spw_concept_refinement_ladder
+#:concept =moving
+
+^"card"{
+  ~#what: "the staged climb from code to apex: Rung 1 functional (the function computes the right thing) → Rung 2 semantic (the circuit means the function) → Rung 3 fold (the recursion preserves it) → apex (one committed forest, all guarantees conjoined)"
+  ~#why_hard: "each rung is green-able in isolation; the system property only exists when the ladder is CONNECTED — a proven rung over an unproven seam is decoration"
+  ~#stitches: "stark_kill lane (climbing it) ↔ trust.apex (its top) ↔ carrier-debt (what stands in for missing rungs) ↔ multichain settlement (rung-3 folded light clients)"
+  ~#trap: "reporting a rung as the ladder — it proves on a box is not verified, and the light client accepts is not sound"
+}

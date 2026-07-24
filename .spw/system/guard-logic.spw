@@ -1,0 +1,29 @@
+# System: the guard logic
+#
+# From the transcendental-syntax bridge (read in full) + the calculus §4.
+# The deployed admission gate and Girard's orthogonality are the same object;
+# how far that identity extends is an honestly-staged research program.
+
+#>spw_system_guard_logic
+#:system #!form
+
+^"the_weld"{
+  ~#identity: "caveatsAdmit IS orthogonality-set membership — definitionally, an Iff.rfl; every committed reduction lands in a behaviour"
+  ~#attenuation: "adding caveats grows the test set and shrinks the behaviour — attenuation is refutation growth, never amplification"
+  @bridge_doc: ~"../../metatheory/docs/TRANSCENDENTAL-SYNTAX-BRIDGE.md"
+}
+
+^"the_two_deciding_questions"{
+  ~#linearity: "ANSWERED YES with an exact boundary — conservation is NOT a behaviour under any per-component test family, and IS one the moment the composite Σδ observable is fielded; linearity is recovered from orthogonality IFF the test side may correlate the pair"
+  ~#grading: "PARTIAL, and the CALM-flavored conjecture REFUTED — coordination-free iff join-closed (definitionally I-confluent); directed-closure is vacuous on the deployed lattices; prices attach to divergent replicas, not growing views"
+  ~#synthesis: "correlation classifies the family — every negative is one generic mix law; a family is a behaviour exactly when the test language fields its single correlating observable"
+}
+
+^"attested_orthogonality"{
+  ~#dregg_addition: "in stella the tests are PLAYED; in dregg they are ATTESTED — the receipt reifies orthogonality as a transferable certificate a third party re-checks, ultimately a STARK"
+}
+
+^"honest_disposition"{
+  ~#proved: "the linear face is load-bearing; the modality grading is sound through orthogonal-closure, semantically completed by the join"
+  ~#open: "the general closure conjecture — every guard class its own biorthogonal — is a structural rhyme awaiting S1 (the orthogonality relation) and S2 (one atom family); S3, linear logic recovered from the dregg side, may terminate at named correspondence — an acceptable honest outcome" =frontier
+}

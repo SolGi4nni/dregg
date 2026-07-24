@@ -1,0 +1,39 @@
+# System Notation
+#
+# The charter for capturing dregg ITSELF in spw syntax — not maps of the
+# system but the system's forms, enacted in the operator algebra.
+#
+# HONESTY CLAUSE, stated first and out loud: these surfaces carry ZERO
+# formal content. The Lean is the proof; this is notation for minds.
+# Nothing here verifies anything. When notation and Lean disagree, the
+# Lean wins and the notation records the move.
+
+#>spw_system_notation
+#:system #!notation_charter
+
+^"operator_correspondence"{
+  // proposed, not imposed — each pairing earns its place by resonance
+  ~#seed: "^ — create, genesis, the verb that brings a cell into being"
+  ~#integrate: "& — the turn, integrator of a forest of effects into one atom"
+  ~#gate: "! — admission: authority, conservation, freshness; the tests that never defer"
+  ~#witness: "* — the receipt; verification's mark, as in the episode form's *[verify]"
+  ~#spec_set: "# — the granted set, a c-list as a #[] set literal"
+  ~#reference: "~ — address and path; a CellId is a commitment to a key, a ~ref is a commitment to a place"
+  ~#identity: "@ — principals as roots; @alice is a root shelf into a person"
+  ~#substrate: "$ — the assumed floor; the one operator with no rule carries the hypotheses that have no proof"
+  ~#bias: "= — attenuation; granted = held narrowed, only ever narrowed"
+  ~#facets: ".{} — the four substances of a cell, faceted"
+  ~#wonder: "?[] — intent-demand, the guard polarity that wants something of the world"
+}
+
+^"discipline"{
+  ~#enact: "a system surface writes the FORM, not a description of the form — if it reads as prose about braces rather than braces, it belongs in concepts/"
+  ~#specimen_rule: "every abstract form keeps at least one concrete specimen transcribed from a real running example"
+  ~#drift: "specimens pin to their source path; when the crystal moves, re-transcribe"
+}
+
+^"two_registers"{
+  ~#card: "trait-dense .{k: v} and ~#key prose — the SUMMONING register; emit collapses it to packs; concepts/ and regions/ speak it"
+  ~#form: "operator-fluid — assign the sigils locally, then SPEAK them; symbols carry meaning in context, prose is residue; see ~\"./turn.spw\" for the register's exemplar"
+  ~#rule: "system/ surfaces prefer form; a form surface earns its symbols by a local assign block, never by convention alone"
+}

@@ -1,0 +1,13 @@
+# Concept: the keystone ledger
+
+#>spw_concept_keystone_ledger
+#:concept =settled
+
+^"card"{
+  ~#what: "the machine half of the claims register: assert-axioms checks in Claims.lean fail the BUILD if any keystone theorem regresses or grows an axiom — claims are compiled, not filed"
+  ~#why_hard: "it inverts the usual docs-drift direction; here prose (CLAIMS.md) tracks the Lean file, and the axiom-clean sweep (the last native_decide is gone) is this ledger tightening"
+  @lean: ~"../../metatheory/Dregg2/Claims.lean"
+  @prose: ~"../../metatheory/CLAIMS.md"
+  ~#stitches: "trust.apex ↔ laws.green_or_bust ↔ chronicle.axiom_clean era ↔ intellect's authoritative-pair pattern"
+  ~#trap: "editing the prose ledger without the Lean file — the direction of authority is the entire point"
+}

@@ -2443,3 +2443,8 @@ mod atomic;
 pub use atomic::{
     AtomicProofEntry, AtomicSovereignTurn, AtomicTurnError, MixedAtomicResult, MixedAtomicTurn,
 };
+
+pub mod conservation_oracle;
+pub use conservation_oracle::{
+    ConservationOracle, conservation_oracle_installed, install_conservation_oracle,
+};

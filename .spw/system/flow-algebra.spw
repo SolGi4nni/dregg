@@ -1,0 +1,21 @@
+# System: the flow algebra
+#
+# Workflow composition is right-skewed — from the flow doc (read in full).
+
+#>spw_system_flow_algebra
+#:system #!form
+
+^"the_fact"{
+  ~#skew: "choice does not left-distribute over composition — the half (P⋆R)⊔(Q⋆R) ≤ (P⊔Q)⋆R holds; the converse FAILS"
+  ~#structure: "a right-skewed Kleene algebra with distributive meets — RSKA, Pradic's Weihrauch-lattice structure, landed on the real workflow executor"
+  @doc: ~"../../metatheory/docs/FLOW-COMPOSITION-ALGEBRA.md"
+}
+
+^"why_it_is_real"{
+  ~#order: "the order is ONLINE step-by-step simulation, not trace language — on the separating counterexample the trace languages are provably EQUAL; a language-only semantics would wrongly conclude distribution; the skew lives one rung up"
+  ~#cause: "the late branch reads R's output before choosing; the early branch has already committed — the obstruction is precisely no-lookahead, the reactive gate's old+new read"
+}
+
+^"the_payoff"{
+  ~#decidable: "flow/policy refinement A ≤ B becomes a Büchi simulation game — decidable, known complexity; the protocol-evolution bar inherits a decision procedure resting on a proof, not a hope" =frontier
+}

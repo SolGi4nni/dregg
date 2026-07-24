@@ -1,0 +1,29 @@
+# System: the cell
+#
+# The unit of isolation, enacted. Four substances as facets, plus the
+# program predicate the cell enforces over its own transitions.
+
+#>spw_system_cell
+#:system #!form
+
+^"cell"{
+  // substance law lines are the registry's own (VerbRegistry §1)
+  .{
+    value: "linear — moves, never copies or vanishes; sum exactly zero; an asset IS its issuer cell carrying negative supply"
+    state: "guarded-mutable — changes only under Pred, only by its owner (the frame); 8 slots of 32-byte field elements, plus nonce"
+    authority: "non-forgeable — authorized production, free attenuation, epoch revocation"
+    evidence: "monotone — once known, never unknown; the nullifier and commitment ledgers"
+  }
+  ~#program: "a predicate over this cell's own transitions, enforced on every turn that touches it"
+  ~#id: "derive_raw(pubkey, token) — a commitment to a public key; a random id is an unspendable bare address"
+}
+
+^"specimen"{
+  // only what the example itself documents — nothing composed
+  @source: ~"../../sdk/examples/hello_receipt_chain.rs"
+  ~#shape: "Identity → .turn() → typed verbs → .sign() → .submit() → Receipt"
+  ~#turn: "one write_u64(slot 0, 42); sign binds the act to the identity's key — an unauthorized act is inexpressible on this surface"
+  ~#receipt: "turn/effects hashes, pre/post state roots, agent cell id, federation id, previous_receipt_hash — the canonical shape to pin a shim against"
+  ~#chain: "after one turn the chain holds exactly one entry; its receipt_hash is the tip and becomes the next turn's previous_receipt_hash"
+  ~#honest_caveats: "local federation-less run: federation_id all-zero, executor_signature null — the example says so itself"
+}

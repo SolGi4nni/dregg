@@ -3006,3 +3006,157 @@ Verified by flipping `allowOpaque := false` again with the control in place:
 — i.e. under blindness the four rejectors printed CLEAN and `#assert_all_clean` printed
 `7 keystones pinned kernel-clean`, and the ONLY red line in the file was the positive control. That
 is the tooth. `allowOpaque := true` restored; mutation reverted; both files back to their shipped text.
+
+## 2026-07-23 apex/gadget-spec — SameOpeningGadget authored IN LEAN: soundness + completeness + shared-w RED, 11 keystones kernel-clean
+
+**File (NEW, this lane owns it):** `metatheory/Market/DarkBazaarSameOpeningGadget.lean`.
+Substrate said out loud: the AIR is AUTHORED IN LEAN — `GadgetAccepts` is the in-circuit relation
+(columns + vanishing gate + range predicate + reused root-chip relation) that would DISCHARGE
+`Market.DarkBazaarSameOpening.SameOpening` (the handoff §53 cryptographic apex). No Rust AIR.
+
+**The relation.** `GadgetColumns` = { phase, noise (private witness column), root : Fin 8 → Int }.
+`DecConstraint` = vanishing gate `phase − (Δ·packedBook w + noise) = 0` ∧ `SafeNoise P |noise|`
+(the in-circuit form of `BfvOpensTo`: the spec's existential noise becomes an explicit column, the
+margin becomes the range check that column carries in the emitted AIR). `RootConstraint` = the
+eight root lanes equal `orderRoot hash8 session w` — the EXISTING
+`DarkBazaarPrivateDescriptor` root-chip relation (`wide_root_lookup_sound` binds it to the real
+Poseidon2 chip); Poseidon2 NOT re-authored. `GadgetAccepts` = both halves over ONE shared `w`.
+
+**Keystones proved (build: `cd metatheory && lake env lean Market/DarkBazaarSameOpeningGadget.lean`
+= exit 0, printed `#assert_all_clean: 11 keystones pinned kernel-clean`):**
+
+- `gadgetAccepts_sound` — SOUNDNESS, the point: `GadgetAccepts → SameOpening` for the ciphertext
+  read off the phase column and root off the root lanes, same `w` both sides.
+- `gadget_complete` — converse realizability: every `SameOpening` instance has an accepting column
+  assignment (faithful in-circuit form, not a strictly stronger relation).
+- `split_books_fail_gadget` — RED (the lane's required failing side): root half from `w`, phase
+  half a zero-noise encryption of `w'` with `packedBook w ≠ packedBook w'` ⇒ `¬ GadgetAccepts … w`
+  for EVERY noise-column value. Engine: `dec_pins_book` (the gate pins the packed book because the
+  forced noise is `Δ·(diff)`, provably non-SafeNoise).
+- `split_books_shared_witness_is_collision` — STRONGER RED: any `u` accepted on split columns
+  yields `RootCollision hash8 session u w`; under the already-isolated computational Poseidon2
+  binding the split assignment has NO shared witness at all. The conjunction is a weld.
+- `q_le_two_t_delta` + `delta_unsafe` — the apex file's `q ≤ 2tΔ` side condition proved a THEOREM
+  for every `Params` (from `q_eq`, `r_lt_t`, `Δ_pos`), so both REDs carry ZERO parameter
+  hypotheses.
+- `gadgetAccepts_noise_safe` — chained through the apex file's `sameOpening_noise_safe`.
+- Deployed pins, both sides on the real numbers: `deployed_fixture_accepts` (fixture book, zero
+  noise, `fheRs4096` — GREEN via kernel-`decide`d `deployed_zero_noise_safe` on the 109-bit q) and
+  `deployed_split_fixture_rejected` (fixture-vs-tamperedOrderWitness split, kernel-`decide`d
+  `deployed_books_differ`).
+
+**NAMED not proved (in-file §7, none faked):** (1) EMISSION — the real `EffectVmDescriptor2`
+(phase/noise columns, bit-decomposition range check realizing SafeNoise, poseidon2 wide lookup
+sharing PACKED_BOOK with `darkBazaarPrivateN4K4Descriptor`) + its `Satisfied2` bridge; until then
+this is a proved spec of the AIR, not a proof-carrying AIR. (2) RNS-polynomial lift (scalar Bfv
+model inherited from `Bfv.Noise`, gap not widened). (3) collective-key decryption columns (no
+single party holds `s` — the deployed phase is not a single-prover-fillable column). (4)
+distributed witness production (no single viewer of the full book).
+
+Did NOT touch: `Market.lean`, `DarkBazaarSameOpening.lean`, `DarkBazaarSameOpeningPoly.lean`
+(another lane's file, present untracked), anything else. Committed NOTHING — supervisor gates.
+
+## 2026-07-23 apex/poly-lift — SameOpening lifted to the per-slot (polynomial-coefficient) model: projection + packing to the proved scalar apex, per-slot RED, packed RED
+
+**File (mine, NEW):** `metatheory/Market/DarkBazaarSameOpeningPoly.lean`. Touched NOTHING else
+(no `Market.lean`, no `DarkBazaarSameOpening.lean`, no other lane file). Committed NOTHING —
+supervisor gates. Build: `cd metatheory && lake env lean Market/DarkBazaarSameOpeningPoly.lean`
+= exit 0, printed `#assert_all_clean: 8 keystones pinned kernel-clean`.
+
+**Substrate, said out loud:** the Lean `Bfv` model is scalar-per-coefficient by declared scope
+(`Bfv/Noise.lean` module doc: no polynomial ring — NAMED gap), so this is the per-SLOT lift the
+lane spec names: the deployed receipt carries four ordered ciphertext rows (HANDOFF §54), one per
+order slot; `SameOpeningPoly` is the conjunction of per-slot scalar openings over ONE shared `w`
+plus the root conjunct (`orderRoot`, whose `rootPreimage` absorbs `packedBook w` — the root, not
+the ciphertext, carries the base-128 packing). This file is the Lean relation layer; the future
+`SameOpeningGadget` discharging it is an in-circuit relation and must ALSO be Lean-authored over
+the emitted descriptor objects — no Rust AIR was written or implied.
+
+**The relation (real, constrains):** `SameOpeningPoly P hash8 session B cts root w` :=
+`SafeNoise P B` ∧ (∀ j, slot j's phase = Δ·orderCode(w.orders j) + e_j with |e_j| ≤ B) ∧
+(∀ i, root i = orderRoot hash8 session w i). `B` mirrors the deployed fresh-noise contract.
+
+**Keystones PROVED (all 8 in `#assert_all_clean`, kernel-clean):**
+- `slot_projection` — (a) per slot: `SameOpeningPoly` yields the scalar `BfvOpensTo` at that
+  slot's real `orderCode` plus the root conjunct — the scalar relation's two conjuncts,
+  slot-indexed.
+- `slot_decrypts_exact` — (a) with teeth via the `Bfv.decrypt_exact` keystone: every slot
+  decrypts to EXACTLY its order code when `128 ≤ P.t` (deployed: pinned).
+- `sameOpeningPoly_packs_to_sameOpening` — (a) packing side: the homomorphic base-128
+  recombination `packCt` (public-scalar-muls + adds only) satisfies the PROVED scalar
+  `SameOpening` at `packedBook w`, under exact headroom `SafeNoise P (PACK_GAIN*B)`,
+  `PACK_GAIN = 1+128+128^2+128^3 = 2113665`; noise tracked exactly as `e = Σ 128^j·e_j`.
+- `wrong_slot_breaks_sameOpeningPoly` — **RED (required):** slot j exactly encrypting a WRONG
+  order is INDEPENDENTLY valid (`BfvOpensTo` at o', zero noise) and the root of the intended `w`
+  is independently valid, yet `SameOpeningPoly` is FALSE for ANY budget B — membership would
+  force `e = Δ·d`, `d ≠ 0`, killed by the scalar apex's `delta_diff_unsafe`.
+- `wrong_slot_breaks_packed_sameOpening` — **RED, packed:** the same single-slot forgery
+  breaks the scalar `SameOpening` after recombination too (forced noise `Δ·128^j·d`); packing
+  cannot launder a wrong slot. Per-slot RED and scalar RED are one gap at two resolutions.
+- Deployed pins (kernel `decide` on real fhe.rs-4096 numbers): `deployed_pack_headroom`
+  (`SafeNoise fheRs4096 (PACK_GAIN·2^20)` — packing hypothesis satisfiable in production),
+  `deployed_q_le_two_t_delta` (`q ≤ 2tΔ` — the REDs bite the real parameters),
+  `deployed_code_window` (`128 ≤ t4096`).
+
+**NAMED, not proved (what full RNS/NTT adds beyond the per-slot model — in the module doc):**
+(1) RNS residue rows `rows[modulus][coeff]` (`bfv_lean.rs::LeanCiphertext`): a slot `Ct.phase : ℤ`
+models the CRT-RECONSTRUCTED coefficient; the CRT bijection `ℤ_q ≃ ∏ ℤ_{qi}` and per-residue
+consistency (a forged single residue row is unrepresentable here) are unformalized. (2) mod-q
+wrap: ℤ phases vs the mod-q machine — inherited `Bfv.Noise` named gap (`decryptPhase_add_q`
+mitigation). (3) ring/NTT encoding: "slot" here = order index with base-128 weight (exactly the
+`packedBook` pack the root commits); real SIMD slot-packing (`t ≡ 1 [MOD 8192]`) is an NTT over
+`ℤ_t`, a different bijective encoding; negacyclic `X^n+1`, multiplication mixing (`Bfv.Mul`), and
+the encoding equivalence are unformalized — this file's packing is public-LINEAR only, where
+coefficient independence is exact. (4) RLWE well-formedness under the collective key (that
+`(b,a)` is a genuine encryption with short randomness) is beyond the phase model — that is the
+in-circuit `SameOpeningGadget`'s obligation, still the Tier-0 residual.
+
+## 2026-07-23 apex/decrypt-core
+
+**File (mine, new): `metatheory/Market/DarkBazaarDecryptConsistency.lean`** — the crypto CORE
+under `SameOpening`: the decryption-consistency relation SOUNDLY DETERMINES the message, over the
+real `Bfv.Noise` objects (`Ct`, `SafeNoise`, `decryptPhase`, `decrypt_exact`) and the real
+`packedBook` from `DarkBazaarPrivateDescriptor`. Substrate said out loud: this is a LEAN relation
++ theorems, no Rust AIR, nothing hand-written circuit-side.
+
+`DecryptConsistent P p m := ∃ e, SafeNoise P |e| ∧ p = Δ·m + e` — definitionally the apex file's
+`BfvOpensTo P ct m` at `p = ct.phase` (NOT imported from the apex file to keep the dependency
+arrow pointing the right way; the bridge is an `Iff.rfl` at supervisor wiring time).
+
+**Keystones proved (build: `cd metatheory && lake env lean Market/DarkBazaarDecryptConsistency.lean`
+= lean exit 0 (checked directly, not through a pipe), printed
+`#assert_all_clean: 9 keystones pinned kernel-clean`):**
+
+- `phase_two_safe_openings_agree` — THE KEYSTONE: `p = Δ·m + e` with `SafeNoise |e|` AND
+  `p = Δ·m₂ + e₂` with `SafeNoise |e₂|` ⇒ `m = m₂`, for m, m₂ ranging over ALL of ℤ. ZERO side
+  hypotheses: every arithmetic fact comes from the `Params` structure (`q_eq`, `r_lt_t`, `Δ_pos`,
+  `t_pos`) — strictly stronger positioning than the apex file's `delta_diff_unsafe`, which takes
+  `q ≤ 2tΔ`, `0 ≤ Δ`, `1 ≤ t`, `0 ≤ r` as inputs. Engine: a collision forces the two noises to
+  bridge a gap ≥ Δ; two safe margins sum strictly below that (with `r < t` closing both the t = 1
+  and t ≥ 2 regimes).
+- `decryptConsistent_unique` — relation form (SameOpening's well-definedness: a ciphertext cannot
+  open to two messages).
+- `decryptConsistent_decrypts` — the unique witness is what the REAL decoder returns
+  (`decrypt_exact` chained; ℕ message, `m < t`).
+- `packedBook_openings_agree` — composed with the real `packedBook_injective_on_orders`: one
+  phase, one ORDER BOOK (`w.orders = w₂.orders`). Exactly the fact that makes `SameOpening`
+  meaningful for the bazaar.
+- FAILING SIDE `phase_without_bound_does_not_determine` — the keystone with the SafeNoise
+  hypotheses DELETED is refuted: phase Δ decomposes as `Δ·1 + 0` and `Δ·0 + Δ`.
+- `delta_not_safe` — the aliasing noise Δ is over the margin for EVERY `Params` (hypothesis-free);
+  `ambiguity_witness_noise_unsafe` itemizes the RED witness and pins its noise provably unsafe —
+  the ambiguity lives exactly and only outside the safe region (consistency, not luck).
+- Deployed pins on the real fhe.rs 109-bit numbers: `deployed_zero_noise_safe` (kernel-`decide`;
+  also discharges, on the deployed set, the `hpos` hypothesis the apex RED takes as input) and
+  `deployed_safe_opening_rejects_alias` (`Δ·1` safely opens to 1 and PROVABLY has no safe opening
+  to 0 — rejection via the keystone, not a `decide` coincidence).
+
+**NAMED not proved (in-file header, none faked):** (1) SCALAR uniqueness only — the deployed
+ciphertext is RNS-polynomial over 4096 slots; the per-slot version is this theorem applied
+coordinatewise and that composition belongs to poly-lift (coordinated: this file is the scalar
+leaf it composes). (2) ℤ-phase not mod-q — same NAMED model gap as `Bfv.Noise`, not widened.
+(3) No circuit here — the `SameOpeningGadget` must CONSTRAIN this relation over emitted RNS
+objects; this file is the semantic law it discharges.
+
+Did NOT touch: `Market.lean`, `DarkBazaarSameOpening.lean`, other lane files (gadget/poly files
+present untracked — left alone). Committed NOTHING — supervisor gates. `git status` taken first.

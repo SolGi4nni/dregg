@@ -1,0 +1,12 @@
+# Concept: the eight verbs
+
+#>spw_concept_eight_verbs
+#:concept =settled
+
+^"card"{
+  ~#what: "create · write · move · grant · revoke · shield/unshield · lifecycle — seven constructors whose human-facing count is eight (shield and unshield are two directions of the evidence verb); MINIMALITY is proved as injectivity of substance × polarity, COMPLETENESS as compiler-exhaustive classification of all 36 wire effects"
+  ~#why_hard: "the temptation is always a ninth verb — and even the repo's own README drifted, listing exercise as a verb when the registry proves it is USING a cap, not a verb; queues, escrows, auctions, councils, bridges are CELL-PROGRAM PATTERNS, deleted from the wire and re-provided as factories"
+  @registry: ~"../../metatheory/Dregg2/Substrate/VerbRegistry.lean"
+  ~#stitches: "kernel region ↔ every offering (a game mechanic is a verb pattern) ↔ hatchery's shape catalog ↔ system/verbs (the enacted form)"
+  ~#trap: "smuggling a primitive as a pattern or a pattern as a primitive — a ninth verb needs a proof, not a PR; a new wire variant that is not classified will not compile"
+}

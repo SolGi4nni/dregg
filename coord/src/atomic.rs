@@ -285,12 +285,11 @@ pub enum Decision {
 
 /// Decide the 2PC verdict via the VERIFIED Lean export `dregg_coord_2pc_decide`
 /// (= `Dregg2.Coord.TwoPhaseCommit.evaluate`). Returns `Some(decision)` when the gate ran, or `None`
-/// when the verified gate is unavailable (feature off / archive lacks the export) so the caller falls
-/// back to the native Rust `evaluate_votes_native`. The wire is
-/// `"y=<yes>;n=<no>;N=<participants>;t=<threshold>"`; the gate returns `Decision2pc` which we map onto
-/// this crate's `Decision`. Routes through the [`crate::verified_gate`] seam; returns `None` when no
-/// verified gate is registered (every FFI-free target / archive lacks the export) so the crate has
-/// no hard dependency on the Lean archive.
+/// when the verified gate is unavailable (archive lacks the export / no gate registered) — in which
+/// case [`Coordinator::evaluate_votes`] FAILS CLOSED (Abort) on the live path rather than running a
+/// native decider. The wire is `"y=<yes>;n=<no>;N=<participants>;t=<threshold>"`; the gate returns
+/// `Decision2pc` which we map onto this crate's `Decision`. Routes through the
+/// [`crate::verified_gate`] seam so the crate has no hard dependency on the Lean archive.
 fn verified_decision(yes: usize, no: usize, n: usize, threshold: usize) -> Option<Decision> {
     use crate::verified_gate::Verdict2pc;
     let gate = crate::verified_gate::gate()?;
@@ -806,24 +805,51 @@ impl Coordinator {
 
     /// Evaluate the current votes to determine if a decision can be made.
     ///
-    /// STRONG-FORM swap: when the verified Lean 2PC gate is linked (every native build;
-    /// `Dregg2.Exec.DistributedExports::dregg_coord_2pc_decide` = `TwoPhaseCommit.evaluate`), the
-    /// AUTHORITATIVE verdict comes from the verified Lean — so the coordinator inherits
-    /// `evaluate_not_commit_and_abort` (no conflicting Commit+Abort) and `commit_needs_threshold` by
-    /// construction. The native Rust [`Self::evaluate_votes_native`] stays as the DIFFERENTIAL sibling
-    /// and the fallback when the archive is not linked / the gate is unavailable.
+    /// The AUTHORITATIVE verdict is the verified Lean 2PC gate
+    /// (`Dregg2.Exec.DistributedExports::dregg_coord_2pc_decide` = `TwoPhaseCommit.evaluate`,
+    /// carried by `coord_2pc_decide_eq`), routed through the [`crate::verified_gate`] seam. So the
+    /// coordinator inherits `evaluate_not_commit_and_abort` (no conflicting Commit+Abort) and
+    /// `commit_needs_threshold` by construction.
+    ///
+    /// When no verified gate is registered (a native node that never installed the
+    /// `dregg-exec-lean` gate, or an archive lacking the export) the live path FAILS CLOSED — it
+    /// returns [`Decision::Abort`] rather than silently running an unverified Rust decider. A
+    /// production node MUST install the gate; refusing to commit is the safe verdict when it is
+    /// absent. (Only in-crate `cfg(test)` builds fall back to the native differential sibling
+    /// [`Self::evaluate_votes_native`], which is cross-checked against the Lean model in
+    /// `coord_diff.rs`; that sibling does not exist in a release/consumer build.)
     fn evaluate_votes(&self) -> Decision {
         if let Some((yes, no, n, thr)) = self.current_tally()
             && let Some(d) = verified_decision(yes, no, n, thr)
         {
             return d;
         }
+        self.evaluate_votes_no_gate()
+    }
+
+    /// The live-path disposition when the verified 2PC gate is unavailable: FAIL CLOSED. A
+    /// terminal/idle state has no tally to decide (Pending, as before); a `Proposing` state with no
+    /// linked verified gate refuses to commit ([`Decision::Abort`]) — never a silent native decision.
+    #[cfg(not(test))]
+    fn evaluate_votes_no_gate(&self) -> Decision {
+        match self.state {
+            CoordinatorState::Proposing { .. } => Decision::Abort,
+            _ => Decision::Pending,
+        }
+    }
+
+    /// `cfg(test)` differential builds keep the native sibling reachable so `coord_diff.rs` can
+    /// cross-check it against the Lean model. It is NOT on any live (release/consumer) path.
+    #[cfg(test)]
+    fn evaluate_votes_no_gate(&self) -> Decision {
         self.evaluate_votes_native()
     }
 
-    /// The NATIVE Rust 2PC decision (the differential sibling of the verified Lean gate). Byte-for-byte
-    /// `TwoPhaseCommit.evaluate`: `if yes ≥ threshold Commit else if no > n − threshold Abort else
-    /// Pending`. Kept as a distinct method so it can be cross-checked against the Lean verdict.
+    /// The NATIVE Rust 2PC decision — the DIFFERENTIAL sibling of the verified Lean gate, retained
+    /// ONLY under `cfg(test)` so it is cross-checked against `TwoPhaseCommit.evaluate` in
+    /// `coord_diff.rs` and can NEVER decide on a live path. Byte-for-byte `TwoPhaseCommit.evaluate`:
+    /// `if yes ≥ threshold Commit else if no > n − threshold Abort else Pending`.
+    #[cfg(test)]
     fn evaluate_votes_native(&self) -> Decision {
         let (forest, votes) = match &self.state {
             CoordinatorState::Proposing { forest, votes, .. } => (forest, votes),

@@ -53,16 +53,23 @@
 //!   `docs/design/DESIGN-realm-kernel-perimeter.md`). So a realm turn admitted
 //!   over `/realm/*` is a node-hosted, durable, gate-routed admission — NOT the
 //!   signed, fee-estimated, proof-carrying `Turn` that `/turns/submit` drives.
-//! * ⚠ **Identity minting through this ingress is CUSTODIAL.** realm-model's
-//!   `mint_identity(label, principal_seed)` derives the identity's hybrid-PQ
-//!   birth key FROM `principal_seed` ([`realm_model::identity::hybrid_seed`]),
-//!   so a `POST /realm/identity/mint` hands the node the material its birth key
-//!   is derived from. The node never echoes or logs the seed, and the routes sit
-//!   behind the bearer gate — but a non-custodial mint (the holder keeps the
-//!   seed and registers only a key COMMITMENT) is a realm-model change, named
-//!   here and NOT fired from this lane. Succession (`rotate`/`recover`) is
-//!   already non-custodial: the hybrid signatures arrive ON THE WIRE and the
-//!   node only verifies them through realm-model's gate.
+//! * **Identity minting through this ingress is NON-CUSTODIAL by default.** The
+//!   holder generates the birth hybrid key (ed25519 + ML-DSA-65) OFF node and
+//!   `POST /realm/identity/mint` carries only its PUBLIC halves (`birth_ed_pk` +
+//!   `birth_ml_pk`); the node computes the commitment
+//!   ([`realm_model::identity::commit_hybrid`]) and derives the identity cell-id
+//!   from it — NO seed material crosses the API or into the durable `REALM_LOG`
+//!   (the `MintIdentityPubkey` op carries only the public keys, re-derived on boot
+//!   replay). A non-custodial identity is referenced by its PUBLIC cell-id handle,
+//!   so bind / guardians / rotate / recover carry `identity` (the id hex) rather
+//!   than a seed. This matches succession's existing posture: the hybrid
+//!   signatures arrive ON THE WIRE and the node only verifies them through
+//!   realm-model's gate — the node never holds key material.
+//! * ⚠ A **CUSTODIAL** mint is RETAINED for a server-custodial use only: supplying
+//!   `principal_seed` makes realm-model derive the birth key from it
+//!   ([`realm_model::identity::hybrid_seed`]), handing the node the seed material
+//!   (never echoed or logged; behind the bearer gate). The two are mutually
+//!   exclusive on the route, and the non-custodial public-key path is preferred.
 //! * The realm write path takes the realm lock, not the node's executor lock:
 //!   these turns do not consume fees, do not enter the block/receipt pipeline,
 //!   and are not visible to `/api/receipts`. The realm receipt chain is its own
@@ -280,6 +287,47 @@ enum RealmOp {
         /// K-of-N guardian co-signs — re-verified on replay.
         guardian_sigs: Vec<HybridSigWire>,
     },
+    // ── NON-CUSTODIAL identity (the default) ─────────────────────────────────
+    // The holder generates the birth hybrid key OFF node; only PUBLIC key
+    // material crosses. Succession then references the identity by its durable
+    // CELL-ID (there is no node-known seed). APPENDED — postcard tags variants by
+    // index, so every previously-written log entry stays decodable.
+    /// Mint from the holder's birth hybrid PUBLIC key. NO seed material — the
+    /// node computes the commitment and derives the cell-id from it. Re-derived
+    /// deterministically on replay from the same public keys.
+    MintIdentityPubkey {
+        label: String,
+        /// ed25519 public key of the birth key (32 bytes).
+        ed_pk: [u8; 32],
+        /// Serialized ML-DSA-65 public key of the birth key.
+        ml_pk: Vec<u8>,
+    },
+    /// Bind a surface onto an identity named by its durable cell-id (the public
+    /// handle a non-custodial identity is referenced by).
+    BindSurfaceToId {
+        identity: [u8; 32],
+        actor: SurfaceRefWire,
+    },
+    /// Register a guardian set on an identity named by its cell-id.
+    RegisterGuardiansById {
+        identity: [u8; 32],
+        guardians: Vec<[u8; 32]>,
+        threshold: u32,
+    },
+    /// Rotate an identity named by its cell-id — hybrid signature by the current
+    /// key, re-verified on replay.
+    RotateById {
+        identity: [u8; 32],
+        new_key_commit: [u8; 32],
+        sig: HybridSigWire,
+    },
+    /// Recover an identity named by its cell-id — K-of-N guardian co-signs,
+    /// re-verified on replay.
+    RecoverById {
+        identity: [u8; 32],
+        new_key_commit: [u8; 32],
+        guardian_sigs: Vec<HybridSigWire>,
+    },
 }
 
 /// The node's durable realm subsystem: a real `RealmWorld` plus the durable
@@ -290,8 +338,14 @@ pub struct NodeRealms {
     store: Arc<PersistentStore>,
     /// Dense index of the next durable log entry (== durable log length).
     next_index: u64,
-    /// principal-seed -> the canonical identity minted from it.
+    /// principal-seed -> the canonical identity minted from it. ONLY populated for
+    /// CUSTODIAL mints (the node held the seed); a non-custodial identity has no
+    /// entry here (the node never saw a seed).
     identities: HashMap<String, CanonicalIdentity>,
+    /// identity cell-id -> the canonical identity. The PUBLIC handle, populated
+    /// for BOTH mint paths — the reference a non-custodial identity (and its
+    /// succession) uses, since there is no node-known seed to key it by.
+    identities_by_id: HashMap<CellId, CanonicalIdentity>,
     /// realm name -> the realm.
     realms: HashMap<String, Realm>,
     /// realm name -> the roots the durable log LISTED and did not unlist. A
@@ -316,6 +370,7 @@ impl NodeRealms {
             store: Arc::clone(&store),
             next_index: 0,
             identities: HashMap::new(),
+            identities_by_id: HashMap::new(),
             realms: HashMap::new(),
             listed: HashMap::new(),
             instances: BTreeMap::new(),
@@ -357,7 +412,8 @@ impl NodeRealms {
                     .world
                     .mint_identity(label, principal_seed)
                     .map_err(RealmError::Refused)?;
-                self.identities.insert(principal_seed.clone(), id);
+                self.identities.insert(principal_seed.clone(), id.clone());
+                self.identities_by_id.insert(id.id, id);
             }
             RealmOp::BindSurface {
                 principal_seed,
@@ -472,6 +528,61 @@ impl NodeRealms {
                     .recover_identity(&id, *new_key_commit, &sigs)
                     .map_err(RealmError::Refused)?;
             }
+            // ── non-custodial (by public key / by cell-id) ───────────────────
+            RealmOp::MintIdentityPubkey {
+                label,
+                ed_pk,
+                ml_pk,
+            } => {
+                let id = self
+                    .world
+                    .mint_identity_from_pubkey(label, ed_pk, ml_pk)
+                    .map_err(RealmError::Refused)?;
+                // NO seed handle — the node never saw one. Public cell-id handle only.
+                self.identities_by_id.insert(id.id, id);
+            }
+            RealmOp::BindSurfaceToId { identity, actor } => {
+                let id = CellId::from_bytes(*identity);
+                let canonical = self.id_identity(&id)?;
+                self.world
+                    .bind_surface(&canonical, actor.clone().into())
+                    .map_err(RealmError::Refused)?;
+            }
+            RealmOp::RegisterGuardiansById {
+                identity,
+                guardians,
+                threshold,
+            } => {
+                let id = CellId::from_bytes(*identity);
+                self.world
+                    .register_guardians(&id, guardians, *threshold)
+                    .map_err(RealmError::Refused)?;
+            }
+            RealmOp::RotateById {
+                identity,
+                new_key_commit,
+                sig,
+            } => {
+                let id = CellId::from_bytes(*identity);
+                let sig = sig.to_sig()?;
+                self.world
+                    .rotate_identity(&id, *new_key_commit, &sig)
+                    .map_err(RealmError::Refused)?;
+            }
+            RealmOp::RecoverById {
+                identity,
+                new_key_commit,
+                guardian_sigs,
+            } => {
+                let id = CellId::from_bytes(*identity);
+                let sigs = guardian_sigs
+                    .iter()
+                    .map(|s| s.to_sig())
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.world
+                    .recover_identity(&id, *new_key_commit, &sigs)
+                    .map_err(RealmError::Refused)?;
+            }
         }
         Ok(())
     }
@@ -503,13 +614,25 @@ impl NodeRealms {
             .ok_or_else(|| RealmError::UnknownHandle(format!("realm {name}")))
     }
 
-    /// The canonical identity cell minted from `principal_seed` (the node-side
-    /// handle). The seed itself is NEVER echoed back to a caller.
+    /// The canonical identity cell minted from `principal_seed` (the CUSTODIAL
+    /// node-side handle). The seed itself is NEVER echoed back to a caller.
     fn identity_id(&self, principal_seed: &str) -> Result<CellId, RealmError> {
         self.identities
             .get(principal_seed)
             .map(|i| i.id)
             .ok_or_else(|| RealmError::UnknownHandle("identity (unminted principal)".to_string()))
+    }
+
+    /// The canonical identity named by its durable cell-id (the PUBLIC handle a
+    /// non-custodial identity is referenced by). Works for custodial identities
+    /// too — both mint paths register the id handle.
+    fn id_identity(&self, identity: &CellId) -> Result<CanonicalIdentity, RealmError> {
+        self.identities_by_id.get(identity).cloned().ok_or_else(|| {
+            RealmError::UnknownHandle(format!(
+                "identity {} (unminted)",
+                hex32(identity.as_bytes())
+            ))
+        })
     }
 
     // ── the node ingress: durable, gate-routed realm operations ────────────────
@@ -529,6 +652,98 @@ impl NodeRealms {
             .get(principal_seed)
             .cloned()
             .expect("identity present after successful mint"))
+    }
+
+    /// Mint a canonical identity NON-CUSTODIALLY — the DEFAULT (durable). The
+    /// holder generated the birth hybrid key OFF node and hands over only its
+    /// PUBLIC halves (`ed_pk` + `ml_pk`); NO seed material crosses into the node or
+    /// the durable log. The node computes the commitment, derives the identity
+    /// cell-id from it, and the durable `MintIdentityPubkey` op re-derives the
+    /// identical identity on boot replay from the same public keys. Returns the
+    /// identity — its cell-id hex is the PUBLIC handle succession then references.
+    pub fn mint_identity_from_pubkey(
+        &mut self,
+        label: &str,
+        ed_pk: &[u8; 32],
+        ml_pk: &[u8],
+    ) -> Result<CanonicalIdentity, RealmError> {
+        self.commit(RealmOp::MintIdentityPubkey {
+            label: label.to_string(),
+            ed_pk: *ed_pk,
+            ml_pk: ml_pk.to_vec(),
+        })?;
+        // The id is deterministic from the public commitment; fetch the registered
+        // identity by re-deriving nothing — it is the last one inserted by id.
+        let commit = realm_model::identity::commit_hybrid(ed_pk, ml_pk);
+        self.identities_by_id
+            .values()
+            .find(|i| i.birth_key_commit == commit)
+            .cloned()
+            .ok_or_else(|| RealmError::UnknownHandle("identity absent after mint".to_string()))
+    }
+
+    /// Bind a surface ref onto an identity named by its durable cell-id — the
+    /// non-custodial handle (durable). No seed is involved.
+    pub fn bind_surface_to_id(
+        &mut self,
+        identity: CellId,
+        actor: &SurfaceRef,
+    ) -> Result<(), RealmError> {
+        let _ = self.id_identity(&identity)?; // NOT_FOUND before writing anything
+        self.commit(RealmOp::BindSurfaceToId {
+            identity: *identity.as_bytes(),
+            actor: actor.into(),
+        })
+    }
+
+    /// Register a guardian set on an identity named by its cell-id (durable).
+    pub fn register_guardians_by_id(
+        &mut self,
+        identity: CellId,
+        guardians: &[[u8; 32]],
+        threshold: u32,
+    ) -> Result<(), RealmError> {
+        let _ = self.id_identity(&identity)?;
+        self.commit(RealmOp::RegisterGuardiansById {
+            identity: *identity.as_bytes(),
+            guardians: guardians.to_vec(),
+            threshold,
+        })
+    }
+
+    /// Rotate an identity named by its cell-id (durable). The node does NOT sign —
+    /// the holder's hybrid signature arrives on the wire and realm-model's gate
+    /// verifies signer-commitment == committed current key before the key advances.
+    pub fn rotate_identity_by_id(
+        &mut self,
+        identity: CellId,
+        new_key_commit: [u8; 32],
+        sig: &HybridSig,
+    ) -> Result<u64, RealmError> {
+        let _ = self.id_identity(&identity)?;
+        self.commit(RealmOp::RotateById {
+            identity: *identity.as_bytes(),
+            new_key_commit,
+            sig: sig.into(),
+        })?;
+        Ok(self.world.identity_epoch(&identity))
+    }
+
+    /// Recover an identity named by its cell-id through its guardian quorum
+    /// (durable). Below threshold the gate refuses and nothing is logged.
+    pub fn recover_identity_by_id(
+        &mut self,
+        identity: CellId,
+        new_key_commit: [u8; 32],
+        guardian_sigs: &[HybridSig],
+    ) -> Result<u64, RealmError> {
+        let _ = self.id_identity(&identity)?;
+        self.commit(RealmOp::RecoverById {
+            identity: *identity.as_bytes(),
+            new_key_commit,
+            guardian_sigs: guardian_sigs.iter().map(HybridSigWire::from).collect(),
+        })?;
+        Ok(self.world.identity_epoch(&identity))
     }
 
     /// Bind a surface ref onto the identity minted from `principal_seed` (durable).
@@ -794,9 +1009,15 @@ impl NodeRealms {
     }
 
     /// The canonical identity minted from `principal_seed`, if this node minted
-    /// it. The seed is a node-side handle only and is never returned.
+    /// it CUSTODIALLY. The seed is a node-side handle only and is never returned.
     pub fn identity_by_seed(&self, principal_seed: &str) -> Option<CanonicalIdentity> {
         self.identities.get(principal_seed).cloned()
+    }
+
+    /// The canonical identity named by its durable cell-id (the PUBLIC handle) —
+    /// present for identities minted through EITHER path.
+    pub fn identity_by_id(&self, identity: &CellId) -> Option<CanonicalIdentity> {
+        self.identities_by_id.get(identity).cloned()
     }
 }
 
@@ -866,6 +1087,7 @@ impl RealmRefusal {
                 Refused::UnsupportedEffect => "unsupported-effect",
                 Refused::Ledger(_) => "ledger-error",
                 Refused::UnknownIdentity(_) => "unknown-identity",
+                Refused::IdentityExists(_) => "identity-exists",
                 Refused::WrongSuccessionKey { .. } => "wrong-succession-key",
                 Refused::BadSuccessionSignature { .. } => "bad-succession-signature",
                 Refused::BelowGuardianThreshold { .. } => "below-guardian-threshold",
@@ -922,6 +1144,30 @@ pub fn routes() -> Router<NodeState> {
 fn parse_hex32(label: &str, s: &str) -> Result<[u8; 32], RealmRefusal> {
     crate::trustline_service::hex_decode_32(s)
         .ok_or_else(|| RealmRefusal::bad_request(format!("{label} must be 32 bytes of hex: {s}")))
+}
+
+/// How a succession/bind request names its identity: the PUBLIC cell-id handle
+/// (`identity`, the non-custodial default) OR the custodial `principal_seed`. A
+/// non-custodially minted identity has no seed, so it is referenced by id.
+enum IdRef {
+    Id(CellId),
+    Seed(String),
+}
+
+fn parse_id_ref(
+    identity: &Option<String>,
+    principal_seed: &Option<String>,
+) -> Result<IdRef, RealmRefusal> {
+    match (identity, principal_seed) {
+        (Some(hex), None) => Ok(IdRef::Id(CellId::from_bytes(parse_hex32("identity", hex)?))),
+        (None, Some(seed)) => Ok(IdRef::Seed(seed.clone())),
+        (Some(_), Some(_)) => Err(RealmRefusal::bad_request(
+            "specify EITHER identity (public, non-custodial) OR principal_seed (custodial), not both",
+        )),
+        (None, None) => Err(RealmRefusal::bad_request(
+            "an identity handle is required: identity (public, non-custodial) or principal_seed (custodial)",
+        )),
+    }
 }
 
 fn parse_surface(s: &str) -> Result<Surface, RealmRefusal> {
@@ -1415,9 +1661,18 @@ async fn post_instance_settle(
 struct MintIdentityRequest {
     /// A human-meaningful label for the principal (NOT a surface id).
     label: String,
-    /// ⚠ CUSTODIAL: realm-model derives the identity's hybrid-PQ BIRTH KEY from
-    /// this value. The node never echoes or logs it. See the module docs.
-    principal_seed: String,
+    /// NON-CUSTODIAL (the DEFAULT): the holder's birth hybrid PUBLIC key — the
+    /// ed25519 half (32 bytes hex) and the ML-DSA-65 half (hex). The holder
+    /// generated the key OFF node and keeps the seed; only these public bytes
+    /// cross. When present, the mint is non-custodial and no seed is involved.
+    birth_ed_pk: Option<String>,
+    birth_ml_pk: Option<String>,
+    /// ⚠ CUSTODIAL (retained, server-custodial use only): realm-model derives the
+    /// identity's hybrid-PQ BIRTH KEY from this seed, so supplying it HANDS THE
+    /// NODE key material. The node never echoes or logs it, but the non-custodial
+    /// `birth_ed_pk`/`birth_ml_pk` path is preferred. Mutually exclusive with the
+    /// public-key fields.
+    principal_seed: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1456,22 +1711,65 @@ fn identity_wire(r: &NodeRealms, id: &CanonicalIdentity) -> IdentityWire {
 /// `POST /realm/identity/mint` — mint a canonical identity (durable). It exists
 /// FIRST; surfaces bind ONTO it (§9.5 — there is deliberately no
 /// identity-from-surface constructor).
+///
+/// NON-CUSTODIAL by DEFAULT: supply the holder's birth hybrid PUBLIC key
+/// (`birth_ed_pk` + `birth_ml_pk`) — the holder keeps the seed off-node and only
+/// public bytes cross. The retained `principal_seed` path is CUSTODIAL
+/// (server-custodial use only) and mutually exclusive with the public-key fields.
 async fn post_identity_mint(
     State(state): State<NodeState>,
     Json(req): Json<MintIdentityRequest>,
 ) -> Result<Json<IdentityWire>, RealmRefusal> {
     let realms = state.realms();
     let mut r = realms.write().await;
-    let id = r.mint_identity(&req.label, &req.principal_seed)?;
-    // The label is safe to log; `principal_seed` is KEY MATERIAL and is not.
-    tracing::info!(label = %req.label, "canonical identity minted through the HTTP ingress");
+    let id = match (&req.birth_ed_pk, &req.birth_ml_pk, &req.principal_seed) {
+        // NON-CUSTODIAL (default): only the public birth key crosses.
+        (Some(ed_hex), Some(ml_hex), None) => {
+            let ed_pk = parse_hex32("birth_ed_pk", ed_hex)?;
+            let ml_pk = hex_bytes("birth_ml_pk", ml_hex)?;
+            let id = r.mint_identity_from_pubkey(&req.label, &ed_pk, &ml_pk)?;
+            tracing::info!(
+                label = %req.label,
+                "canonical identity minted NON-CUSTODIALLY through the HTTP ingress (public key only)"
+            );
+            id
+        }
+        // CUSTODIAL (retained): the node derives the birth key from the seed.
+        (None, None, Some(seed)) => {
+            let id = r.mint_identity(&req.label, seed)?;
+            // The label is safe to log; `principal_seed` is KEY MATERIAL and is not.
+            tracing::info!(
+                label = %req.label,
+                "canonical identity minted CUSTODIALLY through the HTTP ingress"
+            );
+            id
+        }
+        (Some(_), None, _) | (None, Some(_), _) => {
+            return Err(RealmRefusal::bad_request(
+                "non-custodial mint needs BOTH birth_ed_pk and birth_ml_pk",
+            ));
+        }
+        (Some(_), Some(_), Some(_)) => {
+            return Err(RealmRefusal::bad_request(
+                "specify EITHER the non-custodial birth public key OR a custodial principal_seed, not both",
+            ));
+        }
+        (None, None, None) => {
+            return Err(RealmRefusal::bad_request(
+                "mint needs the non-custodial birth_ed_pk + birth_ml_pk (preferred) or a custodial principal_seed",
+            ));
+        }
+    };
     Ok(Json(identity_wire(&r, &id)))
 }
 
 #[derive(Deserialize)]
 struct BindSurfaceRequest {
-    /// The node-side handle of an ALREADY-MINTED identity.
-    principal_seed: String,
+    /// The PUBLIC handle of an already-minted identity: its cell-id hex (the
+    /// non-custodial default). Mutually exclusive with `principal_seed`.
+    identity: Option<String>,
+    /// The CUSTODIAL node-side handle of an already-minted identity.
+    principal_seed: Option<String>,
     #[serde(flatten)]
     actor: ActorSpec,
 }
@@ -1491,12 +1789,20 @@ async fn post_identity_bind(
     Json(req): Json<BindSurfaceRequest>,
 ) -> Result<Json<BindResponse>, RealmRefusal> {
     let actor = req.actor.to_ref()?;
+    let idref = parse_id_ref(&req.identity, &req.principal_seed)?;
     let realms = state.realms();
     let mut r = realms.write().await;
-    r.bind_surface(&req.principal_seed, &actor)?;
-    let id = r
-        .identity_by_seed(&req.principal_seed)
-        .ok_or_else(|| RealmRefusal::not_found("identity (unminted principal)"))?;
+    let id = match idref {
+        IdRef::Id(cell) => {
+            r.bind_surface_to_id(cell, &actor)?;
+            r.identity_by_id(&cell)
+        }
+        IdRef::Seed(seed) => {
+            r.bind_surface(&seed, &actor)?;
+            r.identity_by_seed(&seed)
+        }
+    }
+    .ok_or_else(|| RealmRefusal::not_found("identity (unminted)"))?;
     Ok(Json(BindResponse {
         identity: identity_wire(&r, &id),
         surface: surface_name(actor.surface),
@@ -1529,7 +1835,11 @@ async fn get_identity_resolve(
 
 #[derive(Deserialize)]
 struct GuardiansRequest {
-    principal_seed: String,
+    /// PUBLIC cell-id handle (non-custodial default). Mutually exclusive with
+    /// `principal_seed`.
+    identity: Option<String>,
+    /// CUSTODIAL handle.
+    principal_seed: Option<String>,
     /// Guardian key COMMITMENTS (hex, 32 bytes each).
     guardians: Vec<String>,
     /// The K-of-N co-sign floor.
@@ -1555,12 +1865,20 @@ async fn post_identity_guardians(
         .iter()
         .map(|g| parse_hex32("guardian commitment", g))
         .collect::<Result<Vec<_>, _>>()?;
+    let idref = parse_id_ref(&req.identity, &req.principal_seed)?;
     let realms = state.realms();
     let mut r = realms.write().await;
-    r.register_guardians(&req.principal_seed, &guardians, req.threshold)?;
-    let id = r
-        .identity_by_seed(&req.principal_seed)
-        .ok_or_else(|| RealmRefusal::not_found("identity (unminted principal)"))?;
+    let id = match idref {
+        IdRef::Id(cell) => {
+            r.register_guardians_by_id(cell, &guardians, req.threshold)?;
+            r.identity_by_id(&cell)
+        }
+        IdRef::Seed(seed) => {
+            r.register_guardians(&seed, &guardians, req.threshold)?;
+            r.identity_by_seed(&seed)
+        }
+    }
+    .ok_or_else(|| RealmRefusal::not_found("identity (unminted)"))?;
     Ok(Json(GuardiansResponse {
         identity: hex32(id.id.as_bytes()),
         guardians: guardians.len(),
@@ -1607,7 +1925,11 @@ impl SigSpec {
 
 #[derive(Deserialize)]
 struct RotateRequest {
-    principal_seed: String,
+    /// PUBLIC cell-id handle (non-custodial default). Mutually exclusive with
+    /// `principal_seed`.
+    identity: Option<String>,
+    /// CUSTODIAL handle.
+    principal_seed: Option<String>,
     /// The successor key's commitment, hex.
     new_key_commit: String,
     /// The hybrid signature BY THE CURRENT KEY over the canonical succession
@@ -1625,18 +1947,30 @@ async fn post_identity_rotate(
 ) -> Result<Json<IdentityWire>, RealmRefusal> {
     let new_commit = parse_hex32("new_key_commit", &req.new_key_commit)?;
     let sig = req.sig.to_sig()?;
+    let idref = parse_id_ref(&req.identity, &req.principal_seed)?;
     let realms = state.realms();
     let mut r = realms.write().await;
-    r.rotate_identity(&req.principal_seed, new_commit, &sig)?;
-    let id = r
-        .identity_by_seed(&req.principal_seed)
-        .ok_or_else(|| RealmRefusal::not_found("identity (unminted principal)"))?;
+    let id = match idref {
+        IdRef::Id(cell) => {
+            r.rotate_identity_by_id(cell, new_commit, &sig)?;
+            r.identity_by_id(&cell)
+        }
+        IdRef::Seed(seed) => {
+            r.rotate_identity(&seed, new_commit, &sig)?;
+            r.identity_by_seed(&seed)
+        }
+    }
+    .ok_or_else(|| RealmRefusal::not_found("identity (unminted)"))?;
     Ok(Json(identity_wire(&r, &id)))
 }
 
 #[derive(Deserialize)]
 struct RecoverRequest {
-    principal_seed: String,
+    /// PUBLIC cell-id handle (non-custodial default). Mutually exclusive with
+    /// `principal_seed`.
+    identity: Option<String>,
+    /// CUSTODIAL handle.
+    principal_seed: Option<String>,
     new_key_commit: String,
     /// Guardian co-signs over the canonical recovery message (kind
     /// `GuardianRecovery`). DISTINCT registered guardians are counted.
@@ -1656,12 +1990,20 @@ async fn post_identity_recover(
         .iter()
         .map(|s| s.to_sig())
         .collect::<Result<Vec<_>, _>>()?;
+    let idref = parse_id_ref(&req.identity, &req.principal_seed)?;
     let realms = state.realms();
     let mut r = realms.write().await;
-    r.recover_identity(&req.principal_seed, new_commit, &sigs)?;
-    let id = r
-        .identity_by_seed(&req.principal_seed)
-        .ok_or_else(|| RealmRefusal::not_found("identity (unminted principal)"))?;
+    let id = match idref {
+        IdRef::Id(cell) => {
+            r.recover_identity_by_id(cell, new_commit, &sigs)?;
+            r.identity_by_id(&cell)
+        }
+        IdRef::Seed(seed) => {
+            r.recover_identity(&seed, new_commit, &sigs)?;
+            r.identity_by_seed(&seed)
+        }
+    }
+    .ok_or_else(|| RealmRefusal::not_found("identity (unminted)"))?;
     Ok(Json(identity_wire(&r, &id)))
 }
 
@@ -2240,5 +2582,292 @@ mod tests {
             resolved["followed_key_commit"], resolved["current_key_commit"],
             "the reloaded succession chain still resolves to the current key"
         );
+    }
+
+    /// ⚑ THE NON-CUSTODIAL MINT CANARY. A realm identity minted through the HTTP
+    /// ingress where the node receives ONLY the holder's birth hybrid PUBLIC key —
+    /// no seed material crosses the API OR into the durable `REALM_LOG` (asserted:
+    /// the mint op is the seedless `MintIdentityPubkey` variant, and the holder's
+    /// 32-byte seed material appears in NO log entry). The identity resolves + binds
+    /// a surface (by its PUBLIC cell-id handle), survives a node restart on the
+    /// durable log, and succession + guardian recovery STILL work on it — both
+    /// before the restart AND on the reloaded identity.
+    #[tokio::test]
+    async fn non_custodial_mint_over_http_seed_never_crosses_survives_restart_and_succeeds() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let key_bytes = [43u8; 32];
+
+        // The HOLDER's secret is generated OFF NODE and NEVER sent. Only the birth
+        // hybrid PUBLIC key crosses. `seed_material` is the 32-byte key material the
+        // node must never see in any durable log entry.
+        let holder_secret = "HOLDER-ONLY-SECRET-noncustodial";
+        let birth = HybridKey::from_principal_seed(holder_secret);
+        let seed_material = realm_model::identity::hybrid_seed(holder_secret);
+
+        let v2 = HybridKey::from_principal_seed("HOLDER-ONLY-SECRET-noncustodial-v2");
+        let v3 = HybridKey::from_principal_seed("HOLDER-ONLY-SECRET-noncustodial-v3");
+        let v4 = HybridKey::from_principal_seed("HOLDER-ONLY-SECRET-noncustodial-v4");
+        let guardians: Vec<HybridKey> = ["ncg-a", "ncg-b", "ncg-c"]
+            .iter()
+            .map(|s| HybridKey::from_principal_seed(s))
+            .collect();
+        let stranger = HybridKey::from_principal_seed("a-total-stranger-nc");
+
+        fn ml_hex(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
+        fn sig_json(k: &HybridKey, msg: &[u8]) -> serde_json::Value {
+            let s = k.sign(msg).expect("hybrid sign");
+            serde_json::json!({
+                "ed_pk": hex32(&s.ed_pk),
+                "ml_pk": ml_hex(&s.ml_pk),
+                "ed_sig": ml_hex(s.ed_sig.as_slice()),
+                "ml_sig": ml_hex(&s.ml_sig),
+            })
+        }
+        // Assert the holder's seed material appears in NO durable log entry.
+        async fn assert_seed_absent(state: &NodeState, seed_material: &[u8; 32], when: &str) {
+            let log = {
+                let s = state.read().await;
+                s.store.load_realm_log().expect("load durable realm log")
+            };
+            for (i, entry) in log.iter().enumerate() {
+                assert!(
+                    !entry.windows(32).any(|w| w == seed_material),
+                    "durable realm log entry {i} contains the holder's seed material ({when})"
+                );
+            }
+        }
+
+        let identity_hex;
+        let identity_cell;
+        {
+            let state = crate::state::NodeState::with_cclerk(tmp.path(), vec![], key_bytes)
+                .expect("node state");
+
+            // ── NON-CUSTODIAL MINT: the request carries ONLY the birth PUBLIC key.
+            //    There is no `principal_seed` field — the node never sees a seed.
+            let (st, minted) = post_json(
+                &state,
+                "/realm/identity/mint",
+                serde_json::json!({
+                    "label": "holder-one",
+                    "birth_ed_pk": hex32(&birth.ed_pk()),
+                    "birth_ml_pk": ml_hex(birth.ml_pk()),
+                }),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "non-custodial mint: {minted}");
+            identity_hex = minted["identity"].as_str().unwrap().to_string();
+            identity_cell = CellId::from_bytes(
+                crate::trustline_service::hex_decode_32(&identity_hex).expect("id hex"),
+            );
+            assert_eq!(minted["epoch"], 1, "genesis succession epoch");
+            assert_eq!(
+                minted["current_key_commit"], minted["birth_key_commit"],
+                "at genesis the current key IS the holder's birth key"
+            );
+            assert_eq!(
+                minted["principal_pk"],
+                hex32(&birth.ed_pk()),
+                "principal_pk is the HOLDER's real ed25519 pubkey (the node did not derive it)"
+            );
+            assert_eq!(
+                minted["current_key_commit"],
+                hex32(&birth.commitment()),
+                "KEY_COMMIT binds commit_hybrid over the holder's PUBLIC keys"
+            );
+
+            // ── THE SEED NEVER CROSSED: the sole durable op is the SEEDLESS
+            //    `MintIdentityPubkey` variant, and no log entry holds the seed.
+            let log = {
+                let s = state.read().await;
+                s.store.load_realm_log().expect("load durable realm log")
+            };
+            assert_eq!(log.len(), 1, "one durable op: the non-custodial mint");
+            let op: RealmOp = postcard::from_bytes(&log[0]).expect("decode the mint op");
+            assert!(
+                matches!(op, RealmOp::MintIdentityPubkey { .. }),
+                "the durable mint op is the non-custodial (structurally seedless) variant, not MintIdentity"
+            );
+            assert_seed_absent(&state, &seed_material, "after mint").await;
+
+            // ── the identity BINDS a surface by its PUBLIC cell-id handle (no seed).
+            let (st, bound) = post_json(
+                &state,
+                "/realm/identity/bind",
+                serde_json::json!({
+                    "identity": identity_hex,
+                    "surface": "web",
+                    "local": "holder-sess-1",
+                }),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "bind by public id: {bound}");
+            assert_eq!(bound["identity"]["identity"], identity_hex);
+
+            // ── it RESOLVES from its surface to the same canonical id.
+            let (st, resolved) = get_json(
+                &state,
+                "/realm/identity/resolve?surface=web&local=holder-sess-1",
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "resolve: {resolved}");
+            assert_eq!(resolved["identity"], identity_hex);
+            assert_eq!(resolved["label"], "holder-one");
+
+            // ── guardians (durable), for the recovery below.
+            let (st, g) = post_json(
+                &state,
+                "/realm/identity/guardians",
+                serde_json::json!({
+                    "identity": identity_hex,
+                    "guardians": guardians
+                        .iter()
+                        .map(|k| hex32(&k.commitment()))
+                        .collect::<Vec<_>>(),
+                    "threshold": 2,
+                }),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "guardians by id: {g}");
+            assert_eq!(g["guardians"], 3);
+
+            // ── SUCCESSION WORKS on the non-custodial identity. Stranger refused.
+            let msg_v2 = succession_message(
+                &identity_cell,
+                1,
+                &birth.commitment(),
+                &v2.commitment(),
+                SuccessionKind::SelfSigned,
+            );
+            let before = realm_status(&state).await["durable_log_len"]
+                .as_u64()
+                .unwrap();
+            let (st, refusal) = post_json(
+                &state,
+                "/realm/identity/rotate",
+                serde_json::json!({
+                    "identity": identity_hex,
+                    "new_key_commit": hex32(&v2.commitment()),
+                    "sig": sig_json(&stranger, &msg_v2),
+                }),
+            )
+            .await;
+            assert_eq!(
+                st,
+                StatusCode::CONFLICT,
+                "stranger rotate refused: {refusal}"
+            );
+            assert_eq!(refusal["reason"], "wrong-succession-key");
+            assert_eq!(
+                realm_status(&state).await["durable_log_len"]
+                    .as_u64()
+                    .unwrap(),
+                before,
+                "a refused succession persists NOTHING"
+            );
+
+            // The real rotation, signed by the holder's CURRENT (birth) key.
+            let (st, rotated) = post_json(
+                &state,
+                "/realm/identity/rotate",
+                serde_json::json!({
+                    "identity": identity_hex,
+                    "new_key_commit": hex32(&v2.commitment()),
+                    "sig": sig_json(&birth, &msg_v2),
+                }),
+            )
+            .await;
+            assert_eq!(
+                st,
+                StatusCode::OK,
+                "rotate by holder's birth key: {rotated}"
+            );
+            assert_eq!(rotated["epoch"], 2);
+            assert_eq!(
+                rotated["identity"], identity_hex,
+                "the durable id is UNCHANGED"
+            );
+            assert_eq!(rotated["current_key_commit"], hex32(&v2.commitment()));
+
+            // Guardian recovery: 2-of-3 succeeds over the id handle.
+            let msg_v3 = succession_message(
+                &identity_cell,
+                2,
+                &v2.commitment(),
+                &v3.commitment(),
+                SuccessionKind::GuardianRecovery,
+            );
+            let (st, recovered) = post_json(
+                &state,
+                "/realm/identity/recover",
+                serde_json::json!({
+                    "identity": identity_hex,
+                    "new_key_commit": hex32(&v3.commitment()),
+                    "guardian_sigs": [
+                        sig_json(&guardians[0], &msg_v3),
+                        sig_json(&guardians[1], &msg_v3),
+                    ],
+                }),
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "2-of-3 recovery: {recovered}");
+            assert_eq!(recovered["epoch"], 3);
+            assert_eq!(recovered["current_key_commit"], hex32(&v3.commitment()));
+
+            // STILL no seed material anywhere in the durable log after succession.
+            assert_seed_absent(&state, &seed_material, "after succession").await;
+        }
+
+        // ── RESTART ── the non-custodial mint + succession replay from the log.
+        let restored = crate::state::NodeState::with_cclerk(tmp.path(), vec![], key_bytes)
+            .expect("restore node state");
+        assert_seed_absent(&restored, &seed_material, "after restart").await;
+
+        // The identity resolves from its surface across the reboot, same durable id.
+        let (st, resolved) = get_json(
+            &restored,
+            "/realm/identity/resolve?surface=web&local=holder-sess-1",
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "resolve after restart: {resolved}");
+        assert_eq!(
+            resolved["identity"], identity_hex,
+            "the non-custodial durable principal outlived TWO key changes + a restart"
+        );
+        assert_eq!(resolved["epoch"], 3, "the succession epoch reloaded");
+        assert_eq!(resolved["current_key_commit"], hex32(&v3.commitment()));
+        assert_eq!(
+            resolved["followed_key_commit"],
+            resolved["current_key_commit"]
+        );
+
+        // ── succession STILL works on the RELOADED non-custodial identity.
+        let msg_v4 = succession_message(
+            &identity_cell,
+            3,
+            &v3.commitment(),
+            &v4.commitment(),
+            SuccessionKind::SelfSigned,
+        );
+        let (st, rotated4) = post_json(
+            &restored,
+            "/realm/identity/rotate",
+            serde_json::json!({
+                "identity": identity_hex,
+                "new_key_commit": hex32(&v4.commitment()),
+                "sig": sig_json(&v3, &msg_v4),
+            }),
+        )
+        .await;
+        assert_eq!(
+            st,
+            StatusCode::OK,
+            "rotate after restart on the reloaded non-custodial identity: {rotated4}"
+        );
+        assert_eq!(rotated4["epoch"], 4);
+        assert_eq!(rotated4["current_key_commit"], hex32(&v4.commitment()));
+        assert_seed_absent(&restored, &seed_material, "after post-restart rotation").await;
     }
 }

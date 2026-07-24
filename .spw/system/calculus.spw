@@ -1,0 +1,51 @@
+# System: the dregg calculus
+#
+# Transcribed from the calculus map (metatheory/docs/DREGG-CALCULUS.md, read
+# in full). One object at many altitudes: a turn is a forest of conserved,
+# gated writes — the same forest is a promise graph, a channel send, a
+# world-fork, a document patch, and it carries a proof.
+
+#>spw_system_calculus
+#:system #!form
+
+^"the_sentence"{
+  ~#is: "a linear capability calculus whose reduction is a witnessed, attestable, gated step over conserved resources"
+  ~#step: "a turn — the exercise of an attenuable, proof-carrying token over owned, conserved state, leaving a verifiable receipt"
+  @map: ~"../../metatheory/docs/DREGG-CALCULUS.md"
+}
+
+^"altitudes"{
+  kernel: "cell + verb → a gated, conserved, attested write"
+  guard: "a Pred over the pre-state — the admission set is biorthogonally CLOSED; the deployed gate IS Girard orthogonality, definitionally"
+  linear: "conservation IS the linear tensor — recovered from orthogonality iff the test side may correlate the paired move; no per-component test family can carve it"
+  turn: "a forest of effects with delegation edges, granted always a genuine subset of held, jointly committed"
+  promise: "a hole is a nullifier, resolution is a spend; one-shot linearity is type-level — a second resume is inexpressible"
+  channel: "the Bus — cap-gated sends, refused before queuing; queued is a promise, handled is a witness"
+  fork_merge: "a membrane is iterated attenuation; a branch cannot drain main as a cap fact; the stitch IS the pushout, loss only ever explicit"
+  document: "patches are the lattice join in disguise; conflict is a first-class STATE, resolved additively"
+  witness: "symbolic defers only the proof object, never a decision; collapse reproduces byte-identical receipts"
+  circuit: "verifyBatch accept implies a genuine kernel transition exists — under named floors, never for free"
+  firmament: "one cap across distance — local, distributed, surface; n=1 collapses to strong-local; a window is a cap, no more"
+  settlement: "authority must be LIVE AT THE TIP — a cap revoked between branch and settlement forecloses the stitch"
+  flow: "composition is right-skewed — choice does not left-distribute; dregg semantics is an online simulation, not a trace language"
+  deos: "the desktop is the calculus made interactive — a fired affordance is a verified turn; a session is a c-list; a MUD is a view over the cell calculus"
+}
+
+^"two_readings"{
+  ~#eight: "eight independent verbs — the discipline (substance × polarity, injective)"
+  ~#three: "three compressed shapes — create, gwrite, move — the executor surface; five verbs dissolve into the guarded write"
+  ~#both: "the compression is ontology-relative; both readings are theorems"
+}
+
+^"modality_price"{
+  ~#law: "each guard modality carries a consensus cost — the TYPE of an operation tells you what coordination it costs"
+  ~#monotone: "grow-only modalities run coordination-free, partition-tolerant"
+  ~#bounded: "ceiling modalities force ordering, with a constructive clashing-pair witness — the system tells you WHY your guard is not cheap"
+}
+
+^"honesty_ledger"{
+  ~#proved: "the reduction laws, minimality, conservation, biorthogonality, promise one-shot, membrane confinement, pushout, unfoolability, settlement — cited theorems, axiom-clean"
+  ~#structural: "the pi-calculus correspondence table, factory-as-replication — typechecked namings, not separate theorems"
+  ~#floors: "StarkSound, Poseidon2SpongeCR, ClosedWitness — irreducible, named, terminal by design"
+  ~#rust: "collapse, data_plane, dregg-doc, shared_fork — the deployed mechanism the Lean refines, not separate proofs"
+}

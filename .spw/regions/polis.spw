@@ -1,0 +1,31 @@
+# Region: Polis
+#
+# The fair-playground constitution as a kernel-clean Lean artifact, plus its
+# runnable verified arena. From POLIS.md and POLIS-SANDBOX.md (read in full).
+
+#>spw_region_polis
+#:region #!summonable
+
+^"constitution"{
+  ~#cage: "verify the cage, not the animal — enforcement cannot psychometrically classify the inhabitant; the ∀-blindness that protects the remainder makes the politician ungovernable-by-interior, so govern TRACE-SHAPE, not motive"
+  ~#legitimacy: "non-regression, not provable justice — self-amending, but no declared minimum may be legally weakened; a regressive amendment is inert"
+  ~#schism: "the polis edge is the empty intersection of EXPORTED floors — never interiors, never souls"
+  @doc: ~"../../metatheory/docs/POLIS.md"
+}
+
+^"the_politician_zoo"{
+  #[bars]{ exit-foreclosure flow-capture disclosure-ratchet grade-laundering clerk-monopoly hole-rent }
+  ~#each: "a named capture strategy with a proven bar — flow capture even gets a decidable Büchi game"
+  ~#hyperproperty: "the interleaved-multi-agent framework is BUILT and deployed-bound — domination as 2-safety on the counterfactual product, erasure on the real blocklace, decidable; the claim is bounded/public/decidable domination, never full unbounded politics — decidable gentleness is bounded gentleness"
+}
+
+^"sandbox"{
+  @arena: ~"../../metatheory/docs/POLIS-SANDBOX.md"
+  ~#shape: "four political textures — foreclosure, coalition, laundering, lock-in — each EMERGES ungoverned and is PREVENTED governed, by decide, visible by eval"
+  ~#depth: "smart adversaries (a searcher discovers domination, a learner converges yet can never strand, a deceiver's long con is caught); a grand governor refuses all named adversaries at once; the sandbox's safety is a literal instance of the constitution's theorem"
+  ~#honest_limits: "agents are scripted archetypes, not LLMs; governance is one-step (bounds harm, does not yet prove liveness of resolution); the real-Minecraft LLM leap is a named infra handoff"
+}
+
+^"stitches"{
+  ~#reach: "confinement concept ↔ trust.key_leak ↔ the Minecraft harness trickster in shadow ↔ laws (legitimacy machinery is the repo's own governance, formalized)"
+}

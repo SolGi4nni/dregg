@@ -1,0 +1,11 @@
+# Concept: VK epochs
+
+#>spw_concept_vk_epoch
+#:concept =moving
+
+^"card"{
+  ~#what: "the verifying key defines an era: an epoch pins a manifest (circuit shape, content set); an upgrade is a drift-CLASSIFIED boundary, not a hot swap; game seasons literally ride VK-epochs"
+  ~#why_hard: "it couples the most formal thing in the repo (circuit identity) to the most playful (seasons), and to operations (the VK ceremony runbook) — three communities, one boundary"
+  ~#stitches: "settlement (a chain verifier pins a VK) ↔ dreggnet.season ↔ ops runbooks ↔ horizon's setField VALUE8 epoch entries"
+  ~#trap: "treating a VK change as a deploy — it is a constitutional moment; the drift classification is what makes it survivable"
+}

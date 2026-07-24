@@ -16,7 +16,8 @@ Poseidon2 domain-separation collision-resistance floor of `Dregg2.Circuit.Poseid
   * TRACK B — the abstract CRYPTO floor. `LightClientUC.unfoolable_of_floor`
     (`ExtractsTo` + `SatBindsProduced` ⇒ `Unfoolable`) over ANY `{State Proof Witness}`, and
     `LightClientUC.fooling_breaks_floor` (a fooling breaks `ExtractsTo`); plus the deployed Negl bounds
-    `Poseidon2KeyedBridge.deployed_*_advantage_bound` under `DomainSeparatedCR`.
+    `DomainSeparatedCREffRegrounded.deployed_*_advantage_bound_eff` under `DomainSeparatedCREff D Eff`
+    (the honest `Eff`-carrying successor of `DomainSeparatedCR`, which is refuted at deployed BabyBear).
 
 ## The instantiation (`u := 0`; every deployed type is `Type`)
 
@@ -48,6 +49,7 @@ import Dregg2.Tactics
 import Dregg2.Crypto.LightClientUC
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.Poseidon2KeyedBridge
+import Dregg2.Circuit.DomainSeparatedCREffRegrounded
 
 namespace Dregg2.Circuit.LightClientFusion
 
@@ -195,9 +197,11 @@ theorem dProduced_false_everywhere (S : CommitSurface) :
 
 `fooling_breaks_floor` at the deployed model: a fooling of the deployed client BREAKS deployed
 extractability. Combined with §2 that means, under the honest carriers, NO deployed fooling exists.
-The Negl half re-exports `Poseidon2KeyedBridge.deployed_recStateCommit_advantage_bound`: a
-state-equivocation, PACKAGED as a `CollisionFinder (poseidon2KeyedFamily D)`, has negligible advantage
-under `DomainSeparatedCR D`. -/
+The Negl half re-exports `DomainSeparatedCREffRegrounded.deployed_recStateCommit_advantage_bound_eff`
+(the named replacement of the DELETED `Poseidon2KeyedBridge.deployed_recStateCommit_advantage_bound`,
+whose `DomainSeparatedCR` floor is REFUTED at the deployed BabyBear sponge): a state-equivocation,
+PACKAGED as a `CollisionFinder (poseidon2KeyedFamily D)` and lying in the explicit class `Eff`, has
+negligible advantage under `DomainSeparatedCREff D Eff`. -/
 
 /-- **The contrapositive at the deployed model.** If the deployed carriers hold (so `SatBindsProduced`)
 yet the deployed client is `Foolable`, then deployed STARK extractability is FALSE — a concrete accepting
@@ -242,16 +246,27 @@ theorem foolingRootEquivocator_wins_iff (D : DomainSeparatedSponge) (xs xs' : Li
   simpa [foolingRootEquivocator] using
     Poseidon2KeyedBridge.wins_iff_deployed_collision D (foolingRootEquivocator D xs xs') n t
 
-/-- **The Negl connection (deployed floor).** Under the DEPLOYED Poseidon2 domain-separation CR
-(`DomainSeparatedCR D`), the state-equivocation finder has NEGLIGIBLE advantage — re-exporting
-`deployed_recStateCommit_advantage_bound` at the concrete finder. So a deployed fooling that violates
-`SatBindsProduced` (which can only happen via a `recStateCommit` root-equivocation) wins with negligible
-probability: deployed light-client fooling is negligible under the deployed sponge's domain separation. -/
-theorem deployed_fooling_advantage_negl (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
-    (xs xs' : List ℤ) :
+/-- **The Negl connection (deployed floor, `Eff`-regrounded).** Under the honest deployed floor
+`DomainSeparatedCREff D Eff` (the 07-22 rebuild DELETED the old
+`Poseidon2KeyedBridge.deployed_recStateCommit_advantage_bound`, whose `DomainSeparatedCR` floor is
+PROVED FALSE at the deployed BabyBear sponge —
+`DomainSeparatedCREffRegrounded.domainSeparatedCR_false_babyBear`; the named replacement is
+`deployed_recStateCommit_advantage_bound_eff`), the state-equivocation finder — carried IN the explicit
+class `Eff`, the `hEff` obligation in the open at this use site — has NEGLIGIBLE advantage. So a
+deployed fooling that violates `SatBindsProduced` (which can only happen via a `recStateCommit`
+root-equivocation) wins with negligible probability, PROVIDED its packaged finder lies in the class the
+floor quantifies over: deployed light-client fooling is negligible under the deployed sponge's
+`Eff`-carrying domain separation. -/
+theorem deployed_fooling_advantage_negl (D : DomainSeparatedSponge)
+    (Eff : Dregg2.Crypto.FloorGames.Adversary
+      (Dregg2.Crypto.FloorGames.hashGame (poseidon2KeyedFamily D)) → Prop)
+    (xs xs' : List ℤ)
+    (hEff : Eff (Dregg2.Crypto.FloorGames.finderToAdv (foolingRootEquivocator D xs xs')))
+    (hD : DomainSeparatedCREffRegrounded.DomainSeparatedCREff D Eff) :
     Dregg2.Crypto.ConcreteSecurity.Negl
       (collisionAdv (poseidon2KeyedFamily D) (foolingRootEquivocator D xs xs')) :=
-  Poseidon2KeyedBridge.deployed_recStateCommit_advantage_bound D hD (foolingRootEquivocator D xs xs')
+  DomainSeparatedCREffRegrounded.deployed_recStateCommit_advantage_bound_eff D Eff
+    (foolingRootEquivocator D xs xs') hEff hD
 
 /-! ### THE RESIDUAL (named, NOT forced).
 

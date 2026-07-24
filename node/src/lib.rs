@@ -618,6 +618,22 @@ pub async fn run(cli: Cli) {
         tracing::debug!("constraint oracle: verified Lean deployed-constraint evaluator installed");
     }
 
+    // Arm the verified-Lean CONSERVATION ORACLE (House Law #1, twin-deletion #1): route the deployed
+    // executor's per-asset `Σδ=0` value-conservation gate through the PROVEN Lean
+    // `dregg_cross_cell_conserves` (`Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`, proved
+    // EQUAL to the committed `CrossCellConservation` AIR boundary by
+    // `CrossCellConserveRefine.decision_conserves_iff_air_boundary`) instead of the hand-written Rust
+    // `dregg_circuit::block_conservation::BlockConservation` twin (the asset-inflation boundary that
+    // already drifted once). `dregg-turn` cannot link the archive (wasm32 + zkVM guest), so this
+    // installs the Lean backend from `dregg-exec-lean` at native startup. When the archive lacks the
+    // export (stale seed), this is a no-op and the labeled Rust fallback in `turn::executor::atomic`
+    // decides (the interim; the deployed full node installs the verified decision here).
+    if dregg_exec_lean::register_conservation_oracle() {
+        tracing::debug!(
+            "conservation oracle: verified Lean cross-cell per-asset Σδ=0 decision installed"
+        );
+    }
+
     // Initialize tracing. Write to stderr so the MCP stdio subcommand (which
     // serves JSON-RPC on stdout) doesn't get corrupted by log lines.
     tracing_subscriber::fmt()

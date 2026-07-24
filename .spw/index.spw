@@ -37,12 +37,34 @@
   @intellect: ~"./regions/intellect.spw"
 }
 
+^"concepts"{
+  @concepts: ~"./concepts/index.spw"
+  @gauge: ~"./topography/gauge.spw"
+}
+
+^"system"{
+  @notation: ~"./system/notation.spw"
+  @cell: ~"./system/cell.spw"
+  @verbs: ~"./system/verbs.spw"
+  @calculus: ~"./system/calculus.spw"
+  @knowledge: ~"./system/constructive-knowledge.spw"
+  @turn: ~"./system/turn.spw"
+  @production: ~"./system/production.spw"
+  @guard_logic: ~"./system/guard-logic.spw"
+  @linking_tower: ~"./system/linking-tower.spw"
+  @flow: ~"./system/flow-algebra.spw"
+  @programs: ~"./system/cell-programs.spw"
+  ~#status: "the enacted-form layer, growing under the read-first rule — each new form surface requires its Lean or Rust source read in full first"
+  ~#unread_trove: "metatheory/docs holds ~50 more docs (TRANSCENDENTAL-SYNTAX-BRIDGE, FLOW-COMPOSITION-ALGEBRA, GUARDED-HOLES-METATHEORY, CELL-PROGRAM-LANGUAGE, the POLIS set) — each a candidate form surface, read-first"
+}
+
 ^"lenses"{
   @summon: ~"./lenses/summon.spw"
   @hoardlight: ~"./lenses/hoardlight.spw"
 }
 
 ^"reading_order"{
-  ~#machine: "poem → polymap → the projection you need → the region it names → a lens to inhabit it"
+  ~#machine: "poem → polymap → the projection you need → the region it names → the concepts it stitches → a lens to inhabit it"
   ~#human: "README.md first"
+  ~#tracking: "statuses live on concept cards (=settled/=moving/=owed/=contested), lanes (active/closed), and horizon flags — the sense loop queries them"
 }

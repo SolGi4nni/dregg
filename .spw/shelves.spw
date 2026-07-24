@@ -11,6 +11,8 @@
  @workbench: ~"./_workbench"
  @topo: ~"./topography"
  @regions: ~"./regions"
+ @concepts: ~"./concepts"
+ @system: ~"./system"
  @lenses: ~"./lenses"
  @kernel: ~"../metatheory"
  @circuit: ~"../circuit"

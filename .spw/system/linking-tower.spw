@@ -1,0 +1,32 @@
+# System: the linking tower
+#
+# What a light client is entitled to believe, and why — five rungs, each a
+# different KIND of fact, each with named premises. Transcribed from the
+# tower doc (read in full), which supersedes older floor statements.
+
+#>spw_system_linking_tower
+#:system #!form
+
+^"the_meta_law"{
+  ~#hypotheses_are_not_free: "assert-axioms checks the axiom closure of a proof term and NEVER its hypothesis list — a def consumed as a hypothesis is an assumption, however clean the axiom report; this document exists to name the premises"
+  @tower: ~"../../docs/THE-LINKING-TOWER.md"
+}
+
+^"rungs"{
+  r0_bytes: "chain of custody from verified source to deployed bytes — the VK pins ONE component by content and THREE by convention; the gate with teeth is generate-fresh descriptor drift; reproducible builds a named frontier"
+  r1_denotation: "the TSV rows are the image of a verified Lean value; descriptorRefines_complete covers all deployed effects with no catch-all arm"
+  r2_stark: "accept forces a genuine step — on the named floor; DeployedRefines reduced to DeployedMatchesModel, the one Rust-to-Lean correspondence residual, provably unprovable as stated since verifyBatch is opaque"
+  r3_kernel: "what the forced transition MEANS — per-effect frames proved, cross-step frame derived; the BindingFromFold family closes every published-identity seam, each with its paired BackingAttack proving the bare AIR omits the backing"
+  r4_apex: "unfoolability, single-turn and whole-history, grounded on derived engine legs; every keystone must carry a satisfiable honest instance AND a tooth"
+}
+
+^"the_fri_ledger"{
+  ~#two_columns: "per-fold and query soundness — two columns, NEVER a product; a theorem says the query ledger does not determine per-fold"
+  ~#capacity_refuted: "the proximity-gaps capacity conjecture (~130 bits) is DISPROVEN in the literature — carried only as a drift canary; a conjecture refuted in general is not a security basis on a field-cardinality technicality" =superseded_claim
+  ~#operating_honesty: "the deployed arity-8 per-fold figure (109) is about near-capacity words that do NOT cover the operating radius; the Johnson query column (73) is the m-to-infinity idealisation; NO 2^-128 headline exists here"
+}
+
+^"the_floor_in_one_list"{
+  #[entitlement]{ Poseidon2SpongeCR Poseidon2ChipArithSound fri-floor-at-deployed-params fs-sz-game rung0-custody DeployedMatchesModel }
+  ~#not_entitled: "freshness (the CAS's job, not the proof's); a 128-bit headline; anything a hypothesis carries"
+}
