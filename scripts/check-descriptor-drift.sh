@@ -91,19 +91,35 @@ echo "check-descriptor-drift:   ${#EMIT_MODULES[@]} modules the emitters import"
 # saving: a generated-Rust-only change takes the non-ack `GENERATED-RUST UPDATE`
 # path in `install_and_stamp` (it cannot re-key a descriptor), so the emit INSTALLS
 # it and returns 0 — and with the module unguarded this gate diffed nothing and
-# reported PASS while the tree had just been rewritten underneath it. The guarded
-# set must equal `install_and_stamp`'s change-set; it now does.
-GUARDED=(
-  "circuit/descriptors"
-  "circuit/src/effect_vm_descriptors.rs"
-  "circuit/src/lean_descriptor_air.rs"
-  "circuit/src/cap_delegation_nonamp_descriptor.rs"
-  "circuit/src/cap_reshape_descriptor.rs"
-  "circuit/src/bilateral_aggregation_air.rs"
-  "circuit/src/effect_vm/layout_generated.rs"
-  "circuit/src/effect_vm/e1_compact_generated.rs"
-  "circuit/src/effect_vm/s2_compact_generated.rs"
-)
+# reported PASS while the tree had just been rewritten underneath it.
+#
+# The guarded set must EQUAL `install_and_stamp`'s change-set. It used to be a hand
+# transcription of it — right the day it was written, and one new generated module
+# away from reopening that exact hole with nothing red (a transcription cannot go
+# red; it just covers less). So it is DERIVED, from the same driver, the same way
+# the emitter build set 25 lines above is: `--list-guarded-paths` prints
+# `DESC + RUST_FP_FILES + GENERATED_RS_PATHS`, and `assert_generated_declared()`
+# fails the EMIT if an emitter buffers a module that tuple does not declare. One
+# authority, and a new generated module cannot arrive unguarded.
+GUARDED=()
+while IFS= read -r p; do
+  [ -n "$p" ] && GUARDED+=("$p")
+done < <(python3 "$ROOT/scripts/emit_descriptors.py" --list-guarded-paths)
+if [ "${#GUARDED[@]}" -eq 0 ]; then
+  echo "check-descriptor-drift: FATAL — derived an EMPTY guarded set (the path scan" >&2
+  echo "  broke; snapshotting nothing would make this gate report PASS for any drift" >&2
+  echo "  whatsoever)." >&2
+  exit 2
+fi
+for p in "${GUARDED[@]}"; do
+  if [ ! -e "$ROOT/$p" ]; then
+    echo "check-descriptor-drift: FATAL — guarded path '$p' does not exist. The driver" >&2
+    echo "  names a change-set member this checkout lacks; the snapshot would silently" >&2
+    echo "  skip it." >&2
+    exit 2
+  fi
+done
+echo "check-descriptor-drift:   ${#GUARDED[@]} guarded paths (the driver's change-set)"
 
 SNAP="$(mktemp -d -t descriptor-drift.XXXXXX)"
 trap 'rm -rf "$SNAP"' EXIT

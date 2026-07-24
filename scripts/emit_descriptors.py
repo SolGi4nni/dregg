@@ -57,6 +57,12 @@ Modes:
                          — the set that must be `lake build`-ed for the emit to run
                          on a cold checkout. Derived from the emitters' own imports;
                          no Lean run. `check-descriptor-drift.sh` builds this.
+  --list-guarded-paths   print the repo-relative paths this driver can REWRITE (one
+                         per line) — `install_and_stamp`'s whole change-set: the
+                         descriptor dir, the `*_FP`-bearing Rust sources, and the
+                         Lean-authored `*_generated.rs` modules. No Lean run.
+                         `check-descriptor-drift.sh` snapshots exactly this instead
+                         of transcribing it.
 
 Exit codes: 0 = ok/no-op · 1 = routing/verify failure · 2 = emitter failed ·
 3 = REGEN REFUSED (unauthorized byte-changing install; tree left untouched).
@@ -301,8 +307,48 @@ def ir2_defname_to_file(rust_text: str, c2f: dict[str, str]) -> dict[str, str]:
 # rotated column geometry that the producer writes, the descriptors read, and the gates audit.
 
 LAYOUT_RS = ROOT / "circuit" / "src" / "effect_vm" / "layout_generated.rs"
+S2_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "s2_compact_generated.rs"
+E1_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "e1_compact_generated.rs"
+
+# THE DECLARED generated-module set. `GENERATED_RS` below is filled at EMIT time, so nothing
+# static can read it — and `scripts/check-descriptor-drift.sh` has to know this driver's whole
+# change-set BEFORE the emit, to snapshot it. That set used to be transcribed into the shell as
+# a `GUARDED=(…)` array; the header of that script records what a transcription costs here (the
+# `*_generated.rs` modules were missing from it, so a generated-Rust-only change took the
+# non-ack install path, the gate diffed nothing, and it reported PASS while the tree had just
+# been rewritten underneath it). The shell now DERIVES its guarded set from
+# `--list-guarded-paths`, which reads this tuple, so there is exactly ONE authority.
+#
+# `assert_generated_declared()` is the tooth that keeps this tuple honest: a future emitter that
+# buffers a FOURTH module into `GENERATED_RS` without listing it here FAILS the emit, instead of
+# silently reopening the same hole one module wider.
+GENERATED_RS_PATHS: tuple[Path, ...] = (LAYOUT_RS, S2_COMPACT_RS, E1_COMPACT_RS)
 
 GENERATED_RS: dict[Path, str] = {}
+
+
+def assert_generated_declared() -> None:
+    """Every buffered generated module must be DECLARED in `GENERATED_RS_PATHS`.
+
+    Undeclared means `check-descriptor-drift.sh` never snapshots it, so a re-emit that rewrites
+    it is invisible to the drift gate — the exact hole that script's header records."""
+    undeclared = sorted(str(p) for p in GENERATED_RS if p not in GENERATED_RS_PATHS)
+    if undeclared:
+        sys.exit(
+            "emit_descriptors: these generated modules are buffered for install but NOT "
+            "declared in GENERATED_RS_PATHS:\n  " + "\n  ".join(undeclared)
+            + "\n  Add them there. Until you do, scripts/check-descriptor-drift.sh does not "
+              "snapshot them and cannot see a re-emit rewrite them."
+        )
+
+
+def guarded_paths() -> list[str]:
+    """The repo-relative paths this driver can REWRITE — `install_and_stamp`'s whole change-set:
+    the descriptor directory, the Rust sources carrying generated `*_FP` constants, and the
+    Lean-authored `*_generated.rs` modules. `check-descriptor-drift.sh` snapshots exactly this."""
+    return [str(DESC.relative_to(ROOT))] + [
+        str(p.relative_to(ROOT)) for p in (*RUST_FP_FILES, *GENERATED_RS_PATHS)
+    ]
 
 
 # ---- rustfmt normalization of the generated modules --------------------------
@@ -913,10 +959,6 @@ def split_wide(stdout: str, written):
     write_file(WIDE_TRANSFER_TSV, line, written)
 
 
-S2_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "s2_compact_generated.rs"
-E1_COMPACT_RS = ROOT / "circuit" / "src" / "effect_vm" / "e1_compact_generated.rs"
-
-
 def _parse_e1_intervals(spec: str) -> list[tuple[int, int]]:
     """Parse an `e1compact` payload (`a-b,c-d,...`, ascending half-open runs; possibly empty)
     into `[(a, b), ...]`. Validates ascending, non-overlapping, well-formed."""
@@ -1210,6 +1252,10 @@ def install_and_stamp(written: dict[str, str]) -> None:
     descriptor install is ack-gated, provenance-stamped, and audit-logged. A generated-Rust-only
     change is byte-safe (it cannot re-key a descriptor) and installs without a VK-regeneration
     acknowledgement. A byte-identical emission is a silent no-op."""
+    # Nothing installs a module the drift gate cannot see: every buffered generated module must
+    # be declared in GENERATED_RS_PATHS, which is what `check-descriptor-drift.sh` snapshots.
+    assert_generated_declared()
+
     # Converge the generated modules onto rustfmt's shape BEFORE the diff, so what we compare
     # against disk is exactly what we would write — and equals what the pre-commit hook and
     # `cargo fmt --all -- --check` produce (see normalize_generated_rust).
@@ -1278,8 +1324,30 @@ def install_and_stamp(written: dict[str, str]) -> None:
     )
 
 
+# The accepted flags, in ONE place. The usage message below is RENDERED from this rather than
+# transcribed beside it — the transcription had already lagged (`--strict` and, the moment it
+# landed, `--list-guarded-paths` were missing from the message that claims to enumerate them).
+ACCEPTED_FLAGS = (
+    "--stamp-existing",
+    "--list-emitter-modules",
+    "--list-guarded-paths",
+    "--verify-by-name-routing",
+    "--verify-provenance",
+    "--strict",
+)
+
+
 def main():
     argv = sys.argv[1:]
+    # An unrecognized flag must REFUSE, not be ignored: every dispatch below is an `in argv`
+    # membership test, so a bare-argv fall-through runs the REAL ack-gated emit. A typo'd or
+    # imagined `--dry-run` would therefore have regenerated the descriptor set for real.
+    unknown = [a for a in argv if a not in ACCEPTED_FLAGS]
+    if unknown:
+        sys.exit(
+            f"emit_descriptors: unknown arguments {unknown!r} (expected none, or one of: "
+            + ", ".join(ACCEPTED_FLAGS) + ")"
+        )
     if "--verify-provenance" in argv:
         verify_provenance(strict="--strict" in argv)
         return
@@ -1297,15 +1365,22 @@ def main():
     if "--stamp-existing" in argv:
         stamp_existing()
         return
+    if "--list-guarded-paths" in argv:
+        # The change-set `install_and_stamp` can rewrite (see guarded_paths). No Lean run, so
+        # `scripts/check-descriptor-drift.sh` can SNAPSHOT exactly what this driver may touch
+        # instead of keeping its own transcription of it.
+        print("\n".join(guarded_paths()))
+        return
     if "--list-emitter-modules" in argv:
         # The build set the emitters need (see emitter_modules). No Lean run; pure source
         # scan, so `scripts/check-descriptor-drift.sh` can build exactly what it runs.
         print("\n".join(emitter_modules()))
         return
     if argv:
-        sys.exit(f"emit_descriptors: unknown arguments {argv!r} "
-                 "(expected none, --stamp-existing, --list-emitter-modules, "
-                 "--verify-by-name-routing, or --verify-provenance [--strict])")
+        # Recognized, but no mode claimed it — today only a bare `--strict`, which is a MODIFIER
+        # of `--verify-provenance`, never a mode. Refuse rather than fall through to the emit.
+        sys.exit(f"emit_descriptors: {argv!r} names no mode (expected none, or one of: "
+                 + ", ".join(ACCEPTED_FLAGS) + ")")
 
     if not (META / "lakefile.lean").exists() and not (META / "lakefile.toml").exists():
         sys.exit(f"emit_descriptors: not a lake project at {META}")
