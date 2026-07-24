@@ -60,14 +60,28 @@ And beyond single kernels:
   (radix, shared-memory twiddles, fusion, batching) is wide open.
 - The DrEX GPU win is a **fused, batched, compute-bound pipeline**, not a fold accelerator.
 
-## 4. Honest status of the numbers
+## 4. The numbers — MEASURED, and the compute-bound NTT WINS
 
-The BFV/TFHE NTT + blind-rotation crossover benchmarks require `--features tfhe-integer` (pulls tfhe-rs +
-bulletproofs + wgpu-hal — a multi-GB build). Both AMD boxes are at **100% disk** right now (hbox 455G full,
-persvati 1.9T/12G free), co-tenant with codex's builds — I will not fill their last GB and break the
-co-tenant. **So the compute-bound crossover NUMBERS are infra-blocked, named as the immediate follow-up when
-disk frees** (or on the AWS F2 / a fresh box). The qualitative correction does not wait on them: the kernels
-exist, their arithmetic intensity is orders above the fold's, and that is the regime GPUs win.
+A light bench (`bin/bfv_ntt_crossover_bench.rs`, no `tfhe-integer` — the `RnsNttEngine` is in the main lib, so
+it fits the disk-constrained boxes) measures the deployed q0/q1/q2 odd NTT forward+inverse, GPU vs CPU,
+BIT-EXACT round-trip, across batch sizes. **The opposite of the fold: the NTT WINS on GPU, and the win is
+architectural (batching).**
+
+| batch | Metal M2 Max fwd g/c | persvati iGPU fwd g/c |
+|---|---|---|
+| 1 | 0.35× (loses — launch overhead) | 0.37× (loses) |
+| 4 | 0.71× | 0.97× |
+| 16 | **2.57×** | **1.54×** (crossover) |
+| 64 | **4.11×** | **1.68×** |
+| 256 | **5.56×** | **2.05×** |
+
+Both platforms: loses at batch=1 (launch overhead), crosses over at **batch=16**, and climbs with batch — the
+"batch many markets" lever, quantified. Metal wins bigger (5.5×) than the mobile iGPU (2.05×); the hbox 6750
+XT (discrete, currently disk-full so unmeasured) sits above the iGPU — expected ~3–4×. Inverse NTT tracks
+forward (5.54× / 1.91×). BIT-EXACT vs the CPU engine at every batch.
+
+**This is the real DrEX GPU story:** BFV ct×ct multiply rides this NTT, so the multiply/convex/dark-AMM path
+is a genuine GPU win at batch — exactly where the fold is a loss. The fold-only analysis missed it entirely.
 
 **The lesson, kept:** one honest negative measurement (the fold loses) is not a thesis about a system. The
 thesis needed the compute-bound kernels measured too — and reaching for "GPU is marginal" from the fold alone
