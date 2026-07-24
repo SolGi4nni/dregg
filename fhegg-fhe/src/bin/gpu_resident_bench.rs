@@ -48,7 +48,7 @@
 
 use fhegg_fhe::bfv_gpu::fold_gpu;
 use fhegg_fhe::bfv_lean::{fold, LeanCiphertext, RnsPoly, FOLD_MODULI};
-use fhegg_fhe::gpu_arena::arena;
+use fhegg_fhe::gpu_arena::{arena, FoldEngine};
 use std::time::Instant;
 
 /// Full-shape fresh-fold ciphertext (2 polys x 3 RNS rows x degree-4096), deterministic canonical
@@ -152,7 +152,9 @@ fn main() {
         .unwrap_or(false);
 
     // Game-scale sweep 10^3..10^5, filtered by the ADAPTER ceiling (printed, never silently clipped).
-    let want: Vec<usize> = vec![1_000, 4_096, 8_192, 16_384, 32_768, 65_536, 100_000];
+    let want: Vec<usize> = vec![
+        1_000, 4_096, 8_192, 16_384, 32_768, 65_536, 100_000, 500_000, 1_000_000,
+    ];
     let sweep: Vec<usize> = want
         .iter()
         .copied()
@@ -164,7 +166,7 @@ fn main() {
         buffer_cap as f64 / 1e9
     );
     if !clipped.is_empty() {
-        println!("CLIPPED by adapter buffer cap (named residual: chunked arena): N in {clipped:?} does not fit one resident buffer");
+        println!("Beyond the single-buffer cap: N in {clipped:?} — measured below via the STREAMING (chunked) FoldEngine path, which IS built (fold_streaming). The single-buffer ceiling was never the real limit.");
     }
     if mutate_parity {
         println!("MUTATE_PARITY=1 — bench-side corruption armed; the parity tooth MUST go RED");
@@ -370,6 +372,56 @@ fn main() {
             "resident does NOT beat the CPU anywhere in this sweep — the thesis does not hold at this K/N on this adapter (honest finding)"
         }
     );
+
+    // ── STREAMING (chunked) single-clear latency: the large-N sizes the single-buffer path clips ARE
+    // handled by the production `FoldEngine` (fold_streaming — adapter-sized chunks, folded resident,
+    // reduced device-to-device, one readback). The single-buffer "clip" was never the real ceiling. This
+    // measures the ACTUAL DrEX aggregation: fold N encrypted orders into one aggregate curve, GPU vs CPU —
+    // the regime where the earlier N=1M histogram won 11.4x. plain_bound=1 keeps the sum < t for N < 2^20.
+    if !clipped.is_empty() {
+        let engine = FoldEngine::new();
+        println!(
+            "\n=== STREAMING (chunked) single-clear — fold N orders into the aggregate, GPU FoldEngine vs CPU ==="
+        );
+        println!(
+            "{:>9} {:>7} | {:>12} {:>14} | {:>9} | {:>12}",
+            "N", "MB", "CPU fold", "GPU stream", "gpu/cpu", "backend"
+        );
+        for &n in clipped.iter().filter(|&&n| n <= res_max_n) {
+            let cts: Vec<LeanCiphertext> = (0..n as u64).map(|i| synth_ct(i + 1, 1)).collect();
+            let mb = (n as u64 * CT_BYTES) / (1 << 20);
+            let want = fold(&cts, t).expect("cpu fold reference");
+            let exec = engine.fold(&cts, t).expect("streaming fold");
+            if exec.ciphertext != want {
+                eprintln!("STREAMING parity BROKE at N={n} — GPU stream != bfv_lean::fold");
+                std::process::exit(1);
+            }
+            let cpu_s = (0..reps)
+                .map(|_| {
+                    let s = Instant::now();
+                    let _ = fold(&cts, t);
+                    s.elapsed().as_secs_f64()
+                })
+                .fold(f64::MAX, f64::min);
+            let gpu_s = (0..reps)
+                .map(|_| {
+                    let s = Instant::now();
+                    let _ = engine.fold(&cts, t);
+                    s.elapsed().as_secs_f64()
+                })
+                .fold(f64::MAX, f64::min);
+            println!(
+                "{:>9} {:>5}MB | {:>10.1}ms {:>12.1}ms | {:>7.2}x | {:?}",
+                n,
+                mb,
+                cpu_s * 1e3,
+                gpu_s * 1e3,
+                cpu_s / gpu_s,
+                exec.backend
+            );
+        }
+        println!("  (streaming single-clear = ONE aggregation of N orders — the real DrEX fold hot path; BIT-EXACT vs CPU asserted)");
+    }
 
     println!("\nNOTES (read before quoting):");
     println!("- CPU is the deployed single-threaded fold, K full passes; one-shot is the deployed fold_gpu, K calls.");
