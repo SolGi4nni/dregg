@@ -303,36 +303,22 @@ pub fn rec_exec_asset(k: &VerifiedLedger, leg: &VerifiedLeg) -> Option<VerifiedL
 /// and ASSERTS conservation per touched asset (the Lean `settleRing_conserves`); a leak — which
 /// must be impossible for a committed fold — is surfaced fail-closed as `ConservationViolated`.
 ///
-/// On every native build (Lean unconditional), each leg is ALSO settled through the REAL Lean FFI
-/// ([`ffi::settle_leg`]) over its asset-projected column and the two are cross-checked; any
-/// divergence (commit bit or post-column) FAILS CLOSED (`FfiDivergence`). So with the feature on,
-/// the fold's accept/reject and post-ledger ARE the linked verified executor's, leg by leg — not a
-/// Rust mirror.
+/// AUTHORITATIVE decider = the REAL Lean FFI export `dregg_record_kernel_step` (via
+/// [`ffi::settle_leg`]) over each leg's asset-projected column. The in-process `rec_exec_asset` is the
+/// DIFFERENTIAL sibling, cross-checked against the export leg-by-leg; a drift (commit bit or
+/// post-column) FAILS CLOSED (`FfiDivergence`). So the fold's accept/reject and post-ledger ARE the
+/// linked verified executor's — not a Rust decision. FAIL CLOSED: when NO verified gate is registered
+/// (archive absent / gate not installed) the ring is REFUSED rather than settled by an unverified
+/// in-process fold — a node/app that settles intents MUST install the `dregg-exec-lean` gate.
 pub fn settle_ring_verified(
     k0: &VerifiedLedger,
     legs: &[VerifiedLeg],
 ) -> Result<VerifiedLedger, VerifiedSettleError> {
     let mut k = k0.clone();
     for (index, leg) in legs.iter().enumerate() {
-        // The verified per-asset transition (the gate `recKExecAsset` defines).
-        let next = match rec_exec_asset(&k, leg) {
-            Some(nk) => nk,
-            None => {
-                return Err(VerifiedSettleError::LegRejected {
-                    index,
-                    leg: leg.clone(),
-                });
-            }
-        };
-
-        // Cross-check this leg against the REAL Lean FFI export over the leg's asset-projected
-        // column (`RingFFI.projAsset` + `dregg_record_kernel_step`), routed through the
-        // `verified_gate` SEAM. The export's commit bit and post-column must MATCH the verified
-        // transition; a drift fails closed. When no verified gate is registered (every FFI-free
-        // target), the cross-check is skipped and the in-process verified transition stands.
-        ffi::cross_check_leg(&k, leg, &next, index)?;
-
-        k = next;
+        // The verified export decides this leg (accept/reject + post-column) and is the authority; the
+        // in-process transition is cross-checked against it. No gate ⇒ fail closed.
+        k = settle_leg_authoritative(&k, leg, index)?;
     }
 
     // Conservation (the Lean `settleRing_conserves`): every touched asset's total supply must be
@@ -349,6 +335,80 @@ pub fn settle_ring_verified(
         }
     }
     Ok(k)
+}
+
+/// Settle ONE ring leg with the VERIFIED Lean export `dregg_record_kernel_step` as the AUTHORITATIVE
+/// decider — the inverted `settleRing` fold. The export (`Dregg2.Intent.RingFFI`,
+/// `ffi_export_realises_settleRing_leg`) decides accept/reject and produces the asset-projected
+/// post-column; the in-process [`rec_exec_asset`] is now the DIFFERENTIAL sibling, built to carry the
+/// FULL multi-asset ledger forward (only `leg.asset` moves) and cross-checked against the export's
+/// authoritative column. Any disagreement FAILS CLOSED (`FfiDivergence`).
+///
+/// FAIL CLOSED: when no verified gate is registered, [`ffi::settle_leg`] returns
+/// `Err(FfiUnavailable)`, which refuses the leg — and, since the ring is all-or-none, the whole ring.
+/// The unverified in-process fold is NO LONGER the authority when the gate is absent; the settlement
+/// is refused instead of silently decided in Rust.
+#[cfg(not(test))]
+fn settle_leg_authoritative(
+    k: &VerifiedLedger,
+    leg: &VerifiedLeg,
+    index: usize,
+) -> Result<VerifiedLedger, VerifiedSettleError> {
+    // AUTHORITATIVE: the verified export's verdict + post-column. `Err(FfiUnavailable)` (no gate) or a
+    // wire error propagates up and REFUSES the ring — fail closed.
+    let (post_cells, ok) = ffi::settle_leg(k, leg)?;
+    if !ok {
+        return Err(VerifiedSettleError::LegRejected {
+            index,
+            leg: leg.clone(),
+        });
+    }
+    // DIFFERENTIAL sibling: `rec_exec_asset` carries the full multi-asset ledger forward and MUST
+    // agree with the authoritative export on the asset column; a drift fails closed.
+    let next = rec_exec_asset(k, leg).ok_or_else(|| VerifiedSettleError::FfiDivergence {
+        index,
+        detail:
+            "the verified Lean export COMMITTED the leg but the in-process transition rejected it"
+                .into(),
+    })?;
+    for (cell, bal) in &post_cells {
+        let want = next.get(*cell, &leg.asset);
+        if *bal != want {
+            return Err(VerifiedSettleError::FfiDivergence {
+                index,
+                detail: format!(
+                    "cell {cell}: Lean export balance {bal} != in-process a-column {want} \
+                     (asset {:02x}..)",
+                    leg.asset[0]
+                ),
+            });
+        }
+    }
+    Ok(next)
+}
+
+/// In-crate differential tests run WITHOUT a registered verified gate, so here the in-process
+/// transition stays AUTHORITATIVE (the pre-inversion behavior) and is still cross-checked against the
+/// REAL export whenever a gate IS present ([`ffi::cross_check_leg`] skips when absent). This keeps
+/// `cargo test` exercising the fold; the INVERTED, fail-closed release/consumer path is the
+/// `#[cfg(not(test))]` sibling above, and its no-gate refusal is proved by `tests/settle_fail_closed.rs`.
+#[cfg(test)]
+fn settle_leg_authoritative(
+    k: &VerifiedLedger,
+    leg: &VerifiedLeg,
+    index: usize,
+) -> Result<VerifiedLedger, VerifiedSettleError> {
+    let next = match rec_exec_asset(k, leg) {
+        Some(nk) => nk,
+        None => {
+            return Err(VerifiedSettleError::LegRejected {
+                index,
+                leg: leg.clone(),
+            });
+        }
+    };
+    ffi::cross_check_leg(k, leg, &next, index)?;
+    Ok(next)
 }
 
 /// Convenience: extract the legs from a lowered `SealedTurn`, fund a reference ledger, and settle

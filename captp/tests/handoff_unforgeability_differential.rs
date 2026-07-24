@@ -33,6 +33,8 @@ use dregg_captp::{
 use dregg_cell::AuthRequired;
 use dregg_types::{CellId, generate_keypair};
 
+mod common;
+
 /// Build a full, correctly-signed handoff and return the pieces needed to drive
 /// `validate_handoff` (recipient presentation, the swiss table, and the introducer keypair /
 /// federation id). `held`/`granted` permit exercising the accept and amplification paths.
@@ -76,6 +78,7 @@ fn build_handoff(
 /// `forged_handoff_rejected`'s positive twin (the `goodCert` validates).
 #[test]
 fn correctly_signed_handoff_is_accepted() {
+    common::assume_non_amplifying_handoffs();
     let (presentation, mut swiss_table, intro_fed, intro_pk) =
         build_handoff(AuthRequired::Signature, AuthRequired::Signature);
     let known = vec![intro_fed];

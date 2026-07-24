@@ -18,8 +18,12 @@
 //!     someone must edit `LEAN_DECISION_TABLE` here to match, re-exposing any Rust drift.
 //!
 //! It ALSO drives the FULL runtime entry point (`validate_handoff`) over every (held, granted)
-//! pair and asserts the accept/reject verdict matches the lattice — the negative tooth lands on
-//! the actual admission path, not just the helper.
+//! pair. Since `validate_handoff`'s §6 verdict now comes ONLY from the verified Lean gate (the
+//! hand-written Rust lattice was deleted from the live path) and this binary registers NO gate, that
+//! runtime tooth asserts `validate_handoff` FAILS CLOSED — refuses every pair with `Amplification`,
+//! including attenuating pairs the old Rust fallback would have admitted. The admit-iff-lattice
+//! decision itself is pinned Rust↔Lean by the two pure teeth here and exercised over a linked archive
+//! in `dregg-exec-lean`.
 
 use dregg_captp::{
     FederationId, HandoffCertificate, HandoffError, HandoffPresentation, SwissTable,
@@ -136,39 +140,35 @@ fn run_handoff(held: AuthRequired, granted: AuthRequired) -> Result<(), HandoffE
     validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150).map(|_| ())
 }
 
-/// THE ADMISSION TOOTH: for every (held, granted) over the corpus, `validate_handoff` accepts
-/// iff `granted.is_narrower_or_equal(held)` (the Lean-pinned lattice). An amplifying pair MUST
-/// be rejected with `Amplification`; an attenuating pair MUST be accepted.
+/// THE FAIL-CLOSED TOOTH: `validate_handoff`'s §6 non-amplification verdict now comes ONLY from the
+/// verified Lean gate (`dregg_captp_validate_handoff`); the hand-written Rust rights lattice was
+/// deleted from the live path. With NO verified gate registered — the state of this test binary —
+/// `validate_handoff` FAILS CLOSED at §6: EVERY handoff over the corpus, attenuating AND amplifying,
+/// is REFUSED with `Amplification`. In particular a legitimately ATTENUATING handoff (which the
+/// deleted Rust fallback would have admitted) is now refused, proving the twin is gone from the live
+/// path. (The Rust↔Lean lattice agreement is pinned by the two pure teeth above; the ADMITTING path
+/// over a linked archive is exercised in `dregg-exec-lean`'s tests.)
 #[test]
-fn validate_handoff_admission_matches_lattice_over_corpus() {
+fn validate_handoff_fails_closed_over_corpus_without_gate() {
     let ps = probes();
     for held in &ps {
         for granted in &ps {
-            let lattice_ok = granted.is_narrower_or_equal(held);
             let verdict = run_handoff(held.clone(), granted.clone());
-            match (lattice_ok, &verdict) {
-                (true, Ok(())) => {}
-                (false, Err(HandoffError::Amplification)) => {}
-                (true, Err(e)) => panic!(
-                    "ATTENUATING handoff (granted={granted:?} ⊆ held={held:?}) was REJECTED ({e:?}); \
-                     validate_handoff is stricter than the proven lattice"
-                ),
-                (false, Ok(())) => panic!(
-                    "AMPLIFYING handoff (granted={granted:?} ⊄ held={held:?}) was ACCEPTED; \
-                     NON-AMPLIFICATION BREACH — validate_handoff admits more than held"
-                ),
-                (false, Err(e)) => panic!(
-                    "amplifying handoff (granted={granted:?}, held={held:?}) rejected with {e:?}, \
-                     expected Amplification — wrong rejection reason masks the lattice check"
-                ),
-            }
+            assert_eq!(
+                verdict,
+                Err(HandoffError::Amplification),
+                "without the verified gate, validate_handoff must FAIL CLOSED (refuse as \
+                 Amplification) — held={held:?} granted={granted:?}; including attenuating pairs the \
+                 deleted Rust lattice would have admitted"
+            );
         }
     }
 }
 
-/// Spot-check the headline amplification: granting `None` (unauthenticated) over a held
-/// `Signature` is rejected as `Amplification` at the runtime entry point. Mirrors Lean
-/// `grant_none_over_nonnone_amplifies`.
+/// The headline amplification — granting `None` (unauthenticated) over a held `Signature` — is
+/// refused as `Amplification` at the runtime entry point (Lean `grant_none_over_nonnone_amplifies`).
+/// With no gate registered here the refusal is the fail-closed refusal; a fortiori the amplifying
+/// handoff never slips through.
 #[test]
 fn grant_none_over_signature_rejected_at_runtime() {
     assert_eq!(
@@ -177,8 +177,9 @@ fn grant_none_over_signature_rejected_at_runtime() {
     );
 }
 
-/// Conjuring `Signature` from a held `Impossible` (locked cap) is rejected. Mirrors Lean
-/// `grant_signature_over_impossible_amplifies`.
+/// Conjuring `Signature` from a held `Impossible` (locked cap) is refused (Lean
+/// `grant_signature_over_impossible_amplifies`). As above, the refusal is fail-closed without the
+/// gate; the amplifying handoff is never admitted.
 #[test]
 fn grant_signature_over_impossible_rejected_at_runtime() {
     assert_eq!(

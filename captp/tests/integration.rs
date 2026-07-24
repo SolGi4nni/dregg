@@ -16,6 +16,8 @@ use dregg_captp::{
 use dregg_cell::AuthRequired;
 use dregg_types::{CellId, generate_keypair};
 
+mod common;
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -350,6 +352,7 @@ fn multi_federation_gc_independence() {
 
 #[test]
 fn three_party_handoff_alice_introduces_bob_to_carol() {
+    common::assume_non_amplifying_handoffs();
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
 

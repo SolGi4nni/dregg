@@ -732,10 +732,10 @@ fn effect_mask_field(m: Option<EffectMask>) -> String {
 /// Decide the §6 non-amplification verdict via the VERIFIED Lean export
 /// `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`). Returns
 /// `Some(true)` (non-amplifying) / `Some(false)` (amplifies) when the gate ran, or `None` when the
-/// verified gate is unavailable (feature off / archive lacks the export) so the caller falls back to
-/// the Rust lattice. Routes through the [`crate::verified_gate`] seam; returns `None` when no
-/// verified gate is registered (every FFI-free target / archive lacks the export) so the crate has
-/// no hard dependency on the Lean archive.
+/// verified gate is unavailable (no gate registered / archive lacks the export) — in which case
+/// [`validate_handoff`] FAILS CLOSED (treats the handoff as amplifying and REFUSES) rather than
+/// running an unverified Rust decision on the live path. Routes through the [`crate::verified_gate`]
+/// seam so the crate has no hard dependency on the Lean archive.
 fn verified_non_amplifying(
     granted_perm: &AuthRequired,
     held_perm: &AuthRequired,
@@ -753,7 +753,8 @@ fn verified_non_amplifying(
         effect_mask_field(held_eff),
         effect_mask_field(granted_eff),
     );
-    // FFI / wire error ⇒ fall back to the Rust lattice (never break the live handoff path).
+    // FFI / wire error ⇒ `None` ⇒ the caller FAILS CLOSED (refuses the handoff), never a silent
+    // unverified Rust decision.
     gate.handoff_non_amplifying(&wire)
 }
 
@@ -823,34 +824,27 @@ pub fn validate_handoff(
     }
 
     // 6. Non-amplification (Granovetter): granted ⊆ held — on BOTH the permission lattice and the
-    //    effect-mask facet.
+    //    effect-mask facet. The AUTHORITATIVE decider is the VERIFIED Lean export
+    //    `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`, proved
+    //    equal to the export by `captp_validate_handoff_eq`), routed through the [`crate::verified_gate`]
+    //    seam. The hand-written Rust rights lattice is NO LONGER a live decider here: it was a
+    //    differential twin that could silently diverge in a config where the gate is absent, so it has
+    //    been deleted from this live path.
     //
-    //    STRONG-FORM SWAP: on every native build (Lean unconditional), this verdict is decided BY the VERIFIED
-    //    Lean export `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`,
-    //    proved equal to the export by `captp_validate_handoff_eq`); the Rust lattice below is then the
-    //    DIFFERENTIAL sibling. Without the feature (or when the archive lacks the export) the Rust
-    //    lattice decides. Either way the decision is fail-CLOSED on amplification.
-    //
-    //    a) Permission lattice: the granted `AuthRequired` must be narrower-than-or-equal to the held
-    //       `AuthRequired` (Impossible ≤ Proof/Signature ≤ Either ≤ None; Custom comparable only to an
-    //       identical Custom). b) Effect facet mask: a `None` held mask is unrestricted (any granted
-    //       mask attenuates it); a concrete held mask requires the granted mask be a bitwise subset.
-    let rust_non_amplifying = cert.permissions.is_narrower_or_equal(&held.permissions)
-        && match (cert.allowed_effects, held.allowed_effects) {
-            (_, None) => true,        // held unrestricted: granted always attenuates
-            (None, Some(_)) => false, // held restricted, granted unrestricted: amplify
-            (Some(granted_mask), Some(held_mask)) => {
-                dregg_cell::is_facet_attenuation(held_mask, granted_mask)
-            }
-        };
-    // The AUTHORITATIVE verdict: the verified Lean gate when linked, else the Rust lattice.
+    //    FAIL CLOSED: when no verified gate is registered (an FFI-free target, a vat that never
+    //    installed the `dregg-exec-lean` gate, or an archive lacking the export) the verdict is treated
+    //    as AMPLIFYING and the handoff is REFUSED — never a silent unverified Rust decision. A
+    //    production vat MUST install the gate; refusing the handoff is the safe verdict when it is
+    //    absent. (The concrete rights lattice `AuthRequired::is_narrower_or_equal` + `is_facet_attenuation`
+    //    remains pinned Rust↔Lean by `handoff_lattice_differential.rs`, and the ACCEPTING path over a
+    //    linked archive is exercised in `dregg-exec-lean`'s tests.)
     let non_amplifying = verified_non_amplifying(
         &cert.permissions,
         &held.permissions,
         cert.allowed_effects,
         held.allowed_effects,
     )
-    .unwrap_or(rust_non_amplifying);
+    .unwrap_or(false);
     if !non_amplifying {
         return Err(HandoffError::Amplification);
     }

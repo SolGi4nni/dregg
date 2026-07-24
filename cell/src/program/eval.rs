@@ -254,6 +254,70 @@ fn evaluate_constraint(
     )
 }
 
+/// Is `constraint` in the LEAN-EVALUATED subset (classes a/b + the `AnyOf`/`AllOf` combinators of
+/// `Dregg2.Exec.DeployedConstraint`)? Returns `false` ONLY for the eleven class-c
+/// witness/crypto/executor-state variants — the named trusted-Rust slot enumerated (no wildcard) in
+/// `dregg-exec-lean::constraint_oracle::encode_constraint` — which are Rust-evaluated on EVERY target,
+/// even with the oracle installed (`admits` returns `None` for them).
+///
+/// Used to FAIL CLOSED on a native node with NO oracle installed: the subset's admission MUST be
+/// decided by the verified `dregg_constraint_admits`, so a subset constraint reached with no oracle is
+/// refused rather than silently Rust-decided. Deliberately OVER-INCLUSIVE — a new/unknown variant
+/// counts as subset ⇒ fail-closed — so any drift from `encode_constraint` biases toward REFUSAL, never
+/// toward a silent unverified admit. (This mirror of the class-c list must track `encode_constraint`;
+/// the safe direction of any mismatch is that the subset over-covers.)
+///
+/// GATED to RELEASE (deployed) native builds — see [`no_oracle_subset_disposition`] for why this is
+/// `not(debug_assertions)` (cell's own convention for "production", the same one the `test-stubs`
+/// guard uses) rather than a plain `not(test)`.
+#[cfg(any(test, all(not(debug_assertions), any(unix, windows))))]
+fn constraint_in_lean_subset(constraint: &StateConstraint) -> bool {
+    !matches!(
+        constraint,
+        StateConstraint::PreimageGate { .. }
+            | StateConstraint::KeyRotationGate { .. }
+            | StateConstraint::ClearanceDominates { .. }
+            | StateConstraint::SenderAuthorized { .. }
+            | StateConstraint::Renounced { .. }
+            | StateConstraint::Witnessed { .. }
+            | StateConstraint::TemporalPredicate { .. }
+            | StateConstraint::ObservedFieldEquals { .. }
+            | StateConstraint::AnyOfBound { .. }
+            | StateConstraint::CountGe { .. }
+            | StateConstraint::Custom { .. }
+    )
+}
+
+/// The no-oracle disposition for a single constraint on a deployed native node:
+/// `Some(Err(ConstraintOracleUnavailable))` for a Lean-SUBSET constraint (FAIL CLOSED — the subset
+/// must be decided by the verified `dregg_constraint_admits`, never the unverified Rust `match`), or
+/// `None` for a class-c witness/crypto/executor-state variant (the named trusted-Rust slot, which
+/// falls through to the hand-written evaluator on every target).
+///
+/// ACTIVATED only on a native RELEASE build with no oracle (the gate in
+/// [`evaluate_constraint_full`]). `dregg-cell` is a pervasive shared dependency, so a plain
+/// `not(test)` fail-closed would refuse VALID turns for every programmed cell across the whole
+/// workspace's DEBUG test builds (which never install the oracle). Gating on `not(debug_assertions)`
+/// is the faithful generalization of the coordination twins' `cfg(test)` split: the deployed (release)
+/// node fails closed without the verified oracle — closing the audit's fail-OPEN, the production
+/// mint/authz risk — while dev/test (debug) builds keep the guest-path evaluator green. It is cell's
+/// OWN "production" convention: the `test-stubs` accept-path guard uses the same `not(debug_assertions)`.
+/// A deployed node is a release build and additionally installs the Lean oracle at startup.
+///
+/// Compiled under `test` too so this pure disposition is unit-tested directly (the gate ACTIVATION is
+/// release-only, which cell cannot test at runtime — the `test-stubs` invariant forbids release test
+/// builds — so the LOGIC is pinned here and the wiring by `cargo check --release`).
+#[cfg(any(test, all(not(debug_assertions), any(unix, windows))))]
+fn no_oracle_subset_disposition(constraint: &StateConstraint) -> Option<Result<(), ProgramError>> {
+    if constraint_in_lean_subset(constraint) {
+        Some(Err(ProgramError::ConstraintOracleUnavailable {
+            constraint: constraint.clone(),
+        }))
+    } else {
+        None
+    }
+}
+
 /// Evaluate a single constraint against the cell state with a witness
 /// bundle in scope (Cav-Codex Block 2). When the bundle carries a
 /// matching witness for `SenderAuthorized`, `PreimageGate`,
@@ -284,6 +348,22 @@ fn evaluate_constraint_full(
     if let Some(oracle) = super::oracle::installed_oracle() {
         if let Some(decision) = oracle.admits(constraint, new_state, old_state, ctx, meta) {
             return decision;
+        }
+        // Oracle installed but `admits` returned `None` ⇒ a class-c (witness/crypto/executor-state)
+        // variant, the named trusted-Rust slot ⇒ the hand-written evaluator below decides it.
+    } else {
+        // NO Lean constraint oracle installed. On a NATIVE node the Lean-subset admission MUST be
+        // computed by the verified `dregg_constraint_admits`; running the hand-written Rust `match`
+        // for the subset here is the fail-OPEN the game-proof audit found (a node that forgot
+        // `install_constraint_oracle` silently ran the Rust twin). FAIL CLOSED for the subset instead;
+        // the class-c variants (the trusted-Rust slot) still fall through to the evaluator below.
+        // (wasm32 / the SP1 zkVM guest cannot link the Lean archive and keep the Rust subset arms
+        // below, explicitly non-verified. The gate is RELEASE-only — see `no_oracle_subset_disposition`
+        // — so debug/test builds across the workspace keep the guest evaluator and stay green; a
+        // deployed release node without the oracle fails closed.)
+        #[cfg(all(not(debug_assertions), any(unix, windows)))]
+        if let Some(disposition) = no_oracle_subset_disposition(constraint) {
+            return disposition;
         }
     }
     match constraint {
@@ -2963,4 +3043,45 @@ pub fn field_from_u64(val: u64) -> FieldElement {
 /// Alias for `field_from_u64` — explicit big-endian naming for clarity at call sites.
 pub fn field_from_u64_be(val: u64) -> FieldElement {
     field_from_u64(val)
+}
+
+/// FAIL-CLOSED logic pins for the constraint-oracle subset twin (#2). These exercise the pure
+/// no-oracle disposition directly (its ACTIVATION in `evaluate_constraint_full` is release-only —
+/// `not(debug_assertions)` — and cell cannot run a release test build because the `test-stubs`
+/// accept-path guard forbids it, so the gate WIRING is pinned by `cargo check --release`).
+#[cfg(test)]
+mod constraint_oracle_fail_closed_tests {
+    use super::*;
+    use crate::program::types::RenouncedSet;
+
+    #[test]
+    fn no_oracle_disposition_fails_closed_for_lean_subset() {
+        // A Lean-SUBSET constraint (`FieldEquals`, class-a/pure) ⇒ FAIL CLOSED when no oracle is
+        // installed: the deployed evaluator refuses rather than deciding the subset in unverified Rust.
+        let subset = StateConstraint::FieldEquals {
+            index: 0,
+            value: field_from_u64(7),
+        };
+        assert!(
+            matches!(
+                no_oracle_subset_disposition(&subset),
+                Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
+            ),
+            "a Lean-subset constraint must fail closed (ConstraintOracleUnavailable) with no oracle"
+        );
+    }
+
+    #[test]
+    fn no_oracle_disposition_defers_class_c_to_the_trusted_rust_slot() {
+        // A class-c witness/crypto variant (`Renounced` — a non-membership proof) is the named
+        // trusted-Rust slot: the disposition returns `None` so it falls through to the hand-written
+        // evaluator on every target, exactly as when an oracle IS installed and `admits` returns `None`.
+        let class_c = StateConstraint::Renounced {
+            set: RenouncedSet::PublicRoot { set_root_index: 0 },
+        };
+        assert!(
+            no_oracle_subset_disposition(&class_c).is_none(),
+            "a class-c (witness/crypto/executor-state) constraint must defer to the Rust trusted slot"
+        );
+    }
 }

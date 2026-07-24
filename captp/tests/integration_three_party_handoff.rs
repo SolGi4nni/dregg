@@ -15,6 +15,8 @@ use dregg_captp::{
 use dregg_cell::AuthRequired;
 use dregg_types::{CellId, generate_keypair};
 
+mod common;
+
 fn fed(b: u8) -> FederationId {
     FederationId([b; 32])
 }
@@ -29,6 +31,7 @@ fn cell(b: u8) -> CellId {
 
 #[test]
 fn three_party_full_flow_alice_introduces_bob_to_carol() {
+    common::assume_non_amplifying_handoffs();
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
 
@@ -196,6 +199,7 @@ fn untrusted_introducer_rejected() {
 
 #[test]
 fn cert_compact_string_roundtrip_still_validates() {
+    common::assume_non_amplifying_handoffs();
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
 
@@ -239,6 +243,7 @@ fn cert_compact_string_roundtrip_still_validates() {
 
 #[test]
 fn handoff_followed_by_gc_lifecycle() {
+    common::assume_non_amplifying_handoffs();
     let (alice_sk, alice_pk) = generate_keypair();
     let alice_fed = FederationId(alice_pk.0);
 

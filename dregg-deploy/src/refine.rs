@@ -108,6 +108,11 @@ pub enum Proc {
 /// `procSize p` — the payload-free node-count, `procSize Done = 0` (the
 /// well-founded measure; `FlowRefine.procSize`). The decision fuel is
 /// `proc_size + 1`, always sufficient (`pstep_decreases`: every move shrinks it).
+///
+/// Part of the σ-free MIRROR, which is only the decider on wasm32 / the SP1 zkVM guest (targets that
+/// cannot link the Lean archive); on a native build the verified export is authoritative and this is
+/// unused (hence the cfg). Retained under `test` for the FFI↔mirror differential.
+#[cfg(any(test, not(any(unix, windows))))]
 fn proc_size(p: &Proc) -> usize {
     match p {
         Proc::Done => 0,
@@ -150,6 +155,9 @@ fn moves(p: &Proc) -> Vec<(u64, Proc)> {
 /// `FlowRefine.decideFuel`: at each round every Spoiler move of `p` must have a
 /// SAME-letter Duplicator answer of `q` that continues to simulate (one fewer
 /// round). Structurally recursive in the fuel ⟹ terminating.
+///
+/// σ-free MIRROR internals — see [`proc_size`]: only the decider on wasm32 / the SP1 zkVM guest.
+#[cfg(any(test, not(any(unix, windows))))]
 fn decide_fuel(n: usize, p: &Proc, q: &Proc) -> bool {
     if n == 0 {
         return false;
@@ -162,12 +170,13 @@ fn decide_fuel(n: usize, p: &Proc, q: &Proc) -> bool {
 }
 
 /// The in-process σ-free simulation-game decision — the Rust MIRROR of
-/// `FlowRefine.decideRefines`, kept as the FALLBACK for targets that cannot link
-/// the verified Lean archive (`wasm32`, the zkvm guest) or a stale archive that
-/// predates the `dregg_decide_refines` export. On a normal native build the
-/// linked-archive path ([`decide_refines`]) runs the PROVEN procedure instead;
-/// [`decide_refines_via_ffi_then_mirror`] proves the two AGREE on every comparison
-/// the gate makes (the differential tooth in `tests.rs`).
+/// `FlowRefine.decideRefines`. This is the decider ONLY on targets that cannot link the verified Lean
+/// archive (`wasm32`, the SP1 zkVM guest); it is explicitly NON-VERIFIED. On a native build it is NOT
+/// on the live deploy path — [`decide_refines`] routes through the PROVEN `dregg_decide_refines`
+/// export and FAILS CLOSED (refuses the deploy) when that export is absent, never falling back here.
+/// It AGREES with the verified procedure by construction (the game is σ-free); the FFI↔mirror
+/// differential in `tests.rs` pins that agreement.
+#[cfg(any(test, not(any(unix, windows))))]
 fn decide_refines_mirror(a: &Proc, b: &Proc) -> bool {
     decide_fuel(proc_size(a) + 1, a, b)
 }
@@ -214,26 +223,34 @@ fn refine_wire(a: &Proc, b: &Proc) -> String {
 /// **`decide_refines A B`** — the refinement DECISION. Returns `true` iff `A`
 /// refines `B` in the online simulation order `≤ᶠ`.
 ///
-/// When the linked Lean archive exports the verified gate
-/// ([`dregg_lean_ffi::decide_refines_gate_available`]), this routes the decision
-/// through `@[export] dregg_decide_refines` — the PROVEN `FlowRefine.decideRefines`,
-/// whose SOUNDNESS + COMPLETENESS against `≤ᶠ` is the Lean theorem `decideRefines_iff`
-/// (LAW #1). So the deploy gate runs the verified procedure, not a re-implementation.
-/// On a target that cannot link the archive (or a stale one lacking the export) it
-/// falls back to the in-process σ-free mirror [`decide_refines_mirror`] (the two AGREE
-/// by construction — the algorithm is identical and σ-free; the differential test pins it).
+/// On a NATIVE build (the deploy gate always runs here) this routes the decision through
+/// `@[export] dregg_decide_refines` — the PROVEN `FlowRefine.decideRefines`, whose SOUNDNESS +
+/// COMPLETENESS against `≤ᶠ` is the Lean theorem `decideRefines_iff` (LAW #1) — as the SOLE authority.
+/// It FAILS CLOSED (returns `false` = "does not refine" ⇒ refuse the deploy) when the archive lacks
+/// the export or the FFI errors; the σ-free Rust mirror is NO LONGER a live fallback on native, so the
+/// deploy gate can never be decided by an unverified re-implementation. On wasm32 / the SP1 zkVM guest
+/// (targets that cannot link the archive) the σ-free [`decide_refines_mirror`] is the only decider
+/// available and is used there, explicitly NON-VERIFIED.
 pub fn decide_refines(a: &Proc, b: &Proc) -> bool {
-    if dregg_lean_ffi::decide_refines_gate_available() {
-        match dregg_lean_ffi::shadow_decide_refines(&refine_wire(a, b)) {
-            Ok(v) if v == "1" => return true,
-            Ok(v) if v == "0" => return false,
-            // "ERR" (a wire the proven gate rejected) or any FFI error: fall through to the mirror
-            // rather than silently mis-deciding. (A well-formed deploy `Proc` never hits this; the
-            // fallback is defense-in-depth, and the differential test asserts FFI == mirror.)
-            _ => {}
+    #[cfg(any(unix, windows))]
+    {
+        if dregg_lean_ffi::decide_refines_gate_available() {
+            return match dregg_lean_ffi::shadow_decide_refines(&refine_wire(a, b)) {
+                Ok(v) if v == "1" => true,
+                Ok(v) if v == "0" => false,
+                // "ERR" (a wire the proven gate rejected) or any FFI error: FAIL CLOSED — refuse the
+                // deploy rather than silently mis-decide in an unverified Rust mirror.
+                _ => false,
+            };
         }
+        // No verified export linked on a native build ⇒ FAIL CLOSED (refuse the deploy), never the
+        // Rust mirror.
+        false
     }
-    decide_refines_mirror(a, b)
+    #[cfg(not(any(unix, windows)))]
+    {
+        decide_refines_mirror(a, b)
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

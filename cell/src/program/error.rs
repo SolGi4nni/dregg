@@ -72,6 +72,18 @@ pub enum ProgramError {
     /// wire bytes and no reachability argument should be load-bearing
     /// for whether a node stays up.
     NegationNotLiftable,
+    /// A Lean-subset `StateConstraint` was evaluated on a NATIVE node with NO
+    /// constraint oracle installed. The Lean-evaluated subset's admission MUST
+    /// be decided by the verified `dregg_constraint_admits`
+    /// (`Dregg2.Exec.DeployedConstraint.admits`), installed via
+    /// [`super::oracle::install_constraint_oracle`]. When the oracle is absent
+    /// on a native build, the deployed evaluator FAILS CLOSED with this sentinel
+    /// rather than silently deciding the subset in the hand-written Rust `match`
+    /// (the fail-OPEN the game-proof audit found). A production node MUST install
+    /// the oracle; the class-c witness/crypto/executor-state variants remain the
+    /// named trusted-Rust slot and are unaffected. (wasm32 / the SP1 zkVM guest
+    /// cannot link the archive and keep the Rust subset arms, labeled unverified.)
+    ConstraintOracleUnavailable { constraint: StateConstraint },
 }
 
 impl core::fmt::Display for ProgramError {
@@ -150,6 +162,12 @@ impl core::fmt::Display for ProgramError {
                 write!(
                     f,
                     "SimpleStateConstraint::Not has no StateConstraint lift; evaluate it through evaluate_simple_constraint, which peels the negation chain"
+                )
+            }
+            ProgramError::ConstraintOracleUnavailable { .. } => {
+                write!(
+                    f,
+                    "no constraint oracle installed: this native node cannot decide a Lean-subset constraint without the verified dregg_constraint_admits oracle — fail-closed (install it via install_constraint_oracle)"
                 )
             }
         }

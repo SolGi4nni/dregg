@@ -454,16 +454,17 @@ fn ffi_decide_refines_agrees_with_lean_both_polarities() {
     let late = late_ex();
 
     if !dregg_lean_ffi::decide_refines_gate_available() {
-        // The archive lacks the export (wasm/zkvm/stale): the gate MUST still
-        // decide correctly via the σ-free mirror. Assert the fallback path here
-        // so this test exercises something real on every target.
+        // The archive lacks the export (wasm/zkvm/stale): on those targets the σ-free MIRROR is the
+        // decider. Assert the mirror directly so this test exercises something real there. (On native
+        // the live `decide_refines` no longer falls back to the mirror — it FAILS CLOSED without the
+        // export — so we drive the mirror function itself, which is what ships to wasm/zkVM.)
         assert!(
-            decide_refines(&early, &late),
-            "fallback: the half holds (early ≤ᶠ late)"
+            super::decide_refines_mirror(&early, &late),
+            "mirror (wasm/zkVM decider): the half holds (early ≤ᶠ late)"
         );
         assert!(
-            !decide_refines(&late, &early),
-            "fallback: the right-skew fails (late ⋠ early)"
+            !super::decide_refines_mirror(&late, &early),
+            "mirror (wasm/zkVM decider): the right-skew fails (late ⋠ early)"
         );
         return;
     }
