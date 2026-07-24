@@ -1331,6 +1331,83 @@ pub fn rotated_descriptor_name_for_effect_fee(effect: &Effect) -> Option<&'stati
     }
 }
 
+/// **The UNDELEGATED spend's delegation-ancestor id** — the felt an honest producer parks in the
+/// deployed `SPEND_ANCESTOR_PARAM_COL` (`prmCol 3` = `PARAM_BASE + 3`, col 71) when the spend is
+/// authorized DIRECTLY by the note holder and so rides no delegated capability.
+///
+/// It is the felt-domain image of the ROOT (mint) derivation node's credential-revocation
+/// nullifier — `fold_bytes32_to_bb(cred_nul(mint_provenance()))` in `dregg_cell::derivation` terms.
+/// The mint root is the terminus of every derivation chain and is never itself a `RevokeDelegation`
+/// target (that verb inserts a CHILD cap's id — `trace.rs`'s `child_hash[0]`), so opening THIS id
+/// `.absent` against the committed revoked set is the honest statement "this spend rides no revoked
+/// delegation", not a fabricated one.
+///
+/// The two BLAKE3 domain strings are the ones `dregg_cell::derivation::{mint_provenance, cred_nul}`
+/// use. `dregg-cell` depends on `dregg-circuit` (never the reverse), so the agreement cannot be a
+/// call across the edge; it is pinned from the cell side by
+/// `dregg_cell::derivation`'s `undelegated_spend_ancestor_matches_mint_root` test.
+pub fn undelegated_spend_ancestor() -> BabyBear {
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg-cap-mint-root-v1");
+    let mint_provenance: [u8; 32] = *h.finalize().as_bytes();
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg-cred-revocation-v1");
+    h.update(&mint_provenance);
+    let cred_nul: [u8; 32] = *h.finalize().as_bytes();
+    crate::effect_vm::fold_bytes32_to_bb(&cred_nul)
+}
+
+/// The param SLOT the deployed `spendAncestorFreshOp` keys on — Lean
+/// `EffectVmEmitRotationV3.SPEND_ANCESTOR_PARAM_COL := prmCol 3`, so the absolute column is
+/// `PARAM_BASE + 3 = 71` (the Lean-side `#guard SPEND_ANCESTOR_PARAM_COL == 71`). Free on a
+/// noteSpend row: the only other declared user of `prmCol 3` is the lifecycle-payload-hash gate
+/// (cellSeal / cellDestroy / receiptArchive), a disjoint descriptor family.
+pub const SPEND_ANCESTOR_PARAM_SLOT: usize = 3;
+
+/// **The spend-side DELEGATION-ANCESTOR REVOCATION witness** — the producer input the deployed
+/// `spendAncestorFreshOp` (`EffectVmEmitRotationV3.spendAncestorFreshOp`, the THIRD map-op on
+/// `noteSpendV3`) consumes: an `.absent` open of the spend's delegation-ancestor id
+/// (`SPEND_ANCESTOR_PARAM_COL`) against the limb-37 `revoked_root` accumulator that
+/// `revokedInsertOp` grows on `RevokeDelegation` turns.
+///
+/// A spend does NOT mutate the revoked set, so `before_revoked` is the set on BOTH sides of the
+/// turn: the generator writes its `root8` into the `REVOKED_ROOT_GROUP` of the BEFORE *and* the
+/// AFTER block (the `.absent` op's `root` and `newRoot` are BOTH `beforeRevokedRootGroup`).
+///
+/// `before_revoked` must be the set the committed `revoked_root` limb actually stands for. Every
+/// live producer today threads `dregg_turn::rotation_witness::empty_revoked_root_8()` (the
+/// grow-only registry starts empty), whose `root8` is exactly this witness's with `&[]` — so the
+/// override is byte-identical to the committed limb and moves no commitment.
+#[derive(Clone, Copy, Debug)]
+pub struct SpendRevocationWitness<'a> {
+    /// The exercised capability's delegation-ancestor id, in the revoked set's key domain.
+    pub ancestor: BabyBear,
+    /// The BEFORE (= AFTER) revoked-set leaves the `.absent` open brackets against.
+    pub before_revoked: &'a [crate::heap_root::HeapLeaf],
+}
+
+impl<'a> SpendRevocationWitness<'a> {
+    /// The spend exercises NO delegated capability (direct holder authority): the ancestor is the
+    /// mint root ([`undelegated_spend_ancestor`]), opened against `before_revoked`.
+    pub fn undelegated(before_revoked: &'a [crate::heap_root::HeapLeaf]) -> Self {
+        Self {
+            ancestor: undelegated_spend_ancestor(),
+            before_revoked,
+        }
+    }
+
+    /// The spend exercises a DELEGATED capability whose derivation-ancestor id is `ancestor`.
+    pub fn under_ancestor(
+        ancestor: BabyBear,
+        before_revoked: &'a [crate::heap_root::HeapLeaf],
+    ) -> Self {
+        Self {
+            ancestor,
+            before_revoked,
+        }
+    }
+}
+
 /// **THE DEPLOYMENT-REAL noteSpend nullifier-tree wiring (the kernel-set grow-gate's witness).**
 ///
 /// The live `noteSpendVmDescriptor2R24` now carries two map-ops gated by the spend selector — the
@@ -1353,7 +1430,15 @@ pub fn rotated_descriptor_name_for_effect_fee(effect: &Effect) -> Option<&'stati
 ///
 /// The nullifier's leaf key is the spend row's folded `param0` (`PARAM_BASE + param::NULLIFIER` —
 /// the SAME felt PI[38] pins), and the inserted leaf value is the note value (`param::NOTE_VALUE_LO`),
-/// so the gate's key/value are the row's own published columns. Returns `(trace, dpis, map_heaps)`.
+/// so the gate's key/value are the row's own published columns.
+///
+/// **THE THIRD MAP-OP (`spendAncestorFreshOp`, limb 37).** The live descriptor also opens the
+/// spend's delegation-ancestor id `.absent` against the committed revoked set. `revocation` carries
+/// the honest producer's answer to that op: the ancestor id goes into `SPEND_ANCESTOR_PARAM_COL`
+/// (`PARAM_BASE + 3`), the revoked set's `root8` into the `REVOKED_ROOT_GROUP` of BOTH blocks (a
+/// spend does not revoke, so the set is unchanged), and the set's leaves are returned as the SECOND
+/// `map_heaps` entry — the prover resolves each op by matching its `root8` against the threaded
+/// heaps. Returns `(trace, dpis, map_heaps)` with `map_heaps = [nullifiers, revoked]`.
 pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     initial_state: &CellState,
     effects: &[Effect],
@@ -1361,9 +1446,12 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_nullifiers: &[crate::heap_root::HeapLeaf],
+    revocation: &SpendRevocationWitness<'_>,
 ) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
-    use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
+    use crate::heap_root::{
+        CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN,
+    };
 
     if !matches!(effects.first(), Some(Effect::NoteSpend { .. })) {
         return Err("nullifier-tree wiring is only for a NoteSpend lead effect".into());
@@ -1411,29 +1499,68 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
         })?;
     let after_root8 = aafi.new_root;
 
+    // THE DELEGATION-ANCESTOR REVOCATION OPEN (`spendAncestorFreshOp`, limb 37). The revoked set is
+    // NOT mutated by a spend, so ONE tree serves the op's `root` and `newRoot` (both
+    // `beforeRevokedRootGroup`). The ancestor must be openable: sentinel-colliding keys have no
+    // bracketing witness and the in-circuit gap teeth would refuse them, so fail closed HERE with a
+    // named error rather than mint an unprovable trace.
+    let revoked_tree = CanonicalHeapTree8::new(revocation.before_revoked.to_vec(), HEAP_TREE_DEPTH);
+    let ancestor = revocation.ancestor;
+    if ancestor == SENTINEL_MIN || ancestor.as_u32() >= SENTINEL_MAX.as_u32() {
+        return Err(format!(
+            "spend delegation-ancestor id {} collides with the revoked-set sentinel range — the \
+             `.absent` open has no bracketing witness",
+            ancestor.as_u32()
+        ));
+    }
+    if revoked_tree.position_of(ancestor).is_some() {
+        return Err(
+            "revoked delegation ancestor: the spend's delegation-ancestor id IS in the committed \
+             revoked set — the in-circuit `spendAncestorFreshOp` (`.absent`) open has no bracketing \
+             witness and refuses the turn"
+                .into(),
+        );
+    }
+    let revoked_root8 = revoked_tree.root8();
+
     let nullifier_group_col =
         |block_base: usize, lane: usize| -> usize { block_base + NULLIFIER_ROOT_GROUP[lane] };
+    let revoked_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + REVOKED_ROOT_GROUP[lane] };
 
     // Write the FAITHFUL 8-felt before/after nullifier-root GROUP into BOTH rotated blocks (lane 0 the
     // scalar limb 26, lanes 1..7 the dedicated completion limbs 68..74 — the map-op `.absent`/`.insert`
-    // root/newRoot groups the deployed AIR binds all eight lanes of), NEVER the lane-0 squeeze. Then
-    // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown set.
+    // root/newRoot groups the deployed AIR binds all eight lanes of), NEVER the lane-0 squeeze. The
+    // revoked-root GROUP (lane 0 the scalar limb 37, lanes 1..7 the completion limbs 82..88) takes the
+    // SAME root on both sides — the spend leaves the revoked set untouched. The ancestor id rides the
+    // declared param column the third map-op keys on. Then recompute the dependent chained commitments
+    // so the published `STATE_COMMIT` binds the grown nullifier set and the opened revoked set.
     for row in trace.iter_mut() {
         for lane in 0..HEAP_DIGEST_W {
             row[nullifier_group_col(BEFORE_BASE, lane)] = before_root8[lane];
             row[nullifier_group_col(AFTER_BASE, lane)] = after_root8[lane];
+            row[revoked_group_col(BEFORE_BASE, lane)] = revoked_root8[lane];
+            row[revoked_group_col(AFTER_BASE, lane)] = revoked_root8[lane];
         }
+        row[PARAM_BASE + SPEND_ANCESTOR_PARAM_SLOT] = ancestor;
         recompute_block_commit(row, BEFORE_BASE);
         recompute_block_commit(row, AFTER_BASE);
     }
 
-    // Re-derive the OLD/NEW rotated commit PIs (the limb-26 override moved the commitments).
+    // Re-derive the OLD/NEW rotated commit PIs (the limb-26/limb-37 overrides moved the commitments).
     let r0_commit = trace[0][BEFORE_BASE + B_STATE_COMMIT];
     let last_commit = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT];
     dpis[V1_PI_COUNT] = r0_commit; // PI 34: rotated OLD commit
     dpis[V1_PI_COUNT + 1] = last_commit; // PI 35: rotated NEW commit
 
-    Ok((trace, dpis, vec![before_nullifiers.to_vec()]))
+    Ok((
+        trace,
+        dpis,
+        vec![
+            before_nullifiers.to_vec(),
+            revocation.before_revoked.to_vec(),
+        ],
+    ))
 }
 
 /// The deployed `cells_root` (limb 0 of the rotated block) — the openable sorted-Poseidon2 accounts
@@ -4964,6 +5091,7 @@ pub fn generate_rotated_note_spend_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
     before_nullifiers: &[crate::heap_root::HeapLeaf],
+    revocation: &SpendRevocationWitness<'_>,
 ) -> RotatedTraceWithHeaps {
     use super::columns::{PARAM_BASE, param};
     let (mut trace, base_pis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
@@ -4973,6 +5101,7 @@ pub fn generate_rotated_note_spend_wide(
         after_w,
         caveat,
         before_nullifiers,
+        revocation,
     )?;
     // §J′: the nullifier key rides param slot 0 (`NULLIFIER_PARAM_COL = prmCol 0`), value slot 1
     // (`prmCol NOTE_VALUE_LO`) — the SAME columns the tree generator reads. Lay the insert read appendix.
@@ -5723,8 +5852,19 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
             .iter()
             .map(|nf| HeapLeaf::entry(*nf, BabyBear::new(1)))
             .collect();
-        generate_rotated_note_spend_wide(initial_state, effects, before, after, caveat, &leaves)
-            .map_err(|e| format!("wide note-spend generation: {e}"))?
+        // No delegated-capability context reaches this dispatch, and the committed `revoked_root`
+        // every live rotation witness carries is `empty_revoked_root_8()`; park the mint-root
+        // ancestor against that same empty set.
+        generate_rotated_note_spend_wide(
+            initial_state,
+            effects,
+            before,
+            after,
+            caveat,
+            &leaves,
+            &SpendRevocationWitness::undelegated(&[]),
+        )
+        .map_err(|e| format!("wide note-spend generation: {e}"))?
     } else if matches!(lead, Effect::NoteCreate { .. }) {
         generate_rotated_note_create_wide(initial_state, effects, before, after, caveat, &[])
             .map_err(|e| format!("wide note-create generation: {e}"))?

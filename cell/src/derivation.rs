@@ -1030,4 +1030,30 @@ mod tests {
         // A node is considered a descendant of itself (reflexive).
         assert!(tree.is_descendant_of((&cell_a, 0), (&cell_a, 0)));
     }
+
+    /// **THE CROSS-CRATE PIN for the deployed limb-37 `spendAncestorFreshOp`.** The circuit's
+    /// producer parks `trace_rotated::undelegated_spend_ancestor()` in `SPEND_ANCESTOR_PARAM_COL`
+    /// for a spend that rides no delegated capability. That felt claims to BE the mint-root
+    /// derivation node's credential-revocation nullifier — but `dregg-cell` depends on
+    /// `dregg-circuit` (never the reverse), so the circuit re-states the two BLAKE3 domains rather
+    /// than calling these functions. This test is the gate: re-derive the value from THE authority
+    /// (`mint_provenance` ∘ `cred_nul`) and require byte equality, so a domain-string drift on
+    /// either side is a RED test rather than a silent divergence between the parked ancestor and
+    /// the id a real revoke would insert.
+    #[test]
+    fn undelegated_spend_ancestor_matches_mint_root() {
+        let authority = dregg_circuit::effect_vm::fold_bytes32_to_bb(&cred_nul(&mint_provenance()));
+        assert_eq!(
+            dregg_circuit::effect_vm::trace_rotated::undelegated_spend_ancestor(),
+            authority,
+            "the circuit's undelegated spend ancestor must be fold(cred_nul(mint_provenance()))"
+        );
+        // …and it must be openable: a sentinel-colliding key has no bracketing `.absent` witness.
+        let a = authority.as_u32();
+        assert!(
+            a != dregg_circuit::heap_root::SENTINEL_MIN.as_u32()
+                && a < dregg_circuit::heap_root::SENTINEL_MAX.as_u32(),
+            "the undelegated ancestor must sit strictly inside the revoked-set sentinel range"
+        );
+    }
 }

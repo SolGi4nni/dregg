@@ -545,6 +545,9 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
         &bridge(&after_w),
         &empty_caveat_manifest(),
         &before_nullifiers,
+        // The limb-37 `spendAncestorFreshOp`: no delegated capability; the block witnesses above
+        // carry `empty_revoked_root_8()`, so the empty set is the committed revoked set.
+        &dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(&[]),
     )
     .expect("wide noteSpend producer");
     // THE S2 DELETION (Epoch 1): the raw family trace is old-geometry; drop the dead

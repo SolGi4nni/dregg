@@ -417,6 +417,7 @@ impl RotationTurnWitness {
                         after_block,
                         caveat,
                         &leaves,
+                        &spend_revocation_witness(),
                     )
                     .map_err(|e| {
                         SdkError::InvalidWitness(format!("wide_commit_anchors note-spend: {e}"))
@@ -570,6 +571,29 @@ pub struct ConservationWitness {
     /// Positive = net credit, negative = net debit. Must be zero for
     /// value-conserving turns (pure internal transfers).
     pub expected_net_delta: i64,
+}
+
+/// **THE SDK's spend-side DELEGATION-ANCESTOR REVOCATION witness** — the producer input the
+/// deployed `spendAncestorFreshOp` (the THIRD `noteSpendV3` map-op: an `.absent` open of the
+/// spend's delegation-ancestor id against the limb-37 `revoked_root` accumulator) consumes.
+///
+/// ONE function so every SDK path that touches a noteSpend trace — the PROVE path
+/// ([`prove_effect_vm_rotated`]), the PI RE-DERIVE path ([`rotated_dpis_for_effects`]) and the wide
+/// commit anchors ([`FullTurnWitness::wide_commit_anchors`]) — writes byte-identical limb-37 and
+/// `SPEND_ANCESTOR_PARAM_COL` columns. They feed the SAME `recompute_block_commit`, so any drift
+/// between them would move the published OLD/NEW commit PIs apart and the re-derive would stop
+/// matching the proof.
+///
+/// TODAY it is the undelegated (mint-root) ancestor against the EMPTY revoked set: no SDK path
+/// carries the exercised capability's derivation-ancestor id (`CapLeaf` does not yet commit
+/// `CapabilityRef::provenance` — see its LEAF NOTE), and every live rotation witness commits
+/// `dregg_turn::rotation_witness::empty_revoked_root_8()`, so the empty set IS the committed
+/// revoked set. When the cap leaf carries provenance, this is the one place to thread
+/// `SpendRevocationWitness::under_ancestor(fold(cred_nul(provenance)), revoked_leaves)`.
+#[cfg(feature = "prover")]
+fn spend_revocation_witness()
+-> dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness<'static> {
+    dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(&[])
 }
 
 /// Cap-membership witness (cap Phase D): the CONSUMED capability's full
@@ -992,6 +1016,7 @@ fn rotated_effect_pi_for(
             &after,
             &rot.caveat,
             &leaves,
+            &spend_revocation_witness(),
         )
         .map_err(|e| SdkError::InvalidWitness(format!("rotated note-spend PI re-derive: {e}")))?;
         return Ok(dpis);
@@ -1105,6 +1130,7 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
             &after,
             caveat,
             &leaves,
+            &spend_revocation_witness(),
         )
         .map_err(|e| {
             SdkError::InvalidWitness(format!("rotated note-spend grow-gate generation: {e}"))

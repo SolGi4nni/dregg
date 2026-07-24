@@ -212,6 +212,8 @@ fn notespend_forced_on_wire_rejects_forged_nullifier_root_anchor_disabled() {
         &bridge(&after_w),
         &caveat,
         &before_nullifiers,
+        // The limb-37 `spendAncestorFreshOp`: no delegated capability, empty committed revoked set.
+        &dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(&[]),
     )
     .expect("nullifier-tree wiring must produce a deployment-real noteSpend trace");
     assert_eq!(trace[0].len(), ROT_WIDTH, "rotated trace width");

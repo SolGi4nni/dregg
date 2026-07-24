@@ -688,13 +688,18 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     //    the nullifier set-insert + freshness against the openable limb-26 accumulator. We wire the
     //    real BEFORE nullifier tree (the spent nullifier ABSENT) so limb 26 carries the deployed
     //    sorted-Poseidon2 root and the prover resolves both map-ops. --
-    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_note_spend_trace_with_nullifier_tree;
+    use dregg_circuit::effect_vm::trace_rotated::{
+        SpendRevocationWitness, generate_rotated_note_spend_trace_with_nullifier_tree,
+    };
     use dregg_circuit::heap_root::HeapLeaf;
     // A non-empty BEFORE nullifier set (distinct from the spent nullifier `0xBEEF`).
     let before_nullifiers = vec![
         HeapLeaf::entry(BabyBear::new(0x1111), BabyBear::new(1)),
         HeapLeaf::entry(BabyBear::new(0x2222), BabyBear::new(1)),
     ];
+    // The THIRD map-op (`spendAncestorFreshOp`, limb 37): this spend rides no delegated capability,
+    // so the honest producer parks the mint-root ancestor against the committed (empty) revoked set.
+    let revocation = SpendRevocationWitness::undelegated(&[]);
     let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
         &st,
         &effects,
@@ -702,6 +707,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
         &bridge(&after_w),
         &caveat,
         &before_nullifiers,
+        &revocation,
     )
     .expect("nullifier-tree wiring must produce a deployment-real note-spend trace");
     let r0 = &trace[0];
@@ -784,11 +790,52 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
             &bridge(&after_w),
             &caveat,
             &spent,
+            &revocation,
         );
         assert!(
             double.is_err(),
             "a DOUBLE-SPEND (nullifier already in the BEFORE tree) MUST be refused by the \
              in-circuit freshness (`.absent`) op — the double-spend hole is closed"
+        );
+    }
+
+    // -- THE DELEGATION-ANCESTOR REVOCATION TOOTH (the limb-37 `spendAncestorFreshOp`): a spend
+    //    whose delegation-ancestor id IS in the committed revoked set has no `.absent` bracketing
+    //    witness, so the wiring REFUSES it before proving. --
+    {
+        let ancestor = BabyBear::new(0x00DE_1E6A);
+        let revoked = vec![HeapLeaf::entry(ancestor, BabyBear::ZERO)];
+        let under_revoked = generate_rotated_note_spend_trace_with_nullifier_tree(
+            &st,
+            &effects,
+            &bridge(&before_w),
+            &bridge(&after_w),
+            &caveat,
+            &before_nullifiers,
+            &SpendRevocationWitness::under_ancestor(ancestor, &revoked),
+        );
+        assert!(
+            under_revoked.is_err(),
+            "a spend under a REVOKED delegation ancestor MUST be refused by the in-circuit \
+             `spendAncestorFreshOp` (`.absent`) open on the limb-37 revoked set"
+        );
+        // …and the SAME ancestor against a revoked set that does NOT hold it still builds (the
+        // tooth is the membership, not the shape of the witness).
+        let fresh_ancestor = generate_rotated_note_spend_trace_with_nullifier_tree(
+            &st,
+            &effects,
+            &bridge(&before_w),
+            &bridge(&after_w),
+            &caveat,
+            &before_nullifiers,
+            &SpendRevocationWitness::under_ancestor(
+                ancestor,
+                &[HeapLeaf::entry(BabyBear::new(0x00AB_CDEF), BabyBear::ZERO)],
+            ),
+        );
+        assert!(
+            fresh_ancestor.is_ok(),
+            "an UNREVOKED delegation ancestor must still produce a deployment-real spend trace"
         );
     }
 

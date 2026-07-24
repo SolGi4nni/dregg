@@ -1217,6 +1217,11 @@ impl TurnExecutor {
                 &placeholder,
                 &caveat,
                 &[],
+                // The limb-37 `spendAncestorFreshOp`: the verifier reconstructs the
+                // witness-INDEPENDENT PIs from PLACEHOLDER blocks and OVERRIDES the commit PIs from
+                // the trusted anchors below, so this mirrors the producer's undelegated default
+                // (mint-root ancestor, empty committed revoked set) rather than a claim of its own.
+                &dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(&[]),
             )
             .map(|(t, d, _heaps)| (t, d))
         } else if matches!(lead, dregg_circuit::effect_vm::Effect::NoteCreate { .. }) {

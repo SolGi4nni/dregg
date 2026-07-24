@@ -9111,8 +9111,8 @@ mod tests {
     #[test]
     fn deployed_notespend_wide_bracket_double_spend_rejected() {
         use crate::effect_vm::trace_rotated::{
-            NUM_PRE_LIMBS, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
-            generate_rotated_note_spend_trace_with_nullifier_tree,
+            NUM_PRE_LIMBS, ROT_WIDTH, RotatedBlockWitness, SpendRevocationWitness,
+            empty_caveat_manifest, generate_rotated_note_spend_trace_with_nullifier_tree,
         };
         use crate::effect_vm::{CellState, Effect};
 
@@ -9171,6 +9171,9 @@ mod tests {
             .expect("NUM_PRE_LIMBS pre-iroot limbs");
         let caveat = empty_caveat_manifest();
 
+        // The THIRD map-op (`spendAncestorFreshOp`): this spend rides no delegated capability, so
+        // the honest producer parks the mint-root ancestor and opens it against the empty revoked
+        // set (the committed `revoked_root` this placeholder witness stands for).
         let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
             &st,
             &effects,
@@ -9178,6 +9181,7 @@ mod tests {
             &zero_w,
             &caveat,
             &before_nullifiers,
+            &SpendRevocationWitness::undelegated(&[]),
         )
         .expect("deployment-real noteSpend trace builds (the spent nullifier is fresh)");
         assert_eq!(trace[0].len(), ROT_WIDTH, "deployed rotated trace width");

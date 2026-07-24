@@ -5940,6 +5940,12 @@ impl AgentCipherclerk {
                     &after_bw,
                     &caveat,
                     &[],
+                    // The limb-37 `spendAncestorFreshOp`: this path threads no delegation context
+                    // and no revoked-set context, so the mint-root ancestor opens against the empty
+                    // set — the same set `empty_revoked_root_8()` commits.
+                    &dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(
+                        &[],
+                    ),
                 )
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!("wide note-spend trace generation: {e}"))
