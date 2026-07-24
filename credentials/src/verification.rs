@@ -282,6 +282,20 @@ fn verify_inner(
         // the token's real fact set, then passing THAT trusted root here. That AIR change is
         // the exact residual; it is out of scope for a Rust fix and must be done in Lean.
         //
+        // BINDING SOUNDNESS (model, PROVEN): the mathematical heart of that fix — "if the
+        // attestation authenticates a member against a `facts_root` equal to the credential's
+        // committed root, the member IS one of the committed leaves; a fabricated fact has no
+        // authenticating co-path" — is proven (no sorry, no axioms, under `hash_4_to_1`
+        // injectivity) in `metatheory/Dregg2/Circuit/Emit/AttestedFactsRootModel.lean`
+        // (`attested_member_is_committed` / `fabricated_member_refused`). What is NOT yet
+        // discharged, and is why this stays FAIL-CLOSED: the emitted presentation descriptor
+        // exposes no `facts_root` PI, AND the credential commits no attribute-facts tree whose
+        // root that PI could equal (the predicate fact `hash_fact(blake3(name),[value,0,0])` is a
+        // different symbol space than the fold-chain facts, so `facts_root != derivation_state_root`).
+        // Landing it is a campaign: issuance/convert (commit the attribute-facts tree) → the
+        // presentation descriptor (expose + weld its root to the trusted derivation) → the
+        // attestation (real co-path into that tree) → this call.
+        //
         // HONEST FLOOR: even fully bound, this predicate proof inherits the deployed STARK/FRI
         // soundness floor (project-fri-soundness-reality) — a proof, not an on-chain-settled
         // fact. Do NOT read a pass here as "sound".
