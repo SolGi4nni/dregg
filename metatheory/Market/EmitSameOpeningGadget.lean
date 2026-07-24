@@ -908,8 +908,16 @@ end Decode
 
 end Market.EmitSameOpeningGadget
 
-/-! ## 13. The emitter (`lake env lean --run`): prints the byte-pinned descriptor JSON. -/
+/-! ## 13. The emitter: prints the byte-pinned descriptor JSON.
 
-def main : IO Unit :=
+⚑ NAMESPACED, deliberately. This module is IMPORTED (`Market.lean:44` → `Dregg2.lean`), so a
+root-level `def main` here collides with the one in `Dregg2/Apps/AgentOrchestration.lean:450` and
+reds the ROOT aggregate ("environment already contains 'main'") even though the file elaborates
+green in isolation — the per-file-green-hides-a-red-umbrella trap. The tree's `lake env lean --run`
+runners (`metatheory/Emit*.lean`) live at the metatheory ROOT and are deliberately NOT imported,
+which is why they may own the root `main`. To run this emitter, add a thin non-imported root runner
+that calls `Market.EmitSameOpeningGadget.emitMain`. -/
+
+def emitMain : IO Unit :=
   IO.println (Dregg2.Circuit.DescriptorIR2.emitVmJson2
     Market.EmitSameOpeningGadget.sameOpeningGadgetDescriptor)
