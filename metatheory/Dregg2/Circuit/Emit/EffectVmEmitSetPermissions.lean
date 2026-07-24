@@ -31,14 +31,18 @@ passthrough+tick.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment keystone is
-UNCONDITIONAL (a deployed-sponge collision disjunction), never conditioned on the (refuted) injective
-sponge floor. Imports are read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment keystones
+are SECURITY REDUCTIONS (§6 the keyed-ROM closure at this effect's hash sites; §8 the row-forgery
+game at THIS descriptor plus its keyed-ROM discharge) — never a bare `binds ∨ collides` disjunction
+(satisfiable through its collision branch by pigeonhole at deployed parameters) and never
+conditioned on the (refuted) injective sponge floor. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstatepermissions
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitSetPermissions
 
@@ -213,17 +217,31 @@ theorem setPermsVm_rejects_nonce_freeze (env : VmRowEnv)
     rcases hnoopB with h' | h' <;> rw [h'] <;> norm_num
   exact hwrong (by omega)
 
-/-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
+/-! ## §6 — the commitment binding (hash sites identical to transfer's), AS A REDUCTION.
+
+⚑ The bare `setPermsVm_commit_binds_block_or_collides` disjunction that stood here is DELETED: at
+deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so `binds ∨ collides` is
+satisfiable through its RIGHT branch without the binding ever holding. Its extraction spine
+(`absorbed_determined_by_commit_or_collides`, `TransferColl`) REMAINS in `EffectVmEmitTransferSound`
+as the reduction-internal witness. The exported headline is the keyed-ROM closure below. -/
 
 theorem setPermsHashSites_eq : setPermsHashSites = transferHashSites := rfl
 
-theorem setPermsVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ setPermsHashSites)
-    (hs₂ : siteHoldsAll hash e₂ setPermsHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE at setPermissions' hash sites** — successor of the deleted
+`setPermsVm_commit_binds_block_or_collides`: in the LABELLED random-oracle idealization of the
+GROUP-4 surface (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every
+QUERY-BOUNDED forger producing two rows that satisfy THIS effect's hash sites with a shared commit
+column but different absorbed 13-column state wins with NEGLIGIBLE probability — closed from the
+PROVED birthday floor (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier
+hypothesis. -/
+theorem setPermsVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame setPermsHashSites))
+    (hA : NarrowBreakEff setPermsHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame setPermsHashSites) A) :=
+  narrowStateCommit_binds setPermsHashSites rfl Q hQ A hA
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -322,41 +340,54 @@ theorem setPermsDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   rw [← hsaC]
   omega
 
-theorem setPermsDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hsat₁ : satisfiedVm hash setPermsVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash setPermsVmDescriptor e₂ true true)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ setPermsHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ setPermsHashSites := hsat₂.2.1
-  -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
-  -- chains the two commit cells (both canonical) into ℤ equality — no PI canonicality needed.
-  have hcm : ∀ (e : VmRowEnv), satisfiedVm hash setPermsVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ setPermsVmDescriptor.constraints := by
-        unfold setPermsVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have h₁ := hcm e₁ hsat₁
-  have h₂ := hcm e₂ hsat₂
-  rw [hpub] at h₁
-  have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ The bare `setPermsDescriptor_commit_binds_state_or_collides` disjunction that stood here is
+DELETED (same pigeonhole shirk as §6's). Its successor is the ROW-FORGERY REDUCTION below: the break
+is a first-class `Game` AT THIS DESCRIPTOR (`narrowRowBreakGame` — two rows both ACCEPTED by
+`satisfiedVm hash setPermsVmDescriptor`, one commit column, different absorbed state), the extractor
+is the GROUP-4 carrier lift, and the conclusion is negligibility — under the deployed sponge's
+collision floor at an OPEN class `Eff` (both poles priced in `EffectVmRowCommitReduction` §6), and
+DISCHARGED with no floor hypothesis at the sampled oracle (`narrowRow_binds_rom`, the keyed birthday
+floor). The deployed-side mod-`p` `NEW_COMMIT` pub-pin lift lives in `setPermsDescriptor_full_sound`
+and deliberately does NOT transport into the λ-wide model (`EffectVmKeyedStateCommit` header). -/
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- setPermissions' runnable descriptor as the row-commit reduction's per-effect datum: its hash
+sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def setPermsNarrowRowSpec : NarrowRowSpec where
+  descriptor := setPermsVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED setPermissions DESCRIPTOR BINDING** — successor of the deleted
+`setPermsDescriptor_commit_binds_state_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff` (`hEff` honestly in the OPEN — `IsPolyTime` is refuted, so no discharged fixed-hash
+form exists), a forger producing two rows BOTH SATISFYING `setPermsVmDescriptor` that share the
+commit column while disagreeing on an absorbed state column has NEGLIGIBLE advantage. -/
+theorem setPermsDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D setPermsNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D setPermsNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D setPermsNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D setPermsNarrowRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE DISCHARGED setPermissions COMMITMENT BINDING, ON THE PROVED KEYED-ROM FLOOR** — a
+query-bounded forger of the deployed 13-column nested `state_commit` has NEGLIGIBLE advantage, from
+`keyedRom_hard` (the birthday bound — a THEOREM), with NO floor hypothesis. The COMMITMENT layer
+carries no descriptor (the nested absorb schedule is one object across effects —
+`EffectVmRowCommitReduction` §5 header); the per-effect circuit content stays in the
+`_advantage_bound` form above, `hEff` in the open. -/
+theorem setPermsDescriptor_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §9 — THE CONNECTOR — `cellProjP` to universe-A's `SetPermissionsSpec` (conserved-balance freeze). -/
 
@@ -535,8 +566,9 @@ theorem staleNoncePermRow_rejected :
 #assert_axioms setPermsVm_rejects_nonce_freeze
 #assert_axioms intent_to_permCellSpec
 #assert_axioms setPermsDescriptor_full_sound
-#assert_axioms setPermsVm_commit_binds_block_or_collides
-#assert_axioms setPermsDescriptor_commit_binds_state_or_collides
+#assert_axioms setPermsVm_commit_binds_keyed
+#assert_axioms setPermsDescriptor_binds_state_advantage_bound
+#assert_axioms setPermsDescriptor_binds_state_rom
 #assert_axioms setPerms_balance_frozen
 #assert_axioms perms_write_is_out_of_row
 #assert_axioms descriptor_agrees_with_executor_setPerms

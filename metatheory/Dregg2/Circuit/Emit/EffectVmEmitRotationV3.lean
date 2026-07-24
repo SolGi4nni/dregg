@@ -109,6 +109,7 @@ import Dregg2.Circuit.DeployedHeapTree
 -- (the THIRD and LAST faithful root, the exact twin of `DeployedHeapTree`'s `Heap8Scheme`). ACYCLIC:
 -- `DeployedFieldsTree` imports only `DeployedCapTree` + `CapMerkleGeneric`, already in this closure.
 import Dregg2.Circuit.DeployedFieldsTree
+import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
@@ -1521,19 +1522,14 @@ def writesTo8 (S8 : Cap8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoot : Diges
     recomposeUp8 S8 (capLeafDigest8 S8 oldLeaf) path = oldRoot ∧
     recomposeUp8 S8 (capLeafDigest8 S8 newLeaf) path = newRoot
 
-/-- **The 8-felt anti-forge tooth, UNCONDITIONAL.** Along a FIXED sibling path the post-root pins the
-post-leaf digest at the full ~124-bit width — UNLESS the deployed arity-16 chip genuinely collides at
-the two `node8` input blocks the walk hands back. A forged `newRoot` cannot be reached with the genuine
-post-leaf along the genuine path except at that named collision — the GENTIAN close at full width, NOT
-lane-0.
-
-⚑ This replaces the former `writesTo8_forces_postleaf`, which rode `Cap8Scheme.recomposeUp8_inj_of_path`
-and hence the deleted `chip8CR : Compress8CR` FIELD — a field the deployed chip refutes, which made
-`Cap8Scheme` uninhabitable and every theorem over it (this one included) VACUOUS. -/
-theorem writesTo8_forces_postleaf_or_collides (S8 : Cap8Scheme) (path : List (StepG Digest8))
-    {a b : Digest8} (h : recomposeUp8 S8 a path = recomposeUp8 S8 b path) :
-    a = b ∨ Coll8 S8.chipAbsorb8 (recomposeUp8Find S8 a b path) :=
-  recomposeUp8_binds_or_collides S8 path h
+/-! ⚑ The bare `writesTo8_forces_postleaf_or_collides` disjunction that stood here is DELETED: at
+deployed BabyBear parameters a chip collision EXISTS by pigeonhole, so `binds ∨ collides` is
+satisfiable through its RIGHT branch without the tooth ever biting — it quantified over SOLUTIONS,
+where hardness quantifies over EFFICIENT ADVERSARIES. Its extraction spine
+(`DeployedCapTree.Cap8Scheme.recomposeUp8_binds_or_collides` + `recomposeUp8Find`) REMAINS as the
+reduction-internal witness. The EXPORTED successor is `writesTo8_forces_postleaf_rom` (§WALK-ROM
+below): the same-path walk equivocation as a keyed-ROM game, closed from the PROVED birthday floor
+via the walking extractor of `Crypto.RomMerkleOpening`. -/
 
 /-! ### v10 — the FAITHFUL 8-felt HEAP-root column GROUP + the native-`node8` heap-write relation
 `heapWritesTo8` (the SECOND faithful root, the exact twin of the cap-root group above).
@@ -1622,16 +1618,13 @@ def heapWritesTo8 (S8 : Heap8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoot : 
     Heap8Scheme.recomposeUp8 S8 (Heap8Scheme.heapLeafDigest8 S8 (k, oldVal, next)) path = oldRoot ∧
     Heap8Scheme.recomposeUp8 S8 (Heap8Scheme.heapLeafDigest8 S8 (k, v, next)) path = newRoot
 
-/-- **The 8-felt heap anti-forge tooth, UNCONDITIONAL.** Along a FIXED sibling path the post-root EITHER
-pins the post-leaf digest at full ~124-bit width, OR the deployed arity-16 chip genuinely collides at the
-two `node8` blocks the walk hands back. A forged `newRoot` cannot be reached with a DIFFERENT post-leaf
-along the genuine path unless that named collision is real — the heap GENTIAN close at full width, NOT
-lane-0.
-
-⚑ This replaces the former `heapWritesTo8_forces_postleaf`, which rode
-`Heap8Scheme.recomposeUp8_inj_of_path` and hence the deleted `chip8CR : Compress8CR` FIELD — a field the
-deployed chip refutes, which made `Heap8Scheme` uninhabitable and every theorem over it (this one
-included) VACUOUS. Exactly the cap-side repair above, at the second faithful root. -/
+/-- **(REDUCTION-INTERNAL extraction step — NOT an exported headline.)** Along a FIXED sibling path
+the post-root EITHER pins the post-leaf digest at full ~124-bit width, OR the deployed arity-16 chip
+genuinely collides at the two `node8` blocks the walk hands back. ⚑ A bare `binds ∨ collides` is a
+SHIRK as a headline (a chip collision EXISTS by pigeonhole at deployed parameters) — this lemma is
+KEPT (public) only because the `RotatedKernelRefinementCapFamily` refinement decodes consume it as an
+extraction step inside their own carriers; the EXPORTED security headline is
+`heapWritesTo8_forces_postleaf_rom` (§WALK-ROM below), closed from the PROVED birthday floor. -/
 theorem heapWritesTo8_forces_postleaf_or_collides (S8 : Heap8Scheme) (path : List (StepG Digest8))
     {a b : Digest8} (h : Heap8Scheme.recomposeUp8 S8 a path = Heap8Scheme.recomposeUp8 S8 b path) :
     a = b ∨ Coll8 S8.chipAbsorb8 (Heap8Scheme.recomposeUp8Find S8 a b path) :=
@@ -1782,19 +1775,105 @@ def fieldsWritesTo8 (S8 : Fields8Scheme) (oldRoot : Digest8) (k v : ℤ) (newRoo
     Fields8Scheme.recomposeUp8 S8 (Fields8Scheme.fieldsLeafDigest8 S8 (k, oldVal, next)) path = oldRoot ∧
     Fields8Scheme.recomposeUp8 S8 (Fields8Scheme.fieldsLeafDigest8 S8 (k, v, next)) path = newRoot
 
-/-- **The 8-felt fields anti-forge tooth, UNCONDITIONAL.** Along a FIXED sibling path the post-root EITHER
-pins the post-leaf digest at full ~124-bit width, OR the deployed arity-16 chip genuinely collides at the
-two `node8` blocks the walk hands back. The fields GENTIAN close at full width, NOT lane-0.
-
-⚑ This replaces the former `fieldsWritesTo8_forces_postleaf`, which rode
-`Fields8Scheme.recomposeUp8_inj_of_path` and hence the deleted `chip8CR : Compress8CR` FIELD — a field the
-deployed chip refutes, which made `Fields8Scheme` uninhabitable and every theorem over it (this one
-included) VACUOUS. The third and last site of that defect class. -/
+/-- **(REDUCTION-INTERNAL extraction step — NOT an exported headline.)** Along a FIXED sibling path
+the post-root EITHER pins the post-leaf digest at full ~124-bit width, OR the deployed arity-16 chip
+genuinely collides at the two `node8` blocks the walk hands back. ⚑ A bare `binds ∨ collides` is a
+SHIRK as a headline — KEPT (public) only because `RotatedKernelRefinementCapFamily` consumes it as an
+extraction step; the EXPORTED security headline is `fieldsWritesTo8_forces_postleaf_rom` (§WALK-ROM
+below), closed from the PROVED birthday floor. -/
 theorem fieldsWritesTo8_forces_postleaf_or_collides (S8 : Fields8Scheme) (path : List (StepG Digest8))
     {a b : Digest8}
     (h : Fields8Scheme.recomposeUp8 S8 a path = Fields8Scheme.recomposeUp8 S8 b path) :
     a = b ∨ Coll8 S8.chipAbsorb8 (Fields8Scheme.recomposeUp8Find S8 a b path) :=
   Fields8Scheme.recomposeUp8_binds_or_collides S8 path h
+
+/-! ### §WALK-ROM — THE EXPORTED SUCCESSORS of the three `writesTo8` walk disjunctions, ON THE
+PROVED KEYED-ROM FLOOR.
+
+⚑ THE MODELLING STEP, STATED (never smuggled): the deployed arity-16 `node8` chip
+(`chipAbsorb8 : List ℤ → Digest8` — ONE fixed public function shared by the cap/heap/fields trees)
+is idealised as a sampled oracle `H : Unit × (Fin (2^l) × Fin (2^l)) → Fin (2^l)`; the ~124-bit
+8-felt `Digest8` accumulator becomes ONE λ-bit word (there is NO `l` at which `Fin (2^l)` is the
+deployed digest — the felt-width discipline, said out loud), and the ordered two-child node message
+`nodeMsg` is the ROM restatement of the `node8` block pair a `StepG` walk absorbs (direction = the
+index bit). The key is `Unit` because the deployed chip runs UNTAGGED — no domain-separation claim
+is made or smuggled (the `vmSpongeFamily` convention). What this buys over the deleted disjunctions:
+the floor under the tooth is `keyedRom_hard` (the birthday bound — a THEOREM), the forger is an
+ORACLE PROGRAM, and the walking extractor PAYS its own `2·depth` queries
+(`Crypto.RomMerkleOpening`'s same-context chain walk — exactly this shape: two leaf accumulators,
+one SHARED sibling path, LEFT-injectivity of the step encoding). What it does not buy: any statement
+about the fixed deployed chip itself (CR of a fixed public function is a conjecture, not a Lean
+theorem). -/
+
+section WalkRomSuccessor
+
+open Dregg2.Crypto.RomMerkleOpening
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv)
+
+/-- The `node8` walk equivocation game at pinned depth `d`: the adversary outputs a shared
+`(bit, sibling)` path and TWO leaf digests; it wins iff the leaves are DISTINCT yet recompose to the
+SAME root along the shared path, against the sampled oracle — `recomposeUp8`'s equivocation event,
+at the sampled chip. -/
+abbrev node8WalkRomGame (d : ℕ → ℕ) : Game :=
+  merkleOpenRomGame Unit inferInstance inferInstance ⟨()⟩ d
+
+/-- **⚑⚑ THE GENERIC WALK BINDING, DISCHARGED** — every query-bounded forger of the `node8` recompose
+walk has NEGLIGIBLE advantage (`merkleOpenRom_binds`: the walking extractor re-descends both chains,
+`2·d` queries PAID, and `keyedRom_hard` closes it). NO floor hypothesis, no `Compress8CR`, no
+`IsPolyTime`. -/
+theorem node8Walk_binds_rom (d Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (node8WalkRomGame d))
+    (hA : RomForgeryEff (merkleRomFamily Unit inferInstance inferInstance ⟨()⟩)
+      (merkleOpenForgery Unit inferInstance inferInstance ⟨()⟩ d) Q A) :
+    Negl (gameAdv (node8WalkRomGame d) A) :=
+  merkleOpenRom_binds Unit inferInstance inferInstance ⟨()⟩ d Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE CAP-TREE WALK TOOTH, DISCHARGED** — the exported successor of the deleted
+`writesTo8_forces_postleaf_or_collides`: a query-bounded forger that reaches one cap post-root from
+two DISTINCT post-leaf digests along one sibling path (the forged-`newRoot` shape `writesTo8`
+excludes) has NEGLIGIBLE advantage in the keyed-ROM model of the §WALK-ROM header. -/
+theorem writesTo8_forces_postleaf_rom (d Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (node8WalkRomGame d))
+    (hA : RomForgeryEff (merkleRomFamily Unit inferInstance inferInstance ⟨()⟩)
+      (merkleOpenForgery Unit inferInstance inferInstance ⟨()⟩ d) Q A) :
+    Negl (gameAdv (node8WalkRomGame d) A) :=
+  node8Walk_binds_rom d Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE HEAP-TREE WALK TOOTH, DISCHARGED** — the exported successor of the (kept-internal)
+`heapWritesTo8_forces_postleaf_or_collides` extraction step, at the SAME sampled chip (the deployed
+trees share ONE `node8` lane). -/
+theorem heapWritesTo8_forces_postleaf_rom (d Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (node8WalkRomGame d))
+    (hA : RomForgeryEff (merkleRomFamily Unit inferInstance inferInstance ⟨()⟩)
+      (merkleOpenForgery Unit inferInstance inferInstance ⟨()⟩ d) Q A) :
+    Negl (gameAdv (node8WalkRomGame d) A) :=
+  node8Walk_binds_rom d Q Q' hle hQ' A hA
+
+/-- **⚑⚑ THE FIELDS-TREE WALK TOOTH, DISCHARGED** — the exported successor of the (kept-internal)
+`fieldsWritesTo8_forces_postleaf_or_collides` extraction step, at the SAME sampled chip. -/
+theorem fieldsWritesTo8_forces_postleaf_rom (d Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (node8WalkRomGame d))
+    (hA : RomForgeryEff (merkleRomFamily Unit inferInstance inferInstance ⟨()⟩)
+      (merkleOpenForgery Unit inferInstance inferInstance ⟨()⟩ d) Q A) :
+    Negl (gameAdv (node8WalkRomGame d) A) :=
+  node8Walk_binds_rom d Q Q' hle hQ' A hA
+
+#assert_axioms node8Walk_binds_rom
+#assert_axioms writesTo8_forces_postleaf_rom
+#assert_axioms heapWritesTo8_forces_postleaf_rom
+#assert_axioms fieldsWritesTo8_forces_postleaf_rom
+
+end WalkRomSuccessor
 
 /-- The held-capability MEMBERSHIP read on the ROTATED before-block cap-root limb (limb 25). The before
 `cap_root` (rotated limb) opens at `param[CAP_KEY]` to `param[HELD_MASK]` (root unchanged — a read). The

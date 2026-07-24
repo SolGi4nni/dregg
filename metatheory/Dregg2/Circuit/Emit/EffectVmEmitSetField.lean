@@ -28,10 +28,11 @@ the earlier descriptor read the value from `param0`, froze the nonce, and named 
 ## What is bound (class A) vs the boundary (named)
 
   * BOUND + anti-ghosted (the 13 absorbed columns): `fields[slot]_after = VALUE` (the move) AND
-    every other state-block column frozen. Tampering ANY of them moves `state_commit` ⇒ UNSAT
-    (`setFieldVm_commit_binds_block_or_collides`, inherited from the cured keystone core
-    `absorbed_determined_by_commit_or_collides` — UNCONDITIONAL: tamper ⇒ moved commit OR a named
-    deployed-sponge collision, no refuted injectivity floor).
+    every other state-block column frozen. Tampering ANY of them while keeping `state_commit` is a
+    SECURITY BREAK priced by reduction (`setFieldVm_commit_binds_keyed` on the keyed-ROM floor;
+    `setFieldDescriptor_binds_state_advantage_bound` at this descriptor with `hEff` open) — the
+    extraction spine `absorbed_determined_by_commit_or_collides` remains the reduction-internal
+    witness, no refuted injectivity floor anywhere.
   * UNIFIED to the executor: `unify_setField_exec` welds the descriptor's bound block to
     `execFullA`'s `SetFieldSpec` post-state (the conserved `balLo` frozen; the written slot's value
     is the executor's `fieldOf (slotName slot) (cell)`).
@@ -46,14 +47,18 @@ the earlier descriptor read the value from `param0`, froze the nonce, and named 
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; the commitment keystone is
-UNCONDITIONAL (an extraction-as-data disjunction), never conditioned on the refuted injective sponge
-floor. Imports are read-only (the keystone Sound module + the universe-A `cellstatefield` spec).
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; the commitment keystones
+are SECURITY REDUCTIONS (§6 the keyed-ROM closure; §8 the row-forgery game at THIS descriptor plus
+its keyed-ROM discharge) — never a bare `binds ∨ collides` disjunction and never conditioned on the
+refuted injective sponge floor. Imports are read-only (the keystone Sound module + the universe-A
+`cellstatefield` spec).
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstatefield
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitSetField
 
@@ -311,13 +316,27 @@ the published `state_commit` is the genuine H4-of-H4 digest of the after-block's
 — and `fields[slot]` is one of them. So a prover cannot keep the published `NEW_COMMIT` while
 tampering the written slot OR any frozen column. This is the class-A anti-ghost-on-ALL-of-it tooth. -/
 
-theorem setFieldVm_commit_binds_block_or_collides (slot : Fin 8) (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ transferHashSites)
-    (hs₂ : siteHoldsAll hash e₂ transferHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ The bare `setFieldVm_commit_binds_block_or_collides` disjunction that stood here is DELETED:
+at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so `binds ∨ collides` is
+satisfiable through its RIGHT branch without the binding ever holding. Its extraction spine
+(`absorbed_determined_by_commit_or_collides`, `TransferColl`) REMAINS in `EffectVmEmitTransferSound`
+as the reduction-internal witness. The exported headline is the keyed-ROM closure below. -/
+
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE at setField's hash sites** — successor of the deleted
+`setFieldVm_commit_binds_block_or_collides`: in the LABELLED random-oracle idealization of the
+GROUP-4 surface (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every
+QUERY-BOUNDED forger producing two rows that satisfy the GROUP-4 hash sites with a shared commit
+column but different absorbed 13-column state (the written `fields[slot]` INCLUDED) wins with
+NEGLIGIBLE probability — closed from the PROVED birthday floor (`keyedRom_hard`); no `IsPolyTime`,
+no `Poseidon2SpongeCR`, no named-carrier hypothesis. -/
+theorem setFieldVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame transferHashSites))
+    (hA : NarrowBreakEff transferHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame transferHashSites) A) :=
+  narrowStateCommit_binds transferHashSites rfl Q hQ A hA
 
 /-! ## §7 — the structured per-cell spec + RowEncodes decoding. -/
 
@@ -393,13 +412,48 @@ theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (
       simpa only [VmConstraint.holdsVm] using hh
   exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env hrow hcanon).mp hgates)
 
-theorem setFieldDescriptor_commit_binds_state_or_collides (slot : Fin 8) (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hsat₁ : satisfiedVm hash (setFieldVmDescriptor slot) e₁ true true)
-    (hsat₂ : satisfiedVm hash (setFieldVmDescriptor slot) e₂ true true)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  setFieldVm_commit_binds_block_or_collides slot hash e₁ e₂ hsat₁.2.1 hsat₂.2.1 hcommit
+/-! ⚑ The bare `setFieldDescriptor_commit_binds_state_or_collides` disjunction that stood here is
+DELETED (same pigeonhole shirk). Its successor is the ROW-FORGERY REDUCTION below at THIS
+descriptor, plus the keyed-ROM discharge. -/
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- setField's runnable descriptor (at the written slot) as the row-commit reduction's per-effect
+datum: its hash sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def setFieldNarrowRowSpec (slot : Fin 8) : NarrowRowSpec where
+  descriptor := setFieldVmDescriptor slot
+  usesTransferSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED setField DESCRIPTOR BINDING** — successor of the deleted
+`setFieldDescriptor_commit_binds_state_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff` (`hEff` honestly in the OPEN — `IsPolyTime` is refuted, so no discharged fixed-hash
+form exists), a forger producing two rows BOTH SATISFYING `setFieldVmDescriptor slot` that share the
+commit column while disagreeing on an absorbed state column (the written `fields[slot]` INCLUDED)
+has NEGLIGIBLE advantage. -/
+theorem setFieldDescriptor_binds_state_advantage_bound (slot : Fin 8) (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D (setFieldNarrowRowSpec slot)))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D (setFieldNarrowRowSpec slot) A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D (setFieldNarrowRowSpec slot)) A) :=
+  narrowRow_binds_advantage_bound D (setFieldNarrowRowSpec slot) Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE DISCHARGED setField COMMITMENT BINDING, ON THE PROVED KEYED-ROM FLOOR** — a
+query-bounded forger of the deployed 13-column nested `state_commit` has NEGLIGIBLE advantage, from
+`keyedRom_hard` (the birthday bound — a THEOREM), with NO floor hypothesis. The COMMITMENT layer
+carries no descriptor (the nested absorb schedule is one object across effects); the per-effect
+circuit content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem setFieldDescriptor_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §9 — THE EXECUTOR UNIFICATION + the named honest boundary.
 
@@ -663,10 +717,11 @@ theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSF
 #assert_axioms setFieldVm_rejects_wrong_value
 #assert_axioms setFieldVm_rejects_wrong_nonce_delta
 #assert_axioms setFieldVm_rejects_moved_balance
-#assert_axioms setFieldVm_commit_binds_block_or_collides
+#assert_axioms setFieldVm_commit_binds_keyed
 #assert_axioms intent_to_cellSpec
 #assert_axioms setFieldDescriptor_full_sound
-#assert_axioms setFieldDescriptor_commit_binds_state_or_collides
+#assert_axioms setFieldDescriptor_binds_state_advantage_bound
+#assert_axioms setFieldDescriptor_binds_state_rom
 #assert_axioms slotName_ne_balance
 #assert_axioms unify_setField_exec
 #assert_axioms setField_guard_is_offrow

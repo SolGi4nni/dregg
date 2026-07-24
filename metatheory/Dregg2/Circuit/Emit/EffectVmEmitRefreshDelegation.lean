@@ -73,6 +73,8 @@ import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.refreshDelegationA
 import Dregg2.Exec.SystemRoots
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+import Dregg2.Exec.SystemRootsBindingReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRefreshDelegation
 
@@ -346,8 +348,11 @@ theorem delegRoot_moves_under_spec (D : (CellId → List Cap) → ℤ)
   show D s'.kernel.delegations = D (refreshDelegationsMap s.kernel child)
   rw [hdeleg]
 
-/-- **`delegRoot_binds_under_commit_or_collides`** (the STAGE-3 anti-ghost tooth, lifted to the `DELEG`
-root — UNCONDITIONAL). Two cells whose canonical `cellCommitS` commitments AGREE (over the same `rest`
+/-- **(REDUCTION-INTERNAL extraction step — NOT an exported headline; the exported successor is
+`delegRoot_binds_rom` below, closed on the PROVED keyed-ROM floor.)** The STAGE-3 anti-ghost tooth,
+lifted to the `DELEG` root. ⚑ A bare `binds ∨ collides` is a SHIRK as a headline (a collision EXISTS
+by pigeonhole at deployed parameters); this lemma is kept PRIVATE as the witness inside the
+`_of_injective` strength bridge below. Two cells whose canonical `cellCommitS` commitments AGREE (over the same `rest`
 and the same frozen sibling roots `others`) EITHER have the SAME `DELEG` root, OR the prover holds a
 NAMED collision of the deployed sponge: at the commitment absorption (`CellCommitSColl`, the pair
 `cellCommitSCollFind` returns) or at the ordered root list (`RootsColl`). The chain: the commitment
@@ -361,7 +366,7 @@ collision is exhibited.
 `delegations` binding. This one assumes nothing about the sponge and holds OF it;
 `delegRoot_binds_under_commit_of_injective` recovers the old statement as exactly the injective special
 case, so no strength was lost. -/
-theorem delegRoot_binds_under_commit_or_collides
+private theorem delegRoot_binds_under_commit_or_collides
     (compressN : List ℤ → ℤ)
     (D : (CellId → List Cap) → ℤ) (others : SysRoots) (rest : List ℤ)
     (k₁ k₂ : RecordKernelState)
@@ -392,6 +397,58 @@ theorem delegRoot_binds_under_commit_of_injective
   · exact hEq
   · exact absurd hcoll (cellCommitSColl_refutable_of_injective compressN hN rest _ _)
   · exact absurd hrcoll (rootsColl_refutable_of_injective compressN hN _ _)
+
+/-! ### §7-ROM — THE EXPORTED SUCCESSOR of the `DELEG`-root extraction disjunction, ON THE PROVED
+KEYED-ROM FLOOR. The deployed chain (`cellCommitS compressN rest sr = compressN (rest ++
+[systemRootsDigest compressN sr])`) is exactly `Exec.SystemRootsBindingReduction`'s two-level nest
+`H (t, inr (rest, H (t, inl roots)))` in the labelled idealization (that module's §7 header — the
+sampled `H : Tag × Msg → Fin (2^l)` replaces the fixed sponge; NO `l` is the deployed ~31-bit felt).
+The successor localizes the disagreement to the `DELEG` lane and closes from the generic full-chain
+binding `cellRoots_binds_rom` (`chained_rom_binds` + `keyedRom_hard`, the birthday bound) — NO floor
+hypothesis, no `compressNInjective`, no `IsPolyTime`. -/
+
+open Dregg2.Exec.SystemRootsBindingReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **THE `DELEG`-ROOT ROM TAMPER** — two truncated `system_roots` sub-blocks that DIFFER AT THE
+`DELEG` LANE (a forged refresh snapshot), one nested canonical cell commitment. -/
+def delegRootRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomForgery (sysRomFamily D tagDec m) where
+  Ans := fun _ => D.Tag × (Fin m → Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+    × RootsBlock × RootsBlock
+  wins := fun l H a =>
+    a.2.2.1 delegIdx ≠ a.2.2.2 delegIdx ∧
+      H (a.1, Sum.inr (a.2.1, H (a.1, Sum.inl a.2.2.1)))
+        = H (a.1, Sum.inr (a.2.1, H (a.1, Sum.inl a.2.2.2)))
+  winsDec := fun l _ _ => by
+    letI := ((sysRomFamily D tagDec m).toRomFamily).rDec l
+    exact instDecidableAnd
+
+open Dregg2.Exec.SystemRootsBindingReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites
+  Dregg2.Crypto.ProbCrypto in
+/-- **⚑⚑ `delegRoot_binds_rom` — THE EXPORTED SUCCESSOR of the `DELEG`-root extraction
+disjunction.** A query-bounded forger that keeps the nested canonical cell commitment while moving
+the `DELEG` side-table root has NEGLIGIBLE advantage — a `DELEG`-lane disagreement IS a sub-block
+disagreement, so the generic full-chain binding (`cellRoots_binds_rom`, from `keyedRom_hard`) kills
+it. NO floor hypothesis. -/
+theorem delegRoot_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (delegRootRomTamper D tagDec m).game)
+    (hA : RomForgeryEff (sysRomFamily D tagDec m) (delegRootRomTamper D tagDec m) Q A) :
+    Negl (gameAdv (delegRootRomTamper D tagDec m).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (cellRootsRomForgery D tagDec m).game
+      (⟨A.run⟩ : Adversary (cellRootsRomForgery D tagDec m).game)) :=
+    cellRoots_binds_rom D tagDec m Q hQ
+      (⟨A.run⟩ : Adversary (cellRootsRomForgery D tagDec m).game) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (delegRootRomTamper D tagDec m).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((delegRootRomTamper D tagDec m).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrFun hc delegIdx), heq⟩
 
 /-! ## §8 — THE CONNECTORS — to `refreshDelegationA_full_sound` (cap-freeze AND deleg-move). -/
 
@@ -712,6 +769,7 @@ theorem refreshNonAmp_rejects_amplify (env : Dregg2.Circuit.Emit.EffectVmEmit.Vm
 #assert_axioms delegRoot_moves_under_spec
 #assert_axioms delegRoot_binds_under_commit_or_collides
 #assert_axioms delegRoot_binds_under_commit_of_injective
+#assert_axioms delegRoot_binds_rom
 #assert_axioms unify_refresh_capFreeze
 #assert_axioms unify_refresh_via_full_sound
 #assert_axioms delegRoot_runtime_column_pending
@@ -728,9 +786,9 @@ record-layer connector + the reported pending runtime column).
 `refreshDelegation` is a PASSTHROUGH+nonce-TICK cap-graph row (cap_root FROZEN on-row). Its WIDE
 descriptor widens `refreshVmDescriptor` to `EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites`, so the
 published `state_commit` now ABSORBS the `system_roots` digest — i.e. the WHOLE side-table sub-block
-(`postRoots`) is bound by the runnable commitment (the anti-ghost
-`refresh_runnable_rejects_root_tamper_or_collides` bites on every one of the 8 roots, the `DELEG` root
-included). The wide RUNNABLE crown pins the per-cell
+(`postRoots`) is bound by the runnable commitment (the anti-ghost REDUCTIONS
+`refresh_rejects_root_tamper_advantage_bound` / `refresh_rejects_root_tamper_rom` bite on every one
+of the 8 roots, the `DELEG` root included). The wide RUNNABLE crown pins the per-cell
 freeze+tick (`RefreshCellSpec`) AND the `postRoots` the carrier digests.
 
 ⚑ THE TOUCHED ROOT (`DELEG`) — the split: refresh is the ONE cap-graph effect that MOVES a
@@ -828,55 +886,74 @@ theorem refresh_runnable_full_sound
       simpa only [VmConstraint.holdsVm] using hh
   exact refreshDescriptor_full_sound env pre post hrow henc hgates'
 
-/-- **`refresh_runnable_rejects_root_tamper_or_collides` — the side-table anti-ghost for
-`refreshDelegation` (the `DELEG`-root tooth on the RUNNABLE commitment).** Two wide refresh rows publishing
-the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table sub-blocks DIFFER at some index
-(the `DELEG` root included) exhibit a genuine collision of the deployed sponge — on the state block
-(`WideColl`) or on the ordered root list (`RootsColl`). So forging the `delegations` move while keeping the
-published commitment COSTS a named sponge collision: the whole side-table sub-block is bound BY the
-runnable refresh commitment.
+/-! ⚑ ANTI-GHOST ON ALL 17 FIELDS, REBUILT AS SECURITY REDUCTIONS (the mint recipe,
+`EffectVmEmitMintRunnable` §4). The bare `refresh_runnable_rejects_{root,state}_tamper_or_collides`
+disjunctions that stood here are DELETED: at deployed BabyBear parameters a sponge collision EXISTS
+by pigeonhole, so `… ∨ collides` is satisfiable through its collision branch without the tooth ever
+biting. Their extraction spine (`EffectVmFullStateRunnable.wide_rejects_*_or_collides`, `WideColl`,
+`RootsColl`) REMAINS as the reduction-internal witness. Fixed-hash `_advantage_bound` forms carry
+`hEff` honestly in the OPEN; the `_rom` forms are discharged from `keyedRom_hard` with NO floor
+hypothesis. -/
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
-so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
-sponge. -/
-theorem refresh_runnable_rejects_root_tamper_or_collides
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash refreshVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash refreshVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (refreshRunnableSpec hash) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- refreshDelegation's WIDE runnable descriptor as the reduction's per-effect datum. -/
+def refreshWideRowSpec : WideRowSpec where
+  descriptor := refreshVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`refresh_runnable_rejects_state_tamper_or_collides` — the per-cell-block anti-ghost for
-`refreshDelegation`.** Two wide refresh rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
-carriers) whose absorbed state-block columns DIFFER (a moved `cap_root`, a tampered field, a forged nonce)
-exhibit a genuine collision of the deployed sponge — on the state block (`WideColl`) or on the ordered root
-list (`RootsColl`). Such a pair is UNSAT unless the prover holds a sponge collision.
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED SIDE-TABLE ANTI-GHOST for refreshDelegation** — successor of the deleted
+`refresh_runnable_rejects_root_tamper_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff`, an adversary keeping the published `NEW_COMMIT` while tampering a side-table root
+(the `DELEG` root included — a forged refresh snapshot) has NEGLIGIBLE advantage. -/
+theorem refresh_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D refreshWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D refreshWideRowSpec (rootTamperToWide D refreshWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D refreshWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D refreshWideRowSpec Eff A hEff hCR
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
-so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
-sponge. -/
-theorem refresh_runnable_rejects_state_tamper_or_collides
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash refreshVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash refreshVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    (htamper : baseAbsorbedCols e₁ ≠ baseAbsorbedCols e₂) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_state_tamper_or_collides (refreshRunnableSpec hash) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE SIDE-TABLE ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** (`wide_root_tamper_rom`,
+from `keyedRom_hard` — the birthday bound). NO floor hypothesis. -/
+theorem refresh_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED PER-CELL-BLOCK ANTI-GHOST for refreshDelegation** — successor of the deleted
+`refresh_runnable_rejects_state_tamper_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff`, an adversary keeping the published `NEW_COMMIT` while tampering an absorbed
+state-block column (a moved `cap_root`, a tampered field, a forged nonce) has NEGLIGIBLE
+advantage. -/
+theorem refresh_rejects_state_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideStateTamperGame D refreshWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D refreshWideRowSpec (stateTamperToWide D refreshWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideStateTamperGame D refreshWideRowSpec) A) :=
+  wide_state_tamper_advantage_bound D refreshWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE PER-CELL-BLOCK ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR**
+(`wide_state_tamper_rom`, from `keyedRom_hard`). NO floor hypothesis. -/
+theorem refresh_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
 
 /-- **`refreshWide_realizes` — NON-VACUITY (witness TRUE).** A real passthrough+tick refresh cell
 transition (frame frozen, nonce `5 → 6`) inhabits `RefreshCellSpec`. -/
@@ -906,8 +983,10 @@ theorem refreshWide_clause_not_trivial :
 
 #assert_axioms refreshWide_constraints_eq
 #assert_axioms refresh_runnable_full_sound
-#assert_axioms refresh_runnable_rejects_root_tamper_or_collides
-#assert_axioms refresh_runnable_rejects_state_tamper_or_collides
+#assert_axioms refresh_rejects_root_tamper_advantage_bound
+#assert_axioms refresh_rejects_root_tamper_rom
+#assert_axioms refresh_rejects_state_tamper_advantage_bound
+#assert_axioms refresh_rejects_state_tamper_rom
 #assert_axioms refreshWide_realizes
 #assert_axioms refreshWide_clause_not_trivial
 

@@ -36,8 +36,8 @@ balance-neutral CapTP clock tick). This is the analog of the abstract `pipelined
     to the (hash-site-free) gate-only soundness `pipelinedSendGates_give_cellSpec`, then carry the frozen
     roots. The crypto is discharged ONCE in the generic `runnable_full_sound`.
 
-The anti-ghost on ALL 17 fields falls out of the generic `runnable_full_commit_binds_or_collides` /
-`wide_rejects_state_tamper_or_collides` / `wide_rejects_root_tamper_or_collides` instantiated at this
+The anti-ghost on ALL 17 fields is a SECURITY REDUCTION (`EffectVmRowCommitReduction`'s wide
+break/tamper games + keyed-ROM discharges — the mint recipe), landed at this
 spec (§4) — tamper ANY absorbed column OR any side-table root ⇒ the RUNNABLE descriptor is UNSAT unless
 a collision of the deployed sponge is EXHIBITED.
 
@@ -61,6 +61,7 @@ every theorem. Imports are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitPipelinedSendWide
 
@@ -190,58 +191,96 @@ theorem pipelinedSend_runnable_full_sound (hash : List ℤ → ℤ)
 
 Tampering ANY absorbed state-block column OR any side-table root makes two same-`NEW_COMMIT` wide rows'
 bound data DISAGREE — UNSAT unless a collision of the deployed sponge is EXHIBITED. Both teeth bite
-(per-cell block AND the 8 roots), via the generic `runnable_full_commit_binds_or_collides` instantiated
-at `pipelinedSendRunnableSpec`. -/
+(per-cell block AND the 8 roots), via the wide break/tamper reductions instantiated at
+pipelinedSend's own wide descriptor. -/
 
-/-- **`pipelinedSend_wide_binds_full_state_or_collides` — the whole-state anti-ghost.** Two rows
-satisfying the wide descriptor that publish the SAME `NEW_COMMIT`, whose carriers ARE the
-`systemRootsDigest` of their post sub-blocks, EITHER agree on EVERY absorbed state-block column AND
-every side-table root, OR exhibit a genuine collision of the deployed sponge (`WideColl` on the two wide
-preimages, or `RootsColl` on the two root lists). So a prover CANNOT keep `NEW_COMMIT` while tampering
-ANY of the 17 fields' bound content without producing a collision.
+/-! ⚑ ANTI-GHOST ON ALL 17 FIELDS, REBUILT AS SECURITY REDUCTIONS (the mint recipe,
+`EffectVmEmitMintRunnable` §4). The bare `..._or_collides` forms that stood here are DELETED: at
+deployed BabyBear parameters a sponge collision EXISTS by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch without the binding ever holding — they quantified over SOLUTIONS, where hardness
+quantifies over EFFICIENT ADVERSARIES. Their extraction spine
+(`EffectVmFullStateRunnable.runnable_full_commit_binds_or_collides` /
+`wide_rejects_root_tamper_or_collides`, `WideColl`, `RootsColl`) REMAINS as the reduction-internal
+witness. The successors: the break/tamper is a first-class `Game` at pipelinedSend's OWN wide descriptor
+(two rows BOTH ACCEPTED by the deployed wide circuit, one published `NEW_COMMIT`, genuine
+`systemRootsDigest` carriers, different bound 17-field state), the extractor is the wide carrier
+lift, and the conclusion is negligibility — the fixed-hash `_advantage_bound` forms with `hEff`
+honestly in the OPEN (`IsPolyTime` is refuted; both poles of the floor are priced in
+`EffectVmRowCommitReduction` §6), and the `_rom` forms DISCHARGED from `keyedRom_hard` (the birthday
+bound) with NO floor hypothesis, in the labelled keyed-ROM idealization of
+`EffectVmRowCommitReduction` §5's header. -/
 
-The former `pipelinedSend_wide_binds_full_state` concluded the bare conjunction from `Poseidon2SpongeCR
-hash`. The deployed sponge REFUTES that hypothesis, so at deployed parameters that theorem was vacuous.
-This disjunction is formally weaker, but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem pipelinedSend_wide_binds_full_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.runnable_full_commit_binds_or_collides (pipelinedSendRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- pipelinedSend's WIDE runnable descriptor as the reduction's per-effect datum: its hash sites ARE the
+`system_roots`-absorbing wide sites (`rfl`). -/
+def pipelinedSendWideRowSpec : WideRowSpec where
+  descriptor := pipelinedSendVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`pipelinedSend_wide_rejects_root_tamper_or_collides` — side-table anti-ghost (the gap's headline
-tooth).** Two wide rows that publish the same `NEW_COMMIT` (with `systemRootsDigest` carriers) but whose
-side-table sub-blocks DIFFER at some index (a dropped escrow, an omitted nullifier) cannot both satisfy
-WITHOUT exhibiting a collision of the deployed sponge. The side-table state is bound BY the runnable
-commitment up to that collision.
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED WHOLE-17-FIELD BINDING for pipelinedSend** — successor of the deleted
+`..._or_collides` whole-state anti-ghost: under the DEPLOYED sponge's collision floor at the class
+`Eff`, an adversary producing two rows BOTH SATISFYING the wide descriptor, publishing one
+`NEW_COMMIT` with genuine `systemRootsDigest` carriers, yet binding DIFFERENT state (an absorbed
+column or a side-table root), has NEGLIGIBLE advantage. -/
+theorem pipelinedSend_runnable_full_binds_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D pipelinedSendWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier (wideRowToCarrier D pipelinedSendWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D pipelinedSendWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D pipelinedSendWideRowSpec Eff A hEff hCR
 
-The former `pipelinedSend_wide_rejects_root_tamper` concluded `False` from `Poseidon2SpongeCR hash`,
-which the deployed sponge REFUTES; at deployed parameters it was vacuous. This disjunction is formally
-weaker, but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem pipelinedSend_wide_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.wide_rejects_root_tamper_or_collides (pipelinedSendRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE WHOLE-17-FIELD BINDING, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+forger of the wide nested `state_commit` (the very commitment pipelinedSend's wide row publishes) has
+NEGLIGIBLE advantage, from `keyedRom_hard` (the birthday bound — a THEOREM). NO floor hypothesis.
+The COMMITMENT layer carries no descriptor (the nested absorb schedule is one object across
+effects); pipelinedSend's per-effect circuit content stays in the `_advantage_bound` form above,
+`hEff` in the open. -/
+theorem pipelinedSend_runnable_full_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
-#assert_axioms pipelinedSend_wide_binds_full_state_or_collides
-#assert_axioms pipelinedSend_wide_rejects_root_tamper_or_collides
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED SIDE-TABLE ANTI-GHOST for pipelinedSend** — successor of the deleted
+`..._rejects_root_tamper_or_collides`: under the DEPLOYED sponge's collision floor at the class
+`Eff`, an adversary that keeps the published `NEW_COMMIT` while tampering a side-table root of a
+satisfying wide pipelinedSend row (a dropped escrow, an omitted nullifier, a reordered queue) has
+NEGLIGIBLE advantage. -/
+theorem pipelinedSend_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D pipelinedSendWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D pipelinedSendWideRowSpec (rootTamperToWide D pipelinedSendWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D pipelinedSendWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D pipelinedSendWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE SIDE-TABLE ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+adversary cannot keep the published nested wide commitment while tampering a side-table root, except
+with negligible probability (`wide_root_tamper_rom`, from `keyedRom_hard`). NO floor hypothesis. -/
+theorem pipelinedSend_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+#assert_axioms pipelinedSend_runnable_full_binds_advantage_bound
+#assert_axioms pipelinedSend_runnable_full_binds_rom
+#assert_axioms pipelinedSend_rejects_root_tamper_advantage_bound
+#assert_axioms pipelinedSend_rejects_root_tamper_rom
 
 /-! ## §5 — NON-VACUITY: the full clause is INHABITED by a real pipelined send (TRUE) and REFUTABLE
 (FALSE), and the wide descriptor is the genuine 188-wide `system_roots`-absorbing circuit. -/

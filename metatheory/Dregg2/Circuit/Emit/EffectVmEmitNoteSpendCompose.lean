@@ -6,9 +6,10 @@ property the per-row EffectVM IR cannot re-derive. The per-row descriptor
 (`EffectVmEmitNoteSpend.noteSpendVmDescriptorFull`) pins what a per-row gate CAN pin:
 
   * the economic frame freeze + the `nullifiers`-root ADVANCE (`new_root = update(old_root, nf)`),
-  * the advanced root absorbed into `state_commit` (the GROUP-4 anti-ghost tooth,
-    `noteSpendFull_binds_nullifiers_root_or_collides` — tampering the root MOVES `state_commit` ⇒ UNSAT,
-    unless the prover exhibits the named sponge collision the disjunct hands back).
+  * the advanced root absorbed into `state_commit` (the GROUP-4 anti-ghost tooth, priced as a
+    SECURITY REDUCTION — `EffectVmEmitNoteSpend.noteSpend_binds_nullifiers_root_rom` on the proved
+    keyed-ROM birthday floor: tampering the root while keeping `state_commit` is a negligible-
+    advantage event for every query-bounded forger).
 
 But the headline anti-replay guarantee — `nf` was NOT already spent (`nf ∉ st.nullifiers`) — is a
 NON-MEMBERSHIP / uniqueness assertion over the WHOLE accumulated set. It is fundamentally NOT a per-row
@@ -67,7 +68,7 @@ def TurnLevelSpendProof (spendProof : Bool) : Prop :=
 /-! ## §2 — The COMPOSITION: per-row insert ⊗ turn-level freshness ⊗ turn-level proof ⟹ full spec.
 
 The per-row root-bound descriptor BINDS the actual nullifier-set INSERT (`nf :: nullifiers`) into the
-post-state commitment (anti-ghost: `noteSpendFull_binds_nullifiers_root_or_collides`). The executor's
+post-state commitment (anti-ghost reduction: `noteSpend_binds_nullifiers_root_rom`). The executor's
 `execFullA st (noteSpendA …) = some st'` is the per-cell+turn realization whose committed `st'` carries
 exactly that insert + the frame freeze. The turn-level gadgets supply the guard (freshness + proof).
 Together they DISCHARGE the full declarative `NoteSpendSpec`. -/

@@ -68,6 +68,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstateaudit
 import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive
 
@@ -337,38 +338,72 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 /-- `archiveHashSites` is DEFINITIONALLY the transfer keystone's `transferHashSites`. -/
 theorem archiveHashSites_eq : archiveHashSites = transferHashSites := rfl
 
-/-- **`archiveDescriptor_commit_binds_state_or_collides` — the whole-state tooth, UNCONDITIONAL.** Two
-`receiptArchiveA` rows that satisfy the hash-sites and publish equal `state_commit`s EITHER have
-identical absorbed columns — the set post-`field[1]` (an absorbed column, site 1) included — OR exhibit
-a genuine deployed-sponge collision. So a prover CANNOT tamper the post-`field[1]` (or any absorbed
-cell) while keeping the published commitment unless it finds a collision. Reuses the cured keystone
-core; no refuted injective sponge floor. -/
-theorem archiveDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ archiveHashSites)
-    (hs₂ : siteHoldsAll hash e₂ archiveHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  rw [archiveHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ The bare `archiveDescriptor_commit_binds_state_or_collides` disjunction that stood here is
+DELETED: at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so
+`binds ∨ collides` is satisfiable through its RIGHT branch without the binding ever holding — it
+quantified over SOLUTIONS, where hardness quantifies over EFFICIENT ADVERSARIES. Its extraction
+spine (`absorbed_determined_by_commit_or_collides`, `TransferColl`) REMAINS in
+`EffectVmEmitTransferSound` as the reduction-internal witness. The exported headlines are the
+keyed-ROM closure below and the descriptor-level reductions after it — the set post-`field[1]` is an
+absorbed column, so the whole-state tooth (field[1] included) is priced by the SAME reductions. -/
 
 open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
   Dregg2.Crypto.ConcreteSecurity in
-/-- **⚑ THE KEYED-FLOOR CLOSURE of the extraction disjunction above** (the honest successor of the
+/-- **⚑ THE KEYED-FLOOR CLOSURE at receiptArchive's hash sites** (the honest successor of the
 fraud-deleted `EffectVmCommitReduction` claim, whose `IsPolyTime` floor is REFUTED at deployed
-parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
+parameters, and of the deleted `archiveDescriptor_commit_binds_state_or_collides` pigeonhole
+disjunction): in the LABELLED random-oracle idealization of the GROUP-4 surface
 (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every QUERY-BOUNDED forger
 producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
 absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
 (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
-deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
-deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+`boundaryLastPins` mod-`p` pub-pin step is deployed-side content and deliberately does NOT transport
+to the λ-wide model; its deployed-hash successor is the `_advantage_bound` reduction below. -/
 theorem archiveVm_commit_binds_keyed (Q : ℕ → ℕ)
     (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
     (A : Adversary (narrowBreakGame archiveHashSites))
     (hA : NarrowBreakEff archiveHashSites Q A) :
     Negl (gameAdv (narrowBreakGame archiveHashSites) A) :=
   narrowStateCommit_binds archiveHashSites rfl Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- receiptArchive's runnable descriptor as the row-commit reduction's per-effect datum: its hash
+sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def archiveNarrowRowSpec : NarrowRowSpec where
+  descriptor := receiptArchiveVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED receiptArchive DESCRIPTOR BINDING** — the deployed-hash successor of the deleted
+`archiveDescriptor_commit_binds_state_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff` (`hEff` honestly in the OPEN — `IsPolyTime` is refuted, so no discharged fixed-hash
+form exists), a forger producing two rows BOTH SATISFYING `receiptArchiveVmDescriptor` that share
+the commit column while disagreeing on an absorbed state column (the set post-`field[1]` INCLUDED)
+has NEGLIGIBLE advantage. -/
+theorem archiveDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D archiveNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D archiveNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D archiveNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D archiveNarrowRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE DISCHARGED receiptArchive COMMITMENT BINDING, ON THE PROVED KEYED-ROM FLOOR** — a
+query-bounded forger of the deployed 13-column nested `state_commit` has NEGLIGIBLE advantage, from
+`keyedRom_hard` (the birthday bound — a THEOREM), with NO floor hypothesis. The COMMITMENT layer
+carries no descriptor (the nested absorb schedule is one object across effects); the per-effect
+circuit content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem archiveDescriptor_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §8 — THE CONNECTOR — `lifeProj` to universe-A's `ReceiptArchiveSpec`.
 
@@ -512,7 +547,8 @@ theorem archiveBadRow_rejected : ¬ (VmConstraint.gate gLifeSet).holdsVm archive
 #assert_axioms archiveVm_rejects_wrong_output
 #assert_axioms intent_to_archiveCellSpec
 #assert_axioms archiveDescriptor_full_sound
-#assert_axioms archiveDescriptor_commit_binds_state_or_collides
+#assert_axioms archiveDescriptor_binds_state_advantage_bound
+#assert_axioms archiveDescriptor_binds_state_rom
 #assert_axioms archiveVm_commit_binds_keyed
 #assert_axioms unify_archive
 #assert_axioms unify_archive_via_exec

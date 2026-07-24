@@ -55,6 +55,8 @@ the (refuted) injective sponge floor; the cap-table digest enters ONLY as `Funct
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.accountgrowth
 
@@ -298,18 +300,67 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 /-- `spawnHashSites` is DEFINITIONALLY the transfer keystone's `transferHashSites`. -/
 theorem spawnHashSites_eq : spawnHashSites = transferHashSites := rfl
 
-/-- **`spawnDescriptor_commit_binds_state_or_collides` — the whole child-state tooth, UNCONDITIONAL.**
-Two `spawnA` rows that satisfy the hash-sites and publish equal `state_commit`s EITHER have identical
-absorbed columns — the born-empty balance/nonce/fields and the moved `cap_root` all included — OR exhibit
-a genuine collision of the deployed sponge (the cured keystone core, never the refuted injective floor). -/
-theorem spawnDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ spawnHashSites)
-    (hs₂ : siteHoldsAll hash e₂ spawnHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  rw [spawnHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ The bare `spawnDescriptor_commit_binds_state_or_collides` disjunction that stood here is
+DELETED: at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so
+`binds ∨ collides` is satisfiable through its RIGHT branch without the binding ever holding. Its
+extraction spine (`absorbed_determined_by_commit_or_collides`, `TransferColl`) REMAINS in
+`EffectVmEmitTransferSound` as the reduction-internal witness. The successors below are REDUCTIONS
+pricing the whole child-state tooth — the born-empty balance/nonce/fields and the moved `cap_root`
+are all absorbed columns, so they are all bound by the same games. -/
+
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE at spawn's hash sites** — successor of the deleted
+`spawnDescriptor_commit_binds_state_or_collides`: in the LABELLED random-oracle idealization of the
+GROUP-4 surface (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every
+QUERY-BOUNDED forger producing two rows that satisfy THIS effect's hash sites with a shared commit
+column but different absorbed 13-column child state wins with NEGLIGIBLE probability — closed from
+the PROVED birthday floor (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no
+named-carrier hypothesis. -/
+theorem spawnVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame spawnHashSites))
+    (hA : NarrowBreakEff spawnHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame spawnHashSites) A) :=
+  narrowStateCommit_binds spawnHashSites rfl Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- spawn's runnable descriptor as the row-commit reduction's per-effect datum: its hash sites ARE
+the deployed GROUP-4 sites (`rfl`). -/
+def spawnNarrowRowSpec : NarrowRowSpec where
+  descriptor := spawnVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED spawn DESCRIPTOR BINDING** — the deployed-hash successor of the deleted
+`spawnDescriptor_commit_binds_state_or_collides`: under the DEPLOYED sponge's collision floor at the
+class `Eff` (`hEff` honestly in the OPEN — `IsPolyTime` is refuted, so no discharged fixed-hash form
+exists), a forger producing two rows BOTH SATISFYING `spawnVmDescriptor` that share the commit
+column while disagreeing on an absorbed child-state column has NEGLIGIBLE advantage. -/
+theorem spawnDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D spawnNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D spawnNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D spawnNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D spawnNarrowRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE DISCHARGED spawn COMMITMENT BINDING, ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+forger of the deployed 13-column nested `state_commit` has NEGLIGIBLE advantage, from
+`keyedRom_hard` (the birthday bound — a THEOREM), with NO floor hypothesis. The COMMITMENT layer
+carries no descriptor (the nested absorb schedule is one object across effects); the per-effect
+circuit content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem spawnDescriptor_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §8 — THE CONNECTOR — `capRootProj`/`balProj` to universe-A's `SpawnSpec`.
 
@@ -469,7 +520,9 @@ theorem spawnBadBalRow_rejected : ¬ (VmConstraint.gate gBalLoZero).holdsVm spaw
 #assert_axioms spawnVm_rejects_wrong_output
 #assert_axioms intent_to_spawnChildSpec
 #assert_axioms spawnDescriptor_full_sound
-#assert_axioms spawnDescriptor_commit_binds_state_or_collides
+#assert_axioms spawnVm_commit_binds_keyed
+#assert_axioms spawnDescriptor_binds_state_advantage_bound
+#assert_axioms spawnDescriptor_binds_state_rom
 #assert_axioms unify_spawn_caps
 #assert_axioms unify_spawn_balance
 #assert_axioms unify_spawn_via_exec

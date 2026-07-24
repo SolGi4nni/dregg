@@ -16,12 +16,14 @@ magnesium win is the WIDE commitment now BINDS all 8 roots. The §RECIPE applied
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The anti-ghost theorems carry NO
-collision-resistance hypothesis: they conclude a disjunction naming the sponge collision they
-would otherwise assume away.
+collision-resistance hypothesis carried as a floor: they are SECURITY REDUCTIONS (fixed-hash
+`_advantage_bound` forms with `hEff` in the OPEN + keyed-ROM `_rom` discharges from the proved
+birthday floor), never a bare `binds ∨ collides` disjunction.
 `fullClause` NON-VACUOUS. Read-only imports; owns only itself.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitSetVK
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitSetVKFullState
 
@@ -105,48 +107,88 @@ theorem setVerificationKey_runnable_full_sound (hash : List ℤ → ℤ) (preRoo
 
 /-! ## §5 — THE ANTI-GHOST. -/
 
-/-- **`setVerificationKey_runnable_full_commit_binds_or_collides` — the setVK anti-ghost.** Two wide
-setVK rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) EITHER agree on all 12
-absorbed state-block columns AND pointwise on the 8 side-table roots, OR exhibit a collision of the
-deployed sponge — at the wide absorb, or at the two root lists.
+/-! ⚑ ANTI-GHOST ON ALL 17 FIELDS, REBUILT AS SECURITY REDUCTIONS (the mint recipe,
+`EffectVmEmitMintRunnable` §4). The bare `..._or_collides` forms that stood here are DELETED: at
+deployed BabyBear parameters a sponge collision EXISTS by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch without the binding ever holding — they quantified over SOLUTIONS, where hardness
+quantifies over EFFICIENT ADVERSARIES. Their extraction spine
+(`EffectVmFullStateRunnable.runnable_full_commit_binds_or_collides` /
+`wide_rejects_root_tamper_or_collides`, `WideColl`, `RootsColl`) REMAINS as the reduction-internal
+witness. The successors: the break/tamper is a first-class `Game` at setVerificationKey's OWN wide descriptor
+(two rows BOTH ACCEPTED by the deployed wide circuit, one published `NEW_COMMIT`, genuine
+`systemRootsDigest` carriers, different bound 17-field state), the extractor is the wide carrier
+lift, and the conclusion is negligibility — the fixed-hash `_advantage_bound` forms with `hEff`
+honestly in the OPEN (`IsPolyTime` is refuted; both poles of the floor are priced in
+`EffectVmRowCommitReduction` §6), and the `_rom` forms DISCHARGED from `keyedRom_hard` (the birthday
+bound) with NO floor hypothesis, in the labelled keyed-ROM idealization of
+`EffectVmRowCommitReduction` §5's header. -/
 
-The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed sponge
-REFUTES; at deployed parameters it was vacuous. The disjunction is formally weaker and HOLDS of the
-deployed sponge. -/
-theorem setVerificationKey_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash setVKVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash setVKVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  runnable_full_commit_binds_or_collides (setVKRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- setVerificationKey's WIDE runnable descriptor as the reduction's per-effect datum: its hash sites ARE the
+`system_roots`-absorbing wide sites (`rfl`). -/
+def setVerificationKeyWideRowSpec : WideRowSpec where
+  descriptor := setVKVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`setVerificationKey_rejects_root_tamper_or_collides` — side-table anti-ghost for setVK.** Two
-wide setVK rows publishing the same `NEW_COMMIT` whose side-table sub-blocks DIFFER at some index `i`
-exhibit a collision of the deployed sponge: forging a side-table root under a fixed commitment costs a
-sponge collision.
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED WHOLE-17-FIELD BINDING for setVerificationKey** — successor of the deleted
+`..._or_collides` whole-state anti-ghost: under the DEPLOYED sponge's collision floor at the class
+`Eff`, an adversary producing two rows BOTH SATISFYING the wide descriptor, publishing one
+`NEW_COMMIT` with genuine `systemRootsDigest` carriers, yet binding DIFFERENT state (an absorbed
+column or a side-table root), has NEGLIGIBLE advantage. -/
+theorem setVerificationKey_runnable_full_binds_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D setVerificationKeyWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier (wideRowToCarrier D setVerificationKeyWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D setVerificationKeyWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D setVerificationKeyWideRowSpec Eff A hEff hCR
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed sponge REFUTES; at
-deployed parameters it was vacuous. This one names the collision instead of assuming it away. -/
-theorem setVerificationKey_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash setVKVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash setVKVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (setVKRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE WHOLE-17-FIELD BINDING, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+forger of the wide nested `state_commit` (the very commitment setVerificationKey's wide row publishes) has
+NEGLIGIBLE advantage, from `keyedRom_hard` (the birthday bound — a THEOREM). NO floor hypothesis.
+The COMMITMENT layer carries no descriptor (the nested absorb schedule is one object across
+effects); setVerificationKey's per-effect circuit content stays in the `_advantage_bound` form above,
+`hEff` in the open. -/
+theorem setVerificationKey_runnable_full_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED SIDE-TABLE ANTI-GHOST for setVerificationKey** — successor of the deleted
+`..._rejects_root_tamper_or_collides`: under the DEPLOYED sponge's collision floor at the class
+`Eff`, an adversary that keeps the published `NEW_COMMIT` while tampering a side-table root of a
+satisfying wide setVerificationKey row (a dropped escrow, an omitted nullifier, a reordered queue) has
+NEGLIGIBLE advantage. -/
+theorem setVerificationKey_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D setVerificationKeyWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D setVerificationKeyWideRowSpec (rootTamperToWide D setVerificationKeyWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D setVerificationKeyWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D setVerificationKeyWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE SIDE-TABLE ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+adversary cannot keep the published nested wide commitment while tampering a side-table root, except
+with negligible probability (`wide_root_tamper_rom`, from `keyedRom_hard`). NO floor hypothesis. -/
+theorem setVerificationKey_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-! ## §6 — NON-VACUITY. -/
 
@@ -184,8 +226,10 @@ theorem setVK_clause_rejects_root_drop :
 
 #assert_axioms setVKGates_give_cellSpec
 #assert_axioms setVerificationKey_runnable_full_sound
-#assert_axioms setVerificationKey_runnable_full_commit_binds_or_collides
-#assert_axioms setVerificationKey_rejects_root_tamper_or_collides
+#assert_axioms setVerificationKey_runnable_full_binds_advantage_bound
+#assert_axioms setVerificationKey_runnable_full_binds_rom
+#assert_axioms setVerificationKey_rejects_root_tamper_advantage_bound
+#assert_axioms setVerificationKey_rejects_root_tamper_rom
 #assert_axioms goodSetVK_realizes
 #assert_axioms setVK_clause_not_trivial
 #assert_axioms setVK_clause_rejects_root_drop

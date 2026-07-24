@@ -30,13 +30,18 @@ This v2 reconciles the descriptor to the runtime passthrough+tick.
     state block (the hand-AIR carries no VK `field` column). The VK-write soundness lives in universe-A's
     `SetVKSpec` (cited via the §connector); the runnable row pins the conserved frame + nonce tick.
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The commitment keystone is UNCONDITIONAL
-(a deployed-sponge collision disjunction), never conditioned on the (refuted) injective sponge floor. Imports read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The commitment keystones are SECURITY
+REDUCTIONS (§6 the keyed-ROM closure at this effect's hash sites; §8 the row-forgery game at THIS
+descriptor plus its keyed-ROM discharge) — never a bare `binds ∨ collides` disjunction (satisfiable
+through its collision branch by pigeonhole at deployed parameters) and never conditioned on the
+(refuted) injective sponge floor. Imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstatevk
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitSetVK
 
@@ -182,17 +187,31 @@ theorem setVKVm_rejects_nonce_freeze (env : VmRowEnv)
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
   exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonTick hwrong
 
-/-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
+/-! ## §6 — the commitment binding (hash sites identical to transfer's), AS A REDUCTION.
+
+⚑ The bare `setVKDescriptor_commit_binds_block_or_collides` disjunction that stood here is DELETED:
+at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so `binds ∨ collides` is
+satisfiable through its RIGHT branch without the binding ever holding. Its extraction spine
+(`absorbed_determined_by_commit_or_collides`, `TransferColl`) REMAINS in `EffectVmEmitTransferSound`
+as the reduction-internal witness. The exported headline is the keyed-ROM closure below. -/
 
 theorem setVK_sites_eq : setVKVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem setVKDescriptor_commit_binds_block_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ setVKHashSites)
-    (hs₂ : siteHoldsAll hash e₂ setVKHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ THE KEYED-FLOOR CLOSURE at setVK's hash sites** — successor of the deleted
+`setVKDescriptor_commit_binds_block_or_collides`: in the LABELLED random-oracle idealization of the
+GROUP-4 surface (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every
+QUERY-BOUNDED forger producing two rows that satisfy THIS effect's hash sites with a shared commit
+column but different absorbed 13-column state wins with NEGLIGIBLE probability — closed from the
+PROVED birthday floor (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier
+hypothesis. -/
+theorem setVK_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame setVKHashSites))
+    (hA : NarrowBreakEff setVKHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame setVKHashSites) A) :=
+  narrowStateCommit_binds setVKHashSites rfl Q hQ A hA
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -284,50 +303,54 @@ theorem setVKDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem setVKDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hsat₁ : satisfiedVm hash setVKVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash setVKVmDescriptor e₂ true true)
-    -- FIELD-FAITHFUL bridge: the published commitment is a CANONICAL field element (Poseidon2's
-    -- output lives in `[0, p)`). The circuit pins `state_commit ≡ NEW_COMMIT [ZMOD p]`; canonicality
-    -- of the two digest columns lifts that field congruence to the ℤ equality collision-resistance
-    -- needs. An honest side condition (the deployed digest IS reduced), NOT a weakening.
-    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
-      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
-      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ setVKHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ setVKHashSites := hsat₂.2.1
-  have hc : ∀ (e : VmRowEnv), satisfiedVm hash setVKVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ setVKVmDescriptor.constraints := by
-        unfold setVKVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
-      [ZMOD 2013265921] := by
-    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
-      rw [hpub]; exact (hc e₂ hsat₂).symm
-    exact (hc e₁ hsat₁).trans h2
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    have hdvd := Int.modEq_iff_dvd.mp hmod
-    obtain ⟨l₁, u₁⟩ := hcanon₁
-    obtain ⟨l₂, u₂⟩ := hcanon₂
-    omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ The bare `setVKDescriptor_commit_binds_state_or_collides` disjunction that stood here is
+DELETED (same pigeonhole shirk as §6's). Its successor is the ROW-FORGERY REDUCTION below: the break
+is a first-class `Game` AT THIS DESCRIPTOR (`narrowRowBreakGame` — two rows both ACCEPTED by
+`satisfiedVm hash setVKVmDescriptor`, one commit column, different absorbed state), the extractor is
+the GROUP-4 carrier lift, and the conclusion is negligibility — under the deployed sponge's
+collision floor at an OPEN class `Eff` (both poles priced in `EffectVmRowCommitReduction` §6), and
+DISCHARGED with no floor hypothesis at the sampled oracle (`narrowRow_binds_rom`, the keyed birthday
+floor). The deployed-side mod-`p` `NEW_COMMIT` pub-pin lift lives in `setVKDescriptor_full_sound`
+and deliberately does NOT transport into the λ-wide model (`EffectVmKeyedStateCommit` header). -/
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- setVK's runnable descriptor as the row-commit reduction's per-effect datum: its hash sites ARE
+the deployed GROUP-4 sites (`rfl`). -/
+def setVKNarrowRowSpec : NarrowRowSpec where
+  descriptor := setVKVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED setVK DESCRIPTOR BINDING** — successor of the deleted
+`setVKDescriptor_commit_binds_state_or_collides`: under the DEPLOYED sponge's collision floor at the
+class `Eff` (`hEff` honestly in the OPEN — `IsPolyTime` is refuted, so no discharged fixed-hash form
+exists), a forger producing two rows BOTH SATISFYING `setVKVmDescriptor` that share the commit
+column while disagreeing on an absorbed state column has NEGLIGIBLE advantage. -/
+theorem setVKDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D setVKNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D setVKNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D setVKNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D setVKNarrowRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE DISCHARGED setVK COMMITMENT BINDING, ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+forger of the deployed 13-column nested `state_commit` (the very commitment setVK's row publishes)
+has NEGLIGIBLE advantage, from `keyedRom_hard` (the birthday bound — a THEOREM), with NO floor
+hypothesis. The COMMITMENT layer carries no descriptor (the nested absorb schedule is one object
+across effects — `EffectVmRowCommitReduction` §5 header); setVK's per-effect circuit content stays
+in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem setVKDescriptor_binds_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) :=
+  narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §9 — THE CONNECTOR — `cellProjV` to universe-A's `SetVKSpec` (conserved-balance freeze). -/
 
@@ -481,8 +504,9 @@ theorem staleNonceSetVKRow_rejected :
 #assert_axioms setVKVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms setVKDescriptor_full_sound
-#assert_axioms setVKDescriptor_commit_binds_block_or_collides
-#assert_axioms setVKDescriptor_commit_binds_state_or_collides
+#assert_axioms setVK_commit_binds_keyed
+#assert_axioms setVKDescriptor_binds_state_advantage_bound
+#assert_axioms setVKDescriptor_binds_state_rom
 #assert_axioms setVK_balance_frozen
 #assert_axioms vk_write_is_out_of_row
 #assert_axioms descriptor_agrees_with_executor_setVK

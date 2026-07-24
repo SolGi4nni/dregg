@@ -64,6 +64,7 @@ import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notenullifier
 import Dregg2.Exec.SystemRoots
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 
@@ -751,13 +752,15 @@ theorem noteSpendColl_refutable_of_injective (hash : List ℤ → ℤ) (hCR : Po
     (e₁ e₂ : VmRowEnv) : ¬ NoteSpendColl hash e₁ e₂ :=
   spongeColl_refutable_of_injective hash hCR _
 
-/-- **`noteSpendFull_commit_binds_sysdigest_or_collides` (UNCONDITIONAL).** Two rows satisfying the
+/-- **(REDUCTION-INTERNAL extraction step — NOT an exported headline.)** Two rows satisfying the
 amplified hash-sites that publish the SAME `state_commit` EITHER have the SAME absorbed `system_roots`
 digest, OR exhibit a genuine collision of the deployed sponge at the pair `noteSpendCollFind` returns.
-The old form derived the equality from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge
-REFUTES; the GROUP-4 peel is now a TOTAL FUNCTION (`Poseidon2Binding.group4Find`, reused not
-re-authored) over the SAME three inner blocks the wide runnable descriptor absorbs. -/
-theorem noteSpendFull_commit_binds_sysdigest_or_collides (hash : List ℤ → ℤ)
+⚑ A bare `binds ∨ collides` is a SHIRK as a headline (a collision EXISTS by pigeonhole at deployed
+parameters, so the disjunction holds through its right branch without binding) — this lemma is kept
+PRIVATE as the witness inside the `_of_injective` strength bridges below; the EXPORTED successors are
+the §ROM reductions (`noteSpend_binds_sysdigest_rom`, `noteSpend_binds_nullifiers_root_rom`), closed
+from the PROVED keyed birthday floor. -/
+private theorem noteSpendFull_commit_binds_sysdigest_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ noteSpendRootHashSites)
     (hs₂ : siteHoldsAll hash e₂ noteSpendRootHashSites)
@@ -771,8 +774,8 @@ theorem noteSpendFull_commit_binds_sysdigest_or_collides (hash : List ℤ → �
   · exact Or.inl hd
   · exact Or.inr hcoll
 
-/-- **`noteSpendFull_binds_nullifiers_root_or_collides` — CONNECTED to `Exec.SystemRoots`,
-UNCONDITIONAL.** Two amplified rows that publish the same `state_commit` AND whose after-digest carrier
+/-- **(REDUCTION-INTERNAL extraction step — NOT an exported headline; see
+`noteSpend_binds_nullifiers_root_rom` for the exported successor.)** Two amplified rows that publish the same `state_commit` AND whose after-digest carrier
 IS the `systemRootsDigest` of their respective `system_roots` sub-blocks EITHER have the SAME
 `nullifiers` side-table root (and every other), OR name a collision of the deployed sponge — at the
 GROUP-4 absorption (`NoteSpendColl`) or at the ordered root list (`RootsColl`). The chain: equal
@@ -783,7 +786,7 @@ root (omitting `nf`) provably MOVES `state_commit` ⇒ UNSAT unless the prover h
 `Exec.SystemRoots.systemRootsDigest_binds_pointwise`'s `compressNInjective` at the roots digest. Neither
 is satisfiable by the deployed compressing sponge, so the old theorem was vacuous exactly where it was
 meant to bind the deployed nullifier set. -/
-theorem noteSpendFull_binds_nullifiers_root_or_collides (hash : List ℤ → ℤ)
+private theorem noteSpendFull_binds_nullifiers_root_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
     (hs₁ : siteHoldsAll hash e₁ noteSpendRootHashSites)
     (hs₂ : siteHoldsAll hash e₂ noteSpendRootHashSites)
@@ -831,6 +834,103 @@ theorem noteSpendFull_binds_nullifiers_root_of_injective (hash : List ℤ → �
   · exact hpt i
   · exact absurd hcoll (noteSpendColl_refutable_of_injective hash hCR e₁ e₂)
   · exact absurd hrcoll (rootsColl_refutable_of_injective hash hCR sr₁ sr₂)
+
+/-! ## §ROM — THE EXPORTED SUCCESSORS of the two extraction disjunctions, ON THE PROVED KEYED-ROM
+FLOOR (`EffectVmRowCommitReduction` §5's labelled idealization: the sampled
+`H : Tag × Msg → Fin (2^l)` replaces the fixed sponge; there is NO `l` at which `Fin (2^l)` is the
+deployed ~31-bit felt — the modelling step, said out loud). The sysdigest carrier is the fourth slot
+of the NARROW outer absorb; the `nullifiers` root is one lane of the WIDE roots sub-block, genuinely
+re-absorbed by the nested wide commitment. Each successor is the corresponding generic forgery with
+the DISAGREEMENT LOCALIZED (the carrier felt; the `NULLIFIER` lane), reduced by winning-set inclusion
+into the generic game and closed from `keyedRom_hard` (the birthday bound) — NO floor hypothesis, no
+`IsPolyTime`, no `Poseidon2SpongeCR`. -/
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **THE SYSDIGEST-CARRIER ROM TAMPER** — two truncated GROUP-4 payloads whose CARRIER FELTS (the
+fourth outer slot — noteSpend's `SYS_DIG_AFTER`) DIFFER, one nested narrow commitment. -/
+def noteSpendSysDigRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (narrowRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × NarrowRomVal × NarrowRomVal
+  wins := fun l H a =>
+    a.2.1.2 ≠ a.2.2.2
+      ∧ narrowRomCommit D tagDec l H a.1 a.2.1 = narrowRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((narrowRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites
+  Dregg2.Crypto.ProbCrypto in
+/-- **⚑⚑ `noteSpend_binds_sysdigest_rom` — THE EXPORTED SUCCESSOR of the sysdigest extraction
+disjunction.** A query-bounded forger that keeps the nested narrow commitment while moving the
+absorbed `system_roots` digest carrier has NEGLIGIBLE advantage — a carrier-localized win IS a
+payload disagreement, so the generic narrow binding (`narrowRow_binds_rom`, from `keyedRom_hard`)
+kills it. NO floor hypothesis. -/
+theorem noteSpend_binds_sysdigest_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (noteSpendSysDigRomTamper D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (noteSpendSysDigRomTamper D tagDec) Q A) :
+    Negl (gameAdv (noteSpendSysDigRomTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game
+      (⟨A.run⟩ : Adversary (effectVmNarrowRomForgery D tagDec).game)) :=
+    narrowRow_binds_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (effectVmNarrowRomForgery D tagDec).game) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (noteSpendSysDigRomTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((noteSpendSysDigRomTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrArg Prod.snd hc), heq⟩
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- The `NULLIFIER` lane of the truncated wide roots sub-block (`systemRoot.NULLIFIER = 5`). -/
+def noteSpendNullifierLane : Fin 8 := ⟨Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER, by decide⟩
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **THE NULLIFIERS-ROOT ROM TAMPER** — two truncated 17-field payloads whose roots sub-blocks
+DIFFER AT THE `NULLIFIER` LANE (the omitted-`nf` double-spend shape), one nested wide commitment. -/
+def noteSpendNullifierRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    a.2.1.2 noteSpendNullifierLane ≠ a.2.2.2 noteSpendNullifierLane
+      ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites
+  Dregg2.Crypto.ProbCrypto in
+/-- **⚑⚑ `noteSpend_binds_nullifiers_root_rom` — THE EXPORTED SUCCESSOR of the nullifiers-root
+extraction disjunction.** A query-bounded forger that keeps the nested wide commitment while moving
+the `NULLIFIER` root lane (omitting `nf` to enable a later double-spend) has NEGLIGIBLE advantage —
+a lane-localized disagreement IS a roots-sub-block disagreement, so the generic root-tamper tooth
+(`wide_root_tamper_rom`, from `keyedRom_hard`) kills it. NO floor hypothesis. -/
+theorem noteSpend_binds_nullifiers_root_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (noteSpendNullifierRomTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (noteSpendNullifierRomTamper D tagDec) Q A) :
+    Negl (gameAdv (noteSpendNullifierRomTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game
+      (⟨A.run⟩ : Adversary (effectVmWideRomRootTamper D tagDec).game)) :=
+    wide_root_tamper_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (effectVmWideRomRootTamper D tagDec).game) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (noteSpendNullifierRomTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((noteSpendNullifierRomTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrFun hc noteSpendNullifierLane), heq⟩
 
 /-! ## §E — CONNECTOR to universe-A `noteSpendDescriptor_full_sound` over the root-bound descriptor. -/
 
@@ -1126,55 +1226,79 @@ theorem noteSpend_runnable_full_sound (hash : List ℤ → ℤ)
   runnable_full_sound (noteSpendRunnableSpec hash value preRoots postRoots step) hash env pre post pr
     hrow hdec hgatesat
 
-/-- **`noteSpend_runnable_rejects_root_tamper_or_collides` — the side-table anti-ghost, as EXTRACTION.**
-Two wide rows publishing the SAME `NEW_COMMIT` (with `systemRootsDigest` carriers) whose `system_roots`
-sub-blocks DIFFER at some index (a dropped/omitted `nullifiers` update — an attacker omitting `nf` to
-enable a later double-spend, OR any other side-table root tampered) exhibit a concrete collision of
-`hash`: a `WideColl` on the wide absorbed lists, or a `RootsColl` on the two root lists. The
-whole-17-field anti-ghost tooth, from `wide_rejects_root_tamper_or_collides`.
+/-! ⚑ ANTI-GHOST ON ALL 17 FIELDS, REBUILT AS SECURITY REDUCTIONS (the mint recipe,
+`EffectVmEmitMintRunnable` §4). The bare `noteSpend_runnable_rejects_{root,state}_tamper_or_collides`
+disjunctions that stood here are DELETED: at deployed BabyBear parameters a sponge collision EXISTS
+by pigeonhole, so `… ∨ collides` is satisfiable through its collision branch without the tooth ever
+biting. Their extraction spine (`EffectVmFullStateRunnable.wide_rejects_*_or_collides`, `WideColl`,
+`RootsColl`) REMAINS as the reduction-internal witness. The successors: the tamper is a first-class
+`Game` at noteSpend's OWN wide descriptor, the extractor is the wide carrier lift, the conclusion is
+negligibility — fixed-hash `_advantage_bound` forms with `hEff` honestly in the OPEN, and keyed-ROM
+`_rom` forms discharged from `keyedRom_hard` with NO floor hypothesis. -/
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`. The deployed BabyBear sponge REFUTES
-that hypothesis (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the previous form was vacuous at
-deployed parameters. This disjunction is formally weaker and holds of the deployed sponge: the omitted-`nf`
-attack is not impossible, it is a hash collision the theorem produces. -/
-theorem noteSpend_runnable_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash noteSpendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noteSpendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (noteSpendRunnableSpec hash value preRoots postRoots step) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- noteSpend's WIDE runnable descriptor as the reduction's per-effect datum. -/
+def noteSpendWideRowSpec : WideRowSpec where
+  descriptor := noteSpendVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`noteSpend_runnable_rejects_state_tamper_or_collides` — the per-cell-block anti-ghost, as
-EXTRACTION.** Two wide rows publishing the same `NEW_COMMIT` whose absorbed state-block columns
-(balance/nonce/fields/cap) DIFFER exhibit a concrete collision of `hash` — a `WideColl` on the wide
-absorbed lists or a `RootsColl` on the two root lists. So a forged credit / tampered field / forged
-cap-root that still claims the published commitment IS a collision. From
-`wide_rejects_state_tamper_or_collides`.
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED SIDE-TABLE ANTI-GHOST for noteSpend** — successor of the deleted
+`noteSpend_runnable_rejects_root_tamper_or_collides`: under the DEPLOYED sponge's collision floor at
+the class `Eff`, an adversary keeping the published `NEW_COMMIT` while tampering a side-table root
+of a satisfying wide noteSpend row (the omitted-`nf` double-spend enabling shape included) has
+NEGLIGIBLE advantage. -/
+theorem noteSpend_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D noteSpendWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noteSpendWideRowSpec (rootTamperToWide D noteSpendWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D noteSpendWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D noteSpendWideRowSpec Eff A hEff hCR
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge
-refutes; it was therefore vacuous at deployed parameters. This form is weaker and holds of that sponge. -/
-theorem noteSpend_runnable_rejects_state_tamper_or_collides (hash : List ℤ → ℤ)
-    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash noteSpendVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noteSpendVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
-    (htamper : baseAbsorbedCols e₁ ≠ baseAbsorbedCols e₂) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_state_tamper_or_collides (noteSpendRunnableSpec hash value preRoots postRoots step) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE SIDE-TABLE ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+adversary cannot keep the published nested wide commitment while tampering a side-table root, except
+with negligible probability (`wide_root_tamper_rom`, from `keyedRom_hard`). NO floor hypothesis. -/
+theorem noteSpend_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED PER-CELL-BLOCK ANTI-GHOST for noteSpend** — successor of the deleted
+`noteSpend_runnable_rejects_state_tamper_or_collides`: under the DEPLOYED sponge's collision floor
+at the class `Eff`, an adversary keeping the published `NEW_COMMIT` while tampering an absorbed
+state-block column (a forged credit, a tampered field, a forged `cap_root`) has NEGLIGIBLE
+advantage. -/
+theorem noteSpend_rejects_state_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideStateTamperGame D noteSpendWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noteSpendWideRowSpec (stateTamperToWide D noteSpendWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideStateTamperGame D noteSpendWideRowSpec) A) :=
+  wide_state_tamper_advantage_bound D noteSpendWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE PER-CELL-BLOCK ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+adversary cannot keep the published nested wide commitment while tampering an absorbed state block,
+except with negligible probability (`wide_state_tamper_rom`, from `keyedRom_hard`). NO floor
+hypothesis. -/
+theorem noteSpend_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
 
 /-! ### §W.5 — NON-VACUITY of the wide instance: the full clause is INHABITED + REFUTABLE. -/
 
@@ -1244,8 +1368,10 @@ theorem noteSpend_fullClause_refutable (hash : List ℤ → ℤ) :
 #assert_axioms noteSpendWide_forces_credit
 #assert_axioms noteSpendWide_forces_root
 #assert_axioms noteSpend_runnable_full_sound
-#assert_axioms noteSpend_runnable_rejects_root_tamper_or_collides
-#assert_axioms noteSpend_runnable_rejects_state_tamper_or_collides
+#assert_axioms noteSpend_rejects_root_tamper_advantage_bound
+#assert_axioms noteSpend_rejects_root_tamper_rom
+#assert_axioms noteSpend_rejects_state_tamper_advantage_bound
+#assert_axioms noteSpend_rejects_state_tamper_rom
 #assert_axioms noteSpend_fullClause_inhabited
 #assert_axioms noteSpend_fullClause_refutable
 
@@ -1282,6 +1408,8 @@ theorem noteSpend_fullClause_refutable (hash : List ℤ → ℤ) :
 #assert_axioms noteSpendFull_binds_nullifiers_root_or_collides
 #assert_axioms noteSpendFull_commit_binds_sysdigest_of_injective
 #assert_axioms noteSpendFull_binds_nullifiers_root_of_injective
+#assert_axioms noteSpend_binds_sysdigest_rom
+#assert_axioms noteSpend_binds_nullifiers_root_rom
 #assert_axioms noteSpendFull_sound
 #assert_axioms noteSpend_freshness_still_needs_nonmembership
 #assert_axioms goodNullRow_realizes

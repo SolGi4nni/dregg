@@ -40,6 +40,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.revokeDelegationA
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 
@@ -669,31 +670,54 @@ theorem revokeDelegation_runnable_full_sound (preRoots : SysRoots)
   runnable_full_sound (revokeRunnableSpec preRoots) hash env pre post postRoots
     hrow ⟨henc, hroots⟩ hsat
 
-/-- **`revokeDelegation_runnable_rejects_root_tamper_or_collides` — the side-table anti-ghost for
-`revokeDelegation`.** Two wide revoke rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
-carriers) whose side-table sub-blocks DIFFER at some index exhibit a genuine collision of the deployed
-sponge — on the state block (`WideColl`) or on the ordered root list (`RootsColl`). So such a pair is UNSAT
-unless the prover holds a sponge collision: the 8 side-table roots (incl. `DELEG`) are bound by the
-runnable commitment (a forged frozen-`DELEG` is rejected; an HONEST advance would require the kernel-widen
-wave to MOVE it, the reported residual).
+/-! ⚑ The bare `revokeDelegation_runnable_rejects_root_tamper_or_collides` disjunction that stood
+here is DELETED: at deployed BabyBear parameters a sponge collision EXISTS by pigeonhole, so
+`… ∨ collides` is satisfiable through its collision branch without the tooth ever biting. Its
+extraction spine (`EffectVmFullStateRunnable.wide_rejects_root_tamper_or_collides`, `WideColl`,
+`RootsColl`) REMAINS as the reduction-internal witness. The successors below are REDUCTIONS: the
+tamper is a first-class `Game` at revokeDelegation's OWN wide descriptor, the extractor is the wide
+carrier lift, and the conclusion is negligibility — the fixed-hash form with `hEff` honestly in the
+OPEN (`IsPolyTime` is refuted, so no discharged fixed-hash form exists; both poles of the floor are
+priced in `EffectVmRowCommitReduction` §6), and the keyed-ROM form DISCHARGED from `keyedRom_hard`
+(the birthday bound) with NO floor hypothesis. -/
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
-so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
-sponge. -/
-theorem revokeDelegation_runnable_rejects_root_tamper_or_collides (preRoots : SysRoots)
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash revokeDelegationVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash revokeDelegationVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (revokeRunnableSpec preRoots) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- revokeDelegation's WIDE runnable descriptor as the reduction's per-effect datum. -/
+def revokeDelegationWideRowSpec : WideRowSpec where
+  descriptor := revokeDelegationVmDescriptorWide
+  usesWideSites := rfl
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑ THE REDUCED SIDE-TABLE ANTI-GHOST for revokeDelegation** — successor of the deleted
+`revokeDelegation_runnable_rejects_root_tamper_or_collides`: under the DEPLOYED sponge's collision
+floor at the class `Eff`, an adversary that produces two satisfying wide revoke rows keeping the
+published `NEW_COMMIT` while tampering a side-table root (the `DELEG` root included) has NEGLIGIBLE
+advantage. -/
+theorem revokeDelegation_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D revokeDelegationWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D revokeDelegationWideRowSpec
+        (rootTamperToWide D revokeDelegationWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D revokeDelegationWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D revokeDelegationWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction Dregg2.Crypto.SpongeCarrierReduction
+  Dregg2.Crypto.FloorGames Dregg2.Crypto.ConcreteSecurity Dregg2.Crypto.RomCarrierSites in
+/-- **⚑⚑ THE SIDE-TABLE ANTI-GHOST, DISCHARGED ON THE PROVED KEYED-ROM FLOOR** — a query-bounded
+adversary cannot keep the published nested wide commitment while tampering a side-table root, except
+with negligible probability (`wide_root_tamper_rom`, from `keyedRom_hard` — the birthday bound). NO
+floor hypothesis. The COMMITMENT layer carries no descriptor; revokeDelegation's per-effect circuit
+content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem revokeDelegation_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-- **`revokeWide_realizes` — NON-VACUITY (witness TRUE).** A real passthrough+tick revoke cell transition
 (frame frozen, nonce `5 → 6`) with frozen roots inhabits `RevokeFullClause`. -/
@@ -752,7 +776,8 @@ theorem revoke_DELEG_epoch_residual (D : Caps → ℤ)
 
 #assert_axioms revokeWide_constraints_eq
 #assert_axioms revokeDelegation_runnable_full_sound
-#assert_axioms revokeDelegation_runnable_rejects_root_tamper_or_collides
+#assert_axioms revokeDelegation_rejects_root_tamper_advantage_bound
+#assert_axioms revokeDelegation_rejects_root_tamper_rom
 #assert_axioms revokeWide_realizes
 #assert_axioms revokeWide_clause_not_trivial
 #assert_axioms revoke_DELEG_epoch_residual
