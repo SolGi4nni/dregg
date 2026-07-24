@@ -75,9 +75,25 @@ predicate. `demoInsertGateW_accepts` is a real ACCEPTING widened write row, and
 double-spend witness at the concrete layer. `demoAafiGateW_accepts` is a real accepting widened AAFI
 row over an arbitrary hash whose post-chain is `ImtSorted` and admits no re-witness.
 
+## L3 (the canonically-keyed committed heap) — what moved here
+
+`MapOpWideKeyGate.LaneEnc` now carries the ADMISSIBLE committed-heap shape as a field (`HeapOk`),
+so every `Heap.SortedKeys h` premise in this file became `E.HeapOk h` — same statements at
+`narrowEnc` (where `HeapOk` IS `SortedKeys`), strictly stronger at `wideEnc` (where it additionally
+says the committed spine is canonically keyed). Two spots needed real work rather than a rename:
+
+  * `writeW_then_absentW_unsat` now routes through `writesToMerkleW_forces_present` to learn that
+    the written key is ALREADY on the spine, which is exactly what `heapOk_set` needs to carry
+    admissibility across `Heap.set`. The file's own §A finding turned out to be the lemma its own
+    L3 closure required.
+  * `aafiGatesW_post_chain_commitsW` gained ONE hypothesis (`hc`: the post-chain's addresses are
+    canonical) — the IMT layer's form of the same extraction premise, since the AAFI gate's bracket
+    is a raw-order fact and cannot force it. `canonHeapW_imtToHeapW` / `heapOkW_imtToHeapW` are the
+    bridge.
+
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Crypto enters ONLY as the existing named
-`Poseidon2SpongeCR` floor — NO new floor. NEW file; every import read-only; no
+`Poseidon2SpongeCR` floor — NO new floor. Every import read-only; no
 `sorry`/`admit`/`native_decide`. Nothing deployed is touched: no descriptor, no emit path, no JSON
 face, no changed byte.
 -/
@@ -96,12 +112,13 @@ open Dregg2.Crypto.Digest8KeySpike (Digest8Key keyLo keyE keyHi keyLo_lt_keyE ke
   keyLo_lt_keyHi spikeLeaves imtAbsent_excludes_digest8 imtInsert_preserves_digest8)
 open Dregg2.Circuit.SortedTreeNonMembershipWide8 (keyOfW keysOfW keysOfW_eq_spine SpineCommitsW
   GapOpenW nonMembership_soundW proj0 lowfelt_collision)
-open Dregg2.Circuit.MapOpWideKey (HoldsKindW)
-open Dregg2.Circuit.MapOpWideKeyGate (LaneEnc wideEnc leafOfW mapRootW mapRootW_injective
-  opensToMerkleW writesToMerkleW opensToMerkleW_some_excludes_none HoldsKindMerkleW
-  ReconcileGatesW ReconcileGatesAtW reconcileGatesW_force_openingW aafiLeafHashW AafiGatesAtW
-  aafiGatesW_force_imtAbsentW insertW_absentW_jointly_unsat insertW_absentW_jointly_unsat'
-  demoHeapW demoHeapW_sorted demoHeapW_length demoRootW demoAbsentGateW_accepts demoOpensW_keyLo)
+open Dregg2.Circuit.MapOpWideKey (HoldsKindW KeyCanon)
+open Dregg2.Circuit.MapOpWideKeyGate (LaneEnc wideEnc CanonHeapW heapOk_canon leafOfW mapRootW
+  mapRootW_injective opensToMerkleW writesToMerkleW opensToMerkleW_some_excludes_none
+  HoldsKindMerkleW ReconcileGatesW ReconcileGatesAtW reconcileGatesW_force_openingW aafiLeafHashW
+  AafiGatesAtW aafiGatesW_force_imtAbsentW insertW_absentW_jointly_unsat
+  insertW_absentW_jointly_unsat' demoHeapW demoHeapW_sorted demoHeapW_ok demoHeapW_length demoRootW
+  demoAbsentGateW_accepts demoOpensW_keyLo)
 open Dregg2.Substrate
 
 set_option autoImplicit false
@@ -136,10 +153,10 @@ direction is `Heap.get_eq_none_iff`. This is the bridge `MapOpWideKeyGate` named
 after it, every `keysOfW`/`nonMembership_soundW`/`HoldsKindW` statement is a statement about the
 EMITTED gate's committed root, not about an abstract denotation. -/
 theorem spineCommitsW_of_heap (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (E : LaneEnc K)
-    (dep : Nat) (h : List (K × ℤ)) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep)
+    (dep : Nat) (h : List (K × ℤ)) (hs : E.HeapOk h) (hlen : h.length = 2 ^ dep)
     {r : ℤ} (hroot : mapRootW hash E dep h = r) :
     SpineCommitsW (opensAtW hash E dep) r (Heap.keys h) := by
-  refine ⟨hs, fun k => ⟨?_, ?_⟩⟩
+  refine ⟨E.heapOk_sorted h hs, fun k => ⟨?_, ?_⟩⟩
   · rintro ⟨e, he, hop⟩
     have he' : e.1 = k := he
     obtain ⟨h', hs', hlen', hroot', hget'⟩ := hop
@@ -155,7 +172,7 @@ theorem spineCommitsW_of_heap (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
 
 /-- The committed key SET at the concrete predicate IS the heap's key spine. -/
 theorem keysOfW_opensAtW (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (E : LaneEnc K)
-    (dep : Nat) (h : List (K × ℤ)) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep)
+    (dep : Nat) (h : List (K × ℤ)) (hs : E.HeapOk h) (hlen : h.length = 2 ^ dep)
     {r : ℤ} (hroot : mapRootW hash E dep h = r) :
     ∀ k, k ∈ keysOfW (opensAtW hash E dep) r ↔ k ∈ Heap.keys h :=
   keysOfW_eq_spine (opensAtW hash E dep) r (Heap.keys h)
@@ -186,7 +203,7 @@ applies verbatim once the weld supplies `SpineCommitsW`: a covering-gap open aga
 heap's key spine proves the key absent from the CONCRETE committed key set. Zero combinatorics
 restated — the gap machinery never knew it was abstract. -/
 theorem concrete_nonMembership_soundW (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (E : LaneEnc K) (dep : Nat) (h : List (K × ℤ)) (hs : Heap.SortedKeys h)
+    (E : LaneEnc K) (dep : Nat) (h : List (K × ℤ)) (hs : E.HeapOk h)
     (hlen : h.length = 2 ^ dep) {r : ℤ} (hroot : mapRootW hash E dep h = r) (k : K)
     (g : GapOpenW (opensAtW hash E dep) r k) (hv : g.coversSpine (Heap.keys h)) :
     k ∉ keysOfW (opensAtW hash E dep) r :=
@@ -197,7 +214,7 @@ theorem concrete_nonMembership_soundW (hash : List ℤ → ℤ) (hCR : Poseidon2
 the CONCRETE `opensToMerkleW … none` — the object the widened AIR's `.absent` row denotes. So the
 abstract wrapper is not a parallel universe: it decides the deployed opening. -/
 theorem concrete_gap_forces_opensNone (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (E : LaneEnc K) (dep : Nat) (h : List (K × ℤ)) (hs : Heap.SortedKeys h)
+    (E : LaneEnc K) (dep : Nat) (h : List (K × ℤ)) (hs : E.HeapOk h)
     (hlen : h.length = 2 ^ dep) {r : ℤ} (hroot : mapRootW hash E dep h = r) (k : K)
     (g : GapOpenW (opensAtW hash E dep) r k) (hv : g.coversSpine (Heap.keys h)) :
     opensToMerkleW hash E dep r k none := by
@@ -249,7 +266,7 @@ This is a structural fact about the deployed denotation, surfaced by the weld, n
 assumption. -/
 theorem writesToMerkleW_forces_present (hash : List ℤ → ℤ) (E : LaneEnc K) (dep : Nat)
     {r : ℤ} {k : K} {v r' : ℤ} (hw : writesToMerkleW hash E dep r k v r') :
-    ∃ h : List (K × ℤ), Heap.SortedKeys h ∧ h.length = 2 ^ dep
+    ∃ h : List (K × ℤ), E.HeapOk h ∧ h.length = 2 ^ dep
       ∧ mapRootW hash E dep h = r ∧ k ∈ Heap.keys h
       ∧ r' = mapRootW hash E dep (Heap.set h k v) := by
   obtain ⟨h, hs, hlen, hlenset, hroot, hr'⟩ := hw
@@ -276,9 +293,9 @@ theorem writesToMerkleW_forces_growth (hash : List ℤ → ℤ) (hCR : Poseidon2
       ↔ (y = k ∨ y ∈ keysOfW (opensAtW hash E dep) r) := by
   obtain ⟨h, hs, hlen, hroot, hk, hr'⟩ := writesToMerkleW_forces_present hash E dep hw
   have hlen' : (Heap.set h k v).length = 2 ^ dep := by
-    rw [Heap.length_set_mem h k v hs hk]; exact hlen
+    rw [Heap.length_set_mem h k v (E.heapOk_sorted h hs) hk]; exact hlen
   have hbrPost := keysOfW_opensAtW hash hCR E dep (Heap.set h k v)
-    (Heap.set_sorted h k v hs) hlen' hr'.symm
+    (E.heapOk_set h k v hs hk) hlen' hr'.symm
   have hbrPre := keysOfW_opensAtW hash hCR E dep h hs hlen hroot
   intro y
   rw [hbrPost y, hbrPre y]
@@ -309,9 +326,11 @@ theorem writeW_then_absentW_unsat (hash : List ℤ → ℤ) (hCR : Poseidon2Spon
     (E : LaneEnc K) (dep : Nat) {r : ℤ} {k : K} {v r' : ℤ}
     (hw : writesToMerkleW hash E dep r k v r')
     (habs : opensToMerkleW hash E dep r' k none) : False := by
-  obtain ⟨h, hs, hlen, hlenset, hroot, hr'⟩ := hw
+  obtain ⟨h, hs, hlen, hroot, hk, hr'⟩ := writesToMerkleW_forces_present hash E dep hw
+  have hlenset : (Heap.set h k v).length = 2 ^ dep := by
+    rw [Heap.length_set_mem h k v (E.heapOk_sorted h hs) hk]; exact hlen
   exact opensToMerkleW_some_excludes_none hash hCR E dep (v := v)
-    ⟨Heap.set h k v, Heap.set_sorted h k v hs, hlenset, hr'.symm, Heap.get_set_self h k v⟩ habs
+    ⟨Heap.set h k v, E.heapOk_set h k v hs hk, hlenset, hr'.symm, Heap.get_set_self h k v⟩ habs
 
 /-- **★ THE DOUBLE-SPEND REFUSAL, ON THE EMITTED GATE (`.insert`).** Two ACCEPTING widened rows —
 an `.insert` of the 8-felt key `k` moving `r` to `r'`, and an `.absent` of the SAME `k` against
@@ -369,12 +388,12 @@ committed spine is LITERALLY `Digest8KeySpike.spikeLeaves` — the same `[keyLo,
 about a real Merkle root. -/
 theorem demoSpineCommitsW (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
     SpineCommitsW (opensAtW hash wideEnc 1) (demoRootW hash) spikeLeaves :=
-  spineCommitsW_of_heap hash hCR wideEnc 1 demoHeapW demoHeapW_sorted demoHeapW_length rfl
+  spineCommitsW_of_heap hash hCR wideEnc 1 demoHeapW demoHeapW_ok demoHeapW_length rfl
 
 /-- The demo heap opens at the HIGH neighbour too (the second bracket leaf, for the gap witness). -/
 theorem demoOpensW_keyHi (hash : List ℤ → ℤ) :
     opensToMerkleW hash wideEnc 1 (demoRootW hash) keyHi (some 2) :=
-  ⟨demoHeapW, demoHeapW_sorted, demoHeapW_length, rfl, by
+  ⟨demoHeapW, demoHeapW_ok, demoHeapW_length, rfl, by
     show Heap.get [(keyLo, (1 : ℤ)), (keyHi, (2 : ℤ))] keyHi = some 2
     rw [Heap.get_cons_ne (1 : ℤ) [(keyHi, (2 : ℤ))] keyLo_lt_keyHi.ne']
     exact Heap.get_cons_self keyHi 2 []⟩
@@ -393,7 +412,7 @@ theorem demoGapW_covers (hash : List ℤ → ℤ) : (demoGapW hash).coversSpine 
 instantiated at `opensAtW`, excludes `keyE` from the committed key set of a real Merkle root. -/
 theorem demo_concrete_excludes (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
     keyE ∉ keysOfW (opensAtW hash wideEnc 1) (demoRootW hash) :=
-  concrete_nonMembership_soundW hash hCR wideEnc 1 demoHeapW demoHeapW_sorted demoHeapW_length rfl
+  concrete_nonMembership_soundW hash hCR wideEnc 1 demoHeapW demoHeapW_ok demoHeapW_length rfl
     keyE (demoGapW hash) (demoGapW_covers hash)
 
 /-- **★ ROUTE 2 — the EMITTED GATE forces the SAME absence.** The gate lane's accepting
@@ -420,10 +439,14 @@ def demoHeapW2 : List (Digest8Key × ℤ) := [(keyLo, 5), (keyHi, 2)]
 
 theorem demoHeapW2_sorted : Heap.SortedKeys demoHeapW2 := demoHeapW_sorted
 
+/-- The post-write heap has the SAME key spine as the pre-write one, so it is admissible for the
+same reason: the L3 canonicity discipline costs the write side nothing either. -/
+theorem demoHeapW2_ok : wideEnc.HeapOk demoHeapW2 := demoHeapW_ok
+
 theorem demoHeapW2_length : demoHeapW2.length = 2 ^ 1 := rfl
 
 /-- The post-write committed root. -/
-def demoRootW2 (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 demoHeapW2
+noncomputable def demoRootW2 (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 demoHeapW2
 
 /-- **★ A REAL ACCEPTING WIDENED WRITE ROW.** The old leaf `(keyLo, 1)` and the new leaf
 `(keyLo, 5)` recompute to the pre- and post-roots along the SAME sibling path; every obligation
@@ -431,13 +454,13 @@ closes by `rfl`, over an ARBITRARY hash. -/
 theorem demoInsertGateW_accepts (hash : List ℤ → ℤ) :
     ReconcileGatesAtW hash wideEnc 1 (demoRootW hash) keyLo 5 (demoRootW2 hash)
       MapOpKind.insert :=
-  ⟨demoHeapW, demoHeapW_sorted, demoHeapW_length, rfl,
+  ⟨demoHeapW, demoHeapW_ok, demoHeapW_length, rfl,
    [(false, leafOfW hash wideEnc (keyHi, 2))], 1, rfl, rfl, rfl⟩
 
 /-- The post-root really commits the written key (the discrimination side of the refusal). -/
 theorem demoRootW2_opens_keyLo (hash : List ℤ → ℤ) :
     opensToMerkleW hash wideEnc 1 (demoRootW2 hash) keyLo (some 5) :=
-  ⟨demoHeapW2, demoHeapW2_sorted, demoHeapW2_length, rfl, Heap.get_cons_self keyLo 5 [(keyHi, 2)]⟩
+  ⟨demoHeapW2, demoHeapW2_ok, demoHeapW2_length, rfl, Heap.get_cons_self keyLo 5 [(keyHi, 2)]⟩
 
 theorem demoRootW2_keyLo_in_keysOfW (hash : List ℤ → ℤ) :
     keyLo ∈ keysOfW (opensAtW hash wideEnc 1) (demoRootW2 hash) :=
@@ -469,7 +492,7 @@ refuses the double spend, not absence proofs in general: the welded gate discrim
 theorem demoAbsentGateW2_accepts (hash : List ℤ → ℤ) :
     ReconcileGatesAtW hash wideEnc 1 (demoRootW2 hash) keyE 0 (demoRootW2 hash)
       MapOpKind.absent :=
-  ⟨demoHeapW2, demoHeapW2_sorted, demoHeapW2_length, rfl,
+  ⟨demoHeapW2, demoHeapW2_ok, demoHeapW2_length, rfl,
    ⟨[(false, leafOfW hash wideEnc (keyHi, 2))], [(true, leafOfW hash wideEnc (keyLo, 5))],
     keyLo, 5, keyHi, 2, rfl, rfl, rfl, rfl, rfl, keyLo_lt_keyE, keyE_lt_keyHi⟩, rfl⟩
 
@@ -522,6 +545,21 @@ theorem imtSortedW_sortedKeys {c : List (ImtLeaf K V)} (hs : ImtSorted c) :
   exact imtSorted_addrs_sorted hs
 
 end ImtWide
+
+/-- The IMT-layer form of the L3 discipline: a chain whose ADDRESSES are canonical projects to a
+canonically-keyed heap. (Chain-address canonicity is the IMT layer's extraction premise, exactly as
+`wideEnc.HeapOk` is the map layer's — the AAFI gate's bracket is a raw-order fact and cannot force
+it, `MapOpWideKeyCanonDischarge.gate_teeth_cannot_force_canonicity`.) -/
+theorem canonHeapW_imtToHeapW {c : List (ImtLeaf Digest8Key ℤ)}
+    (hc : ∀ x ∈ imtAddrs c, KeyCanon (ofLex x)) : CanonHeapW (imtToHeapW c) := by
+  intro k hk
+  rw [keys_imtToHeapW] at hk
+  exact hc k hk
+
+/-- …hence an `ImtSorted`, canonically-addressed chain projects to an ADMISSIBLE wide heap. -/
+theorem heapOkW_imtToHeapW {c : List (ImtLeaf Digest8Key ℤ)} (hs : ImtSorted c)
+    (hc : ∀ x ∈ imtAddrs c, KeyCanon (ofLex x)) : wideEnc.HeapOk (imtToHeapW c) :=
+  ⟨imtSortedW_sortedKeys hs, canonHeapW_imtToHeapW hc⟩
 
 /-- **★ ITEM 2 — THE WIDENED GATE PRESERVES THE SORTED CHAIN.** The widened twin of
 `IndexedMerkleTree.aafiGates_force_sortedKeys`: on an `ImtSorted` pre-chain, an ACCEPTING widened
@@ -577,11 +615,13 @@ theorem aafiGatesW_post_chain_commitsW (hash : List ℤ → ℤ) (hCR : Poseidon
     (hs : ImtSorted c)
     (hg : AafiGatesAtW hash dep oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty)
     (hlow : (⟨lowAddr, lowValue, lowNext⟩ : ImtLeaf Digest8Key ℤ) ∈ c)
-    (hlen : (imtToHeapW (imtInsert c k v)).length = 2 ^ d) :
+    (hlen : (imtToHeapW (imtInsert c k v)).length = 2 ^ d)
+    (hc : ∀ x ∈ imtAddrs (imtInsert c k v), KeyCanon (ofLex x)) :
     SpineCommitsW (opensAtW hash wideEnc d)
       (mapRootW hash wideEnc d (imtToHeapW (imtInsert c k v))) (imtAddrs (imtInsert c k v)) := by
-  have hsk := (aafiGatesW_force_sortedChainW hash hCR dep hs hg hlow).2
-  have hb := spineCommitsW_of_heap hash hCR wideEnc d (imtToHeapW (imtInsert c k v)) hsk hlen rfl
+  have hsk := (aafiGatesW_force_sortedChainW hash hCR dep hs hg hlow).1
+  have hb := spineCommitsW_of_heap hash hCR wideEnc d (imtToHeapW (imtInsert c k v))
+    (heapOkW_imtToHeapW hsk hc) hlen rfl
   rwa [keys_imtToHeapW] at hb
 
 /-! ### §3a — NON-VACUITY for item 2: a REAL accepting widened AAFI row at depth 1. -/
@@ -683,8 +723,11 @@ existing named `Poseidon2SpongeCR` floor. No new floor was introduced. -/
 #assert_axioms demoAbsentGateW2_accepts
 #assert_axioms demoAbsentGateW2_forces_absence
 #assert_axioms demoWeldedRows_indistinguishable_narrowly
+#assert_axioms demoHeapW2_ok
 #assert_axioms keys_imtToHeapW
 #assert_axioms imtSortedW_sortedKeys
+#assert_axioms canonHeapW_imtToHeapW
+#assert_axioms heapOkW_imtToHeapW
 #assert_axioms aafiGatesW_force_sortedChainW
 #assert_axioms aafiGatesW_force_spine_growthW
 #assert_axioms aafiGatesW_no_rewitnessW

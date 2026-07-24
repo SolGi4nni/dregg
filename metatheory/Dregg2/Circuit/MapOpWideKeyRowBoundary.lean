@@ -59,27 +59,39 @@ W3.
     chain that PRESENTS it. `forgeRow_canon_survives` is the same row's canonical statement, TRUE.
     So routing through `keyAtCanon` is load-bearing at the row boundary, not stylistic.
 
-## ⚑ THE FINDING: the row boundary closes, the WITNESS boundary does not
+## ⚑ L3 — the WITNESS boundary, now CLOSED BY DEFINITION (and what that cost)
 
 Composing the weld at the row surfaced the NEXT unforced hypothesis one level down, at the
-extraction premise rather than the trace row. `ReconcileGatesAtW` opens with `∃ h : List (K × ℤ)`;
-nothing makes that heap's KEYS canonical, and `keysOfW` is a set of raw `Digest8Key`s. So:
+extraction premise rather than the trace row: `ReconcileGatesAtW` opened with `∃ h : List (K × ℤ)`
+and nothing made that heap's KEYS canonical, so `heapAlias_row_absence_is_not_residue_absence`
+exhibited a REAL accepting widened `.absent` gate over `[0 ↦ 1, (p+5) ↦ 1]` whose forced absence of
+`5` coexisted with a committed key aliasing `5`.
 
-  ⚑ `heapAlias_row_absence_is_not_residue_absence` — a REAL accepting widened `.absent` gate
-  (depth 1, arbitrary hash, every path obligation `rfl`) whose committed heap is
-  `[0 ↦ 1, (p+5) ↦ 1]`, for the row whose canonical key is `5`. The bracket `0 < 5 < p+5` accepts;
-  the weld forces `5 ∉ keysOfW`; and the committed spine HOLDS a key (`p+5`) whose canonical
-  reading IS `5`. In the deployed prover that leaf's key column carries the field element `5` — the
-  same key — so the accepted row is a non-membership forgery *there* while the model theorem is
-  true *here*.
+That is now cured in `MapOpWideKeyGate`, non-additively: `LaneEnc` carries the admissible
+committed-heap shape as a FIELD (`HeapOk`), `opensToMerkleW`/`writesToMerkleW`/`ReconcileGatesAtW`
+quantify over it, and `wideEnc.HeapOk = Heap.SortedKeys ∧ CanonHeapW`. §6 records the consequences:
+`row_absence_is_residue_absence_of_canonHeap` LOSES its canonicity hypothesis,
+`absentGate_forces_residue_absence` is the hypothesis-free form W3 consumes, and
+⚑ `aliasRoot_admits_no_gate` says the alias root now admits NO widened gate at all — the old
+counterexample is unconstructible, kept as that `¬`-form plus its intact evidence
+(`aliasHeap_not_canon`, `aliasHeap_not_heapOk`). `canonAliasRoot_refuses_absence_of_five` is the
+discrimination side: the CANONICAL twin heap is admissible and refuses for the honest reason.
 
-  * `row_absence_is_residue_absence_of_canonHeap` — with `CanonHeapW h` the row-level absence DOES
-    upgrade to absence of the whole residue class (the statement deployment needs).
-  * `heapAlias_heap_not_canon` — and the accepting gate above has `¬ CanonHeapW`, so `CanonHeapW`
-    is not gate-forced: it is a MODEL ARTIFACT of the same class `gate_teeth_cannot_force_canonicity`
-    identified for trace cells, one level down. Its cure is the same shape (read the committed heap
-    canonically) but it lives in `MapOpWideKeyGate`'s `opensToMerkleW`/`mapRootW` definitions, not
-    in any tooth — so it is a DEFINITION change, deliberately not made here (this file is additive).
+⚠ Status, stated plainly: `CanonHeapW` did not become gate-FORCED (it cannot —
+`gate_teeth_cannot_force_canonicity`), it became DEFINITIONAL, sitting exactly where
+`Heap.SortedKeys` already sat. `narrowEnc.HeapOk` is definitionally `Heap.SortedKeys`, so every
+conservativity `rfl` to the deployed narrow objects survived.
+
+## ⚑⚑⚑ §9 — QUESTION ZERO: the DEPLOYED narrow map-op has the SAME alias hole
+
+`narrowAliasGate_accepts` / `narrow_deployed_alias_hole` build the construction at
+`MapOpsColumnLayout.ReconcileGatesAt` and `MapMerkleRoot.opensToMerkle` — the deployed, ℤ-keyed
+objects, nothing widened — and `deployed_narrow_heapOk_is_only_sortedness` (a `rfl`) shows the
+deployed extraction premise says nothing about canonical keys. CLASSIFICATION: **(ii) a model-level
+artifact**, not a deployed wound; §9's header carries the full argument, and
+`residueBlind_collapses_alias` + `residueBlind_refutes_spongeCR` are its decisive half — the alias
+root differs from the canonical root only for a hash that separates residues, which is precisely the
+capability `Poseidon2Binding` already records the deployed sponge as NOT having.
 
 ## Non-vacuity
 
@@ -95,8 +107,10 @@ reading is arithmetic (`% p`); the compare block's content is structural.
 
 ## Byte safety
 
-NEW file, additive. No descriptor, emit, golden or JSON byte is touched. No `sorry`/`admit`/
-`native_decide`. `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}.
+No descriptor, emit, golden or JSON byte is touched. No `sorry`/`admit`/`native_decide`.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. `ResidueBlindLeaf` (§9a) is a
+theorem HYPOTHESIS, never a floor: no keystone depends on it, and it is a property the deployed
+sponge has by construction rather than a hardness assumption.
 -/
 import Dregg2.Circuit.MapOpWideKeyWeld
 import Dregg2.Circuit.MapOpWideKeyCanonDischarge
@@ -114,8 +128,13 @@ open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs imtI
 open Dregg2.Crypto.Digest8KeySpike (Digest8Key keyLo keyE keyHi)
 open Dregg2.Circuit.SortedTreeNonMembershipWide8 (keysOfW)
 open Dregg2.Circuit.MapOpWideKey (KeyCanon MapOpW HoldsKindW)
-open Dregg2.Circuit.MapOpWideKeyGate (wideEnc leafOfW mapRootW opensToMerkleW ReconcileGatesW
+open Dregg2.Circuit.MapOpWideKeyGate (wideEnc CanonHeapW heapOk_canon leafOfW mapRootW
+  mapRootW_injective opensToMerkleW opensToMerkleW_functional ReconcileGatesW
   ReconcileGatesAtW AafiGatesAtW gatesAtW demoRootW demoAbsentGateW_accepts)
+open Dregg2.Circuit.MapMerkleRoot (mapRoot mapRoot_injective opensToMerkle
+  opensToMerkle_functional)
+open Dregg2.Circuit.MapOpsColumnLayout (ReconcileGatesAt reconcileGates_force_opening)
+open Dregg2.Circuit.DescriptorIR2 (MapOp)
 open Dregg2.Circuit.MapOpWideKeyWeld (opensAtW keysOfW_opensAtW absentGatesW_force_keysOfW_absence
   gates_force_holdsKindW_absent gates_force_holdsKindW_read gates_force_holdsKindW_insert
   gates_force_holdsKindW_aafiInsert gates_insertW_absentW_jointly_unsat
@@ -426,7 +445,7 @@ theorem absentRow_of_lexBlocks_forces_absence (hash : List ℤ → ℤ) (hCR : P
     (hLoBlk : lexBlockHolds lexTf envLo)
     (hHiB : ∀ i : Fin 8, envHi.loc (8 + i.val) = lowNext i)
     (hHiBlk : lexBlockHolds lexTf envHi)
-    (h : List (Digest8Key × ℤ)) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep)
+    (h : List (Digest8Key × ℤ)) (hs : wideEnc.HeapOk h) (hlen : h.length = 2 ^ dep)
     (hroot : mapRootW hash wideEnc dep h = r)
     (stepsLo stepsHi : List (Bool × ℤ)) (vlo vhi : ℤ)
     (hlLo : stepsLo.length = dep) (hlHi : stepsHi.length = dep)
@@ -499,39 +518,78 @@ theorem forgeRow_canon_survives (a : Assignment) :
     keyAtCanon forgeRow a ∉ imtAddrs forgeChain :=
   canon_weld_survives
 
-/-! ## §6 — ⚑ THE FINDING: the row boundary closes; the WITNESS boundary does not.
+/-! ## §6 — ⚑ THE WITNESS BOUNDARY, CLOSED BY DEFINITION (L3).
 
-`ReconcileGatesAtW` opens with `∃ h : List (K × ℤ)` — the extracted committed heap. Nothing makes
-its KEYS canonical, and `keysOfW` is a set of RAW `Digest8Key`s. The row-level absence is therefore
-absence from a raw-keyed spine, which is NOT absence of the residue class the deployed field-element
-columns identify. -/
+**What this section said before, and what changed.** `ReconcileGatesAtW` used to open with
+`∃ h : List (K × ℤ)` and `Heap.SortedKeys h` — nothing made that extracted heap's KEYS canonical,
+so the row-level absence was absence from a RAW-keyed spine, which is NOT absence of the residue
+class the deployed field-element columns identify. This file exhibited the hole with an accepting
+`.absent` gate over `aliasHeap = [0 ↦ 1, (p+5) ↦ 1]` (`heapAlias_row_absence_is_not_residue_absence`)
+and declined to fix it, because the cure was a DEFINITION change rather than a tooth.
 
-/-- **`CanonHeapW h`** — every committed key of the heap is canonical: the property the deployed
-prover has for free (its heap keys ARE field elements) and the model does not state. -/
-def CanonHeapW (h : List (Digest8Key × ℤ)) : Prop := ∀ k ∈ Heap.keys h, KeyCanon (ofLex k)
+That definition change is now made, one module down: `MapOpWideKeyGate.LaneEnc` carries the
+admissible committed-heap shape as a FIELD (`HeapOk`), and `wideEnc.HeapOk h` is
+`Heap.SortedKeys h ∧ CanonHeapW h`. `opensToMerkleW` / `writesToMerkleW` / `ReconcileGatesAtW` all
+quantify over `E.HeapOk`, so the committed spine is canonically keyed **by definition** — and
+`narrowEnc.HeapOk` is definitionally `Heap.SortedKeys`, so every conservativity `rfl` to the
+deployed narrow objects survived untouched (`opensToMerkleW_narrow`, `mapRootW_narrow`,
+`leafOfW_narrow`, `writesToMerkleW_narrow`, `narrow_holdsAt_is_instance`, `narrow_gates_is_instance`).
 
-/-- **★ WITH `CanonHeapW`, THE ROW-LEVEL ABSENCE IS RESIDUE-CLASS ABSENCE** — the statement
-deployment actually needs: no committed key has the row's canonical key as its canonical reading. -/
+Consequences, machine-checked below:
+
+  * `row_absence_is_residue_absence_of_canonHeap` loses its `hcanon` hypothesis (STRICTLY stronger).
+  * `aliasHeap_not_heapOk` — the alias heap is not an admissible commitment; and
+    ⚑ `aliasRoot_admits_no_gate` — under CR, the alias root admits NO widened gate AT ALL, for any
+    key, value, post-root or kind, because the ONLY `2`-leaf heap behind it is the inadmissible one.
+    So `heapAlias_row_absence_is_not_residue_absence` is now UNCONSTRUCTIBLE by construction; its
+    `¬`-form is `aliasRoot_admits_no_gate`, and its evidence (`aliasHeap`, `aliasHeap_sorted`,
+    `aliasHeap_not_canon`) is kept so the closed hole stays legible.
+
+⚠ NOTE THE STATUS HONESTLY. `CanonHeapW` did not become *forced*; it became *definitional*. It now
+sits where `Heap.SortedKeys` already sat — inside the knowledge-extraction premise, i.e. a property
+of the prover's committed heap rather than a consequence of any gate. That is the only place it can
+live: `MapOpWideKeyCanonDischarge.gate_teeth_cannot_force_canonicity` proves no enlargement of the
+gate set can force it. What the change buys is that no use site can now *forget* it, that the
+statement forced at every row is the one deployment needs, and that the model can no longer certify
+an acceptance whose deployed reading is a forgery. -/
+
+/-- **★ THE ROW-LEVEL ABSENCE IS RESIDUE-CLASS ABSENCE** — the statement deployment actually needs:
+no committed key has the row's canonical key as its canonical reading. The `hcanon : CanonHeapW h`
+this theorem used to carry is GONE: `wideEnc.HeapOk` supplies it (`heapOk_canon`). -/
 theorem row_absence_is_residue_absence_of_canonHeap (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) (dep : Nat) (m : MapOpW) (a : Assignment)
-    (h : List (Digest8Key × ℤ)) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep) {r : ℤ}
-    (hroot : mapRootW hash wideEnc dep h = r) (hcanon : CanonHeapW h)
+    (h : List (Digest8Key × ℤ)) (hs : wideEnc.HeapOk h) (hlen : h.length = 2 ^ dep) {r : ℤ}
+    (hroot : mapRootW hash wideEnc dep h = r)
     (habs : keyAtCanon m a ∉ keysOfW (opensAtW hash wideEnc dep) r) :
     ∀ k ∈ Heap.keys h, canonKey (ofLex k) ≠ ofLex (keyAtCanon m a) := by
   intro k hk heq
-  have hkc : canonKey (ofLex k) = ofLex k := canonKey_id (hcanon k hk)
+  have hkc : canonKey (ofLex k) = ofLex k := canonKey_id (heapOk_canon hs k hk)
   have hkeq : k = keyAtCanon m a := by
     have : (ofLex k : Fin 8 → ℤ) = ofLex (keyAtCanon m a) := by rw [← hkc, heq]
     exact congrArg (toLex : (Fin 8 → ℤ) → Digest8Key) this
   exact habs (hkeq ▸ (keysOfW_opensAtW hash hCR wideEnc dep h hs hlen hroot k).mpr hk)
 
-/-! ### §6a — ⚑ the ALIAS INSTANCE: an accepting gate whose committed heap is NOT canonical. -/
+/-- **★ THE SAME, WITHOUT NAMING A HEAP.** Whatever admissible heap the extraction produced behind
+an accepting `.absent` row's pre-root, none of its committed keys aliases the row's canonical key.
+This is the L3 statement in the form W3 consumes: gate acceptance ⇒ residue-class absence, with no
+canonicity hypothesis anywhere in the chain. -/
+theorem absentGate_forces_residue_absence (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (dep : Nat) (m : MapOpW) (a : Assignment) (r v r' : ℤ)
+    (hg : ReconcileGatesAtW hash wideEnc dep r (keyAtCanon m a) v r' MapOpKind.absent) :
+    ∀ h : List (Digest8Key × ℤ), wideEnc.HeapOk h → h.length = 2 ^ dep →
+      mapRootW hash wideEnc dep h = r →
+      ∀ k ∈ Heap.keys h, canonKey (ofLex k) ≠ ofLex (keyAtCanon m a) := by
+  intro h hs hlen hroot
+  exact row_absence_is_residue_absence_of_canonHeap hash hCR dep m a h hs hlen hroot
+    (absentGatesW_force_row_absence hash hCR dep m a r v r' hg).1
+
+/-! ### §6a — ⚑ THE ALIAS INSTANCE, NOW REFUSED (the evidence of what was closed). -/
 
 private theorem lex_lt_at0 {x y : Fin 8 → ℤ} (h : x 0 < y 0) : (toLex x : Digest8Key) < toLex y :=
   ⟨0, fun j hj => absurd hj (Fin.not_lt_zero j), h⟩
 
 /-- The committed heap of the alias instance: `[0 ↦ 1, (p+5) ↦ 1]`. Sorted at the raw lex order,
-two leaves, depth 1. Its second key is NON-canonical — and nothing in the gate forbids that. -/
+two leaves, depth 1. Its second key is NON-canonical — which the widened gate now REFUSES. -/
 def aliasHeap : List (Digest8Key × ℤ) := [(toLex forgeLow, 1), (toLex forgeKk, 1)]
 
 theorem aliasHeap_sorted : Heap.SortedKeys aliasHeap := by
@@ -546,30 +604,9 @@ theorem aliasHeap_sorted : Heap.SortedKeys aliasHeap := by
 theorem aliasHeap_length : aliasHeap.length = 2 ^ 1 := rfl
 
 /-- The committed root of the alias heap. -/
-def aliasRoot (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 aliasHeap
+noncomputable def aliasRoot (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 aliasHeap
 
-/-- **★ A REAL ACCEPTING WIDENED `.absent` GATE FOR `forgeRow`'s CANONICAL KEY.** The bracket is
-`0 < 5 < p+5` at the raw lex order, both bracket leaves are committed at adjacent positions, every
-path obligation closes by `rfl`, over an ARBITRARY hash. -/
-theorem aliasAbsentGate_accepts_canonKey (hash : List ℤ → ℤ) :
-    ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) (toLex (canonKey forgeKk)) 0
-      (aliasRoot hash) MapOpKind.absent :=
-  ⟨aliasHeap, aliasHeap_sorted, aliasHeap_length, rfl,
-   ⟨[(false, leafOfW hash wideEnc (toLex forgeKk, 1))],
-    [(true, leafOfW hash wideEnc (toLex forgeLow, 1))],
-    toLex forgeLow, 1, toLex forgeKk, 1, rfl, rfl, rfl, rfl, rfl,
-    lex_lt_at0 (by decide), lex_lt_at0 (by decide)⟩, rfl⟩
-
-/-- …stated at the ROW: the accepting gate is a gate for `forgeRow`'s key AS THE COMPARE BLOCK
-READS IT. -/
-theorem aliasAbsentGate_accepts (hash : List ℤ → ℤ) (a : Assignment) :
-    ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) (keyAtCanon forgeRow a) 0 (aliasRoot hash)
-      MapOpKind.absent := by
-  rw [forgeRow_keyAtCanon]
-  exact aliasAbsentGate_accepts_canonKey hash
-
-/-- The alias heap's key spine is NOT canonical — so `CanonHeapW` is not gate-forced: the accepting
-row above is a counterexample to "the extraction premise supplies canonical keys". -/
+/-- The alias heap's key spine is NOT canonical — the fact that made the old hole, unchanged. -/
 theorem aliasHeap_not_canon : ¬ CanonHeapW aliasHeap := by
   intro H
   have hmem : (toLex forgeKk : Digest8Key) ∈ Heap.keys aliasHeap := by
@@ -579,29 +616,88 @@ theorem aliasHeap_not_canon : ¬ CanonHeapW aliasHeap := by
   have : (2013265926 : ℤ) < 2013265921 := h0
   omega
 
-/-- **⚑ THE FINDING, MACHINE-CHECKED.** On one accepting widened `.absent` row: (i) the gate
-ACCEPTS, (ii) the weld forces the ROW's canonical key `5` absent from the committed key set, and
-(iii) the committed spine HOLDS a key (`p+5`) whose canonical reading IS that very key. The model
-statement is true; the deployed reading of the same trace is a non-membership forgery, because there
-that leaf's key column carries the field element `5`. Routing the ROW through `keyAtCanon` closes
-the row boundary and does NOT close the extraction premise — the heap must be read canonically too,
-which is a change to `opensToMerkleW`/`mapRootW`, not a tooth. -/
-theorem heapAlias_row_absence_is_not_residue_absence (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) (a : Assignment) :
-    ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) (keyAtCanon forgeRow a) 0 (aliasRoot hash)
-        MapOpKind.absent
-      ∧ keyAtCanon forgeRow a ∉ keysOfW (opensAtW hash wideEnc 1) (aliasRoot hash)
-      ∧ ∃ k ∈ Heap.keys aliasHeap,
-          k ≠ keyAtCanon forgeRow a ∧ canonKey (ofLex k) = ofLex (keyAtCanon forgeRow a) := by
-  refine ⟨aliasAbsentGate_accepts hash a,
-    (absentGatesW_force_row_absence hash hCR 1 forgeRow a (aliasRoot hash) 0 (aliasRoot hash)
-      (aliasAbsentGate_accepts hash a)).1,
-    toLex forgeKk, ?_, ?_, ?_⟩
-  · show (toLex forgeKk : Digest8Key) ∈ [(toLex forgeLow : Digest8Key), toLex forgeKk]
-    simp
-  · exact fun hcontra => forgeRow_readings_differ a (hcontra.symm)
-  · show canonKey forgeKk = canonKey forgeKk
-    rfl
+/-- **⚑ …AND IT IS THEREFORE NOT AN ADMISSIBLE WIDE COMMITMENT.** `wideEnc.HeapOk` is exactly
+sortedness AND canonical keying; the alias heap has the first and not the second. -/
+theorem aliasHeap_not_heapOk : ¬ wideEnc.HeapOk aliasHeap := fun h => aliasHeap_not_canon h.2
+
+/-- **⚑⚑ THE L3 CLOSURE, AS A REFUSAL.** Under the one named CR floor, the alias root admits NO
+widened gate whatsoever — any key, any value, any post-root, any kind. The extraction premise alone
+kills it: a `2`-leaf heap with that root IS `aliasHeap` (`mapRootW_injective`), and `aliasHeap` is
+inadmissible. This is the `¬`-form of the deleted `heapAlias_row_absence_is_not_residue_absence`:
+the model can no longer certify an acceptance whose deployed reading is a non-membership forgery. -/
+theorem aliasRoot_admits_no_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (k : Digest8Key) (v r' : ℤ) (op : MapOpKind) :
+    ¬ ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) k v r' op := by
+  rintro ⟨h, hok, hlen, hroot, -⟩
+  have : h = aliasHeap :=
+    mapRootW_injective hash hCR wideEnc 1 hlen aliasHeap_length (hroot.trans rfl)
+  exact aliasHeap_not_heapOk (this ▸ hok)
+
+/-- …in particular the exact old counterexample — the `.absent` gate at `forgeRow`'s canonical key
+`5` against the alias root — is refused. `heapAlias_row_absence_is_not_residue_absence` is
+UNCONSTRUCTIBLE. -/
+theorem aliasAbsentGate_refused (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (a : Assignment) :
+    ¬ ReconcileGatesAtW hash wideEnc 1 (aliasRoot hash) (keyAtCanon forgeRow a) 0 (aliasRoot hash)
+        MapOpKind.absent :=
+  aliasRoot_admits_no_gate hash hCR _ _ _ _
+
+/-- **⚑ THE DISCRIMINATION SIDE — the refusal is TARGETED, not blanket.** The CANONICAL twin of the
+alias heap, `[0 ↦ 1, 5 ↦ 1]`, IS admissible; and against ITS root the `.absent` gate for the key `5`
+is refused for the RIGHT reason — `5` is present there, so absence and membership at one root
+collide (`opensToMerkleW_functional`). Alias and canonical heap are refused by two DIFFERENT
+mechanisms, which is what says the closure did not simply outlaw the whole neighbourhood. -/
+def canonAliasHeap : List (Digest8Key × ℤ) := [(toLex forgeLow, 1), (toLex (canonKey forgeKk), 1)]
+
+theorem canonAliasHeap_sorted : Heap.SortedKeys canonAliasHeap := by
+  show List.Pairwise (· < ·) [(toLex forgeLow : Digest8Key), toLex (canonKey forgeKk)]
+  refine List.Pairwise.cons ?_ (List.Pairwise.cons ?_ List.Pairwise.nil)
+  · intro b hb
+    rw [List.mem_singleton.mp hb]
+    refine lex_lt_at0 ?_
+    show (0 : ℤ) < canonKey forgeKk 0
+    rw [forgeKk_canon0]
+    norm_num
+  · intro b hb
+    simp at hb
+
+theorem canonAliasHeap_length : canonAliasHeap.length = 2 ^ 1 := rfl
+
+theorem canonAliasHeap_ok : wideEnc.HeapOk canonAliasHeap := by
+  refine ⟨canonAliasHeap_sorted, ?_⟩
+  intro k hk
+  have hk' : k ∈ [(toLex forgeLow : Digest8Key), toLex (canonKey forgeKk)] := hk
+  rcases List.mem_cons.mp hk' with h1 | h1
+  · rw [h1]
+    show KeyCanon forgeLow
+    intro i
+    show 0 ≤ (0 : ℤ) ∧ (0 : ℤ) < 2013265921
+    norm_num
+  · rw [List.mem_singleton.mp h1]
+    exact canonKey_isCanon forgeKk
+
+noncomputable def canonAliasRoot (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 canonAliasHeap
+
+/-- The canonical twin really OPENS at the key `5`. -/
+theorem canonAliasHeap_opens_five (hash : List ℤ → ℤ) :
+    opensToMerkleW hash wideEnc 1 (canonAliasRoot hash) (toLex (canonKey forgeKk)) (some 1) :=
+  ⟨canonAliasHeap, canonAliasHeap_ok, canonAliasHeap_length, rfl, by
+    show Heap.get [((toLex forgeLow : Digest8Key), (1 : ℤ)),
+        ((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))] (toLex (canonKey forgeKk)) = some 1
+    rw [Heap.get_cons_ne (1 : ℤ) [((toLex (canonKey forgeKk) : Digest8Key), (1 : ℤ))]]
+    · exact Heap.get_cons_self _ 1 []
+    · refine fun hEq => absurd hEq.symm (ne_of_lt (lex_lt_at0 ?_))
+      show (0 : ℤ) < canonKey forgeKk 0
+      rw [forgeKk_canon0]
+      norm_num⟩
+
+/-- **★ …AND THE `.absent` GATE FOR `5` IS REFUSED THERE TOO, FOR THE HONEST REASON.** No absence
+opening can coexist with that membership opening at one root. -/
+theorem canonAliasRoot_refuses_absence_of_five (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash) :
+    ¬ opensToMerkleW hash wideEnc 1 (canonAliasRoot hash) (toLex (canonKey forgeKk)) none :=
+  fun habs => Dregg2.Circuit.MapOpWideKeyGate.opensToMerkleW_some_excludes_none hash hCR wideEnc 1
+    (canonAliasHeap_opens_five hash) habs
 
 /-! ## §7 — NON-VACUITY: every row-level statement fires on the epoch's existing accepting rows. -/
 
@@ -723,6 +819,210 @@ theorem varRow_composition_fires :
   rw [forgeLow_canon, forgeNext_canon]
   exact forgeLow_leaf_mem
 
+/-! ## §9 — ⚑⚑⚑ QUESTION ZERO: THE SAME ALIAS, AT THE **DEPLOYED NARROW** MAP-OP.
+
+The wide modules are conservative extensions of the deployed narrow objects (`opensToMerkleW_narrow`,
+`mapRootW_narrow`, `narrow_gates_is_instance`, all `rfl`). So the obvious question is whether the L3
+alias is a wide-epoch artifact at all, or whether the DEPLOYED, currently-shipping ℤ-keyed map-op has
+it too. It has it, and it is EASIER there — no `keyAtCanon` is needed, because a narrow row key is a
+single ℤ cell.
+
+`narrowEnc.HeapOk` is definitionally nothing but `Heap.SortedKeys` (`deployed_narrow_heapOk_is_only_sortedness`,
+a `rfl`): the deployed extraction premise says NOTHING about the committed keys' canonicity. Below,
+a REAL accepting deployed `ReconcileGatesAt` row (depth 1, arbitrary hash, every path obligation
+`rfl`) over the committed heap `[0 ↦ 1, (p+5) ↦ 1]`, whose key column carries `5`, forcing
+`opensToMerkle … 5 none` while the committed spine holds a key whose residue IS `5`.
+
+**⚠ CLASSIFICATION — read this before treating it as a wound.** This is (ii), a MODEL-LEVEL
+ARTIFACT, and the two blockers must not be conflated:
+
+  (1) TYPE-LEVEL, i.e. the Lean statement is over-general. In deployment a committed heap key is a
+      BabyBear element; there is no inhabitant `p + 5` distinct from `5`. Every leaf in the tree was
+      written by a row whose key column is a field element. `narrowAliasHeap` is not a state the
+      deployed prover can be in — the same reason `MapOpWideKeyCanonDischarge` gives for raw trace
+      cells, one level down at the extraction premise.
+  (2) STRONGER THAN (1), AND SPECIFIC TO THIS SITE: the alias root and the canonical root are
+      DISTINCT ONLY FOR A HASH THAT SEPARATES RESIDUES. `residueBlind_collapses_alias` shows that a
+      residue-blind leaf absorb — which is what a sponge over field elements IS — gives
+      `mapRoot hash 1 narrowAliasHeap = mapRoot hash 1 narrowCanonHeap`; and against the canonical
+      root the absence of `5` is refused for the honest reason
+      (`narrowCanonRoot_refuses_absence_of_five`). The construction therefore lives ENTIRELY in the
+      gap between the ℤ model and the field, and `residueBlind_refutes_spongeCR` shows that gap is
+      the SAME one `Poseidon2Binding` already flags: no residue-blind hash satisfies
+      `Poseidon2SpongeCR`. Building the alias root needs a hash the deployed system does not have.
+
+  NOT (i): there is no live deployed soundness wound here, and no wound-doc entry is warranted.
+  NOT (iii): nothing in the Lean model closes it — `ReconcileGatesAt` is unchanged and still admits
+  the construction below; what closes it in deployment is the FIELD, plus (independently) a real
+  deployed tooth the Lean model does not carry at all: `circuit/src/descriptor_ir2.rs`
+  `eval_canon_decomp` (`MA_A_DEC0`/`MA_K_DEC0`/`MA_B_DEC0`, 13 columns each) pins each of
+  `lo_addr`, `key`, `low_next` to its UNIQUE canonical lift `hi4 · 2^27 + lo27` — nibble lookup on
+  `hi4`, 27-bit decomposition of `lo27`, and the uniqueness tooth `is15 · lo27 = 0` (`p − 1 =
+  15 · 2^27`, so `hi4 = 15` admits only `lo27 = 0`) — and `eval_lex_lt` compares THOSE lifts. That
+  tooth is a genuine constraint, and `ReconcileGatesAt` does not model it: the Lean narrow `.absent`
+  arm carries bare `klo < key < khi` over ℤ with no decomposition data. So the deployed narrow AIR
+  is STRICTLY STRONGER than its Lean model on this axis, which is the actionable finding here.
+  (⚠ It does not force ℤ-canonicity of a raw cell either — the decomposition equation is a mod-`p`
+  gate and the lookups sit on `hi4`/`lo27`, so `gate_teeth_cannot_force_canonicity` still applies
+  verbatim. What it forces is IN THE FIELD: a unique lift, hence a well-defined integer order.) -/
+
+/-- **★ THE DEPLOYED NARROW EXTRACTION PREMISE, MEASURED.** `narrowEnc.HeapOk` — the shape of the
+committed heap the deployed `ReconcileGatesAt` / `opensToMerkle` quantify over — is EXACTLY
+`Heap.SortedKeys`, by `rfl`. Not one word about canonical keys. This is the deployed half of the L3
+gap, read off the object rather than asserted. -/
+theorem deployed_narrow_heapOk_is_only_sortedness (h : Heap.FeltHeap) :
+    Dregg2.Circuit.MapOpWideKeyGate.narrowEnc.HeapOk h = Heap.SortedKeys h := rfl
+
+/-- The deployed-narrow twin of `aliasHeap`: the ℤ-keyed committed heap `[0 ↦ 1, (p+5) ↦ 1]`. -/
+def narrowAliasHeap : Heap.FeltHeap := [(0, 1), (2013265926, 1)]
+
+theorem narrowAliasHeap_sorted : Heap.SortedKeys narrowAliasHeap := by
+  show List.Pairwise (· < ·) [(0 : ℤ), 2013265926]
+  refine List.Pairwise.cons ?_ (List.Pairwise.cons ?_ List.Pairwise.nil)
+  · intro b hb
+    rw [List.mem_singleton.mp hb]
+    norm_num
+  · intro b hb
+    simp at hb
+
+theorem narrowAliasHeap_length : narrowAliasHeap.length = 2 ^ 1 := rfl
+
+/-- The DEPLOYED committed root of the alias heap (`MapMerkleRoot.mapRoot`, the object
+`heap_root.rs::CanonicalHeapTree::root` is pinned to). -/
+def narrowAliasRoot (hash : List ℤ → ℤ) : ℤ := mapRoot hash 1 narrowAliasHeap
+
+/-- **The DEPLOYED narrow `.absent` row** whose one-felt key column carries `5`. A real
+`DescriptorIR2.MapOp` — the deployed IR node, not a widened twin. -/
+def narrowAliasOp (hash : List ℤ → ℤ) : MapOp where
+  guard := .const 1
+  root := fun _ => .const (narrowAliasRoot hash)
+  key := .const 5
+  value := .const 0
+  newRoot := fun _ => .const (narrowAliasRoot hash)
+  op := MapOpKind.absent
+
+/-- **⚑⚑⚑ QUESTION ZERO, ACCEPT SIDE: THE DEPLOYED NARROW GATE ACCEPTS.** Depth 1, an ARBITRARY
+hash, both bracket leaves committed at adjacent positions, every path obligation `rfl`, and the
+bracket `0 < 5 < p+5` decided over ℤ — exactly `MapOpsColumnLayout.ReconcileGatesAt`, the deployed
+gate model, with nothing widened. -/
+theorem narrowAliasGate_accepts (hash : List ℤ → ℤ) (a : Assignment) :
+    ReconcileGatesAt hash 1 a (narrowAliasOp hash) :=
+  ⟨narrowAliasHeap, narrowAliasHeap_sorted, narrowAliasHeap_length, rfl,
+   ⟨[(false, Heap.leafOf hash (2013265926, 1))], [(true, Heap.leafOf hash (0, 1))],
+    0, 1, 2013265926, 1, rfl, rfl, rfl, rfl, rfl,
+    by show (0 : ℤ) < 5; norm_num, by show (5 : ℤ) < 2013265926; norm_num⟩, rfl⟩
+
+/-- **⚑⚑⚑ QUESTION ZERO, FORCE SIDE: …AND FORCES A DEPLOYED NON-MEMBERSHIP OF `5`.** The deployed
+MapOps law (`reconcileGates_force_opening`) turns that accepting row into `opensToMerkle … 5 none`
+against the committed root. -/
+theorem narrowAliasGate_forces_absence (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (a : Assignment) : opensToMerkle hash 1 (narrowAliasRoot hash) 5 none :=
+  (reconcileGates_force_opening hash hCR 1 a (narrowAliasOp hash)
+    (narrowAliasGate_accepts hash a)).1
+
+/-- …while the committed spine HOLDS a key whose canonical reading is that very `5`. -/
+theorem narrowAliasHeap_holds_an_alias :
+    (2013265926 : ℤ) ∈ Heap.keys narrowAliasHeap ∧ (2013265926 : ℤ) ≠ 5
+      ∧ canonFelt 2013265926 = 5 := by
+  refine ⟨?_, by norm_num, ?_⟩
+  · show (2013265926 : ℤ) ∈ [(0 : ℤ), 2013265926]
+    simp
+  · show (2013265926 : ℤ) % 2013265921 = 5
+    norm_num
+
+/-- **⚑⚑⚑ QUESTION ZERO, PACKAGED.** The DEPLOYED, currently-shipping narrow 1-felt map-op has the
+SAME alias hole as the wide one had, in the Lean model: an accepting deployed `.absent` gate whose
+forced non-membership of `5` coexists with a committed key `p+5` whose residue is `5`. Nothing about
+the widening created it; the wide epoch merely made it visible. See the §9 header for why this is
+(ii) — a model-level artifact — and not a deployed wound. -/
+theorem narrow_deployed_alias_hole (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (a : Assignment) :
+    ReconcileGatesAt hash 1 a (narrowAliasOp hash)
+      ∧ opensToMerkle hash 1 (narrowAliasRoot hash) 5 none
+      ∧ ∃ k ∈ Heap.keys narrowAliasHeap, k ≠ 5 ∧ canonFelt k = 5 :=
+  ⟨narrowAliasGate_accepts hash a, narrowAliasGate_forces_absence hash hCR a,
+   2013265926, narrowAliasHeap_holds_an_alias.1, narrowAliasHeap_holds_an_alias.2.1,
+   narrowAliasHeap_holds_an_alias.2.2⟩
+
+/-! ### §9a — WHY IT IS (ii): the construction needs a hash the deployment does not have. -/
+
+/-- The CANONICAL twin of the alias heap: `[0 ↦ 1, 5 ↦ 1]` — the state a deployed prover with
+field-element keys is actually in. -/
+def narrowCanonHeap : Heap.FeltHeap := [(0, 1), (5, 1)]
+
+theorem narrowCanonHeap_sorted : Heap.SortedKeys narrowCanonHeap := by
+  show List.Pairwise (· < ·) [(0 : ℤ), 5]
+  refine List.Pairwise.cons ?_ (List.Pairwise.cons ?_ List.Pairwise.nil)
+  · intro b hb
+    rw [List.mem_singleton.mp hb]
+    norm_num
+  · intro b hb
+    simp at hb
+
+theorem narrowCanonHeap_length : narrowCanonHeap.length = 2 ^ 1 := rfl
+
+def narrowCanonRoot (hash : List ℤ → ℤ) : ℤ := mapRoot hash 1 narrowCanonHeap
+
+/-- The canonical twin OPENS at `5`. -/
+theorem narrowCanonHeap_opens_five (hash : List ℤ → ℤ) :
+    opensToMerkle hash 1 (narrowCanonRoot hash) 5 (some 1) :=
+  ⟨narrowCanonHeap, narrowCanonHeap_sorted, narrowCanonHeap_length, rfl, by
+    show Heap.get [((0 : ℤ), (1 : ℤ)), ((5 : ℤ), (1 : ℤ))] 5 = some 1
+    rw [Heap.get_cons_ne (1 : ℤ) [((5 : ℤ), (1 : ℤ))] (by norm_num)]
+    exact Heap.get_cons_self 5 1 []⟩
+
+/-- **★ …SO THE DEPLOYED GATE REFUSES ABSENCE OF `5` THERE.** Against the state the deployed prover
+is actually in, `.absent` for `5` is UNSAT for the honest reason: the key is present, and one root
+cannot both open and not-open at it. -/
+theorem narrowCanonRoot_refuses_absence_of_five (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash) : ¬ opensToMerkle hash 1 (narrowCanonRoot hash) 5 none := by
+  intro habs
+  have := opensToMerkle_functional hash hCR 1 (narrowCanonHeap_opens_five hash) habs
+  simp at this
+
+/-- **`ResidueBlindLeaf hash`** — the leaf absorb sees only RESIDUES. ⚠ This is a HYPOTHESIS of the
+two theorems below and NOT a floor: nothing in the epoch assumes it, no `#assert_axioms` target
+depends on it, and it is a PROPERTY (not a hardness assumption) — the deployed Poseidon2 sponge eats
+BabyBear elements, so it has this property by construction. -/
+def ResidueBlindLeaf (hash : List ℤ → ℤ) : Prop :=
+  ∀ x₁ x₂ y : ℤ, x₁ ≡ x₂ [ZMOD 2013265921] → hash [x₁, y] = hash [x₂, y]
+
+private theorem alias_modEq : (2013265926 : ℤ) ≡ 5 [ZMOD 2013265921] := by
+  show (2013265926 : ℤ) % 2013265921 = 5 % 2013265921
+  norm_num
+
+/-- **⚑ THE DECISIVE HALF OF THE CLASSIFICATION.** For a residue-blind leaf absorb — i.e. for a hash
+that behaves like the deployed field sponge — the alias heap and its canonical twin publish the SAME
+committed root. The two "different" heaps of `narrow_deployed_alias_hole` are ONE deployed
+commitment, and against it the absence of `5` is refused
+(`narrowCanonRoot_refuses_absence_of_five`). The alias hole is not something the field forgets to
+forbid; it is something the ℤ model can express and the field cannot. -/
+theorem residueBlind_collapses_alias (hash : List ℤ → ℤ) (hres : ResidueBlindLeaf hash) :
+    narrowAliasRoot hash = narrowCanonRoot hash := by
+  show mapRoot hash 1 narrowAliasHeap = mapRoot hash 1 narrowCanonHeap
+  show Dregg2.Circuit.MapMerkleRoot.perfectRoot hash 1
+      (narrowAliasHeap.map (Heap.leafOf hash))
+    = Dregg2.Circuit.MapMerkleRoot.perfectRoot hash 1 (narrowCanonHeap.map (Heap.leafOf hash))
+  have hleaf : hash [(2013265926 : ℤ), 1] = hash [(5 : ℤ), 1] := hres _ _ _ alias_modEq
+  have hmap : narrowAliasHeap.map (Heap.leafOf hash)
+      = narrowCanonHeap.map (Heap.leafOf hash) := by
+    show [hash [(0 : ℤ), 1], hash [(2013265926 : ℤ), 1]] = [hash [(0 : ℤ), 1], hash [(5 : ℤ), 1]]
+    rw [hleaf]
+  rw [hmap]
+
+/-- **⚑⚑ AND THE TWO MODEL ASSUMPTIONS ARE INCOMPATIBLE.** No residue-blind hash satisfies
+`Poseidon2SpongeCR` — the ℤ-list injectivity the whole Merkle layer carries. So the alias
+construction is powered by exactly the part of the floor that `Poseidon2Binding` already records as
+FALSE at deployed BabyBear parameters: separating `p+5` from `5` is not a capability the deployed
+sponge has, and the model's own crypto hypothesis is what pretends otherwise. That is the sharpest
+statement of "over-general model", and it applies verbatim to the wide `aliasHeap` too. -/
+theorem residueBlind_refutes_spongeCR (hash : List ℤ → ℤ) (hres : ResidueBlindLeaf hash)
+    (hCR : Poseidon2SpongeCR hash) : False := by
+  have hleaf : hash [(2013265926 : ℤ), 1] = hash [(5 : ℤ), 1] := hres _ _ _ alias_modEq
+  have hl : [(2013265926 : ℤ), 1] = [(5 : ℤ), 1] := hCR _ _ hleaf
+  injection hl with h1 _
+  norm_num at h1
+
 /-! ## §8 — axiom hygiene. -/
 
 #assert_axioms RowKeyWiredW.keyAtCanon_eq
@@ -751,11 +1051,15 @@ theorem varRow_composition_fires :
 #assert_axioms rowRawBracketClaim_false
 #assert_axioms forgeRow_canon_survives
 #assert_axioms row_absence_is_residue_absence_of_canonHeap
+#assert_axioms absentGate_forces_residue_absence
 #assert_axioms aliasHeap_sorted
-#assert_axioms aliasAbsentGate_accepts_canonKey
-#assert_axioms aliasAbsentGate_accepts
 #assert_axioms aliasHeap_not_canon
-#assert_axioms heapAlias_row_absence_is_not_residue_absence
+#assert_axioms aliasHeap_not_heapOk
+#assert_axioms aliasRoot_admits_no_gate
+#assert_axioms aliasAbsentGate_refused
+#assert_axioms canonAliasHeap_ok
+#assert_axioms canonAliasHeap_opens_five
+#assert_axioms canonAliasRoot_refuses_absence_of_five
 #assert_axioms demoRowE_keyAtCanon
 #assert_axioms demoRowE_absence
 #assert_axioms demoRowE_holdsKindW
@@ -768,5 +1072,16 @@ theorem varRow_composition_fires :
 #assert_axioms rowOfVars_wired
 #assert_axioms rowOfVars_keyAtCanon
 #assert_axioms varRow_composition_fires
+-- §9 — Question Zero, at the DEPLOYED narrow map-op.
+#assert_axioms deployed_narrow_heapOk_is_only_sortedness
+#assert_axioms narrowAliasHeap_sorted
+#assert_axioms narrowAliasGate_accepts
+#assert_axioms narrowAliasGate_forces_absence
+#assert_axioms narrowAliasHeap_holds_an_alias
+#assert_axioms narrow_deployed_alias_hole
+#assert_axioms narrowCanonHeap_opens_five
+#assert_axioms narrowCanonRoot_refuses_absence_of_five
+#assert_axioms residueBlind_collapses_alias
+#assert_axioms residueBlind_refutes_spongeCR
 
 end Dregg2.Circuit.MapOpWideKeyRowBoundary

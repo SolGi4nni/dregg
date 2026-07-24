@@ -12,6 +12,16 @@ deployable widened AIR:
     eats) and re-states `leafOf`/`mapRoot`/`opensToMerkle`/`writesToMerkle` over it. The DEPLOYED
     objects are the `K := ℤ, LaneEnc := narrowEnc` instance, **definitionally** — `leafOfW_narrow`,
     `mapRootW_narrow`, `opensToMerkleW_narrow`, `writesToMerkleW_narrow` are all `rfl`.
+  * **L3 — the committed heap is CANONICALLY KEYED, by definition.** `LaneEnc` also carries the
+    ADMISSIBLE SHAPE of a committed heap (`HeapOk`, with `heapOk_sorted` / `heapOk_set`), and
+    `opensToMerkleW` / `writesToMerkleW` / `ReconcileGatesAtW` quantify over it instead of over bare
+    `Heap.SortedKeys`. `narrowEnc.HeapOk` IS `Heap.SortedKeys` (so every conservativity `rfl` above
+    survives untouched); `wideEnc.HeapOk h` is `Heap.SortedKeys h ∧ CanonHeapW h`. This closes the
+    third level of the canonicity defect — `MapOpWideKeyRowBoundary`'s alias instance
+    (`[0 ↦ 1, (p+5) ↦ 1]`) is no longer an admissible commitment, and its root now admits NO gate at
+    all (`aliasRoot_admits_no_gate`). ⚠ `CanonHeapW` is not gate-FORCED by this — it cannot be
+    (`MapOpWideKeyCanonDischarge.gate_teeth_cannot_force_canonicity`) — it is DEFINITIONAL, sitting
+    exactly where `Heap.SortedKeys` already sat: inside the knowledge-extraction premise.
   * **S8 — the three per-kind OPENERS** (`MapOpsColumnLayout.lean:466-566`) at `[LinearOrder K]`:
     `opensToMerkleW_of_path`, `opensToMerkleW_none_of_bracket`, `writesToMerkleW_of_path`. The
     deployed narrow openers are RE-DERIVED as the `narrowEnc` instance
@@ -61,8 +71,12 @@ the deployed narrow objects come back as `rfl` instances.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Crypto enters ONLY as the existing
-named `Poseidon2SpongeCR` floor — no new floor. NEW file; every import read-only; no
+named `Poseidon2SpongeCR` floor — no new floor. Every import read-only; no
 `sorry`/`admit`/`native_decide`. Every concrete object is a literal ≤3-element list.
+`wideEnc` (and the three symbolic roots downstream of it) are `noncomputable`: `HeapOk` names the
+`Digest8Key` order, whose `LinearOrder` is classical. Nothing here executes; the two arity `#guard`s
+that used the evaluator became `rfl` THEOREMS (`MAP_TREE_LEAF_ARITY_WIDE_eq`,
+`map_tree_leaf_arity_delta`), i.e. kernel-checked instead.
 -/
 import Dregg2.Circuit.MapOpWideKey
 
@@ -105,9 +119,17 @@ the openings, the openers, the gate model) is parametric in this one object, so 
 denotation and the widened one are the SAME theorems at two encodings — not a twin pair. -/
 
 /-- **`LaneEnc K`** — a map key's ABSORPTION SCHEDULE into a leaf digest: a fixed-width, injective
-lane encoding. `width` is the number of felts the key contributes to the leaf's hash input; the
-injectivity is what makes the leaf digest bind the WHOLE key. -/
-structure LaneEnc (K : Type) where
+lane encoding, TOGETHER WITH the admissible shape of a committed heap at that key width.
+
+`width`/`enc` are the absorb; the injectivity is what makes the leaf digest bind the WHOLE key.
+`HeapOk` is the **extraction premise's DOMAIN** — the class of heaps a prover can actually have
+committed at this key width. It is the field this structure grew for the L3 closure: at
+`narrowEnc` it is exactly `Heap.SortedKeys` (so every deployed object comes back definitionally),
+and at `wideEnc` it is `Heap.SortedKeys ∧ CanonHeapW` — the committed spine is CANONICALLY KEYED
+**by definition**, which is what the deployed prover has for free (its heap keys ARE field
+elements) and what no gate can force (`MapOpWideKeyCanonDischarge.gate_teeth_cannot_force_canonicity`).
+Carrying it here rather than at each use site is what retires `CanonHeapW` as a hypothesis. -/
+structure LaneEnc (K : Type) [LinearOrder K] where
   /-- The key's felt lanes, most-significant first. -/
   enc : K → List ℤ
   /-- The number of felts the key contributes to a leaf absorb. -/
@@ -116,28 +138,75 @@ structure LaneEnc (K : Type) where
   enc_length : ∀ k, (enc k).length = width
   /-- The lanes DETERMINE the key: no pre-folding, no projection. -/
   enc_inj : Function.Injective enc
+  /-- **THE ADMISSIBLE COMMITTED HEAP at this key width** — the extraction premise's domain. -/
+  HeapOk : List (K × ℤ) → Prop
+  /-- An admissible heap is sorted (so every heap lemma the openers call still applies). -/
+  heapOk_sorted : ∀ h, HeapOk h → Heap.SortedKeys h
+  /-- Admissibility survives an in-place update at an ALREADY-COMMITTED key: the key spine does
+  not grow, so no new key needs to be checked. (`Heap.set` at a FRESH key is not covered — and
+  need not be: `MapOpWideKeyWeld.writesToMerkleW_forces_present` shows the map-tree write layer
+  can only update keys already on the spine.) -/
+  heapOk_set : ∀ (h : List (K × ℤ)) (k : K) (v : ℤ), HeapOk h → k ∈ Heap.keys h →
+    HeapOk (Heap.set h k v)
 
-/-- **The DEPLOYED encoding** — one felt, `k ↦ [k]`. `MapOp.key : EmittedExpr` is exactly this. -/
+/-- **The DEPLOYED encoding** — one felt, `k ↦ [k]`. `MapOp.key : EmittedExpr` is exactly this.
+Its `HeapOk` IS `Heap.SortedKeys`, definitionally — which is precisely why every conservativity
+`rfl` to the deployed narrow objects survives the L3 closure untouched. That the deployed narrow
+object carries NO canonicity on its committed heap is not an oversight of this instance: it is
+the state of the deployed model, and §2b below exhibits it. -/
 def narrowEnc : LaneEnc ℤ where
   enc := fun k => [k]
   width := 1
   enc_length := fun _ => rfl
   enc_inj := by intro a b h; simpa using h
+  HeapOk := Heap.SortedKeys
+  heapOk_sorted := fun _ h => h
+  heapOk_set := fun h k v hs _ => Heap.set_sorted h k v hs
 
-/-- **The WIDENED encoding** — all eight felts of a `Digest8Key`, most-significant lane first. -/
-def wideEnc : LaneEnc Digest8Key where
+/-- **`CanonHeapW h`** — every committed key of a widened heap is CANONICAL: the property the
+deployed prover has for free (its heap keys ARE BabyBear elements) and that no gate tooth can
+force. It is a FIELD of `wideEnc` below, not a hypothesis carried at use sites. -/
+def CanonHeapW (h : List (Digest8Key × ℤ)) : Prop := ∀ k ∈ Heap.keys h, KeyCanon (ofLex k)
+
+/-- **The WIDENED encoding** — all eight felts of a `Digest8Key`, most-significant lane first, and
+a committed heap that is sorted AND canonically keyed.
+
+`noncomputable` only because `HeapOk` now names the `Digest8Key` order, whose `LinearOrder`
+(`Pi.Lex.linearOrder`) is classical. Nothing here is ever executed — every downstream object is a
+proof or a symbolic root — and the arities that used to be `#guard`ed are now `rfl` THEOREMS
+(`MAP_TREE_LEAF_ARITY_WIDE_eq`, §8), i.e. kernel-checked rather than evaluator-checked. -/
+noncomputable def wideEnc : LaneEnc Digest8Key where
   enc := keyLanes
   width := 8
   enc_length := keyLanes_length
   enc_inj := by intro a b h; exact keyLanes_inj h
+  HeapOk := fun h => Heap.SortedKeys h ∧ CanonHeapW h
+  heapOk_sorted := fun _ h => h.1
+  heapOk_set := by
+    intro h k v hok hk
+    refine ⟨Heap.set_sorted h k v hok.1, ?_⟩
+    intro y hy
+    rcases (Heap.mem_keys_set_iff h k y v).mp hy with h1 | h1
+    · rw [h1]; exact hok.2 k hk
+    · exact hok.2 y h1
+
+/-- The widened `HeapOk` unfolds to exactly its two conjuncts (used to build and destructure). -/
+theorem wideEnc_heapOk_iff (h : List (Digest8Key × ℤ)) :
+    wideEnc.HeapOk h ↔ (Heap.SortedKeys h ∧ CanonHeapW h) := Iff.rfl
+
+/-- **★ THE L3 CLOSURE, AS ONE FACT.** An admissible WIDE committed heap is canonically keyed —
+with no hypothesis, at every use site, because it is the definition. -/
+theorem heapOk_canon {h : List (Digest8Key × ℤ)} (hok : wideEnc.HeapOk h) : CanonHeapW h := hok.2
 
 /-- The deployed map-tree leaf absorb arity `hash[key, value]`. -/
 def MAP_TREE_LEAF_ARITY_NARROW : Nat := narrowEnc.width + 1
 /-- The widened map-tree leaf absorb arity `hash[key8 ‖ value]`. -/
-def MAP_TREE_LEAF_ARITY_WIDE : Nat := wideEnc.width + 1
+noncomputable def MAP_TREE_LEAF_ARITY_WIDE : Nat := wideEnc.width + 1
 
 #guard MAP_TREE_LEAF_ARITY_NARROW == 2
-#guard MAP_TREE_LEAF_ARITY_WIDE == 9
+/-- The widened arity, kernel-checked (the `#guard` this replaces went through the evaluator, which
+`wideEnc`'s classical order no longer admits; `rfl` is the stronger check). -/
+theorem MAP_TREE_LEAF_ARITY_WIDE_eq : MAP_TREE_LEAF_ARITY_WIDE = 9 := rfl
 
 section Generic
 
@@ -212,14 +281,14 @@ the depth-`d` binary root `r`, reads `o` at `k`. At `narrowEnc` this is DEFINITI
 `opensToMerkle` (hence `DescriptorIR2.opensTo`). -/
 def opensToMerkleW (hash : List ℤ → ℤ) (E : LaneEnc K) (d : Nat) (r : ℤ) (k : K)
     (o : Option ℤ) : Prop :=
-  ∃ h : List (K × ℤ), Heap.SortedKeys h ∧ h.length = 2 ^ d ∧ mapRootW hash E d h = r
+  ∃ h : List (K × ℤ), E.HeapOk h ∧ h.length = 2 ^ d ∧ mapRootW hash E d h = r
     ∧ Heap.get h k = o
 
 /-- **`writesToMerkleW hash E d r k v r'`** — the sorted insert-or-update of `(k, v)` moves the
 committed root `r` to `r'`, at key width `E`. -/
 def writesToMerkleW (hash : List ℤ → ℤ) (E : LaneEnc K) (d : Nat) (r : ℤ) (k : K) (v : ℤ)
     (r' : ℤ) : Prop :=
-  ∃ h : List (K × ℤ), Heap.SortedKeys h ∧ h.length = 2 ^ d
+  ∃ h : List (K × ℤ), E.HeapOk h ∧ h.length = 2 ^ d
     ∧ (Heap.set h k v).length = 2 ^ d
     ∧ mapRootW hash E d h = r ∧ r' = mapRootW hash E d (Heap.set h k v)
 
@@ -335,7 +404,7 @@ root FORCES the membership opening at the FULL key: the row cannot claim a value
 hold there, and it cannot claim it at a colliding projection either — the leaf absorbs all
 `E.width` lanes. -/
 theorem opensToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (E : LaneEnc K)
-    (dep : Nat) {r : ℤ} {k : K} {v : ℤ} (h : List (K × ℤ)) (hs : Heap.SortedKeys h)
+    (dep : Nat) {r : ℤ} {k : K} {v : ℤ} (h : List (K × ℤ)) (hs : E.HeapOk h)
     (hlen : h.length = 2 ^ dep) (hroot : mapRootW hash E dep h = r)
     (steps : List (Bool × ℤ)) (hsl : steps.length = dep)
     (hpath : pathRecompute hash (leafOfW hash E (k, v)) steps = r) :
@@ -351,7 +420,7 @@ theorem opensToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeC
     rw [he] at hbind
     simp only [Option.map_some, Option.some.injEq] at hbind
     obtain rfl := leafOfW_injective hash hCR E hbind
-    exact ⟨h, hs, hlen, rfl, getW_eq_some_of_getElem? hs he⟩
+    exact ⟨h, hs, hlen, rfl, getW_eq_some_of_getElem? (E.heapOk_sorted h hs) he⟩
 
 /-- **`.absent` opener (widened) — the gap arm.** TWO paths at CONSECUTIVE positions, opening
 leaves whose keys strictly bracket the row's key AT THE FULL KEY ORDER, FORCE the non-membership
@@ -359,7 +428,7 @@ opening. The committed root pins both bracket leaves (arity `E.width + 1` absorb
 adjacency pins spine adjacency, and `Heap.get_none_of_gap` (= `sorted_gap_excludes`, already
 `[LinearOrder κ]`-generic) excludes the key. -/
 theorem opensToMerkleW_none_of_bracket (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (E : LaneEnc K) (dep : Nat) {r : ℤ} {k : K} (h : List (K × ℤ)) (hs : Heap.SortedKeys h)
+    (E : LaneEnc K) (dep : Nat) {r : ℤ} {k : K} (h : List (K × ℤ)) (hs : E.HeapOk h)
     (hlen : h.length = 2 ^ dep) (hroot : mapRootW hash E dep h = r)
     (stepsLo stepsHi : List (Bool × ℤ)) {klo khi : K} {vlo vhi : ℤ}
     (hlLo : stepsLo.length = dep) (hlHi : stepsHi.length = dep)
@@ -390,12 +459,13 @@ theorem opensToMerkleW_none_of_bracket (hash : List ℤ → ℤ) (hCR : Poseidon
       obtain rfl := leafOfW_injective hash hCR E hbindHi
       rw [hadj] at heHi
       exact ⟨h, hs, hlen, rfl,
-        Heap.get_none_of_gap h klo khi k hs (adjacentW_of_getElem?_pair heLo heHi) hklo hkhi⟩
+        Heap.get_none_of_gap h klo khi k (E.heapOk_sorted h hs)
+          (adjacentW_of_getElem?_pair heLo heHi) hklo hkhi⟩
 
 /-- **`.write`/`.insert` opener (widened).** An old-leaf path to the pre-root plus the SAME siblings
 recomputing the new `(key, value)` leaf to the post-root FORCE the write opening at the full key. -/
 theorem writesToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (E : LaneEnc K)
-    (dep : Nat) {r : ℤ} {k : K} {v r' : ℤ} (h : List (K × ℤ)) (hs : Heap.SortedKeys h)
+    (dep : Nat) {r : ℤ} {k : K} {v r' : ℤ} (h : List (K × ℤ)) (hs : E.HeapOk h)
     (hlen : h.length = 2 ^ dep) (hroot : mapRootW hash E dep h = r)
     (steps : List (Bool × ℤ)) (vOld : ℤ) (hsl : steps.length = dep)
     (hpathOld : pathRecompute hash (leafOfW hash E (k, vOld)) steps = r)
@@ -415,7 +485,7 @@ theorem writesToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
     have hkmem : k ∈ Heap.keys h :=
       List.mem_map.mpr ⟨_, List.mem_of_getElem? he, rfl⟩
     have hnew : r' = mapRootW hash E dep (Heap.set h k v) := by
-      rw [← hpathNew, heapSetW_eq_listSet hs he v]
+      rw [← hpathNew, heapSetW_eq_listSet (E.heapOk_sorted h hs) he v]
       have h2 := hupd (leafOfW hash E (k, v))
       rw [hsl] at h2
       calc pathRecompute hash (leafOfW hash E (k, v)) steps
@@ -425,7 +495,7 @@ theorem writesToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
               ((h.set (pathPos steps) (k, v)).map (leafOfW hash E)) := by rw [map_set']
         _ = mapRootW hash E dep (h.set (pathPos steps) (k, v)) := rfl
     exact ⟨h, hs, hlen,
-      by rw [Heap.length_set_mem h k v hs hkmem]; exact hlen, rfl, hnew⟩
+      by rw [Heap.length_set_mem h k v (E.heapOk_sorted h hs) hkmem]; exact hlen, rfl, hnew⟩
 
 /-! ### §1e — the widened PER-KIND DENOTATION and GATE MODEL (design S4 + S5). -/
 
@@ -475,7 +545,7 @@ knowledge-extraction premise (the prover's committed canonical heap, NAMED exact
 def ReconcileGatesAtW (hash : List ℤ → ℤ) (E : LaneEnc K) (dep : Nat)
     (r : ℤ) (k : K) (v r' : ℤ) (op : MapOpKind) : Prop :=
   ∃ h : List (K × ℤ),
-    Heap.SortedKeys h ∧ h.length = 2 ^ dep ∧ mapRootW hash E dep h = r
+    E.HeapOk h ∧ h.length = 2 ^ dep ∧ mapRootW hash E dep h = r
       ∧ ReconcileGatesW hash E dep r k v r' op
 
 /-- **★ THE WIDENED MAPOPS LAW.** For every op kind, accepted widened gate data yields the exact
@@ -907,8 +977,36 @@ theorem demoHeapW_sorted : Heap.SortedKeys demoHeapW := by
 
 theorem demoHeapW_length : demoHeapW.length = 2 ^ 1 := rfl
 
+/-! ### §7a — the spike keys are CANONICAL, so the demo heaps are ADMISSIBLE at `wideEnc`. -/
+
+theorem keyLo_canon : KeyCanon (ofLex keyLo) := by
+  show ∀ i : Fin 8, 0 ≤ (0 : ℤ) ∧ (0 : ℤ) < 2013265921
+  decide
+
+theorem keyHi_canon : KeyCanon (ofLex keyHi) := by
+  show ∀ i : Fin 8, 0 ≤ (if i = 0 then (1 : ℤ) else 0)
+    ∧ (if i = 0 then (1 : ℤ) else 0) < 2013265921
+  decide
+
+theorem keyE_canon : KeyCanon (ofLex keyE) := by
+  show ∀ i : Fin 8, 0 ≤ (if i = 7 then (1 : ℤ) else 0)
+    ∧ (if i = 7 then (1 : ℤ) else 0) < 2013265921
+  decide
+
+/-- **★ THE DEMO HEAP IS AN ADMISSIBLE WIDE COMMITMENT.** Both committed keys are canonical, so
+the L3 closure costs the epoch's own accepting rows exactly nothing — the discipline is invisible
+to an honest, field-keyed heap. -/
+theorem demoHeapW_ok : wideEnc.HeapOk demoHeapW := by
+  refine ⟨demoHeapW_sorted, ?_⟩
+  intro k hk
+  have : k ∈ [keyLo, keyHi] := hk
+  rcases List.mem_cons.mp this with rfl | hk'
+  · exact keyLo_canon
+  · rw [List.mem_singleton.mp hk']
+    exact keyHi_canon
+
 /-- The committed root of the demo heap, at the widened leaf schema. -/
-def demoRootW (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 demoHeapW
+noncomputable def demoRootW (hash : List ℤ → ℤ) : ℤ := mapRootW hash wideEnc 1 demoHeapW
 
 /-- **★ A REAL ACCEPTING WIDENED `.absent` GATE.** Two adjacent committed paths bracket the honest
 fresh key `keyE` at the FULL 8-felt lex order (`keyLo < keyE` decided at felt **7** — the limb the
@@ -917,7 +1015,7 @@ deployed projection discards — and `keyE < keyHi` at felt 0). Every path oblig
 theorem demoAbsentGateW_accepts (hash : List ℤ → ℤ) :
     ReconcileGatesAtW hash wideEnc 1 (demoRootW hash) keyE 0 (demoRootW hash)
       MapOpKind.absent :=
-  ⟨demoHeapW, demoHeapW_sorted, demoHeapW_length, rfl,
+  ⟨demoHeapW, demoHeapW_ok, demoHeapW_length, rfl,
    ⟨[(false, leafOfW hash wideEnc (keyHi, 2))], [(true, leafOfW hash wideEnc (keyLo, 1))],
     keyLo, 1, keyHi, 2, rfl, rfl, rfl, rfl, rfl, keyLo_lt_keyE, keyE_lt_keyHi⟩, rfl⟩
 
@@ -931,7 +1029,7 @@ theorem demoAbsentGateW_forces_absence (hash : List ℤ → ℤ) (hCR : Poseidon
 /-- The demo heap really OPENS at the present key (the discrimination side). -/
 theorem demoOpensW_keyLo (hash : List ℤ → ℤ) :
     opensToMerkleW hash wideEnc 1 (demoRootW hash) keyLo (some 1) :=
-  ⟨demoHeapW, demoHeapW_sorted, demoHeapW_length, rfl, Heap.get_cons_self keyLo 1 [(keyHi, 2)]⟩
+  ⟨demoHeapW, demoHeapW_ok, demoHeapW_length, rfl, Heap.get_cons_self keyLo 1 [(keyHi, 2)]⟩
 
 /-- **★ TOOTH — A FORGED `.absent` ON A PRESENT KEY IS UNSAT.** No widened `.absent` opening exists
 for `keyLo`, which the committed root holds. The gate discriminates. -/
@@ -960,10 +1058,18 @@ def MA_COMPARE_COLS_WIDE : Nat := Dregg2.Circuit.Emit.LexCompare8Emit.LEX_WIDTH
 -- The IMT leaf absorb: arity 3 → 17 (both key groups widen; the pointer is not optional).
 #guard 17 - 3 == 14
 -- The map-tree leaf absorb: arity 2 → 9.
-#guard MAP_TREE_LEAF_ARITY_WIDE - MAP_TREE_LEAF_ARITY_NARROW == 7
+theorem map_tree_leaf_arity_delta : MAP_TREE_LEAF_ARITY_WIDE - MAP_TREE_LEAF_ARITY_NARROW = 7 := rfl
 
 /-! ## §9 — axiom hygiene: every keystone rests on the kernel triple only. -/
 
+#assert_axioms wideEnc_heapOk_iff
+#assert_axioms heapOk_canon
+#assert_axioms keyLo_canon
+#assert_axioms keyHi_canon
+#assert_axioms keyE_canon
+#assert_axioms demoHeapW_ok
+#assert_axioms MAP_TREE_LEAF_ARITY_WIDE_eq
+#assert_axioms map_tree_leaf_arity_delta
 #assert_axioms leafOfW_injective
 #assert_axioms map_leafOfW_injective
 #assert_axioms mapRootW_injective
