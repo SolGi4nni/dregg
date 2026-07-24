@@ -186,7 +186,31 @@ Probe first: name the 34–39-col unidentified bands (RV-F8) before the compacto
 
 ### §E7 — by-name narrow-bus swap (census + bridge landed `9959af6cc`, mechanical regen)
 
-**CUTOVER STARTED 2026-07-24 — 2 of ~24 members DEPLOYED.** `poseidon2-hash-arity2` 10→3 and
+**CUTOVER: 12 of ~24 members DEPLOYED (2026-07-24), −154 committed columns.** Batch 2 (`3f47a93023`)
+landed 10 of the 11 TAIL-TRUNCATE members in one slice — `dfa-routing` 22→8, `turn-chain-binding`
+14→7, `bound-presentation` 29→22, `blinded-membership` 33→12, `merkle-membership-4ary-general`
+18→11, `dregg-shielded-spend-pinned-root-v1` 48→20,
+`dregg-shielded-value-link-conserve-ranged-v1` 23→9,
+`dregg-shielded-wide-value-link-conserve-v1` 30→23, `adjacency-membership` 32→18, `dyck-parse`
+38→24 — **−133 further committed columns; deployed descriptor bytes 48,328 → 45,804 B (−2,524,
+−5.2%), MEASURED.** Installed FROM the machine-checked `#guard emitVmJson2` pins, then confirmed by
+a canonical `scripts/emit_descriptors.py` run that reports all ten UNCHANGED. Drift class:
+GEOMETRY-WIDEN, all ten moves SHRINKS.
+
+`attested-fact-membership` 34→13 is the ONE tail-truncate member batch 2 did NOT take: hazard (a)
+below (its commit tooth is character-for-character `PredicatesArithmeticEmit.factCommitLookup`)
+means it must narrow together with the predicate-arith family, which is in the RENUMBER-NEEDED set.
+
+Batch 2's real coupling, found by READING the twin rather than by a red: `blinded-4ary-depth*` is
+RENUMBER-NEEDED (not yet narrowed) but Rust derived its column indices from
+`MEMBERSHIP_4ARY_WIDTH`, so narrowing the general 4-ary would have silently renumbered that still-
+27-wide family. Decoupled by a new `PATH_BLOCK_4ARY = 18`; `blinded_membership_witness_4ary` now
+re-derives the `PAR` permutation lanes itself. They re-couple when blinded-4ary narrows. The
+proof-byte delta for batch 2 was NOT measured (no proving run in that commit); extrapolating batch
+1's ≈107 B/column at height 4 would suggest ≈14 KB, but that figure is HEIGHT-DEPENDENT and these
+members' heights differ — treat it as an unvalidated estimate, not a reading.
+
+**Batch 1 (2026-07-24) — 2 members DEPLOYED.** `poseidon2-hash-arity2` 10→3 and
 `merkle-membership-depth2` 24→10 now emit the NARROW (`poseidon2narrow` = `TID_P2_NARROW`, wire 8)
 18-wide tuple; **21 committed columns deleted from the deployed bytes.** Their emit + Refine modules
 re-point at `ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table` under the deployment-shaped
@@ -376,7 +400,7 @@ OUTSIDE the regen window.
 | 4 | E4 FRI re-grid (8,14–15,16) | (6,19) chosen at a 3.0×-smaller member | projected 151→115–125 KB [A] | 1 lane | regen | with/after bundle |
 | 5 | E5 map-ops instance split | 476 all-zero cols ≈ 36 KB on heapWrite/refusal | 36–68 KB on 10 map members | 1 lane | regen | independent |
 | 6 | E6 absent-op deletion | MapAbsent instance ≈ 18–27 KB + 1 witness chip path × 7 members | strongest single lever on the chip-64 cliff | 1–2 lanes | regen + Lean lemma | independent |
-| 7 | E7 by-name zoo re-emit | 387 of 1,857 committed cols mechanically dead (lanes-only + unref); note-spend-leaf −62% width | dominant share of every private-payment sub-proof | 1 lane (census + bridge LANDED; **cutover STARTED — 2 members deployed, −21 cols**) | regen | does NOT inherit Epoch-2 |
+| 7 | E7 by-name zoo re-emit | 387 of 1,857 committed cols mechanically dead (lanes-only + unref); note-spend-leaf −62% width | dominant share of every private-payment sub-proof | 1 lane (census + bridge LANDED; **cutover 12/24 members deployed, −154 cols; only `attested-fact-membership` left of the tail-truncate set**) | regen | does NOT inherit Epoch-2 |
 | 8 | E8 bilateral-v2 expected-block deletion | 35 duplicated cols+gates, live per multi-cell turn | width 87→52 + closes middle-row identity gap | 1 lane (soundness core PROVEN `b0c73d084`; regen mechanical) | semantic-change | independent; ride the regen |
 | 9 | E9 joint-turn binding leaf | free-witness digest + 1 uni-STARK + 1 wrap per joint turn | delete a layer or make it real | 0.5–1 lane | semantic-change | rides tag retype if (b) |
 | 10 | E10 frozen-authority falsifier + 83-col dedup | 83 duplicate cols ≈ 15.6 KB (16 members); no-freeze class PROVEN a witness-gen gap | 15.6 KB + 5.3K cells + owner-freeze colEq close | 1 lane (falsifier LANDED `a8cd5e35f`; dedup + colEq ride regen) | byte-safe then regen | dedup + close ride regen |
