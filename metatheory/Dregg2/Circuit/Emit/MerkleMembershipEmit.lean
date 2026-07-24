@@ -20,12 +20,14 @@ canary). Emitted descriptor ≡ hand-AIR membership semantics.
 
 ## The Poseidon2Chip lookup mapping this validates (the ~15-family dependency)
 
-A `TID_P2` chip lookup with arity tag `4` and inputs `[c0,c1,c2,c3]` is served by the chip table's
+A `TID_P2_NARROW` chip lookup with arity tag `4` and inputs `[c0,c1,c2,c3]` is served by the chip table's
 narrow rate-4 seeding: `state[0..4] = c0..c3`, `state[4] = 4` (the arity tag), `state[5..] = 0`,
 `out0 = permute(state)[0]`. That is EXACTLY `poseidon2::hash_4_to_1([c0,c1,c2,c3])`
 (`circuit/src/descriptor_ir2.rs:3353` `chip_absorb_all_lanes(4, ..)[0]` — the Rust gate KATs this).
-The chip AIR binds `out0` (and lanes 1..7) to the real permutation, so a lookup that names a forged
-parent has no serving chip row → UNSAT. Every hash-carrying family (heap/fields/accumulator/cap/…)
+The chip AIR binds `out0` (and lanes 1..7) to the real permutation, and the NARROW bus is served by
+the 18-prefix of those SAME rows (`descriptor_ir2.rs::narrow_hist`, modelled by
+`ChipNarrowLookup.narrowTable_sound`), so a lookup that names a forged parent has no serving chip
+row → UNSAT. Every hash-carrying family (heap/fields/accumulator/cap/…)
 depends on THIS arity→seeding→digest correspondence; here it is exercised end-to-end.
 
 ## Axiom hygiene
@@ -34,7 +36,7 @@ Definitional descriptor + a byte-pinned `#guard` on its wire string + one genuin
 non-vacuous semantic lemma (`continuity_body_zero_iff`, TRUE iff the levels chain, FALSE otherwise).
 `#assert_axioms continuity_body_zero_iff ⊆ {}` (pure `omega`). NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.ChipNarrowLookup
 
 namespace Dregg2.Circuit.Emit.MerkleMembershipEmit
 
@@ -42,8 +44,8 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
-  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple CHIP_RATE CHIP_OUT_LANES
-   emitVmJson2)
+  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTupleNarrow poseidon2narrow
+   CHIP_RATE CHIP_OUT_LANES emitVmJson2)
 
 set_option autoImplicit false
 
@@ -69,13 +71,10 @@ def SIB1C : Nat := 8
 /-- Level-1 parent digest = the ROOT = `hash_4_to_1(cur1, sib1a, sib1b, sib1c)` (chip lookup out0). -/
 def PARENT1 : Nat := 9
 
-/-- The seven exposed permutation lane columns 1..7 of the level-`k` chip lookup (out0 is the
-digest column above; the lanes are witnessed by the chip's `out[i] == lane[i]` equalities). -/
-def LEVEL0_LANES : List Nat := [10, 11, 12, 13, 14, 15, 16]
-def LEVEL1_LANES : List Nat := [17, 18, 19, 20, 21, 22, 23]
-
-/-- Total main-trace width: 10 base columns + 7 + 7 chip lanes. -/
-def MEMBERSHIP_WIDTH : Nat := 24
+/-- Total main-trace width: 10 base columns. The 2 x 7 exposed permutation lane columns the WIDE
+`TID_P2` tuples carried are GONE (E7 narrowing, `ChipNarrowLookup.lean`) — they were referenced only
+at lane positions 18..24 of the 25-wide tuples and entered no soundness conclusion. -/
+def MEMBERSHIP_WIDTH : Nat := 10
 
 /-- The public root is the single PI slot. -/
 def ROOT_PI : Nat := 0
@@ -85,14 +84,14 @@ def ROOT_PI : Nat := 0
 /-- The level-0 `child → parent` step: an arity-4 `Poseidon2Chip` lookup absorbing
 `[leaf, sib0a, sib0b, sib0c]`, binding out0 to `PARENT0`. -/
 def level0Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0⟩
 
 /-- The level-1 `child → parent` step: an arity-4 `Poseidon2Chip` lookup absorbing
 `[cur1, sib1a, sib1b, sib1c]`, binding out0 to `PARENT1` (the root). -/
 def level1Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1 LEVEL1_LANES⟩
+  .lookup ⟨poseidon2narrow,
+    chipLookupTupleNarrow [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1⟩
 
 /-- The chain-continuity gate body: `CUR1 - PARENT0` (the next level's path input equals this
 level's parent — the emitted twin of `poseidon2_air.rs`'s chain-continuity constraint). -/
@@ -116,7 +115,7 @@ def rootPin : VmConstraint2 := .base (.piBinding VmRow.first PARENT1 ROOT_PI)
 
 /-- **`merkleMembershipDesc`** — the depth-2, 4-ary Poseidon2 Merkle-membership descriptor.
 Constraints: two child→parent chip lookups, the level-tying continuity gate, and the root pin.
-The chip table (`TID_P2`) is IMPLICITLY present (Presence-detected from the lookups), so `tables`
+The chip table (`TID_P2_NARROW`) is IMPLICITLY present (Presence-detected from the lookups), so `tables`
 is empty exactly as the working `node8`/`deco` descriptors leave it. The level-tie is enforced on
 EVERY row: the transition `continuityGate` covers rows `0..n-2` and `continuityLastFix` covers the
 last row (so a height-1 trace is not under-constrained). -/
@@ -137,7 +136,7 @@ THE EQUALITY-GATE ANCHOR: this exact string is embedded verbatim in
 `assert_eq!(decoded, hand_built)` — neither can silently diverge. -/
 
 #guard emitVmJson2 merkleMembershipDesc ==
-  "{\"name\":\"merkle-membership-depth2-4ary::poseidon2-v1\",\"ir\":2,\"trace_width\":24,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"merkle-membership-depth2-4ary::poseidon2-v1\",\"ir\":2,\"trace_width\":10,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — A genuinely-proven, non-vacuous semantic lemma (the continuity gate teeth).
 
@@ -158,8 +157,12 @@ theorem continuity_body_zero_iff (a : Assignment) :
 #guard merkleMembershipDesc.traceWidth == MEMBERSHIP_WIDTH
 #guard merkleMembershipDesc.piCount == 1
 #guard merkleMembershipDesc.constraints.length == 5
-#guard (chipLookupTuple [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES).length
-         == CHIP_RATE + 1 + CHIP_OUT_LANES
+#guard (chipLookupTupleNarrow [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0).length
+         == CHIP_RATE + 1 + 1
+-- The narrowing dropped exactly 2 x (CHIP_OUT_LANES - 1) = 14 main columns for the same two forced
+-- digest equations.
+#guard MEMBERSHIP_WIDTH + 2 * (CHIP_OUT_LANES - 1) == 24
+#guard poseidon2narrow.wireId == 8
 
 #assert_axioms continuity_body_zero_iff
 

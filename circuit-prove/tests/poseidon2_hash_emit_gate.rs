@@ -29,8 +29,9 @@
 //! and the value that changes is guarded by EXACTLY the one constraint the canary names.
 
 use dregg_circuit::descriptor_ir2::{
-    CHIP_OUT_LANES, EffectVmDescriptor2, MemBoundaryWitness, TID_P2, VmConstraint2,
-    chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
+    CHIP_OUT_LANES, CHIP_RATE, EffectVmDescriptor2, MemBoundaryWitness, TID_P2_NARROW,
+    VmConstraint2, chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::VmConstraint;
@@ -46,11 +47,13 @@ const GOLDEN_JSON: &str = POSEIDON2_HASH_DESCRIPTOR_JSON;
 const IN0: usize = 0;
 const IN1: usize = 1;
 const DIGEST: usize = 2;
-const HASH_WIDTH: usize = 10;
+/// 3 after the E7 narrowing (`ChipNarrowLookup.lean`): the 7 exposed permutation-lane columns are
+/// no longer trace columns at all — the lookup rides the 18-wide NARROW chip bus.
+const HASH_WIDTH: usize = 3;
 
 /// One honest hash row: preimage `(a, b)` with the genuine `hash_2_to_1(a, b)` in the digest column.
-/// The chip LANE columns (3..10) are left zero — the prover's `trace_with_chip_lanes` fills them
-/// from the genuine permutation. Returns `(row, digest)`.
+/// After the narrowing there are no lane columns to fill — all 3 columns are semantic.
+/// Returns `(row, digest)`.
 fn honest_row(a: BabyBear, b: BabyBear) -> (Vec<BabyBear>, BabyBear) {
     let digest = hash_2_to_1(a, b);
     let mut row = vec![BabyBear::ZERO; HASH_WIDTH];
@@ -101,9 +104,16 @@ fn poseidon2_hash_emit_decodes_without_rust_constraints() {
     let chip_lookups = decoded
         .constraints
         .iter()
-        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW))
         .count();
-    assert_eq!(chip_lookups, 1, "one preimage→digest chip lookup");
+    assert_eq!(chip_lookups, 1, "one preimage→digest NARROW chip lookup");
+    assert!(
+        decoded
+            .constraints
+            .iter()
+            .all(|c| !matches!(c, VmConstraint2::Lookup(l) if l.tuple.len() != 1 + CHIP_RATE + 1)),
+        "E7: the surviving chip lookup must be the 18-wide narrow tuple"
+    );
     let pins = decoded
         .constraints
         .iter()
@@ -112,7 +122,7 @@ fn poseidon2_hash_emit_decodes_without_rust_constraints() {
     assert_eq!(pins, 3, "the three boundary pins (preimage ×2 + digest)");
 }
 
-/// STEP 2 — the chip mapping: an arity-2 `TID_P2` absorb IS `hash_2_to_1`, and both preimage felts
+/// STEP 2 — the chip mapping: an arity-2 chip absorb IS `hash_2_to_1`, and both preimage felts
 /// are load-bearing (perturbing either changes the digest AND every lane).
 #[test]
 fn arity2_chip_lookup_is_hash_2_to_1() {

@@ -65,13 +65,13 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt Lookup TableId
-   ChipTableSound chip_lookup_sound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES
+   ChipTableSound chipLookupTupleNarrow poseidon2narrow chipRow CHIP_RATE CHIP_OUT_LANES
    memLog mapLog memCheck_nil)
+open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.MerkleMembershipEmit
   (merkleMembershipDesc level0Lookup level1Lookup continuityGate continuityLastFix rootPin contBody
    continuity_body_zero_iff
-   LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1
-   LEVEL0_LANES LEVEL1_LANES ROOT_PI)
+   LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 ROOT_PI)
 
 set_option autoImplicit false
 
@@ -146,17 +146,19 @@ gated). This is where the Poseidon2 CR carrier enters, through `chip_lookup_soun
 theorem lookupChip4 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (j : Nat) (hj : j < t.rows.length)
-    (i0 i1 i2 i3 digestCol : Nat) (lanes : List Nat)
-    (hmem : VmConstraint2.lookup ⟨TableId.poseidon2,
-              chipLookupTuple [.var i0, .var i1, .var i2, .var i3] digestCol lanes⟩
+    (i0 i1 i2 i3 digestCol : Nat)
+    (hmem : VmConstraint2.lookup ⟨poseidon2narrow,
+              chipLookupTupleNarrow [.var i0, .var i1, .var i2, .var i3] digestCol⟩
               ∈ merkleMembershipDesc.constraints) :
     (envAt t j).loc digestCol
       = hash [(envAt t j).loc i0, (envAt t j).loc i1, (envAt t j).loc i2, (envAt t j).loc i3] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
-  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1, .var i2, .var i3] digestCol lanes (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+  rw [hwire] at h
+  have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var i0, .var i1, .var i2, .var i3] digestCol (by show (4 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared `.gate` body vanishes on any ACTIVE (non-last) row — the `when_transition` arm. -/
@@ -206,6 +208,7 @@ theorem merkleMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {mi
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = narrowTable (t.tf .poseidon2))
     (hc : MerkleCanon t) :
     MerkleMembers2 hash
       ((envAt t 0).loc LEAF) ((envAt t 0).loc SIB0A) ((envAt t 0).loc SIB0B) ((envAt t 0).loc SIB0C)
@@ -218,12 +221,12 @@ theorem merkleMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {mi
   have hp0 : (envAt t 0).loc PARENT0
       = hash [(envAt t 0).loc LEAF, (envAt t 0).loc SIB0A, (envAt t 0).loc SIB0B,
               (envAt t 0).loc SIB0C] :=
-    lookupChip4 hsat hChip 0 hlen0 LEAF SIB0A SIB0B SIB0C PARENT0 LEVEL0_LANES (by mm_mem)
+    lookupChip4 hsat hChip hwire 0 hlen0 LEAF SIB0A SIB0B SIB0C PARENT0 (by mm_mem)
   -- level-1 `child → parent`: PARENT1 = hash [cur1, s1a, s1b, s1c].
   have hp1 : (envAt t 0).loc PARENT1
       = hash [(envAt t 0).loc CUR1, (envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B,
               (envAt t 0).loc SIB1C] :=
-    lookupChip4 hsat hChip 0 hlen0 CUR1 SIB1A SIB1B SIB1C PARENT1 LEVEL1_LANES (by mm_mem)
+    lookupChip4 hsat hChip hwire 0 hlen0 CUR1 SIB1A SIB1B SIB1C PARENT1 (by mm_mem)
   -- chain continuity: CUR1 = PARENT0 (the levels chain). The `when_transition` gate binds
   -- `CUR1 − PARENT0 ≡ 0 [ZMOD p]`; both cells are canonical, so this lifts to a genuine ℤ equality
   -- (load-bearing: `CUR1` is re-hashed into the level-1 digest, where mod-`p` cannot thread).
@@ -262,7 +265,7 @@ theorem witness_spec_false : ¬ MerkleMembers2 cHash 1 2 3 4 5 6 7 999 := by
 
 /-- The single logical row: leaf `1`, level-0 siblings `2,3,4`, level-0 parent `1234`; the
 chained level-1 input `CUR1 = 1234`, level-1 siblings `5,6,7`, top parent (root)
-`1234567`. All lane / unused columns are `0`. -/
+`1234567`. All unused columns are `0` (the E7 narrowing deleted the 14 lane columns). -/
 private def cRow : Assignment := fun c =>
   if c = LEAF then 1 else if c = SIB0A then 2 else if c = SIB0B then 3 else if c = SIB0C then 4
   else if c = PARENT0 then 1234
@@ -280,7 +283,15 @@ private def cTbl : List (List ℤ) :=
 row 0 a genuine transition row, so the continuity gate fires). -/
 private def cTrace : VmTrace :=
   { rows := [cRow, cRow], pub := cPub
-    tf := fun tid => match tid with | .poseidon2 => cTbl | _ => [] }
+    tf := fun tid => match tid with
+      | .poseidon2 => cTbl
+      | .custom 3  => narrowTable cTbl
+      | _ => [] }
+
+/-- The concrete family wires the NARROW bus to the 18-prefix of the wide chip table — ONE physical
+chip serving both buses, exactly the deployed Rust `narrow_hist` serving. -/
+theorem concrete_narrow_wire :
+    cTrace.tf poseidon2narrow = narrowTable (cTrace.tf .poseidon2) := rfl
 
 /-- **The concrete chip table is genuinely SOUND** for `cHash` (each row is a real `chipRow`) — so
 the NAMED carrier `ChipTableSound` is realizable, not just assumed. -/
@@ -333,7 +344,8 @@ theorem witness_spec : MerkleMembers2 cHash
     ((envAt cTrace 0).loc LEAF) ((envAt cTrace 0).loc SIB0A) ((envAt cTrace 0).loc SIB0B)
     ((envAt cTrace 0).loc SIB0C) ((envAt cTrace 0).loc SIB1A) ((envAt cTrace 0).loc SIB1B)
     ((envAt cTrace 0).loc SIB1C) (cTrace.pub ROOT_PI) :=
-  merkleMembership_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
+  merkleMembership_sat_refines (by decide) concrete_sat concrete_chipSound concrete_narrow_wire
+    concrete_canon
 
 /-- The fired witness spec IS the closed-form true instance (`1234567 = cHash […]`). -/
 theorem witness_spec_is_closed :
@@ -386,6 +398,7 @@ theorem concrete_fail_root :
 #assert_axioms lookupChip4
 #assert_axioms merkleMembership_sat_refines
 #assert_axioms concrete_chipSound
+#assert_axioms concrete_narrow_wire
 #assert_axioms concrete_sat
 #assert_axioms concrete_canon
 #assert_axioms witness_spec

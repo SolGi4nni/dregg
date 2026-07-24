@@ -25,11 +25,10 @@ pub fn poseidon2_hash_descriptor() -> EffectVmDescriptor2 {
 /// emitted descriptor. This is witness construction only; all algebra is in the
 /// included Lean artifact.
 pub fn poseidon2_hash_witness(a: BabyBear, b: BabyBear) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    // out0 of the arity-2 absorb IS the digest; after the E7 narrowing the descriptor rides the
+    // NARROW chip bus, so the 7 exposed permutation lanes are no longer trace columns at all.
     let lanes = chip_absorb_all_lanes(2, &[a, b]);
-    let mut row = vec![BabyBear::ZERO; 10];
-    row[0] = a;
-    row[1] = b;
-    row[2..10].copy_from_slice(&lanes);
+    let row = vec![a, b, lanes[0]];
     (vec![row.clone(), row], vec![a, b, lanes[0]])
 }
 

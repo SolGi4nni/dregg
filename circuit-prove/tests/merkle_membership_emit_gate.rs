@@ -26,8 +26,8 @@
 use std::panic::AssertUnwindSafe;
 
 use dregg_circuit::descriptor_ir2::{
-    CHIP_OUT_LANES, CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness,
-    TID_P2, VmConstraint2, chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2,
+    CHIP_OUT_LANES, CHIP_RATE, EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2_NARROW,
+    VmConstraint2, chip_absorb_all_lanes, parse_vm_descriptor2, prove_vm_descriptor2,
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
@@ -38,7 +38,7 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 merkleMembershipDesc` emits (pinned by the
 /// `#guard` in `MerkleMembershipEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this
 /// literal drifts, the `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"merkle-membership-depth2-4ary::poseidon2-v1","ir":2,"trace_width":24,"public_input_count":1,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4},{"t":"var","v":10},{"t":"var","v":11},{"t":"var","v":12},{"t":"var","v":13},{"t":"var","v":14},{"t":"var","v":15},{"t":"var","v":16}]},{"t":"lookup","table":1,"tuple":[{"t":"const","v":4},{"t":"var","v":5},{"t":"var","v":6},{"t":"var","v":7},{"t":"var","v":8},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":9},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20},{"t":"var","v":21},{"t":"var","v":22},{"t":"var","v":23}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"t":"pi_binding","row":"first","col":9,"pi_index":0},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"merkle-membership-depth2-4ary::poseidon2-v1","ir":2,"trace_width":10,"public_input_count":1,"tables":[],"constraints":[{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":0},{"t":"var","v":1},{"t":"var","v":2},{"t":"var","v":3},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":4}]},{"t":"lookup","table":8,"tuple":[{"t":"const","v":4},{"t":"var","v":5},{"t":"var","v":6},{"t":"var","v":7},{"t":"var","v":8},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":9}]},{"t":"gate","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"t":"pi_binding","row":"first","col":9,"pi_index":0},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `MerkleMembershipEmit.lean` §1). ---
 const LEAF: usize = 0;
@@ -51,16 +51,19 @@ const SIB1A: usize = 6;
 const SIB1B: usize = 7;
 const SIB1C: usize = 8;
 const PARENT1: usize = 9;
-const LEVEL0_LANE_BASE: usize = 10;
-const LEVEL1_LANE_BASE: usize = 17;
-const MEMBERSHIP_WIDTH: usize = 24;
+/// The E7 narrowing (`ChipNarrowLookup.lean`) deleted the 2 x 7 exposed permutation-lane columns:
+/// the descriptor is 10 wide, not 24, and its two chip lookups ride the NARROW bus.
+const MEMBERSHIP_WIDTH: usize = 10;
+const NARROW_TUPLE_LEN: usize = 1 + CHIP_RATE + 1;
 
-/// An arity-4 `TID_P2` chip lookup absorbing `input_cols` (4 children), binding out0 to `out_col`
-/// (the parent) and lanes 1..7 to `lane_base..lane_base+7`. Built EXACTLY as Lean's
-/// `chipLookupTuple` (arity tag = 4, `CHIP_RATE` zero-padded inputs, then out0 :: 7 lanes).
-fn chip4_lookup(input_cols: [usize; 4], out_col: usize, lane_base: usize) -> VmConstraint2 {
-    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-    tuple.push(LeanExpr::Const(4)); // arity tag (= ins.length in Lean's chipLookupTuple)
+/// An arity-4 `TID_P2_NARROW` chip lookup absorbing `input_cols` (4 children) and binding out0 to
+/// `out_col` (the parent) — NO lane columns. Built EXACTLY as Lean's `chipLookupTupleNarrow`
+/// (arity tag = 4, `CHIP_RATE` zero-padded inputs, then out0). The narrow bus is served by the
+/// 18-prefix of the SAME chip rows (`descriptor_ir2.rs::narrow_hist`), so the digest equation this
+/// forces is identical to the one the 25-wide tuple forced.
+fn chip4_lookup(input_cols: [usize; 4], out_col: usize) -> VmConstraint2 {
+    let mut tuple: Vec<LeanExpr> = Vec::with_capacity(NARROW_TUPLE_LEN);
+    tuple.push(LeanExpr::Const(4)); // arity tag (= ins.length in Lean's chipLookupTupleNarrow)
     for i in 0..CHIP_RATE {
         tuple.push(match input_cols.get(i) {
             Some(&c) => LeanExpr::Var(c),
@@ -68,12 +71,9 @@ fn chip4_lookup(input_cols: [usize; 4], out_col: usize, lane_base: usize) -> VmC
         });
     }
     tuple.push(LeanExpr::Var(out_col)); // out0 = the parent digest
-    for j in 0..(CHIP_OUT_LANES - 1) {
-        tuple.push(LeanExpr::Var(lane_base + j));
-    }
-    assert_eq!(tuple.len(), CHIP_TUPLE_LEN);
+    assert_eq!(tuple.len(), NARROW_TUPLE_LEN);
     VmConstraint2::Lookup(LookupSpec {
-        table: TID_P2,
+        table: TID_P2_NARROW,
         tuple,
     })
 }
@@ -108,8 +108,8 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         public_input_count: 1,
         tables: vec![],
         constraints: vec![
-            chip4_lookup([LEAF, SIB0A, SIB0B, SIB0C], PARENT0, LEVEL0_LANE_BASE),
-            chip4_lookup([CUR1, SIB1A, SIB1B, SIB1C], PARENT1, LEVEL1_LANE_BASE),
+            chip4_lookup([LEAF, SIB0A, SIB0B, SIB0C], PARENT0),
+            chip4_lookup([CUR1, SIB1A, SIB1B, SIB1C], PARENT1),
             continuity,
             root_pin,
             continuity_last,
@@ -121,8 +121,8 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 
 /// One honest membership row: leaf + level-0 siblings + level-1 siblings, with the genuine
 /// `hash_4_to_1` chain filled into the digest columns (`PARENT0`, `PARENT1`) and `CUR1 = PARENT0`
-/// (the continuity witness). The chip LANE columns (10..24) are left zero — the prover's
-/// `trace_with_chip_lanes` fills them from the genuine permutation. Returns `(row, root)`.
+/// (the continuity witness). After the E7 narrowing there are no lane columns to fill — every one
+/// of the 10 columns is semantic. Returns `(row, root)`.
 fn honest_row(leaf: BabyBear, s0: [BabyBear; 3], s1: [BabyBear; 3]) -> (Vec<BabyBear>, BabyBear) {
     let parent0 = hash_4_to_1(&[leaf, s0[0], s0[1], s0[2]]);
     let root = hash_4_to_1(&[parent0, s1[0], s1[1], s1[2]]);
@@ -204,9 +204,19 @@ fn merkle_membership_emit_decodes_to_hand_built() {
     let chip_lookups = decoded
         .constraints
         .iter()
-        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+        .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW))
         .count();
-    assert_eq!(chip_lookups, 2, "two child→parent chip lookups (depth 2)");
+    assert_eq!(
+        chip_lookups, 2,
+        "two child→parent NARROW chip lookups (depth 2)"
+    );
+    assert!(
+        decoded
+            .constraints
+            .iter()
+            .all(|c| !matches!(c, VmConstraint2::Lookup(l) if l.tuple.len() > NARROW_TUPLE_LEN)),
+        "E7: no 25-wide chip tuple may survive the narrowing"
+    );
     let pins = decoded
         .constraints
         .iter()
@@ -215,7 +225,7 @@ fn merkle_membership_emit_decodes_to_hand_built() {
     assert_eq!(pins, 1, "the single root pin");
 }
 
-/// STEP 2 — the family-wide chip mapping: an arity-4 `TID_P2` absorb IS `hash_4_to_1`, and every
+/// STEP 2 — the family-wide chip mapping: an arity-4 chip absorb IS `hash_4_to_1`, and every
 /// child is load-bearing (perturbing any one changes the digest AND every lane). This is the
 /// lemma ~15 hash-carrying families depend on.
 #[test]

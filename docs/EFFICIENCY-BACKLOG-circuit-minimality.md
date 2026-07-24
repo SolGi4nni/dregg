@@ -186,6 +186,20 @@ Probe first: name the 34–39-col unidentified bands (RV-F8) before the compacto
 
 ### §E7 — by-name narrow-bus swap (census + bridge landed `9959af6cc`, mechanical regen)
 
+**CUTOVER STARTED 2026-07-24 — 2 of ~24 members DEPLOYED.** `poseidon2-hash-arity2` 10→3 and
+`merkle-membership-depth2` 24→10 now emit the NARROW (`poseidon2narrow` = `TID_P2_NARROW`, wire 8)
+18-wide tuple; **21 committed columns deleted from the deployed bytes.** Their emit + Refine modules
+re-point at `ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table` under the deployment-shaped
+same-rows hypothesis `t.tf poseidon2narrow = narrowTable (t.tf .poseidon2)` (the Lean face of Rust
+`narrow_hist`), discharged CONCRETELY in each non-vacuity witness (`witTf_narrow_wire`,
+`concrete_narrow_wire`) — no new assumption. Verified: 15/15 emit-gate + audit tests green on
+persvati (honest prove+verify on the narrow bus; forged digest / forged parent / tampered leaf /
+tampered sibling / forged claimed root / forged PI teeth ALL still bite), 5/5
+`gate1_adversarial_audit` cross-descriptor rejects green, full `lake build` green, and the CANONICAL
+`scripts/emit_descriptors.py` run reproduces both files byte-exact (a verified no-op — the bytes
+came from the machine-checked `#guard` pins, never a sweep). Drift class: GEOMETRY-WIDEN (both moves
+are SHRINKS). Remaining members below.
+
 Sequence AFTER the Epoch-2 chip retype (E7 does not inherit it); cannot run parallel with other
 regens (mints new VK/bytes for 24 members). Recipe:
 1. In each by-name emit module (`NoteSpendingLeafEmit`, `BlindedMembershipEmit` +4ary,
@@ -332,7 +346,7 @@ OUTSIDE the regen window.
 | 4 | E4 FRI re-grid (8,14–15,16) | (6,19) chosen at a 3.0×-smaller member | projected 151→115–125 KB [A] | 1 lane | regen | with/after bundle |
 | 5 | E5 map-ops instance split | 476 all-zero cols ≈ 36 KB on heapWrite/refusal | 36–68 KB on 10 map members | 1 lane | regen | independent |
 | 6 | E6 absent-op deletion | MapAbsent instance ≈ 18–27 KB + 1 witness chip path × 7 members | strongest single lever on the chip-64 cliff | 1–2 lanes | regen + Lean lemma | independent |
-| 7 | E7 by-name zoo re-emit | 387 of 1,857 committed cols mechanically dead (lanes-only + unref); note-spend-leaf −62% width | dominant share of every private-payment sub-proof | 1 lane (census + narrowing bridge LANDED; regen now mechanical) | regen | does NOT inherit Epoch-2 |
+| 7 | E7 by-name zoo re-emit | 387 of 1,857 committed cols mechanically dead (lanes-only + unref); note-spend-leaf −62% width | dominant share of every private-payment sub-proof | 1 lane (census + bridge LANDED; **cutover STARTED — 2 members deployed, −21 cols**) | regen | does NOT inherit Epoch-2 |
 | 8 | E8 bilateral-v2 expected-block deletion | 35 duplicated cols+gates, live per multi-cell turn | width 87→52 + closes middle-row identity gap | 1 lane (soundness core PROVEN `b0c73d084`; regen mechanical) | semantic-change | independent; ride the regen |
 | 9 | E9 joint-turn binding leaf | free-witness digest + 1 uni-STARK + 1 wrap per joint turn | delete a layer or make it real | 0.5–1 lane | semantic-change | rides tag retype if (b) |
 | 10 | E10 frozen-authority falsifier + 83-col dedup | 83 duplicate cols ≈ 15.6 KB (16 members); no-freeze class PROVEN a witness-gen gap | 15.6 KB + 5.3K cells + owner-freeze colEq close | 1 lane (falsifier LANDED `a8cd5e35f`; dedup + colEq ride regen) | byte-safe then regen | dedup + close ride regen |

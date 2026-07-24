@@ -28,7 +28,9 @@ fn rejects(
 }
 
 // ---- Merkle depth-2 4-ary golden witness (mirrors the real membership AIR). ----
-const MEMBERSHIP_WIDTH: usize = 24;
+/// The depth-2 Merkle descriptor is 10 wide after the E7 narrowing (the 2 x 7 exposed
+/// permutation-lane columns were deleted; every remaining column is semantic).
+const MEMBERSHIP_WIDTH: usize = 10;
 fn honest_merkle(
     leaf: BabyBear,
     s0: [BabyBear; 3],

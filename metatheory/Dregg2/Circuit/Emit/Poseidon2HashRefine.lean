@@ -118,8 +118,10 @@ theorem mem_digestPin : digestPin ∈ poseidon2HashDesc.constraints := by
 A trace `t` that SATISFIES the emitted descriptor `poseidon2HashDesc` (via the deployed acceptance
 predicate `Satisfied2`), is non-empty, carries canonical BabyBear representatives at its exposed IO,
 and whose Poseidon2 chip table is SOUND (the NAMED carrier
-`ChipTableSound hash (t.tf .poseidon2)` — the Poseidon2 chip-AIR faithfulness), computes the genuine
-arity-2 hash relation: the published digest `PI[2]` equals `hash [PI[0], PI[1]]`.
+`ChipTableSound hash (t.tf .poseidon2)` — the Poseidon2 chip-AIR faithfulness) and whose NARROW bus
+is served by the 18-prefix of those same chip rows (`hwire` — the Lean face of Rust
+`descriptor_ir2.rs::narrow_hist`, which derives each narrow key from the SAME
+`chip_absorb_all_lanes` row), computes the genuine arity-2 hash relation: the published digest `PI[2]` equals `hash [PI[0], PI[1]]`.
 
 This welds the whole `Satisfied2` accept-set to the semantic relation `ComputesHash2`, by composing the
 chip lookup (`digest_forced`: digest column = `hash` of the preimage columns) with the three boundary
@@ -127,16 +129,20 @@ pins (preimage/digest columns = the exposed public inputs) on the first row. -/
 theorem poseidon2Hash_refines_computesHash2 {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hSound : ChipTableSound hash (t.tf .poseidon2))
+    (hwire : t.tf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2))
     (hc : Hash2Canon t)
     (hne : t.rows ≠ [])
     (hsat : Satisfied2 hash poseidon2HashDesc minit mfin maddrs t) :
     ComputesHash2 hash t := by
   have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
-  -- (a) the chip lookup on row 0 → digest column = hash of the two preimage columns
+  -- (a) the NARROW chip lookup on row 0 → digest column = hash of the two preimage columns
   have hlk := hsat.rowConstraints 0 hpos hashLookup mem_hashLookup
-  have hmem : (chipLookupTuple [.var IN0, .var IN1] DIGEST LANES).map (·.eval (envAt t 0).loc)
-      ∈ t.tf .poseidon2 := by
-    simpa only [VmConstraint2.holdsAt, hashLookup, Lookup.holdsAt] using hlk
+  have hmem : (chipLookupTupleNarrow [.var IN0, .var IN1] DIGEST).map (·.eval (envAt t 0).loc)
+      ∈ Dregg2.Circuit.ChipNarrowLookup.narrowTable (t.tf .poseidon2) := by
+    have h : (chipLookupTupleNarrow [.var IN0, .var IN1] DIGEST).map (·.eval (envAt t 0).loc)
+        ∈ t.tf poseidon2narrow := by
+      simpa only [VmConstraint2.holdsAt, hashLookup, Lookup.holdsAt] using hlk
+    rwa [hwire] at h
   have hdig : (envAt t 0).loc DIGEST = hash [(envAt t 0).loc IN0, (envAt t 0).loc IN1] :=
     digest_forced hash (t.tf .poseidon2) hSound (envAt t 0).loc hmem
   -- (b) the three boundary pins fire on the first row
@@ -179,23 +185,33 @@ def rowOf (cols : List ℤ) : Assignment := fun i => cols.getD i 0
 serves; any total function works (the descriptor reads the digest through the chip lookup). -/
 def hash0 : List ℤ → ℤ := fun _ => 99
 
-/-- The witness row: preimage `(5, 7)`, digest `99 = hash0 [5,7]`, the seven exposed lanes `0`
-(main-trace width `HASH_WIDTH = 10`). -/
-def wr0 : Assignment := rowOf [5, 7, 99, 0, 0, 0, 0, 0, 0, 0]
+/-- The witness row: preimage `(5, 7)`, digest `99 = hash0 [5,7]` (main-trace width
+`HASH_WIDTH = 3` — the E7 narrowing deleted the seven exposed lane columns). -/
+def wr0 : Assignment := rowOf [5, 7, 99]
 
 /-- The witness public inputs: `PI[0] = 5`, `PI[1] = 7`, `PI[2] = 99` (the exposed preimage + digest). -/
 def wpub : Assignment := rowOf [5, 7, 99]
 
-/-- The evaluated chip-lookup tuple of a row (what the lookup asserts is a table member). -/
+/-- The evaluated NARROW chip-lookup tuple of a row (what the lookup asserts is a table member). -/
 def chipTupleAt (a : Assignment) : List ℤ :=
-  (chipLookupTuple [.var IN0, .var IN1] DIGEST LANES).map (·.eval a)
+  (chipLookupTupleNarrow [.var IN0, .var IN1] DIGEST).map (·.eval a)
 
-/-- The witness trace family: the Poseidon2 chip table carries EXACTLY the row's genuine chip tuple
-(so the lookup holds); every other table is empty (no mem/map content). -/
+/-- The genuine WIDE chip row for inputs `[5,7]` — the one physical permutation row. -/
+def wideChipRow : List ℤ := chipRow hash0 [5, 7] (List.replicate 7 0)
+
+/-- The witness trace family: ONE physical chip serving TWO buses — `.poseidon2` carries the genuine
+25-wide row, and the narrow bus (`poseidon2narrow = .custom 3`) carries its 18-prefix, exactly the
+Rust `narrow_hist` serving. Every other table is empty (no mem/map content). -/
 def witTf : TraceFamily := fun id =>
   match id with
-  | .poseidon2 => [chipTupleAt wr0]
+  | .poseidon2 => [wideChipRow]
+  | .custom 3  => Dregg2.Circuit.ChipNarrowLookup.narrowTable [wideChipRow]
   | _ => []
+
+/-- The witness family wires the narrow bus to the 18-prefix of the wide chip table (definitional —
+the same-rows serving `narrow_lookup_holdsAt_sound` models). -/
+theorem witTf_narrow_wire :
+    witTf poseidon2narrow = Dregg2.Circuit.ChipNarrowLookup.narrowTable (witTf .poseidon2) := rfl
 
 /-- The concrete 1-row hash witness: preimage `(5,7)` hashing to digest `99`, all through the emitted
 descriptor's own lookup + boundary-pin constraints. -/
@@ -208,7 +224,7 @@ theorem witTf_chipSound : ChipTableSound hash0 (witTrace.tf .poseidon2) := by
   intro r hr
   simp only [witTrace, witTf, List.mem_singleton] at hr
   subst hr
-  exact ⟨[5, 7], List.replicate 7 0, by decide, by decide, by decide⟩
+  exact ⟨[5, 7], List.replicate 7 0, by decide, by decide, rfl⟩
 
 /-- The concrete witness uses canonical BabyBear representatives at every exposed IO cell. -/
 theorem witTrace_canon : Hash2Canon witTrace := by
@@ -243,7 +259,8 @@ theorem witTrace_satisfies :
 trace + its sound chip table to `poseidon2Hash_refines_computesHash2` recovers the genuine relation:
 `PI[2] = hash0 [PI[0], PI[1]]`. -/
 theorem witTrace_computesHash2 : ComputesHash2 hash0 witTrace :=
-  poseidon2Hash_refines_computesHash2 witTf_chipSound witTrace_canon (by decide) witTrace_satisfies
+  poseidon2Hash_refines_computesHash2 witTf_chipSound witTf_narrow_wire witTrace_canon (by decide)
+    witTrace_satisfies
 
 /-- The recovered value is the concrete genuine digest `99` over the read preimage `(5, 7)`. -/
 theorem witness_value :
@@ -252,7 +269,7 @@ theorem witness_value :
   ⟨by decide, by decide, witTrace_computesHash2⟩
 
 /-- The forged row: same preimage `(5, 7)` but a LIE in the digest column — `100 ≠ hash0 [5,7] = 99`. -/
-def badRow0 : Assignment := rowOf [5, 7, 100, 0, 0, 0, 0, 0, 0, 0]
+def badRow0 : Assignment := rowOf [5, 7, 100]
 
 /-- The forged public inputs pin `PI[2]` to the same lie, so the boundary pins pass — only the chip
 lookup bites. -/
@@ -260,10 +277,7 @@ def badPub : Assignment := rowOf [5, 7, 100]
 
 /-- The forged trace: the GENUINE chip table (serving only the true digest `99`), the forged row. -/
 def badTrace : VmTrace :=
-  { rows := [badRow0], pub := badPub,
-    tf := fun id => match id with
-      | .poseidon2 => [chipTupleAt wr0]
-      | _ => [] }
+  { rows := [badRow0], pub := badPub, tf := witTf }
 
 /-- **A FORGED digest PROVABLY fails the hypothesis (the false half of non-vacuity).** The row-0 chip
 lookup forces the evaluated tuple (digest column `100`) into the genuine chip table (which serves only
@@ -298,6 +312,7 @@ theorem hash2_relation_discriminates :
 #assert_axioms mapOpsOf_p2
 #assert_axioms memLog_p2
 #assert_axioms mapLog_p2
+#assert_axioms witTf_narrow_wire
 #assert_axioms witTf_chipSound
 #assert_axioms witTrace_canon
 #assert_axioms witTrace_satisfies

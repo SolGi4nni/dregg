@@ -13,12 +13,13 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_2_to_1;
 use dregg_circuit::refusal::{Outcome, classify};
 
-const GOLDEN_JSON: &str = r#"{"name":"poseidon2-hash-arity2::poseidon2-v1","ir":2,"trace_width":10,"public_input_count":3,"tables":[],"constraints":[{"t":"lookup","table":1,"tuple":[{"t":"const","v":2},{"t":"var","v":0},{"t":"var","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":2},{"t":"var","v":3},{"t":"var","v":4},{"t":"var","v":5},{"t":"var","v":6},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9}]},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"poseidon2-hash-arity2::poseidon2-v1","ir":2,"trace_width":3,"public_input_count":3,"tables":[],"constraints":[{"t":"lookup","table":8,"tuple":[{"t":"const","v":2},{"t":"var","v":0},{"t":"var","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":2}]},{"t":"pi_binding","row":"first","col":0,"pi_index":0},{"t":"pi_binding","row":"first","col":1,"pi_index":1},{"t":"pi_binding","row":"first","col":2,"pi_index":2}],"hash_sites":[],"ranges":[]}"#;
 
 const IN0: usize = 0;
 const IN1: usize = 1;
 const DIGEST: usize = 2;
-const HASH_WIDTH: usize = 10;
+/// 3 after the E7 narrowing (the 7 exposed permutation-lane columns are gone).
+const HASH_WIDTH: usize = 3;
 
 fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -> bool {
     match classify("rejects", || {

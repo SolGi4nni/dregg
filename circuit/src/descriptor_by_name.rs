@@ -762,7 +762,8 @@ mod tests {
     const SIB1B: usize = 7;
     const SIB1C: usize = 8;
     const PARENT1: usize = 9;
-    const MEMBERSHIP_WIDTH: usize = 24;
+    /// 10 after the E7 narrowing (the 2 x 7 chip-lane columns are gone).
+    const MEMBERSHIP_WIDTH: usize = 10;
 
     fn honest_merkle_row(
         leaf: BabyBear,
