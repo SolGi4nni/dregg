@@ -163,6 +163,27 @@ fn oracle_pit_prices_weighted_quadratic() {
     );
 }
 
+/// THE TRADEABLE INTERFACE: the MARGINAL PRICE (the odds a trader sees) of outcome 1 is `∂c/∂q₁ = 2A·q₁ +
+/// B·q₂` — a LINEAR function of the positions (public-scalar-mul + add, no ct×ct). Computed over HIDDEN
+/// positions and revealed as public odds: the market quotes a price while the participants' positions stay
+/// encrypted. This is what makes the Oracle Pit an actual prediction market — private positions, public odds.
+#[test]
+fn oracle_pit_marginal_price_reveals_odds_not_positions() {
+    let mut fx = fixture(0x0AC1E0DD5);
+    let (q1, q2) = (4u64, 6u64);
+    let (a, b) = (2u64, 3u64);
+    let ct1 = encrypt(&mut fx, &[q1]);
+    let ct2 = encrypt(&mut fx, &[q2]);
+    // p₁ = 2A·q₁ + B·q₂, the marginal cost / tradeable odds of outcome 1 — LINEAR, so scalar-mul + add.
+    let price1 = &(&ct1 * &weight_pt(&fx, 2 * a)) + &(&ct2 * &weight_pt(&fx, b));
+    let got = decrypt_slots(&fx, &price1, 1)[0];
+    let want = 2 * a * q1 + b * q2;
+    assert_eq!(
+        got, want,
+        "Oracle Pit marginal price (odds) wrong — the positions q1,q2 are never revealed, only the price"
+    );
+}
+
 /// THE LOAD-BEARING TOOTH: a quadratic market priced over encrypted positions decrypts to EXACTLY the
 /// plaintext quadratic — the running witness of `OraclePitQuadratic.quadratic_form_2var_decrypts`.
 #[test]
