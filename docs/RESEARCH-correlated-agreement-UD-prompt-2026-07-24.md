@@ -341,3 +341,56 @@ Threshold `(m−1)(r+1)` throughout.
 ≈ 2^22.6 bad challenges at the top layer, ≈ **101 bits** over `|L| ≈ 2^123.6`. That is NOT the ledger's
 ~109.84 (arity-8 `FriArityTransfer`) or ~111 (`FriJohnsonRadiusGap`). Different objects, different
 radii; they are not comparable and must not be quoted as one number.
+
+---
+
+## 9. STATUS (2026-07-24, later still) — what is PROVEN, and what §5/§7 got wrong
+
+### ⚑ L3.2 IS PROVEN. §7's first bullet is FALSIFIED.
+
+`Dregg2/ForMathlib/PolishchukSpielman.lean` — `Dregg2.PS.polishchuk_spielman`, the
+**Cramer–Nardi-fixed** form (Kopparty 2025 §2.2 Lemma 2.2, checked verbatim; NOT Spielman's
+subtly-wrong original — the local BCIKS PDF p.14 carries the superseded rev.1 shape). Verified
+independently, not on a lane's report: zero `sorry`/`admit`/`axiom` in code, `#print axioms` on
+`polishchuk_spielman`, `polishchuk_spielman_fires`, `leadingCoeff_degree_comparison` and
+`card_filter_horizontal_zero_le` each reports exactly `[propext, Classical.choice, Quot.sound]`;
+13/13 `#assert_axioms`; `lake build` 8480/8480; non-vacuous on concrete `ZMod 11` data with the
+concluded divisibility confirmed by `rfl`. L3.1 proven too.
+
+**§5 and §7 were wrong in our favour, and the error is worth recording.** §5 called Part B "a bounded
+research-grade sub-project … the honest majority of the work"; §7 said "if it resists formalization,
+everything above is a conditional proof … do not under-scope it." In fact **no Mathlib gap blocked
+anything**: this Mathlib's formal-degree `Polynomial.resultant` API (`resultant_add_mul_right`,
+`resultant_C_mul_right`, the Sylvester determinant) carried the whole crux, and the line-point-LDT
+template was not needed. The lesson matches the rest of this campaign: *check the library before
+pricing a lemma as research.*
+
+The proof's own crux is worth knowing for anyone reading it: the `resultant_add_mul_right` row
+operation is legal **precisely because of the Cramer bound** — that is the exact point where the
+original PS proof was wrong, and where the Cramer–Nardi fix lives.
+
+### Landed alongside it
+- **L0** — `Dregg2/Circuit/CorrelatedAgreement/Scaffolding.lean` (RS/`closeN`/`interleavedClose`/
+  unique-decoding, 20 keystones clean).
+- **The pinned interface** — `Dregg2/Circuit/CorrelatedAgreement/Interface.lean` (30 keystones clean):
+  `ud_tower_far_survival` (round-by-round FS soundness with CA as an explicit hypothesis, over the
+  pre-existing `Strategy`/`fsRun`/`winProb` layer) and `deployed_colsClose_of_curveUD` (CA ⟹ the literal
+  `DecodedLdtLink` antecedent). See §8 for its verdict.
+
+### Remaining on the DAG
+**L1/L2** (Berlekamp–Welch facts + Part A bivariate interpolation over `F(Z)`), **L4** (degree control +
+collinearity, Kopparty Lemma 2.4), **L5/L6** (the theorems — in **generic-parameter** form per §8).
+No known research risk remains in the chain: the one item rated as such is proven.
+
+### ⚑ NAMED FOLLOW-UP worth checking early — `DecimLift` may now be dischargeable
+`Interface.lean` carries `DecimLift` (the RS fold-geometry decimation-lift weld) as a named hypothesis,
+on the grounds that its deployed proof is "the missing setup-tower engineering `FriChainStepIdx` names."
+**But that tower has since landed**: `Dregg2/Circuit/FriSetupTower.lean` (`towerS`, `tower_link`
+proving `(towerS i).C' = (towerS (i+1)).C` across five real layers, `chainStepIdx_tower`). So
+`DecimLift` may be dischargeable from the landed tower rather than carried. Worth a lane before L5/L6,
+since discharging it removes a hypothesis from the headline theorem.
+
+### Note for later: PS is reusable
+`PolishchukSpielman.lean` is a general-purpose bivariate-divisibility result in `ForMathlib`, not
+specific to this application — it is upstreamable, and other FRI/proximity work in the tree can consume
+it directly.
