@@ -1324,7 +1324,7 @@ import Dregg2.Metatheory.DirectLogicArithmetization -- corrected Gabbay matrix c
 import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 import Dregg2.Circuit.Emit.BlindedMembershipWideEmit
 import Dregg2.Circuit.Emit.BoundPresentationWideEmit
-import Dregg2.Circuit.Emit.HeapLeafWideEmit
+import Dregg2.Circuit.Emit.HeapLeafWideEmit -- the WIDE (17-felt) heap-leaf absorb schema addr8‖value‖nextAddr8 on the shared chip + Lex bracket. ⚑ §RomSuccessor (07-24): EXPORTED binding = wideLeaf_binds_rom (identity carrier over the truncated triple, romCarrier_binds/keyedRom_hard) + wideKeysTamper_binds_rom (sort-key/value/pointer tamper priced) + wideTwins_defanged; wideKeys_bound_or_collide DELETED (zero consumers); heapLeafWide/wideOpen8 `_or_collides` DEMOTED to skeletons (wideOpen8's successor = leaf carrier ⊕ RomMerkleOpening union bound, named in-file, not yet landed).
 import Dregg2.Circuit.Emit.LexCompare8Emit
 import Dregg2.Circuit.Emit.ShieldedSpendDescriptor
 import Dregg2.Circuit.Emit.ShieldedValueLinkDescriptor

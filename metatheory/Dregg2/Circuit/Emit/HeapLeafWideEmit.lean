@@ -73,6 +73,7 @@ Quot.sound}` on every theorem below.
 -/
 import Dregg2.Circuit.DeployedHeapTree
 import Dregg2.Crypto.NonMembership
+import Dregg2.Crypto.RomCarrierSites
 import Mathlib.Order.PiLex
 
 namespace Dregg2.Circuit.Emit.HeapLeafWideEmit
@@ -184,7 +185,13 @@ def heapLeafWideDigest8 (S8 : Heap8Scheme) (e : WideHeapLeaf) : Digest8 :=
 def wideLeafColl8Find (e₁ e₂ : WideHeapLeaf) : List ℤ × List ℤ :=
   (wideLeafBlock e₁, wideLeafBlock e₂)
 
-/-- **Wide-leaf binding, UNCONDITIONAL** (the widened `heapLeafDigest8_binds_or_collides`).
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE BINDING (see §RomSuccessor's
+`wideLeaf_binds_rom`).** At deployed parameters a chip collision EXISTS by pigeonhole
+(`compress8CR_false_babyBear`), so this disjunction is satisfiable through the collides branch;
+the exported binding is the keyed-ROM reduction.  Retained because `wideOpen8_binds_leaf_or_collides`
+and the `_of_injective` strength bridge derive from it.
+
+(The widened `heapLeafDigest8_binds_or_collides`.)
 Equal wide digests EITHER force the whole widened triple equal — all 8 addr lanes, the value,
 AND all 8 pointer lanes, so a prover can neither vary a lane-1..7 key limb nor relink the sorted
 chain while keeping the leaf — OR the two arity-17 blocks ARE a genuine chip collision, handed
@@ -254,8 +261,15 @@ def wideOpen8Find (S8 : Heap8Scheme) (e₁ e₂ : WideHeapLeaf)
         (heapLeafWideDigest8 S8 e₁) (heapLeafWideDigest8 S8 e₂) path
   else wideLeafColl8Find e₁ e₂
 
-/-- **⚑ THE WIDE GENTIAN CLOSE, UNCONDITIONAL** (the widened
-`heapOpen8_binds_leaf_or_collides`, riding the SAME deployed spine keystone). Two WIDE leaves
+/-- **EXACT-PROP SKELETON — ⚑ NOT THE HEADLINE (its ROM successor is the ONE site of this file
+still to repoint).** The path-opening successor composes the §RomSuccessor leaf carrier with
+`Crypto.RomMerkleOpening.merkleOpenRom_binds` (two leaves, ONE shared sibling path — the
+same-context transpose shape): leaf digests differ ⇒ a `merkleOpenForgery` win at accumulator
+level (extractor pays two extra leaf queries), leaf digests agree ⇒ a leaf-carrier win; the union
+bound closes both from the proved floor.  Stated here so the successor is a composition of LANDED
+kit, not new machinery; until it lands this skeleton remains the deterministic residue.
+
+(The widened `heapOpen8_binds_leaf_or_collides`, riding the SAME deployed spine keystone.) Two WIDE leaves
 opening the SAME 8-felt root along the SAME committed path are EITHER the same leaf — all 8 addr
 lanes, the value, AND the full 8-felt sorted-chain pointer — OR the deployed chip genuinely
 collides at the pair `wideOpen8Find` hands back. A prover cannot keep the published root while
@@ -312,17 +326,12 @@ theorem wideBracket_is_two_gadget_props (low : WideHeapLeaf) (k : Fin 8 → ℤ)
     WideBracket low (toLex k) ↔ (toLex low.1 < toLex k ∧ toLex k < toLex low.2.2) :=
   Iff.rfl
 
-/-- The bracket keys survive the digest: equal wide digests force equal SORT KEYS (addr), equal
-values, AND equal POINTER keys (nextAddr) — or the named 17-block collision. The "genuine 8-felt
-keys" claim as a theorem: the bracket's subjects are pinned by the commitment at full width. -/
-theorem wideKeys_bound_or_collide (S8 : Heap8Scheme) {e₁ e₂ : WideHeapLeaf}
-    (h : heapLeafWideDigest8 S8 e₁ = heapLeafWideDigest8 S8 e₂) :
-    (wideAddrKey e₁ = wideAddrKey e₂ ∧ e₁.2.1 = e₂.2.1 ∧ wideNextKey e₁ = wideNextKey e₂)
-      ∨ Coll8 S8.chipAbsorb8 (wideLeafColl8Find e₁ e₂) := by
-  rcases heapLeafWide_binds_or_collides S8 h with he | hc
-  · subst he
-    exact Or.inl ⟨rfl, rfl, rfl⟩
-  · exact Or.inr hc
+/-! The former `wideKeys_bound_or_collide` — "the bracket keys survive the digest, or the named
+17-block collision" — is DELETED (zero consumers): its escape branch is unconditionally available
+at deployed parameters.  The exported key-binding claim is §RomSuccessor's
+`wideKeysTamper_binds_rom`: a query-bounded adversary cannot keep the wide digest while moving
+the SORT KEY, the value, or the POINTER key, except with negligible probability at the sampled
+oracle. -/
 
 /-- **⚑ THE EXCLUSION OVER THE WIDE KEY** — the deployed `LinearOrder`-generic keystone
 `NonMembership.sorted_gap_excludes` instantiated at `Lex (Fin 8 → ℤ)` with the bracketing
@@ -475,6 +484,160 @@ theorem wide_twins_bind_or_collide (S8 : Heap8Scheme)
 #guard (List.ofFn (heapLeafWideDigest8 deployedHeap8Scheme demoWideLeaf))
     != (List.ofFn (heapLeafWideDigest8 deployedHeap8Scheme (addrTwinA, 99, nextHiKey)))
 
+/-! ## ⚑ §RomSuccessor — the wide-leaf binding, DISCHARGED on the PROVED keyed-ROM floor.
+
+⚑ THE MODELLING STEP, STATED: the sampled `H : Unit × WideLeafT → Fin (2 ^ l)` idealises the
+deployed 17-felt chip absorb at asymptotic width over the TRUNCATED wide-leaf triple
+`addr8 ‖ value ‖ nextAddr8` (BabyBear-range lanes — the deployed felt discipline); the arity-17
+length separation from the narrow-leaf/node domains is carried here by this site's own family.
+The flat single-absorb shape needs NO chain machinery: the extractor is the identity carrier's
+own, and `romCarrier_binds` (the birthday floor) closes it at the forger's own budget. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv gameAdv_mem_unit)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomCarrierSites
+
+/-- The truncated wide heap leaf: 8 addr lanes, the value, 8 pointer lanes — every limb a
+BabyBear-range felt (the deployed `wideLeafBlock` shape at genuine felt width). -/
+abbrev WideLeafT : Type :=
+  (Fin 8 → Fin babyBearP) × Fin babyBearP × (Fin 8 → Fin babyBearP)
+
+/-- **THE WIDE-LEAF KEYED ROM FAMILY** — this site's own arity-17 absorb domain. -/
+def wideLeafRomFamily : KeyedRomFamily :=
+  flatFamily Unit inferInstance inferInstance ⟨()⟩ (fun _ => WideLeafT)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(fun _ => ⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩, fun _ => ⟨0, babyBearP_pos⟩)⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem wideLeafRomFamily_card_R (l : ℕ) :
+    letI := wideLeafRomFamily.rFin l
+    Fintype.card (wideLeafRomFamily.R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE WIDE-LEAF CARRIER** — the identity carrier: one commitment = one absorb of the whole
+truncated triple (the `wideLeafBlock_inj` layout fact is the identity embedding's injectivity). -/
+def wideLeafRomCarrier : RomCarrier wideLeafRomFamily :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => WideLeafT)
+    (fun _ => inferInstance)
+    (fun _ _ v => v)
+    (fun _ _ _ _ h => h)
+
+/-- **⚑⚑ THE WIDE-LEAF BINDING, DISCHARGED ON THE PROVED FLOOR** — the exported successor of the
+demoted `heapLeafWide_binds_or_collides` skeleton: every query-bounded forger that equivocates
+one wide-leaf digest between two DISTINCT truncated triples — any addr lane, the value, or any
+pointer lane — has NEGLIGIBLE advantage.  NO floor hypothesis, NO escape branch. -/
+theorem wideLeaf_binds_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame wideLeafRomFamily wideLeafRomCarrier))
+    (hA : RomCarrierEff wideLeafRomFamily wideLeafRomCarrier Q A) :
+    Negl (gameAdv (romCarrierGame wideLeafRomFamily wideLeafRomCarrier) A) :=
+  romCarrier_binds wideLeafRomFamily wideLeafRomCarrier Q hQ wideLeafRomFamily_card_R A hA
+
+/-- **THE KEY/VALUE/POINTER TAMPER FORGERY** — the successor shape of the deleted
+`wideKeys_bound_or_collide`: the adversary wins iff its two triples differ in the SORT KEY
+(addr), the value, or the POINTER key (nextAddr), yet carry ONE wide digest at the sampled
+oracle. -/
+def wideKeysTamper : RomForgery wideLeafRomFamily where
+  Ans := fun _ => WideLeafT × WideLeafT
+  wins := fun _ H p =>
+    (p.1.1 ≠ p.2.1 ∨ p.1.2.1 ≠ p.2.2.1 ∨ p.1.2.2 ≠ p.2.2.2)
+      ∧ H ((), p.1) = H ((), p.2)
+  winsDec := fun l _ _ => by
+    letI := (wideLeafRomFamily.toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- The tamper extractor — a pure output reshaping into the carrier triple (budget preserved). -/
+def wideKeysExtract
+    (M : ∀ l, OracleComp (wideLeafRomFamily.toRomFamily.D l) (wideLeafRomFamily.toRomFamily.R l)
+      (wideKeysTamper.Ans l)) :
+    RomCarrierComp wideLeafRomFamily wideLeafRomCarrier :=
+  fun l => OracleComp.mapOut (fun p => (((), ()), p.1, p.2)) (M l)
+
+/-- **⚑ THE KEY BINDING, DISCHARGED** — a query-bounded adversary cannot keep the wide digest
+while moving the sort key, the value, or the pointer key, except with negligible probability:
+the bracket's subjects (`wideAddrKey`/`wideNextKey`) are pinned by the commitment at full
+width, on the PROVED floor. -/
+theorem wideKeysTamper_binds_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary wideKeysTamper.game)
+    (hA : RomForgeryEff wideLeafRomFamily wideKeysTamper Q A) :
+    Negl (gameAdv wideKeysTamper.game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine negl_of_le (fun l => (gameAdv_mem_unit wideKeysTamper.game A l).1)
+    (fun l => ?_)
+    (romCarrier_binds wideLeafRomFamily wideLeafRomCarrier Q hQ wideLeafRomFamily_card_R
+      (romCarrierAdv _ _ (wideKeysExtract M))
+      ⟨wideKeysExtract M, fun l => OracleComp.mapOut_queryBounded _ (hM l), fun _ _ => rfl⟩)
+  refine @winProb_le_of_imp _ (wideKeysTamper.game.instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hproj, heq⟩ := hH
+  have hBrun : (romCarrierAdv _ _ (wideKeysExtract M)).run l H
+      = (((), ()), (A.run l H).1, (A.run l H).2) := by
+    show (wideKeysExtract M l).eval H = _
+    unfold wideKeysExtract
+    rw [OracleComp.mapOut_eval, hrun l H]
+    rfl
+  rw [hBrun]
+  refine ⟨fun hc => ?_, heq⟩
+  rcases hproj with h | h | h
+  · exact h (congrArg Prod.fst hc)
+  · exact h (congrArg (fun v : WideLeafT => v.2.1) hc)
+  · exact h (congrArg (fun v : WideLeafT => v.2.2) hc)
+
+/-- The truncated lane-0-colliding twins: all-zero addr vs lane-7-one addr, same value, same
+pointer — `demoWideLeaf`/`demoWideLeafB` at genuine felt width. -/
+def demoWideLeafT : WideLeafT :=
+  (fun _ => ⟨0, babyBearP_pos⟩, ⟨22, by norm_num [Dregg2.Crypto.RomCarrierSites.babyBearP]⟩,
+   fun i => if i = 0 then ⟨1, one_lt_babyBearP⟩ else ⟨0, babyBearP_pos⟩)
+
+/-- The lane-7 twin. -/
+def demoWideLeafBT : WideLeafT :=
+  (fun i => if i = 7 then ⟨1, one_lt_babyBearP⟩ else ⟨0, babyBearP_pos⟩,
+   ⟨22, by norm_num [Dregg2.Crypto.RomCarrierSites.babyBearP]⟩,
+   fun i => if i = 0 then ⟨1, one_lt_babyBearP⟩ else ⟨0, babyBearP_pos⟩)
+
+/-- The truncated twins genuinely differ (lane 7) — the wide schema STATES their difference. -/
+theorem demoWideLeafT_ne : demoWideLeafT ≠ demoWideLeafBT := by
+  intro h
+  have h7 := congrFun (congrArg Prod.fst h) 7
+  simp [demoWideLeafT, demoWideLeafBT] at h7
+
+/-- **(TOOTH — the twins' conflation is a WIN, and the admitted refuter-shape is DEFANGED.)**
+The `0`-query constant answerer emitting the twins is IN the class, WINS at the constant oracle
+(the anti-masquerade content of `wide_twins_bind_or_collide`, at the sampled oracle: conflating
+the lane-0-colliding twins IS an equivocation), and is NEGLIGIBLE by the bound. -/
+theorem wideTwins_defanged (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    RomCarrierEff wideLeafRomFamily wideLeafRomCarrier Q
+        (romCarrierAdv _ _ (constTripleComp _ _ (fun _ => ((), ()))
+          (fun _ => demoWideLeafT) (fun _ => demoWideLeafBT)))
+      ∧ (∀ l, 0 < gameAdv (romCarrierGame wideLeafRomFamily wideLeafRomCarrier)
+          (romCarrierAdv _ _ (constTripleComp _ _ (fun _ => ((), ()))
+            (fun _ => demoWideLeafT) (fun _ => demoWideLeafBT))) l)
+      ∧ Negl (gameAdv (romCarrierGame wideLeafRomFamily wideLeafRomCarrier)
+          (romCarrierAdv _ _ (constTripleComp _ _ (fun _ => ((), ()))
+            (fun _ => demoWideLeafT) (fun _ => demoWideLeafBT)))) :=
+  ⟨constTriple_in_eff _ _ _ _ _ Q,
+    fun l => constTriple_gameAdv_pos _ _ _ _ _ l demoWideLeafT_ne,
+    constTriple_binds _ _ _ _ _ Q hQ wideLeafRomFamily_card_R⟩
+
+/-- **(TOOTH — a non-negligible wide-leaf equivocator is OUTSIDE the class.)** -/
+theorem wideLeaf_nonNegl_forger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame wideLeafRomFamily wideLeafRomCarrier))
+    (hnn : ¬ Negl (gameAdv (romCarrierGame wideLeafRomFamily wideLeafRomCarrier) A)) :
+    ¬ RomCarrierEff wideLeafRomFamily wideLeafRomCarrier Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ wideLeafRomFamily_card_R A hnn
+
+end RomSuccessor
+
 /-! ## §5 — axiom hygiene: every theorem rests on the kernel triple only. -/
 
 #assert_axioms wideLeafBlock_inj
@@ -491,7 +654,6 @@ theorem wide_twins_bind_or_collide (S8 : Heap8Scheme)
 #assert_axioms wideLeaf_folds_into_deployed_spine
 #assert_axioms wideOpen8_binds_leaf_or_collides
 #assert_axioms wideBracket_is_two_gadget_props
-#assert_axioms wideKeys_bound_or_collide
 #assert_axioms wideBracket_excludes
 #assert_axioms twins_collide_on_lane0
 #assert_axioms twins_differ_lane7
@@ -506,5 +668,12 @@ theorem wide_twins_bind_or_collide (S8 : Heap8Scheme)
 #assert_axioms demo_member
 #assert_axioms narrow_schema_conflates
 #assert_axioms wide_twins_bind_or_collide
+-- §RomSuccessor — the EXPORTED wide-leaf binding on the PROVED keyed-ROM floor.
+#assert_axioms wideLeafRomFamily_card_R
+#assert_axioms wideLeaf_binds_rom
+#assert_axioms wideKeysTamper_binds_rom
+#assert_axioms demoWideLeafT_ne
+#assert_axioms wideTwins_defanged
+#assert_axioms wideLeaf_nonNegl_forger_excluded
 
 end Dregg2.Circuit.Emit.HeapLeafWideEmit
