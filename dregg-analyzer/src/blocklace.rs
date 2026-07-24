@@ -340,6 +340,11 @@ fn build_ordering_blocklace(
         let payload = match &block.payload {
             Payload::Turn(data) => data.clone(),
             Payload::TurnBundle(bundle) => bundle.signed_turn.clone(),
+            // CTM1 (consensus-timed turn, added by the blocklace consensus-time lane): carry the
+            // signed-turn bytes, mirroring `TurnBundle` — the ordering payload IS the turn; the
+            // `consensus_time` header lives in the block's own encoding (blocklace finality.rs),
+            // not in the ordering lace. Without this arm the whole crate failed to compile.
+            Payload::ConsensusTimedTurnV1(bundle) => bundle.signed_turn().to_vec(),
             Payload::Ack => vec![],
             Payload::Checkpoint { root, height } => {
                 let mut buf = Vec::with_capacity(40);
