@@ -2012,20 +2012,35 @@ mod tests {
     /// file among them) that change on every legitimate edit, so it is a provenance
     /// snapshot, not a stable invariant — rigging it would make the test red on every
     /// source change. Named, not rigged.
+    ///
+    /// The anti-vacuity leg is a DERIVED COVERAGE invariant, not a pinned count. Until
+    /// 2026-07-24 it read `assert_eq!((d, b), (75, 27))`, which rots on every legitimate
+    /// descriptor addition (it had been stale-red at b = 55) and, worse, is satisfied by
+    /// a map of the RIGHT SIZE covering the WRONG files. The replacement asserts the two
+    /// maps cover EXACTLY the checked-in descriptor set — see below — which cannot go
+    /// stale, still fails on a truncated map (a dropped pin leaves a checked-in
+    /// descriptor uncovered), and additionally bites the hole a count is blind to: a lane
+    /// lands a descriptor and never re-stamps PROVENANCE.
     #[test]
     fn provenance_json_pins_match_checked_in_descriptor_bytes() {
+        use std::collections::BTreeSet;
         use std::path::Path;
         let descdir = Path::new(env!("CARGO_MANIFEST_DIR")).join("descriptors");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate dir has a parent (the repo root)");
         let prov_bytes =
             std::fs::read(descdir.join("PROVENANCE.json")).expect("PROVENANCE.json must exist");
         let prov: serde_json::Value =
             serde_json::from_slice(&prov_bytes).expect("PROVENANCE.json must parse");
 
-        let check_map = |map_key: &str, subdir: Option<&str>| -> usize {
+        // Per-file leg (UNCHANGED): every pin equals sha256 of the file it names.
+        // Returns the pinned key set so the coverage leg below can compare against it.
+        let check_map = |map_key: &str, subdir: Option<&str>| -> BTreeSet<String> {
             let map = prov[map_key]
                 .as_object()
                 .unwrap_or_else(|| panic!("PROVENANCE.json missing object `{map_key}`"));
-            let mut n = 0usize;
+            let mut keys = BTreeSet::new();
             for (fname, pin) in map {
                 let pin = pin
                     .as_str()
@@ -2045,19 +2060,141 @@ mod tests {
                     pin,
                     "PROVENANCE {map_key} pin for `{fname}` != sha256 of the file on disk (DRIFT)"
                 );
-                n += 1;
+                keys.insert(fname.clone());
             }
-            n
+            keys
         };
 
-        let d = check_map("descriptor_sha256", None);
-        let b = check_map("by_name_sha256", Some("by-name"));
-        // Exact counts: a truncated map (fewer pins) must not pass vacuously.
-        assert_eq!(
-            (d, b),
-            (75, 27),
-            "PROVENANCE pin counts changed (descriptor_sha256={d}, by_name_sha256={b}); re-audit"
-        );
+        let pinned_top = check_map("descriptor_sha256", None);
+        let pinned_by_name = check_map("by_name_sha256", Some("by-name"));
+
+        // ---- Coverage leg: the set the stamp must cover, DERIVED ----
+        //
+        // Ground truth for "what belongs in the stamp" is `verify_provenance()` in
+        // `scripts/emit_descriptors.py`: `descriptor_sha256` covers every file sitting
+        // DIRECTLY in `circuit/descriptors/` (the `.tsv` staged registries included, since
+        // the prover reads those bytes too) except PROVENANCE.json itself and the declared
+        // `COVERAGE_EXEMPT` entries; `by_name_sha256` covers every file in
+        // `circuit/descriptors/by-name/`. This test mirrors those two sets.
+        //
+        // TRACKED (`git ls-files`), not everything-on-disk — CHOSEN, not defaulted. This
+        // tree is worked by ~10 concurrent lanes, so `circuit/descriptors/` routinely holds
+        // another lane's untracked scratch emissions (at the time of writing:
+        // `by-name/automatafl-legc-n*.json`). An untracked file is not yet a CLAIM about
+        // what this build runs, and reddening the shared suite for one would block every
+        // lane over a file that is not in the repo. A file in the INDEX is a claim — its
+        // author said "this ships", and in this shared tree a co-tenant `commit -a` can
+        // promote it to HEAD without them — so a tracked-but-unstamped descriptor is a real
+        // provenance hole and SHOULD red. (`emit_descriptors.py` reads the whole directory
+        // instead because it runs pre-ceremony on a clean tree, where the two sets
+        // coincide.) If git is unavailable — a vendored source export, or the rsync'd
+        // remote build lane `scripts/pbuild` creates (it excludes `.git/`) — we fall back
+        // to the on-disk listing, which is STRICTER (untracked files count), never weaker.
+        // The failure message names which set it compared against so a red in a `.git`-less
+        // tree is not mistaken for a red in the repo.
+        let tracked: Option<Vec<String>> = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&descdir)
+            .args(["ls-files", "-z"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .split('\0')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            });
+        let dir_files = |dir: &Path| -> BTreeSet<String> {
+            std::fs::read_dir(dir)
+                .unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()))
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        let (present_top, present_by_name): (BTreeSet<String>, BTreeSet<String>) = match &tracked {
+            Some(rels) => (
+                rels.iter().filter(|r| !r.contains('/')).cloned().collect(),
+                rels.iter()
+                    .filter_map(|r| r.strip_prefix("by-name/"))
+                    .filter(|r| !r.contains('/'))
+                    .map(str::to_string)
+                    .collect(),
+            ),
+            None => (dir_files(&descdir), dir_files(&descdir.join("by-name"))),
+        };
+        let source = match &tracked {
+            Some(_) => "tracked by git",
+            None => "present on disk (NO git index here — untracked files count too)",
+        };
+
+        // The exemption set is READ OUT of the ceremony checker rather than copied, so
+        // there is exactly ONE authority for "this artifact is not owned by the stamp" and
+        // no second hand-maintained list to rot (each entry is required, there, to carry a
+        // co-located regen/check). A reformat that breaks this parse panics loudly rather
+        // than silently widening what the test accepts.
+        let script_path = root.join("scripts").join("emit_descriptors.py");
+        let script = std::fs::read_to_string(&script_path).unwrap_or_else(|e| {
+            panic!(
+                "{} must be readable (it defines COVERAGE_EXEMPT): {e}",
+                script_path.display()
+            )
+        });
+        let exempt: BTreeSet<String> = {
+            let marker = "COVERAGE_EXEMPT = frozenset({";
+            let start = script.find(marker).unwrap_or_else(|| {
+                panic!(
+                    "emit_descriptors.py: `{marker}` not found — the stamp's exemption set \
+                     moved; re-point this mirror (do NOT hand-copy the list)"
+                )
+            });
+            let body = &script[start + marker.len()..];
+            let end = body
+                .find("})")
+                .expect("emit_descriptors.py: COVERAGE_EXEMPT literal is unterminated");
+            body[..end]
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_string)
+                .collect()
+        };
+
+        let want_top: BTreeSet<String> = present_top
+            .iter()
+            .filter(|n| n.as_str() != "PROVENANCE.json" && !exempt.contains(n.as_str()))
+            .cloned()
+            .collect();
+        let want_by_name = present_by_name;
+
+        let compare = |map_key: &str, pinned: &BTreeSet<String>, want: &BTreeSet<String>| {
+            // The derivation itself must not come back empty — that (a broken glob, a moved
+            // directory) is the only way this leg could go vacuous, and it is the exact
+            // failure mode the old hand-pinned count was there to prevent.
+            assert!(
+                !want.is_empty(),
+                "PROVENANCE {map_key}: the checked-in descriptor set derived EMPTY — this \
+                 test would be vacuous; the derivation is broken, not the stamp"
+            );
+            let unstamped: Vec<&str> = want.difference(pinned).map(String::as_str).collect();
+            assert!(
+                unstamped.is_empty(),
+                "PROVENANCE {map_key} does NOT cover descriptor(s) {unstamped:?} ({source}) — \
+                 they landed without re-stamping, so nothing attests their bytes. Fix at the \
+                 SOURCE: re-run the emit/stamp ceremony (`scripts/emit_descriptors.py`, see \
+                 docs/VK-REGEN-CONTROLS.md); do NOT hand-add rows."
+            );
+            let ghosts: Vec<&str> = pinned.difference(want).map(String::as_str).collect();
+            assert!(
+                ghosts.is_empty(),
+                "PROVENANCE {map_key} pins {ghosts:?}, which are not part of the descriptor set \
+                 ({source}) — deleted, renamed, or newly exempted without re-stamping"
+            );
+        };
+        compare("descriptor_sha256", &pinned_top, &want_top);
+        compare("by_name_sha256", &pinned_by_name, &want_by_name);
     }
 
     /// Every registered descriptor re-parses via `parse_vm_descriptor` into the
