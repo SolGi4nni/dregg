@@ -4838,6 +4838,49 @@ pub fn generate_rotated_heap_write_wide(
     value: BabyBear,
     heap_leaves: &[crate::heap_root::HeapLeaf],
 ) -> RotatedTraceWithHeaps {
+    let (mut trace, dpis, map_heaps) = generate_rotated_heap_write_wide_raw(
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+        coll,
+        key,
+        value,
+        heap_leaves,
+    )?;
+    compact_s2_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
+    compact_e1_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
+    Ok((trace, dpis, map_heaps))
+}
+
+/// **THE PRE-COMPACTION STAGE of [`generate_rotated_heap_write_wide`]** — the assembled RAW wide row
+/// (`HEAP_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX` = the OPTION-I after-spine host + wide carriers),
+/// *before* the two Epoch flag-day deletions the deployed producer applies. Identical body; the
+/// deployed entry above is exactly this plus `compact_s2_columns ∘ compact_e1_columns`, so the emitted
+/// (compacted) trace is byte-unchanged.
+///
+/// **Why it is exposed.** An ADVERSARIAL tooth on this member has to build its forgery at the RAW
+/// rotated coordinates and then carry it through the SAME compaction as the honest row — the S2 band
+/// `[bb+418, bb+478)` deletes the AFTER block's whole 1-felt chain-carrier stratum, so on a compacted
+/// row there is nothing left to recompute a patched AFTER block-commit into, and the wide carriers no
+/// longer sit at `HEAP_WRITE_HOST_WIDTH`. A tooth that patches the compacted row and re-runs
+/// [`append_wide_carriers`] re-inflates it to the raw width, and the prover then refuses on SHAPE
+/// (`base row width 3065 must equal descriptor trace_width 1963`) — a refusal the tooth reads as an
+/// unsat verdict while the forgery was never examined. `circuit/tests/heap_write_roundtrip.rs` pins
+/// that the two entries agree byte-for-byte, so this accessor cannot drift from what deploys.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_rotated_heap_write_wide_raw(
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    coll: BabyBear,
+    key: BabyBear,
+    value: BabyBear,
+    heap_leaves: &[crate::heap_root::HeapLeaf],
+) -> RotatedTraceWithHeaps {
     use super::columns::{AUX_BASE, PARAM_BASE};
     use crate::descriptor_ir2::chip_absorb_all_lanes;
     use crate::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
@@ -4996,8 +5039,6 @@ pub fn generate_rotated_heap_write_wide(
         HEAP_WRITE_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
     ); // 3065 (HEAP_WRITE_HOST_WIDTH + WIDE_CARRIER_APPENDIX — OPTION I after-spine host)
     debug_assert_eq!(dpis.len(), 20); // 4 base (2 retired) + 16 wide
-    compact_s2_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
-    compact_e1_columns(&mut trace, "heapWriteVmDescriptor2R24")?;
     Ok((trace, dpis, vec![heap_leaves.to_vec()]))
 }
 

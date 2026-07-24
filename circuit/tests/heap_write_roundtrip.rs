@@ -3,11 +3,11 @@
 //! ## The gap under attack (R3, v13-class)
 //!
 //! `heapWriteVmDescriptor2R24` is the write-bearing Class-A member. Unlike the effect-dispatched
-//! cohort it has NO live selector — it is reached only through the dedicated per-family producer
-//! [`generate_rotated_heap_write_wide`]. R3 flagged it as the sharpest surviving v13-class gap: a
-//! DISTINCT heap-splice producer, structurally pinned only, with no end-to-end prove+verify roundtrip
-//! that would catch the producer silently diverging from the committed descriptor while the drift gate
-//! stays green (the v13 stale-descriptor scare class).
+//! cohort it has NO live selector — there is no `Effect::HeapWrite` variant at all, so it is reached
+//! only through the dedicated per-family producer [`generate_rotated_heap_write_wide`]. R3 flagged it
+//! as the sharpest surviving v13-class gap: a DISTINCT heap-splice producer, structurally pinned only,
+//! with no end-to-end prove+verify roundtrip that would catch the producer silently diverging from the
+//! committed descriptor while the drift gate stays green (the v13 stale-descriptor scare class).
 //!
 //! The staleness risk is REAL and visible: the source carries drifted geometry comments whose ACTUAL
 //! runtime values moved under them, and a sibling structural test
@@ -17,20 +17,65 @@
 //! proof — and every geometry here is DERIVED (host + carriers − S2 − E1; columns pushed through the
 //! deployed compaction) rather than transcribed, so the next flag-day moves the pins with the bytes.
 //!
+//! ## Which descriptor the wire actually runs
+//!
+//! The DEPLOYED light-client verifier (`turn/src/executor/proof_verify.rs:1088`) resolves the rotated
+//! member out of `WIDE_REGISTRY_STAGED_TSV`, then prefers its welded twin — EXCEPT for the four
+//! `LIVE_ONLY_BARE_KEYS` (`:1146`), of which `heapWriteVmDescriptor2R24` is one: its genuine
+//! before→after projection is multi-domain (heap + registers), so the single-domain cohort weld
+//! refuses it and the producer keeps it on the BARE wide leg. So the bare-wide member this file
+//! proves against **is** the member the wire runs, and the forge below is a verdict on the deployed
+//! path — not on a staged twin.
+//!
+//! (An earlier revision of this file claimed the opposite — that the deployed light client verifies
+//! against the narrow `V3_STAGED_REGISTRY_TSV` — and carried two v3-live legs built on that claim.
+//! It is FALSE at HEAD; see the retirement note below.)
+//!
 //! ## What this file pins
 //!
 //!  (a) ROUNDTRIP — the wide producer's trace PROVES + light-client VERIFIES against the COMMITTED
 //!      bare-wide `heapWriteVmDescriptor2R24`, AND the producer's written after-root columns are
 //!      byte-identical to the descriptor's `.write` map-op `new_root` columns — asserted as the S2+E1
 //!      IMAGE of `AFTER_BASE + HEAP_ROOT_GROUP`, so the BANDS are pinned and not merely the count
-//!      (the anti-drift catcher). Also pins that the UNCOMPACTED v3-live committed descriptor carries
-//!      those columns at their raw coordinates and the truncated producer trace proves against it —
-//!      closing R3's "partial on both paths".
+//!      (the anti-drift catcher). It also pins the deployed producer against its own pre-compaction
+//!      stage: `generate_rotated_heap_write_wide` must be byte-identical to
+//!      `generate_rotated_heap_write_wide_raw` followed by the two deployed compaction calls.
 //!  (b) AFTER-ROOT 8-FELT FORGE — forge the `.write` `new_root` completion lanes 1..7 to garbage
-//!      while keeping lane 0 honest, recompute the after block-commit + wide carriers so the trace is
-//!      fully self-consistent, and run the pure LC verify. If UNSAT, the deployed `.write` map-op
-//!      binds ALL EIGHT after-root felts to the genuine sorted-Merkle splice (~124-bit), not lane-0
+//!      while keeping lane 0 honest, **on the RAW pre-compaction row**, recompute the after
+//!      block-commit + wide carriers there, then carry the forgery through the SAME compaction the
+//!      honest row takes, and run the pure LC verify. If UNSAT, the deployed `.write` map-op binds
+//!      ALL EIGHT after-root felts to the genuine sorted-Merkle splice (~124-bit), not lane-0
 //!      (~31-bit).
+//!
+//! ## Why (b) is built on the RAW row (this file's own repaired vacuity)
+//!
+//! The previous revision forged the ALREADY-COMPACTED row and then called `append_wide_carriers` on
+//! it, which re-inflated 1963 → 3065. `prove_vm_descriptor2` then refused on SHAPE (`base row width
+//! 3065 must equal descriptor trace_width 1963`) and the tooth's `refused()` read that width
+//! complaint as an unsat verdict. It was VACUOUS: neutering the forgery entirely — writing all eight
+//! lanes back honest — left the test GREEN and still printing "binds ALL EIGHT after-root felts".
+//!
+//! Two facts force the raw-row construction. The S2 band `[bb+418, bb+478)` deletes the AFTER block's
+//! entire 1-felt chain-carrier stratum, so a patched AFTER block-commit has nowhere to land on a
+//! compacted row; and the wide carriers sit at `HEAP_WRITE_HOST_WIDTH`, a RAW coordinate. So the
+//! forgery is written at the raw rotated coordinates and carried through `compact_s2_columns ∘
+//! compact_e1_columns` beside the honest row — the same method the frozen-audit-slot forgery uses in
+//! `effect_vm_rotation_flip.rs` (`cd24980fe8`), and for the same reason: the deleted bands would
+//! otherwise renumber the forged column out from under the tooth.
+//!
+//! Every refusal in this file goes through [`refusal_reason`], which pins the committed SHAPE first
+//! and REDs on a shape fault, so a width complaint can never be laundered into an unsat verdict
+//! again.
+//!
+//! ## Retired: the two v3-live legs
+//!
+//! `roundtrip_v3_live_descriptor` and `after_root_forge_is_unsat_against_DEPLOYED_v3_registry` paired
+//! the wide producer's TRUNCATED trace with the narrow `V3_STAGED_REGISTRY_TSV` member. That member
+//! is STRANDED at HEAD: no producer emits its geometry (there is no `Effect::HeapWrite` variant, so no
+//! narrow V3 path reaches it), and its S2 bands `[367,427) ∪ [606,666) ∪ [723,1563)` all lie inside
+//! the v3 width 1633, so no prefix or re-inflation of the wide row recovers it. Both legs were RED,
+//! and the premise they rested on (that v3-live is the deployed registry) is false. Their distinct
+//! assertions are PORTED onto the wide tooth below, marked `PORTED`.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
@@ -39,12 +84,12 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::layout_generated::HEAP_ROOT_GROUP;
 use dregg_circuit::effect_vm::trace_rotated::{
-    AFTER_BASE, B_STATE_COMMIT, BEFORE_BASE, HEAP_WRITE_HOST_WIDTH, HEAP_WRITE_READ_BASE,
-    RotatedBlockWitness, WIDE_CARRIER_APPENDIX, append_wide_carriers, compact_e1_columns,
-    compact_s2_columns, empty_caveat_manifest, generate_rotated_heap_write_wide,
+    AFTER_BASE, B_STATE_COMMIT, BEFORE_BASE, HEAP_WRITE_HOST_WIDTH, RotatedBlockWitness,
+    WIDE_CARRIER_APPENDIX, append_wide_carriers, compact_e1_columns, compact_s2_columns,
+    empty_caveat_manifest, generate_rotated_heap_write_wide, generate_rotated_heap_write_wide_raw,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
-use dregg_circuit::effect_vm_descriptors::{V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV};
+use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
@@ -178,30 +223,100 @@ fn write_new_root_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
     panic!("descriptor {} has no WRITE map-op", desc.name);
 }
 
-/// `true` iff prove/verify REFUSES (Err or panic) on the given trace + PIs — the LC verdict.
-fn refused(
+/// **THE DEPLOYED COMPACTION** — the two calls `generate_rotated_heap_write_wide` itself makes on the
+/// raw row, in the order it makes them (E1's bands are stated in the S2-compacted geometry, so the
+/// order is load-bearing). Applied to the honest row and the forged row ALIKE.
+fn compact_like_the_producer(trace: &mut Vec<Vec<BabyBear>>) {
+    compact_s2_columns(trace, KEY).expect("deployed S2 compaction of the heap-write row");
+    compact_e1_columns(trace, KEY).expect("deployed E1 compaction of the heap-write row");
+}
+
+/// Substrings of a prover `Err` that name a SHAPE/deploy fault rather than a witness refusal. This
+/// file's repaired vacuity WAS one of these being read as an unsat verdict.
+const SHAPE_FAULT_MARKERS: [&str; 3] = [
+    "must equal descriptor trace_width",
+    "public_input",
+    "public input",
+];
+
+/// Pin that `trace`/`dpis` have EXACTLY the committed member's shape, so a subsequent prover `Err`
+/// cannot be a width complaint. Structural, not string-matched: this is the guard, and
+/// [`SHAPE_FAULT_MARKERS`] is only the second net behind it.
+fn assert_committed_shape(
+    what: &str,
+    desc: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    dpis: &[BabyBear],
+) {
+    for (i, row) in trace.iter().enumerate() {
+        assert_eq!(
+            row.len(),
+            desc.trace_width,
+            "{what}: row {i} is {} wide but the committed {} is {} — a SHAPE fault. The prover \
+             reports it as an Err, and a tooth that reads any Err as 'refused' would pass here with \
+             the forgery never examined.",
+            row.len(),
+            desc.name,
+            desc.trace_width
+        );
+    }
+    assert_eq!(
+        dpis.len(),
+        desc.public_input_count,
+        "{what}: PI vector is {} long but the committed {} declares {} — a SHAPE fault, not a \
+         refusal",
+        dpis.len(),
+        desc.name,
+        desc.public_input_count
+    );
+}
+
+/// **THE REFUSAL DISCRIMINATOR.** Run prove+verify and return the refusal REASON, or `None` if the
+/// witness was ACCEPTED.
+///
+/// Three layers keep a non-refusal from wearing a refusal's clothes:
+///
+///  * the committed SHAPE is pinned first ([`assert_committed_shape`]), so the prover is genuinely
+///    asked about this witness rather than about the row's width;
+///  * [`classify`] REDs on any panic that is not the p3 debug prover's documented unsat verdict (a
+///    stray unwrap, a trace-assembly `debug_assert`, a height assert);
+///  * an `Err` naming a [`SHAPE_FAULT_MARKERS`] fault REDs even so.
+fn refusal_reason(
+    what: &str,
     desc: &EffectVmDescriptor2,
     trace: &[Vec<BabyBear>],
     dpis: &[BabyBear],
     mem_boundary: &MemBoundaryWitness,
     map_heaps: &[Vec<HeapLeaf>],
-) -> bool {
-    match classify("refused", || {
+) -> Option<String> {
+    assert_committed_shape(what, desc, trace, dpis);
+    match classify(what, || {
         let proof = prove_vm_descriptor2(desc, trace, dpis, mem_boundary, map_heaps)?;
         verify_vm_descriptor2(desc, &proof, dpis)
     }) {
-        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
-        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
-        // debug_assert), which used to land here and read as "rejected".
-        Outcome::UnsatPanic(_) => true,
-        Outcome::Err(_) => true,
-        Outcome::Accepted(_) => false,
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal by the constraint system.
+        Outcome::UnsatPanic(m) => Some(format!("p3 unsat verdict — {m}")),
+        // The pre-flight in-trace replay refusing fail-closed (the PREFERRED mechanism per
+        // `dregg_circuit::refusal`) — but never a width complaint.
+        Outcome::Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                !SHAPE_FAULT_MARKERS.iter().any(|m| msg.contains(m)),
+                "{what}: the prover refused with a SHAPE/deploy fault, not a witness refusal: \
+                 {msg}\nThat is not the constraint system rejecting the forgery — it is the exact \
+                 vacuity this tooth was repaired for."
+            );
+            Some(format!("fail-closed replay refusal — {msg}"))
+        }
+        Outcome::Accepted(_) => None,
     }
 }
 
-/// Build the honest wide heap-write turn (the exact fixture `wide_new_members_cover` uses), returning
-/// the producer's `(trace, dpis, map_heaps)` and the recomputed heap-address the splice opens.
-fn honest_heap_write() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>) {
+/// Build the honest wide heap-write turn (the exact fixture `wide_new_members_cover` uses). With
+/// `raw = true` it returns the PRE-compaction row [`generate_rotated_heap_write_wide_raw`] assembles;
+/// with `raw = false` it returns exactly what the DEPLOYED producer emits. Same inputs either way,
+/// so the two are comparable byte-for-byte.
+fn heap_write_fixture(raw: bool) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>) {
     let st = CellState::new(100, 5);
     let value_full: u64 = 30;
     let effects = vec![Effect::Mint {
@@ -247,19 +362,38 @@ fn honest_heap_write() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>
         HeapLeaf::entry(BabyBear::new(999_983), BabyBear::new(1)),
     ];
 
-    let (trace, dpis, map_heaps) = generate_rotated_heap_write_wide(
-        &st,
-        &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
-        &empty_caveat_manifest(),
-        coll,
-        key,
-        value,
-        &heap,
-    )
-    .expect("wide heap-write generation");
+    let built = if raw {
+        generate_rotated_heap_write_wide_raw(
+            &st,
+            &effects,
+            &bridge(&before_w),
+            &bridge(&after_w),
+            &empty_caveat_manifest(),
+            coll,
+            key,
+            value,
+            &heap,
+        )
+    } else {
+        generate_rotated_heap_write_wide(
+            &st,
+            &effects,
+            &bridge(&before_w),
+            &bridge(&after_w),
+            &empty_caveat_manifest(),
+            coll,
+            key,
+            value,
+            &heap,
+        )
+    };
+    let (trace, dpis, map_heaps) = built.expect("wide heap-write generation");
     (trace, dpis, map_heaps)
+}
+
+/// The honest turn as the DEPLOYED producer emits it (compacted).
+fn honest_heap_write() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>) {
+    heap_write_fixture(false)
 }
 
 /// **(a) ROUNDTRIP + ANTI-DRIFT.** The wide producer PROVES + light-client VERIFIES against the
@@ -267,6 +401,9 @@ fn honest_heap_write() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>
 /// into are byte-identical to the committed descriptor's `.write` map-op `new_root` columns. This is
 /// the executed check the structural teeth cannot give: a producer that laid the group at the STALE
 /// (188/237-based) columns while the committed descriptor moved to 188/415 would be UNSAT here.
+///
+/// It also pins the deployed producer against its own pre-compaction stage — the accessor the forge
+/// below builds on cannot drift from what deploys.
 #[test]
 fn roundtrip_wide_producer_matches_committed_descriptor() {
     let wide_desc = parse_vm_descriptor2(registry_json(WIDE_REGISTRY_STAGED_TSV, KEY))
@@ -286,14 +423,65 @@ fn roundtrip_wide_producer_matches_committed_descriptor() {
     // + E1 kill-sets. This binds the producer and the frozen descriptor to the same felts through
     // the same bands — a compaction that drops different bands of the same size REDs here rather
     // than leaving the honest proof mysteriously UNSAT.
+    let raw_cols = raw_after_heap_root_cols();
     assert_eq!(
         new_root_cols,
-        compacted_cols(KEY, raw_wide_width(), &raw_after_heap_root_cols()),
+        compacted_cols(KEY, raw_wide_width(), &raw_cols),
         "committed .write new_root columns == the S2+E1 image of AFTER_BASE + HEAP_ROOT_GROUP — the \
          anti-drift pin"
     );
+    // PORTED (retired v3-live legs asserted "all 8 lanes within the width"): every lane survives the
+    // compaction AND lands inside the row the light client is handed. `compacted_cols` REDs by name
+    // if a lane's raw column was DELETED; this pins the other half.
+    assert!(
+        new_root_cols.iter().all(|&c| c < wide_desc.trace_width),
+        "every .write new_root lane must land inside the committed width {} — got {new_root_cols:?}",
+        wide_desc.trace_width
+    );
 
+    // THE PRE-COMPACTION IDENTITY PIN. `generate_rotated_heap_write_wide` is exactly
+    // `generate_rotated_heap_write_wide_raw` + the two deployed compaction calls. The forge below
+    // builds on the raw accessor, so this is what keeps that accessor honest: if the deployed entry
+    // ever grows a step the raw one lacks, the forgery would be exercising a different object and
+    // this REDs first.
+    let (raw_trace, raw_dpis, raw_heaps) = heap_write_fixture(true);
+    assert_eq!(
+        raw_trace[0].len(),
+        raw_wide_width(),
+        "the pre-compaction row is the OPTION-I host + wide carriers"
+    );
+    let mut raw_then_compacted = raw_trace.clone();
+    compact_like_the_producer(&mut raw_then_compacted);
     let (trace, dpis, map_heaps) = honest_heap_write();
+    assert_eq!(
+        raw_then_compacted, trace,
+        "DEPLOYED producer == raw producer + the deployed compaction (trace)"
+    );
+    assert_eq!(
+        raw_dpis, dpis,
+        "DEPLOYED producer == raw producer + the deployed compaction (public inputs)"
+    );
+    assert_eq!(
+        raw_heaps.len(),
+        map_heaps.len(),
+        "DEPLOYED producer == raw producer + the deployed compaction (map heap count)"
+    );
+    for (h_raw, h_dep) in raw_heaps.iter().zip(map_heaps.iter()) {
+        assert_eq!(
+            h_raw.len(),
+            h_dep.len(),
+            "DEPLOYED producer == raw producer (map heap leaf count)"
+        );
+        for (l_raw, l_dep) in h_raw.iter().zip(h_dep.iter()) {
+            assert!(
+                l_raw.addr == l_dep.addr
+                    && l_raw.value == l_dep.value
+                    && l_raw.next_addr == l_dep.next_addr,
+                "DEPLOYED producer == raw producer (map heap leaf)"
+            );
+        }
+    }
+
     assert_eq!(
         trace[0].len(),
         wide_desc.trace_width,
@@ -304,6 +492,19 @@ fn roundtrip_wide_producer_matches_committed_descriptor() {
         wide_desc.public_input_count,
         "producer PI count == descriptor PI count"
     );
+
+    // PORTED (retired v3-live legs pinned `write_new_root_cols(v3) == raw_after_heap_root_cols()`
+    // against a descriptor with NO producer at HEAD): the RAW-coordinate claim now rides the path
+    // that actually deploys — the producer lays the genuine 8-felt splice root at `AFTER_BASE +
+    // HEAP_ROOT_GROUP` on the pre-compaction row, and compaction carries those same felts into the
+    // committed `new_root` columns.
+    for lane in 0..8 {
+        assert_eq!(
+            raw_trace[0][raw_cols[lane]], trace[0][new_root_cols[lane]],
+            "after-root lane {lane}: raw column {} and compacted column {} must carry the SAME felt",
+            raw_cols[lane], new_root_cols[lane]
+        );
+    }
 
     // Non-vacuity: the producer actually laid the genuine 8-felt splice root into those columns, with
     // ≥1 nonzero completion lane (so the forge below moves a genuinely bound felt).
@@ -320,225 +521,127 @@ fn roundtrip_wide_producer_matches_committed_descriptor() {
         .expect("ROUNDTRIP: light client must VERIFY the wide heap-write proof");
     eprintln!(
         "HEAP-WRITE ROUNDTRIP (bare-wide {}/{}): producer≡descriptor — PROVED + VERIFIED, after-root \
-         group laid at the committed new_root columns {new_root_cols:?}. Coverage gap CLOSED, benign.",
+         group laid at the committed new_root columns {new_root_cols:?} (raw {raw_cols:?}). This is \
+         the member turn/src/executor/proof_verify.rs:1088 resolves and :1146 keeps BARE. Coverage \
+         gap CLOSED, benign.",
         wide_desc.trace_width, wide_desc.public_input_count
-    );
-}
-
-/// **(a′) v3-live path.** The committed v3-live `heapWriteVmDescriptor2R24` carries the `.write`
-/// map-op at the RAW (pre-compaction) rotated coordinates — `root` at `BEFORE_BASE +
-/// HEAP_ROOT_GROUP`, `new_root` at `AFTER_BASE + HEAP_ROOT_GROUP` — because the narrow V3 registry
-/// never took the S2 / E1 flag-days: its width is still the raw graduated Class-A heap base
-/// ([`HEAP_WRITE_READ_BASE`]), where the WIDE twin is that base + read appendix + after spine + wide
-/// carriers MINUS both kill-sets. Truncating the wide producer's trace to the v3-live width and
-/// proving against the committed v3-live descriptor with the honest heap witness closes R3's
-/// "partial on v3-live" leg. Reports PASS or a genuine shape MISMATCH.
-#[test]
-fn roundtrip_v3_live_descriptor() {
-    let v3 = parse_vm_descriptor2(registry_json(V3_STAGED_REGISTRY_TSV, KEY))
-        .expect("committed v3-live heapWriteVmDescriptor2R24 parses");
-    // The narrow V3 member is UNCOMPACTED — the raw graduated Class-A heap base, 14 columns
-    // narrower than the rotated cohort base. Derived, so a graduation change moves it here.
-    assert_eq!(
-        v3.trace_width, HEAP_WRITE_READ_BASE,
-        "committed v3-live width"
-    );
-    assert_eq!(v3.public_input_count, 4, "committed v3-live PIs");
-    assert_eq!(
-        write_new_root_cols(&v3),
-        raw_after_heap_root_cols(),
-        "the uncompacted v3-live .write new_root columns are the RAW AFTER heap-root group"
-    );
-
-    let (wide_trace, wide_dpis, map_heaps) = honest_heap_write();
-    // Truncate the wide producer trace to the v3-live width; use the first 4 (base) PIs.
-    let trace: Vec<Vec<BabyBear>> = wide_trace
-        .iter()
-        .map(|r| r[..v3.trace_width].to_vec())
-        .collect();
-    let dpis: Vec<BabyBear> = wide_dpis[..v3.public_input_count].to_vec();
-    assert_eq!(trace[0].len(), HEAP_WRITE_READ_BASE);
-    assert_eq!(dpis.len(), 4);
-
-    let mb = MemBoundaryWitness::default();
-    let refused_v3 = refused(&v3, &trace, &dpis, &mb, &map_heaps);
-    if refused_v3 {
-        eprintln!(
-            "HEAP-WRITE v3-live ({}/{}): the truncated producer trace does NOT prove against the \
-             committed v3-live descriptor — a producer≡descriptor SHAPE MISMATCH on the v3-live leg.",
-            v3.trace_width, v3.public_input_count
-        );
-    } else {
-        eprintln!(
-            "HEAP-WRITE v3-live ({}/{}): truncated producer trace PROVED + VERIFIED against the \
-             committed v3-live descriptor. v3-live coverage CLOSED (shares the wide 8-felt splice).",
-            v3.trace_width, v3.public_input_count
-        );
-    }
-    assert!(
-        !refused_v3,
-        "MISMATCH: the wide producer's HEAP_WRITE_READ_BASE-col prefix must satisfy the committed v3-live descriptor \
-         (they share the .write map-op) — a refusal is a live v3-live producer≡descriptor divergence"
     );
 }
 
 const FORGED_LANES: [u32; 7] = [0xDEAD, 0xBEEF, 0x1234, 0x5678, 0x9ABC, 0xCAFE, 0xF00D];
 
-/// **(b-ADV) THE ADVERSARIAL R1-TRAP CHECK — the after-root forge run against the DEPLOYED registry.**
+/// **(b) AFTER-ROOT 8-FELT BINDING FORGE — on the DEPLOYED member.** Forge the `.write` `new_root`
+/// completion lanes 1..7 to garbage on every row while keeping lane 0 honest, recompute the after
+/// block-commit chain + wide carriers so the ONLY thing that can bite is the map-op grow-gate on the
+/// completion lanes, then run the pure LC verify. UNSAT ⟹ the deployed `.write` map-op binds all 8
+/// after-root felts to the genuine sorted-Merkle splice (~124-bit), not lane-0.
 ///
-/// The finder's forge `after_root_completion_lane_forge_is_unsat` runs against `WIDE_REGISTRY_STAGED_TSV`,
-/// which its own doc (`effect_vm_descriptors.rs:1204`) calls "the parallel wide path BESIDE" the live
-/// registry, "the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK are UNTOUCHED." The light client the
-/// wire runs verifies against the DEPLOYED registry — `V3_STAGED_REGISTRY_TSV` (`:821`, "the live
-/// 1-felt" registry). If the deployed member bound only after-root lane 0 while WIDE bound all 8, the
-/// finder's UNSAT would be an R1-trap (proving 8-felt binding on an undeployed descriptor). This test
-/// re-runs the identical forge against the DEPLOYED v3-live descriptor. UNSAT here ⟹ the
-/// DEPLOYED heapWrite `.write` map-op binds all 8 after-root felts — the finder's refutation holds on
-/// the real light-client path, not just the staged wide twin.
-#[test]
-#[allow(non_snake_case)]
-fn after_root_forge_is_unsat_against_DEPLOYED_v3_registry() {
-    let v3 = parse_vm_descriptor2(registry_json(V3_STAGED_REGISTRY_TSV, KEY))
-        .expect("committed DEPLOYED v3-live heapWriteVmDescriptor2R24 parses");
-    assert_eq!(
-        v3.trace_width, HEAP_WRITE_READ_BASE,
-        "deployed v3-live width"
-    );
-    assert_eq!(v3.public_input_count, 4, "deployed v3-live PIs");
-    let new_root_cols = write_new_root_cols(&v3);
-    assert_eq!(
-        new_root_cols,
-        raw_after_heap_root_cols(),
-        "deployed v3-live .write new_root columns — the RAW AFTER heap-root group, all 8 lanes \
-         within the width"
-    );
-
-    let (trace, dpis, map_heaps) = honest_heap_write();
-    let mb = MemBoundaryWitness::default();
-
-    // NO DOWNGRADE: the honest truncated producer proves + verifies against the deployed descriptor.
-    let htrace: Vec<Vec<BabyBear>> = trace.iter().map(|r| r[..v3.trace_width].to_vec()).collect();
-    let hdpis: Vec<BabyBear> = dpis[..4].to_vec();
-    assert!(
-        !refused(&v3, &htrace, &hdpis, &mb, &map_heaps),
-        "NO DOWNGRADE: honest heap-write must prove+verify against the deployed v3 descriptor"
-    );
-
-    let honest_root: Vec<BabyBear> = new_root_cols.iter().map(|&c| trace[0][c]).collect();
-
-    // THE FORGE (identical to the finder's, but bound for the DEPLOYED descriptor): garble after-root
-    // completion lanes 1..7 on every row, keep lane 0 honest, recompute the after block-commit so only
-    // the deployed .write map-op grow-gate can bite, then truncate to the deployed v3-live width + build
-    // the deployed 4-PI vector (pi0 = before state-commit, pi1 = recomputed after state-commit).
-    let mut ftrace = trace.clone();
-    for row in ftrace.iter_mut() {
-        for lane in 1..8 {
-            row[new_root_cols[lane]] = BabyBear::new(FORGED_LANES[lane - 1]);
-        }
-    }
-    assert!(
-        (1..8).any(|l| ftrace[0][new_root_cols[l]] != honest_root[l]),
-        "the forged high lanes differ from the genuine splice root"
-    );
-    dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut ftrace);
-    let last = ftrace.len() - 1;
-    let before_sc = ftrace[0][BEFORE_BASE + B_STATE_COMMIT];
-    let after_sc = ftrace[last][AFTER_BASE + B_STATE_COMMIT];
-    let ftrace_v3: Vec<Vec<BabyBear>> = ftrace
-        .iter()
-        .map(|r| r[..v3.trace_width].to_vec())
-        .collect();
-    let mut fdpis = dpis[..4].to_vec();
-    fdpis[0] = before_sc;
-    fdpis[1] = after_sc;
-
-    let unsat = refused(&v3, &ftrace_v3, &fdpis, &mb, &map_heaps);
-    if unsat {
-        eprintln!(
-            "HEAP-WRITE DEPLOYED-REGISTRY VERDICT: the after-root completion-lane forge is UNSAT against \
-             the DEPLOYED v3-live descriptor — the light client the wire runs binds ALL EIGHT \
-             after-root felts. NOT an R1-trap; the finder's refutation holds on the deployed path."
-        );
-    } else {
-        eprintln!(
-            "HEAP-WRITE DEPLOYED-REGISTRY VERDICT: the forge PROVES+VERIFIES against the DEPLOYED v3-live \
-             descriptor — the light client binds only after-root lane 0 (~31-bit). The finder's UNSAT \
-             was an R1-TRAP (staged-wide only). LIVE 8-felt gap on the deployed heapWrite path."
-        );
-    }
-    assert!(
-        unsat,
-        "R1-TRAP: the after-root forge proves+verifies against the DEPLOYED v3 registry member — the \
-         deployed light-client heapWrite binds only lane-0, not the 8-felt splice. The finder tested \
-         the undeployed WIDE twin."
-    );
-}
-
-/// **(b) AFTER-ROOT 8-FELT BINDING FORGE.** Forge the `.write` `new_root` completion lanes 1..7 to
-/// garbage on every row while keeping lane 0 honest, recompute the after block-commit chain + wide
-/// carriers so the ONLY thing that can bite is the map-op grow-gate on the completion lanes, then run
-/// the pure LC verify. UNSAT ⟹ the deployed `.write` map-op binds all 8 after-root felts to the
-/// genuine sorted-Merkle splice (~124-bit), not lane-0.
+/// The forgery is built at the RAW rotated coordinates and carried through the SAME compaction as
+/// the honest row (see the module header): the S2 flag-day deleted the AFTER block's 1-felt chain
+/// stratum, so a patched after block-commit and the re-derived wide carriers only exist
+/// pre-compaction. `heapWriteVmDescriptor2R24` is one of `proof_verify.rs:1146`'s
+/// `LIVE_ONLY_BARE_KEYS`, so this bare-wide member IS the light client's — the verdict is on the
+/// deployed path.
 #[test]
 fn after_root_completion_lane_forge_is_unsat() {
     let wide_desc = parse_vm_descriptor2(registry_json(WIDE_REGISTRY_STAGED_TSV, KEY)).unwrap();
     let new_root_cols = write_new_root_cols(&wide_desc);
+    let raw_cols = raw_after_heap_root_cols();
+    assert_eq!(
+        new_root_cols,
+        compacted_cols(KEY, raw_wide_width(), &raw_cols),
+        "the forged RAW columns must be the ones compaction carries into the committed new_root"
+    );
 
-    let (trace, dpis, map_heaps) = honest_heap_write();
+    // THE RAW (pre-compaction) honest row — the geometry the forgery has to be authored at.
+    let (raw_trace, raw_dpis, map_heaps) = heap_write_fixture(true);
+    assert_eq!(raw_trace[0].len(), raw_wide_width());
+    assert_eq!(raw_dpis.len(), 20);
     let mb = MemBoundaryWitness::default();
 
-    // POSITIVE (no downgrade): the honest turn proves + verifies.
-    let honest_proof = prove_vm_descriptor2(&wide_desc, &trace, &dpis, &mb, &map_heaps)
+    // POSITIVE (no downgrade): the honest turn, carried through the deployed compaction, proves +
+    // verifies. Without this the negative below would be satisfied by a tooth that rejects
+    // everything.
+    let mut htrace = raw_trace.clone();
+    compact_like_the_producer(&mut htrace);
+    let hdpis = raw_dpis.clone();
+    assert_committed_shape("honest heap-write", &wide_desc, &htrace, &hdpis);
+    let honest_proof = prove_vm_descriptor2(&wide_desc, &htrace, &hdpis, &mb, &map_heaps)
         .expect("NO DOWNGRADE: honest wide heap-write proves");
-    verify_vm_descriptor2(&wide_desc, &honest_proof, &dpis)
+    verify_vm_descriptor2(&wide_desc, &honest_proof, &hdpis)
         .expect("NO DOWNGRADE: honest wide heap-write verifies");
 
-    // Non-vacuity: ≥1 forged completion lane genuinely differs from the honest after-root felt.
-    let honest_root: Vec<BabyBear> = new_root_cols.iter().map(|&c| trace[0][c]).collect();
-
-    // THE FORGE: garble lanes 1..7 on every row; keep lane 0 honest. These completion lanes are the
-    // after rotated block's heap-root completion limbs (58..64), so they feed the after STATE_COMMIT —
-    // recompute the after block-commit + re-derive the wide carriers/PIs so the trace is fully
-    // self-consistent and the map-op grow-gate is the sole possible binder.
-    let mut ftrace = trace.clone();
+    // THE FORGE, AT RAW COORDINATES: garble lanes 1..7 on every row; keep lane 0 honest. These
+    // completion lanes are the after rotated block's heap-root completion limbs, so they feed the
+    // after STATE_COMMIT and the 8-felt after commit carriers — recompute the after block-commit and
+    // re-derive the wide carriers/PIs so the trace is fully self-consistent and the map-op grow-gate
+    // is the sole possible binder.
+    let honest_raw_root: Vec<BabyBear> = raw_cols.iter().map(|&c| raw_trace[0][c]).collect();
+    let mut ftrace = raw_trace.clone();
     for row in ftrace.iter_mut() {
         for lane in 1..8 {
-            row[new_root_cols[lane]] = BabyBear::new(FORGED_LANES[lane - 1]);
+            row[raw_cols[lane]] = BabyBear::new(FORGED_LANES[lane - 1]);
         }
     }
     assert_eq!(
-        ftrace[0][new_root_cols[0]], trace[0][new_root_cols[0]],
+        ftrace[0][raw_cols[0]], raw_trace[0][raw_cols[0]],
         "lane 0 (the scalar heap-root limb) stays honest — only the high seven lanes are forged"
     );
     assert!(
-        (1..8).any(|l| ftrace[0][new_root_cols[l]] != honest_root[l]),
+        (1..8).any(|l| ftrace[0][raw_cols[l]] != honest_raw_root[l]),
         "the forged high lanes differ from the genuine splice root (the grow-gate's UNSAT precondition)"
     );
 
     dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut ftrace);
-    // Rebuild the base 4 PIs (pi1 = the recomputed after state-commit on the last row) + wide carriers.
+    // Rebuild the base 4 PIs (pi1 = the recomputed after state-commit on the last row) + wide
+    // carriers, ALL at the raw geometry the producer itself uses.
     let last = ftrace.len() - 1;
-    let mut base4 = dpis[..4].to_vec();
+    let mut base4 = raw_dpis[..4].to_vec();
     base4[0] = ftrace[0][BEFORE_BASE + B_STATE_COMMIT];
     base4[1] = ftrace[last][AFTER_BASE + B_STATE_COMMIT];
     let fdpis = append_wide_carriers(&mut ftrace, base4, HEAP_WRITE_HOST_WIDTH);
     assert_eq!(fdpis.len(), 20);
+    assert_eq!(ftrace[0].len(), raw_wide_width());
 
-    let unsat = refused(&wide_desc, &ftrace, &fdpis, &mb, &map_heaps);
-    if unsat {
-        eprintln!(
-            "HEAP-WRITE AFTER-ROOT VERDICT: the completion-lane forge is UNSAT — the deployed .write \
-             map-op binds ALL EIGHT after-root felts to the genuine sorted-Merkle splice (~124-bit). \
-             The 8-felt AFTER-root binding is faithfully enforced, not lane-0."
-        );
-    } else {
-        eprintln!(
-            "HEAP-WRITE AFTER-ROOT VERDICT: the completion-lane forge PROVES+VERIFIES — the deployed \
-             descriptor binds only after-root lane 0 (~31-bit). A LIVE 8-felt gap."
+    // THE SAME COMPACTION THE HONEST ROW TOOK. The deleted bands would otherwise renumber the forged
+    // columns out from under the tooth — and re-inflating a compacted row instead is precisely the
+    // shape fault that made this tooth vacuous.
+    compact_like_the_producer(&mut ftrace);
+    assert_eq!(
+        ftrace[0].len(),
+        htrace[0].len(),
+        "the forged row and the honest row are the SAME shape — the forgery is the only difference"
+    );
+    for lane in 1..8 {
+        assert_ne!(
+            ftrace[0][new_root_cols[lane]], htrace[0][new_root_cols[lane]],
+            "after compaction, forged lane {lane} must still differ at committed column {}",
+            new_root_cols[lane]
         );
     }
+
+    let reason = refusal_reason(
+        "after_root_completion_lane_forge_is_unsat",
+        &wide_desc,
+        &ftrace,
+        &fdpis,
+        &mb,
+        &map_heaps,
+    );
+    match &reason {
+        Some(why) => eprintln!(
+            "HEAP-WRITE AFTER-ROOT VERDICT: the completion-lane forge is UNSAT — the deployed .write \
+             map-op binds ALL EIGHT after-root felts to the genuine sorted-Merkle splice (~124-bit). \
+             The 8-felt AFTER-root binding is faithfully enforced, not lane-0. Refusal mechanism: \
+             {why}"
+        ),
+        None => eprintln!(
+            "HEAP-WRITE AFTER-ROOT VERDICT: the completion-lane forge PROVES+VERIFIES — the deployed \
+             descriptor binds only after-root lane 0 (~31-bit). A LIVE 8-felt gap."
+        ),
+    }
     assert!(
-        unsat,
+        reason.is_some(),
         "AFTER-ROOT FORGE: a heap-write forged to differ ONLY in the after-root's high seven \
          completion lanes proves+verifies through the deployed descriptor — the 8-felt AFTER-root is \
          NOT bound (lane-0 only). This is a live light-client soundness gap."
