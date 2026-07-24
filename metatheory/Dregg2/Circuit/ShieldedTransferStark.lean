@@ -356,14 +356,21 @@ floors (none a new crypto carrier):
      **It is not a consequence of floors 1–3 as they were stated**: `forged_valueBinding_now_refused`
      exhibits a site where the untied residual — all the content floors 1–3 delivered about `pi[2]` —
      accepts a forged `value_binding` and the tied one refuses it.
-     STATUS, at the resolution each object actually has: for the **Lean-emitted** objects the tie is a
-     THEOREM, not a floor — `ShieldedSpendPortDischarge.emitted_conserved_is_leaf_bound` proves
-     `leaf_commit` and `value_binding` hash the SAME in-AIR `cVAL` cell on every row, from
-     `ShieldedValueLinkDescriptor.value_link_bound`. For the **deployed hand-written Rust** AIR
-     (`spend_circuit.rs` C6/C7a — house-law-#1 DEBT) it is a FAITHFULNESS claim about column identity
-     in Rust `ConstraintExpr` data, discharged by nothing here and by no Rust test (a case test is not
-     a ∀-inputs statement). That gap is the honest content of floor 4, and it is the reason the
-     deployed effect should route the Lean-emitted descriptor.
+     STATUS, at the resolution each object actually has — three levels, do not conflate them:
+       (i) **Inside the Lean-emitted value-link object it is a THEOREM**, not a floor:
+           `ShieldedValueLinkDescriptor.value_link_bound`, via
+           `ShieldedSpendPortDischarge.emitted_conserved_is_leaf_bound`, proves that on EVERY row
+           `leaf_commit` and `value_binding` are hash images of the SAME in-AIR value cell `cVAL`.
+       (ii) **Across the two emitted objects it is still open.** The membership/nullifier side is
+           `shieldedSpendDesc` and the value side is `shieldedValueLinkDesc` — two descriptors, two
+           traces. Nothing yet identifies the spend trace's `cLEAF` with the value-link trace's, so
+           the object-level tie is (i) plus a cross-descriptor join that no theorem supplies. That
+           join is the precise next lane.
+       (iii) **For the deployed hand-written Rust AIR** (`spend_circuit.rs` C6/C7a — house-law-#1
+           DEBT) it is a FAITHFULNESS claim about column identity in Rust `ConstraintExpr` data,
+           discharged by nothing here and by no Rust test (a case test is not a ∀-inputs statement).
+     Levels (ii) and (iii) are the honest content of floor 4, and (iii) is the reason the deployed
+     effect should route the Lean-emitted descriptors rather than the Rust AIR.
 
   ⚠ **GENUINE OPEN RESIDUAL (a real finding, not a floor): the leaf↔leg VALUE LINK.** Distinct from
   floor 4: floor 4 is INSIDE the STARK (spent leaf ↔ published `value_binding`); this residual is
