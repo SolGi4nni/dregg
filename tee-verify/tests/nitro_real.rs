@@ -27,6 +27,14 @@ fn verifies_real_live_nitro_doc_and_extracts_bound_report_data() {
 
 #[test]
 fn tampering_the_signed_bytes_is_rejected() {
+    // Non-vacuity baseline, LOCAL to this tamper test: the UNMUTATED doc must verify.
+    // Without it, if `nitro_att.bin` ever drifts so the base doc stops parsing, the
+    // mutation below would also fail and this test would pass FOR THE WRONG REASON —
+    // tamper-rejection silently disabled. Assert the positive first, then the negative.
+    assert!(
+        verify_nitro_core(REAL_DOC).is_ok(),
+        "baseline: the unmutated real Nitro doc must verify (else the tamper check is vacuous)"
+    );
     // Flip a byte in the middle of the payload region -> COSE sig (or parse) must fail.
     let mut doc = REAL_DOC.to_vec();
     let mid = doc.len() / 2;
@@ -39,5 +47,12 @@ fn tampering_the_signed_bytes_is_rejected() {
 
 #[test]
 fn a_truncated_doc_is_rejected() {
+    // Non-vacuity baseline, LOCAL to this test: the FULL doc must verify, so the
+    // rejection below is genuinely attributable to the truncation and not to a drifted
+    // fixture that never verified in the first place.
+    assert!(
+        verify_nitro_core(REAL_DOC).is_ok(),
+        "baseline: the full real Nitro doc must verify (else the truncation check is vacuous)"
+    );
     assert!(verify_nitro_core(&REAL_DOC[..REAL_DOC.len() / 2]).is_err());
 }
