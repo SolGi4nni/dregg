@@ -11571,3 +11571,43 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   than dalek. The largest measured game-path cost is the six-share Descent
   threshold range-proof path (~1086s), now assigned to the owned host-parallel
   Bulletproof prover + bounded parallel quorum cut before any further GPU claim.
+
+## 2026-07-24 — E7 cutover STARTED: the by-name narrowing is DEPLOYED bytes (2 members, −21 columns)
+Circuit-minimality item E7 crossed from PROVEN to DEPLOYED. The bridge (`ChipNarrowLookup.lean`,
+`9959af6cc`) had proved the narrow bus is served by the 18-prefix of the SAME chip rows, but no
+descriptor had ever been re-emitted. Landed `9648759c79`:
+- `poseidon2-hash-arity2` 10→3 and `merkle-membership-depth2` 24→10 now emit the 18-wide
+  `poseidon2narrow` (= Rust `TID_P2_NARROW`, wire 8) tuple. **21 committed columns deleted from the
+  deployed bytes.** Both are pure TAIL truncations — the kill-set is exactly the trailing suffix —
+  so no column index moved in Lean or in any Rust consumer.
+- Refinement proofs re-point at `chip_lookup_narrow_sound_of_wide_table` under the
+  deployment-shaped `t.tf poseidon2narrow = narrowTable (t.tf .poseidon2)` (the Lean face of
+  `descriptor_ir2.rs::narrow_hist`). It is NOT a carried hypothesis: each non-vacuity witness
+  discharges it definitionally (`witTf_narrow_wire`, `concrete_narrow_wire`) and each forge trace
+  still PROVABLY fails `Satisfied2`. Every refinement conclusion is unchanged.
+- Deployed bytes came FROM the machine-checked `#guard emitVmJson2` pins (never hand-typed, never a
+  full-tree emit sweep against the ~51-dirty multi-lane tree). Independently confirmed: the
+  CANONICAL `scripts/emit_descriptors.py` run reports both files UNCHANGED — its only would-change
+  entries belong to other live lanes (`guarded-hiding-span-…`, `e1_compact_generated.rs`).
+  Provenance edit is targeted to exactly the two re-derived members; `dregg2_tree_hash` deliberately
+  still names the last FULL emit.
+- VERIFIED on persvati: 20/20 (7 merkle emit-gate + 7 poseidon2 emit-gate + 1 audit-extra + 5
+  gate1 cross-descriptor). Honest witnesses prove+verify on the narrow bus; forged digest column,
+  forged parent digest, tampered leaf/sibling keeping the root, forged claimed root and forged
+  PI[0/1/2] ALL still REFUSE. Full `lake build` green. Drift class GEOMETRY-WIDEN (both moves are
+  SHRINKS) — exactly 2 members with moved geometry.
+- RECIPE REFINEMENT (recorded in the backlog §E7): a fresh per-column parse re-derives the pinned
+  census EXACTLY (366 remaining + 21 deleted = 387) and splits it — **11 members / 154 columns are
+  pure TAIL-TRUNCATE (no renumbering at all)**, 10 members / 212 columns genuinely need dense
+  renumbering (`note-spend-leaf` 149→57, `predicate-arith`×6 with INTERIOR kill-sets,
+  `blinded-4ary`×2, `derivation`). Named hazards: the `attested-fact-membership` commit tooth is
+  character-for-character the `PredicatesArithmeticEmit.factCommitLookup` JOIN (narrow both or
+  neither); `dyck-parse`'s Rust twin derives later layout constants from its width
+  (`dyck_stack.rs::V2_ACC = DYCK_WIDTH`); `adjacency-membership` shares its lane-carrying
+  `pathBlock` with three other emit modules.
+- Pre-existing reds this lane inherited, did NOT cause and did NOT paper over:
+  `cargo test -p dregg-circuit --lib` is red at HEAD (`exact_cap_root.rs:522` E0369,
+  `descriptor_ir2.rs:6471` non-exhaustive `ExactPublicRow`), `--verify-provenance` is red at HEAD
+  for 4 unstamped `automatafl-*-marks-*` by-name files (+2 untracked), and another lane's
+  `turn/src/faithful_note_spend_verifier.rs` carries a deliberate compile-error probe in the
+  working tree (neutralized only in the remote build copy, never in the shared tree).

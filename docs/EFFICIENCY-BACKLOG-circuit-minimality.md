@@ -200,6 +200,29 @@ tampered sibling / forged claimed root / forged PI teeth ALL still bite), 5/5
 came from the machine-checked `#guard` pins, never a sweep). Drift class: GEOMETRY-WIDEN (both moves
 are SHRINKS). Remaining members below.
 
+**RECIPE REFINEMENT found by the cutover lane (2026-07-24): step 1's "renumber densely" is
+UNNECESSARY for 11 of the 21 remaining members.** A fresh per-column parse of the deployed bytes
+re-derives the census EXACTLY (366 killable columns remain + the 21 already deleted = the pinned
+387) and splits it by whether the kill-set is a trailing SUFFIX of `[0, trace_width)`:
+
+* **TAIL-TRUNCATE — 11 members, 154 columns, NO index moves anywhere** (the two landed members were
+  both of this kind, which is why no consumer index changed): `dregg-shielded-spend-pinned-root-v1`
+  48→20, `attested-fact-membership` 34→13, `blinded-membership` 33→12, `adjacency-membership` 32→18,
+  `dfa-routing` 22→8, `dregg-shielded-value-link-conserve-ranged-v1` 23→9, `dyck-parse` 38→24,
+  `bound-presentation` 29→22, `dregg-shielded-wide-value-link-conserve-v1` 30→23,
+  `merkle-membership-4ary-general` 18→11, `turn-chain-binding` 14→7.
+* **RENUMBER-NEEDED — 10 members, 212 columns**: `note-spend-leaf` 149→57 (the big one),
+  `predicate-arith{,-gt,-le,-lt,-neq,-inrange}` (kill-set is INTERIOR — pure-tail-run 0),
+  `blinded-membership-4ary-depth{2,8}` 27→13, `derivation` 386→378.
+
+Two per-member hazards the cutover lane surfaced and did NOT paper over: (a) the
+`attested-fact-membership` commit tooth is deliberately CHARACTER-FOR-CHARACTER the shape of
+`PredicatesArithmeticEmit.factCommitLookup` (the third-party JOIN) — narrow BOTH in one step or
+neither, even though only the former is a tail truncation; (b) `dyck-parse`'s Rust twin derives
+later layout constants FROM its width (`dyck_stack.rs::V2_ACC = DYCK_WIDTH`), so a Lean-side tail
+truncation still moves Rust indices. `adjacency-membership` shares its `pathBlock` lane-carrying
+helper with `PresentationEmit` / `PredicatesRelationalCompoundEmit` / `NoteSpendingLeafEmit`.
+
 Sequence AFTER the Epoch-2 chip retype (E7 does not inherit it); cannot run parallel with other
 regens (mints new VK/bytes for 24 members). Recipe:
 1. In each by-name emit module (`NoteSpendingLeafEmit`, `BlindedMembershipEmit` +4ary,
