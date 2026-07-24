@@ -40,6 +40,8 @@ import Market.DarkBazaarSameOpening
 import Market.DarkBazaarDecryptConsistency
 import Market.DarkBazaarSameOpeningPoly
 import Market.DarkBazaarSameOpeningGadget
+import Market.DarkBazaarSameOpeningGadgetPoly
+import Market.DarkBazaarCollectiveOpening
 import Market.PrivateBookEncryptionBinding
 import Market.DarkAmmPrivateSwap
 import Market.DarkAmmPrivateReceipt
