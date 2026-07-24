@@ -4300,6 +4300,44 @@ pub(crate) fn board_window_connects(
     }
 }
 
+/// **THE CLEAN-HANDOFF SEAM** — the `C_last.OUT == R.IN` connect of the multi-round braid, the
+/// analogue of [`board_window_connects`] for two legs whose windows have DIFFERENT widths.
+///
+/// The conflict chain runs on the FULL RoundState window
+/// `[board ‖ marks ‖ locked ‖ waiting ‖ auto]` (`l_window` lanes; 32 at n = 11, P = 2) with
+/// [`board_window_connects`] connecting all `l_window` lanes `C_k.OUT == C_{k+1}.IN`. When the last
+/// conflict round hands off to a CLEAN round (Leg R), the clean segment CONSUMES `locked`/`waiting`
+/// — those tables do not cross into it — so the handoff connects ONLY the leading `handoff` lanes,
+/// `board ‖ marks` (18 at n = 11), of the conflict round's OUT window to the clean round's IN
+/// window, and DROPS the rest.
+///
+/// `L.OUT`'s board+marks prefix is `l[SEG_WIDTH + l_window .. SEG_WIDTH + l_window + handoff)`;
+/// `R.IN`'s is `r[SEG_WIDTH .. SEG_WIDTH + handoff)`. Both windows are authored `board`-first then
+/// `marks` (the RoundState order, `AutomataflLegCEmit`), so the shared prefix IS `board ‖ marks` on
+/// each side. `L.OUT`'s dropped `locked`/`waiting`/`auto` lanes are left free — a differing locked
+/// lane does NOT break this handoff, by design (it is consumed at the clean round, not carried).
+///
+/// Same aliasing force as [`board_window_connects`]: each connected lane pair becomes ONE witness
+/// cell, so a board-or-marks disagreement across the clean handoff is a `WitnessConflict` — a
+/// witness that does not exist, not a soft constraint. `handoff` must be `<= min(l_window, R.IN
+/// width)` and every connected lane must be `board ‖ marks` on both sides (the caller's contract;
+/// the M7 braid supplies it from `roundstate_window_n11::HANDOFF_LANES`).
+///
+/// Wired by the M7 multi-round braid fold (which chooses the merge per adjacent-leg pair); today it
+/// is exercised at the connect level by `board_window_seam_tests`.
+#[allow(dead_code)]
+pub(crate) fn board_window_clean_handoff_connects(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    l: &[p3_recursion::Target],
+    r: &[p3_recursion::Target],
+    l_window: usize,
+    handoff: usize,
+) {
+    for k in 0..handoff {
+        cb.connect(l[SEG_WIDTH + l_window + k], r[SEG_WIDTH + k]);
+    }
+}
+
 pub(crate) fn segment_combine_expose_with_board_window(
     cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
     left_apt: &[Vec<p3_recursion::Target>],
@@ -5317,5 +5355,166 @@ mod board_window_seam_tests {
                 "a windowed exposure is SEG_WIDTH plus an EVEN count at every W"
             );
         }
+    }
+
+    // ========================================================================
+    // THE ROUNDSTATE SEAM (M5) — the whole-RoundState conflict chain and the
+    // board+marks clean handoff, at the constraint level.
+    // ========================================================================
+    //
+    // The mechanism above is width-GENERIC (`board_window_connects` takes `window: usize`), so the
+    // conflict chain rides it unchanged at W = 32. What is genuinely new is the CLEAN HANDOFF
+    // (`board_window_clean_handoff_connects`): two legs of DIFFERENT widths, connected on their
+    // shared `board ‖ marks` prefix only. These canaries pin BOTH connects at the level where a
+    // broken seam is decidable in milliseconds — a `WitnessConflict`, a witness that does not exist.
+
+    /// The RoundState window width the conflict chain carries: `board(9) ‖ marks(9) ‖ locked(10) ‖
+    /// waiting(2) ‖ auto(2)` = `roundStateWindowLanes 11 2`.
+    const RS: usize = 32;
+    /// The board+marks prefix the CLEAN handoff carries; `locked ‖ waiting ‖ auto` sit past it.
+    const HANDOFF: usize = 18;
+    /// The marks sub-window sits at lanes `[9, 18)` of the RoundState window (after the 9-lane board).
+    const MARKS_LO: usize = 9;
+    const MARKS_HI: usize = 18;
+
+    /// **THE HONEST CONFLICT SEAM (C→C).** `C_k.OUT == C_{k+1}.IN` over the WHOLE 32-lane
+    /// RoundState window has a witness. Non-vacuous: the two children's window lanes are DISTINCT
+    /// public inputs, so every one of the 32 connects is a real union, not a `a == a` early-out.
+    #[test]
+    fn an_honest_roundstate_conflict_seam_has_a_witness() {
+        let mid: Vec<u32> = (0..RS as u32).map(|k| 5000 + 7 * k).collect();
+        let old: Vec<u32> = (0..RS as u32).map(|k| 100 + k).collect();
+        let new: Vec<u32> = (0..RS as u32).map(|k| 900 + k).collect();
+        run_seam(RS, &claim(1, &old, &mid), &claim(50, &mid, &new))
+            .expect("an honest C_k.OUT == C_{k+1}.IN RoundState seam must be satisfiable");
+    }
+
+    /// **THE LOAD-BEARING NEGATIVE — A MISMATCHED marksOut IS UNSAT.** `C_{k+1}` is fed a marks
+    /// overlay `C_k` did NOT produce. This is the MARKS analogue of
+    /// `every_forged_mid_lane_is_a_witness_conflict`: every one of the 9 marks lanes is
+    /// load-bearing, and forging ANY ONE is a per-lane `connect` conflict (UNSAT node ⇒ no root ⇒
+    /// no verifying artifact). Per-leaf validity cannot catch it — only the seam can.
+    #[test]
+    fn a_mismatched_marks_out_in_the_roundstate_seam_is_a_witness_conflict() {
+        let mid: Vec<u32> = (0..RS as u32).map(|k| 5000 + 7 * k).collect();
+        let old: Vec<u32> = (0..RS as u32).map(|k| 100 + k).collect();
+        let new: Vec<u32> = (0..RS as u32).map(|k| 900 + k).collect();
+        for lane in MARKS_LO..MARKS_HI {
+            let mut forged = mid.clone();
+            forged[lane] += 1; // C_{k+1} claims a DIFFERENT marksIn than C_k produced as marksOut.
+            let err = run_seam(RS, &claim(1, &old, &mid), &claim(50, &forged, &new))
+                .expect_err("a forged marks lane must have NO witness");
+            assert!(
+                matches!(
+                    err,
+                    p3_circuit::errors::CircuitError::WitnessConflict { .. }
+                ),
+                "forged marks lane {lane} must be a per-lane connect CONFLICT — got {err:?}"
+            );
+        }
+    }
+
+    /// Build a bare circuit carrying a WIDE conflict child (`l_window`-lane windows) and a CLEAN
+    /// child (`r_window`-lane windows), wire ONLY the clean handoff between them, and try to drive
+    /// it. The conflict child's OUT window is `l_out`; the clean child's IN window is `r_in`.
+    fn run_handoff(
+        l_window: usize,
+        r_window: usize,
+        handoff: usize,
+        l_out: &[u32],
+        r_in: &[u32],
+    ) -> Result<(), p3_circuit::errors::CircuitError> {
+        // left  = seg(25) ‖ IN_l(l_window) ‖ OUT_l(l_window)   (IN_l is irrelevant to the handoff)
+        let mut left: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 1 + k).collect();
+        left.extend((0..l_window as u32).map(|k| 40_000 + k));
+        left.extend_from_slice(l_out);
+        // right = seg(25) ‖ IN_r(r_window) ‖ OUT_r(r_window)   (OUT_r is irrelevant to the handoff)
+        let mut right: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 60_000 + k).collect();
+        right.extend_from_slice(r_in);
+        right.extend((0..r_window as u32).map(|k| 90_000 + k));
+
+        let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
+        let l: Vec<p3_recursion::Target> = cb.alloc_public_inputs(left.len(), "left_claim");
+        let r: Vec<p3_recursion::Target> = cb.alloc_public_inputs(right.len(), "right_claim");
+        board_window_clean_handoff_connects(&mut cb, &l, &r, l_window, handoff);
+        let circuit = cb.build().expect("the handoff-only circuit builds");
+        let mut runner = circuit.runner();
+        let pubs: Vec<RecursionChallenge> = left
+            .iter()
+            .chain(right.iter())
+            .map(|v| RecursionChallenge::from(P3BabyBear::from_u64(*v as u64)))
+            .collect();
+        runner.set_public_inputs(&pubs)?;
+        runner.run().map(|_| ())
+    }
+
+    /// **THE CLEAN HANDOFF (C→R) CONNECTS board ‖ marks AND DROPS locked ‖ waiting.** With the
+    /// conflict round's board+marks prefix equal to the clean round's, the handoff is satisfiable;
+    /// a differing locked/waiting/auto lane (past the prefix) leaves it satisfiable — those tables
+    /// are CONSUMED at the clean round, not carried; and a differing board-or-marks lane (inside
+    /// the prefix) is a `WitnessConflict`, the same force as the conflict seam.
+    #[test]
+    fn the_clean_handoff_connects_board_and_marks_and_drops_locked_waiting() {
+        // A clean round's window whose leading 18 lanes are board ‖ marks (then, say, auto).
+        let r_window = 20usize;
+        let c_out: Vec<u32> = (0..RS as u32).map(|k| 3000 + k).collect();
+        let mut r_in: Vec<u32> = c_out[..HANDOFF].to_vec(); // board ‖ marks AGREE
+        r_in.extend((HANDOFF as u32..r_window as u32).map(|k| 8000 + k));
+
+        // Honest: the board ‖ marks prefixes agree.
+        run_handoff(RS, r_window, HANDOFF, &c_out, &r_in)
+            .expect("an honest clean handoff (board ‖ marks agree) must be satisfiable");
+
+        // A differing LOCKED / WAITING / AUTO lane of C_last.OUT does NOT break the handoff — it is
+        // consumed at the clean round, not carried into Leg R.
+        for lane in HANDOFF..RS {
+            let mut c2 = c_out.clone();
+            c2[lane] += 1;
+            run_handoff(RS, r_window, HANDOFF, &c2, &r_in).unwrap_or_else(|e| {
+                panic!(
+                    "a differing dropped lane {lane} (locked/waiting/auto) must NOT break the \
+                     clean handoff — it is consumed, not carried — got {e:?}"
+                )
+            });
+        }
+
+        // A differing BOARD-or-MARKS lane (inside the connected prefix) DOES break it.
+        for lane in 0..HANDOFF {
+            let mut c2 = c_out.clone();
+            c2[lane] += 1;
+            let err = run_handoff(RS, r_window, HANDOFF, &c2, &r_in)
+                .expect_err("a board/marks disagreement across the clean handoff has NO witness");
+            assert!(
+                matches!(
+                    err,
+                    p3_circuit::errors::CircuitError::WitnessConflict { .. }
+                ),
+                "clean-handoff lane {lane} (board ‖ marks) must be a connect CONFLICT — got {err:?}"
+            );
+        }
+    }
+
+    /// The RoundState lane arithmetic the M5 generalization is stated in, and the fail-closed shape
+    /// the (already width-generic) verifier recovers. A conflict-round LEAF exposes `24 + 2·32 =
+    /// 88` claim lanes; a conflict-round segment ROOT exposes `25 + 2·32 = 89`; and
+    /// [`exposed_board_window`] recovers `W = 32` from the 89-lane count alone (no verifier change
+    /// was needed — the seam was width-generic; only the DECLARATION and the clean handoff are new).
+    #[test]
+    fn the_roundstate_lane_arithmetic_is_unambiguous() {
+        assert_eq!(RS, 32, "roundStateWindowLanes 11 2");
+        assert_eq!(SEG_WIDTH + 2 * RS, 89, "the RoundState root exposure");
+        assert_eq!(
+            crate::custom_leaf_adapter::custom_board_window_claim_len(RS),
+            88,
+            "the RoundState leaf exposure (commitment(8) ‖ old8 ‖ new8 ‖ IN(32) ‖ OUT(32))"
+        );
+        // The generic recovery `exposed_board_window` performs: (lanes - SEG_WIDTH) / 2.
+        assert_eq!((SEG_WIDTH + 2 * RS - SEG_WIDTH) / 2, RS);
+        assert_eq!(HANDOFF, 18, "the clean handoff carries board(9) ‖ marks(9)");
+        assert!(
+            HANDOFF < RS,
+            "the clean handoff drops locked ‖ waiting ‖ auto (RS - HANDOFF = {} lanes)",
+            RS - HANDOFF
+        );
     }
 }

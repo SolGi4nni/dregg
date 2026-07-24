@@ -26,6 +26,8 @@
 //! catalog (and thereby Discord / Telegram / WeChat, which render the same `Surface`).
 
 pub mod game;
+pub mod legc_layout;
+pub mod legc_witness;
 pub mod reference;
 pub mod resolve_layout;
 pub mod resolve_witness;

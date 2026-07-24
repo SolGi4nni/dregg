@@ -165,6 +165,14 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     // name for the two-leg fold's resolve leaf (`dregg-automatafl/src/resolve_witness.rs`).
     ("dregg-automatafl-resolve-n2", AUTOMATAFL_RESOLVE_N2_JSON),
     ("dregg-automatafl-resolve-n11", AUTOMATAFL_RESOLVE_N11_JSON),
+    // The automatafl conflict-round (LEG C: `roundStep`'s `.again` branch) descriptors — the
+    // Lean-emitted `automataflLegCDescN {5,11}` (`AutomataflLegCEmit.lean`), whose OUT window IS
+    // `roundStep`'s `.again` RoundState up to `List.Perm` on marks (`legC_sat_imp_roundAgainN`, M2).
+    // Byte-pinned in `AutomataflLegCGolden`; n=5 is the D4a/D4b audit-witness board, n=11 the
+    // deployed stock game. These back the multi-round fold's per-conflict-round leaf
+    // (`dregg-automatafl/src/legc_witness.rs`, M4); HASH-FREE, ZERO lookups.
+    ("dregg-automatafl-legc-n5", AUTOMATAFL_LEGC_N5_JSON),
+    ("dregg-automatafl-legc-n11", AUTOMATAFL_LEGC_N11_JSON),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -305,6 +313,13 @@ const AUTOMATAFL_RESOLVE_N2_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-resolve.json");
 const AUTOMATAFL_RESOLVE_N11_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-resolve-n11.json");
+/// The automatafl LEG C (conflict-round `.again`) descriptors (Lean `automataflLegCDescN {5,11}`),
+/// byte-pinned by their `emitVmJson2` `#guard` in `AutomataflLegCGolden`. n=5 is the D4a/D4b
+/// audit-witness board (536w/50pi/521c); n=11 is the deployed stock game (1208w/78pi/1425c).
+const AUTOMATAFL_LEGC_N5_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-legc-n5.json");
+const AUTOMATAFL_LEGC_N11_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-legc-n11.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

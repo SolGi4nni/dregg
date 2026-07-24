@@ -240,6 +240,9 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         CreateCellNonZeroBalance { cell, .. } => (GuardKind::Conservation, vec![*cell]),
         NoteConservationViolation { .. } => (GuardKind::Conservation, vec![]),
         CommittedConservationFailed { .. } => (GuardKind::Conservation, vec![]),
+        // Per-asset conservation imbalance (asset id + signed imbalance, no cells named) —
+        // a Conservation-family refusal, added to TurnError by the cross-cell conservation lane.
+        PerAssetConservationViolation { .. } => (GuardKind::Conservation, vec![]),
 
         CapabilityNotHeld { actor, target } => (GuardKind::Capability, vec![*actor, *target]),
         DelegationDenied {

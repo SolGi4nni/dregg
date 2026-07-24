@@ -355,6 +355,105 @@ pub fn extract_custom_pi_board_window(
     Some((win_in, win_out))
 }
 
+// ============================================================================
+// THE ROUNDSTATE WINDOW — the M5 generalization of the 11-lane board window to the
+// WHOLE RoundState the multi-round (conflict) braid carries between legs.
+// ============================================================================
+//
+// The board window above carries `[pack(board) ‖ auto]` (11 lanes at n = 11) — enough for the
+// SINGLE-round two-leg fold (Leg R → Leg A), whose only cross-leaf datum is the board position.
+// The MULTI-ROUND braid adds CONFLICT rounds (Leg C, `AutomataflLegCEmit`), which carry the marks
+// overlay and the per-seat locked/waiting tables across `C_k → C_{k+1}`. The window a conflict
+// round hands to the next is the WHOLE RoundState:
+//
+//   [ boardPack(RFC) ‖ marksPack(RFC) ‖ lockedVec(5·P) ‖ waitingInd(P) ‖ auto(2) ]
+//
+// which at n = 11, P = 2 seats is `roundStateWindowLanes 11 2 = 32` lanes
+// (`AutomataflLegCEmit.roundStateWindowLanes`, `#guard`ed to 32 in Lean).
+//
+// **`BoardWindowBinding` ALREADY carries this.** It is an arbitrary slice LIST — never fixed at
+// 11 (the `window_len()`, `pi_end()`, `is_well_formed()`, and `extract_*` machinery are all width-
+// generic; the "11" only ever lived in the automatafl leg constructors and their tests). So the
+// generalization is a DECLARATION, not a new carrier: which PI lanes of a Leg C sub-proof are each
+// sub-window, mirroring the Lean PI layout (`AutomataflLegCEmit §3`). The in-circuit `connect`
+// (whole-window for the conflict chain `C_k.OUT == C_{k+1}.IN`, and the board+marks PREFIX for the
+// clean handoff `C_last.OUT == R.IN`) lives in `dregg-circuit-prove`, exactly as the board window's
+// `connect` does.
+
+/// The RoundState sub-window widths and the Leg C PI offsets at `n = 11`, `P = LEGC_SEATS = 2` —
+/// the only instantiated size (Lean: `AutomataflLegCEmit`, `#guard roundStateWindowLanes 11 2 ==
+/// 32`). Every offset mirrors a Lean `def` (named per line); the cross-pin is the `#guard`ed Lean
+/// layout, and [`leg_c_roundstate_window_n11`] reproduces exactly those PI ranges.
+pub mod roundstate_window_n11 {
+    /// `NGen.RFC 11` = `AutomataflCommit.feltCount 11` — the packed-board lane count.
+    pub const BOARD_LANES: usize = 9;
+    /// `AutomataflMarks.marksWindowLanes 11` = `feltCount 11`.
+    pub const MARKS_LANES: usize = 9;
+    /// `AutomataflLegCEmit.lockedLanes 2` = `5 · P`.
+    pub const LOCKED_LANES: usize = 10;
+    /// `AutomataflLegCEmit.waitingLanes 2` = `P`.
+    pub const WAITING_LANES: usize = 2;
+    /// The automaton coordinate `(ax, ay)`.
+    pub const AUTO_LANES: usize = 2;
+    /// `roundStateWindowLanes 11 2` = 9 + 9 + 10 + 2 + 2.
+    pub const ROUNDSTATE_LANES: usize =
+        BOARD_LANES + MARKS_LANES + LOCKED_LANES + WAITING_LANES + AUTO_LANES;
+
+    /// `board ‖ marks` — the leading prefix the CLEAN HANDOFF (`C_last.OUT == R.IN`) carries.
+    /// `locked`/`waiting`/`auto` sit past it and are consumed at the clean round, not carried into
+    /// Leg R (see `board_window_clean_handoff_connects` in `dregg-circuit-prove`).
+    pub const HANDOFF_LANES: usize = BOARD_LANES + MARKS_LANES;
+
+    // The Leg C PI offsets (`AutomataflLegCEmit §3`); `AUTO_PI_BASE 11 = 16 + 2·RFC = 34`.
+    /// `cPackInFelt` window — `PI[16 .. 16+RFC)`, verbatim Leg R's `pack_in`.
+    pub const PI_BOARD_IN: usize = 16;
+    /// `cPackOutFelt` window — `PI[16+RFC .. 16+2·RFC)` (board FROZEN: gated equal to IN).
+    pub const PI_BOARD_OUT: usize = 25;
+    /// `ax, ay` at `AUTO_PI_BASE 11`. The board is frozen across a clash round, so the IN and OUT
+    /// windows point at the SAME auto lanes.
+    pub const PI_AUTO: usize = 34;
+    /// `piMarksIn 11 = AUTO_PI_BASE + 2`.
+    pub const PI_MARKS_IN: usize = 36;
+    /// `piMarksOut = piMarksIn + RFC`.
+    pub const PI_MARKS_OUT: usize = 45;
+    /// `piLockedIn = piMarksOut + RFC`.
+    pub const PI_LOCKED_IN: usize = 54;
+    /// `piLockedOut = piLockedIn + 5·P`.
+    pub const PI_LOCKED_OUT: usize = 64;
+    /// `piWaitingIn = piLockedOut + 5·P`.
+    pub const PI_WAITING_IN: usize = 74;
+    /// `piWaitingOut = piWaitingIn + P`.
+    pub const PI_WAITING_OUT: usize = 76;
+    /// `LEGC_PI_COUNT 11 = piWaitingOut + P`.
+    pub const LEGC_PI_COUNT: usize = 78;
+}
+
+/// The Leg C conflict-round RoundState window at `n = 11` — the `(IN, OUT)` slice lists in the
+/// canonical `[board ‖ marks ‖ locked ‖ waiting ‖ auto]` order, each 32 lanes. This is the
+/// declaration a conflict-round leaf carries so the fold can `connect` `C_k.OUT == C_{k+1}.IN`
+/// (whole window) and `C_last.OUT == R.IN` (the board+marks prefix). It reproduces exactly the Lean
+/// PI layout (`AutomataflLegCEmit §3`); nothing here authors a constraint — this is the same
+/// declaration-only category as the board window's `in_slices`/`out_slices`.
+pub fn leg_c_roundstate_window_n11() -> BoardWindowBinding {
+    use roundstate_window_n11::*;
+    BoardWindowBinding {
+        in_slices: vec![
+            (PI_BOARD_IN, BOARD_LANES),
+            (PI_MARKS_IN, MARKS_LANES),
+            (PI_LOCKED_IN, LOCKED_LANES),
+            (PI_WAITING_IN, WAITING_LANES),
+            (PI_AUTO, AUTO_LANES),
+        ],
+        out_slices: vec![
+            (PI_BOARD_OUT, BOARD_LANES),
+            (PI_MARKS_OUT, MARKS_LANES),
+            (PI_LOCKED_OUT, LOCKED_LANES),
+            (PI_WAITING_OUT, WAITING_LANES),
+            (PI_AUTO, AUTO_LANES),
+        ],
+    }
+}
+
 /// Read the published app root `R` a sub-proof's public inputs carry for `binding`. Returns `None`
 /// when the binding is ill-formed or the vector is too short to carry `R` — never zero-padding a
 /// short vector into a false root (the in-circuit mirror refuses the same shape fail-closed).
@@ -608,6 +707,85 @@ mod tests {
 
         // One PI short of the OUT window's end ⇒ None (never zero-padded into a false window).
         assert!(extract_custom_pi_board_window(&pis[..37], &binding).is_none());
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The ROUNDSTATE WINDOW (the multi-round conflict braid's whole cross-leg vocabulary).
+    // ---------------------------------------------------------------------------------------
+
+    /// The Leg C RoundState window is a well-formed 32-lane `BoardWindowBinding` — the SAME
+    /// slice-list carrier the 11-lane board window uses, never a new type. This is the M5
+    /// generalization made concrete: `window_len()` is 32, not 11.
+    #[test]
+    fn the_leg_c_roundstate_window_is_well_formed_and_32_lanes_wide() {
+        let b = leg_c_roundstate_window_n11();
+        assert!(
+            b.is_well_formed(),
+            "the RoundState window must be well-formed"
+        );
+        assert_eq!(
+            b.window_len(),
+            32,
+            "board(9) ‖ marks(9) ‖ locked(10) ‖ waiting(2) ‖ auto(2)"
+        );
+        assert_eq!(b.window_len(), roundstate_window_n11::ROUNDSTATE_LANES);
+        assert_eq!(
+            b.pi_end(),
+            roundstate_window_n11::LEGC_PI_COUNT,
+            "the window reaches LEGC_PI_COUNT 11 = 78"
+        );
+        // The carrier was NEVER fixed at 11 — the same slice-list now holds the whole RoundState.
+        assert!(
+            b.window_len() > 11,
+            "the carrier generalized past the 11-lane board window"
+        );
+        assert_eq!(
+            roundstate_window_n11::HANDOFF_LANES,
+            18,
+            "the clean handoff carries board ‖ marks = 18 lanes"
+        );
+    }
+
+    /// The extractor concatenates the RoundState sub-windows in `[board ‖ marks ‖ locked ‖ waiting
+    /// ‖ auto]` order, and the board+marks HANDOFF prefix is the leading 18 lanes of each half.
+    /// `PI[j] = j`, so each extracted lane IS its own index — the layout is visible.
+    #[test]
+    fn the_roundstate_window_extracts_the_lean_pi_layout_in_order() {
+        let b = leg_c_roundstate_window_n11();
+        let pis: Vec<BabyBear> = (0..roundstate_window_n11::LEGC_PI_COUNT as u32)
+            .map(BabyBear::new)
+            .collect();
+        let (win_in, win_out) =
+            extract_custom_pi_board_window(&pis, &b).expect("both windows present");
+        let idx = |w: &[BabyBear]| w.iter().map(|f| f.as_u32()).collect::<Vec<_>>();
+        assert_eq!(
+            idx(&win_in),
+            vec![
+                16, 17, 18, 19, 20, 21, 22, 23, 24, // board IN  [16..25)
+                36, 37, 38, 39, 40, 41, 42, 43, 44, // marksIn   [36..45)
+                54, 55, 56, 57, 58, 59, 60, 61, 62, 63, // lockedIn  [54..64)
+                74, 75, // waitingIn [74..76)
+                34, 35, // auto      [34..36)
+            ]
+        );
+        assert_eq!(
+            idx(&win_out),
+            vec![
+                25, 26, 27, 28, 29, 30, 31, 32, 33, // board OUT  [25..34)
+                45, 46, 47, 48, 49, 50, 51, 52, 53, // marksOut   [45..54)
+                64, 65, 66, 67, 68, 69, 70, 71, 72, 73, // lockedOut  [64..74)
+                76, 77, // waitingOut [76..78)
+                34, 35, // auto       [34..36) (board frozen ⇒ same as IN)
+            ]
+        );
+        // The board+marks handoff prefix — what the clean C→R connect carries — is the leading 18.
+        assert_eq!(
+            idx(&win_out[..roundstate_window_n11::HANDOFF_LANES]),
+            vec![
+                25, 26, 27, 28, 29, 30, 31, 32, 33, 45, 46, 47, 48, 49, 50, 51, 52, 53
+            ],
+            "the clean handoff carries board(9) ‖ marks(9); locked/waiting/auto sit past it"
+        );
     }
 
     /// Every board-window lane rides the SAME commitment surface the fold already binds — so the
