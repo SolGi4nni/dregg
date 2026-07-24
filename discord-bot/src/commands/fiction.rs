@@ -140,6 +140,15 @@ struct DungeonMeta {
     /// when the party's real outcomes earn them XP. Display state for the embed's Adventurers
     /// panel; the durable source of truth is the sqlite store.
     adventurers: BTreeMap<String, CharacterSheet>,
+    /// The Discord user who ran `/dungeon start` — the run's HOST. Only the host may close a
+    /// round early; every other member must wait out the fair voting window (or a fully-voted
+    /// restricted electorate). This is the [`authorize_close`] opener check's ground truth.
+    opener: u64,
+    /// Unix seconds the CURRENT round was opened at (set at `/dungeon start`, refreshed each
+    /// time a close resolves and opens the next round). The [`authorize_close`] maturity gate
+    /// measures a round's age from here, so a fresh round can never be closed out from under
+    /// the voters by a single quick ballot.
+    round_opened_at: i64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -762,6 +771,10 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             current_room: String::new(),
             history: RunHistory::default(),
             adventurers: BTreeMap::new(),
+            // The invoker is the run's HOST — the only member who may close a round early — and
+            // the opening round starts its fair voting window now.
+            opener: command.user.id.get(),
+            round_opened_at: now_secs(),
         },
     );
 
@@ -1445,8 +1458,118 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
 
 // ─── /dungeon close — resolve the plurality winner as a REAL turn ─────────────
 
+/// Unix seconds — the maturity clock for the `/dungeon close` voting window. A missing/rewound
+/// system clock reads as `0` (which the age comparison treats as "very old", so it can never
+/// wedge a round permanently un-closable).
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The minimum a `/dungeon` round stays open before ANYONE other than the host may close it — the
+/// fair voting window. Under it, a passer-by cannot lock a one-ballot "winner" and deny the room to
+/// everyone who had not yet voted; the run's opener (the DM) may always close, and a fully-voted
+/// restricted electorate needs no wait.
+const MIN_ROUND_SECS: i64 = 60;
+
+/// The authorization verdict for a `/dungeon close`, decided BEFORE the round resolves. A close
+/// LOCKS the round's plurality winner and opens the next room — an irreversible act against every
+/// member who has not yet cast — so it is gated, not open to any channel member on a whim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseAuth {
+    /// The invoker OPENED the run — the host (DM) may end the beat at any time.
+    Opener,
+    /// A restricted electorate has FULLY voted — every eligible voter cast, so waiting is pointless.
+    ElectorateComplete,
+    /// The fair voting window (`MIN_ROUND_SECS`) has elapsed — a matured round, anyone may close.
+    Matured,
+    /// Refused: not the host, the (restricted) electorate has not finished, and the round is younger
+    /// than the fair window. `wait_secs` is the time remaining before it matures.
+    Denied { wait_secs: i64 },
+}
+
+/// **The `/dungeon close` authorization gate** (backlog: close authz/quorum/timing). Authorized iff
+/// the invoker OPENED the run, OR a restricted electorate has fully voted, OR the fair voting window
+/// has elapsed. For the default open-crowd dungeon (`electorate == None`) the electorate branch
+/// never fires — there is no bounded eligible set — so an open-crowd round is closable only by the
+/// host or after the window, which is exactly what stops a drive-by one-ballot close.
+fn authorize_close(
+    invoker: u64,
+    opener: u64,
+    now: i64,
+    round_opened_at: i64,
+    electorate: Option<&[String]>,
+    voted: &[String],
+) -> CloseAuth {
+    if invoker == opener {
+        return CloseAuth::Opener;
+    }
+    if let Some(eligible) = electorate {
+        if !eligible.is_empty() && eligible.iter().all(|m| voted.iter().any(|v| v == m)) {
+            return CloseAuth::ElectorateComplete;
+        }
+    }
+    let age = now.saturating_sub(round_opened_at);
+    if age >= MIN_ROUND_SECS {
+        CloseAuth::Matured
+    } else {
+        CloseAuth::Denied {
+            wait_secs: MIN_ROUND_SECS - age,
+        }
+    }
+}
+
 async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let channel = command.channel_id.get();
+    let invoker = command.user.id.get();
+
+    // AUTHORIZATION GATE — decided BEFORE resolving anything. A `/dungeon close` locks the current
+    // plurality tally and moves the party to the next room, denying every member who has not yet
+    // voted. So refuse a premature close: only the run's HOST closes early, else the fair voting
+    // window must elapse (or a restricted electorate must have fully voted). This runs pre-defer —
+    // it is local + fast — and answers ephemerally without resolving the round.
+    let gate = {
+        let host = meta()
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&channel).map(|d| (d.opener, d.round_opened_at)));
+        host.map(|(opener, opened_at)| {
+            let (electorate, voted) =
+                with_live::<DungeonOffering, _>(channel, |l| match l.round.as_ref() {
+                    Some(r) => (
+                        r.electorate.clone(),
+                        r.ballots.keys().cloned().collect::<Vec<String>>(),
+                    ),
+                    None => (None, Vec::new()),
+                })
+                .unwrap_or((None, Vec::new()));
+            (
+                opener,
+                authorize_close(
+                    invoker,
+                    opener,
+                    now_secs(),
+                    opened_at,
+                    electorate.as_deref(),
+                    &voted,
+                ),
+            )
+        })
+    };
+    if let Some((opener, CloseAuth::Denied { wait_secs })) = gate {
+        let embed = warn_embed(
+            "Not yet — the voting window is still open",
+            &format!(
+                "Closing now would lock the current tally and move the party on, denying anyone \
+                 who has not voted. Only the run's host <@{opener}> can close early; everyone else \
+                 can close in about **{wait_secs}s**, or once every eligible voter has cast."
+            ),
+        );
+        respond(ctx, command, embed, vec![], true).await;
+        return;
+    }
 
     // ACK inside Discord's 3s window BEFORE the round resolves — `close_round` COMMITS the
     // party's plurality choice as a real turn, and the narrator that follows can take ~20s.
@@ -1621,6 +1744,9 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                         d.narrator = provenance.clone();
                         d.last_narration = narration.clone();
                         d.current_room = next_room_name.clone();
+                        // The next round is now live for voting — start its fair window fresh, so a
+                        // matured PREVIOUS round does not leak permission to close the new one early.
+                        d.round_opened_at = now_secs();
                     }
                 }
                 let embed = with_adventurers(
@@ -3069,6 +3195,132 @@ mod tests {
             }
             _ => panic!("the round must resolve"),
         }
+        close_in::<DungeonOffering>(channel);
+    }
+
+    // ── the `/dungeon close` authorization / quorum / timing gate ─────────────
+    //
+    // MUTATION CANARY for the close-authz fix. `handle_close` used to call `close_round`
+    // unconditionally: any channel member could `/dungeon close` right after their own single
+    // ballot, locking a 1-vote "winner" and denying everyone else their voting window. The gate
+    // `authorize_close` refuses that. This test pins each verdict; reverting `authorize_close` to
+    // the old "always resolve" behavior (e.g. `return CloseAuth::Matured;`) turns the Denied
+    // assertions RED, which is exactly the pre-fix hole.
+
+    /// FALSIFIER: a non-opener invoking `/dungeon close` right after a single ballot, on a young
+    /// open-crowd round, is REFUSED — never resolved. Plus the three authorized paths and the
+    /// partly-voted restricted electorate (still refused).
+    #[test]
+    fn a_non_opener_may_not_close_a_young_round_pre_quorum() {
+        let opener = 111_u64;
+        let passer_by = 222_u64;
+        let now = 1_000_000_i64;
+        let just_opened = now - 5; // 5s ago — far under MIN_ROUND_SECS
+        let one_ballot = vec![ident("a").0]; // a lone open-crowd vote
+
+        // THE HOLE, GATED: a passer-by closing a young open crowd right after one ballot is refused.
+        let verdict = authorize_close(passer_by, opener, now, just_opened, None, &one_ballot);
+        assert!(
+            matches!(verdict, CloseAuth::Denied { wait_secs } if wait_secs > 0),
+            "a non-opener pre-window close of an open crowd must be REFUSED, got {verdict:?}"
+        );
+
+        // The host (DM) may always end the beat.
+        assert_eq!(
+            authorize_close(opener, opener, now, just_opened, None, &one_ballot),
+            CloseAuth::Opener,
+        );
+
+        // Once the fair window elapses, anyone may close a matured round.
+        assert_eq!(
+            authorize_close(
+                passer_by,
+                opener,
+                now,
+                now - MIN_ROUND_SECS,
+                None,
+                &one_ballot
+            ),
+            CloseAuth::Matured,
+        );
+
+        // A restricted electorate that has FULLY voted needs no further wait.
+        let eligible = vec![ident("a").0, ident("b").0];
+        let all_cast = vec![ident("a").0, ident("b").0];
+        assert_eq!(
+            authorize_close(
+                passer_by,
+                opener,
+                now,
+                just_opened,
+                Some(&eligible),
+                &all_cast
+            ),
+            CloseAuth::ElectorateComplete,
+        );
+
+        // …but a restricted electorate only PARTLY voted is still refused before the window.
+        let some_cast = vec![ident("a").0];
+        assert!(
+            matches!(
+                authorize_close(
+                    passer_by,
+                    opener,
+                    now,
+                    just_opened,
+                    Some(&eligible),
+                    &some_cast
+                ),
+                CloseAuth::Denied { .. }
+            ),
+            "a partly-voted restricted electorate must still wait out the window",
+        );
+    }
+
+    /// The gate reads the REAL live round's shape (electorate + ballots) the same way
+    /// `handle_close` does, and a refused close resolves NOTHING — the round and its single ballot
+    /// stand untouched (the anti-drive-by property, over the real offering store).
+    #[test]
+    fn the_close_gate_reads_the_real_round_and_a_refusal_resolves_nothing() {
+        let channel = 771_050;
+        open_channel(channel, 7);
+        let host = 900_u64;
+        let passer_by = 901_u64;
+
+        // A passer-by casts ONE ballot, then immediately tries to close.
+        let pos = position_of_arg(channel, KP_PRESS_ON as i64);
+        assert!(matches!(
+            cast_ballot(channel, ident("driveby"), 0, pos),
+            BallotCast::Recorded(_)
+        ));
+
+        let (electorate, voted) =
+            with_live::<DungeonOffering, _>(channel, |l| match l.round.as_ref() {
+                Some(r) => (
+                    r.electorate.clone(),
+                    r.ballots.keys().cloned().collect::<Vec<String>>(),
+                ),
+                None => (None, Vec::new()),
+            })
+            .unwrap();
+        let now = now_secs();
+        let verdict = authorize_close(passer_by, host, now, now, electorate.as_deref(), &voted);
+        assert!(
+            matches!(verdict, CloseAuth::Denied { .. }),
+            "an open-crowd round is restricted electorate-None, so a non-host must wait the window; \
+             got {verdict:?}"
+        );
+
+        // Because the handler refuses on Denied (returns before `close_round`), the round is intact:
+        // its single ballot still stands and nothing resolved.
+        let ballots =
+            with_live::<DungeonOffering, _>(channel, |l| l.round.as_ref().map(|r| r.ballots.len()))
+                .unwrap();
+        assert_eq!(
+            ballots,
+            Some(1),
+            "a refused close resolves nothing — the ballot stands"
+        );
         close_in::<DungeonOffering>(channel);
     }
 
