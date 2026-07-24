@@ -112,8 +112,14 @@ impl SessionResumeStore for SqliteRpgResumeStore {
         let _ = self.block(self.db.rpg_session_open(&self.player, key, &id.0, &seed));
     }
 
-    fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity) {
-        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()));
+    fn record_landed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+    ) -> bool {
+        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()))
     }
 
     fn record_landed_attributed(
@@ -123,7 +129,7 @@ impl SessionResumeStore for SqliteRpgResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         attribution: &Attribution,
-    ) {
+    ) -> bool {
         // A landed move on a session we never saw opened still establishes the open row (default
         // cfg); in practice `record_open` always precedes it (the host opens before it advances).
         let _ = self.block(self.db.rpg_session_open(&self.player, key, &id.0, "-"));
@@ -140,10 +146,14 @@ impl SessionResumeStore for SqliteRpgResumeStore {
                 Attribution::Asserted { .. } => "a".to_string(),
             },
         };
-        let _ = self.block(
+        // Durable-or-quarantine: report whether the landed move actually persisted to the RPG store
+        // (mirrors the offerings file/journal discipline). The host quarantines the session on false,
+        // so a swallowed SQLite failure can no longer drop a committed turn from the durable log.
+        self.block(
             self.db
                 .rpg_session_record_move(&self.player, key, &id.0, &row),
-        );
+        )
+        .is_ok()
     }
 
     fn forget(&self, key: &str, id: &SessionId) {
