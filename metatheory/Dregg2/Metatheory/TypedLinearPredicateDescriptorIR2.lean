@@ -1617,30 +1617,33 @@ def source : Formula 16 :=
 
 def program : QuadProgram 8 24 16 := { atomTerms := atomTerms, source := source }
 
-set_option maxHeartbeats 1200000 in
-theorem program_witnessCount : witnessCount program.source = 47 := by rfl
+/- MEASURE — concrete generated resources of the compiled nonlinear descriptor.
 
-set_option maxHeartbeats 1200000 in
-theorem program_equations : program.source.graphCost.equations = 78 := by
-  show (Dregg2.Metatheory.ArithmetizationCost.BooleanGraph.cost program.source.toGraph).equations = 78
-  rw [Dregg2.Metatheory.ArithmetizationCost.BooleanGraph.equations_exact]
-  rfl
+These are MEASUREMENTS, not load-bearing proofs.  The SYMBOLIC, load-bearing
+statement is `QuadProgram.descriptor_exact_resources` (proven, fast, kernel-clean,
+pinned in `#assert_all_clean` and cited across the peephole tree): for any
+`QuadProgram`, `piCount = pub`, `traceWidth = pub + sec + atoms + witnessCount
+source`, and `constraints.length = pub + atoms + graphCost.equations + 1`.
 
-/-- MEASURE — generated resources of the compiled nonlinear descriptor, from the
-proven `descriptor_exact_resources`.  Generated: `piCount 8`, `traceWidth 95`,
-`103 constraints`.  Hand (`quantifiedAbsenceDesc`): `traceWidth 28`, `20
-constraints`, `piCount 8`.  The compiled form is larger because it is a GENERAL
-front end carrying per-atom residual columns (16), inverse witnesses, Boolean
-gates, and an accept gate — and it comes with whole-descriptor `sound`, which the
-hand descriptor lacks. -/
-theorem generated_resources :
-    (QuadProgram.descriptor program).piCount = 8 /\
-    (QuadProgram.descriptor program).traceWidth = 95 /\
-    (QuadProgram.descriptor program).constraints.length = 103 := by
-  obtain ⟨hpi, htw, hcon⟩ := QuadProgram.descriptor_exact_resources program
-  refine ⟨hpi, ?_, ?_⟩
-  · rw [htw, program_witnessCount]
-  · rw [hcon, program_equations]
+The concrete integers for THIS program are read off below by COMPILED `Bool`
+evaluation (`#guard`), which does NOT kernel-whnf-reduce the whole boolean-graph
+fold.  The previous `by rfl` proofs DID force that fold through the kernel — the
+source of the maxHeartbeats-1200000 band-aid and the file's slow build — while
+proving nothing that any downstream theorem consumes (nothing does; grep the
+tree).  Keeping them as `#guard` measurements retains the exact same checked
+numbers with none of the whnf cost.
+
+Generated: `piCount 8`, `traceWidth 95`, `103 constraints`; the source formula
+has `witnessCount 47` and `graphCost.equations 78`.  Hand (`quantifiedAbsenceDesc`):
+`traceWidth 28`, `20 constraints`, `piCount 8`.  The compiled form is larger
+because it is a GENERAL front end carrying per-atom residual columns (16), inverse
+witnesses, Boolean gates, and an accept gate — and it comes with whole-descriptor
+`sound`, which the hand descriptor lacks. -/
+#guard witnessCount program.source == 47
+#guard program.source.graphCost.equations == 78
+#guard (QuadProgram.descriptor program).piCount == 8
+#guard (QuadProgram.descriptor program).traceWidth == 95
+#guard (QuadProgram.descriptor program).constraints.length == 103
 
 /-- Non-vacuous faithfulness of the BILINEAR tooth: atom 4's truth is EXACTLY the
 BabyBear⁴ multiply limb-0 polynomial `prod₀ = w₀·d₀ + 11·(w₁·d₃ + w₂·d₂ + w₃·d₁)`
@@ -1679,7 +1682,6 @@ end QuantifiedAbsence
   QuadProgram.atom_link_field,
   QuadProgram.sound,
   QuadProgram.public_sound,
-  QuantifiedAbsence.generated_resources,
   QuantifiedAbsence.prod0_bilinear_faithful,
   QuantifiedAbsence.program_sound,
   graphConstraintsAt_length,
