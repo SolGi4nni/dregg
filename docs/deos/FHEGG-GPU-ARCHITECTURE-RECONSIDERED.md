@@ -96,3 +96,29 @@ iGPU's cache sweet spot and the kernel goes bandwidth-limited (the iGPU shares s
 mobile part, batch ≈ 256 is the optimal operating point; a discrete GPU (more compute + dedicated VRAM
 bandwidth — the 6750 XT, or F2 HBM) would peak higher and at a larger batch. The lever is real but
 hardware-bounded: pick the batch to the adapter's cache, do not just crank it.
+
+### The decisive number: the FULL multiply (the convex-engine / dark-AMM op) — measured on both
+
+Not the NTT primitive — the actual ct-poly multiply (forward NTT + pointwise + inverse NTT) the convex engine
+and dark AMM hammer. GPU/CPU, bit-exact:
+
+| batch | Metal M2 Max | AMD iGPU (RADV GFX1150) |
+|---|---|---|
+| 1 | 0.88× | 0.16× (launch overhead) |
+| 16 | 4.93× | 1.24× (crossover) |
+| 64 | 8.97× | 2.32× |
+| 256 | **9.98× (peak)** | 3.07× |
+| 1024 | 8.53× | **3.35× (peak)** |
+| 2048 | 8.48× | 2.58× |
+
+**The multiply wins bigger than the NTT** (Metal ~10× vs 5.5×; iGPU 3.35× vs 2.05×) and crosses over EARLIER
+(batch 4–16) because it is more arithmetic-dense (2 forward NTTs + pointwise + 1 inverse per multiply). On the
+iGPU it also PEAKS LATER (batch 1024) than the NTT (batch 256) — the extra compute keeps the ALUs busy further
+before the shared-memory bandwidth wall. The discrete 6750 XT (disk-blocked) sits between the iGPU and Metal
+(~5–7× expected).
+
+**This is the load-bearing conclusion:** the FOLD loses on GPU, but the MULTIPLY — the op DrEX's
+convex/dark-AMM path actually spends its time on — wins **3.35× on the mobile AMD iGPU and ~10× on Metal**,
+bit-exact, batch-scaling. The fold-only analysis would have shipped "GPU is marginal" while the real hot op
+runs an order of magnitude faster on the silicon. That is the myopia, fully corrected with the real operation
+on the real hardware.
