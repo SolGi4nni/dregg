@@ -342,6 +342,67 @@ def assert_generated_declared() -> None:
         )
 
 
+# Directories a source scan must not walk: build output, vendored trees, and the mirror-gate
+# canary, which holds DELIBERATE copies of descriptor-bearing sources (a scan that took those for
+# real consumers would red on the fixtures whose whole job is to look real).
+_SCAN_SKIP_DIRS = frozenset({
+    ".git", ".lake", "target", "vendor", "node_modules", "tmp", "old-docs",
+    "ts-sdk.archived", "mirror-gates",
+})
+
+
+def fp_bearing_sources() -> list[Path]:
+    """Every Rust source that carries the FP CONVENTION: a `pub const X_{JSON,TSV}: &str =
+    include_str!("../descriptors/…")` together with the paired `pub const X_FP: &str =
+    "<sha256>"` that `compute_fp_rewrites` rewrites.
+
+    A file with that convention and NO row in `RUST_FP_FILES` gets its FP constant left stale by
+    the emit, is absent from the stamp's `fp_file_sha256`, and is not snapshotted by
+    `check-descriptor-drift.sh` — three gates blind at once, silently."""
+    fp_const = re.compile(r'pub const (\w+)_FP:\s*&str\s*=\s*"[0-9a-f]{64}"')
+    found: list[Path] = []
+    # `os.walk` with in-place pruning, NOT `rglob` — rglob enumerates every skipped tree before
+    # the filter sees it, and `target/` alone makes that a minutes-long walk.
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in _SCAN_SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(".rs"):
+                continue
+            path = Path(dirpath) / fn
+            try:
+                text = path.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if "descriptors/" not in text:
+                continue
+            bases = {
+                c[:-5] if c.endswith("_JSON") else c[:-4]
+                for c in const_to_file(text) if c.endswith(("_JSON", "_TSV"))
+            }
+            if bases & set(fp_const.findall(text)):
+                found.append(path)
+    return found
+
+
+def assert_fp_files_declared() -> None:
+    """Every FP-bearing Rust source must be DECLARED in `RUST_FP_FILES`.
+
+    The twin of `assert_generated_declared`, on the other half of the change-set. `RUST_FP_FILES`
+    is a hand list over a set that GROWS every time a descriptor gets a new Rust consumer, and a
+    hand list over a growing set cannot go red — it just quietly covers less."""
+    undeclared = sorted(
+        str(p.relative_to(ROOT)) for p in fp_bearing_sources() if p not in RUST_FP_FILES
+    )
+    if undeclared:
+        sys.exit(
+            "emit_descriptors: these Rust sources carry the `*_FP` sha256 convention but are NOT "
+            "declared in RUST_FP_FILES:\n  " + "\n  ".join(undeclared)
+            + "\n  Add them there. Until you do, the emit never rewrites their FP constants, the "
+              "PROVENANCE stamp does not cover them, and scripts/check-descriptor-drift.sh does "
+              "not snapshot them — their pins can go stale with nothing red."
+        )
+
+
 def guarded_paths() -> list[str]:
     """The repo-relative paths this driver can REWRITE — `install_and_stamp`'s whole change-set:
     the descriptor directory, the Rust sources carrying generated `*_FP` constants, and the
@@ -1253,8 +1314,10 @@ def install_and_stamp(written: dict[str, str]) -> None:
     change is byte-safe (it cannot re-key a descriptor) and installs without a VK-regeneration
     acknowledgement. A byte-identical emission is a silent no-op."""
     # Nothing installs a module the drift gate cannot see: every buffered generated module must
-    # be declared in GENERATED_RS_PATHS, which is what `check-descriptor-drift.sh` snapshots.
+    # be declared in GENERATED_RS_PATHS, and every FP-bearing source in RUST_FP_FILES. Together
+    # those two tuples ARE `guarded_paths()`, which is what `check-descriptor-drift.sh` snapshots.
     assert_generated_declared()
+    assert_fp_files_declared()
 
     # Converge the generated modules onto rustfmt's shape BEFORE the diff, so what we compare
     # against disk is exactly what we would write — and equals what the pre-commit hook and
