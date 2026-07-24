@@ -266,7 +266,7 @@ const signed = await window.dregg.signOfferingTurn({
 
 // 4. POST the SignedAction to the server's act-signed route (the follow-up
 //    lane), alongside the action fields the message was signed over:
-await fetch(`/api/offerings/${offeringKey}/sessions/${sessionId}/act-signed`, {
+await fetch(`/offerings/${offeringKey}/session/${sessionId}/act-signed`, {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
