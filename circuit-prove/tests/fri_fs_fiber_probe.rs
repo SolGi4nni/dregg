@@ -35,10 +35,14 @@
 
 use std::collections::HashMap;
 
-use p3_baby_bear::{BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16};
+use p3_baby_bear::{
+    BABYBEAR_POSEIDON2_RC_16_EXTERNAL_FINAL, BABYBEAR_POSEIDON2_RC_16_EXTERNAL_INITIAL,
+    BABYBEAR_POSEIDON2_RC_16_INTERNAL, BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16,
+};
 use p3_challenger::{CanObserve, DuplexChallenger, FieldChallenger};
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{BasedVectorSpace, PrimeField32};
+use p3_poseidon2::{ExternalLayerConstants, Poseidon2};
 
 type Perm16 = Poseidon2BabyBear<16>;
 type Chal = DuplexChallenger<BabyBear, Perm16, 16, 8>;
@@ -108,6 +112,103 @@ fn fold_beta_fiber_is_flat_over_full_permutation() {
     assert_eq!(
         distinct, k as usize,
         "unexpected collision in the full-permutation fold-beta map (would BE a finding)"
+    );
+}
+
+/// Build a ROUND-REDUCED BabyBear Poseidon2-16 from the deployed round constants: `rf_half` initial
+/// and `rf_half` terminal external rounds (deployed: 4 + 4) and `rp` internal rounds (deployed: 13).
+fn reduced_perm(rf_half: usize, rp: usize) -> Poseidon2BabyBear<16> {
+    Poseidon2::new(
+        ExternalLayerConstants::new(
+            BABYBEAR_POSEIDON2_RC_16_EXTERNAL_INITIAL[..rf_half].to_vec(),
+            BABYBEAR_POSEIDON2_RC_16_EXTERNAL_FINAL[..rf_half].to_vec(),
+        ),
+        BABYBEAR_POSEIDON2_RC_16_INTERNAL[..rp].to_vec(),
+    )
+}
+
+/// Degree over `F_p` of `c |-> f(c)` sampled on `0..n`, by finite differences: a polynomial of degree
+/// `d` has vanishing `(d+1)`-th difference. Returns `None` if the degree is `>= n-1` (saturated
+/// beyond what the sample can see).
+fn degree_by_finite_differences(vals: &[BabyBear]) -> Option<usize> {
+    let mut v: Vec<BabyBear> = vals.to_vec();
+    let mut d = 0usize;
+    while v.len() > 1 {
+        if v.iter().all(|x| x.as_canonical_u32() == 0) {
+            return Some(d.saturating_sub(1));
+        }
+        v = v.windows(2).map(|w| w[1] - w[0]).collect();
+        d += 1;
+    }
+    None
+}
+
+/// **The algebraic margin of the Fiat-Shamir map, MEASURED.** A protocol-coupled algebraic attack
+/// needs a tractable low-degree description of the challenge as a function of prover-controlled
+/// input. BabyBear-Poseidon2's S-box is `x^7`, so that degree grows like `7^(S-box applications)`.
+/// Here we interpolate `controlled lane |-> beta_0` exactly over `F_p` (finite differences) and read
+/// off its degree.
+///
+/// Two measured facts, both scoping the wedge:
+///   * plonky3 structurally REFUSES `rounds_f < 6` (`Poseidon2::new` panics, citing the paper's
+///     §7.1 statistical-attack floor), so the deeply-round-reduced configurations an algebraic
+///     attack would want are not reachable through the shipped constructor at all -- an attacker
+///     must reimplement the permutation.
+///   * even at that MINIMUM permitted external-round count, and with the internal rounds stripped to
+///     zero, the map is already saturated past this sample window. The deployed (4+4, 13) map is far
+///     beyond it. So there is no low-degree description to encode, which is exactly why the honest
+///     wedge is absorption/rate structure rather than a degree attack on the full permutation.
+#[test]
+fn fs_map_algebraic_degree_growth() {
+    const N: usize = 2400; // can exhibit degrees up to ~2398; 7^4 = 2401 is already past it
+    let prefix = [11u32, 22, 33, 44, 55, 66, 77, 88];
+    println!(
+        "[fs-degree] deployed BabyBear-Poseidon2-16 is (4+4 external, 13 internal), S-box x^7"
+    );
+    println!("[fs-degree] plonky3 refuses rounds_f < 6, so 3+3 external is the library floor");
+    for (rf_half, rp) in [(3usize, 0usize), (3, 1), (3, 13), (4, 13)] {
+        let perm = reduced_perm(rf_half, rp);
+        let vals: Vec<BabyBear> = (0..N as u32)
+            .map(|c| {
+                let mut ch = Chal::new(perm.clone());
+                for &x in prefix.iter() {
+                    ch.observe(BabyBear::new(x));
+                }
+                ch.observe(BabyBear::new(c));
+                let beta: EF4 = ch.sample_algebra_element();
+                beta.as_basis_coefficients_slice()[0]
+            })
+            .collect();
+        let deg = degree_by_finite_differences(&vals);
+        let shown = match deg {
+            Some(d) => format!("{d}"),
+            None => format!(">= {}", N - 1),
+        };
+        let tag = if (rf_half, rp) == (4, 13) {
+            "  <-- DEPLOYED"
+        } else {
+            ""
+        };
+        println!(
+            "[fs-degree] external {rf_half}+{rf_half}, internal {rp:2}: deg(beta_0) = {shown}{tag}"
+        );
+    }
+    // The deployed configuration must be saturated past the sample window: if it were not, the
+    // challenge would admit a low-degree description in the prover-controlled lane.
+    let deployed: Vec<BabyBear> = (0..N as u32)
+        .map(|c| {
+            let mut ch = Chal::new(default_babybear_poseidon2_16());
+            for &x in prefix.iter() {
+                ch.observe(BabyBear::new(x));
+            }
+            ch.observe(BabyBear::new(c));
+            let beta: EF4 = ch.sample_algebra_element();
+            beta.as_basis_coefficients_slice()[0]
+        })
+        .collect();
+    assert!(
+        degree_by_finite_differences(&deployed).is_none(),
+        "deployed FS map is low-degree in the controlled lane -- that WOULD be the wedge"
     );
 }
 
