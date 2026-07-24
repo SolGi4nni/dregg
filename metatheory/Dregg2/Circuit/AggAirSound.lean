@@ -235,7 +235,7 @@ the `injection` steps the deleted proof performed BESIDE the refuted hypothesis.
 theorem childCode_injective : Function.Injective childCode := by
   rintro ⟨a, b⟩ ⟨c, d⟩ h
   simp only [childCode, List.cons.injEq, and_true] at h
-  simp [h.1, h.2.1]
+  exact Prod.ext h.1 h.2
 
 /-- **THE COMBINE-DIGEST FORGERY GAME.** The adversary is handed a sampled domain-separation tag and
 WINS iff it outputs two ordered child-digest pairs that DIFFER yet fold to the SAME parent digest under
