@@ -37,7 +37,7 @@ theorem weighted_quadratic_term_decrypts {P : Params} {A m : ℕ} {prodCt : Ct P
     (hscaleSafe : SafeNoise P |(A : ℤ) * prodCt.noiseAt m|) :
     decryptPhase P ((A : ℤ) * prodCt.phase) = (A * m : ℕ) := by
   have hphase : prodCt.phase = (P.Δ : ℤ) * m + prodCt.noiseAt m := by
-    unfold Ct.noiseAt; ring
+    unfold Ct.noiseAt; push_cast; ring
   have hscaled : (A : ℤ) * prodCt.phase
       = (P.Δ : ℤ) * ((A * m : ℕ) : ℤ) + (A : ℤ) * prodCt.noiseAt m := by
     rw [hphase]; push_cast; ring
@@ -70,8 +70,37 @@ theorem weighted_term_injective_below_modulus {P : Params} {A A' m : ℕ} {prodC
   rw [hA, hA'] at hprice
   exact_mod_cast hprice
 
+/-- **The complete 2-asset quadratic pricing function decrypts exactly.** A quadratic cost
+`c = A·q₁² + B·q₁·q₂ + C·q₂²` over encrypted positions — the public-weighted SUM of the three product
+ciphertexts `p11, p12, p22` (which decrypt to `m₁², m₁·m₂, m₂²`) — decrypts to EXACTLY the plaintext quadratic
+`A·m₁² + B·m₁·m₂ + C·m₂²`, provided the quadratic value does not wrap (`< t`) and the summed weighted noise is
+decrypt-safe. This is a full, deployable Oracle-Pit pricing object (a 2-asset quadratic cost), not one term —
+and it is ONE homomorphic evaluation (three multiplies + public-weighted adds), so its budget is bounded, not
+an iterated squaring. Each of the three products rides the ct×ct multiply that wins 5×/10× on GPU, so a
+batched pricing pass is compute-bound GPU-favorable. -/
+theorem quadratic_form_2var_decrypts {P : Params} (A B C m₁ m₂ : ℕ) (p11 p12 p22 : Ct P)
+    (hwrap : A * (m₁ * m₁) + B * (m₁ * m₂) + C * (m₂ * m₂) < P.t)
+    (hnoise : SafeNoise P |(A : ℤ) * p11.noiseAt (m₁ * m₁)
+        + (B : ℤ) * p12.noiseAt (m₁ * m₂) + (C : ℤ) * p22.noiseAt (m₂ * m₂)|) :
+    decryptPhase P ((A : ℤ) * p11.phase + (B : ℤ) * p12.phase + (C : ℤ) * p22.phase)
+      = ((A * (m₁ * m₁) + B * (m₁ * m₂) + C * (m₂ * m₂) : ℕ) : ℤ) := by
+  have e11 : p11.phase = (P.Δ : ℤ) * (m₁ * m₁) + p11.noiseAt (m₁ * m₁) := by
+    unfold Ct.noiseAt; push_cast; ring
+  have e12 : p12.phase = (P.Δ : ℤ) * (m₁ * m₂) + p12.noiseAt (m₁ * m₂) := by
+    unfold Ct.noiseAt; push_cast; ring
+  have e22 : p22.phase = (P.Δ : ℤ) * (m₂ * m₂) + p22.noiseAt (m₂ * m₂) := by
+    unfold Ct.noiseAt; push_cast; ring
+  have hcombine : (A : ℤ) * p11.phase + (B : ℤ) * p12.phase + (C : ℤ) * p22.phase
+      = (P.Δ : ℤ) * ((A * (m₁ * m₁) + B * (m₁ * m₂) + C * (m₂ * m₂) : ℕ) : ℤ)
+        + ((A : ℤ) * p11.noiseAt (m₁ * m₁) + (B : ℤ) * p12.noiseAt (m₁ * m₂)
+           + (C : ℤ) * p22.noiseAt (m₂ * m₂)) := by
+    rw [e11, e12, e22]; push_cast; ring
+  rw [hcombine]
+  exact decrypt_exact P _ _ hwrap hnoise
+
 #assert_all_clean [Market.OraclePitQuadratic.weighted_quadratic_term_decrypts,
   Market.OraclePitQuadratic.unweighted_term_is_product_decrypt,
-  Market.OraclePitQuadratic.weighted_term_injective_below_modulus]
+  Market.OraclePitQuadratic.weighted_term_injective_below_modulus,
+  Market.OraclePitQuadratic.quadratic_form_2var_decrypts]
 
 end Market.OraclePitQuadratic
