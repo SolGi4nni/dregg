@@ -70,6 +70,9 @@ import Dregg2.Games.PrivatePreferenceDescriptor
 import Dregg2.Games.PrivatePreferenceCellDescriptor
 import Dregg2.Games.DescentCensusDescriptor
 import Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor
+import Dregg2.Circuit.Emit.ShieldedSpendDescriptor
+import Dregg2.Circuit.Emit.ShieldedWideValueLinkDescriptor
+import Dregg2.Circuit.ShieldedValueRangeDischarge
 import Dregg2.Games.PrivateRaidAssignmentDescriptor
 import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
@@ -216,6 +219,18 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Games.DescentCensusDescriptor.descentCensusDescriptor)
   , ("shielded-whole-note-swap-substrate-v1.json",
       Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor.shieldedWholeNoteSwapSubstrateDescriptor)
+  -- ⚑ L3 (shielded apex redesign): the three already-PROVEN, previously-unrouted shielded
+  -- descriptors land as emitted authority. Each is byte-pinned by a machine-checked
+  -- `#guard emitVmJson2 <desc> == <GOLDEN>` in its authoring module — this table makes those
+  -- bytes the SOLE checked-in artifact (house-law #1 for the shielded family). #15 spend-root
+  -- pin, #17 ranged value-link + wraparound-refusal, #17 wide 8-lane value binding. Soundness
+  -- WHEN USED still rests on L0's committed accumulator + the L4 route (not yet live).
+  , ("dregg-shielded-spend-pinned-root-v1.json",
+      Dregg2.Circuit.Emit.ShieldedSpendDescriptor.shieldedSpendDesc)
+  , ("dregg-shielded-value-link-conserve-ranged-v1.json",
+      Dregg2.Circuit.ShieldedValueRangeDischarge.shieldedValueLinkRangedDesc)
+  , ("dregg-shielded-wide-value-link-conserve-v1.json",
+      Dregg2.Circuit.Emit.ShieldedWideValueLinkDescriptor.shieldedWideValueLinkDesc)
   , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage0-exact-public.json",
       Market.PrivateBookBfvExactPublicConsumer.stage0Descriptor)
   , ("private-book-bfv-odd-ntt-butterfly-q0-n8-stage1-exact-public.json",
@@ -233,7 +248,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 59
+#guard byNameDescriptors.length == 62
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
