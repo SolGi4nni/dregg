@@ -189,29 +189,15 @@ theorem effectVmCommit_binds_record_digest_or_collides
   · refine Or.inr ⟨fun hq => hrd ?_, h⟩
     exact congrArg (fun q : ℤ × ℤ × ℤ × ℤ => q.2.2.2) hq
 
-/-- **`effectVmCommit_binds_cap_root_or_collides` (corollary), UNCONDITIONAL.** Equal commitments over
-otherwise-identical limbs EITHER force an equal `cap_root`, OR exhibit a genuine `hash_4_to_1`
-collision — at the third intermediate if that absorption already collided, otherwise at the root. The
-deployed twin of cap-Phase-A's "the openable c-list root is bound". -/
-theorem effectVmCommit_binds_cap_root_or_collides
-    (balLo balHi nonce : ℤ) (fields : Fin 8 → ℤ) (capRoot capRoot' recordDigest : ℤ)
-    (h : effectVmCommit h4 balLo balHi nonce fields capRoot recordDigest
-       = effectVmCommit h4 balLo balHi nonce fields capRoot' recordDigest) :
-    capRoot = capRoot'
-      ∨ Coll4 h4 ((fields 5), (fields 6), (fields 7), capRoot)
-          ((fields 5), (fields 6), (fields 7), capRoot')
-      ∨ Coll4 h4 (rootQuad h4 balLo balHi nonce fields capRoot recordDigest)
-          (rootQuad h4 balLo balHi nonce fields capRoot' recordDigest) := by
-  by_cases hcr : capRoot = capRoot'
-  · exact Or.inl hcr
-  by_cases hi3 : h4 (fields 5) (fields 6) (fields 7) capRoot
-      = h4 (fields 5) (fields 6) (fields 7) capRoot'
-  · -- the third intermediate already collided: THAT is the collision.
-    refine Or.inr (Or.inl ⟨fun hq => hcr ?_, hi3⟩)
-    exact congrArg (fun q : ℤ × ℤ × ℤ × ℤ => q.2.2.2) hq
-  · -- the intermediates differ, so the two root quads differ while their images agree.
-    refine Or.inr (Or.inr ⟨fun hq => hi3 ?_, h⟩)
-    exact congrArg (fun q : ℤ × ℤ × ℤ × ℤ => q.2.2.1) hq
+/-! ⚑ **`effectVmCommit_binds_cap_root_or_collides` — DELETED (2026-07-24), replaced by the
+REDUCTION `CommitDifferentialRom.effectVmCommit_binds_cap_root_rom`.** The disjunction was a bare
+`binds ∨ Coll4` export with NO consumers: at deployed BabyBear parameters a `hash_4_to_1` collision
+EXISTS by pigeonhole, so the statement held through its right branch with no binding — an extractor
+witness posing as a security statement. Its two-branch case split (third-intermediate collision vs
+root-quad collision) is exactly the inner/outer union bound `narrowRow_binds_rom` performs at the
+sampled oracle, where the floor (`keyedRom_hard`, the birthday bound) is PROVED. The
+`record_digest` disjunction above is RETAINED — `RotatedCommitDifferential` still `rcases` on it —
+with ITS reduction successor `effectVmCommit_binds_record_digest_rom` landed beside it. -/
 
 /-- **⚑ THE NO-STRENGTH-LOST TOOTH.** The deleted `effectVmCommit_binds_record_digest` is EXACTLY the
 injective special case of the unconditional tooth: assume the injectivity the old carrier asserted and
@@ -297,7 +283,6 @@ private def realDigestC : ℤ := 42  -- a residue-bearing cell (real authority d
 #assert_axioms effectVmCommit_absorbs_limbs
 #assert_axioms record_digest_at_index_12
 #assert_axioms effectVmCommit_binds_record_digest_or_collides
-#assert_axioms effectVmCommit_binds_cap_root_or_collides
 #assert_axioms effectVmCommit_binds_record_digest_of_injective
 #assert_axioms coll4_refutable_of_injective
 #assert_axioms h4q_rootQuad
