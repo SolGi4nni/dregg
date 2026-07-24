@@ -36,6 +36,8 @@ import Dregg2.Circuit.Emit.AttestedFactMembershipEmit
 import Dregg2.Circuit.Emit.AutomataflResolveEmit
 import Dregg2.Circuit.Emit.AutomataflStepEmit
 import Dregg2.Circuit.Emit.AutomataflNGenGolden
+import Dregg2.Circuit.Emit.AutomataflLegCEmit
+import Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
@@ -117,6 +119,14 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.AutomataflNGenGolden.automataflStepDescN11)
   , ("automatafl-resolve-n11.json",
       Dregg2.Circuit.Emit.AutomataflNGenGolden.automataflResolveDescN11)
+  , ("automatafl-legc-n5.json",
+      Dregg2.Circuit.Emit.AutomataflLegCEmit.automataflLegCDescN 5)
+  , ("automatafl-legc-n11.json",
+      Dregg2.Circuit.Emit.AutomataflLegCEmit.automataflLegCDescN 11)
+  , ("automatafl-resolve-marks-n2.json",
+      Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone.automataflResolveMarksDescN 2)
+  , ("automatafl-resolve-marks-n11.json",
+      Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone.automataflResolveMarksDescN 11)
   , ("blinded-membership-4ary-depth2.json",
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 2)
   , ("blinded-membership-4ary-depth8.json",
@@ -218,7 +228,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 53
+#guard byNameDescriptors.length == 57
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

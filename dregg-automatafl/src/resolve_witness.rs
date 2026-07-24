@@ -98,12 +98,12 @@ impl ResolveTrace {
 
 /// The canonical integer value of a felt (in `[0, p)`); small for every column a `forced_ge0`
 /// head or the `i64` evaluator reads.
-fn canon(b: BabyBear) -> i64 {
+pub(crate) fn canon(b: BabyBear) -> i64 {
     b.0 as i64
 }
 
 /// A signed integer lifted into BabyBear.
-fn bb(x: i64) -> BabyBear {
+pub(crate) fn bb(x: i64) -> BabyBear {
     if x >= 0 {
         BabyBear::from_u64(x as u64)
     } else {
@@ -112,7 +112,7 @@ fn bb(x: i64) -> BabyBear {
 }
 
 /// Set a column iff it is currently unfilled; return `true` iff this call newly filled it.
-fn set_if_none(vals: &mut [Option<BabyBear>], col: usize, v: BabyBear) -> bool {
+pub(crate) fn set_if_none(vals: &mut [Option<BabyBear>], col: usize, v: BabyBear) -> bool {
     if vals[col].is_none() {
         vals[col] = Some(v);
         true
@@ -251,7 +251,7 @@ fn fill_forced_ge0(
 
 /// Set a one-hot selector vector to the indicator of `idx` (`sel[j] = [j == idx]`). Fails closed
 /// on an out-of-board index.
-fn fill_one_hot(
+pub(crate) fn fill_one_hot(
     vals: &mut [Option<BabyBear>],
     n: usize,
     sel: impl Fn(usize) -> usize,
@@ -432,7 +432,7 @@ pub fn automatafl_resolve_trace(
 /// Seed the genuinely-free trace columns: `old` cells, `ONE`, the witnessed automaton position +
 /// one-hots, and each move's coordinate + range bits + source one-hots + destination endpoint
 /// one-hots.
-fn seed(
+pub(crate) fn seed(
     l: &ResolveLayout,
     old: &Board,
     ms: &[Move; 2],
@@ -506,7 +506,7 @@ fn seed(
 
 /// Fire the gadget fillers (forced_ge0 blocks + coordinate-pinned one-hots) whose deps are
 /// resolved. Returns whether any column was newly filled.
-fn fire_fillers(
+pub(crate) fn fire_fillers(
     l: &ResolveLayout,
     ms: &[Move; 2],
     vals: &mut [Option<BabyBear>],

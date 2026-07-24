@@ -951,8 +951,45 @@ pub fn board_window_of_chain(
     compute_root_board_window(&refs)
 }
 
+/// **THE MIXED-WIDTH CLEAN-HANDOFF HOST MIRROR** — [`board_window_of_chain`] for a MULTI-ROUND
+/// automatafl turn, whose chain has ONE `C_last → R` boundary where the window width changes (the
+/// conflict braid's 32-lane RoundState windows hand off to the clean round's narrower `[board ‖
+/// marks ‖ auto]` windows).
+///
+/// It mirrors the in-circuit fold EXACTLY: the conflict sub-chain folds uniformly (whole 32-lane
+/// window seam), the clean sub-chain folds uniformly (whole `r_window`-lane seam), and at the single
+/// width-change boundary only the leading `clean_handoff` `board ‖ marks` lanes are compared (the
+/// analogue of [`board_window_clean_handoff_connects`], which connects the prefix and DROPS `locked
+/// ‖ waiting ‖ auto`). The root window is the MIXED `[C_first.IN ‖ R_last.OUT]` — genesis RoundState
+/// (32 lanes) and the clean round's final state (`r_window` lanes). Fail-closed at the boundary
+/// exactly as the in-circuit connect is UNSAT on a `board ‖ marks` prefix disagreement — the
+/// forged-mid analogue at the C→R handoff — surfaced in milliseconds instead of hours of proving.
+///
+/// A UNIFORM chain (no width change) is accepted too and behaves identically to
+/// [`board_window_of_chain`]; MORE than one width change is refused (the mirror models a single
+/// clean handoff).
+pub fn board_window_of_chain_with_clean_handoff(
+    turns: &[FinalizedTurn],
+    clean_handoff: usize,
+) -> Result<Option<BoardWindow>, TurnChainError> {
+    let refs: Vec<&FinalizedTurn> = turns.iter().collect();
+    compute_root_board_window_inner(&refs, Some(clean_handoff))
+}
+
 fn compute_root_board_window(
     turns: &[&FinalizedTurn],
+) -> Result<Option<BoardWindow>, TurnChainError> {
+    compute_root_board_window_inner(turns, None)
+}
+
+/// The host board-window mirror, generalized over the C→R clean handoff. `clean_handoff == None` is
+/// the UNIFORM chain (the deployed two-leg / conflict fold — every turn's window is the same width,
+/// each seam the whole window). `clean_handoff == Some(h)` allows ONE width-change boundary, where
+/// only the leading `h` `board ‖ marks` lanes are compared. Both share the pure
+/// [`fold_declared_windows`] core, so the mixed path is not a second implementation of the seam.
+fn compute_root_board_window_inner(
+    turns: &[&FinalizedTurn],
+    clean_handoff: Option<usize>,
 ) -> Result<Option<BoardWindow>, TurnChainError> {
     let mut wins: Vec<(Vec<BabyBear>, Vec<BabyBear>)> = Vec::with_capacity(turns.len());
     let mut declared = 0usize;
@@ -980,38 +1017,124 @@ fn compute_root_board_window(
             ),
         });
     }
-    let w = wins[0].0.len();
+    fold_declared_windows(&wins, clean_handoff)
+        .map(Some)
+        .map_err(|reason| TurnChainError::RecursionFailed { reason })
+}
+
+/// **THE PURE WINDOW-FOLD CORE** — fold the per-turn `(IN, OUT)` windows (already gathered, all
+/// declared, in chain order) the way the in-circuit aggregation tree will, returning the root
+/// `[first.IN ‖ last.OUT]` or the reason a seam does not chain. Shared by the uniform and
+/// clean-handoff host mirrors and unit-tested directly (no leg minting), so the mixed C→R seam is
+/// exercised in milliseconds.
+///
+///   * `clean_handoff == None` — the UNIFORM chain: every window is the same width `w` and each seam
+///     is the whole-window `turn[i].OUT == turn[i+1].IN`. Byte-for-byte the pre-generalization
+///     behavior (the "board-window seam broken" phrasing the deployed canaries match is preserved).
+///   * `clean_handoff == Some(h)` — the MIXED chain: uniform widths EXCEPT at (at most) ONE boundary
+///     (the `C_last → R` handoff), where only the leading `h` `board ‖ marks` lanes are compared —
+///     `locked ‖ waiting ‖ auto` are dropped, consumed at the clean round, exactly as
+///     `board_window_clean_handoff_connects` drops them in-circuit.
+fn fold_declared_windows(
+    wins: &[(Vec<BabyBear>, Vec<BabyBear>)],
+    clean_handoff: Option<usize>,
+) -> Result<BoardWindow, String> {
+    // Per-turn self-consistency: a turn consumes and produces a same-width state (a conflict round is
+    // 32/32, a clean round r/r). A half-empty or lopsided window cannot express the fold.
     for (i, (win_in, win_out)) in wins.iter().enumerate() {
-        if win_in.len() != w || win_out.len() != w {
-            return Err(TurnChainError::TurnProofInvalid {
-                index: i,
-                reason: format!(
-                    "board-window chain: turn {i} declares a {}/{} -lane window, chain width is {w}",
-                    win_in.len(),
-                    win_out.len()
-                ),
-            });
+        if win_in.is_empty() || win_out.is_empty() {
+            return Err(format!(
+                "board-window chain: turn {i} declares an empty window half"
+            ));
+        }
+        if win_in.len() != win_out.len() {
+            return Err(format!(
+                "board-window chain: turn {i} declares a {}/{}-lane window (a turn's IN and OUT \
+                 widths must agree)",
+                win_in.len(),
+                win_out.len()
+            ));
         }
     }
-    // THE SEAM, host-side: turn i's OUT must be turn i+1's IN, lane for lane.
-    for i in 0..wins.len() - 1 {
-        if wins[i].1 != wins[i + 1].0 {
-            return Err(TurnChainError::TurnProofInvalid {
-                index: i + 1,
-                reason: format!(
-                    "board-window seam broken: turn {i}'s OUT window does not equal turn {}'s IN \
-                     window. The in-circuit `connect` would be UNSAT (no root, no verifying \
-                     artifact) — refusing before proving. This is the forged-mid / substituted-\
-                     board case the seam exists to catch.",
-                    i + 1
-                ),
-            });
+    match clean_handoff {
+        None => {
+            let w = wins[0].0.len();
+            for (i, (win_in, win_out)) in wins.iter().enumerate() {
+                if win_in.len() != w || win_out.len() != w {
+                    return Err(format!(
+                        "board-window chain: turn {i} declares a {}/{} -lane window, chain width \
+                         is {w} (a mixed-width chain needs the clean-handoff mirror)",
+                        win_in.len(),
+                        win_out.len()
+                    ));
+                }
+            }
+            // THE SEAM, host-side: turn i's OUT must be turn i+1's IN, lane for lane.
+            for i in 0..wins.len() - 1 {
+                if wins[i].1 != wins[i + 1].0 {
+                    return Err(format!(
+                        "board-window seam broken: turn {i}'s OUT window does not equal turn {}'s \
+                         IN window. The in-circuit `connect` would be UNSAT (no root, no verifying \
+                         artifact) — refusing before proving. This is the forged-mid / \
+                         substituted-board case the seam exists to catch.",
+                        i + 1
+                    ));
+                }
+            }
+        }
+        Some(h) => {
+            if h == 0 {
+                return Err("clean-handoff width must be nonzero".to_string());
+            }
+            let mut boundaries = 0usize;
+            for i in 0..wins.len() - 1 {
+                let wl = wins[i].1.len();
+                let wr = wins[i + 1].0.len();
+                if wl == wr {
+                    // A uniform seam INSIDE a side (conflict→conflict or clean→clean): whole window.
+                    if wins[i].1 != wins[i + 1].0 {
+                        return Err(format!(
+                            "board-window seam broken: turn {i}'s OUT window does not equal turn \
+                             {}'s IN window (uniform boundary inside a fold side).",
+                            i + 1
+                        ));
+                    }
+                } else {
+                    // THE CLEAN HANDOFF — exactly one width change; compare the `board ‖ marks`
+                    // prefix only (the C→R analogue of the mid seam).
+                    boundaries += 1;
+                    if boundaries > 1 {
+                        return Err(
+                            "board-window chain has more than one window-width change — the \
+                             clean-handoff mirror models a SINGLE C->R boundary; refused fail-closed"
+                                .to_string(),
+                        );
+                    }
+                    if h > wl.min(wr) {
+                        return Err(format!(
+                            "clean-handoff prefix {h} exceeds the min window width {} at the C->R \
+                             boundary {i}->{}",
+                            wl.min(wr),
+                            i + 1
+                        ));
+                    }
+                    if wins[i].1[..h] != wins[i + 1].0[..h] {
+                        return Err(format!(
+                            "clean-handoff seam broken: the board||marks prefix ({h} lanes) of turn \
+                             {i}'s OUT window does not equal turn {}'s IN window. The in-circuit \
+                             `board_window_clean_handoff_connects` would be UNSAT — the forged-mid \
+                             analogue at the C->R handoff, refused before proving.",
+                            i + 1
+                        ));
+                    }
+                }
+            }
         }
     }
-    Ok(Some(BoardWindow {
+    Ok(BoardWindow {
         first_in: wins[0].0.clone(),
         last_out: wins[wins.len() - 1].1.clone(),
-    }))
+    })
 }
 
 /// The host mirror of [`aggregate_tree_streaming`]'s schedule over [`HostSeg`]s. Because the
@@ -4383,6 +4506,102 @@ pub(crate) fn segment_combine_expose_with_board_window(
     cb.expose_as_public_output(&parent);
 }
 
+/// **THE CLEAN-HANDOFF SEAM + PARENT MIXED-WINDOW CARRY** — the board-visible half of the mixed-width
+/// merge node ([`segment_combine_expose_with_clean_handoff`]), factored out so it can be driven in a
+/// bare `CircuitBuilder` (where a broken seam is a millisecond `WitnessConflict`) WITHOUT the
+/// tens-of-minutes real aggregation the ordered-digest sponge needs.
+///
+/// It (a) connects the leading `handoff` `board ‖ marks` lanes of the LEFT child's OUT window
+/// (`l_window` lanes) to the RIGHT child's IN window via [`board_window_clean_handoff_connects`],
+/// dropping `locked ‖ waiting ‖ auto`, and (b) returns the parent MIXED window `[L.IN(l_window) ‖
+/// R.OUT(r_window)]` — the whole turn's genesis RoundState and the clean round's final state. The
+/// segment digest (count + `acc`) is the unchanged shared [`seg_poseidon_commit`], added by the
+/// caller.
+fn clean_handoff_seam_and_window(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    l: &[p3_recursion::Target],
+    r: &[p3_recursion::Target],
+    l_window: usize,
+    r_window: usize,
+    handoff: usize,
+) -> Vec<p3_recursion::Target> {
+    // (3) THE CLEAN HANDOFF — connect the `board ‖ marks` prefix, drop the rest.
+    board_window_clean_handoff_connects(cb, l, r, l_window, handoff);
+    // (4) THE PARENT MIXED WINDOW — L.IN(l_window) then R.OUT(r_window).
+    let mut win = Vec::with_capacity(l_window + r_window);
+    win.extend_from_slice(&l[SEG_WIDTH..SEG_WIDTH + l_window]); // L.IN
+    win.extend_from_slice(&r[SEG_WIDTH + r_window..SEG_WIDTH + 2 * r_window]); // R.OUT
+    win
+}
+
+/// **THE MIXED-WIDTH CLEAN-HANDOFF MERGE NODE** — the parent-segment producer for the single
+/// `C_last → R` boundary of a multi-round automatafl turn, where the LEFT child (the folded conflict
+/// braid) carries an `l_window`-lane RoundState window and the RIGHT child (the folded clean round)
+/// carries a NARROWER `r_window`-lane `[board ‖ marks ‖ auto]` window.
+///
+/// This is the analogue of [`segment_combine_expose_with_board_window`] for two children whose
+/// windows have DIFFERENT widths. It runs the SAME three teeth, mixed-width:
+///
+/// ```text
+///   (1) STATE CONTINUITY: L.last_new8 == R.first_old8            ← the cell tooth (unchanged)
+///   (3) CLEAN HANDOFF:    L.OUT[0..handoff] == R.IN[0..handoff]  ← board||marks only; drop the rest
+///   (2) parent segment:   [L.first_old8 ‖ R.last_new8 ‖ L.count+R.count ‖ H(L.acc ++ R.acc)]
+///   (4) parent window:    [L.IN(l_window) ‖ R.OUT(r_window)]     ← MIXED width, carried to the root
+/// ```
+///
+/// The handoff connects ONLY `board ‖ marks` (`handoff` = 18 at n = 11); `L.OUT`'s `locked ‖ waiting
+/// ‖ auto` are consumed at the clean round, not carried into Leg R, so a differing locked lane does
+/// not break it (by design, [`board_window_clean_handoff_connects`]). A disagreeing `board`-or-`marks`
+/// lane is a per-lane `connect` CONFLICT ⇒ the node is UNSAT ⇒ no root ⇒ the light client never
+/// receives a verifying artifact — the C→R analogue of the mid seam.
+///
+/// The parent re-exposes `SEG_WIDTH + l_window + r_window` lanes — the MIXED window. This node is
+/// TERMINAL (the root of a multi-round turn); nothing merges above it, so the mixed exposure is read
+/// only by the verifier's segment tooth (exact equality against the carried claim), never re-fed to
+/// [`exposed_board_window`] (which assumes a uniform `SEG_WIDTH + 2W` shape).
+pub(crate) fn segment_combine_expose_with_clean_handoff(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    left_apt: &[Vec<p3_recursion::Target>],
+    right_apt: &[Vec<p3_recursion::Target>],
+    left_idx: usize,
+    right_idx: usize,
+    l_window: usize,
+    r_window: usize,
+    handoff: usize,
+) {
+    let l = left_apt
+        .get(left_idx)
+        .expect("left segment instance present");
+    let r = right_apt
+        .get(right_idx)
+        .expect("right segment instance present");
+    debug_assert!(l.len() >= SEG_WIDTH + 2 * l_window && r.len() >= SEG_WIDTH + 2 * r_window);
+    debug_assert!(handoff > 0 && handoff <= l_window.min(r_window));
+
+    // (1) STATE CONTINUITY — the cell tooth, unchanged.
+    for k in 0..SEG_ANCHOR_WIDTH {
+        cb.connect(l[SEG_LAST_NEW + k], r[SEG_FIRST_OLD + k]);
+    }
+
+    // (3) CLEAN HANDOFF (board||marks prefix) + (4) the parent MIXED window.
+    let window = clean_handoff_seam_and_window(cb, l, r, l_window, r_window, handoff);
+
+    // (2) parent segment — identical math to the plain / board-window combine.
+    let count = cb.add(l[SEG_COUNT], r[SEG_COUNT]);
+    let mut acc_inputs = Vec::with_capacity(2 * SEG_DIGEST_WIDTH);
+    acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
+    let acc = seg_poseidon_commit(cb, &acc_inputs);
+    let mut parent = Vec::with_capacity(SEG_WIDTH + l_window + r_window);
+    parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
+    parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
+    parent.push(count);
+    parent.extend_from_slice(&acc);
+    parent.extend_from_slice(&window);
+    debug_assert_eq!(parent.len(), SEG_WIDTH + l_window + r_window);
+    cb.expose_as_public_output(&parent);
+}
+
 /// The board-window width a segment-carrying proof's exposed claim declares: `0` for a plain
 /// 25-lane segment, `W` for a `[segment ‖ IN(W) ‖ OUT(W)]` exposure.
 ///
@@ -4536,6 +4755,187 @@ pub(crate) fn merge_two_segment_proofs(
         .map_err(|e| TurnChainError::RecursionFailed {
             reason: format!("aggregation layer failed: {e}"),
         })
+}
+
+/// **THE MIXED-WIDTH CLEAN-HANDOFF MERGE PRIMITIVE — the `C_last → R` fold node.**
+///
+/// The sibling of [`merge_two_segment_proofs`] for the ONE boundary the deployed same-width merge
+/// refuses: the LEFT child (the folded conflict braid) exposes a UNIFORM `l_window`-lane RoundState
+/// window (`SEG_WIDTH + 2·l_window` lanes), the RIGHT child (the folded clean round) exposes a
+/// UNIFORM but NARROWER `r_window`-lane window (`SEG_WIDTH + 2·r_window` lanes), and this node stitches
+/// them via [`segment_combine_expose_with_clean_handoff`] — connecting the shared `board ‖ marks`
+/// prefix (`handoff` lanes) and re-exposing the parent MIXED window `[L.IN(l_window) ‖ R.OUT(r_window)]`.
+///
+/// FAIL-CLOSED ON SHAPE (item (3) of the braid): each child's window is read from its OWN exposed
+/// shape (never a caller flag a forger could clear); both must be windowed; `handoff` must be nonzero
+/// and fit inside both windows. A same-width pair is NOT this node's job — it is refused here and
+/// belongs to [`merge_two_segment_proofs`]; a mixed pair is refused THERE and belongs here. The two
+/// merge primitives partition cleanly, so a forger cannot present a mixed pair to the same-width node
+/// (dropping the seam) nor a same-width pair to the weaker prefix-only handoff.
+///
+/// The caller (the multi-round-turn driver) supplies `handoff = roundstate_window_n11::HANDOFF_LANES`
+/// (18 = `board(9) ‖ marks(9)`) — the semantic contract that the connected lanes ARE board+marks on
+/// both sides (both windows are authored `board`-first then `marks`).
+///
+/// This node is TERMINAL — the root of a multi-round turn. Its mixed exposure is read only by the
+/// verifier's segment tooth, never re-fed to [`exposed_board_window`].
+pub(crate) fn merge_clean_handoff_segment_proofs(
+    left: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    right: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    handoff: usize,
+    config: &DreggRecursionConfig,
+    _backend: &p3_recursion::FriRecursionBackendForExt<
+        D,
+        16,
+        8,
+        p3_recursion::ops::Poseidon2Config,
+    >,
+    _params: &ProveNextLayerParams,
+) -> Result<RecursionOutput<DreggRecursionConfig>, TurnChainError> {
+    let left_idx =
+        expose_claim_instance_index(left).ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "left clean-handoff child carries no segment (expose_claim) table".to_string(),
+        })?;
+    let right_idx =
+        expose_claim_instance_index(right).ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "right clean-handoff child carries no segment (expose_claim) table".to_string(),
+        })?;
+
+    // LEVER (a) — pin each child's preprocessed commitment (its VK-identity core) in-band.
+    let left_commit = left
+        .stark_common
+        .preprocessed
+        .as_ref()
+        .map(|gp| gp.commitment.clone())
+        .ok_or_else(|| TurnChainError::RecursionFailed {
+            reason: "left clean-handoff child carries no preprocessed commitment to pin — refused \
+                     fail-closed"
+                .to_string(),
+        })?;
+    let right_commit = right
+        .stark_common
+        .preprocessed
+        .as_ref()
+        .map(|gp| gp.commitment.clone())
+        .ok_or_else(|| TurnChainError::RecursionFailed {
+            reason:
+                "right clean-handoff child carries no preprocessed commitment to pin — refused \
+                     fail-closed"
+                    .to_string(),
+        })?;
+
+    // THE MIXED SHAPE, derived from the children's OWN exposed windows (never a caller flag).
+    let l_window =
+        exposed_board_window(left).map_err(|reason| TurnChainError::RecursionFailed {
+            reason: format!("left {reason}"),
+        })?;
+    let r_window =
+        exposed_board_window(right).map_err(|reason| TurnChainError::RecursionFailed {
+            reason: format!("right {reason}"),
+        })?;
+    if l_window == 0 || r_window == 0 {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "clean-handoff merge requires BOTH children to carry a state window (left {l_window}, \
+                 right {r_window}); a plain-segment child has no board||marks to hand off — refused \
+                 fail-closed"
+            ),
+        });
+    }
+    if l_window == r_window {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "clean-handoff merge is for a MIXED-width C->R boundary; both children expose a \
+                 {l_window}-lane window — a same-width pair folds through merge_two_segment_proofs \
+                 (the whole-window seam), never the weaker board||marks-prefix handoff; refused \
+                 fail-closed"
+            ),
+        });
+    }
+    if handoff == 0 || handoff > l_window.min(r_window) {
+        return Err(TurnChainError::RecursionFailed {
+            reason: format!(
+                "clean-handoff prefix {handoff} does not fit both windows (left {l_window}, right \
+                 {r_window}); the handoff must be exactly the board||marks lanes — refused fail-closed"
+            ),
+        });
+    }
+
+    let left_input = batch_to_pinned_input(left, left_commit);
+    let right_input = batch_to_pinned_input(right, right_commit);
+
+    let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+                       left_apt: &[Vec<p3_recursion::Target>],
+                       right_apt: &[Vec<p3_recursion::Target>]| {
+        segment_combine_expose_with_clean_handoff(
+            cb, left_apt, right_apt, left_idx, right_idx, l_window, r_window, handoff,
+        );
+    };
+
+    prove_recursion_aggregation_auto_with_expose(&left_input, &right_input, config, Some(&expose))
+        .map_err(|e| TurnChainError::RecursionFailed {
+            reason: format!("clean-handoff aggregation layer failed: {e}"),
+        })
+}
+
+/// **THE MIXED-WIDTH FOLD DRIVER — stitch the conflict braid to the clean round in ONE root.**
+///
+/// A multi-round automatafl turn folds in a SHAPED tree, not a flat balanced one:
+///
+/// ```text
+///   [ aggregate_tree(conflict leaves) ]  --clean-handoff-merge--  [ aggregate_tree(clean leaves) ]
+///              ↑ uniform l_window                                        ↑ uniform r_window
+///                                    ↘   ROOT: mixed [C_first.IN(l) ‖ R_last.OUT(r)]   ↙
+/// ```
+///
+/// The conflict leaves (each a Leg C `[segment ‖ IN(l_window) ‖ OUT(l_window)]`) fold through the
+/// deployed width-generic [`aggregate_tree`] — the uniform whole-`l_window` seam — to a conflict
+/// sub-root; the clean leaves fold likewise to a clean sub-root at `r_window`; and the ONE
+/// [`merge_clean_handoff_segment_proofs`] node connects their shared `board ‖ marks` prefix
+/// (`handoff` lanes), drops `locked ‖ waiting ‖ auto`, and re-exposes the mixed root window. This is
+/// the composition the M7 finding named as absent — the clean handoff is no longer a bare connect
+/// primitive but the top node of a real fold DAG.
+///
+/// The two sub-folds are UNIFORM (the deployed merge), so only the single top node is new. The root
+/// is TERMINAL (its mixed exposure is read by the verifier's segment tooth, never re-merged).
+///
+/// The caller supplies the handoff (18 = `board ‖ marks` at n = 11). This returns the mixed ROOT;
+/// wrapping it into a verifying [`WholeChainProof`] additionally needs (a) the whole-turn segment
+/// host mirror folded in THIS shape (conflict sub-seg ∘ clean sub-seg, not the flat
+/// [`compute_root_segment`]) and (b) the carried board window from
+/// [`board_window_of_chain_with_clean_handoff`] — the honest residual, alongside the resolve-marks
+/// 20-lane clean leaf that mints the clean sub-chain (Lean-authored, being emitted separately).
+pub fn fold_clean_handoff_root(
+    conflict_leaves: Vec<RecursionOutput<DreggRecursionConfig>>,
+    clean_leaves: Vec<RecursionOutput<DreggRecursionConfig>>,
+    handoff: usize,
+    config: &DreggRecursionConfig,
+    backend: &p3_recursion::FriRecursionBackendForExt<D, 16, 8, p3_recursion::ops::Poseidon2Config>,
+    params: &ProveNextLayerParams,
+) -> Result<RecursionOutput<DreggRecursionConfig>, TurnChainError> {
+    if conflict_leaves.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff fold: the conflict braid has no leaves".to_string(),
+        });
+    }
+    if clean_leaves.is_empty() {
+        return Err(TurnChainError::RecursionFailed {
+            reason: "clean-handoff fold: the clean round has no leaves".to_string(),
+        });
+    }
+    // Each sub-chain folds UNIFORMLY through the deployed width-generic merge (whole-window seam).
+    let conflict_root = aggregate_tree(conflict_leaves, config, backend, params)?;
+    let clean_root = aggregate_tree(clean_leaves, config, backend, params)?;
+    // The ONE new node: the mixed-width clean handoff, deriving each side's width from its own
+    // exposed shape and connecting only the board||marks prefix.
+    merge_clean_handoff_segment_proofs(
+        &conflict_root.0,
+        &clean_root.0,
+        handoff,
+        config,
+        backend,
+        params,
+    )
 }
 
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.
@@ -4886,11 +5286,19 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
     // shape mismatches (47-lane root / no carried window, and carried window / 25-lane root)
     // fall out of it fail-closed rather than needing their own conditional.
     if let Some(w) = board_window {
-        if w.first_in.len() != w.last_out.len() || w.first_in.is_empty() {
+        // A UNIFORM two-leg / conflict root carries equal-width halves; a MIXED clean-handoff root
+        // (a multi-round automatafl turn) legitimately carries `first.IN` (the 32-lane genesis
+        // RoundState) WIDER than `last.OUT` (the clean round's narrower final state). So the halves
+        // may differ in width — what is refused is an EMPTY half (a window that cannot express any
+        // endpoint). The real gate is the exact-equality check below: `first.IN ‖ last.OUT` is
+        // appended to `expected` and compared to the root's genuine exposure, so a carried window
+        // that is not the fold of the real leaves (wrong width, wrong lanes, dropped lanes) fails
+        // there regardless of the halves' relative widths.
+        if w.first_in.is_empty() || w.last_out.is_empty() {
             return Err(TurnChainError::ClaimedPublicsUnattested {
                 reason: format!(
-                    "carried board window is malformed ({} IN lanes, {} OUT lanes) — a window \
-                     whose halves disagree cannot be the fold of `left.OUT == right.IN`",
+                    "carried board window is malformed ({} IN lanes, {} OUT lanes) — an empty \
+                     window half cannot be the fold of a two-leg / clean-handoff seam",
                     w.first_in.len(),
                     w.last_out.len()
                 ),
@@ -5197,6 +5605,139 @@ mod streaming_fold_tests {
                 "floor_pow2_window({input})"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // THE MIXED-WIDTH CLEAN-HANDOFF HOST MIRROR (`fold_declared_windows`, the C->R boundary).
+    // -----------------------------------------------------------------------------------------
+
+    /// Synthetic per-turn window of `width` lanes filled from a base value (so distinct turns'
+    /// windows are distinguishable). `PI value = base + lane`.
+    fn syn_win(base: u32, width: usize) -> Vec<BabyBear> {
+        (0..width as u32).map(|k| BabyBear::new(base + k)).collect()
+    }
+
+    /// The conflict-braid RoundState width and the clean round's `[board||marks||auto]` width, and
+    /// the `board||marks` handoff prefix — the n = 11, P = 2 layout the M7 braid folds.
+    const RS_W: usize = 32; // roundStateWindowLanes 11 2
+    const CLEAN_W: usize = 20; // board(9) || marks(9) || auto(2)
+    const HANDOFF_W: usize = 18; // board(9) || marks(9)
+
+    /// **THE MIXED-WIDTH HOST MIRROR ACCEPTS AN HONEST C(32)->R(20) TURN.** A conflict braid whose
+    /// rounds chain on the whole 32-lane window, handing off to a clean round on the 18-lane
+    /// board||marks prefix, folds to the MIXED root window `[C_first.IN(32) ‖ R_last.OUT(20)]`.
+    #[test]
+    fn clean_handoff_host_mirror_accepts_an_honest_mixed_turn() {
+        // Two conflict rounds (uniform 32) + one clean round (20). The 32-lane seam chains the
+        // conflict rounds; the 18-lane prefix chains C_last.OUT -> R.IN.
+        let c0_in = syn_win(100, RS_W);
+        let c0_out = syn_win(200, RS_W);
+        let c1_in = c0_out.clone(); // C_0.OUT == C_1.IN (uniform 32-lane seam)
+        let c1_out = syn_win(300, RS_W);
+        // The clean round's IN shares C_1.OUT's board||marks prefix (18) then has its own auto tail.
+        let mut r_in = c1_out[..HANDOFF_W].to_vec();
+        r_in.extend(syn_win(900, CLEAN_W - HANDOFF_W));
+        let r_out = syn_win(500, CLEAN_W);
+
+        let wins = vec![
+            (c0_in.clone(), c0_out.clone()),
+            (c1_in, c1_out.clone()),
+            (r_in, r_out.clone()),
+        ];
+        let w = fold_declared_windows(&wins, Some(HANDOFF_W)).expect("honest mixed turn folds");
+        assert_eq!(w.first_in, c0_in, "root IN = genesis RoundState (32 lanes)");
+        assert_eq!(
+            w.last_out, r_out,
+            "root OUT = clean round's final state (20 lanes)"
+        );
+        assert_eq!(w.first_in.len(), RS_W);
+        assert_eq!(w.last_out.len(), CLEAN_W);
+    }
+
+    /// **THE LOAD-BEARING NEGATIVE — A MISMATCHED marks IN THE HANDOFF IS REFUSED.** Forging ANY of
+    /// the 18 board||marks prefix lanes at the C->R boundary breaks the clean-handoff seam (the host
+    /// analogue of the in-circuit `WitnessConflict`).
+    #[test]
+    fn clean_handoff_host_mirror_refuses_a_mismatched_board_or_marks_lane() {
+        let c_in = syn_win(100, RS_W);
+        let c_out = syn_win(200, RS_W);
+        let mut r_in = c_out[..HANDOFF_W].to_vec();
+        r_in.extend(syn_win(900, CLEAN_W - HANDOFF_W));
+        let r_out = syn_win(500, CLEAN_W);
+
+        for lane in 0..HANDOFF_W {
+            let mut forged = r_in.clone();
+            forged[lane] += BabyBear::ONE; // R claims a board/marks lane C_last did not produce.
+            let wins = vec![(c_in.clone(), c_out.clone()), (forged, r_out.clone())];
+            let err = fold_declared_windows(&wins, Some(HANDOFF_W))
+                .expect_err("a forged board||marks handoff lane must be refused");
+            assert!(
+                err.contains("clean-handoff seam broken"),
+                "handoff lane {lane} must name the broken clean-handoff seam, got: {err}"
+            );
+        }
+    }
+
+    /// A differing `locked ‖ waiting ‖ auto` lane (PAST the 18-lane prefix) does NOT break the
+    /// handoff — those tables are consumed at the clean round, not carried into Leg R. This mirrors
+    /// `board_window_clean_handoff_connects` leaving the dropped lanes free.
+    #[test]
+    fn clean_handoff_host_mirror_ignores_dropped_lanes_past_the_prefix() {
+        let c_in = syn_win(100, RS_W);
+        let c_out = syn_win(200, RS_W);
+        // R.IN's board||marks prefix agrees; its auto tail (lanes 18..20) differs freely.
+        let mut r_in = c_out[..HANDOFF_W].to_vec();
+        r_in.extend(syn_win(7777, CLEAN_W - HANDOFF_W)); // an auto tail C_last.OUT never dictated
+        let r_out = syn_win(500, CLEAN_W);
+        let wins = vec![(c_in, c_out), (r_in, r_out)];
+        fold_declared_windows(&wins, Some(HANDOFF_W))
+            .expect("a differing dropped (auto) lane must NOT break the clean handoff");
+    }
+
+    /// The mirror models a SINGLE C->R boundary: a chain with more than one window-width change is
+    /// refused fail-closed.
+    #[test]
+    fn clean_handoff_host_mirror_refuses_more_than_one_width_change() {
+        // 32 -> 20 -> 32: two width changes.
+        let a_out = syn_win(200, RS_W);
+        let mut b_in = a_out[..HANDOFF_W].to_vec();
+        b_in.extend(syn_win(900, CLEAN_W - HANDOFF_W));
+        let b_out = syn_win(300, CLEAN_W);
+        let mut c_in = b_out[..HANDOFF_W].to_vec();
+        c_in.extend(syn_win(1000, RS_W - HANDOFF_W));
+        let wins = vec![
+            (syn_win(100, RS_W), a_out),
+            (b_in, b_out),
+            (c_in, syn_win(400, RS_W)),
+        ];
+        let err = fold_declared_windows(&wins, Some(HANDOFF_W))
+            .expect_err("two width changes must be refused");
+        assert!(
+            err.contains("more than one window-width change"),
+            "got: {err}"
+        );
+    }
+
+    /// The uniform path (`clean_handoff == None`) is byte-for-byte the pre-generalization behavior:
+    /// an honest same-width chain folds, and a broken whole-window seam names "board-window seam
+    /// broken" (the phrasing the deployed two-leg canaries match).
+    #[test]
+    fn uniform_path_is_unchanged_by_the_generalization() {
+        let a_in = syn_win(1, 11);
+        let a_out = syn_win(50, 11);
+        let b_in = a_out.clone();
+        let b_out = syn_win(90, 11);
+        let honest = vec![(a_in.clone(), a_out.clone()), (b_in, b_out.clone())];
+        let w = fold_declared_windows(&honest, None).expect("honest uniform chain folds");
+        assert_eq!(w.first_in, a_in);
+        assert_eq!(w.last_out, b_out);
+
+        let mut broken_b_in = a_out.clone();
+        broken_b_in[0] += BabyBear::ONE;
+        let broken = vec![(a_in, a_out), (broken_b_in, b_out)];
+        let err =
+            fold_declared_windows(&broken, None).expect_err("a broken uniform seam is refused");
+        assert!(err.contains("board-window seam broken"), "got: {err}");
     }
 }
 
@@ -5516,5 +6057,118 @@ mod board_window_seam_tests {
             "the clean handoff drops locked ‖ waiting ‖ auto (RS - HANDOFF = {} lanes)",
             RS - HANDOFF
         );
+    }
+
+    /// The clean round's `[board(9) ‖ marks(9) ‖ auto(2)]` window width (the resolve-marks leg's
+    /// interface the mixed handoff hands off TO).
+    const CLEAN_W: usize = 20;
+
+    /// Drive the MERGE NODE's board-visible half (`clean_handoff_seam_and_window` — the seam +
+    /// parent MIXED-window carry) in a bare `CircuitBuilder`: a left conflict child (`l_window`-lane
+    /// windows), a right clean child (`r_window`-lane windows), the clean-handoff seam wired between
+    /// them. `Ok` iff a witness exists. (No `expose_as_public_output` — that needs the recursion
+    /// config's `enable_expose_claim`; the seam is what a broken handoff violates.)
+    fn run_merge_node(
+        l_window: usize,
+        r_window: usize,
+        handoff: usize,
+        l_out: &[u32],
+        r_in: &[u32],
+    ) -> Result<(), p3_circuit::errors::CircuitError> {
+        // left  = seg(25) ‖ IN_l(l_window) ‖ OUT_l(l_window)
+        let mut left: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 1 + k).collect();
+        left.extend((0..l_window as u32).map(|k| 40_000 + k));
+        left.extend_from_slice(l_out);
+        // right = seg(25) ‖ IN_r(r_window) ‖ OUT_r(r_window)
+        let mut right: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 60_000 + k).collect();
+        right.extend_from_slice(r_in);
+        right.extend((0..r_window as u32).map(|k| 90_000 + k));
+
+        let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
+        let l: Vec<p3_recursion::Target> = cb.alloc_public_inputs(left.len(), "left_claim");
+        let r: Vec<p3_recursion::Target> = cb.alloc_public_inputs(right.len(), "right_claim");
+        let _window = clean_handoff_seam_and_window(&mut cb, &l, &r, l_window, r_window, handoff);
+        let circuit = cb.build().expect("the merge-node circuit builds");
+        let mut runner = circuit.runner();
+        let pubs: Vec<RecursionChallenge> = left
+            .iter()
+            .chain(right.iter())
+            .map(|v| RecursionChallenge::from(P3BabyBear::from_u64(*v as u64)))
+            .collect();
+        runner.set_public_inputs(&pubs)?;
+        runner.run().map(|_| ())
+    }
+
+    /// **THE MIXED-WIDTH MERGE NODE (C→R): the parent produces `[L.IN(32) ‖ R.OUT(20)]` and seams
+    /// board||marks.** This is the M7-finding closure — the clean handoff is no longer a bare connect
+    /// primitive but wired into a parent-segment producer. Two halves are canaried:
+    ///
+    ///   * STRUCTURAL: the parent MIXED window `clean_handoff_seam_and_window` carries is EXACTLY
+    ///     `[L.IN(l_window) ‖ R.OUT(r_window)]`, in order — the 32-lane genesis RoundState followed by
+    ///     the 20-lane clean-round final state, `SEG_WIDTH + 32 + 20 = 77` root lanes total.
+    ///   * SEAM: an honest C(32)→R(20) handoff (board||marks agree) is satisfiable; a mismatched
+    ///     board-or-marks lane is a `WitnessConflict` (UNSAT node ⇒ no root ⇒ no verifying artifact);
+    ///     a differing dropped `locked ‖ waiting ‖ auto` lane leaves it satisfiable (consumed at the
+    ///     clean round, not carried).
+    #[test]
+    fn the_mixed_width_merge_node_carries_the_mixed_window_and_seams_board_marks() {
+        // ---- STRUCTURAL: the parent window IS [L.IN(l_window) ‖ R.OUT(r_window)], in that order.
+        {
+            let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
+            let l: Vec<p3_recursion::Target> =
+                cb.alloc_public_inputs(SEG_WIDTH + 2 * RS, "left_claim");
+            let r: Vec<p3_recursion::Target> =
+                cb.alloc_public_inputs(SEG_WIDTH + 2 * CLEAN_W, "right_claim");
+            let window = clean_handoff_seam_and_window(&mut cb, &l, &r, RS, CLEAN_W, HANDOFF);
+            assert_eq!(
+                window.len(),
+                RS + CLEAN_W,
+                "the parent MIXED window is L.IN(32) ‖ R.OUT(20) = 52 lanes; the root exposes \
+                 SEG_WIDTH + 52 = {} lanes",
+                SEG_WIDTH + RS + CLEAN_W
+            );
+            let mut expected: Vec<p3_recursion::Target> = l[SEG_WIDTH..SEG_WIDTH + RS].to_vec();
+            expected.extend_from_slice(&r[SEG_WIDTH + CLEAN_W..SEG_WIDTH + 2 * CLEAN_W]);
+            assert_eq!(
+                window, expected,
+                "the parent window selects L.IN (the genesis RoundState) then R.OUT (the clean \
+                 round's final state), lane for lane"
+            );
+        }
+
+        // ---- SEAM: honest accepts; mismatched board||marks is a WitnessConflict; dropped lanes free.
+        let c_out: Vec<u32> = (0..RS as u32).map(|k| 3000 + k).collect();
+        let mut r_in: Vec<u32> = c_out[..HANDOFF].to_vec(); // board ‖ marks AGREE
+        r_in.extend((HANDOFF as u32..CLEAN_W as u32).map(|k| 8000 + k));
+
+        run_merge_node(RS, CLEAN_W, HANDOFF, &c_out, &r_in)
+            .expect("an honest mixed C(32)->R(20) merge node (board||marks agree) is satisfiable");
+
+        for lane in HANDOFF..RS {
+            let mut c2 = c_out.clone();
+            c2[lane] += 1;
+            run_merge_node(RS, CLEAN_W, HANDOFF, &c2, &r_in).unwrap_or_else(|e| {
+                panic!(
+                    "a differing dropped lane {lane} (locked/waiting/auto) must NOT break the mixed \
+                     merge node — it is consumed, not carried — got {e:?}"
+                )
+            });
+        }
+
+        for lane in 0..HANDOFF {
+            let mut c2 = c_out.clone();
+            c2[lane] += 1;
+            let err = run_merge_node(RS, CLEAN_W, HANDOFF, &c2, &r_in).expect_err(
+                "a board/marks disagreement across the mixed merge node has NO witness",
+            );
+            assert!(
+                matches!(
+                    err,
+                    p3_circuit::errors::CircuitError::WitnessConflict { .. }
+                ),
+                "mixed-merge-node board||marks lane {lane} must be a per-lane connect CONFLICT — \
+                 got {err:?}"
+            );
+        }
     }
 }

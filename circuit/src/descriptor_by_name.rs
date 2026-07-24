@@ -173,6 +173,26 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     // (`dregg-automatafl/src/legc_witness.rs`, M4); HASH-FREE, ZERO lookups.
     ("dregg-automatafl-legc-n5", AUTOMATAFL_LEGC_N5_JSON),
     ("dregg-automatafl-legc-n11", AUTOMATAFL_LEGC_N11_JSON),
+    // The automatafl RESOLVE-MARKS (Leg R for a CLEAN ROUND of a multi-round turn) descriptors — the
+    // Lean-emitted `automataflResolveMarksDescN {2,11}` (`AutomataflResolveMarksCapstone.lean`): the
+    // resolve descriptor VERBATIM plus a marks tail (the accumulated `marksIn` commitment, the two
+    // moves' destination one-hots, and the two marks-legality NOR pins). PROVEN: `cMidV4` IS
+    // `roundStep`'s clean-round resolve board at ACCUMULATED marks (`resolve_sat_imp_roundBoardMarksN`,
+    // `turn_sat_imp_roundStepMarks_pi`), the marks-legality re-check is a DESCRIPTOR THEOREM
+    // (`resolveMarksMoveLegal`, not assumed), and the published `marksIn` window is the base-4-injective
+    // pack of the decoded indicator (`resolveMarks_marksIn_pi_of_sat`) — the hash-free seam to Leg C's
+    // `marksOut`. Byte-pinned in `AutomataflResolveMarksGolden`; this makes the marks-aware clean leaf
+    // MINTABLE for the multi-round fold (`dregg-automatafl/src/resolve_marks_witness.rs`, M6->deploy).
+    // HASH-FREE, ZERO lookups. n=2 is the minimal instance (460w/21pi/566c); n=11 the deployed stock
+    // game (1453w/45pi/1817c).
+    (
+        "dregg-automatafl-resolve-marks-n2",
+        AUTOMATAFL_RESOLVE_MARKS_N2_JSON,
+    ),
+    (
+        "dregg-automatafl-resolve-marks-n11",
+        AUTOMATAFL_RESOLVE_MARKS_N11_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -320,6 +340,15 @@ const AUTOMATAFL_LEGC_N5_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-legc-n5.json");
 const AUTOMATAFL_LEGC_N11_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-legc-n11.json");
+/// The automatafl RESOLVE-MARKS (Leg R, clean round of a multi-round turn) descriptors (Lean
+/// `automataflResolveMarksDescN {2,11}`), byte-pinned by their `emitVmJson2` `#guard` in
+/// `AutomataflResolveMarksGolden` and re-derived onto `by-name/` by `EmitByName.lean`. The resolve
+/// descriptor plus a marks tail; n=2 is the minimal instance (460w/21pi), n=11 the deployed stock
+/// game (1453w/45pi).
+const AUTOMATAFL_RESOLVE_MARKS_N2_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-resolve-marks-n2.json");
+const AUTOMATAFL_RESOLVE_MARKS_N11_JSON: &str =
+    include_str!("../descriptors/by-name/automatafl-resolve-marks-n11.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

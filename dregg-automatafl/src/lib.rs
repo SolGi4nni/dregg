@@ -30,6 +30,8 @@ pub mod legc_layout;
 pub mod legc_witness;
 pub mod reference;
 pub mod resolve_layout;
+pub mod resolve_marks_layout;
+pub mod resolve_marks_witness;
 pub mod resolve_witness;
 pub mod step_layout;
 pub mod surface;
