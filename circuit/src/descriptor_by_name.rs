@@ -886,25 +886,55 @@ mod tests {
     }
 
     /// Keep the hand-built shape aligned with the golden decode: the chip4 tuple helper the emit
-    /// gate uses produces the exact `CHIP_TUPLE_LEN` shape (a guard against a silent chip-arity
-    /// drift in the dispatched membership descriptor).
+    /// gate uses produces the exact chip tuple shape (a guard against a silent chip-arity drift in
+    /// the dispatched membership descriptor).
+    ///
+    /// The INTENT — "this golden really does perform two arity-4 child→parent chip lookups" — is
+    /// unchanged; the BUS moved. The E7 by-name narrowing (`9648759c79`) re-emitted
+    /// `merkle-membership-depth2` onto the NARROW chip bus (`poseidon2narrow`, wire 8 =
+    /// `TID_P2_NARROW`): the same two lookups, tail-truncated of their 7 trailing output lanes
+    /// (`trace_width 24 → 10`), served by the SAME chip rows. So the tooth counts the lookups on
+    /// the bus the descriptor NOW uses AND pins the bus identity both ways — a re-widening back to
+    /// `TID_P2`, or a third bus, fails here instead of silently passing with a count of zero.
     #[test]
     fn merkle_golden_has_two_arity4_chip_lookups() {
+        use crate::descriptor_ir2::TID_P2_NARROW;
         let d = descriptor_by_name("merkle-membership-depth2-4ary::poseidon2-v1").unwrap();
         let chip: Vec<&LookupSpec> = d
             .constraints
             .iter()
             .filter_map(|c| match c {
-                VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
+                VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW => Some(l),
                 _ => None,
             })
             .collect();
-        assert_eq!(chip.len(), 2, "depth-2 = two child→parent chip lookups");
+        assert_eq!(
+            chip.len(),
+            2,
+            "depth-2 = two child→parent chip lookups, on the E7 NARROW chip bus"
+        );
+        // BUS IDENTITY: the narrowing is a cutover, not an addition — NO lookup rides the wide
+        // 25-tuple `TID_P2` bus any more. Together with the count above this pins exactly two chip
+        // lookups in total, and pins which bus carries them.
+        assert_eq!(
+            d.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+                .count(),
+            0,
+            "the E7-narrowed golden carries NO wide-bus chip lookup"
+        );
         for l in chip {
-            assert_eq!(l.tuple.len(), CHIP_TUPLE_LEN);
             assert_eq!(l.tuple[0], LeanExpr::Const(4), "arity-4 tag");
-            // out lanes are the last CHIP_OUT_LANES entries; the input block is CHIP_RATE wide.
-            assert_eq!(l.tuple.len(), 1 + CHIP_RATE + CHIP_OUT_LANES);
+            // The narrow tuple is `[arity, ins, out0]`: the input block is still CHIP_RATE wide,
+            // and exactly the 7 trailing output lanes of the wide CHIP_TUPLE_LEN shape are gone
+            // (a pure tail truncation — no input column was renumbered).
+            assert_eq!(l.tuple.len(), 1 + CHIP_RATE + 1);
+            assert_eq!(
+                l.tuple.len(),
+                CHIP_TUPLE_LEN - (CHIP_OUT_LANES - 1),
+                "the narrow bus drops exactly the wide tuple's trailing output lanes"
+            );
         }
         // the single root pin.
         let pins = d

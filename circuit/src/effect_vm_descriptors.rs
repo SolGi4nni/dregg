@@ -1207,12 +1207,14 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 /// (`metatheory/EmitWideRegistryProbe.lean`). `grantCapWriteCapOpen` is reconciled OUT (it is not a
 /// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
 /// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) is
-/// byte-identical to `WIDE_TRANSFER_STAGED_TSV`. The wide carriers land PAST each member's host
-/// width, re-absorbing the SAME rotated limbs the 1-felt block lays into a genuine 8-felt
-/// (~124-bit) commitment (each wide member = its host width + the 960-column
-/// `trace_rotated::WIDE_CARRIER_APPENDIX`, carrying the 16 wide commit PIs = the 8-felt
-/// before/after anchors; the per-member widths are pinned by the drift tooth in
-/// `wide_registry_parses_and_is_name_stable`).
+/// the v12 TEETH-EXPOSING advance of `WIDE_TRANSFER_STAGED_TSV` (+2 claim PIs / +2 teeth columns).
+/// The wide carriers land PAST each member's host width, re-absorbing the SAME rotated limbs the
+/// 1-felt block lays into a genuine 8-felt (~124-bit) commitment, carrying the 16 wide commit PIs =
+/// the 8-felt before/after anchors. The committed width is NO LONGER host + the 960-column
+/// `trace_rotated::WIDE_CARRIER_APPENDIX`: the S2 flag-day (`4dd3273bd2`) and the E1 per-member
+/// dead-column compaction (`bd21266e6b` / `3ebf42e25f`) drop each member's own kill-set, so the
+/// width is a PER-MEMBER fact — pinned member-by-member by the drift tooth in
+/// `wide_registry_parses_and_is_name_stable`.
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
@@ -3200,9 +3202,10 @@ mod tests {
     fn wide_registry_parses_and_is_name_stable() {
         use crate::descriptor_ir2::parse_vm_descriptor2;
 
-        // Every wide member parses; the wide geometry is `host + 608` carrier columns + 16 PIs. The
-        // keys are NAME-STABLE against the live 1-felt registry, member-for-member (the flip repoint
-        // does not rename).
+        // Every wide member parses; the wide geometry is the host + the carrier block MINUS the S2
+        // and E1 dead-column kill-sets, plus 16 PIs — pinned PER MEMBER by `WIDE_MEMBER_GEOMETRY`
+        // below. The keys are NAME-STABLE against the live 1-felt registry, member-for-member (the
+        // flip repoint does not rename).
         let live_keys: Vec<&str> = V3_STAGED_REGISTRY_TSV
             .lines()
             .filter(|l| !l.is_empty())
@@ -3218,6 +3221,89 @@ mod tests {
                     && *k != "vaultSatVmDescriptor2R24"
             })
             .collect();
+
+        // **THE PER-MEMBER WIDE GEOMETRY PIN — RE-PINNED FOR THE S2 + E1 COMPACTIONS.**
+        // `(registry key, committed trace_width)` in registry order, READ OFF THE EMITTED
+        // `rotation-wide-registry-staged.tsv` (the Lean `EmitWideRegistryProbe.lean` is the byte
+        // source), never hand-derived.
+        //
+        // This USED to be a whitelist of 15 legitimate widths (2607 / 2623 / … / 3127 = the
+        // pre-compaction `host + WIDE_CARRIER_APPENDIX (960)` + gentian geometry). Two flag-days
+        // moved every member and neither re-pinned this tooth, so it was asserting a geometry no
+        // member had any more:
+        //   * the S2 FLAG-DAY REGEN (`4dd3273bd2`) dropped the dead post-S2 columns — −960 per
+        //     member (transfer 2664 → 1704);
+        //   * the E1 per-member dead-column compaction (`bd21266e6b`, kill-set narrowed to the
+        //     pre-gentian `e1Ceiling` by `3ebf42e25f`) dropped each member's OWN kill-set
+        //     (transfer 1704 → 1610 = 94 columns; see `e1_compact_generated::E1_COMPACT_TABLE`).
+        //
+        // It is re-pinned PER MEMBER rather than as a fresh whitelist because E1's kill-set is a
+        // per-member fact: a shared width whitelist lets one member silently drift onto another
+        // member's legitimate width (26 of the 57 now sit at 1601), which is exactly the
+        // unintended-geometry-drift this tooth exists to catch. The pin below fails on ANY member
+        // whose carrier block, refuse weld, or kill-set moved — a regen that legitimately moves a
+        // member has to move its row here, deliberately and visibly. The RETIRED v1 (912-appendix)
+        // widths stay structurally refused by `wide_carrier_geometry_version`.
+        const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
+            ("transferVmDescriptor2R24", 1610),
+            ("burnVmDescriptor2R24", 1606),
+            ("mintVmDescriptor2R24", 1601),
+            ("noteSpendVmDescriptor2R24", 1892),
+            ("noteCreateVmDescriptor2R24", 1892),
+            ("cellSealVmDescriptor2R24", 1601),
+            ("cellDestroyVmDescriptor2R24", 1601),
+            ("refusalVmDescriptor2R24", 2109),
+            ("setPermsVmDescriptor2R24", 1601),
+            ("setVKVmDescriptor2R24", 1601),
+            ("exerciseVmDescriptor2R24", 1601),
+            ("pipelinedSendVmDescriptor2R24", 1601),
+            ("refreshVmDescriptor2R24", 1601),
+            ("incrementNonceVmDescriptor2R24", 1601),
+            ("revokeVmDescriptor2R24", 1601),
+            ("introduceVmDescriptor2R24", 1601),
+            ("attenuateVmDescriptor2R24", 1601),
+            ("revokeCapabilityVmDescriptor2R24", 1601),
+            ("customVmDescriptor2R24", 1577),
+            ("setFieldDynVmDescriptor2R24", 1569),
+            ("grantCapVmDescriptor2R24", 1601),
+            ("makeSovereignVmDescriptor2R24", 1637),
+            ("createCellVmDescriptor2R24", 1892),
+            ("factoryVmDescriptor2R24", 1601),
+            ("spawnVmDescriptor2R24", 1601),
+            ("receiptArchiveVmDescriptor2R24", 1601),
+            ("cellUnsealVmDescriptor2R24", 1601),
+            ("emitEventVmDescriptor2R24", 1601),
+            ("setFieldVmDescriptor2-0R24", 1601),
+            ("setFieldVmDescriptor2-1R24", 1601),
+            ("setFieldVmDescriptor2-2R24", 1601),
+            ("setFieldVmDescriptor2-3R24", 1601),
+            ("setFieldVmDescriptor2-4R24", 1601),
+            ("setFieldVmDescriptor2-5R24", 1601),
+            ("setFieldVmDescriptor2-6R24", 1601),
+            ("setFieldVmDescriptor2-7R24", 1601),
+            ("delegateCapOpenVmDescriptor2R24", 1878),
+            ("introduceCapOpenVmDescriptor2R24", 1878),
+            ("grantCapCapOpenVmDescriptor2R24", 1878),
+            ("revokeCapOpenVmDescriptor2R24", 1878),
+            ("refreshDelegationCapOpenVmDescriptor2R24", 1878),
+            ("revokeCapabilityCapOpenVmDescriptor2R24", 1878),
+            ("transferCapOpenEffVmDescriptor2R24", 1888),
+            ("attenuateCapOpenEffVmDescriptor2R24", 2021),
+            ("transferFeeVmDescriptor2R24", 1569),
+            ("transferCapOpenTBVmDescriptor2R24", 1890),
+            ("heapWriteVmDescriptor2R24", 1963),
+            ("delegateWriteCapOpenVmDescriptor2R24", 1878),
+            ("introduceWriteCapOpenVmDescriptor2R24", 1878),
+            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1878),
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 1878),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 1878),
+            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2021),
+            ("spawnWriteCapOpenVmDescriptor2R24", 1878),
+            ("spawnCapOpenVmDescriptor2R24", 1878),
+            ("exerciseCapOpenVmDescriptor2R24", 1878),
+            ("supplyMintVmDescriptor2R24", 1549),
+        ];
+
         let mut n = 0usize;
         for (i, line) in WIDE_REGISTRY_STAGED_TSV.lines().enumerate() {
             if line.is_empty() {
@@ -3233,53 +3319,14 @@ mod tests {
                 "wide registry key {i} name-stable with the live registry"
             );
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} wide parses: {e}"));
-            // the wide member is `host + WIDE_CARRIER_APPENDIX (960)` (the v2 flag-day 60-carrier
-            // appendix) and `host.piCount + 16`. The committed wide widths — READ OFF THE EMITTED
-            // rotation-wide-registry-staged.tsv, never hand-derived — are:
-            //   * 2607 — the rotated-cohort base wide (GRAD_ROT_WIDTH 1647 + 960; supplyMint);
-            //   * 2623 — the AVAILABILITY-HARDENED transferFee (fee-avail host 1663 + 960);
-            //   * 2627 — setFieldDyn (host 1619 = GRAD_ROT_WIDTH − 28) + the gentian 48-column
-            //     floor-refuse weld (2579 + 48);
-            //   * 2635 — custom (host 1619 + 8 carrier teeth = 1627) + the wide appendix
-            //     + the gentian 48-column refuse weld (1627 + 960 + 48);
-            //   * 2655 — the bare-cohort members: 2607 + the gentian 48-column floor-refuse weld;
-            //   * 2660 — the AVAILABILITY-HARDENED burn (burn-avail host 1700 + 960);
-            //   * 2664 — the AVAILABILITY-HARDENED transfer (transfer-avail host 1704 + 960);
-            //   * 2687 — the KEY_COMMIT-gated sovereign (2607 + the 32-column chip-digest appendix
-            //     + 48, `CarrierComposed.makeSovereignV3DeployedWide`);
-            //   * 2936 — the cap-open family + the §J′ insert hosts (host 1976 + 960);
-            //   * 2946 — the avail-hardened transferCapOpenEff leg (host 1986 + 960);
-            //   * 2948 — the turn-identity-pinned transferCapOpenTB (host 1988 + 960);
-            //   * 2984 — cap-open bare-cohort hosts + the gentian refuse (2936 + 48);
-            //   * 3065 — heapWrite's after-spine membership host (HEAP_WRITE_HOST_WIDTH 2105 + 960);
-            //   * 3079 — the refusal fields-write weld + cap-WRITE after-spine members
-            //     (REFUSAL_WRITE_HOST_WIDTH 2119 + 960);
-            //   * 3127 — the refusal fields-write / cap-WRITE bare-cohort members (3079 + 48).
-            // The retired 2657 (pre-avail membership-teeth transfer) and 2938 (pre-avail
-            // transferCapOpenTB) widths are GONE: the availability-hardening pads (transfer/burn/fee)
-            // grew those hosts, and the AAFI accumulator-insert flip moved the cap-open transfer legs.
-            // Any member off this exact set (a carrier block that grew/shrank, or a refuse weld
-            // mis-sized) fails this drift tooth. The RETIRED v1 (912-appendix) widths are refused
-            // structurally by `wide_carrier_geometry_version` (the versioned boundary).
-            assert!(
-                matches!(
-                    d.trace_width,
-                    2607 | 2623
-                        | 2627
-                        | 2635
-                        | 2655
-                        | 2660
-                        | 2664
-                        | 2687
-                        | 2936
-                        | 2946
-                        | 2948
-                        | 2984
-                        | 3065
-                        | 3079
-                        | 3127
-                ),
-                "{key}: wide width {} is a known wide geometry (2607 / 2623 / 2627 / 2635 / 2655 / 2660 / 2664 / 2687 / 2936 / 2946 / 2948 / 2984 / 3065 / 3079 / 3127)",
+            let (pin_key, pin_width) = WIDE_MEMBER_GEOMETRY[i];
+            assert_eq!(
+                key, pin_key,
+                "wide registry row {i} is the pinned member (a reorder / insertion moves this pin)"
+            );
+            assert_eq!(
+                d.trace_width, pin_width,
+                "{key}: wide width {} drifted off its pinned per-member geometry {pin_width}",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
@@ -3315,25 +3362,33 @@ mod tests {
                     "wide registry row 0 (transfer) = the plain wide transfer + 2 membership claim PIs"
                 );
                 // The plain single-line `WIDE_TRANSFER_STAGED_TSV` is the BARE transfer: neither
-                // availability-hardened, nor teeth-advanced, nor refuse-welded. The registry row 0 is
-                // the AVAIL-HARDENED membership-teeth transfer AND (being a bare cohort route) carries
-                // the gentian floor-refuse weld. Its refuse blocks therefore anchor at
-                // `plain + TRANSFER_AVAIL_PAD + 2 teeth` (verified against the emitted descriptor: the
-                // three floor gates land at 2631 / 2647 / 2663, stride 16), and the member extends
-                // exactly to cover the last floor column — `floor_col(NB−1) + 1`, i.e. 45 columns past
-                // its own anchor, NOT a padded `3·REFUSE_STRIDE = 48`. Both the extent and the pad are
-                // derived from the weld's own constants, so a stride/pad change moves this tooth with
-                // them. The PI relation stays `plain + 2` (the refuse weld adds constraints + columns
-                // but NO public inputs).
+                // availability-hardened, nor teeth-advanced, nor refuse-welded, and NOT E1-compacted
+                // (the S2 flag-day took it 2607 → 1647; the E1 cutover re-emitted only the two
+                // registries). The registry row 0 is the AVAIL-HARDENED membership-teeth transfer
+                // AND (being a bare cohort route) carries the gentian floor-refuse weld, and it IS
+                // E1-compacted. So the structural relation now carries the compaction term:
+                //   row0 = plain + TRANSFER_AVAIL_PAD + 2 teeth + refuse_extent − |E1 kill-set|
+                //        = 1647 + 10 + 2 + 45 − 94 = 1610.
+                // The member extends exactly to cover the last floor column — `floor_col(NB−1) + 1`,
+                // i.e. 45 columns past its own anchor, NOT a padded `3·REFUSE_STRIDE = 48`. Every
+                // term is derived from its own source (the weld's constants, the Lean-emitted
+                // `E1_COMPACT_TABLE`), so a stride / pad / kill-set change moves this tooth with it.
+                // The PI relation stays `plain + 2`: neither the refuse weld nor E1 compaction adds
+                // or removes a public input.
                 use crate::effect_vm::bare_floor_refuse_weld as wrefuse;
                 let refuse_extent = wrefuse::floor_col(wrefuse::CAPACITY_TAGS.len() - 1) + 1
                     - crate::effect_vm::trace_rotated::GRAD_ROT_WIDTH;
                 let avail_pad = crate::effect_vm::trace_rotated::TRANSFER_AVAIL_PAD;
+                let e1_killed: usize = crate::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
+                    .expect("wide registry row 0 (transfer) is in the E1 kill-set table");
                 assert_eq!(
                     d.trace_width,
-                    plain.trace_width + avail_pad + 2 + refuse_extent,
+                    plain.trace_width + avail_pad + 2 + refuse_extent - e1_killed,
                     "wide registry row 0 (transfer) = the plain wide transfer + the availability pad \
-                     + 2 teeth columns + the gentian floor-refuse extent"
+                     + 2 teeth columns + the gentian floor-refuse extent − the E1 kill-set"
                 );
             }
         }
