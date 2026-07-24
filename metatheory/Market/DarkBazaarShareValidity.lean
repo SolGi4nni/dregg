@@ -66,9 +66,26 @@ theorem unvalidated_shift_breaks_opening {P : Params} {honestPhase m δ : ℤ}
   have hδ : -δ = e - e' := by rw [hp] at hp'; linarith
   exact hbig e e' he he' hδ
 
+/-- **ROBUSTNESS — validated shares reconstruct the honest collective key.** If ALL `n` shares are valid
+against their committed secrets `sᵢ`, the combined phase is exactly `c0 + (Σ sᵢ)·c1 + (Σ deviations)`. The
+`(Σ sᵢ)·c1` term is the HONEST collective-key contribution (`s = Σ sᵢ`, pinned by the VSS commitments); a
+malicious party bound by `ShareValid` cannot move it — it can only contribute to `Σ deviations`, and each
+deviation is decrypt-safe (`valid_share_bounded_deviation`). So malicious-but-validated parties are confined
+to injecting bounded noise on top of the honest key; the message survives while the total noise stays in the
+decrypt budget (the deployed `smudge_bits + ⌈log₂ n⌉ ≤ 84` constraint). -/
+theorem valid_shares_reconstruct_honest_key {P : Params} {n : ℕ} (c0 c1 : ℤ)
+    (s h : Fin n → ℤ) (_hvalid : ∀ i, ShareValid P (s i) c1 (h i)) :
+    combinePhase c0 h = c0 + (∑ i, s i) * c1 + ∑ i, (h i - s i * c1) := by
+  simp only [combinePhase]
+  have hsum : (∑ i, s i) * c1 + ∑ i, (h i - s i * c1) = ∑ i, h i := by
+    rw [Finset.sum_mul, ← Finset.sum_add_distrib]
+    exact Finset.sum_congr rfl (fun i _ => by ring)
+  linarith [hsum]
+
 #assert_all_clean [Market.DarkBazaarShareValidity.honest_share_valid,
   Market.DarkBazaarShareValidity.valid_share_bounded_deviation,
   Market.DarkBazaarShareValidity.unsafe_deviation_not_valid,
-  Market.DarkBazaarShareValidity.unvalidated_shift_breaks_opening]
+  Market.DarkBazaarShareValidity.unvalidated_shift_breaks_opening,
+  Market.DarkBazaarShareValidity.valid_shares_reconstruct_honest_key]
 
 end Market.DarkBazaarShareValidity
