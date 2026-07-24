@@ -101,6 +101,85 @@ theorem toWindowAt_degree {m : Nat} (rawBase : Nat) (term : AffineTerm m) :
 
 end AffineTerm
 
+/-! ## 1b. Nonlinear (bilinear) atom terms.
+
+`AffineTerm` keeps every atom link degree ≤ 1.  `QuadTerm` adds ONE controlled
+degree-2 form: `mul` of two *affine* children.  The grammar is closed under
+`add`/`scale`/`neg` over such products (and injects `AffineTerm` via `lin`), so a
+`QuadTerm` denotes any sum of `affine · affine` products plus an affine part —
+degree at most two, never more, because `mul` takes only affine children and no
+constructor multiplies two `QuadTerm`s.  This is exactly the shape of a BabyBear
+extension-multiply output limb (a sum of coordinate products with the X⁴−11
+coupling), so one `QuadTerm` atom lowers to one degree-2 gate. -/
+inductive QuadTerm (inputCount : Nat) where
+  | lin (term : AffineTerm inputCount)
+  | mul (left right : AffineTerm inputCount)
+  | neg (term : QuadTerm inputCount)
+  | add (left right : QuadTerm inputCount)
+  | scale (k : Int) (term : QuadTerm inputCount)
+  deriving Repr
+
+namespace QuadTerm
+
+noncomputable def evalField {m : Nat} (input : Fin m -> BabyBear) : QuadTerm m -> BabyBear
+  | .lin t => t.evalField input
+  | .mul a b => a.evalField input * b.evalField input
+  | .neg x => -(evalField input x)
+  | .add x y => evalField input x + evalField input y
+  | .scale k x => (k : BabyBear) * evalField input x
+
+/-- Wire expression at a chosen raw-input base column.  The sole degree-2 form
+is `mul`, lowering to a single `WindowExpr.mul` of two affine (degree ≤ 1)
+window expressions. -/
+def toWindowAt {m : Nat} (rawBase : Nat) : QuadTerm m -> WindowExpr
+  | .lin t => t.toWindowAt rawBase
+  | .mul a b => .mul (a.toWindowAt rawBase) (b.toWindowAt rawBase)
+  | .neg x => .mul (.const (-1)) (toWindowAt rawBase x)
+  | .add x y => .add (toWindowAt rawBase x) (toWindowAt rawBase y)
+  | .scale k x => .mul (.const k) (toWindowAt rawBase x)
+
+def additions {m : Nat} : QuadTerm m -> Nat
+  | .lin t => t.additions
+  | .mul a b => a.additions + b.additions
+  | .neg x => additions x
+  | .add x y => additions x + additions y + 1
+  | .scale _ x => additions x
+
+@[simp] theorem evalField_lin {m : Nat} (input : Fin m -> BabyBear) (t : AffineTerm m) :
+    (QuadTerm.lin t).evalField input = t.evalField input := rfl
+
+theorem fieldWindow_toWindowAt {m : Nat} (env : VmRowEnv) (rawBase : Nat)
+    (term : QuadTerm m) :
+    fieldWindow env (term.toWindowAt rawBase) =
+      term.evalField (fun i => fieldAssignment env.loc (rawBase + i.val)) := by
+  induction term with
+  | lin t =>
+      simpa [toWindowAt, evalField] using
+        AffineTerm.fieldWindow_toWindowAt env rawBase t
+  | mul a b =>
+      simp [toWindowAt, evalField, fieldWindow, AffineTerm.fieldWindow_toWindowAt]
+  | neg x ih => simp [toWindowAt, evalField, fieldWindow, ih]
+  | add x y ihx ihy => simp [toWindowAt, evalField, fieldWindow, ihx, ihy]
+  | scale k x ih => simp [toWindowAt, evalField, fieldWindow, ih]
+
+/-- The bilinear widening stays low-degree: every `QuadTerm` lowers to a window
+expression of degree at most two. -/
+theorem toWindowAt_degree {m : Nat} (rawBase : Nat) (term : QuadTerm m) :
+    exprDegree (term.toWindowAt rawBase) ≤ 2 := by
+  induction term with
+  | lin t =>
+      have h := AffineTerm.toWindowAt_degree (m := m) rawBase t
+      simp only [toWindowAt]; omega
+  | mul a b =>
+      have ha := AffineTerm.toWindowAt_degree (m := m) rawBase a
+      have hb := AffineTerm.toWindowAt_degree (m := m) rawBase b
+      simp only [toWindowAt, exprDegree]; omega
+  | neg x ih => simp only [toWindowAt, exprDegree]; omega
+  | add x y ihx ihy => simp only [toWindowAt, exprDegree]; omega
+  | scale k x ih => simp only [toWindowAt, exprDegree]; omega
+
+end QuadTerm
+
 /-- A reusable gadget contract: `atomTerms` is both executable compiler input
 and the semantic definition of every atom.  No proposition or correctness
 proof is supplied by a caller and hence none can drift from the emitted wire. -/
@@ -1215,9 +1294,394 @@ theorem live_complete (hash : List Int -> Int) (tag payload : BabyBear)
 
 end InterchainRung
 
+/-! ## 7. Nonlinear (bilinear) atom widening: the parallel `QuadProgram` stack.
+
+The affine `Program` fragment above is a shared interface consumed by several
+downstream modules (`ArithmetizeTypedPredicate`, `BridgeSynthesis`,
+`FieldDeltaRangePilot`), so it is left byte-for-byte intact.  This section adds
+an ADDITIVE parallel compiler whose atom residuals are `QuadTerm`s — the same
+public pins, the same materialized Boolean graph, the same accept gate — with
+the sole change that an atom link lowers a degree-2 `QuadTerm` instead of a
+degree-1 `AffineTerm`.  Every generic Boolean-graph lemma (`graph_of_node_constraints`,
+`node_constraint_degree`, `formula_holds_congr`, …) is reused unchanged; only the
+five atom-link glue lemmas are re-derived. -/
+
+def andList {n : Nat} : List (Formula n) -> Formula n
+  | [] => .top
+  | [a] => a
+  | a :: rest => .and a (andList rest)
+
+structure QuadProgram (publicCount secretCount atomCount : Nat) where
+  atomTerms : Fin atomCount -> QuadTerm (publicCount + secretCount)
+  source : Formula atomCount
+
+namespace QuadProgram
+
+noncomputable def AtomTruth {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (input : Fin (pub + sec) -> BabyBear) (a : Fin atoms) : Prop :=
+  (p.atomTerms a).evalField input = 0
+
+noncomputable def Holds {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (input : Fin (pub + sec) -> BabyBear) : Prop :=
+  Formula.Holds (p.AtomTruth input) p.source
+
+noncomputable def PublicHolds {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (publicInput : Fin pub -> BabyBear) : Prop :=
+  exists input : Fin (pub + sec) -> BabyBear,
+    (forall i : Fin pub, input (Fin.castAdd sec i) = publicInput i) /\ p.Holds input
+
+def atomLinkBody {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (a : Fin atoms) : WindowExpr :=
+  subW (.loc a.val) ((p.atomTerms a).toWindowAt (rawBase atoms))
+
+def atomLink {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (a : Fin atoms) : VmConstraint2 := gate (atomLinkBody p a)
+
+def atomLinks {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) : List VmConstraint2 :=
+  (List.finRange atoms).map (atomLink p)
+
+def graphConstraintsAt {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) :
+    List VmConstraint2 :=
+  (nodesAt (boolBase pub sec atoms) p.source).flatMap Node.constraints
+
+def acceptConstraintAt {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) :
+    VmConstraint2 :=
+  gate (subW (outputAt (boolBase pub sec atoms) p.source).expr (.const 1))
+
+/-- The nonlinear compiler target: identical schema to the affine compiler, but
+the atom links are degree-2 `QuadTerm` residuals. -/
+def descriptor {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) :
+    EffectVmDescriptor2 :=
+  { name := "dregg-typed-nonlinear-predicate-v2-p" ++ toString pub ++
+      "-s" ++ toString sec ++ "-a" ++ toString atoms
+  , traceWidth := boolBase pub sec atoms + witnessCount p.source
+  , piCount := pub
+  , tables := [mainTableDef (boolBase pub sec atoms + witnessCount p.source)]
+  , constraints := publicPins pub sec atoms ++ atomLinks p ++
+      graphConstraintsAt p ++ [acceptConstraintAt p]
+  , hashSites := []
+  , ranges := [] }
+
+theorem graphConstraintsAt_length {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) :
+    (graphConstraintsAt p).length = p.source.graphCost.equations :=
+  nodesAt_constraint_length (boolBase pub sec atoms) p.source
+
+theorem descriptor_exact_resources {pub sec atoms : Nat} (p : QuadProgram pub sec atoms) :
+    (descriptor p).piCount = pub /\
+    (descriptor p).traceWidth = atoms + (pub + sec) + witnessCount p.source /\
+    (descriptor p).constraints.length = pub + atoms + p.source.graphCost.equations + 1 := by
+  refine ⟨rfl, ?_, ?_⟩
+  · simp [descriptor, boolBase]
+  · simp [descriptor, publicPins, atomLinks, graphConstraintsAt_length]
+    omega
+
+/-- Deliverable (2): the bilinear atom is degree 2, so every emitted constraint
+is still a linear public pin or a degree-≤2 window gate.  The `QuadTerm` widening
+provably cannot exceed the low-degree bound. -/
+theorem descriptor_constraint_low_degree {pub sec atoms : Nat}
+    (p : QuadProgram pub sec atoms) (c : VmConstraint2)
+    (hc : c ∈ (descriptor p).constraints) :
+    (exists row col pi, c = .base (.piBinding row col pi)) \/
+      (exists body, c = gate body /\ exprDegree body ≤ 2) := by
+  simp only [descriptor, List.mem_append, List.mem_singleton] at hc
+  rcases hc with ((hpin | hlink) | hgraph) | rfl
+  · simp only [publicPins, List.mem_map] at hpin
+    obtain ⟨i, _, rfl⟩ := hpin
+    exact Or.inl ⟨.first, rawBase atoms + i, i, rfl⟩
+  · simp only [atomLinks, List.mem_map] at hlink
+    obtain ⟨a, _, rfl⟩ := hlink
+    right
+    refine ⟨atomLinkBody p a, rfl, ?_⟩
+    have ht := QuadTerm.toWindowAt_degree (rawBase atoms) (p.atomTerms a)
+    simp [atomLinkBody, subW, negW, exprDegree]
+    omega
+  · simp only [graphConstraintsAt, List.mem_flatMap] at hgraph
+    obtain ⟨node, hn, hcn⟩ := hgraph
+    right
+    exact node_constraint_degree node c hcn
+  · right
+    refine ⟨subW (outputAt (boolBase pub sec atoms) p.source).expr (.const 1), rfl, ?_⟩
+    have hout := wire_expr_degree (outputAt (boolBase pub sec atoms) p.source)
+    simp [subW, negW, exprDegree]
+    omega
+
+noncomputable def rowInput {pub sec atoms : Nat} (_p : QuadProgram pub sec atoms)
+    (t : VmTrace) : Fin (pub + sec) -> BabyBear :=
+  fun i => fieldAssignment (envAt t 0).loc (rawBase atoms + i.val)
+
+theorem public_pin_mem {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (i : Fin pub) :
+    .base (.piBinding .first (rawBase atoms + i.val) i.val) ∈
+      (descriptor p).constraints := by
+  simp [descriptor, publicPins, List.mem_map, List.mem_range, i.isLt]
+
+theorem atom_link_mem {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (a : Fin atoms) : atomLink p a ∈ (descriptor p).constraints := by
+  simp [descriptor, atomLinks]
+
+theorem graph_node_constraint_mem {pub sec atoms : Nat} (p : QuadProgram pub sec atoms)
+    (node : Node) (hn : node ∈ nodesAt (boolBase pub sec atoms) p.source)
+    (c : VmConstraint2) (hc : c ∈ node.constraints) :
+    c ∈ (descriptor p).constraints := by
+  simp [descriptor, graphConstraintsAt]
+  exact Or.inr (Or.inr (Or.inl ⟨node, hn, hc⟩))
+
+theorem public_pin_field (hash : List Int -> Int) {pub sec atoms : Nat}
+    {p : QuadProgram pub sec atoms} {t : VmTrace} (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t)
+    (i : Fin pub) :
+    fieldAssignment (envAt t 0).loc (rawBase atoms + i.val) =
+      fieldAssignment t.pub i.val := by
+  have hpos : 0 < t.rows.length := List.length_pos_iff.mpr hne
+  have hpin := hsat.rowConstraints 0 hpos
+    (.base (.piBinding .first (rawBase atoms + i.val) i.val)) (public_pin_mem p i)
+  have hmod : (envAt t 0).loc (rawBase atoms + i.val) ≡ t.pub i.val
+      [ZMOD 2013265921] := by
+    simpa [VmConstraint2.holdsAt] using hpin
+  exact (ZMod.intCast_eq_intCast_iff _ _ 2013265921).2 hmod
+
+/-- The single re-derived atom-link glue: the emitted degree-2 gate pins the
+atom residual column to the `QuadTerm`'s field value. -/
+theorem atom_link_field (hash : List Int -> Int) {pub sec atoms : Nat}
+    {p : QuadProgram pub sec atoms} {t : VmTrace} (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t)
+    (a : Fin atoms) :
+    fieldAssignment (envAt t 0).loc a.val =
+      (p.atomTerms a).evalField (rowInput p t) := by
+  have hpos : 0 < t.rows.length := List.length_pos_iff.mpr hne
+  have hgate := hsat.rowConstraints 0 hpos (atomLink p a) (atom_link_mem p a)
+  have hz := field_zero_of_gate (env := envAt t 0) (body := atomLinkBody p a) (by
+    simpa [atomLink] using hgate)
+  simp only [atomLinkBody, subW, negW, fieldWindow] at hz
+  rw [QuadTerm.fieldWindow_toWindowAt] at hz
+  have hz' : fieldAssignment (envAt t 0).loc a.val -
+      (p.atomTerms a).evalField (rowInput p t) = 0 := by
+    simpa [sub_eq_add_neg, rowInput] using hz
+  linear_combination hz'
+
+theorem graph_nodes_hold (hash : List Int -> Int) {pub sec atoms : Nat}
+    {p : QuadProgram pub sec atoms} {t : VmTrace} (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t) :
+    forall node, node ∈ nodesAt (boolBase pub sec atoms) p.source ->
+      Node.HoldsAt (envAt t 0) node := by
+  have hpos : 0 < t.rows.length := List.length_pos_iff.mpr hne
+  intro node hn c hc
+  have hgate := hsat.rowConstraints 0 hpos c (graph_node_constraint_mem p node hn c hc)
+  obtain ⟨body, rfl, _⟩ := node_constraint_degree node c hc
+  simpa [Node.HoldsAt, gate, VmConstraint2.holdsAt,
+    WindowConstraint.holdsAt] using hgate
+
+theorem accepts_output_one (hash : List Int -> Int) {pub sec atoms : Nat}
+    {p : QuadProgram pub sec atoms} {t : VmTrace} (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t) :
+    fieldWire (envAt t 0).loc (outputAt (boolBase pub sec atoms) p.source) = 1 := by
+  have hpos : 0 < t.rows.length := List.length_pos_iff.mpr hne
+  have hmem : acceptConstraintAt p ∈ (descriptor p).constraints := by
+    simp [descriptor]
+  have hgate := hsat.rowConstraints 0 hpos (acceptConstraintAt p) hmem
+  have hz := field_zero_of_gate (env := envAt t 0)
+    (body := subW (outputAt (boolBase pub sec atoms) p.source).expr (.const 1)) (by
+      simpa [acceptConstraintAt] using hgate)
+  simp [subW, negW, fieldWindow] at hz
+  rw [fieldWire_expr] at hz
+  linear_combination hz
+
+/-- Deliverable (1) payoff: arbitrary-trace soundness for the NONLINEAR
+compiler.  Any nonempty satisfying trace of the emitted descriptor proves the
+source predicate on the actual typed row inputs — with bilinear atoms now in the
+fragment. -/
+theorem sound (hash : List Int -> Int) {pub sec atoms : Nat}
+    (p : QuadProgram pub sec atoms) (t : VmTrace) (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t) :
+    p.Holds (rowInput p t) := by
+  have hgraph := graph_of_node_constraints (envAt t 0) (boolBase pub sec atoms)
+    p.source (graph_nodes_hold hash hne hsat)
+  have hout := accepts_output_one hash hne hsat
+  have heval : Dregg2.Logic.BoolGraph.Eval
+      (fun a : Fin atoms => fieldAssignment (envAt t 0).loc a.val)
+      p.source.toGraph :=
+    (Dregg2.Logic.BoolGraph.graph_sound hgraph).2.mp hout
+  have hrow : Formula.Holds
+      (fun a : Fin atoms => fieldAssignment (envAt t 0).loc a.val = 0) p.source :=
+    (Formula.graphEval_iff_holds (F := BabyBear)
+      (fun a : Fin atoms => fieldAssignment (envAt t 0).loc a.val) p.source).mp heval
+  apply (formula_holds_congr _ _ (fun a => ?_) p.source).mp hrow
+  rw [atom_link_field hash hne hsat a]
+  rfl
+
+theorem public_sound (hash : List Int -> Int) {pub sec atoms : Nat}
+    (p : QuadProgram pub sec atoms) (t : VmTrace) (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (descriptor p) (fun _ => 0) (fun _ => (0, 0)) [] t) :
+    p.PublicHolds (fun i => fieldAssignment t.pub i.val) := by
+  refine ⟨rowInput p t, ?_, sound hash p t hne hsat⟩
+  intro i
+  change fieldAssignment (envAt t 0).loc
+      (rawBase atoms + (Fin.castAdd sec i).val) = fieldAssignment t.pub i.val
+  simpa using public_pin_field hash hne hsat i
+
+end QuadProgram
+
+/-! ## 8. Re-derivation of `quantified_absence` as a nonlinear `QuadProgram`.
+
+`Dregg2.Circuit.Emit.QuantifiedAbsenceEmit.quantifiedAbsenceDesc` is a bespoke,
+hand-authored BabyBear⁴ descriptor (`traceWidth 28`, `20 constraints`, per-limb
+`_zero_iff` teeth but NO whole-descriptor soundness).  Here the same per-element
+relation `diff = α−elem`, `prod = w·diff`, `sum = prod+v`, `sum = Acc_all` is
+authored as a compiled `QuadProgram` — the bilinear `prod` limbs use the new
+`QuadTerm` form — so it inherits the machine-checked `QuadProgram.sound`.
+
+Scope note (honest, per the extension-field residual): the BabyBear⁴ multiply
+mod (X⁴−11) is NOT a single `a·b=c` product, but each output limb IS a single
+degree-2 polynomial (a sum of `w_j·d_k` products), which the `QuadTerm.mul`/`add`
+grammar expresses exactly and lowers to ONE degree-2 gate per limb.  There is
+therefore no unmodeled extension residual for the multiply itself; the four
+limbs are the four `prodAtom*` below, term-for-term the hand AIR's `prodC*`. -/
+namespace QuantifiedAbsence
+
+private def AC (i : Fin 4) : AffineTerm 32 := .input ⟨0 + i.val, by have := i.isLt; omega⟩
+private def AL (i : Fin 4) : AffineTerm 32 := .input ⟨4 + i.val, by have := i.isLt; omega⟩
+private def E (i : Fin 4) : AffineTerm 32 := .input ⟨8 + i.val, by have := i.isLt; omega⟩
+private def V (i : Fin 4) : AffineTerm 32 := .input ⟨16 + i.val, by have := i.isLt; omega⟩
+private def D (i : Fin 4) : AffineTerm 32 := .input ⟨20 + i.val, by have := i.isLt; omega⟩
+private def P (i : Fin 4) : AffineTerm 32 := .input ⟨24 + i.val, by have := i.isLt; omega⟩
+private def S (i : Fin 4) : AffineTerm 32 := .input ⟨28 + i.val, by have := i.isLt; omega⟩
+
+/-- C1 limb i: `diff_i − (α_i − elem_i)` (affine, one degree-1 gate). -/
+private def diffAtom (i : Fin 4) : QuadTerm 32 :=
+  .lin (.add (D i) (.add (.neg (AL i)) (E i)))
+/-- C3 limb i: `sum_i − (prod_i + v_i)` (affine). -/
+private def sumAtom (i : Fin 4) : QuadTerm 32 :=
+  .lin (.add (S i) (.add (.neg (P i)) (.neg (V i))))
+/-- Boundary limb i: `sum_i − Acc_all_i` (affine, over the public `Acc_all`). -/
+private def boundAtom (i : Fin 4) : QuadTerm 32 :=
+  .lin (.add (S i) (.neg (AC i)))
+
+/-- Literal-indexed columns for the bilinear C2 teeth (so they unfold to
+`input ⟨24⟩` rather than `input ⟨24 + ↑0⟩`, which keeps the faithfulness lemma's
+ring atoms aligned).  `w_i = col (12+i)`, `d_i = col (20+i)`, `prod_i = col (24+i)`. -/
+private def w0 : AffineTerm 32 := .input ⟨12, by omega⟩
+private def w1 : AffineTerm 32 := .input ⟨13, by omega⟩
+private def w2 : AffineTerm 32 := .input ⟨14, by omega⟩
+private def w3 : AffineTerm 32 := .input ⟨15, by omega⟩
+private def d0 : AffineTerm 32 := .input ⟨20, by omega⟩
+private def d1 : AffineTerm 32 := .input ⟨21, by omega⟩
+private def d2 : AffineTerm 32 := .input ⟨22, by omega⟩
+private def d3 : AffineTerm 32 := .input ⟨23, by omega⟩
+private def p0 : AffineTerm 32 := .input ⟨24, by omega⟩
+private def p1 : AffineTerm 32 := .input ⟨25, by omega⟩
+private def p2 : AffineTerm 32 := .input ⟨26, by omega⟩
+private def p3 : AffineTerm 32 := .input ⟨27, by omega⟩
+
+/-- C2 — the BILINEAR teeth: `prod_i − extmult_i`, `extmult` = `ExtElem::mul`
+mod (X⁴−11) term-for-term with `QuantifiedAbsenceEmit.prodC*`. -/
+private def prodAtom0 : QuadTerm 32 :=
+  .add (.lin p0) (.neg (.add (.mul w0 d0)
+    (.scale 11 (.add (.add (.mul w1 d3) (.mul w2 d2)) (.mul w3 d1)))))
+private def prodAtom1 : QuadTerm 32 :=
+  .add (.lin p1) (.neg (.add (.add (.mul w0 d1) (.mul w1 d0))
+    (.scale 11 (.add (.mul w2 d3) (.mul w3 d2)))))
+private def prodAtom2 : QuadTerm 32 :=
+  .add (.lin p2) (.neg (.add (.add (.add (.mul w0 d2) (.mul w1 d1))
+    (.mul w2 d0)) (.scale 11 (.mul w3 d3))))
+private def prodAtom3 : QuadTerm 32 :=
+  .add (.lin p3) (.neg (.add (.add (.add (.mul w0 d3) (.mul w1 d2))
+    (.mul w2 d1)) (.mul w3 d0)))
+
+def atomTerms : Fin 16 -> QuadTerm 32
+  | ⟨0, _⟩ => diffAtom 0
+  | ⟨1, _⟩ => diffAtom 1
+  | ⟨2, _⟩ => diffAtom 2
+  | ⟨3, _⟩ => diffAtom 3
+  | ⟨4, _⟩ => prodAtom0
+  | ⟨5, _⟩ => prodAtom1
+  | ⟨6, _⟩ => prodAtom2
+  | ⟨7, _⟩ => prodAtom3
+  | ⟨8, _⟩ => sumAtom 0
+  | ⟨9, _⟩ => sumAtom 1
+  | ⟨10, _⟩ => sumAtom 2
+  | ⟨11, _⟩ => sumAtom 3
+  | ⟨12, _⟩ => boundAtom 0
+  | ⟨13, _⟩ => boundAtom 1
+  | ⟨14, _⟩ => boundAtom 2
+  | ⟨15, _⟩ => boundAtom 3
+  | ⟨_, _⟩ => .lin (.const 0)
+
+/-- Source: the conjunction of all sixteen limb relations (four each of C1, C2,
+C3, boundary).  A left-unfolded `andList` of sixteen atoms: 15 `and` nodes. -/
+def source : Formula 16 :=
+  andList
+    [ .atom ⟨0, by omega⟩, .atom ⟨1, by omega⟩, .atom ⟨2, by omega⟩, .atom ⟨3, by omega⟩
+    , .atom ⟨4, by omega⟩, .atom ⟨5, by omega⟩, .atom ⟨6, by omega⟩, .atom ⟨7, by omega⟩
+    , .atom ⟨8, by omega⟩, .atom ⟨9, by omega⟩, .atom ⟨10, by omega⟩, .atom ⟨11, by omega⟩
+    , .atom ⟨12, by omega⟩, .atom ⟨13, by omega⟩, .atom ⟨14, by omega⟩, .atom ⟨15, by omega⟩ ]
+
+def program : QuadProgram 8 24 16 := { atomTerms := atomTerms, source := source }
+
+set_option maxHeartbeats 1200000 in
+theorem program_witnessCount : witnessCount program.source = 47 := by rfl
+
+set_option maxHeartbeats 1200000 in
+theorem program_equations : program.source.graphCost.equations = 78 := by
+  show (Dregg2.Metatheory.ArithmetizationCost.BooleanGraph.cost program.source.toGraph).equations = 78
+  rw [Dregg2.Metatheory.ArithmetizationCost.BooleanGraph.equations_exact]
+  rfl
+
+/-- MEASURE — generated resources of the compiled nonlinear descriptor, from the
+proven `descriptor_exact_resources`.  Generated: `piCount 8`, `traceWidth 95`,
+`103 constraints`.  Hand (`quantifiedAbsenceDesc`): `traceWidth 28`, `20
+constraints`, `piCount 8`.  The compiled form is larger because it is a GENERAL
+front end carrying per-atom residual columns (16), inverse witnesses, Boolean
+gates, and an accept gate — and it comes with whole-descriptor `sound`, which the
+hand descriptor lacks. -/
+theorem generated_resources :
+    (QuadProgram.descriptor program).piCount = 8 /\
+    (QuadProgram.descriptor program).traceWidth = 95 /\
+    (QuadProgram.descriptor program).constraints.length = 103 := by
+  obtain ⟨hpi, htw, hcon⟩ := QuadProgram.descriptor_exact_resources program
+  refine ⟨hpi, ?_, ?_⟩
+  · rw [htw, program_witnessCount]
+  · rw [hcon, program_equations]
+
+/-- Non-vacuous faithfulness of the BILINEAR tooth: atom 4's truth is EXACTLY the
+BabyBear⁴ multiply limb-0 polynomial `prod₀ = w₀·d₀ + 11·(w₁·d₃ + w₂·d₂ + w₃·d₁)`
+(the Lean analog of `QuantifiedAbsenceEmit.prodBody0_zero_iff`, here as an atom of
+the compiled program rather than a hand gate). -/
+theorem prod0_bilinear_faithful (input : Fin 32 -> BabyBear) :
+    program.AtomTruth input ⟨4, by omega⟩ ↔
+      input ⟨24, by omega⟩ =
+        input ⟨12, by omega⟩ * input ⟨20, by omega⟩ +
+          11 * (input ⟨13, by omega⟩ * input ⟨23, by omega⟩ +
+                input ⟨14, by omega⟩ * input ⟨22, by omega⟩ +
+                input ⟨15, by omega⟩ * input ⟨21, by omega⟩) := by
+  have h4 : program.atomTerms ⟨4, by omega⟩ = prodAtom0 := rfl
+  simp only [QuadProgram.AtomTruth, h4, prodAtom0, w0, w1, w2, w3,
+    d0, d1, d2, d3, p0, QuadTerm.evalField, AffineTerm.evalField]
+  push_cast
+  constructor <;> intro h <;> linear_combination h
+
+/-- The nonlinear compiler's soundness, instantiated at the quantified-absence
+descriptor: every nonempty satisfying trace proves the sixteen limb relations on
+the row inputs. -/
+theorem program_sound (hash : List Int -> Int) (t : VmTrace) (hne : t.rows ≠ [])
+    (hsat : Satisfied2 hash (QuadProgram.descriptor program) (fun _ => 0) (fun _ => (0, 0)) [] t) :
+    program.Holds (QuadProgram.rowInput program t) :=
+  QuadProgram.sound hash program t hne hsat
+
+end QuantifiedAbsence
+
 #assert_all_clean [
   AffineTerm.fieldWindow_toWindowAt,
   AffineTerm.toWindowAt_degree,
+  QuadTerm.fieldWindow_toWindowAt,
+  QuadTerm.toWindowAt_degree,
+  QuadProgram.descriptor_exact_resources,
+  QuadProgram.descriptor_constraint_low_degree,
+  QuadProgram.atom_link_field,
+  QuadProgram.sound,
+  QuadProgram.public_sound,
+  QuantifiedAbsence.generated_resources,
+  QuantifiedAbsence.prod0_bilinear_faithful,
+  QuantifiedAbsence.program_sound,
   graphConstraintsAt_length,
   descriptor_exact_resources,
   descriptor_constraint_low_degree,
