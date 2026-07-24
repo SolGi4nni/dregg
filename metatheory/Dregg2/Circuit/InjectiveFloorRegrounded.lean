@@ -91,7 +91,7 @@ the three carriers' docstrings now point at these teeth. `#assert_all_clean`; no
 -/
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
-import Dregg2.Crypto.CostTactics
+import Dregg2.Crypto.RomChainedReduction
 import Dregg2.Circuit.VacuitySweepTeeth
 import Dregg2.Circuit.CommitDifferential
 import Dregg2.Circuit.DeployedCapTree
@@ -842,43 +842,43 @@ theorem wide_floor_bot_vacuous (D : WideKeyed) :
     HashCRHardQuant (wideFamily D) (fun _ => False) :=
   hashCRHardQuant_bot_vacuous _
 
-/-! ## §4 — `hEff` DISCHARGED: efficiency is a THEOREM at `Eff := IsPolyTime`, not a floating parameter.
+/-! ## §4 — the DISCHARGED headlines: every binding keystone lands on the PROVED keyed-ROM floor.
 
-§1–§3 each close with an advantage bound carrying `hEff : Eff (extracted finder)` as a BARE PARAMETER —
-the honest name for "the reduction is efficient", undischarged because `FloorGames` §8 had no cost model.
-`Dregg2.Crypto.CostAdversary` supplies one at COST-VECTOR resolution (intrinsic instructions + per-oracle
-call counts, both DERIVED from a deep-embedded program's syntax), and at `Eff := IsPolyTime` the parameter
-becomes a CONSEQUENCE: every extractor in this file is a pure output reshaping (`Adversary.postMap`, the
-sampled tag passed through), and `isPolyTime_postMap` proves each preserves `IsPolyTime`.
+§1–§3 each close with an `Eff`-parametric advantage bound carrying `hEff : Eff (extracted finder)`
+in the open — the honest fixed-hash content, KEPT beside this section. §4 holds their DISCHARGED
+successors. The `IsPolyTime` discharges that historically stood here (`node8_binds_from_polyTime`,
+`leaf8_binds_from_polyTime`, `effectVmCommit_binds_all_from_polyTime`,
+`wireCommitR8_binds_from_polyTime`) instantiated each collision floor at
+`Eff := IsPolyTime (AnsSize)` — a floor class REFUTED at every fixed public hash
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`;
+`Market.WideCommitBoundary.stateCommit_floor_polyTime_false_babyBear` proves it AT this very wire
+break game's family): `IsPolyTime` prices answer SIZE, so a `Classical.choice` `.pure`-leaf
+answering a fixed short collision of the fixed function is IN the class and wins with probability
+`1`. No `Eff` repairs a fixed-hash game (`Crypto.RomBindingReduction`'s header). ALL FOUR are
+DELETED, each in the same commit its successor landed:
 
-So each carrier gets a `_from_polyTime` twin whose ONLY per-site inputs are
+  * `node8` / leaf → §4.1's `RomSuccessor` section (`node8_binds_rom` / `leaf8_binds_rom`, flat
+    carriers over the chip's own tag space);
+  * the cell commitment → §4.2's `RomSuccessorCommit4` (`effectVmCommit_binds_all_rom`: the
+    TWO-CARRIER union bound over ONE family — `chained_rom_binds` — because WHICH inner `h4` call
+    collides depends on the sampled oracle's answers);
+  * the chained wire commitment → §4.4's `RomSuccessorWire` (`wireCommitR8_binds_rom`: the
+    CHAIN-WALK extractor that re-walks both chains and PAYS its own queries — `romChained_binds`).
 
-  * the reshaper's DECLARED work `cw · (input size) + bw` — two `ℕ` constants, LINEAR in the size of the
-    value the reduction is handed. A Lean `fun` has no runtime, so that number cannot be derived, only
-    CHARGED in the program's syntax (`CostAdversary` design commitment 5);
-  * the extractor's OUTPUT SIZE, PROVED here from the deployed widths rather than hypothesized —
-    `pack8` is 16 felts, `leafFields` is 7, an `h4` quad is 4, and the chain walk returns at most
-    `11 + 11` (§4.4's `wireCommit8Find_len_le`, the same bound the `Market` boundary consumes).
+What remains of the cost-model era, kept deliberately: the proved OUTPUT-SIZE facts about the
+fixed-hash extractors (`pack8_length`, §4.3's `wireCommit8Find_len_le` — facts about §1–§3's
+extractors, still true of the deployed schedule), and the `_isPolyTime_inhabited` teeth, which pin
+the REFUTED class strictly between the poles §1.4/§2.5/§3.6 price — so a reader can see the
+refuted class was never `⊥` and the refutation was earned, not vacuous. -/
 
-NO `PolyBoundedNat` overhead hypothesis is taken: the poly-ness of the composed overhead is derived from
-the breaker's OWN bound via `FreeOracle.maxOut_le_intr` ("a poly-time adversary writes poly-many bits").
-
-The instantiated class is pinned STRICTLY BETWEEN the two poles §1.4/§2.5/§3.6 price: it is not `⊥`
-(each family's `_isPolyTime_inhabited` tooth below puts the constant finder in it) and it is not `⊤`
-(`CostAdversary.bruteForce_not_polyTime` excludes the scanning solver that collapses every floor). -/
-
-/-! ⚑ **STATUS OF THIS SECTION (2026-07-24).** The `node8`/leaf discharges below are REPOINTED onto
-the keyed-ROM floor (§4.1's `RomSuccessor` section) and their `IsPolyTime` forms DELETED — that floor
-class is refuted (`sysRoots_floor_polyTime_false_babyBear`). The remaining TWO `_from_polyTime`
-discharges (`effectVmCommit_binds_all_from_polyTime` §4.2, `wireCommitR8_binds_from_polyTime` §4.4)
-are NOT yet repointed and are KNOWN to carry that refuted floor — left in place rather than deleted
-without a built replacement. Their successors need genuine construction, not a hypothesis swap: the
-cell commitment is a TWO-LEVEL `h4` nest (three inner quads + an outer quad absorbing the authority
-residue — the `EffectVmRowCommitReduction.effectVmNarrowRomForgery` chain shape, which must first be
-generalised from `SpongeKeyed` to a bare tag space to be instantiable at `H4Keyed`), and the wire
-commitment is an 11-step CHAIN whose walking extractor is `Crypto.RomChainedReduction`'s
-`RomChainedCarrier` shape (blocks = the `chunk31` schedule, accumulator = the iroot). Both are
-mechanical on existing kit and on the repoint work-list; neither is a refutation tooth. -/
+/-! ⚑ **STATUS OF THIS SECTION (2026-07-24): the repoint is COMPLETE — no `_from_polyTime`
+discharge remains in this file.** Every successor is a LABELLED idealisation, never a derivation
+(`RomCarrierSites` header): the sampled `H : Tag × Msg → Fin (2 ^ l)` idealises the deployed
+Poseidon2 digest at an ASYMPTOTIC width — there is NO `l` at which `Fin (2 ^ l)` is the deployed
+~31-bit BabyBear felt (the felt-width wound, said out loud). A `_binds_rom` proves binding in the
+keyed-ROM model at that width, NOT any statement about the fixed deployed permutation; CR of a
+fixed public function is a conjecture, not a Lean theorem. The fixed-hash residual is priced, per
+family, by the ⊤/⊥ poles and the `Eff`-parametric advantage bounds kept beside it. -/
 
 /-! ### §4.1 — the arity-16 chip: `node8` and the leaf. -/
 
@@ -1036,27 +1036,6 @@ theorem chip8Floor_isPolyTime_inhabited (D : Chip8Keyed) :
 def h4AnsSize (D : H4Keyed) : AnsSize (hashGame (h4Family D)) :=
   fun _ (_ : (ℤ × ℤ × ℤ × ℤ) × (ℤ × ℤ × ℤ × ℤ)) => 8
 
-/-- **THE CELL-COMMITMENT GAME'S ANSWER ENCODING** — two 13-limb claims. -/
-def commit4AnsSize (D : H4Keyed) : AnsSize (commit4BreakGame D) :=
-  fun _ (_ : Claim13 × Claim13) => 26
-
-/-- **⚑ `hEff` DISCHARGED for the deployed cell commitment.** A cell-commitment equivocator that is
-EFFICIENT, put through the TREE-TRACE extractor, yields an `h4`-collision finder that is still efficient:
-whichever of the four branches the trace takes it writes exactly two quads, a CONSTANT `8` felts. So the
-audit-P0-2 anti-ghost tooth is a concrete-security statement with no floating efficiency parameter. -/
-theorem effectVmCommit_binds_all_from_polyTime (D : H4Keyed) (A : Adversary (commit4BreakGame D))
-    (hA : IsPolyTime (commit4AnsSize D) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (h4Family D) (IsPolyTime (h4AnsSize D))) :
-    Negl (gameAdv (commit4BreakGame D) A) := by
-  have hEff : IsPolyTime (h4AnsSize D) (commit4BreakToFinder D A) := by
-    poly_time (commit4AnsSize D) (h4AnsSize D)
-      (fun _ t (c : Claim13 × Claim13) => commit4Find (D.h4At t) c.1 c.2)
-      cw bw 0 8 hA
-    intro l t c
-    show (8 : ℕ) ≤ 0 * (commit4AnsSize D l c) + 8
-    omega
-  exact effectVmCommit_binds_all_advantage_bound D (IsPolyTime (h4AnsSize D)) A hEff hCR
-
 /-- **(TOOTH — the `h4` floor's class is NOT EMPTY.)** -/
 theorem h4Floor_isPolyTime_inhabited (D : H4Keyed) :
     IsPolyTime (h4AnsSize D)
@@ -1065,13 +1044,272 @@ theorem h4Floor_isPolyTime_inhabited (D : H4Keyed) :
                      ((0 : ℤ), (0 : ℤ), (0 : ℤ), (0 : ℤ))))).toAdversary :=
   isPolyTime_inhabited _ _ ⟨8, 0, fun _ _ => by simp [h4AnsSize]⟩
 
+/-! ### ⚑ THE DISCHARGED CELL-COMMITMENT HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
+
+The `IsPolyTime` discharge that stood here (`effectVmCommit_binds_all_from_polyTime`) carried
+`HashCRHardQuant (h4Family D) (IsPolyTime …)` — a floor class the `Classical.choice`
+short-collision answerer refutes at the deployed `hash_4_to_1`
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` is the proved shape:
+`IsPolyTime` prices answer SIZE, and a `.pure`-leaf answering a fixed short collision of the fixed
+compress is in the class and wins with probability `1`), and no `Eff` repairs the fixed-hash game
+(`Crypto.RomBindingReduction`'s header). DELETED. The successor lands on a SAMPLED oracle keyed by
+the compress's OWN tag space, where `KeyedRomFloor.keyedRom_hard` (the birthday bound) is a
+THEOREM.
+
+⚑ THE MODELLING STEP, STATED (not smuggled): the deployed BabyBear digest is idealised as ONE
+`λ`-bit sampled value `Fin (2 ^ l)` — there is NO `l` at which that is the deployed ~31-bit felt
+(the felt-width wound, said out loud). The message domain is the TRUNCATED deployed absorb
+schedule, domain-separated by constructor inside ONE family: an INNER quad (four BabyBear-range
+felts — `commit4Find`'s head/body quads `(bl, bh, n, f0)` / `(f1..f4)` / `(f5..f7, cr)` at the
+truncated widths) or the OUTER absorb (the three inner digests plus the authority-residue felt —
+the fourth outer slot is a PAYLOAD felt, not an inner hash: the deployed
+`h4 i1 i2 i3 rd` shape, exactly). The two-level nest is genuinely re-absorbed: the oracle appears
+INSIDE the win relation, which is what §2's fixed `commit4Find` trace could not say in the ROM —
+WHICH inner `h4` call collides depends on the sampled oracle's answers, so a fixed `mapOut` cannot
+pick it. The successor splits into an INNER and an OUTER carrier over one family and takes the
+UNION bound (`chained_rom_binds`) — the landed
+`EffectVmRowCommitReduction.narrowRow_binds_rom` shape, re-keyed from `SpongeKeyed` to the bare
+`H4Keyed` tag space.
+
+⚑ WHAT THE ROM LAYER DOES NOT CARRY: §2's fixed-hash content — the break game over real
+`Claim13`s, the tree-trace extractor, the `Eff`-parametric
+`effectVmCommit_binds_all_advantage_bound` with `hEff` in the open, and both poles §2.5 prices —
+stays untouched beside it. CR of the fixed public `hash_4_to_1` remains a conjecture, not a Lean
+theorem. -/
+
+section RomSuccessorCommit4
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomCarrierSites hiding babyBearP
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- A truncated inner quad: four BabyBear-range felts — the deployed `commit4Find` head/body quad
+shape at the truncated widths. -/
+abbrev Quad4 : Type := Fin 4 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+
+/-- **THE ORACLE MESSAGE DOMAIN** — the deployed two-level absorb schedule, domain-separated by
+constructor: `inl` an inner quad, `inr` the OUTER absorb (three inner digests + the
+authority-residue felt). -/
+abbrev Commit4RomMsg (l : ℕ) : Type :=
+  Quad4 ⊕ ((Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+    × Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+
+/-- The cell-commitment keyed ROM family — keyed by the DEPLOYED compress's own tag space. -/
+def commit4RomFamily (D : H4Keyed) (tagDec : DecidableEq D.Tag) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty Commit4RomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (fun _ => ⟨0, babyBearP_pos⟩)⟩)
+
+theorem commit4RomFamily_card_R (D : H4Keyed) (tagDec : DecidableEq D.Tag) (l : ℕ) :
+    letI := (commit4RomFamily D tagDec).rFin l
+    Fintype.card ((commit4RomFamily D tagDec).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- The truncated 13-limb payload — the three inner quads and the authority-residue felt
+(`Claim13`'s limbs distributed into the deployed quad decomposition, at the truncated widths). -/
+abbrev Commit4RomVal : Type :=
+  (Quad4 × Quad4 × Quad4) × Fin Dregg2.Crypto.RomCarrierSites.babyBearP
+
+/-- The inner carrier — binds one absorbed quad. The embedding is by constructor, injective on
+the nose. -/
+def commit4InnerCarrier (D : H4Keyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (commit4RomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => Quad4)
+    (fun _ => inferInstance) (fun _ _ v => Sum.inl v)
+    (fun _ _ _ _ h => Sum.inl_injective h)
+
+/-- The outer carrier — binds the outer absorb (three inner digests + the residue felt). -/
+def commit4OuterCarrier (D : H4Keyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (commit4RomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun l => (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+      × Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+    (fun _ => inferInstance) (fun _ _ v => Sum.inr v)
+    (fun _ _ _ _ h => Sum.inr_injective h)
+
+/-- **THE DEPLOYED NESTED COMMITMENT AT THE SAMPLED ORACLE** — the ROM restatement of
+`effectVmCommit h4 … = h4 (h4 bl bh n f0) (h4 f1 f2 f3 f4) (h4 f5 f6 f7 cr) rd`, with the three
+inner digests genuinely re-absorbed by the outer query. -/
+def commit4RomCommit (D : H4Keyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (H : (commit4RomFamily D tagDec).toRomFamily.D l
+      → (commit4RomFamily D tagDec).toRomFamily.R l)
+    (t : D.Tag) (v : Commit4RomVal) : (commit4RomFamily D tagDec).toRomFamily.R l :=
+  H (t, Sum.inr ((H (t, Sum.inl v.1.1), H (t, Sum.inl v.1.2.1), H (t, Sum.inl v.1.2.2)), v.2))
+
+/-- **THE CELL-COMMITMENT ROM FORGERY** — two DISTINCT truncated 13-limb payloads, one nested
+deployed commitment: `commit4BreakGame`'s commitment content at the sampled oracle. -/
+def effectVmCommitRomForgery (D : H4Keyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (commit4RomFamily D tagDec) where
+  Ans := fun _ => D.Tag × Commit4RomVal × Commit4RomVal
+  wins := fun l H a =>
+    a.2.1 ≠ a.2.2
+      ∧ commit4RomCommit D tagDec l H a.1 a.2.1 = commit4RomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((commit4RomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- The inner-leg selection — the first differing quad (pure post-map, no queries added). If all
+three agree the payloads differ only at the residue felt, which the OUTER leg then catches (the
+felt sits in the outer message). The fallback answer is the (equal) head quads — never a win,
+harmlessly. -/
+def commit4InnerSelect (D : H4Keyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (a : (effectVmCommitRomForgery D tagDec).Ans l) :
+    (commit4InnerCarrier D tagDec).Ctx l
+      × (commit4InnerCarrier D tagDec).Val l × (commit4InnerCarrier D tagDec).Val l :=
+  let v := a.2.1
+  let w := a.2.2
+  if v.1.1 ≠ w.1.1 then ((a.1, ()), v.1.1, w.1.1)
+  else if v.1.2.1 ≠ w.1.2.1 then ((a.1, ()), v.1.2.1, w.1.2.1)
+  else ((a.1, ()), v.1.2.2, w.1.2.2)
+
+/-- The outer-leg extraction — run the forger, then RE-QUERY the six inner points and answer with
+the two outer messages (`bindComp`, budget `Q + 6`). -/
+def commit4OuterComp (D : H4Keyed) (tagDec : DecidableEq D.Tag)
+    (M : ∀ l, OracleComp ((commit4RomFamily D tagDec).toRomFamily.D l)
+      ((commit4RomFamily D tagDec).toRomFamily.R l)
+      ((effectVmCommitRomForgery D tagDec).Ans l)) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrierComp (commit4RomFamily D tagDec)
+      (commit4OuterCarrier D tagDec) :=
+  fun l => OracleComp.bindComp (M l) (fun a =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.1) (fun d₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.1) (fun d₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.2) (fun d₃ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.1) (fun e₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.1) (fun e₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.2) (fun e₃ =>
+    OracleComp.pure ((a.1, ()), ((d₁, d₂, d₃), a.2.1.2), ((e₁, e₂, e₃), a.2.2.2)))))))))
+
+/-- **⚑⚑ THE CELL-COMMITMENT BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the
+deleted `effectVmCommit_binds_all_from_polyTime`: a query-bounded forger of the deployed nested
+cell commitment has NEGLIGIBLE advantage. Outer messages differ (which covers a
+residue-felt-only disagreement, since the felt sits in the outer absorb) → outer-carrier win,
+budget `Q + 6`; outer messages agree → the first differing quad is an inner collision, budget
+`Q`. Each leg dies by the birthday floor. NO floor hypothesis. -/
+theorem effectVmCommit_binds_all_rom (D : H4Keyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmCommitRomForgery D tagDec).game)
+    (hA : RomForgeryEff (commit4RomFamily D tagDec) (effectVmCommitRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmCommitRomForgery D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine chained_rom_binds (effectVmCommitRomForgery D tagDec)
+    (commit4InnerCarrier D tagDec) (commit4OuterCarrier D tagDec)
+    Q (fun l => Q l + 2 + 2 + 2) hQ
+    (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ hQ)))
+    (commit4RomFamily_card_R D tagDec) A
+    (romCarrierAdv _ _ (fun l => OracleComp.mapOut (commit4InnerSelect D tagDec l) (M l)))
+    (romCarrierAdv _ _ (commit4OuterComp D tagDec M))
+    ?_
+    ⟨fun l => OracleComp.mapOut (commit4InnerSelect D tagDec l) (M l),
+      fun l => OracleComp.mapOut_queryBounded _ (hM l), fun _ _ => rfl⟩
+    ⟨commit4OuterComp D tagDec M,
+      fun l => (OracleComp.bindComp_queryBounded (hM l)
+        (fun a => QueryBounded.query 5 _ _ (fun _ => QueryBounded.query 4 _ _
+          (fun _ => QueryBounded.query 3 _ _ (fun _ => QueryBounded.query 2 _ _
+          (fun _ => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+          (fun _ => QueryBounded.pure 0 _)))))))).mono
+        (by show Q l + 6 ≤ Q l + 2 + 2 + 2; omega),
+      fun _ _ => rfl⟩
+  intro l H hwin
+  have hArun : A.run l H = (M l).eval H := hrun l H
+  set a := A.run l H with ha
+  obtain ⟨hne, heq⟩ := hwin
+  have hB₁run : (romCarrierAdv _ _
+      (fun l => OracleComp.mapOut (commit4InnerSelect D tagDec l) (M l))).run l H
+      = commit4InnerSelect D tagDec l a := by
+    show (OracleComp.mapOut (commit4InnerSelect D tagDec l) (M l)).eval H = _
+    rw [OracleComp.mapOut_eval, ← hArun]
+  have hB₂run : (romCarrierAdv _ _ (commit4OuterComp D tagDec M)).run l H
+      = ((a.1, ()),
+          ((H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+            H (a.1, Sum.inl a.2.1.1.2.2)), a.2.1.2),
+          ((H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+            H (a.1, Sum.inl a.2.2.1.2.2)), a.2.2.2)) := by
+    show (commit4OuterComp D tagDec M l).eval H = _
+    unfold commit4OuterComp
+    rw [OracleComp.bindComp_eval, ← hArun]
+    rfl
+  by_cases hT :
+      (((H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+         H (a.1, Sum.inl a.2.1.1.2.2)), a.2.1.2)
+        : (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+          × Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+      = ((H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+          H (a.1, Sum.inl a.2.2.1.2.2)), a.2.2.2)
+  · -- the outer messages AGREE: all three inner digests collide and the residue felts are
+    -- equal, so some quad differs — an inner-carrier equivocation.
+    refine Or.inl ?_
+    rw [hB₁run]
+    have h1 : H (a.1, Sum.inl a.2.1.1.1) = H (a.1, Sum.inl a.2.2.1.1) :=
+      congrArg (fun p => p.1.1) hT
+    have h2 : H (a.1, Sum.inl a.2.1.1.2.1) = H (a.1, Sum.inl a.2.2.1.2.1) :=
+      congrArg (fun p => p.1.2.1) hT
+    have h3 : H (a.1, Sum.inl a.2.1.1.2.2) = H (a.1, Sum.inl a.2.2.1.2.2) :=
+      congrArg (fun p => p.1.2.2) hT
+    have hd : a.2.1.2 = a.2.2.2 := congrArg (fun p => p.2) hT
+    unfold commit4InnerSelect
+    by_cases hA1 : a.2.1.1.1 ≠ a.2.2.1.1
+    · rw [if_pos hA1]
+      exact ⟨hA1, h1⟩
+    · rw [if_neg hA1]
+      by_cases hB1 : a.2.1.1.2.1 ≠ a.2.2.1.2.1
+      · rw [if_pos hB1]
+        exact ⟨hB1, h2⟩
+      · rw [if_neg hB1]
+        push_neg at hA1 hB1
+        have hC1 : a.2.1.1.2.2 ≠ a.2.2.1.2.2 := by
+          intro hc
+          apply hne
+          exact Prod.ext (Prod.ext hA1 (Prod.ext hB1 hc)) hd
+        exact ⟨hC1, h3⟩
+  · -- the outer messages DIFFER — an outer-carrier equivocation, witnessed by the re-queried
+    -- inner digests.
+    refine Or.inr ?_
+    rw [hB₂run]
+    exact ⟨hT, heq⟩
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage, and the admitted refuter-shape is
+DEFANGED.)** The `0`-query constant answerer on two distinct payloads is in `RomForgeryEff` at
+every budget; at the constant oracle both nested commitments collapse, so it WINS there (positive
+advantage); and `effectVmCommit_binds_all_rom` applies to it — NEGLIGIBLE advantage. The exact
+`IsPolyTime`-refuting shape, admitted and defanged, dying at this layer. -/
+theorem commit4Rom_constAnswer_defanged (D : H4Keyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (t₀ : D.Tag) (v w : Commit4RomVal) (hvw : v ≠ w) :
+    ∃ A, RomForgeryEff (commit4RomFamily D tagDec) (effectVmCommitRomForgery D tagDec) Q A
+      ∧ Negl (gameAdv (effectVmCommitRomForgery D tagDec).game A)
+      ∧ ∀ l, 0 < gameAdv (effectVmCommitRomForgery D tagDec).game A l := by
+  refine ⟨⟨fun _ _ => (t₀, v, w)⟩,
+    ⟨fun _ => OracleComp.pure (t₀, v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩,
+    effectVmCommit_binds_all_rom D tagDec Q hQ _
+      ⟨fun _ => OracleComp.pure (t₀, v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩,
+    fun l => ?_⟩
+  obtain ⟨r₀⟩ := ((commit4RomFamily D tagDec).toRomFamily).rNe l
+  refine @winProb_pos_of_witness _
+    (((effectVmCommitRomForgery D tagDec).game).instFin l) _ (fun _ => r₀) ?_
+  exact (Dregg2.Crypto.FloorGames.Adversary.hit_eq_true _ l _).mpr ⟨hvw, rfl⟩
+
+/-- **(TOOTH — a non-negligible cell-commitment forger is OUTSIDE the class.)** The refutation
+strategy that killed the `IsPolyTime` floor cannot produce a member of this one. -/
+theorem commit4Rom_nonNegl_forger_excluded (D : H4Keyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmCommitRomForgery D tagDec).game)
+    (hnn : ¬ Negl (gameAdv (effectVmCommitRomForgery D tagDec).game A)) :
+    ¬ RomForgeryEff (commit4RomFamily D tagDec) (effectVmCommitRomForgery D tagDec) Q A :=
+  fun hA => hnn (effectVmCommit_binds_all_rom D tagDec Q hQ A hA)
+
+end RomSuccessorCommit4
+
 /-! ### §4.3 — the wide chained wire commitment: the chain walk's output is BOUNDED.
 
 The wire extractor is the only one in this file that is not a fixed-width reshape: `wireCommit8Find`
 WALKS the two chains. Its output is nevertheless a CONSTANT `≤ 22` felts, because every value the walk
-can return is a carrier (width `8`, the deployed squeeze) or a carrier plus one body block (`≤ 3`). That
-is proved here, beside the extractor's own advantage bound, so the wide carrier's `hEff` is discharged AT
-its own site rather than only downstream at the `Market` boundary. -/
+can return is a carrier (width `8`, the deployed squeeze) or a carrier plus one body block (`≤ 3`).
+Proved here beside the extractor's own advantage bound. (The `IsPolyTime` discharge these bounds once
+served is DELETED — that class is refuted; §4.4's `RomSuccessorWire` is the discharged successor —
+but the bounds remain true facts of §3's fixed-hash extractor and of the deployed schedule.) -/
 
 /-- Every `chunk31` block is at most three limbs wide (the deployed body arity is `carrier ‖ 3`). -/
 theorem chunk31_len_le : ∀ (xs : List ℤ) (c : List ℤ), c ∈ chunk31 xs → c.length ≤ 3
@@ -1161,42 +1399,173 @@ theorem wireCommit8Find_len_le (permW : List ℤ → List ℤ) (hW : Poseidon2Wi
 def wideAnsSize (D : WideKeyed) : AnsSize (hashGame (wideFamily D)) :=
   fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
 
-/-- **THE WIRE GAME'S ANSWER ENCODING** — the two limb lists plus the two iroots. -/
-def wireAnsSize (D : WideKeyed) : AnsSize (wireCommitBreakGame D) :=
-  fun _ (c : (List ℤ × ℤ) × (List ℤ × ℤ)) => c.1.1.length + c.2.1.length + 2
-
-/-- **⚑ `hEff` DISCHARGED for the faithful wide wire commitment — AT ITS OWN SITE.** A wire-commit
-equivocator that is EFFICIENT, put through the CHAIN WALK, yields a `permW`-collision finder that is
-still efficient (`wireCommit8Find_len_le`: the walk writes at most `22` felts whichever branch it
-takes) — so the wide collision floor at `Eff := IsPolyTime` applies to it and the ~124-bit binding the
-light client trusts holds except with negligible probability, with NO floating efficiency parameter.
-
-This is the carrier with seven hypothesis uses across the wide emission lane, the cap-open lane, the
-`Market` boundary and the `Deos` settle descriptors; discharging it here means every one of those
-consumers can reach the poly-time floor without re-deriving the walk's output bound. -/
-theorem wireCommitR8_binds_from_polyTime (D : WideKeyed) (A : Adversary (wireCommitBreakGame D))
-    (hA : IsPolyTime (wireAnsSize D) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (wideFamily D) (IsPolyTime (wideAnsSize D))) :
-    Negl (gameAdv (wireCommitBreakGame D) A) := by
-  have hEff : IsPolyTime (wideAnsSize D) (wireBreakToFinder D A) := by
-    poly_time (wireAnsSize D) (wideAnsSize D)
-      (fun _ t (c : (List ℤ × ℤ) × (List ℤ × ℤ)) =>
-        wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2)
-      cw bw 0 22 hA
-    intro l t c
-    have h := wireCommit8Find_len_le (D.permWAt t) (D.width8At t) c.1.1 c.1.2 c.2.1 c.2.2
-    show (wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2).1.length
-        + (wireCommit8Find (D.permWAt t) c.1.1 c.1.2 c.2.1 c.2.2).2.length
-      ≤ 0 * (wireAnsSize D l c) + 22
-    omega
-  exact wireCommitR8_binds_advantage_bound D (IsPolyTime (wideAnsSize D)) A hEff hCR
-
 /-- **(TOOTH — the wide floor's class is NOT EMPTY.)** -/
 theorem wideFloor_isPolyTime_inhabited (D : WideKeyed) :
     IsPolyTime (wideAnsSize D)
       (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
         (fun _ _ => (([] : List ℤ), ([] : List ℤ)))).toAdversary :=
   isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [wideAnsSize]⟩
+
+/-! ### §4.4 — ⚑ THE DISCHARGED WIRE-COMMIT HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
+
+The `IsPolyTime` discharge that stood here (`wireCommitR8_binds_from_polyTime`) carried
+`HashCRHardQuant (wideFamily D) (IsPolyTime …)` — the floor class
+`Market.WideCommitBoundary.stateCommit_floor_polyTime_false_babyBear` PROVES FALSE at this very
+family (the `Classical.choice` short-collision answerer is in the class and wins with probability
+`1`), and no `Eff` repairs the fixed-hash game. DELETED. The successor is the CHAIN-WALK shape
+(`Crypto.RomChainedReduction`): `wireCommitR8` is a chained absorption — the 4-limb head
+`permW (l.take 4)`, then the `chunk31` 3-limb blocks each re-absorbing the previous 8-felt digest,
+the iroot block `[ir, 0, 0]` last — and the colliding step of a forgery sits at an INTERIOR chain
+position that depends on the sampled oracle's answers, so the extractor cannot be a post-map: it
+must RE-WALK both chains, two queries per step, and PAY for them (`chainedFinder_in_romEff`,
+budget `Q + 2·len + 2`).
+
+⚑ THE MODELLING STEP, STATED (not smuggled): digests AND limbs are idealised at `Fin (2 ^ l)` —
+there is NO `l` at which that is the deployed ~31-bit BabyBear felt (the felt-width wound). The
+head/step encodings are the deployed fixed-width concatenation `acc ++ c` made type-level, so
+their injectivity is a LAYOUT fact, never a hash claim. The chain-as-oracle-program weld to the
+REAL `wireCommitR8` is already landed at `Market.WideCommitBoundary` §Q (`wireCommitComp_eval`:
+the program's run at the deployed permutation IS `wireCommitR8`, step for step); the carrier below
+is that schedule re-keyed to `WideKeyed`'s OWN tag space and generic in the block count `n` (the
+break game §3.4 pins only EQUAL limb counts; `wireCommitRomCarrier_len_eq_schedule` welds `n` to
+the deployed `chunk31 ++ [iroot]` schedule of any limb list). §3's fixed-hash content — the break
+game over real limb lists, the walking extractor `wireCommit8Find`, the `Eff`-parametric
+`wireCommitR8_binds_advantage_bound`, both poles §3.6 prices — stays untouched beside it. -/
+
+section RomSuccessorWire
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomCarrierSites hiding babyBearP
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomChainedReduction
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- **THE ORACLE MESSAGE DOMAIN** — the deployed chained absorb schedule, head/step
+domain-separated by constructor: `inl` the 4-limb head (`l.take 4`), `inr` a step input — the
+previous 8-felt digest re-absorbed with the next 3-limb block (`acc ++ c` at the deployed fixed
+widths, made type-level). -/
+abbrev WireRomMsg (l : ℕ) : Type :=
+  (Fin 4 → Fin (2 ^ l)) ⊕ (Fin (2 ^ l) × (Fin 3 → Fin (2 ^ l)))
+
+/-- The wire keyed ROM family — keyed by the DEPLOYED wide permutation's own tag space. -/
+def wireRomFamily (D : WideKeyed) (tagDec : DecidableEq D.Tag) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty WireRomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (fun _ => ⟨0, by positivity⟩)⟩)
+
+theorem wireRomFamily_card_R (D : WideKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ) :
+    letI := (wireRomFamily D tagDec).rFin l
+    Fintype.card ((wireRomFamily D tagDec).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE CHAINED WIRE CARRIER** — 4-limb head, `n` three-limb blocks, each step re-absorbing the
+previous digest; the context is the shared domain-separation tag. Generic in the block count `n`
+because §3.4's break game pins only EQUAL limb counts; the weld below pins `n` to the deployed
+schedule of any concrete limb list. Same shape as the landed
+`Market.WideCommitBoundary.stateCommitRomCarrier` (which fixes `n = 59` at the 178-limb payload). -/
+def wireCommitRomCarrier (D : WideKeyed) (tagDec : DecidableEq D.Tag) (n : ℕ) :
+    RomChainedCarrier (wireRomFamily D tagDec) where
+  Ctx := fun _ => D.Tag
+  Hd := fun l => Fin 4 → Fin (2 ^ l)
+  Blk := fun l => Fin 3 → Fin (2 ^ l)
+  len := fun _ => n
+  hdDec := fun _ => inferInstance
+  blkDec := fun _ => inferInstance
+  encHd := fun _ c h => (c, Sum.inl h)
+  encStep := fun _ c r b => (c, Sum.inr (r, b))
+  encHd_inj := fun _ _ _ _ h => Sum.inl_injective (congrArg Prod.snd h)
+  encStep_inj := fun _ _ r b r' b' h => by
+    have h2 := Sum.inr_injective (congrArg Prod.snd h)
+    exact ⟨congrArg Prod.fst h2, congrArg Prod.snd h2⟩
+
+/-- **THE SCHEDULE WELD** — at `n = |chunk31 (l.drop 4)| + 1` the carrier's chain length IS the
+deployed block count of `wireCommitR8`'s absorption schedule (`chunk31` chunks + the iroot block)
+for a limb list of any length. -/
+theorem wireCommitRomCarrier_len_eq_schedule (D : WideKeyed) (tagDec : DecidableEq D.Tag)
+    (l : ℕ) (xs : List ℤ) (ir : ℤ) :
+    (wireCommitRomCarrier D tagDec ((chunk31 (xs.drop 4)).length + 1)).len l
+      = (chunk31 (xs.drop 4) ++ [[ir, 0, 0]]).length := by
+  show (chunk31 (xs.drop 4)).length + 1 = (chunk31 (xs.drop 4) ++ [[ir, 0, 0]]).length
+  simp
+
+/-- **⚑⚑ THE WIRE-COMMIT BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`wireCommitR8_binds_from_polyTime`: a query-bounded chained forger against the wire schedule has
+NEGLIGIBLE advantage — the chained commitment binds the head and EVERY block of its payload except
+with negligible probability, over the sampled tag-separated oracle. Budget accounting: the
+forger's `Q` plus the extractor's re-walk of both chains (`2·n + 2`). NO floor hypothesis —
+`keyedRom_hard` (the birthday bound, a theorem) closes it through `romChained_binds`. -/
+theorem wireCommitR8_binds_rom (D : WideKeyed) (tagDec : DecidableEq D.Tag) (n : ℕ)
+    (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l =>
+      (((Q l + (2 * n + 2) : ℕ) : ℝ) * ((Q l + (2 * n + 2) : ℕ) : ℝ) + 1)))
+    (A : Adversary (romChainedGame (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n)))
+    (hA : RomChainedEff (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n) Q A) :
+    Negl (gameAdv (romChainedGame (wireRomFamily D tagDec)
+      (wireCommitRomCarrier D tagDec n)) A) :=
+  romChained_binds (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n)
+    Q (fun l => Q l + (2 * n + 2))
+    (fun l => by show Q l + (2 * n + 2) ≤ Q l + (2 * n + 2); omega)
+    hQ (wireRomFamily_card_R D tagDec) A hA
+
+/-- **(TOOTH — the class is INHABITED and the admitted refuter-shape is DEFANGED.)** The
+`0`-query fixed-answer forger is in `RomChainedEff` at every budget, and the binding applies to
+it: the exact shape that wins with probability `1` against the fixed public permutation wins only
+negligibly against the sampled oracle. -/
+theorem wireCommitRom_fixedForger_defanged (D : WideKeyed) (tagDec : DecidableEq D.Tag)
+    (n : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l =>
+      (((Q l + (2 * n + 2) : ℕ) : ℝ) * ((Q l + (2 * n + 2) : ℕ) : ℝ) + 1)))
+    (t₀ : ∀ _l : ℕ, D.Tag) (v v' : ∀ l, (wireCommitRomCarrier D tagDec n).Val l) :
+    RomChainedEff (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n) Q
+        (romChainedAdv _ _ (fixedChainedComp _ _ t₀ v v'))
+      ∧ Negl (gameAdv (romChainedGame (wireRomFamily D tagDec)
+          (wireCommitRomCarrier D tagDec n))
+          (romChainedAdv _ _ (fixedChainedComp _ _ t₀ v v'))) :=
+  ⟨fixedChainedForger_in_eff _ _ Q t₀ v v',
+    fixedChainedForger_negl (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n)
+      Q (fun l => Q l + (2 * n + 2))
+      (fun l => by show Q l + (2 * n + 2) ≤ Q l + (2 * n + 2); omega)
+      hQ (wireRomFamily_card_R D tagDec) t₀ v v'⟩
+
+/-- **(TOOTH — the game is genuinely winnable.)** At the constant oracle any two distinct
+payloads equivocate (the chain forgets its input once the digests agree), so the negligible
+advantage is earned against a live event, not vacuously. -/
+theorem wireCommitRom_game_winnable (D : WideKeyed) (tagDec : DecidableEq D.Tag) (n : ℕ)
+    (l : ℕ) (hl : 1 ≤ l) :
+    ∃ (H : (romChainedGame (wireRomFamily D tagDec)
+        (wireCommitRomCarrier D tagDec n)).Inst l)
+      (p : (romChainedGame (wireRomFamily D tagDec)
+        (wireCommitRomCarrier D tagDec n)).Ans l),
+      (romChainedGame (wireRomFamily D tagDec)
+        (wireCommitRomCarrier D tagDec n)).wins l H p := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  have h2 : 1 < 2 ^ l := Nat.one_lt_two_pow_iff.mpr (by omega)
+  have hpos : 0 < 2 ^ l := by positivity
+  refine ⟨fun _ => (⟨0, hpos⟩ : Fin (2 ^ l)),
+    (t₀,
+     ((fun _ => (⟨0, hpos⟩ : Fin (2 ^ l))), fun _ _ => (⟨0, hpos⟩ : Fin (2 ^ l))),
+     ((fun _ => (⟨1, h2⟩ : Fin (2 ^ l))), fun _ _ => (⟨0, hpos⟩ : Fin (2 ^ l)))), ?_⟩
+  refine romChainedGame_win_at_const _ _ l _ _ _ ?_ _
+  intro h
+  have h0 : (⟨0, hpos⟩ : Fin (2 ^ l)) = ⟨1, h2⟩ := congrFun (congrArg Prod.fst h) 0
+  simp [Fin.ext_iff] at h0
+
+/-- **(TOOTH — a non-negligible wire forger is OUTSIDE the class.)** The `Classical.choice`
+collision-answerer that refuted the deleted `IsPolyTime` floor cannot produce a member of this
+class: were it inside, the binding would collapse its advantage. -/
+theorem wireCommitRom_choiceForger_excluded (D : WideKeyed) (tagDec : DecidableEq D.Tag)
+    (n : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l =>
+      (((Q l + (2 * n + 2) : ℕ) : ℝ) * ((Q l + (2 * n + 2) : ℕ) : ℝ) + 1)))
+    (A : Adversary (romChainedGame (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n)))
+    (hnn : ¬ Negl (gameAdv (romChainedGame (wireRomFamily D tagDec)
+      (wireCommitRomCarrier D tagDec n)) A)) :
+    ¬ RomChainedEff (wireRomFamily D tagDec) (wireCommitRomCarrier D tagDec n) Q A :=
+  fun hA => hnn (wireCommitR8_binds_rom D tagDec n Q hQ A hA)
+
+end RomSuccessorWire
 
 /-! ## §5 — axiom-hygiene pins. -/
 
@@ -1208,12 +1577,20 @@ theorem wideFloor_isPolyTime_inhabited (D : WideKeyed) :
   node8Rom_constAnswer_defanged,
   node8Rom_nonNegl_forger_excluded,
   chip8Floor_isPolyTime_inhabited,
-  effectVmCommit_binds_all_from_polyTime,
+  commit4RomFamily_card_R,
+  effectVmCommit_binds_all_rom,
+  commit4Rom_constAnswer_defanged,
+  commit4Rom_nonNegl_forger_excluded,
   h4Floor_isPolyTime_inhabited,
   chunk31_len_le,
   chainCollFind_len_le,
   wireCommit8Find_len_le,
-  wireCommitR8_binds_from_polyTime,
+  wireRomFamily_card_R,
+  wireCommitRomCarrier_len_eq_schedule,
+  wireCommitR8_binds_rom,
+  wireCommitRom_fixedForger_defanged,
+  wireCommitRom_game_winnable,
+  wireCommitRom_choiceForger_excluded,
   wideFloor_isPolyTime_inhabited
 ]
 
