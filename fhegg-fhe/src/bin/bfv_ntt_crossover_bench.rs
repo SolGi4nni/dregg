@@ -13,7 +13,7 @@ use std::time::Instant;
 
 const DEG: usize = 4096;
 const REPS: usize = 5;
-const BATCH_SIZES: &[usize] = &[1, 4, 16, 64, 256];
+const BATCH_SIZES: &[usize] = &[1, 4, 16, 64, 256, 512, 1024, 2048];
 
 /// A deterministic canonical deg-4096 RnsPoly over FOLD_MODULI (same synth style as the other benches).
 fn deployed_poly(seed: u64) -> RnsPoly {

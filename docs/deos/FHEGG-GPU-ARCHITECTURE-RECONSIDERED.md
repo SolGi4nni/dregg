@@ -86,3 +86,13 @@ is a genuine GPU win at batch — exactly where the fold is a loss. The fold-onl
 **The lesson, kept:** one honest negative measurement (the fold loses) is not a thesis about a system. The
 thesis needed the compute-bound kernels measured too — and reaching for "GPU is marginal" from the fold alone
 was exactly the myopia to avoid. Thanks to ember for the shove.
+
+### The batch-many-markets asymptote (AMD iGPU, measured)
+
+Extending the sweep finds where the "batch many markets" lever saturates on the RADV GFX1150 iGPU
+(fwd GPU/CPU): batch 256 **1.97× (peak)**, 512 1.71×, 1024 1.80×, 2048 1.71× — all bit-exact. The win PEAKS
+around **batch 256** (~2×) and PLATEAUS ~1.7–1.8× beyond: past batch 256 the 48 MB+ working set exceeds the
+iGPU's cache sweet spot and the kernel goes bandwidth-limited (the iGPU shares system memory). So on this
+mobile part, batch ≈ 256 is the optimal operating point; a discrete GPU (more compute + dedicated VRAM
+bandwidth — the 6750 XT, or F2 HBM) would peak higher and at a larger batch. The lever is real but
+hardware-bounded: pick the batch to the adapter's cache, do not just crank it.
