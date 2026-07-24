@@ -122,3 +122,29 @@ convex/dark-AMM path actually spends its time on — wins **3.35× on the mobile
 bit-exact, batch-scaling. The fold-only analysis would have shipped "GPU is marginal" while the real hot op
 runs an order of magnitude faster on the silicon. That is the myopia, fully corrected with the real operation
 on the real hardware.
+
+### The dark-tier bombshell: the TFHE bootstrap core op crosses over at the DEPLOYED degree (measured)
+
+Disk cleanup (07-24: hbox 26G→255G, persvati 12G→784G free) unblocked the `tfhe-integer` crossover. The TFHE
+external product — the core op inside the blind-rotation/PBS bootstrap, the single most expensive dark-tier
+operation — measured GPU vs CPU on the persvati AMD iGPU (RADV GFX1150), via the exact-RNS-NTT GPU path,
+bit-exact vs CPU:
+
+| N | CPU | GPU exact-RNS-NTT | ntt/coeff |
+|---|---|---|---|
+| 256 | 0.079ms | 1.189ms | CPU wins |
+| 512 | 0.360ms | 1.774ms | CPU wins |
+| 1024 | 0.640ms | 1.904ms | CPU wins |
+| 2048 | 1.393ms | 2.250ms | ~even (0.945) |
+| **4096** | **5.722ms** | **2.243ms** | **GPU wins 2.55×** |
+
+**The crossover is at N=4096 — the DEPLOYED degree.** At the size fhEgg actually runs, the bootstrap's core op
+wins **2.55×** on the mobile iGPU (the exact-RNS-NTT path; the naive coefficient-domain path wins a weaker
+1.48×). Below 4096 the op is too small (launch/transfer overhead dominates), consistent with every other
+kernel here. A full bootstrap runs MANY external products (the blind-rotation loop), so the batched/repeated
+pattern amortizes further — like the BFV multiply that hit 3.35× batched on the same iGPU.
+
+**Implication for the dark tier:** the oblivious-argmax crossing (bootstrap-heavy) CAN be GPU-accelerated at
+the deployed size — modestly on the mobile iGPU (2.55×), more on a discrete GPU (the 6750 XT, pending) and at
+batch. So "the house is blind AND the clearing is fast" is a measured possibility, not just an aspiration —
+the dark-tier op the fold-only analysis would have dismissed wins at the size that matters.
