@@ -28,13 +28,18 @@ root must open to the *same* `w`. Without it, an adversary encrypts `w'` while c
 | `DarkBazaarSameOpeningGadget.lean` | 11 | **The construction, as a Lean relation (per the AIR-in-Lean rule, never Rust).** `GadgetAccepts` conjoins, over one shared `w`, the decryption-consistency constraint and the Poseidon2 root constraint. FAITHFUL: `gadgetAccepts_sound` (⟹ `SameOpening`) AND `gadget_complete` (converse), so `GadgetAccepts ⟺ SameOpening` — the circuit relation neither over- nor under-constrains the property. Failing-side: a split-book witness is rejected. |
 | `DarkBazaarSameOpeningGadgetPoly.lean` | 17 | `gadgetAcceptsPoly_master`: consolidates the above into ONE soundness theorem — `GadgetAcceptsPoly ⟹ SameOpeningPoly` over the real per-slot polynomial ciphertext. `split_slot_fails_gadgetPoly` bites per slot. |
 | `DarkBazaarCollectiveOpening.lean` | 17 | **The no-single-viewer piece (§3.3).** `CollectiveOpensTo` models the collective decrypt as the sum of `n` party shares (`s = Σ sᵢ`, never assembled). SOUNDNESS proved: `collective_decrypt_unique` / `collective_book_unique` (collective decrypt is as sound as single-key). HIDING handled honestly: the `(n−1)`-coalition secrecy is discharged by INSTANTIATING the proved `Bfv.Smudging.deployed_smudge_hides`; the below-bound leak references `deployed_smudge_floor_leaks`. Referenced, not re-proved; statistical-security boundary named per Smudging's scope note. |
+| `EmitSameOpeningGadget.lean` | 14 | **The EMITTED descriptor (§3.1 constructive residual, first cut).** Emits `GadgetAccepts` as a real `EffectVmDescriptor2` (`sameOpeningGadgetDescriptor`), with `sameOpeningGadget_emit_sound` and `sameOpeningGadget_emit_discharges_apex` — the emitted descriptor discharges the apex. Anti-forgery: a single-column dec gate would be mod-p wrap-forgeable, so it emits an exact base-2¹² limb system. Lean-authored AIR per the ember rule, no Rust. |
+| `DarkBazaarQuorumNecessity.lean` | 3 | **The n-of-n SOUNDNESS dual of the hiding.** `dropped_share_breaks_opening` / `collective_missing_share_breaks` — any `n−1` coalition cannot DECRYPT (a party's real share is necessary), with `trivial_share_drop_still_opens` the sharp failing-side. So n-of-n is two-sided: all `n` needed to open, any `n−1` learn nothing. |
+| `DarkBazaarCollectiveOpeningPoly.lean` | 19 | **The RNS-polynomial collective lift.** `CollectiveOpensToPoly` + `collective_poly_decrypt_unique` — the collective decrypt lifted to the real per-slot polynomial ciphertext, `wrong_slot_breaks_collectivePoly` the per-slot failing-side. Ties no-single-viewer to `SameOpeningPoly`. |
 
 ## 2. What the family establishes, in one sentence
 
 **The property the whole Dark Bazaar rests on — "the dealer cannot see the cards" — is now a Lean relation
-that is sound, complete, consolidated over the real polynomial ciphertext, and hiding from any `n−1`
-coalition; and the composition's *failure* to imply it without the gadget is itself a proved RED.** It went
-from prose → gap-theorem → faithful construction → collective/house-blind relation.
+family (9 files) that is sound, complete, consolidated over the real polynomial ciphertext, EMITTED as a real
+descriptor that discharges it, and TWO-SIDED no-single-viewer (all `n` needed to open AND any `n−1` learn
+nothing); and the composition's *failure* to imply it without the gadget is itself a proved RED.** It went
+from prose → gap-theorem → faithful construction → emitted descriptor → two-sided collective/house-blind
+relation, all kernel-clean, every level with a biting failing-side.
 
 ## 3. The honest residuals (the constructive apex, NAMED not faked)
 
