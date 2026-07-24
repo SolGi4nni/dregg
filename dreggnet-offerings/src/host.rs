@@ -1647,14 +1647,25 @@ impl OfferingHost {
         actor: DreggIdentity,
         attribution: Attribution,
         provenance: Option<SignedProvenance>,
-    ) {
+    ) -> bool {
         // A signed advance threads its re-verifiable envelope through BOTH the durable store and
         // the in-memory log so the `Signed` provenance is a re-checkable fact, not a bare tag; an
         // asserted/collective turn carries none.
+        //
+        // DURABLE-FIRST QUARANTINE (mirrors the binary-operation journal, `operation.rs`): if a store
+        // is attached and its landed-write does NOT reach stable storage, `close` the session and DO
+        // NOT append to the in-memory log. A landed-but-not-durable turn is worse than a refused one —
+        // it would resume as a silent omission or a bricking replay of `0..K-1, K+1`. Returns whether
+        // the turn is now durably recorded (or no store is attached); a `false` means quarantined.
         match provenance {
             Some(prov) => {
-                if let Some(store) = &self.resume_store {
-                    store.record_landed_signed(key, id, &input, &actor, &prov);
+                let durable = match &self.resume_store {
+                    Some(store) => store.record_landed_signed(key, id, &input, &actor, &prov),
+                    None => true,
+                };
+                if !durable {
+                    self.close(key, id);
+                    return false;
                 }
                 self.logs
                     .entry((key.to_string(), id.clone()))
@@ -1664,8 +1675,15 @@ impl OfferingHost {
                     .record_signed(input, actor, prov);
             }
             None => {
-                if let Some(store) = &self.resume_store {
-                    store.record_landed_attributed(key, id, &input, &actor, &attribution);
+                let durable = match &self.resume_store {
+                    Some(store) => {
+                        store.record_landed_attributed(key, id, &input, &actor, &attribution)
+                    }
+                    None => true,
+                };
+                if !durable {
+                    self.close(key, id);
+                    return false;
                 }
                 self.logs
                     .entry((key.to_string(), id.clone()))
@@ -1675,6 +1693,7 @@ impl OfferingHost {
                     .record_attributed(input, actor, attribution);
             }
         }
+        true
     }
 
     /// Advance session `(key, id)` by one real **crowd** turn carrying a [`CollectiveDecision`] (the
@@ -2557,6 +2576,53 @@ mod tests {
         assert!(
             format!("{:?}", restarted.render("confused", &id).unwrap().0).contains("confused = 0"),
             "restart must recover the pre-operation state, not the ghost mutation"
+        );
+    }
+
+    /// A durable LANDED-write failure (a full disk after genesis) must QUARANTINE the session —
+    /// `close` it so it is no longer observable/resumable — never leave a landed-but-not-durable
+    /// turn behind. Such a turn would resume as a silent omission or a bricking replay of
+    /// `0..K-1, K+1`; quarantining is the same fail-closed discipline the binary-operation journal
+    /// uses (`operation.rs::durable_write_failure_quarantines_without_ghosting_the_live_log`).
+    ///
+    /// LOAD-BEARING: on the pre-fix code `record_landed` returned `()` and the host appended to the
+    /// in-memory log unconditionally, so `is_open` stayed `true` and this assert FAILED.
+    #[test]
+    fn a_landed_write_failure_quarantines_the_session_instead_of_ghosting_it() {
+        // Accepts the OPEN, then fails every landed write. `record_landed_attributed`/`_signed`
+        // inherit `false` through their defaults, so both the ordinary and signed paths quarantine.
+        struct RefusingLandedStore;
+        impl crate::resume::SessionResumeStore for RefusingLandedStore {
+            fn record_open(&self, _: &str, _: &SessionId, _: &SessionConfig) {}
+            fn record_landed(&self, _: &str, _: &SessionId, _: &Action, _: &DreggIdentity) -> bool {
+                false
+            }
+            fn forget(&self, _: &str, _: &SessionId) {}
+            fn load(&self, _: &str, _: &SessionId) -> Option<SessionMoveLog> {
+                None
+            }
+            fn all(&self) -> Vec<SessionMoveLog> {
+                Vec::new()
+            }
+        }
+
+        let id = SessionId::new("nospc");
+        let mut host = OfferingHost::new().with_resume_store(Box::new(RefusingLandedStore));
+        host.register("counter", "Counter", CounterOffering);
+        host.open_session("counter", id.clone(), SessionConfig::with_seed(1))
+            .unwrap();
+
+        // The offering advances in-memory, but the durable landed-write fails.
+        let _out = host.advance(
+            "counter",
+            &id,
+            Action::new("tick", "tick", 1, true),
+            DreggIdentity("alice".to_string()),
+        );
+
+        assert!(
+            !host.is_open("counter", &id),
+            "a landed turn whose durable write failed must quarantine the session, not stay resumable"
         );
     }
 

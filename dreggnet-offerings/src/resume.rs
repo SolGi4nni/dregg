@@ -285,7 +285,18 @@ pub trait SessionResumeStore {
 
     /// Append a LANDED advance to `(key, id)`'s log (called after each `Outcome::Landed`). A refused
     /// move records nothing (it committed nothing).
-    fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity);
+    ///
+    /// Returns whether the advance was **durably recorded** — `true` only when the line is on stable
+    /// storage (synced). A `false` means the committed turn did NOT reach the durable log, so the host
+    /// must QUARANTINE the session (a landed-but-not-durable turn would resume as a silently-omitted or
+    /// bricking replay), mirroring [`record_binary_operation`](SessionResumeStore::record_binary_operation).
+    fn record_landed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+    ) -> bool;
 
     /// Append a LANDED advance **with its [`Attribution`] trust level** — the provenance-aware
     /// twin of [`record_landed`](SessionResumeStore::record_landed), which the host calls so a
@@ -300,9 +311,9 @@ pub trait SessionResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         attribution: &Attribution,
-    ) {
+    ) -> bool {
         let _ = attribution;
-        self.record_landed(key, id, action, actor);
+        self.record_landed(key, id, action, actor)
     }
 
     /// Append a LANDED signature-VERIFIED advance **with the re-verifiable envelope**
@@ -325,9 +336,9 @@ pub trait SessionResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         provenance: &SignedProvenance,
-    ) {
+    ) -> bool {
         let _ = provenance;
-        self.record_landed(key, id, action, actor);
+        self.record_landed(key, id, action, actor)
     }
 
     /// **Persist the signed-advance replay floors** for `(key, id)` — the last consumed
@@ -429,8 +440,14 @@ impl SessionResumeStore for InMemoryResumeStore {
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), cfg.clone()));
     }
 
-    fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity) {
-        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()));
+    fn record_landed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+    ) -> bool {
+        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()))
     }
 
     fn record_landed_attributed(
@@ -440,7 +457,7 @@ impl SessionResumeStore for InMemoryResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         attribution: &Attribution,
-    ) {
+    ) -> bool {
         let mut map = self.inner.borrow_mut();
         let entry = map
             .entry(Self::map_key(key, id))
@@ -448,6 +465,7 @@ impl SessionResumeStore for InMemoryResumeStore {
             // in practice `record_open` always precedes it (the host opens before it advances).
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
         entry.record_attributed(action.clone(), actor.clone(), attribution.clone());
+        true
     }
 
     fn record_landed_signed(
@@ -457,12 +475,13 @@ impl SessionResumeStore for InMemoryResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         provenance: &SignedProvenance,
-    ) {
+    ) -> bool {
         let mut map = self.inner.borrow_mut();
         let entry = map
             .entry(Self::map_key(key, id))
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
         entry.record_signed(action.clone(), actor.clone(), provenance.clone());
+        true
     }
 
     fn record_signed_counters(&self, key: &str, id: &SessionId, floors: &[(String, u64)]) -> bool {
@@ -657,8 +676,14 @@ impl SessionResumeStore for FileResumeStore {
         self.write_header_if_absent(key, id, cfg);
     }
 
-    fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity) {
-        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()));
+    fn record_landed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+    ) -> bool {
+        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()))
     }
 
     fn record_landed_attributed(
@@ -668,7 +693,7 @@ impl SessionResumeStore for FileResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         attribution: &Attribution,
-    ) {
+    ) -> bool {
         // The ASSERTED path — an asserted line's trust is implicit (no signature to persist), so
         // the attribution level rides only in the omission of the signed columns. A `Signed`
         // attribution never reaches here (the host routes it to `record_landed_signed`, which
@@ -679,8 +704,15 @@ impl SessionResumeStore for FileResumeStore {
         // in practice `record_open` always precedes it (the host opens before it advances).
         self.write_header_if_absent(key, id, &SessionConfig::default());
         let path = self.path_for(key, id);
-        if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&path) {
-            let _ = writeln!(f, "{}", encode_move(action, actor, None));
+        // Durable-or-quarantine: report `true` only when the line is both written AND synced to
+        // stable storage. A swallowed error here (the old best-effort append) would let a committed
+        // turn vanish on a transient ENOSPC while the host reported `Landed` — a bricking/omitting
+        // replay on the next boot. The host quarantines the session on `false`.
+        match fs::OpenOptions::new().append(true).open(&path) {
+            Ok(mut f) => {
+                writeln!(f, "{}", encode_move(action, actor, None)).is_ok() && f.sync_data().is_ok()
+            }
+            Err(_) => false,
         }
     }
 
@@ -691,11 +723,16 @@ impl SessionResumeStore for FileResumeStore {
         action: &Action,
         actor: &DreggIdentity,
         provenance: &SignedProvenance,
-    ) {
+    ) -> bool {
         self.write_header_if_absent(key, id, &SessionConfig::default());
         let path = self.path_for(key, id);
-        if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&path) {
-            let _ = writeln!(f, "{}", encode_move(action, actor, Some(provenance)));
+        // Durable-or-quarantine (see `record_landed_attributed`): `true` only when written AND synced.
+        match fs::OpenOptions::new().append(true).open(&path) {
+            Ok(mut f) => {
+                writeln!(f, "{}", encode_move(action, actor, Some(provenance))).is_ok()
+                    && f.sync_data().is_ok()
+            }
+            Err(_) => false,
         }
     }
 

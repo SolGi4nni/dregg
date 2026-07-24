@@ -806,7 +806,9 @@ mod journal_transaction_tests {
             _id: &SessionId,
             _action: &Action,
             _actor: &DreggIdentity,
-        ) {
+        ) -> bool {
+            // This mock accepts landed advances durably; it refuses only the binary-op journal.
+            true
         }
 
         fn supports_binary_operations(&self) -> bool {
