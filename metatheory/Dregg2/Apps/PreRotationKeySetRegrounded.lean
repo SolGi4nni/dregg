@@ -67,6 +67,7 @@ re-grounded in `Circuit.CouncilRosterRegrounded`; the queue-root carriers are
 import Dregg2.Apps.PreRotation
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Apps.PreRotationKeySetRegrounded
 
@@ -299,7 +300,8 @@ the forgery game, the hypothesis about the collision game, and `forgery_adv_le` 
 ⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
 side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor's honesty
 is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at the deployed digest, `⊥`
-vacuous. -/
+vacuous. The DISCHARGED successor — on the PROVED keyed-ROM floor, forger an oracle program with
+query-counted cost — is §8's `rotate_compromise_resistant_binds_rom`. -/
 theorem rotate_compromise_resistant_advantage_bound {Key : Type} (D : KeySetDeployment Key)
     (cur : D.Tag → List Key) (Eff : Adversary (keySetCollisionGame D) → Prop)
     (A : Adversary (rotationForgeryGame D cur))
@@ -422,6 +424,137 @@ theorem keySetFamily_CR_of_injective {Key : Type} (D : KeySetDeployment Key)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (keySetFamily D) :=
   injective_family_CR (keySetFamily D) (fun _ t => hinj t)
 
+/-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the rotation-forgery bound DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` siblings are the honest fixed-hash statements, and their `hcol : Hard … Eff`
+hypothesis is a PARAMETER with no known non-vacuous instantiation (§7: `⊤` FALSE at the deployed
+digest, `⊥` vacuous, no cost model). The DISCHARGED successor moves the floor where it is a THEOREM:
+the keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`, the birthday bound), the forger
+an ORACLE PROGRAM with QUERY-COUNTED cost, oracle sampled AFTER the program is fixed
+(`Crypto.RomCarrierSites`, the `Exec.SystemRootsBindingReduction` §7 pattern).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H : Tag × Msg → Fin (2 ^ l)` replaces the fixed public key-set digest (a deliberate labelled
+idealisation, NOT a derivation), and the digest space is `λ`-growing where the deployed digest is a
+FIXED-width BLAKE3/felt value. The message domain is the TRUNCATED deployed shape: key sets of at
+most `m` keys (`BVec Key m`), lossless on everything the deployed cell can commit
+(`RomCarrierSites.bvecOfList_inj`). The rotation break — an ADMITTED rotation exhibits a key set
+hashing to the one `next_keys_digest` the register PUBLISHED (`rotate_exhibits_preimage`, §4) — is
+the OPENING game (`romOpenGame`): the published digest, opened by the exhibited set AND by the
+committed one. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R taggedCarrier BVec bvecOfList bvecOfList_inj romOpenGame RomOpenEff
+   romOpenAdv rom_open_binds flat_open_binds constOpenComp constOpen_in_eff constOpen_gameAdv_pos
+   constOpen_binds romOpen_forger_excluded)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- **THE KEY-SET KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag` (the anchor to the
+deployed object), over truncated key sets (at most `m` keys), with the ideal `λ`-bit digest. -/
+def keySetRomFamily {Key : Type} (D : KeySetDeployment Key) (keyFin : Fintype Key)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => BVec Key m)
+    (fun _ => by letI := keyFin; letI := D.keyDecEq; infer_instance)
+    (fun _ => by letI := keyFin; letI := D.keyDecEq; infer_instance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
+
+/-- **THE KEY-SET CARRIER** — commitment `H (t, keySet)`: the `next_keys_digest` register binds the
+WHOLE key set in one query; the embedding is the identity, injective on the nose. -/
+def keySetRomCarrier {Key : Type} (D : KeySetDeployment Key) (keyFin : Fintype Key)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : RomCarrier (keySetRomFamily D keyFin tagDec m) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => BVec Key m)
+    (fun _ => by letI := keyFin; letI := D.keyDecEq; infer_instance)
+    (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The rotation-forgery game at the sampled oracle: the adversary PUBLISHES a digest (the
+`next_keys_digest` register value) and exhibits two DISTINCT truncated key sets that BOTH open it —
+`romOpenGame`, the `rotationForgeryGame`'s compromise (exhibited vs committed set behind one
+published register) at the sampled oracle. -/
+abbrev rotationRomGame {Key : Type} (D : KeySetDeployment Key) (keyFin : Fintype Key)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : Game :=
+  romOpenGame (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m)
+
+/-- **⚑ THE DEPLOYED FORGERY IS A WIN OF THE ROM GAME.** An exhibited key set DIFFERENT from the
+committed one, both within the truncation bound, both hashing (at the sampled oracle) to the ONE
+published `next_keys_digest` — which is exactly what `rotate_exhibits_preimage` forces of any
+ADMITTED rotation — IS a win, with the truncation proved lossless (`bvecOfList_inj`). -/
+theorem rotationRom_forgery_is_break {Key : Type} (D : KeySetDeployment Key) (keyFin : Fintype Key)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (l : ℕ)
+    (H : (rotationRomGame D keyFin tagDec m).Inst l) (t : D.Tag)
+    {newKeys committed : List Key}
+    (hl : newKeys.length ≤ m) (hl' : committed.length ≤ m)
+    (hne : newKeys ≠ committed) (d : Fin (2 ^ l))
+    (h1 : H (t, bvecOfList m newKeys hl) = d) (h2 : H (t, bvecOfList m committed hl') = d) :
+    (rotationRomGame D keyFin tagDec m).wins l H
+      (d, (t, ()), bvecOfList m newKeys hl, bvecOfList m committed hl') :=
+  ⟨fun hc => hne (bvecOfList_inj hl hl' hc), h1, h2⟩
+
+/-- **⚑⚑ RE-GROUNDED `PreRotation.rotate_compromise_resistant`, DISCHARGED ON THE PROVED FLOOR** —
+the keyed-ROM successor of §5's `rotate_compromise_resistant_advantage_bound`: every query-bounded
+rotation forger has NEGLIGIBLE advantage — an attacker holding every current signing key rotates to a
+set of its own choosing only with negligible probability, in the keyed ROM model of §8's header. The
+hypotheses are a polynomial query budget and class membership — nothing refutable is carried. -/
+theorem rotate_compromise_resistant_binds_rom {Key : Type} (D : KeySetDeployment Key)
+    (keyFin : Fintype Key) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rotationRomGame D keyFin tagDec m))
+    (hA : RomOpenEff (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m) Q A) :
+    Negl (gameAdv (rotationRomGame D keyFin tagDec m) A) :=
+  flat_open_binds _ _ _ _ _ _ _ _ _ Q hQ A hA
+
+/-- **⚑ RE-GROUNDED `PreRotation.rotate_install_unique`, DISCHARGED** — two admitted rotations from
+one key state install different sets only by opening the one published digest two ways: the SAME
+oracle-program forgery, so the same discharged bound. -/
+theorem rotate_install_unique_binds_rom {Key : Type} (D : KeySetDeployment Key)
+    (keyFin : Fintype Key) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rotationRomGame D keyFin tagDec m))
+    (hA : RomOpenEff (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m) Q A) :
+    Negl (gameAdv (rotationRomGame D keyFin tagDec m) A) :=
+  rotate_compromise_resistant_binds_rom D keyFin tagDec m Q hQ A hA
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two distinct truncated key sets is in the class at every budget and wins with positive probability at
+every parameter. -/
+theorem rotationRom_class_inhabited_pos {Key : Type} (D : KeySetDeployment Key)
+    (keyFin : Fintype Key) (tagDec : DecidableEq D.Tag) (m : ℕ) (hm : 0 < m) (Q : ℕ → ℕ) :
+    ∃ A, RomOpenEff (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m) Q A
+      ∧ ∀ l, 0 < gameAdv (rotationRomGame D keyFin tagDec m) A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  refine ⟨romOpenAdv (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m)
+      (constOpenComp (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m)
+        (fun l => ⟨0, by positivity⟩) (fun _ => (t₀, ()))
+        (fun _ => (⟨0, Nat.succ_pos m⟩, fun _ => none)) (fun _ => (⟨1, by omega⟩, fun _ => none))),
+    constOpen_in_eff (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m)
+      _ _ _ _ Q,
+    fun l => constOpen_gameAdv_pos (keySetRomFamily D keyFin tagDec m)
+      (keySetRomCarrier D keyFin tagDec m) _ _ _ _ l ?_⟩
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun v : BVec Key m => v.1.val) hc
+  omega
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED, at this site.)** -/
+theorem rotationRom_constAnswer_defanged {Key : Type} (D : KeySetDeployment Key)
+    (keyFin : Fintype Key) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (r : ∀ l, Fin (2 ^ l)) (c : ∀ _l, D.Tag × Unit) (v w : ∀ _l, BVec Key m) :
+    Negl (gameAdv (rotationRomGame D keyFin tagDec m)
+      (romOpenAdv _ _ (constOpenComp (keySetRomFamily D keyFin tagDec m)
+        (keySetRomCarrier D keyFin tagDec m) r c v w))) :=
+  constOpen_binds (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m)
+    r c v w Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _)
+
+/-- **(TOOTH — a non-negligible forger is OUTSIDE the class.)** -/
+theorem rotationRom_nonNegl_forger_excluded {Key : Type} (D : KeySetDeployment Key)
+    (keyFin : Fintype Key) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rotationRomGame D keyFin tagDec m))
+    (hnn : ¬ Negl (gameAdv (rotationRomGame D keyFin tagDec m) A)) :
+    ¬ RomOpenEff (keySetRomFamily D keyFin tagDec m) (keySetRomCarrier D keyFin tagDec m) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   finite_range_of_bound,
   keySetCR_false_of_finite_range,
@@ -441,7 +574,13 @@ theorem keySetFamily_CR_of_injective {Key : Type} (D : KeySetDeployment Key)
   keySet_floor_top_false_blake3,
   keySet_floor_bot_vacuous,
   brokenKeySet_floor_top_false,
-  keySetFamily_CR_of_injective
+  keySetFamily_CR_of_injective,
+  rotationRom_forgery_is_break,
+  rotate_compromise_resistant_binds_rom,
+  rotate_install_unique_binds_rom,
+  rotationRom_class_inhabited_pos,
+  rotationRom_constAnswer_defanged,
+  rotationRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Apps.PreRotationKeySetRegrounded

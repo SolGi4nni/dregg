@@ -83,6 +83,8 @@ This is the SPONGE compression lane. The beacon honest-slot carrier is re-ground
 import Dregg2.Crypto.SpongeReduction
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.RomCarrierSites
+import Dregg2.Crypto.RomChainedReduction
 
 namespace Dregg2.Crypto.SpongeCompressionRegrounded
 
@@ -587,7 +589,9 @@ Unlike its predecessor this statement is FALSE if you delete the reduction: the 
 sponge game, the hypothesis about the compression game, and `sponge_adv_le` is the only bridge (§6's
 canary compiles that fact).
 
-⚑ `hEff` is UNDISCHARGED. See §7 for both of its poles, priced. -/
+⚑ `hEff` is UNDISCHARGED. See §7 for both of its poles, priced. The DISCHARGED successor — on the
+PROVED keyed-ROM floor, forger an oracle program, the chain walk's queries paid — is §8's
+`spongeCR_of_reduction_binds_rom`. -/
 theorem spongeCR_of_reduction_advantage_bound {State : Type} (D : SpongeDeployment State)
     (hSq : ∀ t : D.Tag, SqueezeBindsReachable (D.machine t))
     (hSep : ∀ t : D.Tag, InitStepSeparated (D.machine t))
@@ -716,6 +720,204 @@ theorem compressionFamily_CR_of_injective {State : Type} (D : SpongeDeployment S
     CollisionResistant (compressionFamily D) :=
   injective_family_CR (compressionFamily D) (fun _ t => hinj t)
 
+/-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the sponge chain DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` keystones are the honest fixed-hash statements, and their `hcol : Hard … Eff`
+hypothesis is a PARAMETER with no known non-vacuous instantiation (§7: `⊤` FALSE at any fixed-width
+state, `⊥` vacuous, no cost model). The DISCHARGED successor moves the floor where it is a THEOREM:
+the keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`, the birthday bound), the forger
+an ORACLE PROGRAM with QUERY-COUNTED cost, oracle sampled AFTER the program is fixed. The sponge's MD
+chain survives INTACT: the chained absorption is `RomChainedReduction.RomChainedCarrier` — the head
+query absorbs the LENGTH TAG (the deployed `init(len)` domain separation, `InitStepSeparated`'s job,
+now bought by the head being its own oracle query), each step re-absorbs the previous digest beside
+the next rate block, and the extractor is the PAYING chain walk (`romChained_binds`: budget
+`Q + 2·m + 2`) — `peel`, at the sampled oracle, with its queries counted.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H` replaces the fixed public `perm ∘ absorb` (a deliberate labelled idealisation, NOT a
+derivation); the chaining state is the `λ`-growing `Fin (2 ^ l)` where the deployed state is a FIXED
+width array of felts. The message domain is the TRUNCATED deployed schedule: a fixed count `m` of
+rate blocks of at most `r` in-range BabyBear limbs each (`blockVec_inj` pins the block truncation
+lossless). ⚑ TWO absorptions of the fixed-schedule move, named: (i) variable length lives in the HEAD
+length tag (shorter messages pad with empty blocks — the deployed zero-padding, with the length tag
+disambiguating, exactly as `init(len)` does); (ii) at the ideal oracle the published digest IS the
+full chaining value, so `SqueezeBindsReachable` — the deployed squeeze-truncation residual that
+`spongeCR_of_reduction` carries as `hSq` — has NO ROM counterpart: the model publishes the whole
+state. That is a coarse-graining of the squeeze, absorbed by the model and said out loud here. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R BVec bvecOfList bvecOfList_inj winProb_pos_of_witness babyBearP
+   babyBearP_pos)
+open Dregg2.Crypto.RomChainedReduction
+  (RomChainedCarrier romChainedGame RomChainedEff romChainedAdv romChained_binds
+   romChained_choiceForger_excluded fixedChainedComp fixedChainedForger_in_eff
+   fixedChainedForger_negl romChainedGame_win_at_const)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- Truncate an IN-RANGE deployed rate block to its `Fin babyBearP` limbs. -/
+def blockVec (xs : List ℤ) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ)) :
+    List (Fin babyBearP) :=
+  xs.pmap (fun x hx => ⟨x.toNat, (Int.toNat_lt hx.1).mpr hx.2⟩) hb
+
+/-- **LIMB-FOR-LIMB FAITHFULNESS** of the block truncation. -/
+theorem blockVec_val : ∀ (xs : List ℤ) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ)),
+    (blockVec xs hb).map (fun f : Fin babyBearP => ((f.val : ℕ) : ℤ)) = xs
+  | [], _ => rfl
+  | x :: xs, hb => by
+      simp only [blockVec, List.pmap, List.map_cons]
+      exact congrArg₂ List.cons (Int.toNat_of_nonneg (hb x (List.mem_cons_self)).1)
+        (blockVec_val xs (fun y hy => hb y (List.mem_cons_of_mem x hy)))
+
+/-- **THE BLOCK TRUNCATION LOSES NOTHING.** -/
+theorem blockVec_inj {xs ys : List ℤ}
+    (hbx : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ))
+    (hby : ∀ y ∈ ys, 0 ≤ y ∧ y < (babyBearP : ℤ))
+    (h : blockVec xs hbx = blockVec ys hby) : xs = ys := by
+  have hmap := congrArg (List.map (fun f : Fin babyBearP => ((f.val : ℕ) : ℤ))) h
+  rwa [blockVec_val, blockVec_val] at hmap
+
+/-- **THE SPONGE KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag` (the anchor to the
+deployed object), over the two absorbed shapes domain-separated by constructor: `inl` a length tag
+(the head/`init(len)` layer), `inr` a (previous digest, rate block) chaining step. -/
+def spongeRomFamily {State : Type} (D : SpongeDeployment State) (tagDec : DecidableEq D.Tag)
+    (r m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty
+    (fun l => Fin (m + 1) ⊕ (Fin (2 ^ l) × BVec (Fin babyBearP) r))
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl ⟨0, Nat.succ_pos m⟩⟩)
+
+/-- **THE SPONGE CHAIN, AS A CHAINED ROM CARRIER** — head query at the length tag (`init(len)`), then
+`m` chained steps, each absorbing the previous digest beside the next truncated rate block
+(`perm ∘ absorb`, one query per block — the deployed absorption schedule, truncated to `m` blocks).
+Both structural injectivities hold on the nose (`Sum`/`Prod` constructors — the fixed-width
+concatenation facts of the deployed layout). -/
+def spongeRomCarrier {State : Type} (D : SpongeDeployment State) (tagDec : DecidableEq D.Tag)
+    (r m : ℕ) : RomChainedCarrier (spongeRomFamily D tagDec r m) where
+  Ctx := fun _ => D.Tag
+  Hd := fun _ => Fin (m + 1)
+  Blk := fun _ => BVec (Fin babyBearP) r
+  len := fun _ => m
+  hdDec := fun _ => inferInstance
+  blkDec := fun _ => inferInstance
+  encHd := fun _ t hd => (t, Sum.inl hd)
+  encStep := fun _ t d b => (t, Sum.inr (d, b))
+  encHd_inj := fun _ _ _ _ h => Sum.inl.inj (congrArg Prod.snd h)
+  encStep_inj := fun _ _ _ _ _ _ h => by
+    have h2 := Sum.inr.inj (congrArg Prod.snd h)
+    exact ⟨congrArg Prod.fst h2, congrArg Prod.snd h2⟩
+
+/-- The sponge chain equivocation game at the sampled oracle: two DISTINCT (length tag, block
+schedule) payloads whose chains land on ONE final chaining value. This is `mdPeelGame`'s ambiguity
+AND `finalStateCollisionGame`'s collision AND (through the model's whole-state digest — §8 header)
+`spongeCollisionGame`'s break, at the sampled oracle. -/
+abbrev spongeRomGame {State : Type} (D : SpongeDeployment State) (tagDec : DecidableEq D.Tag)
+    (r m : ℕ) : Game :=
+  romChainedGame (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m)
+
+/-- **⚑ THE DEPLOYED AMBIGUITY IS A WIN OF THE ROM GAME** — two distinct absorption histories with
+one final chaining value, by `Iff.rfl`-shaped constructor. -/
+theorem spongeRom_ambiguity_is_break {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (l : ℕ)
+    (H : (spongeRomGame D tagDec r m).Inst l) (t : D.Tag)
+    {v v' : (spongeRomCarrier D tagDec r m).Val l} (hne : v ≠ v')
+    (heq : (spongeRomCarrier D tagDec r m).enc l H t v
+      = (spongeRomCarrier D tagDec r m).enc l H t v') :
+    (spongeRomGame D tagDec r m).wins l H (t, v, v') :=
+  ⟨hne, heq⟩
+
+/-- **⚑⚑ RE-GROUNDED `foldl_step_eq`, DISCHARGED ON THE PROVED FLOOR** — the keyed-ROM successor of
+§5's `foldl_step_eq_advantage_bound`: every query-bounded adversary exhibiting an ambiguous
+absorption history has NEGLIGIBLE advantage, in the keyed ROM model of §8's header. The extractor is
+the PAYING chain walk (`romChained_binds`): the total budget `Q'` dominates the forger's queries plus
+the walk's `2·m + 2`, and the floor is `keyedRom_hard` — a THEOREM. The `init`-vs-`step` separation
+that `hSep` carried is bought structurally: the head is its own domain-separated query. -/
+theorem foldl_step_eq_binds_rom {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * m + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (spongeRomGame D tagDec r m))
+    (hA : RomChainedEff (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m) Q A) :
+    Negl (gameAdv (spongeRomGame D tagDec r m) A) :=
+  romChained_binds _ _ Q Q' hle hQ' (flatFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **⚑ RE-GROUNDED `finalState_inj`, DISCHARGED** — a final-state collision on distinct truncated
+inputs IS the chained equivocation (the block schedule is the chunked input, `blockVec_inj` +
+`bvecOfList_inj` losslessness), so the same discharged bound. -/
+theorem finalState_inj_binds_rom {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * m + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (spongeRomGame D tagDec r m))
+    (hA : RomChainedEff (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m) Q A) :
+    Negl (gameAdv (spongeRomGame D tagDec r m) A) :=
+  foldl_step_eq_binds_rom D tagDec r m Q Q' hle hQ' A hA
+
+/-- **⚑⚑ RE-GROUNDED `spongeCR_of_reduction` — THE HEADLINE, DISCHARGED.** The keyed-ROM successor of
+§5's `spongeCR_of_reduction_advantage_bound`. ⚑ At the ideal oracle the published digest is the WHOLE
+chaining value, so the squeeze-truncation residual (`hSq : SqueezeBindsReachable`) is ABSORBED by the
+model rather than discharged — the §8 header names this coarse-graining; at the deployed truncated
+squeeze the residual stands exactly as `SpongeReduction` isolates it. What IS discharged: the whole
+MD chain's binding, on the birthday floor, with the extractor's queries paid. -/
+theorem spongeCR_of_reduction_binds_rom {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * m + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (spongeRomGame D tagDec r m))
+    (hA : RomChainedEff (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m) Q A) :
+    Negl (gameAdv (spongeRomGame D tagDec r m) A) :=
+  foldl_step_eq_binds_rom D tagDec r m Q Q' hle hQ' A hA
+
+set_option maxHeartbeats 1000000 in
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two payloads differing in the LENGTH TAG is in the class at every budget, and the chained game is
+winnable at every parameter (the constant oracle collapses both chains —
+`romChainedGame_win_at_const`), so the discharged bound bounds something genuinely nonzero. -/
+theorem spongeRom_class_inhabited_pos {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (hm : 0 < m) (Q : ℕ → ℕ) :
+    ∃ A, RomChainedEff (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m) Q A
+      ∧ ∀ l, 0 < gameAdv (spongeRomGame D tagDec r m) A l := by
+  have t₀ := D.tagNonempty.some
+  refine ⟨romChainedAdv _ _ (fixedChainedComp (spongeRomFamily D tagDec r m)
+      (spongeRomCarrier D tagDec r m) (fun _ => t₀)
+      (fun _ => (⟨0, Nat.succ_pos m⟩, fun _ => (⟨0, Nat.succ_pos r⟩, fun _ => none)))
+      (fun _ => (⟨1, by omega⟩, fun _ => (⟨0, Nat.succ_pos r⟩, fun _ => none)))),
+    fixedChainedForger_in_eff _ _ Q _ _ _, ?_⟩
+  intro l
+  refine @winProb_pos_of_witness _ ((spongeRomGame D tagDec r m).instFin l) _
+    (fun _ => ⟨0, by positivity⟩) ?_
+  refine (Dregg2.Crypto.FloorGames.Adversary.hit_eq_true _ l _).mpr ?_
+  refine romChainedGame_win_at_const _ _ l _ _ _ ?_ _
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun v : (spongeRomCarrier D tagDec r m).Val l => v.1.val) hc
+  omega
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED, at this site.)** The `0`-query
+constant chained forger is in the class, and the discharged bound applies to it: negligible against
+the sampled oracle, where against the fixed permutation it wins with probability `1`. -/
+theorem spongeRom_constAnswer_defanged {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * m + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (c : ∀ _l, D.Tag) (v v' : ∀ l, (spongeRomCarrier D tagDec r m).Val l) :
+    Negl (gameAdv (spongeRomGame D tagDec r m)
+      (romChainedAdv _ _ (fixedChainedComp (spongeRomFamily D tagDec r m)
+        (spongeRomCarrier D tagDec r m) c v v'))) :=
+  fixedChainedForger_negl (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m)
+    Q Q' hle hQ' (flatFamily_card_R _ _ _ _ _ _ _ _) c v v'
+
+/-- **(TOOTH — a non-negligible chained forger is OUTSIDE the class.)** -/
+theorem spongeRom_nonNegl_forger_excluded {State : Type} (D : SpongeDeployment State)
+    (tagDec : DecidableEq D.Tag) (r m : ℕ) (Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + (2 * m + 2) ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (spongeRomGame D tagDec r m))
+    (hnn : ¬ Negl (gameAdv (spongeRomGame D tagDec r m) A)) :
+    ¬ RomChainedEff (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m) Q A :=
+  romChained_choiceForger_excluded (spongeRomFamily D tagDec r m) (spongeRomCarrier D tagDec r m)
+    Q Q' hle hQ' (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   compressionCR_false_of_finite_range,
   compressionCR_false_of_finite_state,
@@ -746,7 +948,16 @@ theorem compressionFamily_CR_of_injective {State : Type} (D : SpongeDeployment S
   compression_floor_bot_vacuous,
   brokenSponge_floor_top_false,
   brokenMachine_not_compressionCR,
-  compressionFamily_CR_of_injective
+  compressionFamily_CR_of_injective,
+  blockVec_val,
+  blockVec_inj,
+  spongeRom_ambiguity_is_break,
+  foldl_step_eq_binds_rom,
+  finalState_inj_binds_rom,
+  spongeCR_of_reduction_binds_rom,
+  spongeRom_class_inhabited_pos,
+  spongeRom_constAnswer_defanged,
+  spongeRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Crypto.SpongeCompressionRegrounded

@@ -70,6 +70,7 @@ is re-grounded in `Circuit.FriCompressRegrounded`; the pre-rotation key-set carr
 import Dregg2.Spike.EffectVmConstraints2
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Spike.CommitTreeRegrounded
 
@@ -313,7 +314,8 @@ equivocation game, the hypothesis about the collision game, and `equivocation_ad
 ⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
 side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor's honesty
 is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at the deployed tree, `⊥`
-vacuous. -/
+vacuous. The DISCHARGED successor — on the PROVED keyed-ROM floor, forger an oracle program with
+query-counted cost — is §8's `state_commitment_binds_state_rom`. -/
 theorem state_commitment_binds_state_advantage_bound (D : CommitDeployment)
     (Eff : Adversary (commitCollisionGame D) → Prop)
     (A : Adversary (stateEquivocationGame D))
@@ -435,6 +437,163 @@ theorem commitFamily_CR_of_injective (D : CommitDeployment)
     CollisionResistant (commitFamily D) :=
   injective_family_CR (commitFamily D) (fun _ t => hinj t)
 
+/-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the equivocation bound DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` siblings are the honest fixed-hash statements, and their `hcol : Hard … Eff`
+hypothesis is a PARAMETER with no known non-vacuous instantiation: §7 prices `Eff := ⊤` FALSE at the
+deployed tree and `Eff := ⊥` vacuous, and this tree has no cost model. The DISCHARGED successor moves
+the floor where it is a THEOREM: the keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`,
+the birthday bound), with the equivocator an ORACLE PROGRAM whose cost is QUERY-COUNTED and the
+oracle sampled AFTER the program is fixed (`Crypto.RomCarrierSites`, the landed
+`Exec.SystemRootsBindingReduction` §7 pattern).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H : Tag × Msg → Fin (2 ^ l)` replaces the fixed public `commitTree (D.hash t)` (the standard
+ROM idealisation, a deliberate modelling step, NOT a derivation); the digest space is `λ`-growing
+where the deployed root is a FIXED ~31-bit BabyBear felt — at the deployed width the honest reading
+stays "binds exactly as well as ~31 bits allow" (birthday ≈ `2^15.5`, the felt-width wound). The
+message domain is the TRUNCATED deployed shape: committed tuples of at most `m` BabyBear-RANGE felts;
+on everything the deployed AIR actually commits (in-range felts, the 12-column tuple) the truncation
+is LOSSLESS — `feltVec_inj` / `feltVec_val` pin that limb-for-limb. The interior 4-leaf tree
+structure is deployed-side; the model commits the tuple in ONE query, exactly as the digest-layer
+carrier of `SystemRootsBindingReduction` commits its sub-block. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R taggedCarrier BVec bvecOfList bvecOfList_inj romOpenGame RomOpenEff
+   romOpenAdv rom_open_binds flat_open_binds constOpenComp constOpen_in_eff constOpen_gameAdv_pos
+   constOpen_binds romOpen_forger_excluded babyBearP babyBearP_pos one_lt_babyBearP)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- Truncate an IN-RANGE deployed felt list to its `Fin babyBearP` limbs — total on exactly the
+tuples the deployed AIR can commit (every committed column a genuine BabyBear felt). -/
+def feltVec (xs : List Int) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : Int)) :
+    List (Fin babyBearP) :=
+  xs.pmap (fun x hx => ⟨x.toNat, (Int.toNat_lt hx.1).mpr hx.2⟩) hb
+
+/-- **LIMB-FOR-LIMB FAITHFULNESS** — reading the truncated limbs back as integers IS the deployed
+committed tuple. What changed is only WHO evaluates them (the sampled oracle vs the fixed tree). -/
+theorem feltVec_val : ∀ (xs : List Int) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : Int)),
+    (feltVec xs hb).map (fun f : Fin babyBearP => ((f.val : ℕ) : Int)) = xs
+  | [], _ => rfl
+  | x :: xs, hb => by
+      simp only [feltVec, List.pmap, List.map_cons]
+      exact congrArg₂ List.cons (Int.toNat_of_nonneg (hb x (List.mem_cons_self)).1)
+        (feltVec_val xs (fun y hy => hb y (List.mem_cons_of_mem x hy)))
+
+@[simp] theorem feltVec_length (xs : List Int) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : Int)) :
+    (feltVec xs hb).length = xs.length :=
+  List.length_pmap ..
+
+/-- **THE TRUNCATION LOSES NOTHING** — two in-range tuples with one truncation are EQUAL, so a
+distinct pair of deployed committed tuples stays a distinct pair of ROM payloads. -/
+theorem feltVec_inj {xs ys : List Int}
+    (hbx : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : Int))
+    (hby : ∀ y ∈ ys, 0 ≤ y ∧ y < (babyBearP : Int))
+    (h : feltVec xs hbx = feltVec ys hby) : xs = ys := by
+  have hmap := congrArg (List.map (fun f : Fin babyBearP => ((f.val : ℕ) : Int))) h
+  rwa [feltVec_val, feltVec_val] at hmap
+
+/-- **THE STATE-COMMIT KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag` (the anchor to
+the deployed object), over truncated committed tuples (at most `m` BabyBear-range felts), with the
+ideal `λ`-bit digest. The `hw` obligation is closed by construction (`flatFamily_card_R`). -/
+def commitRomFamily (D : CommitDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => BVec (Fin babyBearP) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
+
+/-- **THE STATE-COMMIT CARRIER** — commitment `H (t, tuple)`: the root binds the WHOLE committed
+tuple in one query. The embedding is the identity on the truncated tuple, injective on the nose. -/
+def commitRomCarrier (D : CommitDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomCarrier (commitRomFamily D tagDec m) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => BVec (Fin babyBearP) m) (fun _ => inferInstance)
+    (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The state-equivocation game at the sampled oracle: the adversary PUBLISHES a root (`NEW_COMMIT`)
+and exhibits two distinct truncated tuples that BOTH commit to it — `romOpenGame`, the published
+value IN the win relation, exactly the `stateEquivocationGame` shape with `StateCommitSat` read at
+the sampled oracle. -/
+abbrev stateOpenRomGame (D : CommitDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) : Game :=
+  romOpenGame (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m)
+
+/-- **⚑ THE DEPLOYED EQUIVOCATION IS A WIN OF THE ROM GAME.** Two DISTINCT in-range committed tuples
+that BOTH open one published `NEW_COMMIT` at the sampled oracle ARE a win — `equivocationGame`'s
+event, restated at the sampled oracle, with the truncation proved lossless (`feltVec_inj`). -/
+theorem stateCommitRom_equivocation_is_break (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (l : ℕ) (H : (stateOpenRomGame D tagDec m).Inst l) (t : D.Tag)
+    {st st' : List Int}
+    (hb : ∀ x ∈ st, 0 ≤ x ∧ x < (babyBearP : Int)) (hb' : ∀ x ∈ st', 0 ≤ x ∧ x < (babyBearP : Int))
+    (hl : (feltVec st hb).length ≤ m) (hl' : (feltVec st' hb').length ≤ m)
+    (hne : st ≠ st') (r : Fin (2 ^ l))
+    (h1 : H (t, bvecOfList m (feltVec st hb) hl) = r)
+    (h2 : H (t, bvecOfList m (feltVec st' hb') hl') = r) :
+    (stateOpenRomGame D tagDec m).wins l H
+      (r, (t, ()), bvecOfList m (feltVec st hb) hl, bvecOfList m (feltVec st' hb') hl') :=
+  ⟨fun hc => hne (feltVec_inj hb hb' (bvecOfList_inj hl hl' hc)), h1, h2⟩
+
+/-- **⚑⚑ RE-GROUNDED `state_commitment_binds_state`, DISCHARGED ON THE PROVED FLOOR** — the keyed-ROM
+successor of §5's `state_commitment_binds_state_advantage_bound`: every query-bounded equivocator of
+the published `NEW_COMMIT` has NEGLIGIBLE advantage, in the keyed ROM model of §8's header. The
+hypotheses are a polynomial query budget and the forger's membership in the query class — nothing
+refutable is carried, and the floor under it is `keyedRom_hard` (the birthday bound), a THEOREM. -/
+theorem state_commitment_binds_state_rom (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (stateOpenRomGame D tagDec m))
+    (hA : RomOpenEff (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (stateOpenRomGame D tagDec m) A) :=
+  flat_open_binds _ _ _ _ _ _ _ _ _ Q hQ A hA
+
+/-- **⚑ RE-GROUNDED `state_commitment_no_silent_change`, DISCHARGED** — a silent change (two distinct
+tuples behind one published root) is the SAME oracle-program forgery, so the same discharged bound. -/
+theorem state_commitment_no_silent_change_rom (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (stateOpenRomGame D tagDec m))
+    (hA : RomOpenEff (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (stateOpenRomGame D tagDec m) A) :=
+  state_commitment_binds_state_rom D tagDec m Q hQ A hA
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two distinct truncated tuples is in the class at every budget and wins with positive probability at
+every parameter — the discharged bound bounds something genuinely nonzero. -/
+theorem stateCommitRom_class_inhabited_pos (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (hm : 0 < m) (Q : ℕ → ℕ) :
+    ∃ A, RomOpenEff (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) Q A
+      ∧ ∀ l, 0 < gameAdv (stateOpenRomGame D tagDec m) A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  refine ⟨romOpenAdv (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m)
+      (constOpenComp (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m)
+        (fun l => ⟨0, by positivity⟩) (fun _ => (t₀, ()))
+        (fun _ => (⟨0, Nat.succ_pos m⟩, fun _ => none)) (fun _ => (⟨1, by omega⟩, fun _ => none))),
+    constOpen_in_eff (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) _ _ _ _ Q,
+    fun l => constOpen_gameAdv_pos (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m)
+      _ _ _ _ l ?_⟩
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun v : BVec (Fin babyBearP) m => v.1.val) hc
+  omega
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED, at this site.)** The exact answerer
+shape that refutes the fixed-hash `IsPolyTime`-style floors — a `0`-query constant answer — is in the
+query class, and the discharged bound applies to it: negligible against the sampled oracle, where
+against the fixed tree it wins with probability `1`. -/
+theorem stateCommitRom_constAnswer_defanged (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (r : ∀ l, Fin (2 ^ l)) (c : ∀ _l, D.Tag × Unit) (v w : ∀ _l, BVec (Fin babyBearP) m) :
+    Negl (gameAdv (stateOpenRomGame D tagDec m)
+      (romOpenAdv _ _ (constOpenComp (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m)
+        r c v w))) :=
+  constOpen_binds (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) r c v w Q hQ
+    (flatFamily_card_R _ _ _ _ _ _ _ _)
+
+/-- **(TOOTH — a non-negligible forger is OUTSIDE the class.)** The general exclusion at this site:
+the refutation strategy that kills every fixed-hash floor cannot produce a member of this one. -/
+theorem stateCommitRom_nonNegl_forger_excluded (D : CommitDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (stateOpenRomGame D tagDec m))
+    (hnn : ¬ Negl (gameAdv (stateOpenRomGame D tagDec m) A)) :
+    ¬ RomOpenEff (commitRomFamily D tagDec m) (commitRomCarrier D tagDec m) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   finite_range_of_bound,
   commitTreeInjective_false_of_finite_range,
@@ -455,7 +614,15 @@ theorem commitFamily_CR_of_injective (D : CommitDeployment)
   commit_floor_top_false_babyBear,
   commit_floor_bot_vacuous,
   brokenCommit_floor_top_false,
-  commitFamily_CR_of_injective
+  commitFamily_CR_of_injective,
+  feltVec_val,
+  feltVec_inj,
+  stateCommitRom_equivocation_is_break,
+  state_commitment_binds_state_rom,
+  state_commitment_no_silent_change_rom,
+  stateCommitRom_class_inhabited_pos,
+  stateCommitRom_constAnswer_defanged,
+  stateCommitRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Spike.CommitTreeRegrounded

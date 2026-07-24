@@ -91,6 +91,7 @@ import Dregg2.Apps.QueueRoot
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Apps.QueueRootFloorRegrounded
 
@@ -463,7 +464,8 @@ bridge (§6's canary compiles that fact).
 ⚑ **THE `hEffR`/`hEffL` OBLIGATIONS ARE UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard
 "the reduction is efficient" side conditions, PARAMETERS because this tree has no cost model
 (`FloorGames` §8). Both floors are priced exactly by §7: `⊤` makes them FALSE at the deployed BLAKE3,
-`⊥` vacuous. -/
+`⊥` vacuous. The DISCHARGED successor — on the PROVED keyed-ROM floor, forger an oracle program with
+query-counted cost, dichotomy intact — is §7b's `dequeue_proof_pins_binds_rom`. -/
 theorem dequeue_proof_pins_advantage_bound {Entry : Type} (D : QueueDeployment Entry)
     (EffR : Adversary (rootCollisionGame D) → Prop)
     (EffL : Adversary (leafCollisionGame D) → Prop)
@@ -617,6 +619,265 @@ theorem brokenQueue_root_floor_top_false :
     (fun _ => ⟨([], [])⟩)
     (fun _ _ => ⟨([1], [1, 1]), by decide, by decide, by decide, rfl⟩)
 
+/-! ## §7b — ⚑ THE KEYED-ROM SUCCESSOR: the dequeue dichotomy DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` keystones are the honest fixed-hash statements; their `hroot`/`hleaf`
+`Hard … Eff` hypotheses are PARAMETERS with no known non-vacuous instantiation (§7: `⊤` FALSE at the
+deployed BLAKE3 root and leaf, `⊥` vacuous, no cost model). The DISCHARGED successor moves the floor
+where it is a THEOREM: the keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`, the
+birthday bound), the forger an ORACLE PROGRAM with QUERY-COUNTED cost, the oracle sampled AFTER the
+program is fixed. The dichotomy survives INTACT: the composed dequeue forgery is a `RomForgery` whose
+win relation NESTS the oracle (the window absorbs the entry's leaf digest, which is itself an oracle
+answer), and the union bound runs over the ONE sampled oracle both layer carriers share
+(`RomCarrierSites.chained_rom_binds` — the `Exec.SystemRootsBindingReduction.cellRoots_binds_rom`
+pattern; the root-layer extractor RE-QUERIES the two leaf digests, paying `+2` queries).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H` replaces the fixed public `blake3_binary_root`/`hash_entry` (a deliberate labelled
+idealisation, NOT a derivation); the digest space is `λ`-growing where the deployed digest is a FIXED
+256-bit value; the message domain is the TRUNCATED deployed shape — a pending window of at most `m`
+remaining leaves beside the head leaf limb (`Fin (2 ^ l) × BVec (Fin (2 ^ l)) m`, the deployed
+`leafHash head :: rest` nesting with the leaf limbs oracle answers), domain-separated by constructor
+from the entry-leaf shape inside ONE family. ⚑ The interior binary-tree structure of
+`blake3_binary_root` is deployed-side: the model commits the window in ONE query (the digest-layer
+coarse-graining, exactly `SystemRootsBindingReduction`'s `rootsRomCarrier` move). The zero-free side
+condition of `rootCollisionGame` has no ROM counterpart because the padding alias it guards against
+is a property of the FIXED padded scheme, not of the sampled oracle — the truncated window shape
+carries its length tag instead, which is the honest version of the same discrimination. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.RomBindingReduction
+  (RomCarrier RomCarrierComp romCarrierGame RomCarrierEff romCarrierAdv romCarrier_binds
+   romCarrier_choiceForger_excluded)
+open Dregg2.Crypto.RomBindingReduction.OracleComp (mapOut mapOut_eval mapOut_queryBounded)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R taggedCarrier BVec flatSite_binds constTripleComp constTriple_in_eff
+   constTriple_gameAdv_pos constTriple_binds RomForgery RomForgeryEff chained_rom_binds
+   polyBounded_sq_add_two winProb_pos_of_witness)
+open Dregg2.Crypto.RomCarrierSites.OracleComp (bindComp bindComp_eval bindComp_queryBounded)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- **THE QUEUE KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag`, over the two absorbed
+shapes domain-separated by constructor: `inl` a truncated pending window (head-leaf limb + at most
+`m` remaining leaf limbs, each limb an oracle answer — the deployed `leafHash head :: rest` nesting),
+`inr` an entry (the leaf layer). One family, one sampled oracle — what makes the union bound a
+`winProb` fact. -/
+def queueRomFamily {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty
+    (fun l => (Fin (2 ^ l) × BVec (Fin (2 ^ l)) m) ⊕ Entry)
+    (fun l => by letI := entryFin; letI := D.entryDecEq; infer_instance)
+    (fun l => by letI := entryFin; letI := D.entryDecEq; infer_instance)
+    (fun l => ⟨Sum.inr entryNe.some⟩)
+
+/-- **THE ROOT-LAYER CARRIER** — commitment `H (t, inl window)`: the pending-window root binds the
+head-leaf limb AND the whole remaining window. `Sum.inl` is injective on the nose. -/
+def queueRootRomCarrier {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomCarrier (queueRomFamily D entryFin entryNe tagDec m) :=
+  taggedCarrier _ (fun _ => Unit) (fun l => Fin (2 ^ l) × BVec (Fin (2 ^ l)) m)
+    (fun _ => inferInstance) (fun _ _ v => Sum.inl v) (fun _ _ _ _ h => Sum.inl.inj h)
+
+/-- **THE LEAF-LAYER CARRIER** — commitment `H (t, inr entry)`: the entry-leaf commitment binds the
+whole entry. -/
+def queueLeafRomCarrier {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomCarrier (queueRomFamily D entryFin entryNe tagDec m) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => Entry) (fun _ => D.entryDecEq)
+    (fun _ _ e => Sum.inr e) (fun _ _ _ _ h => Sum.inr.inj h)
+
+/-- **⚑ RE-GROUNDED ROOT LAYER, DISCHARGED** — every query-bounded window equivocator has NEGLIGIBLE
+advantage: the honest successor of the `RootCR` consumer's root horn. -/
+theorem queueRoot_binds_rom {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m)))
+    (hA : RomCarrierEff (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m) Q A) :
+    Negl (gameAdv (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m)) A) :=
+  romCarrier_binds _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **⚑ RE-GROUNDED LEAF LAYER, DISCHARGED** — the honest successor of the `LeafCR` consumer's leaf
+horn. -/
+theorem queueLeaf_binds_rom {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueLeafRomCarrier D entryFin entryNe tagDec m)))
+    (hA : RomCarrierEff (queueRomFamily D entryFin entryNe tagDec m)
+      (queueLeafRomCarrier D entryFin entryNe tagDec m) Q A) :
+    Negl (gameAdv (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueLeafRomCarrier D entryFin entryNe tagDec m)) A) :=
+  romCarrier_binds _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **THE COMPOSED DEQUEUE FORGERY** — the dichotomy's endpoint as ONE break over the shared sampled
+oracle: two claimed `(entry, remaining-window)` pairs, DISTINCT, whose NESTED deployed commitments
+agree — `H (t, inl (H (t, inr e), w))` on both sides. The entry's leaf digest is genuinely
+re-absorbed by the window commitment: the oracle appears INSIDE the win relation, which is exactly
+what neither single carrier can say and what `verifyDequeue`'s recompute does. -/
+def dequeueRomForgery {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomForgery (queueRomFamily D entryFin entryNe tagDec m) where
+  Ans := fun l => D.Tag × (Entry × BVec (Fin (2 ^ l)) m) × (Entry × BVec (Fin (2 ^ l)) m)
+  wins := fun l H a =>
+    a.2.1 ≠ a.2.2 ∧
+      H (a.1, Sum.inl (H (a.1, Sum.inr a.2.1.1), a.2.1.2))
+        = H (a.1, Sum.inl (H (a.1, Sum.inr a.2.2.1), a.2.2.2))
+  winsDec := fun l H a => by
+    letI := D.entryDecEq
+    letI := ((queueRomFamily D entryFin entryNe tagDec m).toRomFamily).rDec l
+    infer_instance
+
+/-- **THE ROOT-LAYER EXTRACTION** — run the composed forger, then RE-QUERY the two claimed entries'
+leaf digests and answer with the two full windows: `bindComp` with a two-query continuation, so the
+budget grows by exactly `2` (the priced re-walk). -/
+def dequeueRomComp₁ {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (M : ∀ l, OracleComp ((queueRomFamily D entryFin entryNe tagDec m).toRomFamily.D l)
+      ((queueRomFamily D entryFin entryNe tagDec m).toRomFamily.R l)
+      ((dequeueRomForgery D entryFin entryNe tagDec m).Ans l)) :
+    RomCarrierComp (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m) :=
+  fun l => bindComp (M l) (fun a =>
+    OracleComp.query (a.1, Sum.inr a.2.1.1) (fun d =>
+      OracleComp.query (a.1, Sum.inr a.2.2.1) (fun d' =>
+        OracleComp.pure ((a.1, ()), (d, a.2.1.2), (d', a.2.2.2)))))
+
+/-- **THE LEAF-LAYER EXTRACTION** — a pure post-map: answer with the two claimed entries.
+`mapOut`, budget preserved. -/
+def dequeueRomComp₂ {Entry : Type} (D : QueueDeployment Entry) (entryFin : Fintype Entry)
+    (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (M : ∀ l, OracleComp ((queueRomFamily D entryFin entryNe tagDec m).toRomFamily.D l)
+      ((queueRomFamily D entryFin entryNe tagDec m).toRomFamily.R l)
+      ((dequeueRomForgery D entryFin entryNe tagDec m).Ans l)) :
+    RomCarrierComp (queueRomFamily D entryFin entryNe tagDec m)
+      (queueLeafRomCarrier D entryFin entryNe tagDec m) :=
+  fun l => mapOut (fun a => ((a.1, ()), a.2.1.1, a.2.2.1)) (M l)
+
+/-- **⚑⚑ RE-GROUNDED `dequeue_proof_pins` / `dequeue_forgery_refused`, DISCHARGED ON THE PROVED
+FLOOR** — the keyed-ROM successor of §5's `dequeue_proof_pins_advantage_bound`, dichotomy intact:
+every query-bounded composed dequeue forger has NEGLIGIBLE advantage. The chain peel is the §4 case
+split at the sampled oracle (windows-with-digests equal → the claim differs in the ENTRY while the
+leaves collide, the LEAF horn; distinct → the ROOT horn); the two extracted programs are `bindComp`
+(budget `Q + 2`) and `mapOut` (budget `Q`); the union bound runs over the ONE sampled oracle; each
+horn dies by the birthday floor. NO `Hard` hypothesis — nothing refutable is carried. -/
+theorem dequeue_proof_pins_binds_rom {Entry : Type} (D : QueueDeployment Entry)
+    (entryFin : Fintype Entry) (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (dequeueRomForgery D entryFin entryNe tagDec m).game)
+    (hA : RomForgeryEff (queueRomFamily D entryFin entryNe tagDec m)
+      (dequeueRomForgery D entryFin entryNe tagDec m) Q A) :
+    Negl (gameAdv (dequeueRomForgery D entryFin entryNe tagDec m).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine chained_rom_binds (dequeueRomForgery D entryFin entryNe tagDec m)
+    (queueRootRomCarrier D entryFin entryNe tagDec m)
+    (queueLeafRomCarrier D entryFin entryNe tagDec m)
+    (fun l => Q l + 2) Q (polyBounded_sq_add_two Q hQ) hQ
+    (flatFamily_card_R _ _ _ _ _ _ _ _) A
+    (romCarrierAdv _ _ (dequeueRomComp₁ D entryFin entryNe tagDec m M))
+    (romCarrierAdv _ _ (dequeueRomComp₂ D entryFin entryNe tagDec m M))
+    ?_
+    ⟨dequeueRomComp₁ D entryFin entryNe tagDec m M,
+      fun l => bindComp_queryBounded (hM l)
+        (fun a => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+          (fun _ => QueryBounded.pure 0 _))), fun _ _ => rfl⟩
+    ⟨dequeueRomComp₂ D entryFin entryNe tagDec m M,
+      fun l => mapOut_queryBounded _ (hM l), fun _ _ => rfl⟩
+  intro l H hwin
+  have hB₁run : (romCarrierAdv _ _ (dequeueRomComp₁ D entryFin entryNe tagDec m M)).run l H
+      = (((A.run l H).1, ()),
+          (H ((A.run l H).1, Sum.inr (A.run l H).2.1.1), (A.run l H).2.1.2),
+          (H ((A.run l H).1, Sum.inr (A.run l H).2.2.1), (A.run l H).2.2.2)) := by
+    show (dequeueRomComp₁ D entryFin entryNe tagDec m M l).eval H = _
+    unfold dequeueRomComp₁
+    rw [bindComp_eval, ← hrun l H]
+    rfl
+  have hB₂run : (romCarrierAdv _ _ (dequeueRomComp₂ D entryFin entryNe tagDec m M)).run l H
+      = (((A.run l H).1, ()), (A.run l H).2.1.1, (A.run l H).2.2.1) := by
+    show (dequeueRomComp₂ D entryFin entryNe tagDec m M l).eval H = _
+    unfold dequeueRomComp₂
+    rw [mapOut_eval, ← hrun l H]
+    rfl
+  obtain ⟨hne, heq⟩ := hwin
+  by_cases hwin' : (H ((A.run l H).1, Sum.inr (A.run l H).2.1.1), (A.run l H).2.1.2)
+      = (H ((A.run l H).1, Sum.inr (A.run l H).2.2.1), (A.run l H).2.2.2)
+  · -- EQUAL full windows: the leaf digests agree and the remaining windows agree, so the claim
+    -- differs in the ENTRY while the leaves collide — the LEAF horn.
+    refine Or.inr ?_
+    rw [hB₂run]
+    have hd := congrArg Prod.fst hwin'
+    have hw := congrArg Prod.snd hwin'
+    simp only at hd hw
+    refine ⟨fun hc => hne (Prod.ext hc hw), hd⟩
+  · -- DISTINCT full windows with one root: the ROOT horn.
+    refine Or.inl ?_
+    rw [hB₁run]
+    exact ⟨hwin', heq⟩
+
+/-- **⚑ RE-GROUNDED `queueDequeueProven_pins_root_transition` / `_refuses_forgery`, DISCHARGED** —
+the WELD keystone's forger is a forger against the composed break, so the same discharged bound. -/
+theorem queueDequeueProven_pins_root_transition_binds_rom {Entry : Type}
+    (D : QueueDeployment Entry) (entryFin : Fintype Entry) (entryNe : Nonempty Entry)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (dequeueRomForgery D entryFin entryNe tagDec m).game)
+    (hA : RomForgeryEff (queueRomFamily D entryFin entryNe tagDec m)
+      (dequeueRomForgery D entryFin entryNe tagDec m) Q A) :
+    Negl (gameAdv (dequeueRomForgery D entryFin entryNe tagDec m).game A) :=
+  dequeue_proof_pins_binds_rom D entryFin entryNe tagDec m Q hQ A hA
+
+/-- **⚑ RE-GROUNDED `dequeue_proof_unique` / `stale_proof_refused`, DISCHARGED** — same forger, same
+floor, same discharged bound. -/
+theorem dequeue_proof_unique_binds_rom {Entry : Type} (D : QueueDeployment Entry)
+    (entryFin : Fintype Entry) (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (dequeueRomForgery D entryFin entryNe tagDec m).game)
+    (hA : RomForgeryEff (queueRomFamily D entryFin entryNe tagDec m)
+      (dequeueRomForgery D entryFin entryNe tagDec m) Q A) :
+    Negl (gameAdv (dequeueRomForgery D entryFin entryNe tagDec m).game A) :=
+  dequeue_proof_pins_binds_rom D entryFin entryNe tagDec m Q hQ A hA
+
+/-- **(TOOTH — the composed class is INHABITED with POSITIVE advantage.)** The `0`-query constant
+answerer on two claims that differ in the remaining window is in `RomForgeryEff` at every budget, and
+the composed game is winnable at every parameter (the constant oracle collapses both nested
+commitments) — the discharged bound bounds something genuinely nonzero. -/
+theorem dequeueRom_class_inhabited_pos {Entry : Type} (D : QueueDeployment Entry)
+    (entryFin : Fintype Entry) (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (hm : 0 < m) (Q : ℕ → ℕ) :
+    ∃ A, RomForgeryEff (queueRomFamily D entryFin entryNe tagDec m)
+        (dequeueRomForgery D entryFin entryNe tagDec m) Q A
+      ∧ ∀ l, 0 < gameAdv (dequeueRomForgery D entryFin entryNe tagDec m).game A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  have e₀ := entryNe.some
+  refine ⟨⟨fun l _ => (t₀, (e₀, (⟨0, Nat.succ_pos m⟩, fun _ => none)),
+      (e₀, (⟨1, by omega⟩, fun _ => none)))⟩,
+    ⟨fun l => OracleComp.pure (t₀, (e₀, (⟨0, Nat.succ_pos m⟩, fun _ => none)),
+      (e₀, (⟨1, by omega⟩, fun _ => none))),
+      fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩, ?_⟩
+  intro l
+  refine @winProb_pos_of_witness _
+    ((dequeueRomForgery D entryFin entryNe tagDec m).game.instFin l) _
+    (fun _ => ⟨0, by positivity⟩) ?_
+  refine (Dregg2.Crypto.FloorGames.Adversary.hit_eq_true _ l _).mpr ⟨?_, rfl⟩
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun p : Entry × BVec (Fin (2 ^ l)) m => p.2.1.val) hc
+  omega
+
+/-- **(TOOTH — a non-negligible ROOT-layer forger is OUTSIDE the class.)** -/
+theorem queueRootRom_nonNegl_forger_excluded {Entry : Type} (D : QueueDeployment Entry)
+    (entryFin : Fintype Entry) (entryNe : Nonempty Entry) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m)))
+    (hnn : ¬ Negl (gameAdv (romCarrierGame (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m)) A)) :
+    ¬ RomCarrierEff (queueRomFamily D entryFin entryNe tagDec m)
+      (queueRootRomCarrier D entryFin entryNe tagDec m) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 /-! ## §8 — `PairCR` / `LenBindCR`: FALSE-PROVED (the §7 hardening's carriers).
 
 These two carry the PROPOSED level-tagged hardening (`QueueRoot` §7, `taggedRoot_injective`), which
@@ -708,7 +969,14 @@ theorem tagged_carriers_false_at_bounded_root {tagLeaf : Int → Int} {combine :
   pairCR_false_blake3,
   lenBindCR_false_of_finite_range,
   lenBindCR_false_blake3,
-  tagged_carriers_false_at_bounded_root
+  tagged_carriers_false_at_bounded_root,
+  queueRoot_binds_rom,
+  queueLeaf_binds_rom,
+  dequeue_proof_pins_binds_rom,
+  queueDequeueProven_pins_root_transition_binds_rom,
+  dequeue_proof_unique_binds_rom,
+  dequeueRom_class_inhabited_pos,
+  queueRootRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Apps.QueueRootFloorRegrounded

@@ -111,6 +111,7 @@ STARK/FRI/Merkle hash consumers are `Circuit.FloorRegroundedConsumers` / `Circui
 import Dregg2.Deos.InAirAuthorityDigestGadget
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Deos.InAirAuthorityFloorRegrounded
 
@@ -406,7 +407,8 @@ bridge (§6's canary compiles that fact).
 ⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
 side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor's honesty
 is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at the deployed felt digest, `⊥`
-vacuous. -/
+vacuous. The DISCHARGED successor — on the PROVED keyed-ROM floor, forger an oracle program with
+query-counted cost — is §8's `gentian_alternate_floor_binds_rom`. -/
 theorem gentian_alternate_floor_advantage_bound (D : FloorDigestDeployment)
     (Eff : Adversary (floorCollisionGame D) → Prop)
     (A : Adversary (alternateFloorGame D))
@@ -548,6 +550,167 @@ theorem floorDigestFamily_CR_of_injective (D : FloorDigestDeployment)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (floorDigestFamily D) :=
   injective_family_CR (floorDigestFamily D) (fun _ t => hinj t)
 
+/-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the alternate-floor bound DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` siblings are the honest fixed-hash statements, and their `hcol : Hard … Eff`
+hypothesis is a PARAMETER with no known non-vacuous instantiation (§7: `⊤` FALSE at the deployed felt
+digest, `⊥` vacuous, no cost model). The DISCHARGED successor moves the floor where it is a THEOREM:
+the keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`, the birthday bound), the forger
+an ORACLE PROGRAM with QUERY-COUNTED cost, oracle sampled AFTER the program is fixed
+(`Crypto.RomCarrierSites`, the `Exec.SystemRootsBindingReduction` §7 pattern).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H : Tag × Msg → Fin (2 ^ l)` replaces the fixed public `hash_many` (a deliberate labelled
+idealisation, NOT a derivation); the digest space is `λ`-growing where the deployed limb is a FIXED
+~31-bit BabyBear felt (birthday ≈ `2^15.5` at the deployed width — the felt-width wound). The message
+domain is the TRUNCATED deployed shape: floors of at most `m` BabyBear-RANGE felt limbs — the
+consumers' own `hcanon` bound — and on those the truncation is LOSSLESS (`floorVec_inj` /
+`floorVec_val`). The published limb the forger must hit becomes the PUBLISHED value of the opening
+game (`romOpenGame`), exactly the `alternateFloorGame` shape at the sampled oracle; the `hcommitLimb`
+transport and the `hChip`/`Satisfied2` legs stay deployed-side, untouched, per the SCOPE header. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R taggedCarrier BVec bvecOfList bvecOfList_inj romOpenGame RomOpenEff
+   romOpenAdv rom_open_binds flat_open_binds constOpenComp constOpen_in_eff constOpen_gameAdv_pos
+   constOpen_binds romOpen_forger_excluded babyBearP babyBearP_pos one_lt_babyBearP)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- Truncate an IN-RANGE deployed floor (felt limb list) to its `Fin babyBearP` limbs — total on
+exactly the floors the deployed gadget can digest (`hcanon`'s bound, verbatim). -/
+def floorVec (xs : List ℤ) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ)) :
+    List (Fin babyBearP) :=
+  xs.pmap (fun x hx => ⟨x.toNat, (Int.toNat_lt hx.1).mpr hx.2⟩) hb
+
+/-- **LIMB-FOR-LIMB FAITHFULNESS** — reading the truncated limbs back as integers IS the deployed
+floor; what changed is only WHO evaluates them (the sampled oracle vs the fixed `hash_many`). -/
+theorem floorVec_val : ∀ (xs : List ℤ) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ)),
+    (floorVec xs hb).map (fun f : Fin babyBearP => ((f.val : ℕ) : ℤ)) = xs
+  | [], _ => rfl
+  | x :: xs, hb => by
+      simp only [floorVec, List.pmap, List.map_cons]
+      exact congrArg₂ List.cons (Int.toNat_of_nonneg (hb x (List.mem_cons_self)).1)
+        (floorVec_val xs (fun y hy => hb y (List.mem_cons_of_mem x hy)))
+
+@[simp] theorem floorVec_length (xs : List ℤ) (hb : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ)) :
+    (floorVec xs hb).length = xs.length :=
+  List.length_pmap ..
+
+/-- **THE TRUNCATION LOSES NOTHING** — two in-range floors with one truncation are EQUAL. -/
+theorem floorVec_inj {xs ys : List ℤ}
+    (hbx : ∀ x ∈ xs, 0 ≤ x ∧ x < (babyBearP : ℤ))
+    (hby : ∀ y ∈ ys, 0 ≤ y ∧ y < (babyBearP : ℤ))
+    (h : floorVec xs hbx = floorVec ys hby) : xs = ys := by
+  have hmap := congrArg (List.map (fun f : Fin babyBearP => ((f.val : ℕ) : ℤ))) h
+  rwa [floorVec_val, floorVec_val] at hmap
+
+/-- **THE FLOOR-DIGEST KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag` (the anchor to
+the deployed object), over truncated floors (at most `m` BabyBear-range limbs), with the ideal
+`λ`-bit digest. The `hw` obligation is closed by construction. -/
+def floorRomFamily (D : FloorDigestDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => BVec (Fin babyBearP) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
+
+/-- **THE FLOOR-DIGEST CARRIER** — commitment `H (t, floor)`: the authority-digest limb binds the
+WHOLE witnessed floor in one query; the embedding is the identity, injective on the nose. -/
+def floorRomCarrier (D : FloorDigestDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    RomCarrier (floorRomFamily D tagDec m) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => BVec (Fin babyBearP) m) (fun _ => inferInstance)
+    (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The alternate-floor game at the sampled oracle: the adversary PUBLISHES a digest limb and
+exhibits two DISTINCT truncated floors that BOTH digest to it — `romOpenGame`, the published value IN
+the win relation, exactly `alternateFloorGame`'s dodge (presented vs committed floor, one published
+`gentianAuthDigestCol` limb) at the sampled oracle. -/
+abbrev alternateFloorRomGame (D : FloorDigestDeployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Game :=
+  romOpenGame (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m)
+
+/-- **⚑ THE DEPLOYED DODGE IS A WIN OF THE ROM GAME.** A presented floor DIFFERENT from the committed
+one, both in-range and truncation-bounded, whose digests BOTH hit one published limb at the sampled
+oracle, IS a win — `alternateFloorGame`'s event after the `hcommitLimb` transport, restated at the
+sampled oracle with the truncation proved lossless. -/
+theorem alternateFloorRom_dodge_is_break (D : FloorDigestDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (l : ℕ) (H : (alternateFloorRomGame D tagDec m).Inst l) (t : D.Tag)
+    {presented committed : List ℤ}
+    (hb : ∀ x ∈ presented, 0 ≤ x ∧ x < (babyBearP : ℤ))
+    (hb' : ∀ x ∈ committed, 0 ≤ x ∧ x < (babyBearP : ℤ))
+    (hl : (floorVec presented hb).length ≤ m) (hl' : (floorVec committed hb').length ≤ m)
+    (hne : presented ≠ committed) (limb : Fin (2 ^ l))
+    (h1 : H (t, bvecOfList m (floorVec presented hb) hl) = limb)
+    (h2 : H (t, bvecOfList m (floorVec committed hb') hl') = limb) :
+    (alternateFloorRomGame D tagDec m).wins l H
+      (limb, (t, ()), bvecOfList m (floorVec presented hb) hl,
+        bvecOfList m (floorVec committed hb') hl') :=
+  ⟨fun hc => hne (floorVec_inj hb hb' (bvecOfList_inj hl hl' hc)), h1, h2⟩
+
+/-- **⚑⚑ RE-GROUNDED `gentian_selector_forced_discharged` (CR LEG), DISCHARGED ON THE PROVED FLOOR** —
+the keyed-ROM successor of §5's `gentian_alternate_floor_advantage_bound`: every query-bounded
+alternate-floor forger has NEGLIGIBLE advantage, in the keyed ROM model of §8's header. Hypotheses: a
+polynomial query budget and class membership — nothing refutable. SCOPE unchanged: this is the CR leg
+only; `hChip` and `hcommitLimb` stay deployed-side named hypotheses exactly as before. -/
+theorem gentian_alternate_floor_binds_rom (D : FloorDigestDeployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (alternateFloorRomGame D tagDec m))
+    (hA : RomOpenEff (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (alternateFloorRomGame D tagDec m) A) :=
+  flat_open_binds _ _ _ _ _ _ _ _ _ Q hQ A hA
+
+/-- **⚑ RE-GROUNDED `gentian_settle_forced_discharged` / `gentian_partial_unsat_discharged` /
+`gentian_phantom_unsat_discharged` (CR LEG), DISCHARGED** — all three consume `hCR` only through the
+selector forcing, so the same discharged bound covers their CR leg. -/
+theorem gentian_settle_alternate_floor_binds_rom (D : FloorDigestDeployment)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (alternateFloorRomGame D tagDec m))
+    (hA : RomOpenEff (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (alternateFloorRomGame D tagDec m) A) :=
+  gentian_alternate_floor_binds_rom D tagDec m Q hQ A hA
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two distinct truncated floors is in the class at every budget and wins with positive probability at
+every parameter — the discharged bound bounds something genuinely nonzero. -/
+theorem alternateFloorRom_class_inhabited_pos (D : FloorDigestDeployment)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (hm : 0 < m) (Q : ℕ → ℕ) :
+    ∃ A, RomOpenEff (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) Q A
+      ∧ ∀ l, 0 < gameAdv (alternateFloorRomGame D tagDec m) A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  refine ⟨romOpenAdv (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m)
+      (constOpenComp (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m)
+        (fun l => ⟨0, by positivity⟩) (fun _ => (t₀, ()))
+        (fun _ => (⟨0, Nat.succ_pos m⟩, fun _ => none)) (fun _ => (⟨1, by omega⟩, fun _ => none))),
+    constOpen_in_eff (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) _ _ _ _ Q,
+    fun l => constOpen_gameAdv_pos (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m)
+      _ _ _ _ l ?_⟩
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun v : BVec (Fin babyBearP) m => v.1.val) hc
+  omega
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED, at this site.)** The `0`-query
+constant answerer is in the class and the discharged bound applies to it: negligible against the
+sampled oracle, where against the fixed `hash_many` it wins with probability `1`. -/
+theorem alternateFloorRom_constAnswer_defanged (D : FloorDigestDeployment)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (r : ∀ l, Fin (2 ^ l)) (c : ∀ _l, D.Tag × Unit) (v w : ∀ _l, BVec (Fin babyBearP) m) :
+    Negl (gameAdv (alternateFloorRomGame D tagDec m)
+      (romOpenAdv _ _ (constOpenComp (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m)
+        r c v w))) :=
+  constOpen_binds (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) r c v w Q hQ
+    (flatFamily_card_R _ _ _ _ _ _ _ _)
+
+/-- **(TOOTH — a non-negligible forger is OUTSIDE the class.)** -/
+theorem alternateFloorRom_nonNegl_forger_excluded (D : FloorDigestDeployment)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (alternateFloorRomGame D tagDec m))
+    (hnn : ¬ Negl (gameAdv (alternateFloorRomGame D tagDec m) A)) :
+    ¬ RomOpenEff (floorRomFamily D tagDec m) (floorRomCarrier D tagDec m) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   floorDigestBinds_false_of_finite_range,
   floorDigestBinds_false_babyBear,
@@ -567,7 +730,15 @@ theorem floorDigestFamily_CR_of_injective (D : FloorDigestDeployment)
   floorDigest_floor_bot_vacuous,
   brokenFloorDigest_floor_top_false,
   brokenFloorDigest_alternate_top_false,
-  floorDigestFamily_CR_of_injective
+  floorDigestFamily_CR_of_injective,
+  floorVec_val,
+  floorVec_inj,
+  alternateFloorRom_dodge_is_break,
+  gentian_alternate_floor_binds_rom,
+  gentian_settle_alternate_floor_binds_rom,
+  alternateFloorRom_class_inhabited_pos,
+  alternateFloorRom_constAnswer_defanged,
+  alternateFloorRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Deos.InAirAuthorityFloorRegrounded

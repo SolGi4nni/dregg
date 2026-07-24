@@ -99,6 +99,9 @@ treatment.
 import Dregg2.Crypto.RandomnessBeacon
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
+import Dregg2.Crypto.RomCarrierSites
+import Mathlib.Data.Sym.Basic
+import Mathlib.Data.Fintype.Vector
 
 namespace Dregg2.Crypto.BeaconSlotRegrounded
 
@@ -381,7 +384,8 @@ compiles that fact).
 ⚑ **`hEff` IS UNDISCHARGED AND THAT IS THE HONEST STATE** — the standard "the reduction is efficient"
 side condition, a PARAMETER because this tree has no cost model (`FloorGames` §8). The floor's honesty
 is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at a bounded output, `⊥`
-vacuous. -/
+vacuous. The DISCHARGED successor — on the PROVED keyed-ROM floor, biaser an oracle program with
+query-counted cost — is §8's `honest_makes_unbiasable_binds_rom`. -/
 theorem honest_makes_unbiasable_advantage_bound {Ct O : Type} (D : BeaconDeployment Ct O)
     (Eff : Adversary (multisetCollisionGame D) → Prop) (A : Adversary (beaconBiasGame D))
     (hEff : Eff (biasToCollisionFinder D A))
@@ -523,6 +527,134 @@ theorem multisetHashFamily_CR_of_injective_deployment {Ct O : Type} (D : BeaconD
     CollisionResistant (multisetHashFamily D) :=
   multisetHashFamily_CR_of_injective D hinj
 
+/-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the bias bound DISCHARGED on the PROVED floor.
+
+§5's `_advantage_bound` siblings are the honest fixed-hash statements, and their `hcol : Hard … Eff`
+hypothesis is a PARAMETER with no known non-vacuous instantiation (§7: `⊤` FALSE at a bounded output,
+`⊥` vacuous, no cost model). The DISCHARGED successor moves the floor where it is a THEOREM: the
+keyed random-oracle model (`Crypto.KeyedRomFloor.keyedRom_hard`, the birthday bound), the biaser an
+ORACLE PROGRAM with QUERY-COUNTED cost, oracle sampled AFTER the program is fixed
+(`Crypto.RomCarrierSites`, the `Exec.SystemRootsBindingReduction` §7 pattern).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited: the
+sampled `H : Tag × Msg → Fin (2 ^ l)` replaces the fixed public multiset combine (a deliberate
+labelled idealisation, NOT a derivation); the digest space is `λ`-growing where the deployed output
+is a FIXED-width digest. The message domain is the TRUNCATED deployed shape: the honest contribution
+beside an adversarial aggregate of EXACTLY `m` contributions (`Ct × Sym Ct m` — the aggregate stays
+an UNORDERED multiset, as deployed; `m` is the truncation bound on how much the adversary commits).
+The adversarial `rest` is the game CONTEXT — the adversary still chooses it per tag — and the honest
+slot is the PAYLOAD the commitment must bind; two distinct honest contributions absorbed at one
+chosen `rest` with one digest IS the bias, in the win relation. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+  (RomCarrier romCarrierGame RomCarrierEff romCarrierAdv romCarrier_choiceForger_excluded)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily flatFamily_card_R taggedCarrier flatSite_binds constTripleComp constTriple_in_eff
+   constTriple_gameAdv_pos constTriple_binds)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- **THE BEACON KEYED ROM FAMILY** — keyed by the DEPLOYED tag space `D.Tag` (the anchor to the
+deployed object), over one honest contribution beside an adversarial aggregate of exactly `m`
+contributions (unordered, as the deployed multiset combine absorbs it), with the ideal `λ`-bit
+digest. -/
+def beaconRomFamily {Ct O : Type} (D : BeaconDeployment Ct O) (ctFin : Fintype Ct)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => Ct × Sym Ct m)
+    (fun _ => by letI := ctFin; letI := D.ctDecEq; infer_instance)
+    (fun _ => by letI := ctFin; letI := D.ctDecEq; infer_instance)
+    (fun _ => by
+      obtain ⟨c₀⟩ := D.ctNonempty
+      exact ⟨(c₀, Sym.replicate m c₀)⟩)
+
+/-- **THE HONEST-SLOT CARRIER** — commitment `H (t, (c, rest))`: the beacon output binds the honest
+contribution `c` UNDER the adversary's own chosen aggregate `rest` (the context). The embedding is
+injective in the honest slot on the nose (`Prod.fst`). -/
+def beaconRomCarrier {Ct O : Type} (D : BeaconDeployment Ct O) (ctFin : Fintype Ct)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : RomCarrier (beaconRomFamily D ctFin tagDec m) :=
+  taggedCarrier _ (fun _ => Sym Ct m) (fun _ => Ct) (fun _ => D.ctDecEq)
+    (fun _ rest c => (c, rest)) (fun _ _ _ _ h => congrArg Prod.fst h)
+
+/-- The beacon bias game at the sampled oracle: the adversary chooses a tag-and-`rest` context and
+exhibits two DISTINCT honest contributions the beacon output cannot tell apart — `romCarrierGame`,
+`beaconBiasGame`'s event at the sampled oracle. -/
+abbrev beaconBiasRomGame {Ct O : Type} (D : BeaconDeployment Ct O) (ctFin : Fintype Ct)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) : Game :=
+  romCarrierGame (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+
+/-- **⚑ THE DEPLOYED BIAS IS A WIN OF THE ROM GAME.** Two DISTINCT honest contributions absorbed at
+ONE adversarial aggregate with ONE sampled-oracle output ARE a win — `bias_breaks_honest_slot_cr`'s
+"biasability is exactly a hash collision on the honest slot", restated at the sampled oracle. -/
+theorem beaconBiasRom_bias_is_break {Ct O : Type} (D : BeaconDeployment Ct O) (ctFin : Fintype Ct)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (l : ℕ)
+    (H : (beaconBiasRomGame D ctFin tagDec m).Inst l) (t : D.Tag) (rest : Sym Ct m)
+    {c c' : Ct} (hne : c ≠ c') (heq : H (t, (c, rest)) = H (t, (c', rest))) :
+    (beaconBiasRomGame D ctFin tagDec m).wins l H ((t, rest), c, c') :=
+  ⟨hne, heq⟩
+
+/-- **⚑⚑ RE-GROUNDED `RandomnessBeacon.honest_makes_unbiasable`, DISCHARGED ON THE PROVED FLOOR** —
+the keyed-ROM successor of §5's `honest_makes_unbiasable_advantage_bound`: every query-bounded
+biasing adversary has NEGLIGIBLE advantage — the adversary that commits its contributions first
+steers the beacon only with negligible probability, in the keyed ROM model of §8's header. The
+hypotheses are a polynomial query budget and class membership — nothing refutable is carried. -/
+theorem honest_makes_unbiasable_binds_rom {Ct O : Type} (D : BeaconDeployment Ct O)
+    (ctFin : Fintype Ct) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (beaconBiasRomGame D ctFin tagDec m))
+    (hA : RomCarrierEff (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+      Q A) :
+    Negl (gameAdv (beaconBiasRomGame D ctFin tagDec m) A) :=
+  flatSite_binds _ _ _ _ _ _ _ _ _ Q hQ A hA
+
+/-- **⚑ RE-GROUNDED `RandomnessBeacon.bias_breaks_honest_slot_cr`, DISCHARGED** — a bias IS a
+collision of the sampled oracle on the honest slot (`beaconBiasRom_bias_is_break`), so the same
+discharged bound. -/
+theorem bias_breaks_honest_slot_cr_binds_rom {Ct O : Type} (D : BeaconDeployment Ct O)
+    (ctFin : Fintype Ct) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (beaconBiasRomGame D ctFin tagDec m))
+    (hA : RomCarrierEff (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+      Q A) :
+    Negl (gameAdv (beaconBiasRomGame D ctFin tagDec m) A) :=
+  honest_makes_unbiasable_binds_rom D ctFin tagDec m Q hQ A hA
+
+/-- **(TOOTH — the class is INHABITED with POSITIVE advantage.)** The `0`-query constant answerer on
+two distinct honest contributions is in the class at every budget and wins with positive probability
+at every parameter — the discharged bound bounds something genuinely nonzero. -/
+theorem beaconBiasRom_class_inhabited_pos {Ct O : Type} (D : BeaconDeployment Ct O)
+    (ctFin : Fintype Ct) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    {c c' : Ct} (hne : c ≠ c') :
+    ∃ A, RomCarrierEff (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m) Q A
+      ∧ ∀ l, 0 < gameAdv (beaconBiasRomGame D ctFin tagDec m) A l := by
+  obtain ⟨t₀⟩ := D.tagNonempty
+  refine ⟨romCarrierAdv (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+      (constTripleComp (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+        (fun _ => (t₀, Sym.replicate m c)) (fun _ => c) (fun _ => c')),
+    constTriple_in_eff (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+      _ _ _ Q,
+    fun l => constTriple_gameAdv_pos (beaconRomFamily D ctFin tagDec m)
+      (beaconRomCarrier D ctFin tagDec m) _ _ _ l hne⟩
+
+/-- **(TOOTH — the `shortCollAdv` shape is ADMITTED and DEFANGED, at this site.)** -/
+theorem beaconBiasRom_constAnswer_defanged {Ct O : Type} (D : BeaconDeployment Ct O)
+    (ctFin : Fintype Ct) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (ctx : ∀ _l, D.Tag × Sym Ct m) (v w : ∀ _l, Ct) :
+    Negl (gameAdv (beaconBiasRomGame D ctFin tagDec m)
+      (romCarrierAdv _ _ (constTripleComp (beaconRomFamily D ctFin tagDec m)
+        (beaconRomCarrier D ctFin tagDec m) ctx v w))) :=
+  constTriple_binds (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m)
+    ctx v w Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _)
+
+/-- **(TOOTH — a non-negligible biaser is OUTSIDE the class.)** -/
+theorem beaconBiasRom_nonNegl_forger_excluded {Ct O : Type} (D : BeaconDeployment Ct O)
+    (ctFin : Fintype Ct) (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (beaconBiasRomGame D ctFin tagDec m))
+    (hnn : ¬ Negl (gameAdv (beaconBiasRomGame D ctFin tagDec m) A)) :
+    ¬ RomCarrierEff (beaconRomFamily D ctFin tagDec m) (beaconRomCarrier D ctFin tagDec m) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ (flatFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   honestSlotCR_false_of_compressing,
   exists_honest_slot_collision_of_compressing,
@@ -545,7 +677,13 @@ theorem multisetHashFamily_CR_of_injective_deployment {Ct O : Type} (D : BeaconD
   beaconSlot_floor_bot_vacuous,
   brokenBeacon_floor_top_false,
   brokenBeacon_not_honestSlotCR,
-  multisetHashFamily_CR_of_injective_deployment
+  multisetHashFamily_CR_of_injective_deployment,
+  beaconBiasRom_bias_is_break,
+  honest_makes_unbiasable_binds_rom,
+  bias_breaks_honest_slot_cr_binds_rom,
+  beaconBiasRom_class_inhabited_pos,
+  beaconBiasRom_constAnswer_defanged,
+  beaconBiasRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Crypto.BeaconSlotRegrounded

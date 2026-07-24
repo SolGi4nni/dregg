@@ -57,7 +57,22 @@ is UNDISCHARGED, it is a named parameter at the use site, and it is the honest r
 Lattice search-floor leg. The signature forking `MSISHard` consumers ride `Crypto.ForkingDischarge`; those
 are NOT re-grounded — no reduction in the tree connects `forkProb` to an `MSISFamily` adversary's advantage,
 and `ThreadAdvantageBound` §4 names that obligation rather than dressing it. Stays in the VRF subtree.
--/
+
+## ⚑ NO KEYED-ROM SUCCESSOR EXISTS FOR THIS FLOOR — named, not dodged (2026-07-24)
+
+The 07-24 keyed-ROM re-pointing campaign (`Crypto.KeyedRomFloor.keyedRom_hard` → the birthday bound)
+DISCHARGES the hash-collision floors of the sibling `*Regrounded` files. It does NOT apply here, and
+saying why precisely is the honest state: `keyedRom_hard` is a COLLISION bound for a SAMPLED oracle —
+an information-theoretic birthday fact. The uniqueness break above extracts an `IsMSISSolution` of the
+PUBLIC augmented map `[A | t]` — a short-vector SEARCH problem over a GIVEN linear map, not a
+collision of anything sampled-after-the-adversary; no query-counted oracle model makes finding short
+kernel vectors of a KNOWN map a theorem (the map is public — the analogue of
+`RomBindingReduction`'s "collision resistance of a FIXED function is a conjecture" applies verbatim).
+The honest successor would be a COST-CARRYING lattice floor (a deep-embedded adversary with real cost
+semantics, `Eff := PolyTime` as a theorem-bearing class — the EasyCrypt/FCF-style grounding), which
+this tree does not yet have. Until it does, `hfloor : MSISHardQuant (vrfMsisFamily F) Eff` stays a
+NAMED, undischarged parameter with both poles priced (§3) — carried in the open, not laundered
+through a floor that cannot ground it. -/
 import Dregg2.Tactics.ThreadAdvantageBound
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.VRF

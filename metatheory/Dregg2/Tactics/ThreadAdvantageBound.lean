@@ -14,6 +14,17 @@ consumers to re-thread. The threading is UNIFORM: each old-floor use — a Boole
 negligibility-closure algebra of `Dregg2/Crypto/ConcreteSecurity.lean`
 (`negl_zero`, `negl_add`, `negl_const_mul`, `negl_finset_sum`, `negl_two_pow`).
 
+## ⚑ THE FLOOR THE DEMOS TEACH IS THE PROVED KEYED-ROM FLOOR (2026-07-24 re-point)
+
+The original §1-§3 prototypes took `hCR : CollisionResistant F` — a floor
+`Crypto.FloorGames.collisionResistant_false_of_compressing` PROVES FALSE for every compressing family,
+i.e. for every deployed hash. A demo that teaches a refuted assumption is worse than no demo, so those
+three are DELETED and their successors below thread the SAME closure algebra with the floor a THEOREM:
+`Crypto.KeyedRomFloor.keyedRom_hard` (the birthday bound — nothing refutable carried), derived
+IN-PROOF at the extracted finder family and entering the leaves as an already-discharged `Negl` /
+`NeglFam` fact. The `CollisionResistant` leaf remains IN the tactic for legacy call sites; what
+changed is what the prototypes TEACH.
+
 ## The tactic
 
 `thread_advantage_bound` closes a goal `Negl e` by STRUCTURAL RECURSION over the closure algebra,
@@ -21,9 +32,13 @@ pulling the proper floor from the local context at the leaves:
 
   * `Negl (fun _ => 0)`                      ↦ `negl_zero`                         (a bound-with-no-hash leg)
   * `Negl (fun n => 1/2ⁿ)`                   ↦ `negl_two_pow`                      (an explicit decaying term)
+  * `Negl (adv s)` with `NeglFam adv` there  ↦ a DISCHARGED per-index family from the context, applied
+                                                at the index (`apply_assumption`) — ⚑ the PROVED
+                                                instantiation the demos put there is `keyedRom_hard`
+                                                at the extracted finder family
   * `Negl (collisionAdv F A)`                ↦ the floor `hCR : CollisionResistant F` applied to `A`
-                                                (the single-use equivocation leaf — an equivocating opener
-                                                 IS a collision finder, so its success is the floor's bound)
+                                                (LEGACY leaf — that floor is REFUTED at every compressing
+                                                 family; kept for old call sites, taught by nothing here)
   * `Negl (adv s)`                           ↦ the floor `hfloor : MSISHardQuantShape adv` (etc.) applied to `s`
   * `Negl (fun n => f n + g n)`              ↦ `negl_add`, recurse on both      (two independent hash legs)
   * `Negl (fun n => a * f n)`                ↦ `negl_const_mul`, recurse         (a query-count / RLC factor)
@@ -33,14 +48,15 @@ pulling the proper floor from the local context at the leaves:
 
 So the two commonest consumer SHAPES thread mechanically:
 
-  1. **SINGLE-USE binding / equivocation** (`HermineHintMLWE.commitment_binding`,
-     `OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR`, `FinBindsKernel`): the Boolean
-     "opens ⟹ equal" restates as "the equivocation advantage is negligible", a single floor leaf.
+  1. **SINGLE-USE binding / equivocation**: "opens ⟹ equal" restates as "the equivocation advantage
+     is negligible", a single floor leaf — now discharged from `keyedRom_hard` at a query-class
+     membership (`commitment_binding_binds_rom`).
   2. **SUMMED multi-round** (the `friFold` / `StarkSound` chain): a total binding-failure advantage =
-     `∑ r ∈ rounds, collisionAdv F (finder r)`, negligible by `negl_finset_sum` at every round.
+     `∑ r ∈ rounds, gameAdv (keyedRomGame F) (finder r)`, negligible by `negl_finset_sum` at every
+     round (`friFold_binding_binds_rom`).
 
 and the MIXED tower shape — a de-batching term SCALED by a query count, PLUS the multi-round sum, PLUS a
-zero leg — threads by composing all of the above additively (`stark_sound_tower_advantage_bound` below).
+zero leg — threads by composing all of the above additively (`stark_sound_tower_binds_rom` below).
 
 ## Scope — what it does NOT do (honest boundary)
 
@@ -63,35 +79,62 @@ a real discharger, not a `sorry` in tactic costume).
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.ConcreteSecurity
 import Dregg2.Crypto.ProbCrypto
+import Dregg2.Crypto.KeyedRomFloor
 
 namespace Dregg2.Tactics.ThreadAdvantageBound
 
 open Dregg2.Crypto.ConcreteSecurity
-  (Negl negl_zero negl_two_pow negl_add negl_const_mul negl_mul_monomial negl_finset_sum Ensemble)
+  (Negl negl_zero negl_two_pow negl_add negl_const_mul negl_mul_monomial negl_finset_sum Ensemble
+   PolyBounded)
 open Dregg2.Crypto.ProbCrypto
   (MSISHardQuantShape MLWEHardQuantShape DLHardQuantShape HashCRHardQuantShape DecisionMLWEHardQuantShape)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv)
+open Dregg2.Crypto.FloorGames (Game Adversary Hard gameAdv)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily keyedRomGame KeyedRomEff keyedRom_hard)
 
 set_option autoImplicit false
 
-/-! ## The floor LEAF — close `Negl (collisionAdv F A)` / `Negl (adv s)` from the proper floor in context.
+/-! ## The floor LEAF — close `Negl (collisionAdv F A)` / `Negl (adv s)` from the proper floor in
+context.
 
-The proper floors are `∀`-statements (`CollisionResistant F := ∀ A, Negl (collisionAdv F A)`,
-`MSISHardQuantShape adv := ∀ s, Negl (adv s)`), so a floor leaf is the floor hypothesis APPLIED to the
-adversary/index the goal names. `‹CollisionResistant _›` finds the floor in context; `_` is the
-adversary, unified from the goal. `assumption` catches a bare `Negl _` hypothesis. -/
+The floors are `∀`-statements (`CollisionResistant F := ∀ A, Negl (collisionAdv F A)`,
+`MSISHardQuantShape adv := ∀ s, Negl (adv s)`, `NeglFam adv := ∀ s, Negl (adv s)`), so a floor leaf is
+the floor hypothesis APPLIED to the adversary/index the goal names. `assumption` catches a bare
+`Negl _` hypothesis.
+
+⚑ The `apply_assumption; done` leaf is the one with a PROVED instantiation: the demos derive
+`NeglFam (fun r => gameAdv (keyedRomGame F) (finder r))` — i.e. `∀ r, Negl (…)` — from
+`keyedRom_hard` (the birthday bound — a THEOREM) and the leaf applies it per index; `done` guards
+against a partial application leaving subgoals. ⚑ Why NOT a context-`Hard` leaf
+(`exact ‹Hard _ _› _ ‹_›`): its rigid `Negl (gameAdv ?G ?A)` result forces the unifier to
+whnf-unfold `gameAdv`↔`collisionAdv` winProb bodies against cross-shaped goals and deterministically
+times out (measured 2026-07-24). The PROVED floor therefore enters through a derived `NeglFam` fact,
+never through a context `Hard`. -/
+/-- **A ∀-INDEXED FAMILY OF DISCHARGED BOUNDS** — the content-free plumbing shape
+(`∀ s, Negl (adv s)`), NAMED so the leaf that applies it says what it is: an already-discharged
+family being indexed, never a hardness assumption (`HardQuantVacuity`'s lesson, kept visible). The
+keyed-ROM demos put `keyedRom_hard`-derived families in context at this shape. -/
+abbrev NeglFam {S : Type*} (adv : S → Ensemble) : Prop := ∀ s, Negl (adv s)
+
 syntax "advantage_floor_leaf" : tactic
 macro_rules
   | `(tactic| advantage_floor_leaf) =>
     `(tactic| first
+        | assumption
+        | (apply_assumption; done)
         | exact ‹CollisionResistant _› _
         | exact ‹HashCRHardQuantShape _› _
         | exact ‹MSISHardQuantShape _› _
         | exact ‹MLWEHardQuantShape _› _
         | exact ‹DecisionMLWEHardQuantShape _› _
-        | exact ‹DLHardQuantShape _› _
-        | assumption)
+        | exact ‹DLHardQuantShape _› _)
+
+/-! ⚑ TRANSPARENCY NOTE (2026-07-24): the two decay leaves of `thread_advantage_bound` run
+`with_reducible` — a `Negl (gameAdv …)` goal must FAIL them fast (at default transparency the defeq
+attempt whnf-unfolds `gameAdv`'s `winProb` over a function-space `Fintype` and can time out), and
+every in-tree use of these leaves is a syntactic `fun _ => 0` / `fun n => 1 / 2 ^ n` leg, which
+reducible matching still closes. -/
 
 /-! ## `thread_advantage_bound` — the recursive closure-algebra discharger.
 
@@ -102,47 +145,56 @@ syntax "thread_advantage_bound" : tactic
 macro_rules
   | `(tactic| thread_advantage_bound) =>
     `(tactic| first
-        | exact negl_zero
-        | exact negl_two_pow
+        | with_reducible exact negl_zero
+        | with_reducible exact negl_two_pow
         | advantage_floor_leaf
         | (refine negl_add ?_ ?_ <;> thread_advantage_bound)
         | (refine negl_const_mul _ ?_ <;> thread_advantage_bound)
         | (refine negl_mul_monomial _ ?_ <;> thread_advantage_bound)
         | (refine negl_finset_sum _ (fun _ _ => ?_) <;> thread_advantage_bound))
 
-/-! ## §1 — PROTOTYPE on real consumer SHAPE 1: single-use equivocation binding.
+/-! ## §1 — PROTOTYPE on real consumer SHAPE 1: single-use equivocation binding, on the PROVED floor.
 
-`HermineHintMLWE.commitment_binding` and `OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR` are
-the Boolean form "two openings of one commitment ⟹ the reveals are equal", conditioned on the (vacuous)
-injective floor. The concrete-security restatement: an equivocating opener — one that opens a commitment
-to two DISTINCT reveals colliding under the hash — IS a `CollisionFinder`, so under the proper
-`CollisionResistant` floor its equivocation advantage is negligible. The `Negl` obligation is a single
-floor leaf, discharged by `thread_advantage_bound`. -/
+⚑ The predecessor (`commitment_binding_advantage_bound`, DELETED 07-24) took
+`hCR : CollisionResistant F` — refuted for every compressing family
+(`FloorGames.collisionResistant_false_of_compressing`), so it taught every future user a FALSE
+assumption. The successor threads the SAME single-leaf shape with the floor a THEOREM: the adversary
+is a query-bounded oracle program against the SAMPLED keyed oracle, and `keyedRom_hard` (the birthday
+bound) closes the leaf. What the caller supplies is a polynomial query budget and the class
+membership — nothing refutable. -/
 
-/-- **SHAPE-1 restatement (commitment / opening binding).** The advantage-bounded form of
-`commitment_binding` / `commitmentOpening_binds_of_poseidon2CR`: under the proper keyed-hash floor, the
-equivocation adversary's advantage is negligible — "opens ⟹ equal" becomes "opens ⟹ equal except with
-negligible probability". Proof: `thread_advantage_bound` (the `CollisionResistant` floor leaf). -/
-theorem commitment_binding_advantage_bound {F : KeyedHashFamily}
-    (hCR : CollisionResistant F) (equivocator : CollisionFinder F) :
-    Negl (collisionAdv F equivocator) := by
+/-- **SHAPE-1 prototype (commitment / opening binding), DISCHARGED.** A query-bounded equivocator of
+the sampled keyed oracle has negligible advantage — "opens ⟹ equal except with negligible
+probability", with the floor `keyedRom_hard` derived in-proof (not assumed). Proof:
+`thread_advantage_bound` (the `assumption` leaf at the derived bound). -/
+theorem commitment_binding_binds_rom (F : KeyedRomFamily) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (A : Adversary (keyedRomGame F)) (hA : KeyedRomEff F Q A) :
+    Negl (gameAdv (keyedRomGame F) A) := by
+  have hleaf : Negl (gameAdv (keyedRomGame F) A) := keyedRom_hard F Q hQ hw A hA
   thread_advantage_bound
 
-/-! ## §2 — PROTOTYPE on real consumer SHAPE 2: the multi-round FRI/STARK fold.
+/-! ## §2 — PROTOTYPE on real consumer SHAPE 2: the multi-round FRI/STARK fold, on the PROVED floor.
 
-The `StarkSound` / FRI-proximity chain runs `rounds` Merkle-binding checks, each an
-`OodCommitmentBinding.merkleRecomputeZ_binds` leg consuming the hash floor. The total binding-failure
-advantage is the finite SUM of the per-round collision advantages, negligible by `negl_finset_sum` — the
-union-bound step. The `Negl` obligation is a `negl_finset_sum` followed by a floor leaf per round, both
-emitted by `thread_advantage_bound`. -/
+The `StarkSound` / FRI-proximity chain runs `rounds` Merkle-binding checks. The total binding-failure
+advantage is the finite SUM of the per-round advantages, negligible by `negl_finset_sum` — the
+union-bound step — with each round's leaf closed from the ONE proved floor at that round's extracted
+finder (the derived `NeglFam`, applied per index by the leaf). Predecessor
+(`friFold_binding_advantage_bound`, `CollisionResistant`-conditioned) DELETED 07-24. -/
 
-/-- **SHAPE-2 restatement (multi-round FRI/STARK binding).** The advantage-bounded form of the `friFold` /
-`StarkSound` chain: the total opening-binding failure advantage across `rounds` Merkle checks is a finite
-sum of per-round collision advantages, negligible under the proper floor. Proof: `thread_advantage_bound`
-(`negl_finset_sum`, then the `CollisionResistant` leaf at each round). -/
-theorem friFold_binding_advantage_bound {F : KeyedHashFamily} (rounds : Finset ℕ)
-    (finder : ℕ → CollisionFinder F) (hCR : CollisionResistant F) :
-    Negl (fun n => ∑ r ∈ rounds, collisionAdv F (finder r) n) := by
+/-- **SHAPE-2 prototype (multi-round FRI/STARK binding), DISCHARGED.** The total opening-binding
+failure advantage across `rounds` checks — each round an extracted query-bounded finder against the
+sampled oracle — is negligible, floor derived in-proof. Proof: `thread_advantage_bound`
+(`negl_finset_sum`, then the `NeglFam` leaf per round). -/
+theorem friFold_binding_binds_rom (F : KeyedRomFamily) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (rounds : Finset ℕ) (finder : ℕ → Adversary (keyedRomGame F))
+    (hmem : ∀ r, KeyedRomEff F Q (finder r)) :
+    Negl (fun n => ∑ r ∈ rounds, gameAdv (keyedRomGame F) (finder r) n) := by
+  have hfam : NeglFam (fun r => gameAdv (keyedRomGame F) (finder r)) :=
+    fun r => keyedRom_hard F Q hQ hw (finder r) (hmem r)
   thread_advantage_bound
 
 /-! ## §3 — PROTOTYPE on the MIXED tower shape: de-batch scale + multi-round sum + zero leg.
@@ -150,18 +202,24 @@ theorem friFold_binding_advantage_bound {F : KeyedHashFamily} (rounds : Finset �
 A full `AlgoStarkSoundTransferV3`-style soundness error threads THREE contributions additively: an RLC
 de-batching term SCALED by a query-count factor, the multi-round Merkle fold SUM, and an algebra leg that
 carries no hash (advantage `0`). `thread_advantage_bound` composes `negl_add` / `negl_const_mul` /
-`negl_finset_sum` / `negl_zero` and closes every collision leaf from the one floor — the whole tower's
-"no equivocation anywhere" becomes "negligible total binding-failure advantage". -/
+`negl_finset_sum` / `negl_zero` and closes every leaf from the ONE proved floor. Predecessor
+(`stark_sound_tower_advantage_bound`, `CollisionResistant`-conditioned) DELETED 07-24. -/
 
-/-- **MIXED tower restatement.** A composite STARK soundness-error advantage
-`c · (debatch term) + ∑_{r ∈ rounds} (per-round collision) + 0` is negligible under the proper floor —
-the additive threading of every hash leg through the tower. Proof: `thread_advantage_bound` (the full
-closure spine: const-scale, finite-sum, zero, all bottoming at the `CollisionResistant` leaf). -/
-theorem stark_sound_tower_advantage_bound {F : KeyedHashFamily}
-    (c : ℝ) (debatch : CollisionFinder F) (rounds : Finset ℕ) (finder : ℕ → CollisionFinder F)
-    (hCR : CollisionResistant F) :
-    Negl (fun n => c * collisionAdv F debatch n
-        + (∑ r ∈ rounds, collisionAdv F (finder r) n) + 0) := by
+/-- **MIXED tower prototype, DISCHARGED.** A composite STARK soundness-error advantage
+`c · (debatch term) + ∑_{r ∈ rounds} (per-round term) + 0` is negligible, floor derived in-proof —
+the additive threading of every hash leg through the tower, all bottoming at leaves fed by
+`keyedRom_hard`. -/
+theorem stark_sound_tower_binds_rom (F : KeyedRomFamily) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (hw : ∀ l, letI := F.rFin l; Fintype.card (F.R l) = 2 ^ l)
+    (c : ℝ) (debatch : Adversary (keyedRomGame F)) (hdb : KeyedRomEff F Q debatch)
+    (rounds : Finset ℕ) (finder : ℕ → Adversary (keyedRomGame F))
+    (hmem : ∀ r, KeyedRomEff F Q (finder r)) :
+    Negl (fun n => c * gameAdv (keyedRomGame F) debatch n
+        + (∑ r ∈ rounds, gameAdv (keyedRomGame F) (finder r) n) + 0) := by
+  have hdb' : Negl (gameAdv (keyedRomGame F) debatch) := keyedRom_hard F Q hQ hw debatch hdb
+  have hfam : NeglFam (fun r => gameAdv (keyedRomGame F) (finder r)) :=
+    fun r => keyedRom_hard F Q hQ hw (finder r) (hmem r)
   thread_advantage_bound
 
 /-! ## §4 — the `*HardQuantShape` leg. ⚠ **NO PROBLEM CONTENT — UNDISCHARGED OBLIGATIONS, NOT KEYSTONES.**
@@ -262,9 +320,9 @@ example (F : KeyedHashFamily) (A : CollisionFinder F) : True := by
 /-! ## §6 — axiom-hygiene pins. -/
 
 #assert_all_clean [
-  commitment_binding_advantage_bound,
-  friFold_binding_advantage_bound,
-  stark_sound_tower_advantage_bound,
+  commitment_binding_binds_rom,
+  friFold_binding_binds_rom,
+  stark_sound_tower_binds_rom,
   forger_advantage_bound_under_msis,
   forger_advantage_with_challenge_bound,
   decision_distinguisher_advantage_bound,

@@ -79,6 +79,7 @@ import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CommitmentBinding
 import Dregg2.Authority.MacaroonDischarge
 import Dregg2.Exec.Factory
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Crypto.FactoryBindingFloorRegrounded
 
@@ -327,7 +328,8 @@ Boolean "equal node hashes ⇒ equal inputs", which needed the FALSE `Compress1C
 `Compress2` (§1a), becomes an honest advantage bound over the SAME single permutation call. No new crypto:
 the sole content is still primitive #4, now stated as something an adversary must FIND.
 
-⚑ `hEff` is UNDISCHARGED and that is the honest state (`FloorGames` §8) — priced by §5's both poles. -/
+⚑ `hEff` is UNDISCHARGED and that is the honest state (`FloorGames` §8) — priced by §5's both poles.
+The DISCHARGED successor on the PROVED keyed-ROM floor is §6a's `compress2_node_binds_rom`. -/
 theorem compress2_node_advantage_bound (F : Compress2Family)
     (Eff : Adversary (hashGame (c2Compress1Family F)) → Prop)
     (A : Adversary (hashGame (c2NodeFamily F)))
@@ -453,7 +455,8 @@ honest concrete-security statement about BLAKE3, which is what `Factory.lean`'s 
 was (*"collision-resistance of BLAKE3, discharged by the hash circuit"*) — it just carried injectivity
 instead.
 
-⚑ `hEff` is UNDISCHARGED and that is the honest state (`FloorGames` §8). -/
+⚑ `hEff` is UNDISCHARGED and that is the honest state (`FloorGames` §8). The DISCHARGED successor on
+the PROVED keyed-ROM floor is §6b's `vk_determines_invariants_binds_rom`. -/
 theorem vk_determines_invariants_advantage_bound (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
     (instNe : ∀ l, Nonempty (Inst l))
     (Eff : Adversary (hashGame (factoryHashFamily Inst instFin instNe)) → Prop)
@@ -587,7 +590,8 @@ the old discharge" (`macaroon.rs:324-329`), now stated as something an attacker 
 injectivity of SHA-256.
 
 ⚑ **`hEff` is UNDISCHARGED, and `hmacInj` is the deployed theorem's own carried premise** — neither is
-new debt; both are named. §5 prices the floor's poles. -/
+new debt; both are named. §5 prices the floor's poles. The DISCHARGED successor on the PROVED
+keyed-ROM floor is §6c's `rebinding_binds_rom`. -/
 theorem rebinding_advantage_bound (F : BindingFamily)
     (Eff : Adversary (hashGame (bindingHashFamily F)) → Prop)
     (A : Adversary (rebindGame F))
@@ -682,6 +686,287 @@ theorem binding_floor_top_false_of_compressing (F : BindingFamily)
   obtain ⟨a, b, hne, heq⟩ := hcol l i
   exact ⟨(a, b), hne, heq⟩
 
+/-! ## §6 — ⚑ THE KEYED-ROM SUCCESSORS: all three bounds DISCHARGED on the PROVED floor.
+
+§2-§4's `_advantage_bound` keystones are the honest fixed-hash statements; their
+`HashCRHardQuant … Eff` hypotheses are PARAMETERS with no known non-vacuous instantiation (§5 prices
+`⊤` FALSE at compressing parameters and `⊥` vacuous; there is no cost model). The DISCHARGED
+successors move the floor where it is a THEOREM: the keyed random-oracle model
+(`Crypto.KeyedRomFloor.keyedRom_hard`, the birthday bound), each forger an ORACLE PROGRAM with
+QUERY-COUNTED cost, the oracle sampled AFTER the program is fixed (`Crypto.RomCarrierSites`, the
+`Exec.SystemRootsBindingReduction` §7 pattern).
+
+⚑ **THE MODELLING STEP, STATED (not smuggled)** — `RomCarrierSites`' header caveat, inherited at all
+three sites: the sampled `H : Inst × Msg → Fin (2 ^ l)` replaces the fixed public function (a
+deliberate labelled idealisation, NOT a derivation); the digest space is `λ`-growing where the
+deployed digest is a FIXED-width felt/256-bit value; the message domains are the TRUNCATED deployed
+shapes (an in-range BabyBear rate-block pair; a descriptor serialization of at most `m` bytes; the
+32-byte macaroon tail). These families are keyed by the SITES' OWN λ-indexed sampled instance spaces
+(`F.Inst`), so `flatFamily` (constant key) does not apply and `instRomFamily` below is its λ-indexed
+sibling — same digest, same floor. -/
+
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+  (RomCarrier romCarrierGame RomCarrierEff romCarrierAdv romCarrier_binds
+   romCarrier_choiceForger_excluded)
+open Dregg2.Crypto.RomCarrierSites
+  (taggedCarrier BVec bvecOfList bvecOfList_inj romOpenGame RomOpenEff romOpenAdv rom_open_binds
+   constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds romOpen_forger_excluded
+   constTripleComp constTriple_in_eff constTriple_gameAdv_pos constTriple_binds babyBearP
+   babyBearP_pos one_lt_babyBearP)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+
+/-- **A KEYED ROM FAMILY OVER A λ-INDEXED INSTANCE SPACE** — `RomCarrierSites.flatFamily` with the
+key space the site's own sampled `Inst : ℕ → Type` instead of a constant tag type. The digest space
+stays the ideal `Fin (2 ^ l)`, so the floor's width obligation closes by computation
+(`instRomFamily_card_R`). -/
+def instRomFamily (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l))
+    (Msg : ℕ → Type) (mF : ∀ l, Fintype (Msg l)) (mD : ∀ l, DecidableEq (Msg l))
+    (mN : ∀ l, Nonempty (Msg l)) : KeyedRomFamily where
+  Key := Inst
+  D := Msg
+  R := fun l => Fin (2 ^ l)
+  keyFin := instFin
+  keyDec := instDec
+  keyNe := instNe
+  dFin := mF
+  dDec := mD
+  dNe := mN
+  rFin := fun _ => inferInstance
+  rDec := fun _ => inferInstance
+  rNe := fun _ => ⟨⟨0, by positivity⟩⟩
+
+/-- The `hw` obligation, closed by construction — as `flatFamily_card_R`, at λ-indexed keys. -/
+theorem instRomFamily_card_R (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l))
+    (Msg : ℕ → Type) (mF : ∀ l, Fintype (Msg l)) (mD : ∀ l, DecidableEq (Msg l))
+    (mN : ∀ l, Nonempty (Msg l)) (l : ℕ) :
+    letI := (instRomFamily Inst instFin instDec instNe Msg mF mD mN).rFin l
+    Fintype.card ((instRomFamily Inst instFin instDec instNe Msg mF mD mN).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-! ### §6a — the 2-to-1 node hash (`Compress1CR`'s consumer), at the sampled oracle. -/
+
+/-- **THE NODE ROM FAMILY** — keyed by the deployed `Compress2Family`'s own sampled instance space,
+over the truncated rate block: a pair of in-range BabyBear felts, the deployed `hash_2_to_1` input
+shape. -/
+def c2NodeRomFamily (F : Compress2Family) (instDec : ∀ l, DecidableEq (F.Inst l)) :
+    KeyedRomFamily :=
+  instRomFamily F.Inst F.instFin instDec F.instNe (fun _ => Fin babyBearP × Fin babyBearP)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩)⟩)
+
+/-- **THE NODE CARRIER** — commitment `H (i, (a, b))`: one oracle query at the packed pair (the
+`pack₂` of §2, with the packing now the identity on the truncated pair — injective on the nose). -/
+def c2NodeRomCarrier (F : Compress2Family) (instDec : ∀ l, DecidableEq (F.Inst l)) :
+    RomCarrier (c2NodeRomFamily F instDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => Fin babyBearP × Fin babyBearP)
+    (fun _ => inferInstance) (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The node collision game at the sampled oracle. -/
+abbrev c2NodeRomGame (F : Compress2Family) (instDec : ∀ l, DecidableEq (F.Inst l)) : Game :=
+  romCarrierGame (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec)
+
+/-- **⚑ THE DEPLOYED NODE COLLISION IS A WIN OF THE ROM GAME.** Two DISTINCT in-range input pairs
+with one sampled digest ARE a win — `c2NodeGame_wins_iff`'s event at the sampled oracle. -/
+theorem c2NodeRom_collision_is_break (F : Compress2Family)
+    (instDec : ∀ l, DecidableEq (F.Inst l)) (l : ℕ)
+    (H : (c2NodeRomGame F instDec).Inst l) {p q : Fin babyBearP × Fin babyBearP}
+    (hne : p ≠ q) (heq : ∀ i : F.Inst l, H (i, p) = H (i, q)) (i : F.Inst l) :
+    (c2NodeRomGame F instDec).wins l H ((i, ()), p, q) :=
+  ⟨hne, heq i⟩
+
+/-- **⚑⚑ RE-GROUNDED `compress2_node_advantage_bound`, DISCHARGED ON THE PROVED FLOOR** — every
+query-bounded node-collision forger has NEGLIGIBLE advantage, in the keyed ROM model of §6's header.
+No `HashCRHardQuant` hypothesis; the floor is `keyedRom_hard`, a THEOREM. -/
+theorem compress2_node_binds_rom (F : Compress2Family)
+    (instDec : ∀ l, DecidableEq (F.Inst l)) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (c2NodeRomGame F instDec))
+    (hA : RomCarrierEff (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec) Q A) :
+    Negl (gameAdv (c2NodeRomGame F instDec) A) :=
+  romCarrier_binds _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **(TOOTH — class inhabited with positive advantage, node site.)** -/
+theorem c2NodeRom_class_inhabited_pos (F : Compress2Family)
+    (instDec : ∀ l, DecidableEq (F.Inst l)) (Q : ℕ → ℕ) :
+    ∃ A, RomCarrierEff (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec) Q A
+      ∧ ∀ l, 0 < gameAdv (c2NodeRomGame F instDec) A l := by
+  refine ⟨romCarrierAdv (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec)
+      (constTripleComp (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec)
+        (fun l => ((F.instNe l).some, ()))
+        (fun _ => (⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩))
+        (fun _ => (⟨1, one_lt_babyBearP⟩, ⟨0, babyBearP_pos⟩))),
+    constTriple_in_eff (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec) _ _ _ Q,
+    fun l => constTriple_gameAdv_pos (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec)
+      _ _ _ l ?_⟩
+  intro hc
+  have : (0 : ℕ) = 1 := congrArg (fun p : Fin babyBearP × Fin babyBearP => p.1.val) hc
+  omega
+
+/-- **(TOOTH — the constant answerer is DEFANGED; a non-negligible forger is EXCLUDED — node
+site.)** -/
+theorem c2NodeRom_nonNegl_forger_excluded (F : Compress2Family)
+    (instDec : ∀ l, DecidableEq (F.Inst l)) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (c2NodeRomGame F instDec))
+    (hnn : ¬ Negl (gameAdv (c2NodeRomGame F instDec) A)) :
+    ¬ RomCarrierEff (c2NodeRomFamily F instDec) (c2NodeRomCarrier F instDec) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
+/-! ### §6b — the factory content address (`HashInjective`'s consumer), at the sampled oracle. -/
+
+/-- **THE FACTORY ROM FAMILY** — keyed by a sampled instance space, over descriptor serializations of
+at most `m` bytes: the truncated shape of what BLAKE3 absorbs to mint a `factory_vk`. -/
+def factoryRomFamily (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ) :
+    KeyedRomFamily :=
+  instRomFamily Inst instFin instDec instNe (fun _ => BVec (Fin 256) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
+
+/-- **THE FACTORY CARRIER** — commitment `H (i, ser (schema, program))`: the `vk` binds the WHOLE
+published content through its serialization. Per-site content: the serialization `ser` and its
+injectivity — the layout facts BLAKE3's input encoding genuinely satisfies. The payloads are the
+contents whose serialization FITS the truncation bound (`Subtype` on length ≤ `m`). -/
+noncomputable def factoryRomCarrier (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ)
+    (ser : Schema × RecordProgram → List (Fin 256)) (serInj : Function.Injective ser) :
+    RomCarrier (factoryRomFamily Inst instFin instDec instNe m) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun _ => {q : Schema × RecordProgram // (ser q).length ≤ m})
+    (fun _ => Classical.decEq _)
+    (fun _ _ q => bvecOfList m (ser q.1) q.2)
+    (fun _ _ a b h => Subtype.ext (serInj (bvecOfList_inj a.2 b.2 h)))
+
+/-- The factory forgery game at the sampled oracle: the adversary PUBLISHES a `vk` and exhibits two
+DISTINCT contents that BOTH content-address to it — `romOpenGame`, the `factoryForgeryGame` event
+with WELL-FORMEDNESS (each `vk` IS the hash of its own content) now the opening equations
+themselves. -/
+@[reducible] noncomputable def factoryRomGame (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ)
+    (ser : Schema × RecordProgram → List (Fin 256)) (serInj : Function.Injective ser) : Game :=
+  romOpenGame (factoryRomFamily Inst instFin instDec instNe m)
+    (factoryRomCarrier Inst instFin instDec instNe m ser serInj)
+
+/-- **⚑⚑ RE-GROUNDED `vk_determines_invariants_advantage_bound`, DISCHARGED ON THE PROVED FLOOR** —
+every query-bounded factory forger has NEGLIGIBLE advantage: the published `vk` determines the cell's
+whole published contract EXCEPT with negligible probability, in the keyed ROM model of §6's header.
+Constructor transparency on a floor that is a THEOREM, not a refutable hypothesis. -/
+theorem vk_determines_invariants_binds_rom (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ)
+    (ser : Schema × RecordProgram → List (Fin 256)) (serInj : Function.Injective ser)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (factoryRomGame Inst instFin instDec instNe m ser serInj))
+    (hA : RomOpenEff (factoryRomFamily Inst instFin instDec instNe m)
+      (factoryRomCarrier Inst instFin instDec instNe m ser serInj) Q A) :
+    Negl (gameAdv (factoryRomGame Inst instFin instDec instNe m ser serInj) A) :=
+  rom_open_binds _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **(TOOTH — class inhabited with positive advantage, factory site.)** Two contents with distinct
+serializations-in-bound witness the game winnable at every parameter. -/
+theorem factoryRom_class_inhabited_pos (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ)
+    (ser : Schema × RecordProgram → List (Fin 256)) (serInj : Function.Injective ser)
+    (Q : ℕ → ℕ) {q q' : Schema × RecordProgram}
+    (hq : (ser q).length ≤ m) (hq' : (ser q').length ≤ m) (hne : q ≠ q') :
+    ∃ A, RomOpenEff (factoryRomFamily Inst instFin instDec instNe m)
+        (factoryRomCarrier Inst instFin instDec instNe m ser serInj) Q A
+      ∧ ∀ l, 0 < gameAdv (factoryRomGame Inst instFin instDec instNe m ser serInj) A l := by
+  refine ⟨romOpenAdv (factoryRomFamily Inst instFin instDec instNe m)
+      (factoryRomCarrier Inst instFin instDec instNe m ser serInj)
+      (constOpenComp (factoryRomFamily Inst instFin instDec instNe m)
+        (factoryRomCarrier Inst instFin instDec instNe m ser serInj)
+        (fun l => ⟨0, by positivity⟩) (fun l => ((instNe l).some, ()))
+        (fun _ => ⟨q, hq⟩) (fun _ => ⟨q', hq'⟩)),
+    constOpen_in_eff (factoryRomFamily Inst instFin instDec instNe m)
+      (factoryRomCarrier Inst instFin instDec instNe m ser serInj) _ _ _ _ Q,
+    fun l => constOpen_gameAdv_pos (factoryRomFamily Inst instFin instDec instNe m)
+      (factoryRomCarrier Inst instFin instDec instNe m ser serInj) _ _ _ _ l ?_⟩
+  intro hc
+  exact hne (congrArg Subtype.val hc)
+
+/-- **(TOOTH — a non-negligible factory forger is OUTSIDE the class.)** -/
+theorem factoryRom_nonNegl_forger_excluded (Inst : ℕ → Type) (instFin : ∀ l, Fintype (Inst l))
+    (instDec : ∀ l, DecidableEq (Inst l)) (instNe : ∀ l, Nonempty (Inst l)) (m : ℕ)
+    (ser : Schema × RecordProgram → List (Fin 256)) (serInj : Function.Injective ser)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (factoryRomGame Inst instFin instDec instNe m ser serInj))
+    (hnn : ¬ Negl (gameAdv (factoryRomGame Inst instFin instDec instNe m ser serInj) A)) :
+    ¬ RomOpenEff (factoryRomFamily Inst instFin instDec instNe m)
+      (factoryRomCarrier Inst instFin instDec instNe m ser serInj) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
+/-! ### §6c — the macaroon binding hash (`BindingHashCR`'s consumer), at the sampled oracle.
+
+⚑ Per §1c this is the one carrier NOT refuted at deployed parameters; the ROM successor still earns
+its keep the same way §4 did — it states FINDING, not existence — and now with the floor a THEOREM.
+The `hmacInj` MAC peel of `rebind_wins_imp` is deployed-side and oracle-independent: a deployed
+re-binding break peels to exactly the two-distinct-tails-one-body event below. -/
+
+/-- **THE BINDING ROM FAMILY** — keyed by the `BindingFamily`'s own sampled instance space, over the
+(finite, e.g. 32-byte) macaroon tail space. -/
+def bindingRomFamily (F : BindingFamily) (instDec : ∀ l, DecidableEq (F.Inst l))
+    (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag) : KeyedRomFamily :=
+  instRomFamily F.Inst F.instFin instDec F.instNe (fun _ => F.Tag)
+    (fun _ => tagFin) (fun _ => F.tagDec) (fun _ => tagNe)
+
+/-- **THE BINDING CARRIER** — commitment `H (i, tail)`: the caveat body binds the parent tail in one
+query; the embedding is the identity. -/
+def bindingRomCarrier (F : BindingFamily) (instDec : ∀ l, DecidableEq (F.Inst l))
+    (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag) :
+    RomCarrier (bindingRomFamily F instDec tagFin tagNe) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => F.Tag) (fun _ => F.tagDec)
+    (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The re-binding break at the sampled oracle: two DISTINCT parent tails, one binding body. -/
+abbrev rebindRomGame (F : BindingFamily) (instDec : ∀ l, DecidableEq (F.Inst l))
+    (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag) : Game :=
+  romCarrierGame (bindingRomFamily F instDec tagFin tagNe)
+    (bindingRomCarrier F instDec tagFin tagNe)
+
+/-- **⚑⚑ RE-GROUNDED `rebinding_advantage_bound`, DISCHARGED ON THE PROVED FLOOR** — every
+query-bounded re-binder (after the deployed-side, oracle-independent `hmacInj` peel of
+`rebind_wins_imp`) has NEGLIGIBLE advantage, in the keyed ROM model of §6's header. -/
+theorem rebinding_binds_rom (F : BindingFamily) (instDec : ∀ l, DecidableEq (F.Inst l))
+    (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rebindRomGame F instDec tagFin tagNe))
+    (hA : RomCarrierEff (bindingRomFamily F instDec tagFin tagNe)
+      (bindingRomCarrier F instDec tagFin tagNe) Q A) :
+    Negl (gameAdv (rebindRomGame F instDec tagFin tagNe) A) :=
+  romCarrier_binds _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hA
+
+/-- **(TOOTH — class inhabited with positive advantage, binding site.)** Needs two distinct tails —
+supplied as hypotheses, since `Tag` is abstract here. -/
+theorem rebindRom_class_inhabited_pos (F : BindingFamily) (instDec : ∀ l, DecidableEq (F.Inst l))
+    (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag) (Q : ℕ → ℕ)
+    {a b : F.Tag} (hne : a ≠ b) :
+    ∃ A, RomCarrierEff (bindingRomFamily F instDec tagFin tagNe)
+        (bindingRomCarrier F instDec tagFin tagNe) Q A
+      ∧ ∀ l, 0 < gameAdv (rebindRomGame F instDec tagFin tagNe) A l :=
+  ⟨romCarrierAdv (bindingRomFamily F instDec tagFin tagNe)
+      (bindingRomCarrier F instDec tagFin tagNe)
+      (constTripleComp (bindingRomFamily F instDec tagFin tagNe)
+        (bindingRomCarrier F instDec tagFin tagNe)
+        (fun l => ((F.instNe l).some, ())) (fun _ => a) (fun _ => b)),
+    constTriple_in_eff (bindingRomFamily F instDec tagFin tagNe)
+      (bindingRomCarrier F instDec tagFin tagNe) _ _ _ Q,
+    fun l => constTriple_gameAdv_pos (bindingRomFamily F instDec tagFin tagNe)
+      (bindingRomCarrier F instDec tagFin tagNe) _ _ _ l hne⟩
+
+/-- **(TOOTH — a non-negligible re-binder is OUTSIDE the class.)** -/
+theorem rebindRom_nonNegl_forger_excluded (F : BindingFamily)
+    (instDec : ∀ l, DecidableEq (F.Inst l)) (tagFin : Fintype F.Tag) (tagNe : Nonempty F.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rebindRomGame F instDec tagFin tagNe))
+    (hnn : ¬ Negl (gameAdv (rebindRomGame F instDec tagFin tagNe) A)) :
+    ¬ RomCarrierEff (bindingRomFamily F instDec tagFin tagNe)
+      (bindingRomCarrier F instDec tagFin tagNe) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ (instRomFamily_card_R _ _ _ _ _ _ _ _) A hnn
+
 #assert_all_clean [
   finite_range_of_field_window,
   finite_range_of_nat_window,
@@ -709,7 +994,18 @@ theorem binding_floor_top_false_of_compressing (F : BindingFamily)
   factory_floor_satisfiable_vacuously,
   factory_floor_top_false_of_compressing,
   binding_floor_satisfiable_vacuously,
-  binding_floor_top_false_of_compressing
+  binding_floor_top_false_of_compressing,
+  instRomFamily_card_R,
+  c2NodeRom_collision_is_break,
+  compress2_node_binds_rom,
+  c2NodeRom_class_inhabited_pos,
+  c2NodeRom_nonNegl_forger_excluded,
+  vk_determines_invariants_binds_rom,
+  factoryRom_class_inhabited_pos,
+  factoryRom_nonNegl_forger_excluded,
+  rebinding_binds_rom,
+  rebindRom_class_inhabited_pos,
+  rebindRom_nonNegl_forger_excluded
 ]
 
 end Dregg2.Crypto.FactoryBindingFloorRegrounded
