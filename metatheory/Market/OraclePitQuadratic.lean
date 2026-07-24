@@ -98,9 +98,31 @@ theorem quadratic_form_2var_decrypts {P : Params} (A B C m₁ m₂ : ℕ) (p11 p
   rw [hcombine]
   exact decrypt_exact P _ _ hwrap hnoise
 
+/-- **The quadratic form's noise budget, discharged abstractly.** If each weighted term's noise is within a
+per-term bound `Bterm` and `3·Bterm` is decrypt-safe, then the SUMMED weighted noise is decrypt-safe — so
+`quadratic_form_2var_decrypts` applies from clean per-term conditions, no summed-noise assumption needed. This
+is the Oracle Pit's realizability budget: a 2-asset quadratic is priceable exactly whenever the params admit
+3× the per-product noise (the `3` is the three quadratic terms). Proved by the triangle inequality + the
+monotonicity of `SafeNoise` in its bound. -/
+theorem quadratic_form_noise_safe {P : Params} (A B C : ℕ) (e11 e12 e22 Bterm : ℤ)
+    (h11 : |(A : ℤ) * e11| ≤ Bterm) (h12 : |(B : ℤ) * e12| ≤ Bterm) (h22 : |(C : ℤ) * e22| ≤ Bterm)
+    (hsafe : SafeNoise P (3 * Bterm)) :
+    SafeNoise P |(A : ℤ) * e11 + (B : ℤ) * e12 + (C : ℤ) * e22| := by
+  have htri : |(A : ℤ) * e11 + (B : ℤ) * e12 + (C : ℤ) * e22| ≤ 3 * Bterm :=
+    calc |(A : ℤ) * e11 + (B : ℤ) * e12 + (C : ℤ) * e22|
+        ≤ |(A : ℤ) * e11 + (B : ℤ) * e12| + |(C : ℤ) * e22| := abs_add_le _ _
+      _ ≤ |(A : ℤ) * e11| + |(B : ℤ) * e12| + |(C : ℤ) * e22| := by gcongr; exact abs_add_le _ _
+      _ ≤ Bterm + Bterm + Bterm := by gcongr
+      _ = 3 * Bterm := by ring
+  unfold SafeNoise at hsafe ⊢
+  have ht0 : (0 : ℤ) ≤ (P.t : ℤ) := Int.natCast_nonneg _
+  nlinarith [htri, hsafe, ht0, mul_nonneg (by linarith : (0 : ℤ) ≤ 2 * (P.t : ℤ))
+    (by linarith [htri] : (0 : ℤ) ≤ 3 * Bterm - |(A : ℤ) * e11 + (B : ℤ) * e12 + (C : ℤ) * e22|)]
+
 #assert_all_clean [Market.OraclePitQuadratic.weighted_quadratic_term_decrypts,
   Market.OraclePitQuadratic.unweighted_term_is_product_decrypt,
   Market.OraclePitQuadratic.weighted_term_injective_below_modulus,
-  Market.OraclePitQuadratic.quadratic_form_2var_decrypts]
+  Market.OraclePitQuadratic.quadratic_form_2var_decrypts,
+  Market.OraclePitQuadratic.quadratic_form_noise_safe]
 
 end Market.OraclePitQuadratic
