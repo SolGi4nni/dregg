@@ -215,8 +215,13 @@ theorem tagLookup_tuple_width :
 #guard decide (FINAL_ROOT = BoundPresentationEmit.FINAL_ROOT + 7)
 #guard decide (RANDOMNESS = BoundPresentationEmit.RANDOMNESS + 7)
 #guard decide (VERIFIER_NONCE = BoundPresentationEmit.VERIFIER_NONCE + 7)
-#guard decide (TAG_LANES = BoundPresentationEmit.TAG_LANES.map (· + 7))
-#guard decide (BOUND_PRES_WIDTH = BoundPresentationEmit.BOUND_PRES_WIDTH + 7)
+-- E7: the DEPLOYED narrow twin was narrowed onto `TID_P2_NARROW`, so its 7 chip lane columns are
+-- gone. This WIDE twin is a SEPARATE staged-additive descriptor (distinct name, distinct VK) and
+-- still commits its own lane block, so the two widths now differ by the 7 extra federation-root
+-- lanes PLUS the 7 chip lanes only this twin still carries.
+#guard decide (TAG_LANES.length = CHIP_OUT_LANES - 1)
+#guard decide (BOUND_PRES_WIDTH
+  = BoundPresentationEmit.BOUND_PRES_WIDTH + 7 + (CHIP_OUT_LANES - 1))
 #guard decide (PI_NONCE = BoundPresentationEmit.PI_NONCE + 7)
 #guard decide (PI_COUNT = BoundPresentationEmit.PI_COUNT + 7)
 #guard decide (PRESENTATION_TAG_DSK = BoundPresentationEmit.PRESENTATION_TAG_DSK)
