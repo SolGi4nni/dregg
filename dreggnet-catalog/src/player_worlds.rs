@@ -215,7 +215,7 @@ impl PlayerWorlds {
     fn least_recently_used(&self) -> Option<String> {
         self.touched
             .iter()
-            .min_by_key(|(_, &tick)| tick)
+            .min_by_key(|&(_, &tick)| tick)
             .map(|(id, _)| id.clone())
     }
 
