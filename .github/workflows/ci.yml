@@ -656,6 +656,34 @@ jobs:
           lfs: true
       - run: bash scripts/check-lean-orphans.sh
 
+  descriptor-by-name-routing:
+    name: Descriptor by-name routing round-trip (table <-> checked-in <-> stamp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # `metatheory/EmitByName.lean`'s `byNameDescriptors` is the routing table for the whole
+    # `circuit/descriptors/by-name/` dispatch surface. Both of its directions were gated
+    # only by machinery that needs the FULL Lean emit (the `descriptor-drift` job below —
+    # a multi-hour build), and one direction was not gated at all: a name added to the
+    # table with no committed artifact behind it is a GHOST that every other gate is blind
+    # to, because they all start from a file that EXISTS and ask whether it is covered
+    # (the emit's coverage check, `--verify-provenance`, and the derived-coverage test in
+    # circuit/src/effect_vm_descriptors.rs alike). The Lean `#guard
+    # byNameDescriptors.length == N` counts the ghost as a member, so it passes too.
+    # One ghost lived a full day in HEAD.
+    #
+    # This gate reconciles table <-> checked-in set <-> PROVENANCE stamp in BOTH
+    # directions from a STATIC parse of the .lean source: no Lean toolchain, no cargo,
+    # seconds — so it keeps reporting while the emit is blocked, which is precisely when a
+    # routing gap can go unnoticed. The parse is FATAL-on-unparseable (it must find the
+    # decl and the terminator, must yield one name per list entry, and must agree with the
+    # file's own machine-checked length guard), so a reshaped table reds instead of
+    # quietly narrowing what this checks.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: python3 scripts/emit_descriptors.py --verify-by-name-routing
+
   no-degraded-felt:
     name: Faithful-commitment gate (no degraded felt)
     runs-on: ubuntu-latest

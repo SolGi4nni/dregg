@@ -49,9 +49,28 @@ Rust files. Anyone — CI, a federation operator pre-epoch-flip — verifies wit
 python3 scripts/emit_descriptors.py --verify-provenance            # hashes match the stamp
 python3 scripts/emit_descriptors.py --verify-provenance --strict   # + clean source, tree hash
                                                                     #   matches THIS checkout
+python3 scripts/emit_descriptors.py --verify-by-name-routing       # the routing round trip
 ```
 
-No Lean toolchain needed. `--strict` refuses a stamp minted from a dirty tree
+No Lean toolchain needed.
+
+`--verify-by-name-routing` is the leg the hash checks structurally cannot carry.
+Every hash check starts from a file that EXISTS and asks whether the stamp covers
+it, so a name in `metatheory/EmitByName.lean`'s `byNameDescriptors` routing table
+whose artifact was **never committed** is invisible to all of them — as it is to
+the emit's own coverage check (which also walks files on disk, and needs a
+multi-hour Lean build to run at all) and to the derived-coverage test in
+`circuit/src/effect_vm_descriptors.rs`. The Lean-side `#guard
+byNameDescriptors.length == N` counts such a ghost as a member, so it passes too.
+This mode parses the table's name literals STATICALLY out of the `.lean` and
+reconciles table ↔ checked-in `by-name/` ↔ stamp in both directions; it needs
+neither Lean nor cargo, so it keeps reporting while the emit is blocked — which is
+exactly when a routing gap sits unnoticed. It is wired as CI job
+`descriptor-by-name-routing` and as a fail-fast preflight in
+`scripts/check-descriptor-drift.sh`. A table shape it cannot parse is FATAL, never
+a pass.
+
+`--strict` refuses a stamp minted from a dirty tree
 (`source_dirty=true`) or one attesting a *different* Dregg2 tree than the
 checkout being deployed. Honesty note: the stamp is **tamper-evident, not
 tamper-proof** — a re-stamp is itself ack-gated + audit-logged, and the stamp is

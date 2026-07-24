@@ -47,6 +47,12 @@ Modes:
                          requires a clean source (source_dirty=false) and that
                          the stamp's tree hash matches THIS checkout's
                          HEAD:metatheory/Dregg2. No Lean needed.
+  --verify-by-name-routing
+                         reconcile `EmitByName.lean`'s routing table against the
+                         checked-in by-name/ set and the stamp, BOTH directions.
+                         Static parse of the .lean — no Lean run, no cargo, seconds
+                         — so it still works while the emit is blocked (which is
+                         exactly when a routing gap can sit unnoticed).
   --list-emitter-modules print the Lean modules the emitters import (one per line)
                          — the set that must be `lake build`-ed for the emit to run
                          on a cold checkout. Derived from the emitters' own imports;
@@ -621,6 +627,11 @@ def verify_provenance(strict: bool) -> None:
         str(p.relative_to(ROOT)): p for p in RUST_FP_FILES if p.exists()
     })
 
+    # The ROUTING leg (static; no Lean run). The three checks above all start from a file
+    # that EXISTS and ask whether the stamp covers it — so a name the Lean routing table
+    # authors with no artifact behind it is invisible to every one of them.
+    failures.extend(verify_by_name_routing())
+
     if strict:
         if prov.get("source_dirty"):
             failures.append(
@@ -646,6 +657,192 @@ def verify_provenance(strict: bool) -> None:
         f"(mode={prov.get('mode')}, tree {str(prov.get('dregg2_tree_hash'))[:12]}…"
         + (", strict" if strict else "") + ")."
     )
+
+
+# ---- the by-name ROUTING round-trip (STATIC — no Lean run) -------------------
+#
+# `EmitByName.lean`'s `byNameDescriptors` is the routing table for the whole
+# `circuit/descriptors/by-name/` surface. Until this check, only ONE of its two
+# directions was gated, and only by machinery that needs a full Lean emit:
+#
+#   * file-on-disk -> table: the coverage check in `main()` fails on a by-name file no
+#     emitter reproduces. Needs the emit (hours of `lake build`) to say anything.
+#   * table -> file-on-disk: NOTHING. A name added to the table whose artifact was never
+#     committed is a GHOST — the emit would mint it, but until the emit runs the routing
+#     table advertises a descriptor that does not exist, `descriptor_by_name.rs` cannot
+#     serve it, and no byte-pin covers it. The `#guard byNameDescriptors.length == N` in
+#     the Lean file counts the ghost as a member, so it passes. `--verify-provenance` and
+#     the derived-coverage test in `circuit/src/effect_vm_descriptors.rs` both start from
+#     files that EXIST, so a ghost gives them nothing to notice.
+#
+# This closes it from the OTHER end: parse the table's name literals out of the .lean
+# source (they are string literals — no Lean toolchain needed) and reconcile them against
+# the tracked/on-disk directory and the PROVENANCE stamp. It therefore keeps working while
+# the emit is blocked, which is exactly when a routing gap can sit unnoticed.
+#
+# The parse is STRUCTURE-CHECKED, never best-effort: it must find the decl, must find the
+# terminator, must produce one name per list opener, and must agree with the Lean file's
+# own machine-checked `#guard byNameDescriptors.length == N`. Any of those failing is a
+# loud FATAL ("the table's shape moved; re-point this parser"), never a quiet pass — same
+# rule the COVERAGE_EXEMPT mirror in `circuit/src/effect_vm_descriptors.rs` follows.
+BY_NAME_ROUTER = "EmitByName.lean"                     # relative to META
+BY_NAME_TABLE_DECL = "def byNameDescriptors : List (String × EffectVmDescriptor2) :="
+_BY_NAME_TERM = re.compile(r"^[ \t]*\][ \t]*$", re.M)
+_BY_NAME_OPENER = re.compile(r"^[ \t]*[\[,][ \t]*\(", re.M)
+_BY_NAME_NAMED = re.compile(r"^[ \t]*[\[,][ \t]*\(\s*\"([^\"\n]*)\"\s*,", re.M)
+_BY_NAME_GUARD = re.compile(r"#guard\s+byNameDescriptors\.length\s*==\s*(\d+)")
+
+
+def parse_by_name_routing() -> list[str]:
+    """The filenames `EmitByName.lean`'s routing table claims to author, in table order.
+
+    A STATIC parse of the .lean source. Fails loudly (never silently returns a short or
+    empty list) if the table's shape has moved past what this parser understands."""
+    path = META / BY_NAME_ROUTER
+    fatal = (
+        f"emit_descriptors: {path} — the by-name routing table's shape moved past this "
+        "parser. Re-point it (do NOT hand-copy the filename list); a routing check that "
+        "cannot read the table must not report a pass."
+    )
+    if not path.exists():
+        sys.exit(f"emit_descriptors: by-name router missing: {path}")
+    src = path.read_text()
+    start = src.find(BY_NAME_TABLE_DECL)
+    if start < 0:
+        sys.exit(f"{fatal}\n  (declaration `{BY_NAME_TABLE_DECL}` not found)")
+    rest = src[start + len(BY_NAME_TABLE_DECL):]
+    term = _BY_NAME_TERM.search(rest)
+    if not term:
+        sys.exit(f"{fatal}\n  (the table literal is unterminated — no closing `]` line)")
+    body = rest[: term.start()]
+
+    names = _BY_NAME_NAMED.findall(body)
+    openers = len(_BY_NAME_OPENER.findall(body))
+    if openers != len(names):
+        sys.exit(
+            f"{fatal}\n  ({openers} list entries but {len(names)} parsed filename "
+            "literals — an entry's first component is not a plain string literal)"
+        )
+    if not names:
+        sys.exit(f"{fatal}\n  (parsed ZERO entries — this check would be vacuous)")
+
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        sys.exit(
+            f"emit_descriptors: {path} routes duplicate filename(s) {dupes} — two table "
+            "entries claim sole authorship of the same artifact"
+        )
+    bad = sorted(n for n in names if not n.endswith(".json"))
+    if bad:
+        sys.exit(f"emit_descriptors: {path} routes non-.json key(s) {bad}")
+
+    # Cross-check against the table's OWN machine-checked length guard. Lean verifies that
+    # literal at build time, so it is independent ground truth for "how many entries are
+    # there" — agreeing with it is what proves this parse saw all of them and no more.
+    guard = _BY_NAME_GUARD.search(src)
+    if not guard:
+        sys.exit(
+            f"{fatal}\n  (no `#guard byNameDescriptors.length == N` — the parse has "
+            "nothing independent to check itself against)"
+        )
+    if int(guard.group(1)) != len(names):
+        sys.exit(
+            f"emit_descriptors: {path} — parsed {len(names)} routing entries but the "
+            f"file's own `#guard byNameDescriptors.length == {guard.group(1)}` says "
+            f"{guard.group(1)}. Either the guard is stale (Lean would catch that at build "
+            "time) or this parser is missing entries. Refusing to report on a table it "
+            "may be reading wrong."
+        )
+    return names
+
+
+def by_name_present() -> tuple[set[str], str]:
+    """The by-name artifacts that count as CHECKED IN, plus a label for which set it is.
+
+    TRACKED (`git ls-files`) by preference, matching the choice made in
+    `circuit/src/effect_vm_descriptors.rs`: ~10 lanes share this tree, so `by-name/`
+    routinely holds another lane's untracked scratch emission, and an untracked file is not
+    yet a claim about what ships. Falls back to the on-disk listing where there is no git
+    index (a vendored export, or the rsync'd remote build lane `scripts/pbuild`, which
+    excludes `.git/`) — STRICTER, never weaker — and the label says which, so a red in a
+    `.git`-less tree is never mistaken for a red in the repo."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "circuit/descriptors/by-name"],
+            capture_output=True, text=True,
+        )
+        if out.returncode == 0:
+            tracked = {p.rsplit("/", 1)[-1] for p in out.stdout.split("\0") if p}
+            if tracked:
+                return tracked, "tracked by git"
+    except OSError:
+        pass
+    return by_name_on_disk(), "present on disk (NO git index here — untracked files count too)"
+
+
+def by_name_on_disk() -> set[str]:
+    d = DESC / "by-name"
+    return {p.name for p in d.iterdir() if p.is_file()} if d.is_dir() else set()
+
+
+def verify_by_name_routing() -> list[str]:
+    """The ROUND TRIP, both directions: every name the Lean routing table authors lands as
+    a checked-in file carrying a provenance row, and every checked-in by-name file is
+    routed. Returns the finding lines (empty == clean); prints a one-line summary."""
+    routed = parse_by_name_routing()
+    routed_set = set(routed)
+    present, source = by_name_present()
+    on_disk = by_name_on_disk()
+    stamp_path = DESC / PROVENANCE_FILE
+    pinned: set[str] | None = None
+    if stamp_path.exists():
+        pinned = set(json.loads(stamp_path.read_text()).get("by_name_sha256", {}))
+
+    findings: list[str] = []
+
+    # (1) THE GHOST: routed, but no such file exists anywhere. The class nothing else can
+    # see — every other gate starts from a file and asks whether it is covered.
+    for n in sorted(routed_set - on_disk):
+        findings.append(
+            f"GHOST: {BY_NAME_ROUTER} routes `{n}`, which exists NOWHERE under "
+            f"circuit/descriptors/by-name/ — the table advertises a descriptor nobody "
+            f"committed. Either commit the artifact (re-run the emit ceremony) or drop "
+            f"the routing entry; this is the routing entry's AUTHOR's call."
+        )
+
+    # (2) routed + on disk + not tracked: a lane mid-flight. Reported, not failed — the
+    # file is not yet a claim (same reasoning as by_name_present). Silence here is how a
+    # scratch emission graduates to HEAD via a co-tenant `commit -a` with nobody looking.
+    inflight = sorted((routed_set & on_disk) - present)
+
+    # (3) the other direction: a checked-in by-name file the table does not author. The
+    # emit's coverage check catches this too — but only by RUNNING the emit.
+    for n in sorted(present - routed_set):
+        findings.append(
+            f"UNROUTED: circuit/descriptors/by-name/{n} is checked in ({source}) but no "
+            f"{BY_NAME_ROUTER} entry authors it — its bytes are not re-derivable from Lean "
+            f"(the ungated hand-transcription hop `predicate-arith.json` drifted through)."
+        )
+
+    # (4) the third leg: routed AND checked in, but no provenance row — nothing
+    # operator-facing attests those bytes.
+    if pinned is not None:
+        for n in sorted((routed_set & present) - pinned):
+            findings.append(
+                f"UNSTAMPED: circuit/descriptors/by-name/{n} is routed and checked in "
+                f"({source}) but has no PROVENANCE.json `by_name_sha256` row — it landed "
+                f"without re-stamping. Fix at the SOURCE (the emit/stamp ceremony, see "
+                f"docs/VK-REGEN-CONTROLS.md); do NOT hand-add rows."
+            )
+
+    print(
+        f"verify-by-name-routing: {len(routed)} routed / {len(present)} checked in "
+        f"({source}) / {len(pinned) if pinned is not None else 0} stamped"
+        + (f" · {len(inflight)} routed-but-untracked (in flight): {', '.join(inflight)}"
+           if inflight else "")
+    )
+    sys.stdout.flush()  # so the summary precedes the findings this returns (stderr)
+    return findings
 
 
 def split_v1(stdout: str, written):
@@ -1086,6 +1283,17 @@ def main():
     if "--verify-provenance" in argv:
         verify_provenance(strict="--strict" in argv)
         return
+    if "--verify-by-name-routing" in argv:
+        # Static, seconds, no Lean and no cargo — usable while the emit is blocked.
+        findings = verify_by_name_routing()
+        if findings:
+            sys.stderr.write("verify-by-name-routing: FAIL\n")
+            for f in findings:
+                sys.stderr.write(f"  - {f}\n")
+            sys.exit(1)
+        print("verify-by-name-routing: PASS — the routing table and the checked-in "
+              "by-name set cover each other, and every routed artifact is stamped.")
+        return
     if "--stamp-existing" in argv:
         stamp_existing()
         return
@@ -1097,7 +1305,7 @@ def main():
     if argv:
         sys.exit(f"emit_descriptors: unknown arguments {argv!r} "
                  "(expected none, --stamp-existing, --list-emitter-modules, "
-                 "or --verify-provenance [--strict])")
+                 "--verify-by-name-routing, or --verify-provenance [--strict])")
 
     if not (META / "lakefile.lean").exists() and not (META / "lakefile.toml").exists():
         sys.exit(f"emit_descriptors: not a lake project at {META}")

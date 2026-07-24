@@ -245,9 +245,17 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
-weak guard, but it is the one this file can state without IO: the STRONG guard is
-`emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
-not reproduce. -/
+weak guard, but it is the one this file can state without IO — and note what it does NOT say:
+a table entry whose artifact was never committed still COUNTS, so this guard passes on a ghost.
+
+Both directions are gated outside Lean:
+* file → table: `emit_descriptors.py`'s recursive coverage check fails on any by-name file this
+  table does not reproduce. Needs a full emit to say anything.
+* table → file: `scripts/emit_descriptors.py --verify-by-name-routing` (CI job
+  `descriptor-by-name-routing`, and a preflight in `check-descriptor-drift.sh`) reconciles this
+  table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
+  STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
+  committing its artifact reds that gate by name. -/
 #guard byNameDescriptors.length == 62
 
 def main : IO Unit := do

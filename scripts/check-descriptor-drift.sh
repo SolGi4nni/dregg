@@ -36,6 +36,23 @@ if ! command -v rustfmt >/dev/null 2>&1; then
   exit 2
 fi
 
+# PREFLIGHT — the by-name ROUTING round trip. Static (parses `EmitByName.lean`'s table out
+# of the source), so it runs in seconds HERE, before the multi-hour Lean build, rather than
+# reporting after it. It is also the only leg of this gate that still works when the emit
+# CANNOT run — and a blocked emit is exactly when a routing gap sits unnoticed: a name added
+# to `byNameDescriptors` with no committed artifact behind it is invisible to the emit's
+# coverage check (which walks files that EXIST, and needs the emit anyway), to
+# `--verify-provenance` (same), and to the derived-coverage test in effect_vm_descriptors.rs
+# (same). One such ghost lived a full day in HEAD before this preflight existed.
+echo "check-descriptor-drift: by-name routing round-trip (static preflight)..."
+if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
+  echo "" >&2
+  echo "DESCRIPTOR ROUTING GAP: EmitByName.lean's table and the checked-in by-name/ set" >&2
+  echo "  do not cover each other (see the findings above). Fix the routing table or" >&2
+  echo "  commit/stamp the artifact — not this gate." >&2
+  exit 1
+fi
+
 # The emitters import the compiled `Dregg2.Circuit.Emit.*` oleans (NOT the source),
 # so the corpus must be built first or `lake env lean --run` will emit from STALE
 # oleans and the gate would be blind to an un-rebuilt Lean change.
