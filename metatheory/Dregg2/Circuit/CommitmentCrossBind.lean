@@ -80,7 +80,8 @@ the shared projection of the others.
   bridge's base), and the extractors keep their correct role as the reduction's internal witnesses.
 
   ⚑ The reduction itself is NOT re-derived here. It lives one layer down, at the definition site of
-  the disjunction — `Dregg2.Circuit.Emit.EffectVmWideCommitReduction.wideFullState_binds_from_polyTime`
+  the disjunction — `Dregg2.Circuit.Emit.EffectVmWideCommitReduction.wideFullState_binds_rom` (the
+  keyed-ROM discharged form; the `_advantage_bound` form carries the fixed-hash content)
   — where it prices ALL FOUR of that file's full-state disjunctions at once, with the GROUP-4 peel and
   the roots peel composed into ONE extracted finder (so no union-bound tightness is lost) and with the
   ABSORBED COLUMNS bound as well as the eight roots. §R is the AC:520 ADDRESS re-exporting it, plus
@@ -553,7 +554,7 @@ open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant)
 open Dregg2.Crypto.CostAdversary (IsPolyTime)
 open Dregg2.Circuit.Emit.EffectVmWideCommitReduction
   (wideFullCarrier rowFull wide_root_tamper_is_break
-   wideFullState_binds_advantage_bound wideFullState_binds_from_polyTime wideFullState_adv_le
+   wideFullState_binds_advantage_bound wideFullState_binds_rom wideFullState_adv_le
    wideCommit_floor_top_false_babyBear wideCommit_floor_bot_vacuous
    wideCommit_polyTime_class_inhabited)
 
@@ -601,22 +602,29 @@ theorem runnable_binds_same_system_roots_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
   wideFullState_binds_advantage_bound D Eff A hEff hCR
 
-/-- **⚑ THE EXPORTED AC:520 BINDING — `hEff` DISCHARGED.** An EFFICIENT forger that moves ANY of the
-eight kernel-owned side-table roots (or any absorbed state-block column) under one published runnable
-`state_commit` has NEGLIGIBLE advantage under the deployed sponge's collision floor at
-`Eff := IsPolyTime`. Efficiency is a THEOREM here, not a carried parameter: the extractor is a pure
-post-map, and `CostTactics.poly_time` derives the composed overhead from the forger's own bound, with
-the only per-site inputs the reshaper's declared work and the PROVED layout widths (four felts per
-GROUP-4 block, eight roots per sub-block).
+/-- **⚑⚑ THE EXPORTED AC:520 BINDING — DISCHARGED ON THE PROVED FLOOR.** The successor of the
+deleted `runnable_binds_same_system_roots_from_polyTime`, whose `IsPolyTime` floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes: a query-bounded
+forger that moves ANY of the eight kernel-owned side-table roots (or any absorbed state-block
+column) under one published nested runnable `state_commit` has NEGLIGIBLE advantage, in the keyed
+ROM model of `EffectVmRowCommitReduction` §5's header — the whole 17-field payload, the inner
+digests genuinely re-absorbed by the outer query. NO floor hypothesis; the floor is
+`keyedRom_hard`, the birthday bound, PROVED.
 
 ⚑ **THIS IS WHAT REPLACES `runnable_binds_same_system_roots_or_collides`** as this file's exported
-runnable keystone. That disjunction is retained one section up, demoted to the exact-Prop skeleton. -/
-theorem runnable_binds_same_system_roots_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (carrierBreakGame D wideFullCarrier))
-    (hA : IsPolyTime (carrierAnsSize D wideFullCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
-  wideFullState_binds_from_polyTime D A hA cw bw hCR
+runnable keystone. That disjunction is retained one section up, demoted to the exact-Prop skeleton;
+the fixed-hash content stays in `runnable_binds_same_system_roots_advantage_bound`, `hEff` in the
+open. -/
+theorem runnable_binds_same_system_roots_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomBreakGame D tagDec))
+    (hA : Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomFamily D tagDec)
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomBreakGame D tagDec) A) :=
+  wideFullState_binds_rom D tagDec Q hQ A hA
 
 /-! ### The floor, PRICED at both poles — re-exported at this address so the residual is legible where
 the keystone is cited, and identical (not merely analogous) to the record layer's. -/
@@ -673,7 +681,7 @@ theorem the_reduced_runnable_roots_bound_fires (D : SpongeKeyed)
 #assert_axioms runnable_root_tamper_is_break
 #assert_axioms runnable_binds_same_system_roots_adv_le
 #assert_axioms runnable_binds_same_system_roots_advantage_bound
-#assert_axioms runnable_binds_same_system_roots_from_polyTime
+#assert_axioms runnable_binds_same_system_roots_rom
 #assert_axioms runnable_roots_floor_top_false_babyBear
 #assert_axioms runnable_roots_floor_bot_vacuous
 #assert_axioms runnable_roots_polyTime_class_inhabited

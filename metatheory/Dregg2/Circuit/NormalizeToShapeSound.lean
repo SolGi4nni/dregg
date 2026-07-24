@@ -74,7 +74,8 @@ was `hCR _ _ h`. `Poseidon2SpongeCR` is injectivity of `List ℤ → ℤ`, PROVE
 parameters, so the anti-ghost guarantee was VACUOUS at the deployed hash. It is DELETED. §R rebuilds it
 as the standard cryptographic object: `publishBreakGame` (the content-swap as a first-class game),
 `codeForgeToFinder` (the extractor as a map of adversaries), an UNCONDITIONAL advantage inequality, and
-`publish_binds_content_advantage_bound` / `publish_binds_content_from_polyTime` — negligible advantage
+`publish_binds_content_advantage_bound` (`hEff` in the open) / `publish_binds_content_rom` (the
+DISCHARGED keyed-ROM form, floor PROVED) — negligible advantage
 under the named `DomainSeparatedCREff` floor, with efficiency DISCHARGED at `Eff := IsPolyTime` rather
 than carried. Both poles of the residual class are proved (`⊤` FALSE at BabyBear, `⊥` vacuous).
 No new axiom; `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
@@ -86,6 +87,7 @@ a non-canonical shape (`non_canonical_not_fixed`) while preserving its semantics
 import Dregg2.Tactics
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.SpongeForgeReduction
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Circuit.NormalizeToShapeSound
 
@@ -97,7 +99,7 @@ open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFa
 open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
 open Dregg2.Circuit.SpongeForgeReduction
   (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
-   codeForge_binds_from_polyTime deployed_forgery_is_break forge_floor_top_false_babyBear
+   deployed_forgery_is_break forge_floor_top_false_babyBear
    forge_floor_bot_vacuous)
 
 /-! ## §1 — the recursion-layer shape: a `non_primitives` manifest of tables. -/
@@ -266,7 +268,8 @@ said. DELETED.
 
 What replaces it: the content-swap is a `FloorGames.Game` (`publishBreakGame`), the extractor is a map
 of adversaries into the deployed sponge's collision game, and the anti-ghost guarantee is a NEGLIGIBLE
-ADVANTAGE under the named floor — with efficiency DISCHARGED at `Eff := IsPolyTime`. -/
+ADVANTAGE — `Eff`-parametric at the fixed hash (`hEff` in the open), DISCHARGED on the keyed-ROM
+floor (`publish_binds_content_rom`, floor PROVED). -/
 
 /-- **THE PUBLISHED-CONTENT FORGERY GAME.** The adversary is handed a sampled domain-separation tag and
 WINS iff it outputs two manifests whose published CONTENT differs yet whose published PI commitment
@@ -309,15 +312,95 @@ theorem publish_binds_content_advantage_bound (D : DomainSeparatedSponge)
     Negl (gameAdv (publishBreakGame D) adv) :=
   codeForge_advantage_bound D (List TableShape) publishedContent Eff adv hEff hCR
 
-/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT content-swap forger stays efficient
-through the extractor, so the deployed floor applies and its advantage is negligible. The reshaper's
-declared work `(cw, bw)` is the only modelling input. -/
-theorem publish_binds_content_from_polyTime (D : DomainSeparatedSponge)
-    (adv : Adversary (publishBreakGame D))
-    (hA : IsPolyTime (codeAnsSize D (List TableShape) publishedContent) adv) (cw bw : ℕ)
-    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
-    Negl (gameAdv (publishBreakGame D) adv) :=
-  codeForge_binds_from_polyTime D (List TableShape) publishedContent adv hA cw bw hCR
+/-! ### ⚑ THE DISCHARGED HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
+
+The `IsPolyTime` discharge that stood here (`publish_binds_content_from_polyTime`) carried
+`DomainSeparatedCREff D (IsPolyTime …)` — a floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES at the deployed
+sponge, and no `Eff` repairs the fixed-hash game (`Crypto.RomBindingReduction`'s header). DELETED.
+The successor lands the floor on a SAMPLED oracle keyed by the deployed tag space, where
+`KeyedRomFloor.keyedRom_hard` is a THEOREM. The modelling step is `RomCarrierSites`' labelled one:
+ideal `Fin (2 ^ l)` digest (the deployed felt is fixed ~31-bit — no `l` coincides), and the message
+domain is the TRUNCATED published content — limb lists of length at most `m` over BabyBear-range
+felts (`BVec`, lossless on everything the deployed publisher absorbs, `bvecOfList_inj`). -/
+
+/-- **THE PUBLISHED-CONTENT ROM FAMILY** — truncated content-limb lists under the ideal digest,
+keyed by the deployed tag space. -/
+abbrev publishRomFamily (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  Dregg2.Crypto.RomCarrierSites.flatFamily D.Tag D.tagFintype tagDec D.tagNonempty
+    (fun _ => Dregg2.Crypto.RomCarrierSites.BVec
+      (Fin Dregg2.Crypto.RomCarrierSites.babyBearP) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
+
+/-- **THE PUBLISHED-CONTENT CARRIER** — commitment `H (t, content)`; identity encoding, injective on
+the nose (the truncated content IS the absorbed message). -/
+def publishRomCarrier (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrier (publishRomFamily D tagDec m) :=
+  Dregg2.Crypto.RomCarrierSites.taggedCarrier _ (fun _ => Unit)
+    (fun _ => Dregg2.Crypto.RomCarrierSites.BVec
+      (Fin Dregg2.Crypto.RomCarrierSites.babyBearP) m)
+    (fun _ => inferInstance) (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The content-swap forgery at the sampled oracle: one commitment, two DISTINCT truncated contents. -/
+abbrev publishRomBreakGame (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Game :=
+  Dregg2.Crypto.RomBindingReduction.romCarrierGame (publishRomFamily D tagDec m)
+    (publishRomCarrier D tagDec m)
+
+/-- **⚑⚑ THE DISCHARGED ANTI-GHOST LEG — ON THE PROVED FLOOR.** The successor of the deleted
+`publish_binds_content_from_polyTime`: every query-bounded content-swap forger has NEGLIGIBLE
+advantage — the published commitment binds the published content except with negligible probability,
+in the keyed ROM model of the §-header. NO floor hypothesis, NO cost model. -/
+theorem publish_binds_content_rom (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (publishRomBreakGame D tagDec m))
+    (hA : Dregg2.Crypto.RomBindingReduction.RomCarrierEff (publishRomFamily D tagDec m)
+      (publishRomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (publishRomBreakGame D tagDec m) A) :=
+  Dregg2.Crypto.RomCarrierSites.flatSite_binds D.Tag D.tagFintype tagDec D.tagNonempty
+    _ _ _ _ (publishRomCarrier D tagDec m) Q hQ A hA
+
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED, not excluded.)** The `0`-query constant
+answerer — the exact `IsPolyTime`-refuting shape — is IN the class, WINS at the constant oracle on
+distinct contents, and is NEGLIGIBLE against the sampled oracle. -/
+theorem publishRom_constAnswer_defanged (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (c : ∀ l, (publishRomCarrier D tagDec m).Ctx l)
+    (v w : ∀ l, (publishRomCarrier D tagDec m).Val l) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrierEff (publishRomFamily D tagDec m)
+        (publishRomCarrier D tagDec m) Q
+        (Dregg2.Crypto.RomBindingReduction.romCarrierAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constTripleComp _ _ c v w))
+      ∧ Negl (gameAdv (publishRomBreakGame D tagDec m)
+        (Dregg2.Crypto.RomBindingReduction.romCarrierAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constTripleComp _ _ c v w)))
+      ∧ ∀ l, v l ≠ w l → 0 < gameAdv (publishRomBreakGame D tagDec m)
+        (Dregg2.Crypto.RomBindingReduction.romCarrierAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constTripleComp _ _ c v w)) l :=
+  ⟨Dregg2.Crypto.RomCarrierSites.constTriple_in_eff _ _ c v w Q,
+    Dregg2.Crypto.RomCarrierSites.constTriple_binds _ _ c v w Q hQ
+      (Dregg2.Crypto.RomCarrierSites.flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty
+        _ _ _ _),
+    fun l hvw => Dregg2.Crypto.RomCarrierSites.constTriple_gameAdv_pos _ _ c v w l hvw⟩
+
+/-- **(TOOTH — a non-negligible content-swap forger is OUTSIDE the class.)** -/
+theorem publishRom_nonNegl_forger_excluded (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (publishRomBreakGame D tagDec m))
+    (hnn : ¬ Negl (gameAdv (publishRomBreakGame D tagDec m) A)) :
+    ¬ Dregg2.Crypto.RomBindingReduction.RomCarrierEff (publishRomFamily D tagDec m)
+      (publishRomCarrier D tagDec m) Q A :=
+  Dregg2.Crypto.RomBindingReduction.romCarrier_choiceForger_excluded _ _ Q hQ
+    (Dregg2.Crypto.RomCarrierSites.flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty
+      _ _ _ _) A hnn
 
 /-- **⚑ THE ⊤ POLE — FALSE at the REAL BabyBear parameters** (the honest price of `hEff`). -/
 theorem publish_floor_top_false_babyBear (D : DomainSeparatedSponge)
@@ -433,7 +516,9 @@ carrier is `Poseidon2SpongeCR`, taken as a hypothesis). -/
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_forgery_is_break
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_or_collides
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_advantage_bound
-#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_from_polyTime
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_binds_content_rom
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publishRom_constAnswer_defanged
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publishRom_nonNegl_forger_excluded
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_top_false_babyBear
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_bot_vacuous
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonical_is_fixed_point

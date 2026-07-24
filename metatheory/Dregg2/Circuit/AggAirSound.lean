@@ -50,20 +50,27 @@ satisfiable and falsifiable; the discharge is non-vacuous.
 import Dregg2.Circuit.RecursiveAggregation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.SpongeForgeReduction
+import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.AggAirSound
 
 open Dregg2.Circuit.RecursiveAggregation (Seg combineSeg CombineOk combineOk_eq)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.FloorGames (Game Adversary gameAdv hashGame)
-open Dregg2.Crypto.ConcreteSecurity (Negl)
-open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
 open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFamily)
 open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
 open Dregg2.Circuit.SpongeForgeReduction
-  (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
-   codeForge_binds_from_polyTime injective_code_forgery_is_break forge_floor_top_false_babyBear
+  (codeForgeGame codeForgeToFinder codeForge_advantage_bound
+   injective_code_forgery_is_break forge_floor_top_false_babyBear
    forge_floor_bot_vacuous)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+  (RomCarrier romCarrierGame RomCarrierEff romCarrierAdv romCarrier_binds
+   romCarrier_choiceForger_excluded)
+open Dregg2.Crypto.RomCarrierSites
+  (taggedCarrier constTripleComp constTriple_in_eff constTriple_gameAdv_pos constTriple_binds)
+open Dregg2.Crypto.RomMerkleOpening (merkleRomFamily merkleRomFamily_card_R)
 
 /-! ## 1. The ordered digest combiner the segment AIR's gate computes.
 
@@ -218,8 +225,11 @@ GONE — not weakened, not doc-marked, deleted.
 What replaces it is the standard cryptographic object: the reorder forgery is a `FloorGames.Game`
 (`combineBreakGame`), the extractor is a MAP OF ADVERSARIES into the deployed sponge's collision game,
 the advantage inequality quantifies over ALL adversaries, and the conclusion is `Negl` under the NAMED
-floor `DomainSeparatedCREff D Eff` — instantiated at `Eff := IsPolyTime`, where the efficiency
-obligation is DISCHARGED (`combine_digest_binds_from_polyTime`) rather than carried.
+floor `DomainSeparatedCREff D Eff` with `hEff` in the open (`combine_digest_binds_advantage_bound`,
+the honest fixed-hash content). The DISCHARGED headline is `combine_digest_binds_rom`: the same
+forgery at the SAMPLED oracle, where the floor is `KeyedRomFloor.keyedRom_hard` — PROVED — and no
+refutable hypothesis is carried. (The `IsPolyTime` discharge that briefly stood here carried a floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes; it is DELETED.)
 
 `combine_digest_binds_or_collides` survives as the reduction's INTERNAL witness (the extractor), NOT as
 the exported binding: a collision EXISTS at deployed parameters by pigeonhole, so its right branch is
@@ -277,7 +287,7 @@ sponge's collision floor at the class `Eff`, a combine-digest forger whose EXTRA
 class has NEGLIGIBLE advantage: the ordered parent digest binds the two children except with negligible
 probability. This replaces the vacuous `combine_digest_binds` as the exported anti-reorder guarantee.
 
-⚑ `hEff` is a PARAMETER at an arbitrary class; `combine_digest_binds_from_polyTime` DISCHARGES it. -/
+⚑ `hEff` is a PARAMETER at an arbitrary class; `combine_digest_binds_rom` is the DISCHARGED form. -/
 theorem combine_digest_binds_advantage_bound (D : DomainSeparatedSponge)
     (Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop)
     (adv : Adversary (combineBreakGame D))
@@ -286,16 +296,89 @@ theorem combine_digest_binds_advantage_bound (D : DomainSeparatedSponge)
     Negl (gameAdv (combineBreakGame D) adv) :=
   codeForge_advantage_bound D (ℤ × ℤ) childCode Eff adv hEff hCR
 
-/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT reorder forger, put through the
-extractor, is still efficient — so the deployed sponge's collision floor applies to it and its advantage
-is negligible. The reshaper's declared work `(cw, bw)` is the only modelling input; the output growth is
-PROVED. No floating polynomial, no `hEff` parameter. -/
-theorem combine_digest_binds_from_polyTime (D : DomainSeparatedSponge)
-    (adv : Adversary (combineBreakGame D))
-    (hA : IsPolyTime (codeAnsSize D (ℤ × ℤ) childCode) adv) (cw bw : ℕ)
-    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
-    Negl (gameAdv (combineBreakGame D) adv) :=
-  codeForge_binds_from_polyTime D (ℤ × ℤ) childCode adv hA cw bw hCR
+/-! ### §R.rom — the DISCHARGED headline, at the SAMPLED oracle, on the PROVED floor.
+
+⚑ THE MODELLING STEP, STATED (not smuggled), exactly `RomCarrierSites`' header: the deployed
+domain-separated Poseidon2 fold is idealised as a keyed RANDOM ORACLE over ORDERED CHILD-DIGEST
+PAIRS at the ideal `λ`-bit width — the two absorbed child accumulators become a `Fin (2 ^ l) ×
+Fin (2 ^ l)` message (the same ordered node-pair shape `RomMerkleOpening.merkleRomFamily` carries,
+reused rather than re-minted), and there is NO `l` at which `Fin (2 ^ l)` is the deployed ~31-bit
+felt. What the move buys: the floor under the binding is `KeyedRomFloor.keyedRom_hard` — the
+birthday bound, a THEOREM — where the deleted `IsPolyTime` discharge carried a refuted hypothesis. -/
+
+/-- **THE COMBINE-FOLD ROM FAMILY** — ordered child-digest pairs under the ideal digest, keyed by
+the DEPLOYED tag space (the anchor to the deployed object: the same tags the aggregate absorbs
+under). The `[L.acc, R.acc]` absorption order of `segment_combine_expose` is the pair's coordinate
+order. -/
+abbrev combineRomFamily (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) :
+    KeyedRomFamily :=
+  merkleRomFamily D.Tag D.tagFintype tagDec D.tagNonempty
+
+/-- **THE COMBINE-FOLD CARRIER** — commitment `H (t, (lAcc, rAcc))`: the parent digest binds the
+ORDERED pair of children. The encoding is the identity on the ordered pair — `childCode_injective`'s
+cons-injectivity content, now constructor-free because the pair IS the ordered two-limb message. -/
+def combineRomCarrier (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (combineRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun l => Fin (2 ^ l) × Fin (2 ^ l))
+    (fun _ => inferInstance) (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The reorder forgery at the SAMPLED oracle: equivocate one parent digest between two DISTINCT
+ordered child pairs. `combineBreakGame`'s win relation, transposed to the oracle model. -/
+abbrev combineRomBreakGame (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) : Game :=
+  romCarrierGame (combineRomFamily D tagDec) (combineRomCarrier D tagDec)
+
+/-- **⚑ THE FORGERY IS THE DEPLOYED REORDER (at the sampled oracle).** Two DISTINCT ordered
+child-digest pairs that the sampled oracle folds to ONE parent digest ARE a win — the
+`satCombine_forgery_is_break` bridge, restated at the oracle. A same-endpoint child swap is exactly
+such a pair. -/
+theorem combineRom_forgery_is_break (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (l : ℕ) (H : (combineRomBreakGame D tagDec).Inst l) (t : D.Tag)
+    {p p' : Fin (2 ^ l) × Fin (2 ^ l)} (hne : p ≠ p') (heq : H (t, p) = H (t, p')) :
+    (combineRomBreakGame D tagDec).wins l H ((t, ()), p, p') :=
+  ⟨hne, heq⟩
+
+/-- **⚑⚑ THE ANTI-REORDER TOOTH, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`combine_digest_binds_from_polyTime`: every query-bounded reorder forger has NEGLIGIBLE advantage —
+the ordered parent digest binds the two children except with negligible probability, in the keyed
+ROM model of §R.rom's header. NO floor hypothesis, NO cost model: `romCarrier_binds`, hence
+`keyedRom_hard`, hence the birthday bound. -/
+theorem combine_digest_binds_rom (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (combineRomBreakGame D tagDec))
+    (hA : RomCarrierEff (combineRomFamily D tagDec) (combineRomCarrier D tagDec) Q A) :
+    Negl (gameAdv (combineRomBreakGame D tagDec) A) :=
+  romCarrier_binds _ _ Q hQ
+    (merkleRomFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty) A hA
+
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED, not excluded.)** The `0`-query constant
+answerer on two distinct ordered pairs — the exact shape that refutes the `IsPolyTime` floor with
+probability `1` against the fixed sponge — is IN the class, WINS at the constant oracle (positive
+advantage on distinct pairs), and its advantage is NEGLIGIBLE against the sampled oracle. -/
+theorem combineRom_constAnswer_defanged (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (c : ∀ l, (combineRomCarrier D tagDec).Ctx l)
+    (v w : ∀ l, (combineRomCarrier D tagDec).Val l) :
+    RomCarrierEff (combineRomFamily D tagDec) (combineRomCarrier D tagDec) Q
+        (romCarrierAdv _ _ (constTripleComp _ _ c v w))
+      ∧ Negl (gameAdv (combineRomBreakGame D tagDec)
+        (romCarrierAdv _ _ (constTripleComp _ _ c v w)))
+      ∧ ∀ l, v l ≠ w l → 0 < gameAdv (combineRomBreakGame D tagDec)
+        (romCarrierAdv _ _ (constTripleComp _ _ c v w)) l :=
+  ⟨constTriple_in_eff _ _ c v w Q,
+    constTriple_binds _ _ c v w Q hQ
+      (merkleRomFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty),
+    fun l hvw => constTriple_gameAdv_pos _ _ c v w l hvw⟩
+
+/-- **(TOOTH — a non-negligible reorder forger is OUTSIDE the class.)** The refutation strategy that
+killed the `IsPolyTime` floor cannot produce a member of this one. -/
+theorem combineRom_nonNegl_forger_excluded (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (combineRomBreakGame D tagDec))
+    (hnn : ¬ Negl (gameAdv (combineRomBreakGame D tagDec) A)) :
+    ¬ RomCarrierEff (combineRomFamily D tagDec) (combineRomCarrier D tagDec) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ
+    (merkleRomFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty) A hnn
 
 /-- **⚑ THE ⊤ POLE — the floor is FALSE at the REAL BabyBear parameters** (the honest price of `hEff`).
 Recorded here so the reduction cannot be mistaken for a floor the deployed sponge satisfies. -/
@@ -433,7 +516,10 @@ end Vacuity
 #assert_axioms satCombine_forgery_is_break
 #assert_axioms combine_digest_binds_or_collides
 #assert_axioms combine_digest_binds_advantage_bound
-#assert_axioms combine_digest_binds_from_polyTime
+#assert_axioms combineRom_forgery_is_break
+#assert_axioms combine_digest_binds_rom
+#assert_axioms combineRom_constAnswer_defanged
+#assert_axioms combineRom_nonNegl_forger_excluded
 #assert_axioms combine_floor_top_false_babyBear
 #assert_axioms combine_floor_bot_vacuous
 #assert_axioms honest_satCombine

@@ -31,8 +31,10 @@ bridges), exactly as `Dregg2.Exec.SystemRoots` was demoted by
 `stateDecode8_pre_faithful`.  They are RETAINED rather than deleted because ~40 per-effect wide
 keystones (bridgeMint, createCell, cellSeal, setPermissions, refreshDelegation, revokeDelegation,
 pipelinedSend, exercise, noop, …) instantiate them as their deterministic skeleton; the EXPORTED
-security claim about the wide commitment is now `wideCommit_binds_from_polyTime` /
-`wideFullState_binds_from_polyTime` below.
+security claim about the wide commitment is now `wideCommit_binds_advantage_bound` /
+`wideFullState_binds_advantage_bound` (fixed hash, `hEff` in the open) and the DISCHARGED
+`wideCommit_binds_rom` / `wideFullState_binds_rom` below (keyed-ROM floor, PROVED — the
+`_from_polyTime` discharges that stood here carried a refuted floor and are DELETED).
 
 ## The shape, and what it costs
 
@@ -74,6 +76,7 @@ per-instance (the game samples a tag; a deployed trace fixes `deployedTag`), and
 No `sorry`, no `axiom`, no `native_decide`, no `decide` on an opaque `Prop`.  Cost stays SYNTACTIC.
 -/
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 import Dregg2.Crypto.SpongeCarrierReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmWideCommitReduction
@@ -89,7 +92,7 @@ open Dregg2.Exec.SystemRoots
    systemRootsDigest_binds_or_collides N_SYSTEM_ROOTS)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeKeyed SpongeCarrier IsSpongeColl spongeFamily carrierBreakGame carrierBreakToFinder
-   carrier_adv_le carrier_binds_advantage_bound carrier_binds_from_polyTime carrierAnsSize
+   carrier_adv_le carrier_binds_advantage_bound carrierAnsSize
    spongeAnsSize carrierFloor_top_false_babyBear carrierFloor_bot_vacuous
    carrierFloor_isPolyTime_inhabited)
 open Dregg2.Crypto.FloorGames (Game Adversary gameAdv hashGame HashCRHardQuant)
@@ -335,18 +338,27 @@ theorem wideCommit_binds_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (carrierBreakGame D wideAbsorbCarrier) A) :=
   carrier_binds_advantage_bound D wideAbsorbCarrier Eff A hEff hCR
 
-/-- **⚑ THE WIDE COMMITMENT BINDING, WITH `hEff` DISCHARGED — what replaces
-`wide_binds_or_collides` as the exported claim.** An EFFICIENT forger of the wide commitment has
-negligible advantage under the deployed sponge's collision floor at `Eff := IsPolyTime`.  The only
-per-site input is the extractor's declared work `(cw, bw)` — a Lean function has no runtime, so that
-number is charged in the program's SYNTAX and can never be derived; the output-growth obligation is
-the four-felt block-arity fact, PROVED. -/
-theorem wideCommit_binds_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (carrierBreakGame D wideAbsorbCarrier))
-    (hA : IsPolyTime (carrierAnsSize D wideAbsorbCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (carrierBreakGame D wideAbsorbCarrier) A) :=
-  carrier_binds_from_polyTime D wideAbsorbCarrier A hA cw bw hCR
+/-- **⚑⚑ THE WIDE COMMITMENT BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the
+deleted `wideCommit_binds_from_polyTime`, whose `IsPolyTime` floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes. The bound domain
+`WideCols × ℤ` — twelve absorbed columns in three GROUP-4 blocks plus one opaque carrier felt,
+absorbed as `h [h A, h B, h C, felt]` — is EXACTLY the nested shape
+`EffectVmRowCommitReduction.effectVmNarrowRomForgery` transposes to the sampled oracle (three
+truncated blocks, one payload felt in the outer absorb), so the successor is that chained binding,
+reused rather than re-minted: every query-bounded forger of the nested commitment has NEGLIGIBLE
+advantage, in the keyed ROM model of that file's §5 header. NO floor hypothesis. -/
+theorem wideCommit_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.effectVmNarrowRomForgery
+      D tagDec).game)
+    (hA : Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.narrowRomFamily D tagDec)
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.effectVmNarrowRomForgery
+      D tagDec).game A) :=
+  Dregg2.Circuit.Emit.EffectVmRowCommitReduction.narrowRow_binds_rom D tagDec Q hQ A hA
 
 /-! ## §3 — CARRIER 2: the wide commitment binds the WHOLE 17-field post-state.
 
@@ -542,18 +554,25 @@ theorem wideFullState_binds_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
   carrier_binds_advantage_bound D wideFullCarrier Eff A hEff hCR
 
-/-- **⚑ THE FULL-STATE BINDING, WITH `hEff` DISCHARGED — the exported anti-ghost claim of the RUNNABLE
-descriptor.** An EFFICIENT forger of the whole post-state has negligible advantage under the deployed
-sponge's collision floor at `Eff := IsPolyTime`.  This is what replaces
-`wide_binds_systemRoots_or_collides`, `runnable_full_commit_binds_or_collides`,
-`wide_rejects_state_tamper_or_collides` and `wide_rejects_root_tamper_or_collides` as the exported
-claim: the four were one binding projected four ways, and they are one reduction now. -/
-theorem wideFullState_binds_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (carrierBreakGame D wideFullCarrier))
-    (hA : IsPolyTime (carrierAnsSize D wideFullCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (carrierBreakGame D wideFullCarrier) A) :=
-  carrier_binds_from_polyTime D wideFullCarrier A hA cw bw hCR
+/-- **⚑⚑ THE FULL-STATE BINDING, DISCHARGED ON THE PROVED FLOOR — the exported anti-ghost claim of
+the RUNNABLE descriptor.** The successor of the deleted `wideFullState_binds_from_polyTime` (floor
+refuted, see `wideCommit_binds_rom`'s docstring). The bound domain `WideCols × SysRoots` — the whole
+17-field post-state — is EXACTLY the shape `EffectVmRowCommitReduction.effectVmWideRomForgery`
+transposes to the sampled oracle (three truncated state blocks plus the eight-root sub-block, the
+inner digests re-absorbed by the outer query), so the successor is that chained binding: every
+query-bounded forger of the whole nested post-state commitment has NEGLIGIBLE advantage. What
+replaced the four `_or_collides` projections stays ONE binding — now with the floor PROVED
+(`keyedRom_hard`, the birthday bound) instead of refutable. -/
+theorem wideFullState_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomBreakGame D tagDec))
+    (hA : Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomFamily D tagDec)
+      (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRomBreakGame D tagDec) A) :=
+  Dregg2.Circuit.Emit.EffectVmRowCommitReduction.wideRow_binds_rom D tagDec Q hQ A hA
 
 /-- **THE ADVANTAGE INEQUALITY, UNCONDITIONAL — the adversary class does NOT appear.** Re-exported at
 this site so the reduction's load-bearing step is visible here and not only in the spine: the wide
@@ -661,7 +680,7 @@ theorem wide_break_reachable_at_broken_sponge (D : SpongeKeyed) (l : ℕ) (t : D
 #assert_axioms rowAbsorbed_eq_iff
 #assert_axioms wideAbsorb_forgery_is_break
 #assert_axioms wideCommit_binds_advantage_bound
-#assert_axioms wideCommit_binds_from_polyTime
+#assert_axioms wideCommit_binds_rom
 #assert_axioms wideFullFind_spec
 #assert_axioms wideFullFind_len_le
 #assert_axioms rowFull_commit
@@ -670,7 +689,7 @@ theorem wide_break_reachable_at_broken_sponge (D : SpongeKeyed) (l : ℕ) (t : D
 #assert_axioms wide_root_tamper_is_break
 #assert_axioms runnable_full_forgery_is_break
 #assert_axioms wideFullState_binds_advantage_bound
-#assert_axioms wideFullState_binds_from_polyTime
+#assert_axioms wideFullState_binds_rom
 #assert_axioms wideFullState_adv_le
 #assert_axioms wideCommit_floor_top_false_babyBear
 #assert_axioms wideCommit_floor_bot_vacuous

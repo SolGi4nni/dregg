@@ -24,7 +24,8 @@ its domain-separation tag), `spongeFamily`, `carrierBreakGame` (the forgery, wit
 relation), `carrierBreakToFinder` (the extractor AS A MAP OF ADVERSARIES), `carrier_adv_le` (the
 UNCONDITIONAL advantage inequality — the adversary class does not appear in it),
 `carrier_binds_advantage_bound` (the conclusion under `FloorGames.HashCRHardQuant (spongeFamily D) Eff`)
-and `carrier_binds_from_polyTime` (`hEff` DISCHARGED at `Eff := IsPolyTime` via `CostTactics.poly_time`).
+and, until 07-24, `carrier_binds_from_polyTime` (`hEff` at `Eff := IsPolyTime` — DELETED with the
+floor's refutation; the discharged successor is `RomBindingReduction.romCarrier_binds`).
 
 ⚑ Why that spine and not a reduction hosted at `Circuit.Poseidon2KeyedBridge`: that bridge sits ABOVE
 the whole `Emit/*` tree in the import graph (`Poseidon2KeyedBridge → FloorRegroundedConsumers →
@@ -75,6 +76,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `decide` on an opaque `Prop`. Cos
 -/
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Crypto.SpongeCarrierReduction
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
@@ -90,7 +92,7 @@ open Dregg2.Exec.SystemRoots
   (SysRoots systemRootsDigest rootList N_SYSTEM_ROOTS systemRootsDigest_eq_hash_rootList)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeKeyed SpongeCarrier IsSpongeColl spongeFamily carrierBreakGame carrierBreakToFinder
-   carrier_adv_le carrier_binds_advantage_bound carrier_binds_from_polyTime carrierAnsSize
+   carrier_adv_le carrier_binds_advantage_bound carrierAnsSize
    spongeAnsSize carrierFloor_top_false_babyBear carrierFloor_bot_vacuous
    carrierFloor_isPolyTime_inhabited)
 open Dregg2.Crypto.FloorGames (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
@@ -614,117 +616,523 @@ theorem wide_root_tamper_advantage_bound (D : SpongeKeyed) (E : WideRowSpec)
     (rootTamper_adv_le D E A)
     (wideRow_binds_advantage_bound D E Eff (rootTamperToWide D E A) hEff hCR)
 
-/-! ## §5 — `hEff` DISCHARGED at `Eff := IsPolyTime` (efficiency is a THEOREM, overhead DERIVED).
+/-! ## §5 — ⚑ THE DISCHARGED HEADLINES, ON THE PROVED KEYED-ROM FLOOR.
 
-Every lift here is a pure output reshaping (`CostAdversary.Adversary.postMap`), so `CostTactics.poly_time`
-applies `isPolyTime_postMap` — which folds in the tight-δ composition and DERIVES the poly overhead from
-the forger's own bound — leaving only the output-growth obligation. Those are CONSTANTS here (the
-deployed GROUP-4 blocks are four felts wide and the side-table sub-block is eight), so the only honest
-modelling input left is each reshaper's DECLARED instruction count: a Lean function has no runtime, so
-that number is charged in the program's syntax and can never be derived. -/
+The four `IsPolyTime` discharges that stood here (`narrowRow_binds_from_polyTime`,
+`wideRow_binds_from_polyTime`, `wide_state_tamper_from_polyTime`, `wide_root_tamper_from_polyTime`)
+carried `HashCRHardQuant (spongeFamily D) (IsPolyTime …)` — a floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` PROVES FALSE at the
+deployed sponge, and no `Eff` repairs the fixed-hash game (`Crypto.RomBindingReduction`'s header).
+They are DELETED. The successors land the COMMITMENT layer on a SAMPLED oracle, where
+`KeyedRomFloor.keyedRom_hard` (the birthday bound) is a THEOREM.
 
-/-- **THE ROW GAMES' ANSWER ENCODING** — the effect's own declared trace width and public inputs, the
-symbols a forged row costs to write down. Concrete on purpose: a degenerate `sz := 0` would make the
-reduction's output free and the cost model vacuous. -/
-def narrowRowAnsSize (D : SpongeKeyed) (E : NarrowRowSpec) : AnsSize (narrowRowBreakGame D E) :=
-  fun _ _ => 2 * (E.descriptor.traceWidth + E.descriptor.piCount)
+⚑ THE MODELLING STEP, STATED (not smuggled), the `Exec.SystemRootsBindingReduction` §7 discipline:
 
-/-- The wide row encoding — the two rows plus their two eight-wide side-table sub-blocks. -/
-def wideRowAnsSize (D : SpongeKeyed) (E : WideRowSpec) : AnsSize (wideRowBreakGame D E) :=
-  fun _ _ => 2 * (E.descriptor.traceWidth + E.descriptor.piCount + N_SYSTEM_ROOTS)
+  * the sampled `H : Tag × Msg → Fin (2 ^ l)` replaces the fixed public sponge; there is NO `l` at
+    which `Fin (2 ^ l)` is the deployed ~31-bit felt (birthday ≈ `2^15.5`, the felt-width wound);
+  * the message domain is the TRUNCATED deployed absorb schedule, domain-separated by constructor
+    inside ONE family: the three GROUP-4 state blocks (four BabyBear-range felts each — the deployed
+    `wideBlockA/B/C` width, a `rfl` fact), the eight-root side-table sub-block, and the OUTER
+    four-slot absorb whose entries are the inner digests (at the ideal width those are not felts —
+    the SAME felt-width residual, carried visibly in the type);
+  * the two-level nest `h [h A, h B, h C, h roots]` is genuinely re-absorbed: the oracle appears
+    INSIDE the win relation, which is what neither single carrier could say.
 
-def stateTamperAnsSize (D : SpongeKeyed) (E : WideRowSpec) : AnsSize (wideStateTamperGame D E) :=
-  fun _ _ => 2 * (E.descriptor.traceWidth + E.descriptor.piCount + N_SYSTEM_ROOTS)
+⚑ WHAT THE ROM LAYER DOES NOT CARRY: the per-effect CIRCUIT-satisfaction content (`satisfiedVm` at
+`E.descriptor`) is inherently about the fixed deployed hash and stays where it is honest — in §2–§4's
+`_advantage_bound` forms, `hEff` in the open. The ROM successors price the COMMITMENT equivocation
+those forms reduce to, which is exactly the leg the deleted discharges claimed and could not have. -/
 
-def rootTamperAnsSize (D : SpongeKeyed) (E : WideRowSpec) : AnsSize (wideRootTamperGame D E) :=
-  fun _ _ => 2 * (E.descriptor.traceWidth + E.descriptor.piCount + N_SYSTEM_ROOTS)
+section RomSuccessor
 
-/-- **⚑ `hEff` DISCHARGED (narrow row).** A row forger efficient at the game's own answer encoding,
-lifted to the carrier game and put through the deployed GROUP-4 peel, stays efficient — so the
-collision floor at `Eff := IsPolyTime` applies and its advantage is negligible. The output-growth
-obligation is the CONSTANT `26` (two 13-felt payloads), proved by computation on the block widths. -/
-theorem narrowRow_binds_from_polyTime (D : SpongeKeyed) (E : NarrowRowSpec)
-    (A : Adversary (narrowRowBreakGame D E))
-    (hA : IsPolyTime (narrowRowAnsSize D E) A) (cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (narrowRowBreakGame D E) A) := by
-  have h1 : IsPolyTime (carrierAnsSize D group4Carrier) (narrowRowToCarrier D E A) := by
-    poly_time (narrowRowAnsSize D E) (carrierAnsSize D group4Carrier)
-      (fun _ _ (c : VmRowEnv × VmRowEnv) => ((), narrowPayload c.1, narrowPayload c.2))
-      cw₀ bw₀ 0 26 hA
-    intro l t c
-    show group4Carrier.size () (narrowPayload c.1) + group4Carrier.size () (narrowPayload c.2)
-      ≤ 0 * (narrowRowAnsSize D E l c) + 26
-    show 13 + 13 ≤ 0 * (narrowRowAnsSize D E l c) + 26
-    omega
-  exact negl_of_le (fun l => (gameAdv_mem_unit (narrowRowBreakGame D E) A l).1)
-    (narrowRow_adv_le D E A)
-    (carrier_binds_from_polyTime D group4Carrier (narrowRowToCarrier D E A) h1 cw bw hCR)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction
+open Dregg2.Crypto.RomCarrierSites
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
 
-/-- **⚑ `hEff` DISCHARGED (wide full-state row).** The output-growth obligation is the CONSTANT `40`
-(two payloads of twelve absorbed felts plus an eight-wide side-table sub-block). -/
-theorem wideRow_binds_from_polyTime (D : SpongeKeyed) (E : WideRowSpec)
-    (A : Adversary (wideRowBreakGame D E))
-    (hA : IsPolyTime (wideRowAnsSize D E) A) (cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideRowBreakGame D E) A) := by
-  have h1 : IsPolyTime (carrierAnsSize D wideStateCarrier) (wideRowToCarrier D E A) := by
-    poly_time (wideRowAnsSize D E) (carrierAnsSize D wideStateCarrier)
-      (fun _ _ (c : (VmRowEnv × SysRoots) × (VmRowEnv × SysRoots)) =>
-        ((), widePayload c.1, widePayload c.2))
-      cw₀ bw₀ 0 40 hA
-    intro l t c
-    show wideStateCarrier.size () (widePayload c.1) + wideStateCarrier.size () (widePayload c.2)
-      ≤ 0 * (wideRowAnsSize D E l c) + 40
-    have hr₁ : (rootList c.1.2).length = 8 := by simp [rootList, N_SYSTEM_ROOTS]
-    have hr₂ : (rootList c.2.2).length = 8 := by simp [rootList, N_SYSTEM_ROOTS]
-    show (wideBlockA c.1.1).length + (wideBlockB c.1.1).length + (wideBlockC c.1.1).length
-          + (rootList c.1.2).length
-        + ((wideBlockA c.2.1).length + (wideBlockB c.2.1).length + (wideBlockC c.2.1).length
-          + (rootList c.2.2).length)
-      ≤ 0 * (wideRowAnsSize D E l c) + 40
-    simp only [show (wideBlockA c.1.1).length = 4 from rfl,
-      show (wideBlockB c.1.1).length = 4 from rfl, show (wideBlockC c.1.1).length = 4 from rfl,
-      show (wideBlockA c.2.1).length = 4 from rfl, show (wideBlockB c.2.1).length = 4 from rfl,
-      show (wideBlockC c.2.1).length = 4 from rfl, hr₁, hr₂]
-    omega
-  exact negl_of_le (fun l => (gameAdv_mem_unit (wideRowBreakGame D E) A l).1)
-    (wideRow_adv_le D E A)
-    (carrier_binds_from_polyTime D wideStateCarrier (wideRowToCarrier D E A) h1 cw bw hCR)
+/-- A truncated GROUP-4 state block: four BabyBear-range felts (the deployed `wideBlock*` width). -/
+abbrev StateBlock4 : Type := Fin 4 → Fin babyBearP
 
-/-- **⚑ `hEff` DISCHARGED (state-block tamper).** -/
-theorem wide_state_tamper_from_polyTime (D : SpongeKeyed) (E : WideRowSpec)
-    (A : Adversary (wideStateTamperGame D E))
-    (hA : IsPolyTime (stateTamperAnsSize D E) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideStateTamperGame D E) A) := by
-  have h1 : IsPolyTime (wideRowAnsSize D E) (stateTamperToWide D E A) := by
-    poly_time (stateTamperAnsSize D E) (wideRowAnsSize D E)
-      (fun _ _ (c : (VmRowEnv × SysRoots) × (VmRowEnv × SysRoots)) => c) cwT bwT 1 0 hA
-    intro l t c
-    show 2 * (E.descriptor.traceWidth + E.descriptor.piCount + N_SYSTEM_ROOTS)
-      ≤ 1 * (stateTamperAnsSize D E l c) + 0
-    simp [stateTamperAnsSize]
-  exact negl_of_le (fun l => (gameAdv_mem_unit (wideStateTamperGame D E) A l).1)
-    (stateTamper_adv_le D E A)
-    (wideRow_binds_from_polyTime D E (stateTamperToWide D E A) h1 cw₀ bw₀ cw bw hCR)
+/-- The truncated side-table sub-block: eight BabyBear-range roots. -/
+abbrev RootsBlock8 : Type := Fin 8 → Fin babyBearP
 
-/-- **⚑ `hEff` DISCHARGED (side-table-root tamper).** -/
-theorem wide_root_tamper_from_polyTime (D : SpongeKeyed) (E : WideRowSpec)
-    (A : Adversary (wideRootTamperGame D E))
-    (hA : IsPolyTime (rootTamperAnsSize D E) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideRootTamperGame D E) A) := by
-  have h1 : IsPolyTime (wideRowAnsSize D E) (rootTamperToWide D E A) := by
-    poly_time (rootTamperAnsSize D E) (wideRowAnsSize D E)
-      (fun _ _ (c : (VmRowEnv × SysRoots) × (VmRowEnv × SysRoots)) => c) cwT bwT 1 0 hA
-    intro l t c
-    show 2 * (E.descriptor.traceWidth + E.descriptor.piCount + N_SYSTEM_ROOTS)
-      ≤ 1 * (rootTamperAnsSize D E l c) + 0
-    simp [rootTamperAnsSize]
-  exact negl_of_le (fun l => (gameAdv_mem_unit (wideRootTamperGame D E) A l).1)
-    (rootTamper_adv_le D E A)
-    (wideRow_binds_from_polyTime D E (rootTamperToWide D E A) h1 cw₀ bw₀ cw bw hCR)
+/-- **THE ORACLE MESSAGE DOMAIN** — the deployed wide absorb schedule, domain-separated by
+constructor: `inl` a state block (an inner absorb), `inr (inl)` the roots sub-block (the fourth
+inner absorb), `inr (inr)` the OUTER four-slot list of inner digests. -/
+abbrev WideRomMsg (l : ℕ) : Type :=
+  StateBlock4 ⊕ RootsBlock8 ⊕ (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+
+/-- **THE EFFECTVM ROW KEYED ROM FAMILY** — keyed by the DEPLOYED tag space. -/
+def wideRomFamily (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty WideRomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (fun _ => ⟨0, babyBearP_pos⟩)⟩)
+
+theorem wideRomFamily_card_R (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ) :
+    letI := (wideRomFamily D tagDec).rFin l
+    Fintype.card ((wideRomFamily D tagDec).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- The truncated WIDE payload — the three state blocks and the whole side-table sub-block: the
+17-field bound content, exactly `WideVal`'s shape at the truncated widths. -/
+abbrev WideRomVal : Type := (StateBlock4 × StateBlock4 × StateBlock4) × RootsBlock8
+
+/-- **THE INNER CARRIER** — binds ONE inner absorb (a state block or the roots sub-block). The
+embedding is by constructor, injective on the nose. -/
+def wideInnerCarrier (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (wideRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => StateBlock4 ⊕ RootsBlock8)
+    (fun _ => inferInstance)
+    (fun _ _ v => Sum.elim Sum.inl (fun r => Sum.inr (Sum.inl r)) v)
+    (fun _ _ a b h => by
+      cases a with
+      | inl x =>
+          cases b with
+          | inl y => rw [Sum.inl_injective h]
+          | inr y => exact absurd h Sum.inl_ne_inr
+      | inr x =>
+          cases b with
+          | inl y => exact absurd h Sum.inr_ne_inl
+          | inr y => rw [Sum.inl_injective (Sum.inr_injective h)])
+
+/-- **THE OUTER CARRIER** — binds the four-slot outer absorb (the list of inner digests). -/
+def wideOuterCarrier (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (wideRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun l => Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+    (fun _ => inferInstance)
+    (fun _ _ v => Sum.inr (Sum.inr v))
+    (fun _ _ a b h => Sum.inr_injective (Sum.inr_injective h))
+
+/-- **THE DEPLOYED NESTED COMMIT AT THE SAMPLED ORACLE** — `H (t, outer (H(t,A), H(t,B), H(t,C),
+H(t,roots)))`: the ROM restatement of `wideStateCarrier.enc = h [h A, h B, h C, h (rootList sr)]`,
+with the inner digests genuinely re-absorbed by the outer query. -/
+def wideRomCommit (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (H : (wideRomFamily D tagDec).toRomFamily.D l → (wideRomFamily D tagDec).toRomFamily.R l)
+    (t : D.Tag) (v : WideRomVal) : (wideRomFamily D tagDec).toRomFamily.R l :=
+  H (t, Sum.inr (Sum.inr
+    (H (t, Sum.inl v.1.1), H (t, Sum.inl v.1.2.1), H (t, Sum.inl v.1.2.2),
+     H (t, Sum.inr (Sum.inl v.2)))))
+
+/-- **THE WIDE FULL-STATE ROM FORGERY** — two DISTINCT truncated 17-field payloads whose NESTED
+deployed commitments agree at the sampled oracle. The ROM restatement of `wideRowBreakGame`'s
+commitment content (the `satisfiedVm` legs are fixed-hash content, §-header). -/
+def effectVmWideRomForgery (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    a.2.1 ≠ a.2.2 ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- The wide ROM forgery game. -/
+abbrev wideRomBreakGame (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) : Game :=
+  (effectVmWideRomForgery D tagDec).game
+
+/-- **THE INNER-LEG EXTRACTION** — a pure post-map of the forger's program: select the FIRST
+component at which the two payloads disagree (state block A, B, C, then the roots sub-block). No
+queries are added; whether the selected pair actually collides is decided by the sampled oracle in
+the union bound's case split, not by the extractor. -/
+def wideInnerSelect (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (a : (effectVmWideRomForgery D tagDec).Ans l) :
+    (wideInnerCarrier D tagDec).Ctx l
+      × (wideInnerCarrier D tagDec).Val l × (wideInnerCarrier D tagDec).Val l :=
+  let v := a.2.1
+  let w := a.2.2
+  if v.1.1 ≠ w.1.1 then ((a.1, ()), Sum.inl v.1.1, Sum.inl w.1.1)
+  else if v.1.2.1 ≠ w.1.2.1 then ((a.1, ()), Sum.inl v.1.2.1, Sum.inl w.1.2.1)
+  else if v.1.2.2 ≠ w.1.2.2 then ((a.1, ()), Sum.inl v.1.2.2, Sum.inl w.1.2.2)
+  else ((a.1, ()), Sum.inr v.2, Sum.inr w.2)
+
+/-- **THE OUTER-LEG EXTRACTION** — run the forger, then RE-QUERY the eight inner points and answer
+with the two outer four-slot tuples: `bindComp` with an eight-query continuation. -/
+def wideOuterComp (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (M : ∀ l, OracleComp ((wideRomFamily D tagDec).toRomFamily.D l)
+      ((wideRomFamily D tagDec).toRomFamily.R l) ((effectVmWideRomForgery D tagDec).Ans l)) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrierComp (wideRomFamily D tagDec)
+      (wideOuterCarrier D tagDec) :=
+  fun l => OracleComp.bindComp (M l) (fun a =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.1) (fun d₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.1) (fun d₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.2) (fun d₃ =>
+    OracleComp.query (a.1, Sum.inr (Sum.inl a.2.1.2)) (fun d₄ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.1) (fun e₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.1) (fun e₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.2) (fun e₃ =>
+    OracleComp.query (a.1, Sum.inr (Sum.inl a.2.2.2)) (fun e₄ =>
+    OracleComp.pure ((a.1, ()), (d₁, d₂, d₃, d₄), (e₁, e₂, e₃, e₄)))))))))))
+
+/-- **⚑⚑ THE WIDE FULL-STATE BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the
+deleted `wideRow_binds_from_polyTime`: a query-bounded forger that equivocates the whole 17-field
+nested runnable commitment has NEGLIGIBLE advantage. The chain peel is the union bound over the ONE
+sampled oracle: outer four-slot tuples differ → an outer-carrier win (the extractor re-queries the
+eight inner points, budget `Q + 8`); tuples agree → the first differing component is an inner
+collision (a `mapOut` post-map, budget `Q`). Each leg dies by the birthday floor. NO floor
+hypothesis. -/
+theorem wideRow_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine chained_rom_binds (effectVmWideRomForgery D tagDec)
+    (wideInnerCarrier D tagDec) (wideOuterCarrier D tagDec)
+    Q (fun l => Q l + 2 + 2 + 2 + 2) hQ
+    (polyBounded_sq_add_two _ (polyBounded_sq_add_two _
+      (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ hQ))))
+    (wideRomFamily_card_R D tagDec) A
+    (romCarrierAdv _ _ (fun l => OracleComp.mapOut (wideInnerSelect D tagDec l) (M l)))
+    (romCarrierAdv _ _ (wideOuterComp D tagDec M))
+    ?_
+    ⟨fun l => OracleComp.mapOut (wideInnerSelect D tagDec l) (M l),
+      fun l => OracleComp.mapOut_queryBounded _ (hM l), fun _ _ => rfl⟩
+    ⟨wideOuterComp D tagDec M,
+      fun l => (OracleComp.bindComp_queryBounded (hM l)
+        (fun a => QueryBounded.query 7 _ _ (fun _ => QueryBounded.query 6 _ _
+          (fun _ => QueryBounded.query 5 _ _ (fun _ => QueryBounded.query 4 _ _
+          (fun _ => QueryBounded.query 3 _ _ (fun _ => QueryBounded.query 2 _ _
+          (fun _ => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+          (fun _ => QueryBounded.pure 0 _)))))))))).mono
+        (by show Q l + 8 ≤ Q l + 2 + 2 + 2 + 2; omega),
+      fun _ _ => rfl⟩
+  intro l H hwin
+  have hArun : A.run l H = (M l).eval H := hrun l H
+  set a := A.run l H with ha
+  obtain ⟨hne, heq⟩ := hwin
+  have hB₁run : (romCarrierAdv _ _
+      (fun l => OracleComp.mapOut (wideInnerSelect D tagDec l) (M l))).run l H
+      = wideInnerSelect D tagDec l a := by
+    show (OracleComp.mapOut (wideInnerSelect D tagDec l) (M l)).eval H = _
+    rw [OracleComp.mapOut_eval, ← hArun]
+  have hB₂run : (romCarrierAdv _ _ (wideOuterComp D tagDec M)).run l H
+      = ((a.1, ()),
+          (H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+           H (a.1, Sum.inl a.2.1.1.2.2), H (a.1, Sum.inr (Sum.inl a.2.1.2))),
+          (H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+           H (a.1, Sum.inl a.2.2.1.2.2), H (a.1, Sum.inr (Sum.inl a.2.2.2)))) := by
+    show (wideOuterComp D tagDec M l).eval H = _
+    unfold wideOuterComp
+    rw [OracleComp.bindComp_eval, ← hArun]
+    rfl
+  by_cases hT :
+      ((H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+        H (a.1, Sum.inl a.2.1.1.2.2), H (a.1, Sum.inr (Sum.inl a.2.1.2)))
+        : Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l))
+      = (H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+         H (a.1, Sum.inl a.2.2.1.2.2), H (a.1, Sum.inr (Sum.inl a.2.2.2)))
+  · -- the outer tuples AGREE: every inner digest pair collides; the first differing
+    -- component is a genuine inner-carrier equivocation.
+    refine Or.inl ?_
+    rw [hB₁run]
+    have h1 : H (a.1, Sum.inl a.2.1.1.1) = H (a.1, Sum.inl a.2.2.1.1) :=
+      congrArg (fun p => p.1) hT
+    have h2 : H (a.1, Sum.inl a.2.1.1.2.1) = H (a.1, Sum.inl a.2.2.1.2.1) :=
+      congrArg (fun p => p.2.1) hT
+    have h3 : H (a.1, Sum.inl a.2.1.1.2.2) = H (a.1, Sum.inl a.2.2.1.2.2) :=
+      congrArg (fun p => p.2.2.1) hT
+    have h4 : H (a.1, Sum.inr (Sum.inl a.2.1.2)) = H (a.1, Sum.inr (Sum.inl a.2.2.2)) :=
+      congrArg (fun p => p.2.2.2) hT
+    unfold wideInnerSelect
+    by_cases hA1 : a.2.1.1.1 ≠ a.2.2.1.1
+    · rw [if_pos hA1]
+      exact ⟨fun hc => hA1 (Sum.inl_injective hc), h1⟩
+    · rw [if_neg hA1]
+      by_cases hB1 : a.2.1.1.2.1 ≠ a.2.2.1.2.1
+      · rw [if_pos hB1]
+        exact ⟨fun hc => hB1 (Sum.inl_injective hc), h2⟩
+      · rw [if_neg hB1]
+        by_cases hC1 : a.2.1.1.2.2 ≠ a.2.2.1.2.2
+        · rw [if_pos hC1]
+          exact ⟨fun hc => hC1 (Sum.inl_injective hc), h3⟩
+        · rw [if_neg hC1]
+          push_neg at hA1 hB1 hC1
+          have hroots : a.2.1.2 ≠ a.2.2.2 := by
+            intro hr
+            apply hne
+            exact Prod.ext (Prod.ext hA1 (Prod.ext hB1 hC1)) hr
+          exact ⟨fun hc => hroots (Sum.inr_injective hc), h4⟩
+  · -- the outer tuples DIFFER: the two outer messages are distinct with one digest —
+    -- an outer-carrier equivocation, witnessed by the re-queried tuples.
+    refine Or.inr ?_
+    rw [hB₂run]
+    exact ⟨hT, heq⟩
+
+/-! ### The tamper teeth — the LOCALIZED disagreements, as corollaries of the full-state bound. -/
+
+/-- **THE STATE-BLOCK ROM TAMPER** — the disagreement localized to an absorbed state block. -/
+def effectVmWideRomStateTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    a.2.1.1 ≠ a.2.2.1
+      ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- **THE SIDE-TABLE-ROOT ROM TAMPER** — the disagreement localized to the roots sub-block. -/
+def effectVmWideRomRootTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    a.2.1.2 ≠ a.2.2.2
+      ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- **⚑ THE STATE-BLOCK TAMPER TOOTH, DISCHARGED** — successor of the deleted
+`wide_state_tamper_from_polyTime`: a query-bounded adversary cannot keep the published nested
+commitment while tampering an absorbed state block, except with negligible probability. -/
+theorem wide_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (wideRomBreakGame D tagDec)
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec))) :=
+    wideRow_binds_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec)) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (effectVmWideRomStateTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((effectVmWideRomStateTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrArg Prod.fst hc), heq⟩
+
+/-- **⚑ THE SIDE-TABLE-ROOT TAMPER TOOTH, DISCHARGED** — successor of the deleted
+`wide_root_tamper_from_polyTime`. -/
+theorem wide_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (wideRomBreakGame D tagDec)
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec))) :=
+    wideRow_binds_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (wideRomBreakGame D tagDec)) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (effectVmWideRomRootTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((effectVmWideRomRootTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrArg Prod.snd hc), heq⟩
+
+/-! ### The NARROW commitment, at the sampled oracle. -/
+
+/-- The narrow outer absorb: three inner digests plus the record-digest felt (the deployed
+`[h A, h B, h C, d]` fourth slot is a PAYLOAD felt, not an inner hash). Sharing the wide family
+would confuse the two outer shapes, so the narrow chain gets its own family. -/
+abbrev NarrowRomMsg (l : ℕ) : Type :=
+  StateBlock4 ⊕ ((Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l)) × Fin babyBearP)
+
+/-- The narrow EffectVM ROM family. -/
+def narrowRomFamily (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty NarrowRomMsg
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (fun _ => ⟨0, babyBearP_pos⟩)⟩)
+
+theorem narrowRomFamily_card_R (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ) :
+    letI := (narrowRomFamily D tagDec).rFin l
+    Fintype.card ((narrowRomFamily D tagDec).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- The truncated NARROW payload — three state blocks and the record-digest felt (`G4Val`'s shape
+at the truncated widths). -/
+abbrev NarrowRomVal : Type := (StateBlock4 × StateBlock4 × StateBlock4) × Fin babyBearP
+
+/-- The narrow inner carrier — binds one absorbed state block. -/
+def narrowInnerCarrier (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (narrowRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => StateBlock4)
+    (fun _ => inferInstance) (fun _ _ v => Sum.inl v)
+    (fun _ _ _ _ h => Sum.inl_injective h)
+
+/-- The narrow outer carrier — binds the outer absorb (three inner digests + the record felt). -/
+def narrowOuterCarrier (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (narrowRomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun l => (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l)) × Fin babyBearP)
+    (fun _ => inferInstance) (fun _ _ v => Sum.inr v)
+    (fun _ _ _ _ h => Sum.inr_injective h)
+
+/-- The deployed narrow nested commit at the sampled oracle — the ROM restatement of
+`group4Carrier.enc = h [h A, h B, h C, d]`. -/
+def narrowRomCommit (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (H : (narrowRomFamily D tagDec).toRomFamily.D l → (narrowRomFamily D tagDec).toRomFamily.R l)
+    (t : D.Tag) (v : NarrowRomVal) : (narrowRomFamily D tagDec).toRomFamily.R l :=
+  H (t, Sum.inr ((H (t, Sum.inl v.1.1), H (t, Sum.inl v.1.2.1), H (t, Sum.inl v.1.2.2)), v.2))
+
+/-- **THE NARROW ROM FORGERY** — two DISTINCT truncated GROUP-4 payloads, one nested commitment. -/
+def effectVmNarrowRomForgery (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (narrowRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × NarrowRomVal × NarrowRomVal
+  wins := fun l H a =>
+    a.2.1 ≠ a.2.2
+      ∧ narrowRomCommit D tagDec l H a.1 a.2.1 = narrowRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((narrowRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- The narrow inner-leg selection — the first differing state block (pure post-map). If all three
+agree the payloads differ only at the record felt, which the OUTER leg then catches (the felt sits
+in the outer message). The fallback answer is the (equal) A-blocks — never a win, harmlessly. -/
+def narrowInnerSelect (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (l : ℕ)
+    (a : (effectVmNarrowRomForgery D tagDec).Ans l) :
+    (narrowInnerCarrier D tagDec).Ctx l
+      × (narrowInnerCarrier D tagDec).Val l × (narrowInnerCarrier D tagDec).Val l :=
+  let v := a.2.1
+  let w := a.2.2
+  if v.1.1 ≠ w.1.1 then ((a.1, ()), v.1.1, w.1.1)
+  else if v.1.2.1 ≠ w.1.2.1 then ((a.1, ()), v.1.2.1, w.1.2.1)
+  else ((a.1, ()), v.1.2.2, w.1.2.2)
+
+/-- The narrow outer-leg extraction — re-query the six inner points, answer with the two outer
+messages (`bindComp`, budget `Q + 6`). -/
+def narrowOuterComp (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (M : ∀ l, OracleComp ((narrowRomFamily D tagDec).toRomFamily.D l)
+      ((narrowRomFamily D tagDec).toRomFamily.R l)
+      ((effectVmNarrowRomForgery D tagDec).Ans l)) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrierComp (narrowRomFamily D tagDec)
+      (narrowOuterCarrier D tagDec) :=
+  fun l => OracleComp.bindComp (M l) (fun a =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.1) (fun d₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.1) (fun d₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.1.1.2.2) (fun d₃ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.1) (fun e₁ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.1) (fun e₂ =>
+    OracleComp.query (a.1, Sum.inl a.2.2.1.2.2) (fun e₃ =>
+    OracleComp.pure ((a.1, ()), ((d₁, d₂, d₃), a.2.1.2), ((e₁, e₂, e₃), a.2.2.2)))))))))
+
+/-- **⚑⚑ THE NARROW ROW BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`narrowRow_binds_from_polyTime`: a query-bounded forger of the deployed 13-column nested
+`state_commit` has NEGLIGIBLE advantage. Outer messages differ (which covers a record-felt-only
+disagreement, since the felt sits in the outer absorb) → outer-carrier win, budget `Q + 6`; outer
+messages agree → the first differing state block is an inner collision, budget `Q`. NO floor
+hypothesis. -/
+theorem narrowRow_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmNarrowRomForgery D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (effectVmNarrowRomForgery D tagDec) Q A) :
+    Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  refine chained_rom_binds (effectVmNarrowRomForgery D tagDec)
+    (narrowInnerCarrier D tagDec) (narrowOuterCarrier D tagDec)
+    Q (fun l => Q l + 2 + 2 + 2) hQ
+    (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ (polyBounded_sq_add_two _ hQ)))
+    (narrowRomFamily_card_R D tagDec) A
+    (romCarrierAdv _ _ (fun l => OracleComp.mapOut (narrowInnerSelect D tagDec l) (M l)))
+    (romCarrierAdv _ _ (narrowOuterComp D tagDec M))
+    ?_
+    ⟨fun l => OracleComp.mapOut (narrowInnerSelect D tagDec l) (M l),
+      fun l => OracleComp.mapOut_queryBounded _ (hM l), fun _ _ => rfl⟩
+    ⟨narrowOuterComp D tagDec M,
+      fun l => (OracleComp.bindComp_queryBounded (hM l)
+        (fun a => QueryBounded.query 5 _ _ (fun _ => QueryBounded.query 4 _ _
+          (fun _ => QueryBounded.query 3 _ _ (fun _ => QueryBounded.query 2 _ _
+          (fun _ => QueryBounded.query 1 _ _ (fun _ => QueryBounded.query 0 _ _
+          (fun _ => QueryBounded.pure 0 _)))))))).mono
+        (by show Q l + 6 ≤ Q l + 2 + 2 + 2; omega),
+      fun _ _ => rfl⟩
+  intro l H hwin
+  have hArun : A.run l H = (M l).eval H := hrun l H
+  set a := A.run l H with ha
+  obtain ⟨hne, heq⟩ := hwin
+  have hB₁run : (romCarrierAdv _ _
+      (fun l => OracleComp.mapOut (narrowInnerSelect D tagDec l) (M l))).run l H
+      = narrowInnerSelect D tagDec l a := by
+    show (OracleComp.mapOut (narrowInnerSelect D tagDec l) (M l)).eval H = _
+    rw [OracleComp.mapOut_eval, ← hArun]
+  have hB₂run : (romCarrierAdv _ _ (narrowOuterComp D tagDec M)).run l H
+      = ((a.1, ()),
+          ((H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+            H (a.1, Sum.inl a.2.1.1.2.2)), a.2.1.2),
+          ((H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+            H (a.1, Sum.inl a.2.2.1.2.2)), a.2.2.2)) := by
+    show (narrowOuterComp D tagDec M l).eval H = _
+    unfold narrowOuterComp
+    rw [OracleComp.bindComp_eval, ← hArun]
+    rfl
+  by_cases hT :
+      (((H (a.1, Sum.inl a.2.1.1.1), H (a.1, Sum.inl a.2.1.1.2.1),
+         H (a.1, Sum.inl a.2.1.1.2.2)), a.2.1.2)
+        : (Fin (2 ^ l) × Fin (2 ^ l) × Fin (2 ^ l)) × Fin babyBearP)
+      = ((H (a.1, Sum.inl a.2.2.1.1), H (a.1, Sum.inl a.2.2.1.2.1),
+          H (a.1, Sum.inl a.2.2.1.2.2)), a.2.2.2)
+  · -- the outer messages AGREE: all three inner digests collide and the record felts are
+    -- equal, so some state block differs — an inner-carrier equivocation.
+    refine Or.inl ?_
+    rw [hB₁run]
+    have h1 : H (a.1, Sum.inl a.2.1.1.1) = H (a.1, Sum.inl a.2.2.1.1) :=
+      congrArg (fun p => p.1.1) hT
+    have h2 : H (a.1, Sum.inl a.2.1.1.2.1) = H (a.1, Sum.inl a.2.2.1.2.1) :=
+      congrArg (fun p => p.1.2.1) hT
+    have h3 : H (a.1, Sum.inl a.2.1.1.2.2) = H (a.1, Sum.inl a.2.2.1.2.2) :=
+      congrArg (fun p => p.1.2.2) hT
+    have hd : a.2.1.2 = a.2.2.2 := congrArg (fun p => p.2) hT
+    unfold narrowInnerSelect
+    by_cases hA1 : a.2.1.1.1 ≠ a.2.2.1.1
+    · rw [if_pos hA1]
+      exact ⟨hA1, h1⟩
+    · rw [if_neg hA1]
+      by_cases hB1 : a.2.1.1.2.1 ≠ a.2.2.1.2.1
+      · rw [if_pos hB1]
+        exact ⟨hB1, h2⟩
+      · rw [if_neg hB1]
+        push_neg at hA1 hB1
+        have hC1 : a.2.1.1.2.2 ≠ a.2.2.1.2.2 := by
+          intro hc
+          apply hne
+          exact Prod.ext (Prod.ext hA1 (Prod.ext hB1 hc)) hd
+        exact ⟨hC1, h3⟩
+  · -- the outer messages DIFFER — an outer-carrier equivocation.
+    refine Or.inr ?_
+    rw [hB₂run]
+    exact ⟨hT, heq⟩
+
+/-! ### Non-vacuity teeth at this site. -/
+
+/-- **(TOOTH — the wide ROM class is INHABITED with POSITIVE advantage, and DEFANGED.)** The
+`0`-query constant answerer on two distinct payloads is in `RomForgeryEff` at every budget; at the
+constant oracle both nested commitments collapse, so it WINS there (positive advantage); and
+`wideRow_binds_rom` applies to it — NEGLIGIBLE advantage. The exact `IsPolyTime`-refuting shape,
+admitted and defanged. -/
+theorem wideRom_constAnswer_defanged (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (t₀ : D.Tag) (v w : WideRomVal) (hvw : v ≠ w) :
+    ∃ A, RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A
+      ∧ Negl (gameAdv (wideRomBreakGame D tagDec) A)
+      ∧ ∀ l, 0 < gameAdv (wideRomBreakGame D tagDec) A l := by
+  refine ⟨⟨fun _ _ => (t₀, v, w)⟩,
+    ⟨fun _ => OracleComp.pure (t₀, v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩,
+    wideRow_binds_rom D tagDec Q hQ _
+      ⟨fun _ => OracleComp.pure (t₀, v, w), fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩,
+    fun l => ?_⟩
+  letI := ((wideRomFamily D tagDec).toRomFamily).rNe l
+  obtain ⟨r₀⟩ := ((wideRomFamily D tagDec).toRomFamily).rNe l
+  refine @winProb_pos_of_witness _ ((wideRomBreakGame D tagDec).instFin l) _ (fun _ => r₀) ?_
+  refine (Dregg2.Crypto.FloorGames.Adversary.hit_eq_true _ l _).mpr ⟨hvw, rfl⟩
+
+/-- **(TOOTH — a non-negligible wide forger is OUTSIDE the class.)** The refutation strategy that
+killed the `IsPolyTime` floor cannot produce a member of this one. -/
+theorem wideRom_nonNegl_forger_excluded (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hnn : ¬ Negl (gameAdv (wideRomBreakGame D tagDec) A)) :
+    ¬ RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A :=
+  fun hA => hnn (wideRow_binds_rom D tagDec Q hQ A hA)
+
+end RomSuccessor
 
 /-! ## §6 — the floor, PRICED at both poles, plus the canary and the positive pole.
 
@@ -797,20 +1205,22 @@ theorem the_reduced_wideRow_bound_fires (D : SpongeKeyed) (E : WideRowSpec)
 #assert_axioms narrowRow_wins_imp
 #assert_axioms narrowRow_adv_le
 #assert_axioms narrowRow_binds_advantage_bound
-#assert_axioms narrowRow_binds_from_polyTime
+#assert_axioms narrowRow_binds_rom
 #assert_axioms wideRowBreakGame_wins_iff
 #assert_axioms wideRow_wins_imp
 #assert_axioms wideRow_adv_le
 #assert_axioms wideRow_binds_advantage_bound
-#assert_axioms wideRow_binds_from_polyTime
+#assert_axioms wideRow_binds_rom
 #assert_axioms stateTamper_wins_imp
 #assert_axioms rootTamper_wins_imp
 #assert_axioms stateTamper_adv_le
 #assert_axioms rootTamper_adv_le
 #assert_axioms wide_state_tamper_advantage_bound
 #assert_axioms wide_root_tamper_advantage_bound
-#assert_axioms wide_state_tamper_from_polyTime
-#assert_axioms wide_root_tamper_from_polyTime
+#assert_axioms wide_state_tamper_rom
+#assert_axioms wide_root_tamper_rom
+#assert_axioms wideRom_constAnswer_defanged
+#assert_axioms wideRom_nonNegl_forger_excluded
 #assert_axioms rowCommitFloor_top_false_babyBear
 #assert_axioms rowCommitFloor_bot_vacuous
 #assert_axioms rowCommitFloor_isPolyTime_inhabited

@@ -64,7 +64,7 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
    brokenFamily_not_CR idFamily_CR)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot)
-open Dregg2.Crypto.ConcreteSecurity (Ensemble Negl negl_zero not_negl_one)
+open Dregg2.Crypto.ConcreteSecurity (Ensemble Negl PolyBounded negl_zero not_negl_one)
 open Dregg2.Crypto
 
 set_option autoImplicit false
@@ -278,12 +278,16 @@ carrying a DOUBLE defect, both halves fatal on their own:
      `DomainSeparatedCR` above says so at length). So the whole section was vacuously true at the
      deployed hash — it transported no security to the thing it was written to be about.
 
-The four rebuilt bounds below stand on `Dregg2.Crypto.SpongeCarrierReduction`'s spine at
-`FloorRegroundedConsumers.merkleOpenCarrier`: the forgery is a GAME whose win relation is a deployed
-Merkle-opening equivocation, the extractor is a TOTAL FUNCTION with an unconditional correctness theorem,
-the advantage inequality quantifies over ALL adversaries, and the floor is `HashCRHardQuant` at an
-EXPLICIT class — which is exactly `DomainSeparatedCREffRegrounded.DomainSeparatedCREff D Eff`, the honest
-successor of `DomainSeparatedCR`. Efficiency is DISCHARGED with `poly_time`, not carried.
+The four rebuilt bounds below (2026-07-24, second rebuild) are the KEYED-ROM successors: the same
+forgery — one committed root, one shared path, two distinct opened leaves — transposed to the SAMPLED
+oracle keyed by the DEPLOYED sponge's own tag space (`FloorRegroundedConsumers` §2's
+`merkleOpenRomBreakGame` at `toSpongeKeyed D`). The `IsPolyTime`-discharged forms that briefly stood
+here carried `DeployedOpenFloor D` = `HashCRHardQuant (poseidon2KeyedFamily D) (IsPolyTime …)`, which
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES at the deployed
+sponge — they are DELETED with their floor abbrev. The successors carry NO floor hypothesis at all:
+the floor is `KeyedRomFloor.keyedRom_hard`, the birthday bound, PROVED. The ROM idealisation is the
+labelled modelling step of `RomCarrierSites`' header (ideal `Fin (2 ^ l)` digest vs the deployed
+~31-bit felt — the felt-width wound, said out loud, not smuggled).
 
 ⚑ **TWO OF THE SIX ARE GONE, NOT MOVED.** `deployed_recStateCommit_advantage_bound` and
 `deployed_committedTrace_pinned_advantage_bound` are DELETED, because the `FloorRegroundedConsumers`
@@ -329,76 +333,83 @@ index to TWO DISTINCT values. By `spongeFamily_toSpongeKeyed` this is a game abo
 abbrev deployedOpenBreakGame (D : DomainSeparatedSponge) : FloorGames.Game :=
   FloorRegroundedConsumers.merkleOpenBreakGame (toSpongeKeyed D)
 
-/-- The deployed forgery game's answer encoding (the two opened values plus the sibling path). -/
-abbrev deployedOpenAnsSize (D : DomainSeparatedSponge) :=
-  SpongeCarrierReduction.carrierAnsSize (toSpongeKeyed D) FloorRegroundedConsumers.merkleOpenCarrier
+/-- **THE DEPLOYED MERKLE-OPENING FORGERY GAME AT THE SAMPLED ORACLE** — the same win relation,
+keyed by the DEPLOYED sponge's own tag space, depth pinned per parameter (a committed tree has a
+fixed height). The ROM transposition of `deployedOpenBreakGame`, per the §4 header's labelled
+modelling step. -/
+abbrev deployedOpenRomBreakGame (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (d : ℕ → ℕ) : FloorGames.Game :=
+  FloorRegroundedConsumers.merkleOpenRomBreakGame (toSpongeKeyed D) tagDec d
 
-/-- The deployed collision game's answer encoding (the two claimed sponge preimages). -/
-abbrev deployedSpongeAnsSize (D : DomainSeparatedSponge) :=
-  SpongeCarrierReduction.spongeAnsSize (toSpongeKeyed D)
+/-- **THE QUERY-BOUNDED DEPLOYED-OPENING-FORGER CLASS** — the fixed `Eff` the bridged successors
+close at: the forger factors through a `Q`-query oracle tree fixed BEFORE the oracle is sampled. The
+honest successor of the deleted `IsPolyTime` discharge. -/
+abbrev DeployedOpenRomEff (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (d Q : ℕ → ℕ) : FloorGames.Adversary (deployedOpenRomBreakGame D tagDec d) → Prop :=
+  FloorRegroundedConsumers.MerkleOpenRomEff (toSpongeKeyed D) tagDec d Q
 
-/-- **⚑ THE DEPLOYED FLOOR THE REBUILT BOUNDS REST ON.** The collision game of the DEPLOYED
-domain-separated Poseidon2 family, at the EXPLICIT class of poly-time adversaries. This is
-`DomainSeparatedCREffRegrounded.DomainSeparatedCREff D (IsPolyTime …)` — definitionally, since
-`spongeFamily_toSpongeKeyed` identifies the families — and it is the successor of the refuted
-`DomainSeparatedCR`, which is this same floor at the UNRESTRICTED class. -/
-abbrev DeployedOpenFloor (D : DomainSeparatedSponge) : Prop :=
-  FloorGames.HashCRHardQuant (poseidon2KeyedFamily D)
-    (CostAdversary.IsPolyTime (deployedSpongeAnsSize D))
+/-- **⚑⚑ OOD / Merkle-opening binder, bridged — DISCHARGED ON THE PROVED FLOOR.** A query-bounded
+forger that opens one committed OOD/Merkle root of the deployed tag space's sampled oracle at one
+query to two DISTINCT leaves has NEGLIGIBLE advantage. NO floor hypothesis: the successor of the
+deleted `deployed_oodCommitmentOpening_advantage_bound`, whose `DeployedOpenFloor` was refuted. -/
+theorem deployed_oodCommitmentOpening_binds_rom (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : FloorGames.Adversary (deployedOpenRomBreakGame D tagDec d))
+    (hA : DeployedOpenRomEff D tagDec d Q A) :
+    Negl (FloorGames.gameAdv (deployedOpenRomBreakGame D tagDec d) A) :=
+  FloorRegroundedConsumers.oodCommitmentOpening_binds_rom (toSpongeKeyed D) tagDec d Q Q'
+    hle hQ' A hA
 
-/-- **⚑ OOD / Merkle-opening binder, bridged — AS A REDUCTION.** An efficient adversary that opens one
-committed OOD/Merkle root of the DEPLOYED Poseidon2 at one query to two DISTINCT values has NEGLIGIBLE
-advantage. `hEff` is discharged inside, off the extractor's proved output bound; the only modelling input
-is the reshaper's declared work `(cw, bw)`. -/
-theorem deployed_oodCommitmentOpening_advantage_bound (D : DomainSeparatedSponge)
-    (A : FloorGames.Adversary (deployedOpenBreakGame D))
-    (hA : CostAdversary.IsPolyTime (deployedOpenAnsSize D) A) (cw bw : ℕ)
-    (hD : DeployedOpenFloor D) :
-    Negl (FloorGames.gameAdv (deployedOpenBreakGame D) A) :=
-  FloorRegroundedConsumers.oodCommitmentOpening_advantage_bound (toSpongeKeyed D) A hA cw bw hD
+/-- **⚑ FRI per-query layer-opening binder, bridged — DISCHARGED.** See `FloorRegroundedConsumers`
+§3 for exactly which step is proved and which is a stated modelling identification (the abstract
+`OracleCR` ⟶ the concrete per-query Merkle recompute) — that identification is unchanged by the
+floor move. Successor of the deleted `deployed_friOracle_binding_advantage_bound`. -/
+theorem deployed_friOracle_binding_binds_rom (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (oracleEquivocator : FloorGames.Adversary (deployedOpenRomBreakGame D tagDec d))
+    (hA : DeployedOpenRomEff D tagDec d Q oracleEquivocator) :
+    Negl (FloorGames.gameAdv (deployedOpenRomBreakGame D tagDec d) oracleEquivocator) :=
+  FloorRegroundedConsumers.friOracle_binding_binds_rom (toSpongeKeyed D) tagDec d Q Q'
+    hle hQ' oracleEquivocator hA
 
-/-- **⚑ FRI per-query layer-opening binder, bridged — AS A REDUCTION.** See
-`FloorRegroundedConsumers` §3 for exactly which step is proved and which is a stated modelling
-identification (the abstract `OracleCR` ⟶ the concrete per-query Merkle recompute). -/
-theorem deployed_friOracle_binding_advantage_bound (D : DomainSeparatedSponge)
-    (oracleEquivocator : FloorGames.Adversary (deployedOpenBreakGame D))
-    (hA : CostAdversary.IsPolyTime (deployedOpenAnsSize D) oracleEquivocator) (cw bw : ℕ)
-    (hD : DeployedOpenFloor D) :
-    Negl (FloorGames.gameAdv (deployedOpenBreakGame D) oracleEquivocator) :=
-  FloorRegroundedConsumers.friOracle_binding_advantage_bound (toSpongeKeyed D) oracleEquivocator
-    hA cw bw hD
-
-/-- **⚑ Multi-round FRI/STARK fold, bridged — AS A REDUCTION.** The total binding-failure advantage
-across the `rounds` Merkle checks is a finite sum of PER-ROUND DEPLOYED-GAME advantages (not a sum of the
-hypothesis), negligible by the union bound under the deployed floor. -/
-theorem deployed_friStark_fold_advantage_bound (D : DomainSeparatedSponge) (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → FloorGames.Adversary (deployedOpenBreakGame D))
-    (hA : ∀ r ∈ rounds, CostAdversary.IsPolyTime (deployedOpenAnsSize D) (roundEquivocator r))
-    (cw bw : ℕ) (hD : DeployedOpenFloor D) :
+/-- **⚑ Multi-round FRI/STARK fold, bridged — DISCHARGED.** The total binding-failure advantage
+across the `rounds` Merkle checks is a finite sum of PER-ROUND DEPLOYED-GAME advantages (not a sum
+of a hypothesis), negligible by the union bound over the ONE sampled oracle. Successor of the
+deleted `deployed_friStark_fold_advantage_bound`. -/
+theorem deployed_friStark_fold_binds_rom (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (rounds : Finset ℕ)
+    (roundEquivocator : ℕ → FloorGames.Adversary (deployedOpenRomBreakGame D tagDec d))
+    (hA : ∀ r ∈ rounds, DeployedOpenRomEff D tagDec d Q (roundEquivocator r)) :
     Negl (fun n => ∑ r ∈ rounds,
-      FloorGames.gameAdv (deployedOpenBreakGame D) (roundEquivocator r) n) :=
-  FloorRegroundedConsumers.friStark_fold_advantage_bound (toSpongeKeyed D) rounds roundEquivocator
-    hA cw bw hD
+      FloorGames.gameAdv (deployedOpenRomBreakGame D tagDec d) (roundEquivocator r) n) :=
+  FloorRegroundedConsumers.friStark_fold_binds_rom (toSpongeKeyed D) tagDec d Q Q' hle hQ'
+    rounds roundEquivocator hA
 
-/-- **⚑ APEX two-hash forgery advantage, bridged — AS A REDUCTION.** The light-client forgery advantage
-— trace-commitment opening equivocation PLUS OOD-commitment opening equivocation — is negligible under
-the DEPLOYED sponge's domain-separation floor at the poly-time class, with both legs' efficiency
-discharged. The deployed apex is welded to the real hash by `spongeFamily_toSpongeKeyed`.
+/-- **⚑ APEX two-hash forgery advantage, bridged — DISCHARGED.** The light-client forgery advantage
+— trace-commitment opening equivocation PLUS OOD-commitment opening equivocation — is negligible in
+the keyed ROM model at the deployed tag space, both legs' query-class membership carried, NO floor
+hypothesis. Successor of the deleted `deployed_lightclientUnfoolable_advantage_bound`.
 
 ⚑ HONEST SCOPE: this is the HASH-BINDING leg of light-client soundness, not the whole of it. The FRI
-proximity leg is a separate named residual, and the deployed digest is ONE BabyBear felt (~31 bits), so
-the collision game this reduces to is winnable in ~2^15.5 work by birthday search. What the rebuild buys
-is that the leg now rests on a floor the deployed sponge does not REFUTE, priced at both poles, instead
-of one it does. -/
-theorem deployed_lightclientUnfoolable_advantage_bound (D : DomainSeparatedSponge)
-    (traceEquivocator oodEquivocator : FloorGames.Adversary (deployedOpenBreakGame D))
-    (hT : CostAdversary.IsPolyTime (deployedOpenAnsSize D) traceEquivocator)
-    (hO : CostAdversary.IsPolyTime (deployedOpenAnsSize D) oodEquivocator) (cw bw : ℕ)
-    (hD : DeployedOpenFloor D) :
-    Negl (fun n => FloorGames.gameAdv (deployedOpenBreakGame D) traceEquivocator n
-        + FloorGames.gameAdv (deployedOpenBreakGame D) oodEquivocator n) :=
-  FloorRegroundedConsumers.lightclientUnfoolable_advantage_bound (toSpongeKeyed D)
-    traceEquivocator oodEquivocator hT hO cw bw hD
+proximity leg is a separate named residual, and the deployed digest is ONE BabyBear felt (~31 bits) —
+there is NO `l` at which the ideal `Fin (2 ^ l)` digest is that felt, and at the deployed width the
+honest reading stays "binds exactly as well as ~31 bits allow" (birthday ≈ `2^15.5`, the felt-width
+wound). What the move buys is that the leg now rests on a floor that is PROVED, instead of one the
+deployed sponge refutes. -/
+theorem deployed_lightclientUnfoolable_binds_rom (D : DomainSeparatedSponge)
+    (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (traceEquivocator oodEquivocator : FloorGames.Adversary (deployedOpenRomBreakGame D tagDec d))
+    (hT : DeployedOpenRomEff D tagDec d Q traceEquivocator)
+    (hO : DeployedOpenRomEff D tagDec d Q oodEquivocator) :
+    Negl (fun n => FloorGames.gameAdv (deployedOpenRomBreakGame D tagDec d) traceEquivocator n
+        + FloorGames.gameAdv (deployedOpenRomBreakGame D tagDec d) oodEquivocator n) :=
+  FloorRegroundedConsumers.lightclientUnfoolable_binds_rom (toSpongeKeyed D) tagDec d Q Q'
+    hle hQ' traceEquivocator oodEquivocator hT hO
 
 /-! ### The deployed floor, PRICED at both poles (so the rebuild cannot be read as stronger). -/
 
@@ -437,10 +448,10 @@ example (D : DomainSeparatedSponge)
 #assert_axioms refDomainSep_CR
 #assert_axioms spongeFamily_toSpongeKeyed
 #assert_axioms deployedHash_toSpongeKeyed
-#assert_axioms deployed_oodCommitmentOpening_advantage_bound
-#assert_axioms deployed_friOracle_binding_advantage_bound
-#assert_axioms deployed_lightclientUnfoolable_advantage_bound
-#assert_axioms deployed_friStark_fold_advantage_bound
+#assert_axioms deployed_oodCommitmentOpening_binds_rom
+#assert_axioms deployed_friOracle_binding_binds_rom
+#assert_axioms deployed_lightclientUnfoolable_binds_rom
+#assert_axioms deployed_friStark_fold_binds_rom
 #assert_axioms deployedFloor_top_false_babyBear
 #assert_axioms deployedFloor_bot_vacuous
 

@@ -59,16 +59,16 @@ BabyBear→ℤ canonical-representative bridge (the same one `FieldIntegerLift` 
 -/
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Crypto.SpongeCarrierReduction
+import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.OodCommitmentBinding
 
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Crypto.SpongeCarrierReduction
-  (SpongeCarrier SpongeKeyed spongeFamily carrierBreakGame carrierAnsSize spongeAnsSize
-   carrier_binds_from_polyTime carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
+  (SpongeCarrier SpongeKeyed spongeFamily carrierBreakGame
+   carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
 open Dregg2.Crypto.FloorGames (Adversary gameAdv HashCRHardQuant)
-open Dregg2.Crypto.CostAdversary (IsPolyTime)
-open Dregg2.Crypto.ConcreteSecurity (Negl)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
 
 /-! ## §1 — the ordered two-felt Merkle node hash (the `Poseidon2SpongeCR` binary specialization).
 
@@ -185,7 +185,7 @@ injective special case, kept as the strength bridge (nothing was lost re-groundi
 NOT a deployed guarantee. A deployed BabyBear sponge is not injective, so reading this as a statement
 about the running verifier is precisely the vacuity being retired.
 
-**The deployed opening binding is §3.1's `merkleOpening_binds_from_polyTime`.** -/
+**The deployed opening binding is §3.1's `merkleOpening_binds_rom`.** -/
 theorem merkleRecomputeZ_binds (sponge : List ℤ → ℤ) (hinj : Function.Injective sponge) :
     ∀ (siblings : List ℤ) (idx : Nat) (l1 l2 : ℤ),
       merkleRecomputeZ sponge idx l1 siblings = merkleRecomputeZ sponge idx l2 siblings →
@@ -264,21 +264,32 @@ recomputed root. That is exactly the forgery `hood.b` needs excluded, stated as 
 abbrev merkleOpeningBreakGame (D : SpongeKeyed) :=
   carrierBreakGame D merkleOpeningCarrier
 
-/-- **⚑ THE DEPLOYED OPENING BINDING — `hEff` DISCHARGED.** An efficient prover that equivocates a
-Merkle opening has NEGLIGIBLE advantage, under the deployed sponge's collision floor at
-`Eff := IsPolyTime`. The extracted finder's efficiency is DERIVED by `poly_time` from the prover's own
-bound — not assumed, and with no floating overhead polynomial: the output-growth obligation is
-`merkleFind_len_le`, a proved constant. The only modelling input is the reshaper's declared work
-`(cw, bw)`, because a Lean function has no runtime and that number can only be charged in syntax. -/
-theorem merkleOpening_binds_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (merkleOpeningBreakGame D))
-    (hA : IsPolyTime
-      (carrierAnsSize D merkleOpeningCarrier) A)
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D)
-      (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (merkleOpeningBreakGame D) A) :=
-  carrier_binds_from_polyTime D merkleOpeningCarrier A hA cw bw hCR
+/-- **⚑⚑ THE DEPLOYED OPENING BINDING — DISCHARGED ON THE PROVED FLOOR.** A query-bounded prover
+that equivocates a Merkle opening — one committed root, one shared (index-bit, sibling) path of
+pinned depth `d`, TWO DISTINCT opened leaves — has NEGLIGIBLE advantage, in the keyed ROM model of
+`RomMerkleOpening`'s header, keyed by the deployed sponge's OWN tag space. NO floor hypothesis is
+carried: the floor is `KeyedRomFloor.keyedRom_hard` (the birthday bound), PROVED, where the deleted
+`merkleOpening_binds_from_polyTime` carried `HashCRHardQuant … (IsPolyTime …)` — a floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES at the deployed
+sponge. The budget is honest: the walking extractor re-descends both chains, paying `2·d` queries on
+top of the forger's `Q`, all inside the polynomial total `Q'`.
+
+⚑ The ROM idealisation is the labelled modelling step of `RomCarrierSites`' header — ideal
+`Fin (2 ^ l)` digest vs the deployed ~31-bit felt (birthday ≈ `2^15.5`, the felt-width wound); the
+fixed-hash content of this module stays §2/§4's unconditional extractor + the poles below. -/
+theorem merkleOpening_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (Dregg2.Crypto.RomMerkleOpening.merkleOpenRomGame
+      D.Tag D.tagFintype tagDec D.tagNonempty d))
+    (hA : Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+      (Dregg2.Crypto.RomMerkleOpening.merkleRomFamily D.Tag D.tagFintype tagDec D.tagNonempty)
+      (Dregg2.Crypto.RomMerkleOpening.merkleOpenForgery D.Tag D.tagFintype tagDec D.tagNonempty d)
+      Q A) :
+    Negl (gameAdv (Dregg2.Crypto.RomMerkleOpening.merkleOpenRomGame
+      D.Tag D.tagFintype tagDec D.tagNonempty d) A) :=
+  Dregg2.Crypto.RomMerkleOpening.merkleOpenRom_binds D.Tag D.tagFintype tagDec D.tagNonempty
+    d Q Q' hle hQ' A hA
 
 /-- **(TOOTH — the floor is FALSE at the REAL BabyBear parameters.)** The honest price of the `hEff`
 obligation, re-exported here so the tower's opening lane cannot read its own reduction as stronger
@@ -347,7 +358,7 @@ end Vacuity
 #assert_axioms merkleFind_spec
 #assert_axioms merkleFind_len_le
 #assert_axioms merkleRecomputeZ_binds
-#assert_axioms merkleOpening_binds_from_polyTime
+#assert_axioms merkleOpening_binds_rom
 #assert_axioms merkleOpening_floor_top_false_babyBear
 #assert_axioms merkleOpening_floor_bot_vacuous
 #assert_axioms commitmentOpening_binds_of_poseidon2CR

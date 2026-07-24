@@ -82,6 +82,7 @@ import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.CostTactics
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Circuit.Blake3FloorEffRegrounded
 
@@ -381,64 +382,114 @@ theorem brokenBlake3_opening_top_false : ¬ Hard (commitOpeningGame brokenBlake3
     (fun _ => ⟨([] : List Nat)⟩)
     (fun _ _ => ⟨[0], List.cons_ne_nil 0 [], rfl⟩)
 
-/-! ## §8 — `hEff` DISCHARGED: the opener→finder step's efficiency is a THEOREM.
+/-! ## §8 — ⚑ THE DISCHARGED HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
 
-§5 states the bound at an ARBITRARY adversary class, so it carries `hEff` — honest while
-`FloorGames` §8 ("no cost model") was the last word, and no longer necessary.
-`Dregg2.Crypto.CostAdversary` gives `Eff` content at COST-VECTOR resolution, and this reduction is a
-pure output reshaping with the sampled tag passed through (it PAIRS the opener's preimage with the
-dealer's committed one), i.e. an `Adversary.postMap`, so `isPolyTime_postMap` turns `hEff` into a
-consequence of "the equivocating opener is efficient".
+This section used to discharge §5's `hEff` at `Eff := IsPolyTime`
+(`blake3_commit_opens_from_polyTime`). That floor —
+`Hard (blake3CollisionGame D) (IsPolyTime …)` — is FALSE at the deployed finite digest by exactly the
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` argument: `IsPolyTime`
+prices answer SIZE, the one-element preimages `[n]` are an infinite family into the finite digest, so
+a `Classical.choice` `.pure`-leaf answering a fixed two-element short collision is in the class and
+wins with probability `1`. Nor can a better `Eff` repair the fixed-hash game
+(`Crypto.RomBindingReduction`'s header). The discharge is DELETED; its successor lands the floor on a
+SAMPLED oracle, where `KeyedRomFloor.keyedRom_hard` (the birthday bound) is a THEOREM.
 
-The one per-site input is the size of the DEALER's committed preimage — the reduction writes it, and
-the opener never did, so it must be bounded by deployment data rather than by the game's answer. That
-is `hc`, a SATISFIED fact about the deployment (a real dealer commits a bounded transcript), not a
-crypto floor. -/
+⚑ THE MODELLING STEP, STATED (not smuggled): the deployed tag-keyed BLAKE3 is idealised as a keyed
+RANDOM ORACLE at an ASYMPTOTIC digest width `Fin (2 ^ l)` — the real digest is FIXED 32 bytes, and
+there is no `l` at which they coincide; at the deployed width the honest reading is "binds exactly
+as well as 256 bits allow". The message domain is the TRUNCATED deployed shape: byte lists of length
+at most `m` (`RomCarrierSites.BVec`), lossless on everything a real dealer commits
+(`bvecOfList_inj`). The published-commitment shape of `commitOpeningGame` is preserved: the ROM game
+is `romOpenGame` — the adversary PUBLISHES a digest and exhibits two DISTINCT payloads that BOTH
+open it, which subsumes "opens the published commitment with a preimage that is not the committed
+one" (take the committed preimage as the second payload). The fixed-hash content of this module —
+§4's reduction and §5's `Eff`-parametric bound, `hEff` in the open — stays untouched beside it. -/
 
-/-- **THE OPENING GAME'S ANSWER ENCODING** — the forged preimage. -/
-def openingAnsSize (D : Blake3Deployment) : AnsSize (commitOpeningGame D) :=
-  fun _ (x : List Nat) => x.length
+/-- **THE BLAKE3 ROM FAMILY** — truncated byte-list messages under the ideal `λ`-bit digest, keyed
+by the deployment's OWN tag space. -/
+abbrev blake3RomFamily (D : Blake3Deployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  Dregg2.Crypto.RomCarrierSites.flatFamily D.Tag D.tagFintype tagDec D.tagNonempty
+    (fun _ => Dregg2.Crypto.RomCarrierSites.BVec (Fin 256) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
 
-/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed colliding preimages. -/
-def blake3AnsSize (D : Blake3Deployment) : AnsSize (blake3CollisionGame D) :=
-  fun _ (p : List Nat × List Nat) => p.1.length + p.2.length
+/-- **THE BLAKE3 COMMITMENT CARRIER** — commitment `H (t, msg)`; the encoding is the identity on the
+truncated byte list, injective on the nose (the deployed preimage IS the absorbed message). -/
+def blake3RomCarrier (D : Blake3Deployment) (tagDec : DecidableEq D.Tag) (m : ℕ) :
+    Dregg2.Crypto.RomBindingReduction.RomCarrier (blake3RomFamily D tagDec m) :=
+  Dregg2.Crypto.RomCarrierSites.taggedCarrier _ (fun _ => Unit)
+    (fun _ => Dregg2.Crypto.RomCarrierSites.BVec (Fin 256) m)
+    (fun _ => inferInstance) (fun _ _ v => v) (fun _ _ _ _ h => h)
 
-/-- **⚑ `hEff` DISCHARGED — the re-grounded BLAKE3 commitment binding with NO floating efficiency
-parameter.** An equivocating opener that is EFFICIENT at the game's own answer encoding, paired against
-the dealer's committed preimage, yields a BLAKE3-collision finder that is STILL efficient — so the
-collision floor at `Eff := IsPolyTime` applies to IT, and a transcript opened against a BLAKE3
-commitment binds except with negligible probability.
+/-- The BLAKE3 opening game at the sampled oracle: publish a digest, open it two ways. -/
+abbrev blake3OpenRomGame (D : Blake3Deployment) (tagDec : DecidableEq D.Tag) (m : ℕ) : Game :=
+  Dregg2.Crypto.RomCarrierSites.romOpenGame (blake3RomFamily D tagDec m)
+    (blake3RomCarrier D tagDec m)
 
-Per-site inputs: the reshaper's declared work `(cw, bw)` (a Lean `fun` has no runtime) and the bound
-`c` on the dealer's committed preimage. Growth constants `(1, c)`, PROVED. No `PolyBoundedNat` overhead
-hypothesis is taken. -/
-theorem blake3_commit_opens_from_polyTime (D : Blake3Deployment)
-    (A : Adversary (commitOpeningGame D)) (hA : IsPolyTime (openingAnsSize D) A)
-    (cw bw c : ℕ) (hc : ∀ t : D.Tag, (D.committed t).length ≤ c)
-    (hcol : Hard (blake3CollisionGame D) (IsPolyTime (blake3AnsSize D))) :
-    Negl (gameAdv (commitOpeningGame D) A) := by
-  have hEff : IsPolyTime (blake3AnsSize D) (openingToCollisionFinder D A) := by
-    poly_time (openingAnsSize D) (blake3AnsSize D)
-      (fun _ t (x : List Nat) => (x, D.committed t))
-      cw bw 1 c hA
-    intro n t x
-    have h := hc t
-    show x.length + (D.committed t).length ≤ 1 * x.length + c
-    omega
-  exact blake3_commit_opens_advantage_bound D (IsPolyTime (blake3AnsSize D)) A hEff hcol
+/-- **⚑⚑ THE DISCHARGED BLAKE3 COMMITMENT BINDING — ON THE PROVED FLOOR.** The successor of the
+deleted `blake3_commit_opens_from_polyTime`: every query-bounded opener that publishes one digest
+and opens it to two DISTINCT truncated preimages has NEGLIGIBLE advantage — a transcript opened
+against a BLAKE3 commitment binds except with negligible probability, in the keyed ROM model of
+§8's header. NO floor hypothesis, NO cost model: `rom_open_binds`, hence `keyedRom_hard`, hence the
+birthday bound. -/
+theorem blake3_commit_opens_rom (D : Blake3Deployment) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (blake3OpenRomGame D tagDec m))
+    (hA : Dregg2.Crypto.RomCarrierSites.RomOpenEff (blake3RomFamily D tagDec m)
+      (blake3RomCarrier D tagDec m) Q A) :
+    Negl (gameAdv (blake3OpenRomGame D tagDec m) A) :=
+  Dregg2.Crypto.RomCarrierSites.flat_open_binds D.Tag D.tagFintype tagDec D.tagNonempty
+    _ _ _ _ (blake3RomCarrier D tagDec m) Q hQ A hA
 
-/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** Together with
-`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
-floor strictly between §7's two poles. -/
-theorem blake3Floor_isPolyTime_inhabited (D : Blake3Deployment) :
-    IsPolyTime (blake3AnsSize D)
-      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
-        (fun _ _ => (([] : List Nat), ([] : List Nat)))).toAdversary :=
-  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [blake3AnsSize]⟩
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED, not excluded.)** The `0`-query constant
+opener — the exact shape whose fixed short collision refutes the `IsPolyTime` floor with
+probability `1` against the fixed hash — is IN the class at every budget, WINS at the constant
+oracle on distinct payloads, and its advantage against the SAMPLED oracle is NEGLIGIBLE. -/
+theorem blake3Rom_constOpen_defanged (D : Blake3Deployment) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (r : ∀ l, (blake3RomFamily D tagDec m).toRomFamily.R l)
+    (c : ∀ l, (blake3RomCarrier D tagDec m).Ctx l)
+    (v w : ∀ l, (blake3RomCarrier D tagDec m).Val l) :
+    Dregg2.Crypto.RomCarrierSites.RomOpenEff (blake3RomFamily D tagDec m)
+        (blake3RomCarrier D tagDec m) Q
+        (Dregg2.Crypto.RomCarrierSites.romOpenAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constOpenComp _ _ r c v w))
+      ∧ Negl (gameAdv (blake3OpenRomGame D tagDec m)
+        (Dregg2.Crypto.RomCarrierSites.romOpenAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constOpenComp _ _ r c v w)))
+      ∧ ∀ l, v l ≠ w l → 0 < gameAdv (blake3OpenRomGame D tagDec m)
+        (Dregg2.Crypto.RomCarrierSites.romOpenAdv _ _
+          (Dregg2.Crypto.RomCarrierSites.constOpenComp _ _ r c v w)) l :=
+  ⟨Dregg2.Crypto.RomCarrierSites.constOpen_in_eff _ _ r c v w Q,
+    Dregg2.Crypto.RomCarrierSites.constOpen_binds _ _ r c v w Q hQ
+      (Dregg2.Crypto.RomCarrierSites.flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty
+        _ _ _ _),
+    fun l hvw =>
+      Dregg2.Crypto.RomCarrierSites.constOpen_gameAdv_pos _ _ r c v w l hvw⟩
+
+/-- **(TOOTH — a non-negligible opener is OUTSIDE the class.)** The refutation strategy that killed
+the `IsPolyTime` floor cannot produce a member of this one. -/
+theorem blake3Rom_nonNegl_opener_excluded (D : Blake3Deployment) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (blake3OpenRomGame D tagDec m))
+    (hnn : ¬ Negl (gameAdv (blake3OpenRomGame D tagDec m) A)) :
+    ¬ Dregg2.Crypto.RomCarrierSites.RomOpenEff (blake3RomFamily D tagDec m)
+      (blake3RomCarrier D tagDec m) Q A :=
+  Dregg2.Crypto.RomCarrierSites.romOpen_forger_excluded _ _ Q hQ
+    (Dregg2.Crypto.RomCarrierSites.flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty
+      _ _ _ _) A hnn
 
 #assert_all_clean [
-  blake3_commit_opens_from_polyTime,
-  blake3Floor_isPolyTime_inhabited
+  blake3_commit_opens_rom,
+  blake3Rom_constOpen_defanged,
+  blake3Rom_nonNegl_opener_excluded
 ]
 
 #assert_all_clean [

@@ -407,13 +407,10 @@ Unlike its predecessor this statement is FALSE if you delete the reduction: the 
 substitution game, the hypothesis about the collision game, and `substitution_adv_le` is the only
 bridge (§6's canary compiles that fact).
 
-⚑ **`hEff` IS A PARAMETER HERE BECAUSE THIS IS THE STATEMENT AT AN ARBITRARY CLASS.** §8 DISCHARGES it:
-`Dregg2.Crypto.CostAdversary` gives `Eff` real content at cost-vector resolution, and
-`recStateCommit_recovers_council_roster_from_polyTime` proves the extracted finder efficient instead of
-assuming it. (The earlier claim here — "nothing in this repository can give `Eff` content" — was true
-when `FloorGames` §8 was the last word and is now retired; it is exactly the gap `CostAdversary`
-closed.) The floor's honesty is exactly its `Eff`'s, and §7 prices both poles: `⊤` makes it FALSE at
-the deployed digest, `⊥` vacuous. -/
+⚑ **`hEff` IS A PARAMETER HERE BECAUSE THIS IS THE STATEMENT AT AN ARBITRARY CLASS.** The DISCHARGED
+form is §8's `recStateCommit_recovers_council_roster_rom`, on the keyed-ROM floor (PROVED — the
+birthday bound), which replaced the deleted `IsPolyTime` discharge whose floor was refutable. §7
+prices both poles of THIS statement's `Eff`: `⊤` makes it FALSE at the deployed digest, `⊥` vacuous. -/
 theorem recStateCommit_recovers_council_roster_advantage_bound {Guardian : Type}
     (D : RosterDeployment Guardian) (Eff : Adversary (rosterCollisionGame D) → Prop)
     (A : Adversary (rosterSubstitutionGame D))
@@ -548,74 +545,125 @@ theorem rosterFamily_CR_of_injective {Guardian : Type} (D : RosterDeployment Gua
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (rosterFamily D) :=
   injective_family_CR (rosterFamily D) (fun _ t => hinj t)
 
-/-! ## §8 — `hEff` DISCHARGED: the reduction's efficiency is a THEOREM, not a parameter.
+/-! ## §8 — ⚑ THE DISCHARGED HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
 
-§5 states the bound at an ARBITRARY adversary class, so it carries `hEff` as a parameter. That was the
-honest state while `FloorGames` §8 ("this tree has no cost model") was the last word. It no longer is:
-`Dregg2.Crypto.CostAdversary` gives `Eff` content at COST-VECTOR resolution (intrinsic instructions +
-per-oracle call counts, both DERIVED from a deep-embedded program's syntax, never an asserted field),
-and the roster reduction is a pure output reshaping — it DISCARDS the two kernel states and keeps the
-two rosters, with the sampled tag passed through, i.e. an `Adversary.postMap`. So `isPolyTime_postMap`
-turns `hEff` into a consequence of "the substituter is efficient".
+The `IsPolyTime` discharge that stood here (`recStateCommit_recovers_council_roster_from_polyTime`)
+carried `Hard (rosterCollisionGame D) (IsPolyTime …)` — FALSE at any range-bounded deployed digest by
+the `Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` argument (`IsPolyTime`
+prices answer SIZE; a `Classical.choice` `.pure`-leaf answering a fixed two-roster short collision is
+in the class and wins with probability `1`), and no `Eff` repairs the fixed-hash game
+(`Crypto.RomBindingReduction`'s header). It is DELETED. The successor lands the floor on a SAMPLED
+oracle, where `KeyedRomFloor.keyedRom_hard` is a THEOREM.
 
-The one per-site fact is the extractor's output size, and it is PROVED, not assumed: the finder writes
-exactly the two rosters the substituter already committed to, so its answer is no larger than the
-substituter's own — growth constants `(1, 0)`. A reduction that THROWS STRUCTURE AWAY cannot blow up. -/
+⚑ THE MODELLING STEP, STATED: the deployed roster digest is idealised as a keyed RANDOM ORACLE at an
+ASYMPTOTIC `Fin (2 ^ l)` width (the real digest is a fixed 256-bit value — no `l` coincides); the
+message domain is the TRUNCATED deployed roster shape — rosters of length at most `m` over a FINITE
+guardian-id space (`RomCarrierSites.BVec`, lossless by `bvecOfList_inj`). The substitution content
+survives as the OPENING shape: the shared `council_commit` register IS a published digest, and the
+substituter's two rosters are two openings of it — `romOpenGame`, the published value in the win
+relation. The extractor that DROPS the two kernel states is the same structure-discarding map as
+`substitutionToCollisionFinder`, now a `mapOut` (budget preserved). The fixed-hash content — §5's
+`Eff`-parametric bound with `hEff` in the open, §7's poles — stays untouched beside it. -/
 
-/-- **THE SUBSTITUTION GAME'S ANSWER ENCODING.** A council substitution costs, to write down, the two
-guardian rosters plus the two kernel states' account sets. Concrete on purpose: the size measure belongs
-to the GAME (`CostAdversary` design commitment 4); a degenerate `sz := 0` would make the extractor's
-output free. -/
-def substitutionAnsSize {Guardian : Type} (D : RosterDeployment Guardian) :
-    AnsSize (rosterSubstitutionGame D) :=
-  fun _ (a : (RecordKernelState × RecordKernelState) × (List Guardian × List Guardian)) =>
-    a.2.1.length + a.2.2.length + (a.1.1.accounts.card + a.1.2.accounts.card)
+section RomSuccessor
 
-/-- **THE COLLISION GAME'S ANSWER ENCODING** — the two claimed colliding rosters. -/
-def rosterAnsSize {Guardian : Type} (D : RosterDeployment Guardian) :
-    AnsSize (rosterCollisionGame D) :=
-  fun _ (p : List Guardian × List Guardian) => p.1.length + p.2.length
+open Dregg2.Crypto.RomCarrierSites
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
 
-/-- **⚑ `hEff` DISCHARGED — the re-grounded council-roster recovery with NO floating efficiency
-parameter.** A council substituter that is EFFICIENT at the game's own answer encoding, put through the
-extractor, yields a roster-digest collision finder that is STILL efficient — so the collision floor at
-`Eff := IsPolyTime` applies to IT, and a guardian SWAP that survives the light client has negligible
-advantage. Governance's keystone no longer rests on an efficiency side condition nobody discharged.
+variable {Guardian : Type}
 
-What remains supplied is the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime, so that
-number is CHARGED in the program's syntax rather than derived. No `PolyBoundedNat` overhead hypothesis
-is taken: the composed overhead's poly-ness follows from the substituter's own bound. -/
-theorem recStateCommit_recovers_council_roster_from_polyTime {Guardian : Type}
-    (D : RosterDeployment Guardian) (A : Adversary (rosterSubstitutionGame D))
-    (hA : IsPolyTime (substitutionAnsSize D) A) (cw bw : ℕ)
-    (hcol : Hard (rosterCollisionGame D) (IsPolyTime (rosterAnsSize D))) :
-    Negl (gameAdv (rosterSubstitutionGame D) A) := by
-  have hEff : IsPolyTime (rosterAnsSize D) (substitutionToCollisionFinder D A) := by
-    poly_time (substitutionAnsSize D) (rosterAnsSize D)
-      (fun _ _ (a : (RecordKernelState × RecordKernelState) × (List Guardian × List Guardian)) =>
-        (a.2.1, a.2.2))
-      cw bw 1 0 hA
-    intro n t a
-    show a.2.1.length + a.2.2.length
-      ≤ 1 * (a.2.1.length + a.2.2.length + (a.1.1.accounts.card + a.1.2.accounts.card)) + 0
-    omega
-  exact recStateCommit_recovers_council_roster_advantage_bound D
-    (IsPolyTime (rosterAnsSize D)) A hEff hcol
+/-- **THE ROSTER ROM FAMILY** — truncated guardian rosters under the ideal `λ`-bit digest, keyed by
+the deployment's OWN tag space. `gFin` is the finite guardian-id space of the truncation (deployed
+guardian ids are felts — a finite space). -/
+abbrev rosterRomFamily (D : RosterDeployment Guardian) (tagDec : DecidableEq D.Tag)
+    (gFin : Fintype Guardian) (m : ℕ) : Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty
+    (fun _ => BVec Guardian m)
+    (fun _ => letI := gFin; letI := D.guardianDecEq; inferInstance)
+    (fun _ => letI := D.guardianDecEq; inferInstance)
+    (fun _ => ⟨(⟨0, Nat.succ_pos m⟩, fun _ => none)⟩)
 
-/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** `Hard (rosterCollisionGame D)
-(IsPolyTime (rosterAnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the
-class, because the answer it writes has size `0` under the game's own encoding. Together with
-`CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
-floor strictly between §7's two poles. -/
-theorem rosterFloor_isPolyTime_inhabited {Guardian : Type} (D : RosterDeployment Guardian) :
-    IsPolyTime (rosterAnsSize D)
-      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit)
-        (fun _ _ => (([] : List Guardian), ([] : List Guardian)))).toAdversary :=
-  isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [rosterAnsSize]⟩
+/-- **THE COUNCIL-ROSTER CARRIER** — commitment `H (t, roster)`; identity encoding, injective on the
+nose (the truncated roster IS the absorbed message). -/
+def rosterRomCarrier (D : RosterDeployment Guardian) (tagDec : DecidableEq D.Tag)
+    (gFin : Fintype Guardian) (m : ℕ) : RomCarrier (rosterRomFamily D tagDec gFin m) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => BVec Guardian m)
+    (fun _ => letI := gFin; letI := D.guardianDecEq; inferInstance)
+    (fun _ _ v => v) (fun _ _ _ _ h => h)
+
+/-- The council-roster opening game at the sampled oracle: one PUBLISHED `council_commit` value,
+opened by two DISTINCT truncated rosters. -/
+abbrev rosterOpenRomGame (D : RosterDeployment Guardian) (tagDec : DecidableEq D.Tag)
+    (gFin : Fintype Guardian) (m : ℕ) : Game :=
+  romOpenGame (rosterRomFamily D tagDec gFin m) (rosterRomCarrier D tagDec gFin m)
+
+/-- **⚑ THE SUBSTITUTION IS AN OPENING BREAK (at the sampled oracle).** Two DISTINCT truncated
+rosters that both hash (under the sampled oracle, at one tag) to ONE published `council_commit`
+register value ARE a win of the opening game — `substitution_win_of_root_attack`'s content with the
+kernel states discharged into the published value. -/
+theorem councilSubstitutionRom_is_open_break (D : RosterDeployment Guardian)
+    (tagDec : DecidableEq D.Tag) (gFin : Fintype Guardian) (m : ℕ) (l : ℕ)
+    (H : (rosterOpenRomGame D tagDec gFin m).Inst l) (t : D.Tag)
+    {v w : BVec Guardian m} (hne : v ≠ w)
+    (c : (rosterRomFamily D tagDec gFin m).toRomFamily.R l)
+    (hv : H (t, v) = c) (hw : H (t, w) = c) :
+    (rosterOpenRomGame D tagDec gFin m).wins l H (c, ((t, ()), v, w)) :=
+  ⟨hne, hv, hw⟩
+
+/-- **⚑⚑ THE DISCHARGED COUNCIL-ROSTER BINDING — ON THE PROVED FLOOR.** The successor of the deleted
+`recStateCommit_recovers_council_roster_from_polyTime`: every query-bounded adversary that publishes
+one `council_commit` value and opens it with two DISTINCT truncated rosters has NEGLIGIBLE advantage
+— a guardian SWAP that survives the light client's root recovery is negligible, in the keyed ROM
+model of the §-header. NO floor hypothesis, NO cost model. -/
+theorem recStateCommit_recovers_council_roster_rom (D : RosterDeployment Guardian)
+    (tagDec : DecidableEq D.Tag) (gFin : Fintype Guardian) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rosterOpenRomGame D tagDec gFin m))
+    (hA : RomOpenEff (rosterRomFamily D tagDec gFin m) (rosterRomCarrier D tagDec gFin m) Q A) :
+    Negl (gameAdv (rosterOpenRomGame D tagDec gFin m) A) :=
+  flat_open_binds D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _
+    (rosterRomCarrier D tagDec gFin m) Q hQ A hA
+
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED, not excluded.)** The `0`-query constant
+opener is IN the class at every budget, WINS at the constant oracle on distinct rosters, and its
+advantage against the SAMPLED oracle is NEGLIGIBLE. -/
+theorem rosterRom_constOpen_defanged (D : RosterDeployment Guardian)
+    (tagDec : DecidableEq D.Tag) (gFin : Fintype Guardian) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (r : ∀ l, (rosterRomFamily D tagDec gFin m).toRomFamily.R l)
+    (c : ∀ l, (rosterRomCarrier D tagDec gFin m).Ctx l)
+    (v w : ∀ l, (rosterRomCarrier D tagDec gFin m).Val l) :
+    RomOpenEff (rosterRomFamily D tagDec gFin m) (rosterRomCarrier D tagDec gFin m) Q
+        (romOpenAdv _ _ (constOpenComp _ _ r c v w))
+      ∧ Negl (gameAdv (rosterOpenRomGame D tagDec gFin m)
+        (romOpenAdv _ _ (constOpenComp _ _ r c v w)))
+      ∧ ∀ l, v l ≠ w l → 0 < gameAdv (rosterOpenRomGame D tagDec gFin m)
+        (romOpenAdv _ _ (constOpenComp _ _ r c v w)) l :=
+  ⟨constOpen_in_eff _ _ r c v w Q,
+    constOpen_binds _ _ r c v w Q hQ
+      (flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _),
+    fun l hvw => constOpen_gameAdv_pos _ _ r c v w l hvw⟩
+
+/-- **(TOOTH — a non-negligible opener is OUTSIDE the class.)** -/
+theorem rosterRom_nonNegl_opener_excluded (D : RosterDeployment Guardian)
+    (tagDec : DecidableEq D.Tag) (gFin : Fintype Guardian) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (rosterOpenRomGame D tagDec gFin m))
+    (hnn : ¬ Negl (gameAdv (rosterOpenRomGame D tagDec gFin m) A)) :
+    ¬ RomOpenEff (rosterRomFamily D tagDec gFin m) (rosterRomCarrier D tagDec gFin m) Q A :=
+  romOpen_forger_excluded _ _ Q hQ
+    (flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _) A hnn
+
+end RomSuccessor
 
 #assert_all_clean [
-  recStateCommit_recovers_council_roster_from_polyTime,
-  rosterFloor_isPolyTime_inhabited
+  councilSubstitutionRom_is_open_break,
+  recStateCommit_recovers_council_roster_rom,
+  rosterRom_constOpen_defanged,
+  rosterRom_nonNegl_opener_excluded
 ]
 
 #assert_all_clean [

@@ -71,10 +71,11 @@ import Dregg2.Tactics.ThreadAdvantageBound
 import Dregg2.Circuit.OodCommitmentBinding
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.SpongeCarrierReduction
+import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.FloorRegroundedConsumers
 
-open Dregg2.Crypto.ConcreteSecurity (Negl negl_add negl_const_mul negl_finset_sum negl_zero)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded negl_add negl_const_mul negl_finset_sum negl_zero)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR
    brokenFamily brokenFamily_not_CR)
@@ -83,9 +84,8 @@ open Dregg2.Crypto.FloorGames
    collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing hard_bot_vacuous)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeKeyed SpongeCarrier IsSpongeColl spongeFamily carrierBreakGame carrierBreakToFinder
-   carrier_binds_advantage_bound carrier_binds_from_polyTime carrierAnsSize spongeAnsSize
+   carrier_binds_advantage_bound
    carrierFloor_top_false_babyBear carrierFloor_bot_vacuous)
-open Dregg2.Crypto.CostAdversary (IsPolyTime)
 open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ)
 
 set_option autoImplicit false
@@ -121,12 +121,15 @@ shape `Market.WideCommitBoundary` established for the wide carrier:
     it walks the path and LOCATES the colliding node, where the old proof assumed injectivity and peeled;
   * the advantage inequality (`carrier_adv_le`) quantifies over ALL adversaries — the class does not
     appear in it;
-  * the conclusion is under the NAMED floor `HashCRHardQuant (spongeFamily D) Eff` at `Eff := IsPolyTime`,
-    with `hEff` DISCHARGED by `CostTactics.poly_time` off the proved output bound
-    (`merklePathCollFind_len_le`), not carried as a floating parameter.
+  * the DISCHARGED conclusion (2026-07-24) is on the KEYED-ROM floor, which is PROVED
+    (`KeyedRomFloor.keyedRom_hard`, the birthday bound): the `_binds_rom` forms of §2–§6. The
+    `IsPolyTime` discharges that briefly stood here carried a floor
+    `Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES, and are
+    deleted; only the `Eff`-parametric fixed-hash forms (`hEff` in the open) remain beside the ROM
+    successors, as the honest fixed-hash content.
 
 ⚑ **TWO OF THE EIGHT ARE NOT REBUILT, AND ARE NOT FAKED.** `committedTrace_pinned` and
-`recStateCommit_root` are documented at §5 and §6 with their precise blockers; the honest statements
+`recStateCommit_root` are documented at §7 with their precise blockers; the honest statements
 that ARE available for them are exported there. Do not read their absence as an oversight. -/
 
 /-! ## §1 — the MERKLE-OPENING EXTRACTOR: the induction, turned inside out.
@@ -285,26 +288,63 @@ the honest committed value, both recomputing to one root, are EQUAL — under in
 instead: an efficient adversary that makes them DISAGREE has negligible advantage, because it would be a
 collision finder for the deployed sponge, by §1's extractor. -/
 
-/-- **⚑ RE-GROUNDED `commitmentOpening_binds_of_poseidon2CR` — the OOD opening binds, as a REDUCTION.**
+/-! ### The keyed-ROM successors — the DISCHARGED headlines, on a floor that is PROVED.
 
-Under the DEPLOYED sponge's collision floor at `Eff := IsPolyTime`, an efficient adversary that opens one
-committed OOD/Merkle root at one query to two DISTINCT values has NEGLIGIBLE advantage. Combined with
-`opening_binds_off_break`, "opens ⟹ equal" becomes "opens ⟹ equal except with negligible probability" —
-with the equivocation IN the statement and the extractor connecting it to the floor.
+⚑ **WHAT WAS DELETED HERE (2026-07-24), AND WHY.** The five discharged bounds this section used to
+export (`oodCommitmentOpening_advantage_bound`, `friOracle_binding_advantage_bound`,
+`friStark_fold_advantage_bound`, `lightclientUnfoolable_advantage_bound`,
+`algoStarkSound_tower_advantage_bound`) closed their floor at
+`HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))` — and
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` PROVES that floor FALSE at
+deployed BabyBear parameters (`IsPolyTime` prices answer SIZE, so a `Classical.choice` `.pure`-leaf
+answering a short collision is in the class and wins with probability `1`). Nor can a better `Eff`
+repair the fixed-hash game (`Crypto.RomBindingReduction`'s header): the fixed public sponge can be
+brute-forced by anything allowed to evaluate it. The floor must move to a SAMPLED oracle, where the
+birthday bound is a THEOREM (`KeyedRomFloor.keyedRom_hard`). The successors below are that move, on
+`Crypto.RomMerkleOpening`'s walking-extractor kit; the `Eff`-parametric forms (§2's
+`merkleRecomputeZ_advantage_bound`, §9) remain as the honest fixed-hash content, `hEff` in the open.
 
-`hEff` is DISCHARGED, not carried: the only per-site input is the reshaper's declared work `(cw, bw)`
-(a Lean function has no runtime); the output-growth slot is `merklePathCollFind_len_le`. -/
-theorem oodCommitmentOpening_advantage_bound (D : SpongeKeyed)
-    (A : Adversary (merkleOpenBreakGame D))
-    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (merkleOpenBreakGame D) A) :=
-  carrier_binds_from_polyTime D merkleOpenCarrier A hA cw bw hCR
+⚑ **THE MODELLING STEP, STATED (not smuggled), exactly `RomMerkleOpening`'s header:** the fixed
+Poseidon2 node hash is idealised as a keyed RANDOM ORACLE over ordered node pairs at an ASYMPTOTIC
+digest width `Fin (2 ^ l)` — there is NO `l` at which that is the deployed ~31-bit BabyBear felt, and
+at the deployed width the honest reading stays "binds exactly as well as ~31 bits allow" (birthday
+≈ `2^15.5`, the felt-width wound). The depth `d` is pinned per parameter, as deployed: a committed
+tree has a fixed height. -/
+
+/-- **THE MERKLE-OPENING FORGERY GAME AT THE SAMPLED ORACLE** — `merkleOpenBreakGame`'s win relation
+(one root, one shared index-bit/sibling path, TWO DISTINCT opened leaves), transposed to the oracle
+model, keyed by the DEPLOYED sponge's own tag space. -/
+abbrev merkleOpenRomBreakGame (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (d : ℕ → ℕ) : Game :=
+  Dregg2.Crypto.RomMerkleOpening.merkleOpenRomGame D.Tag D.tagFintype tagDec D.tagNonempty d
+
+/-- **THE QUERY-BOUNDED OPENING-FORGER CLASS at this site** — the fixed `Eff` the successors close
+at: the forger factors through a `Q`-query oracle tree fixed BEFORE the oracle is sampled. -/
+abbrev MerkleOpenRomEff (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (d Q : ℕ → ℕ) :
+    Adversary (merkleOpenRomBreakGame D tagDec d) → Prop :=
+  Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+    (Dregg2.Crypto.RomMerkleOpening.merkleRomFamily D.Tag D.tagFintype tagDec D.tagNonempty)
+    (Dregg2.Crypto.RomMerkleOpening.merkleOpenForgery D.Tag D.tagFintype tagDec D.tagNonempty d) Q
+
+/-- **⚑⚑ THE OOD / MERKLE-OPENING BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the
+deleted `oodCommitmentOpening_advantage_bound` (floor refuted, §-header): a query-bounded forger that
+opens one committed OOD/Merkle root at one query to two DISTINCT leaves has NEGLIGIBLE advantage, in
+the keyed ROM model. The hypotheses are a polynomial total budget `Q'` dominating the forger's `Q`
+plus the extractor's `2·d` re-walk — nothing refutable. Combined with `opening_binds_off_break`,
+"opens ⟹ equal" stays "opens ⟹ equal except with negligible probability". -/
+theorem oodCommitmentOpening_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (merkleOpenRomBreakGame D tagDec d))
+    (hA : MerkleOpenRomEff D tagDec d Q A) :
+    Negl (gameAdv (merkleOpenRomBreakGame D tagDec d) A) :=
+  Dregg2.Crypto.RomMerkleOpening.merkleOpenRom_binds
+    D.Tag D.tagFintype tagDec D.tagNonempty d Q Q' hle hQ' A hA
 
 /-- **⚑ RE-GROUNDED `merkleRecomputeZ_binds` — the raw path recompute binds, as a REDUCTION.** The same
 spine at the general path-equivocation adversary, stated at an ARBITRARY adversary class so a consumer
 that has not yet instantiated `Eff` can still land on it (`hEff` in the open, `FloorGames` §8). The
-`IsPolyTime` instance is `oodCommitmentOpening_advantage_bound` above. -/
+DISCHARGED instance is `oodCommitmentOpening_binds_rom` above — on the keyed-ROM floor, not on the
+refuted `IsPolyTime` one. -/
 theorem merkleRecomputeZ_advantage_bound (D : SpongeKeyed)
     (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
     (pathEquivocator : Adversary (merkleOpenBreakGame D))
@@ -328,16 +368,18 @@ per-query opening IS the deployed object, and it is what §3 bounds.
 Proving it needs `FriSoundness` to be re-stated over the concrete Merkle commitment — real work, in a
 file this lane does not own. Named, not smuggled. -/
 
-/-- **⚑ RE-GROUNDED `FriSoundness.oracle_binding` — the per-query FRI layer opening binds, as a
-REDUCTION.** An efficient adversary that opens one committed FRI layer root at one query to two distinct
-evaluations has negligible advantage under the deployed sponge's collision floor. See the §3 header for
-exactly which step is modelled and which is proved. -/
-theorem friOracle_binding_advantage_bound (D : SpongeKeyed)
-    (oracleEquivocator : Adversary (merkleOpenBreakGame D))
-    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) oracleEquivocator) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (merkleOpenBreakGame D) oracleEquivocator) :=
-  carrier_binds_from_polyTime D merkleOpenCarrier oracleEquivocator hA cw bw hCR
+/-- **⚑ RE-GROUNDED `FriSoundness.oracle_binding` — the per-query FRI layer opening binds, ON THE
+PROVED FLOOR** — the successor of the deleted `friOracle_binding_advantage_bound`: a query-bounded
+adversary that opens one committed FRI layer root at one query to two distinct evaluations has
+negligible advantage in the keyed ROM model. See the §3 header for exactly which step is modelled and
+which is proved — that identification is unchanged by the floor move. -/
+theorem friOracle_binding_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (oracleEquivocator : Adversary (merkleOpenRomBreakGame D tagDec d))
+    (hA : MerkleOpenRomEff D tagDec d Q oracleEquivocator) :
+    Negl (gameAdv (merkleOpenRomBreakGame D tagDec d) oracleEquivocator) :=
+  oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' oracleEquivocator hA
 
 /-! ## §4 — MULTI-ROUND FRI/STARK fold: the union bound over REAL per-round games.
 
@@ -346,17 +388,21 @@ equivocation is now a genuine `merkleOpenBreakGame` win at that round's own adve
 binding-failure advantage is the finite SUM of REAL game advantages — negligible by the union bound.
 The old version summed `collisionAdv F (roundEquivocator r)`, i.e. summed the hypothesis. -/
 
-/-- **⚑ RE-GROUNDED FRI/STARK multi-round binding.** The total opening-binding failure advantage across
-the `rounds` Merkle checks is a finite sum of PER-ROUND MERKLE-OPENING GAME advantages, negligible under
-the deployed sponge's collision floor. Each round carries its own efficiency, discharged. -/
-theorem friStark_fold_advantage_bound (D : SpongeKeyed) (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → Adversary (merkleOpenBreakGame D))
-    (hA : ∀ r ∈ rounds, IsPolyTime (carrierAnsSize D merkleOpenCarrier) (roundEquivocator r))
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (fun n => ∑ r ∈ rounds, gameAdv (merkleOpenBreakGame D) (roundEquivocator r) n) :=
+/-- **⚑ RE-GROUNDED FRI/STARK multi-round binding, ON THE PROVED FLOOR** — the successor of the
+deleted `friStark_fold_advantage_bound`: the total opening-binding failure advantage across the
+`rounds` Merkle checks is a finite sum of PER-ROUND MERKLE-OPENING GAME advantages at the sampled
+oracle, negligible by the union bound. Each round's equivocator carries its own query-class
+membership. -/
+theorem friStark_fold_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (rounds : Finset ℕ)
+    (roundEquivocator : ℕ → Adversary (merkleOpenRomBreakGame D tagDec d))
+    (hA : ∀ r ∈ rounds, MerkleOpenRomEff D tagDec d Q (roundEquivocator r)) :
+    Negl (fun n => ∑ r ∈ rounds,
+      gameAdv (merkleOpenRomBreakGame D tagDec d) (roundEquivocator r) n) :=
   negl_finset_sum rounds (fun r hr =>
-    carrier_binds_from_polyTime D merkleOpenCarrier (roundEquivocator r) (hA r hr) cw bw hCR)
+    oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' (roundEquivocator r) (hA r hr))
 
 /-! ## §5 — the APEX two-hash sum, AS A REDUCTION.
 
@@ -374,36 +420,42 @@ advantage. It is not the whole light-client soundness — the FRI proximity leg 
 residual (`AirSoundness`'s `FriProximity`), and the ~31-bit felt width of the digest means the collision
 game itself is winnable in ~2^15.5 work by birthday search. What is closed is that this leg now rests on
 a floor the deployed sponge does not REFUTE, instead of one it does. -/
-theorem lightclientUnfoolable_advantage_bound (D : SpongeKeyed)
-    (traceEquivocator oodEquivocator : Adversary (merkleOpenBreakGame D))
-    (hT : IsPolyTime (carrierAnsSize D merkleOpenCarrier) traceEquivocator)
-    (hO : IsPolyTime (carrierAnsSize D merkleOpenCarrier) oodEquivocator) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (fun n => gameAdv (merkleOpenBreakGame D) traceEquivocator n
-        + gameAdv (merkleOpenBreakGame D) oodEquivocator n) :=
-  negl_add (carrier_binds_from_polyTime D merkleOpenCarrier traceEquivocator hT cw bw hCR)
-    (carrier_binds_from_polyTime D merkleOpenCarrier oodEquivocator hO cw bw hCR)
+theorem lightclientUnfoolable_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (traceEquivocator oodEquivocator : Adversary (merkleOpenRomBreakGame D tagDec d))
+    (hT : MerkleOpenRomEff D tagDec d Q traceEquivocator)
+    (hO : MerkleOpenRomEff D tagDec d Q oodEquivocator) :
+    Negl (fun n => gameAdv (merkleOpenRomBreakGame D tagDec d) traceEquivocator n
+        + gameAdv (merkleOpenRomBreakGame D tagDec d) oodEquivocator n) :=
+  negl_add (oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' traceEquivocator hT)
+    (oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' oodEquivocator hO)
 
-/-! ## §6 — the MIXED `AlgoStarkSound*` tower, AS A REDUCTION. -/
+/-! ## §6 — the MIXED `AlgoStarkSound*` tower, AS A REDUCTION, ON THE PROVED FLOOR. -/
 
-/-- **⚑ RE-GROUNDED `AlgoStarkSound*` binding tower.** The composite STARK soundness-error advantage
-`c · (de-batch equivocation) + ∑_{r ∈ rounds} (per-round equivocation) + 0` is negligible under the
-deployed sponge's collision floor — const-scale, finite-sum, zero, every collision leg through a REAL
-per-leg Merkle-opening game rather than through the hypothesis. -/
-theorem algoStarkSound_tower_advantage_bound (D : SpongeKeyed)
-    (c : ℝ) (debatchEquivocator : Adversary (merkleOpenBreakGame D)) (rounds : Finset ℕ)
-    (roundEquivocator : ℕ → Adversary (merkleOpenBreakGame D))
-    (hD : IsPolyTime (carrierAnsSize D merkleOpenCarrier) debatchEquivocator)
-    (hA : ∀ r ∈ rounds, IsPolyTime (carrierAnsSize D merkleOpenCarrier) (roundEquivocator r))
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (fun n => c * gameAdv (merkleOpenBreakGame D) debatchEquivocator n
-        + (∑ r ∈ rounds, gameAdv (merkleOpenBreakGame D) (roundEquivocator r) n) + 0) :=
+/-- **⚑ RE-GROUNDED `AlgoStarkSound*` binding tower** — the successor of the deleted
+`algoStarkSound_tower_advantage_bound` (whose `IsPolyTime` floor §-header refutes): the composite
+STARK soundness-error advantage `c · (de-batch equivocation) + ∑_{r ∈ rounds} (per-round
+equivocation) + 0` is negligible in the keyed ROM model — const-scale (`negl_const_mul`), finite-sum
+(`negl_finset_sum` inside `friStark_fold_binds_rom`), zero (`negl_zero`), every collision leg through
+a REAL per-leg Merkle-opening game at the SAMPLED oracle, each equivocator carrying its own
+query-class membership. NO floor hypothesis is carried; the floor is `keyedRom_hard`, PROVED. -/
+theorem algoStarkSound_tower_binds_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (c : ℝ) (debatchEquivocator : Adversary (merkleOpenRomBreakGame D tagDec d))
+    (rounds : Finset ℕ)
+    (roundEquivocator : ℕ → Adversary (merkleOpenRomBreakGame D tagDec d))
+    (hD : MerkleOpenRomEff D tagDec d Q debatchEquivocator)
+    (hA : ∀ r ∈ rounds, MerkleOpenRomEff D tagDec d Q (roundEquivocator r)) :
+    Negl (fun n => c * gameAdv (merkleOpenRomBreakGame D tagDec d) debatchEquivocator n
+        + (∑ r ∈ rounds, gameAdv (merkleOpenRomBreakGame D tagDec d) (roundEquivocator r) n)
+        + 0) :=
   negl_add
     (negl_add
       (negl_const_mul c
-        (carrier_binds_from_polyTime D merkleOpenCarrier debatchEquivocator hD cw bw hCR))
-      (friStark_fold_advantage_bound D rounds roundEquivocator hA cw bw hCR))
+        (oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' debatchEquivocator hD))
+      (friStark_fold_binds_rom D tagDec d Q Q' hle hQ' rounds roundEquivocator hA))
     negl_zero
 
 /-! ## §7 — ⚑ THE TWO SITES THAT ARE **NOT** REBUILT, AND WHY (BLOCKED, NOT FAKED).
@@ -470,25 +522,43 @@ example (D : SpongeKeyed) (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
     (have : Negl (gameAdv (merkleOpenBreakGame D) A) := hCR B hB)
   trivial
 
-/-- **(CANARY — the EFFICIENCY hypothesis is load-bearing, not decorative.)** The rebuilt bound cannot be
-had from the floor alone: without `hA` (the forger is efficient at the game's own answer encoding) there
-is nothing to put the extractor through, and the application does not elaborate. The retired `P → P` form
-needed no such hypothesis precisely because it did no work. -/
-example (D : SpongeKeyed) (A : Adversary (merkleOpenBreakGame D))
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) : True := by
+/-- **(CANARY — the QUERY-CLASS hypothesis is load-bearing, not decorative.)** The rebuilt ROM bound
+cannot be had without `hA` (the forger factors through a `Q`-query tree): `trivial` does not prove the
+existential class membership, and the application does not elaborate. The retired `P → P` form needed
+no such hypothesis precisely because it did no work. -/
+example (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ)
+    (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (merkleOpenRomBreakGame D tagDec d)) : True := by
   fail_if_success
-    (have : Negl (gameAdv (merkleOpenBreakGame D) A) :=
-      oodCommitmentOpening_advantage_bound D A trivial 0 0 hCR)
+    (have : Negl (gameAdv (merkleOpenRomBreakGame D tagDec d) A) :=
+      oodCommitmentOpening_binds_rom D tagDec d Q Q' hle hQ' A trivial)
   trivial
 
-/-- **THE POSITIVE POLE — the RIGHT hypotheses DO discharge it.** A gate that refuses everything is a
-broken keystone, not a fixed one: with the forger efficient and the floor at `IsPolyTime`, the OOD
-opening bound fires. -/
-theorem the_rebuilt_opening_bound_fires (D : SpongeKeyed) (A : Adversary (merkleOpenBreakGame D))
-    (hA : IsPolyTime (carrierAnsSize D merkleOpenCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (merkleOpenBreakGame D) A) :=
-  oodCommitmentOpening_advantage_bound D A hA cw bw hCR
+/-- **THE POSITIVE POLE — the rebuilt bound FIRES, on an ADMITTED member of the class.** A gate that
+refuses everything is a broken keystone, not a fixed one. The `0`-query constant answerer — the exact
+shape that refutes the `IsPolyTime` floor with probability `1` against the fixed sponge — is IN the
+query class (`constOpenAdv_in_eff`), WINS at the constant oracle when the depth is positive and the
+leaves distinct (`constOpenAdv_gameAdv_pos` — the game is genuinely winnable), and the discharged
+bound applies to it: NEGLIGIBLE advantage. Admitted, positive, defanged — the counterexample dying at
+this site, with no `IsPolyTime` anywhere. -/
+theorem the_rebuilt_opening_bound_fires (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : PolyBounded (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (c : ∀ l, D.Tag × (Fin (d l) → Bool × Fin (2 ^ l))) (v w : ∀ l, Fin (2 ^ l)) :
+    MerkleOpenRomEff D tagDec d Q
+        (Dregg2.Crypto.RomMerkleOpening.constOpenAdv D.Tag D.tagFintype tagDec D.tagNonempty d c v w)
+      ∧ Negl (gameAdv (merkleOpenRomBreakGame D tagDec d)
+        (Dregg2.Crypto.RomMerkleOpening.constOpenAdv D.Tag D.tagFintype tagDec D.tagNonempty d c v w))
+      ∧ ∀ l, 1 ≤ d l → v l ≠ w l →
+        0 < gameAdv (merkleOpenRomBreakGame D tagDec d)
+          (Dregg2.Crypto.RomMerkleOpening.constOpenAdv D.Tag D.tagFintype tagDec D.tagNonempty d c v w) l :=
+  ⟨Dregg2.Crypto.RomMerkleOpening.constOpenAdv_in_eff D.Tag D.tagFintype tagDec D.tagNonempty
+      d c v w Q,
+    Dregg2.Crypto.RomMerkleOpening.constOpenAdv_negl D.Tag D.tagFintype tagDec D.tagNonempty
+      d Q Q' hle hQ' c v w,
+    fun l hd hvw => Dregg2.Crypto.RomMerkleOpening.constOpenAdv_gameAdv_pos
+      D.Tag D.tagFintype tagDec D.tagNonempty d c v w l hd hvw⟩
 
 /-! ## §9 — ⚑ the `Eff`-CARRYING re-grounding (FINDING-2 of the 07-17 sweep).
 
@@ -639,12 +709,12 @@ theorem the_repaired_apex_fires_on_the_right_floor {F : KeyedHashFamily}
   merklePathCollFind_len_le,
   opening_equivocation_is_break,
   opening_binds_off_break,
-  oodCommitmentOpening_advantage_bound,
+  oodCommitmentOpening_binds_rom,
   merkleRecomputeZ_advantage_bound,
-  friOracle_binding_advantage_bound,
-  friStark_fold_advantage_bound,
-  lightclientUnfoolable_advantage_bound,
-  algoStarkSound_tower_advantage_bound,
+  friOracle_binding_binds_rom,
+  friStark_fold_binds_rom,
+  lightclientUnfoolable_binds_rom,
+  algoStarkSound_tower_binds_rom,
   merkleFloor_top_false_babyBear,
   merkleFloor_bot_vacuous,
   the_rebuilt_opening_bound_fires,

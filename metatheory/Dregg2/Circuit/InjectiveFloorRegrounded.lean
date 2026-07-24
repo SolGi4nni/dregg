@@ -96,6 +96,7 @@ import Dregg2.Circuit.VacuitySweepTeeth
 import Dregg2.Circuit.CommitDifferential
 import Dregg2.Circuit.DeployedCapTree
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
+import Dregg2.Crypto.RomCarrierSites
 
 namespace Dregg2.Circuit.InjectiveFloorRegrounded
 
@@ -866,6 +867,19 @@ The instantiated class is pinned STRICTLY BETWEEN the two poles §1.4/§2.5/§3.
 (each family's `_isPolyTime_inhabited` tooth below puts the constant finder in it) and it is not `⊤`
 (`CostAdversary.bruteForce_not_polyTime` excludes the scanning solver that collapses every floor). -/
 
+/-! ⚑ **STATUS OF THIS SECTION (2026-07-24).** The `node8`/leaf discharges below are REPOINTED onto
+the keyed-ROM floor (§4.1's `RomSuccessor` section) and their `IsPolyTime` forms DELETED — that floor
+class is refuted (`sysRoots_floor_polyTime_false_babyBear`). The remaining TWO `_from_polyTime`
+discharges (`effectVmCommit_binds_all_from_polyTime` §4.2, `wireCommitR8_binds_from_polyTime` §4.4)
+are NOT yet repointed and are KNOWN to carry that refuted floor — left in place rather than deleted
+without a built replacement. Their successors need genuine construction, not a hypothesis swap: the
+cell commitment is a TWO-LEVEL `h4` nest (three inner quads + an outer quad absorbing the authority
+residue — the `EffectVmRowCommitReduction.effectVmNarrowRomForgery` chain shape, which must first be
+generalised from `SpongeKeyed` to a bare tag space to be instantiable at `H4Keyed`), and the wire
+commitment is an 11-step CHAIN whose walking extractor is `Crypto.RomChainedReduction`'s
+`RomChainedCarrier` shape (blocks = the `chunk31` schedule, accumulator = the iroot). Both are
+mechanical on existing kit and on the repoint work-list; neither is a refutation tooth. -/
+
 /-! ### §4.1 — the arity-16 chip: `node8` and the leaf. -/
 
 /-- **THE CHIP COLLISION GAME'S ANSWER ENCODING** — the two claimed absorbed blocks, at their genuine
@@ -873,14 +887,6 @@ lengths. Concrete on purpose: the size measure belongs to the GAME (`CostAdversa
 leaving it open would let a degenerate `sz := 0` make the reduction's output free again. -/
 def chip8AnsSize (D : Chip8Keyed) : AnsSize (hashGame (chip8Family D)) :=
   fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
-
-/-- **THE `node8` GAME'S ANSWER ENCODING** — four 8-felt digests, `32` felts to write down. -/
-def node8AnsSize (D : Chip8Keyed) : AnsSize (node8BreakGame D) :=
-  fun _ (_ : (Digest8 × Digest8) × (Digest8 × Digest8)) => 32
-
-/-- **THE LEAF GAME'S ANSWER ENCODING** — two 7-field `CapLeaf`s. -/
-def leaf8AnsSize (D : Chip8Keyed) : AnsSize (leaf8BreakGame D) :=
-  fun _ (_ : CapLeaf × CapLeaf) => 14
 
 /-- The deployed pack is exactly the two 8-felt children concatenated — the extractor's output size,
 proved off `pack8` rather than assumed. -/
@@ -890,42 +896,128 @@ theorem pack8_length (l r : Digest8) : (pack8 l r).length = 16 := by
 /-- The deployed leaf block is exactly the seven `cap_root.rs` fields. -/
 theorem leafFields_length (l : CapLeaf) : (leafFields l).length = 7 := rfl
 
-/-- **⚑ `hEff` DISCHARGED for the `node8` binding.** A `node8`-injectivity breaker that is EFFICIENT at
-the game's own answer encoding, put through the `pack8` extractor, yields a chip-collision finder that is
-STILL efficient — so the chip's collision floor at `Eff := IsPolyTime` applies to IT, and the breaker's
-advantage is negligible. `hEff` is PROVED, not assumed; the only modelling input left is the reshaper's
-declared work `(cw, bw)`. -/
-theorem node8_binds_from_polyTime (D : Chip8Keyed) (A : Adversary (node8BreakGame D))
-    (hA : IsPolyTime (node8AnsSize D) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (chip8Family D) (IsPolyTime (chip8AnsSize D))) :
-    Negl (gameAdv (node8BreakGame D) A) := by
-  have hEff : IsPolyTime (chip8AnsSize D) (node8BreakToFinder D A) := by
-    poly_time (node8AnsSize D) (chip8AnsSize D)
-      (fun _ _ (c : (Digest8 × Digest8) × (Digest8 × Digest8)) =>
-        (pack8 c.1.1 c.1.2, pack8 c.2.1 c.2.2))
-      cw bw 0 32 hA
-    intro l t c
-    show (pack8 c.1.1 c.1.2).length + (pack8 c.2.1 c.2.2).length
-      ≤ 0 * (node8AnsSize D l c) + 32
-    rw [pack8_length, pack8_length]
-    omega
-  exact node8_injective_advantage_bound D (IsPolyTime (chip8AnsSize D)) A hEff hCR
+/-! ### ⚑ THE DISCHARGED `node8`/leaf HEADLINES, ON THE PROVED KEYED-ROM FLOOR.
 
-/-- **⚑ `hEff` DISCHARGED for the leaf binding.** Same one call; the output bound is the seven
-`leafFields`. -/
-theorem leaf8_binds_from_polyTime (D : Chip8Keyed) (A : Adversary (leaf8BreakGame D))
-    (hA : IsPolyTime (leaf8AnsSize D) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (chip8Family D) (IsPolyTime (chip8AnsSize D))) :
-    Negl (gameAdv (leaf8BreakGame D) A) := by
-  have hEff : IsPolyTime (chip8AnsSize D) (leaf8BreakToFinder D A) := by
-    poly_time (leaf8AnsSize D) (chip8AnsSize D)
-      (fun _ _ (c : CapLeaf × CapLeaf) => (leafFields c.1, leafFields c.2))
-      cw bw 0 14 hA
-    intro l t c
-    show (leafFields c.1).length + (leafFields c.2).length ≤ 0 * (leaf8AnsSize D l c) + 14
-    rw [leafFields_length, leafFields_length]
-    omega
-  exact leaf8_injective_advantage_bound D (IsPolyTime (chip8AnsSize D)) A hEff hCR
+The `IsPolyTime` discharges that stood here (`node8_binds_from_polyTime`,
+`leaf8_binds_from_polyTime`) carried `HashCRHardQuant (chip8Family D) (IsPolyTime …)` — the floor
+class `Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes (`IsPolyTime`
+prices answer SIZE; a `Classical.choice` `.pure`-leaf answering a fixed short collision of the fixed
+chip is in the class and wins with probability `1`), and no `Eff` repairs the fixed-hash game
+(`Crypto.RomBindingReduction`'s header). DELETED. The successors land on a SAMPLED oracle keyed by
+the chip's OWN tag space, where `KeyedRomFloor.keyedRom_hard` (the birthday bound) is a THEOREM.
+
+⚑ THE MODELLING STEP, STATED: the deployed 8-felt chip digest is idealised as ONE `λ`-bit sampled
+value `Fin (2 ^ l)` (no `l` coincides with the deployed ~248-bit 8-felt digest — the felt-width
+discipline, said out loud); the message domain is the TRUNCATED deployed absorb schedule,
+length-separated exactly as deployed: the 16-felt packed node block (`pack8 l r` — two 8-felt
+children, `Fin.append`) and the 7-felt leaf block, domain-separated by constructor. The fixed-hash
+content — §1/§2's `Eff`-parametric bounds with `hEff` in the open, the extractors, the poles —
+stays untouched beside it. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomCarrierSites hiding babyBearP
+open Dregg2.Crypto.RomBindingReduction
+
+/-- The truncated chip messages: a packed two-child node block (16 range felts, the two 8-felt
+children appended in order) or a 7-felt leaf block. -/
+abbrev Chip8RomMsg : Type :=
+  (Fin (8 + 8) → Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+    ⊕ (Fin 7 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+
+/-- The chip ROM family — keyed by the DEPLOYED chip's own tag space. -/
+abbrev chip8RomFamily (D : Chip8Keyed) (tagDec : DecidableEq D.Tag) :
+    Dregg2.Crypto.KeyedRomFloor.KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => Chip8RomMsg)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inr (fun _ => ⟨0, by norm_num [Dregg2.Crypto.RomCarrierSites.babyBearP]⟩)⟩)
+
+/-- **THE `node8` CARRIER** — commitment `H (t, inl (append l r))`: the node digest binds BOTH
+ordered children. `Fin.append` is the `pack8` layout; its injectivity in the pair is the same
+layout fact `pack8_inj` carries at the deployed lists. -/
+def node8RomCarrier (D : Chip8Keyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (chip8RomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun _ => (Fin 8 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+      × (Fin 8 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP))
+    (fun _ => inferInstance)
+    (fun _ _ v => Sum.inl (Fin.append v.1 v.2))
+    (fun _ _ a b h => by
+      have happ : Fin.append a.1 a.2 = Fin.append b.1 b.2 := Sum.inl_injective h
+      refine Prod.ext (funext fun i => ?_) (funext fun i => ?_)
+      · have := congrFun happ (Fin.castAdd 8 i)
+        rwa [Fin.append_left, Fin.append_left] at this
+      · have := congrFun happ (Fin.natAdd 8 i)
+        rwa [Fin.append_right, Fin.append_right] at this)
+
+/-- **THE LEAF CARRIER** — commitment `H (t, inr leaf)`: the leaf digest binds all seven
+`cap_root.rs` fields (the truncated `leafFields` block; identity embedding, injective on the nose —
+`leafFields_inj`'s content at the truncated widths). -/
+def leaf8RomCarrier (D : Chip8Keyed) (tagDec : DecidableEq D.Tag) :
+    RomCarrier (chip8RomFamily D tagDec) :=
+  taggedCarrier _ (fun _ => Unit)
+    (fun _ => Fin 7 → Fin Dregg2.Crypto.RomCarrierSites.babyBearP)
+    (fun _ => inferInstance)
+    (fun _ _ v => Sum.inr v)
+    (fun _ _ _ _ h => Sum.inr_injective h)
+
+/-- **⚑⚑ THE `node8` BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`node8_binds_from_polyTime`: every query-bounded forger that equivocates one node digest between
+two DISTINCT ordered child pairs has NEGLIGIBLE advantage. NO floor hypothesis. -/
+theorem node8_binds_rom (D : Chip8Keyed) (tagDec : DecidableEq D.Tag) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec)))
+    (hA : RomCarrierEff (chip8RomFamily D tagDec) (node8RomCarrier D tagDec) Q A) :
+    Negl (gameAdv (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec)) A) :=
+  flatSite_binds D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _
+    (node8RomCarrier D tagDec) Q hQ A hA
+
+/-- **⚑⚑ THE LEAF BINDING, DISCHARGED ON THE PROVED FLOOR** — the successor of the deleted
+`leaf8_binds_from_polyTime`. -/
+theorem leaf8_binds_rom (D : Chip8Keyed) (tagDec : DecidableEq D.Tag) (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (chip8RomFamily D tagDec) (leaf8RomCarrier D tagDec)))
+    (hA : RomCarrierEff (chip8RomFamily D tagDec) (leaf8RomCarrier D tagDec) Q A) :
+    Negl (gameAdv (romCarrierGame (chip8RomFamily D tagDec) (leaf8RomCarrier D tagDec)) A) :=
+  flatSite_binds D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _
+    (leaf8RomCarrier D tagDec) Q hQ A hA
+
+/-- **(TOOTH — the admitted refuter-shape is DEFANGED at the node carrier, not excluded.)** The
+`0`-query constant answerer — the exact `IsPolyTime`-refuting shape — is IN the class, WINS at the
+constant oracle on distinct child pairs, and is NEGLIGIBLE against the sampled oracle. -/
+theorem node8Rom_constAnswer_defanged (D : Chip8Keyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (c : ∀ l, (node8RomCarrier D tagDec).Ctx l)
+    (v w : ∀ l, (node8RomCarrier D tagDec).Val l) :
+    RomCarrierEff (chip8RomFamily D tagDec) (node8RomCarrier D tagDec) Q
+        (romCarrierAdv _ _ (constTripleComp _ _ c v w))
+      ∧ Negl (gameAdv (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec))
+        (romCarrierAdv _ _ (constTripleComp _ _ c v w)))
+      ∧ ∀ l, v l ≠ w l →
+        0 < gameAdv (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec))
+          (romCarrierAdv _ _ (constTripleComp _ _ c v w)) l :=
+  ⟨constTriple_in_eff _ _ c v w Q,
+    constTriple_binds _ _ c v w Q hQ
+      (flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _),
+    fun l hvw => constTriple_gameAdv_pos _ _ c v w l hvw⟩
+
+/-- **(TOOTH — a non-negligible node forger is OUTSIDE the class.)** -/
+theorem node8Rom_nonNegl_forger_excluded (D : Chip8Keyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ)
+    (hQ : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec)))
+    (hnn : ¬ Negl (gameAdv
+      (romCarrierGame (chip8RomFamily D tagDec) (node8RomCarrier D tagDec)) A)) :
+    ¬ RomCarrierEff (chip8RomFamily D tagDec) (node8RomCarrier D tagDec) Q A :=
+  romCarrier_choiceForger_excluded _ _ Q hQ
+    (flatFamily_card_R D.Tag D.tagFintype tagDec D.tagNonempty _ _ _ _) A hnn
+
+end RomSuccessor
 
 /-- **(TOOTH — the class the chip floor is instantiated at is NOT EMPTY.)** `HashCRHardQuant (chip8Family
 D) (IsPolyTime (chip8AnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the
@@ -1111,8 +1203,10 @@ theorem wideFloor_isPolyTime_inhabited (D : WideKeyed) :
 #assert_all_clean [
   pack8_length,
   leafFields_length,
-  node8_binds_from_polyTime,
-  leaf8_binds_from_polyTime,
+  node8_binds_rom,
+  leaf8_binds_rom,
+  node8Rom_constAnswer_defanged,
+  node8Rom_nonNegl_forger_excluded,
   chip8Floor_isPolyTime_inhabited,
   effectVmCommit_binds_all_from_polyTime,
   h4Floor_isPolyTime_inhabited,

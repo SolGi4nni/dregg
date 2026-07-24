@@ -77,6 +77,7 @@ import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.CostTactics
+import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.FriCompressRegrounded
 
@@ -636,49 +637,40 @@ theorem peelPath_len_le {F : Type} [DecidableEq F] (compress : List F → List F
           rw [hpp]
           exact ih (idx / 2) _ _ (hw _ _) (hw _ _) hrest
 
-/-- **⚑ `hEff` DISCHARGED — the re-grounded `merkleRecompute_binds` with NO floating efficiency
-parameter.** A Merkle forger that is EFFICIENT at the game's own answer encoding, put through the path
-peel, yields a compression-collision finder that is STILL efficient — so the collision floor at
-`Eff := IsPolyTime` applies to IT, and a FRI query opened to a forged leaf has negligible advantage.
+/-- **⚑⚑ THE DISCHARGED FRI MERKLE-OPENING BINDING — ON THE PROVED FLOOR.** The successor of the
+deleted `merkleRecompute_binds_from_polyTime`, whose floor
+`Hard (compressCollisionGame D) (IsPolyTime …)` is the same disease
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes at the deployed
+sponge: `IsPolyTime` prices answer SIZE, so a `Classical.choice` `.pure`-leaf answering a fixed short
+collision of the FIXED compression is in the class and wins with probability `1` — and no
+query-counted `Eff` repairs the fixed-function game (`Crypto.RomBindingReduction`'s header). The
+floor must move to a SAMPLED oracle.
 
-The per-site inputs are the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime — and the
-deployed digest width `w`, a SATISFIED contract of the Poseidon2 `TruncatedPermutation`. The peel's
-output growth `(4, 4·w)` is PROVED from it (`peelPath_len_le`), not hypothesized, and no
-`PolyBoundedNat` overhead hypothesis is taken. -/
-theorem merkleRecompute_binds_from_polyTime {F : Type} (D : CompressDeployment F)
-    (A : Adversary (merkleForgeryGame D)) (hA : IsPolyTime (merkleAnsSize D) A)
-    (cw bw w : ℕ) (hw : ∀ (t : D.Tag) (xs ys : List F), (D.compress t xs ys).length ≤ w)
-    (hcol : Hard (compressCollisionGame D) (IsPolyTime (compressAnsSize D))) :
-    Negl (gameAdv (merkleForgeryGame D) A) := by
-  have hEff : IsPolyTime (compressAnsSize D) (merkleToCollisionFinder D A) := by
-    poly_time (merkleAnsSize D) (compressAnsSize D)
-      (fun _ t (fg : MerkleForgery F) =>
-        letI := D.fieldDecEq
-        peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings)
-      cw bw 4 (4 * w) hA
-    intro n t fg
-    letI := D.fieldDecEq
-    have hm := peelPath_len_le (D.compress t) (merkleAnsSize D n fg + w)
-      (fun xs ys => le_trans (hw t xs ys) (Nat.le_add_left _ _))
-      fg.siblings fg.index fg.leaf1 fg.leaf2
-      (by
-        show fg.leaf1.length ≤ merkleAnsSize D n fg + w
-        simp only [merkleAnsSize]; omega)
-      (by
-        show fg.leaf2.length ≤ merkleAnsSize D n fg + w
-        simp only [merkleAnsSize]; omega)
-      (fun s hs => by
-        have := sibling_len_le_sum hs
-        show s.length ≤ merkleAnsSize D n fg + w
-        simp only [merkleAnsSize]; omega)
-    obtain ⟨p1, p2, p3, p4⟩ := hm
-    show (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).1.1.length
-        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).1.2.length
-        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).2.1.length
-        + (peelPath (D.compress t) fg.index fg.leaf1 fg.leaf2 fg.siblings).2.2.length
-      ≤ 4 * (merkleAnsSize D n fg) + 4 * w
-    omega
-  exact merkleRecompute_binds_advantage_bound D (IsPolyTime (compressAnsSize D)) A hEff hcol
+This is that move, keyed by the deployment's OWN tag space: a query-bounded forger that opens one
+committed FRI layer root at one query — one shared (index-bit, sibling) path of pinned depth `d` —
+to two DISTINCT leaves has NEGLIGIBLE advantage, closed from `KeyedRomFloor.keyedRom_hard` (the
+birthday bound, PROVED) through `RomMerkleOpening`'s walking extractor, whose `2·d` re-descent is
+PAID inside the polynomial total `Q'`. NO floor hypothesis, NO cost model.
+
+⚑ THE MODELLING STEP, STATED: the deployed `w`-felt `TruncatedPermutation` digest is idealised as
+ONE `λ`-bit sampled value `Fin (2 ^ l)` — there is no `l` at which they coincide, and at the
+deployed width the honest reading stays "binds exactly as well as the digest width allows". The
+fixed-hash content of this module is unchanged beside it: the unconditional peel (§5) and the
+`Eff`-parametric `merkleRecompute_binds_advantage_bound` with `hEff` in the open. -/
+theorem merkleRecompute_binds_rom {F : Type} (D : CompressDeployment F)
+    (tagDec : DecidableEq D.Tag) (d Q Q' : ℕ → ℕ) (hle : ∀ l, Q l + 2 * d l ≤ Q' l)
+    (hQ' : Dregg2.Crypto.ConcreteSecurity.PolyBounded
+      (fun l => ((Q' l : ℝ) * (Q' l : ℝ) + 1)))
+    (A : Adversary (Dregg2.Crypto.RomMerkleOpening.merkleOpenRomGame
+      D.Tag D.tagFintype tagDec D.tagNonempty d))
+    (hA : Dregg2.Crypto.RomCarrierSites.RomForgeryEff
+      (Dregg2.Crypto.RomMerkleOpening.merkleRomFamily D.Tag D.tagFintype tagDec D.tagNonempty)
+      (Dregg2.Crypto.RomMerkleOpening.merkleOpenForgery D.Tag D.tagFintype tagDec D.tagNonempty d)
+      Q A) :
+    Negl (gameAdv (Dregg2.Crypto.RomMerkleOpening.merkleOpenRomGame
+      D.Tag D.tagFintype tagDec D.tagNonempty d) A) :=
+  Dregg2.Crypto.RomMerkleOpening.merkleOpenRom_binds D.Tag D.tagFintype tagDec D.tagNonempty
+    d Q Q' hle hQ' A hA
 
 /-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** Together with
 `CostAdversary.bruteForce_not_polyTime` (the ⊤-collapse witness is excluded) this pins the instantiated
@@ -692,7 +684,7 @@ theorem compressFloor_isPolyTime_inhabited {F : Type} (D : CompressDeployment F)
 #assert_all_clean [
   sibling_len_le_sum,
   peelPath_len_le,
-  merkleRecompute_binds_from_polyTime,
+  merkleRecompute_binds_rom,
   compressFloor_isPolyTime_inhabited
 ]
 

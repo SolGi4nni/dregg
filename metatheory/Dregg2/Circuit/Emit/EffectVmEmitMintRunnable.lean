@@ -59,17 +59,20 @@ open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
   (baseAbsorbedCols wideHashSites RunnableFullStateSpec runnable_full_sound)
 open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
 open Dregg2.Crypto.SpongeCarrierReduction
-  (SpongeKeyed spongeFamily carrierBreakToFinder spongeAnsSize)
+  (SpongeKeyed spongeFamily carrierBreakToFinder)
 open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
-  (WideRowSpec wideStateCarrier wideRowBreakGame wideRowToCarrier wideRowAnsSize
-   wideRow_binds_advantage_bound wideRow_binds_from_polyTime
-   wideStateTamperGame stateTamperToWide stateTamperAnsSize
-   wide_state_tamper_advantage_bound wide_state_tamper_from_polyTime
-   wideRootTamperGame rootTamperToWide rootTamperAnsSize
-   wide_root_tamper_advantage_bound wide_root_tamper_from_polyTime)
+  (WideRowSpec wideStateCarrier wideRowBreakGame wideRowToCarrier
+   wideRow_binds_advantage_bound
+   wideStateTamperGame stateTamperToWide
+   wide_state_tamper_advantage_bound
+   wideRootTamperGame rootTamperToWide
+   wide_root_tamper_advantage_bound
+   wideRomFamily wideRomBreakGame effectVmWideRomForgery wideRow_binds_rom
+   effectVmWideRomStateTamper wide_state_tamper_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
 open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant)
-open Dregg2.Crypto.ConcreteSecurity (Negl)
-open Dregg2.Crypto.CostAdversary (IsPolyTime)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
@@ -203,18 +206,22 @@ theorem mint_binds_full_state_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (wideRowBreakGame D mintWideRowSpec) A) :=
   wideRow_binds_advantage_bound D mintWideRowSpec Eff A hEff hCR
 
-/-- **⚑ `mint_binds_full_state_from_polyTime` — `hEff` DISCHARGED, not carried.** At
-`Eff := IsPolyTime` (`CostAdversary`'s cost-vector class, cost DERIVED from program syntax) the
-efficiency of the extracted collision finder is a THEOREM: both reduction hops are pure output
-reshapings, and the extractor's output growth is the proved constant `40`. The only inputs left are
-each reshaper's DECLARED instruction count — a Lean function has no runtime, so that number can only be
-charged in the program's syntax. -/
-theorem mint_binds_full_state_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (wideRowBreakGame D mintWideRowSpec))
-    (hA : IsPolyTime (wideRowAnsSize D mintWideRowSpec) A) (cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideRowBreakGame D mintWideRowSpec) A) :=
-  wideRow_binds_from_polyTime D mintWideRowSpec A hA cw₀ bw₀ cw bw hCR
+/-- **⚑⚑ `mint_binds_full_state_rom` — THE DISCHARGED whole-17-field binding, on the PROVED
+floor.** The successor of the deleted `mint_binds_full_state_from_polyTime`, whose
+`HashCRHardQuant … (IsPolyTime …)` floor
+`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes: a query-bounded
+forger of the wide nested `state_commit` — the very commitment mint's wide row publishes — has
+NEGLIGIBLE advantage, in the keyed ROM model of `EffectVmRowCommitReduction` §5's header. NO floor
+hypothesis. The COMMITMENT layer carries no descriptor (that is the point — the nested absorb
+schedule is one object across effects), so this is `wideRow_binds_rom` at the deployed tag space;
+mint's per-effect circuit content (`satisfiedVm` at `mintVmDescriptorWide`) remains in the
+`_advantage_bound` form above, `hEff` in the open. -/
+theorem mint_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
 /-- **⚑ `mint_rejects_state_tamper_advantage_bound` — the per-cell-block anti-ghost, REDUCED.** An
 efficient adversary cannot keep the published `NEW_COMMIT` while tampering an absorbed state-block
@@ -229,13 +236,15 @@ theorem mint_rejects_state_tamper_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (wideStateTamperGame D mintWideRowSpec) A) :=
   wide_state_tamper_advantage_bound D mintWideRowSpec Eff A hEff hCR
 
-/-- **⚑ `mint_rejects_state_tamper_from_polyTime`** — the same tooth with `hEff` DISCHARGED. -/
-theorem mint_rejects_state_tamper_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (wideStateTamperGame D mintWideRowSpec))
-    (hA : IsPolyTime (stateTamperAnsSize D mintWideRowSpec) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideStateTamperGame D mintWideRowSpec) A) :=
-  wide_state_tamper_from_polyTime D mintWideRowSpec A hA cwT bwT cw₀ bw₀ cw bw hCR
+/-- **⚑ `mint_rejects_state_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor
+(successor of the deleted `mint_rejects_state_tamper_from_polyTime`): a query-bounded adversary
+cannot keep the published nested commitment while tampering an absorbed state block. -/
+theorem mint_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
 
 /-- **⚑ `mint_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED.** An efficient
 adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a satisfying wide
@@ -250,20 +259,22 @@ theorem mint_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
     Negl (gameAdv (wideRootTamperGame D mintWideRowSpec) A) :=
   wide_root_tamper_advantage_bound D mintWideRowSpec Eff A hEff hCR
 
-/-- **⚑ `mint_rejects_root_tamper_from_polyTime`** — the same tooth with `hEff` DISCHARGED. -/
-theorem mint_rejects_root_tamper_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (wideRootTamperGame D mintWideRowSpec))
-    (hA : IsPolyTime (rootTamperAnsSize D mintWideRowSpec) A) (cwT bwT cw₀ bw₀ cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (wideRootTamperGame D mintWideRowSpec) A) :=
-  wide_root_tamper_from_polyTime D mintWideRowSpec A hA cwT bwT cw₀ bw₀ cw bw hCR
+/-- **⚑ `mint_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor
+(successor of the deleted `mint_rejects_root_tamper_from_polyTime`): a query-bounded adversary
+cannot keep the published nested commitment while tampering a side-table root. -/
+theorem mint_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 #assert_axioms mint_binds_full_state_advantage_bound
-#assert_axioms mint_binds_full_state_from_polyTime
+#assert_axioms mint_binds_full_state_rom
 #assert_axioms mint_rejects_state_tamper_advantage_bound
-#assert_axioms mint_rejects_state_tamper_from_polyTime
+#assert_axioms mint_rejects_state_tamper_rom
 #assert_axioms mint_rejects_root_tamper_advantage_bound
-#assert_axioms mint_rejects_root_tamper_from_polyTime
+#assert_axioms mint_rejects_root_tamper_rom
 
 /-! ## §5 — NON-VACUITY: the full clause is inhabited by a real mint, and refutable.
 
