@@ -743,7 +743,7 @@ accept`, committing to `(pre, post)`. A VALID turn HAS an accepting proof — th
 `lightclient_unfoolable_assembled`. The value-leg premise is DISCHARGED (the §4 rung), not opaque. -/
 theorem lightclient_complete_assembled
     (hash : List ℤ → ℤ) (S : CommitSurface)
-    (hCR : Poseidon2SpongeCR hash) [StarkComplete hash RfixBare]
+    [StarkComplete hash RfixBare]
     (e : EffectIdx) (pre post : RecChainedState) (turn : BoundaryTurn)
     (hcomplete : descriptorComplete S hash (RfixBare e) (kstepAll e))
     (hstep : kstepAll e pre post)
@@ -753,12 +753,12 @@ theorem lightclient_complete_assembled
       verifyBatch (vkOfRegistry RfixBare) pi π = Verdict.accept ∧
       pi.pre = S.commit pre.kernel turn ∧
       pi.post = S.commit post.kernel turn :=
-  lightclient_complete hash S RfixBare hCR kstepAll e pre post turn hcomplete hstep hpreWF hpostWF
+  lightclient_complete hash S RfixBare kstepAll e pre post turn hcomplete hstep hpreWF hpostWF
 
 /-- **`lightclient_complete_transfer` — the transfer beachhead, value-leg DISCHARGED.** The headline at the
 transfer tag with the satisfiability premise supplied by `descriptorComplete_transfer` from the prover
-bundle: a genuine transfer kernel step HAS an accepting proof, carrying ONLY `StarkComplete`/the hash CR/
-the `CompletenessWitnesses` bundle. The completeness dual of the soundness transfer rung. -/
+bundle: a genuine transfer kernel step HAS an accepting proof, carrying ONLY `StarkComplete` and the
+`CompletenessWitnesses` bundle — the hash-CR floor is GONE with the `descriptorComplete` port. The completeness dual of the soundness transfer rung. -/
 theorem lightclient_complete_transfer
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
@@ -766,7 +766,7 @@ theorem lightclient_complete_transfer
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkComplete hash RfixBare]
+    [StarkComplete hash RfixBare]
     (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash compressN)
     (pre post : RecChainedState) (turn : BoundaryTurn)
@@ -779,14 +779,14 @@ theorem lightclient_complete_transfer
         pre.kernel turn ∧
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel turn :=
-  lightclient_complete_assembled hash _ hCR 0 pre post turn
+  lightclient_complete_assembled hash _ 0 pre post turn
     (descriptorComplete_transfer hash bw) hstep hpreWF hpostWF
 
 /-- **`lightclient_complete_burn` — the burn rung, value-leg DISCHARGED.** A second concrete corollary
 (any of the 21 §4 dischargers composes identically): a genuine burn kernel step HAS an accepting proof. -/
 theorem lightclient_complete_burn
     (hash : List ℤ → ℤ) (S : CommitSurface) (compressN : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkComplete hash RfixBare]
+    [StarkComplete hash RfixBare]
     (bw : CompletenessWitnesses S hash compressN)
     (pre post : RecChainedState) (turn : BoundaryTurn)
     (hstep : kstepAll 4 pre post)
@@ -796,7 +796,7 @@ theorem lightclient_complete_burn
       verifyBatch (vkOfRegistry RfixBare) pi π = Verdict.accept ∧
       pi.pre = S.commit pre.kernel turn ∧
       pi.post = S.commit post.kernel turn :=
-  lightclient_complete_assembled hash S hCR 4 pre post turn
+  lightclient_complete_assembled hash S 4 pre post turn
     (descriptorComplete_burn S hash compressN bw) hstep hpreWF hpostWF
 
 /-! ## §7 — the BIDIRECTIONAL pairing: verifyBatch-acceptable ⟺ kernel-valid (mod the ASYMMETRIC floors).
@@ -865,7 +865,7 @@ theorem verifyBatch_kernel_bidirectional
   ⟨fun pi π hwitdec hacc =>
      CircuitSoundnessAssembled.lightclient_unfoolable_assembled hash S hCR hbridge pi π hwitdec hacc,
    fun e pre post turn hcomplete hstep hpreWF hpostWF =>
-     lightclient_complete_assembled hash S hCR e pre post turn hcomplete hstep hpreWF hpostWF⟩
+     lightclient_complete_assembled hash S e pre post turn hcomplete hstep hpreWF hpostWF⟩
 
 /-! ## §8 — axiom hygiene. -/
 

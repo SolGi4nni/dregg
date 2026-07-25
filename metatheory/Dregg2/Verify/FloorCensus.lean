@@ -138,8 +138,7 @@ rediscover (each is `def … : Prop := Poseidon2SpongeCR hash → …` — no fl
 type, so a binder-only census reports them as NOT CARRIERS at all). Fail closed if any is
 missed: these gate the L0 keystones. -/
 def sentinelPropBody : List Name :=
-  [ `Dregg2.Circuit.CircuitSoundness.descriptorRefines
-  , `Dregg2.Circuit.CircuitCompleteness.descriptorComplete ]
+  [ `Dregg2.Circuit.CircuitSoundness.descriptorRefines ]
 
 /-- Pass 1b RATCHET (the INVERSE sentinel): `Prop`-def-body floor carriers that have been PORTED —
 their floor antecedent is DELETED — and must never come back. Each name must resolve to a `Prop`-
@@ -147,14 +146,20 @@ valued `def` in our modules AND must NOT be discovered as a prop-body floor carr
 either: a ported def that reappears in `propBody` is the port being reverted, and a name that no
 longer resolves is the ratchet quietly losing its grip.
 
-`ClosureAll.ClosedLogExtract` was the first of the three keystone gates to fall (2026-07-25). Its
-`Poseidon2SpongeCR hash →` antecedent was DEAD — all 35 rungs discharging a slot bound it as `_hCR`
-and never used it — so the port is a DELETION, strictly strengthening, needing no bridge lemma. The
-kernel-defeq shape pin lives in `Circuit/ClosedLogExtractPortCheck`; this list is the census-level
-half, so an instrument that reports the class as clean cannot also be the instrument that stopped
-looking. -/
+TWO of the three keystone gates fell on 2026-07-25, both by the same finding: the antecedent was DEAD.
+
+* `ClosureAll.ClosedLogExtract` — all 35 rungs discharging a slot bound it `_hCR` and never used it.
+* `CircuitCompleteness.descriptorComplete` — every rung is built by `descriptorComplete_of_satFloor`,
+  which binds it `_hCR` and never uses it. Completeness CONSTRUCTS its decode; only the soundness
+  direction reads a kernel back out of a commitment, and only that direction can be fooled by a
+  collision. Porting it let `lightclient_complete` — the completeness apex — shed the floor entirely.
+
+So both ports are DELETIONS, strictly strengthening, needing no bridge lemma. The kernel-defeq shape
+pins live in `Circuit/ClosedLogExtractPortCheck`; this list is the census-level half, so an instrument
+that reports the class as clean cannot also be the instrument that stopped looking. -/
 def portedPropBody : List Name :=
-  [ `Dregg2.Circuit.ClosureAll.ClosedLogExtract ]
+  [ `Dregg2.Circuit.ClosureAll.ClosedLogExtract
+  , `Dregg2.Circuit.CircuitCompleteness.descriptorComplete ]
 
 /-- The higher-order-flow SENTINEL: the top keystone that v1 mis-leveled to L0 because its
 floor hypothesis flows into ANOTHER hypothesis (`hrefines`), not a constant. v2 must see the

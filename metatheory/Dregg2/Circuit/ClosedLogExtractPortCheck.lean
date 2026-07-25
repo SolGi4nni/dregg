@@ -1,5 +1,9 @@
 /-
-# Dregg2.Circuit.ClosedLogExtractPortCheck — the SEMANTIC TEETH of the `ClosedLogExtract` port.
+# Dregg2.Circuit.ClosedLogExtractPortCheck — the SEMANTIC TEETH of the PROP-DEF-BODY ports.
+
+Two of the three `Prop`-def-BODY floor keystones are ported here: `ClosureAll.ClosedLogExtract` (§1-§4)
+and `CircuitCompleteness.descriptorComplete` (§5). `CircuitSoundness.descriptorRefines`, the third, is
+NOT ported — see the note at the end of §5.
 
 `ClosureAll.ClosedLogExtract` used to be
 
@@ -52,6 +56,7 @@ place and still floor-free in statement and proof", not that the surviving tree 
 -/
 import Dregg2.Circuit.ClosureReadoutsRealizable
 import Dregg2.Circuit.ClosureFinalAvail
+import Dregg2.Circuit.CircuitCompletenessAssembled
 
 namespace Dregg2.Circuit.ClosedLogExtractPortCheck
 
@@ -171,12 +176,109 @@ example : ∀ {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     False :=
   @Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_emptyTag_false
 
-/-! ## §5 — axiom hygiene. -/
+/-! ## §5 — the SECOND keystone: `CircuitCompleteness.descriptorComplete`.
+
+Same finding, same shape. Its `Poseidon2SpongeCR hash →` antecedent was DEAD: every rung in the tree
+is built by `CircuitCompletenessSatFloor.descriptorComplete_of_satFloor`, whose proof binds it `_hCR`
+and never uses it. Completeness CONSTRUCTS the published commitment from the kernel it already has
+(`stateDecode_construct`); only SOUNDNESS has to read a kernel back out of a commitment, and only that
+direction can be fooled by a collision. The asymmetry is the reason the deletion is available here and
+is a genuine re-proof on the soundness side. -/
+
+/-- ⚙ PORT CHECK — the ported `descriptorComplete`, spelled out with NO floor antecedent. Kernel
+defeq; restoring the antecedent is a type error. -/
+theorem descriptorComplete_shape :
+    @Dregg2.Circuit.CircuitCompleteness.descriptorComplete =
+      fun (S : CommitSurface) (hash : List ℤ → ℤ)
+          (d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2)
+          (kstep : RecChainedState → RecChainedState → Prop) =>
+        ∀ (pre post : RecChainedState) (turn : BoundaryTurn),
+          kstep pre post →
+          Dregg2.Circuit.StateCommit.AccountsWF pre.kernel →
+          Dregg2.Circuit.StateCommit.AccountsWF post.kernel →
+          ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+            (t : Dregg2.Circuit.DescriptorIR2.VmTrace),
+            Dregg2.Circuit.DescriptorIR2.Satisfied2 hash d minit mfin maddrs t ∧
+            Dregg2.Circuit.CircuitSoundness.tracePublishedCommit t =
+              Dregg2.Circuit.CircuitCompleteness.commitOf S pre post turn ∧
+            StateDecode S (Dregg2.Circuit.CircuitCompleteness.commitOf S pre post turn) pre post :=
+  rfl
+
+#assert_not_depends_on Dregg2.Circuit.CircuitCompleteness.descriptorComplete
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+
+/-- ⚑ THE HEADLINE OF THE SECOND PORT — the COMPLETENESS APEX carries NO hash floor. Typed out
+independently: `lightclient_complete` needs `StarkComplete` and the per-effect satisfiability rung and
+nothing else. Before the port it carried `Poseidon2SpongeCR hash`, whose ONLY use was feeding the
+`descriptorComplete` antecedent — so the completeness half of "verifyBatch-acceptable ⟺ kernel-valid"
+was resting on a hypothesis this tree proves FALSE at deployed BabyBear parameters, for no work. -/
+example : ∀ (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
+    [Dregg2.Circuit.CircuitCompleteness.StarkComplete hash R]
+    (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)
+    (e : EffectIdx) (pre post : RecChainedState) (turn : BoundaryTurn),
+    Dregg2.Circuit.CircuitCompleteness.descriptorComplete S hash (R e) (kstep e) →
+    kstep e pre post →
+    Dregg2.Circuit.StateCommit.AccountsWF pre.kernel →
+    Dregg2.Circuit.StateCommit.AccountsWF post.kernel →
+    ∃ (pi : BatchPublicInputs) (π : BatchProof),
+      pi.effect = e ∧
+      Dregg2.Circuit.CircuitSoundness.verifyBatch
+        (Dregg2.Circuit.CircuitSoundness.vkOfRegistry R) pi π = Verdict.accept ∧
+      pi.pre = S.commit pre.kernel turn ∧
+      pi.post = S.commit post.kernel turn :=
+  @Dregg2.Circuit.CircuitCompleteness.lightclient_complete
+
+#assert_not_depends_on Dregg2.Circuit.CircuitCompleteness.lightclient_complete
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+
+/-- ⚙ NO STRENGTH LOST — the OLD `descriptorComplete` statement still follows from the ported one. -/
+example (S : CommitSurface) (hash : List ℤ → ℤ)
+    (d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2)
+    (kstep : RecChainedState → RecChainedState → Prop)
+    (hc : Dregg2.Circuit.CircuitCompleteness.descriptorComplete S hash d kstep) :
+    Poseidon2SpongeCR hash →
+    ∀ (pre post : RecChainedState) (turn : BoundaryTurn),
+      kstep pre post →
+      Dregg2.Circuit.StateCommit.AccountsWF pre.kernel →
+      Dregg2.Circuit.StateCommit.AccountsWF post.kernel →
+      ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+        (t : Dregg2.Circuit.DescriptorIR2.VmTrace),
+        Dregg2.Circuit.DescriptorIR2.Satisfied2 hash d minit mfin maddrs t ∧
+        Dregg2.Circuit.CircuitSoundness.tracePublishedCommit t =
+          Dregg2.Circuit.CircuitCompleteness.commitOf S pre post turn ∧
+        StateDecode S (Dregg2.Circuit.CircuitCompleteness.commitOf S pre post turn) pre post :=
+  fun _hCR => hc
+
+/-
+⚑ THE THIRD KEYSTONE, `CircuitSoundness.descriptorRefines`, IS NOT PORTED — stated precisely so the
+next lane inherits a measurement rather than a guess.
+
+Its antecedent is NOT dead the way these two were. `descriptorRefines` is the SOUNDNESS direction: a
+rung must read a kernel back out of a published commitment, and that is exactly the step a hash
+collision defeats, so the floor is doing real work in at least some rungs. Two further facts bound the
+next attempt:
+
+  * `DescriptorRefinesShirkRefuted` PROVES the def vacuous at deployed BabyBear
+    (`descriptorRefines_vacuous_babyBear`), and proves the `DescriptorRefinesReduce` twin
+    `descriptorRefinesR` vacuous TOO — so `descriptorRefinesR` is not a port target, it is the same
+    hole with a different name.
+  * The rungs are discharged by TERM APPLICATION, not by `intro`, so "is the antecedent used?" is not
+    a grep — it needs elaborated-term analysis. `Tools/ConePort` already does exactly that analysis
+    (floor binders by constant identity, floor-flow walk of the proof term) and is the right
+    instrument to point at the `descriptorRefines` cone before any editing starts.
+
+What this module can say today is only that the OTHER two gates are shut and stay shut.
+-/
+
+/-! ## §6 — axiom hygiene. -/
 
 #assert_axioms closedLogExtract_shape
 #assert_axioms Dregg2.Circuit.ClosureAll.closedLogExtract_no_strength_lost
 #assert_axioms Dregg2.Circuit.ClosureAll.closedLogExtract_converse_costs_the_floor
 #assert_axioms Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_emptyTag_false
 #assert_axioms Dregg2.Circuit.ClosureReadoutsRealizable.closureReadouts_uninstantiable
+#assert_axioms descriptorComplete_shape
+#assert_axioms Dregg2.Circuit.CircuitCompleteness.lightclient_complete
+#assert_axioms Dregg2.Circuit.CircuitCompletenessAssembled.lightclient_complete_assembled
 
 end Dregg2.Circuit.ClosedLogExtractPortCheck

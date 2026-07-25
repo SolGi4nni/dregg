@@ -98,7 +98,7 @@ theorem descriptorComplete_of_satFloor (S : CommitSurface) (hash : List ℤ → 
     (d : EffectVmDescriptor2) (kstep : RecChainedState → RecChainedState → Prop)
     (floor : SatFloor S hash d kstep) :
     descriptorComplete S hash d kstep := by
-  intro _hCR pre post turn hstep hpreWF hpostWF
+  intro pre post turn hstep hpreWF hpostWF
   obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ := floor pre post turn hstep hpreWF hpostWF
   exact ⟨minit, mfin, maddrs, t, hsat, hpub, stateDecode_construct S pre post turn hpreWF hpostWF⟩
 

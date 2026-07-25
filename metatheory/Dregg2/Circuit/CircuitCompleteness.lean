@@ -115,14 +115,24 @@ FORCES `kstep pre post` (witness ⟹ step). `descriptorComplete` is the DUAL: ev
 always be witnessed by the circuit. -/
 
 /-- **`descriptorComplete S hash d kstep`** — the per-effect SATISFIABILITY obligation (dual of
-`descriptorRefines`): under the named hash CR carrier, every kernel step `kstep pre post` (with
-`AccountsWF` boundary kernels) admits a circuit witness — a memory boundary `(minit, mfin, maddrs)` and
-trace `t` with `Satisfied2 hash d …`, whose published commitment is the kernel's own
-`commitOf S pre post turn` and decodes faithfully to `(pre, post)`. The published commitment is
-CONSTRUCTED (`stateDecode_construct`); the satisfying trace is the prover's realizable witness. -/
+`descriptorRefines`): every kernel step `kstep pre post` (with `AccountsWF` boundary kernels) admits a
+circuit witness — a memory boundary `(minit, mfin, maddrs)` and trace `t` with `Satisfied2 hash d …`,
+whose published commitment is the kernel's own `commitOf S pre post turn` and decodes faithfully to
+`(pre, post)`. The published commitment is CONSTRUCTED (`stateDecode_construct`); the satisfying trace
+is the prover's realizable witness.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (vacuity campaign, 2026-07-25) — the SECOND prop-def-body keystone.**
+This def used to open with a `Poseidon2SpongeCR hash →` antecedent, a floor this tree PROVES FALSE at
+deployed BabyBear parameters, living in the def's BODY where no binder-keyed ruler could see it. The
+antecedent was DEAD: every `descriptorComplete` rung in the tree is built by
+`CircuitCompletenessSatFloor.descriptorComplete_of_satFloor`, whose proof binds it `_hCR` and never
+uses it — completeness CONSTRUCTS its decode (`stateDecode_construct`), and construction never needs
+collision-resistance; only the soundness direction reads a decode back out. Deleting it makes the
+obligation strictly STRONGER, and it is what lets the completeness apex `lightclient_complete` shed
+the floor entirely (its only use of `hCR` was feeding it here). The gate against its return is
+`FloorCensus.portedPropBody` + the defeq shape pin in `Circuit/ClosedLogExtractPortCheck`. -/
 def descriptorComplete (S : CommitSurface) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor2) (kstep : RecChainedState → RecChainedState → Prop) : Prop :=
-  Poseidon2SpongeCR hash →
   ∀ (pre post : RecChainedState) (turn : BoundaryTurn),
     kstep pre post → AccountsWF pre.kernel → AccountsWF post.kernel →
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
@@ -160,14 +170,22 @@ spuriously rejects a genuine transition. -/
 
 /-- **`lightclient_complete` — THE COMPLETENESS APEX.** From a genuine kernel transition
 `kstep pre post` (with `AccountsWF` boundary kernels), the per-effect satisfiability rung
-`descriptorComplete` AT the claimed descriptor `R e`, the dual STARK floor `[StarkComplete hash R]`, and
-the named hash CR carrier, there EXIST public inputs `pi` and a batch proof `π` with
+`descriptorComplete` AT the claimed descriptor `R e`, and the dual STARK floor `[StarkComplete hash R]`,
+there EXIST public inputs `pi` and a batch proof `π` with
 `verifyBatch (vkOfRegistry R) pi π = accept`, and `pi` commits to `(pre, post)`:
 `pi.pre = S.commit pre.kernel turn` / `pi.post = S.commit post.kernel turn`. The honest prover, holding a
-valid transition, ALWAYS produces an accepting proof — the dual of `lightclient_unfoolable_one`. -/
+valid transition, ALWAYS produces an accepting proof — the dual of `lightclient_unfoolable_one`.
+
+⚑ **NO `Poseidon2SpongeCR` (vacuity campaign, 2026-07-25).** This apex used to carry the sponge-CR
+floor; its ONE use was feeding the `descriptorComplete` antecedent, and that antecedent is gone (see
+the def). So the completeness direction rests on `StarkComplete` + the per-effect satisfiability rung
+and NOTHING ELSE — no hash floor at all, refuted or otherwise. The asymmetry with soundness is real
+and worth stating: completeness CONSTRUCTS the published commitment from the kernel it already has,
+while soundness must READ a kernel back out of a published commitment, and only that direction can
+be fooled by a collision. -/
 theorem lightclient_complete
     (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
-    (hCR : Poseidon2SpongeCR hash) [StarkComplete hash R]
+    [StarkComplete hash R]
     (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)
     (e : EffectIdx) (pre post : RecChainedState) (turn : BoundaryTurn)
     (hcomplete : descriptorComplete S hash (R e) (kstep e))
@@ -181,7 +199,7 @@ theorem lightclient_complete
   -- (1) the per-effect satisfiability rung supplies a satisfying witness publishing the kernel's
   --     own commitment `commitOf S pre post turn`.
   obtain ⟨minit, mfin, maddrs, t, hsat, hpub, _hdec⟩ :=
-    hcomplete hCR pre post turn hstep hpreWF hpostWF
+    hcomplete pre post turn hstep hpreWF hpostWF
   -- (2) assemble the public inputs `pi` from the kernel's published roots (the prover's PI).
   refine ⟨⟨e, S.commit pre.kernel turn, S.commit post.kernel turn, turn⟩, ?_⟩
   -- the witness of descriptor `R e` publishes `pi.toPublished` (= `commitOf …`).
