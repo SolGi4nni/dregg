@@ -71,3 +71,21 @@ intent/src/verified_settle.rs	settle_leg_authoritative	ffi::settle_leg	-	twin#10
 # That is a live, env-var-reachable unverified consensus decider and it is named here so it shows up
 # in every CI log rather than hiding in a `match` arm.
 node/src/finalization_votes.rs	verified_quorum_reached	verified_finalization_quorum	quorum_rust_fallback_allowed	twin#11 no quorum export => `false` (no attestation) unless the DECLARED no-Lean/operator-opt-in escape lets the Rust sibling decide
+
+# ── twin#8b the FINALITY BELT projection gate — THE SECOND CONFIRMED MEMBER OF THE CLASS ──────
+# The row the conservation fix predicted. `node/src/finality_gate.rs::compute()` collapses every
+# failure to `None` and PROPAGATES it (this checker classifies `compute` itself as `propagates` — the
+# disposition belongs to the caller), so the CALLER is the decision site. That caller was
+# UNREGISTERED and it FAILED OPEN: `blocklace_sync.rs` warned "verified finality gate UNAVAILABLE …
+# FAILING OPEN to the un-gated tau order" and then sliced turns to the executor off the un-verified
+# Rust `ordering::tau` order. The disposition is now the named `finality_belt_disposition`, which
+# REFUSES (finalize nothing this poll).
+#
+# TWO DECLARED BYPASSES, both live and both env/link reachable, named here so they print in every CI
+# log instead of hiding in a match arm: no `dregg_blocklace_finalize` export linked at all (an
+# archive-less build / the guest; for a full-mode node the state `lib.rs`'s verified-consensus
+# hard-check refuses to start in), and the operator's `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`.
+# `DREGG_REQUIRE_LEAN=1` revokes BOTH. Deliberately NOT a bypass — and this is the hole that was
+# closed — the export IS linked and this poll still got no answer out of it (wire `ERR` / panicked
+# blocking FFI thread).
+node/src/blocklace_sync.rs	finality_belt_disposition	belt_gate\b	belt_gate_bypass_allowed	twin#8b no verified finality projection => FinalityAdvanceRefusal::FinalityGateUnavailable, the poll finalizes NOTHING; the un-gated Rust ordering::tau never reaches the executor

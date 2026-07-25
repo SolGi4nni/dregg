@@ -31,6 +31,8 @@ dregg-turn	test:conservation_oracle_installed_poles	conservation_gate_installed_
 dregg-node	lib	rust_tau_twin_forbidden_on_verified_full_node	twin#8 the Rust tau ordering twin is forbidden on a verified full node
 dregg-node	lib	rust_quorum_twin_forbidden_on_verified_full_node	twin#11 the Rust finalization-quorum twin is forbidden on a verified full node
 dregg-node	lib	record_requires_root_agreement_not_bare_distinct_count	quorum attested requires one-root agreement not a bare distinct-signer count
+dregg-node	lib	finality_fails_closed_when_the_verified_gate_is_unavailable	twin#8b POLE A with the verified finality projection gate ARMED and UNANSWERABLE the poll REFUSES to advance finality (FinalityGateUnavailable) instead of FAILING OPEN to the un-gated Rust ordering::tau; also pins the vacuity short-circuit and both DECLARED bypasses
+dregg-node	lib	poll_refuses_to_advance_finality_when_the_belt_gate_cannot_answer	twin#8b BOTH POLES at the poll: honest finality still advances when the belt gate answers, NOTHING reaches the executor when it cannot, and the refusal recovers (it halts the poll, it does not poison the cursor)
 
 # ── intent per-leg settle predicate forgery ────────────────────────────────────
 dregg-intent	lib	test_verify_fulfillment_rejects_cross_state_predicate_forgery	intent verify_fulfillment rejects a cross-state predicate forgery

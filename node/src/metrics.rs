@@ -148,6 +148,18 @@ pub fn inc_consensus_differential_divergence() {
     counter!("dregg_consensus_differential_divergence_total").increment(1);
 }
 
+/// Increment the FINALITY-GATE-UNAVAILABLE REFUSAL counter: a poll declined to advance finality
+/// because the verified `dregg_blocklace_finalize` belt projection was ARMED (the poll was about to
+/// advance over an order the verified Lean rule did not produce) and could not answer, with no
+/// declared bypass. This is the fail-CLOSED disposition that replaced this site's fail-OPEN, and it
+/// is deliberately a SEPARATE series from `dregg_consensus_differential_divergence_total` and from
+/// any per-block refusal: no block was judged invalid here — the gate could not answer. A non-zero
+/// rate means finality is HALTED pending a verified archive (or a deliberate
+/// `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`), which is a liveness alarm, not a safety one.
+pub fn inc_finality_gate_unavailable_refusals() {
+    counter!("dregg_finality_gate_unavailable_refusals_total").increment(1);
+}
+
 // ─── Histograms ──────────────────────────────────────────────────────────────
 
 /// Record turn execution duration.

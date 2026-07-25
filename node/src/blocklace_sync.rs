@@ -1861,25 +1861,66 @@ impl BlocklaceHandle {
         // FLAG: default ON (`DREGG_FINALITY_GATE`); solo (n=1) does not run `tau` and is
         // scales-to-zero, so the gate applies to the n>1 path that matters.
         //
-        // FAIL-OPEN: when the verified archive lacks the export (stale build) or the wire returns
-        // ERR, `compute` is `None` and the gate is a no-op with a loud warning — the live path is
-        // never broken. When it IS armed and the verified projection excludes a block, we STOP the
-        // committed batch BEFORE that block (it is NOT marked executed), so it is re-evaluated on a
-        // later poll once the lace has grown enough — preserving liveness (a finalized block stays
-        // pending until served; identity tracking makes the retry order-shift-proof).
+        // ⚑ FAIL-CLOSED (this site was the SECOND confirmed member of the conservation twin's
+        // fail-OPEN class). When the verified archive lacks `dregg_blocklace_finalize`, or the wire
+        // returns `ERR`, or the blocking FFI thread panics, `compute` is `None`. That used to be a
+        // NO-OP WITH A WARNING: the poll went on to advance finality over the UN-GATED Rust tau
+        // order, with a log line as the only trace. It now REFUSES to advance finality — see
+        // [`finality_belt_disposition`] below, consulted after `pending` is known, whose refusal
+        // returns an EMPTY batch (finalize NOTHING this poll; a later poll re-attempts, exactly the
+        // disposition the F-CO-1 projection halt and the twin#8 order gate already use).
+        //
+        // The refusal has TWO DECLARED BYPASSES (`belt_gate_bypass_allowed`, the shape twin#8's
+        // `rust_tau_fallback_allowed` and twin#11's `quorum_rust_fallback_allowed` already use):
+        // there is no `dregg_blocklace_finalize` export linked AT ALL (no verified projection to
+        // route to — the state the `lib.rs` verified-consensus hard-check owns, and the state every
+        // archive-less test binary and the wasm/zkVM guest are in), or the operator explicitly
+        // accepted unverified consensus (`DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`). `DREGG_REQUIRE_LEAN=1`
+        // promotes BOTH to the hard refusal. Both bypasses are DECLARED in
+        // `scripts/ci-invariants/gate-dataflow.tsv`'s `allow` column, so they print in every CI log
+        // instead of hiding in a match arm.
+        //
+        // When the gate IS armed and DOES answer, and the verified projection excludes a block, we
+        // STOP the committed batch BEFORE that block (it is NOT marked executed), so it is
+        // re-evaluated on a later poll once the lace has grown enough — preserving liveness (a
+        // finalized block stays pending until served; identity tracking makes the retry
+        // order-shift-proof).
+        //
+        // ⚑ HOW WIDE WAS THE HOLE — stated at its real resolution, not inflated. Reaching the belt
+        // with a NON-EMPTY `ordered` requires `!ordered_from_lean`, which in the multi-party arm
+        // implies `allow_rust_fallback` (`!tau_order_available() || DREGG_ALLOW_UNVERIFIED_CONSENSUS`).
+        // So on a FULLY Lean-linked node with no operator escape the belt never armed with work to do,
+        // and the fail-open was NOT reachable there. What the refusal actually newly closes:
+        //   * a SPLIT archive (`dregg_blocklace_finalize` present, `dregg_tau_order` absent) on a node
+        //     that never ran `lib.rs`'s verified-consensus hard-check — one started
+        //     `--federation-mode solo` whose constitution grew to n>1 (the check keys on the FLAG, the
+        //     order on the runtime roster), or any embedder/test driving this handle directly;
+        //   * `DREGG_REQUIRE_LEAN=1`, which previously had NO effect on this path at all and now makes
+        //     an operator who demands the verified artifact get a HARD HALT instead of a log line.
+        // The durable half is that the disposition is now a REGISTERED decision site
+        // (`gate-dataflow.tsv` twin#8b + `lean-twins.tsv`), so the warn-and-continue cannot regrow
+        // silently — which is the same value the conservation fix delivered.
         //
         // PERF: when `ordered` ALREADY came from the verified Lean export (`ordered_from_lean`,
         // the common path), the gate is provably a no-op — it re-runs the SAME verified projection
         // and admits the whole Lean order back (`gate_admits_iff_verified_finalizes`). So skip the
         // second O(history) FFI there and keep the belt ONLY for the Rust fallback (the case it
-        // actually defends, where `ordered` is NOT Lean-verified). Equivalent to the prior behaviour
-        // (verified=None ⇒ fail-open ⇒ admit all) on the Lean path, at half the per-poll Lean cost.
-        let gate_armed = participants.len() > 1
-            && !ordered_from_lean
-            && crate::finality_gate::finality_gate_enabled();
+        // actually defends, where `ordered` is NOT Lean-verified). NOT a fail-open: on the Lean path
+        // `ordered` IS the verified rule's own output, so there is no un-verified order to gate.
+        //
+        // ⚑ THE VACUITY SHORT-CIRCUIT LIVES HERE AND BELOW, NOT IN THE REFUSAL. `ordered_from_lean`
+        // is the FIRST of the three states where "no verified belt" is genuinely irrelevant (the
+        // other two: a poll with an EMPTY pending set, and a pending set with no CONSENSUS-ACTIONABLE
+        // block — the belt only ever gates actionable payloads, so refusing an ack/heartbeat-only
+        // poll would halt the DAG on a decision that does not exist). See
+        // `finality_belt_disposition`.
+        let gate_armed = belt_gate_fault_injected()
+            || (participants.len() > 1
+                && !ordered_from_lean
+                && crate::finality_gate::finality_gate_enabled());
         // Belt-and-suspenders consistency gate FFI — also on a BLOCKING thread (see the tau-order FFI
         // above) so it can never starve the async runtime, regardless of lace size.
-        let verified = if gate_armed {
+        let verified = if gate_armed && !belt_gate_fault_injected() {
             let lace_ffi = lace.clone();
             let participants_ffi = participants.clone();
             match tokio::task::spawn_blocking(move || {
@@ -1889,10 +1930,13 @@ impl BlocklaceHandle {
             {
                 Ok(v) => v,
                 Err(e) => {
+                    // A panicked/cancelled FFI thread is a gate-UNAVAILABLE, exactly like a stale
+                    // archive — it is NOT a verdict about any block. It falls through to
+                    // `finality_belt_disposition` below, which REFUSES unless a bypass is declared.
                     warn!(
                         error = %e,
-                        "verified finality-gate FFI blocking task panicked/cancelled — failing open \
-                         (un-gated) for this poll"
+                        "verified finality-gate FFI blocking task panicked/cancelled — the belt gate \
+                         is UNAVAILABLE for this poll (see the fail-closed disposition below)"
                     );
                     None
                 }
@@ -1900,13 +1944,6 @@ impl BlocklaceHandle {
         } else {
             None
         };
-        if gate_armed && verified.is_none() {
-            warn!(
-                "verified finality gate UNAVAILABLE (Lean archive missing `dregg_blocklace_finalize` \
-                 or wire returned ERR) — FAILING OPEN to the un-gated tau order. Rebuild the node \
-                 with the verified archive (it splices Dregg2.Distributed.FinalityGate) to arm the gate."
-            );
-        }
 
         // ── TAU-PREFIX-MONOTONE CLOSURE (identity cursor, not an index) ─────────────────────────
         // `TauPrefixMonotone.lean` proves tau's finalized prefix is stable only CONDITIONALLY
@@ -1947,6 +1984,53 @@ impl BlocklaceHandle {
             return vec![];
         }
 
+        // ── THE BELT'S FAIL-CLOSED DISPOSITION (the fix for this site's fail-OPEN) ──────────────
+        // `gate_armed` means: this poll is about to advance finality over an order the verified Lean
+        // rule did NOT produce, so the belt projection is the ONLY verified check standing between the
+        // un-gated Rust `ordering::tau` and the executor. If the belt could not answer, we do not
+        // advance. Nothing has been marked executed at this point (`pending` is a pure set difference;
+        // `observe_order` above is observability only), so an empty return is a clean "finalize
+        // nothing this poll" that a later poll re-attempts — the same disposition as the F-CO-1
+        // projection halt and the twin#8 order gate.
+        if gate_armed {
+            let actionable_pending = pending
+                .iter()
+                .filter_map(|id| lace.get(id))
+                .filter(|b| is_consensus_actionable(&b.payload))
+                .count();
+            // Whether the verified PROJECTION export (`dregg_blocklace_finalize`) is linked at all.
+            // This is what distinguishes "there is no verified projection in this binary" (a DECLARED
+            // bypass — an archive-less build, the state the startup hard-check owns) from "the
+            // projection IS here and this poll could not get an answer out of it" (wire `ERR` /
+            // panicked FFI thread — the undeclared fail-open this site shipped with). Probed HERE, not
+            // beside `gate_armed`: `finality_gate_available()` runs `lean_init_once()`, and the solo
+            // (n=1) path must not start initialising the Lean runtime it otherwise never touches.
+            let belt_export_linked =
+                dregg_lean_ffi::finality_gate_available() || belt_gate_fault_injected();
+            if let Err(refusal) = finality_belt_disposition(
+                verified.as_ref(),
+                actionable_pending,
+                belt_export_linked,
+                allow_unverified_consensus(),
+                require_verified_lean_gate(),
+            ) {
+                crate::metrics::inc_finality_gate_unavailable_refusals();
+                warn!(
+                    refusal = %refusal,
+                    actionable_pending,
+                    finalized = ordered.len(),
+                    belt_export_linked,
+                    "verified finality gate UNAVAILABLE — FAILING CLOSED: finalizing NOTHING this \
+                     poll rather than advancing finality over the UN-GATED Rust `ordering::tau` \
+                     order. This is NOT a verdict about any block (no block was refused; the gate \
+                     could not answer). Rebuild the node against the verified archive (it splices \
+                     Dregg2.Distributed.FinalityGate), or set DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 to \
+                     deliberately accept un-gated finality."
+                );
+                return Vec::new();
+            }
+        }
+
         let mut finalized = Vec::new();
 
         for block_id in pending {
@@ -1965,14 +2049,7 @@ impl BlocklaceHandle {
             // NOT marked executed, so they are re-evaluated on a later poll once the lace has
             // grown enough (verified rule wins; liveness preserved).
             if let Some(vf) = verified.as_ref() {
-                let actionable = matches!(
-                    &block.payload,
-                    Payload::Turn(_)
-                        | Payload::TurnBundle(_)
-                        | Payload::ConsensusTimedTurnV1(_)
-                        | Payload::MembershipVote { .. }
-                        | Payload::Checkpoint { .. }
-                );
+                let actionable = is_consensus_actionable(&block.payload);
                 if actionable && !vf.admits(&block.creator, block.seq) {
                     warn!(
                         block_id = %block_id,
@@ -2342,6 +2419,171 @@ fn allow_unverified_consensus() -> bool {
 /// the Rust twin never decides finality.
 fn rust_tau_fallback_allowed(tau_order_available: bool, allow_unverified: bool) -> bool {
     !tau_order_available || allow_unverified
+}
+
+/// Whether a payload is CONSENSUS-ACTIONABLE — i.e. finalizing it changes committed state, so the
+/// verified finality gate is entitled to have an opinion about it. `Ack`/`Data` are DAG plumbing:
+/// they are served to the executor as `Inert` and carry no state transition.
+///
+/// One definition, two consumers: the per-block belt gate (which only refuses ACTIONABLE blocks the
+/// verified projection did not finalize) and the belt's fail-closed vacuity count (which must not
+/// refuse a poll whose pending set is heartbeats only). Inlining it twice is how the two drift.
+fn is_consensus_actionable(payload: &Payload) -> bool {
+    matches!(
+        payload,
+        Payload::Turn(_)
+            | Payload::TurnBundle(_)
+            | Payload::ConsensusTimedTurnV1(_)
+            | Payload::MembershipVote { .. }
+            | Payload::Checkpoint { .. }
+    )
+}
+
+/// `DREGG_REQUIRE_LEAN=1` — "I demand the verified artifact". The tree-wide signal (the
+/// `dregg-lean-ffi` build gate; `turn`'s `require_verified_conservation_gate`) that a build must not
+/// take ANY declared bypass around a verified gate. It promotes both of
+/// [`belt_gate_bypass_allowed`]'s bypasses to the hard refusal, which is how an archive-less build —
+/// a test binary, a dev box — can drive the fail-closed pole that a deployed node reaches on its own.
+fn require_verified_lean_gate() -> bool {
+    std::env::var_os("DREGG_REQUIRE_LEAN")
+        .is_some_and(|v| matches!(v.to_string_lossy().trim(), "1" | "true" | "on" | "yes"))
+}
+
+/// FAIL-CLOSED CLASS (the finality twin of `rust_tau_fallback_allowed` / `quorum_rust_fallback_allowed`):
+/// whether the verified finality BELT gate — the `dregg_blocklace_finalize` `(creator, seq)`
+/// projection of `BlocklaceFinality.tauOrder` — may be BYPASSED when it could not answer.
+///
+/// Two DECLARED bypasses, and nothing else:
+///   * `!belt_export_linked` — the archive contains no `dregg_blocklace_finalize` at all, so there
+///     is no verified projection in this binary to route to. That is the archive-less build (every
+///     test binary, the wasm/zkVM guest, a marshal-only dev box), and for a full-mode node it is the
+///     state the `lib.rs` verified-consensus hard-check refuses to start in.
+///   * `allow_unverified` — `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, the operator's explicit acceptance
+///     of un-verified consensus. They already accepted the Rust `ordering::tau` ORDER; the belt is a
+///     secondary check over that same order, so its absence adds nothing they did not accept.
+///
+/// `require_lean` (`DREGG_REQUIRE_LEAN=1`) revokes BOTH.
+///
+/// What is DELIBERATELY not a bypass, and is the hole this closes: the export IS linked and this
+/// poll still got no answer out of it (the wire returned `ERR`, or the blocking FFI thread
+/// panicked). That state used to warn and advance finality over the un-gated order.
+fn belt_gate_bypass_allowed(
+    belt_export_linked: bool,
+    allow_unverified: bool,
+    require_lean: bool,
+) -> bool {
+    if require_lean {
+        return false;
+    }
+    !belt_export_linked || allow_unverified
+}
+
+/// Why a poll REFUSED to advance finality. Distinct from every "the verified rule did not finalize
+/// this block" outcome on purpose: mirroring conservation's `ConservationGateUnavailable`, a
+/// VERIFIER's missing archive is not a PROVER's fault. No block is invalid here and none was
+/// refused — the gate could not answer, so this poll declines to advance at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinalityAdvanceRefusal {
+    /// The verified `dregg_blocklace_finalize` projection gate was ARMED (this poll is advancing over
+    /// an order the verified Lean rule did not produce) and could not answer, with no declared
+    /// bypass. Finality does not advance this poll.
+    FinalityGateUnavailable,
+}
+
+impl std::fmt::Display for FinalityAdvanceRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FinalityGateUnavailable => write!(
+                f,
+                "FinalityGateUnavailable: the verified finality projection gate \
+                 (dregg_blocklace_finalize) was armed and could not answer — finality does not \
+                 advance (this is a MISSING GATE, not a verdict about any block)"
+            ),
+        }
+    }
+}
+
+/// THE FAIL-CLOSED DISPOSITION for the verified finality belt gate. Called by
+/// `poll_finalized_blocks` on every poll where the belt is armed — i.e. every poll about to advance
+/// finality over an order the verified Lean rule did not produce.
+///
+/// `Ok(())` ⇒ the poll may advance. `Err(FinalityGateUnavailable)` ⇒ finalize NOTHING this poll.
+///
+/// ## The vacuity short-circuit, and why it is REQUIRED
+///
+/// A refusal that fires where it means nothing is not a gate. The belt only ever gates
+/// CONSENSUS-ACTIONABLE blocks (`is_consensus_actionable`); `Ack`/`Data` are DAG plumbing served as
+/// `Inert`. A poll whose pending set is heartbeats only therefore has NO decision for the belt to
+/// make, and refusing it would halt DAG progress on a verdict that does not exist — the same
+/// over-refusal the conservation fix hit when a `set_state` with no value delta tripped its gate.
+/// So `actionable_pending == 0` short-circuits BEFORE the gate is consulted. (The other two vacuous
+/// states are handled at the arming site: `ordered_from_lean` — the order IS the verified rule's
+/// output, nothing un-verified to gate — and an empty `pending`, which returns earlier.)
+fn finality_belt_disposition(
+    belt_gate: Option<&crate::finality_gate::VerifiedFinality>,
+    actionable_pending: usize,
+    belt_export_linked: bool,
+    allow_unverified: bool,
+    require_lean: bool,
+) -> Result<(), FinalityAdvanceRefusal> {
+    // VACUOUS POLL — no consensus-actionable block is pending, so there is no admission decision in
+    // existence for the projection to make. Short-circuited BEFORE the gate is consulted, so the
+    // refusal below can never fire where it would mean nothing.
+    if actionable_pending == 0 {
+        return Ok(());
+    }
+    let Some(_admissions) = belt_gate else {
+        if belt_gate_bypass_allowed(belt_export_linked, allow_unverified, require_lean) {
+            return Ok(());
+        }
+        return Err(FinalityAdvanceRefusal::FinalityGateUnavailable);
+    };
+    Ok(())
+}
+
+// TEST-ONLY fault injection for the belt gate's ARMED-BUT-UNANSWERABLE state — the export linked,
+// the poll advancing over a non-Lean order, and no answer out of the FFI (a wire `ERR` or a panicked
+// blocking thread).
+//
+// It exists because that state is not producible in-process on EITHER build. With the archive
+// present, `compute_order` succeeds, so `ordered_from_lean` is true and the belt is never armed; with
+// the archive absent, `finality_gate_available()` is false, so the miss is a DECLARED bypass.
+// Reaching the armed-and-unanswerable state otherwise requires `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`,
+// which is itself a declared bypass. So without this, the poll-level refusal could only be asserted
+// on an archive-less box — i.e. it would pass VACUOUSLY on ember's laptop.
+//
+// `#[cfg(test)]`: it does not exist in any non-test build, and the checker in
+// `scripts/ci-invariants/gate-dataflow.py` strips `cfg(test)` definitions before slicing.
+//
+// THREAD-LOCAL, not a static: several other tests in this binary call `poll_finalized_blocks`
+// concurrently and would see a process-wide flag, turning them flakily red. `#[tokio::test]` polls
+// its future on the calling thread (current-thread runtime), so the poll body reads the same
+// thread-local the test set.
+//
+// (Plain `//` comments, not `///`: a doc comment on a macro invocation is an `unused_doc_comments`
+// warning — the macro would have to emit the docs itself.)
+#[cfg(test)]
+thread_local! {
+    static FORCE_BELT_GATE_UNANSWERABLE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn belt_gate_fault_injected() -> bool {
+    FORCE_BELT_GATE_UNANSWERABLE.with(|c| c.get())
+}
+
+/// TEST-ONLY: arm/disarm the belt-gate fault injector for THIS thread. See
+/// [`FORCE_BELT_GATE_UNANSWERABLE`].
+#[cfg(test)]
+fn set_belt_gate_fault_injected(on: bool) {
+    FORCE_BELT_GATE_UNANSWERABLE.with(|c| c.set(on));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn belt_gate_fault_injected() -> bool {
+    false
 }
 
 /// Build a `dregg_blocklace::Blocklace` (the ordering-compatible type) from
@@ -12065,6 +12307,180 @@ mod tests {
             "with no verified archive linked the Rust ordering::tau is the only decider available"
         );
         assert!(rust_tau_fallback_allowed(false, true));
+    }
+
+    /// ⚑ POLE A (the DISPOSITION, exhaustively): the verified finality BELT gate is UNAVAILABLE and
+    /// finality REFUSES TO ADVANCE. This is the second confirmed member of the conservation twin's
+    /// fail-OPEN class — `blocklace_sync` used to warn that the gate was unavailable, declare itself
+    /// to be failing open to the un-gated tau order, and then execute turns off the un-gated Rust
+    /// `ordering::tau`. (`lean-twins.tsv`'s `forbid` row keeps that exact warn text from returning, so
+    /// it is deliberately not reproduced verbatim here.)
+    ///
+    /// The test asserts THE NEGATIVE the way conservation's Pole A does: an `Ok(())` in the
+    /// no-bypass quadrant PANICS with a FAIL-OPEN message, because `Ok(())` there means the poll went
+    /// on to advance finality with no verified gate — the exact defect.
+    ///
+    /// It also pins the two DECLARED bypasses (and that `DREGG_REQUIRE_LEAN=1` revokes both), and the
+    /// VACUITY short-circuit (a heartbeat-only poll is not refused — a refusal that fires where it
+    /// means nothing is a bust nobody can land).
+    #[test]
+    fn finality_fails_closed_when_the_verified_gate_is_unavailable() {
+        // ── THE HOLE, CLOSED. Export linked, no operator escape, actionable work pending, and the
+        //    gate could not answer (wire ERR / panicked FFI thread) ⇒ REFUSE.
+        match finality_belt_disposition(None, 3, true, false, false) {
+            Err(FinalityAdvanceRefusal::FinalityGateUnavailable) => { /* fail-closed */ }
+            Ok(()) => panic!(
+                "FAIL-OPEN: the verified `dregg_blocklace_finalize` projection gate IS linked, the \
+                 operator did NOT accept unverified consensus, 3 consensus-actionable blocks are \
+                 pending, and the gate returned NO ANSWER — yet the disposition permits the poll to \
+                 ADVANCE FINALITY over the un-gated Rust `ordering::tau` order. That is the defect \
+                 this gate exists to prevent: state transitions reach the executor with no verified \
+                 finality rule having finalized them."
+            ),
+        }
+
+        // The refusal is TOTAL over actionable work — one pending turn is enough, it is not a
+        // threshold effect.
+        assert!(
+            finality_belt_disposition(None, 1, true, false, false).is_err(),
+            "a single pending consensus-actionable block with no verified gate must refuse"
+        );
+
+        // ── VACUITY SHORT-CIRCUIT: NO consensus-actionable block is pending (an ack/heartbeat-only
+        //    poll). There is no admission decision in existence, so refusing would halt the DAG on a
+        //    verdict that does not exist — the over-refusal the conservation fix had to fix.
+        assert!(
+            finality_belt_disposition(None, 0, true, false, false).is_ok(),
+            "a poll with no consensus-actionable pending block must NOT be refused — the belt only \
+             ever gates actionable payloads, so there is nothing for a missing gate to have decided. \
+             A refusal here would halt heartbeat processing on every poll."
+        );
+
+        // ── DECLARED BYPASS 1: no `dregg_blocklace_finalize` export in this binary at all. Nothing
+        //    to route to (an archive-less build / the guest; for a full node, the state `lib.rs`'s
+        //    verified-consensus hard-check refuses to start in).
+        assert!(
+            finality_belt_disposition(None, 3, false, false, false).is_ok(),
+            "with NO verified projection export linked there is no gate to be unavailable — this is \
+             the DECLARED bypass (gate-dataflow.tsv), not a silent fall-open"
+        );
+        // ── DECLARED BYPASS 2: the operator explicitly accepted unverified consensus.
+        assert!(
+            finality_belt_disposition(None, 3, true, true, false).is_ok(),
+            "DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 is the operator's declared acceptance of un-gated \
+             finality (the same escape twin#8 and twin#11 use)"
+        );
+        // ── `DREGG_REQUIRE_LEAN=1` REVOKES BOTH — this is what lets an archive-less build drive the
+        //    same hard refusal a deployed node reaches on its own.
+        assert!(
+            finality_belt_disposition(None, 3, false, false, true).is_err(),
+            "DREGG_REQUIRE_LEAN=1 must revoke the no-export bypass"
+        );
+        assert!(
+            finality_belt_disposition(None, 3, true, true, true).is_err(),
+            "DREGG_REQUIRE_LEAN=1 must revoke the operator-escape bypass too"
+        );
+
+        // The bypass predicate itself, so a future widening is a visible diff and not a quiet
+        // boolean flip.
+        assert!(!belt_gate_bypass_allowed(true, false, false));
+        assert!(belt_gate_bypass_allowed(false, false, false));
+        assert!(belt_gate_bypass_allowed(true, true, false));
+        assert!(!belt_gate_bypass_allowed(false, true, true));
+    }
+
+    /// ⚑ POLE A AT THE POLL, and POLE B beside it: the SAME handle, the SAME lace, the SAME committed
+    /// roster — the ONLY thing that changes is whether the belt gate can answer.
+    ///
+    /// * BELT ANSWERS (or is not armed) ⇒ honest finality ADVANCES (a non-empty batch). Without this
+    ///   half, "refuses when the gate is missing" is satisfied by a node that finalizes nothing ever.
+    /// * BELT ARMED AND CANNOT ANSWER ⇒ the poll returns an EMPTY batch and NOTHING reaches the
+    ///   executor. A non-empty batch here PANICS with a FAIL-OPEN message: it would mean turns were
+    ///   sliced to the executor off the un-gated Rust `ordering::tau` order.
+    ///
+    /// The fault injector is needed because the armed-and-unanswerable state is not producible
+    /// in-process on either build (see `FORCE_BELT_GATE_UNANSWERABLE`) — without it this pole would
+    /// pass VACUOUSLY wherever the Lean archive is present.
+    #[tokio::test]
+    async fn poll_refuses_to_advance_finality_when_the_belt_gate_cannot_answer() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let members: Vec<ed25519_dalek::SigningKey> = [[0x51u8; 32], [0x52u8; 32], [0x53u8; 32]]
+            .iter()
+            .map(ed25519_dalek::SigningKey::from_bytes)
+            .collect();
+        let eds: Vec<[u8; 32]> = members
+            .iter()
+            .map(|k| k.verifying_key().to_bytes())
+            .collect();
+        let quorum = dregg_blocklace::supermajority_threshold(members.len());
+
+        let (_tmp, state) = committed_state_for(&members).await;
+        let handle = test_handle_with_committee(eds[0], eds.clone()).await;
+        *handle.lace.write().await = cross_linked_finality_lace(&members, quorum);
+        {
+            let mut pq = HashMap::new();
+            for k in &members {
+                pq.insert(
+                    k.verifying_key().to_bytes(),
+                    dregg_federation::frost::MlDsaSigningKey::from_seed(&k.to_bytes()).0,
+                );
+            }
+            handle.votes.write().await.set_committee(eds.clone(), pq);
+        }
+
+        // ── POLE B: the honest baseline. No fault injected ⇒ finality advances.
+        set_belt_gate_fault_injected(false);
+        let honest = handle.poll_finalized_blocks(&state).await;
+        assert!(
+            !honest.is_empty(),
+            "the 3-node cross-linked lace must finalize a non-empty batch with the gate in its \
+             normal state — otherwise the refusal pole below asserts nothing (a node that never \
+             finalizes trivially 'fails closed')"
+        );
+        let honest_actionable = honest
+            .iter()
+            .filter(|b| !matches!(b, FinalizedBlock::Inert { .. }))
+            .count();
+        assert!(
+            honest_actionable > 0,
+            "the honest baseline must include at least one CONSENSUS-ACTIONABLE finalized block — a \
+             heartbeat-only batch would hit the vacuity short-circuit and make the refusal pole \
+             vacuous too"
+        );
+
+        // ── POLE A: hold EVERYTHING fixed and change ONLY the gate's ability to answer. Reset the
+        //    cursor so the same order is re-served (otherwise `pending` is empty and the vacuity
+        //    short-circuit — not the refusal — would produce the empty batch).
+        *handle.cursor.write().await = crate::execution_cursor::ExecutionCursor::new();
+        set_belt_gate_fault_injected(true);
+        let refused = handle.poll_finalized_blocks(&state).await;
+        set_belt_gate_fault_injected(false);
+
+        if !refused.is_empty() {
+            panic!(
+                "FAIL-OPEN: the verified finality belt gate was ARMED and could NOT answer, and the \
+                 poll STILL sliced {} finalized block(s) ({} consensus-actionable) to the executor \
+                 off the UN-GATED Rust `ordering::tau` order. Nothing verified finalized them. This \
+                 is exactly the fail-OPEN-to-the-un-gated-tau-order defect this gate closes.",
+                refused.len(),
+                refused
+                    .iter()
+                    .filter(|b| !matches!(b, FinalizedBlock::Inert { .. }))
+                    .count()
+            );
+        }
+
+        // And it is a REFUSAL, not a stuck cursor: with the gate answering again the same lace
+        // finalizes the same honest batch. A fail-closed path that never recovers is not a fix.
+        *handle.cursor.write().await = crate::execution_cursor::ExecutionCursor::new();
+        let recovered = handle.poll_finalized_blocks(&state).await;
+        assert_eq!(
+            finalized_order_ids(&recovered),
+            finalized_order_ids(&honest),
+            "once the belt gate can answer again the SAME lace must finalize the SAME order — the \
+             refusal halts the poll, it does not poison the cursor or drop blocks"
+        );
     }
 
     /// F-CO-1 FALSIFIER (the fork the fix closes): two poll passes over the SAME lace

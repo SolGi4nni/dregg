@@ -58,6 +58,14 @@ cfgtest	federation/src/admission.rs	admitted_rust	twin#7 the native admission si
 # ── twin#8 finality tau order ────────────────────────────────────────────────────────
 route	node/src/finality_gate.rs	verified_tau_order	twin#8 finality tau order routes through the verified export
 
+# ── twin#8b the FINALITY BELT projection gate's FAIL-CLOSED disposition ───────────────
+# Invariant 6 slices `finality_belt_disposition` itself; these rows are the companion name-grep, so
+# a refactor that stops CALLING it — or restores the fail-OPEN this site shipped with — is caught
+# even though the sliced fn would still look fine on its own.
+route	node/src/blocklace_sync.rs	finality_belt_disposition	twin#8b the belt gate's fail-closed disposition is still CONSULTED by poll_finalized_blocks (invariant 6 only proves the fn itself refuses)
+route	node/src/blocklace_sync.rs	FinalityAdvanceRefusal::FinalityGateUnavailable	twin#8b the gate-UNAVAILABLE refusal variant is still the disposition; a VERIFIER's missing archive must never be laundered into a per-block verdict
+forbid	node/src/blocklace_sync.rs	FAILING OPEN to the un-gated	twin#8b the exact warn-and-continue text this site shipped with must not come back (prose ABOUT the defect deliberately avoids the string, so a match means the behaviour is back, not that someone documented it)
+
 # ── twin#9 deploy refinement ─────────────────────────────────────────────────────────
 route	dregg-deploy/src/refine.rs	shadow_decide_refines	twin#9 deploy refinement routes through the verified export
 

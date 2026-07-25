@@ -26,13 +26,21 @@
 //!
 //! # Flag + fail-safety
 //!
-//! Gated by [`finality_gate_enabled`] (`DREGG_FINALITY_GATE`, **default ON**). When the Lean archive
-//! lacks the export (stale build) or the wire round-trips to `ERR`, the gate FAILS OPEN to the
-//! un-gated Rust order **with a loud warning + a divergence record** — the live path is never broken
-//! (a node missing the verified archive keeps running), but the operator is told the verified gate is
-//! not active. When the archive HAS the export and the rule disagrees with the Rust `tau` on a
-//! `(creator, seq)`, the gate REFUSES that block (it is not sliced to the executor) and records the
-//! divergence — the verified rule wins.
+//! Gated by [`finality_gate_enabled`] (`DREGG_FINALITY_GATE`, **default ON**). When the archive HAS
+//! the export and the rule disagrees with the Rust `tau` on a `(creator, seq)`, the gate REFUSES that
+//! block (it is not sliced to the executor) and records the divergence — the verified rule wins.
+//!
+//! ⚑ **FAILS CLOSED when the gate cannot answer.** This is a CORRECTION: until
+//! `blocklace_sync::finality_belt_disposition` landed, a missing export / `ERR` wire / panicked FFI
+//! thread made the gate a NO-OP WITH A WARNING and the poll advanced finality over the **un-gated**
+//! Rust tau order — the same fail-OPEN class as the conservation twin
+//! (`turn/src/executor/atomic.rs`'s `ConservationGateUnavailable`). [`VerifiedFinality::compute`]
+//! still collapses every failure to `None`; what changed is the CALLER's disposition: a `None` where
+//! the belt is armed now REFUSES to advance finality (finalize nothing this poll, re-attempt later)
+//! unless one of two DECLARED bypasses holds — no `dregg_blocklace_finalize` export linked at all, or
+//! the operator's `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`. `DREGG_REQUIRE_LEAN=1` revokes both. The
+//! bypasses are declared in `scripts/ci-invariants/gate-dataflow.tsv` (invariant 6), which slices
+//! the disposition and reddens if the gate-absent path can admit.
 
 use std::collections::HashMap;
 
@@ -163,22 +171,28 @@ impl VerifiedFinality {
         )
     }
 
-    /// Run the VERIFIED Lean finalization rule over the lace and participants. Returns `Ok(Some(_))`
-    /// with the verified finalized set when the Lean gate ran and produced a non-`ERR` order;
-    /// `Ok(None)` when the gate is unavailable/`ERR` (the caller fails open); `Err` is never produced
-    /// (errors collapse to `None` so the caller has one fail-open branch).
+    /// Run the VERIFIED Lean finalization rule over the lace and participants. `Some(_)` is the
+    /// verified finalized set (the gate ran and produced a non-`ERR` order); `None` means THE GATE
+    /// COULD NOT ANSWER — a missing export, an `ERR` wire, or an unparseable reply — and every failure
+    /// mode collapses to it so the caller has ONE gate-absent branch.
+    ///
+    /// ⚑ `None` IS NOT A PERMISSION TO PROCEED. The caller
+    /// (`blocklace_sync::finality_belt_disposition`) FAILS CLOSED on it: a poll that would advance
+    /// finality over a non-Lean-produced order finalizes NOTHING instead, unless a declared bypass
+    /// holds (no export linked at all / `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1`, both revoked by
+    /// `DREGG_REQUIRE_LEAN=1`). It used to fail OPEN here; that was the defect.
     pub fn compute(lace: &Blocklace, participants: &[[u8; 32]]) -> Option<VerifiedFinality> {
         let LaceWire {
             wire, creator_ids, ..
         } = Self::build_wire(lace, participants);
 
         // Call the verified Lean rule. On any error (archive missing the export, init failure) or the
-        // `ERR` sentinel, return None so the caller fails open with a warning.
+        // `ERR` sentinel, return None — GATE UNAVAILABLE, which the caller fails CLOSED on.
         let out = match dregg_lean_ffi::shadow_blocklace_finalize(&wire) {
             Ok(s) => s,
             Err(_) => return None,
         };
-        let body = out.strip_prefix("F=")?; // `ERR` (or anything else) -> None -> fail open.
+        let body = out.strip_prefix("F=")?; // `ERR` (or anything else) -> None -> gate unavailable.
 
         let mut finalized = std::collections::HashSet::new();
         if !body.is_empty() {

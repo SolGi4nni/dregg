@@ -244,6 +244,24 @@ determine is RED — never a skipped check.
 whether `false` means "refuse" for a given predicate's polarity, and it stops at depth 2. It exists
 to make one known regression class impossible to land silently.
 
+**Its precise blind spot, measured.** The checker verifies that the gate-absent region *reaches* a
+refusal past a declared discriminator; it does NOT evaluate the discriminator. Twin#8b's row was
+tested against a mutant whose `belt_gate_bypass_allowed` was replaced by a bare `true` — invariant 6
+stayed **GREEN**. Widening a bypass predicate is therefore invisible here by construction. That is
+why every registered site also needs a falsifier row (invariant 2) that asserts the predicate's own
+quadrants: `finality_fails_closed_when_the_verified_gate_is_unavailable` pins
+`belt_gate_bypass_allowed(true, false, false) == false`, and reddens on exactly the mutation
+invariant 6 misses. **Invariants 2 and 6 are complements at each site, not alternatives.**
+
+**Twin#8b — the second member of the class, found by the row above's own note.** Invariant 6
+classified `node/src/finality_gate.rs::compute()` as `propagates` (a `?`-shaped gate whose disposition
+belongs to the caller) and its PASS line says *"register the CALLER to check where it lands."* The
+caller was `node/src/blocklace_sync.rs::poll_finalized_blocks`, it was unregistered, and it failed
+OPEN: a missing / `ERR` / panicked `dregg_blocklace_finalize` made the belt gate a no-op with a
+warning, and the poll went on to slice turns to the executor off the **un-gated** Rust
+`ordering::tau`. The disposition is now the registered `finality_belt_disposition`, which refuses
+(finalize nothing this poll). A `propagates` PASS is a POINTER, not a clean bill of health — chase it.
+
 ---
 
 ## Wiring
@@ -275,3 +293,14 @@ checks itself against a synthetic fall-open decider (must go RED) and a syntheti
 wrong. It was also demonstrated red against the real pre-fix `atomic.rs` on 2026-07-25 — 9 of 10
 registered sites passing, the conservation twin the single failure — and green after the fail-closed
 fix. `--self-test` runs just that part.
+
+Twin#8b (the finality belt gate) was demonstrated red the same way on 2026-07-25, in a scratch tree
+(`CI_INVARIANTS_ROOT` + `CI_INVARIANTS_DATAFLOW_TSV`, working tree untouched — no stash, no checkout),
+three ways: (a) the pre-fix site as shipped, registered as `poll_finalized_blocks` /
+`VerifiedFinality::compute`, is **FAIL `[UNPARSED]`** — the inline disposition is not a shape the
+checker can slice, and it fails CLOSED rather than guessing; (b) the row as landed, against the
+pre-fix source, is **FATAL (exit 2)** — "no non-`cfg(test)` `fn finality_belt_disposition`", i.e. a
+deleted disposition is never a silent green; (c) the mutation canary — the post-fix tree with only the
+refusal arm reverted to `return Ok(())` — is **FAIL: "gate-absent path reaches an ACCEPTING verdict
+(`return Ok(`) … A MISSING VERIFIED GATE CAN ADMIT."** (c) is the one that matters: it is the defect's
+semantics at the registered site. 11 of 11 sites pass post-fix.
