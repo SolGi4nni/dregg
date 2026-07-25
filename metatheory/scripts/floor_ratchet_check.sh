@@ -58,11 +58,19 @@ grep -q '^#floor_ratchet$' "$ROOT" \
 #    branch; a longer baseline is a deliberate raise and must be justified in the message.
 BASE_FILE="Dregg2/Verify/FloorRatchetBaseline.lean"
 DEFAULT_BRANCH="${FLOOR_RATCHET_BASE:-origin/main}"
-if git -C "$META" rev-parse --verify --quiet "$DEFAULT_BRANCH" >/dev/null 2>&1; then
-  count_names() { grep -c '^  "' 2>/dev/null || true; }
+# ⚑ Every git call here is guarded. Under `set -euo pipefail` an UNGUARDED
+# `WAS="$(git show … | count_names)"` aborts the whole script when the ref or the path is
+# absent — which is the NORMAL case on a fresh clone, on a branch whose remote predates this
+# file, or offline. That is the worst possible failure mode for a gate's wiring check: it exits
+# non-zero having printed NOTHING, so CI reports a wiring failure that has nothing to do with
+# the wiring, and the real check (the build) never runs. Measured: exit 128, no output, because
+# `origin/main` on this repo predates the baseline file.
+count_names() { grep -c '^  "' 2>/dev/null || true; }
+if git -C "$META" rev-parse --verify --quiet "$DEFAULT_BRANCH" >/dev/null 2>&1 \
+   && git -C "$META" cat-file -e "$DEFAULT_BRANCH:metatheory/$BASE_FILE" 2>/dev/null; then
   NOW="$(count_names < "$META/$BASE_FILE")"
-  WAS="$(git -C "$META" show "$DEFAULT_BRANCH:metatheory/$BASE_FILE" 2>/dev/null | count_names)"
-  if [ -n "${WAS:-}" ] && [ "${WAS:-0}" -gt 0 ] && [ "${NOW:-0}" -gt "${WAS:-0}" ]; then
+  WAS="$(git -C "$META" show "$DEFAULT_BRANCH:metatheory/$BASE_FILE" | count_names)"
+  if [ "${WAS:-0}" -gt 0 ] && [ "${NOW:-0}" -gt "${WAS:-0}" ]; then
     printf '\n\033[33mFLOOR-RATCHET RAISED\033[0m: grandfathered carriers %s -> %s (+%s) vs %s.\n' \
       "$WAS" "$NOW" "$((NOW - WAS))" "$DEFAULT_BRANCH" >&2
     printf 'Each added line is a claim, on the record, that a new declaration had to be built\n' >&2
