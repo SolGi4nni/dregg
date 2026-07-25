@@ -338,7 +338,10 @@ fn one_player_across_seven_expeditions_the_map_opens_and_the_collection_fills() 
     );
     let bail = come_home(&mut campaign);
     assert!(!bail.crowned());
-    assert_eq!(bail.depth, 1);
+    assert_eq!(
+        bail.deepest, 1,
+        "a bail that touched floor 1 REACHED floor 1, though it stands at the mouth"
+    );
     let vault = record(&campaign, "vault");
     assert_eq!((vault.runs, vault.deepest, vault.crowns), (1, 1, 0));
     assert!(!vault.cleared, "a bail opens no road");
@@ -685,7 +688,10 @@ fn the_outcome_reads_the_cell_and_remembers_what_was_lost() {
         location: "keep".into(),
         ordinal: 3,
         day: 2,
+        // A run whose light died STANDS where it fell, so the two agree here — unlike a
+        // run that came home, which always stands at the surface whatever it reached.
         depth: 4,
+        deepest: 4,
         spent: BREATH,
         wounds: 0,
         fate: 0,

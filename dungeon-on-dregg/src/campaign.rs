@@ -256,8 +256,20 @@ pub struct ExpeditionOutcome {
     pub ordinal: u64,
     /// Which of the [`crate::descent::DAYS`] drawn maps it was played on.
     pub day: usize,
-    /// The floor standing at the end.
+    /// The floor STANDING ON at the end. Since `ascend` landed this is 0 on every
+    /// expedition that came home — banking demands the surface — so it answers "where
+    /// are they now", never "how deep did they get". Use [`Self::deepest`] for that.
     pub depth: u64,
+    /// The DEEPEST floor reached, a high-water mark over the whole expedition.
+    ///
+    /// Under the old one-way descent these two were the same number, because a run
+    /// ended wherever it had got to. `ascend` separated them, and THREE consumers
+    /// rediscovered the gap independently as a bug: the share card announced floor 0 on
+    /// every crowned run, the chronicle paid zero depth-XP, and this record's own test
+    /// asserted a reach of 1 against a standing 0. A value that was unique only by
+    /// accident, outliving the accident. Both meanings are now named, so the next
+    /// consumer picks one instead of discovering which it got.
+    pub deepest: u64,
     /// Light burned, of [`BREATH`].
     pub spent: u64,
     /// Wounds on the standing guardian at the end.
@@ -534,6 +546,7 @@ impl CampaignSession {
             ordinal: self.expedition_ordinal,
             day: self.descent.day(),
             depth: self.descent.read_reg("depth"),
+            deepest: self.expedition_deepest.max(self.descent.read_reg("depth")),
             spent: self.descent.read_reg("spent"),
             wounds: self.descent.read_reg("wounds"),
             fate: self.descent.read_reg("fate"),
