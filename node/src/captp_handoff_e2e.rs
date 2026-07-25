@@ -145,6 +145,26 @@ fn scenario(
 /// it. An over-broad handoff is refused.
 #[test]
 fn cross_node_cap_handoff_over_the_relay_routes() {
+    // Install the verified-Lean distributed gates exactly as a native node does at startup
+    // (`node/src/lib.rs::run` — `dregg_exec_lean::register_distributed_gates()`). `validate_handoff`
+    // decides §6 non-amplification ONLY through this gate and FAILS CLOSED when it is absent (the
+    // twin-deletion posture, commit 1b8d7827c2's `.unwrap_or(false)`): with no gate installed, even
+    // the LEGITIMATE attenuating handoff below (held Either ⊇ granted Signature) is refused as
+    // `Amplification`. This minimal E2E harness never went through `run()`, so it installed no gate.
+    // We register the REAL Lean gate (not a permissive stand-in) so the cross-node routing observes
+    // the true accept/reject: the attenuation is admitted, and the over-broad case further down is
+    // still refused by the SAME verified verdict. The live `validate_handoff` fail-close is untouched
+    // — only this test installs a gate. Self-skip when the archive lacks the CapTP handoff export
+    // (honest developer-mode skip; hard error under `DREGG_TEST_REQUIRE_LEAN=1`), the same idiom the
+    // `lean_*` node tests use.
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::distributed_exports_available(),
+        "the verified CapTP handoff gate (distributed_exports_available()==false)",
+    ) {
+        return;
+    }
+    dregg_exec_lean::register_distributed_gates();
+
     let base_url = spawn_relay();
 
     // B's identity: a cipherclerk for relay drain-auth + an X25519 keypair the
