@@ -232,6 +232,23 @@ if [ "${SEED_LEAN_CACHE:-0}" -eq 1 ] || [ "${PBUILD_ALWAYS_CACHE_GET:-0}" -eq 1 
 instead (hours). Check network/elan on ${HOST} before blaming the build." >&2
 fi
 
+# ---- forward the DREGG_* build knobs to the remote shell ------------------
+# `ssh` does not carry the caller's environment, so `DREGG_FOO=1 scripts/pbuild …`
+# silently had NO EFFECT on the remote build — the variable was consumed by the
+# local pbuild process and never crossed. That is a quiet, expensive kind of wrong:
+# a lane sets `DREGG_ALLOW_UNAUDITED_PQ=1`, sees the same SIGABRT it was trying to
+# opt out of, and concludes its CODE is broken. (Cost one cycle to find, tonight.)
+#
+# Only DREGG_-prefixed names are forwarded, and each value is shell-quoted, so this
+# cannot smuggle PATH/LD_PRELOAD or any other ambient influence onto the box.
+# Explicit `env VAR=… cargo …` in the command still works and still wins.
+REMOTE_ENV=""
+for _v in $(env | sed -n 's/^\(DREGG_[A-Z0-9_]*\)=.*/\1/p'); do
+  printf -v _q '%q' "${!_v}"
+  REMOTE_ENV+="export ${_v}=${_q}; "
+done
+[ -n "$REMOTE_ENV" ] && echo "pbuild: forwarding $(printf '%s' "$REMOTE_ENV" | grep -o 'DREGG_[A-Z0-9_]*' | tr '\n' ' ')to ${HOST}" >&2
+
 # Build with cargo + elan env sourced (non-login shells lack them). Persvati's
 # empty-wrapper path is intentionally byte-for-byte the historical behavior.
 if [ -z "$REMOTE_WRAPPER" ]; then
