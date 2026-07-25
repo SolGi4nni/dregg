@@ -30,6 +30,7 @@
 
 use std::cell::Cell as StdCell; // alias: `Cell` is taken by dregg_cell::Cell
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 
 use dregg_cell::{
@@ -1332,6 +1333,35 @@ impl World {
                     }
                 }
 
+                // WRITE-SET COMPLETENESS (M2 cache-soundness, dynamics.rs; backlog
+                // #1). The two loops above name only the SYNTACTIC `touched`
+                // over-approximation of the INPUT turn (balances) plus the input
+                // effects. But an effect resolves cells at RUNTIME that the input
+                // walk never mentions — a burn's issuer well absorbing the −supply
+                // credit, a metered fee sink, a factory/lazy-created cell. Such a
+                // cell mutates the ledger with NO WorldEvent naming it, so a
+                // memoized inspector projection of it silently goes stale — the
+                // exact M2 violation ("cache soundness = dynamics completeness").
+                //
+                // The executor's EXACT journal write-set (`last_write_set`) is
+                // COMPLETE by construction. Emit a conservative `CellMutated` tooth
+                // for every written cell not ALREADY named by an event above, so
+                // the delta loop's invalidation covers the whole write-set. This
+                // runs in BOTH Full and Symbolic mode (the journal captures the
+                // write-set regardless of witness deferral) and OUTSIDE the durable
+                // `will_dual_write` block, so ephemeral/fork worlds — which never
+                // dual-write — get the same completeness. ZERO is the CreateCell
+                // sentinel (never a real ledger id) and is skipped.
+                let mut named: HashSet<CellId> = HashSet::new();
+                for ev in &events {
+                    ev.collect_named_cells(&mut named);
+                }
+                for id in self.engine.executor().last_write_set() {
+                    if id != CellId::ZERO && named.insert(id) {
+                        events.push(WorldEvent::CellMutated { cell: id });
+                    }
+                }
+
                 for ev in &events {
                     self.dynamics.emit(ev.clone());
                 }
@@ -1363,25 +1393,53 @@ impl World {
     }
 
     // --- SYMBOLIC EXECUTION (the deferred-witness fast path + collapse) ------
+    //
+    // ⚠ EXPERIMENTAL / SHELVED — NOT YET WIRED (backlog #2). This is the
+    // partial-turn / promises symbolic-witness path. Nothing in the shipped
+    // cockpit calls it — its ONLY callers are the self-tests below. It is kept
+    // (not deleted) because it IS the partial-turn vision, but it is
+    // `#[doc(hidden)]` so it stops PRESENTING as live API, and it carries a
+    // cluster of KNOWN LATENT BUGS in the collapse protocol (backlog #3/#5/#6:
+    // a receipt-index desync when Full receipts land at the tail, a non-atomic
+    // `mem::take` that tears state on mid-collapse failure, and a durability
+    // drift where buffered turns are lost on reopen). Those are MOOT while the
+    // feature is gated (no live caller). DO NOT wire any of these into a live
+    // path until the collapse protocol is repaired — see
+    // docs/STARBRIDGE-V2-IMPROVEMENT-BACKLOG-2026-07-24.md.
 
     /// The current [`WitnessMode`] (Full by default).
+    ///
+    /// ⚠ EXPERIMENTAL / not yet wired — part of the shelved symbolic-witness
+    /// path (backlog #2). See the section banner above.
+    #[doc(hidden)]
     pub fn witness_mode(&self) -> WitnessMode {
         self.witness_mode
     }
 
     /// `true` iff the live commit path is currently deferring witnesses
     /// ([`WitnessMode::Symbolic`]).
+    ///
+    /// ⚠ EXPERIMENTAL / not yet wired — part of the shelved symbolic-witness
+    /// path (backlog #2). See the section banner above.
+    #[doc(hidden)]
     pub fn is_symbolic(&self) -> bool {
         self.witness_mode.is_symbolic()
     }
 
     /// How many symbolic (deferred-witness) turns are buffered, awaiting
     /// [`World::collapse`]. `0` in Full mode or after a collapse.
+    ///
+    /// ⚠ EXPERIMENTAL / not yet wired — part of the shelved symbolic-witness
+    /// path (backlog #2). See the section banner above.
+    #[doc(hidden)]
     pub fn symbolic_pending(&self) -> usize {
         self.symbolic_turns.len()
     }
 
     /// **Enter / leave SYMBOLIC mode** — the local deferred-witness fast path.
+    ///
+    /// ⚠ EXPERIMENTAL / not yet wired — the partial-turn symbolic-witness path
+    /// (backlog #2); no live caller. See the section banner above.
     ///
     /// In [`WitnessMode::Symbolic`] the engine applies each turn's FULL state
     /// transition (balances / caps / nonces — the abstract progress) but DEFERS
@@ -1401,6 +1459,7 @@ impl World {
     /// symbolic turns (call [`World::collapse`] for that); it only makes
     /// SUBSEQUENT turns witness eagerly again. The engine executor's mode is
     /// flipped here so the live receipts reflect the new mode immediately.
+    #[doc(hidden)]
     pub fn set_witness_mode(&mut self, mode: WitnessMode) {
         self.witness_mode = mode;
         self.engine.executor().set_witness_mode(mode);
@@ -1426,6 +1485,13 @@ impl World {
     /// shared admission gate makes impossible barring corruption).
     ///
     /// Returns the count of turns collapsed.
+    ///
+    /// ⚠ EXPERIMENTAL / not yet wired (backlog #2) — no live caller. The collapse
+    /// protocol carries KNOWN LATENT BUGS #3/#5/#6 (receipt-index desync when Full
+    /// receipts land at the tail, non-atomic `mem::take` on mid-collapse failure,
+    /// and buffered turns lost on reopen). MOOT while gated; DO NOT use in a live
+    /// path until repaired. See the section banner above.
+    #[doc(hidden)]
     pub fn collapse(&mut self) -> Result<usize, String> {
         let buffered = std::mem::take(&mut self.symbolic_turns);
         let n = buffered.len();
@@ -2941,6 +3007,77 @@ mod tests {
             w.receipts().last().unwrap().was_burn,
             "the receipt must flag the burn"
         );
+    }
+
+    #[test]
+    fn a_runtime_resolved_write_is_named_in_the_dynamics_stream() {
+        // ADVERSARIAL M2 WRITE-SET COMPLETENESS (backlog #1). A burn resolves its
+        // asset's ISSUER WELL at RUNTIME (`derive_issuer_well`) and credits it the
+        // burned −supply — a cell the SYNTACTIC input walk (`touched_cells`) never
+        // names. Before the write-set completeness pass, that well mutated with NO
+        // WorldEvent naming it, so a memoized inspector projection of the well
+        // stayed stale — the M2 violation ("cache soundness = dynamics
+        // completeness"). This asserts the executor's EXACT journal write-set is
+        // FULLY named by the emitted events, and specifically that the
+        // runtime-resolved cell gets a conservative `CellMutated` tooth.
+        let mut w = World::new();
+        let a = w.genesis_cell(1, 1_000);
+        let turn = w.turn(a, vec![burn(a, 250)]);
+
+        // The SYNTACTIC over-approximation the old BalanceFlowed/effect loops
+        // iterated — just the burn target `a`, NOT the well it resolves.
+        let touched = touched_cells(&turn);
+
+        let events = match w.commit_turn(turn) {
+            CommitOutcome::Committed { events, .. } => events,
+            other => panic!("burn must commit, got {other:?}"),
+        };
+
+        // The executor's EXACT journal write-set — complete, includes the well.
+        let write_set = w.engine.executor().last_write_set();
+
+        // PROVE THE TEST BITES: at least one written cell is runtime-resolved (in
+        // the exact write-set but NOT syntactically touched). Otherwise the fix is
+        // untested and this test proves nothing.
+        let runtime_resolved: Vec<CellId> = write_set
+            .iter()
+            .copied()
+            .filter(|c| !touched.contains(c))
+            .collect();
+        assert!(
+            !runtime_resolved.is_empty(),
+            "a burn must resolve an issuer well the syntactic walk misses \
+             (write_set={write_set:?}, touched={touched:?})"
+        );
+
+        // M2: EVERY cell the executor wrote is NAMED by some emitted event, so a
+        // memoized projection of ANY written cell is invalidated (never stale).
+        let mut named: HashSet<CellId> = HashSet::new();
+        for ev in &events {
+            ev.collect_named_cells(&mut named);
+        }
+        for id in &write_set {
+            assert!(
+                named.contains(id),
+                "the executor wrote cell {} but NO dynamics event names it — a \
+                 memoized projection of it would go stale (M2 violation)",
+                short(id)
+            );
+        }
+
+        // And specifically: the runtime-resolved well is named by the conservative
+        // `CellMutated` tooth — it moved no INPUT effect, so ONLY the completeness
+        // pass can have named it.
+        for id in &runtime_resolved {
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, WorldEvent::CellMutated { cell } if cell == id)),
+                "the runtime-resolved cell {} must get a conservative CellMutated \
+                 naming event from the write-set completeness pass",
+                short(id)
+            );
+        }
     }
 
     #[test]

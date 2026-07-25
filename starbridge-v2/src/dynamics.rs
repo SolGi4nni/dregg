@@ -34,6 +34,8 @@
 //! [`emit`]: Dynamics::emit
 //! [`since`]: Dynamics::since
 
+use std::collections::HashSet;
+
 use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
 
@@ -186,6 +188,59 @@ impl WorldEvent {
                 crate::reflect::short_hex(sender.as_bytes()),
                 crate::reflect::short_hex(cell.as_bytes()),
             ),
+        }
+    }
+
+    /// The specific cell id(s) this event NAMES for M2 cache invalidation — the
+    /// cells whose memoized projection a consumer drops on seeing it. This
+    /// mirrors the AUTHORITATIVE variant→invalidation table (the
+    /// `cockpit::construct` module's `invalidate_for`): a cell is "named"
+    /// here iff some emitted event drives an `invalidate_cell` for it.
+    ///
+    /// Deliberate exclusions:
+    /// - The `CellBorn`/`CreateCell*` **ZERO sentinel** names NO specific cell
+    ///   (the real id is unknown at emit — that consumer refreshes wholesale),
+    ///   so it is not counted. This is exactly why a runtime-resolved newborn
+    ///   still needs its own naming event from the write-set completeness pass.
+    /// - `TurnCommitted`/`TurnRejected`/`TurnQueued` carry no per-cell
+    ///   invalidation (a height tick invalidates nothing on its own), so the
+    ///   `agent` they mention is NOT counted as named — a cell that mutated but
+    ///   is only referenced by a `TurnCommitted.agent` must still be named by a
+    ///   real per-cell event or the completeness pass.
+    ///
+    /// Used by `World::commit_turn`'s write-set completeness pass to decide which
+    /// executor-written cells still need a conservative `CellMutated` tooth.
+    pub(crate) fn collect_named_cells(&self, out: &mut HashSet<CellId>) {
+        match self {
+            WorldEvent::CellBorn { cell, .. } => {
+                // ZERO is the CreateCell / CreateCellFromFactory sentinel — the
+                // real newborn id is not known here, so it names no cell.
+                if *cell != CellId::ZERO {
+                    out.insert(*cell);
+                }
+            }
+            WorldEvent::CellDestroyed { cell }
+            | WorldEvent::BalanceFlowed { cell, .. }
+            | WorldEvent::FieldSet { cell, .. }
+            | WorldEvent::CellMutated { cell }
+            | WorldEvent::CellSealed { cell }
+            | WorldEvent::CellUnsealed { cell }
+            | WorldEvent::Burned { cell, .. }
+            | WorldEvent::EventEmitted { cell, .. }
+            | WorldEvent::CapabilityRevoked { cell, .. } => {
+                out.insert(*cell);
+            }
+            WorldEvent::SurfaceDamaged { cell, owner, .. } => {
+                out.insert(*cell);
+                out.insert(*owner);
+            }
+            WorldEvent::CapabilityGranted { from, to } => {
+                out.insert(*from);
+                out.insert(*to);
+            }
+            WorldEvent::TurnCommitted { .. }
+            | WorldEvent::TurnRejected { .. }
+            | WorldEvent::TurnQueued { .. } => {}
         }
     }
 }
