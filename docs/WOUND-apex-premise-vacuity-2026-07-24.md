@@ -1,6 +1,8 @@
 # The apex premise was empty — a proved vacuity, its repair, and the instrument
 
-**Date:** 2026-07-24. **Status:** wound PROVED; correct replacement path built; **apex NOT closed**.
+**Date:** 2026-07-24 (status updated 2026-07-25). **Status:** wound PROVED; bare-premise cutover
+COMPLETE; the `FriLdtExtractV3` block and the apex itself **still open**. Read the Status update before
+relying on any figure in the original text — its census was wrong.
 
 ## The finding, stated plainly
 
@@ -82,10 +84,14 @@ nowhere**, so correcting it cost nothing.
 
 Recorded because they were nearly lost when a concurrent commit swept the files in without this message.
 
-1. **Nothing was migrated.** Roughly **35** `hfri : FriLdtExtract` hypotheses across
-   `AlgoStarkSoundFanoutMemFree`, `AlgoStarkSoundFanoutMemory` and the kernel/config modules still ride
-   the premise proved empty. `algoStarkSound_of_memoryLegs_cons` exists but **nothing calls it**. The
-   honest status is *"wound proved and a correct replacement path built"*, **not** *"wound repaired"*.
+1. ~~**Nothing was migrated.**~~ **SUPERSEDED 2026-07-25 — see the Status update below.** As written on
+   07-24 this was true and is left visible rather than deleted, because the *reasoning* still applies to
+   the block that remains. What changed: the **bare-premise cutover is complete** (zero soundness
+   consumers left on `FriLdtExtract`; `algoStarkSound_of_memoryLegs_cons` now has callers), and the
+   census figure quoted here — "roughly 35" — was itself wrong, conflating prose with code. What has
+   *not* changed: **8 consumers still ride the sibling proven-empty `FriLdtExtractV3`**, including the
+   named apex, so for that bundle the honest status remains *"wound proved and a correct replacement
+   path built"*, not *"wound repaired"*.
 2. **The corrected bundles have no exhibited model anywhere.** An adversarial verifier wrote its own
    falsifier and showed that a conjunct the repair **retains** — `topen ∈ proof.tableOpenings` — is
    *refutable at the very accepting pole used as the witness run*, because that pole has
