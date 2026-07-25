@@ -46,7 +46,21 @@ jobs:
         with:
           toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets
+      # `--keep-going` (2026-07-25): without it cargo stops scheduling new units at
+      # the first failure ("warning: build failed, waiting for other jobs to
+      # finish...") and the log ends there. So this step reported ONE broken crate
+      # per run out of ~196, and the next push's log showed the next one — which is
+      # how a whole directory of rotted examples stayed covered-but-unseen, and how
+      # a genuinely NEW break was indistinguishable from the standing red. One flag,
+      # no new job, no coverage change: every independent failure now surfaces in
+      # the SAME run, and the step still exits non-zero. It is the same reason
+      # `clippy-correctness` below already passes `--keep-going`, and it is spelled
+      # out in `.github/dark-targets.txt`'s header ("a plain --all-targets run
+      # ABORTS at the first broken target and shows you nothing past it").
+      # ⚠ NOT sufficient on its own, for the reason that header also gives: a red
+      # LIBRARY still prunes its whole downstream cone, so a count taken while any
+      # lib is red is a LOWER BOUND. Fix libs first, re-read.
+      - run: cargo check --workspace --all-targets --keep-going
       # FEATURE-MATRIX GATES (2026-07-16, Lane 2 config-space audit): `dregg-chain`
       # has NO default features, so the workspace check above compiles NEITHER of
       # its real configurations. Before this gate, the `mock` config's tests had
@@ -565,6 +579,26 @@ jobs:
       - name: correctness sweep over every target
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
+          # ⚑ THIS GATE COULD NOT FIRE, and had not been able to since it was written
+          # (found 2026-07-25). The workflow sets `CARGO_TERM_COLOR: always` at the top
+          # level, which cargo honours even when its output is REDIRECTED TO A FILE. So
+          # every line in `clippy-correctness.log` carries SGR escapes around the word
+          # `error`, and both readers below are anchored on that literal:
+          #
+          #   raw:   src/main.rs:1:25: ESC[1mESC[91merrorESC[0m[E0308]: mismatched types
+          #   raw:   ESC[1mESC[91merrorESC[0m: could not compile `p` (bin "p") due to 1 …
+          #
+          # Measured, not reasoned: on a probe crate with one type error,
+          # `grep -c '^error: could not compile'` returns 0 and the correctness pattern
+          # returns nothing. Consequences, both bad in the "reports GREEN" direction:
+          #   * `correctness: clean.` was a VACUOUS pass — a denied correctness lint,
+          #     the thing this HARD GATE exists to refuse, was unmatchable.
+          #   * the dark-target ratchet's `dark-now.txt` was ALWAYS EMPTY, so NEW dark
+          #     targets could never be detected, and every row in
+          #     `.github/dark-targets.txt` was reported as "NO LONGER DARK" on every
+          #     run — the job's standing red, and a claim it had no evidence for.
+          # `never` here, not a sed pipeline: this log is read by machines only.
+          CARGO_TERM_COLOR: never
         run: |
           set -uo pipefail
           cargo clippy --workspace --all-targets --keep-going --message-format=short \
@@ -1003,6 +1037,26 @@ jobs:
       - name: Cone-cutover textual post-state (the Dregg2.lean WIRING check, no cache can answer it)
         working-directory: metatheory
         run: bash scripts/cone_cutover_textual_check.sh
+
+      # THE REFUTED-FLOOR ACCRUAL GATE, ARMED (2026-07-25).
+      # `#floor_ratchet` (end of `metatheory/Dregg2.lean`) fails the build when a NEW declaration
+      # takes a hypothesis that is PROVABLY FALSE at deployed BabyBear params — such a theorem is
+      # VACUOUS. It reads the elaborated environment + a checked-in baseline through IMPORTS, so
+      # lake re-runs it whenever any declaration changes; `lake build Dregg2` IS the gate. It was
+      # verified by adversarial probe: 8 deliberate violations across all five evasion classes
+      # (plain binder, RENAMED floor, prop-body def, structure field via both `.mk` and the
+      # projection, and a section `variable` binder) each turned the build RED.
+      #
+      # This step exists for the ONE thing the Lean command structurally cannot do: notice that it
+      # is GONE. A deleted command raises no error, and that is not hypothetical — `Dregg2.lean`
+      # has been silently TRUNCATED twice (`6b1e156bdf` cut 1055+ imports; `8a28420ec9` cut it
+      # 1301 -> 217), and this very campaign shipped SIX teeth that never ran because nothing
+      # imported them. Until this step existed, `grep -rn floor_ratchet .github/` returned ZERO
+      # hits: deleting one line would have disarmed the gate with no signal.
+      # Baseline is a RATCHET — it may only ever go DOWN; raising it requires a visible edit.
+      - name: Refuted-floor accrual gate (presence + canary + build — a gate that can vanish is not a gate)
+        working-directory: metatheory
+        run: bash scripts/floor_ratchet_check.sh
 
       # THE CORPUS-WIDE AXIOM-HYGIENE LEDGER, ARMED (2026-07-17, wiring hunt round 2; counts
       # re-measured 2026-07-25).
