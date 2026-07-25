@@ -435,8 +435,26 @@ fn apply_rlimits_before_exec(cmd: &mut std::process::Command, limits: Rlimits) {
     }
 }
 
+/// The first parameter of `setrlimit`, whose type is NOT the same across unixes:
+/// linux-gnu declares `setrlimit(resource: __rlimit_resource_t /* u32 */, …)` while
+/// macOS and linux-musl declare `setrlimit(resource: c_int /* i32 */, …)`. Hard-coding
+/// `c_int` compiled on the laptop this was written on and failed on ubuntu with five
+/// `error[E0308]: expected i32, found u32` — the whole `durable-workflow` leg of
+/// ci.yml's excluded-workspaces matrix, invisible until its `--locked` failure was
+/// cleared out of the way.
+///
+/// An alias rather than a cast at the call sites: `libc::RLIMIT_AS as libc::c_int`
+/// would be a LOSSY conversion written as if it were free, and `.try_into().unwrap()`
+/// puts a panic inside `pre_exec` — which runs in the forked child, after `fork` and
+/// before `exec`, where unwinding is not something to invite. Passing the constant
+/// through at the width the platform's own declaration uses needs neither.
+#[cfg(all(unix, target_os = "linux", target_env = "gnu"))]
+type RlimitResource = libc::__rlimit_resource_t;
+#[cfg(all(unix, not(all(target_os = "linux", target_env = "gnu"))))]
+type RlimitResource = libc::c_int;
+
 #[cfg(unix)]
-fn set_rlimit(resource: libc::c_int, value: u64) {
+fn set_rlimit(resource: RlimitResource, value: u64) {
     let lim = libc::rlimit {
         rlim_cur: value as libc::rlim_t,
         rlim_max: value as libc::rlim_t,
