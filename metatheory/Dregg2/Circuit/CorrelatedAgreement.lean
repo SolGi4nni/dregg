@@ -35,6 +35,11 @@ Rungs, in dependency order:
   explicit hypothesis.
 * `DecimLiftDischarge` — `DecimLift` discharged from the landed `FriSetupTower`, and
   `ud_tower_far_survival_discharged`.
+* `RlcDischarge` — the L5/L6 output CONSUMED: `FriDeepQuotientRlc.RlcDistributes` (the ONE named
+  hypothesis of the deployed DEEP-quotient argument) proved AT the deployed extension code
+  `FriDeployedExtCode.deepCodeDeployedExt`, with no hypothesis, at the full UD radius `7340028`
+  and every batch width; hence `oodValues_correct_deployed_ps` — the deployed OOD-value
+  correctness with the correlated-agreement assumption gone.
 
 Honest scope for the subtree as a whole: these are theorems about Reed–Solomon codes and about the
 honest fold chain under a uniform oracle. They do NOT by themselves make the FRI apex
@@ -48,3 +53,4 @@ import Dregg2.Circuit.CorrelatedAgreement.Collinearity
 import Dregg2.Circuit.CorrelatedAgreement.Interface
 import Dregg2.Circuit.CorrelatedAgreement.DecimLiftDischarge
 import Dregg2.Circuit.CorrelatedAgreement.Theorems
+import Dregg2.Circuit.CorrelatedAgreement.RlcDischarge
