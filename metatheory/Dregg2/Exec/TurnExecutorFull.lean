@@ -31,63 +31,11 @@ open Dregg2.Tactics  -- the effect-arm combinators (`reject_none`/`commit_subst`
 
 /-! ## §11 — Axiom-hygiene tripwires (the honesty pins over the widened replacement's keystones). -/
 
-#assert_axioms recKMint_delta
-#assert_axioms recKBurn_delta
-#assert_axioms recKMint_authorized
-#assert_axioms recKBurn_authorized
-#assert_axioms recKMint_unauthorized_fails
-#assert_axioms recKBurn_unauthorized_fails
-#assert_axioms mint_discloses
-#assert_axioms burn_discloses
-#assert_axioms execFull_ledger
-#assert_axioms execFull_conserves
-#assert_axioms execFull_balance_domain_conserves
-#assert_axioms execFull_balance_authorized
-#assert_axioms execFull_delegate_grounds
-#assert_axioms execFull_mint_authorized
-#assert_axioms execFull_burn_authorized
-#assert_axioms execFull_delegate_addEdge
-#assert_axioms execFull_delegate_grants_held_cap
-#assert_axioms execFull_revoke_removeEdge
-#assert_axioms execFull_chainlink
-#assert_axioms execFull_obsadvance
-#assert_axioms execFull_attests
-#assert_axioms execFullTurn_ledger
-#assert_axioms execFullTurn_conserves
-#assert_axioms execFullTurn_each_attests
 -- The PER-ASSET conservation-vector keystones (FILL 1, phase 2) over the executable turn:
-#assert_axioms recBalCredit_recTotalAsset
-#assert_axioms recKMintAsset_delta
-#assert_axioms recKBurnAsset_delta
-#assert_axioms recKMintAsset_authorized
-#assert_axioms execFullA_ledger_per_asset
-#assert_axioms execFullTurnA_ledger_per_asset
-#assert_axioms execFullTurnA_conserves_per_asset
 -- The per-asset PER-NODE attestation carrier (the forest lift, §MB) keystones:
-#assert_axioms execFullTurnA_append
-#assert_axioms execFullA_chainlink
-#assert_axioms execFullA_obsadvance
-#assert_axioms execFullA_balance_authorized
-#assert_axioms execFullA_delegate_grounds
-#assert_axioms execFullA_delegate_addEdge
-#assert_axioms execFullA_delegate_grants_held_cap
-#assert_axioms execFullA_revoke_removeEdge
-#assert_axioms execFullA_mintA_authorized
-#assert_axioms recKBurnAsset_authorized
-#assert_axioms execFullA_burnA_authorized
-#assert_axioms execFullA_attests_per_asset
-#assert_axioms execFullTurnA_each_attests
 -- META-FILL B Wave 1: the 5 PURE-STATE (field/log) effects on the per-asset dispatch.
 -- The balance-NEUTRALITY keystone (a field/log write moves NO asset's supply) + the per-effect
 -- authority gates + the (re-extended) per-asset spine arms all pinned kernel-clean.
-#assert_axioms writeField_recTotalAsset
-#assert_axioms stateStep_recTotalAsset
-#assert_axioms emitStep_recTotalAsset
-#assert_axioms emitStep_obsadvance
-#assert_axioms execFullA_setFieldA_authorized
-#assert_axioms execFullA_incrementNonceA_authorized
-#assert_axioms execFullA_setPermissionsA_authorized
-#assert_axioms execFullA_setVKA_authorized
 
 -- §MA-seal (Wave 6): the 6 SIMPLE bal-neutral effects (seal/unseal/createSealPair/makeSovereign/
 -- refusal/receiptArchive) — each a `stateStep` field write, balance-NEUTRAL (`recTotalAsset`
@@ -95,51 +43,18 @@ open Dregg2.Tactics  -- the effect-arm combinators (`reject_none`/`commit_subst`
 -- commitment) is the chain-layer portal, NOT proved sound. The keystone
 -- `execFullA_attests_per_asset` (re-extended above) carries ALL into the forest by construction
 -- (FullForestA spine UNCHANGED — only `targetOf` gained arms).
-#assert_axioms execFullA_makeSovereignA_authorized
-#assert_axioms execFullA_refusalA_authorized
-#assert_axioms execFullA_receiptArchiveA_authorized
 -- FILL #133: MakeSovereign is a VALUE-REBIND (commitment-form), NOT a flag. The faithful kernel move
 -- (`cells.remove(id)` + `sovereign_commitments.insert(id, cell.state_commitment())`) + its TEETH: the
 -- readable balance/fields are GONE (a flag model CANNOT prove this), the commitment IS present and
 -- binds the pre-state, and it stays bal-NEUTRAL on the per-asset ledger (`cell`-only ⇒ `bal` fixed).
-#assert_axioms makeSovereignStep_factors
-#assert_axioms makeSovereignKernel_recTotalAsset
-#assert_axioms makeSovereignKernel_cell_eq
-#assert_axioms makeSovereignStep_authorized
-#assert_axioms makeSovereignStep_chainlink
-#assert_axioms makeSovereignStep_balance_unreadable
-#assert_axioms makeSovereignStep_fields_dropped
-#assert_axioms makeSovereignStep_commitment_present
 -- THE THIRD NONCE-RESET VECTOR, CLOSED: the commitment-form rebind PRESERVES the reserved replay nonce
 -- (the readable nonce no longer drops to 0 — `makeSovereign` is now nonce-MONOTONE, the fix that makes
 -- `BodyNonceNondecreasing` hold for `makeSovereign` too, dropping the no-replay carve-out).
-#assert_axioms sovereignRebind_nonce_scalar
-#assert_axioms makeSovereignKernel_nonce_preserved
 -- META-FILL B Wave 2: the 6 DISTINCT AUTHORITY effects on the per-asset dispatch. The headline
 -- NON-AMPLIFICATION (genuine `capAuthConferred ⊆` over the real `List Auth` lattice) + the
 -- teeth (amplifying grant rejected) + grounding/addEdge/removeEdge/graph-unchanged graph moves,
 -- all pinned kernel-clean. The keystone `execFullA_attests_per_asset` (re-extended above) carries
 -- ALL of these into the forest by construction (FullForestA spine UNCHANGED).
-#assert_axioms amplifyingF_rejected
-#assert_axioms attenuateF_non_amplifying
-#assert_axioms exerciseStepA_factors
-#assert_axioms execFullA_introduceA_grounds
-#assert_axioms execFullA_introduceA_addEdge
-#assert_axioms execFullA_introduceA_holds_real_cap
-#assert_axioms execFullA_introduceA_grants_held_cap
-#assert_axioms execFullA_introduceA_non_amplifying
-#assert_axioms execFullA_attenuateA_non_amplifying
-#assert_axioms execFullA_attenuateA_confined
-#assert_axioms execFullA_revokeDelegationA_removeEdge
-#assert_axioms execFullA_delegateAttenA_grounds
-#assert_axioms execFullA_delegateAttenA_grants
-#assert_axioms execFullA_delegateAttenA_non_amplifying
-#assert_axioms execFullA_exerciseA_authorized
-#assert_axioms execFullA_exerciseA_recurses
-#assert_axioms execInnerA_ledger_per_asset
-#assert_axioms execFullA_log_suffix
-#assert_axioms execInnerA_log_suffix
-#assert_axioms execFullA_chainlinkExact
 -- META-FILL C Wave 3: accounts-GROWTH (`createCell`/`spawn`, born EMPTY ⇒ conservation-NEUTRAL) +
 -- the SUPPLY inflow (`bridgeMint`, §8-portal disclosed `+value` at ONE asset). The account-growth
 -- NEUTRALITY keystone (`recTotalAsset` unchanged BECAUSE the fresh cell is born empty, the index set
@@ -148,50 +63,9 @@ open Dregg2.Tactics  -- the effect-arm combinators (`reject_none`/`commit_subst`
 -- construction (FullForestA spine UNCHANGED — only `targetOf` gains arms).
 #assert_axioms recTotalAsset_insert_fresh
 #assert_axioms createCellIntoAsset_grows_accounts
-#assert_axioms createCellChainA_factors
-#assert_axioms createCellChainA_neutral
-#assert_axioms createCellChainA_grows_accounts
-#assert_axioms createCellChainA_authorized
-#assert_axioms createCellChainA_unauthorized_fails
-#assert_axioms createCellChainA_chainlink
 -- §MA-factory: the `CreateCellFromFactory` keystones (validation + program-install + frames).
-#assert_axioms createCellFromFactoryChainA_factors
-#assert_axioms createCellFromFactoryChainA_neutral
-#assert_axioms createCellFromFactoryChainA_authorized
-#assert_axioms createCellFromFactoryChainA_grows_accounts
-#assert_axioms createCellFromFactoryChainA_installs_program
-#assert_axioms createCellFromFactoryChainA_unknown_factory_fails
-#assert_axioms createCellFromFactoryChainA_nonconforming_fails
-#assert_axioms createCellFromFactoryChainA_balance_field_fails
-#assert_axioms createCellFromFactoryChainA_caps_frame
-#assert_axioms createCellFromFactoryChainA_sideTables
-#assert_axioms spawnChainA_factors
-#assert_axioms spawnChainA_neutral
-#assert_axioms spawnChainA_authorized
-#assert_axioms spawnChainA_grounds
-#assert_axioms spawnChainA_provenance
-#assert_axioms spawnChainA_parent_snapshot
-#assert_axioms spawnChainA_stamps_epoch
-#assert_axioms spawnChainA_fresh_at_birth
-#assert_axioms spawnChainA_chainlink
-#assert_axioms execFullA_bridgeMintA_authorized
-#assert_axioms execFullA_bridgeMintA_unauthorized_fails
-#assert_axioms execFullA_createCellA_neutral_per_asset
-#assert_axioms execFullA_createCellA_grows_accounts
-#assert_axioms execFullA_spawnA_neutral_per_asset
-#assert_axioms execFullA_bridgeMintA_discloses_per_asset
 -- META-FILL C: the note chained wrappers + the executed-dispatch obligations.
-#assert_axioms execFullA_noteSpendA_inserts
-#assert_axioms execFullA_noteCreateA_inserts
 -- §MA-lifecycle (Wave-3) keystones: the lifecycle state machine + the de-shadowed seal cap-movement.
-#assert_axioms cellSealChainA_nonlive_rejects
-#assert_axioms cellDestroyChainA_terminal_rejects
-#assert_axioms refreshDelegationChainA_noParent_rejects
-#assert_axioms refreshDelegationChainA_snapshots_parent
-#assert_axioms refreshDelegationChainA_restamps_epoch
-#assert_axioms refreshDelegationChainA_fresh
-#assert_axioms execFullA_cellSealA_authorized
-#assert_axioms execFullA_refreshDelegationA_authorized
 
 /-! ## §12 — Non-vacuity: each kind commits with the right invariant; unauthorized rejected.
 
@@ -832,6 +706,34 @@ def fmaP : RecChainedState :=
 #guard ((execFullA fmaP (.pipelinedSendA 0)).isSome)  --  true — apply-time neutral commits
 #guard ((execFullA fmaP (.pipelinedSendA 0)).map
         (fun s => (recTotalAsset s.kernel 0, s.log.length))) == some (50, 1)  --  some (50, 1) — NEUTRAL + one clock row
+
+/-! ## §14 — the axiom-hygiene pin, placed LAST on purpose (see the note). -/
+
+-- ⚑ 2026-07-24 PILOT (axiom-pin migration, MEASURED). The 126 per-theorem
+-- `#assert_axioms` lines that used to sit in §11-§13 are replaced by the ONE
+-- namespace pin below. MEASURED on this tree: it pins 293 theorems kernel-clean
+-- (`#assert_namespace_axioms Dregg2.Exec.TurnExecutorFull: 293 theorems pinned
+-- kernel-clean`) versus the 126 the explicit lines covered — 2.3x the coverage,
+-- because it also reaches every theorem in the `.Scalar` and `.PerAsset` halves
+-- that the hand-written list never enumerated.
+--
+-- ⚠ TWO pins are DELIBERATELY RETAINED below and must NOT be folded in:
+--   `recTotalAsset_insert_fresh` and `createCellIntoAsset_grows_accounts` are
+--   `Dregg2.Exec.*`, NOT `Dregg2.Exec.TurnExecutorFull.*` — they only resolved
+--   bare here because of the `open Dregg2.Exec` above. The namespace pin does
+--   NOT cover them; deleting them would SILENTLY drop 2 keystones.
+--
+-- ⚠ PLACEMENT MATTERS: this command pins only what is ALREADY ELABORATED when it runs.
+--   Measured: sitting at the top of §11 it reported 292; moved here (last) it reports 293 —
+--   it was silently missing this file's own `fullActionInvA_nonvacuous` (§12, line ~339).
+--   A namespace pin belongs at the END of the file. A per-theorem pin has no such trap.
+--
+-- ⚠ TRADEOFF, recorded honestly: every name this file pins is defined in ANOTHER
+--   module (this file declares 1 theorem). A per-theorem pin fails LOUDLY if its
+--   theorem is renamed/removed; the namespace pin just covers one fewer, SILENTLY.
+--   Coverage went up, tripwire sharpness went down. Do not mass-apply this without
+--   that trade being acceptable per-file. See docs/ORPHAN-TRIAGE-2026-07-24.md.
+#assert_namespace_axioms Dregg2.Exec.TurnExecutorFull
 
 end Dregg2.Exec.TurnExecutorFull
 

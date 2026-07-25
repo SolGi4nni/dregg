@@ -22,15 +22,12 @@
 # delete them from here; the staleness check will remind you.
 
 # --- in-flight Lean-authored circuit EMIT/REFINE/RUNG pipeline (AutomataflResolveEmit family); each lands in Dregg2.lean when its refinement rung is discharged ---
-Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.AccumulatorNonRevocationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AdjacencyMembershipRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AdjacencyMembershipRefineAudit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AdjacencyMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AttestedFactMembershipEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AvailWideMembersNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BlindedMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.BoundPresentationEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BridgeActionEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -64,39 +61,25 @@ Dregg2.Circuit.Emit.MultiStepChainRefine  # GREEN self-checked (#assert clean), 
 Dregg2.Circuit.Emit.NoteSpendingLeafEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesArithmeticEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesArithmeticRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesGtEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesGtRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesInRangeEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesInRangeRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesLeEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesLeRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesLtEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesLtRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesNeqEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesNeqRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesRelationalCompoundRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2Full  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PresentationEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PresentationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.QuantifiedAbsenceEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.QuantifiedAbsenceRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.QuantifiedAbsenceRefineAudit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.QuantifiedAbsenceRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.RotatedLayoutBridge  # GREEN, NO self-check — asserts nothing on its own — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.TemporalPredicateEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.TemporalPredicateRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.TemporalPredicateRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 
-# --- circuit-soundness WIP (FRI/STARK proximity-gap, AlgoStark fanout, kernel-config, wrap-safety); several carry sorry and must NOT enter the default build until discharged ---
+# --- circuit-soundness WIP (FRI/STARK proximity-gap, AlgoStark fanout, kernel-config, wrap-safety) ---
+# ⚑ CORRECTED 2026-07-24: this heading used to say "several carry sorry". MEASURED FALSE —
+# a comment-stripped scan finds ZERO real `sorry` tokens in ANY allowlisted orphan and ZERO
+# across all 1730 Dregg2/**.lean. Every file here is self-checked GREEN. The reason they stay
+# out of the default build is ci.yml's documented 28 RED-AT-HEAD Circuit.Emit modules
+# (elaboration-time `sorryAx` from a Type mismatch — not a source `sorry`), not carried sorry.
 Dregg2.Circuit.AcceptanceDischarge  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundFanoutMemFree  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundFanoutMemory  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundFanoutSetField  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundGeneral  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundKernel  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundKernelAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.BlindedMembershipBindingFromFold  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
@@ -112,8 +95,6 @@ Dregg2.Circuit.FriProximityGapWitness  # GREEN self-checked (#assert clean), REG
 Dregg2.Circuit.FriVerifierOracle  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.KernelConfigSoundness  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.KernelConfigSoundnessAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.OodColumnLayout  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.PresentationBindingFromFold  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.WrapSafetyStaticAnalyzer  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 
@@ -132,14 +113,10 @@ Dregg2.Crypto.VerifyCoreEqSpecW  # GREEN self-checked (#assert clean), REGISTERA
 Dregg2.Crypto.VerifyCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 
 # --- light-client / proof-of-holdings bridge WIP (Eth/Tendermint/MPT clients, holding-fold tally) ---
-Dregg2.Bridge.HoldingFoldRecursive  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 Dregg2.Bridge.HoldingWeightedTally  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.InterchainAdapterDecision  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 Dregg2.Bridge.LightClientEth  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 Dregg2.Bridge.LightClientMpt  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 Dregg2.Bridge.LightClientTendermint  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.ProofOfHoldings  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.ProofOfHoldingsGeneric  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 Dregg2.Bridge.VerifiedLightClient  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 
 # --- game AIRs authored in Lean, actively churning (Dungeon/MultiwayTug/Automatafl); carry sorry — not for the metatheory-no-sorry build ---

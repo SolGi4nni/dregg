@@ -17,10 +17,31 @@
 # WHY AN ALLOWLIST, NOT A GLOB
 #   Globbing the Dregg2 lib would pull the WHOLE subtree into the default build. As of
 #   writing that is 136 orphan modules — many are intentional WIP (the Circuit.Emit
-#   refinement rungs, FRI/STARK soundness drafts, PQ-crypto specs, game AIRs) and several
-#   CARRY `sorry`. Globbing would turn the tree red and collide with the metatheory-no-sorry
-#   gate. The allowlist keeps those exclusions EXPLICIT and REASONED while still failing
+#   refinement rungs, FRI/STARK soundness drafts, PQ-crypto specs, game AIRs).
+#
+#   ⚑ CORRECTED 2026-07-24 (measured, not assumed). This header used to claim "and several
+#   CARRY `sorry`". That is FALSE and was the stated reason not to glob. A comment-stripped
+#   token scan (block `/- -/` and line `--` comments removed, so the many "no `sorry`" PROSE
+#   mentions do not count) finds ZERO real `sorry` in the 123 allowlisted orphans AND ZERO in
+#   all 1730 metatheory/Dregg2/**.lean files. The 16 files that grep for `sorry` match only
+#   inside doc comments asserting they are sorry-FREE. Do not re-assert the sorry claim
+#   without re-measuring; `grep sorry` over Lean sources is dominated by prose false hits.
+#
+#   The REAL reason not to glob is unchanged and is a BUILD-REDNESS reason, not a sorry
+#   reason: ci.yml's "Orphan gate" step documents 28 dark Circuit.Emit/*{Refine,Rung2}
+#   modules that are RED AT HEAD (a Type mismatch that induces `sorryAx` at ELABORATION —
+#   which is NOT a source `sorry` token and is exactly why the textual scan above reads
+#   clean). Globbing would turn the default build red on those.
+#
+#   The allowlist keeps those exclusions EXPLICIT and REASONED while still failing
 #   loud the instant a NEW, unlisted orphan appears.
+#
+# ⚠ WHAT THIS GATE DOES *NOT* GUARANTEE (read before trusting a PASS)
+#   Allowlisted == "the exclusion is deliberate", NOT "the module is checked somewhere".
+#   Measured 2026-07-24: of 136 orphans, only 58 are actually built by ci.yml's
+#   AXIOM_GUARD_TARGETS "Orphan gate"; 79 are compiled by NO CI target at all. See
+#   docs/ORPHAN-TRIAGE-2026-07-24.md for the per-module triage. A green run of THIS gate
+#   says nothing about those 79.
 #
 # REACHABILITY (pure source-text scan; no Lean toolchain, no build — like the sibling
 # independence-controls gate)
