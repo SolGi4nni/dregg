@@ -1,3 +1,8 @@
+# AUDIT FIXTURE, NOT A DEPLOYABLE: every [[cell]] below declares `owner_pubkey = "unowned"`.
+# These specs exist to exercise the cap-graph checks; no operator holds a signing key for
+# these cells, and declaring that is what keeps `dregg-deploy apply` from refusing the file
+# (ApplyError::UnownedCells). A real deployment pins the operator's 32-byte key instead.
+#
 # identity.dregg.toml — DreggDL deployment for the `starbridge-identity` app.
 #
 # An identity ISSUER is a factory-born sovereign cell whose program enforces the
@@ -33,6 +38,7 @@ factory_vk      = "0x737461726272696467652d6964656e746974792d6973737565722d66616
 [[cell]]
 name    = "issuer"
 factory = "issuer-factory"
+owner_pubkey = "unowned"
 mode    = "sovereign"
 
 # The ISSUER-ADMIN agent — the root authority over the issuer (manages the
@@ -40,18 +46,21 @@ mode    = "sovereign"
 [[cell]]
 name    = "issuer-admin"
 factory = "issuer-factory"
+owner_pubkey = "unowned"
 
 # A delegated SUB-ISSUER agent — authorized by the admin to ISSUE credentials
 # (advance the issuance counter, write the revocation root).
 [[cell]]
 name    = "sub-issuer"
 factory = "issuer-factory"
+owner_pubkey = "unowned"
 
 # A credential HOLDER / VERIFIER — reads the schema + revocation root to verify a
 # credential (read-only).
 [[cell]]
 name    = "holder"
 factory = "issuer-factory"
+owner_pubkey = "unowned"
 
 # ── The cap-grant graph (admin ⊃ sub-issuer ⊃ holder ladder).
 

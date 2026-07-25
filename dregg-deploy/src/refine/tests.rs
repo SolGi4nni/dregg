@@ -100,12 +100,15 @@ ref = "f"
 [[cell]]
 name = "deal"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "operator"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "bank"
 factory = "f"
+owner_pubkey = "unowned"
 
 [[fund]]
 from = "bank"
@@ -152,12 +155,15 @@ ref = "f"
 [[cell]]
 name = "deal"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "operator"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "bank"
 factory = "f"
+owner_pubkey = "unowned"
 
 [[fund]]
 from = "bank"
@@ -208,12 +214,15 @@ ref = "f"
 [[cell]]
 name = "deal"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "operator"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "bank"
 factory = "f"
+owner_pubkey = "unowned"
 
 [[fund]]
 from = "bank"

@@ -1,3 +1,8 @@
+# AUDIT FIXTURE, NOT A DEPLOYABLE: every [[cell]] below declares `owner_pubkey = "unowned"`.
+# These specs exist to exercise the cap-graph checks; no operator holds a signing key for
+# these cells, and declaring that is what keeps `dregg-deploy apply` from refusing the file
+# (ApplyError::UnownedCells). A real deployment pins the operator's 32-byte key instead.
+#
 # escrow.dregg.toml — one declarative dregg deployment.
 #
 # The reference deployment from sdk/src/factories.rs, written as DreggDL: an
@@ -36,6 +41,7 @@ creation_budget  = 100
 [[cell]]
 name           = "deal-001"
 factory        = "escrow"
+owner_pubkey = "unowned"
 mode           = "hosted"
 initial_fields = [ { slot = 1, value = 0 }, { slot = 3, value = 42 } ]
 
@@ -43,12 +49,14 @@ initial_fields = [ { slot = 1, value = 0 }, { slot = 3, value = 42 } ]
 [[cell]]
 name    = "operator"
 factory = "escrow"
+owner_pubkey = "unowned"
 
 # Fund the deal: the funding bank moves value into the deal cell. Conservation
 # (guarantee B) is checked over this transfer.
 [[cell]]
 name    = "bank"
 factory = "escrow"
+owner_pubkey = "unowned"
 
 [[fund]]
 from   = "bank"

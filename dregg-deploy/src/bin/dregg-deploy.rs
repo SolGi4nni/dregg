@@ -139,10 +139,21 @@ fn print_human(v: &dregg_deploy::DeployVerdict, text: &str) {
     if !v.cells.is_empty() {
         println!("  cells:");
         for (name, id) in &v.cells {
-            println!("    {name:<16} cell      {}…", &id[..16]);
+            let owner = if v.unowned_cells.iter().any(|c| c == name) {
+                "  ⚠ NO OWNER KEY"
+            } else {
+                ""
+            };
+            println!("    {name:<16} cell      {}…{owner}", &id[..16]);
         }
     }
     println!();
+    // The ownership hazard the static assurance structurally cannot see: the cap GRAPH is fine,
+    // the KEYS are dead. `apply` refuses; say so here, where the operator is looking.
+    if let Some(warning) = v.unowned_warning() {
+        println!("{warning}");
+        println!();
+    }
 
     let a = &v.assurance;
     let line = |name: &str, vd: &dregg_userspace_verify::Verdict| {

@@ -87,6 +87,19 @@ pub struct Lowered {
     pub factory_vks: BTreeMap<String, [u8; 32]>,
     /// Resolved cell ids (`name` -> `CellId`).
     pub cell_ids: BTreeMap<String, CellId>,
+    /// **Cells whose `owner_pubkey` was DEFAULTED — nobody can ever sign for them.**
+    ///
+    /// Absent a pin, a cell's owner key is `derive_key("dregg-deploy-owner-v1", name)`. That value
+    /// is used directly AS the ed25519 PUBLIC key, so it is not forgeable (recovering the scalar is
+    /// a discrete log) — the hazard runs the other way: **no one holds the matching secret**, so
+    /// every `AuthRequired::Signature` turn on that cell is refused forever. The deployment mints a
+    /// cell it can never fund out of, grant from, or drive.
+    ///
+    /// The lowering still produces the forest (a spec being AUDITED does not need real owners), but
+    /// [`crate::plan_apply`] refuses to emit a submittable plan while this list is non-empty. A
+    /// spec that genuinely means "no one signs for this" says so with `owner_pubkey = "unowned"`,
+    /// which lowers to the same value and is NOT listed here.
+    pub unowned_cells: Vec<String>,
 }
 
 impl Lowered {
@@ -171,6 +184,12 @@ fn hex_nibble(c: u8) -> Result<u8, String> {
 fn derive32(domain: &str, name: &str) -> [u8; 32] {
     blake3::derive_key(domain, name.as_bytes())
 }
+
+/// The `[[cell]].owner_pubkey` value that DECLARES a cell has no signing owner: nobody holds a
+/// secret for it and every `AuthRequired::Signature` turn on it will be refused, deliberately.
+/// Case-insensitive. This is the escape hatch from the [`Lowered::unowned_cells`] refusal — it
+/// changes nothing about the lowered bytes, only about whether the deployment SAID it meant this.
+pub const UNOWNED: &str = "unowned";
 
 // ─── enum surface parsing ────────────────────────────────────────────────────
 
@@ -346,6 +365,8 @@ impl Lowered {
         };
 
         let mut roots: Vec<CallTree> = Vec::new();
+        // Cells that did not pin an owner and did not declare themselves `"unowned"`.
+        let mut unowned_cells: Vec<String> = Vec::new();
 
         // (3) births: one CreateCellFromFactory per [[cell]], dependency-first.
         for c in &dep.cells {
@@ -363,9 +384,20 @@ impl Lowered {
                 Some(m) => parse_mode(&format!("cell `{}`.mode", c.name), m)?,
                 None => desc.default_mode.clone(),
             };
+            // OWNERSHIP. The pinned key is the cell's real owner. `"unowned"` is a DECLARATION
+            // that no one will ever sign for this cell (an audit fixture, a proof-gated or
+            // permissionless cell) — it lowers to the same name-derived value as the old silent
+            // default, but says so out loud. An ABSENT `owner_pubkey` gets that value too and is
+            // RECORDED: nobody holds its secret, so `plan_apply` refuses to deploy it.
             let owner_pubkey = match &c.owner_pubkey {
+                Some(s) if s.trim().eq_ignore_ascii_case(UNOWNED) => {
+                    derive32("dregg-deploy-owner-v1", &c.name)
+                }
                 Some(s) => parse_hex32(&format!("cell `{}`.owner_pubkey", c.name), s)?,
-                None => derive32("dregg-deploy-owner-v1", &c.name),
+                None => {
+                    unowned_cells.push(c.name.clone());
+                    derive32("dregg-deploy-owner-v1", &c.name)
+                }
             };
             let token_id = match &c.token_id {
                 Some(s) => parse_hex32(&format!("cell `{}`.token_id", c.name), s)?,
@@ -515,6 +547,7 @@ impl Lowered {
             forest,
             factory_vks,
             cell_ids,
+            unowned_cells,
         })
     }
 }

@@ -1,3 +1,8 @@
+# AUDIT FIXTURE, NOT A DEPLOYABLE: every [[cell]] below declares `owner_pubkey = "unowned"`.
+# These specs exist to exercise the cap-graph checks; no operator holds a signing key for
+# these cells, and declaring that is what keeps `dregg-deploy apply` from refusing the file
+# (ApplyError::UnownedCells). A real deployment pins the operator's 32-byte key instead.
+#
 # supply-chain-provenance.overgrant.dregg.toml — the DELIBERATELY OVER-GRANTING
 # variant of the supply-chain deployment. DreggDL's no-amplification gate REFUSES
 # this before any turn is built — the "the gate catches the over-grant before it
@@ -31,23 +36,28 @@ factory_vk      = "0x737461726272696467652d737570706c79636861696e2d6974656d2d666
 [[cell]]
 name    = "item"
 factory = "item-factory"
+owner_pubkey = "unowned"
 mode    = "sovereign"
 
 [[cell]]
 name    = "manufacturer"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 [[cell]]
 name    = "custodian"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 [[cell]]
 name    = "verifier"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 [[cell]]
 name    = "rogue-custodian"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 # manufacturer → custodian: the held state-writer|transfer custody cap (same as
 # the valid spec).

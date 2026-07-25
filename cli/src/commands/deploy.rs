@@ -257,6 +257,44 @@ fn apply(
             std::process::exit(EXIT_REFUSED);
         }
 
+        // REFUSED because one or more cells would be born owned by a key nobody holds
+        // (`owner_pubkey` omitted ⇒ derived from the cell NAME). The authority layout is fine;
+        // the cells would simply be unsignable forever. NO turn was produced. Exit 2.
+        Err(ApplyError::UnownedCells { cells }) => {
+            if cfg.is_json() {
+                ctx.json_stdout(&serde_json::json!({
+                    "command": "deploy apply",
+                    "spec": spec.display().to_string(),
+                    "pass": false,
+                    "refused": true,
+                    "unowned_cells": cells,
+                    "findings": [format!(
+                        "{} cell(s) have no `owner_pubkey`: {}",
+                        cells.len(),
+                        cells.join(", ")
+                    )],
+                    "exit_code": EXIT_REFUSED,
+                }));
+                std::process::exit(EXIT_REFUSED);
+            }
+            ctx.header("DreggDL — apply REFUSED: cells nobody can sign for");
+            ctx.kv("Spec", &spec.display().to_string());
+            ctx.error(&format!(
+                "{} cell(s) omit `owner_pubkey`, so they would be born owned by \
+                 derive_key(\"dregg-deploy-owner-v1\", name) — a public value nobody holds the \
+                 secret for. No fund out, no grant from, no method call, ever.",
+                cells.len()
+            ));
+            for cell in &cells {
+                ctx.info(&format!("  • {cell}"));
+            }
+            ctx.warn(
+                "Set `owner_pubkey` to the operator's 32-byte key, or — if the cell is genuinely \
+                 never signed for — declare it with `owner_pubkey = \"unowned\"`.",
+            );
+            std::process::exit(EXIT_REFUSED);
+        }
+
         // Lowering failed on the `plan_apply` path (we already lowered above so
         // this is unlikely, but it is a usage error either way): exit 1.
         Err(e @ ApplyError::Lower(_)) => Err(format!("{}: {e}", spec.display()).into()),

@@ -136,7 +136,17 @@ pub struct Cell {
     pub name: String,
     /// Which factory births this cell (`-> factory.ref`).
     pub factory: String,
-    /// Owner public key (32-byte hex). Defaults to a hash of `name`.
+    /// **Owner public key (32-byte hex) — who can sign for this cell.**
+    ///
+    /// Omitted, it falls back to `derive_key("dregg-deploy-owner-v1", name)`. That value is used
+    /// directly AS the ed25519 public key, so it is not forgeable — but **nobody holds the
+    /// matching secret**, so the cell is born permanently unsignable: no fund out, no grant from,
+    /// no method call, ever. `dregg-deploy check` warns and `plan_apply` REFUSES
+    /// (`ApplyError::UnownedCells`) rather than deploy one silently.
+    ///
+    /// Set it to the operator's real key, or — for an audit fixture or a cell that is genuinely
+    /// never signed for — declare the intent with the literal `"unowned"`
+    /// ([`crate::lower::UNOWNED`]), which lowers to the same value without the refusal.
     #[serde(default)]
     pub owner_pubkey: Option<String>,
     /// Token domain (32-byte hex). Defaults to all-zeros (native domain).

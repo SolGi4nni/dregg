@@ -1,3 +1,8 @@
+# AUDIT FIXTURE, NOT A DEPLOYABLE: every [[cell]] below declares `owner_pubkey = "unowned"`.
+# These specs exist to exercise the cap-graph checks; no operator holds a signing key for
+# these cells, and declaring that is what keeps `dregg-deploy apply` from refusing the file
+# (ApplyError::UnownedCells). A real deployment pins the operator's 32-byte key instead.
+#
 # escrow-market.dregg.toml — DreggDL deployment for the
 # `starbridge-escrow-market` app.
 #
@@ -33,22 +38,26 @@ factory_vk      = "0x737461726272696467652d657363726f772d6d61726b65742d666163746
 [[cell]]
 name    = "deal"
 factory = "escrow-factory"
+owner_pubkey = "unowned"
 mode    = "sovereign"
 
 # The SELLER agent — opens the listing (root of the deal's authority).
 [[cell]]
 name    = "seller"
 factory = "escrow-factory"
+owner_pubkey = "unowned"
 
 # The BUYER agent — funds the escrow.
 [[cell]]
 name    = "buyer"
 factory = "escrow-factory"
+owner_pubkey = "unowned"
 
 # An ARBITER agent — observes the deal (read-only) to adjudicate disputes.
 [[cell]]
 name    = "arbiter"
 factory = "escrow-factory"
+owner_pubkey = "unowned"
 
 # The buyer funds the escrow: value moves buyer → deal. Conservation (guarantee
 # B) is checked over this transfer — it self-nets, so a funded escrow conserves.

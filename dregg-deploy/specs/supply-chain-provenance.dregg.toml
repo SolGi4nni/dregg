@@ -1,3 +1,8 @@
+# AUDIT FIXTURE, NOT A DEPLOYABLE: every [[cell]] below declares `owner_pubkey = "unowned"`.
+# These specs exist to exercise the cap-graph checks; no operator holds a signing key for
+# these cells, and declaring that is what keeps `dregg-deploy apply` from refusing the file
+# (ApplyError::UnownedCells). A real deployment pins the operator's 32-byte key instead.
+#
 # supply-chain-provenance.dregg.toml — DreggDL deployment for the
 # `starbridge-supply-chain-provenance` app.
 #
@@ -41,22 +46,26 @@ factory_vk      = "0x737461726272696467652d737570706c79636861696e2d6974656d2d666
 [[cell]]
 name    = "item"
 factory = "item-factory"
+owner_pubkey = "unowned"
 mode    = "sovereign"
 
 # The MANUFACTURER agent — the root holder (mints, grants custody forward).
 [[cell]]
 name    = "manufacturer"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 # The first CUSTODIAN agent (a warehouse / carrier holding the item).
 [[cell]]
 name    = "custodian"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 # A VERIFIER agent (a regulator / the public — reads the provenance chain).
 [[cell]]
 name    = "verifier"
 factory = "item-factory"
+owner_pubkey = "unowned"
 
 # ── The custody-cap GRANT graph (the manufacturer ⊃ custodian ⊃ verifier ladder).
 #

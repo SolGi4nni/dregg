@@ -6622,6 +6622,7 @@ dependencies = [
  "ed25519-dalek",
  "postcard",
  "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -8005,6 +8006,7 @@ dependencies = [
  "fhe-traits",
  "fhegg-fhe",
  "fhegg-solver",
+ "getrandom 0.3.4",
  "procgen-dregg",
  "rand 0.8.6",
  "rand 0.9.4",

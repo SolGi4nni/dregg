@@ -187,6 +187,21 @@ pub enum ApplyError {
     /// message contains `amplifies`.
     #[error("deployment refused by the static pre-submission check: {0} finding(s) over the declared authority layout (run `dregg-deploy check` for the loci)", .assurance.all_findings().len())]
     Refused { assurance: Box<Assurance> },
+    /// One or more `[[cell]]` rows omitted `owner_pubkey`, so their owner key was defaulted to
+    /// `derive_key("dregg-deploy-owner-v1", name)` — a public value **nobody holds the secret
+    /// for**. Deploying them mints cells that can never be signed for: no fund out, no grant
+    /// from, no method call, forever, and nothing on-chain says so.
+    ///
+    /// Fix by pinning the operator's real 32-byte key, or — if the cell is genuinely never meant
+    /// to be signed for — declare it: `owner_pubkey = "unowned"`.
+    #[error(
+        "deployment refused: {} cell(s) have no owner key and nobody could ever sign for them \
+         ({}). Set `owner_pubkey` to the operator's 32-byte key, or declare the intent with \
+         `owner_pubkey = \"unowned\"`.",
+        .cells.len(),
+        .cells.join(", ")
+    )]
+    UnownedCells { cells: Vec<String> },
 }
 
 /// One turn in the applied deployment plan: the submittable [`Turn`] plus the
@@ -304,11 +319,25 @@ pub fn plan_apply(dep: &Deployment, as_ring: bool) -> Result<AppliedPlan, ApplyE
     let lowered = Lowered::from_deployment(dep)?;
 
     // (2) THE GATE: run the static assurance over the whole declared authority
-    // layout. Refuse to emit anything if it does not pass.
+    // layout. Refuse to emit anything if it does not pass. This runs FIRST of the two gates:
+    // an amplifying or non-conserving spec is refused as such even if it also forgot its owners,
+    // so the more serious finding is the one the operator is shown.
     let assurance = dregg_userspace_verify::analyze(&lowered.forest, as_ring);
     if !assurance.pass() {
         return Err(ApplyError::Refused {
             assurance: Box::new(assurance),
+        });
+    }
+
+    // (2b) THE OWNERSHIP GATE. A `[[cell]]` with no `owner_pubkey` is born owned by
+    // `derive_key("dregg-deploy-owner-v1", name)` — a value nobody holds the secret for. The
+    // static assurance structurally cannot see this: the cap GRAPH is fine, it is the *keys* that
+    // are dead. So it is checked here, on the path that actually produces submittable turns.
+    // `check` and `plan_from_lowered` deliberately do NOT gate on it — auditing a spec's authority
+    // layout does not require real owners, deploying it does.
+    if !lowered.unowned_cells.is_empty() {
+        return Err(ApplyError::UnownedCells {
+            cells: lowered.unowned_cells.clone(),
         });
     }
 

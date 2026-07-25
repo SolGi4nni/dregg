@@ -153,12 +153,34 @@ pub struct DeployVerdict {
     pub cells: Vec<(String, String)>,
     /// Number of root effect-groups in the lowered forest.
     pub turn_count: usize,
+    /// Cells whose `owner_pubkey` was defaulted — see [`Lowered::unowned_cells`]. `check` still
+    /// PASSES with these (the authority layout is what it audits, and an audit needs no real
+    /// keys), but [`plan_apply`] refuses to deploy them: nobody holds a secret for a name-derived
+    /// owner key, so the cells would be born permanently unsignable.
+    pub unowned_cells: Vec<String>,
 }
 
 impl DeployVerdict {
     /// `true` iff every static check passed.
     pub fn pass(&self) -> bool {
         self.assurance.pass()
+    }
+
+    /// The loud warning for [`unowned_cells`](Self::unowned_cells), or `None` when every cell has
+    /// a declared owner. A passing `check` on a spec with unowned cells is a spec that will be
+    /// REFUSED at `apply` — say it where the operator is looking.
+    pub fn unowned_warning(&self) -> Option<String> {
+        if self.unowned_cells.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "WARNING: {} cell(s) have no `owner_pubkey` and would be born owned by a key nobody \
+             holds ({}). They could never be signed for — no fund out, no grant from, no method \
+             call, ever. `apply` REFUSES this spec. Pin the operator's 32-byte key, or declare \
+             the intent with `owner_pubkey = \"unowned\"`.",
+            self.unowned_cells.len(),
+            self.unowned_cells.join(", ")
+        ))
     }
 }
 
@@ -198,6 +220,7 @@ pub fn check_deployment(dep: &Deployment, as_ring: bool) -> Result<DeployVerdict
         factories,
         cells,
         turn_count: lowered.forest.roots.len(),
+        unowned_cells: lowered.unowned_cells.clone(),
     })
 }
 

@@ -576,6 +576,120 @@ fn apply_refuses_directly_via_plan_apply_with_the_assurance() {
     assert!(!assurance.no_amplification.is_pass());
 }
 
+// ─── the ownership gate: a cell nobody can sign for is not deployable ────────
+
+/// The DreggDL an operator writes when they forget `owner_pubkey`: structurally perfect, a
+/// passing authority layout, and — before this gate — a deployment of three cells that could
+/// never be driven again.
+const NO_OWNER: &str = r#"
+[federation]
+id = "auto"
+
+[[factory]]
+ref = "f"
+
+[[cell]]
+name = "vault"
+factory = "f"
+[[cell]]
+name = "operator"
+factory = "f"
+
+[[grant]]
+from = "vault"
+to   = "operator"
+permissions = "signature"
+target = "vault"
+"#;
+
+/// **FALSIFIER — a defaulted `owner_pubkey` is a cell nobody can ever sign for, and `apply`
+/// refuses it.**
+///
+/// Omitting `owner_pubkey` silently installs `derive_key("dregg-deploy-owner-v1", name)` as the
+/// cell's owner. That value is *not* forgeable — it is used directly AS the ed25519 public key and
+/// recovering the scalar is a discrete log — the hazard is the inverse: nobody holds the secret,
+/// so every `AuthRequired::Signature` turn on the cell is refused forever. The declared
+/// `[[grant]]` here hands `operator` a **signature** cap over `vault` that can never be exercised.
+///
+/// Every static check PASSES on this spec (the cap graph conserves and does not amplify), which is
+/// exactly why the assurance could not catch it: the graph is fine, the keys are dead.
+#[test]
+fn apply_refuses_a_deployment_of_cells_nobody_can_sign_for() {
+    // The static audit is happy — the finding is invisible to it.
+    let verdict = crate::check(NO_OWNER, false).expect("the spec lowers and checks");
+    assert!(
+        verdict.pass(),
+        "the authority layout itself is sound — that is the point"
+    );
+    assert_eq!(
+        verdict.unowned_cells,
+        vec!["vault".to_string(), "operator".to_string()],
+        "check still reports which cells have no owner"
+    );
+    assert!(
+        verdict
+            .unowned_warning()
+            .expect("a warning is rendered")
+            .contains("could never be signed for"),
+        "the check output must say what is wrong in words"
+    );
+
+    // …and apply refuses to emit a single turn.
+    let err = plan_apply_toml(NO_OWNER, false)
+        .expect_err("a deployment of unsignable cells must be refused");
+    let crate::DeployError::Apply(ApplyError::UnownedCells { cells }) = err else {
+        panic!("expected ApplyError::UnownedCells, got {err}");
+    };
+    assert_eq!(cells, vec!["vault".to_string(), "operator".to_string()]);
+}
+
+/// The escape hatch is a DECLARATION, not a silence: `owner_pubkey = "unowned"` lowers to the
+/// SAME bytes as the omitted default — byte-identical forests — and only that difference in what
+/// the spec SAID moves it from refused to deployable. (A pinned real key does too, and produces a
+/// genuinely different forest.)
+#[test]
+fn declaring_unowned_deploys_the_identical_forest_the_default_would_have() {
+    let declared = NO_OWNER
+        .replace(
+            "name = \"vault\"\nfactory = \"f\"",
+            "name = \"vault\"\nfactory = \"f\"\nowner_pubkey = \"unowned\"",
+        )
+        .replace(
+            "name = \"operator\"\nfactory = \"f\"",
+            "name = \"operator\"\nfactory = \"f\"\nowner_pubkey = \"unowned\"",
+        );
+
+    let silent = Lowered::from_deployment(&parse_toml(NO_OWNER).unwrap()).unwrap();
+    let loud = Lowered::from_deployment(&parse_toml(&declared).unwrap()).unwrap();
+    assert_eq!(
+        silent.forest.forest_hash, loud.forest.forest_hash,
+        "declaring `unowned` must not change a single lowered byte — only the refusal"
+    );
+    assert!(loud.unowned_cells.is_empty(), "the declaration is honored");
+    assert!(!silent.unowned_cells.is_empty(), "the silence is recorded");
+
+    plan_apply_toml(&declared, false).expect("a spec that declares its intent applies");
+
+    // A pinned real key is the other way out, and it DOES change the deployment.
+    let pinned = NO_OWNER.replace(
+        "name = \"vault\"\nfactory = \"f\"",
+        &format!(
+            "name = \"vault\"\nfactory = \"f\"\nowner_pubkey = \"{}\"",
+            "ab".repeat(32)
+        ),
+    );
+    let pinned_lowered = Lowered::from_deployment(&parse_toml(&pinned).unwrap()).unwrap();
+    assert_eq!(
+        pinned_lowered.unowned_cells,
+        vec!["operator".to_string()],
+        "pinning one cell leaves the other still unowned"
+    );
+    assert_ne!(
+        pinned_lowered.forest.forest_hash, silent.forest.forest_hash,
+        "a real owner key is a different born cell"
+    );
+}
+
 // ─── a valid spec lowers to the chained per-root turn sequence ───────────────
 
 #[test]
@@ -662,12 +776,15 @@ ref = "f"
 [[cell]]
 name = "deal"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "operator"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "sub"
 factory = "f"
+owner_pubkey = "unowned"
 
 [[grant]]
 from = "deal"
@@ -715,12 +832,15 @@ ref = "f"
 [[cell]]
 name = "a"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "b"
 factory = "f"
+owner_pubkey = "unowned"
 [[cell]]
 name = "c"
 factory = "f"
+owner_pubkey = "unowned"
 
 [[fund]]
 from = "a"
