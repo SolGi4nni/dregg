@@ -385,6 +385,30 @@ extern lean_object *initialize_Dregg2_Dregg2_Games_AutomataflFFI(uint8_t builtin
 extern lean_object *dregg_automatafl_rules(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` MULTIWAY-TUG RULES ORACLE
+ * (`Dregg2.Games.MultiwayTugFFI.rulesFFI`): the verb-dispatched wire over the proven
+ * pure-transition spec `Dregg2.Games.MultiwayTug` — `legal` / `legalresp` / `kinds` / `split` /
+ * `act` / `respond` / `control` / `count` / `score` / `won` / `winner` / `total` / `charm` /
+ * `turns`. Every legality verdict, escrow split, row control, tally and round winner the deployed
+ * multiway-tug surface reports is computed HERE. It replaces the decisions of
+ * `dregg-multiway-tug/src/reference.rs`, a Rust re-expression of the same rules that had ALREADY
+ * DRIFTED: its `winner_of` is the model's `roundWinner` truncated to the two absolute thresholds,
+ * so it answers "no winner" on every sub-threshold round the model ADJUDICATES by charm and then
+ * by row count (`undecidedState_adjudicates` — the fix that took the draw rate from 66.1% to
+ * 5.1%). GATED on DREGG_MULTIWAY_TUG_RULES (build.rs probes + defines it).
+ *
+ * LIKE automatafl's export (and UNLIKE R3's / holding's / interchain's / FRI's) this one DOES need
+ * its module initializer: the `charm` verb reads `Dregg2.Games.MultiwayTug.charm` and every witness
+ * state reads `blankState` — nullary defs the generated C compiles to module-level globals that
+ * only `initialize_Dregg2_Dregg2_Games_MultiwayTug` fills; an un-initialized call would read NULL.
+ * It is therefore initialized explicitly in `dregg_ffi_init` below. Its closure
+ * (Games.MultiwayTug / Boundary / Tactics / Mathlib multiset+bigops) is re-entrant-safe under
+ * Lean's init guards and drags in no init edge the automatafl oracle does not already drag in. */
+#ifdef DREGG_MULTIWAY_TUG_RULES
+extern lean_object *initialize_Dregg2_Dregg2_Games_MultiwayTugFFI(uint8_t builtin);
+extern lean_object *dregg_multiway_tug_rules(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
  * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
  * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
@@ -409,6 +433,22 @@ extern lean_object *dregg_automatafl_rules(lean_object *input);
  * links and runs on the always-initialized Init runtime. */
 #ifdef DREGG_FRI_LEDGER
 extern lean_object *dregg_fri_ledger(lean_object *input);
+#endif
+
+/* The @[export]ed Lean `String -> String` DELEGATED TOOL/MCP-ACCESS ADMISSION decision
+ * (`Dregg2.Apps.DelegAdmit.delegAdmitFFI`). Runs `delegAdmit` — the five-conjunct predicate
+ * `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` proves the production
+ * caveat-gated executor commits a metered `calls_made : c -> c+1` write IFF, and whose negations are
+ * the `tool_invocation_over_rate_rejected` / `_past_deadline_rejected` / `_out_of_scope_rejected`
+ * teeth. The SDK tool gateway, the starbridge tool-access-delegation app and the dreggnet offerings
+ * session all marshal to THIS instead of re-deciding the policy in Rust; their three hand-maintained
+ * mirrors are deleted, so an absent export means those gateways REFUSE, not that a twin answers.
+ * GATED on DREGG_DELEG_ADMIT (build.rs probes + defines it). Like R3's / holding's / interchain's /
+ * FRI's export it needs NO module initializer: `Dregg2.Apps.DelegAdmit` imports nothing beyond core
+ * Init, so its generated C hoists its string literals into STATIC CONST `lean_string_object`s and is
+ * self-contained on the always-initialized Init runtime. */
+#ifdef DREGG_DELEG_ADMIT
+extern lean_object *dregg_deleg_admit(lean_object *input);
 #endif
 
 /* The @[export]ed Lean `String -> String` VERIFIED LIGHT-CLIENT verify-logic gates — the three
@@ -680,6 +720,21 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(afres);
 #endif
+#ifdef DREGG_MULTIWAY_TUG_RULES
+    /* The multiway-tug rules-oracle module is OUTSIDE the FFI closure; initialize it explicitly so
+     * `dregg_multiway_tug_rules` is callable. Like automatafl's (and unlike the self-contained cores
+     * below) it MUST be initialized: its `charm` verb reads the `charm` module global and every
+     * witness state reads `blankState` (see the extern-decl note above). Its dependency closure
+     * (Games.MultiwayTug / Boundary / Tactics / Mathlib multiset+bigops) is re-entrant-safe under
+     * Lean's init guards. */
+    lean_object *mtres = initialize_Dregg2_Dregg2_Games_MultiwayTugFFI(1);
+    if (!lean_io_result_is_ok(mtres)) {
+        lean_io_result_show_error(mtres);
+        lean_dec_ref(mtres);
+        return 1;
+    }
+    lean_dec_ref(mtres);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -931,6 +986,31 @@ size_t dregg_automatafl_rules_str(const char *in_utf8, char *out, size_t out_cap
 }
 #endif
 
+#ifdef DREGG_MULTIWAY_TUG_RULES
+/* dregg_multiway_tug_rules_str — the C string bridge over the Lean `String -> String` MULTIWAY-TUG
+ * RULES ORACLE export (`Dregg2.Games.MultiwayTugFFI.rulesFFI`). Input: a verb-first token wire (see
+ * the extern-decl note above and the module's header table). Output: `"1 …"` with the verb's
+ * payload, or `"0"` fail-closed for a malformed wire. Runs `Dregg2.Games.MultiwayTug` — the spec
+ * whose conservation, one-action-per-round, offer-interlock, scoring and win-safety theorems the
+ * emitted `MultiwayTugProgram` teeth are pinned against — so the playable surface, the witness path
+ * and the deployed teeth all take their answer from one object. Same return contract as the bridges
+ * above. */
+size_t dregg_multiway_tug_rules_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_multiway_tug_rules(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
 #ifdef DREGG_FRI_LEDGER
 /* dregg_fri_ledger_str — the C string bridge over the Lean `String -> String` FRI SOUNDNESS LEDGER
  * export (`Dregg2.Circuit.FriLedger.friLedgerFFI`). Input:
@@ -945,6 +1025,31 @@ size_t dregg_fri_ledger_str(const char *in_utf8, char *out, size_t out_cap) {
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_fri_ledger(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_DELEG_ADMIT
+/* dregg_deleg_admit_str — the C string bridge over the Lean `String -> String` DELEGATED
+ * TOOL/MCP-ACCESS ADMISSION export (`Dregg2.Apps.DelegAdmit.delegAdmitFFI`). Input:
+ * `"toolId rateLimit deadline now tool old new"` (seven signed decimal integers — the grant
+ * flattened first, then the presentation, then the counter transition). Output: `"1"` ADMIT / `"0"`
+ * REFUSE (the delegated policy said no) / `""` malformed wire (NO VERDICT — the Rust wrapper turns an
+ * empty answer into an `Err` and every caller refuses). Runs `delegAdmit`, the predicate
+ * `tool_invocation_commit_iff_admit` is stated over, so a routed gateway's verdict IS the proven
+ * one. Same return contract as the bridges above. */
+size_t dregg_deleg_admit_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_deleg_admit(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -183,6 +183,23 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          witness or run a match (there is no Rust twin left to fall back to — `reference.rs` was \
          DELETED because it carried the non-canonical experiment's 2-cycle and path-check bugs)",
     ),
+    (
+        "dregg_multiway_tug_rules",
+        "the multiway-tug RULES ORACLE compiles out: action/response legality, the escrow split, \
+         row control, the tallies and the ADJUDICATED round winner have no proven answer source, \
+         so `dregg-multiway-tug` falls back on `reference.rs` — whose `winner_of` is the model's \
+         `roundWinner` TRUNCATED to its two threshold branches, i.e. it answers 'no winner' on \
+         every sub-threshold round the model adjudicates (`undecidedState_adjudicates`)",
+    ),
+    (
+        "dregg_deleg_admit",
+        "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
+         gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
+         all REFUSE every invocation (fail-closed). There is no Rust twin left to fall back to — \
+         all three hand-maintained `deleg_admit`/`play_admit` re-implementations were DELETED when \
+         the decision was routed to `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate \
+         `tool_invocation_commit_iff_admit` and its three rejection teeth are proven over",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2060,6 +2077,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -2802,6 +2821,27 @@ fn main() {
         absent_export_warn("dregg_fri_ledger");
     }
 
+    // DELEGATED TOOL/MCP-ACCESS ADMISSION (`Dregg2.Apps.DelegAdmit.delegAdmitFFI`): the five-conjunct
+    // verdict — SCOPE (`tool = toolId`) ∧ DEADLINE (`now ≤ deadline`) ∧ STEP (`new = old + 1`) ∧ SANE
+    // (`0 ≤ old`) ∧ RATE (`new ≤ rateLimit`) — that `Dregg2.Apps.ToolAccessDelegation`'s
+    // `tool_invocation_commit_iff_admit` and its over-rate / past-deadline / out-of-scope teeth are
+    // proven over. Init-only module (no Mathlib), self-contained like R3/holding/interchain/FRI, so
+    // NO module initializer is referenced.
+    //
+    // ⚑ THERE IS NO FALLBACK ARM. Three Rust re-implementations of these same five conjuncts shipped
+    // beside the Lean for months — `sdk/src/tool_gateway.rs::deleg_admit`,
+    // `starbridge-apps/tool-access-delegation/src/lib.rs::deleg_admit`, and
+    // `dreggnet-offerings/src/session.rs::play_admit` — each documented as "the byte-faithful Rust
+    // mirror" of `delegAdmit`, each independently maintained, each provable of nothing (there is no
+    // formal semantics of Rust, so their differential tests pinned drift and not correctness). All
+    // three are DELETED. Absent ⇒ the gateways refuse every invocation rather than re-grow a twin.
+    let deleg_admit_present = archive_exports(&build_archive, "dregg_deleg_admit");
+    if deleg_admit_present {
+        println!("cargo:rustc-cfg=dregg_deleg_admit_present");
+    } else {
+        absent_export_warn("dregg_deleg_admit");
+    }
+
     // AUTOMATAFL GAME ORACLE (`Dregg2.Games.AutomataflFFI.rulesFFI`): the verb-dispatched wire over
     // the rules-faithful spec `Dregg2.Games.AutomataflRules` — board resolution (`mid`), the
     // automaton step and its whole decision (`step` / `sense`), move legality, the round's conflict
@@ -2823,6 +2863,30 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_automatafl_rules_present");
     } else {
         absent_export_warn("dregg_automatafl_rules");
+    }
+
+    // MULTIWAY-TUG RULES ORACLE (`Dregg2.Games.MultiwayTugFFI.rulesFFI`): the verb-dispatched wire
+    // over the proven pure-transition spec `Dregg2.Games.MultiwayTug` — action legality (`legal`),
+    // response legality and the anti-self-deal interlock (`legalresp`), the open action-kinds
+    // (`kinds`), the escrow split (`split`), the two transitions (`act` / `respond`), row control
+    // (`control`), the per-row tally including the scored Secret (`count`), the charm/row scores
+    // (`score`), the win predicate (`won`) and the ADJUDICATED round winner (`winner`).
+    //
+    // ⚑ THIS ONE **IS** INITIALIZED in `lean_init.c` (like automatafl, unlike R3/FRI): the `charm`
+    // verb reads `MultiwayTug.charm`, and every `#guard` witness state reads `blankState` — nullary
+    // defs the generated C compiles to module globals that only the module initializer fills.
+    //
+    // ⚑ WHY THE ABSENT ARM IS A REAL DEGRADE, NOT A QUIETER ANSWER. The twin this replaces —
+    // `dregg-multiway-tug/src/reference.rs` — is a SPEC-twin (the twin-deletion sweep hunted AIR
+    // twins, so it was filed "not a twin" and survived), and it had already DRIFTED: `winner_of` is
+    // `roundWinner` truncated to its two absolute-threshold branches, with no charm tie-break and no
+    // row tie-break. On every round where neither seat clears the bar it answers "no winner" where
+    // the model ADJUDICATES a seat — the §7B fix that took the draw rate from 66.1% to 5.1%.
+    let multiway_tug_rules_present = archive_exports(&build_archive, "dregg_multiway_tug_rules");
+    if multiway_tug_rules_present {
+        println!("cargo:rustc-cfg=dregg_multiway_tug_rules_present");
+    } else {
+        absent_export_warn("dregg_multiway_tug_rules");
     }
 
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
@@ -3048,6 +3112,18 @@ fn main() {
     // DOES need its module initializer — see the extern-decl note there).
     if automatafl_rules_present {
         shim.define("DREGG_AUTOMATAFL_RULES", None);
+    }
+    // MULTIWAY-TUG RULES ORACLE: `DREGG_MULTIWAY_TUG_RULES` gates the extern decls, the `_str`
+    // bridge AND the explicit `initialize_Dregg2_Dregg2_Games_MultiwayTugFFI` call in `lean_init.c`
+    // (this export DOES need its module initializer — see the extern-decl note there).
+    if multiway_tug_rules_present {
+        shim.define("DREGG_MULTIWAY_TUG_RULES", None);
+    }
+    // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
+    // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its
+    // generated C is self-contained, same as the FRI ledger's).
+    if deleg_admit_present {
+        shim.define("DREGG_DELEG_ADMIT", None);
     }
     // The three light-client gates: each define gates BOTH the extern decl and the `_str` bridge in
     // `lean_init.c` (no module initializer — see the extern-decl note there). Independently probed,

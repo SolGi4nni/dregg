@@ -947,6 +947,38 @@ pub fn automatafl_rules(wire: &str) -> Result<String, String> {
     ffi::lean_automatafl_rules(wire)
 }
 
+/// Whether the linked archive exports the multiway-tug RULES ORACLE (`dregg_multiway_tug_rules`, the
+/// C-ABI entry over `Dregg2.Games.MultiwayTugFFI.rulesFFI`). When false, every call below fails
+/// closed. Distinct from [`lean_available`]: a stale archive can lack this export.
+pub fn multiway_tug_rules_available() -> bool {
+    ffi::multiway_tug_rules_present() && lean_init_once().is_ok()
+}
+
+/// **Run the multiway-tug RULES ORACLE `@[export] dregg_multiway_tug_rules`** — the verb-dispatched
+/// wire over `Dregg2.Games.MultiwayTug`, the proven pure-transition spec whose conservation,
+/// one-action-per-round, offer-interlock, scoring and win-safety theorems the emitted
+/// `MultiwayTugProgram` teeth are pinned against.
+///
+/// `wire` is a verb-first token line (`charm` · `turns` · `legal STATE SEAT ACTION` ·
+/// `legalresp STATE SEAT RESP` · `kinds STATE SEAT` · `split PEND RESP` · `act STATE SEAT ACTION` ·
+/// `respond STATE SEAT RESP` · `control STATE` · `count STATE SEAT g` · `score STATE` ·
+/// `won STATE SEAT` · `winner STATE` · `total STATE`); the grammar is documented in that module's
+/// header. The reply is `"1 …"` on success and `"0"` fail-closed on a malformed wire.
+///
+/// ⚑ This exists because the Rust twin it replaces had already DRIFTED, not merely because it was
+/// unproven. `dregg-multiway-tug/src/reference.rs::winner_of` is the model's `roundWinner` truncated
+/// to its two absolute-threshold branches — no charm tie-break, no row tie-break — so on every round
+/// where neither seat clears the bar it answers "no winner" where the model ADJUDICATES a seat
+/// (`undecidedState_adjudicates`; the §7B fix that took the draw rate from 66.1% to 5.1%). It is also
+/// the second known member of a class the twin-deletion sweep structurally could not see: that sweep
+/// hunted twins of Lean AIR, and this is a twin of a Lean SPEC.
+///
+/// Returns `Err` if the archive lacks the export or Lean refused the wire.
+pub fn multiway_tug_rules(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_multiway_tug_rules(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -1154,8 +1186,17 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_fri_ledger_present)]
         fn dregg_fri_ledger_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize) -> usize;
+        #[cfg(dregg_deleg_admit_present)]
+        fn dregg_deleg_admit_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize)
+            -> usize;
         #[cfg(dregg_automatafl_rules_present)]
         fn dregg_automatafl_rules_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_multiway_tug_rules_present)]
+        fn dregg_multiway_tug_rules_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -1789,6 +1830,33 @@ mod ffi {
         false
     }
 
+    #[cfg(dregg_multiway_tug_rules_present)]
+    pub fn lean_multiway_tug_rules(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_multiway_tug_rules_str,
+            "dregg_multiway_tug_rules_str",
+        )
+    }
+
+    #[cfg(not(dregg_multiway_tug_rules_present))]
+    pub fn lean_multiway_tug_rules(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_multiway_tug_rules not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+
+    #[cfg(dregg_multiway_tug_rules_present)]
+    pub fn multiway_tug_rules_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_multiway_tug_rules_present))]
+    pub fn multiway_tug_rules_present() -> bool {
+        false
+    }
+
     #[cfg(dregg_fri_ledger_present)]
     pub fn fri_ledger_present() -> bool {
         true
@@ -1796,6 +1864,30 @@ mod ffi {
 
     #[cfg(not(dregg_fri_ledger_present))]
     pub fn fri_ledger_present() -> bool {
+        false
+    }
+
+    /// Run the DELEGATED TOOL/MCP-ACCESS admission decision:
+    /// `"toolId rateLimit deadline now tool old new"` → `"1"` (ADMIT) / `"0"` (REFUSE) / `""`
+    /// (malformed wire — NO VERDICT). This is `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate
+    /// `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` is stated over.
+    #[cfg(dregg_deleg_admit_present)]
+    pub fn lean_deleg_admit(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_deleg_admit_str, "dregg_deleg_admit_str")
+    }
+
+    #[cfg(not(dregg_deleg_admit_present))]
+    pub fn lean_deleg_admit(_wire: &str) -> Result<String, String> {
+        Err("dregg_deleg_admit not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    #[cfg(dregg_deleg_admit_present)]
+    pub fn deleg_admit_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_deleg_admit_present))]
+    pub fn deleg_admit_present() -> bool {
         false
     }
 
@@ -2245,6 +2337,22 @@ mod ffi {
     }
 
     pub fn lean_automatafl_rules(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn multiway_tug_rules_present() -> bool {
+        false
+    }
+
+    pub fn lean_multiway_tug_rules(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn deleg_admit_present() -> bool {
+        false
+    }
+
+    pub fn lean_deleg_admit(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

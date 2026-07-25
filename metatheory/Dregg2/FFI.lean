@@ -16,6 +16,8 @@ import Dregg2.Storage.Deployed
 import Dregg2.Bridge.ProofOfHoldings
 import Dregg2.Bridge.InterchainAdapterDecision
 import Dregg2.Games.AutomataflFFI
+import Dregg2.Games.MultiwayTugFFI
+import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
 import Dregg2.Crypto.Fips203Kem
@@ -77,7 +79,7 @@ that justifies it; this file only fixes which of them are the runtime's boundary
   These are *not* decisions; they are the wire. They are 74 % of the symbol count and a rounding
   error of the archive.
 
-### §1.3 Verified decisions the node routes through (17 symbols)
+### §1.3 Verified decisions the node routes through (18 symbols)
 Each of these gates a `#[cfg(dregg_*_present)]` bridge whose absent arm reverts a proven verdict to
 a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
 * `Dregg2.Exec.DeployedConstraint` — `dregg_constraint_admits`
@@ -96,6 +98,17 @@ a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
 * `Dregg2.Games.AutomataflFFI` — `dregg_automatafl_rules` (the automatafl board transition,
   legality, conflict set and win — the whole game oracle `dregg-automatafl/src/reference.rs` used
   to answer with a transcription of a non-canonical Rust experiment; see §2)
+* `Dregg2.Apps.DelegAdmit` — `dregg_deleg_admit` (the delegated tool/MCP-access admission verdict:
+  SCOPE ∧ DEADLINE ∧ single-step ∧ sane-prior ∧ RATE, the predicate
+  `Dregg2.Apps.ToolAccessDelegation.tool_invocation_commit_iff_admit` and its three rejection teeth
+  are proven over. It replaced THREE hand-maintained Rust re-implementations of the same five
+  conjuncts — `sdk/src/tool_gateway.rs`, `starbridge-apps/tool-access-delegation/src/lib.rs`,
+  `dreggnet-offerings/src/session.rs` — each of which called itself "the byte-faithful Rust mirror".
+  Absent ⇒ every routed gateway REFUSES; there is no Rust arm left to fall back to.)
+* `Dregg2.Games.MultiwayTugFFI` — `dregg_multiway_tug_rules` (multiway-tug's action/response
+  legality, the escrow split, row control, the tallies and the adjudicated round winner — the
+  decisions `dregg-multiway-tug/src/reference.rs` re-expressed in Rust, with `winner_of` already
+  DRIFTED to `roundWinner` minus its adjudication tail; see §2)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns
@@ -130,8 +143,11 @@ so the next reader does not have to rediscover it:
   modules and their own `lake build`. This file pulls a module in only when a symbol Rust can call
   lives there. It is not the whole-tree build, and `lake build` still covers the tree.
 * **Most of `Dregg2/Games/**`.** A game *program* is data the deployed evaluator admits or refuses
-  (`dregg_constraint_admits`, `Dregg2.Exec.DeployedConstraint`), not a C symbol, so the dungeon and
-  tug programs stay out.
+  (`dregg_constraint_admits`, `Dregg2.Exec.DeployedConstraint`), not a C symbol, so
+  `Games.DungeonProgram` and `Games.MultiwayTugProgram` stay out — a program is CHECKED, not
+  computed. The distinction is per-DECISION, not per-game: `Games.MultiwayTugFFI` is in the closure
+  (below) while `Games.MultiwayTugProgram` is not, because the same game needs its teeth checked and
+  its rules computed, and only the latter needs a C symbol.
 
   **`Dregg2.Games.AutomataflFFI` is the exception, and it is here for a measured reason.**
   automatafl's turn is not a program the evaluator runs: `dregg-automatafl` needs the *game oracle*
@@ -142,6 +158,15 @@ so the next reader does not have to rediscover it:
   inclusive path check — with the divergence *documented in-tree* in `resolve_witness.rs` rather than
   fixed. A game whose semantics the runtime must COMPUTE needs a C symbol; one whose semantics the
   runtime merely CHECKS does not. This closure now carries the former.
+
+  **`Dregg2.Games.MultiwayTugFFI` is here for the SAME measured reason, and it is the second member
+  of a class the twin-deletion sweep could not see.** That sweep hunted twins of Lean *AIR*;
+  `dregg-multiway-tug/src/reference.rs` is a twin of a Lean *SPEC*, so it was filed "not a twin" and
+  survived. It had already drifted: its `winner_of` is the model's `roundWinner` truncated to the two
+  absolute thresholds, so it answers "no winner" on every sub-threshold round the model ADJUDICATES
+  (`undecidedState_adjudicates`) — the fix that took the draw rate from 66.1% to 5.1%. The tug
+  surface must COMPUTE legality, the escrow split, row control and the winner to run a match, so
+  that oracle needs a C symbol.
 * **Emit drivers** (`EmitDungeonProgram`, `Emit*`). Those are `lean_exe`s that write fixtures at
   build time; they are not linked into any node.
 * **`Metatheory/`, `Polis/`, `Market/`, `Bfv/` as libraries.** A handful of their modules are in
