@@ -96,11 +96,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # ── L1 + L3 (syntactic): the mod-p alias reinvention and any array-shaped byte→felt map.
-printf '%s\n' "${FILES[@]}" > "$TMP/files"
-# `sg scan` exits non-zero only on error-severity survivors; the rule is `warning` in report-only
-# mode, so drive it explicitly and count the report lines ourselves.
-xargs -a "$TMP/files" "$SG" scan --config "$ROOT/sgconfig.yml" --filter 'byte-to-felt-arithmetic' \
-  --json=stream 2>/dev/null > "$TMP/l13.json" || true
+# Hand `sg` the repo ROOT, not a file list: it walks and parses in parallel internally (~2s), while
+# `xargs`-batching one invocation per chunk of 3800 paths blew a 300s budget. `sg scan` exits
+# non-zero only on error-severity survivors and this rule is `warning` in report-only mode, so the
+# report lines are counted here rather than read off the exit code.
+"$SG" scan --config "$ROOT/sgconfig.yml" --filter 'byte-to-felt-arithmetic' --json=stream "$ROOT" \
+  2>/dev/null | grep -v -F "\"file\":\"${ALLOWLIST}\"" > "$TMP/l13.json" || true
 L13="$(count_lines_matching '"ruleId"' "$TMP/l13.json")"
 
 # ── L2 (lexical): a mask applied between bytes and a felt. `& 0x3F` is the F2 bit-discard (16 of
@@ -154,10 +155,11 @@ if [ "$MODE" = "report" ] || [ "$MODE" = "write" ]; then
   for f in l2 l4 l5 l6; do
     [ -s "$TMP/$f" ] && { echo ""; echo "── ${f} hits ──"; cat "$TMP/$f"; }
   done
-  [ -s "$TMP/l13.json" ] && {
-    echo ""; echo "── L1+L3 hits ──"
-    "$RG" -o '"file":"[^"]*","range":\{"byteOffset":\{"start":[0-9]*' "$TMP/l13.json" 2>/dev/null | head -200 || true
-  }
+  if [ -s "$TMP/l13.json" ]; then
+    echo ""; echo "── L1+L3 hits (file:line) ──"
+    "$RG" -o '"file":"[^"]*"|"line":[0-9]+' "$TMP/l13.json" 2>/dev/null \
+      | paste - - 2>/dev/null | head -200 || true
+  fi
 fi
 
 case "$MODE" in
