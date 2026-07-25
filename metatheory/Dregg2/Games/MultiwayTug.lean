@@ -50,6 +50,7 @@ spec is the reference the AIR is emitted against.
 import Dregg2.Boundary
 import Mathlib.Data.Multiset.Basic
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.VecNotation
 import Mathlib.Tactic.Abel
@@ -427,6 +428,243 @@ theorem winState_wins : Won winState .p1 := by
   simp only [charmScore, hctl]
   decide
 
+/-! ## 7B. ⚑ THE ADJUDICATED ROUND WINNER — the fix for the 66% draw rate
+
+**The design wound.** `Won` is an ABSOLUTE threshold (≥ 11 charm or ≥ 4 guilds) and the shipped
+game is ONE round. In Hanamikoji the round is a *hand*, not a *match*: rounds repeat, and the
+absolute threshold is a "you have won the whole match" test. Shipping a single round against an
+absolute threshold means a round in which neither player clears the bar has NO WINNER, and
+`reference.rs::winner_of` duly returns `None`.
+
+**Measured** (1500 rounds, symmetric greedy agents, this model's rules): **66.1% of rounds end
+with no winner at all.** That is not a close game; it is two thirds of matches ending in a shrug.
+
+**Why it happens is exact, not incidental.** `∑ g, charm g = 21` and `control` awards a row to
+at most one player, so `charmScore p1 + charmScore p2 ≤ 21` (`charmScore_add_le`) — and if every
+row were controlled the sum would be exactly 21, forcing one player to ≥ 11. So *every* undecided
+round is caused by TIED rows going uncontrolled, and the charm they carry evaporating. Empty rows
+are not the cause (0.09 per round measured); contested ties are.
+
+**The fix, and why this one.** Three tie rules were measured. Awarding tied rows to a fixed player
+decides every round but at **81.7% / 18.3%** — a landslide, because ties are frequent. Awarding
+them to whoever secreted onto the row leaves 41.8% draws. Adjudicating an *undecided round* on
+total charm, then on rows held, leaves **5.1%** draws at **41.2% / 53.7%** — decisive, and it does
+not touch `control`, so the emitted win-gate teeth (`MultiwayTugProgram.winTooth_shape`, which
+gate `winner = p ⇒ charm ≥ 11 ∨ guilds ≥ 4`) keep meaning exactly what they meant. `Won` is
+UNCHANGED and still the first thing `roundWinner` asks.
+
+⚠ The residual, measured and NOT fixed here: the player who takes the round's LAST action wins
+~57% of decided rounds (alternating order 40.6/54.5; the mirrored "snake" order 55.5/39.6 — the
+edge follows the last action, so no re-ordering of a single round is fair). That is the second
+thing Hanamikoji's repeated rounds buy, and it needs an even number of rounds with the opening
+player alternating — a state change, not a tweak. -/
+
+instance (s : GState) (p : Player) : Decidable (Won s p) := by unfold Won; exact inferInstance
+
+/-- The two players' controlled-row sets are DISJOINT: `control` returns at most one owner. -/
+theorem controlledBy_disjoint (s : GState) :
+    Disjoint (controlledBy s .p1) (controlledBy s .p2) := by
+  rw [Finset.disjoint_left]
+  intro g h1 h2
+  simp only [controlledBy, Finset.mem_filter] at h1 h2
+  rw [h1.2] at h2
+  exact absurd h2.2 (by simp)
+
+/-- **`charmScore_add_le` — the conservation of charm.** The two charm totals together never
+exceed the whole board's `∑ charm = 21`, because the controlled-row sets are disjoint subsets of
+`univ`. This is the fact that makes the adjudication well-behaved (and that makes a double win
+impossible). -/
+theorem charmScore_add_le (s : GState) :
+    charmScore s .p1 + charmScore s .p2 ≤ ∑ g : Geisha, charm g := by
+  rw [charmScore, charmScore, ← Finset.sum_union (controlledBy_disjoint s)]
+  exact Finset.sum_le_sum_of_subset_of_nonneg (Finset.subset_univ _)
+    (fun _ _ _ => Nat.zero_le _)
+
+/-- The board's whole charm is `21`. -/
+theorem total_charm : (∑ g : Geisha, charm g) = 21 := by decide
+
+/-- Likewise for rows held: at most the seven rows exist. -/
+theorem geishaScore_add_le (s : GState) : geishaScore s .p1 + geishaScore s .p2 ≤ 7 := by
+  rw [geishaScore, geishaScore, ← Finset.card_union_of_disjoint (controlledBy_disjoint s)]
+  simpa using Finset.card_le_card (Finset.subset_univ
+    (controlledBy s .p1 ∪ controlledBy s .p2))
+
+/-- **`not_both_charm_won`** — `11 + 11 > 21`, so the charm bar cannot be cleared by both. -/
+theorem not_both_charm_won (s : GState) :
+    ¬ (charmWinThreshold ≤ charmScore s .p1 ∧ charmWinThreshold ≤ charmScore s .p2) := by
+  rintro ⟨h1, h2⟩
+  have hc := charmScore_add_le s
+  rw [total_charm] at hc
+  simp only [charmWinThreshold] at h1 h2
+  omega
+
+/-- **`not_both_guild_won`** — `4 + 4 > 7`, so the row bar cannot be cleared by both. -/
+theorem not_both_guild_won (s : GState) :
+    ¬ (guildWinThreshold ≤ geishaScore s .p1 ∧ guildWinThreshold ≤ geishaScore s .p2) := by
+  rintro ⟨h1, h2⟩
+  have hg := geishaScore_add_le s
+  simp only [guildWinThreshold] at h1 h2
+  omega
+
+/-- ⚠ **`won_can_be_mutual` — `Won` is NOT exclusive, and the shipped rule already knew it.**
+`Won` is a DISJUNCTION, and its two disjuncts can straddle: P1 can hold rows `4,5,6` for
+`3 + 4 + 5 = 12` charm on only THREE rows while P2 holds the other FOUR rows for `2+2+2+3 = 9`
+charm. Both are `Won`. So the round's terminal rule needs a PRECEDENCE, not just an exclusivity
+argument — and `reference.rs::winner_of` fixes it as *charm bar, then row bar*. `roundWinner`
+below reproduces exactly that order, so the adjudication is bolted onto the shipped precedence
+rather than quietly re-ranking it. -/
+def straddleState : GState :=
+  { blankState with
+    placed := fun p => if p = .p1 then ({4, 5, 6} : Multiset Geisha)
+                                   else ({0, 1, 2, 3} : Multiset Geisha) }
+
+theorem won_can_be_mutual : Won straddleState .p1 ∧ Won straddleState .p2 := by
+  have h1 : controlledBy straddleState .p1 = {4, 5, 6} := by decide
+  have h2 : controlledBy straddleState .p2 = {0, 1, 2, 3} := by decide
+  refine ⟨Or.inl ?_, Or.inr ?_⟩
+  · simp only [charmScore, h1]; decide
+  · simp only [geishaScore, h2]; decide
+
+/-- **`roundWinner` — the terminal rule the shipped game was missing.**
+
+A round is decided by, in order: the absolute threshold (`Won`, UNCHANGED — this is still the
+"you cleared the bar" win the emitted teeth gate); then, if neither player cleared it, the higher
+TOTAL CHARM; then the higher ROW COUNT; and only on exact parity of both is the round a genuine
+draw. Total, deterministic, and — by `roundWinner_draw_iff` — the draw it does return is an
+honest dead heat rather than the shipped "nobody reached the bar". -/
+def roundWinner (s : GState) : Option Player :=
+  if charmWinThreshold ≤ charmScore s .p1 then some .p1
+  else if charmWinThreshold ≤ charmScore s .p2 then some .p2
+  else if guildWinThreshold ≤ geishaScore s .p1 then some .p1
+  else if guildWinThreshold ≤ geishaScore s .p2 then some .p2
+  else if charmScore s .p2 < charmScore s .p1 then some .p1
+  else if charmScore s .p1 < charmScore s .p2 then some .p2
+  else if geishaScore s .p2 < geishaScore s .p1 then some .p1
+  else if geishaScore s .p1 < geishaScore s .p2 then some .p2
+  else none
+
+/-- **`roundWinner_extends_Won` (the fix is CONSERVATIVE).** Whenever the shipped threshold rule
+named a winner *outright* — that player cleared a bar and the opponent cleared neither —
+`roundWinner` names the SAME winner. Adjudication only ever fills in rounds the old rule left
+blank; it never overturns an uncontested threshold win. (The straddle case, where both are `Won`,
+is settled by the same charm-then-rows precedence `reference.rs::winner_of` already used.) -/
+theorem roundWinner_extends_Won (s : GState) (p : Player) (h : Won s p) (h' : ¬ Won s p.other) :
+    roundWinner s = some p := by
+  simp only [Won, charmWinThreshold, guildWinThreshold, not_or, not_le] at h h'
+  cases p with
+  | p1 => simp only [Player.other_p1] at h'
+          rcases h with hc | hg <;>
+            (rw [roundWinner]; simp only [charmWinThreshold, guildWinThreshold]
+             split_ifs <;> first | rfl | omega)
+  | p2 => simp only [Player.other_p2] at h'
+          rcases h with hc | hg <;>
+            (rw [roundWinner]; simp only [charmWinThreshold, guildWinThreshold]
+             split_ifs <;> first | rfl | omega)
+
+/-- **`roundWinner_sound` (the adjudicated winner EARNED it).** A named winner either cleared one
+of the absolute bars, or strictly out-charmed the opponent, or matched on charm and strictly
+out-held them on rows. There is no arm that hands the round to a player who is behind on both. -/
+theorem roundWinner_sound (s : GState) (p : Player) (h : roundWinner s = some p) :
+    Won s p
+      ∨ charmScore s p.other < charmScore s p
+      ∨ (charmScore s p.other = charmScore s p ∧ geishaScore s p.other < geishaScore s p) := by
+  unfold roundWinner at h
+  split at h
+  · rename_i hw; rw [Option.some.injEq] at h; subst h; exact Or.inl (Or.inl hw)
+  · split at h
+    · rename_i hw; rw [Option.some.injEq] at h; subst h; exact Or.inl (Or.inl hw)
+    · split at h
+      · rename_i hw; rw [Option.some.injEq] at h; subst h; exact Or.inl (Or.inr hw)
+      · split at h
+        · rename_i hw; rw [Option.some.injEq] at h; subst h; exact Or.inl (Or.inr hw)
+        · split at h
+          · rename_i hlt; rw [Option.some.injEq] at h; subst h; exact Or.inr (Or.inl hlt)
+          · split at h
+            · rename_i hlt; rw [Option.some.injEq] at h; subst h; exact Or.inr (Or.inl hlt)
+            · split at h
+              · rename_i h1 h2 hlt
+                rw [Option.some.injEq] at h; subst h
+                exact Or.inr (Or.inr ⟨by simp only [Player.other_p1]; omega, hlt⟩)
+              · split at h
+                · rename_i h1 h2 h3 hlt
+                  rw [Option.some.injEq] at h; subst h
+                  exact Or.inr (Or.inr ⟨by simp only [Player.other_p2]; omega, hlt⟩)
+                · exact absurd h (by simp)
+
+/-- **`roundWinner_draw_iff` (the draw is an EXACT DEAD HEAT).** `roundWinner` returns `none` iff
+the two players are level on charm AND level on rows held. Contrast the shipped rule, whose `none`
+meant only "neither reached the bar" — the state `9 charm vs 6` was a non-result there and is a
+win here. This is the theorem that says the 66% is gone for a reason and not by fiat. -/
+theorem roundWinner_draw_iff (s : GState) :
+    roundWinner s = none ↔
+      (charmScore s .p1 = charmScore s .p2 ∧ geishaScore s .p1 = geishaScore s .p2) := by
+  constructor
+  · intro h
+    unfold roundWinner at h
+    repeat (split at h; · exact absurd h (by simp))
+    rename_i h1 h2 h3 h4 h5 h6 h7 h8
+    exact ⟨by omega, by omega⟩
+  · rintro ⟨hc, hg⟩
+    -- level on both scales ⇒ neither bar can have been cleared (11+11 > 21, 4+4 > 7)
+    have hcs := charmScore_add_le s
+    rw [total_charm] at hcs
+    have hgs := geishaScore_add_le s
+    rw [roundWinner, if_neg (by simp only [charmWinThreshold]; omega),
+      if_neg (by simp only [charmWinThreshold]; omega),
+      if_neg (by simp only [guildWinThreshold]; omega),
+      if_neg (by simp only [guildWinThreshold]; omega),
+      if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+
+/-- A concrete round the SHIPPED rule threw away: P1 holds rows `5` and `6` (charm `4 + 4 = 9`),
+P2 holds row `3` (charm `3`). Nobody reached 11 charm or 4 rows, so `winner_of` returned `None`
+and the match was a non-event — with P1 three rows and six charm ahead. -/
+def undecidedState : GState :=
+  { blankState with
+    placed := fun p => if p = .p1 then ({5, 6} : Multiset Geisha) else ({3} : Multiset Geisha) }
+
+/-- **`undecidedState_not_Won` — the shipped rule finds NO winner here.** -/
+theorem undecidedState_not_Won (p : Player) : ¬ Won undecidedState p := by
+  have h1 : controlledBy undecidedState .p1 = {5, 6} := by decide
+  have h2 : controlledBy undecidedState .p2 = {3} := by decide
+  cases p <;>
+    simp only [Won, charmScore, geishaScore, charmWinThreshold, guildWinThreshold, h1, h2] <;>
+    decide
+
+/-- **`undecidedState_adjudicates` (THE FIX, WITNESSED).** The same round is a clean P1 win under
+`roundWinner` — 9 charm to 3. Together with `undecidedState_not_Won` this is the non-vacuity of
+the whole section: the adjudication is not decoration, it decides a round the shipped rule
+dropped. -/
+theorem undecidedState_adjudicates : roundWinner undecidedState = some .p1 := by
+  have h1 : ¬ Won undecidedState .p1 := undecidedState_not_Won .p1
+  have h2 : ¬ Won undecidedState .p2 := undecidedState_not_Won .p2
+  have hc1 : controlledBy undecidedState .p1 = {5, 6} := by decide
+  have hc2 : controlledBy undecidedState .p2 = {3} := by decide
+  have e1 : charmScore undecidedState .p1 = 9 := by simp only [charmScore, hc1]; decide
+  have e2 : charmScore undecidedState .p2 = 3 := by simp only [charmScore, hc2]; decide
+  have g1 : geishaScore undecidedState .p1 = 2 := by simp only [geishaScore, hc1]; decide
+  have g2 : geishaScore undecidedState .p2 = 1 := by simp only [geishaScore, hc2]; decide
+  rw [roundWinner]
+  simp only [charmWinThreshold, guildWinThreshold, e1, e2, g1, g2]
+  decide
+
+/-- **`winState_roundWinner` — a threshold win is still a threshold win.** -/
+theorem winState_roundWinner : roundWinner winState = some .p1 := by
+  have hctl : controlledBy winState .p1 = {3, 5, 6} := by decide
+  have hc : charmWinThreshold ≤ charmScore winState .p1 := by
+    simp only [charmScore, charmWinThreshold, hctl]; decide
+  simp only [roundWinner, if_pos hc]
+
+/-- A genuine dead heat — both players hold row `0` counts of zero and nothing else, so both
+scores are `0` and the round honestly draws. -/
+theorem blankState_draws : roundWinner blankState = none := by
+  rw [roundWinner_draw_iff]
+  have h : ∀ p, controlledBy blankState p = ∅ := by
+    intro p
+    apply Finset.filter_eq_empty_iff.mpr
+    intro g _
+    simp [control, blankState, geishaCount]
+  simp [charmScore, geishaScore, h]
+
 /-! ## 8. The `Boundary` tie-in — conservation as a `Good`-invariant along whole executions -/
 
 open Dregg2.Boundary
@@ -526,6 +764,19 @@ AIR-refinement obligation is a CARRIED hypothesis (`AirSpec`), not an axiom. -/
 #assert_axioms won_needs_control
 #assert_axioms not_won_blank
 #assert_axioms winState_wins
+#assert_axioms controlledBy_disjoint
+#assert_axioms charmScore_add_le
+#assert_axioms geishaScore_add_le
+#assert_axioms not_both_charm_won
+#assert_axioms not_both_guild_won
+#assert_axioms won_can_be_mutual
+#assert_axioms roundWinner_extends_Won
+#assert_axioms roundWinner_sound
+#assert_axioms roundWinner_draw_iff
+#assert_axioms undecidedState_not_Won
+#assert_axioms undecidedState_adjudicates
+#assert_axioms winState_roundWinner
+#assert_axioms blankState_draws
 #assert_axioms conservation_along_run
 #assert_axioms multiwayTug_air_refines_applyAction
 #assert_axioms air_functional

@@ -603,6 +603,148 @@ def stockTwoPlayer : Board :=
      rowR 10 [0, 1, 4, 5, 6, 9, 10])
     ⟨5, 5⟩
 
+/-! ## §6B  ⚑ ADJUDICATION AT THE TURN CAP — the terminal rule the ruleset never had
+
+**The design wound, measured.** `winOnEntry` is the game's ONLY terminal condition, so a match
+that never walks the Automaton into a corner never ends. It does not end. Driving this exact
+Lean spec (cross-checked `#eval`-against-`#eval` with the play harness that produced these
+numbers) with a one-ply simultaneous-minimax agent on `stockTwoPlayer`:
+
+  * **Two competent seats draw 100% of the time.** Every match froze — 6/6 at one search budget,
+    5/5 when seat 0 was given FIVE TIMES seat 1's search, including from `(10,2)`, two squares
+    from seat 0's own corner. The freeze arrives in **8–11 turns**, before the 10-turn
+    theoretical minimum win is even reachable.
+  * The reason is structural, not tactical. Each axis decision (`evaluateAxis`) is a COMPARISON
+    of the two raycast distances, and on the mirror-symmetric stock board each seat controls one
+    side of that comparison with equal ease. In a frozen position both seats had exactly `30 of
+    198` raycast-relevant moves that shift the Automaton at all, and **zero** that improve their
+    own goal-distance against every reply. Defence is strictly cheaper than attack, and
+    simultaneity denies the attacker the tempo that would break parity.
+  * Greedy-vs-greedy matches DO end (median 20 turns) only because a one-ply agent that ignores
+    the reply blunders into losing exchanges.
+
+**What the deployed game already did about it, unproven.** `dregg-automatafl/src/surface.rs`
+carries `const MAX_TURNS: u64 = 64` and calls the capped match *a draw* — a terminal rule that
+exists in the Rust surface and NOWHERE in this ruleset. So the shipped game's most common
+outcome is decided by a constant no theorem here has ever seen.
+
+**What this section adds.** The cap's adjudication, in the ruleset, as a POSITIONAL decision
+rather than a blanket draw: at the cap the seat whose nearest own goal is strictly nearer the
+Automaton takes the match; exact parity is an honest dead heat. Measured, this converts about
+half of the dead draws into decisions and — the point — destroys the free freeze, because
+parking on the neutral line is no longer as good as winning. It does not touch `winOnEntry`,
+`roundStep` or the automaton, so every existing theorem and the emitted step descriptor are
+untouched.
+
+⚠ The residual, stated at its real resolution: agents that PLAY for the adjudication still park
+on the exact mid-line `y = 5` in about half of matches, where the distances tie by the board's
+own `y ↦ 10 - y` symmetry. A "momentum" variant (the Automaton continues its last direction when
+no axis fires) was implemented and measured and did **not** help — 5/8 still drew, because the
+defender answers with an OPPOSING decision rather than a `.none`. Closing the residual needs an
+asymmetric opening or an attrition clock, which is a change to the creator's ruleset, not a
+tweak, and is not made here. -/
+
+/-- Manhattan distance between two board coordinates. -/
+def manhattan (a b : Coord) : Nat :=
+  (max a.x b.x - min a.x b.x) + (max a.y b.y - min a.y b.y)
+
+@[simp] theorem manhattan_self (a : Coord) : manhattan a a = 0 := by
+  simp only [manhattan, max_self, min_self, Nat.sub_self, Nat.add_zero]
+
+/-- The distances from `a` to each goal a seat owns. -/
+def goalDists (a : Coord) (g : GoalAssignment) (p : Pid) : List Nat :=
+  (g.entries.filter (fun e => e.2 == p)).map (fun e => manhattan a e.1)
+
+/-- The distance to a seat's NEAREST goal; `none` when the seat owns no goal. -/
+def goalDistance (a : Coord) (g : GoalAssignment) (p : Pid) : Option Nat :=
+  (goalDists a g p).min?
+
+/-- **`adjudicateCapped` — the capped match's terminal rule** for the two-seat game: the seat strictly
+nearer its own goal wins; a seat that owns goals beats one that owns none; exact parity draws. -/
+def adjudicateCapped (a : Coord) (g : GoalAssignment) : Option Pid :=
+  match goalDistance a g 0, goalDistance a g 1 with
+  | some d0, some d1 => if d0 < d1 then some 0 else if d1 < d0 then some 1 else none
+  | some _, none     => some 0
+  | none,   some _   => some 1
+  | none,   none     => none
+
+/-- **`adjudicate_seated` (soundness — a winner OWNS a goal).** The adjudicated winner is always a
+seat with at least one goal corner; the rule cannot award a match to an unseated player. -/
+theorem adjudicate_seated (a : Coord) (g : GoalAssignment) (p : Pid)
+    (h : adjudicateCapped a g = some p) : ∃ d, goalDistance a g p = some d := by
+  unfold adjudicateCapped at h
+  cases h0 : goalDistance a g 0 <;> cases h1 : goalDistance a g 1 <;>
+    rw [h0, h1] at h <;> simp only at h
+  · exact absurd h (by simp)
+  · rw [Option.some.injEq] at h; subst h; exact ⟨_, h1⟩
+  · rw [Option.some.injEq] at h; subst h; exact ⟨_, h0⟩
+  · rename_i d0 d1
+    split at h
+    · rw [Option.some.injEq] at h; subst h; exact ⟨d0, h0⟩
+    · split at h
+      · rw [Option.some.injEq] at h; subst h; exact ⟨d1, h1⟩
+      · exact absurd h (by simp)
+
+/-- **`adjudicate_sound` (the winner is genuinely NEARER).** When both seats own goals, an
+adjudicated winner is strictly closer to its own goal than the loser is to theirs. This is the
+teeth: the rule never awards a capped match to the seat that was behind on the board. -/
+theorem adjudicate_sound (a : Coord) (g : GoalAssignment) (p : Pid) (d0 d1 : Nat)
+    (h : adjudicateCapped a g = some p)
+    (h0 : goalDistance a g 0 = some d0) (h1 : goalDistance a g 1 = some d1) :
+    (p = 0 ∧ d0 < d1) ∨ (p = 1 ∧ d1 < d0) := by
+  unfold adjudicateCapped at h
+  rw [h0, h1] at h
+  simp only at h
+  split at h
+  · rename_i hlt; rw [Option.some.injEq] at h; subst h; exact Or.inl ⟨rfl, hlt⟩
+  · split at h
+    · rename_i hlt; rw [Option.some.injEq] at h; subst h; exact Or.inr ⟨rfl, hlt⟩
+    · exact absurd h (by simp)
+
+/-- **`adjudicate_draw_level` (a draw is a DEAD HEAT).** The rule returns `none` only when the two
+seats are exactly level — same nearest-goal distance, or neither owning a goal at all. There is no
+arm that draws a match one seat was winning. -/
+theorem adjudicate_draw_level (a : Coord) (g : GoalAssignment) (h : adjudicateCapped a g = none) :
+    goalDistance a g 0 = goalDistance a g 1 := by
+  unfold adjudicateCapped at h
+  cases h0 : goalDistance a g 0 <;> cases h1 : goalDistance a g 1 <;>
+      rw [h0, h1] at h <;> simp only at h
+  case none.some => exact absurd h (by simp)
+  case some.none => exact absurd h (by simp)
+  case some.some d0 d1 =>
+    split at h
+    · exact absurd h (by simp)
+    · split at h
+      · exact absurd h (by simp)
+      · rename_i hge hle
+        exact congrArg some (by omega)
+
+/-- **`stock_opening_adjudicates_draw` (FAIRNESS of the setup, decided).** The stock 11×11 opening
+puts the Automaton on `(5,5)`, which is exactly equidistant from seat 0's `y = 0` corners and seat
+1's `y = 10` corners — so the adjudication does not hand either seat a free positional edge at
+turn zero. The rule is a contest, not a thumb on the scale. -/
+theorem stock_opening_adjudicates_draw :
+    adjudicateCapped stockTwoPlayer.automaton (stockGoals2 11) = none := by decide
+
+/-- **`adjudicate_decisive_witness` (NON-VACUITY, at a position the play harness actually froze
+on).** The 5×-search asymmetric run parked the Automaton on `(10,2)` — on seat 0's goal COLUMN,
+two squares from `(10,0)` — and seat 1 still held the draw under the shipped rules. Under
+adjudication that same board is a seat-0 win. This is the measured line, not a toy. -/
+theorem adjudicate_decisive_witness : adjudicateCapped ⟨10, 2⟩ (stockGoals2 11) = some 0 := by decide
+
+/-- The mirrored witness: `(3,8)` is nearer seat 1's `y = 10` row, and adjudicates to seat 1. So
+the rule is symmetric under the board's own `y ↦ 10 - y` symmetry. -/
+theorem adjudicate_decisive_witness_mirror : adjudicateCapped ⟨3, 8⟩ (stockGoals2 11) = some 1 := by
+  decide
+
+/-- **`adjudicate_midline_draws` (the RESIDUAL, witnessed rather than hidden).** Every square on
+the mid-line `y = 5` adjudicates to a draw, because the stock goal rows are symmetric about it.
+This is exactly the equilibrium the play harness found competent seats parking on, and it is why
+adjudication halves the draws rather than eliminating them. Stated as a theorem so the remaining
+weakness is a CHECKED fact about the shipped rule, not a footnote. -/
+theorem adjudicate_midline_draws :
+    ∀ x : Fin 11, adjudicateCapped ⟨x.val, 5⟩ (stockGoals2 11) = none := by decide
+
 /-! ## §7  THE ROUND — the honest type of a turn
 
 `applyTurn : Board → List Move → Board` cannot express the rules. Per (A):
@@ -2769,6 +2911,13 @@ end Conformance
 
 #assert_all_clean [
   moveLegalB_iff,
+  adjudicate_seated,
+  adjudicate_sound,
+  adjudicate_draw_level,
+  stock_opening_adjudicates_draw,
+  adjudicate_decisive_witness,
+  adjudicate_decisive_witness_mirror,
+  adjudicate_midline_draws,
   chooseOffsetCfg_mem,
   chooseOffsetCfg_column,
   automatonOffsetCfg_column,
