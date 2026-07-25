@@ -288,13 +288,21 @@ theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
 
 /-! ## §4 — THE PER-EFFECT SHAPE LEMMAS (the ENTIRE per-effect obligation, each one `rfl`-fed). -/
 
-/-- noteSpend: graduated nullifier-pin base ++ the freshness `.absent` + set-insert `.insert`. -/
+set_option maxRecDepth 8192 in
+/-- noteSpend: graduated nullifier-pin base ++ the freshness `.absent` + set-insert `.insert`.
+
+`maxRecDepth` bump (below): the proof is `rfl`-fed through `shape_of_graduated_append`, and this
+descriptor's constraint list grew past the default whnf budget — the same idiom the sibling fan-out
+already uses (`AlgoStarkSoundFanoutSetField.lean:740`). Without it the module is RED at HEAD and, worse,
+the error recovery leaves `algoStarkSound_noteSpend` and `fanout_sideConditions_mechanical` reported as
+depending on non-kernel axioms — a faked-green leak into keystones, which is why this is a soundness fix
+and not merely a build fix. -/
 theorem noteSpendV3_shape :
     ∀ c ∈ noteSpendV3.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) :=
   shape_of_graduated_append noteSpendV3
     (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
-    [nullifierFreshOp, nullifierInsertOp] rfl
+    [nullifierFreshOp, nullifierInsertOp, spendAncestorFreshOp] rfl
 
 /-- noteCreate: graduated commitment-key-pin base ++ the single commitments `.insert`. -/
 theorem noteCreateV3_shape :
