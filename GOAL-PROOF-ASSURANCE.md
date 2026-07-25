@@ -96,9 +96,28 @@ proves migration costs a consumer nothing. What it buys, exactly: the premise no
 universal rejection. It does **not** prove satisfiability at the opaque `cfg*` args — nothing can.
 
 ## In flight
-- `entity-compose-producer` — the ONLY thing blocking deletion of `param-compose`'s Rust AIR
 - `eval-oracle` — `ir2_eval_accepts` rejects *everything*, making 3 assertions unfalsifiable
 - `ci-did-it-run` — CI cannot distinguish "passed" from "never ran"
+- `delegAdmit` — one Lean `def`, **three** Rust copies; export + FFI + delete (wasm seam to handle honestly)
+- `wide_value_binding` — 639 lines of Rust AIR added *for the felt-width repair*; Lean route
+
+## ⚑ HELD, PENDING TYPE-CHECK — do not commit until green
+
+The `param-compose` witness producer + production rewire is **written but never compiled**: the shared
+cargo lock was saturated all session (75 procs, load 193/12 cores), so *not one* invocation ran.
+- Uncommitted: `param-compose/src/witness.rs` (804), `lean_descriptor.rs` (100),
+  `tests/lean_witness.rs` (399), plus the `entity-compose` / `braid-hook` rewire.
+- **Production path is already off the Rust AIR** — zero `param_compose::air|builder` imports remain,
+  and `entity-compose::air_accepts` is deleted.
+- What *is* verified without a compiler: `rustfmt` parses all 12 files, and the layout was checked
+  against the **emitted bytes** at ~40 independent points (all 37 PI bindings at both shapes, all 18
+  chip tuples, `forced_ge0` expanded coefficient-for-coefficient). Logic checked; **types are not**.
+- Gate: `/tmp/lane-verify.log` or `/tmp/pc_verify.log` showing `= 0`.
+
+**Deletion still blocked on two things, both recorded in the ratchet itself** (`721cca7843`): ~1935 lines
+of `param-compose/tests/*` exercise shapes Lean has **not** pinned (only `pcMin`/`pcRealistic` are
+emitted), and the two BASELINE rows must die *in the same commit* as the files or the stale-entry check
+fires.
 
 ## ⚑ THE BOUNDARY FINDINGS (2026-07-25 afternoon)
 
