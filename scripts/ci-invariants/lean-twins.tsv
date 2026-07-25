@@ -64,3 +64,14 @@ route	intent/src/verified_settle.rs	settle_leg_authoritative	twin#10 per-leg set
 
 # ── twin#11 finalization quorum ──────────────────────────────────────────────────────
 route	node/src/finalization_votes.rs	verified_finalization_quorum	twin#11 the live record() quorum decision routes through the verified export
+
+# ── twin#12 ToolGateway delegAdmit mirror (audit F3 — HAND-PINNED, not FFI) ────────────
+# NOT a route-through to an @[export]: `deleg_admit` is a byte-faithful Rust MIRROR of the Lean
+# `Dregg2.Apps.ToolAccessDelegation.delegAdmit`, pinned by a hand-written differential (no generated
+# corpus). The Lean side self-guards (a `delegAdmit` edit trips its §8 `#guard` at `lake build`); the
+# RUST side has only the pin. These rows are the structural canary that the pin — and the mirrored
+# predicate it pins — stay intact, so a silent Rust edit or a deleted alarm can't drift the mirror.
+route	sdk/src/tool_gateway.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the SDK deleg_admit predicate mirrors the Lean delegAdmit conjunct-for-conjunct (scope/deadline/increment/prior/rate); any edit drifts from delegAdmit
+route	sdk/src/tool_gateway.rs	fn tool_gateway_admit_mirrors_lean_delegadmit	twin#12 the hand-pinned §8 differential (the only Rust-drift alarm) must not be deleted
+route	starbridge-apps/tool-access-delegation/src/lib.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the starbridge-apps mirror deleg_admit is conjunct-for-conjunct faithful to the Lean delegAdmit
+route	starbridge-apps/tool-access-delegation/tests/lean_differential.rs	fn corpus_matches_lean_pinned_literal	twin#12 the starbridge-apps corpus differential (the pinned-literal alarm) must not be deleted

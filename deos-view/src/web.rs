@@ -207,17 +207,22 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             select_turn,
             panels,
         } => {
-            // The tab strip carries each tab's `{selectTurn, index}` as data-attributes (the
-            // exact payload a click fires); the active panel is `selectedSlot`'s live value, a
-            // JS layer toggling `deos-tabpanel` visibility. ALL panels are emitted (same order
-            // the native renderer + bind cursor walk them) so the cursor never desyncs.
+            // The tab strip carries each tab's `{select_turn, index}` as data-attributes (the
+            // exact payload a click fires — matched by the `.deos-tab` handler in [`JS`]); the
+            // active panel is `selected_slot`'s LIVE value, which the JS wire reads off the
+            // in-tab executor (`card.read(selected_slot)`) and reflects by moving the
+            // `deos-active` class (the CSS keys visibility on that class, NOT a hardcoded index).
+            // The first tab/panel carry `deos-active` as the pre-JS initial paint; the wire
+            // reconciles it to the live slot on load and on every click. ALL panels are emitted
+            // (same order the native renderer + bind cursor walk them) so the cursor never desyncs.
             out.push_str(&format!(
                 "<div class=\"deos-tabs\" data-selected-slot=\"{selected_slot}\">"
             ));
             out.push_str("<div class=\"deos-tabstrip\">");
             for (i, label) in tabs.iter().enumerate() {
+                let active = if i == 0 { " deos-active" } else { "" };
                 out.push_str(&format!(
-                    "<button class=\"deos-tab\" data-turn=\"{}\" data-arg=\"{}\" data-index=\"{}\">{}</button>",
+                    "<button class=\"deos-tab{active}\" data-turn=\"{}\" data-arg=\"{}\" data-index=\"{}\">{}</button>",
                     escape(select_turn),
                     i,
                     i,
@@ -226,7 +231,10 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             }
             out.push_str("</div>");
             for (i, panel) in panels.iter().enumerate() {
-                out.push_str(&format!("<div class=\"deos-tabpanel\" data-index=\"{i}\">"));
+                let active = if i == 0 { " deos-active" } else { "" };
+                out.push_str(&format!(
+                    "<div class=\"deos-tabpanel{active}\" data-index=\"{i}\">"
+                ));
                 node(panel, binds, cursor, out);
                 out.push_str("</div>");
             }
@@ -1886,9 +1894,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',u
 .deos-tabstrip{display:flex;flex-direction:row;gap:.4rem;flex-wrap:wrap;}
 .deos-tab{background:var(--elev);color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:.32rem .8rem;font:inherit;cursor:pointer;transition:border-color .12s;}
 .deos-tab:hover{border-color:var(--accent);}
-.deos-tab[data-index='0']{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;}
-.deos-tabpanel{display:block;}
-.deos-tabpanel:not([data-index='0']){display:none;}
+.deos-tab.deos-active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;}
+.deos-tabpanel{display:none;}
+.deos-tabpanel.deos-active{display:block;}
 .deos-gauge{display:flex;flex-direction:column;gap:.3rem;}
 .deos-gauge-label{color:var(--fg);font-weight:700;}
 .deos-gauge-track{width:100%;max-width:220px;height:9px;background:#0a1224;border:1px solid var(--border);border-radius:5px;overflow:hidden;}
@@ -2074,6 +2082,46 @@ document.querySelectorAll('.deos-toggle[data-slot]').forEach(function(t){
         t.textContent = (nowOn ? t.getAttribute('data-glyph-on') : t.getAttribute('data-glyph-off')) + t.textContent.slice(1);
       } catch (e) { console.error('deos toggle refused:', turn, e); }
     }
+  });
+});
+// THE TABS — a tab click fires `{turn=select_turn, arg=the clicked index}` (a REAL cap-gated
+// select turn when an in-tab executor is bound) AND switches the visible panel. Visibility is
+// driven by the `deos-active` class off the LIVE selected slot (`card.read(selected_slot)`) —
+// NOT a hardcoded index-0 CSS rule — so the panel follows the committed selection.
+function deosActivateTab(tabsEl, index){
+  var want = String(index);
+  tabsEl.querySelectorAll('.deos-tab').forEach(function(t){
+    t.classList.toggle('deos-active', t.getAttribute('data-index') === want);
+  });
+  tabsEl.querySelectorAll('.deos-tabpanel').forEach(function(p){
+    p.classList.toggle('deos-active', p.getAttribute('data-index') === want);
+  });
+}
+document.querySelectorAll('.deos-tabs').forEach(function(tabsEl){
+  var slot = parseInt(tabsEl.getAttribute('data-selected-slot') || '0', 10) || 0;
+  // On load, reconcile the active panel to the LIVE selected slot when an executor is bound;
+  // with no executor the renderer's initial `deos-active` (first panel) stands.
+  var boot = window.__deosCard;
+  if (boot && typeof boot.read === 'function') {
+    try { deosActivateTab(tabsEl, deosReadSlot(boot, slot)); } catch (e) { /* keep initial paint */ }
+  }
+  tabsEl.querySelectorAll('.deos-tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      var turn = tab.getAttribute('data-turn');
+      var index = parseInt(tab.getAttribute('data-arg') || '0', 10) || 0;
+      document.dispatchEvent(new CustomEvent('deos-affordance', {detail:{turn:turn, arg:index}}));
+      var card = window.__deosCard;
+      if (card && typeof card.fire === 'function' && turn) {
+        try {
+          card.fire(turn, index);                       // the real select turn: selected_slot = index
+          deosRepaintBinds(card);
+          deosActivateTab(tabsEl, deosReadSlot(card, slot)); // drive visibility from the LIVE slot
+          return;
+        } catch (e) { console.error('deos tab select refused:', turn, index, e); }
+      }
+      // Static bake (no executor) or an unbound select_turn — switch the visible panel locally.
+      deosActivateTab(tabsEl, index);
+    });
   });
 });
 ";
@@ -2288,5 +2336,82 @@ mod trustless_tests {
         // The breakout `</script>` is neutralised (escaped `<`), never raw in the island.
         assert!(!doc.contains("</script><b>x</b>"));
         assert!(doc.contains("\\u003c/script>\\u003cb>x\\u003c/b>"));
+    }
+
+    /// THE FUNCTIONAL TABS. A `Tabs` node renders a strip of `.deos-tab` buttons — each
+    /// carrying the `select_turn` as `data-turn` and its own index as `data-arg` — so a click
+    /// maps to a REAL `select_turn(index)`, and the selected panel is the VISIBLE one (driven
+    /// by the `deos-active` class off the live selected slot, not a hardcoded index-0 CSS rule).
+    /// Regression for the backlog #3 wound: buttons were `.deos-tab` but the only handler
+    /// matched `.deos-button` (clicks fired NO turn) and CSS pinned panel 0 visible.
+    #[test]
+    fn tabs_click_maps_to_select_turn_and_selected_panel_is_visible() {
+        let tabs = ViewNode::Tabs {
+            tabs: vec!["Overview".into(), "Ledger".into(), "Structure".into()],
+            selected_slot: 4,
+            select_turn: "select_tab".into(),
+            panels: vec![
+                ViewNode::Text("overview body".into()),
+                ViewNode::Text("ledger body".into()),
+                ViewNode::Text("structure body".into()),
+            ],
+        };
+        let html = render_html(&tabs, &[]);
+
+        // ── Each tab is a `.deos-tab` button whose click carries `{select_turn, index}`. The
+        //    `data-arg` IS the clicked index (the `select_turn`'s argument). ────────────────
+        assert!(
+            html.contains(
+                r#"<button class="deos-tab deos-active" data-turn="select_tab" data-arg="0" data-index="0">Overview</button>"#
+            ),
+            "tab 0 fires select_tab(0) and is the initial active tab: {html}"
+        );
+        assert!(
+            html.contains(
+                r#"<button class="deos-tab" data-turn="select_tab" data-arg="1" data-index="1">Ledger</button>"#
+            ),
+            "tab 1 fires select_tab(1): {html}"
+        );
+        assert!(
+            html.contains(
+                r#"<button class="deos-tab" data-turn="select_tab" data-arg="2" data-index="2">Structure</button>"#
+            ),
+            "tab 2 fires select_tab(2): {html}"
+        );
+        // The container carries the live selected slot the JS reads (not a baked-in index).
+        assert!(
+            html.contains(r#"<div class="deos-tabs" data-selected-slot="4">"#),
+            "the tabs container carries its live selected slot: {html}"
+        );
+
+        // ── Exactly one panel (the selected one) is active; visibility is class-driven. ────
+        assert!(
+            html.contains(r#"<div class="deos-tabpanel deos-active" data-index="0">"#),
+            "the selected panel (0) carries deos-active: {html}"
+        );
+        assert!(
+            html.contains(r#"<div class="deos-tabpanel" data-index="1">"#)
+                && html.contains(r#"<div class="deos-tabpanel" data-index="2">"#),
+            "the non-selected panels are NOT active: {html}"
+        );
+
+        // ── The full document: CSS keys visibility on `.deos-active`, NOT a hardcoded index 0,
+        //    and the JS wire has a real `.deos-tab` click handler that fires the select turn. ─
+        let doc = render_card_document("tabs", &tabs, &[]);
+        assert!(
+            doc.contains(".deos-tabpanel{display:none;}")
+                && doc.contains(".deos-tabpanel.deos-active{display:block;}"),
+            "panel visibility is driven by the deos-active class: {doc}"
+        );
+        assert!(
+            !doc.contains(".deos-tabpanel:not([data-index='0'])"),
+            "the hardcoded panel-0 CSS rule is gone: {doc}"
+        );
+        assert!(
+            doc.contains("querySelectorAll('.deos-tabs')")
+                && doc.contains("function deosActivateTab(")
+                && doc.contains("card.fire(turn, index)"),
+            "a real .deos-tab click handler fires the select turn + drives panel visibility: {doc}"
+        );
     }
 }
