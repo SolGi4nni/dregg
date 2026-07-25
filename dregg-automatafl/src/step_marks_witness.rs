@@ -27,7 +27,7 @@ use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, ir2_eval
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
-use crate::reference::{Board, Coord};
+use crate::board::{Board, Coord};
 use crate::resolve_witness::rule_l_pass;
 use crate::step_marks_layout::{StepMarksLayout, step_marks_descriptor_name};
 use crate::witness::{
@@ -329,7 +329,8 @@ fn eval_expr(e: &LeanExpr, get: &dyn Fn(usize) -> Option<BabyBear>) -> Option<Ba
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{ATT, AUTO, VAC, automaton_step, stock_two_player};
+    use crate::board::{ATT, AUTO, VAC};
+    use crate::rules::{automaton_step, stock_two_player};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn desc11() -> EffectVmDescriptor2 {
@@ -350,12 +351,13 @@ mod tests {
 
     /// (1) THE STEP SATISFIES + new = automatonStepCfg(old): the honest automaton step of the stock
     /// board carrying accumulated marks SATISFIES the descriptor, and the decoded `new` board equals
-    /// the reference `automaton_step(old)` (the step is marks-independent).
+    /// the spec's `automatonStepCfg(old)` (the step is marks-independent).
     #[test]
     fn step_with_marks_satisfies_and_new_is_automaton_step() {
         let desc = desc11();
         let l = StepMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let marks: Vec<Coord> = vec![(5, 5), (9, 9), (0, 10)];
         let tr = automatafl_step_marks_trace(&old, &marks, &desc)
             .unwrap_or_else(|e| panic!("witness-gen: {e}"));
@@ -369,7 +371,9 @@ mod tests {
         );
         assert_eq!(
             tr.new_cells(&l),
-            automaton_step(&old).cells,
+            automaton_step(&old)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
+                .cells,
             "the decoded new board IS automaton_step(old) (the step is marks-independent)"
         );
     }
@@ -388,7 +392,8 @@ mod tests {
                 step_marks_trace_accepts(&desc, &tr),
                 "turn {turn}: the stepped board's marks trace must satisfy the Lean descriptor"
             );
-            board = automaton_step(&board);
+            board = automaton_step(&board)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         }
     }
 
@@ -399,7 +404,8 @@ mod tests {
     fn marks_are_frozen_through_the_step() {
         let desc = desc11();
         let l = StepMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let tr_a = automatafl_step_marks_trace(&old, &[(5, 5)], &desc).expect("fill a");
         let tr_b = automatafl_step_marks_trace(&old, &[(9, 9), (0, 0)], &desc).expect("fill b");
         assert_eq!(
@@ -422,7 +428,8 @@ mod tests {
     fn forged_marks_in_pi_is_rejected() {
         let desc = desc11();
         let l = StepMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let mut tr = automatafl_step_marks_trace(&old, &[(5, 5)], &desc).expect("clean fill");
         let pi = l.pi_marks_in(); // the first published marksIn felt.
         tr.public_inputs[pi] = tr.public_inputs[pi] + BabyBear::ONE;
@@ -437,7 +444,8 @@ mod tests {
     fn tampered_marks_cell_is_rejected() {
         let desc = desc11();
         let l = StepMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let mut tr = automatafl_step_marks_trace(&old, &[(5, 5)], &desc).expect("clean fill");
         let cell = l.s_marks_in_cell(0);
         tr.row[cell] = tr.row[cell] + BabyBear::ONE;
@@ -452,7 +460,8 @@ mod tests {
     #[test]
     fn tampered_new_cell_is_rejected() {
         let desc = desc11();
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let mut tr = automatafl_step_marks_trace(&old, &[(5, 5)], &desc).expect("clean fill");
         let front = *pi_binding_cols(&desc)
             .get(&16)
@@ -484,7 +493,8 @@ mod tests {
             "the handoff prefix is board(9) ‖ marks(9)"
         );
 
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let marks: Vec<Coord> = vec![(5, 5), (9, 9)];
         let tr = automatafl_step_marks_trace(&old, &marks, &desc).expect("clean fill");
         let (win_in, win_out) =

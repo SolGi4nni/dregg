@@ -26,7 +26,7 @@ use dregg_automatafl::game::{
 /// The opening match state (the `old` value every relational tooth reads) — the same
 /// seed `AutomataflOffering::open` commits under genesis.
 fn opening_state() -> MatchState {
-    let board = opening_board();
+    let board = opening_board().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     MatchState {
         turn_no: 0,
         phase: 0,

@@ -4,8 +4,9 @@
 //! (a legal play lands a receipt; an illegal one is refused and commits nothing).
 
 use super::*;
-use crate::game::{GENESIS, coord_of, index_of, opening_board};
-use crate::reference::{ATT, apply_turn};
+use crate::board::ATT;
+use crate::game::{GENESIS, coord_of, goals, index_of, opening_board};
+use crate::rules::{apply_turn, move_legal};
 use dreggnet_offerings::{Offering, Outcome, SessionConfig};
 
 /// Every rendered string in a surface (text, pill/icon labels, section titles, menu rows, cell
@@ -130,16 +131,16 @@ fn the_board_renders_as_a_coordgrid() {
     // (a repulsor sits on all four). Before, a goal was legible only by its `a`/`b` glyph, which a
     // piece standing on it hides: on the stock board that made the four squares that decide the
     // game paint as ordinary pieces.
-    for (g, who) in GOALS {
-        let i = index_of(g).expect("a goal corner is on the board");
+    for (g, who) in goals().expect("the Lean game oracle (`dregg_automatafl_rules`) answers") {
+        let i = index_of(*g).expect("a goal corner is on the board");
         assert_eq!(
             cells[i].tag, "goal",
             "goal corner {g:?} (seat {who}) is marked as an objective"
         );
     }
 
-    // The grid AGREES with the reference board, square by square.
-    let board = opening_board();
+    // The grid AGREES with the Lean-sourced opening board, square by square.
+    let board = opening_board().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     for idx in 0..CELLS {
         let expect = match board.cells[idx] {
             REP => "R",
@@ -185,17 +186,19 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
 
     let (_, cells) = grid(&off.render_for(&session, &seat_a()));
 
-    // The reference's own legal set (the tooth the highlight must mirror).
+    // The LEAN's own legal set (the tooth the highlight must mirror).
     let expected: Vec<usize> = (0..CELLS)
         .filter(|&i| {
-            move_valid(
+            move_legal(
                 session.board(),
+                &[],
                 &Move {
                     who: 0,
                     frm: src,
                     to: coord_of(i),
                 },
             )
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
         })
         .collect();
     // Rook line of (3,1) on an 11×11: row y=1 minus (3,1) → 10; column x=3 minus (3,1) → 10. The
@@ -251,18 +254,45 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
         );
     }
 
-    // The automaton square is never a legal target — even on a rook line through it. (0,5) holds
-    // a stock repulsor on the automaton's own rank.
+    // ⚑ THE AUTOMATON'S SQUARE, AS THE RULESET HAS IT. Naming it as a DESTINATION is LEGAL to
+    // propose (ruling D: `model.py::ev_Move` rejects only a move whose SOURCE is the agent), and the
+    // move then simply FAILS to execute, because the inclusive path check finds the square occupied.
+    // So `(0,5) → (5,5)` is legal, and resolving it leaves the repulsor where it was.
+    //
+    // This test previously asserted the opposite. That came from `logic/src/game.rs`, which bans both
+    // endpoints — the audit's ruling (D) is that the README and the python prototype are the
+    // authority and only the SOURCE is banned.
+    let onto_auto = Move {
+        who: 0,
+        frm: (0, 5),
+        to: (5, 5),
+    };
     assert!(
-        !move_valid(
+        move_legal(session.board(), &[], &onto_auto)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        "naming the automaton's square as a destination is legal to PROPOSE (ruling D)"
+    );
+    let after = crate::rules::resolve_mid(session.board(), &[], &[onto_auto])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+    assert_eq!(
+        after.cells,
+        session.board().cells,
+        "and it FAILS TO EXECUTE: the occupied destination blocks the move, so nothing changes"
+    );
+
+    // Moving the automaton ITSELF is illegal — the square is banned as a SOURCE.
+    assert!(
+        !move_legal(
             session.board(),
+            &[],
             &Move {
                 who: 0,
-                frm: (0, 5),
-                to: (5, 5)
+                frm: (5, 5),
+                to: (5, 3)
             }
-        ),
-        "the automaton's square is never a move target"
+        )
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+        "the automaton is never a move SOURCE"
     );
 }
 
@@ -302,8 +332,15 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
         "a diagonal move is refused"
     );
 
-    // The AUTOMATON's square (5,5) is off (3,1)'s line anyway. Use a source on the automaton's
-    // own rank: select the repulsor at (0,5), then seal onto (5,5).
+    // ⚑ THE AUTOMATON'S SQUARE IS *NOT* IN THIS LIST. Naming it as a DESTINATION is legal to
+    // PROPOSE under the ruleset (audit ruling D: `model.py::ev_Move` bans only a move whose SOURCE
+    // is the agent) and then fails to execute at resolution. This test used to assert a refusal
+    // here, which was `logic/src/game.rs`'s reading rather than the README's. The ruleset's answer
+    // is pinned by `a_move_onto_the_automaton_is_a_legal_proposal_that_fails_to_execute` below and
+    // by the highlight test above (the square is IN the rook-line set).
+    //
+    // Move the selection onto the automaton's own rank anyway, so the off-board case below is
+    // exercised from a live selection.
     assert!(
         off.advance(
             &mut session,
@@ -311,14 +348,6 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
             seat_a()
         )
         .landed()
-    );
-    let onto_auto = index_of((5, 5)).unwrap() as i64;
-    assert!(
-        matches!(
-            off.advance(&mut session, act(COMMIT, onto_auto), seat_a()),
-            Outcome::Refused(_)
-        ),
-        "a move onto the automaton is refused"
     );
 
     // An OFF-BOARD square is refused.
@@ -346,6 +375,59 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
         session.game().read_reg("commits"),
         commits_before + 1,
         "the committed seal advanced the executor's commit counter"
+    );
+}
+
+/// ⚑ **A MOVE ONTO THE AUTOMATON IS A LEGAL PROPOSAL THAT FAILS TO EXECUTE** — audit ruling (D)
+/// plus clause 3.2, driven end-to-end through the surface.
+///
+/// Seat A seals the repulsor at `(5,1)` onto the automaton's square `(5,5)` — the file between them
+/// is clear, so nothing but the DESTINATION can stop it. The seal LANDS (a legal proposal), and the
+/// resolution leaves the repulsor exactly where it was, because the inclusive path check finds the
+/// destination occupied. Seat B's clean move on another file executes in the same round, so the
+/// round really did resolve — A's move failing is not the round refusing.
+///
+/// The deleted Rust oracle answered this input twice over differently: `move_valid` REFUSED the
+/// proposal outright, and `occluded` (interior-only) would have let the mover land on and DESTROY
+/// the automaton's cell had the proposal ever reached resolution.
+#[test]
+fn a_move_onto_the_automaton_is_a_legal_proposal_that_fails_to_execute() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(21)).expect("open");
+    assert_eq!(session.board().cell_at((5, 1)), REP, "the stock repulsor");
+    assert_eq!(
+        session.board().cell_at((5, 5)),
+        AUTO,
+        "the automaton, dead centre"
+    );
+
+    // A: (5,1) → (5,5), the automaton's own square. THE SEAL LANDS.
+    seal(&off, &mut session, &seat_a(), (5, 1), (5, 5));
+    // B: a clean attractor move on a clear file.
+    seal(&off, &mut session, &seat_b(), (3, 1), (3, 3));
+
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_a()).landed());
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+    assert!(
+        off.advance(&mut session, act(RESOLVE, 0), seat_a())
+            .landed(),
+        "the round RESOLVES — a proposal that cannot execute is not a conflict"
+    );
+
+    assert_eq!(
+        session.board().cell_at((5, 1)),
+        REP,
+        "A's repulsor is replaced at its origin: the occupied destination blocked the move"
+    );
+    assert_eq!(
+        session.board().cell_at((3, 3)),
+        ATT,
+        "B's clean move executed in the same round"
+    );
+    assert_eq!(
+        session.board().cell_at((3, 1)),
+        VAC,
+        "…and vacated its source"
     );
 }
 
@@ -408,14 +490,14 @@ fn a_viewer_sees_their_own_sealed_move_and_the_opponent_is_fog() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────
-// 5. A FULL n=2 TURN — commit → reveal → resolve, against the reference `apply_turn`
+// 5. A FULL n=2 TURN — commit → reveal → resolve, against the LEAN's own transition
 // ────────────────────────────────────────────────────────────────────────────────────────────
 
-/// A full simultaneous turn drives through the Offering, and the resolved board is EXACTLY
-/// `apply_turn(old, [move_a, move_b])` — the reference oracle the AIR pins — on both the session's
-/// board AND the executor's COMMITTED cell state.
+/// A full simultaneous turn drives through the Offering, and the resolved board is EXACTLY what the
+/// LEAN says the turn is (`automatonStepCfg ∘ resolveMoves`, the object the AIR is refined against) —
+/// on both the session's board AND the executor's COMMITTED cell state.
 #[test]
-fn a_full_turn_resolves_exactly_as_the_reference() {
+fn a_full_turn_resolves_exactly_as_the_ruleset() {
     let off = AutomataflOffering;
     let mut session = off.open(SessionConfig::with_seed(15)).expect("open");
 
@@ -449,24 +531,27 @@ fn a_full_turn_resolves_exactly_as_the_reference() {
     let out = off.advance(&mut session, act(RESOLVE, 0), seat_a());
     assert!(out.landed(), "the resolution lands one real turn");
 
-    // THE ORACLE: the resolved board is exactly the reference transition.
-    let expect = apply_turn(&before, &[ma, mb]);
+    // THE ORACLE: the resolved board is exactly the LEAN's transition.
+    let expect = apply_turn(&before, &[ma, mb])
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     assert_eq!(
         session.board().cells,
         expect.cells,
-        "the board matches the reference apply_turn"
+        "the board matches the Lean transition"
     );
     assert_eq!(
         session.board().auto,
         expect.auto,
-        "the automaton stepped as the reference says"
+        "the automaton stepped as the ruleset says"
     );
 
-    // …and the EXECUTOR's committed cell state agrees, square for square (translation validation).
+    // …and the EXECUTOR's committed cell state agrees, square for square: the deployed substrate
+    // reproduces the board the ruleset resolved. (This is a per-case agreement check on two concrete
+    // boards — not translation validation, which would need a formal semantics of the executor.)
     let committed = session.game().read_state();
     assert_eq!(
         committed.cells, expect.cells,
-        "the committed board == the reference"
+        "the committed board == the ruleset's board"
     );
     assert_eq!(committed.auto, expect.auto);
     assert_eq!(committed.turn_no, 1, "one resolved turn is committed");
@@ -505,7 +590,9 @@ fn a_full_turn_resolves_exactly_as_the_reference() {
         "the resolved round recorded BOTH seats' revealed moves, in seat order"
     );
     assert_eq!(
-        session.unfoldable_round(),
+        session
+            .unfoldable_round()
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         None,
         "a clean round is foldable — nothing blocks the crown"
     );
@@ -552,7 +639,10 @@ fn a_conflicting_round_is_played_but_refuses_to_fold() {
         "the conflicting round still RESOLVES on the surface (both moves dropped)"
     );
 
-    // The surface's rule: both moves dropped, so the board only took the automaton's step.
+    // The RULESET's answer: a conflicted round does not resolve its moves at all (`resolveMoves` is
+    // guarded by `resolvableB`), so the board only took the automaton's step. The old Rust twin
+    // reached the same board here by DROPPING the two forking moves; the ruleset gets there by not
+    // resolving the round — which is why the fold still refuses it below.
     assert_eq!(
         session.board().cells,
         apply_turn(
@@ -570,11 +660,14 @@ fn a_conflicting_round_is_played_but_refuses_to_fold() {
                 },
             ]
         )
+        .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
         .cells
     );
     assert_eq!(session.rounds().len(), 1, "the round is recorded as played");
     assert_eq!(
-        session.unfoldable_round(),
+        session
+            .unfoldable_round()
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
         Some(0),
         "round 0 CONFLICTS — the fold must refuse it by name, not fake a leaf"
     );
@@ -612,7 +705,7 @@ fn the_automaton_can_be_pulled_to_a_goal_and_win() {
                         frm,
                         to,
                     };
-                    if move_valid(board, &m)
+                    if move_legal(board, &[], &m).unwrap_or(false)
                         && (ty - goal.1).abs() < (board.auto.1 - goal.1).abs().max(1)
                     {
                         return Some(m);
@@ -630,13 +723,14 @@ fn the_automaton_can_be_pulled_to_a_goal_and_win() {
         assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
         let out = off.advance(&mut session, act(RESOLVE, 0), seat_a());
         assert!(out.landed(), "each resolution lands a real turn");
-        // The board always tracks the reference.
-        let expect = apply_turn(&board, &[ma, mb]);
+        // The board always tracks the Lean.
+        let expect = apply_turn(&board, &[ma, mb])
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         assert_eq!(session.board().cells, expect.cells);
         won = session.winner();
         turns += 1;
     }
-    // Whether or not the crude driver reaches a goal, EVERY turn matched the reference and the
+    // Whether or not the crude driver reaches a goal, EVERY turn matched the Lean and the
     // executor verified. If a goal was reached, the winner is committed write-once.
     assert!(off.verify(&session).verified);
     if let Some(w) = won {

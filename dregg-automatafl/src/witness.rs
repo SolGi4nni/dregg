@@ -9,7 +9,7 @@
 //! ## Solve-the-gates (NO hand-authored Rust AIR / `Builder` dependency)
 //!
 //! The trace is filled the SAME way [`crate::resolve_witness`] fills the resolve leg: SEED the
-//! non-affine gadget columns (the ones a linear solver cannot derive) from the reference automaton
+//! non-affine gadget columns (the ones a linear solver cannot derive) from the LEAN automaton
 //! oracle at their exact [`crate::step_layout::StepLayout`] columns, then SOLVE every affine column
 //! from the descriptor's OWN gates ([`crate::resolve_witness::rule_l_pass`], the shared Rule-L
 //! propagation). This is what let the hand-authored Rust AIR (`dregg-automatafl/src/{air,builder,
@@ -44,7 +44,7 @@
 //!
 //! `nax`/`nay` are pinned by the Lean-emitted DEGREE-2 gates `nax − ax − m·ox == 0`,
 //! `nay − ay − m·oy == 0`, where `m` is the step block's own move mask. The mask is what makes the
-//! published coordinate the reference's post-step position on BOTH branches of
+//! published coordinate the spec's post-step position on BOTH branches of
 //! `automaton_step`'s guard (`m·ox` collapses when the guard refuses), which is what lets the Lean
 //! transport be stated against the full `automatonStepCfg` semantics instead of against the column
 //! expression `ax + ox`. This generator never re-derives that rule; it SOLVES the emitted gate.
@@ -58,9 +58,10 @@
 use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::field::BabyBear;
 
-use crate::reference::{Board, VAC, automaton_sense, decision_score};
+use crate::board::{Board, VAC};
 use crate::resolve_witness::rule_l_pass;
-use crate::step_layout::{SCORE_RBITS, SMALL_RBITS, StepLayout};
+use crate::rules;
+use crate::step_layout::{SCORE_RBITS, SMALL_RBITS, StepLayout, decision_score};
 
 /// Placeholder cell-state door roots for the state-binding PI prefix `[old8 ‖ new8]` (PIs `[0..16)`).
 /// The door is OPAQUE to the board descriptor — it is a free 16-felt window the fold driver
@@ -180,8 +181,8 @@ impl StepTrace {
     }
 }
 
-/// **SEED the genuinely non-affine gadget columns** of the step trace from the reference automaton
-/// oracle, at their exact [`StepLayout`] columns. Everything a linear gate cannot derive — the
+/// **SEED the genuinely non-affine gadget columns** of the step trace from the PROVEN LEAN automaton
+/// decision ([`crate::rules::sense`]), at their exact [`StepLayout`] columns. Everything a linear gate cannot derive — the
 /// coordinate decompositions, the auto/ipw/inw/hit one-hots, the `cond_nonzero` inverses, the
 /// decision fields, and every `forced_ge0` range block — is placed here; the affine remainder is
 /// left for [`rule_l_pass`]. `Err` is fail-closed (an out-of-range distance/coordinate).
@@ -223,7 +224,7 @@ pub(crate) fn seed_step(
     seed_one_hot(vals, |x| l.sel_col(x), n, ax);
 
     // -- the four ray scans: the hit one-hot + the cond_nonzero inverse. --
-    let sense = automaton_sense(old);
+    let sense = rules::sense(old)?;
     for d in 0..4 {
         let ray = sense.rays[d];
         // hit[kk] = [kk == dist] over steps 1..=n.
@@ -350,7 +351,7 @@ pub(crate) fn seed_step(
 
 /// **THE WITNESS GENERATOR (solve-the-gates).** Fill the Lean D1 (Leg A) descriptor's trace for the
 /// honest transition `next = automaton_step(old)` with NO dependency on the hand-authored Rust AIR:
-/// [`seed_step`] places the non-affine gadget columns from the reference oracle, then Rule L solves
+/// [`seed_step`] places the non-affine gadget columns from the Lean oracle, then Rule L solves
 /// every affine column from the descriptor's OWN gates, and the public inputs are read off the
 /// descriptor's first-row `PiBinding`s.
 ///
@@ -542,7 +543,8 @@ pub fn step_trace_accepts(desc: &EffectVmDescriptor2, tr: &StepTrace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{ATT, AUTO, REP, VAC, automaton_step, stock_two_player};
+    use crate::board::{ATT, AUTO, REP, VAC};
+    use crate::rules::{automaton_step, stock_two_player};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn n5_board() -> Board {
@@ -581,7 +583,8 @@ mod tests {
         // The shape is READ, not pinned to a frozen number: the descriptor grows APPEND-ONLY
         // (the `NAX`/`NAY` stepped-automaton family), and the generator must track it.
         assert!(desc.public_input_count >= 36, "the packed-felt ABI floor");
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let tr = automatafl_step_trace(&old, &desc).expect("witness-gen fills the n=11 layout");
         assert_eq!(tr.row.len(), desc.trace_width);
         assert!(
@@ -595,7 +598,8 @@ mod tests {
     #[test]
     fn n11_stepped_chain_all_satisfy() {
         let desc = descriptor_by_name(&step_descriptor_name(11)).unwrap();
-        let mut board = stock_two_player();
+        let mut board =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         for turn in 0..4 {
             let tr = automatafl_step_trace(&board, &desc)
                 .unwrap_or_else(|e| panic!("turn {turn} witness-gen: {e}"));
@@ -603,7 +607,8 @@ mod tests {
                 step_trace_accepts(&desc, &tr),
                 "turn {turn}: the stepped board's trace must satisfy the Lean descriptor"
             );
-            board = automaton_step(&board);
+            board = automaton_step(&board)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         }
     }
 
@@ -626,7 +631,8 @@ mod tests {
     #[test]
     fn tampered_tail_is_rejected() {
         let desc = descriptor_by_name(&step_descriptor_name(11)).unwrap();
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let mut tr = automatafl_step_trace(&old, &desc).unwrap();
         // Corrupt a packed OLD felt (the tail) without touching its board cells: the pack gate
         // `packed - Σ cell·4^i == 0` no longer vanishes. The column is READ off the descriptor's
@@ -642,7 +648,7 @@ mod tests {
     }
 
     /// **`auto_out` IS THE REFERENCE POST-STEP COORDINATE** — the property Leg A's OUT window
-    /// needs, checked at every step of a real chain, against the reference oracle. This is the
+    /// needs, checked at every step of a real chain, against the Lean oracle. This is the
     /// positive half of the mask-pin story: what the fold reads as `auto_out` is where the
     /// automaton actually stands after the step, and it differs from the coordinate the leg
     /// CONSUMED (so the OUT window is not silently republishing the IN one).
@@ -654,12 +660,20 @@ mod tests {
         let mut moved_at_least_once = false;
         // The stock opening (the automaton senses nothing decisive and STANDS STILL — the `m = 0`,
         // zero-offset case) and a pulled position (an attractor 3 north, so the guard FIRES).
-        for (name, start) in [("stock", stock_two_player()), ("pulled", pulled_n11())] {
+        for (name, start) in [
+            (
+                "stock",
+                stock_two_player()
+                    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+            ),
+            ("pulled", pulled_n11()),
+        ] {
             let mut board = start;
             for turn in 0..4 {
                 let tr = automatafl_step_trace(&board, &desc).unwrap();
                 assert!(step_trace_accepts(&desc, &tr), "{name} turn {turn}");
-                let stepped = automaton_step(&board);
+                let stepped = automaton_step(&board)
+                    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
                 assert_eq!(
                     (tr.public_inputs[auto_out], tr.public_inputs[auto_out + 1]),
                     (
@@ -756,7 +770,7 @@ mod tests {
     ///   reference automaton does not occupy on that branch.
     /// * `M = 1` (the guard fires): the gate is satisfied **only** by `NAX = AX + OX`.
     ///
-    /// Together those are exactly `if m = 1 then ax + ox else ax` — the reference `automatonStep`'s
+    /// Together those are exactly `if m = 1 then ax + ox else ax` — the spec `automatonStep`'s
     /// `.automaton`, discharged AT THE GATE. That is what lets
     /// `AutomataflTurnCapstone.astep_newAuto_pi_of_sat` be stated against the full
     /// `automatonStepCfg` semantics rather than against the column expression `ax + ox`.
@@ -831,7 +845,7 @@ mod tests {
     /// **WHY THE MASK IS THE RIGHT PIN, STATED HONESTLY.** The blocked branch (`m = 0` with a
     /// NONZERO sensed offset) is a real branch of the AIR's case split and of the Lean capstone's
     /// `.automaton = if m = 1 then (ax+ox, ay+oy) else (ax, ay)` — but it is **not reachable under
-    /// the reference dynamics**: every arm of `evaluate_axis` that yields a nonzero offset carries
+    /// the spec dynamics**: every arm of `evaluateAxis` that yields a nonzero offset carries
     /// a `dist > 1` guard (or picks the farther of two repulsors), so the first cell in the chosen
     /// direction is always in-bounds and vacuum, and the guard fires.
     ///
@@ -847,7 +861,7 @@ mod tests {
     /// discharges the case split at the gate, so the transport is unconditional.
     #[test]
     fn a_nonzero_sensed_offset_always_targets_an_in_bounds_vacuum_cell() {
-        use crate::reference::automaton_sense;
+        use crate::rules::sense;
         let n = 11usize;
         let dirs: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
         let mut checked = 0usize;
@@ -907,7 +921,9 @@ mod tests {
                                 auto: (ax, ay),
                                 col_rule: true,
                             };
-                            let off = automaton_sense(&b).offset;
+                            let off = sense(&b)
+                                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
+                                .offset;
                             checked += 1;
                             if off == (0, 0) {
                                 continue;
@@ -920,9 +936,13 @@ mod tests {
                                  degree-1 `ax + ox` pin would have refused this honest position"
                             );
                             assert_eq!(
-                                automaton_step(&b).auto,
+                                automaton_step(&b)
+                                    .expect(
+                                        "the Lean game oracle (`dregg_automatafl_rules`) answers"
+                                    )
+                                    .auto,
                                 target,
-                                "…and the reference takes it"
+                                "…and the ruleset takes it"
                             );
                         }
                     }
@@ -945,8 +965,9 @@ mod tests {
             descriptor_by_name(&step_descriptor_name(5)).is_none(),
             "n=5 is not an emitted Lean descriptor size; the loader must return None (blocked)"
         );
-        // And the board still steps fine via the reference oracle — only the Lean-descriptor
-        // route is unavailable at n=5.
-        let _ = automaton_step(&n5_board());
+        // And the board still steps fine via the Lean oracle — only the Lean-DESCRIPTOR route is
+        // unavailable at n=5 (the spec is size-generic; the emitted AIR is not).
+        let _ = automaton_step(&n5_board())
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
     }
 }

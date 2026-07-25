@@ -20,9 +20,9 @@
 //! the particle as the glyph (`·` vacuum, `R` repulsor, `A` attractor, `@` automaton), the
 //! automaton cell marked, and each affordance-bearing square carrying the `{turn, arg}` a click
 //! fires. Selecting one of your pieces LIGHTS ITS ROOK LINE: every legal target of that source
-//! (same row or column, in-bounds, not the automaton's square — exactly
-//! [`crate::reference::move_valid`]) is painted in the highlight-set; an illegal target (a diagonal,
-//! the source itself, the automaton) is NOT.
+//! (same row or column, in-bounds, and never the automaton as a SOURCE — exactly what the LEAN
+//! `AutomataflRules.moveLegalB` admits, asked of it) is painted in the highlight-set; an illegal
+//! target (a diagonal, the source itself) is NOT.
 //!
 //! **The simultaneous-move shape, rendered.** Automatafl's turn is not alternating: both players
 //! move at once. So the surface runs COMMIT → REVEAL → RESOLVE:
@@ -30,8 +30,9 @@
 //!    COMMITMENT (a blake3 seal over the move + a per-turn nonce), never the plaintext;
 //! 2. **reveal** — each seat opens its seal (the plaintext lands on the cell, checked against the
 //!    commitment it opens);
-//! 3. **resolve** — ONE real turn applies [`crate::reference::apply_turn`]: invalid moves filtered,
-//!    conflicts dropped, the surviving moves applied, and the automaton takes its step.
+//! 3. **resolve** — ONE real turn asks the LEAN for `roundStep`'s clean-round arm
+//!    ([`crate::rules::turn`]): illegal moves filtered, the conflict set checked, the moves resolved,
+//!    the automaton takes its step, and the win is checked ON ENTRY.
 //!
 //! [`Offering::render_for`] paints the table AS A VIEWER SEES IT: the viewer's own committed move is
 //! shown in full (they know what they sealed), while the opponent's is FOG — a sealed commitment, no
@@ -49,7 +50,7 @@
 //! (the commitment opened inside the AIR, folded as a custom leaf) is the named next lane, exactly
 //! as the tug's in-proof hidden hand is. The board TRANSITION is already proven in-circuit by the
 //! PROVEN Lean descriptors ([`crate::witness`] / [`crate::resolve_witness`],
-//! `new == apply_turn(old, moves)`); this surface drives the same reference oracle the descriptors
+//! `new == applyTurn(old, moves)`); this surface asks the same LEAN SPEC the descriptors
 //! pin.
 
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
@@ -58,14 +59,12 @@ use dreggnet_offerings::{
     VerifyReport,
 };
 
+use crate::board::{ATT, AUTO, Board, Coord, Decision, Move, REP, VAC};
 use crate::game::{
-    AutomataflGame, CELLS, COMMIT, GOALS, MatchState, N, RESOLVE, REVEAL, SELECT, coord_of,
-    goals_of, index_of, opening_board, winner_of,
+    AutomataflGame, CELLS, COMMIT, MatchState, N, RESOLVE, REVEAL, SELECT, coord_of, goal_owner_at,
+    goals, goals_of, index_of, opening_board,
 };
-use crate::reference::{
-    ATT, AUTO, Board, Coord, Decision, Move, REP, VAC, apply_turn, automaton_sense, move_valid,
-    resolve_mid, round_is_clean,
-};
+use crate::rules;
 
 /// The default match seed when a [`SessionConfig`] pins none.
 const DEFAULT_SEED: u64 = 0xA07F;
@@ -77,7 +76,7 @@ const MAX_TURNS: u64 = 64;
 /// A seat at the table (automatafl is n=2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seat {
-    /// Seat A — the two `y = 0` goal corners (see [`GOALS`]).
+    /// Seat A — the two `y = 0` goal corners (see [`Seat::goals`]).
     A,
     /// Seat B — the two `y = 10` goal corners.
     B,
@@ -101,17 +100,20 @@ impl Seat {
     }
 
     /// The seat's TWO goal corners — the automaton arriving on either wins the match for them
-    /// (the stock two-player rule: each player owns the two corners in one row).
+    /// (the stock two-player rule: each player owns the two corners in one row). Sourced from the
+    /// LEAN `stockGoals2` via [`goals_of`].
+    ///
+    /// Empty only if the game oracle cannot answer, which no live session can reach: a session
+    /// exists only because [`opening_board`] already got an answer out of it
+    /// (`AutomataflOffering::open`). Painting NO corners is the honest degrade — it never paints a
+    /// transcribed guess.
     pub fn goals(self) -> Vec<Coord> {
-        goals_of(self.idx() as u32)
+        goals_of(self.idx() as u32).unwrap_or_default()
     }
 
-    /// The seat that owns goal corner `c`, if any.
+    /// The seat that owns goal corner `c`, if any (the Lean-sourced goal table).
     pub fn owner_of_goal(c: Coord) -> Option<Seat> {
-        GOALS
-            .iter()
-            .find(|(g, _)| *g == c)
-            .map(|(_, w)| Seat::from_idx(*w))
+        goal_owner_at(c).ok().flatten().map(Seat::from_idx)
     }
 
     /// The seat an index / owner tag (`0`/`1`) names.
@@ -181,10 +183,10 @@ fn squares(d: usize) -> String {
     }
 }
 
-/// **Read one axis's [`Decision`] as a sentence** — WHY that axis pulls the way it does. The
-/// variant codes are the reference's (`1 = TowardAttractor, 2 = FromRepulsor, 3 = UnbalancedPair`)
-/// and the distances are the raycast distances the decision was taken on, so this is the actual
-/// reason, not a plausible-sounding gloss.
+/// **Read one axis's [`Decision`] as a sentence** — WHY that axis pulls the way it does. The variant
+/// codes and the distances are the ones the LEAN reported (`1 = towardAttractor, 2 = fromRepulsor,
+/// 3 = unbalancedPair`, and the raycast distances the decision was actually taken on), so this is the
+/// spec's own reason rendered into English, not a plausible-sounding gloss.
 fn decision_why(d: &Decision, axis_x: bool) -> String {
     let (dir, back) = match (axis_x, d.pos) {
         (true, true) => ("right", "left"),
@@ -219,7 +221,17 @@ fn decision_why(d: &Decision, axis_x: bool) -> String {
 /// This is PUBLIC information: it is a pure function of the board every viewer already sees, so it
 /// is safe on a spectator's surface and leaks nothing about a sealed move.
 fn sense_reading(b: &Board) -> (Coord, String) {
-    let s = automaton_sense(b);
+    let s = match rules::sense(b) {
+        Ok(s) => s,
+        // The oracle is the only thing that knows; say so rather than guess. Unreachable in a live
+        // session (see `Seat::goals`).
+        Err(_) => {
+            return (
+                b.auto,
+                "the game oracle did not answer, so the automaton's read is unknown".to_string(),
+            );
+        }
+    };
     let (ox, oy) = s.offset;
     let target = (b.auto.0 + ox, b.auto.1 + oy);
     let moves = (ox != 0 || oy != 0) && b.in_bounds(target) && b.cell_at(target) == VAC;
@@ -259,12 +271,12 @@ impl AutomataflOffering {
     }
 }
 
-/// A live automatafl match: the deployed executor game, the reference board (the witness oracle the
-/// AIR pins), the two seats, and each seat's SEALED move (the plaintext the opponent cannot see).
+/// A live automatafl match: the deployed executor game, the board the Lean oracle is asked about, the
+/// two seats, and each seat's SEALED move (the plaintext the opponent cannot see).
 pub struct AutomataflSession {
     /// The deployed executor game — every advance commits this state as ONE real verified turn.
     game: AutomataflGame,
-    /// The reference board (the oracle: `apply_turn` computes each resolution).
+    /// The live board; every resolution is computed by the Lean ([`crate::rules::turn`]).
     board: Board,
     /// **The GENESIS position** — the board the match opened on, kept so the played match can be
     /// folded (`AutomataflMatch::played(start, rounds)`); the fold's first leaf declares this as
@@ -381,15 +393,15 @@ impl AutomataflSession {
     /// DROPPING the clashing moves, which is the audited-WRONG rule — the ruleset marks the
     /// contested square and re-enters the round. Surfacing the index here lets a frontend say
     /// WHICH round blocks the crown instead of reporting an opaque prover failure.
-    pub fn unfoldable_round(&self) -> Option<usize> {
+    pub fn unfoldable_round(&self) -> Result<Option<usize>, String> {
         let mut b = self.start.clone();
         for (i, (ma, mb)) in self.rounds.iter().enumerate() {
-            if !round_is_clean(&b, &[*ma, *mb]) {
-                return Some(i);
+            if !rules::round_is_clean(&b, &[*ma, *mb])? {
+                return Ok(Some(i));
             }
-            b = apply_turn(&b, &[*ma, *mb]);
+            b = rules::apply_turn(&b, &[*ma, *mb])?;
         }
-        None
+        Ok(None)
     }
 
     /// The deployed executor game (read the COMMITTED state off the cell).
@@ -547,22 +559,18 @@ impl AutomataflSession {
         }
     }
 
-    /// The LEGAL TARGETS of `src` — exactly the rook line [`move_valid`] admits (same row or column,
-    /// distinct, in-bounds, and never the automaton's square). The highlight-set the board paints.
+    /// The LEGAL TARGETS of `src` — the set the LEAN admits (`AutomataflRules.moveLegalB` over the
+    /// board: same row or column, distinct, in-bounds, and never the automaton as a SOURCE). The
+    /// highlight-set the board paints.
+    ///
+    /// ⚑ Naming the automaton's square as a DESTINATION is legal to propose and then FAILS to execute
+    /// (ruling D + the inclusive path check), so it is in this set. The old Rust `move_valid` banned
+    /// it, which is `logic/src/game.rs`'s reading rather than the README's.
+    ///
+    /// Empty when the oracle cannot answer — no affordance is offered for a move nobody can
+    /// adjudicate, and `advance` re-asks before it commits anything.
     pub fn legal_targets(&self, src: Coord) -> Vec<Coord> {
-        (0..CELLS)
-            .map(coord_of)
-            .filter(|&to| {
-                move_valid(
-                    &self.board,
-                    &Move {
-                        who: 0,
-                        frm: src,
-                        to,
-                    },
-                )
-            })
-            .collect()
+        rules::legal_targets(&self.board, &[], 0, src).unwrap_or_default()
     }
 
     /// Whether `src` is a square a seat may move: a real (non-vacuum) particle that is not the
@@ -1056,7 +1064,7 @@ impl Offering for AutomataflOffering {
         let seed = cfg.seed.unwrap_or(DEFAULT_SEED);
         let game =
             AutomataflGame::deploy(seed as u8).map_err(|e| OfferingError::Deploy(e.to_string()))?;
-        let board = opening_board();
+        let board = opening_board().map_err(OfferingError::Deploy)?;
         let session = AutomataflSession {
             game,
             start: board.clone(),
@@ -1218,14 +1226,24 @@ impl Offering for AutomataflOffering {
                     frm,
                     to,
                 };
-                // THE LEGALITY TOOTH — exactly the reference's `move_valid` (rook-line, distinct,
-                // in-bounds, never the automaton). An illegal move commits NOTHING.
-                if !move_valid(&session.board, &mv) {
-                    return refuse(format!(
-                        "illegal move ({},{}) → ({},{}): a move is a rook line to a distinct \
-                         in-bounds square, and never touches the automaton",
-                        frm.0, frm.1, to.0, to.1
-                    ));
+                // THE LEGALITY TOOTH — the LEAN's `moveLegalB` (rook-line, distinct, in-bounds,
+                // and the automaton is banned as a SOURCE). An illegal move commits NOTHING, and a
+                // move nobody can adjudicate commits nothing either.
+                match rules::move_legal(&session.board, &[], &mv) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return refuse(format!(
+                            "illegal move ({},{}) → ({},{}): a move is a rook line to a distinct \
+                             in-bounds square, and never moves the automaton itself",
+                            frm.0, frm.1, to.0, to.1
+                        ));
+                    }
+                    Err(why) => {
+                        return refuse(format!(
+                            "the game oracle could not adjudicate ({},{}) → ({},{}): {why}",
+                            frm.0, frm.1, to.0, to.1
+                        ));
+                    }
                 }
                 let seal = session.seal_of(seat, &mv);
                 session.committed[i] = Some(mv);
@@ -1284,14 +1302,36 @@ impl Offering for AutomataflOffering {
                 }
                 let ma = session.committed[0].expect("sealed");
                 let mb = session.committed[1].expect("sealed");
-                // THE RESOLUTION — the pure transition the AIR re-checks in-circuit: validity
-                // filter → conflict resolve → apply → the automaton's step.
-                let next = apply_turn(&session.board, &[ma, mb]);
-                // THE DAEMON'S STEP, RECORDED. `apply_turn = automaton_step ∘ resolve_mid`, so the
+                // THE RESOLUTION AND THE WIN, BOTH FROM THE LEAN — `roundStep`'s clean-round arm:
+                // legality filter → conflict check → resolve → the automaton's step → the win
+                // checked ON ENTRY (`winOnEntry`: the automaton must have MOVED into a goal, not
+                // merely be sitting on one). This is the object the AIR is refined against.
+                let stock_goals = match goals() {
+                    Ok(g) => g,
+                    Err(why) => {
+                        return refuse(format!("the goal assignment is unavailable: {why}"));
+                    }
+                };
+                let (next, win) = match rules::turn(&session.board, &[], &[ma, mb], stock_goals) {
+                    Ok(pair) => pair,
+                    Err(why) => {
+                        return refuse(format!(
+                            "the game oracle could not resolve the turn: {why}"
+                        ));
+                    }
+                };
+                // THE DAEMON'S STEP, RECORDED. The turn is `automatonStepCfg ∘ resolveMoves`, so the
                 // board the automaton actually senses is the MID board (the players' moves already
                 // applied) — read it there, exactly once, and keep the reading for the surface. The
                 // step used to leave no trace at all: the reader saw two boards and had to diff.
-                let mid = resolve_mid(&session.board, &[ma, mb]);
+                let mid = match rules::resolve_mid(&session.board, &[], &[ma, mb]) {
+                    Ok(m) => m,
+                    Err(why) => {
+                        return refuse(format!(
+                            "the game oracle could not resolve the moves: {why}"
+                        ));
+                    }
+                };
                 let (auto_to, auto_why) = sense_reading(&mid);
                 let step = AutoStep {
                     turn_no: session.turn_no,
@@ -1299,10 +1339,7 @@ impl Offering for AutomataflOffering {
                     to: auto_to,
                     why: auto_why,
                 };
-                // THE WIN CHECK — the automaton standing on one of the four stock goal corners
-                // wins for that corner's owner (`reference::win_owner`, the `try_complete_round`
-                // goal scan).
-                let winner = winner_of(&next).map(Seat::from_idx);
+                let winner = win.map(Seat::from_idx);
 
                 let before = (
                     session.board.clone(),
@@ -1356,14 +1393,14 @@ impl Offering for AutomataflOffering {
         }
     }
 
-    /// Re-verify the committed match: the executor's COMMITTED board must be exactly the reference
-    /// board (translation validation — the substrate reproduces the game), every square must hold a
-    /// real particle code, and there must be exactly one automaton, where the state says it is.
+    /// Re-verify the committed match: the executor's COMMITTED board must be exactly the board the
+    /// LEAN oracle resolved (the substrate reproduces the game the ruleset describes), every square must
+    /// hold a real particle code, and there must be exactly one automaton, where the state says it is.
     fn verify(&self, session: &Self::Session) -> VerifyReport {
         let committed = session.game.read_state();
         let turns = session.turns;
         if committed.cells != session.board.cells {
-            return VerifyReport::broken(turns, "the committed board diverged from the reference");
+            return VerifyReport::broken(turns, "the committed board diverged from the ruleset");
         }
         if committed.auto != session.board.auto {
             return VerifyReport::broken(turns, "the committed automaton coordinate diverged");

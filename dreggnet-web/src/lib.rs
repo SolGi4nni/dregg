@@ -94,6 +94,13 @@ pub mod descent_store;
 /// the Activity shell are the named follow-up (they need `DISCORD_CLIENT_SECRET`). See
 /// [`discord_activity`] and `docs/DISCORD-ACTIVITIES-DESIGN.md`.
 pub mod discord_activity;
+/// THE CHAIN EXPLORER — `GET /explorer`, a rendering of what has actually happened on a live
+/// node: its cells (owned state), its per-agent receipt chains (turns), the blocklace DAG, the
+/// attested ledger roots, and an IN-BROWSER check of a cell-inclusion proof. Reads the node
+/// through a GET-only, path-allowlisted, credential-free hop at `/explorer/node/{*path}`
+/// (`DREGG_NODE_URL`); with no node configured it says so rather than rendering an empty table.
+/// See [`explorer`].
+pub mod explorer;
 /// One hosted binary-operation transport shared by the web, Telegram Mini App,
 /// and Discord Activity authentication wrappers. Concrete operations remain
 /// independently feature-gated.
@@ -3339,18 +3346,19 @@ fn af_piece(glyph: &str) -> Option<(&'static str, &'static str, &'static str)> {
 }
 
 /// The seat letter of the goal corner at `c`. A VACANT corner already says so in its glyph
-/// (`a`/`b`); an OCCUPIED one is resolved against the game crate's own `GOALS` table rather than
-/// guessed from the geometry, so the renderer never invents an owner. `None` = the square is a goal
-/// (the surface tagged it one) on a board `GOALS` does not describe: it still paints as a goal, it
-/// just does not claim to know whose.
+/// (`a`/`b`); an OCCUPIED one is resolved against the game's LEAN-sourced goal assignment
+/// (`AutomataflRules.stockGoals2`, via `dregg_automatafl::game::goal_owner_at`) rather than guessed
+/// from the geometry, so the renderer never invents an owner. `None` = the square is a goal (the
+/// surface tagged it one) that the assignment does not describe, or the game oracle did not answer:
+/// it still paints as a goal, it just does not claim to know whose.
 fn af_goal_owner(c: (i32, i32), glyph: &str) -> Option<char> {
     match glyph {
         "a" => Some('a'),
         "b" => Some('b'),
-        _ => dregg_automatafl::game::GOALS
-            .iter()
-            .find(|(g, _)| *g == c)
-            .map(|(_, who)| if *who == 0 { 'a' } else { 'b' }),
+        _ => dregg_automatafl::game::goal_owner_at(c)
+            .ok()
+            .flatten()
+            .map(|who| if who == 0 { 'a' } else { 'b' }),
     }
 }
 
@@ -5341,6 +5349,11 @@ fn make_app_parts_with_catalog(
         // catalog page used to point every visitor at.
         .merge(tug_web::tug_router(Arc::clone(&catalog)))
         .merge(sprite::sprite_router())
+        // THE CHAIN EXPLORER — `GET /explorer`: what has been happening on the node this surface
+        // is pointed at (`DREGG_NODE_URL`). Always mounted: with no node configured the page's
+        // job is to SAY that, which it cannot do from a route that does not exist. Additive —
+        // the `/explorer` prefix overlaps nothing above.
+        .merge(explorer::explorer_router())
         .merge(overlay_router);
     #[cfg(feature = "hosted-binary-operations")]
     let app = app.merge(fhegg_operation::router(Arc::clone(&catalog)));
@@ -5449,10 +5462,22 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
     // corners — the SAME data the live surface renders — so the landing cannot drift away from the
     // product it previews. (It used to be a hand-rolled 5×5 grid; when the played board became the
     // stock 11×11 game, that still would have advertised a board nobody can play.)
-    use dregg_automatafl::game::{GOALS, N, coord_of, index_of, opening_board};
-    use dregg_automatafl::reference::{ATT, AUTO, REP, VAC};
+    use dregg_automatafl::board::{ATT, AUTO, REP, VAC};
+    use dregg_automatafl::game::{N, coord_of, goals, index_of, opening_board};
 
-    let board = opening_board();
+    // The board and the goal assignment come from the PROVEN LEAN (`@[export]
+    // dregg_automatafl_rules`). Without it there is no position to show, so the still says so rather
+    // than paint a guessed one.
+    let (board, stock_goals) = match (opening_board(), goals()) {
+        (Ok(b), Ok(g)) => (b, g),
+        _ => {
+            return format!(
+                "<div class=\"af-still {extra_class}\"><p>The automatafl still needs the game \
+                 oracle (the Lean <code>dregg_automatafl_rules</code> export), which this build did \
+                 not link.</p></div>"
+            );
+        }
+    };
     // Mid-turn: seat A has the attractor at (3,1) selected, so its rook line is the lit legal-move
     // set — exactly what the live board highlights on a click.
     let sel = (3i32, 1i32);
@@ -5466,7 +5491,7 @@ pub(crate) fn automatafl_still(extra_class: &str) -> String {
             let p = board.cells[i];
             // The selected piece's rook cross, minus the automaton's square (never a legal target).
             let lit = (c.0 == sel.0 || c.1 == sel.1) && c != board.auto && i != sel_idx;
-            let goal = GOALS.iter().find(|(g, _)| *g == c);
+            let goal = stock_goals.iter().find(|(g, _)| *g == c);
             let glyph = match p {
                 REP => "R".to_string(),
                 ATT => "A".to_string(),

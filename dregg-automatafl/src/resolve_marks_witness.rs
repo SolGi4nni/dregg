@@ -36,7 +36,7 @@ use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, ir2_eval
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
-use crate::reference::{Board, Coord, Move};
+use crate::board::{Board, Coord, Move};
 use crate::resolve_layout::AUTO_CODE;
 use crate::resolve_marks_layout::{ResolveMarksLayout, resolve_marks_descriptor_name};
 use crate::resolve_witness::{
@@ -357,7 +357,8 @@ fn eval_expr(e: &LeanExpr, get: &dyn Fn(usize) -> Option<BabyBear>) -> Option<Ba
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{Move, resolve_mid, stock_two_player};
+    use crate::board::Move;
+    use crate::rules::{resolve_mid, stock_two_player};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn desc11() -> EffectVmDescriptor2 {
@@ -387,7 +388,8 @@ mod tests {
     fn clean_round_with_marks_satisfies() {
         let desc = desc11();
         let l = ResolveMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         // Accumulated marks well away from either move's source/destination.
         let marks: Vec<Coord> = vec![(5, 5), (9, 9), (0, 10)];
@@ -413,7 +415,8 @@ mod tests {
     #[test]
     fn clean_round_marked_move_is_unsat() {
         let desc = desc11();
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         // Mark move 0's DESTINATION — a marks-illegal submission.
         let marks: Vec<Coord> = vec![(3, 3)];
@@ -437,7 +440,8 @@ mod tests {
     #[test]
     fn clean_round_marked_source_is_unsat() {
         let desc = desc11();
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let marks: Vec<Coord> = vec![(3, 1)]; // move 0's SOURCE.
         let tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).unwrap();
@@ -448,17 +452,19 @@ mod tests {
     }
 
     /// (3) `cMidV4 == resolveMoves`: the marks carry is board-inert. The resolve-marks trace's decoded
-    /// `cMidV4` equals the naive `resolve_mid` oracle for a clean move pair — the same board the plain
+    /// `cMidV4` equals the SPEC's `resolveMoves` for a clean move pair — the same board the plain
     /// resolve leaf commits (marks gate LEGALITY at proposal, never the resolution function).
     #[test]
     fn mid_board_is_marks_independent() {
         let desc = desc11();
         let l = ResolveMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let marks: Vec<Coord> = vec![(5, 5)];
         let tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).unwrap();
-        let expect = resolve_mid(&old, &ms);
+        let expect = resolve_mid(&old, &[], &ms)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         assert_eq!(
             tr.mid_board(&l).cells,
             expect.cells,
@@ -481,7 +487,8 @@ mod tests {
     fn forged_marks_in_pi_is_rejected() {
         let desc = desc11();
         let l = ResolveMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let marks: Vec<Coord> = vec![(5, 5)];
         let mut tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).unwrap();
@@ -498,7 +505,8 @@ mod tests {
     fn tampered_marks_cell_is_rejected() {
         let desc = desc11();
         let l = ResolveMarksLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let marks: Vec<Coord> = vec![(5, 5)];
         let mut tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).unwrap();
@@ -530,7 +538,8 @@ mod tests {
             "the handoff prefix is board(9) ‖ marks(9)"
         );
 
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let marks: Vec<Coord> = vec![(5, 5), (9, 9)];
         let tr = automatafl_resolve_marks_trace(&old, &ms, &marks, &desc).expect("clean fill");

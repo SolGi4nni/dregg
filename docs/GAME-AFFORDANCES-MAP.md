@@ -74,10 +74,12 @@ through the chain fold plus discharging the welded-twin/umem residual and the Le
 flip is an **active in-flight lane** (see `docs/EXCELLENCE-BACKLOG-2026-07-16.md` §3 — this
 cluster is the deep end of the pool; coordinate before touching anything under `circuit-prove/`).
 
-**The exemplar to copy is `dregg-automatafl`** (see §3): `reference.rs` oracle + `air.rs` gates +
-`Builder::air_accepts` as the fast shadow, with the real prove/fold as the `#[ignore]` gate. Its
-AIR is deliberately HASH-free/Merkle-free/Lookup-free — the recipe that dodges every
-custom-leaf-adapter residual.
+**The exemplar to copy is `dregg-automatafl`** (see §3): a LEAN-CALLED oracle
+(`rules.rs` → `@[export] dregg_automatafl_rules`) + a LEAN-EMITTED AIR (`automataflResolveDescN` /
+`automataflStepDescN`) filled by fail-closed Rust witness generators, with the real prove/fold as the
+`#[ignore]` gate. Its AIR is deliberately HASH-free/Merkle-free/Lookup-free — the recipe that dodges
+every custom-leaf-adapter residual. ⚑ Both Rust halves the older text named here are DELETED: the
+hand-written AIR (`air.rs`/`builder.rs`/`moves.rs`) and, on 2026-07-25, the `reference.rs` oracle.
 
 **Never touch:** `custom_state_binding.rs` (the ABI), `turn/src/executor/` internals, the fold
 connectors, the light client. Those are the platform floor. You author schemas, offerings, AIRs,
@@ -180,9 +182,11 @@ are built. Open: Phase 4 Lean refinement.
 
 ### automatafl — the Custom-VK exemplar (driven; copy this to build a complex game)
 `dregg-automatafl`: simultaneous-move cellular-automaton boardgame (n=2 seats, **11×11 — the STOCK
-two-player board, which is also the emitted-descriptor size, so a played match FOLDS**). `reference.rs:
-apply_turn` is the off-circuit oracle; `air.rs` staged builders `build_d1/d2/d3/build_sealed`
-(+`_honest` witnesses); `builder.rs: Builder::air_accepts` is the fast refinement shadow;
+two-player board, which is also the emitted-descriptor size, so a played match FOLDS**). `rules.rs`
+is the off-circuit oracle and it is the LEAN — every transition, legality verdict, conflict set and
+win comes back from `@[export] dregg_automatafl_rules` over `Dregg2.Games.AutomataflRules`, with no
+Rust fallback (`reference.rs` deleted 2026-07-25); the AIR is Lean-emitted and
+`resolve_witness.rs`/`witness.rs` fill its trace fail-closed;
 `game.rs: AutomataflGame` deploys the same match on a real WorldCell with a commit→reveal→resolve
 tooth discipline (idioms (a) and (b) in one game); `surface.rs: AutomataflOffering` renders the
 board as a `ViewNode::CoordGrid` with legal-move highlighting and sealed-move fog. Lean spec:

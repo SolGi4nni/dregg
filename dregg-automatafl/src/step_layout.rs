@@ -24,6 +24,27 @@
 pub const SMALL_RBITS: usize = 5;
 /// `NGen`/`chooseOffset` `SCORE_RBITS` — the score-compare range width.
 pub const SCORE_RBITS: usize = 20;
+/// `AutomataflStepEmit.SCORE_PRI` — the priority coefficient of the emit's `scoreHead`.
+pub const SCORE_PRI: i64 = 100_000;
+/// `AutomataflStepEmit.SCORE_ATT` — the attractor-distance coefficient of the emit's `scoreHead`.
+pub const SCORE_ATT: i64 = 100;
+
+/// The emitted score head `variant·SCORE_PRI − att·SCORE_ATT − rep` (`AutomataflStepEmit.scoreHead`),
+/// evaluated on a decision the LEAN reported.
+///
+/// ⚑ This is TRACE ARITHMETIC, not a game rule. The offset a decision pair induces is chosen by the
+/// Lean (`chooseOffsetCfg`, read off [`crate::rules::sense`]); this function exists only because the
+/// descriptor's `choose_offset` block spends two `forced_ge0` witnesses on the SIGN of
+/// `score_x − score_y`, and a witness generator must fill them at the emit's own coefficients. It
+/// belongs to the layout mirror for the same reason every column formula here does.
+///
+/// The field conventions the Lean wire uses already zero the irrelevant tiebreak key (`fromRepulsor`
+/// carries `att = 0`, `towardAttractor` carries `rep = 0`, `none` both), so this single formula
+/// reproduces `decisionCmp`'s order — priority first, then the reversed distances — over the range the
+/// emit's `SCORE_ATT` radix supports.
+pub fn decision_score(d: &crate::board::Decision) -> i64 {
+    d.variant as i64 * SCORE_PRI - d.att_dist as i64 * SCORE_ATT - d.rep_dist as i64
+}
 /// `decide_axis` block width (constant in `n`): `A_DA_W`.
 const A_DA_W: usize = 47;
 /// `choose_offset` block width (constant in `n`): `A_CO_W`.

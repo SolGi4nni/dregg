@@ -9,8 +9,12 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
 
 ## The shared architecture (per game)
 
-1. The reference rules engine is vendored as the deterministic `apply_turn`/`applyAction` oracle
-   (`dregg-automatafl/src/reference.rs`, `dregg-multiway-tug/src/reference.rs`).
+1. The rules engine is the deterministic `apply_turn`/`applyAction` oracle. For **automatafl this is
+   the LEAN** — `@[export] dregg_automatafl_rules` over `Dregg2.Games.AutomataflRules`, called from
+   `dregg-automatafl/src/rules.rs`; the vendored Rust oracle `src/reference.rs` is DELETED (2026-07-25)
+   because the conformance audit found the transcribed lineage divergent from the ruleset, including
+   three divergences that destroy material. For multiway-tug it is still a vendored Rust engine
+   (`dregg-multiway-tug/src/reference.rs`) — the same wound, not yet closed.
 2. The STATE: simple scalars as dregg-schema register components; the board/deck/hand as a heap
    COLLECTION (the 16-register model doesn't hold a 121-cell board or a 21-card deck).
 3. The SIMPLE teeth lower via game-turn-slice's compiler (validity, counts, win-thresholds,
@@ -78,8 +82,15 @@ An original game (o1Labs / Corey Richardson), NOT a Tafl variant: an 11×11 grid
 together, moves conflict-resolve and apply, then the Automaton ("Daemon") takes one autonomous
 raycast-decided step; win = steer the Daemon into your goal (no capture). What exists:
 
-- **The engine** (`src/reference.rs`) — the vendored deterministic `apply_turn` oracle, mirroring
-  `Dregg2.Games.Automatafl` and its `#guard`s.
+- **The engine** — the LEAN, called. `dregg-automatafl/src/rules.rs` asks
+  `@[export] dregg_automatafl_rules` (`Dregg2.Games.AutomataflFFI` over the rules-faithful
+  `AutomataflRules`) for every board transition, legality verdict, conflict set and win; `src/board.rs`
+  is the state shape plus the wire, and there is no Rust fallback. ⚑ 2026-07-25: this replaced
+  `src/reference.rs`, a hand transcription of `~/dev/automatafl/logic` (a non-canonical experiment)
+  that swapped the pieces of a 2-cycle and let a mover destroy a stationary piece on its destination.
+  ⚠ The bullets below still describe the DELETED hand-written Rust AIR (`src/air.rs`,
+  `src/builder.rs`, `src/moves.rs`, `tests/refinement.rs`); the AIR is Lean-emitted now
+  (`automataflResolveDescN` / `automataflStepDescN`) and this section has not been rewritten for it.
 - **The staged board-transition AIR** (`src/air.rs`, `src/builder.rs`, `src/moves.rs`) — the
   translation-validation Custom AIR, staged D1 (Daemon-only) → D2 (single move + occlusion) → D3
   (n=2 simultaneous resolution with the fork/collide/survive truth table).

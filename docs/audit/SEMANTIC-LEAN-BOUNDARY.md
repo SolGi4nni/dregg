@@ -132,7 +132,7 @@ proof above it, and the Lean "twin" would stay green.**
 |---|---|---|---|
 | multiway-tug (counter-model) | `state.rs:253` `CellProgram::Cases` | `MultiwayTug.lean` + `MultiwayTugAir.lean` | **NO** — `AirSpec`/`MerkleSound` carried hypotheses; Lean models multisets, Rust deploys counters |
 | multiway-tug (Merkle-fold) | `hidden_hand.rs:783`, `fold.rs::membership_leaf_for_play` | `MultiwayTugAir.lean` `airPlay` | **NO** — `airPlay`↔`fold.rs` is doc-comment prose + two undischarged hyps |
-| automatafl | `game.rs:174` `Cases`; `reference::apply_turn` oracle | `Automatafl.lean` + `AutomataflAir.lean` | **NO** — `MoveSound`/`StepSound` discharged only for ideal gadgets, not `air.rs` |
+| automatafl | `game.rs` `Cases`; the oracle is the LEAN (`rules.rs` → `@[export] dregg_automatafl_rules`, 2026-07-25 — `reference.rs` deleted) | `AutomataflRules.lean` (spec) + the emitted `automatafl{Resolve,Step}DescN` | **PARTLY** — the off-circuit ORACLE now IS the Lean spec (no Rust twin left to diverge). The in-circuit leg is a Lean-EMITTED descriptor refined against `roundStep`; what carries no proof is the Rust WITNESS GENERATOR that fills its trace |
 | generic schema games (Descent, …) | `dregg-schema::emit_program` `emit.rs:150` | `RotatedLayout.lean` (pattern only) | **NO** — correctness by Rust driven test (`tests/refinement.rs`), not Lean |
 | governed-namespace | `governed-namespace/src/lib.rs:369` | `GovernedNamespace.lean` | **NO** — re-authored mirror linked by slot-name strings |
 | deos-app family (Identity/Subscription/StorageGatewayMandate/EscrowDeskCouncil/…) | `starbridge-apps/*` | `Dregg2/Apps/*.lean` | **NO** — same re-authored-mirror shape |

@@ -46,8 +46,8 @@ use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, ir2_eval
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
+use crate::board::{Board, Coord, Move};
 use crate::legc_layout::{LEGC_SEATS, LegCLayout, legc_descriptor_name};
-use crate::reference::{Board, Coord, Move};
 use crate::resolve_layout::{AUTO_CODE, RBITS, SMALL_RBITS};
 use crate::resolve_witness::rule_l_pass;
 
@@ -616,7 +616,7 @@ pub fn legc_round_state_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{ATT, AUTO, VAC};
+    use crate::board::{ATT, AUTO, VAC};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn desc(n: usize) -> EffectVmDescriptor2 {

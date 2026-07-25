@@ -47,7 +47,7 @@ use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, ir2_eval
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
-use crate::reference::{Board, Move};
+use crate::board::{Board, Move};
 use crate::resolve_layout::{
     AUTO_CODE, RBITS, ResolveLayout, SMALL_RBITS, resolve_descriptor_name,
 };
@@ -790,7 +790,8 @@ pub fn resolve_trace_first_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::{Move, resolve_mid, stock_two_player};
+    use crate::board::Move;
+    use crate::rules::{resolve_mid, stock_two_player};
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
     fn desc11() -> EffectVmDescriptor2 {
@@ -815,13 +816,15 @@ mod tests {
 
     /// Fill the trace for a move pair and assert (a) the solver resolves every column and (b) the
     /// REAL Ir2 evaluator accepts. When `expect_mid` is `Some`, additionally assert the trace's
-    /// decoded `cMidV4` equals it; when `None`, print how `cMidV4` relates to `old` / `resolve_mid`
-    /// (the descriptor's roundStep-faithful board may diverge from the naive oracle — e.g. a
-    /// 2-cycle the detector blocks). Returns the filled trace.
+    /// decoded `cMidV4` equals it; when `None`, print how `cMidV4` relates to `old` / the spec's
+    /// `resolveMoves` (they are the SAME object now — the descriptor is refined against
+    /// `roundStep`'s resolve board and the oracle IS `roundStep`, so a difference is a
+    /// witness-generator fault, not a known divergence). Returns the filled trace.
     fn check(ms: [Move; 2], expect_mid: Option<Board>) -> ResolveTrace {
         let desc = desc11();
         let l = ResolveLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let tr = automatafl_resolve_trace(&old, &ms, &desc)
             .unwrap_or_else(|e| panic!("witness-gen: {e}"));
         assert_eq!(tr.row.len(), desc.trace_width);
@@ -839,7 +842,8 @@ mod tests {
                 "the descriptor's cMidV4 must equal the expected resolution"
             ),
             None => {
-                let om = resolve_mid(&old, &ms);
+                let om = resolve_mid(&old, &[], &ms)
+                    .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
                 println!(
                     "  cMidV4 == old? {}   cMidV4 == resolve_mid(oracle)? {}",
                     mid.cells == old.cells,
@@ -854,9 +858,11 @@ mod tests {
     /// attractors — the descriptor's cMidV4 equals `resolve_mid`.
     #[test]
     fn clean_resolve_satisfies() {
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
-        let expect = resolve_mid(&old, &ms);
+        let expect = resolve_mid(&old, &[], &ms)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         check(ms, Some(expect));
     }
 
@@ -864,9 +870,11 @@ mod tests {
     /// leaves its source piece in place; paired with a clean move. cMidV4 == `resolve_mid`.
     #[test]
     fn occluded_stayer_satisfies() {
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((0, 0), (0, 6)), mv((7, 1), (7, 3))];
-        let expect = resolve_mid(&old, &ms);
+        let expect = resolve_mid(&old, &[], &ms)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         assert_ne!(
             expect.cells, old.cells,
             "the clean partner move does change the board"
@@ -874,26 +882,34 @@ mod tests {
         check(ms, Some(expect));
     }
 
-    /// (3) A 2-CYCLE: the two flank pieces on column 0 swap (`to_a == frm_b`, `to_b == frm_a`).
-    /// The CHUNK-6 occupancy-blind 2-cycle detector BLOCKS the swap (`cTwoCyc` zeroes both
-    /// `carryV4`s), so `cMidV4 == old` — and this DELIBERATELY diverges from the naive
-    /// `reference::resolve_mid` oracle, which performs the swap. Pinning both halves keeps the
-    /// divergence a stated property of the descriptor rather than a silent surprise.
+    /// (3) A 2-CYCLE: the two flank pieces on column 0 name each other's squares (`to_a == frm_b`,
+    /// `to_b == frm_a`). The ruleset says both pieces STAY PUT — `PHILOSOPHY.md`: *"2-cycles (A→B,
+    /// B→A): **Always** stay in place — unambiguous composition"* (`AutomataflRules.twoCyc`) — and the
+    /// descriptor's CHUNK-6 2-cycle detector zeroes both `carryV4`s, so `cMidV4 == old`.
+    ///
+    /// ⚑ **THIS TEST USED TO ASSERT A DIVERGENCE.** The Rust oracle it compared against
+    /// (`reference::resolve_mid`, a transcription of `~/dev/automatafl/logic`) performed the SWAP, so
+    /// the descriptor and the very oracle its witness generator consulted disagreed on this input —
+    /// and the test pinned the disagreement "as a stated property of the descriptor rather than a
+    /// silent surprise". There is nothing left to state: the oracle IS now the ruleset the descriptor
+    /// was refined against, so the two AGREE, and the agreement is the tooth.
     #[test]
-    fn two_cycle_satisfies_and_is_blocked() {
-        let old = stock_two_player();
+    fn two_cycle_satisfies_and_both_pieces_stay_put() {
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((0, 0), (0, 4)), mv((0, 4), (0, 0))];
-        let oracle = resolve_mid(&old, &ms);
-        assert_ne!(
+        let oracle = resolve_mid(&old, &[], &ms)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+        assert_eq!(
             oracle.cells, old.cells,
-            "the naive oracle DOES perform the 2-cycle swap (so the divergence below is real)"
+            "the ruleset keeps BOTH pieces put on a 2-cycle (the old Rust twin swapped them)"
         );
         let tr = check(ms, Some(old.clone()));
         let l = ResolveLayout::new(11);
-        assert_ne!(
+        assert_eq!(
             tr.mid_board(&l).cells,
             oracle.cells,
-            "the descriptor's 2-cycle detector must diverge from the naive swap oracle"
+            "the descriptor's 2-cycle detector and the ruleset oracle now agree"
         );
     }
 
@@ -901,11 +917,13 @@ mod tests {
     /// clash ⇒ roundStep re-entry ⇒ cMidV4 == old, STILL satisfying the descriptor.
     #[test]
     fn fork_clash_reenters_with_mid_equals_old() {
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((0, 0), (0, 4)), mv((0, 0), (4, 0))];
         // Fork ⇒ both moves dropped by conflict-resolution ⇒ the oracle's resolve_mid IS `old`;
         // assert the descriptor's cMidV4 equals that clash re-entry board.
-        let expect = resolve_mid(&old, &ms);
+        let expect = resolve_mid(&old, &[], &ms)
+            .expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         assert_eq!(
             expect.cells, old.cells,
             "a fork drops both moves ⇒ resolve_mid == old"
@@ -919,7 +937,8 @@ mod tests {
     fn tampered_mid_felt_is_rejected() {
         let desc = desc11();
         let l = ResolveLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let mut tr = automatafl_resolve_trace(&old, &ms, &desc).unwrap();
         // Corrupt the first packed mid felt's trace column: the pack gate no longer vanishes and
@@ -938,7 +957,8 @@ mod tests {
     fn forged_mid_pi_is_rejected() {
         let desc = desc11();
         let l = ResolveLayout::new(11);
-        let old = stock_two_player();
+        let old =
+            stock_two_player().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         let ms = [mv((3, 1), (3, 3)), mv((7, 1), (7, 3))];
         let mut tr = automatafl_resolve_trace(&old, &ms, &desc).unwrap();
         let pi = l.pack_out_pi_base();

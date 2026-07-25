@@ -676,14 +676,32 @@ fn enqueue_response(
         );
     }
     // An automatafl round the seats CLASHED on is refused HERE, by name, rather than shipped to
-    // the prover to fail opaquely minutes later. The two-leg fold attests a CLEAN resolution; the
-    // surface resolves a clash by DROPPING both moves, while the ruleset marks the contested
-    // square and re-enters the round (the Leg C braid, not yet wired to the surface). Attesting
-    // the drop would be a succinct proof of a transition the rules never licensed.
+    // the prover to fail opaquely minutes later. The two-leg fold attests a CLEAN resolution; under
+    // the ruleset a clash does not resolve at all — it MARKS the contested square and RE-ENTERS the
+    // round (the Leg C braid, not yet wired to the surface). Attesting anything else would be a
+    // succinct proof of a transition the rules never licensed.
+    //
+    // Both questions are put to the PROVEN LEAN (`dregg_automatafl::rules`, `@[export]
+    // dregg_automatafl_rules`); if it cannot answer, the crown is refused rather than guessed.
     if let PlayedMatch::Automatafl(a) = &m {
         let mut board = a.start.clone();
         for (i, (ma, mb)) in a.rounds.iter().enumerate() {
-            if !dregg_automatafl::reference::round_is_clean(&board, &[*ma, *mb]) {
+            let clean = match dregg_automatafl::rules::round_is_clean(&board, &[*ma, *mb]) {
+                Ok(c) => c,
+                Err(why) => {
+                    return (
+                        CreateEmbed::new()
+                            .title("This match folds no crown (yet)")
+                            .description(format!(
+                                "The game oracle could not adjudicate round **{}** of this match,                                  so nothing is attested: `{why}`.",
+                                i + 1,
+                            ))
+                            .color(COLOR_REFUSED),
+                        Vec::new(),
+                    );
+                }
+            };
+            if !clean {
                 return (
                     CreateEmbed::new()
                         .title("This match folds no crown (yet)")
@@ -692,7 +710,7 @@ fn enqueue_response(
                              the same square. The surface resolved it by dropping the moves; the \
                              ruleset says a clash *marks* the square and *re-enters* the round, \
                              and that braid (Leg C) is not yet wired to the played surface.\n\n\
-                             So this match is REFUSED rather than mis-attested: folding the drop \
+                             So this match is REFUSED rather than mis-attested: folding it \
                              would mint a succinct proof of a transition the rules never \
                              licensed. A clash-free match folds today.",
                             i + 1,
@@ -701,7 +719,22 @@ fn enqueue_response(
                     Vec::new(),
                 );
             }
-            board = dregg_automatafl::reference::apply_turn(&board, &[*ma, *mb]);
+            board = match dregg_automatafl::rules::apply_turn(&board, &[*ma, *mb]) {
+                Ok(b) => b,
+                Err(why) => {
+                    return (
+                        CreateEmbed::new()
+                            .title("This match folds no crown (yet)")
+                            .description(format!(
+                                "The game oracle could not replay round **{}** of this match, so \
+                                 nothing is attested: `{why}`.",
+                                i + 1,
+                            ))
+                            .color(COLOR_REFUSED),
+                        Vec::new(),
+                    );
+                }
+            };
         }
     }
     match enqueue_fold(game, channel, player_hex, m) {

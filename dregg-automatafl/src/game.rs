@@ -12,9 +12,9 @@
 //! phase, the two sealed commitments, the two selections, the two revealed moves, the automaton
 //! coordinates, the winner) and the 121 board squares on heap keys `16..137`.
 //!
-//! **THE BOARD IS THE STOCK 11×11 TWO-PLAYER GAME** ([`crate::reference::stock_two_player`], the
-//! byte-for-byte transcription of the automatafl reference opening) with the real four-corner goal
-//! set ([`crate::reference::GOAL_CORNERS_2P`]). That is the size the Lean descriptors are EMITTED
+//! **THE BOARD IS THE STOCK 11×11 TWO-PLAYER GAME** ([`crate::rules::stock_two_player`], computed by
+//! the Lean `AutomataflRules.stockTwoPlayer`) with the ruleset's own four-corner goal assignment
+//! ([`goals`] = `stockGoals2`). That is the size the Lean descriptors are EMITTED
 //! at (`dregg-automatafl-{step,resolve}-d1-n11`), so a played match LOWERS: the former 5×5
 //! mini-variant had no emitted descriptor at all, so every fold of a played match was
 //! `MatchError::NoDescriptor`-blocked (blocked-not-faked) and no automatafl match could rank.
@@ -35,7 +35,7 @@
 //!
 //! `genesis` is the one permissive case (it seeds the opening board + the registers the relational
 //! teeth read as an `old` value). The BOARD TRANSITION itself (`new == apply_turn(old, moves)`) is
-//! re-checked off-circuit by [`crate::reference::apply_turn`] (the witness oracle the AIR pins) —
+//! re-checked off-circuit by [`crate::rules::turn`] (the PROVEN Lean the AIR is refined against) —
 //! the executor teeth are the state discipline, the AIR is the transition proof.
 
 use std::collections::BTreeMap;
@@ -51,7 +51,8 @@ use dregg_schema::schema::Schema;
 use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
-use crate::reference::{Board, Coord, GOAL_CORNERS_2P, N11, stock_two_player};
+use crate::board::{Board, Coord, N11};
+use crate::rules;
 
 /// The scene id that fixes the deterministic world-cell identity.
 pub const SCENE_ID: &str = "dregg-automatafl/n2";
@@ -410,7 +411,7 @@ pub struct MatchState {
 }
 
 impl MatchState {
-    /// The reference [`Board`] this committed state denotes (the oracle the AIR pins).
+    /// The [`Board`] this committed state denotes — the state the Lean oracle is asked about.
     pub fn board(&self) -> Board {
         Board {
             n: N,
@@ -619,7 +620,7 @@ impl AutomataflGame {
         self.world.read_heap(self.dep.cell_key(idx)).unwrap_or(0) as u8
     }
 
-    /// Reconstruct the COMMITTED match state off the cell — compared against the reference to
+    /// Reconstruct the COMMITTED match state off the cell — compared against the Lean oracle to
     /// prove the executor reproduces the game exactly (the translation-validation shape).
     pub fn read_state(&self) -> MatchState {
         MatchState {
@@ -655,35 +656,58 @@ pub fn index_of(c: Coord) -> Option<usize> {
     }
 }
 
-/// **The opening board — the STOCK two-player position** ([`stock_two_player`]): the automaton
-/// dead centre at `(5,5)`, the repulsor/attractor ring around the flanks, the four attractor pairs
-/// on the `y ∈ {4,6}` files. This is the reference game's own opening, not an invented mini-board,
-/// and it is the position the emitted `n=11` Lean descriptors adjudicate.
-pub fn opening_board() -> Board {
-    let b = stock_two_player();
-    debug_assert_eq!(b.n, N, "the played opening is the emitted-descriptor size");
-    b
+/// **The opening board — the STOCK two-player position** ([`crate::rules::stock_two_player`]): the
+/// automaton dead centre at `(5,5)`, the repulsor/attractor ring around the flanks, the four attractor
+/// pairs on the `y ∈ {4,6}` files. This is `AutomataflRules.stockTwoPlayer` — the ruleset's own
+/// opening, computed by the Lean, not an invented mini-board — and it is the position the emitted
+/// `n=11` Lean descriptors adjudicate.
+pub fn opening_board() -> Result<Board, String> {
+    let b = rules::stock_two_player()?;
+    if b.n != N {
+        return Err(format!(
+            "the Lean stock board is {}×{} but this deployment plays {N}×{N}",
+            b.n, b.n
+        ));
+    }
+    Ok(b)
 }
 
 /// **The four goal corners of the stock two-player game**, each tagged with its owning seat
-/// (`0` = seat A, `1` = seat B) — [`crate::reference::GOAL_CORNERS_2P`]. Per the two-player rule
-/// each player owns the two corners in one row: seat A the `y = 0` pair, seat B the `y = 10` pair.
-/// The automaton stepping onto a corner wins for that corner's owner.
-pub const GOALS: [(Coord, u32); 4] = GOAL_CORNERS_2P;
+/// (`0` = seat A, `1` = seat B) — `AutomataflRules.stockGoals2 11`, asked of the Lean once per
+/// process. Per the two-player rule each player owns the two corners in one row: seat A the `y = 0`
+/// pair, seat B the `y = 10` pair.
+///
+/// This used to be a `const` transcribed from `reference.rs::GOAL_CORNERS_2P`. The ASSIGNMENT is a
+/// rule (the README's "two corners in the same row" — the python prototype gets it WRONG, giving seat
+/// 1 a column), so it comes from the ruleset like every other rule here.
+pub fn goals() -> Result<&'static [(Coord, u32)], String> {
+    static CACHE: std::sync::OnceLock<Result<Vec<(Coord, u32)>, String>> =
+        std::sync::OnceLock::new();
+    match CACHE.get_or_init(|| rules::stock_goals2(N)) {
+        Ok(v) => Ok(v.as_slice()),
+        Err(e) => Err(e.clone()),
+    }
+}
 
 /// The two goal corners seat `who` (`0`/`1`) owns.
-pub fn goals_of(who: u32) -> Vec<Coord> {
-    GOALS
+pub fn goals_of(who: u32) -> Result<Vec<Coord>, String> {
+    Ok(goals()?
         .iter()
         .filter(|(_, w)| *w == who)
         .map(|(c, _)| *c)
-        .collect()
+        .collect())
 }
 
-/// The seat whose goal corner the automaton currently occupies, or `None` — the deployed win check
-/// ([`crate::reference::win_owner`] over [`GOALS`], the reference `try_complete_round` goal scan).
-pub fn winner_of(b: &Board) -> Option<u32> {
-    crate::reference::win_owner(b, &GOALS)
+/// The seat whose goal corner the automaton currently OCCUPIES, or `None`.
+///
+/// ⚑ This is an OCCUPANCY reading of the Lean-sourced goal table ([`goals`]), and it is NOT the
+/// ruleset's win condition: `AutomataflRules.winOnEntry` fires only when the automaton **moved** into
+/// a goal this turn (audit §6 — "the win fires on the automaton *moving into* a corner, not sitting on
+/// one"), which is a property of the TRANSITION, not of the post-position. A caller adjudicating a
+/// resolved turn takes the winner from [`crate::rules::turn`], which returns what the ruleset says.
+/// This helper is for painting a board that already carries a decided match.
+pub fn goal_owner_at(c: Coord) -> Result<Option<u32>, String> {
+    Ok(goals()?.iter().find(|(g, _)| *g == c).map(|(_, w)| *w))
 }
 
 #[cfg(test)]
@@ -702,7 +726,7 @@ mod played_size_is_the_proven_size {
         use crate::witness::step_descriptor_name;
         use dregg_circuit::descriptor_by_name::descriptor_by_name;
 
-        let b = opening_board();
+        let b = opening_board().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
         assert_eq!(b.n, N, "the opening board IS the declared board size");
         assert_eq!(b.cells.len(), CELLS);
         assert!(
@@ -717,15 +741,46 @@ mod played_size_is_the_proven_size {
         );
     }
 
-    /// Every goal corner is on the board, and the two seats own two corners each.
+    /// Every goal corner is on the board, and the two seats own two corners each — as the LEAN
+    /// assigns them (`stockGoals2`), not as a Rust const asserts.
     #[test]
     fn the_goal_corners_are_the_stock_four() {
-        assert_eq!(goals_of(0).len(), 2, "seat A owns two corners");
-        assert_eq!(goals_of(1).len(), 2, "seat B owns two corners");
-        for (c, _) in GOALS {
-            assert!(index_of(c).is_some(), "goal {c:?} is on the played board");
+        let gs = goals().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+        assert_eq!(
+            gs.len(),
+            4,
+            "the stock two-player game has four goal corners"
+        );
+        assert_eq!(
+            goals_of(0)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
+                .len(),
+            2,
+            "seat A owns two corners"
+        );
+        assert_eq!(
+            goals_of(1)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers")
+                .len(),
+            2,
+            "seat B owns two corners"
+        );
+        for (c, _) in gs {
+            assert!(index_of(*c).is_some(), "goal {c:?} is on the played board");
         }
-        // The opening is not already won.
-        assert_eq!(winner_of(&opening_board()), None);
+        // Each seat's pair shares a row (the README's two-player rule).
+        for who in [0u32, 1] {
+            let cs =
+                goals_of(who).expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+            assert_eq!(cs[0].1, cs[1].1, "seat {who}'s two corners share a row");
+        }
+        // The opening is not already won: the automaton starts dead centre, not on a corner.
+        let open =
+            opening_board().expect("the Lean game oracle (`dregg_automatafl_rules`) answers");
+        assert_eq!(
+            goal_owner_at(open.auto)
+                .expect("the Lean game oracle (`dregg_automatafl_rules`) answers"),
+            None
+        );
     }
 }

@@ -13,6 +13,13 @@ description = "Verified automatafl (n=2): a hand-authored Custom-VK board-transi
 dregg-circuit = { path = "../circuit" }
 dregg-circuit-prove = { path = "../circuit-prove" }
 
+# THE GAME ORACLE. `@[export] dregg_automatafl_rules` (`Dregg2.Games.AutomataflFFI` over the
+# rules-faithful spec `Dregg2.Games.AutomataflRules`) answers every board transition, legality
+# verdict, conflict set and win this crate reports — see `src/rules.rs`. It replaces `src/reference.rs`,
+# a hand transcription of `~/dev/automatafl/logic` that the conformance audit found divergent from the
+# ruleset on 2-cycles and on the path check. There is no Rust fallback, on purpose.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+
 # --- The PLAYABLE surface (additive; mirrors dregg-multiway-tug's Offering phase). ---
 # The tooth vocabulary (CellProgram / StateConstraint / TransitionCase / TransitionGuard /
 # Effect / symbol / field_from_u64 / CellId / TurnReceipt) the deployed match teeth are built from.
@@ -39,11 +46,6 @@ blake3 = "1"
 # real turn chain the light client verify_history accepts.
 dregg-turn = { path = "../turn" }
 dregg-lightclient = { path = "../lightclient" }
-# ember's automatafl reference engine (emberian/automatafl) — the DIFFERENTIAL
-# ORACLE for the differential test. Test-only; never linked into the crate/AIR.
-# Pinned GIT dep on the public repo (rev on origin/rust) so the differential is
-# REPRODUCIBLE on persvati/CI, not a local-path "green on my laptop" test.
-automatafl-logic = { git = "https://github.com/emberian/automatafl", rev = "253bafa5dcad7c40b4d71ac0861ee0c9728a7dcd" }
 
 [lints]
 workspace = true

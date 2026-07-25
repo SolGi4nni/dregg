@@ -122,6 +122,17 @@ dregg-pq = { path = "../dregg-pq", optional = true }
 [build-dependencies]
 cc = "1"
 
+# THE CFG-DRIFT DETECTOR, armed 2026-07-25. This crate's entire job is `#[cfg]`-gating
+# access to the verified Lean `@[export]`s: build.rs probes `libdregg_lean.a` for each
+# symbol and emits `cargo::rustc-cfg=dregg_<name>_present`. A `#[cfg(dregg_foo_present)]`
+# whose `rustc-check-cfg` line build.rs never printed is ALWAYS FALSE — the gated code
+# compiles to nothing and the gate goes dark, silently. That happened twice for ~5 days
+# each. `unexpected_cfgs = "deny"` (workspace.lints.rust) is exactly that detector, and
+# this crate — the one crate where the class lives — was the crate it did not bind,
+# because there was no `[lints]` section here. There is now.
+[lints]
+workspace = true
+
 # RE-MEASURE the no-copy boundary win: JSON marshalling vs the direct lean_object* path on the SAME
 # extracted wire (both run the identical verified executor). `harness = false` (plain timed main,
 # prints a table like the Stage-0 baseline in perf/benches/lean_ffi_turn.rs).

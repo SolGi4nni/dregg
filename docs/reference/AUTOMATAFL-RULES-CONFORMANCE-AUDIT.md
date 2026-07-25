@@ -12,6 +12,29 @@ Creator-Approved ruleset · **Mode** audit only, nothing rewritten.
    (a later generalization, carries its own defects) and
    `old_python_prototype/model.py` (oldest; contradicts the README in several places).
 
+## STATUS — 2026-07-25: the Rust side of this audit is CLOSED by DELETION
+
+The findings below were about two objects: the Lean spec (repaired in
+`metatheory/Dregg2/Games/AutomataflRules.lean`, the rules-faithful rewrite) and the Rust oracle
+`dregg-automatafl/src/reference.rs`, which was a hand transcription of `logic/src/game.rs` and
+therefore carried the same defects. **`reference.rs` is deleted.** `dregg-automatafl` now asks the
+Lean for every board transition, legality verdict, conflict set and win, through
+`@[export] dregg_automatafl_rules` (`Dregg2.Games.AutomataflFFI` over `AutomataflRules`) — see
+`dregg-automatafl/src/rules.rs`. There is no Rust fallback, so none of the divergences below is
+reachable from Rust any more; the three that DESTROY MATERIAL are gone from the deployed path.
+
+`tests/differential_reference.rs` — the harness this document calls out for *"comparing a second
+copy of the same code against the first"* — is deleted too, along with the `automatafl-logic` git
+dev-dependency it drove. Its purpose is served by `tests/lean_oracle.rs`, which pins the ruleset's
+answer on the audit's own witnesses (the 2-cycle 3.5a, the inclusive path check 3.2, ruling D on
+1.4) — inputs the deleted transcription answered differently, so the tests are evidence about
+*which object* answered.
+
+Two of the divergences below therefore now show up as CHANGED BEHAVIOUR in the deployed surface,
+deliberately: naming the automaton's square as a move DESTINATION is legal to propose (1.4, ruling
+D) and so appears in the rook-line highlight set; and a conflicted round does not resolve its moves
+at all (it marks and re-enters) rather than dropping the clashing pair.
+
 ## 0. The headline
 
 The **automaton half is right**. `evaluateAxis`'s nine-case table, its empty-space guards, its

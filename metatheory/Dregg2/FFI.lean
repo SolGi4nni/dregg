@@ -15,6 +15,7 @@ import Dregg2.Grain.R3Verify
 import Dregg2.Storage.Deployed
 import Dregg2.Bridge.ProofOfHoldings
 import Dregg2.Bridge.InterchainAdapterDecision
+import Dregg2.Games.AutomataflFFI
 
 -- §1.4 Post-quantum cores.
 import Dregg2.Crypto.Fips203Kem
@@ -76,7 +77,7 @@ that justifies it; this file only fixes which of them are the runtime's boundary
   These are *not* decisions; they are the wire. They are 74 % of the symbol count and a rounding
   error of the archive.
 
-### §1.3 Verified decisions the node routes through (16 symbols)
+### §1.3 Verified decisions the node routes through (17 symbols)
 Each of these gates a `#[cfg(dregg_*_present)]` bridge whose absent arm reverts a proven verdict to
 a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
 * `Dregg2.Exec.DeployedConstraint` — `dregg_constraint_admits`
@@ -92,6 +93,9 @@ a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
 * `Dregg2.Storage.Deployed` — `dregg_storage_content_root`
 * `Dregg2.Bridge.ProofOfHoldings` — `dregg_holding_grant_weight`
 * `Dregg2.Bridge.InterchainAdapterDecision` — `dregg_interchain_reached_consensus`
+* `Dregg2.Games.AutomataflFFI` — `dregg_automatafl_rules` (the automatafl board transition,
+  legality, conflict set and win — the whole game oracle `dregg-automatafl/src/reference.rs` used
+  to answer with a transcription of a non-canonical Rust experiment; see §2)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns
@@ -125,9 +129,19 @@ so the next reader does not have to rediscover it:
 * **Every proof that is not needed to run.** The exports' *justifications* stay in their own
   modules and their own `lake build`. This file pulls a module in only when a symbol Rust can call
   lives there. It is not the whole-tree build, and `lake build` still covers the tree.
-* **`Dregg2/Games/**`.** The three deployed games reach the runtime through
-  `dregg_constraint_admits` (`Dregg2.Exec.DeployedConstraint`) — a game program is *data* the
-  deployed evaluator admits or refuses, not a C symbol. No game module belongs in this closure.
+* **Most of `Dregg2/Games/**`.** A game *program* is data the deployed evaluator admits or refuses
+  (`dregg_constraint_admits`, `Dregg2.Exec.DeployedConstraint`), not a C symbol, so the dungeon and
+  tug programs stay out.
+
+  **`Dregg2.Games.AutomataflFFI` is the exception, and it is here for a measured reason.**
+  automatafl's turn is not a program the evaluator runs: `dregg-automatafl` needs the *game oracle*
+  — which board a round resolves to, which moves are legal, which coordinates clash, who won — to
+  fill the witness of the Lean-emitted descriptor and to run the playable surface. That oracle was a
+  hand-written Rust transcription (`src/reference.rs`) of `~/dev/automatafl/logic`, a non-canonical
+  experiment, and the conformance audit found it divergent from the ruleset on 2-cycles and on the
+  inclusive path check — with the divergence *documented in-tree* in `resolve_witness.rs` rather than
+  fixed. A game whose semantics the runtime must COMPUTE needs a C symbol; one whose semantics the
+  runtime merely CHECKS does not. This closure now carries the former.
 * **Emit drivers** (`EmitDungeonProgram`, `Emit*`). Those are `lean_exe`s that write fixtures at
   build time; they are not linked into any node.
 * **`Metatheory/`, `Polis/`, `Market/`, `Bfv/` as libraries.** A handful of their modules are in
