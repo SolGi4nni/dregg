@@ -49,10 +49,23 @@ They catch disjoint classes, and neither sees the other's:
 | | catches | blind to |
 |---|---|---|
 | `#assert_axioms` (in-tree, fires on build) | `sorryAx` and non-kernel axioms — *what a proof rests on* | an **empty premise**: the vacuous apex was kernel-clean, sorry-free, and *true* |
-| `PremiseInhabitability` (this lane) | premises nothing can satisfy | a **carrier-gated** class whose `extractable : Prop` is `True` — that mode never mentions acceptance |
+| `PremiseInhabitability` | premises nothing can satisfy | a **carrier-gated** class whose `extractable : Prop` is `True` — that mode never mentions acceptance |
+| `CarrierAudit` | evasive `True` carriers — demands a *refutation* at a broken sibling oracle | **mode 3** (below), and it *misclassifies* an **honest** `True` |
+| `ConclusionTotal` / `WitnessBearing` | mode 3, and honest-vs-evasive `True` | the deployment question — see the ceiling |
 
-And the carrier mode needs a third check (`CarrierAudit`), which demands a *refutation* at a broken
-sibling oracle — something `True` can never have.
+### ⚑ THE THREE VACUITY MODES
+
+Modes 1 and 2 live on the **antecedent**. Mode 3 lives on the **conclusion**, and was found by the
+instrument built to check modes 1–2 — proving that criterion insufficient:
+
+3. **A total conclusion** makes a gated theorem free with the carrier *and* the acceptance hypothesis
+   **deleted**, while `CarrierLive` reports green, axioms are clean, and no `sorry` exists.
+
+Live instance, and the strongest verdict in the sweep: **`nonmembership_verify_sound` is a tautology at
+every instantiation** — its conclusion `∃ leaves, NonMember leaves stmt.elem` is discharged by
+`leaves := []` and never mentions `stmt.root`. **No deployment can repair it.** And the polarity
+*inverts* on the reference Merkle kernel: the **forge** kernel's conclusion bites while the
+**reference** one does not — the instance cited as the family's reassurance is the one saying nothing.
 
 ### The sweep that finds hygiene leaks (repeatable)
 
