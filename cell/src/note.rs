@@ -559,8 +559,10 @@ mod tests {
         // Independently reconstruct the Poseidon2 nullifier felt.
         let mut preimage = Vec::with_capacity(17);
         preimage.push(note.poseidon2_commitment());
-        preimage.extend_from_slice(&super::bytes32_to_limbs(&key));
-        preimage.extend_from_slice(&super::bytes32_to_limbs(&note.creation_nonce));
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(&key));
+        preimage.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(
+            &note.creation_nonce,
+        ));
         let expected = crate::felt_to_bytes32(hash_many(&preimage));
         assert_eq!(
             note.nullifier(&key).0,
