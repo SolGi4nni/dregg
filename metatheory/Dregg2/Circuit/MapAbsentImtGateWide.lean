@@ -677,6 +677,14 @@ theorem topGapW_model_rejects :
   · exact keyLo_lt_ptrMid
   · rw [List.mem_singleton.mp hx'']; exact keyE_lt_ptrMid
 
+/-- **⚑ THE REFUSAL BELOW IS TARGETED, NOT BLANKET.** The projected top-gap map is an ADMISSIBLE
+wide commitment (`wideEnc.HeapOk` = sorted AND canonically keyed), so `topGapW_reconcileGatesW_unsat`
+cannot be the `aliasRoot_admits_no_gate` mechanism — the extraction premise is satisfiable at that
+root and the model still has no `.absent` witness. The refusal is the BRACKET, and only the
+bracket. -/
+theorem topGapHeapW_ok : wideEnc.HeapOk (imtToHeapW forgeChain) :=
+  heapOkW_imtToHeapW forgeChain_sorted forgeChain_addrs_canon
+
 /-- **★ THE BLAST RADIUS, CONCRETE AT THE WIDE KEY — the epoch's `.absent` gate hypothesis is
 UNSATISFIABLE on an honest deployed row.** There is NO wide gate data, at any admissible heap and
 any paths, for the top-gap row the deployed table accepts. Every theorem whose hypothesis is
@@ -817,6 +825,7 @@ end TopGapW
 #assert_axioms aafiInsertW_then_absentImtW_unsat
 #assert_axioms topGapW_deployed_accepts
 #assert_axioms topGapW_model_rejects
+#assert_axioms topGapHeapW_ok
 #assert_axioms topGapW_reconcileGatesW_unsat
 #assert_axioms topGapW_deployed_law_fires
 #assert_axioms topGapW_keysOfW_absence_fires
