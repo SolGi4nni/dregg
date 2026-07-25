@@ -228,6 +228,17 @@ impl<'rt> HermesGateway<'rt> {
             .expect("just inserted the gateway for this key"))
     }
 
+    /// The confinement WORKER CELL a call's mandate routes to (admitting the
+    /// worker if it is not yet standing). Lets a caller that supplies its own
+    /// `work` witness (e.g. `run_js`, whose evaluated script is not the wire
+    /// payload) build an [`Effect::EmitEvent`] bound to the EXACT cell the
+    /// metered turn will commit on — the same cell [`Self::admit_with_work`]
+    /// derives internally for the auto-witness path.
+    pub fn worker_cell_for(&mut self, call: &ToolCallRequest) -> Result<CellId, ToolCallError> {
+        let key = self.registry.key_for_tool(&call.name);
+        Ok(self.gateway_for(&key)?.worker_cell())
+    }
+
     /// THE SEAM — admit a Hermes ACP tool-call as a cap-gated, metered,
     /// receipted dregg turn (or refuse it in-band), with the tool's SIDE-EFFECT
     /// riding the SAME metered turn.

@@ -47,12 +47,28 @@ use deos_js::{
 use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, CellId};
 use dregg_doc::Author;
+use dregg_turn::Effect;
 
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::bridge::HermesGateway;
 
 /// The slot the spike's counter applet writes (slot 0 = the model's scalar).
 const COUNTER_SLOT: usize = 0;
+
+/// Build the accountability-turn witness for a `run_js` call: an
+/// [`Effect::EmitEvent`](dregg_turn::Effect) binding a digest of the EXACT
+/// `script` this runtime is about to evaluate, on the worker cell the metered turn
+/// commits on. This retires the blind `Some(vec![])` admission that witnessed only
+/// THAT a run_js happened — the receipt now binds WHICH program ran.
+///
+/// If the worker cannot be routed/admitted the witness is empty; the subsequent
+/// `admit_with_work` then refuses the call on the same routing failure, so no
+/// script-blind receipt is ever committed.
+fn run_js_witness(gw: &mut HermesGateway<'_>, call: &ToolCallRequest, script: &str) -> Vec<Effect> {
+    gw.worker_cell_for(call)
+        .map(|cell| crate::tool_effects::run_js_effects(script, cell))
+        .unwrap_or_default()
+}
 
 /// The outcome of a `run_js` call: the gateway verdict on the *tool-call* (the
 /// accountability turn) plus what the JS did inside its bounded runtime (the
@@ -221,9 +237,12 @@ impl RunJsTool {
     ) -> Result<RunJsOutcome, RunJsError> {
         // (1) THE ACCOUNTABILITY TURN — the `run_js` tool-call routes through the
         //     gateway exactly like any other Hermes tool: a scoped, rate-limited,
-        //     receipted ToolGrant turn. `Some(vec![])` keeps the gateway turn a
-        //     pure metered admission (the JS's own fires carry the real witness).
-        let tool_outcome = gw.admit_with_work(call, now, Some(vec![]));
+        //     receipted ToolGrant turn. The witness binds a digest of the EXACT
+        //     script this runtime evaluates (topic `tool.run_js`), so the metered
+        //     turn's receipt records WHICH program ran — the JS's own affordance
+        //     fires still carry their separate receipts.
+        let work = run_js_witness(gw, call, script);
+        let tool_outcome = gw.admit_with_work(call, now, Some(work));
         if !tool_outcome.allowed() {
             // Refused at the membrane — the agent is not granted `run_js` this
             // turn. No JS runs; no world is touched.
@@ -295,8 +314,10 @@ impl RunJsTool {
         now: i64,
         script: &str,
     ) -> Result<RunJsOutcome, RunJsError> {
-        // (1) THE ACCOUNTABILITY TURN — the same metered, receipted ToolGrant.
-        let tool_outcome = gw.admit_with_work(call, now, Some(vec![]));
+        // (1) THE ACCOUNTABILITY TURN — the same metered, receipted ToolGrant, its
+        //     witness binding a digest of the evaluated script (topic `tool.run_js`).
+        let work = run_js_witness(gw, call, script);
+        let tool_outcome = gw.admit_with_work(call, now, Some(work));
         if !tool_outcome.allowed() {
             return Ok(RunJsOutcome {
                 tool_outcome,
@@ -446,9 +467,11 @@ impl RunJsAuthoringTool {
     ) -> RunJsAuthorOutcome {
         // (1) THE ACCOUNTABILITY TURN — the `run_js` tool-call routes through the
         //     gateway exactly like any other Hermes tool: a scoped, rate-limited,
-        //     receipted ToolGrant turn. `Some(vec![])` keeps the gateway turn a pure
-        //     metered admission (the editor's own patches carry the real witness).
-        let tool_outcome = gw.admit_with_work(call, now, Some(vec![]));
+        //     receipted ToolGrant turn. The witness binds a digest of the exact
+        //     authoring script (topic `tool.run_js`); the editor's own patches carry
+        //     their separate provenance receipts.
+        let work = run_js_witness(gw, call, script);
+        let tool_outcome = gw.admit_with_work(call, now, Some(work));
         if !tool_outcome.allowed() {
             // Refused at the membrane — no JS runs; no card is authored.
             return RunJsAuthorOutcome {

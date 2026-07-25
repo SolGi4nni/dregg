@@ -122,6 +122,16 @@ pub fn effects_for_call(call: &ToolCallRequest, worker_cell: CellId) -> Vec<Effe
             }]
         }
 
+        // A `run_js` HANDS-CALL — witness a digest of the SCRIPT the agent asked
+        // to run (topic `tool.run_js`), so the metered accountability turn's
+        // receipt binds WHICH script the model submitted, not merely THAT a run_js
+        // happened. The script's own affordance fires carry their separate
+        // receipts; this pins the program that produced them.
+        "run_js" | "run_attached" => {
+            let script = str_arg(call, &["script", "code"]).unwrap_or_default();
+            run_js_effects(&script, worker_cell)
+        }
+
         // Every other classified tool: a generic witness carrying the tool name's
         // digest + a digest of the whole argument object, so NO authorized call
         // leaves the receipt blind to what it was.
@@ -136,6 +146,26 @@ pub fn effects_for_call(call: &ToolCallRequest, worker_cell: CellId) -> Vec<Effe
             }]
         }
     }
+}
+
+/// The witness a `run_js` accountability turn rides: an [`Effect::EmitEvent`]
+/// (topic `tool.run_js`) binding a stable digest of the EXACT script the runtime
+/// evaluated plus its byte length. Distinct scripts produce distinct witnesses, so
+/// the metered turn's `emitted_events` (absorbed into the receipt hash) record
+/// WHICH script the model ran — closing the blind `Some(vec![])` accountability
+/// turn that witnessed only THAT a run_js happened.
+///
+/// The caller passes the script actually handed to `eval` (which may differ from a
+/// placeholder in the wire `ToolCallRequest`), so the receipt binds the real
+/// program, not a stand-in.
+pub fn run_js_effects(script: &str, worker_cell: CellId) -> Vec<Effect> {
+    vec![Effect::EmitEvent {
+        cell: worker_cell,
+        event: Event {
+            topic: symbol("tool.run_js"),
+            data: vec![digest_field(script), field_from_u64(script.len() as u64)],
+        },
+    }]
 }
 
 /// Pull the first present string argument among `keys` from the call's args.
@@ -195,6 +225,82 @@ mod tests {
                 assert_eq!(event.data[0], digest_field("dregg"));
             }
             other => panic!("expected the query witness, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_js_call_witnesses_which_script() {
+        // The accountability turn for a `run_js` hands-call must bind a digest of
+        // the SCRIPT (topic `tool.run_js`) — so the receipt records WHICH program
+        // the model ran, not merely THAT a run_js happened. Before this arm existed
+        // a `run_js` call fell to the generic `_` witness (topic `tool.call`,
+        // data[0] = digest("run_js")), never binding the script.
+        let s1 = "deos.world.cells().length";
+        let call = ToolCallRequest::new("s", "tc", "run_js", serde_json::json!({ "script": s1 }));
+        let fx = effects_for_call(&call, cell());
+        assert_eq!(fx.len(), 1, "one witness event for the run_js call");
+        match &fx[0] {
+            Effect::EmitEvent { event, .. } => {
+                assert_eq!(
+                    event.topic,
+                    symbol("tool.run_js"),
+                    "a run_js call witnesses under its OWN topic, not the generic tool.call"
+                );
+                assert_eq!(
+                    event.data[0],
+                    digest_field(s1),
+                    "the witness binds a digest of the submitted script"
+                );
+                assert_eq!(
+                    event.data[1],
+                    field_from_u64(s1.len() as u64),
+                    "the witness records the script byte length"
+                );
+            }
+            other => panic!("expected a run_js script witness, got {other:?}"),
+        }
+
+        // A DIFFERENT script yields a DIFFERENT witness — the receipt binds which
+        // program ran (distinct scripts are distinguishable on the audit tape).
+        let s2 = "deos.world.cells()[0].reflect()";
+        let call2 = ToolCallRequest::new("s", "tc", "run_js", serde_json::json!({ "script": s2 }));
+        let fx2 = effects_for_call(&call2, cell());
+        match (&fx[0], &fx2[0]) {
+            (Effect::EmitEvent { event: a, .. }, Effect::EmitEvent { event: b, .. }) => {
+                assert_ne!(
+                    a.data[0], b.data[0],
+                    "two different run_js scripts must witness two different digests"
+                );
+            }
+            _ => panic!("expected two run_js witnesses"),
+        }
+    }
+
+    #[test]
+    fn run_js_effects_binds_the_evaluated_script() {
+        // `run_js_effects` is the builder `RunJsTool` calls with the EXACT evaluated
+        // script (which may differ from the wire ToolCallRequest payload). It binds
+        // that script's digest so the metered turn's receipt pins the real program.
+        let evaluated = "app.fire('inc', 1)";
+        let fx = run_js_effects(evaluated, cell());
+        assert_eq!(fx.len(), 1);
+        match &fx[0] {
+            Effect::EmitEvent { event, .. } => {
+                assert_eq!(event.topic, symbol("tool.run_js"));
+                assert_eq!(event.data[0], digest_field(evaluated));
+            }
+            other => panic!("expected the evaluated-script witness, got {other:?}"),
+        }
+        // Empty vs non-empty scripts are distinguishable (a no-op run is still on tape).
+        let empty = run_js_effects("", cell());
+        match (&empty[0], &fx[0]) {
+            (Effect::EmitEvent { event: a, .. }, Effect::EmitEvent { event: b, .. }) => {
+                assert_ne!(
+                    a.data[0], b.data[0],
+                    "an empty script witnesses distinctly from a real one"
+                );
+            }
+            _ => panic!("expected two run_js witnesses"),
         }
     }
 

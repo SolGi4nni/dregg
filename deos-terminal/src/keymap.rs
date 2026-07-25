@@ -192,7 +192,7 @@ pub fn to_esc_str(
             "f2" => Some(format!("\x1b[1;{}Q", modifier_code)),
             "f3" => Some(format!("\x1b[1;{}R", modifier_code)),
             "f4" => Some(format!("\x1b[1;{}S", modifier_code)),
-            "F5" => Some(format!("\x1b[15;{}~", modifier_code)),
+            "f5" => Some(format!("\x1b[15;{}~", modifier_code)),
             "f6" => Some(format!("\x1b[17;{}~", modifier_code)),
             "f7" => Some(format!("\x1b[18;{}~", modifier_code)),
             "f8" => Some(format!("\x1b[19;{}~", modifier_code)),
@@ -311,6 +311,35 @@ mod test {
         assert_eq!(
             to_esc_str(&Keystroke::parse("backspace").unwrap(), mode, false),
             Some("\x7f".into())
+        );
+    }
+
+    #[test]
+    fn test_modified_f5_is_not_dropped() {
+        // gpui normalises key names to lowercase, so the modified-function-key arm
+        // must match "f5" — the "F5" (uppercase) typo never matched, silently
+        // DROPPING every Ctrl/Shift/Alt+F5 press while F4 and F6 worked.
+        let mode = Modes::NONE;
+        // Ctrl → modifier code 5.
+        assert_eq!(
+            to_esc_str(&Keystroke::parse("ctrl-f5").unwrap(), mode, false),
+            Some("\x1b[15;5~".into()),
+            "Ctrl+F5 must encode, not be dropped (the F5-vs-f5 keymap typo)"
+        );
+        // Shift → modifier code 2.
+        assert_eq!(
+            to_esc_str(&Keystroke::parse("shift-f5").unwrap(), mode, false),
+            Some("\x1b[15;2~".into()),
+            "Shift+F5 must encode too"
+        );
+        // The neighbours already worked and still do — F5 now joins them.
+        assert_eq!(
+            to_esc_str(&Keystroke::parse("ctrl-f4").unwrap(), mode, false),
+            Some("\x1b[1;5S".into())
+        );
+        assert_eq!(
+            to_esc_str(&Keystroke::parse("ctrl-f6").unwrap(), mode, false),
+            Some("\x1b[17;5~".into())
         );
     }
 }

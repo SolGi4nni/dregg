@@ -151,7 +151,12 @@ impl OcapGraph {
         let mut queue: VecDeque<CellId> = VecDeque::new();
         if let Some(direct) = self.adjacency.get(root) {
             for t in direct {
-                if seen.insert(*t) {
+                // A cell holding a cap over ITSELF (a self-targeting grant) puts a
+                // `root -> root` edge in the adjacency. `root` is excluded from its
+                // own reach by contract, so skip it here exactly as the transitive
+                // loop below does (`t != root`) — otherwise a self-cap leaks `root`
+                // into its own reachable set.
+                if t != root && seen.insert(*t) {
                     queue.push_back(*t);
                 }
             }

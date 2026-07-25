@@ -66,6 +66,69 @@ fn ocap_graph_has_the_grant_edge() {
 }
 
 #[test]
+fn self_cap_does_not_leak_root_into_its_own_reach() {
+    // A cell holding a capability over ITSELF (a self-grant — a legitimate ocap
+    // shape) creates a `root -> root` edge in the adjacency. `reachable_from`
+    // documents that "`root` itself is NOT included", and the transitive loop
+    // guards `t != root` — but the FIRST hop (direct neighbours) did not, so a
+    // self-cap leaked `root` into its own reachable set (contract violation).
+    let mut ledger = Ledger::new();
+    let mut selfish = cell(0x30, 500);
+    let selfish_id = selfish.id();
+    // Grant the cell a capability over ITSELF (the self-targeting edge).
+    selfish
+        .capabilities
+        .grant(selfish_id, AuthRequired::Signature)
+        .expect("grant self-cap");
+    ledger.insert_cell(selfish).unwrap();
+
+    let g = OcapGraph::build(&ledger);
+    assert_eq!(g.edge_count(), 1, "the self-grant is one edge");
+
+    let reach = g.reachable_from(&selfish_id);
+    assert!(
+        !reach.contains(&selfish_id),
+        "root must be EXCLUDED from its own reach even when it holds a self-cap"
+    );
+    assert_eq!(
+        g.reach_count(&selfish_id),
+        0,
+        "a self-only cap reaches no OTHER cell — the blast radius is empty"
+    );
+}
+
+#[test]
+fn self_cap_hop_still_reaches_beyond() {
+    // The self-cap must not SUPPRESS legitimate onward reach: a cell that holds
+    // BOTH a self-cap and a cap over a leaf still reaches the leaf (root excluded,
+    // leaf included).
+    let mut ledger = Ledger::new();
+    let leaf = cell(0x11, 10);
+    let leaf_id = leaf.id();
+    let mut holder = cell(0x31, 500);
+    let holder_id = holder.id();
+    holder
+        .capabilities
+        .grant(holder_id, AuthRequired::Signature)
+        .expect("grant self-cap");
+    holder
+        .capabilities
+        .grant(leaf_id, AuthRequired::Signature)
+        .expect("grant leaf cap");
+    ledger.insert_cell(leaf).unwrap();
+    ledger.insert_cell(holder).unwrap();
+
+    let g = OcapGraph::build(&ledger);
+    let reach = g.reachable_from(&holder_id);
+    assert!(!reach.contains(&holder_id), "root excluded");
+    assert!(
+        reach.contains(&leaf_id),
+        "onward reach to the leaf is preserved"
+    );
+    assert_eq!(g.reach_count(&holder_id), 1, "exactly the leaf");
+}
+
+#[test]
 fn frustum_is_cap_bounded() {
     let (ledger, treasury_id, leaf_id) = ledger_with_grant();
 
