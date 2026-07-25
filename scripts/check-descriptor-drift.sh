@@ -50,13 +50,19 @@ fi
 # it, and an UNTRACKED target compiles for exactly one lane (the one that emitted it) and reds for
 # every co-tenant and every fresh clone. Both shipped at once: `descriptor_by_name.rs`
 # include_str'd `dfa-routing-table-exact-public-v1.json` while the artifact was uncommitted.
-echo "check-descriptor-drift: by-name routing round-trip + include_str! targets (static preflight)..."
+#
+# A THIRD leg (verify_lean_imports) is the same door one language over: a committed .lean that
+# imports an uncommitted module. `20b9d9a20f` is literally titled "repairs a committed tree that
+# imported untracked files", and it had already recurred. Worth catching HERE rather than after the
+# multi-hour build below, since that build is what the missing module breaks.
+echo "check-descriptor-drift: by-name routing + include_str! targets + Lean imports (static preflight)..."
 if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
   echo "" >&2
-  echo "DESCRIPTOR ROUTING GAP: EmitByName.lean's table, the checked-in by-name/ set and the" >&2
-  echo "  Rust include_str!/include_bytes! targets do not cover each other (see the findings" >&2
-  echo "  above). Fix the routing table, or commit/stamp the artifact ALONGSIDE its include" >&2
-  echo "  — not this gate, and never by #[cfg]-gating the include away." >&2
+  echo "REFERENCE GAP: something committed points at something that is not. EmitByName.lean's" >&2
+  echo "  table, the checked-in by-name/ set, the Rust include_str!/include_bytes! targets and" >&2
+  echo "  the first-party Lean imports do not cover each other (see the findings above)." >&2
+  echo "  Fix the routing table, or commit/stamp the artifact or module ALONGSIDE the reference" >&2
+  echo "  to it — not this gate, and never by #[cfg]-gating the include away." >&2
   exit 1
 fi
 
