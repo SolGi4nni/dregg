@@ -1,0 +1,129 @@
+# lean-ratchet-dark-allow.txt — modules that are DARK to `#floor_ratchet` / `#teeth_wired`
+# and are recorded here as deliberate. Gate: scripts/check-ratchet-darkness.sh.
+#
+# WHY THIS FILE EXISTS
+#   `#floor_ratchet` (the refuted-floor ACCRUAL gate) and `#teeth_wired` (the tooth-wiring
+#   roster) are Lean commands at the end of `metatheory/Dregg2.lean`. They read the elaborated
+#   environment — which is EXACTLY that root's transitive import closure. `lakefile.toml` has
+#   FIVE default targets and only one of them is that root: `Metatheory.+` and `Polis.+` are
+#   GLOBBED (every file is its own target), and `Market`/`Bfv` are separate roots. So a
+#   declaration outside the Dregg2 closure can take a hypothesis this tree PROVES FALSE at
+#   deployed BabyBear parameters, compile green in the default build, pass its own
+#   `#assert_axioms` — and be invisible to the gate built to catch exactly that.
+#
+#   Measured at the commit that added the gate (clean `git archive` export): 201 of 2029 in-tree
+#   modules dark, 75 of them still BUILT by lake. Nine dark modules mentioned a refuted floor
+#   (101 mentions). The ratchet baseline's own `manual +56` raise is this bypass running in
+#   reverse: rooting six dark modules surfaced 56 already-vacuous theorems that had been hiding.
+#
+# THE RULE THIS FILE RECORDS
+#   A dark module that MENTIONS A REFUTED FLOOR gets ROOTED, not listed. Exempting one needs the
+#   literal token `FLOOR-EXEMPT:` on its line plus a reason — a loud, greppable spelling, because
+#   "it is scratch" is not a reason to hide floor-carrying content from this gate. Everything
+#   else here is RULE 2: built by lake, outside the ratchet's environment, recorded so the
+#   surface cannot grow silently.
+#
+# ⚠ WHAT A LINE HERE DOES *NOT* SAY
+#   It says the exclusion is DELIBERATE. It does NOT say the module is counted by any
+#   instrument. A listed module's declarations are absent from every `#floor_ratchet` number,
+#   from `#floor_census`, and from the baseline — the campaign's counts are counts of the Dregg2
+#   root closure, and this file is the measured statement of what they leave out.
+#
+# FORMAT  one dotted module per line, optional `# reason` after it. Blank/`#` lines are comments.
+#         Staleness is checked: an entry that got rooted, an entry whose file is gone, a
+#         `FLOOR-EXEMPT:` entry that no longer mentions a floor, and an entry that records
+#         nothing (not built, no floor mention) each FAIL the gate.
+
+# ═══ RULE 1 EXEMPTIONS (floor-mentioning and deliberately dark) ══════════════════════════
+scripts.floor_ratchet_canary  # FLOOR-EXEMPT: this file IS the ratchet's inversion probe. `scripts/floor_ratchet_check.sh` step 4 runs it under `lake env lean` and requires it to FAIL with the gate's own banner — a zero exit there is a hard CI failure, because it means the gate has stopped being able to bite. It takes `Poseidon2SpongeCR` as a hypothesis ON PURPOSE and MUST stay outside the root closure: rooting it would make `lake build Dregg2` permanently red. The one dark floor mention in this tree that is load-bearing rather than hidden.
+
+# ═══ RULE 2 — built by lake, outside the ratchet's environment ═══════════════════════════
+Bfv  # ROOT-MODULE LIB, deliberately not imported from `Dregg2.lean`. `Bfv` is its own
+  # lean_lib root (lakefile.toml defaultTargets) for the additive-fold BFV tower; its
+  # closure is built and axiom-checked in the default build. Zero refuted-floor
+  # mentions (measured), so nothing vacuous can be hiding behind this line.
+
+# --- Metatheory.+ (GLOBBED lib: every file is its own lake target) ---
+# Built and axiom-checked by the default build; outside the Dregg2 ROOT closure, so their
+# declarations are not counted by `#floor_ratchet`. NONE mentions a refuted floor
+# (measured, comments stripped) — the three that DID (Adversary.{Instances,Schema,Model},
+# 49 mentions) were ROOTED instead of listed, which is the rule this file records.
+Metatheory.CommonSecret  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+Metatheory.EnergyGame  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+Metatheory.Open.BlindedSpanHidingKeyed  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+Metatheory.ReachGame  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+Metatheory.ResharingChain  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+Metatheory.SafetyGame  # Metatheory.+ globbed lib; built, ratchet-dark, zero floor mentions
+
+# --- Polis.+ (GLOBBED lib: the polisware-constitution tree, 65 modules) ---
+# Same posture. Rooting the whole tree into `Dregg2.lean` would put 65 modules on the
+# root's critical path for no proof reason: they are already compiled, and their own
+# `#assert_axioms` already run, in the default build. What this file buys is that the
+# surface cannot GROW silently — a new Polis module reds this gate — and that the moment
+# any of them names a refuted floor, RULE 1 fires and the entry stops being enough.
+# Measured at the commit that added this gate: zero floor mentions across all 65.
+Polis.DreggPolis  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthAtlas  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthCoord  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthDatalog  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthDelegate  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthExec  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthExecGraph  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthGame  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthGameN  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthGrand  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthGrandDatalog  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthLive  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthReach  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthReachDatalog  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthReachFull  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisAuthViability  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisCrossCell  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisDatalog  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisDominationDregg  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisDreggGame  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisErase  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisEraseBlocklace  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisFloorComposed  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisFlowRefine  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisGovernorTheory  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisGrade  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisGradeProduct  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisGradeTier  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisGrandGovernor  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisHyperBars  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisMembrane  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisMonitor  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisNonConfusion  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisNonConfusionCircuit  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisPolitician  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisRecoveryFloor  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisRecoveryWrite  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandbox  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxAdaptive  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxAgent  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxCoalitionEmerge  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxCombined  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxCompete  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxConstitution  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxDeceiver  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxDetect  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxGradedComposed  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxGradedGov  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxLaunder  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxLearn  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxLiveness  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxLockin  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxLongGame  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxN  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxNAttack  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxObservatory  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxRun  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxUnified  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSandboxUnifiedAttack  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisSelfCompose  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisStreamCarrier  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisTrace  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisViability  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisViabilityKernel  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions
+Polis.PolisViewFunctor  # Polis.+ globbed lib; built, ratchet-dark, zero floor mentions

@@ -111,14 +111,33 @@ def roster : List Tooth :=
   , { mod := `Dregg2.Verify.FloorCensus
     , guards := "`#floor_census` — the elaborated-term refuted-floor census, the campaign's \
         instrument of record" }
+  , { mod := `Dregg2.Verify.FloorRatchet
+    , guards := "`#floor_ratchet` — THE ACCRUAL GATE. It fails the build when a declaration not \
+        in the checked-in baseline takes a hypothesis this tree PROVES FALSE at deployed BabyBear \
+        parameters (binder, prop-body def, or structure field). Without it in the build, new \
+        VACUOUS theorems land unremarked — which is the measured state the gate was built to end \
+        (52 carriers removed, 63 added, net +11 over the campaign's own window)" }
   ]
 
-/-! ⚑ NOT ON THE ROSTER YET, deliberately: `Dregg2.Verify.FloorRatchet` (the ACCRUAL GATE). It is
-in flight in a co-tenant lane at the time of writing and not yet at HEAD, and a roster entry for a
-module the committed root does not import would make THIS gate red for another lane's schedule
-rather than for a real regression. It carries its own presence check
-(`scripts/floor_ratchet_check.sh`) meanwhile. Add the entry here when that lane lands — the roster
-is the campaign's record of what it believes is guarding it, and the accrual gate belongs in it. -/
+/-! ⚑ WHY `Dregg2.Verify.FloorRatchet` IS ON THE ROSTER AND ITS BASELINE IS NOT.
+
+The roster entry above REPLACES a stale note (landed 2026-07-25) that read "NOT ON THE ROSTER YET
+… in flight in a co-tenant lane and not yet at HEAD". That lane landed — `Dregg2.lean` imports
+`Dregg2.Verify.FloorRatchet` and invokes `#floor_ratchet` at HEAD, and CI runs
+`scripts/floor_ratchet_check.sh` — so the note was asserting the absence of the very module the
+root was already carrying. A roster that omits the campaign's principal gate certifies the wrong
+set: `#teeth_wired` would have reported "all teeth wired" on a build with the accrual gate cut out.
+
+The entry is NOT redundant with the invocation erroring. Dropping ONLY the import reds the build
+(`#floor_ratchet` becomes an unknown command). Dropping the import AND the invocation — which is
+exactly what happened to four cutover teeth under `799b5a6e27`, and to 1055+/1084 imports under the
+two root truncations — leaves a GREEN build with no gate. That is the case this line catches, from
+INSIDE the build, where no textual script has to be remembered.
+
+`Dregg2.Verify.FloorRatchetBaseline` is deliberately NOT listed: `FloorRatchet` imports it, so its
+presence follows from the line above and a roster entry for it would be the tautology this module's
+header refuses. Its CONTENT (a silent raise) is a different question, gated separately by
+`scripts/floor_ratchet_check.sh` step 3 against the merge-base. -/
 
 /-- BLINDNESS CONTROL (negative). A module name that cannot exist, which the same membership test
 used above must report ABSENT on the same run. Its job is to fail when the test stops being able to

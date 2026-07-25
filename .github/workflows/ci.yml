@@ -893,6 +893,41 @@ jobs:
           lfs: true
       - run: bash scripts/check-lean-orphans.sh
 
+  ratchet-darkness:
+    name: Refuted-floor DARKNESS gate (nothing carrying a refuted floor is invisible to the ratchet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # THE B5 BYPASS, CLOSED (2026-07-25). The job above asks whether a `Dregg2/**` module is
+    # COMPILED by some default lake target. This one asks the strictly harder question the
+    # accrual gate actually depends on: is it in the environment `#floor_ratchet` READS.
+    #
+    # Those differ, and the difference is a hole. `#floor_ratchet` / `#teeth_wired` are Lean
+    # commands at the end of metatheory/Dregg2.lean and see exactly that root's import closure.
+    # metatheory/lakefile.toml has FIVE default targets: `Metatheory.+` and `Polis.+` are GLOBBED
+    # (every file its own target) and `Market`/`Bfv` are separate roots. So a declaration under a
+    # globbed lib compiles in the default build, runs its own #assert_axioms, is green in CI —
+    # and can take a hypothesis this tree PROVES FALSE at deployed BabyBear parameters with NO
+    # instrument counting it. Measured on a clean export of the parent commit: 201 of 2029 in-tree
+    # modules dark to that root, 75 of them still built by lake, NINE of them mentioning a refuted
+    # floor in code (101 mentions) — worst was Metatheory.Adversary.Instances at 41, a module the
+    # globbed `Metatheory.+` lib had been compiling green all along.
+    #
+    # RULE 1: a dark module that mentions a refuted floor must be ROOTED, not allowlisted
+    # (exempting one needs the loud literal `FLOOR-EXEMPT:` token plus a reason — currently ONE
+    # entry, `scripts/floor_ratchet_canary.lean`, whose job is to make the gate error).
+    # RULE 2: a module lake builds outside that closure must be recorded with a reason, so the
+    # surface cannot grow silently.
+    # Fail-closed on a vacuous scan, on a truncated root, and on a stale allowlist entry — and on
+    # its own blindness: the floor NAMES are parsed out of Dregg2/Verify/FloorCensus.lean's
+    # `sentinelFloors` rather than hand-written here, and fewer than 15 parsed names is a FAILURE,
+    # because a gate scanning for nothing passes every module and looks exactly like coverage.
+    # Pure source-text scan: no Lean toolchain, no build.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: bash scripts/check-ratchet-darkness.sh
+
   descriptor-by-name-routing:
     name: Descriptor by-name routing round-trip (table <-> checked-in <-> stamp)
     runs-on: ubuntu-latest
@@ -1122,12 +1157,30 @@ jobs:
       # to advertise "Bridge/* — the light clients" and "Circuit/AlgoStarkSound*, Fri* — the
       # STARK/FRI soundness tower" are gone: that content moved into the default build.
       #
-      # WHAT THE 47 ACTUALLY ARE (counted from the list, this commit):
-      #   * 39 Circuit/*   — 26 Circuit/Emit/{*Refine,*Rung2,*Emit} (the emit refinement ladder)
-      #                      plus 13 Circuit/{Fri*,Fin*,KernelConfigSoundness*,
-      #                      PresentationBindingFromFold,RotatedKernelRefinement*,
-      #                      WrapSafetyStaticAnalyzer,CustomLeafEncoding}.
-      #   * 3 Games/*      — AutomataflAir, MultiwayTug, MultiwayTugAir (the DEPLOYED games'
+      # ⚑ 47 -> 42 (2026-07-25, B5). Five entries left this list because they got ROOTED into
+      # metatheory/Dregg2.lean: Circuit.{FinBindsKernel,FinInjectivityCollapse,
+      # KernelConfigSoundness,KernelConfigSoundnessAvail} and Circuit.Emit.
+      # MembershipDepthGeneralRung2. They were the exact shape this block's own header warns
+      # about — named here, so COMPILED and sorry-grepped by CI, while sitting outside the
+      # `Dregg2.lean` closure that `#floor_ratchet` reads. Between them they carried 51
+      # refuted-floor mentions that no census, no baseline and no ratchet counted: compiled is
+      # not counted. Now that they are in the default build, naming them here would assert
+      # coverage that is simply the zero-sorry step's. The standing gate for that distinction is
+      # the `ratchet-darkness` job above.
+      #
+      # WHAT THE 42 ACTUALLY ARE (counted from the list, this commit):
+      #   ⚑ 42 -> 39 in the same commit, second pass: `Circuit.Fri{CorrelatedAgreementSharp,
+      #   LdtJohnsonList,ProximityGapListDecoding,ProximityGapWitness}` became ROOT-REACHABLE as
+      #   transitive imports of `Dregg2.Circuit.FriIncidenceDesign`, which B5b rooted. By this
+      #   block's own rule they must leave: naming a reachable module here asserts coverage that is
+      #   simply the zero-sorry step's. (One entry, `Games.MultiwayTugProgram`, arrived from another
+      #   lane in the same window and is counted in the 39.)
+      #
+      #   * 30 Circuit/*   — 25 Circuit/Emit/{*Refine,*Rung2,*Emit} (the emit refinement ladder)
+      #                      plus 5 Circuit/{FriVerifierOracle,PresentationBindingFromFold,
+      #                      RotatedKernelRefinementAvailWideNarrow,WrapSafetyStaticAnalyzer,
+      #                      CustomLeafEncoding}.
+      #   * 4 Games/*      — AutomataflAir, MultiwayTug, MultiwayTugAir, MultiwayTugProgram (the DEPLOYED games'
       #                      move-legality proofs).
       #   * 3 Verify/LoadBearing* — the @[load_bearing] linter. NOTE: proof-integrity-canary.yml's
       #                      header claims this linter "runs every push in ci.yml's
@@ -1155,7 +1208,7 @@ jobs:
       # metatheory/lakefile.toml), so an exit-code-only `lake build <list>` would GREEN even with
       # a sorry in any of them. The folded AXIOM_GUARD_TARGETS becomes the space-separated build
       # list; the guard applies the identical textual net, closing the coverage hole.
-      - name: Orphan gate (47 modules reachable from no CI target — the CryptoVerifyAll siblings)
+      - name: Orphan gate (39 modules reachable from no CI target — the CryptoVerifyAll siblings)
         env:
           AXIOM_GUARD_TARGETS: >-
             Dregg2.Apps.ColonistJob
@@ -1184,28 +1237,39 @@ jobs:
             Dregg2.Circuit.Emit.FoldRefine
             Dregg2.Circuit.Emit.FoldRung2
             Dregg2.Circuit.Emit.MembershipAuthRootEdge
-            Dregg2.Circuit.Emit.MembershipDepthGeneralRung2
             Dregg2.Circuit.Emit.MultiStepChainEmit
             Dregg2.Circuit.Emit.RotatedLayoutBridge
-            Dregg2.Circuit.FinBindsKernel
-            Dregg2.Circuit.FinInjectivityCollapse
-            Dregg2.Circuit.FriCorrelatedAgreementSharp
-            Dregg2.Circuit.FriLdtJohnsonList
-            Dregg2.Circuit.FriProximityGapListDecoding
-            Dregg2.Circuit.FriProximityGapWitness
             Dregg2.Circuit.FriVerifierOracle
-            Dregg2.Circuit.KernelConfigSoundness
-            Dregg2.Circuit.KernelConfigSoundnessAvail
             Dregg2.Circuit.PresentationBindingFromFold
             Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow
             Dregg2.Circuit.WrapSafetyStaticAnalyzer
             Dregg2.Games.AutomataflAir
             Dregg2.Games.MultiwayTug
             Dregg2.Games.MultiwayTugAir
+            Dregg2.Games.MultiwayTugProgram
             Dregg2.Verify.LoadBearingAuditBroad
             Dregg2.Verify.LoadBearingAuditKey
             Dregg2.Verify.LoadBearingLint
         run: bash scripts/axiom-hygiene-guard.sh
+
+      # ⚑ THE TUG PROGRAM ARTIFACT DRIFT GATE (2026-07-25).
+      #
+      # `dregg-multiway-tug/program/multiway_tug_program.json` is a CACHE of the Lean emission
+      # (`Dregg2.Games.MultiwayTugProgram :: multiwayTugProgram`), `include_str!`d into the crate
+      # and LOADED as the deployed referee. `program/regen.sh --check` re-emits and diffs it.
+      #
+      # It ran NOWHERE until now — not in any workflow, not in the git hooks. That is exactly how
+      # the file it guards ended up RED at HEAD: `372b79e375` widened `DInput` by five fields and
+      # `MultiwayTugProgram.lean` stopped compiling, so `program_admits_legal_play_deployed` was
+      # silently unproven and nothing went red, because NO CI TARGET COMPILED THE MODULE. The
+      # module is now in AXIOM_GUARD_TARGETS above (which fixes the compile half); this step fixes
+      # the artifact half. Without it a rules edit lands in Lean while the deployed JSON keeps
+      # shipping the OLD teeth — a green build serving a different game than the one proved.
+      #
+      # Cheap by construction: the oleans are already built by the step above, so this is a
+      # re-run of one emit plus a diff.
+      - name: Tug program artifact matches its Lean source (drift gate)
+        run: bash dregg-multiway-tug/program/regen.sh --check
 
   # ── THE ML-DSA VERIFY-CORE APEX SPINE, IN ITS OWN LANE (2026-07-25) ─────────────────
   # `ebb0b9f9ae` rooted 16 never-compiled PQ modules into the default build with one import
@@ -1287,6 +1351,30 @@ jobs:
       - name: The apex spine (VerifyCore{EqSpecW,UseHint,HashFrame,ArgRows,ArgAssembly})
         env:
           AXIOM_GUARD_TARGETS: Dregg2.Crypto.VerifyCoreArgAssembly
+        run: bash scripts/axiom-hygiene-guard.sh
+
+      # ⚑ THE ML-KEM KEYGEN REFINEMENT, GIVEN A HOME (2026-07-25, B5 orphan sweep).
+      # `Dregg2.Crypto.MlKemKeygenRefine` was an UNLISTED orphan: reachable from nothing, named by
+      # no CI step, compiled by NO target at all — its `#assert_axioms` had never run anywhere.
+      # It is GREEN (verified: fresh `lake env lean`, exit 0, no `sorry`), so the only question was
+      # where to pay for it, and that was MEASURED rather than guessed: 1882s = 31 min on one fresh
+      # elaboration, and a TIMEOUT at 2400s on another. That is the `VerifyCoreEqSpecW` situation
+      # (44 min) this whole job exists for, so it goes HERE and not into the default build or the
+      # `metatheory-no-sorry` Orphan-gate step — both of which run in a job that has already been
+      # cancelled once for length (315.6 min against `timeout-minutes: 330`).
+      # ⚠ WHAT THIS BUYS AND WHAT IT DOES NOT: compilation + the zero-sorry/axiom net. NOT ratchet
+      # visibility — it stays outside `Dregg2.lean`'s closure, so `#floor_ratchet` still cannot see
+      # its declarations. That is acceptable ONLY because it mentions ZERO refuted floors (measured,
+      # comments stripped), and `scripts/check-ratchet-darkness.sh` RULE 1 turns red the moment that
+      # stops being true. `Dregg2.Circuit.Emit.AutomataflNGenGolden` rides along for the same
+      # reason with a different cost story: it is a 2.98 MB byte-pinned wire golden, and the
+      # "separate leaf so the refinement surface does not pay for the golden" posture is already
+      # the documented precedent in `Dregg2.lean`'s `ParamComposeGolden` line.
+      - name: The two orphans too expensive for the default build (MlKemKeygenRefine 31 min, AutomataflNGenGolden 2.98 MB golden)
+        env:
+          AXIOM_GUARD_TARGETS: >-
+            Dregg2.Crypto.MlKemKeygenRefine
+            Dregg2.Circuit.Emit.AutomataflNGenGolden
         run: bash scripts/axiom-hygiene-guard.sh
 
   descriptor-drift:

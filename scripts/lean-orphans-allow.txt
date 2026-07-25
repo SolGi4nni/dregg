@@ -17,6 +17,22 @@
 # FORMAT  one dotted module per line, optional `# reason` after it. `#`-only lines and blanks
 #         are comments. Every listed module MUST exist as a file and MUST be a genuine orphan.
 #
+# ⚑ THIS FILE IS NOT THE WHOLE COVERAGE QUESTION (2026-07-25, B5).
+#   It governs ONE thing: is a `Dregg2/**` module compiled by a default lake target. It does NOT
+#   ask whether a module is in the environment `#floor_ratchet` / `#teeth_wired` read, which is
+#   the closure of `metatheory/Dregg2.lean` ALONE — a strictly smaller set than "what lake
+#   builds", because `Metatheory.+` and `Polis.+` are GLOBBED libs and `Market`/`Bfv` are separate
+#   roots. A module can therefore be BUILT, axiom-checked, green in CI, and still carry a
+#   hypothesis this tree proves FALSE with no instrument counting it. That second question is
+#   `scripts/check-ratchet-darkness.sh` + `scripts/lean-ratchet-dark-allow.txt`.
+#
+#   FIVE entries left this file to that gate's RULE 1 (a dark module that MENTIONS a refuted floor
+#   gets rooted, not listed): Circuit.{FinBindsKernel,FinInjectivityCollapse,KernelConfigSoundness,
+#   KernelConfigSoundnessAvail} and Circuit.Emit.MembershipDepthGeneralRung2 — 51 floor mentions
+#   between them, sitting behind lines that said "GREEN self-checked, REGISTERABLE". They are now
+#   imported from `metatheory/Dregg2.lean`. When you consider adding an entry here, check the same
+#   thing first: `bash scripts/check-ratchet-darkness.sh` will tell you if it is a floor carrier.
+#
 # These entries are the CURRENT (2026-07-18) orphan census — WIP from this and other
 # terminals. As each cluster's work lands, register the finished modules in Dregg2.lean and
 # delete them from here; the staleness check will remind you.
@@ -52,7 +68,6 @@ Dregg2.Circuit.Emit.FoldEmit  # GREEN self-checked (#assert clean), REGISTERABLE
 Dregg2.Circuit.Emit.FoldRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.FoldRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MembershipAuthRootEdge  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.MembershipDepthGeneralRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MerkleMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MultiStepChainEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.MultiStepChainRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -76,15 +91,7 @@ Dregg2.Circuit.Emit.TemporalPredicateRefine  # GREEN self-checked (#assert clean
 Dregg2.Circuit.CustomLeafEncoding  # GREEN, NO self-check — asserts nothing on its own — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.DeltaProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.EffectsAsDataProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FinBindsKernel  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FinInjectivityCollapse  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FriCorrelatedAgreementSharp  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FriLdtJohnsonList  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FriProximityGapListDecoding  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.FriProximityGapWitness  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.FriVerifierOracle  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.KernelConfigSoundness  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.KernelConfigSoundnessAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.WrapSafetyStaticAnalyzer  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 
@@ -131,3 +138,30 @@ Dregg2.Apps.ColonistJob  # GREEN self-checked (#assert clean), REGISTERABLE — 
 
 # --- the Claims axiom-net — KNOWN 'ran nowhere' (see MEMORY: CI-meaningfulness audit); being wired on its own track ---
 Dregg2.Claims  # GREEN self-checked (#assert clean), REGISTERABLE — Claims axiom-net
+
+# --- B5b (2026-07-25): the two of fifteen unlisted orphans that stay OUT, with their MEASURED cost ---
+# The other thirteen were fresh-elaborated green and ROOTED into metatheory/Dregg2.lean in the same
+# commit; these two are green too, and the only question was where to pay for them. Both are now
+# named by ci.yml's `metatheory-pq-apex` job, so neither is in "NO CI target" any more — which is
+# what they were. Neither mentions a refuted floor (measured, comments stripped), which is the ONLY
+# reason a non-rooted home is acceptable: scripts/check-ratchet-darkness.sh RULE 1 reds the moment
+# that changes.
+Dregg2.Crypto.MlKemKeygenRefine  # MEASURED 1882s (31 min) on one fresh `lake env lean`, and a TIMEOUT at 2400s on another — the `VerifyCoreEqSpecW` (44 min) class. The default build and the `metatheory-no-sorry` Orphan-gate step share a job that was already CANCELLED once for length (315.6 min vs `timeout-minutes: 330`); 31 min there is not a rounding error. Rides `metatheory-pq-apex` instead. Its ML-DSA sibling (MlDsaKeygenRefine, 38s) and both *KeygenAcvp modules ARE rooted.
+Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (117 "lines", one of them enormous). The "keep the golden a separate leaf so the refinement surface does not pay for it on every build" posture is this tree's own, documented at `Dregg2.lean`'s `ParamComposeGolden` import — which cites THIS module by name as the precedent. Green at 6-26s; also named by `metatheory-pq-apex` now, so the golden is compiled somewhere.
+
+# --- co-tenant lanes' modules that landed DURING the B5 sweep (2026-07-25), recorded not rooted ---
+# These four were committed by other terminals between this sweep's HEAD snapshot (16f7719341) and
+# its commit, so they arrived UNLISTED and turned this gate red for a scheduling reason rather than
+# a real one. They are NOT this lane's to root: each belongs to a live lane that will register it
+# with the rest of its work, and adding an import for a module whose author is still editing it is
+# how two lanes clobber one root file. VERIFIED before recording, so this is not a shrug: both
+# Bridge modules fresh-elaborate green (`lake env lean`, 12s / 14s, exit 0); the two AIRs return
+# only "object file … .olean does not exist" for a sibling a concurrent build had not written yet,
+# which is build state, not a defect. ⚑ AND CHECKED FOR THE THING THAT WOULD MAKE RECORDING WRONG:
+# `scripts/check-ratchet-darkness.sh` reports ZERO refuted-floor mentions in all four, so nothing
+# vacuous is hiding behind these lines. If any of them ever names a floor, RULE 1 of that gate reds
+# and the entry stops being enough. The landing lane should DELETE its entry here when it roots.
+Dregg2.Bridge.LightClientMidnight  # co-tenant lane (landed 5b540c20df, "formalize + STARK-ify the MIDNIGHT lightclient"); green at 12s; zero floor mentions
+Dregg2.Bridge.LightClientSolana  # co-tenant lane, same sweep window; green at 14s; zero floor mentions
+Dregg2.Circuit.Emit.LightClientMidnightAir  # co-tenant lane; the AIR half of LightClientMidnight; zero floor mentions
+Dregg2.Circuit.Emit.LightClientSolanaAir  # co-tenant lane; the AIR half of LightClientSolana; zero floor mentions
