@@ -1411,3 +1411,34 @@ import Dregg2.Circuit.FriFoldConsistencyDichotomy -- ⚑⚑ THE OTHER HALF OF TH
 import Dregg2.FFI -- ⚑ THE Lean⟷Rust BOUNDARY (07-25), and the ONLY C-compilation root: `dregg-lean-ffi/build.rs` now builds exactly one Lake target (`Dregg2.FFI`) and splices exactly this module's import closure into `libdregg_lean.a`. It replaces a hand-maintained 24-entry list of "modules outside the FFI closure" that had silently drifted from the 172 `@[export]`s across 28 files: a module missing from that list emitted no `:c`, so its symbol never reached the archive, so the Rust `#[cfg(dregg_*_present)]` bridge compiled its ABSENT arm and the node ran the un-gated path — green and wrong. `dregg_{eth,mpt,tm}_lc_verify` (all three interchain light-client gates) were dark exactly that way and are now in the archive. An import closure cannot drift from itself. Rooted here so the whole-tree `lake build` covers the boundary; the file itself declares nothing and proves nothing — it is the manifest, realized as imports, and its header says what the surface IS and what it deliberately excludes.
 import Dregg2.Crypto.VerifyCoreArgAssembly -- ⚑⚑ ROOTS 16 NEVER-COMPILED MODULES (07-25). This ONE line moves the whole ML-DSA-65 verify-core refinement chain AND the entire Keccak/FIPS-202 stack from "reachable from nothing" into `lake build Dregg2` — MEASURED with check-lean-orphans' own algorithm: reachable Dregg2 modules 1632→1648, orphans 138→122. Newly in CI: VerifyCore{Spec,EqSpec,EqSpecW,HashFrame,UseHint,ArgRows,ArgAssembly} (the deployed `MlDsaVerifyReal.verifyCore` ⟺ FIPS-204 `specVerifyB` chain, apex `verifyCore_eq_specVerifyB_noArg_deployed`), Fips204BitPack + Fips204ChallengeHash (Alg. 9/10/16/28 encoder refinement), NttFaithful, and Keccak.Fips202{Spec,Round,Sponge,SpongeRefine,Refine,Lfsr} — the SHA-3 stack the floor-closure claim `2c3f531301` rested on while NOTHING had ever elaborated it. AXIOM CENSUS (independent `Lean.collectAxioms` over EVERY declaration defined in the 16, not just the ones the files name): 601 declarations, 453 theorems, ZERO sorryAx and zero source sorry/admit/axiom. SIX declarations carry a non-kernel axiom, and they rest on FOUR distinct `native_decide` KATs — VerifyCoreSpec.{gen_hint_size,challengeMatches_real,verifyCore_split_witness}, VerifyCoreEqSpec.verifyCore_eq_challengeMatches_and_norm_witness (via MlDsaVerifyReal.verify_accepts_real), VerifyCoreHashFrame.hashSpec_witness, and Keccak.Fips202SpongeRefine.spec_SHAKE256_empty_cavp (via shake256_empty_kat). All four are evaluation anchors; NONE is load-bearing for a refinement theorem — every refinement apex is kernel-clean. KECCAK FLOOR CHECKED, NOT INHERITED: `SpongeRefinesObligation` is NOT the `True` placeholder it once was (it is the real ∀ input outLen, bitsOfBytes (shake256 input outLen) = Fips202.SHAKE256 (bitsOfBytes input) (8*outLen), + SHAKE128), and `rc_lanes_eq_exec` — the ONE residual `2c3f531301` named as "still native_decide ... the ONLY non-standard axiom anywhere in the Keccak chain" — is now [propext, Classical.choice, Quot.sound]: Fips202Lfsr.lean closed it, so that commit's stated residual is STALE IN OUR FAVOUR. The real unstated qualifier is that this refines the executable against a LEAN TRANSCRIPTION of FIPS 202; transcription fidelity to the PDF is human-checked, not proven. WHAT ROOTING BUYS, EXACTLY: 132 #assert_axioms/#assert_all_clean in the TEN non-Keccak modules ran in no target and now run on every build; the SIX Keccak modules contain ZERO #assert_axioms/#assert_all_clean/#guard between them, so for those this buys COMPILATION coverage only and their axiom hygiene is still asserted by nothing in-file (named follow-up). An orphan under `lake env lean` is green in a scratchpad and covered by no gate.
 import Dregg2.Crypto.CryptoVerifyAll -- ⚑⚑ ROOTS THE NIST CONFORMANCE CLUSTER (07-25): 12 modules in one line (reachable Dregg2 1660→1672). The ACVP/CAVP validation-vector side of the PQ stack — KeccakCavp, MlDsaSigGenAcvp, MlDsaSigVerAcvp, MlKemEncapsAcvp, AcvpHex, CrateGeneratedKats, CodecRoundTrip, SignCoreSpec, EncapsCoreSpec, MlDsaHintCodec, MlDsaSigCodecClosed — i.e. the known-answer evidence for exactly the Keccak/ML-DSA refinement chain `VerifyCoreArgAssembly` roots above. It could NOT be rooted before `2a210a4e13`: EncapsCoreSpec did not compile at HEAD (an `Ambiguous term sampleA_size` collision introduced by DecapsCoreSpec), and being an orphan it could not go red to say so — the allowlist meanwhile asserted it was "GREEN self-checked, REGISTERABLE". Verified before rooting: `lake build Dregg2.Crypto.CryptoVerifyAll` exits 0 (8539 jobs).
+
+-- ─── ⚑⚑ THE WIRING GATE (2026-07-25) ──────────────────────────────────────────────────────
+-- Before any check in this tree can mean something, the check has to be IN THE BUILD.
+--
+-- The `Dregg2` lean_lib has no `globs` (lakefile.toml), so `lake build` compiles this file plus
+-- its transitive imports and nothing else. A tooth nobody imports is not RED — it is ABSENT,
+-- and the build is green because its checks never ran. This campaign has been bitten by that
+-- four times: `6b1e156bdf` (1055+ imports dropped), `8a28420ec9` (1301 -> 217), `799b5a6e27`
+-- (four cutover imports dropped SELECTIVELY under an unrelated Peephole commit), and the six
+-- cutover teeth that shipped dark while being advertised as armed. Every one of those was
+-- invisible to `lake build Dregg2`, which stayed green throughout.
+--
+-- Until now exactly ONE of eleven teeth modules was covered by any wiring check at all — the
+-- ListDigestBindsList cutover, and only because its spec happens to pin a ROOT edit textually.
+--
+-- `#teeth_wired` reads `Environment.header.moduleNames` HERE, at the root, where that set is
+-- exactly what this build compiled. It arrives through imports, so lake tracks it: the edit
+-- that drops an import invalidates this file's own olean and re-runs the check on the spot. No
+-- file is read, so no cached olean can answer for it — the repair this campaign's earlier
+-- textual tooth needed.
+--
+-- ⚑ `Dregg2.Verify.TeethWiring` deliberately imports NONE of the modules it certifies — if it
+-- did, importing it would guarantee their presence and the whole roster would be a tautology.
+-- The membership test carries a negative blindness control (a module that cannot exist must be
+-- reported ABSENT on the same run), because a rejector whose test has gone constantly-true
+-- certifies nothing while staying green. The one failure it cannot report — its own deletion,
+-- since a removed command raises no error — is covered outside the build, by
+-- `scripts/cone_cutover_textual_check.sh`.
+import Dregg2.Verify.TeethWiring
+
+#teeth_wired
