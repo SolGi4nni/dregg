@@ -945,7 +945,17 @@ jobs:
       # WARNINGS (exit 0, no warningAsError in metatheory/lakefile.toml), so an
       # exit-code-only `lake build <module>` here would GREEN even with a sorry
       # in the module — this closes that hole and keeps the textual net uniform.
-      - name: Crypto linking-seam gauntlet (SignCoreSpec/EncapsCoreSpec/AcvpKats — outside the default aggregator)
+      #
+      # ⚠ STALE AS OF 1905a9a97b, kept as belt-and-suspenders: that commit added
+      # `import Dregg2.Crypto.CryptoVerifyAll` to metatheory/Dregg2.lean, so this
+      # aggregator is now IN the default build and the zero-sorry step above already
+      # compiled it. "NO CI job compiled these PQ floor proofs at all" was true when
+      # written and is no longer. This step is now a warm no-op (0s) that re-applies the
+      # same grep to the same modules; the cost of keeping it is nothing and it survives
+      # the root losing that import again. Its target list is NOT the apex spine: the
+      # five-module ML-DSA `VerifyCore{EqSpecW,UseHint,HashFrame,ArgRows,ArgAssembly}`
+      # chain lives in the `metatheory-pq-apex` job below, for the reasons given there.
+      - name: Crypto linking-seam gauntlet (SignCoreSpec/EncapsCoreSpec/AcvpKats — now root-reachable; kept as belt-and-suspenders)
         env:
           AXIOM_GUARD_TARGETS: Dregg2.Crypto.CryptoVerifyAll
         run: bash scripts/axiom-hygiene-guard.sh
@@ -1041,37 +1051,16 @@ jobs:
       # Bridge.LightClientEth, ProofOfHoldings, HoldingWeightedTally). The folded
       # AXIOM_GUARD_TARGETS becomes the space-separated build list; the guard
       # applies the identical textual net, closing the coverage hole.
-      - name: Orphan gate (76 modules reachable from no CI target — the CryptoVerifyAll siblings)
+      - name: Orphan gate (47 modules reachable from no CI target — the CryptoVerifyAll siblings)
         env:
           AXIOM_GUARD_TARGETS: >-
             Dregg2.Apps.ColonistJob
-            Dregg2.Bridge.HoldingFoldRecursive
             Dregg2.Bridge.HoldingWeightedTally
-            Dregg2.Bridge.InterchainAdapterDecision
-            Dregg2.Bridge.LightClientEth
-            Dregg2.Bridge.LightClientMpt
-            Dregg2.Bridge.LightClientTendermint
-            Dregg2.Bridge.ProofOfHoldings
-            Dregg2.Bridge.ProofOfHoldingsGeneric
-            Dregg2.Bridge.VerifiedLightClient
-            Dregg2.Circuit.AcceptanceDischarge
-            Dregg2.Circuit.AlgoStarkSoundFanoutMemFree
-            Dregg2.Circuit.AlgoStarkSoundFanoutMemory
-            Dregg2.Circuit.AlgoStarkSoundFanoutSetField
-            Dregg2.Circuit.AlgoStarkSoundGeneral
-            Dregg2.Circuit.AlgoStarkSoundKernel
-            Dregg2.Circuit.AlgoStarkSoundKernelAvail
-            Dregg2.Circuit.BlindedMembershipBindingFromFold
             Dregg2.Circuit.CustomLeafEncoding
-            Dregg2.Circuit.Emit.AccumulatorNonRevocationRefine
             Dregg2.Circuit.Emit.AdjacencyMembershipRefine
             Dregg2.Circuit.Emit.AdjacencyMembershipRefineAudit
             Dregg2.Circuit.Emit.AdjacencyMembershipRung2
             Dregg2.Circuit.Emit.AvailWideMembersNarrow
-            Dregg2.Circuit.Emit.BilateralAggregationEmit
-            Dregg2.Circuit.Emit.BilateralAggregationRefine
-            Dregg2.Circuit.Emit.BilateralAggregationRung2
-            Dregg2.Circuit.Emit.BlindedMembershipRung2
             Dregg2.Circuit.Emit.BoundPresentationRefine
             Dregg2.Circuit.Emit.BoundPresentationRung2
             Dregg2.Circuit.Emit.CommittedThresholdEmit
@@ -1090,14 +1079,9 @@ jobs:
             Dregg2.Circuit.Emit.FoldEmit
             Dregg2.Circuit.Emit.FoldRefine
             Dregg2.Circuit.Emit.FoldRung2
-            Dregg2.Circuit.Emit.GarbledEvalEmit
-            Dregg2.Circuit.Emit.GarbledEvalRefine
-            Dregg2.Circuit.Emit.GarbledEvalRung2
             Dregg2.Circuit.Emit.MembershipAuthRootEdge
             Dregg2.Circuit.Emit.MembershipDepthGeneralRung2
             Dregg2.Circuit.Emit.MultiStepChainEmit
-            Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit
-            Dregg2.Circuit.Emit.RotatedLayout
             Dregg2.Circuit.Emit.RotatedLayoutBridge
             Dregg2.Circuit.FinBindsKernel
             Dregg2.Circuit.FinInjectivityCollapse
@@ -1108,20 +1092,100 @@ jobs:
             Dregg2.Circuit.FriVerifierOracle
             Dregg2.Circuit.KernelConfigSoundness
             Dregg2.Circuit.KernelConfigSoundnessAvail
-            Dregg2.Circuit.OodColumnLayout
             Dregg2.Circuit.PresentationBindingFromFold
             Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow
             Dregg2.Circuit.WrapSafetyStaticAnalyzer
-            Dregg2.Exec.FFIDirect
-            Dregg2.Games.Automatafl
             Dregg2.Games.AutomataflAir
             Dregg2.Games.MultiwayTug
             Dregg2.Games.MultiwayTugAir
             Dregg2.Verify.LoadBearingAuditBroad
             Dregg2.Verify.LoadBearingAuditKey
             Dregg2.Verify.LoadBearingLint
-            Dregg2.Circuit.Emit.DyckStackRefine
-            Dregg2.Circuit.Emit.DyckStackReplay
+        run: bash scripts/axiom-hygiene-guard.sh
+
+  # ── THE ML-DSA VERIFY-CORE APEX SPINE, IN ITS OWN LANE (2026-07-25) ─────────────────
+  # `ebb0b9f9ae` rooted 16 never-compiled PQ modules into the default build with one import
+  # (`Dregg2.Crypto.VerifyCoreArgAssembly`) and that rooting is RIGHT — 601 declarations, 453
+  # theorems, zero sorryAx, 132 #assert_axioms that previously ran nowhere. Then it MEASURED
+  # what it cost, and one module carries essentially all of it:
+  #
+  #     VerifyCoreEqSpecW   2664s = 44.4 min, exit 0   ← INTRINSIC, not contention
+  #                                                      (degree-256 `AdjoinRoot` power basis,
+  #                                                       `maxRecDepth 8000`)
+  #     the whole Keccak/FIPS-202 stack   ~160s (9-52s each)
+  #     VerifyCoreEqSpec 27s · NttFaithful 181s · Fips204BitPack 33s
+  #
+  # And `EqSpecW` is NOT a leaf: the chain is Spec → EqSpec → EqSpecW → UseHint → HashFrame →
+  # ArgRows → ArgAssembly, one linear import spine, so four more modules SERIALIZE behind it and
+  # no amount of runner parallelism hides it. Measured fresh here on 07-25 (contended box,
+  # `lake env lean`, LEAN_NUM_THREADS=3): ArgAssembly 54s, ArgRows 496s, HashFrame 37s.
+  #
+  # WHY IT HAD TO MOVE, in CI's own numbers rather than a laptop's. The `metatheory-no-sorry`
+  # job's "Zero-sorry guard" step is the verdict people actually read, and it is AT ITS OWN
+  # TIMEOUT WALL:
+  #     run 30148956262   Zero-sorry step 233 min      (job 279 min)
+  #     run 30146325284   Zero-sorry step 315.6 min    (job killed at 335 min vs timeout 330)
+  # 46 serial minutes is 15-20% of a step that has already been cancelled for length once. A
+  # gate nobody waits for is on its way to being a gate nobody believes.
+  #
+  # WHY A PUSH-TRIGGERED JOB AND NOT A SCHEDULED "SLOW LANE" — the recommendation this deviates
+  # from, with the number that justifies the deviation: `lake build
+  # Dregg2.Crypto.VerifyCoreArgAssembly` compiles a **34-module in-tree closure**, not the
+  # 1788-module corpus. Set-subtracting `Fips204ChallengeHash`'s closure (the 29 cheap modules
+  # the default build keeps) leaves EXACTLY the five spine modules. So this lane is ~1h, not
+  # ~5h, and it does not need a schedule to be affordable. That matters for coverage, not
+  # tidiness: a nightly lane detects a regression up to 24h late and — as
+  # proof-integrity-canary.yml's own header records, after its ⛔ lines sat unread in a
+  # scheduled log for three days — needs a page-on-red job wired to it before anyone sees a
+  # thing. This job is a CHECK on every run's checks page instead, next to the other Lean
+  # gates, so its verdict arrives with the commit that caused it and needs no notification
+  # machinery to reach a human. (lean-seed.yml, the repo's other long Lean lane, is scheduled
+  # AND has no notify job — do not add a third of those.)
+  #
+  # Routed through axiom-hygiene-guard.sh, never a bare `lake build`: `sorry`/`admit` are Lean
+  # WARNINGS (exit 0, no warningAsError in metatheory/lakefile.toml), so an exit-code-only step
+  # would green with a sorry in the apex refinement. Same net as every other Lean job here.
+  #
+  # A RED HERE IS THE ML-DSA-65 VERIFY-CORE REFINEMENT ROTTING — `verifyCore_eq_specVerifyB_
+  # noArg_deployed`, the deployed `MlDsaVerifyReal.verifyCore` ⟺ FIPS-204 `specVerifyB` apex —
+  # not infra flake. Do NOT "fix" it by dropping the target.
+  metatheory-pq-apex:
+    name: ML-DSA verify-core apex spine (the 44-min serial tail, off the critical path)
+    runs-on: ubuntu-latest
+    # Generous but far below the corpus jobs' 330: the closure is 34 modules and the tail is
+    # ~50 min of it. If this ever approaches 150, the spine grew a second expensive module —
+    # measure it, do not raise the number.
+    timeout-minutes: 150
+    env:
+      MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # Identical toolchain + mathlib setup to metatheory-no-sorry (deliberately copied
+      # verbatim: if that job's mathlib provisioning is wrong, this lane must be wrong the
+      # SAME way rather than differ in a way that hides it).
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned mathlib4
+        run: |
+          MATHLIB_DIR="$(cd "$GITHUB_WORKSPACE/../.." && pwd)/src/mathlib4"
+          mkdir -p "$MATHLIB_DIR"
+          git clone https://github.com/leanprover-community/mathlib4 "$MATHLIB_DIR"
+          git -C "$MATHLIB_DIR" checkout "$MATHLIB_REV"
+          ( cd "$MATHLIB_DIR" && ~/.elan/bin/lake exe cache get )
+
+      # The five spine modules ride in as ArgAssembly's transitive imports; naming the apex
+      # rather than the five keeps this target honest if the chain grows another rung.
+      - name: The apex spine (VerifyCore{EqSpecW,UseHint,HashFrame,ArgRows,ArgAssembly})
+        env:
+          AXIOM_GUARD_TARGETS: Dregg2.Crypto.VerifyCoreArgAssembly
         run: bash scripts/axiom-hygiene-guard.sh
 
   descriptor-drift:

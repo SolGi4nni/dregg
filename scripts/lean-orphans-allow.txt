@@ -73,12 +73,6 @@ Dregg2.Circuit.Emit.TemporalPredicateRefine  # GREEN self-checked (#assert clean
 # across all 1730 Dregg2/**.lean. Every file here is self-checked GREEN. The reason they stay
 # out of the default build is ci.yml's documented 28 RED-AT-HEAD Circuit.Emit modules
 # (elaboration-time `sorryAx` from a Type mismatch — not a source `sorry`), not carried sorry.
-Dregg2.Circuit.AcceptanceDischarge  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundFanoutMemFree  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundFanoutMemory  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundFanoutSetField  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundKernel  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.AlgoStarkSoundKernelAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.CustomLeafEncoding  # GREEN, NO self-check — asserts nothing on its own — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.DeltaProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.EffectsAsDataProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
@@ -93,6 +87,25 @@ Dregg2.Circuit.KernelConfigSoundness  # GREEN self-checked (#assert clean), REGI
 Dregg2.Circuit.KernelConfigSoundnessAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.WrapSafetyStaticAnalyzer  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
+
+# --- the ML-DSA verify-core APEX SPINE: NOT unchecked — built on EVERY PUSH by ci.yml's
+# `metatheory-pq-apex` job (target `Dregg2.Crypto.VerifyCoreArgAssembly`, routed through
+# scripts/axiom-hygiene-guard.sh). These five are the ONE case in this file where "orphan" does
+# not mean "covered by nothing": they are deliberately OUT of the default `lake build` and IN a
+# dedicated lane, because `VerifyCoreEqSpecW` costs 2664s / 44.4 min of INTRINSIC elaboration
+# (degree-256 `AdjoinRoot` power basis, `maxRecDepth 8000`) on a LINEAR import chain that the
+# other four serialize behind — 15-20% of a "Zero-sorry guard" step CI measured at 233 min and
+# 315.6 min against its own 330-minute job timeout. Their apex is
+# `verifyCore_eq_specVerifyB_noArg_deployed` (deployed `MlDsaVerifyReal.verifyCore` <=> FIPS-204
+# `specVerifyB`), kernel-clean. Verified green 07-25 before the split: ArgAssembly 54s,
+# ArgRows 496s, HashFrame 37s (fresh `lake env lean`, contended box).
+# ⚠ IF YOU DELETE THE `metatheory-pq-apex` JOB, THESE FIVE LINES BECOME LIES. Re-root them
+# (`import Dregg2.Crypto.VerifyCoreArgAssembly` in metatheory/Dregg2.lean) in the same change.
+Dregg2.Crypto.VerifyCoreEqSpecW  # GREEN — built by ci.yml `metatheory-pq-apex` every push, NOT unchecked (44.4 min intrinsic; the reason it is out of the default build)
+Dregg2.Crypto.VerifyCoreUseHint  # GREEN — built by ci.yml `metatheory-pq-apex` every push, NOT unchecked (serializes behind EqSpecW)
+Dregg2.Crypto.VerifyCoreHashFrame  # GREEN — built by ci.yml `metatheory-pq-apex` every push, NOT unchecked (37s itself; behind EqSpecW)
+Dregg2.Crypto.VerifyCoreArgRows  # GREEN — built by ci.yml `metatheory-pq-apex` every push, NOT unchecked (496s itself; behind EqSpecW)
+Dregg2.Crypto.VerifyCoreArgAssembly  # GREEN — built by ci.yml `metatheory-pq-apex` every push, NOT unchecked; THE APEX TARGET that lane names (54s itself)
 
 # --- PQ-crypto spec WIP (ML-DSA/ML-KEM codecs, VerifyCore/SignCore specs, ACVP KATs, NTT faithfulness); spec-in-progress, not yet CI-clean ---
 Dregg2.Crypto.KemSoundnessQuant  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster

@@ -32,9 +32,30 @@ What this transitively verifies:
   `AcvpKats`, whose name implied a NIST provenance the vectors never had.)
 
 See `docs/LINKING-SEAMS-PROGRESS.md` for the seam-by-seam status and the named residuals.
+
+⚠ THIS AGGREGATOR IS NOW IN THE DEFAULT BUILD, and the paragraph above about being "outside the
+default `Dregg2.lean` aggregator, deliberately" is STALE: `1905a9a97b` added
+`import Dregg2.Crypto.CryptoVerifyAll` to `metatheory/Dregg2.lean` to root the twelve-module NIST
+ACVP/CAVP cluster. That is the right place for it — the KAT batch is cheap — but it made this file a
+SECOND ROOT PATH, and one of its imports was not cheap.
+
+`import Dregg2.Crypto.VerifyCoreEqSpecW` is therefore GONE from the list below (07-25). `EqSpecW` is
+the degree-256 `AdjoinRoot` power-basis module: 2664s / 44 min of INTRINSIC, unparallelizable
+elaboration, on a linear chain that four more modules serialize behind. Dropping the root's
+`import Dregg2.Crypto.VerifyCoreArgAssembly` in favour of `Fips204ChallengeHash` moved that spine out
+of the default build — and would have achieved NOTHING while this line stood, because this file
+pulled `EqSpecW` back in by itself. Measured with `check-lean-orphans.sh`'s own reachability
+algorithm: dropping only the root's ArgAssembly line takes reachable Dregg2 modules 1673 → 1661 while
+`EqSpecW` STAYS REACHABLE THROUGH HERE. Both cuts, or neither.
+
+Nothing is lost by the removal: this module declares NOTHING (it is imports only), its docstring above
+never named `EqSpecW` among what it verifies, and the whole five-module apex spine — `EqSpecW`,
+`UseHint`, `HashFrame`, `ArgRows`, `ArgAssembly` — is built on EVERY PUSH by ci.yml's
+`metatheory-pq-apex` job (target `Dregg2.Crypto.VerifyCoreArgAssembly`, routed through
+scripts/axiom-hygiene-guard.sh, a 34-module closure rather than the corpus). If you want the whole
+chain including the spine as ONE local target, build that module, not this one.
 -/
 import Dregg2.Crypto.VerifyCoreEqSpec
-import Dregg2.Crypto.VerifyCoreEqSpecW
 import Dregg2.Crypto.CodecRoundTrip
 import Dregg2.Crypto.MlDsaHintCodec
 import Dregg2.Crypto.MlDsaSigCodecClosed
