@@ -55,6 +55,54 @@ fn encrypt_to_collective(
         .expect("collective encrypt")
 }
 
+fn weight(params: &BfvParams, w: u64) -> Plaintext {
+    Plaintext::try_encode(&[w], Encoding::simd(), params.arc()).expect("weight encode")
+}
+
+/// THE CONFIDENTIAL PREDICTION MARKET, RUNNING: the market quotes PUBLIC ODDS over PRIVATE positions, and no
+/// single party can compute them. The marginal price (odds) of outcome 1 is `∂c/∂q₁ = 2A·q₁ + B·q₂` — LINEAR,
+/// so scalar-mul + add under the collective key (NO relin needed). Positions stay encrypted; only the odds are
+/// threshold-revealed by the full quorum (n−1 refused). Private positions, public odds, house-blind committee:
+/// the defining shape of a confidential prediction market, at Tier-0.
+#[test]
+fn dark_oracle_pit_reveals_odds_not_positions() {
+    const N: usize = 3;
+    let params = BfvParams::fold_set();
+    let (keygen, collective, parties) = collective_keygen(N, &params);
+    // odds are linear -> no relin ceremony needed; just the collective key + threshold decrypt.
+    let _ = keygen;
+    let (q1, q2) = (4u64, 6u64);
+    let (a, b) = (2u64, 3u64);
+    let cq1 = encrypt_to_collective(&collective, &params, q1);
+    let cq2 = encrypt_to_collective(&collective, &params, q2);
+    // p₁ = 2A·q₁ + B·q₂ — the tradeable odds, computed under the collective key (scalar-mul + add).
+    let price1 = &(&cq1 * &weight(&params, 2 * a)) + &(&cq2 * &weight(&params, b));
+    let price1_lean = LeanCiphertext::from_fhe_bytes(
+        &price1.to_bytes(),
+        params.moduli(),
+        params.degree(),
+        2 * a * q1 + b * q2,
+    )
+    .expect("odds cross the Lean boundary");
+    let shares = parties
+        .iter()
+        .map(|pty| {
+            pty.partial_decrypt(&price1_lean, MIN_SMUDGE_BITS)
+                .expect("odds share")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        combine(&shares[..N - 1], &params).is_err(),
+        "an n−1 coalition opened the odds — no-single-viewer broke"
+    );
+    let opened = combine(&shares, &params).expect("full-quorum odds");
+    assert_eq!(
+        opened[0],
+        2 * a * q1 + b * q2,
+        "dark odds (marginal price) wrong — positions never revealed, only the quorum-opened odds"
+    );
+}
+
 /// THE VISION CORE: a confidential quadratic market prices hidden positions under an n-of-n collective key,
 /// and the price is revealed ONLY by the full quorum — an `n−1` coalition is refused. The house sees no
 /// position and no single party can open the price; only the whole committee together reveals it.
