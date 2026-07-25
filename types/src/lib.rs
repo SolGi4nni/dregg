@@ -636,6 +636,16 @@ impl AttestedRoot {
             // invalid (empty/truncated) QCs here.
             return qc.0.len() >= 48;
         }
+        // A trust anchor requiring ZERO signatures is not a trust anchor: with
+        // `threshold == 0`, `quorum_signatures.len() < 0` is never true and the final
+        // `valid_count >= 0` is always true, so an EMPTY quorum over a prover-CHOSEN
+        // `merkle_root` would "verify" — bypassing the committee entirely (a revocation /
+        // admission / attested-root forgery). No legitimate attested root sets a zero
+        // threshold (the committee-signed path always requires >= 1 signer; the
+        // threshold_qc path is handled above + verified by the higher BLS/FROST layer).
+        if self.threshold == 0 {
+            return false;
+        }
         if self.quorum_signatures.len() < self.threshold {
             return false;
         }
@@ -1113,6 +1123,40 @@ mod tests {
             ..root
         };
         assert!(!truncated_qc.has_quorum()); // Truncated QC is rejected
+    }
+
+    #[test]
+    fn zero_threshold_empty_quorum_attested_root_is_refused() {
+        // CLASS-1 sibling (the committee-gate residual): a forger sets threshold:0 +
+        // an EMPTY quorum + a CHOSEN merkle_root + no threshold_qc. Before the guard,
+        // is_valid returned true (zero sigs vacuously "meet" a zero threshold), so the
+        // committee was never consulted — a revocation/admission/attested-root forgery.
+        // It must be REFUSED against ANY committee. (A genuine 2-of-3 root still verifies
+        // per attested_root_is_valid_verifies_signatures.)
+        let (_sk1, pk1) = generate_keypair();
+        let forged = AttestedRoot {
+            merkle_root: [0x77; 32], // attacker-chosen (e.g. an empty revocation tree)
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 1,
+            timestamp: 1700000000,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures: vec![], // NO signatures
+            threshold_qc: None,
+            threshold: 0, // requires ZERO signers
+            federation_id: FederationId::PLACEHOLDER,
+            receipt_stream_root: None,
+            hybrid_quorum: Vec::new(),
+        };
+        assert!(
+            !forged.is_valid(&[pk1]),
+            "zero-threshold root must be refused"
+        );
+        assert!(
+            !forged.is_valid(&[]),
+            "zero-threshold root must be refused (empty committee)"
+        );
     }
 
     #[test]
