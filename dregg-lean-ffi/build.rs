@@ -4,12 +4,22 @@
 //   * libdregg_lean.a — a single static archive of the native objects emitted by the
 //     Lean compiler for `Dregg2.Exec.FFI` and its ENTIRE transitive dependency
 //     closure (Dregg2 modules + mathlib + batteries + aesop + Qq + … — ~8200 .o).
-//     The git-tracked SEED archive lives next to this build.rs; it was produced by
-//     compiling each module's `.c` (lake's `:c` facet) with `leanc -c` and archiving
-//     with `llvm-ar` (see `scripts/seed-dregg2-closure.sh`).
+//     The SEED archive lives next to this build.rs at `dregg-lean-ffi/libdregg_lean.a`;
+//     it was produced by compiling each module's `.c` (lake's `:c` facet) with
+//     `leanc -c` and archiving with `llvm-ar` (see `scripts/seed-dregg2-closure.sh`).
+//
+//     ⚠ THE SEED IS **NOT** IN THE REPOSITORY. `dregg-lean-ffi/.gitignore:7` ignores
+//     `*.a` and `git log -- dregg-lean-ffi/libdregg_lean.a` is EMPTY: the file has
+//     never been tracked. (This header claimed "git-tracked" until 2026-07-24; several
+//     warning strings below still say "no git-tracked seed" and mean the same thing —
+//     no seed on disk.) A fresh checkout — every GitHub-hosted runner included — has
+//     NO archive, so the `!build_archive.exists()` guard in `main` fires and this
+//     script returns BEFORE emitting a single `cargo:rustc-cfg`. Get one with
+//     `scripts/fetch-lean-seed.sh` (prebuilt, minutes) or `./scripts/bootstrap.sh`
+//     (from source, hours). See `docs/ASSESS-cold-build-silent-export.md`.
 //
 // ── SWARM-SAFE ARCHIVE (the per-OUT_DIR working copy) ──
-// The git-tracked `libdregg_lean.a` is treated as a READ-ONLY SEED. A `cargo build`
+// The seed `libdregg_lean.a` is treated as a READ-ONLY SEED. A `cargo build`
 // NEVER mutates it. Instead, each build copies the seed into a per-`OUT_DIR` working
 // archive (`$OUT_DIR/libdregg_lean.a`) and does its splice → closure-completion →
 // reachability-GC against THAT copy, then links against it. Because `OUT_DIR` is
@@ -31,6 +41,125 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod build_parallel;
+
+// ── THE REQUIRED-EXPORT MANIFEST ────────────────────────────────────────────────────────────
+// The symbols whose ABSENCE silently swaps a Lean-PROVEN decision for an unverified Rust twin (or
+// an unaudited crate). They are all SPLICE-ONLY: the seed archive exports NONE of them (`nm` over
+// the on-disk seed: 126 `dregg_*` exports, of which only `dregg_captp_validate_handoff`,
+// `dregg_coord_2pc_decide` and `dregg_exec_full_forest_auth_direct` are on this list's radar), so
+// "the archive links" is NOT evidence that any of them is there.
+//
+// The manifest is the ARTIFACT-PROBED gate: it re-reads the archive we are actually about to link
+// instead of trusting control flow, which catches every degrade path at once (including ones added
+// later) and cannot be bypassed by a new early `return` upstream. It is used TWICE:
+//
+//   * BEFORE the splice — `archive_dregg2_complete` makes a missing export force `needs_splice`,
+//     so a warm `.o` cache can never leave a freshly re-seeded archive un-spliced (see that fn).
+//   * AFTER the splice — the `DREGG_REQUIRE_PQ_CORES` / `DREGG_REQUIRE_VERIFIED_EXPORTS` gates
+//     below turn a missing export into a hard build FAILURE when armed.
+//
+// DELIBERATELY NOT ON THE LIST (they are the legitimately-optional exports, and a manifest that
+// cannot distinguish "optional" from "absent" is a manifest someone turns off):
+//   * `dregg_exec_handler_turn`   — has its OWN require_lean_native panic at the probe site.
+//   * `dregg_exec_full_forest_auth_direct` — PERF only; absent ⇒ the JSON marshalling path, same
+//     verified decision. (It is in the seed anyway.)
+
+/// The verified post-quantum CORES. Absent ⇒ `dregg-pq` answers with an UNAUDITED crate.
+/// Gate: `DREGG_REQUIRE_PQ_CORES` (opt-out `=0`).
+const REQUIRED_PQ_CORE_EXPORTS: &[(&str, &str)] = &[
+    (
+        "dregg_fips204_verify_real",
+        "ML-DSA-65 verify would be answered by the UNAUDITED `fips204` 0.4 crate",
+    ),
+    (
+        "dregg_fips204_sign_real",
+        "ML-DSA-65 sign would be answered by the UNAUDITED `fips204` 0.4 crate",
+    ),
+    (
+        "dregg_mlkem_encaps_real",
+        "ML-KEM-768 encaps would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
+    ),
+    (
+        "dregg_mlkem_decaps_real",
+        "ML-KEM-768 decaps would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
+    ),
+    (
+        "dregg_mlkem_keygen_real",
+        "ML-KEM-768 keygen would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
+    ),
+    (
+        "dregg_mldsa_keygen_real",
+        "ML-DSA-65 IDENTITY keygen would be answered by the UNAUDITED `fips204` 0.4 crate",
+    ),
+];
+
+/// The verified DECISION exports — every one gates a `#[cfg(dregg_*_present)]` bridge whose absent
+/// arm reverts a proven verdict to a Rust twin, a fail-closed refusal, or (worse) a test module
+/// that simply ceases to exist. Gate: `DREGG_REQUIRE_VERIFIED_EXPORTS` (opt-out `=0`).
+const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
+    (
+        "dregg_grain_r3_verify",
+        "the R3 whole-history verdict loses its ONLY anti-forgery teeth (the 8-lane width \
+         ~2^31-grind falsifier and the anti-self-anchor tooth compile out entirely)",
+    ),
+    (
+        "dregg_cross_cell_conserves",
+        "the per-asset Σδ=0 conservation ORACLE is uninstallable — hidden mint/burn detection \
+         reverts to the hand-written Rust `BlockConservation` twin",
+    ),
+    (
+        "dregg_constraint_admits",
+        "deployed-constraint admission stays on the Rust guest-path evaluator",
+    ),
+    (
+        "dregg_holding_grant_weight",
+        "the non-custodial proof-of-holdings → governance-weight verdict is unverifiable",
+    ),
+    (
+        "dregg_interchain_reached_consensus",
+        "the bridge-trust verdict is unverifiable (both polarities go untested)",
+    ),
+    (
+        "dregg_blocklace_finalize",
+        "the finality + τ-order gate compiles out and the node runs the un-gated path",
+    ),
+    (
+        "dregg_storage_content_root",
+        "the verified content-root is 100% invisible (this flag has NO `cfg(not(...))` arm \
+         anywhere, and the `#[used]` Poseidon2 linker anchor disappears with it)",
+    ),
+    (
+        "dregg_strand_admit",
+        "federation admission falls back to the seeds-only Rust gate",
+    ),
+    (
+        "dregg_captp_validate_handoff",
+        "SIX verified gates go at once (CapTP handoff/GC-drop/pipeline + coord 2PC/causal/\
+         shared-budget); the 2PC decider silently reverts on the live coordinator path",
+    ),
+    (
+        "dregg_decide_refines",
+        "the deploy refinement gate falls back to its in-process σ-free mirror",
+    ),
+    (
+        "dregg_fips204_verify",
+        "the verified ML-DSA verify core is unexercised (the tampered-c̃ / out-of-range-z \
+         assertions compile out)",
+    ),
+    (
+        "dregg_fips204_sign",
+        "the verified ML-DSA sign core is unexercised (the sign→verify round-trip compiles out)",
+    ),
+    (
+        "dregg_fips203_encaps",
+        "the verified ML-KEM encaps core is unexercised (the KEM round-trip compiles out)",
+    ),
+    (
+        "dregg_fips203_decaps",
+        "the verified ML-KEM decaps core is unexercised (the implicit-reject divergence \
+         assertion compiles out)",
+    ),
+];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
 /// override is intentionally shared: operators should not have to discover
@@ -220,9 +349,9 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Seed the per-OUT_DIR WORKING archive (`build`) from the git-tracked SEED (`seed`), so the
-/// splice/closure/GC steps below mutate the working copy and NEVER the shared seed (the swarm-safe
-/// split — see the top-of-file note). The seed is treated as read-only input.
+/// Seed the per-OUT_DIR WORKING archive (`build`) from the SEED (`seed`), so the splice/closure/GC
+/// steps below mutate the working copy and NEVER the shared seed (the swarm-safe split — see the
+/// top-of-file note). The seed is treated as read-only input.
 ///
 /// We (re)copy when the working archive is missing OR older than the seed (an out-of-band re-seed
 /// via `scripts/seed-dregg2-closure.sh` must take effect). When the working copy is at least as new
@@ -231,17 +360,22 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// renamed into place so a working archive is never observed half-written. If the seed is absent we
 /// do nothing: a prior working copy (if any) is reused; otherwise the `!build_archive.exists()`
 /// guard in `main` degrades to marshal-only.
-fn seed_build_archive(seed: &Path, build: &Path) {
+///
+/// ⚑ RETURNS `true` iff it actually re-copied the seed — i.e. iff it just WIPED whatever Dregg2
+/// slice the working archive had spliced in. The caller MUST force a re-splice on that, because a
+/// warm `$OUT_DIR/dregg2_closure_objs/` cache otherwise leaves `recompiled == false` and the
+/// un-spliced seed gets linked (see `archive_dregg2_complete`).
+fn seed_build_archive(seed: &Path, build: &Path) -> bool {
     if !seed.exists() {
-        return;
+        return false;
     }
     // Decide whether to (re)seed. Copy iff the working archive is missing or strictly older than
     // the seed (mtime). `newer_than(seed, build)` ⇒ seed is newer (or build absent) ⇒ copy.
     if build.exists() && !newer_than(seed, build) {
-        return;
+        return false;
     }
     let Some(parent) = build.parent() else {
-        return;
+        return false;
     };
     // Stage to a unique-ish temp in the SAME dir (so the final rename is same-filesystem & atomic),
     // keyed on the build OUT_DIR's own path hash via the process id — one build script runs per
@@ -256,7 +390,7 @@ fn seed_build_archive(seed: &Path, build: &Path) {
                  the build will use the existing working archive if present."
             );
             let _ = std::fs::remove_file(&tmp);
-            return;
+            return false;
         }
     }
     if let Err(e) = std::fs::rename(&tmp, build) {
@@ -266,22 +400,26 @@ fn seed_build_archive(seed: &Path, build: &Path) {
                 "cargo:warning=dregg-lean-ffi: could not install the working archive in OUT_DIR \
                  ({e}) — using the existing working archive if present."
             );
+            let _ = std::fs::remove_file(&tmp);
+            return false;
         }
         let _ = std::fs::remove_file(&tmp);
     }
+    true
 }
 
 /// Produce / refresh `libdregg_lean.a` IN OUT_DIR by (1) `lake build`-ing the FFI module's
 /// `:c` facet, (2) `leanc -c`-compiling each freshly-emitted `Dregg2/**/*.c` whose `.c` is newer
 /// than its cached `.o`, and (3) splicing ONLY those `Dregg2_*.o` back into the (seeded) working
 /// archive — preserving the ~5600 expensive mathlib/batteries/aesop dependency objects untouched.
-/// `archive` here is the PER-OUT_DIR working copy, never the git-tracked seed.
+/// `archive` here is the PER-OUT_DIR working copy, never the seed.
 ///
 /// Incremental + cached: `lake` is itself incremental, the `leanc` step is guarded on
 /// `.c`-newer-than-`.o`, and the (relatively expensive) `ar` extract/repack only runs when at least
-/// one Dregg2 object actually changed or the archive lacks Dregg2 members. `rerun-if-changed` is
-/// emitted by the caller for the source tree + toolchain marker, so a genuine no-op cargo build does
-/// not even re-enter this function.
+/// one Dregg2 object actually changed, the caller just RE-SEEDED the working archive (`reseeded`,
+/// which wipes the previous splice), or the archive's Dregg2 slice is incomplete. `rerun-if-changed`
+/// is emitted by the caller for the source tree + toolchain marker, so a genuine no-op cargo build
+/// does not even re-enter this function.
 fn build_dregg2_archive(
     meta: &Path,
     sysroot: &Path,
@@ -289,6 +427,7 @@ fn build_dregg2_archive(
     out_dir: &Path,
     seed: &Path,
     require_current_source: bool,
+    reseeded: bool,
 ) {
     // (1) Refresh the Lean `:c` facets. `lake build` is incremental; building the FFI module pulls
     // in (and emits `:c` for) its whole Dregg2 transitive closure.
@@ -448,7 +587,7 @@ fn build_dregg2_archive(
             );
             // Force the working archive back to the seed (overwrite any prior incoherent splice).
             let _ = std::fs::remove_file(archive);
-            seed_build_archive(seed, archive);
+            let _ = seed_build_archive(seed, archive);
             return;
         }
         Err(e) => {
@@ -586,9 +725,27 @@ fn build_dregg2_archive(
         }
     }
 
-    // (3) Splice. Only pay the extract/repack cost when something actually changed, or when the
-    // archive is missing Dregg2 members entirely (e.g. a freshly-seeded dependency-only base).
-    let needs_splice = recompiled || !archive_has_dregg2(archive);
+    // (3) Splice. Only pay the extract/repack cost when something actually changed, when the caller
+    // just RE-SEEDED (which wipes the previous splice), or when the archive's Dregg2 slice is
+    // INCOMPLETE — i.e. it does not export every symbol in the required-export manifest.
+    //
+    // ⚑ Both of the last two conditions are the 2026-07-24 fix for the warm-cache silent-degrade
+    // (`docs/ASSESS-cold-build-silent-export.md` §3.2). This used to read
+    // `recompiled || !archive_has_dregg2(archive)`, where `archive_has_dregg2` asked only whether
+    // ANY `Dregg2_*.o` member existed — which is TRUE of the un-spliced seed. A re-seed + a warm
+    // `.o` cache therefore produced `needs_splice == false` and linked the seed with every
+    // security-critical splice-only export ABSENT, while the objects defining them sat unused in
+    // `dregg2_closure_objs/`. See `archive_dregg2_complete` for the full note.
+    let slice_complete = archive_dregg2_complete(archive);
+    let needs_splice = recompiled || reseeded || !slice_complete;
+    if !recompiled && (reseeded || !slice_complete) {
+        println!(
+            "cargo:warning=dregg-lean-ffi: forcing a re-splice with a WARM object cache \
+             (reseeded={reseeded}, dregg2-slice-complete={slice_complete}) — a re-seeded or \
+             export-incomplete archive must not be linked just because it carries some Dregg2 \
+             members."
+        );
+    }
 
     if !archive.exists() {
         println!(
@@ -1378,15 +1535,91 @@ fn add_objects_to_archive(
     Ok(())
 }
 
-/// Whether the archive already contains any `Dregg2_*.o` member (via `ar t`). Used to force a
-/// splice when the base archive is dependency-closure-only.
-fn archive_has_dregg2(archive: &Path) -> bool {
+/// Whether the archive contains any `Dregg2_*.o` member (via `ar t`). NOT a splice-completeness
+/// predicate on its own — the SEED already has Dregg2 members. See `archive_dregg2_complete`.
+fn archive_has_dregg2_member(archive: &Path) -> bool {
     let Ok(out) = Command::new(ar_tool()).arg("t").arg(archive).output() else {
         return false;
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .any(|l| l.trim().starts_with("Dregg2_") && l.trim().ends_with(".o"))
+}
+
+/// Whether the archive's Dregg2 slice is COMPLETE: it has `Dregg2_*.o` members AND it exports
+/// every symbol in the required-export manifest (`REQUIRED_PQ_CORE_EXPORTS` +
+/// `REQUIRED_DECISION_EXPORTS`).
+///
+/// ⚑ WHY THIS IS NOT `archive_has_dregg2` ANY MORE (the warm-cache silent-degrade generator, fixed
+/// 2026-07-24 — `docs/ASSESS-cold-build-silent-export.md` §3.2). The old predicate asked only "does
+/// ANY `Dregg2_*.o` member exist", and it drove
+///
+/// ```text
+/// let needs_splice = recompiled || !archive_has_dregg2(archive);
+/// ```
+///
+/// The SEED archive already carries Dregg2 members. So after `seed_build_archive` re-copied the
+/// seed over the working archive — WIPING the previously spliced Dregg2 slice — the old predicate
+/// answered `true`, and if the persistent `.o` cache was warm (`recompiled == false`) then
+/// `needs_splice` was **false**: the build LINKED THE UN-SPLICED SEED while the very objects that
+/// define the missing exports sat in `$OUT_DIR/dregg2_closure_objs/`. Every splice-only export was
+/// then absent, every `#[cfg(dregg_*_present)]` module compiled out, and the build was green.
+/// (Reproduced from disk: three OUT_DIRs sitting at exactly seed level, one of them at the SAME
+/// cargo feature hash as a sibling with the full export set.)
+///
+/// Asking for the EXPORTS rather than for member names is deliberate and is what keeps this cheap
+/// and stable: the manifest symbols are `dregg_*` FFI entry points, i.e. exactly the roots the
+/// step-5 reachability GC never prunes. A member-set completeness check would go false after every
+/// GC (the GC legitimately drops unreachable `Dregg2_*.o`) and would re-splice on every rerun.
+fn archive_dregg2_complete(archive: &Path) -> bool {
+    archive_has_dregg2_member(archive) && missing_required_exports(archive).is_empty()
+}
+
+/// Every `dregg_*` symbol the archive DEFINES, from a single `nm` pass (the leading Mach-O
+/// underscore is stripped, so the set is platform-uniform).
+fn archive_dregg_exports(archive: &Path) -> std::collections::HashSet<String> {
+    let mut found = std::collections::HashSet::new();
+    let Ok(out) = Command::new(nm_tool()).arg(archive).output() else {
+        return found;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        // A DEFINED symbol shows in the text section as `<addr> T <name>` — the exact shape
+        // `archive_exports` matches one symbol at a time. Mach-O (macOS) mangles the C name with a
+        // leading underscore, ELF (Linux) does not; strip it so the set is platform-uniform.
+        let trimmed = line.trim_end();
+        let Some(idx) = trimmed.rfind(" T ") else {
+            continue;
+        };
+        let sym = trimmed[idx + 3..].trim().trim_start_matches('_');
+        if sym.starts_with("dregg_") {
+            found.insert(sym.to_string());
+        }
+    }
+    found
+}
+
+/// The manifest entries the archive does NOT export, in ONE `nm` pass over both tables.
+fn missing_required_exports(archive: &Path) -> Vec<(&'static str, &'static str)> {
+    let defined = archive_dregg_exports(archive);
+    REQUIRED_PQ_CORE_EXPORTS
+        .iter()
+        .chain(REQUIRED_DECISION_EXPORTS.iter())
+        .filter(|(sym, _)| !defined.contains(*sym))
+        .copied()
+        .collect()
+}
+
+/// The subset of `required` the archive does not export, in ONE `nm` pass.
+fn missing_from(
+    archive: &Path,
+    required: &[(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    let defined = archive_dregg_exports(archive);
+    required
+        .iter()
+        .filter(|(sym, _)| !defined.contains(*sym))
+        .copied()
+        .collect()
 }
 
 /// The set of archive MEMBER names (e.g. `Await.o`, `Dregg2_Spec_Await.o`) that define a project
@@ -1617,8 +1850,22 @@ fn main() {
     //     EXPLICIT tier forces them). The opt-out for a deliberately-marshal-only release build
     //     (dev / benchmarks / a non-node crate) is `DREGG_REQUIRE_LEAN=0` (or `false`/`off`).
     //
-    // Debug/dev builds keep the historical warn-and-degrade behavior unless `DREGG_REQUIRE_LEAN=1`.
+    //   * TEST-LANE OPT-IN — `DREGG_TEST_REQUIRE_LEAN=1`: the SAME variable `lib.rs`'s
+    //     `demand_lean` already reads to turn a runtime self-skip into a panic, now also armed at
+    //     BUILD time. Without this, a `cargo test` lane was structurally unable to arm anything:
+    //     `cargo test` is a DEBUG build, `require_lean_native` needed `--release`, so an absent /
+    //     un-spliced archive emitted a `cargo:warning=` (which cargo HIDES for dependency crates),
+    //     returned before every `cargo:rustc-cfg=` below, and each `#[cfg(dregg_*_present)]` test
+    //     module simply CEASED TO EXIST. `cargo test -p dregg-lean-ffi --lib` then reported
+    //     `11 passed` — not `0` — while all 9 verified-crypto/verified-decision assertions had
+    //     evaporated. An opt-in rather than a debug default, because a legitimate local dev build
+    //     with no Lean toolchain must keep working; the CI test lane opts in
+    //     (`.github/workflows/ci.yml`, the `test` job). `docs/ASSESS-cold-build-silent-export.md`.
+    //
+    // Debug/dev builds keep the historical warn-and-degrade behavior unless `DREGG_REQUIRE_LEAN=1`
+    // or `DREGG_TEST_REQUIRE_LEAN=1`.
     println!("cargo:rerun-if-env-changed=DREGG_REQUIRE_LEAN");
+    println!("cargo:rerun-if-env-changed=DREGG_TEST_REQUIRE_LEAN");
     println!("cargo:rerun-if-env-changed=PROFILE");
     let require_lean_env = std::env::var("DREGG_REQUIRE_LEAN").ok();
     let require_lean = matches!(
@@ -1629,22 +1876,33 @@ fn main() {
         require_lean_env.as_deref(),
         Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF")
     );
+    // The test-lane opt-in. Same grammar as DREGG_REQUIRE_LEAN and as `lib.rs`'s
+    // `armed_from_env_value`, so "1"/"true"/"on" arm and anything else (including "0") does not.
+    let require_lean_test = matches!(
+        std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    );
     // Cargo sets PROFILE to "release" for `--release` (and any release-profile) builds.
     let is_release = std::env::var("PROFILE").as_deref() == Ok("release");
-    // Native-target release builds fail loud on a marshal-only degrade unless explicitly opted out.
-    let require_lean_native = require_lean || (is_release && !require_lean_off);
+    // Native-target release builds — and any lane that opted the test gate in — fail loud on a
+    // marshal-only degrade unless explicitly opted out with DREGG_REQUIRE_LEAN=0.
+    let require_lean_native =
+        require_lean || ((is_release || require_lean_test) && !require_lean_off);
     let degrade_guard = |forced: bool, reason: &str| {
         if forced {
             panic!(
-                "dregg-lean-ffi: the Lean-required gate is ACTIVE (DREGG_REQUIRE_LEAN=1, or a \
-                 --release/distribution build on a native archive-linkable target) but this build \
-                 would degrade to MARSHAL-ONLY (lean_available()==false): {reason}. A marshal-only \
-                 binary runs the UN-verified Rust executor and must NEVER ship as a verified node. \
-                 Fix the cause (usually: install elan+lake and the mathlib pin, and (re)seed a \
-                 HEAD-matching dregg-lean-ffi/libdregg_lean.a via ./scripts/bootstrap.sh — the seed \
-                 must match the current Lean HEAD or the closure link fails; see \
-                 docs/BUILD-LEAN-LINKED-NODE.md), or set DREGG_REQUIRE_LEAN=0 to allow a \
-                 deliberately-marshal-only (degraded) build."
+                "dregg-lean-ffi: the Lean-required gate is ACTIVE (DREGG_REQUIRE_LEAN=1, \
+                 DREGG_TEST_REQUIRE_LEAN=1, or a --release/distribution build on a native \
+                 archive-linkable target) but this build would degrade to MARSHAL-ONLY \
+                 (lean_available()==false): {reason}. A marshal-only binary runs the UN-verified \
+                 Rust executor and must NEVER ship as a verified node; a marshal-only TEST binary \
+                 silently compiles out every #[cfg(dregg_*_present)] module and reports the \
+                 remaining tests as green. Fix the cause (usually: install elan+lake and the \
+                 mathlib pin, and (re)seed a HEAD-matching dregg-lean-ffi/libdregg_lean.a via \
+                 ./scripts/bootstrap.sh, or fetch a prebuilt one with \
+                 ./scripts/fetch-lean-seed.sh — the seed must match the current Lean HEAD or the \
+                 closure link fails; see docs/BUILD-LEAN-LINKED-NODE.md), or set \
+                 DREGG_REQUIRE_LEAN=0 to allow a deliberately-marshal-only (degraded) build."
             );
         }
     };
@@ -1723,14 +1981,17 @@ fn main() {
     let sysroot_opt = lean_sysroot();
     let meta_opt = metatheory_dir();
 
-    // ── SEED the per-OUT_DIR working archive from the git-tracked seed (read-only input). This
+    // ── SEED the per-OUT_DIR working archive from the seed (read-only input, NOT in git). This
     // copies the seed into `$OUT_DIR/libdregg_lean.a` once (and re-copies whenever the seed is
     // newer than the working copy, e.g. after an out-of-band re-seed). All splice / closure /
     // GC mutation below targets `build_archive`, never the seed — so concurrent multi-feature
     // lanes never tear the shared file. `cargo:rerun-if-changed` on the seed re-runs build.rs
     // when the seed is re-produced out-of-band, picking up the fresh base.
+    //
+    // `reseeded` is load-bearing: a re-copy WIPES the working archive's spliced Dregg2 slice, so it
+    // must force the re-splice below even when the persistent `.o` cache is warm.
     println!("cargo:rerun-if-changed={}", seed_archive.display());
-    seed_build_archive(&seed_archive, &build_archive);
+    let reseeded = seed_build_archive(&seed_archive, &build_archive);
 
     // ── PRODUCE / REFRESH the archive from the Lean source (the linchpin). We watch the whole
     // `metatheory/Dregg2` source tree + the toolchain marker; when any of those change, build.rs
@@ -1758,6 +2019,7 @@ fn main() {
                 &out_dir,
                 &seed_archive,
                 require_lean_native,
+                reseeded,
             ),
             None if require_lean_native => panic!(
                 "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate cannot resolve the Lean \
@@ -1834,6 +2096,26 @@ fn main() {
         runtime_dead_init_trim(&build_archive, &trim_archive, &out_dir)
     } else {
         None
+    };
+
+    // Report a probe MISS uniformly, reading the consequence straight out of the required-export
+    // manifest so there is ONE source of truth. Fourteen of the probes below used to be a bare
+    // `if present { println!("cargo:rustc-cfg=…") }` with NO `else` at all — an absent export left
+    // literally no trace anywhere in the build, not even the (already-hidden) warning stream. The
+    // HARD failure is the manifest gate further down; this is the visible-in-`-vv` half.
+    let absent_export_warn = |symbol: &str| {
+        let consequence = REQUIRED_PQ_CORE_EXPORTS
+            .iter()
+            .chain(REQUIRED_DECISION_EXPORTS.iter())
+            .find(|(s, _)| *s == symbol)
+            .map(|(_, c)| *c)
+            .unwrap_or("the Rust extern + C shim bridge it gates is compiled out");
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `{symbol}` — {consequence}. \
+             Re-splice a current archive (./scripts/bootstrap.sh) or fetch a HEAD-matching seed \
+             (./scripts/fetch-lean-seed.sh). To make this a BUILD FAILURE instead of a warning, \
+             build --release or set DREGG_REQUIRE_LEAN=1 / DREGG_TEST_REQUIRE_LEAN=1."
+        );
     };
 
     // The handler-cutover export is the credential-preserving handler-registry shadow. Older
@@ -1998,6 +2280,8 @@ fn main() {
         archive_exports(&build_archive, "dregg_storage_content_root");
     if storage_content_root_present {
         println!("cargo:rustc-cfg=dregg_storage_content_root_present");
+    } else {
+        absent_export_warn("dregg_storage_content_root");
     }
 
     // FIPS-204-VERIFY extraction: probe the spliced archive for the `@[export] dregg_fips204_verify`
@@ -2006,6 +2290,8 @@ fn main() {
     let fips204_verify_present = archive_exports(&build_archive, "dregg_fips204_verify");
     if fips204_verify_present {
         println!("cargo:rustc-cfg=dregg_fips204_verify_present");
+    } else {
+        absent_export_warn("dregg_fips204_verify");
     }
 
     // FIPS-204-VERIFY-REAL extraction (BRICK 8): probe the spliced archive for the
@@ -2018,6 +2304,8 @@ fn main() {
     let fips204_verify_real_present = archive_exports(&build_archive, "dregg_fips204_verify_real");
     if fips204_verify_real_present {
         println!("cargo:rustc-cfg=dregg_fips204_verify_real_present");
+    } else {
+        absent_export_warn("dregg_fips204_verify_real");
     }
 
     // FIPS-204-SIGN extraction: probe the spliced archive for the `@[export] dregg_fips204_sign`
@@ -2029,6 +2317,8 @@ fn main() {
     let fips204_sign_present = archive_exports(&build_archive, "dregg_fips204_sign");
     if fips204_sign_present {
         println!("cargo:rustc-cfg=dregg_fips204_sign_present");
+    } else {
+        absent_export_warn("dregg_fips204_sign");
     }
 
     // FIPS-204-SIGN-REAL extraction (the brick-8 SIGN analog): probe the spliced archive for the
@@ -2040,6 +2330,8 @@ fn main() {
     let fips204_sign_real_present = archive_exports(&build_archive, "dregg_fips204_sign_real");
     if fips204_sign_real_present {
         println!("cargo:rustc-cfg=dregg_fips204_sign_real_present");
+    } else {
+        absent_export_warn("dregg_fips204_sign_real");
     }
 
     // FIPS-203-KEM extraction: probe the spliced archive for the `@[export] dregg_fips203_encaps` /
@@ -2049,10 +2341,14 @@ fn main() {
     let fips203_encaps_present = archive_exports(&build_archive, "dregg_fips203_encaps");
     if fips203_encaps_present {
         println!("cargo:rustc-cfg=dregg_fips203_encaps_present");
+    } else {
+        absent_export_warn("dregg_fips203_encaps");
     }
     let fips203_decaps_present = archive_exports(&build_archive, "dregg_fips203_decaps");
     if fips203_decaps_present {
         println!("cargo:rustc-cfg=dregg_fips203_decaps_present");
+    } else {
+        absent_export_warn("dregg_fips203_decaps");
     }
 
     // ML-KEM-768-DECAPS-REAL extraction (BRICK K6): probe the spliced archive for the
@@ -2065,6 +2361,8 @@ fn main() {
     let mlkem_decaps_real_present = archive_exports(&build_archive, "dregg_mlkem_decaps_real");
     if mlkem_decaps_real_present {
         println!("cargo:rustc-cfg=dregg_mlkem_decaps_real_present");
+    } else {
+        absent_export_warn("dregg_mlkem_decaps_real");
     }
 
     // ML-KEM-768-ENCAPS-REAL extraction (BRICK K5 — the ENCAPS mirror of K6): probe the spliced archive for
@@ -2077,6 +2375,8 @@ fn main() {
     let mlkem_encaps_real_present = archive_exports(&build_archive, "dregg_mlkem_encaps_real");
     if mlkem_encaps_real_present {
         println!("cargo:rustc-cfg=dregg_mlkem_encaps_real_present");
+    } else {
+        absent_export_warn("dregg_mlkem_encaps_real");
     }
 
     // ML-KEM-768-KEYGEN-REAL extraction (BRICK K7 — the KEYGEN mirror of K5/K6): probe the spliced archive
@@ -2089,6 +2389,8 @@ fn main() {
     let mlkem_keygen_real_present = archive_exports(&build_archive, "dregg_mlkem_keygen_real");
     if mlkem_keygen_real_present {
         println!("cargo:rustc-cfg=dregg_mlkem_keygen_real_present");
+    } else {
+        absent_export_warn("dregg_mlkem_keygen_real");
     }
 
     // ML-DSA-65-KEYGEN-REAL extraction (the identity-key KEYGEN mirror): probe the spliced archive for the
@@ -2101,6 +2403,8 @@ fn main() {
     let mldsa_keygen_real_present = archive_exports(&build_archive, "dregg_mldsa_keygen_real");
     if mldsa_keygen_real_present {
         println!("cargo:rustc-cfg=dregg_mldsa_keygen_real_present");
+    } else {
+        absent_export_warn("dregg_mldsa_keygen_real");
     }
 
     // ── PQ-CORE EXPORT GATE (DREGG_REQUIRE_PQ_CORES) ────────────────────────────────────────
@@ -2141,72 +2445,45 @@ fn main() {
     );
     let require_pq_cores = require_pq_on || (require_lean_native && !require_pq_off);
     if require_pq_cores {
-        // (export symbol, present?, what dregg-pq silently falls back to without it)
-        let required: [(&str, bool, &str); 6] = [
-            (
-                "dregg_fips204_verify_real",
-                fips204_verify_real_present,
-                "ML-DSA-65 verify would be answered by the UNAUDITED `fips204` 0.4 crate",
-            ),
-            (
-                "dregg_fips204_sign_real",
-                fips204_sign_real_present,
-                "ML-DSA-65 sign would be answered by the UNAUDITED `fips204` 0.4 crate",
-            ),
-            (
-                "dregg_mlkem_encaps_real",
-                mlkem_encaps_real_present,
-                "ML-KEM-768 encaps would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
-            ),
-            (
-                "dregg_mlkem_decaps_real",
-                mlkem_decaps_real_present,
-                "ML-KEM-768 decaps would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
-            ),
-            (
-                "dregg_mlkem_keygen_real",
-                mlkem_keygen_real_present,
-                "ML-KEM-768 keygen would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
-            ),
-            (
-                "dregg_mldsa_keygen_real",
-                mldsa_keygen_real_present,
-                "ML-DSA-65 IDENTITY keygen would be answered by the UNAUDITED `fips204` 0.4 crate",
-            ),
-        ];
-        let missing: Vec<&(&str, bool, &str)> =
-            required.iter().filter(|(_, present, _)| !present).collect();
+        // The manifest moved to the `REQUIRED_PQ_CORE_EXPORTS` const at the top of this file so the
+        // SAME table also drives (a) the pre-splice completeness check in `archive_dregg2_complete`
+        // and (b) the per-probe `absent_export_warn` text. Same 6 symbols, same consequences, one
+        // `nm` pass instead of six.
+        let missing = missing_from(&build_archive, REQUIRED_PQ_CORE_EXPORTS);
         if !missing.is_empty() {
             let detail = missing
                 .iter()
-                .map(|(sym, _, consequence)| format!("  * {sym} — ABSENT: {consequence}"))
+                .map(|(sym, consequence)| format!("  * {sym} — ABSENT: {consequence}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             let archive_path = build_archive.display();
             let n_missing = missing.len();
+            let n_total = REQUIRED_PQ_CORE_EXPORTS.len();
             panic!(
                 "\n\
                  ================================================================================\n\
                  dregg-lean-ffi: REFUSING to link an archive without the verified PQ cores.\n\
                  ================================================================================\n\
                  The PQ-core export gate is ACTIVE (DREGG_REQUIRE_PQ_CORES=1, or a --release /\n\
-                 distribution build on a native archive-linkable target), but the archive this\n\
-                 build would link:\n\
+                 distribution build / DREGG_TEST_REQUIRE_LEAN=1 on a native archive-linkable\n\
+                 target), but the archive this build would link:\n\
                  \n    {archive_path}\n\n\
-                 does NOT export {n_missing} of the 6 Lean-verified post-quantum cores:\n\
+                 does NOT export {n_missing} of the {n_total} Lean-verified post-quantum cores:\n\
                  {detail}\n\
                  \n\
                  A binary linked against this archive would look identical, build green, and\n\
                  answer one or more post-quantum operations with UNAUDITED crate primitives — the exact\n\
                  silent substitution this gate exists to prevent.\n\
                  \n\
-                 CAUSE: the git-tracked seed archive exports NONE of these; they are produced by\n\
-                 THIS build script splicing freshly-compiled Dregg2 objects in. If they are\n\
+                 CAUSE: the seed archive exports NONE of these; they are produced by THIS build\n\
+                 script splicing freshly-compiled Dregg2 objects in. If they are\n\
                  missing, a degrade path above fired and reported itself only as a\n\
                  `cargo:warning=` (which cargo HIDES for dependency crates). Re-run with\n\
                  `cargo build -vv` and read the `dregg-lean-ffi:` warnings — the usual causes are\n\
                  a `lake build` failure in metatheory/ (a module failed to elaborate), a `leanc`\n\
-                 failure, or an archive-splice failure.\n\
+                 failure, an archive-splice failure, or NO ARCHIVE AT ALL (the seed is gitignored\n\
+                 and has never been in the repository — fetch one with\n\
+                 ./scripts/fetch-lean-seed.sh).\n\
                  \n\
                  VERIFY BY HAND:\n\
                  \n    nm -g --defined-only {archive_path} | grep dregg_fips204_verify_real\n\n\
@@ -2225,6 +2502,8 @@ fn main() {
     let grain_r3_verify_present = archive_exports(&build_archive, "dregg_grain_r3_verify");
     if grain_r3_verify_present {
         println!("cargo:rustc-cfg=dregg_grain_r3_verify_present");
+    } else {
+        absent_export_warn("dregg_grain_r3_verify");
     }
 
     // HOLDING grant-weight verdict extraction: probe the spliced archive for the
@@ -2243,6 +2522,8 @@ fn main() {
         archive_exports(&build_archive, "dregg_holding_grant_weight");
     if holding_grant_weight_present {
         println!("cargo:rustc-cfg=dregg_holding_grant_weight_present");
+    } else {
+        absent_export_warn("dregg_holding_grant_weight");
     }
 
     // INTERCHAIN reached-consensus verdict extraction: probe the spliced archive for the
@@ -2258,6 +2539,85 @@ fn main() {
         archive_exports(&build_archive, "dregg_interchain_reached_consensus");
     if interchain_reached_consensus_present {
         println!("cargo:rustc-cfg=dregg_interchain_reached_consensus_present");
+    } else {
+        absent_export_warn("dregg_interchain_reached_consensus");
+    }
+
+    // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
+    // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
+    // "Nothing errors. The build is green. The deployed binary runs crypto nobody audited."
+    // That was true of exactly 6 of the 20 exports that carry a proven verdict. This block is the
+    // other 14 — everything whose absence silently reverts a Lean-PROVEN decision to a Rust twin,
+    // a fail-closed refusal, or (for the `#[cfg(all(test, …))]` modules) to a test that no longer
+    // EXISTS TO RUN. Nine test functions vanish that way, and the crate then reports `11 passed`,
+    // not `0` — a zero gets noticed, eleven green tests look like a healthy crate. The worst
+    // individual loss is `dregg_grain_r3_verify`: it carries the ONLY automated falsifier for the
+    // ~2^31-grind width forgery.
+    //
+    // Deliberately a SEPARATE gate from DREGG_REQUIRE_PQ_CORES rather than a widening of it: the
+    // two opt-outs mean different things ("this build has no verified PQ crypto" vs "this build
+    // has no verified decisions"), and silently changing the scope of an existing `=0` would
+    // disarm more than its user asked for. Same arming tier as the PQ gate.
+    println!("cargo:rerun-if-env-changed=DREGG_REQUIRE_VERIFIED_EXPORTS");
+    let require_dec_env = std::env::var("DREGG_REQUIRE_VERIFIED_EXPORTS").ok();
+    let require_dec_off = matches!(
+        require_dec_env.as_deref(),
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF")
+    );
+    let require_dec_on = matches!(
+        require_dec_env.as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    );
+    if require_dec_on || (require_lean_native && !require_dec_off) {
+        let missing = missing_from(&build_archive, REQUIRED_DECISION_EXPORTS);
+        if !missing.is_empty() {
+            let detail = missing
+                .iter()
+                .map(|(sym, consequence)| format!("  * {sym} — ABSENT: {consequence}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let archive_path = build_archive.display();
+            let n_missing = missing.len();
+            let n_total = REQUIRED_DECISION_EXPORTS.len();
+            let first = missing[0].0;
+            panic!(
+                "\n\
+                 ================================================================================\n\
+                 dregg-lean-ffi: REFUSING to link an archive without the verified DECISION exports.\n\
+                 ================================================================================\n\
+                 The verified-export gate is ACTIVE (DREGG_REQUIRE_VERIFIED_EXPORTS=1, or a\n\
+                 --release / distribution build / DREGG_TEST_REQUIRE_LEAN=1 on a native\n\
+                 archive-linkable target), but the archive this build would link:\n\
+                 \n    {archive_path}\n\n\
+                 does NOT export {n_missing} of the {n_total} Lean-verified decision cores:\n\
+                 {detail}\n\
+                 \n\
+                 WHAT WOULD HAVE HAPPENED INSTEAD: this build script would have emitted no\n\
+                 `cargo:rustc-cfg=dregg_*_present` for each missing symbol, every\n\
+                 `#[cfg(dregg_*_present)]` bridge would compile out, every\n\
+                 `#[cfg(all(test, dregg_*_present))]` test module would CEASE TO EXIST, and\n\
+                 `cargo test` would report the SURVIVING tests as green. No error, no failure,\n\
+                 no zero-test count — just a smaller, quieter, unverified system.\n\
+                 \n\
+                 CAUSE: these are SPLICE-ONLY exports. The seed archive exports none of them (it\n\
+                 is also gitignored and has NEVER been in the repository, so a fresh checkout has\n\
+                 no archive at all). They appear only when this script compiles the current\n\
+                 Dregg2 `:c` facets and splices them in. If they are missing, either there is no\n\
+                 archive, or a degrade path above fired and reported itself only as a\n\
+                 `cargo:warning=` — which cargo HIDES for dependency crates. Re-run with\n\
+                 `cargo build -vv` and read the `dregg-lean-ffi:` warnings.\n\
+                 \n\
+                 VERIFY BY HAND:\n\
+                 \n    nm -g --defined-only {archive_path} | grep {first}\n\n\
+                 GET AN ARCHIVE:\n\
+                 \n    ./scripts/fetch-lean-seed.sh     # prebuilt, minutes\n\
+                 \n    ./scripts/bootstrap.sh           # from source, hours\n\n\
+                 To allow a deliberately decision-less build (a dev build with no Lean toolchain,\n\
+                 a bench, a non-node crate) set DREGG_REQUIRE_VERIFIED_EXPORTS=0 — such a build\n\
+                 MUST NOT ship as verified and MUST NOT be trusted as a test gate.\n\
+                 ================================================================================\n"
+            );
+        }
     }
 
     let mut shim = cc::Build::new();
