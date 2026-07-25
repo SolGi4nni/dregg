@@ -47,7 +47,12 @@ pub struct Mirror<S: ObjectStore> {
 
 impl<S: ObjectStore> Mirror<S> {
     /// Build a mirror over `store`.
-    pub fn new(store: S, cfg: MirrorConfig) -> Mirror<S> {
+    ///
+    /// The configured origin is normalized to a bare host here, once, so every page names
+    /// the party the reader is trusting the same way no matter which form the deployment
+    /// wrote (see [`page::normalize_origin`]).
+    pub fn new(store: S, mut cfg: MirrorConfig) -> Mirror<S> {
+        cfg.page.origin = page::normalize_origin(&cfg.page.origin);
         Mirror { store, cfg }
     }
 
@@ -135,7 +140,7 @@ impl<S: ObjectStore> Mirror<S> {
                      <code>b3_</code>. This one is not hex.",
                     None,
                     None,
-                )
+                );
             }
             Err(AddrError::TooShort { got, need }) => {
                 return self.refuse(
@@ -148,7 +153,7 @@ impl<S: ObjectStore> Mirror<S> {
                     ),
                     None,
                     None,
-                )
+                );
             }
             Err(AddrError::TooLong) => {
                 return self.refuse(
@@ -157,7 +162,7 @@ impl<S: ObjectStore> Mirror<S> {
                     "This is longer than a blake3 digest, so it is not an address.",
                     None,
                     None,
-                )
+                );
             }
         };
 
@@ -234,7 +239,7 @@ impl<S: ObjectStore> Mirror<S> {
                      this mirror can read. It will not render a partial guess at them.",
                     Some(&canonical),
                     Some(&e.to_string()),
-                )
+                );
             }
         };
 
@@ -267,7 +272,7 @@ impl<S: ObjectStore> Mirror<S> {
                      so it renders none of it.",
                     Some(&canonical),
                     Some(&e),
-                )
+                );
             }
         };
 

@@ -43,6 +43,32 @@ impl Default for PageConfig {
     }
 }
 
+/// Reduce whatever an operator wrote to the bare HOST the pages need.
+///
+/// `origin` is not cosmetics: it is printed as the party the reader is trusting
+/// ("dregg.gg checked this object. You did not.") and it is the authority of every mirror
+/// URL the page emits. So a deployment that sets `https://dregg.gg/` — which reads as the
+/// obviously-correct value, and is exactly what `deploy/edge/compose/docker-compose.yml`
+/// wrote — must not produce `✓ verified by https://dregg.gg/ (trust the origin)` and links
+/// of the form `https://https://dregg.gg//poll/…`. Both forms normalize here rather than
+/// making the operator guess which one this crate wanted.
+pub fn normalize_origin(origin: &str) -> String {
+    // Lower-case FIRST (a host is case-insensitive), so the scheme strip below is not
+    // defeated by an operator who wrote `HTTPS://`.
+    let s = origin.trim().to_ascii_lowercase();
+    let s = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(&s);
+    // Keep any `host:port` (a local smoke test is reached at `localhost:8791`), drop a
+    // path/query the operator may have pasted along.
+    s.split(['/', '?', '#'])
+        .next()
+        .unwrap_or(s)
+        .trim()
+        .to_string()
+}
+
 /// Render the resolved-object page: the object's own view-tree, under the tier-`server`
 /// label and the upgrade path.
 pub fn object_page(
@@ -146,11 +172,7 @@ pub fn error_page(
         upgrade_min = minimal_upgrade_block(cfg),
         ladder = ladder_block(),
     );
-    document(
-        &format!("{status_headline} — dregg mirror"),
-        "none",
-        &body,
-    )
+    document(&format!("{status_headline} — dregg mirror"), "none", &body)
 }
 
 /// The index page: what this service is, and the kinds it will render.
@@ -455,6 +477,20 @@ mod tests {
         let s = short_addr(&a);
         assert!(s.starts_with("b3_012345678"));
         assert!(s.ends_with("cdef"));
+    }
+
+    #[test]
+    fn an_origin_written_as_a_url_still_names_a_host() {
+        for written in [
+            "dregg.gg",
+            "https://dregg.gg",
+            "http://dregg.gg/",
+            " HTTPS://Dregg.GG/ ",
+        ] {
+            assert_eq!(normalize_origin(written), "dregg.gg", "{written:?}");
+        }
+        // A host:port survives — a local smoke test is reached at one.
+        assert_eq!(normalize_origin("http://localhost:8791"), "localhost:8791");
     }
 
     #[test]

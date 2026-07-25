@@ -25,11 +25,10 @@
 use std::process::ExitCode;
 
 use dregg_mirror::{
-    fixtures,
+    Mirror, MirrorConfig, PageConfig, fixtures,
     object::Committee,
     store::{DirStore, MemoryStore, ObjectStore},
     uri::Kind,
-    Mirror, MirrorConfig, PageConfig,
 };
 use http_serve::{WebRequest, WebResponse};
 
@@ -81,6 +80,21 @@ fn main() -> ExitCode {
                 .collect(),
         },
     };
+
+    // A NAMED GAP, said out loud rather than silently ignored. `deploy/edge/compose`
+    // sets DREGG_NODE_URL because the intended shape is that the mirror fetches attested
+    // envelopes from the node (the transport hop `extension/src/netlayer.ts` injects).
+    // That transport is NOT built: the store is the filesystem / in-memory one. An
+    // operator who sets this and gets a mirror serving an empty corpus must be told why
+    // here, not left to infer it from a 404.
+    if std::env::var("DREGG_NODE_URL").is_ok() {
+        eprintln!(
+            "dregg-mirror: DREGG_NODE_URL is set but UNUSED — the node transport is not \
+             built. Objects are served from --root (or --seed-demo) only, so this mirror \
+             will 404 every reference until that directory is populated. The seam is \
+             `ObjectStore` (dregg-mirror/src/store.rs)."
+        );
+    }
 
     if cfg.committee.keys.is_empty() {
         eprintln!(
