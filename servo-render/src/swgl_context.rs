@@ -207,17 +207,43 @@ pub struct SwglRenderingContext {
     buffer: Box<std::cell::RefCell<Vec<u8>>>,
 }
 
+/// The maximum SWGL default-framebuffer dimension, in pixels. Any larger
+/// width/height is clamped so `w * h * 4` (the RGBA8 byte count) cannot overflow
+/// `usize` on any target and cannot under-allocate the backing buffer. 32768 px
+/// is far beyond any real display surface, and `32768² × 4 = 4 GiB` is a
+/// finite, non-wrapping upper bound.
+const MAX_DIM: u32 = 1 << 15;
+
+/// The RGBA8 backing-buffer length for a `width × height` surface. Both dims are
+/// clamped to [`MAX_DIM`] and the product is taken in `usize` — never the
+/// wrapping `u32` product that under-allocated the buffer (SWGL then writes
+/// `w*h*4` bytes into a too-small `Vec`, an OOB heap write). Clamped, the
+/// multiply cannot overflow `usize` on a 64-bit target. Callers that store the
+/// dims (`new`/`resize`) clamp them the same way, so `buffer.len()` and the
+/// framebuffer SWGL renders into stay consistent.
+fn framebuffer_len(width: u32, height: u32) -> usize {
+    let w = width.min(MAX_DIM) as usize;
+    let h = height.min(MAX_DIM) as usize;
+    w * h * 4
+}
+
 impl SwglRenderingContext {
     /// Create a SWGL rendering context with a `width × height` RGBA8 default
     /// framebuffer, all owned by the returned value. No GPU, no display, no
     /// surface — `Context::create()` + `init_default_framebuffer` into our own
     /// `Vec<u8>`.
     pub fn new(width: u32, height: u32) -> Self {
+        // Clamp the surface dimensions so `w * h * 4` cannot wrap `u32` (an
+        // under-allocation SWGL would then write PAST — an OOB heap write). Both
+        // the stored dims and the backing buffer use the clamped values, so
+        // `buffer.len()` and the framebuffer SWGL is pointed at stay consistent.
+        let width = width.min(MAX_DIM);
+        let height = height.min(MAX_DIM);
         let swgl = swgl::Context::create();
         let gl: Rc<dyn Gl> = Rc::new(swgl);
         let buffer = Box::new(std::cell::RefCell::new(vec![
             0u8;
-            (width * height * 4) as usize
+            framebuffer_len(width, height)
         ]));
 
         let ctx = SwglRenderingContext {
@@ -300,6 +326,10 @@ impl RenderingContext for SwglRenderingContext {
     }
 
     fn resize(&self, width: u32, height: u32) {
+        // Same clamp as `new`: the stored dims and the buffer must agree, and
+        // `w * h * 4` must be computed in `usize` (never the wrapping `u32`).
+        let width = width.min(MAX_DIM);
+        let height = height.min(MAX_DIM);
         if (width, height) == (self.width.get(), self.height.get()) {
             return;
         }
@@ -307,7 +337,7 @@ impl RenderingContext for SwglRenderingContext {
         self.height.set(height);
         self.buffer
             .borrow_mut()
-            .resize((width * height * 4) as usize, 0);
+            .resize(framebuffer_len(width, height), 0);
         self.bind_default_framebuffer();
     }
 
@@ -325,6 +355,32 @@ impl RenderingContext for SwglRenderingContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The framebuffer size math must not wrap: the OLD `(width * height * 4) as
+    /// usize` computed the product in `u32`, so an oversized surface wrapped to a
+    /// tiny value and UNDER-allocated the buffer SWGL then wrote past. The fix
+    /// clamps both dims to `MAX_DIM` and multiplies in `usize`.
+    #[test]
+    fn framebuffer_len_does_not_overflow_on_oversized_dims() {
+        // A benign surface is exact.
+        assert_eq!(framebuffer_len(100, 100), 100 * 100 * 4);
+
+        // The old u32 product for (65536, 65536, ×4) wraps to 0; the clamped usize
+        // math yields the honest MAX_DIM² × 4 byte count instead.
+        let wrapped_u32 = 65536u32.wrapping_mul(65536).wrapping_mul(4); // == 0 in u32
+        assert_eq!(
+            wrapped_u32, 0,
+            "the OLD math wrapped to a 0-byte under-alloc"
+        );
+
+        let m = MAX_DIM as usize;
+        assert_eq!(framebuffer_len(65536, 65536), m * m * 4);
+        assert_eq!(framebuffer_len(u32::MAX, u32::MAX), m * m * 4);
+        assert!(
+            framebuffer_len(u32::MAX, u32::MAX) > 0,
+            "an oversized surface is CLAMPED to a real byte count, never wrapped to 0"
+        );
+    }
 
     /// **THE LOAD-BEARING TEST: SWGL produces REAL RGBA8 pixels with no GPU.**
     ///

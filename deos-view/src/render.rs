@@ -1112,10 +1112,14 @@ fn tag_color(tag: &str) -> gpui::Hsla {
 }
 
 /// A short, human prefix of a (hex) cell id for a host frame header. Long ids elide; short
-/// ones (the test labels) show whole.
+/// ones (the test labels) show whole. Truncates by CHARACTER, never by byte offset: an
+/// author-supplied `cell` string with a multibyte char must not panic on a mid-codepoint
+/// `&cell[..12]` slice (the byte-slice-after-byte-length-check class).
 fn short_cell(cell: &str) -> String {
-    if cell.len() > 12 {
-        format!("{}…", &cell[..12])
+    let mut chars = cell.chars();
+    let prefix: String = chars.by_ref().take(12).collect();
+    if chars.next().is_some() {
+        format!("{prefix}…")
     } else {
         cell.to_string()
     }

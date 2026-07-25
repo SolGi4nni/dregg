@@ -303,6 +303,79 @@ fn assert_secret_absent_from_agent_reach(
     }
 }
 
+/// (5) A LOOPING model is CAPPED — a paid HttpLlm that NEVER emits a final
+/// message (every response is another tool_use) would drive unbounded PAID
+/// provider round-trips (a live DoS). `with_max_steps(N)` forces a Finish after
+/// exactly N tool-calls, and the provider is called exactly N times — no round
+/// trip past the cap.
+#[test]
+fn looping_model_is_capped_after_n_tool_calls() {
+    let (rt, root) = grantor();
+    let registry = GrantRegistry::default_for_session(1000).with_standard_tool_grants(1000);
+    let gateway = deos_hermes::HermesGateway::new(&rt, root, registry);
+
+    // The model never finishes: every completion is another tool_use.
+    let brain = HttpLlm::new(
+        LlmKeys::new("acme", "sk-test-loop"),
+        "https://provider.example/v1/messages",
+        "acme-large",
+        LoopingCaller { calls: 0 },
+    );
+
+    const CAP: usize = 4;
+    let peer = HermesAgentPeer::with_max_steps("sess-cap", brain, CAP);
+    let mut client = AcpClient::new(peer, gateway, 100);
+
+    // WITHOUT the cap this run would never return (an unbounded loop). It returns
+    // BECAUSE the cap forces a Finish.
+    let run = client
+        .run_prompt("/tmp/proj", "loop forever")
+        .expect("the per-turn cap terminates a looping model");
+
+    assert_eq!(run.stop_reason, "end_turn", "the capped turn ended cleanly");
+    assert_eq!(
+        run.verdicts.len(),
+        CAP,
+        "the loop fired exactly the cap of tool-calls, then a forced Finish"
+    );
+    // The paid provider was hit exactly CAP times — the cap forces the Finish
+    // WITHOUT one more `next_step`/provider round-trip.
+    assert_eq!(
+        client.peer().brain().caller().calls,
+        CAP,
+        "no PAID provider round-trip happened past the cap"
+    );
+    assert!(
+        run.agent_text.contains("limit"),
+        "the forced Finish names the cap: {:?}",
+        run.agent_text
+    );
+}
+
+/// A provider caller that ALWAYS returns another tool_use — a looping model that
+/// never emits a final message. `calls` counts the paid round-trips it received.
+struct LoopingCaller {
+    calls: usize,
+}
+
+impl LlmHttpCaller for LoopingCaller {
+    fn complete(
+        &mut self,
+        _endpoint: &str,
+        _api_key: &str,
+        _request: &Value,
+    ) -> Result<Value, String> {
+        self.calls += 1;
+        Ok(json!({
+            "content": [{
+                "type": "tool_use",
+                "name": "terminal",
+                "input": { "command": "echo loop" }
+            }]
+        }))
+    }
+}
+
 /// A mock provider caller — returns a scripted response stream, recording the key
 /// and request bodies it received so a test can assert the key's confinement.
 struct MockHttpCaller {

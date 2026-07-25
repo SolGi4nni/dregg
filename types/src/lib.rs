@@ -184,6 +184,44 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// **Char-safe** decode of exactly 64 ASCII hex characters into 32 bytes — the
+/// canonical inverse of [`hex_encode`] for a 32-byte id. Returns `None` on any
+/// non-hex byte or a length other than 64 bytes.
+///
+/// This is the ONE codec the deos JS / view surfaces route their `parse_cell_id`
+/// / `hex_decode_*` helpers through. It NEVER slices a `&str` by byte offset, so
+/// a 64-BYTE guest/author string containing a multibyte char returns `None` (its
+/// first non-ASCII byte fails the hex-digit check) instead of PANICKING on a
+/// mid-codepoint slice. That panic matters: inside a JS engine's `extern "C"`
+/// callback it unwinds across the FFI boundary to an abort. `str::len` counts
+/// BYTES, so the old guards that checked `len() == 64` and then indexed
+/// `&s[i*2..i*2+2]` mixed a byte-length check with a char-boundary slice.
+pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
+    let bytes = s.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, o) in out.iter_mut().enumerate() {
+        let hi = hex_nibble(bytes[2 * i])?;
+        let lo = hex_nibble(bytes[2 * i + 1])?;
+        *o = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// The `0..=15` value of one ASCII hex-digit byte, or `None` if it is not a hex
+/// digit. Byte-wise (never `&str`-indexed), so it is immune to codepoint
+/// boundaries — see [`parse_hex32`].
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// BLS threshold quorum certificate (opaque bytes, constant size regardless of committee).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThresholdQC(pub Vec<u8>);
@@ -1062,6 +1100,35 @@ mod tests {
     #[test]
     fn pubkey_size() {
         assert_eq!(std::mem::size_of::<PublicKey>(), 32);
+    }
+
+    #[test]
+    fn parse_hex32_round_trips_and_is_case_insensitive() {
+        let bytes: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let hex = hex_encode(&bytes);
+        assert_eq!(hex.len(), 64);
+        assert_eq!(parse_hex32(&hex), Some(bytes));
+        assert_eq!(parse_hex32(&hex.to_uppercase()), Some(bytes));
+    }
+
+    #[test]
+    fn parse_hex32_rejects_bad_length_and_non_hex() {
+        assert_eq!(parse_hex32(""), None);
+        assert_eq!(parse_hex32(&"a".repeat(63)), None);
+        assert_eq!(parse_hex32(&"a".repeat(65)), None);
+        // 64 chars but a 'g' is not hex.
+        assert_eq!(parse_hex32(&format!("g{}", "a".repeat(63))), None);
+    }
+
+    #[test]
+    fn parse_hex32_multibyte_64_byte_id_returns_none_not_panic() {
+        // 61 ASCII + one 2-byte char + 1 ASCII = 64 BYTES; the multibyte char
+        // straddles the `i*2` grid so the OLD `&s[i*2..i*2+2]` would panic on a
+        // mid-codepoint slice. The char-safe codec returns None instead.
+        let id = format!("{}\u{00e9}b", "a".repeat(61));
+        assert_eq!(id.len(), 64, "the adversarial id is 64 BYTES");
+        assert!(id.chars().count() < 64, "…but fewer than 64 CHARS");
+        assert_eq!(parse_hex32(&id), None);
     }
 
     #[test]

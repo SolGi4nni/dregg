@@ -18,24 +18,56 @@ use deos_reflect::substance::{hex_encode, FieldValue};
 use deos_reflect::{reflect_cell, AffordanceSurface, Frustum, OcapGraph, ReflectedCell};
 use dregg_cell::{AuthRequired, Ledger};
 use dregg_turn::action::Effect;
-use dregg_types::CellId;
+use dregg_types::{parse_hex32, CellId};
 
-/// Parse a 64-hex-char cell id from JS. Returns `None` on a malformed id.
+/// Parse a 64-hex-char cell id from JS. Returns `None` on a malformed id —
+/// including a 64-BYTE string carrying a multibyte char (which the old
+/// `&hex[i*2..i*2+2]` byte-slice would have PANICKED on, unwinding through the
+/// engine's `extern "C"` boundary). Routed through the shared char-safe
+/// [`dregg_types::parse_hex32`] so the doc-comment is TRUE for every input.
 pub fn parse_cell_id(hex: &str) -> Option<CellId> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    for (i, b) in bytes.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(CellId::from_bytes(bytes))
+    parse_hex32(hex).map(CellId::from_bytes)
 }
 
 /// The 64-hex-char rendering of a cell id (the JS-facing string form). Public so the
 /// editor binding can name "the current card" to JS by the same id the crawl uses.
 pub fn id_hex(id: &CellId) -> String {
     hex_encode(id.as_bytes())
+}
+
+#[cfg(test)]
+mod parse_cell_id_tests {
+    use super::parse_cell_id;
+
+    #[test]
+    fn valid_hex_round_trips() {
+        let hex = "aa".repeat(32);
+        assert_eq!(hex.len(), 64);
+        let id = parse_cell_id(&hex).expect("64 valid hex chars parse");
+        assert_eq!(id.as_bytes(), &[0xAAu8; 32]);
+    }
+
+    #[test]
+    fn multibyte_64_byte_id_returns_none_not_panic() {
+        // A JS caller can hand any string here. 61 ASCII + a 2-byte char + 1 ASCII
+        // is 64 BYTES, and the multibyte char straddles the old `&hex[i*2..i*2+2]`
+        // grid — that slice PANICKED mid-codepoint (an abort through the engine's
+        // extern "C" boundary). The doc says "Returns None on a malformed id"; make
+        // it TRUE.
+        let id = format!("{}\u{00e9}b", "a".repeat(61));
+        assert_eq!(id.len(), 64, "the adversarial id is 64 BYTES");
+        assert!(
+            parse_cell_id(&id).is_none(),
+            "malformed id → None, no panic"
+        );
+    }
+
+    #[test]
+    fn wrong_length_returns_none() {
+        assert!(parse_cell_id("").is_none());
+        assert!(parse_cell_id(&"a".repeat(63)).is_none());
+        assert!(parse_cell_id(&"a".repeat(65)).is_none());
+    }
 }
 
 /// A JSON string escape (the small subset our labels need).

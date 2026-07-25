@@ -60,11 +60,17 @@ pub fn read_view_blob(cell: &Cell) -> Option<Vec<u8>> {
     len_bytes.copy_from_slice(&header[..8]);
     let total = u64::from_le_bytes(len_bytes) as usize;
 
-    let mut out = Vec::with_capacity(total);
+    // The `total` header is UNTRUSTED committed content: a malicious cell can
+    // claim any u64 length. Do NOT pre-`with_capacity(total)` (a huge value is an
+    // OOM-abort); grow `out` as real chunks arrive, and stop when the committed
+    // heap runs out (`get_heap` → None → the whole read fails safe to None). The
+    // per-leaf `fill` is clamped to the leaf's real payload width so a forged
+    // `leaf[0] > 31` cannot slice past the 32-byte element (an OOB panic).
+    let mut out: Vec<u8> = Vec::new();
     let mut key: u32 = 1;
     while out.len() < total {
         let leaf = cell.state.get_heap(VIEWTREE_COLL, key)?;
-        let fill = leaf[0] as usize;
+        let fill = (leaf[0] as usize).min(CHUNK_BYTES);
         out.extend_from_slice(&leaf[1..1 + fill]);
         key += 1;
     }
@@ -100,14 +106,60 @@ pub fn cell_id_hex(id: CellId) -> String {
 }
 
 /// Parse a 64-hex-char cell id back into a [`CellId`]. `None` if it is not exactly 32 bytes
-/// of hex (so a malformed mount reference fail-safes to unresolved).
+/// of hex (so a malformed mount reference fail-safes to unresolved). Routed through the
+/// shared char-safe [`dregg_types::parse_hex32`] — the ONE hex/id codec.
 pub fn cell_id_from_hex(hex: &str) -> Option<CellId> {
-    if hex.len() != 64 {
-        return None;
+    dregg_types::parse_hex32(hex).map(CellId)
+}
+
+#[cfg(test)]
+mod read_view_blob_tests {
+    use super::*;
+
+    fn blank_cell() -> Cell {
+        Cell::new([1u8; 32], [2u8; 32])
     }
-    let mut bytes = [0u8; 32];
-    for (i, b) in bytes.iter_mut().enumerate() {
-        *b = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+
+    fn len_header(total: u64) -> FieldElement {
+        let mut header = [0u8; 32];
+        header[..8].copy_from_slice(&total.to_le_bytes());
+        header
     }
-    Some(CellId(bytes))
+
+    #[test]
+    fn round_trips_a_real_blob() {
+        let mut cell = blank_cell();
+        let payload = b"the hosted view-tree JSON bytes".to_vec();
+        write_view_blob(&mut cell, &payload);
+        assert_eq!(read_view_blob(&cell), Some(payload));
+    }
+
+    #[test]
+    fn oversized_length_header_is_not_pre_allocated() {
+        // A malicious cell claims a u64::MAX byte length but commits NO chunks.
+        // The OLD `Vec::with_capacity(total)` aborts on a ~18-exabyte allocation
+        // before reading a single chunk; the fix grows the vec as chunks arrive
+        // and fail-safes to None the instant the (absent) first chunk is read.
+        let mut cell = blank_cell();
+        cell.state.set_heap(VIEWTREE_COLL, 0, len_header(u64::MAX));
+        assert_eq!(
+            read_view_blob(&cell),
+            None,
+            "no chunks → None, no OOM-abort"
+        );
+    }
+
+    #[test]
+    fn forged_chunk_fill_over_31_does_not_slice_past_the_leaf() {
+        // A forged leaf claims fill=255, but a leaf is only 32 bytes. The OLD
+        // `&leaf[1..1 + fill]` slices to index 256 → an OOB panic. The fill is
+        // clamped to the real 31-byte payload width, so the read fails safe.
+        let mut cell = blank_cell();
+        cell.state.set_heap(VIEWTREE_COLL, 0, len_header(100));
+        let mut leaf = [0u8; 32];
+        leaf[0] = 255; // forged fill, far past the 31-byte payload capacity
+        cell.state.set_heap(VIEWTREE_COLL, 1, leaf);
+        // Reads the clamped 31 payload bytes, then the next (absent) chunk → None.
+        assert_eq!(read_view_blob(&cell), None, "clamped fill, no OOB panic");
+    }
 }

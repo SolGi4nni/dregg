@@ -37,12 +37,23 @@ enum Phase {
     Done,
 }
 
+/// The default per-turn tool-call cap. A brain that never emits a final message
+/// (a LOOPING model) would otherwise drive tool-calls without bound; for a paid
+/// [`crate::brain::HttpLlm`] that is unbounded PAID provider round-trips. After
+/// this many tool-calls in one turn the peer forces a [`BrainStep::Finish`]
+/// WITHOUT another `next_step` (no further provider call). Override per session
+/// with [`HermesAgentPeer::with_max_steps`].
+pub const DEFAULT_MAX_STEPS: usize = 64;
+
 /// A faithful Hermes ACP peer DRIVEN BY A BRAIN. Implements [`AcpPeer`], so
 /// `AcpClient::run_prompt` drives a real confined agent over it.
 pub struct HermesAgentPeer<B: LlmBrain> {
     phase: Phase,
     session_id: String,
     brain: B,
+    /// The per-turn tool-call cap (see [`DEFAULT_MAX_STEPS`]). The loop forces a
+    /// Finish once `tool_call_seq` reaches it.
+    max_steps: usize,
     /// The running conversation the brain decides over (prompt + verdicts seen).
     convo: AgentConvo,
     /// Frames queued for the client's next `recv`.
@@ -70,10 +81,18 @@ impl<B: LlmBrain> HermesAgentPeer<B> {
     /// prompt + cwd are captured from the client's `session/prompt` /
     /// `session/new`.
     pub fn new(session_id: &str, brain: B) -> HermesAgentPeer<B> {
+        HermesAgentPeer::with_max_steps(session_id, brain, DEFAULT_MAX_STEPS)
+    }
+
+    /// Like [`HermesAgentPeer::new`], but with an explicit per-turn tool-call cap.
+    /// A host that wants a tighter (or looser) bound than [`DEFAULT_MAX_STEPS`] —
+    /// e.g. a cheap-provider session — sets it here.
+    pub fn with_max_steps(session_id: &str, brain: B, max_steps: usize) -> HermesAgentPeer<B> {
         HermesAgentPeer {
             phase: Phase::Init,
             session_id: session_id.into(),
             brain,
+            max_steps: max_steps.max(1),
             convo: AgentConvo::default(),
             outbox: VecDeque::new(),
             pending_permission_id: None,
@@ -124,6 +143,18 @@ impl<B: LlmBrain> HermesAgentPeer<B> {
     /// tool-call's `session/update` + `session/request_permission`, or the final
     /// agent message + transition to `Done`.
     fn drive_brain_step(&mut self) {
+        // ITERATION CAP — a looping model (one that never emits a final message)
+        // would otherwise call tools without bound; for a paid HttpLlm that is
+        // unbounded PAID provider round-trips (a live DoS). Once this turn has
+        // fired `max_steps` tool-calls, force a Finish WITHOUT asking the brain
+        // again (so no further `next_step`/provider call happens).
+        if self.tool_call_seq >= self.max_steps {
+            self.finish_turn(format!(
+                "Reached the {}-tool-call limit for this turn; stopping here.",
+                self.max_steps
+            ));
+            return;
+        }
         match self.brain.next_step(&self.convo) {
             BrainStep::CallTool { name, arguments } => {
                 self.tool_call_seq += 1;
@@ -170,21 +201,25 @@ impl<B: LlmBrain> HermesAgentPeer<B> {
                     }),
                 ));
             }
-            BrainStep::Finish { text } => {
-                // The brain's final message + the turn ends.
-                self.outbox.push_back(RpcMessage::notification(
-                    "session/update",
-                    json!({
-                        "sessionId": self.session_id,
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": { "type": "text", "text": text }
-                        }
-                    }),
-                ));
-                self.phase = Phase::Done;
-            }
+            BrainStep::Finish { text } => self.finish_turn(text),
         }
+    }
+
+    /// Emit the brain's final agent message and end the turn. Shared by a brain
+    /// [`BrainStep::Finish`] and the [`Self::max_steps`] cap so both paths end the
+    /// turn identically.
+    fn finish_turn(&mut self, text: String) {
+        self.outbox.push_back(RpcMessage::notification(
+            "session/update",
+            json!({
+                "sessionId": self.session_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "text", "text": text }
+                }
+            }),
+        ));
+        self.phase = Phase::Done;
     }
 
     /// Fold the client's permission verdict into the conversation, then ask the

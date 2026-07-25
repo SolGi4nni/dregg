@@ -2416,22 +2416,42 @@ mod auth_label_tests {
 }
 
 /// Decode 64-char hex into `out` (exact-length match required). Returns false on any
-/// non-hex char or a length mismatch.
+/// non-hex char or a length mismatch. Char-safe via the shared
+/// [`dregg_types::parse_hex32`]: a 64-BYTE string with a multibyte char returns
+/// `false`, never a mid-codepoint slice panic (which, in a JS-engine callback,
+/// aborts through `extern "C"`).
 fn hex_decode_into(s: &str, out: &mut [u8; 32]) -> bool {
-    let s = s.trim();
-    if s.len() != 64 {
-        return false;
+    match dregg_types::parse_hex32(s.trim()) {
+        Some(bytes) => {
+            *out = bytes;
+            true
+        }
+        None => false,
     }
-    for (i, byte) in out.iter_mut().enumerate() {
-        let hi = match u8::from_str_radix(&s[i * 2..i * 2 + 1], 16) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        let lo = match u8::from_str_radix(&s[i * 2 + 1..i * 2 + 2], 16) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        *byte = (hi << 4) | lo;
+}
+
+#[cfg(test)]
+mod hex_decode_into_tests {
+    use super::hex_decode_into;
+
+    #[test]
+    fn valid_hex_decodes() {
+        let mut out = [0u8; 32];
+        assert!(hex_decode_into(&"bb".repeat(32), &mut out));
+        assert_eq!(out, [0xBBu8; 32]);
     }
-    true
+
+    #[test]
+    fn multibyte_64_byte_string_returns_false_not_panic() {
+        // 61 ASCII + a 2-byte char + 1 ASCII = 64 BYTES; the old
+        // `&s[i*2..i*2+1]` slice PANICKED on the mid-codepoint boundary (an abort
+        // through the SpiderMonkey extern "C" callback). It must return false.
+        let s = format!("{}\u{00e9}b", "a".repeat(61));
+        assert_eq!(s.len(), 64);
+        let mut out = [0u8; 32];
+        assert!(
+            !hex_decode_into(&s, &mut out),
+            "malformed → false, no panic"
+        );
+    }
 }

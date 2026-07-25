@@ -145,7 +145,13 @@ mod live {
             .get_field_ext(LEN_KEY)
             .ok_or_else(|| anyhow!("file cell holds no content (no length field)"))?;
         let len = u64::from_le_bytes(len_felt[0..8].try_into().unwrap()) as usize;
-        let mut bytes = Vec::with_capacity(len);
+        // `len` is UNTRUSTED committed content — a corrupt/forged length field can
+        // claim any u64. Do NOT pre-`with_capacity(len)` (a huge value is an
+        // OOM-abort before a single chunk is read); grow `bytes` as chunks arrive
+        // and fail safely the moment a claimed chunk is absent from the committed
+        // map (`get_field_ext` → None → Err), so an oversized length costs one
+        // lookup, not gigabytes.
+        let mut bytes: Vec<u8> = Vec::new();
         for i in 0..chunk_count(len) {
             let felt = cell
                 .state
@@ -939,6 +945,24 @@ mod live {
     mod tests {
         use super::*;
         use crate::fs::Fs;
+
+        #[test]
+        fn decode_content_does_not_pre_allocate_an_oversized_length() {
+            // A file cell whose committed length field claims u64::MAX but commits
+            // NO content chunks. The OLD `Vec::with_capacity(len)` aborts on an
+            // ~18-exabyte allocation before reading a single chunk; the fix grows
+            // the vec as chunks arrive and fails safely on the first absent chunk.
+            let mut cell = Cell::new([3u8; 32], [4u8; 32]);
+            let mut len_felt = [0u8; 32];
+            len_felt[0..8].copy_from_slice(&u64::MAX.to_le_bytes());
+            cell.state.set_field_ext(LEN_KEY, len_felt);
+
+            let err = decode_content(&cell).expect_err("an oversized length must not decode");
+            assert!(
+                err.to_string().contains("missing content chunk"),
+                "oversized length fails safe on the first absent chunk, not an OOM-abort: {err}"
+            );
+        }
 
         #[test]
         fn save_is_a_receipted_turn_and_content_round_trips_through_the_ledger() {
