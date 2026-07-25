@@ -117,6 +117,60 @@ fn dark_pool_fair_swap_preserves_constant_product() {
     );
 }
 
+/// BATCHED swap verification: many independent pools' swaps verified in ONE homomorphic pass via the SIMD
+/// slots — the exact compute-bound, GPU-favorable shape (the ct×ct product measures 5.13×/10× batched). Each
+/// slot is a different pool `(x_i, y_i)` with its own fair swap; all invariants are checked simultaneously,
+/// and the batched invariant difference decrypts to 0 in every slot. This is the Dark Pool at throughput.
+#[test]
+fn dark_pool_batched_swaps_verify_in_one_pass() {
+    let mut fx = fixture(0x0DA12BA7);
+    let eng = engine(&fx);
+    // 6 independent pools packed into SIMD slots; each has reserves (x,y) and a fair swap: dx=x (so x+dx=2x)
+    // and dy=y/2 (so y−dy=y/2), giving (2x)(y/2)=x·y — the constant product preserved. y is EVEN so y/2 exact.
+    let x = vec![10u64, 6, 8, 12, 4, 20];
+    let y = vec![20u64, 12, 16, 6, 20, 8];
+    let dx = x.clone();
+    let dy: Vec<u64> = y.iter().map(|&yi| yi / 2).collect();
+    let k = x.len();
+    let encode = |fx: &Fixture, v: &[u64]| {
+        Plaintext::try_encode(v, Encoding::simd(), &fx.params).expect("simd encode")
+    };
+    let cx = fx
+        .pk
+        .try_encrypt(&encode(&fx, &x), &mut fx.rng)
+        .expect("enc x");
+    let cy = fx
+        .pk
+        .try_encrypt(&encode(&fx, &y), &mut fx.rng)
+        .expect("enc y");
+    let bx = x.iter().max().unwrap() * 2; // max new_x = 2·max(x)
+    let by = *y.iter().max().unwrap();
+    // old = x·y, new = (x+dx)(y−dy), slot-wise homomorphic — every pool's product in one multiply.
+    let old = eng
+        .multiply(
+            &BoundedCiphertext::new(cx.clone(), *x.iter().max().unwrap()),
+            &BoundedCiphertext::new(cy.clone(), by),
+        )
+        .expect("old products");
+    let new_x = &cx + &encode(&fx, &dx);
+    let new_y = &cy - &encode(&fx, &dy);
+    let new = eng
+        .multiply(
+            &BoundedCiphertext::new(new_x, bx),
+            &BoundedCiphertext::new(new_y, by),
+        )
+        .expect("new products");
+    let diff = &new.ct - &old.ct;
+    let dpt = fx.sk.try_decrypt(&diff).expect("decrypt");
+    let got = Vec::<u64>::try_decode(&dpt, Encoding::simd()).expect("decode");
+    for i in 0..k {
+        assert_eq!(
+            got[i], 0,
+            "batched Dark Pool invariant broke in pool slot {i}"
+        );
+    }
+}
+
 /// THE GUARD BITES: an UNFAIR swap (one that does NOT preserve `x·y`) is CAUGHT — the homomorphic invariant
 /// check reveals a nonzero difference, so the Dark Pool can refuse it without ever opening the reserves. Here
 /// `dy=9` instead of `10` gives `(20)(11)=220 ≠ 200`, and the invariant difference decrypts to a nonzero
