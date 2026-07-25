@@ -1519,12 +1519,17 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
+            // A process-global counter guarantees a unique path even when parallel `TestDir::new()`
+            // calls land on the same nanosecond nonce (same pid, coarse clock) — otherwise
+            // `create_dir(...).unwrap()` panics with AlreadyExists and the test flakes under `cargo test`.
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
             let path = std::env::temp_dir().join(format!(
-                "fhegg-preprocessing-use-{}-{nonce}",
+                "fhegg-preprocessing-use-{}-{seq}-{nonce}",
                 std::process::id()
             ));
             fs::create_dir(&path).unwrap();
