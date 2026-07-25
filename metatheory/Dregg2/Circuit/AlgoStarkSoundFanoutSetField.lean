@@ -12,8 +12,9 @@ Per effect, the residual `Prop` hypotheses of `algoStarkSound_setFieldDyn` are E
   1. `Poseidon2SpongeCR sponge` — the ONE shared commitment-binding hash floor (NOTE: unlike the
      7 mapOp effects, SetFieldDyn needs NO second CR instance — its memory argument is Blum's
      multiset balance, zero hashing);
-  2. `FriLdtExtract … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle
-     (`AlgoStarkSoundGeneral`);
+  2. `FriLdtExtractCons … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
+     CORRECTED OOD shape (`ApexOodLaneRepair`; see ★ THE OOD CUTOVER below and §9 — this slot used
+     to be the singleton-OOD `AlgoStarkSoundGeneral.FriLdtExtract`, which is PROVED empty);
   3. `BusModelFamily … <descriptor>` — the per-used-table LogUp bus models (chip/range lookups);
   4. `MemBusDisciplineFamily … <descriptor>` — NAMED (NEW here, the Species-C carried bundle,
      MEMORY-LEGS-SCOPE §3(C)/§4): per accepting batch, a declared memory boundary
@@ -29,6 +30,27 @@ Per effect, the residual `Prop` hypotheses of `algoStarkSound_setFieldDyn` are E
      `AlgoStarkSoundFanoutMemory.MapTableAssembly`): the committed memory table IS the gathered
      `memLog` (now CONTENT-BEARING — 2 rows on an active trace) and the committed mapOps table
      IS the (empty — `mapOpsOf = []` is DERIVED from the shape) gathered `mapLog`.
+
+## ★ THE OOD CUTOVER (2026-07-25) — this fan-out no longer consumes an EMPTY premise
+
+Both instances used to carry `AlgoStarkSoundGeneral.FriLdtExtract … <descriptor>`, whose OOD conjunct
+is the SINGLETON `oodPoint = [ood]` while deployed acceptance forces FOUR lanes. That premise is
+PROVED empty at the deployed arguments — `ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`
+forces `verifyBatch vkey pi π = Verdict.reject` for EVERY triple, EVERY descriptor and EVERY
+extracted trace — so `algoStarkSound_setFieldDyn` and `_setFieldDynForced` quantified over an empty
+accepting set and were VACUOUSLY TRUE. This file was NOT in the campaign's original inventory
+(`docs/WOUND-apex-premise-vacuity-2026-07-24.md` names only the MemFree/Memory fan-outs and the
+kernel/config modules); it is the last per-effect fan-out to be migrated.
+
+Both statements now carry `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest`, the
+shape `FriVerifier.batchTablesCheck` actually matches) through
+`ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons`. The singleton was load-bearing NOWHERE here —
+it is consumed only inside the general assembler's `hood` modeler, which
+`ApexOodLaneRepair.hood_of_oodColumnLayout_cons` re-derives at the cons shape — so the migration was
+mechanical. NO deprecated twin is kept (a twin would be a silent duplicate of a statement proved
+empty); a consumer holding the old bundle composes the real implication
+`ApexOodLaneRepair.friLdtExtract_imp_cons`. §9 discharges the non-emptiness obligation and states,
+as a THEOREM, the one residual the corrected bundle still inherits (`topen ∈ tableOpenings`).
 
 ## ★ THE MULTISET-EQUALITY SZ EXTENSION (the real content of this file)
 
@@ -57,7 +79,7 @@ reading (`memBus_membership_of_model`) — honest report: membership is REAL but
 `MemCheck`; the equality form proved here is what closes the leg.
 
 Everything else is DERIVED, ∀ d, with NO per-effect proof work: `MainAirAcceptF`/`hood` (the OOD
-modeler inside `algoStarkSound_of_memoryLegs`), the `.lookup` arm (the LogUp bus modeler), the
+modeler inside `algoStarkSound_of_memoryLegs_cons`), the `.lookup` arm (the LogUp bus modeler), the
 `.memOp` row arm (row-locally `True` — its content is EXACTLY the global legs above,
 `DescriptorIR2.lean:575-597`), `mapOpsOf = []`/`mapLog = []` (from the shape lemma), and the
 graduated column shape (`rfl`).
@@ -71,6 +93,7 @@ mismatch (`busNum [7,7] [7] ≠ 0`) that NO membership theorem can see. NEW file
 read-only; builds targeted (`lake build Dregg2.Circuit.AlgoStarkSoundFanoutSetField`).
 -/
 import Dregg2.Circuit.AlgoStarkSoundGeneral
+import Dregg2.Circuit.ApexOodLaneRepair
 import Dregg2.Circuit.LogUpMultiset
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 
@@ -78,12 +101,17 @@ namespace Dregg2.Circuit.AlgoStarkSoundFanoutSetField
 
 open Dregg2.Circuit.FriVerifierBridge (AlgoStarkSound ProofView)
 open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullChecks)
-open Dregg2.Circuit.CircuitSoundness (BatchPublicInputs BatchProof)
+open Dregg2.Circuit.CircuitSoundness
+  (BatchPublicInputs BatchProof Verdict VerifyKey verifyBatch
+   cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgInitState cfgLogN cfgView)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.AirChecksSatisfied (isArith)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.AlgoStarkSoundGeneral
-  (AcceptsFull FriLdtExtract BusModelFamily MemoryLegs algoStarkSound_of_memoryLegs)
+  (AcceptsFull FriLdtExtract BusModelFamily MemoryLegs)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape algoStarkSound_of_memoryLegs_cons
+   friLdtExtractCons_iff_noOodShape friLdtExtract_makes_verifyBatch_reject_everything)
 open Dregg2.Circuit.Emit.EffectVmEmit (EffectVmDescriptor)
 open Dregg2.Circuit.Emit.EffectVmEmitV2
   (graduateV1 constraints_graduateV1_shapes fieldWriteOp fieldReadbackOp)
@@ -603,9 +631,15 @@ theorem memoryLegs_of_memShape {F : Type*} [Field F] [DecidableEq F]
 /-! ## §6 — THE ∀-d ASSEMBLER at the `.memOp` shape, then ★ THE INSTANCES. -/
 
 /-- **`algoStarkSound_of_memShape`** — the general assembler at the SetFieldDyn shape:
-`algoStarkSound_of_memoryLegs` with its `MemoryLegs` input assembled by
-`memoryLegs_of_memShape`. Residual = {the named floor, `FriLdtExtract d`, `BusModelFamily d`,
-`MemBusDisciplineFamily d`, `MemTableAssembly d`}. -/
+`ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons` with its `MemoryLegs` input assembled by
+`memoryLegs_of_memShape`. Residual = {the named floor, `FriLdtExtractCons d`, `BusModelFamily d`,
+`MemBusDisciplineFamily d`, `MemTableAssembly d`}.
+
+★ CUTOVER (§9): the FRI slot is the CORRECTED cons-shaped bundle. The singleton-OOD
+`AlgoStarkSoundGeneral.FriLdtExtract` this used to take is PROVED to force
+`CircuitSoundness.verifyBatch` to reject EVERY triple at the deployed arguments
+(`deleted_setFieldDyn_premise_was_empty`), so both instances below were vacuously true. A consumer
+still holding the old bundle composes `ApexOodLaneRepair.friLdtExtract_imp_cons`; no twin is kept. -/
 theorem algoStarkSound_of_memShape {F : Type*} [Field F] [DecidableEq F]
     (p : ℕ) [CharP F p]
     (d : EffectVmDescriptor2)
@@ -619,14 +653,14 @@ theorem algoStarkSound_of_memShape {F : Type*} [Field F] [DecidableEq F]
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MemOp, c = VmConstraint2.memOp m))
     (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d)
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
     (hlegs : MemBusDisciplineFamily p fpMem perm RATE toNat params vk core A initState logN
       view tr d)
     (hasm : MemTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryLegs_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
     initState logN view tr hsites hranges hfri hbusF
     (memoryLegs_of_memShape p fpMem hash perm RATE toNat params vk core A initState logN view
       tr d hshape hlegs hasm)
@@ -666,7 +700,7 @@ rotated `setFieldDynV3` (the Blum write→read transport pair on the dynamic add
 repeated-address 2-op log is DERIVED via the multiset-equality SZ extension, not carried. -/
 theorem algoStarkSound_setFieldDyn
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       setFieldDynV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       setFieldDynV3)
@@ -684,7 +718,7 @@ theorem algoStarkSound_setFieldDyn
 fields-root weld rides the graduated base; the memory legs are identical in shape. -/
 theorem algoStarkSound_setFieldDynForced
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       setFieldDynForcedV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       setFieldDynForcedV3)
@@ -840,8 +874,114 @@ theorem forged_final_memcheck_bites :
 
 end Teeth
 
+/-! ## §9 — ★ THE OOD CUTOVER, and the obligation it must discharge.
+
+Both instances above used to carry `AlgoStarkSoundGeneral.FriLdtExtract … <descriptor>`, whose OOD
+conjunct is `oodPoint = [ood]` — a SINGLETON list holding one BabyBear base felt. Acceptance forces
+FOUR lanes (`ExtFieldChallenge.verifyAlgoUnifiedFaithfulExt` carries `decide (params.extDeg = 4)`;
+`FriChallengerUnified.lean:122` requires `proof.oodPoint = d.ζ`; `Challenger.sampleN_length`,
+`FriVerifier.lean:139-146`, gives that `ζ` length `extDeg`), so that premise is PROVED empty at the
+deployed arguments and `algoStarkSound_setFieldDyn` / `_setFieldDynForced` were VACUOUSLY TRUE.
+
+The premise is now `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest` — the shape
+`FriVerifier.batchTablesCheck` actually matches at `FriVerifier.lean:803-808`). A cutover that swaps
+one vacuity for another is worse than none, because it looks fixed; the three statements below
+discharge the obligation, in ascending force, and the fourth names what is NOT closed. -/
+
+/-- **The corrected premise adds EXACTLY ZERO strength.** For ANY `d` — hence at both
+`setFieldDynV3` and `setFieldDynForcedV3` — `FriLdtExtractCons … d` is EQUIVALENT to
+`FriLdtExtractConsNoOodShape … d`, the same bundle with its OOD conjunct DELETED. The `mpr`
+direction is the point: the conjunct is SUPPLIED by the bundle's own antecedent
+(`ApexOodLaneRepair.acceptsFull_gives_cons_shape` — `batchTablesCheck` returns `false` on an empty
+`oodPoint`), so it cannot shrink the set of accepting runs the premise must cover, and in particular
+cannot empty it. -/
+theorem setFieldFanout_premise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace) (d : EffectVmDescriptor2) :
+    FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d
+      ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN view
+        tr d :=
+  friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState logN view tr d
+
+/-- **★ SHARPER: NO OOD SHAPE IS NEEDED AT ALL.** The entire conclusion of `algoStarkSound_of_memShape`
+— and hence of both instances, each one application of it — follows from a premise that MENTIONS NO
+OOD-SHAPE CONJUNCT WHATSOEVER. A premise cannot be emptied by a conjunct it does not contain, so
+neither the deleted singleton nor the installed cons shape is load-bearing anywhere in this file. -/
+theorem algoStarkSound_of_memShape_noOodShape {F : Type*} [Field F] [DecidableEq F]
+    (p : ℕ) [CharP F p]
+    (d : EffectVmDescriptor2)
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ)
+    (fp : List ℤ → F) (embed : ℤ → F) (fpMem : MemoryChecking.Entry ℤ ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
+      (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MemOp, c = VmConstraint2.memOp m))
+    (hsites : d.hashSites = []) (hranges : d.ranges = [])
+    (hfri : FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+      view tr d)
+    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
+    (hlegs : MemBusDisciplineFamily p fpMem perm RATE toNat params vk core A initState logN
+      view tr d)
+    (hasm : MemTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
+    AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_of_memShape p d sponge hCR hash fp embed fpMem perm RATE toNat params vk core A
+    initState logN view tr hshape hsites hranges
+    ((setFieldFanout_premise_adds_no_strength sponge perm RATE toNat params vk core A initState
+      logN view tr d).mpr hfri)
+    hbusF hlegs hasm
+
+/-- **THE RECEIPT FOR WHAT WAS DELETED, at this file's OWN descriptor.** The premise both instances
+used to carry — `AlgoStarkSoundGeneral.FriLdtExtract … setFieldDynV3` at the DEPLOYED `cfg*`
+arguments — forces `CircuitSoundness.verifyBatch` to return `Verdict.reject` on every
+key/public-input/proof triple. So `algoStarkSound_setFieldDyn` and `_setFieldDynForced` previously
+quantified over an EMPTY accepting set. That is what the cutover removed, and why no deprecated twin
+is retained. -/
+theorem deleted_setFieldDyn_premise_was_empty
+    (sponge : List ℤ → ℤ) (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (h : FriLdtExtract sponge cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
+      cfgInitState cfgLogN cfgView tr setFieldDynV3)
+    (vkey : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) :
+    verifyBatch vkey pi π = Verdict.reject :=
+  friLdtExtract_makes_verifyBatch_reject_everything sponge tr setFieldDynV3 h vkey pi π
+
+/-- **⚠ THE CAVEAT THIS MIGRATION INHERITS, AS A THEOREM RATHER THAN A NOTE.** `FriLdtExtractCons`
+RETAINS the conjunct `topen ∈ (view pi π).1.tableOpenings`, and — unlike the OOD conjunct —
+acceptance does NOT supply it: at ANY verifier arguments admitting an accepting run whose mapped
+proof opens NO table, the migrated premise of both instances here is FALSE. The condition is not
+hypothetical — `FriLdtExtractDeployed.deployed_accepting_pole_has_no_tableOpenings` exhibits a
+`decide`-backed accepting run with `tableOpenings = []` — but that pole is `Nat`-typed while this
+premise is `ℤ`-typed at `opaque` `cfg*` arguments, so what is refuted is the SCHEMA where anything is
+exhibitable, NOT the `ℤ` premise at the deployed arguments, which remains UNDECIDED in either
+direction. The cutover traded an unconditionally empty premise for one whose emptiness is
+conditional: an improvement, not a closure. -/
+theorem setFieldFanout_premise_false_of_accepting_run_without_tableOpenings
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace) (d : EffectVmDescriptor2)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : AcceptsFull perm RATE toNat params vk core A initState logN view pi π)
+    (hnil : (view pi π).1.tableOpenings = []) :
+    ¬ FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d := by
+  intro h
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, hmem, _, _, _, _, _, _⟩ := h pi π hacc
+  rw [hnil] at hmem
+  simp at hmem
+
 /-! ## Kernel-clean keystones (0 sorries; axiom floor is Lean's own). -/
 
+#assert_axioms setFieldFanout_premise_adds_no_strength
+#assert_axioms algoStarkSound_of_memShape_noOodShape
+#assert_axioms deleted_setFieldDyn_premise_was_empty
+#assert_axioms setFieldFanout_premise_false_of_accepting_run_without_tableOpenings
 #assert_axioms busNum_perm_right
 #assert_axioms natCast_ne_zero_of_lt_charP
 #assert_axioms sumSkip_ne_zero_of_ne_nil

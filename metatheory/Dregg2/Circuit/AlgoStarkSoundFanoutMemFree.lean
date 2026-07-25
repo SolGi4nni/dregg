@@ -1,19 +1,79 @@
 /-
 # `Dregg2.Circuit.AlgoStarkSoundFanoutMemFree` — THE MEM-FREE KERNEL FAN-OUT:
 `algoStarkSound_<effect>` for every pure-graduated (memory/map-op-free) registry effect, each ONE
-invocation of the general assembler `AlgoStarkSoundGeneral.algoStarkSound_of_memoryFree`.
+invocation of the CORRECTED general assembler
+`ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons`.
 
 ## What this file is (the one-line honest claim)
 
 Per mem-free effect `E` with deployed descriptor `dE`, `algoStarkSound_<E>` proves the full
 `AlgoStarkSound hash (fun _ => dE) …` from EXACTLY the named floor
 
-  { `Poseidon2SpongeCR sponge`, `FriLdtExtract … dE`, `BusModelFamily … dE` } + `MemMapFree`
+  { `Poseidon2SpongeCR sponge`, `FriLdtExtractCons … dE`, `BusModelFamily … dE` } + `MemMapFree`
 
-(the same residual as the lever's `algoStarkSound_transferV3_ofBusModels` — the two
+(the same residual as the lever's `algoStarkSound_transferV3_ofBusModels_cons` — the two
 aux-table-emptiness assembly facts `FriLdtExtractV3` carries verbatim ride as `MemMapFree`).
 NO `hood`, NO `hbus`, NO `MainAirAcceptF`, NO per-descriptor column layout is assumed anywhere:
 those are DERIVED by the ∀-d modelers inside the general assembler.
+
+## ★ THE OOD CUTOVER (2026-07-25) — this fan-out no longer consumes an EMPTY premise
+
+Every instance here used to carry `AlgoStarkSoundGeneral.FriLdtExtract … dE`, whose OOD conjunct
+is `oodPoint = [ood]` — a SINGLETON of one BabyBear base felt. That premise is PROVED empty at the
+deployed arguments: `ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything` shows it
+forces `CircuitSoundness.verifyBatch vkey pi π = Verdict.reject` for EVERY triple, EVERY descriptor
+`d` and EVERY extracted trace `tr` — so all 26 fan-out statements quantified over an empty accepting
+set and were vacuously true. Acceptance forces FOUR OOD lanes (`verifyAlgoUnifiedFaithfulExt` carries
+`decide (params.extDeg = 4)`; `FriChallengerUnified.lean:122` requires `proof.oodPoint = d.ζ`;
+`Challenger.sampleN_length`, `FriVerifier.lean:139-146`, gives that `ζ` length `extDeg`).
+
+The 26 singleton-premised statements are DELETED — not deprecated in place, not duplicated. Each
+name now carries the corrected premise `ApexOodLaneRepair.FriLdtExtractCons … dE`
+(`oodPoint = ood :: oodRest`, the shape `FriVerifier.batchTablesCheck` actually matches at
+`FriVerifier.lean:803-808`), assembled through `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons`.
+Nothing is lost for a consumer holding the old bundle: `ApexOodLaneRepair.friLdtExtract_imp_cons` is
+a real ∀-d implication `FriLdtExtract → FriLdtExtractCons`, so every old application still elaborates
+after one `friLdtExtract_imp_cons` — which is why no deprecated twin is kept here (a twin would be a
+silent duplicate of a statement we proved empty).
+
+The migration was MECHANICAL because the singleton was load-bearing NOWHERE in this file: each
+`algoStarkSound_<E>` is one `algoStarkSound_memFree_apply` and the bundle's `ood` is never destructed
+here — it is consumed only inside the general assembler's `hood` modeler, which
+`ApexOodLaneRepair.hood_of_oodColumnLayout_cons` re-derives at the cons shape.
+
+### The non-emptiness obligation, discharged (§6)
+
+  * `memFreeFanout_premise_adds_no_strength` — for EVERY descriptor, `FriLdtExtractCons` is
+    EQUIVALENT to itself with the OOD conjunct DELETED (`ApexOodLaneRepair`'s
+    `friLdtExtractCons_iff_noOodShape`, whose `mpr` direction is supplied by the bundle's OWN
+    antecedent: `batchTablesCheck` returns `false` on an empty `oodPoint`). The corrected conjunct
+    therefore adds exactly zero strength and can NEVER be the reason a premise is empty.
+  * `algoStarkSound_memFree_apply_noOodShape` — sharper, and specific to this fan-out: the whole
+    per-effect conclusion follows from a premise that mentions NO OOD SHAPE AT ALL. Every one of the
+    26 instances factors through it, so no instance depends on any OOD-shape conjunct.
+  * `deleted_mint_premise_was_empty` — the receipt for what was removed, at THIS file's own
+    descriptor: the deleted `FriLdtExtract … mintV3` premise at the deployed `cfg*` arguments forces
+    `verifyBatch` to reject every triple.
+
+### ⚠ THE CAVEAT THIS MIGRATION INHERITS (not papered over)
+
+`FriLdtExtractCons` RETAINS the conjunct `topen ∈ (view pi π).1.tableOpenings`, and — unlike the OOD
+conjunct — acceptance does NOT supply it. This file states that as a theorem, not a note:
+`memFreeFanout_premise_false_of_accepting_run_without_tableOpenings` — at ANY arguments admitting an
+accepting run whose mapped proof opens no table, the migrated premise of every instance here is
+FALSE. The only accepting run exhibited anywhere in the tree is exactly such a run
+(`FriLdtExtractDeployed.deployed_accepting_pole_has_no_tableOpenings`, `decide`-backed,
+`tableOpenings = []`; fired at schema level by
+`PremiseInhabitabilitySweep.tableOpeningMember_forcing_premise_is_false_at_a_real_pole`), and it is
+`Nat`-typed while this premise is `ℤ`-typed at `opaque` `cfg*` arguments.
+
+So the corrected bundle has NO exhibited model, and this fan-out claims none. What IS established is
+exactly the pair above — the corrected OOD conjunct is implied by acceptance (contributes zero
+emptiness), while the deleted singleton one is contradicted by it (contributed TOTAL emptiness,
+everywhere). The cutover therefore trades an unconditionally empty premise for one whose emptiness is
+conditional and, at the deployed `cfg*` arguments, UNDECIDED in either direction —
+`cfgPerm`/`cfgView`/… are `opaque` and the remaining conjuncts ARE the undischarged FRI-LDT floor.
+That is an improvement, not a closure, and it is not stated as one.
 
 ## The per-effect obligation IS mechanical (this file is the receipt)
 
@@ -52,7 +112,7 @@ parametric instance).
   * `noteSpendV3` / `noteCreateV3` / `createCellV3` / `factoryV3` / `heapWriteV3` and the
     deployed insert/write hosts (`effAccumInsertV3`/`effHeapWriteV3`/`effFieldsWriteV3`, hence
     the deployed refusal) — the memory-touching family; they take the MEMORY-LEGS route
-    (`algoStarkSound_of_memoryLegs`), not this file's.
+    (`ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons`), not this file's.
   * `customV3` — carries a `.proofBind` (non-arith, non-lookup): mem-free in the table sense but
     NOT lookup-shaped; its non-arith arm needs the proof-binding leg, so it is NOT in this fan-out.
   * noop — has no own registry descriptor (pads ride `sel[NOOP]` inside other members); nothing
@@ -73,18 +133,22 @@ proof is structural (constructor-shape recursion over the emission combinators; 
 is ever evaluated). BabyBear arithmetic never computed. NEW file; imports read-only; builds
 targeted (`lake build Dregg2.Circuit.AlgoStarkSoundFanoutMemFree`).
 -/
-import Dregg2.Circuit.AlgoStarkSoundGeneral
+import Dregg2.Circuit.ApexOodLaneRepair
 
 namespace Dregg2.Circuit.AlgoStarkSoundFanoutMemFree
 
 open Dregg2.Circuit.FriVerifierBridge (AlgoStarkSound ProofView)
 open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullChecks)
-open Dregg2.Circuit.CircuitSoundness (BatchPublicInputs BatchProof)
+open Dregg2.Circuit.CircuitSoundness
+  (BatchPublicInputs BatchProof Verdict VerifyKey verifyBatch
+   cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgInitState cfgLogN cfgView)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace EffectVmDescriptor2 VmConstraint2 Lookup)
 open Dregg2.Circuit.AirChecksSatisfied (isArith)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.AlgoStarkSoundGeneral
-  (FriLdtExtract BusModelFamily MemMapFree algoStarkSound_of_memoryFree)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (AcceptsFull FriLdtExtract BusModelFamily MemMapFree)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape algoStarkSound_of_memoryFree_cons
+   friLdtExtractCons_iff_noOodShape friLdtExtract_makes_verifyBatch_reject_everything)
 open Dregg2.Circuit.Emit.EffectVmEmit (EffectVmDescriptor VmConstraint)
 open Dregg2.Circuit.Emit.EffectVmEmitV2
   (graduateV1 constraints_graduateV1_shapes submaskLookup fieldWriteOp)
@@ -136,8 +200,8 @@ No constraint list is ever evaluated: `lookupShaped_graduateV1` is parametric in
 `.base`s or explicit `.lookup`s — closed under the four append bricks. -/
 
 /-- The all-lookup non-arith shape — EXACTLY the `hshape` slot of
-`algoStarkSound_of_memoryFree` (and the second component of
-`transferV3_sideConditions_mechanical`). -/
+`ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons` (and the second component of
+`AlgoStarkSoundGeneral.transferV3_sideConditions_mechanical`). -/
 abbrev LookupShaped (cs : List VmConstraint2) : Prop :=
   ∀ c ∈ cs, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l
 
@@ -188,8 +252,8 @@ theorem lookupShaped_lookup_single (l : Lookup) :
 /-! ## §2 — the per-effect SIDE-CONDITION packages (the `transferV3_sideConditions_mechanical`
 shape, per effect): `rfl` + the structural shape bricks. NO new proof content per effect. -/
 
-/-- The whole per-effect obligation of `algoStarkSound_of_memoryFree` at `d` (the fan-out
-receipt shape of the lever's §6). -/
+/-- The whole per-effect obligation of `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons` at
+`d` (the fan-out receipt shape of the lever's §6). -/
 abbrev MemFreeSideConditions (d : EffectVmDescriptor2) : Prop :=
   (d.hashSites = [] ∧ d.ranges = []) ∧ LookupShaped d.constraints
 
@@ -273,8 +337,14 @@ theorem bridgeMint_sideConditions : MemFreeSideConditions mintV3BridgeHash :=
 
 /-- **`algoStarkSound_memFree_apply`** — the general assembler consumed through the per-effect
 side-condition package: for any `d` with `MemFreeSideConditions d`, the full `AlgoStarkSound` at
-the registry slice `fun _ => d` from EXACTLY {`Poseidon2SpongeCR`, `FriLdtExtract … d`,
-`BusModelFamily … d`} + `MemMapFree`. Nothing per-effect remains but the package. -/
+the registry slice `fun _ => d` from EXACTLY {`Poseidon2SpongeCR`, `FriLdtExtractCons … d`,
+`BusModelFamily … d`} + `MemMapFree`. Nothing per-effect remains but the package.
+
+★ CUTOVER: the FRI slot is the CORRECTED cons-shaped bundle (`oodPoint = ood :: oodRest`) and the
+assembler is `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons`. The singleton-shaped
+`AlgoStarkSoundGeneral.FriLdtExtract` this used to take is PROVED to empty `verifyBatch` at the
+deployed arguments (`deleted_mint_premise_was_empty`, §6). A consumer still holding the old bundle
+composes `ApexOodLaneRepair.friLdtExtract_imp_cons` — no twin is kept. -/
 theorem algoStarkSound_memFree_apply {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2) (hside : MemFreeSideConditions d)
     (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
@@ -283,19 +353,20 @@ theorem algoStarkSound_memFree_apply {F : Type*} [Field F] [DecidableEq F]
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat) (view : ProofView)
     (tr : BatchPublicInputs → BatchProof → VmTrace)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d)
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryFree d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryFree_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
     initState logN view tr hside.2 hside.1.1 hside.1.2 hfri hbusF hmemfree
 
 /-! ## §4 — ★ THE FAN-OUT: `algoStarkSound_<effect>` per mem-free effect.
 
 Each is ONE `algoStarkSound_memFree_apply` at its descriptor; the residual of EVERY instance is
-EXACTLY {`Poseidon2SpongeCR sponge`, `FriLdtExtract … d`, `BusModelFamily … d`, `MemMapFree`} —
-the named floor, identical to `algoStarkSound_transferV3_ofBusModels`. -/
+EXACTLY {`Poseidon2SpongeCR sponge`, `FriLdtExtractCons … d`, `BusModelFamily … d`, `MemMapFree`}
+— the named floor, identical to `ApexOodLaneRepair.algoStarkSound_transferV3_ofBusModels_cons`.
+NO instance carries the singleton-OOD `AlgoStarkSoundGeneral.FriLdtExtract` any more (§6). -/
 
 section FanOut
 
@@ -308,7 +379,7 @@ variable {F : Type*} [Field F] [DecidableEq F]
 
 theorem algoStarkSound_mint
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr mintV3)
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr mintV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         mintV3)
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
@@ -319,7 +390,7 @@ theorem algoStarkSound_mint
 
 theorem algoStarkSound_bridgeMint
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         mintV3BridgeHash)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         mintV3BridgeHash)
@@ -331,7 +402,7 @@ theorem algoStarkSound_bridgeMint
 
 theorem algoStarkSound_supplyMint
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         supplyMintV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         supplyMintV3)
@@ -343,7 +414,7 @@ theorem algoStarkSound_supplyMint
 
 theorem algoStarkSound_burn
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr burnV3)
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr burnV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         burnV3)
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
@@ -354,7 +425,7 @@ theorem algoStarkSound_burn
 
 theorem algoStarkSound_incrementNonce
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         incrementNonceV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         incrementNonceV3)
@@ -366,7 +437,7 @@ theorem algoStarkSound_incrementNonce
 
 theorem algoStarkSound_emitEvent
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         emitEventV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         emitEventV3)
@@ -378,7 +449,7 @@ theorem algoStarkSound_emitEvent
 
 theorem algoStarkSound_exercise
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         exerciseV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         exerciseV3)
@@ -390,7 +461,7 @@ theorem algoStarkSound_exercise
 
 theorem algoStarkSound_pipelinedSend
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         pipelinedSendV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         pipelinedSendV3)
@@ -402,7 +473,7 @@ theorem algoStarkSound_pipelinedSend
 
 theorem algoStarkSound_delegate
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         delegateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         delegateV3)
@@ -414,7 +485,7 @@ theorem algoStarkSound_delegate
 
 theorem algoStarkSound_delegateAtten
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         delegateAttenV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         delegateAttenV3)
@@ -426,7 +497,7 @@ theorem algoStarkSound_delegateAtten
 
 theorem algoStarkSound_attenuate
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         attenuateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         attenuateV3)
@@ -438,7 +509,7 @@ theorem algoStarkSound_attenuate
 
 theorem algoStarkSound_grantCap
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         grantCapWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         grantCapWriteV3)
@@ -450,7 +521,7 @@ theorem algoStarkSound_grantCap
 
 theorem algoStarkSound_introduce
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         introduceWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         introduceWriteV3)
@@ -462,7 +533,7 @@ theorem algoStarkSound_introduce
 
 theorem algoStarkSound_revokeCapability
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         revokeCapabilityV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         revokeCapabilityV3)
@@ -474,7 +545,7 @@ theorem algoStarkSound_revokeCapability
 
 theorem algoStarkSound_revokeDelegation
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         revokeDelegationWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         revokeDelegationWriteV3)
@@ -487,7 +558,7 @@ theorem algoStarkSound_revokeDelegation
 
 theorem algoStarkSound_refreshDelegation
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         refreshDelegationWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         refreshDelegationWriteV3)
@@ -500,7 +571,7 @@ theorem algoStarkSound_refreshDelegation
 
 theorem algoStarkSound_makeSovereign
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         makeSovereignV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         makeSovereignV3)
@@ -512,7 +583,7 @@ theorem algoStarkSound_makeSovereign
 
 theorem algoStarkSound_setPermissions
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setPermsV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         setPermsV3)
@@ -524,7 +595,7 @@ theorem algoStarkSound_setPermissions
 
 theorem algoStarkSound_setVK
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setVKV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         setVKV3)
@@ -536,7 +607,7 @@ theorem algoStarkSound_setVK
 
 theorem algoStarkSound_setProgram
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setProgramV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         setProgramV3)
@@ -548,7 +619,7 @@ theorem algoStarkSound_setProgram
 
 theorem algoStarkSound_cellSeal
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellSealV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         cellSealV3)
@@ -560,7 +631,7 @@ theorem algoStarkSound_cellSeal
 
 theorem algoStarkSound_cellUnseal
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellUnsealV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         cellUnsealV3)
@@ -572,7 +643,7 @@ theorem algoStarkSound_cellUnseal
 
 theorem algoStarkSound_cellDestroy
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellDestroyV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         cellDestroyV3)
@@ -584,7 +655,7 @@ theorem algoStarkSound_cellDestroy
 
 theorem algoStarkSound_receiptArchive
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         receiptArchiveV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         receiptArchiveV3)
@@ -596,7 +667,7 @@ theorem algoStarkSound_receiptArchive
 
 theorem algoStarkSound_transferFee
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         transferFeeV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         transferFeeV3)
@@ -609,7 +680,7 @@ theorem algoStarkSound_transferFee
 /-- The eight STATIC per-slot setField members in one parametric instance (`slot : Fin 8`). -/
 theorem algoStarkSound_setFieldStatic (slot : Fin 8)
     (hCR : Poseidon2SpongeCR sponge)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         (setFieldStaticV3 slot))
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         (setFieldStaticV3 slot))
@@ -657,8 +728,113 @@ theorem setFieldDynV3_not_lookupShaped : ¬ LookupShaped setFieldDynV3.constrain
   obtain ⟨l, hl⟩ := h _ hmem (fun hA => hA)
   exact nomatch hl
 
+/-! ## §6 — ★ THE MIGRATION OBLIGATION: the NEW premise is not ALSO empty.
+
+A cutover that swaps one vacuity for another is worse than none, because it looks fixed. Three
+statements discharge the obligation for this fan-out, in ascending force; a fourth
+(`memFreeFanout_premise_false_of_accepting_run_without_tableOpenings`) states, as a theorem rather
+than a note, the one residual the corrected bundle still inherits — so the discharge is not read as
+more than it is. -/
+
+/-- **The corrected premise adds EXACTLY ZERO strength, at every descriptor this fan-out covers.**
+For ANY `d` — hence for all 26 members, including the ∀-slot `setFieldStaticV3 slot` — the migrated
+premise `FriLdtExtractCons … d` is EQUIVALENT to `FriLdtExtractConsNoOodShape … d`, the same bundle
+with its OOD conjunct DELETED. The `mpr` direction is the whole point: the conjunct is SUPPLIED by
+the bundle's own antecedent (`ApexOodLaneRepair.acceptsFull_gives_cons_shape` —
+`FriVerifier.batchTablesCheck` returns `false` on an empty `oodPoint`), so it can never shrink the
+set of accepting runs the premise must cover, and in particular can never empty it. Contrast the
+DELETED singleton conjunct, which is CONTRADICTED on accepting runs
+(`deleted_mint_premise_was_empty`). -/
+theorem memFreeFanout_premise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace) (d : EffectVmDescriptor2) :
+    FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d
+      ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN view
+        tr d :=
+  friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState logN view tr d
+
+/-- **★ SHARPER, and specific to this fan-out: NO OOD SHAPE IS NEEDED AT ALL.** The entire
+per-effect conclusion — `AlgoStarkSound` at the registry slice, for any `d` carrying
+`MemFreeSideConditions` — follows from a premise (`FriLdtExtractConsNoOodShape`) that MENTIONS NO
+OOD-SHAPE CONJUNCT WHATSOEVER. Every one of the 26 instances is one `algoStarkSound_memFree_apply`,
+and that lemma and this one are INTERDERIVABLE through `memFreeFanout_premise_adds_no_strength`
+(`.mpr` gives this one from it — the proof term below; `.mp` gives it from this one). So NO instance
+in this file depends on any OOD-shape conjunct: the singleton was load-bearing nowhere, and neither
+is the cons shape. This is the strongest available form of "the migration did not swap one vacuity
+for another" — a premise cannot be emptied by a conjunct it does not contain. It does NOT say the
+premise is inhabited; that is the separate, still-open question the caveat below records. -/
+theorem algoStarkSound_memFree_apply_noOodShape {F : Type*} [Field F] [DecidableEq F]
+    (d : EffectVmDescriptor2) (hside : MemFreeSideConditions d)
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (hfri : FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+        view tr d)
+    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
+    (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
+    AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_memFree_apply d hside sponge hCR hash fp embed perm RATE toNat params vk core A
+    initState logN view tr
+    ((memFreeFanout_premise_adds_no_strength sponge perm RATE toNat params vk core A initState
+      logN view tr d).mpr hfri)
+    hbusF hmemfree
+
+/-- **⚠ THE CAVEAT THIS MIGRATION INHERITS, AS A THEOREM RATHER THAN A NOTE.** `FriLdtExtractCons`
+RETAINS the conjunct `topen ∈ (view pi π).1.tableOpenings`, and that conjunct is NOT supplied by
+acceptance: at ANY verifier arguments admitting an accepting run whose mapped proof opens NO table,
+the migrated premise of every instance in this file is FALSE. So the cutover removed a premise that
+was empty EVERYWHERE (`deleted_mint_premise_was_empty`) and installed one whose emptiness is
+CONDITIONAL and UNKNOWN at the deployed `cfg*` arguments — a strict improvement, not a closure.
+
+The condition is not hypothetical: `FriLdtExtractDeployed.deployed_accepting_pole_has_no_tableOpenings`
+exhibits a `decide`-backed accepting run with `tableOpenings = []`, and
+`PremiseInhabitabilitySweep.tableOpeningMember_forcing_premise_is_false_at_a_real_pole` fires this
+shape there. That pole is `Nat`-typed while this file's premise is `ℤ`-typed at `opaque` `cfg*`
+arguments, so what is refuted is the SCHEMA at the arguments where anything is exhibitable — NOT the
+`ℤ` premise at the deployed ones, which nobody has decided in either direction. Stated here so the
+residual travels with the fan-out that carries it. -/
+theorem memFreeFanout_premise_false_of_accepting_run_without_tableOpenings
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace) (d : EffectVmDescriptor2)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : AcceptsFull perm RATE toNat params vk core A initState logN view pi π)
+    (hnil : (view pi π).1.tableOpenings = []) :
+    ¬ FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d := by
+  intro h
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, hmem, _, _, _, _, _, _⟩ := h pi π hacc
+  rw [hnil] at hmem
+  simp at hmem
+
+/-- **THE RECEIPT FOR WHAT WAS DELETED, at this file's OWN descriptor.** The premise every
+instance in this file used to carry — `AlgoStarkSoundGeneral.FriLdtExtract … mintV3` at the
+DEPLOYED `cfg*` arguments — forces `CircuitSoundness.verifyBatch` to return `Verdict.reject` on
+every key/public-input/proof triple. So `algoStarkSound_mint` and its 25 siblings previously
+quantified over an EMPTY accepting set: they were vacuously true, for `mintV3` and for any
+descriptor whatsoever. That is what the cutover removed, and why no deprecated twin is retained. -/
+theorem deleted_mint_premise_was_empty
+    (sponge : List ℤ → ℤ) (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (h : FriLdtExtract sponge cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
+      cfgInitState cfgLogN cfgView tr mintV3)
+    (vkey : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) :
+    verifyBatch vkey pi π = Verdict.reject :=
+  friLdtExtract_makes_verifyBatch_reject_everything sponge tr mintV3 h vkey pi π
+
 /-! ## Kernel-clean keystones (0 sorries; axiom floor is Lean's own). -/
 
+#assert_axioms memFreeFanout_premise_adds_no_strength
+#assert_axioms algoStarkSound_memFree_apply_noOodShape
+#assert_axioms memFreeFanout_premise_false_of_accepting_run_without_tableOpenings
+#assert_axioms deleted_mint_premise_was_empty
 #assert_axioms lookupShaped_graduateV1
 #assert_axioms lookupShaped_append
 #assert_axioms algoStarkSound_memFree_apply
