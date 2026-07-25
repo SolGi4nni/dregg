@@ -122,7 +122,8 @@ theorem stripe_deco_cascade_nonvacuous :
           DecoRelation Reference.refKernel.sigVerify Reference.refKernel.macVerify
             Reference.refKernel.compress Reference.refKernel.encode
             (claimToStmt (11 : Int) sampleClaim) w :=
-  stripe_deco_attest_sound 42 (11 : Int) emptyBase sampleClaim () trivial (by decide)
+  stripe_deco_attest_sound 42 (11 : Int) emptyBase sampleClaim () Reference.refKernel_extractable
+    (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms (enforcing tripwire —
 -- fails the build if the whitelist `{propext, Classical.choice, Quot.sound}` is ever escaped).
