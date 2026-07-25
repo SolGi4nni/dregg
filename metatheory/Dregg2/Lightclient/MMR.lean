@@ -16,9 +16,14 @@ completeness holds BY CONSTRUCTION. This module is the MMR theory that specializ
   * **the structure theorem** `peaksOf_mountains`: every peak is perfect and heights strictly
     increase from the youngest — the binary decomposition of the log length (so #peaks ≤ log₂ n,
     the succinct frontier the prover carries);
-  * **bagging + the root** (§3): `mroot = bag (peaksOf L)`; `mroot_injective` — the root BINDS the
-    whole log under the SAME single named CR floor (`Poseidon2SpongeCR`) the cap-root/heap/receipt
-    advances carry; nothing else;
+  * **bagging + the root** (§3, §3½): `mroot = bag (peaksOf L)`; **`mroot_binds_or_collides`** — the
+    root BINDS the whole log, UNCONDITIONALLY: two logs with equal roots are equal OR the total
+    extractor `mrootFind` HANDS BACK the specific pair of sponge inputs that collide. ⚑ CUTOVER
+    2026-07-25: the headline used to be `mroot_injective` under the `Poseidon2SpongeCR` floor, which
+    `Storage.DeployedFloorRefuted.deployed_floor_false` REFUTES at the deployed hash by `rfl` — so it
+    said nothing about deployment. `mroot_injective` survives as a one-line STRENGTH BRIDGE (the
+    injective special case), and `Storage.DeployedFloorRegrounded` prices the collision disjunct as an
+    advantage in a real collision GAME;
   * **positional + range openings** (§4): `Opens`/`mrange`; appends preserve prior openings and
     prior ranges VERBATIM (`append_preserves_opens`, `append_preserves_range`);
   * **POSITIONAL COMPLETENESS** (§5): the range protocol needs NO gap openings — positions are
@@ -34,9 +39,10 @@ completeness holds BY CONSTRUCTION. This module is the MMR theory that specializ
     canonical order) and no gap-opening machinery (density replaces bracketing).
 
 ## Axiom hygiene
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Crypto enters ONLY as
-the named `Poseidon2SpongeCR` hypothesis (the one floor) + `EngineSound`'s named fields at the
-bridge — hypotheses, never axioms. Non-vacuity §7: witnesses TRUE (a complete range
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Crypto enters the ROOT
+layer as NOTHING at all after the 2026-07-25 cutover — §1½/§3½ are hypothesis-free — and elsewhere
+only as the named `Poseidon2SpongeCR` hypothesis (retained as the strength bridge) + `EngineSound`'s
+named fields at the bridge — hypotheses, never axioms. Non-vacuity §7: witnesses TRUE (a complete range
 answer verifies; the demo forest has the binary-decomposition shape) and FALSE (a skipped position
 is rejected; a substituted/reordered value is rejected; tamper/truncate/extend/reorder each MOVE
 the root). NEW file; all imports read-only.
@@ -46,7 +52,8 @@ import Dregg2.Lightclient.AttestedQuery
 namespace Dregg2.Lightclient.MMR
 
 open Dregg2.Substrate.Heap (refSponge)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding
+  (Poseidon2SpongeCR SpongeColl spongeColl_refutable_of_injective)
 
 /-! ## §1 — perfect peak trees.
 
@@ -119,6 +126,93 @@ theorem hashOf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash
       simp only [List.cons.injEq, and_true] at hl
       rw [ihl l' hl.1, ihr r' hl.2]
 
+/-! ### §1½ — THE PEAK EXTRACTOR: the same binding, with NO refuted floor.
+
+`hashOf_injective` above is conditioned on `Poseidon2SpongeCR`, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE for every range-bounded sponge and
+`Storage.DeployedFloorRefuted.deployed_floor_false` refutes at the DEPLOYED hash by `rfl`. A theorem
+carrying it says nothing about the deployed system.
+
+What replaces it is not a weaker hypothesis but NO hypothesis: a TOTAL extractor that, from two peaks
+with equal hashes, either proves the peaks equal or HANDS BACK the specific pair of sponge inputs at
+which the hash actually collides. The disjunction is UNCONDITIONAL, so it holds OF the deployed
+sponge — and it is not a free pass, because `Poseidon2Binding.spongeColl_refutable_of_injective`
+refutes the right disjunct at any injective sponge (which is exactly how `hashOf_injective` is
+re-derived below, losing nothing). -/
+
+/-- **THE PEAK-COLLISION EXTRACTOR (TOTAL).** The tree walk `hashOf_injective` performs, written as a
+FUNCTION. Two peaks whose hashes agree: if their sponge preimages differ (mismatched arity, or
+different child digests) those preimages ARE the collision; otherwise the child digests agree
+slot-for-slot, so recurse into the first child that differs. No search, no `Classical.choice` — the
+branch test is `DecidableEq PTree`. -/
+def collFind (hash : List ℤ → ℤ) : PTree → PTree → List ℤ × List ℤ
+  | .leaf v, .leaf v' => ([v], [v'])
+  | .leaf v, .node l' r' => ([v], [l'.hashOf hash, r'.hashOf hash])
+  | .node l r, .leaf v' => ([l.hashOf hash, r.hashOf hash], [v'])
+  | .node l r, .node l' r' =>
+      if [l.hashOf hash, r.hashOf hash] ≠ [l'.hashOf hash, r'.hashOf hash] then
+        ([l.hashOf hash, r.hashOf hash], [l'.hashOf hash, r'.hashOf hash])
+      else if l ≠ l' then collFind hash l l'
+      else collFind hash r r'
+
+/-- **⚑ THE PEAK BINDING, UNCONDITIONAL.** Two peaks with equal hashes are EITHER equal, OR the pair
+`collFind` returns is a genuine sponge collision. No injectivity, no CR, no floor of any kind — this
+holds of the DEPLOYED sponge, which `hashOf_injective` never did. -/
+theorem hashOf_binds_or_collides (hash : List ℤ → ℤ) :
+    ∀ t t' : PTree, t.hashOf hash = t'.hashOf hash →
+      t = t' ∨ SpongeColl hash (collFind hash t t') := by
+  intro t
+  induction t with
+  | leaf v =>
+    intro t' h
+    cases t' with
+    | leaf v' =>
+      by_cases hv : v = v'
+      · exact Or.inl (by rw [hv])
+      · refine Or.inr ?_
+        simp only [collFind]
+        exact ⟨by simpa using hv, h⟩
+    | node l' r' =>
+      refine Or.inr ?_
+      simp only [collFind]
+      exact ⟨by simp, h⟩
+  | node l r ihl ihr =>
+    intro t' h
+    cases t' with
+    | leaf v' =>
+      refine Or.inr ?_
+      simp only [collFind]
+      exact ⟨by simp, h⟩
+    | node l' r' =>
+      by_cases houter : [l.hashOf hash, r.hashOf hash] ≠ [l'.hashOf hash, r'.hashOf hash]
+      · refine Or.inr ?_
+        simp only [collFind, if_pos houter]
+        exact ⟨houter, h⟩
+      · have hcond := houter
+        rw [not_not] at houter
+        simp only [List.cons.injEq, and_true] at houter
+        obtain ⟨hlh, hrh⟩ := houter
+        by_cases hl : l = l'
+        · subst hl
+          simp only [collFind, if_neg hcond, if_neg (by simp : ¬ (l ≠ l))]
+          rcases ihr r' hrh with hr | hcoll
+          · exact Or.inl (by rw [hr])
+          · exact Or.inr hcoll
+        · refine Or.inr ?_
+          simp only [collFind, if_neg hcond, if_pos hl]
+          exact (ihl l' hlh).resolve_left hl
+
+/-- **THE STRENGTH BRIDGE (peak level), stated contradiction-style.** Under exactly the injectivity
+the refuted floor asserted, DISTINCT peaks cannot share a hash — the collision disjunct is impossible,
+so `hashOf_injective`'s conclusion falls straight out of the unconditional form. Nothing that was
+genuinely proved has been surrendered; what was surrendered is the pretence that the deployed sponge
+satisfies the hypothesis. -/
+theorem hashOf_injective_of_binds_or_collides (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash) (t t' : PTree) (h : t.hashOf hash = t'.hashOf hash)
+    (hne : t ≠ t') : False :=
+  hne ((hashOf_binds_or_collides hash t t' h).resolve_right
+    (spongeColl_refutable_of_injective hash hCR _))
+
 /-- A perfect peak of height `h` carries exactly `2 ^ h` leaves (the chunk sizes are the binary
 decomposition of the log length). -/
 theorem length_leaves : ∀ t : PTree, t.Perfect → t.leaves.length = 2 ^ t.height := by
@@ -134,6 +228,8 @@ theorem length_leaves : ∀ t : PTree, t.Perfect → t.leaves.length = 2 ^ t.hei
 end PTree
 
 #assert_axioms PTree.hashOf_injective
+#assert_axioms PTree.hashOf_binds_or_collides
+#assert_axioms PTree.hashOf_injective_of_binds_or_collides
 #assert_axioms PTree.length_leaves
 
 /-! ## §2 — the forest: `push` (the carry), `peaksOf` (the fold), leaf recovery, the mountains
@@ -290,38 +386,118 @@ def bag (hash : List ℤ → ℤ) : Forest → ℤ
 commitment absorbs (§6) — `iroot` for the append-only index. -/
 def mroot (hash : List ℤ → ℤ) (L : List ℤ) : ℤ := bag hash (peaksOf L)
 
-/-- The bag binds the forest: equal bags force equal peak lists (arity separates empty from cons;
-`hashOf_injective` pins each peak; induction pins the rest). -/
-theorem bag_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∀ f₁ f₂ : Forest, bag hash f₁ = bag hash f₂ → f₁ = f₂ := by
+/-! ### §3½ — THE ROOT EXTRACTOR: the anti-ghost keystone WITHOUT the refuted floor.
+
+Same move as §1½, one level up. `bagFind` walks the two peak lists together; `mrootFind` is that walk
+started at `peaksOf`. `mroot_binds_or_collides` is the UNCONDITIONAL form of the headline: two logs
+with equal roots are equal OR the extractor hands back a genuine collision of the sponge. It is what
+a light client can actually rely on at the deployed Poseidon2, and it is the theorem every consumer
+below is migrated onto. -/
+
+/-- **THE FOREST-COLLISION EXTRACTOR (TOTAL).** The `bag_injective` induction as a FUNCTION: mismatched
+arity (empty vs cons) IS the collision; matching arity with differing preimages IS the collision;
+otherwise peel — the peak if the peaks differ, else the tail. -/
+def bagFind (hash : List ℤ → ℤ) : Forest → Forest → List ℤ × List ℤ
+  | [], [] => ([], [])
+  | [], (t' :: rest') => ([], [t'.hashOf hash, bag hash rest'])
+  | (t :: rest), [] => ([t.hashOf hash, bag hash rest], [])
+  | (t :: rest), (t' :: rest') =>
+      if [t.hashOf hash, bag hash rest] ≠ [t'.hashOf hash, bag hash rest'] then
+        ([t.hashOf hash, bag hash rest], [t'.hashOf hash, bag hash rest'])
+      else if t ≠ t' then PTree.collFind hash t t'
+      else bagFind hash rest rest'
+
+/-- **⚑ THE BAG BINDING, UNCONDITIONAL.** Equal bags force equal peak lists OR expose a genuine sponge
+collision. No floor. -/
+theorem bag_binds_or_collides (hash : List ℤ → ℤ) :
+    ∀ f₁ f₂ : Forest, bag hash f₁ = bag hash f₂ →
+      f₁ = f₂ ∨ SpongeColl hash (bagFind hash f₁ f₂) := by
   intro f₁
   induction f₁ with
   | nil =>
     intro f₂ h
     cases f₂ with
-    | nil => rfl
-    | cons t rest => exact absurd (hCR _ _ h) (by simp)
+    | nil => exact Or.inl rfl
+    | cons t' rest' =>
+      refine Or.inr ?_
+      simp only [bagFind]
+      exact ⟨by simp, h⟩
   | cons t rest ih =>
     intro f₂ h
     cases f₂ with
-    | nil => exact absurd (hCR _ _ h) (by simp)
+    | nil =>
+      refine Or.inr ?_
+      simp only [bagFind]
+      exact ⟨by simp, h⟩
     | cons t' rest' =>
-      have hl := hCR _ _ h
-      simp only [List.cons.injEq, and_true] at hl
-      rw [PTree.hashOf_injective hash hCR t t' hl.1, ih rest' hl.2]
+      by_cases houter :
+          [t.hashOf hash, bag hash rest] ≠ [t'.hashOf hash, bag hash rest']
+      · refine Or.inr ?_
+        simp only [bagFind, if_pos houter]
+        exact ⟨houter, h⟩
+      · have hcond := houter
+        rw [not_not] at houter
+        simp only [List.cons.injEq, and_true] at houter
+        obtain ⟨hth, hbh⟩ := houter
+        by_cases ht : t = t'
+        · subst ht
+          simp only [bagFind, if_neg hcond, if_neg (by simp : ¬ (t ≠ t))]
+          rcases ih rest' hbh with hrest | hcoll
+          · exact Or.inl (by rw [hrest])
+          · exact Or.inr hcoll
+        · refine Or.inr ?_
+          simp only [bagFind, if_neg hcond, if_pos ht]
+          exact (PTree.hashOf_binds_or_collides hash t t' hth).resolve_left ht
 
-/-- **`mroot_injective` — THE ROOT BINDS THE WHOLE LOG (the anti-ghost, transferred).** Two logs
-with equal roots are EQUAL, under the single named CR floor: a server cannot keep the published
-root while suppressing, forging, REORDERING, or truncating ANY receipt position. The proof is the
-recovery keystone riding bag injectivity — the sorted-map `iroot_injective`, specialized to the
-structure where canonical order is free. -/
+/-- The bag binds the forest: equal bags force equal peak lists.
+
+⚠ **RETAINED ONLY AS THE STRENGTH BRIDGE.** `Poseidon2SpongeCR` is REFUTED at the deployed sponge
+(`Storage.DeployedFloorRefuted.deployed_floor_false`), so this statement is vacuous there. It is now
+DERIVED from the unconditional `bag_binds_or_collides` in one line, which is the proof that the
+migration surrendered nothing: the old theorem is exactly the injective special case of the new one. -/
+theorem bag_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+    ∀ f₁ f₂ : Forest, bag hash f₁ = bag hash f₂ → f₁ = f₂ := fun f₁ f₂ h =>
+  (bag_binds_or_collides hash f₁ f₂ h).resolve_right
+    (spongeColl_refutable_of_injective hash hCR _)
+
+/-- **THE ROOT-COLLISION EXTRACTOR (TOTAL).** The forest walk started at the two logs' peak lists —
+what an adversary who equivocates on the published MMR root actually hands over. -/
+def mrootFind (hash : List ℤ → ℤ) (L₁ L₂ : List ℤ) : List ℤ × List ℤ :=
+  bagFind hash (peaksOf L₁) (peaksOf L₂)
+
+/-- **⚑ `mroot_binds_or_collides` — THE ROOT BINDS THE WHOLE LOG, UNCONDITIONALLY.** Two logs with
+equal roots are EITHER equal — a server cannot keep the published root while suppressing, forging,
+REORDERING or truncating any receipt position — OR the pair `mrootFind` returns is a genuine collision
+of the sponge.
+
+This is the headline `mroot_injective` was trying to be, minus the hypothesis the deployed sponge
+REFUTES. It holds OF the deployed Poseidon2. What it costs is honest and named: the guarantee is now
+"binds, unless the server found a sponge collision", and §3¾ prices that residual as a game advantage
+instead of assuming it away. -/
+theorem mroot_binds_or_collides (hash : List ℤ → ℤ) {L₁ L₂ : List ℤ}
+    (h : mroot hash L₁ = mroot hash L₂) :
+    L₁ = L₂ ∨ SpongeColl hash (mrootFind hash L₁ L₂) := by
+  rcases bag_binds_or_collides hash _ _ h with hf | hcoll
+  · refine Or.inl ?_
+    calc L₁ = forestLeaves (peaksOf L₁) := (forestLeaves_peaksOf L₁).symm
+      _ = forestLeaves (peaksOf L₂) := by rw [hf]
+      _ = L₂ := forestLeaves_peaksOf L₂
+  · exact Or.inr hcoll
+
+/-- **`mroot_injective` — the anti-ghost keystone, at an INJECTIVE sponge.**
+
+⚠ **RETAINED ONLY AS THE STRENGTH BRIDGE.** `Poseidon2SpongeCR` is REFUTED at the deployed sponge, so
+at deployment this says nothing; `mroot_binds_or_collides` is the live statement and every migrated
+consumer routes through it. Derived here in one line to PROVE that the cutover is a weakening of the
+hypothesis and therefore a strengthening of every consumer: whatever `mroot_injective` gave you, the
+unconditional form still gives you, at exactly the same hypothesis. -/
 theorem mroot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {L₁ L₂ : List ℤ} (h : mroot hash L₁ = mroot hash L₂) : L₁ = L₂ := by
-  have hf := bag_injective hash hCR _ _ h
-  calc L₁ = forestLeaves (peaksOf L₁) := (forestLeaves_peaksOf L₁).symm
-    _ = forestLeaves (peaksOf L₂) := by rw [hf]
-    _ = L₂ := forestLeaves_peaksOf L₂
+    {L₁ L₂ : List ℤ} (h : mroot hash L₁ = mroot hash L₂) : L₁ = L₂ :=
+  (mroot_binds_or_collides hash h).resolve_right
+    (spongeColl_refutable_of_injective hash hCR _)
 
+#assert_axioms bag_binds_or_collides
+#assert_axioms mroot_binds_or_collides
 #assert_axioms bag_injective
 #assert_axioms mroot_injective
 

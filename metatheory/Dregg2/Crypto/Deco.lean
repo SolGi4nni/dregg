@@ -487,27 +487,60 @@ example : ∃ circuit : CircuitIR Int, Satisfies refSig refMac refCompress refEn
   deco_complete refSig refMac refCompress refEncode sampleStmt sampleWit sample_relation
 
 /-- A degenerate reference DECO verifier kernel over `ℤ` (`def`, not a global `instance`). `verify`
-accepts iff the disclosed facts are non-zero and encode/open canonically against server key `11`;
-`extractable := True`. `extract` rebuilds the satisfying trace from the disclosed statement. -/
+accepts iff the disclosed facts are non-zero and encode/open canonically against server key `11`.
+`extract` rebuilds the satisfying trace from the disclosed statement.
+
+⚑ **CARRIER REPAIR (2026-07-25).** `extractable` was `True`; it is now the genuine
+extractability-SHAPED `Prop` over THIS oracle, `extract := fun h => h` (PortalFloor style), PROVED at
+`refKernel_extractable` and REFUTED at `forgeKernel_not_extractable`. -/
 @[reducible] def refKernel : DecoVerifierKernel Int Unit where
   sigVerify := refSig
   macVerify := refMac
   compress := refCompress
   encode := refEncode
   verify stmt _ := decide (stmt.serverKey = 11 ∧ 1 ≤ stmt.facts.amountCents)
-  extractable := True
-  extract := by
-    intro _ stmt _ haccept
-    simp only [decide_eq_true_eq] at haccept
-    obtain ⟨hkey, hamt⟩ := haccept
-    -- build the satisfying trace: session key = serverKey (= 11) so refSig accepts; open canonically.
-    have hrel : DecoRelation refSig refMac refCompress refEncode stmt
-        { sessionKey := stmt.serverKey, sig := 0,
-          transcriptCommit := refEncode stmt.facts + 7, tag := 0,
-          fieldsDigest := refEncode stmt.facts, salt := 7, amtBits := [] } := by
-      refine ⟨?_, rfl, rfl, rfl, hamt⟩
-      show decide (stmt.serverKey = stmt.serverKey) = true; simp
-    exact deco_complete refSig refMac refCompress refEncode stmt _ hrel
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Unit),
+      decide (stmt.serverKey = 11 ∧ 1 ≤ stmt.facts.amountCents) = true →
+        ∃ circuit : CircuitIR Int, Satisfies refSig refMac refCompress refEncode circuit stmt
+  extract := fun h => h
+
+/-- **THE REFERENCE CARRIER HOLDS** — a theorem: an accepted statement really does carry a satisfying
+DECO trace (session key = server key so the sig gate fires; the transcript opens canonically). -/
+theorem refKernel_extractable : refKernel.extractable := by
+  intro stmt _ haccept
+  simp only [decide_eq_true_eq] at haccept
+  obtain ⟨hkey, hamt⟩ := haccept
+  -- build the satisfying trace: session key = serverKey (= 11) so refSig accepts; open canonically.
+  have hrel : DecoRelation refSig refMac refCompress refEncode stmt
+      { sessionKey := stmt.serverKey, sig := 0,
+        transcriptCommit := refEncode stmt.facts + 7, tag := 0,
+        fieldsDigest := refEncode stmt.facts, salt := 7, amtBits := [] } := by
+    refine ⟨?_, rfl, rfl, rfl, hamt⟩
+    show decide (stmt.serverKey = stmt.serverKey) = true; simp
+  exact deco_complete refSig refMac refCompress refEncode stmt _ hrel
+
+/-- **FORGE KERNEL** — same carrier SHAPE over a signature oracle that REJECTS everything (gate 1 of
+the DECO chain can never fire) while the §8 verifier accepts EVERY statement. -/
+@[reducible] def forgeKernel : DecoVerifierKernel Int Unit where
+  sigVerify _ _ _ := false
+  macVerify := refMac
+  compress := refCompress
+  encode := refEncode
+  verify _ _ := true
+  extractable :=
+    ∀ (stmt : Statement Int) (_proof : Unit), (true : Bool) = true →
+      ∃ circuit : CircuitIR Int,
+        Satisfies (fun _ _ _ => false) refMac refCompress refEncode circuit stmt
+  extract := fun h => h
+
+/-- **THE CARRIER IS FALSE HERE.** No trace can satisfy the DECO AIR when its signature gate rejects
+every triple, yet the verifier accepts every statement. So the reference carrier has CONTENT — it is
+refutable, which `True` is not. -/
+theorem forgeKernel_not_extractable : ¬ forgeKernel.extractable := by
+  intro h
+  obtain ⟨_, hsat⟩ := h sampleStmt () rfl
+  exact Bool.noConfusion hsat.2.1
 
 /-- A toy ed25519 `SignatureKernel` over `ℤ` whose oracle IS the reference DECO sig gate (`refSig`).
 `Signed pk m := pk = m`; `unforgeable` is the GENUINE EUF-CMA-shaped soundness Prop over this oracle. -/
@@ -536,7 +569,8 @@ theorem reference_authenticates_payment :
       w.transcriptCommit = refKernel.compress (refKernel.encode sampleStmt.facts) w.salt ∧
       1 ≤ sampleStmt.facts.amountCents :=
   deco_authenticates_payment (KD := refKernel) (SK := refSigKernel) (MK := refMacKernel)
-    rfl rfl trivial (fun _ _ _ h => of_decide_eq_true h) trivial sampleStmt () (by decide)
+    rfl rfl refKernel_extractable (fun _ _ _ h => of_decide_eq_true h) trivial sampleStmt ()
+    (by decide)
 
 #print axioms reference_authenticates_payment
 
@@ -546,7 +580,7 @@ def base : Registry (Statement Int) Unit := fun _ => none
 /-- Non-vacuity of `deco_verify_sound`: at the reference kernel an accepted proof proves the DECO relation
 holds for some witness. -/
 example : ∃ w : CircuitIR Int, DecoRelation refSig refMac refCompress refEncode sampleStmt w :=
-  deco_verify_sound (K := refKernel) trivial sampleStmt () (by decide)
+  deco_verify_sound (K := refKernel) refKernel_extractable sampleStmt () (by decide)
 
 /-- Non-vacuity of the FULL cascade: at the reference kernel an accepted proof both `Discharged`s the
 registry predicate at `custom 42` AND proves the DECO relation. A NAMED witness so its axiom footprint is
@@ -555,7 +589,7 @@ theorem reference_cascade_nonvacuous :
     (@Discharged (Statement Int) Unit
         (verifiableOfRegistry (@decoReg Int Unit refKernel 42 base) (.custom 42)) sampleStmt ())
       ∧ ∃ w : CircuitIR Int, DecoRelation refSig refMac refCompress refEncode sampleStmt w :=
-  deco_registry_cascade (K := refKernel) 42 base sampleStmt () trivial (by decide)
+  deco_registry_cascade (K := refKernel) 42 base sampleStmt () refKernel_extractable (by decide)
 
 -- Non-vacuity axiom footprint: rests only on the standard kernel axioms.
 #print axioms reference_cascade_nonvacuous
@@ -563,7 +597,7 @@ theorem reference_cascade_nonvacuous :
 /-- Non-vacuity of the dial wiring: the DECO kind's floor is `selective`, the dial's bottom notch is the
 verifier's bit, and an accepting proof proves the DECO relation. -/
 example : (decoKindObligation Int).dialFloor = Dial.selective :=
-  (deco_dial_wired (K := refKernel) 42 trivial base sampleStmt ()).1
+  (deco_dial_wired (K := refKernel) 42 refKernel_extractable base sampleStmt ()).1
 
 end Reference
 
@@ -576,5 +610,9 @@ end Reference
 #assert_axioms deco_authenticates_payment
 #assert_axioms deco_registry_cascade
 #assert_axioms deco_dial_wired
+
+-- Carrier non-vacuity pins (PortalFloor §9c discipline): reference carrier HOLDS, forge carrier FALSE.
+#assert_axioms Reference.refKernel_extractable
+#assert_axioms Reference.forgeKernel_not_extractable
 
 end Dregg2.Crypto.Deco
