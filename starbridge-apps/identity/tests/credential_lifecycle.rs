@@ -44,11 +44,17 @@ fn fixture_cell(seed: u8) -> CellId {
 }
 
 fn fixture_issuer() -> IssuerKeys {
-    // Poseidon2-path federation root (matches hash_4_to_1 / DSL circuit).
+    // (root_key, federation_root) MUST be a matching synthetic-Poseidon2 pair:
+    // present() now runs the real issuer-membership STARK, which folds
+    // bytes_to_babybear(root_key) up the synthetic 8-level path and refuses with
+    // IssuerNotInFederation unless the computed root equals federation_root (see
+    // bridge::present `compute_matching_federation_root` /
+    // build_issuer_membership_poseidon2_synthetic). This is the proven pair the
+    // credentials crate's own fixtures use.
     IssuerKeys::new(
-        [100u8; 32],
+        [11u8; 32],
         [
-            3, 154, 242, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            33, 181, 62, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0,
         ],
         b"starbridge-identity-test",
@@ -119,13 +125,22 @@ fn roundtrip_issue_present_verify() {
     assert_eq!(pres_action.effects.len(), 1);
 
     // Verify the presentation against the verifier's expectations.
+    //
+    // Since the 2026-07-26 F1 fix, `verify()` routes through the bridge STARK
+    // verifier (`verify_proof_complete`): it REQUIRES the external trusted
+    // federation root and binds the committed action/resource (the presentation
+    // above binds `read` on `starbridge-identity-test`). Freshness stays disabled
+    // (`now` unset). The predicate is NOT asserted at verify: predicate
+    // verification is fail-closed pending the facts_root AIR binding (see
+    // `credentials/src/verification.rs`). The presentation still CARRIES its
+    // predicate proof; the verifier checks the genuine selective disclosure of
+    // `verification_level` through the sound path.
     let verify_opts = VerificationOptions {
         expected_schema: Some(schema),
         expected_disclosure: vec!["verification_level".into()],
-        expected_predicates: vec![PredicateRequest::new(
-            "verification_level",
-            Predicate::Gte(1),
-        )],
+        expected_federation_root: Some(issuer.federation_root),
+        expected_action: "read".into(),
+        expected_resource: "starbridge-identity-test".into(),
         ..Default::default()
     };
     let verified = verify(&presentation, &verify_opts).expect("verification must succeed");
@@ -169,14 +184,23 @@ fn revoked_credential_rejected() {
 
     // Verifier supplies the non-revocation proof from the registry —
     // verification must reject.
+    //
+    // The F1 trusted-root + action/resource are supplied so verify() REACHES the
+    // revocation check through the sound path. A bare `Default` would fail-closed
+    // at `MissingTrustedFederationRoot` — a reject for the WRONG reason; with the
+    // sound path reached, the attached non-revocation proof makes the revoked
+    // credential reject specifically as `Revoked`.
     let verify_opts = VerificationOptions {
         revocation: Some(revocation_proof),
+        expected_federation_root: Some(issuer.federation_root),
+        expected_action: "read".into(),
+        expected_resource: "starbridge-identity-test".into(),
         ..Default::default()
     };
     let result = verify(&presentation, &verify_opts);
     assert!(
-        result.is_err(),
-        "verification of revoked credential must fail; got {result:?}"
+        matches!(result, Err(starbridge_identity::VerificationError::Revoked)),
+        "verification of revoked credential must reject as Revoked; got {result:?}"
     );
 
     // The verifier turn-builder records the rejection on the verifier cell.
@@ -299,9 +323,16 @@ fn verify_action_records_accept_event() {
     )
     .unwrap();
 
+    // F1: the accept path routes through the bridge STARK verifier, so the
+    // verifier must hold the trusted federation root and the committed
+    // action/resource (`fixture_request` binds `read` on
+    // `starbridge-identity-test`).
     let verify_opts = VerificationOptions {
         expected_schema: Some(schema),
         expected_disclosure: vec!["verification_level".into()],
+        expected_federation_root: Some(issuer.federation_root),
+        expected_action: "read".into(),
+        expected_resource: "starbridge-identity-test".into(),
         ..Default::default()
     };
     let cipherclerk = fixture_cipherclerk();
@@ -346,11 +377,20 @@ fn verify_action_records_reject_event() {
         present(&credential, &fixture_request(), &PresentationOptions::new()).unwrap();
 
     // Verifier asks for a predicate that the holder didn't prove.
+    //
+    // The F1 trusted-root + action/resource are supplied so verify() reaches the
+    // predicate check and rejects for the RIGHT reason (`MissingPredicate` — the
+    // holder proved no `verification_level` predicate), rather than fail-closing
+    // early at `MissingTrustedFederationRoot`. `fixture_request` binds `read` on
+    // `starbridge-identity-test`.
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new(
             "verification_level",
             Predicate::Gte(99),
         )],
+        expected_federation_root: Some(issuer.federation_root),
+        expected_action: "read".into(),
+        expected_resource: "starbridge-identity-test".into(),
         ..Default::default()
     };
     let cipherclerk = fixture_cipherclerk();

@@ -63,10 +63,15 @@ fn u64_field(value: u64) -> [u8; 32] {
 }
 
 fn issuer_keys() -> IssuerKeys {
+    // (root_key, federation_root) MUST be a matching synthetic-Poseidon2 pair:
+    // present() runs the real issuer-membership STARK and refuses with
+    // IssuerNotInFederation unless the computed root equals federation_root. This
+    // is the proven pair the credentials crate's own fixtures use (see
+    // bridge::present::compute_matching_federation_root).
     IssuerKeys::new(
-        [100u8; 32],
+        [11u8; 32],
         [
-            3, 154, 242, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            33, 181, 62, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0,
         ],
         b"composition-test",
@@ -208,13 +213,21 @@ fn build_actions(env: &Env) -> Vec<Action> {
     .expect("presentation builds");
     let present_action = build_present_credential_action(cc, env.identity_cell, &presentation);
 
+    // Since the 2026-07-26 F1 fix, `verify()` (run by
+    // `build_verify_presentation_action`) routes through the bridge STARK
+    // verifier: it REQUIRES the external trusted federation root and binds the
+    // committed action/resource (the presentation binds `read` on
+    // `composition-test`). The predicate is NOT asserted at verify — predicate
+    // verification is fail-closed pending the facts_root AIR binding (see
+    // `credentials/src/verification.rs`); the presentation still CARRIES its
+    // predicate proof and the sound path checks the genuine disclosure of
+    // `verification_level`, which is what this composition's accept step needs.
     let verify_opts = VerificationOptions {
         expected_schema: Some(schema),
         expected_disclosure: vec!["verification_level".into()],
-        expected_predicates: vec![PredicateRequest::new(
-            "verification_level",
-            Predicate::Gte(1),
-        )],
+        expected_federation_root: Some(issuer_keys().federation_root),
+        expected_action: "read".into(),
+        expected_resource: "composition-test".into(),
         ..Default::default()
     };
     let verify_action =
@@ -263,8 +276,21 @@ fn submit_all(env: &Env, actions: &[Action]) -> Vec<TurnReceipt> {
     actions
         .iter()
         .map(|a| {
+            // Re-sign against the clerk's CURRENT next-turn nonce before submit.
+            // `build_actions` signs the whole batch UPFRONT over the build-time
+            // nonce, but dregg-action-sig-v3 binds the submitting turn's nonce
+            // into the classical signature half. A capability action on a
+            // NON-primary cell (e.g. the nameservice register) then fails the
+            // classical half once the clerk's nonce has advanced past the
+            // build-time value. The executor's own stale-nonce repair only covers
+            // refused-turn nonce DIVERGENCE, not a batch pre-signed at an older
+            // nonce — so we stamp the live nonce here, the correct usage for a
+            // pre-built batch. (Unrelated to credentials verify(): the credential
+            // issue/present/verify actions already commit through the F1 sound
+            // path; this repairs the nameservice/subscription/governance steps.)
+            let signed = env.cipherclerk.sign_action(a.clone());
             env.executor
-                .submit_action(&env.cipherclerk, a.clone())
+                .submit_action(&env.cipherclerk, signed)
                 .expect("composition action commits")
         })
         .collect()

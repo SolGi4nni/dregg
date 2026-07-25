@@ -37,6 +37,14 @@ serde_json = { workspace = true }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+# Activates bridge's `test-utils` feature for the credential-lifecycle tests.
+# `dregg-credentials::present()` drives the SYNTHETIC issuer-membership Merkle
+# path (bridge `build_issuer_membership_poseidon2_synthetic`), which is gated
+# `#[cfg(any(test, feature = "test-utils"))]`. Bridge is only a TRANSITIVE dep
+# here (via dregg-credentials), so `cfg(test)` never applies to it; without this
+# feature present() fails-closed with `IssuerNotInFederation`. The credentials
+# crate activates the same feature in its own dev-deps for the same reason.
+dregg-bridge = { path = "../../bridge", features = ["test-utils"] }
 
 [lints]
 workspace = true

@@ -48,11 +48,17 @@ fn fixture_executor(cipherclerk: &AppCipherclerk) -> (EmbeddedExecutor, CellId) 
 }
 
 fn fixture_issuer() -> IssuerKeys {
-    // Poseidon2-path federation root (matches hash_4_to_1 / DSL circuit).
+    // (root_key, federation_root) MUST be a matching synthetic-Poseidon2 pair:
+    // present() now runs the real issuer-membership STARK, which folds
+    // bytes_to_babybear(root_key) up the synthetic 8-level path and refuses with
+    // IssuerNotInFederation unless the computed root equals federation_root (see
+    // bridge::present `compute_matching_federation_root` /
+    // build_issuer_membership_poseidon2_synthetic). This is the proven pair the
+    // credentials crate's own fixtures use.
     IssuerKeys::new(
-        [100u8; 32],
+        [11u8; 32],
         [
-            3, 154, 242, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            33, 181, 62, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0,
         ],
         b"integration-test",
@@ -175,13 +181,21 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
         .expect("present_credential action must succeed");
 
     // Step 4: Verify — executor-bound.
+    //
+    // Since the 2026-07-26 F1 fix, `verify()` (which `build_verify_presentation_action`
+    // runs) routes through the bridge STARK verifier: it REQUIRES the external
+    // trusted federation root and binds the committed action/resource (the
+    // presentation above binds `read` on `integration-test`). The predicate is
+    // NOT asserted at verify — predicate verification is fail-closed pending the
+    // facts_root AIR binding (see `credentials/src/verification.rs`); the
+    // presentation still CARRIES its predicate proof and the sound path checks
+    // the genuine disclosure of `verification_level`.
     let verify_opts = VerificationOptions {
         expected_schema: Some(schema),
         expected_disclosure: vec!["verification_level".into()],
-        expected_predicates: vec![PredicateRequest::new(
-            "verification_level",
-            Predicate::Gte(1),
-        )],
+        expected_federation_root: Some(fixture_issuer().federation_root),
+        expected_action: "read".into(),
+        expected_resource: "integration-test".into(),
         ..Default::default()
     };
     let verify_action =
@@ -331,8 +345,17 @@ fn executor_verify_revoked_presentation_emits_reject_event() {
     .expect("presentation builds even for revoked credential");
 
     // Verifier checks with the revocation proof → must reject.
+    //
+    // F1: the trusted-root + action/resource are supplied so verify() reaches the
+    // revocation check through the sound path (a bare `Default` would fail-closed
+    // at `MissingTrustedFederationRoot` — the reject would then be a missing-root
+    // artefact, not the revocation this test asserts). The presentation binds
+    // `read` on `integration-test`.
     let verify_opts = VerificationOptions {
         revocation: Some(revocation_proof),
+        expected_federation_root: Some(fixture_issuer().federation_root),
+        expected_action: "read".into(),
+        expected_resource: "integration-test".into(),
         ..Default::default()
     };
     let verify_action =
