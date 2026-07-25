@@ -27,7 +27,6 @@ Dregg2.Circuit.Emit.AdjacencyMembershipRefineAudit  # GREEN self-checked (#asser
 Dregg2.Circuit.Emit.AdjacencyMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AttestedFactMembershipEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.AvailWideMembersNarrow  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.BlindedMembershipRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BoundPresentationRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.BridgeActionEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -80,7 +79,6 @@ Dregg2.Circuit.AlgoStarkSoundFanoutMemory  # GREEN self-checked (#assert clean),
 Dregg2.Circuit.AlgoStarkSoundFanoutSetField  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundKernel  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.AlgoStarkSoundKernelAvail  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
-Dregg2.Circuit.BlindedMembershipBindingFromFold  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.CustomLeafEncoding  # GREEN, NO self-check — asserts nothing on its own — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.DeltaProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
 Dregg2.Circuit.EffectsAsDataProto  # GREEN, #guard-only (no axiom self-check) — Circuit-soundness (FRI/STARK/kernel) cluster
@@ -97,17 +95,7 @@ Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow  # GREEN self-checked (#as
 Dregg2.Circuit.WrapSafetyStaticAnalyzer  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit-soundness (FRI/STARK/kernel) cluster
 
 # --- PQ-crypto spec WIP (ML-DSA/ML-KEM codecs, VerifyCore/SignCore specs, ACVP KATs, NTT faithfulness); spec-in-progress, not yet CI-clean ---
-Dregg2.Crypto.CodecRoundTrip  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.CryptoVerifyAll  # GREEN dep-ordered (lake build = EXIT 0, 8556 jobs). The prior "RED: missing VerifyCoreEqSpecW.olean" was a STALE-OLEAN artifact of `lake env lean` (orphan dep never built to olean); dep-ordered build compiles it. Crypto aggregator, unreachable from root.
-Dregg2.Crypto.EncapsCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.KemSoundnessQuant  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.MlDsaHintCodec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.MlDsaSigCodecClosed  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.NttFaithful  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.SignCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.VerifyCoreEqSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.VerifyCoreEqSpecW  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.VerifyCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 
 # --- light-client / proof-of-holdings bridge WIP (Eth/Tendermint/MPT clients, holding-fold tally) ---
 Dregg2.Bridge.HoldingWeightedTally  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
