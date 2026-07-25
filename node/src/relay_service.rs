@@ -41,6 +41,72 @@ use dregg_storage_templates::relay_operator::{
     relay_operator_factory_descriptor, relay_operator_program_with,
 };
 
+// ─── Delivery-proof bounding (audit #10: slash-safe eviction) ───────────────────
+//
+// `delivery_proofs` is the sticky DELIVERED-set the dispute referee reads as the
+// content-address-honest delivery witness (see `relay_dispute::handle_dispute`):
+// membership of a box's `content_hash` acquits a dispute over it. Left unbounded it
+// grows forever (GC skipped it). It could NOT be blindly ring/TTL-evicted because a
+// dispute only had a LOWER admissibility bound (`at_height >= accept_by`, no upper
+// bound), so dropping a still-disputable delivered box's proof would flip an acquit
+// into a Dropped verdict and WRONGLY SLASH an honest relay.
+//
+// The fix pairs an UPPER dispute deadline with a height-keyed eviction whose
+// thresholds COINCIDE:
+//
+//   * `handle_dispute` rejects, against the node's OWN finalized `current_height`
+//     (unforgeable, unlike the disputer's `at_height`), any dispute with
+//     `current_height > accept_by + dispute_window_blocks` — past that height the
+//     delivery is FINAL.
+//   * a cached proof is retained iff `current_height <= dispute_deadline`, where
+//     `dispute_deadline = enqueued_at + CUSTODY_DEADLINE_BLOCKS + dispute_window`.
+//
+// Under the receipt construction `accept_by = enqueued_at + custody_deadline`
+// (captp `Bus::enqueue`, data_plane.rs: `accept_by = now + default_deadline`), and
+// `enqueued_at <= drain height`, we have `dispute_deadline >= accept_by +
+// dispute_window`. So a proof is only ever evicted at or AFTER the height at which
+// every dispute that could read it is already inadmissible — eviction can never turn
+// an acquit into a slash. This is the invariant eviction safety rests on.
+
+/// The custody deadline horizon (blocks past a box's enqueue height) by which the
+/// relay must have delivered or refunded, else it has DROPPED the box. Mirrors the
+/// captp data-plane bus deadline (`Bus::default_deadline` = 100, data_plane.rs),
+/// where a minted `CustodyReceipt` sets `accept_by = enqueue + default_deadline`.
+///
+/// SAFETY INVARIANT: eviction assumes `accept_by <= enqueued_at +
+/// CUSTODY_DEADLINE_BLOCKS` for every valid receipt (true by that construction). A
+/// deployment that raises the bus `default_deadline` MUST raise this in lockstep, or
+/// a proof could be evicted while a longer-deadline dispute is still open.
+pub const CUSTODY_DEADLINE_BLOCKS: u64 = 100;
+
+/// Default dispute (challenge) window: blocks PAST a box's `accept_by` during which
+/// its delivery may still be disputed. After `accept_by + dispute_window` the
+/// delivery is FINAL and its cached proof is evictable. Chosen conservatively as the
+/// default message lifetime (`RelayConfig::message_ttl_blocks` / the bus
+/// `default_ttl` = 1000): an honest wronged party has a full message-lifetime of
+/// blocks after the deadline to raise a dispute — comfortably longer than the
+/// consensus finality depth (`FINALITY_DEPTH_ROUNDS` = 6) and the custody deadline
+/// horizon. Tunable via `RelayConfig::dispute_window_blocks`.
+pub const DEFAULT_DISPUTE_WINDOW_BLOCKS: u64 = 1_000;
+
+/// Default hard cap on cached delivery proofs — a memory backstop above the
+/// structural bound (deliveries within one live dispute window, itself throttled by
+/// the send-side per-epoch byte quota `RateLimitBySum` + inbox capacities; with the
+/// default config ~1.1 epochs of a 100k-byte/epoch quota). Reaching it means TTL
+/// eviction has not kept pace; a drain then caches only as many proofs as fit and
+/// leaves the rest ENQUEUED (still in custody, no witness gap) — backpressure, never
+/// dropping a within-window proof (which could wrongly slash). Tunable via
+/// `RelayConfig::max_delivery_proofs`.
+pub const DEFAULT_MAX_DELIVERY_PROOFS: usize = 262_144;
+
+fn default_dispute_window_blocks() -> u64 {
+    DEFAULT_DISPUTE_WINDOW_BLOCKS
+}
+
+fn default_max_delivery_proofs() -> usize {
+    DEFAULT_MAX_DELIVERY_PROOFS
+}
+
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 /// Configuration for the relay operator service.
@@ -61,6 +127,16 @@ pub struct RelayConfig {
     pub gc_interval_secs: u64,
     /// TTL for messages in blocks (used during GC).
     pub message_ttl_blocks: u64,
+    /// Dispute (challenge) window: blocks past a box's `accept_by` deadline during
+    /// which its delivery may still be disputed. After `accept_by +
+    /// dispute_window_blocks` the delivery is FINAL and its cached delivery proof is
+    /// evictable (audit #10). See [`DEFAULT_DISPUTE_WINDOW_BLOCKS`].
+    #[serde(default = "default_dispute_window_blocks")]
+    pub dispute_window_blocks: u64,
+    /// Hard cap on cached delivery proofs (memory backstop). See
+    /// [`DEFAULT_MAX_DELIVERY_PROOFS`].
+    #[serde(default = "default_max_delivery_proofs")]
+    pub max_delivery_proofs: usize,
     /// SLA: max delivery latency in blocks.
     pub max_delivery_latency_blocks: u64,
     /// Path for persistent state file.
@@ -81,6 +157,8 @@ impl Default for RelayConfig {
             max_total_capacity: 100_000,
             gc_interval_secs: 300,
             message_ttl_blocks: 1000,
+            dispute_window_blocks: DEFAULT_DISPUTE_WINDOW_BLOCKS,
+            max_delivery_proofs: DEFAULT_MAX_DELIVERY_PROOFS,
             max_delivery_latency_blocks: 50,
             state_file: PathBuf::from("./relay-state.json"),
             default_inbox_capacity: 100,
@@ -323,10 +401,15 @@ pub struct RelayState {
     pub template: RelayTemplateState,
     /// Configuration.
     pub config: RelayConfig,
-    /// Current block height (updated by the node or a ticker).
+    /// Current block height (updated by the node or a ticker). Used as the finalized
+    /// frontier for delivery-proof eviction and the dispute-window gate.
     pub current_height: u64,
-    /// Delivered message proofs: msg_hash -> DequeueProof.
-    pub delivery_proofs: std::collections::HashMap<[u8; 32], DequeueProof>,
+    /// Delivered-message proofs: `content_hash -> DeliveryProofRecord`. The sticky
+    /// delivery witness the dispute referee reads (its keys are the DELIVERED set).
+    /// Bounded by height-keyed eviction past each proof's dispute deadline + a hard
+    /// cap (audit #10); see [`DeliveryProofRecord`] and
+    /// [`RelayState::evict_expired_delivery_proofs`].
+    pub delivery_proofs: std::collections::HashMap<[u8; 32], DeliveryProofRecord>,
     /// Total messages delivered since startup.
     pub messages_delivered: u64,
     /// Total messages received since startup.
@@ -334,6 +417,42 @@ pub struct RelayState {
 }
 
 pub type SharedRelayState = Arc<RwLock<RelayState>>;
+
+/// A cached delivery proof plus the height past which its delivery is FINAL.
+///
+/// `dispute_deadline = enqueued_at + CUSTODY_DEADLINE_BLOCKS + dispute_window_blocks`
+/// — the box's `accept_by` (enqueue + custody horizon) plus the dispute window. Once
+/// the finalized frontier (`current_height`) passes it, no dispute over this box is
+/// admissible (`relay_dispute::handle_dispute` rejects `current_height > accept_by +
+/// window`), so the proof can be evicted without ever flipping an acquit into a
+/// slash. See the module-level bounding note.
+#[derive(Debug, Clone)]
+pub struct DeliveryProofRecord {
+    /// The dequeue proof retrieved by `GET /relay/proof/:msg_id`.
+    pub proof: DequeueProof,
+    /// Finalized height past which the delivery is FINAL and this proof is evictable.
+    pub dispute_deadline: u64,
+}
+
+impl RelayState {
+    /// Evict every cached delivery proof whose dispute deadline has passed below the
+    /// finalized frontier `height` — i.e. `height > dispute_deadline` (at `height ==
+    /// dispute_deadline` the window is still open, so RETAIN). Returns the count
+    /// evicted.
+    ///
+    /// SLASH-SAFE by construction: `relay_dispute::handle_dispute` rejects any dispute
+    /// with `current_height > accept_by + dispute_window`, and each retained proof's
+    /// `dispute_deadline >= accept_by + dispute_window` (the receipt-construction
+    /// invariant, see [`CUSTODY_DEADLINE_BLOCKS`]). So a proof is only ever dropped at
+    /// or after the height at which every dispute that could read it is already
+    /// inadmissible — eviction can never turn an acquit into a slash.
+    pub fn evict_expired_delivery_proofs(&mut self, height: u64) -> usize {
+        let before = self.delivery_proofs.len();
+        self.delivery_proofs
+            .retain(|_, rec| height <= rec.dispute_deadline);
+        before - self.delivery_proofs.len()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayTemplateState {
@@ -1200,9 +1319,23 @@ async fn handle_drain(
 
     let mut s = state.write().await;
     let current_height = s.current_height;
+    let dispute_window = s.config.dispute_window_blocks;
+    // Bound the delivery-proof cache (audit #10). First evict proofs past their
+    // dispute deadline (below the finalized frontier); then cap how many NEW proofs
+    // this drain may cache to the remaining room. We deliver only as many boxes as we
+    // can WITNESS: a box we cannot cache stays enqueued (still in custody, no witness
+    // gap) — backpressure under a flood, never dropping a within-window proof (which
+    // could wrongly slash). In normal operation the cache is far below the cap, so
+    // `effective_max == max`.
+    s.evict_expired_delivery_proofs(current_height);
+    let room = s
+        .config
+        .max_delivery_proofs
+        .saturating_sub(s.delivery_proofs.len());
+    let effective_max = max.min(room);
     let drained = s
         .template
-        .drain_inbox(&owner, max, current_height)
+        .drain_inbox(&owner, effective_max, current_height)
         .map_err(|e| {
             let status = if e.contains("missing inbox") {
                 StatusCode::NOT_FOUND
@@ -1215,8 +1348,21 @@ async fn handle_drain(
     let messages: Vec<DrainedMessage> = drained
         .into_iter()
         .map(|(entry, proof, payload)| {
-            // Cache the proof for later retrieval.
-            s.delivery_proofs.insert(entry.content_hash, proof.clone());
+            // Cache the proof, stamped with the height past which its delivery is
+            // FINAL: accept_by (= enqueued_at + custody horizon) + the dispute window.
+            // `evict_expired_delivery_proofs` drops it only past this height, which is
+            // exactly when every dispute over it is inadmissible (see handle_dispute).
+            let dispute_deadline = entry
+                .enqueued_at
+                .saturating_add(CUSTODY_DEADLINE_BLOCKS)
+                .saturating_add(dispute_window);
+            s.delivery_proofs.insert(
+                entry.content_hash,
+                DeliveryProofRecord {
+                    proof: proof.clone(),
+                    dispute_deadline,
+                },
+            );
             s.messages_delivered += 1;
 
             DrainedMessage {
@@ -1298,11 +1444,11 @@ async fn handle_proof(
     })?;
 
     let s = state.read().await;
-    if let Some(proof) = s.delivery_proofs.get(&msg_hash) {
+    if let Some(rec) = s.delivery_proofs.get(&msg_hash) {
         Ok(Json(ProofResponse {
             msg_id,
-            old_root: hex_encode(&proof.old_root),
-            new_root: hex_encode(&proof.new_root),
+            old_root: hex_encode(&rec.proof.old_root),
+            new_root: hex_encode(&rec.proof.new_root),
             found: true,
         }))
     } else {
@@ -1356,12 +1502,18 @@ pub async fn run_relay_service(config: RelayConfig) {
             interval.tick().await;
             let mut s = gc_state.write().await;
             let height = s.current_height;
+            // Bound delivery_proofs (audit #10): evict every proof past its dispute
+            // deadline (below the finalized frontier). Slash-safe — see
+            // `RelayState::evict_expired_delivery_proofs`.
+            let delivery_proofs_evicted = s.evict_expired_delivery_proofs(height);
             let result = s.operator.gc_expired(height, message_ttl);
-            if result.messages_collected > 0 {
+            if result.messages_collected > 0 || delivery_proofs_evicted > 0 {
                 info!(
                     collected = result.messages_collected,
                     operator_fees = result.operator_fees,
                     refunds = result.sender_refunds.len(),
+                    delivery_proofs_evicted,
+                    delivery_proofs_live = s.delivery_proofs.len(),
                     "relay GC pass completed"
                 );
             }
@@ -1907,6 +2059,167 @@ mod tests {
         assert_eq!(drain.messages[0].sender, hex_encode(&[0xBC; 32]));
         assert_eq!(state.read().await.template.total_pending(), 0);
         assert_eq!(state.read().await.messages_delivered, 1);
+    }
+
+    // ─── audit #10: delivery_proofs are bounded (TTL/height evict + hard cap) ──────
+    //
+    // Both-directions falsifiers for the memory bound. The slash-safety of the bound
+    // (an evicted proof never wrongly slashes an honest relay) is proven against the
+    // real dispute handler in `relay_dispute`'s test module; here we prove the map is
+    // actually bounded (a) under a flood by TTL/height eviction, and (b) at the hard
+    // cap by backpressure that never drops a within-window proof.
+
+    fn signed_subscribe_cap(sk: &SigningKey, owner: [u8; 32], capacity: usize) -> SubscribeRequest {
+        let nonce = b"sub-cap";
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&owner);
+        payload.extend_from_slice(nonce);
+        SubscribeRequest {
+            owner: hex_encode(&owner),
+            capacity: Some(capacity),
+            min_deposit: Some(1),
+            nonce: hex_encode(nonce),
+            signature: sign_request(sk, b"dregg-relay-subscribe-v1", &payload),
+        }
+    }
+
+    async fn drain_signed(
+        state: &Arc<RwLock<RelayState>>,
+        sk: &SigningKey,
+        owner: [u8; 32],
+        max: usize,
+    ) -> DrainResponse {
+        let nonce = b"drain-audit10";
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&owner);
+        payload.extend_from_slice(nonce);
+        payload.extend_from_slice(&(max as u64).to_le_bytes());
+        handle_drain(
+            State(state.clone()),
+            axum::extract::Query(DrainQuery {
+                owner: hex_encode(&owner),
+                max: Some(max),
+                nonce: hex_encode(nonce),
+                signature: sign_request(sk, b"dregg-relay-drain-v1", &payload),
+            }),
+        )
+        .await
+        .expect("drain")
+        .0
+    }
+
+    async fn send_one(state: &Arc<RwLock<RelayState>>, owner: [u8; 32], tag: [u8; 4]) {
+        handle_send(
+            State(state.clone()),
+            Path(hex_encode(&owner)),
+            Json(SendRequest {
+                sender: hex_encode(&[0xBC; 32]),
+                payload: {
+                    use base64::Engine;
+                    base64::engine::general_purpose::STANDARD.encode(tag)
+                },
+                deposit: 1,
+            }),
+        )
+        .await
+        .expect("send");
+    }
+
+    /// (b) A flood of deliveries stays bounded: proofs past their dispute deadline are
+    /// height-evicted, so the live set never exceeds deliveries within ONE window.
+    #[tokio::test]
+    async fn audit10_delivery_proofs_bounded_under_flood_by_height_eviction() {
+        let (sk, owner) = make_key(42);
+        let window = 50u64;
+        let state = Arc::new(RwLock::new(test_state(RelayConfig {
+            dispute_window_blocks: window,
+            default_inbox_capacity: 8,
+            max_total_capacity: 100_000,
+            ..test_config()
+        })));
+        let _ = handle_subscribe(
+            State(state.clone()),
+            Json(signed_subscribe_cap(&sk, owner, 8)),
+        )
+        .await
+        .expect("subscribe");
+
+        // Round 1 at height 0: deliver 4 boxes → 4 proofs, each with dispute_deadline
+        // = enqueued_at(0) + CUSTODY_DEADLINE_BLOCKS(100) + window(50) = 150.
+        for i in 0..4u8 {
+            send_one(&state, owner, [i, i, i, i]).await;
+        }
+        let drain = drain_signed(&state, &sk, owner, 4).await;
+        assert_eq!(drain.messages.len(), 4);
+        assert_eq!(state.read().await.delivery_proofs.len(), 4);
+        // enqueued_at(0) + CUSTODY_DEADLINE_BLOCKS + window.
+        for rec in state.read().await.delivery_proofs.values() {
+            assert_eq!(rec.dispute_deadline, CUSTODY_DEADLINE_BLOCKS + window);
+        }
+
+        // The finalized frontier advances past their deadline: they evict — no leak.
+        {
+            let mut s = state.write().await;
+            s.current_height = 151;
+            assert_eq!(s.evict_expired_delivery_proofs(151), 4);
+        }
+        assert!(
+            state.read().await.delivery_proofs.is_empty(),
+            "old deliveries evicted"
+        );
+
+        // Round 2 at the new height: fresh proofs, still bounded to one window's worth.
+        for i in 4..8u8 {
+            send_one(&state, owner, [i, i, i, i]).await;
+        }
+        let drain = drain_signed(&state, &sk, owner, 4).await;
+        assert_eq!(drain.messages.len(), 4);
+        assert_eq!(
+            state.read().await.delivery_proofs.len(),
+            4,
+            "live set bounded to one window's deliveries — the leak is closed"
+        );
+    }
+
+    /// (b/c) At the hard cap, a drain caches only as many proofs as fit and leaves the
+    /// rest ENQUEUED (still in custody, no witness gap) — backpressure, NOT a dropped
+    /// within-window proof (which could wrongly slash).
+    #[tokio::test]
+    async fn audit10_delivery_proof_cap_applies_backpressure_no_witness_gap() {
+        let (sk, owner) = make_key(43);
+        let state = Arc::new(RwLock::new(test_state(RelayConfig {
+            max_delivery_proofs: 2,
+            default_inbox_capacity: 8,
+            max_total_capacity: 100_000,
+            ..test_config()
+        })));
+        let _ = handle_subscribe(
+            State(state.clone()),
+            Json(signed_subscribe_cap(&sk, owner, 8)),
+        )
+        .await
+        .expect("subscribe");
+
+        for i in 0..5u8 {
+            send_one(&state, owner, [i, i, i, i]).await;
+        }
+        assert_eq!(state.read().await.template.total_pending(), 5);
+
+        // Drain up to 5, but the cache cap is 2: only 2 are delivered + cached; the
+        // other 3 stay enqueued (their witness is never lost — they were not delivered).
+        let drain = drain_signed(&state, &sk, owner, 5).await;
+        assert_eq!(
+            drain.messages.len(),
+            2,
+            "delivered only as many boxes as the cache can witness"
+        );
+        let s = state.read().await;
+        assert_eq!(s.delivery_proofs.len(), 2, "cache bounded at the cap");
+        assert_eq!(
+            s.template.total_pending(),
+            3,
+            "the undelivered rest remain enqueued — backpressure, no witness gap"
+        );
     }
 
     // ─── Computron purchase path, rung 1 (operator-local policy) ──────────

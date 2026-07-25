@@ -2170,6 +2170,8 @@ async fn run_relay(
         max_total_capacity: max_capacity,
         gc_interval_secs: gc_interval,
         message_ttl_blocks: message_ttl,
+        dispute_window_blocks: relay_service::DEFAULT_DISPUTE_WINDOW_BLOCKS,
+        max_delivery_proofs: relay_service::DEFAULT_MAX_DELIVERY_PROOFS,
         max_delivery_latency_blocks: max_delivery_latency,
         state_file,
         default_inbox_capacity,

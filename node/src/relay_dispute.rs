@@ -570,6 +570,48 @@ pub async fn handle_dispute(
 
     let mut s = state.write().await;
 
+    // Node-authoritative dispute window (audit #10 — the upper deadline that makes
+    // bounded eviction of `delivery_proofs` slash-safe). `well_formed` above already
+    // checked the disputer's OWN `at_height >= accept_by` — a crypto lower bound the
+    // disputer asserts and can craft. Here the NODE re-decides admissibility against
+    // its own finalized `current_height`, which a disputer cannot forge, so neither
+    // bound is bypassable by a chosen `at_height`:
+    //
+    //   * current_height < accept_by            → the custody deadline has NOT passed
+    //     at the node's real height; the relay may still deliver or refund. Reject —
+    //     no PREMATURE slash of a relay that has not defaulted.
+    //   * current_height > accept_by + window   → the dispute (challenge) window has
+    //     CLOSED; the delivery is FINAL. Reject. Past this point every dispute over
+    //     the box is inadmissible, which is EXACTLY what lets the relay service evict
+    //     that box's cached delivery proof (`evict_expired_delivery_proofs`) without
+    //     ever flipping an acquit into a slash: no admissible dispute can read the
+    //     evicted (now content-hash-absent) delivered set. The eviction threshold and
+    //     this gate coincide by construction (see `DeliveryProofRecord`).
+    let current_height = s.current_height;
+    let accept_by = evidence.receipt.accept_by;
+    let dispute_deadline = accept_by.saturating_add(s.config.dispute_window_blocks);
+    if current_height < accept_by {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(DisputeError {
+                error: format!(
+                    "dispute premature: finalized height {current_height} < accept_by {accept_by} (the relay has not defaulted)"
+                ),
+            }),
+        ));
+    }
+    if current_height > dispute_deadline {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(DisputeError {
+                error: format!(
+                    "dispute window closed: finalized height {current_height} > accept_by {accept_by} + window {} (delivery is final)",
+                    s.config.dispute_window_blocks
+                ),
+            }),
+        ));
+    }
+
     let owner = evidence.receipt.inbox_owner.0;
     // The inbox's authenticated head root at the dispute height (0 if the inbox
     // has been unsubscribed / never existed). The verdict reads the delivery
@@ -1231,6 +1273,243 @@ mod tests {
         assert_eq!(
             transfers, 2,
             "senior-only: restitution + remainder, no junior leg"
+        );
+    }
+
+    // ── audit #10: the dispute window makes bounded delivery_proofs slash-safe ──────
+    //
+    // `handle_dispute` reads `delivery_proofs`' KEYS as the delivery witness. Left
+    // unbounded the map leaks; but blind eviction could drop a still-disputable
+    // delivered box and WRONGLY SLASH an honest relay (or, past the deadline, wrongly
+    // fail to slash). The node-authoritative dispute window
+    // (`accept_by ..= accept_by + dispute_window_blocks`, decided against the
+    // finalized `current_height`, which a disputer cannot forge) makes a delivery
+    // FINAL past the window, and the height-keyed eviction's deadline coincides with
+    // it. These are the both-directions falsifiers over the REAL handler + eviction:
+    //   (a) within the window a dropped box still slashes and a delivered box acquits;
+    //   (c) past the deadline the proof IS evicted AND the late dispute is rejected,
+    //       so the honest relay is never wrongly slashed by the eviction;
+    //       the two thresholds coincide exactly (no gap where the proof is gone but a
+    //       dispute would still slash); a premature dispute is rejected too.
+
+    use crate::relay_service::{DeliveryProofRecord, RelayConfig, RelayState, RelayTemplateState};
+    use dregg_storage::queue::{DequeueProof, QueueEntry};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[allow(deprecated)]
+    fn dispute_state(current_height: u64, dispute_window_blocks: u64) -> SharedRelayState {
+        use dregg_storage::operator::RelayOperator;
+        let config = RelayConfig {
+            operator_key: [0xAA; 32],
+            bond_amount: 10_000,
+            dispute_window_blocks,
+            ..RelayConfig::default()
+        };
+        let mut template = RelayTemplateState::new(&config);
+        // Genesis sets bond_min == bond_amount (zero headroom); lower it so a slash
+        // actually seizes, exercising the real seizure path within the headroom.
+        template.slots[BOND_MIN_SLOT as usize] = u64_to_field(1_000);
+        let operator = RelayOperator::new(
+            config.operator_key,
+            config.bond_amount,
+            config.max_delivery_latency_blocks,
+        );
+        Arc::new(RwLock::new(RelayState {
+            operator,
+            template,
+            config,
+            current_height,
+            delivery_proofs: std::collections::HashMap::new(),
+            messages_delivered: 0,
+            messages_received: 0,
+        }))
+    }
+
+    fn dummy_proof() -> DequeueProof {
+        DequeueProof {
+            entry: QueueEntry {
+                content_hash: [0xAB; 32],
+                sender: [0u8; 32],
+                deposit: 0,
+                enqueued_at: 0,
+                size: 0,
+            },
+            old_root: [0u8; 32],
+            new_root: [0u8; 32],
+            position: 0,
+            remaining_leaves: Vec::new(),
+        }
+    }
+
+    fn dispute_req() -> DisputeRequest {
+        DisputeRequest {
+            evidence: EvidenceOfDrop::from_receipt(demo_receipt()), // content_hash 0xAB, accept_by 500
+            requested_penalty: Some(500),
+        }
+    }
+
+    /// (a) A dropped box (never delivered) disputed WITHIN its window slashes: the
+    /// window gate admits it, the empty witness set reads Dropped.
+    #[tokio::test]
+    async fn audit10_within_window_dropped_box_still_slashes() {
+        let state = dispute_state(500, 1_000); // accept_by 500; window [500, 1500]
+        let resp = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect("within-window dispute is admissible")
+            .0;
+        assert_eq!(resp.verdict, "slash");
+        assert!(resp.slashed);
+        assert_eq!(resp.dispute_count, 1, "the dispute is recorded");
+        assert_eq!(
+            resp.seized_amount, 500,
+            "a real seizure within the bond headroom"
+        );
+        assert_eq!(
+            u64_from_field(state.read().await.template.slots[BOND_AMOUNT_SLOT as usize]),
+            9_500
+        );
+    }
+
+    /// (a) A delivered box (its content_hash in the witness set) disputed within the
+    /// window ACQUITS — the proof is present, not evicted.
+    #[tokio::test]
+    async fn audit10_within_window_delivered_box_acquits() {
+        let state = dispute_state(500, 1_000);
+        state.write().await.delivery_proofs.insert(
+            [0xAB; 32],
+            DeliveryProofRecord {
+                proof: dummy_proof(),
+                dispute_deadline: 1_500,
+            },
+        );
+        let resp = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect("admissible")
+            .0;
+        assert_eq!(resp.verdict, "acquit");
+        assert!(!resp.slashed);
+        assert_eq!(resp.dispute_count, 0);
+        assert_eq!(
+            u64_from_field(state.read().await.template.slots[BOND_AMOUNT_SLOT as usize]),
+            10_000,
+            "an acquit seizes nothing"
+        );
+    }
+
+    /// (c) THE CRUX. A delivered box PAST its dispute deadline: the proof IS evicted
+    /// (map bounded) AND a late dispute over it is REJECTED by the window gate, so the
+    /// honest relay is NEVER wrongly slashed by the eviction.
+    #[tokio::test]
+    async fn audit10_evicted_delivered_proof_never_wrongly_slashes() {
+        let state = dispute_state(0, 1_000);
+        {
+            let mut s = state.write().await;
+            s.delivery_proofs.insert(
+                [0xAB; 32],
+                DeliveryProofRecord {
+                    proof: dummy_proof(),
+                    dispute_deadline: 1_500, // accept_by 500 + window 1000
+                },
+            );
+            s.current_height = 1_501; // finalized frontier one past the deadline
+            assert_eq!(
+                s.evict_expired_delivery_proofs(1_501),
+                1,
+                "proof past deadline evicted"
+            );
+            assert!(
+                s.delivery_proofs.is_empty(),
+                "map bounded — the leak is closed"
+            );
+        }
+        // The witness is gone, but the honest relay is safe: the late dispute is
+        // inadmissible (window closed), so it can never flip into a slash.
+        let err = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect_err("a dispute past the window is rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1.0.error.contains("window closed"),
+            "rejected as final: {}",
+            err.1.0.error
+        );
+        let s = state.read().await;
+        assert_eq!(
+            u64_from_field(s.template.slots[DISPUTE_COUNT_SLOT as usize]),
+            0,
+            "no mutation on a rejected dispute"
+        );
+        assert_eq!(
+            u64_from_field(s.template.slots[BOND_AMOUNT_SLOT as usize]),
+            10_000
+        );
+    }
+
+    /// (c, precise) The eviction threshold and the window gate COINCIDE: at the last
+    /// in-window height the proof is retained AND the dispute acquits; at the first
+    /// height past it the proof is evictable AND the dispute is rejected. There is no
+    /// height where the proof is gone but a dispute would still slash.
+    #[tokio::test]
+    async fn audit10_eviction_and_gate_thresholds_coincide() {
+        // Last admissible height (== deadline 1500): retained + acquit.
+        let state = dispute_state(1_500, 1_000);
+        state.write().await.delivery_proofs.insert(
+            [0xAB; 32],
+            DeliveryProofRecord {
+                proof: dummy_proof(),
+                dispute_deadline: 1_500,
+            },
+        );
+        assert_eq!(
+            state.write().await.evict_expired_delivery_proofs(1_500),
+            0,
+            "retained at the deadline"
+        );
+        let resp = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect("admissible at the deadline")
+            .0;
+        assert_eq!(resp.verdict, "acquit");
+
+        // First height past (1501): evictable + rejected.
+        let state = dispute_state(1_501, 1_000);
+        state.write().await.delivery_proofs.insert(
+            [0xAB; 32],
+            DeliveryProofRecord {
+                proof: dummy_proof(),
+                dispute_deadline: 1_500,
+            },
+        );
+        assert_eq!(
+            state.write().await.evict_expired_delivery_proofs(1_501),
+            1,
+            "evictable past the deadline"
+        );
+        let err = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect_err("rejected past the deadline");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    /// A dispute raised before the deadline is reached at the node's real height is
+    /// rejected — no PREMATURE slash of a relay that has not defaulted (even against an
+    /// empty/dropped witness set, and even though the disputer forged `at_height`).
+    #[tokio::test]
+    async fn audit10_premature_dispute_rejected() {
+        let state = dispute_state(499, 1_000); // accept_by 500 > current 499
+        let err = handle_dispute(State(state.clone()), Json(dispute_req()))
+            .await
+            .expect_err("premature dispute is rejected");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1.0.error.contains("premature"),
+            "rejected as premature: {}",
+            err.1.0.error
+        );
+        assert_eq!(
+            u64_from_field(state.read().await.template.slots[DISPUTE_COUNT_SLOT as usize]),
+            0
         );
     }
 }
