@@ -101,7 +101,7 @@ use dregg_app_framework::TurnReceipt;
 use procgen_dregg::CommittedSeed;
 use spween_dregg::{WorldCell, WorldError};
 
-use crate::descent::{BANKED, BREATH, CARRIED, DAYS, Descent, RELICS};
+use crate::descent::{BREATH, CARRIED, DAYS, Descent, RELICS};
 use crate::{meta, progression};
 
 /// Why a run seals no tomb. Both variants are the *good* endings-that-are-not-a-death: the run is
@@ -367,7 +367,7 @@ mod tomb_tests {
     //! The dying run is a genuine 18-move line on day 9's real daily map — one of the only two
     //! maps the deployed rules let the light run out on at all (module header).
     use super::*;
-    use crate::descent::{DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, UNLOCK};
+    use crate::descent::{BANKED, DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, UNLOCK};
     use crate::loot::LootVault;
 
     /// The one lethal line day 9's map admits: down to the bottom, every guardian felled, the three

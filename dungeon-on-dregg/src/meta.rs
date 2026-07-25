@@ -958,6 +958,61 @@ mod meta_tests {
         assert_eq!(echoes(&world), echoes_for_depth(4));
     }
 
+    /// THE MUTATION CANARY for the tooth above: a passing refusal-test proves nothing unless the
+    /// same payload COMMITS with the tooth removed. This rebuilds the identical story MINUS the
+    /// `SlotChanged { ECHOES_SLOT }` case — i.e. exactly HEAD before this commit — and drives the
+    /// identical staple. It mints 9,999 echoes on a living hero, which is the hole, in the tree, as
+    /// it stood. If someone later deletes that case, this test is what goes red.
+    #[test]
+    fn the_currency_tooth_is_load_bearing_removing_it_reopens_the_mint() {
+        let mut story = meta_hero_story();
+        let CellProgram::Cases(cases) = &mut story.program else {
+            panic!("Cases program");
+        };
+        let before = cases.len();
+        cases.retain(
+            |c| !matches!(c.guard, TransitionGuard::SlotChanged { index } if index == ECHOES_SLOT),
+        );
+        assert_eq!(
+            before - cases.len(),
+            1,
+            "exactly one SlotChanged(echoes) case exists to remove"
+        );
+
+        let world =
+            WorldCell::deploy_compiled(Arc::new(story), 45).expect("the stripped cell deploys");
+        progression::choose_class(&world, WARRIOR).expect("class");
+        assert!(!progression::is_dead(&world), "ALIVE");
+        let cell = world.cell_id();
+
+        let minted = world.apply_raw(
+            progression::GAIN_XP_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: progression::XP_SLOT as u64,
+                    value: field_from_u64(1),
+                },
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as u64,
+                    value: field_from_u64(9_999),
+                },
+            ],
+        );
+        assert!(
+            minted.is_ok(),
+            "WITHOUT the SlotChanged(echoes) case this staple COMMITS — that is the hole this \
+             commit closes; got {minted:?}"
+        );
+        assert_eq!(
+            echoes(&world),
+            9_999,
+            "9,999 death-echoes on a hero that never died — every boon and talent price in the \
+             tree is denominated in this slot"
+        );
+    }
+
     /// THE PRICED ACCRUAL (non-vacuous): the tomb grant's amount is fixed by the KERNEL, not by the
     /// caller. The same method with a forged (larger) payload is refused; a depth the dungeon does
     /// not have names no case and is a default-deny refusal; and the sanctioned call commits
