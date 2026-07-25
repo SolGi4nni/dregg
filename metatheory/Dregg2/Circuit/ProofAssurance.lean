@@ -28,6 +28,21 @@ kernel-clean, sorry-free, and true.
   args, forces `verifyBatch` to reject **every** input.
 * `ApexOodLaneRepair`, `OodSingletonRepair`, `FriFsDecodedOodRepair`, `StarkSoundFriLdtCorrected` — the
   corrected cons-shape bundles and the non-vacuous apex.
+* `ExtChallengeOodSites`, `ExtChallengeLogUpSite` — the remaining base-field-challenge sites retyped to
+  the quartic extension. Same asymmetry proved each time (base lifts, extension does not descend, and
+  the base equation *cannot express* the deployed value) with the same payoff shape: the extension-typed
+  hypothesis still forces the identical base-field conclusion — weaker-but-achievable, same conclusion.
+  Two sharpenings worth knowing: `OodSoundnessGame`'s BabyBear instance prices a **different object**, so
+  citing it for the deployed ε would be laundering — though it is *conservative*, never too small; and
+  the LogUp wound is not `F`'s type (already generic) but the **read** — one ℤ from one public column
+  cannot produce four lanes, and `atMostOne_basis_mem_range` makes that obstruction basis-independent.
+* `Crypto.CarrierContent` — **NOT YET IMPORTED: it does not compile** (8 `failed to synthesize`
+  at the audit definitions, confirmed by direct elaboration; the authoring lane reported green on a file
+  that does not build). Intended as the repair of the sweep's R11 finding: the `CarrierAudit` tooth (a record
+  no `True` carrier can inhabit, because it demands a REFUTATION of the same carrier shape at a
+  broken sibling oracle) plus the eight audits, one per reference kernel of the carrier-gated family.
+  Their carriers are now PROVED theorems over their own oracles instead of `extractable := True`.
+  This closes the *self-witnessing* hole, NOT the deployment question: R11 stays UNKNOWN.
 
 ## The repair obligation (why these modules carry so many `_adds_no_strength` theorems)
 
@@ -59,3 +74,5 @@ import Dregg2.Circuit.ApexOodLaneRepair
 import Dregg2.Circuit.OodSingletonRepair
 import Dregg2.Circuit.FriFsDecodedOodRepair
 import Dregg2.Circuit.StarkSoundFriLdtCorrected
+import Dregg2.Circuit.ExtChallengeOodSites
+import Dregg2.Circuit.ExtChallengeLogUpSite
