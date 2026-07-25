@@ -23,6 +23,15 @@ kernel-clean, sorry-free, and true.
 * `PremiseInhabitabilitySweep` — the instrument **run** across the tree's accepts-implies-exists surface
   (R1–R18). Enumeration was mechanical, not impressionistic: a structural scan returned 39 candidates
   and a second grep on `extractable : Prop` found 13 more the filter missed.
+* `PremiseInhabitabilitySweepSettled` — the sweep's `UNKNOWN` rows worked down, and a **THIRD vacuity
+  mode** found: the first two live on the ANTECEDENT, this one on the **CONCLUSION**. A total conclusion
+  makes a gated theorem free with carrier *and* acceptance deleted, while `CarrierLive` reports green,
+  axioms are clean and no `sorry` exists (`carrierLive_does_not_exclude_mode3`). Concretely
+  `nonmembership_verify_sound` is a **tautology at every instantiation** — its conclusion
+  `∃ leaves, NonMember leaves stmt.elem` is discharged by `leaves := []` and never mentions
+  `stmt.root`, so no deployment can repair it. And the polarity INVERTS on the reference Merkle kernel:
+  the *forge* kernel's collapsing hash gives a conclusion that bites while the *reference* one does not
+  — the instance cited as the family's reassurance is the one saying nothing.
 * `FriLdtExtractDeployed` — where the wound was proved:
   `friLdtExtractV3_makes_verifyBatch_reject_everything`. The landed extraction bundle, at the deployed
   args, forces `verifyBatch` to reject **every** input.
@@ -36,13 +45,15 @@ kernel-clean, sorry-free, and true.
   citing it for the deployed ε would be laundering — though it is *conservative*, never too small; and
   the LogUp wound is not `F`'s type (already generic) but the **read** — one ℤ from one public column
   cannot produce four lanes, and `atMostOne_basis_mem_range` makes that obstruction basis-independent.
-* `Crypto.CarrierContent` — **NOT YET IMPORTED: it does not compile** (8 `failed to synthesize`
-  at the audit definitions, confirmed by direct elaboration; the authoring lane reported green on a file
-  that does not build). Intended as the repair of the sweep's R11 finding: the `CarrierAudit` tooth (a record
+* `Crypto.CarrierContent` — the repair of the sweep's R11 finding: the `CarrierAudit` tooth (a record
   no `True` carrier can inhabit, because it demands a REFUTATION of the same carrier shape at a
-  broken sibling oracle) plus the eight audits, one per reference kernel of the carrier-gated family.
+  broken sibling oracle) plus nine audits, one per reference kernel of the carrier-gated family.
   Their carriers are now PROVED theorems over their own oracles instead of `extractable := True`.
   This closes the *self-witnessing* hole, NOT the deployment question: R11 stays UNKNOWN.
+  (It was briefly de-rooted while it did not compile: the `accepts` witnesses were written `by decide`,
+  which cannot synthesize `Decidable (ofBool …)` because `ofBool` is an opaque `def` — the goal is
+  `f i = true` only up to unfolding. `rfl`, which is what `PremiseInhabitabilitySweep`'s own
+  `referenceMerkleKernel_accepts_a_run` uses for the identical goal shape, discharges it.)
 
 ## The repair obligation (why these modules carry so many `_adds_no_strength` theorems)
 
@@ -69,6 +80,7 @@ premises are `ℤ`-typed: what is refuted is the **schema**, not the deployed in
 -/
 import Dregg2.Circuit.PremiseInhabitability
 import Dregg2.Circuit.PremiseInhabitabilitySweep
+import Dregg2.Circuit.PremiseInhabitabilitySweepSettled
 import Dregg2.Circuit.FriLdtExtractDeployed
 import Dregg2.Circuit.ApexOodLaneRepair
 import Dregg2.Circuit.OodSingletonRepair
@@ -76,3 +88,4 @@ import Dregg2.Circuit.FriFsDecodedOodRepair
 import Dregg2.Circuit.StarkSoundFriLdtCorrected
 import Dregg2.Circuit.ExtChallengeOodSites
 import Dregg2.Circuit.ExtChallengeLogUpSite
+import Dregg2.Crypto.CarrierContent
