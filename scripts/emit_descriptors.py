@@ -1177,10 +1177,23 @@ def verify_include_targets() -> list[str]:
             n_sites += 1
             line = blanked.count("\n", 0, m.start()) + 1
             target = (p.parent / m.group(1)).resolve()
+            # Both sides are fully resolved (ROOT is `.resolve()`d at import), so this is a
+            # symlink-stable comparison. A target OUTSIDE the repo gets its own class rather than
+            # being mislabelled UNTRACKED with a "commit it alongside" instruction that cannot
+            # apply — nothing in this repo can make a path outside it tracked.
+            inside = True
             try:
                 trel = target.relative_to(ROOT).as_posix()
             except ValueError:
-                trel = target.as_posix()  # escapes the repo — reported as-is below
+                inside = False
+                trel = target.as_posix()
+            if not inside:
+                findings.append(
+                    f"INCLUDE-ESCAPES-REPO: {rel}:{line} `include_str!/include_bytes!` of "
+                    f"`{m.group(1)}` resolves to {trel}, OUTSIDE this repository. The build then "
+                    f"depends on a path no checkout can reproduce. Vendor the file in-tree."
+                )
+                continue
             if not target.exists():
                 findings.append(
                     f"INCLUDE-GHOST: {rel}:{line} `include_str!/include_bytes!` of "
