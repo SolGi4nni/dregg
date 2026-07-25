@@ -20,6 +20,10 @@ Layers (each `lake build`-verified, kernel-clean; `#assert_axioms` on stated the
 * `BN254.Groth16` — the deployed 4-pairing + Pedersen-PoK 2-pairing verify EQUATION over the actual
                     `DreggGroth16Verifier25.sol` VK (every VK point on-curve, KAT'd) + the bridge
                     plan to `SettlementVerifier25Refines`.
+* `BN254.Primality`— DISCHARGES the `Fq.lean` primality seam: `Nat.Prime pBN254` by a recursive
+                    Pratt/Lucas certificate (kernel-checked, NO `sorry`/`axiom`/`native_decide`),
+                    the `Fact` instance, and the ripple — `Field Fq`, `Field Fp2`, and the `G1`/`G2`
+                    point `AddCommGroup`s all now unconditional; `Fp2FieldGoal` discharged.
 -/
 import Dregg2.Crypto.BN254.Fq
 import Dregg2.Crypto.BN254.Fp2
@@ -28,3 +32,4 @@ import Dregg2.Crypto.BN254.Fp12
 import Dregg2.Crypto.BN254.Curves
 import Dregg2.Crypto.BN254.Pairing
 import Dregg2.Crypto.BN254.Groth16
+import Dregg2.Crypto.BN254.Primality
