@@ -546,10 +546,15 @@ pub struct PartyArenaEncounter {
     target: Option<u8>,
     events: Vec<EncounterEvent>,
     root: [u8; 32],
+    /// The host-private custody root the party's local seat secrets derive from (see
+    /// [`PartyArenaEncounter::custody_root`]). Never enters [`EncounterRecord`].
+    custody_root: Option<[u8; 32]>,
 }
 
 impl PartyArenaEncounter {
-    /// Start a gate assault from a canonical role-aligned roster.
+    /// Start a gate assault from a canonical role-aligned roster. The seats' ballot
+    /// secrets are drawn from OS entropy; keep [`custody_root`](Self::custody_root) if you
+    /// intend to [`resume`](Self::resume) this encounter after a restart.
     pub fn new(
         roster: [String; 4],
         leader: impl Into<String>,
@@ -563,6 +568,52 @@ impl PartyArenaEncounter {
         ])
         .map_err(|error| EncounterError::InvalidRecord(error.to_string()))?;
         Self::from_party(party, leader, arena_seed)
+    }
+
+    /// Rebuild the SAME seats a previous encounter had, from the host-held secret
+    /// `custody_root` ([`Self::custody_root`]). The replay path — a resumed record's
+    /// recorded ballots only re-verify against seats derived from the same root.
+    fn new_under_root(
+        roster: [String; 4],
+        leader: impl Into<String>,
+        arena_seed: u8,
+        custody_root: [u8; 32],
+    ) -> Result<Self, EncounterError> {
+        let party = Party::muster_under_custody_root(
+            custody_root,
+            [
+                (Role::Tank, roster[0].clone()),
+                (Role::Scout, roster[1].clone()),
+                (Role::Mage, roster[2].clone()),
+                (Role::Healer, roster[3].clone()),
+            ],
+        )
+        .map_err(|error| EncounterError::InvalidRecord(error.to_string()))?;
+        Self::from_party(party, leader, arena_seed)
+    }
+
+    /// **The host-private custody root** this encounter's seat ballot keys derive from.
+    ///
+    /// ⚠ Key material. A host that persists an [`EncounterRecord`] to resume later must
+    /// store this ALONGSIDE it, in its own private storage — never inside the record, which
+    /// is the publishable object. `None` when the players hold their own secrets
+    /// ([`Party::muster_with_custody`]); such an encounter cannot mint seat ballots and so
+    /// cannot be resumed by re-signing either.
+    pub fn custody_root(&self) -> Option<[u8; 32]> {
+        self.custody_root
+    }
+
+    /// The custody root the isolated candidate image must be rebuilt under. A party whose
+    /// seats are remote-custody holds no secret, so it cannot mint the ballots a replay
+    /// re-drives — that is a refusal, not a silently weaker replay.
+    fn replay_custody_root(&self) -> Result<[u8; 32], EncounterError> {
+        self.custody_root.ok_or_else(|| {
+            EncounterError::InvalidRecord(
+                "this encounter's seats hold their own ballot secrets, so the party cannot \
+                 rebuild a replay image that re-signs for them"
+                    .to_string(),
+            )
+        })
     }
 
     /// Enter the Arena with the actual party returned by a live
@@ -598,6 +649,7 @@ impl PartyArenaEncounter {
             .map_err(|error| EncounterError::VoteRefused(error.to_string()))?;
         let arena = Arena::deploy(arena_seed);
         let root = genesis_root(&roster, &leader, arena_seed, &party, &arena);
+        let custody_root = party.custody_root();
         Ok(Self {
             roster,
             leader,
@@ -609,6 +661,7 @@ impl PartyArenaEncounter {
             target: None,
             events: Vec::new(),
             root,
+            custody_root,
         })
     }
 
@@ -776,6 +829,7 @@ impl PartyArenaEncounter {
         prepared.validate()?;
         let mut candidate = Self::resume_at(
             &self.export_record(),
+            self.replay_custody_root()?,
             prepared.base_revision,
             prepared.base_root,
         )?;
@@ -822,6 +876,7 @@ impl PartyArenaEncounter {
         // before the final assignment cannot expose either prefix through `self`.
         let mut candidate = Self::resume_at(
             &self.export_record(),
+            self.replay_custody_root()?,
             prepared.base_revision,
             prepared.base_root,
         )?;
@@ -842,10 +897,11 @@ impl PartyArenaEncounter {
     /// encounter record. This is idempotent across every crash interval.
     pub fn recover_prepared(
         record: &EncounterRecord,
+        custody_root: [u8; 32],
         prepared: &PreparedContribution,
     ) -> Result<(Self, ContributionRecovery), EncounterError> {
         prepared.validate()?;
-        let mut encounter = Self::resume(record)?;
+        let mut encounter = Self::resume(record, custody_root)?;
         let record_revision = encounter.revision();
 
         if record_revision == prepared.base_revision {
@@ -882,12 +938,13 @@ impl PartyArenaEncounter {
     /// [`FileContributionJournal::clear`] with that exact intent.
     pub fn recover_journaled(
         record: &EncounterRecord,
+        custody_root: [u8; 32],
         journal: &FileContributionJournal,
     ) -> Result<Option<(Self, PreparedContribution, ContributionRecovery)>, EncounterError> {
         let Some(prepared) = journal.load()? else {
             return Ok(None);
         };
-        let (encounter, recovery) = Self::recover_prepared(record, &prepared)?;
+        let (encounter, recovery) = Self::recover_prepared(record, custody_root, &prepared)?;
         Ok(Some((encounter, prepared, recovery)))
     }
 
@@ -1022,17 +1079,21 @@ impl PartyArenaEncounter {
 
     /// Re-drive an untrusted record through fresh party, vote, and Arena engines.
     /// The returned live encounter can continue play after restart.
-    pub fn resume(record: &EncounterRecord) -> Result<Self, EncounterError> {
+    pub fn resume(
+        record: &EncounterRecord,
+        custody_root: [u8; 32],
+    ) -> Result<Self, EncounterError> {
         if record.events.len() > MAX_ENCOUNTER_EVENTS {
             return Err(EncounterError::InvalidRecord(format!(
                 "{} events exceeds the {MAX_ENCOUNTER_EVENTS}-event bound",
                 record.events.len()
             )));
         }
-        let mut replay = Self::new(
+        let mut replay = Self::new_under_root(
             record.roster.clone(),
             record.leader.clone(),
             record.arena_seed,
+            custody_root,
         )?;
         validate_record_chain(record, replay.root)?;
         for (idx, expected) in record.events.iter().enumerate() {
@@ -1073,10 +1134,11 @@ impl PartyArenaEncounter {
     /// self-consistent chain.
     pub fn resume_at(
         record: &EncounterRecord,
+        custody_root: [u8; 32],
         expected_revision: u64,
         expected_root: [u8; 32],
     ) -> Result<Self, EncounterError> {
-        let replay = Self::resume(record)?;
+        let replay = Self::resume(record, custody_root)?;
         if replay.revision() != expected_revision || replay.root() != expected_root {
             return Err(EncounterError::InvalidRecord(
                 "record does not match the independently anchored latest revision/root".to_string(),

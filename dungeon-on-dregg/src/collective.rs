@@ -111,6 +111,11 @@ const BALLOT_DOMAIN: &[u8] = b"dungeon-on-dregg/collective/ballot-v1";
 /// this keyring.
 const CUSTODY_DERIVE_CONTEXT: &str = "dungeon-on-dregg collective custody seat v1";
 
+/// The `blake3::derive_key` context for a custody seed derived under a caller-held SECRET
+/// root (see [`Custodian::under_root`]) — domain-separated from [`CUSTODY_DERIVE_CONTEXT`]
+/// so a root-derived seat never collides with a name-derived one.
+const CUSTODY_ROOT_CONTEXT: &str = "dungeon-on-dregg collective custody seat under root v1";
+
 /// The canonical ballot message a seat signs with its custody key: `domain ‖ poll-cell id
 /// ‖ voter pk ‖ option`. Binding the poll id stops a cross-poll replay of a signature;
 /// binding the option stops re-pointing a signature at a different choice.
@@ -146,12 +151,38 @@ impl Custodian {
         }
     }
 
+    /// A custody keypair for `name` under a caller-held **secret 32-byte custody root**:
+    /// the ed25519 seed is `blake3::derive_key(CUSTODY_ROOT_CONTEXT, root ‖ name)`.
+    ///
+    /// This is the reproducible-AND-unguessable middle ground [`demo`] is not. A host that
+    /// must rebuild the same seats later (a replay, a crash-safe candidate image) draws ONE
+    /// `root` from OS entropy, keeps it private, and re-derives; the seat names are public
+    /// and reconstruct nothing without `root`. The root is a SECRET — a host that persists
+    /// it must persist it privately, never inside a record it publishes.
+    ///
+    /// [`demo`]: Custodian::demo
+    pub fn under_root(name: impl Into<String>, root: &[u8; 32]) -> Custodian {
+        let name = name.into();
+        let mut material = Vec::with_capacity(32 + name.len());
+        material.extend_from_slice(root);
+        material.extend_from_slice(name.as_bytes());
+        let seed = blake3::derive_key(CUSTODY_ROOT_CONTEXT, &material);
+        let key = SigningKey::from_bytes(&seed);
+        let pk = key.public_key();
+        Custodian { name, key, pk }
+    }
+
     /// A **deterministic demo** custody keypair for `name`: the ed25519 SECRET seed is
-    /// `blake3::derive_key(CUSTODY_DERIVE_CONTEXT, name)`, a genuine keypair whose secret
-    /// only this derivation reproduces (so the example/tests are stable). NOT a production
-    /// custody key — a real seat generates its secret in its own device ([`generate`]).
+    /// `blake3::derive_key(CUSTODY_DERIVE_CONTEXT, name)`.
+    ///
+    /// ⚠ The input is the seat's PUBLIC name, so **anyone who knows the name holds the
+    /// secret**. This reproduces stable identities for an example or a fixture and
+    /// authenticates NOTHING. A seat whose ballots must be unforgeable uses [`generate`]
+    /// (the player's own device) or [`under_root`] (a host that needs to rebuild the same
+    /// seats from a secret it holds).
     ///
     /// [`generate`]: Custodian::generate
+    /// [`under_root`]: Custodian::under_root
     pub fn demo(name: impl Into<String>) -> Custodian {
         let name = name.into();
         let seed = blake3::derive_key(CUSTODY_DERIVE_CONTEXT, name.as_bytes());

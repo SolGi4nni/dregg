@@ -3,6 +3,14 @@ use dreggnet_party::encounter::{EncounterError, MAX_ENCOUNTER_EVENTS, PartyArena
 use dreggnet_party::lobby::PartyLobby;
 use dungeon_on_dregg::combat::{Arena, WARDEN, is_hero};
 
+/// The host-private custody root a resume needs. A host that persists an `EncounterRecord`
+/// stores this beside it in its OWN storage — it is key material and never enters the record.
+fn host_root(encounter: &PartyArenaEncounter) -> [u8; 32] {
+    encounter
+        .custody_root()
+        .expect("a locally-custodied party carries its custody root")
+}
+
 fn roster() -> [String; 4] {
     ["alice", "bob", "cara", "devi"].map(str::to_string)
 }
@@ -145,7 +153,8 @@ fn signed_fork_and_role_cap_receipts_authorize_a_real_arena_turn_and_resume() {
 
     // Restart re-drives all three engines and can continue from the exact state.
     let record = encounter.export_record();
-    let mut resumed = PartyArenaEncounter::resume(&record).expect("semantic replay resumes");
+    let mut resumed = PartyArenaEncounter::resume(&record, host_root(&encounter))
+        .expect("semantic replay resumes");
     assert_eq!(resumed.root(), encounter.root());
     assert_eq!(
         resumed.arena().world.snapshot(),
@@ -190,9 +199,15 @@ fn replay_refuses_receipt_state_actor_and_root_forgeries() {
         .contribute("bob", Role::Scout)
         .expect("authorized Arena strike");
     let authentic = encounter.export_record();
-    PartyArenaEncounter::resume(&authentic).expect("authentic record replays");
-    PartyArenaEncounter::resume_at(&authentic, encounter.revision(), encounter.root())
-        .expect("the authentic latest anchor resumes");
+    PartyArenaEncounter::resume(&authentic, host_root(&encounter))
+        .expect("authentic record replays");
+    PartyArenaEncounter::resume_at(
+        &authentic,
+        host_root(&encounter),
+        encounter.revision(),
+        encounter.root(),
+    )
+    .expect("the authentic latest anchor resumes");
 
     let mut forged_receipt = authentic.clone();
     forged_receipt
@@ -204,14 +219,14 @@ fn replay_refuses_receipt_state_actor_and_root_forgeries() {
         .unwrap()
         .post_state_hash[0] ^= 1;
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_receipt),
+        PartyArenaEncounter::resume(&forged_receipt, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { detail, .. }) if detail.contains("root")
     ));
 
     let mut forged_state = authentic.clone();
     forged_state.events.last_mut().unwrap().arena_state[0] ^= 1;
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_state),
+        PartyArenaEncounter::resume(&forged_state, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { detail, .. }) if detail.contains("root")
     ));
 
@@ -224,21 +239,21 @@ fn replay_refuses_receipt_state_actor_and_root_forgeries() {
         panic!("last event is the contribution");
     }
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_actor),
+        PartyArenaEncounter::resume(&forged_actor, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { .. })
     ));
 
     let mut forged_root = authentic.clone();
     forged_root.events.last_mut().unwrap().root[0] ^= 1;
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_root),
+        PartyArenaEncounter::resume(&forged_root, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { detail, .. }) if detail.contains("root")
     ));
 
     let mut forged_ballot = authentic.clone();
     forged_ballot.events[0].ballot.as_mut().unwrap().signature.0[0] ^= 1;
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_ballot),
+        PartyArenaEncounter::resume(&forged_ballot, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { detail, .. }) if detail.contains("root")
     ));
 
@@ -249,15 +264,16 @@ fn replay_refuses_receipt_state_actor_and_root_forgeries() {
         .unwrap()
         .post_state_hash[0] ^= 1;
     assert!(matches!(
-        PartyArenaEncounter::resume(&forged_vote_receipt),
+        PartyArenaEncounter::resume(&forged_vote_receipt, host_root(&encounter)),
         Err(EncounterError::ReplayDiverged { detail, .. }) if detail.contains("root")
     ));
 
     let mut truncated = authentic.clone();
     truncated.events.pop();
-    PartyArenaEncounter::resume(&truncated).expect("a valid prefix is semantically valid");
+    PartyArenaEncounter::resume(&truncated, host_root(&encounter))
+        .expect("a valid prefix is semantically valid");
     assert!(matches!(
-        PartyArenaEncounter::resume_at(&truncated, encounter.revision(), encounter.root()),
+        PartyArenaEncounter::resume_at(&truncated, host_root(&encounter), encounter.revision(), encounter.root()),
         Err(EncounterError::InvalidRecord(reason)) if reason.contains("anchored latest")
     ));
 }
@@ -274,7 +290,7 @@ fn event_bound_is_part_of_restart_validation() {
     };
     record.events = vec![sample; MAX_ENCOUNTER_EVENTS + 1];
     assert!(matches!(
-        PartyArenaEncounter::resume(&record),
+        PartyArenaEncounter::resume(&record, host_root(&encounter)),
         Err(EncounterError::InvalidRecord(reason)) if reason.contains("exceeds")
     ));
 }

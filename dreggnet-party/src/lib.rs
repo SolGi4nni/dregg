@@ -271,16 +271,24 @@ pub struct Seat {
 
 /// Where a seat's ballot SECRET lives.
 ///
-/// [`Party::muster`] / [`Party::muster_with_roster`] mint [`Custodian::demo`] keys, whose
-/// ed25519 seed is `blake3::derive_key(context, name)` — reproducible, which is what makes
-/// the demo and the tests stable, and which also means **anyone who knows the seat's name
-/// can reconstruct its secret**. That is fine for a hotseat/demo table and unusable for a
-/// deployment: "nobody forges your vote" is only true when the secret is the player's.
+/// [`Party::muster`] / [`Party::muster_with_roster`] mint [`Custodian::generate`] keys — a
+/// FRESH ed25519 secret per seat, per muster, straight out of OS entropy
+/// (`dregg_types::generate_keypair` → `getrandom::fill`). The party holds those secrets and
+/// can mint its own seats' ballots (a hotseat table), but **nothing public reconstructs
+/// them**: two musters of the same roster of names produce different ballot keys.
+///
+/// This was NOT always true. The seats used to be minted by [`Custodian::demo`], whose
+/// ed25519 seed is `blake3::derive_key(context, name)` over the seat's PUBLIC display name —
+/// so anyone who knew "Bramwen" held Bramwen's ballot key and the party admitted the forged
+/// ballot. `a_name_is_not_a_ballot_key_on_the_default_muster` is the falsifier for that.
+///
 /// [`Party::muster_with_custody`] seats [`SeatCustody::Remote`] instead — the party holds
 /// the player's real PUBLIC key and ballots arrive already signed on the player's device.
+/// That is the deployment shape; local custody remains a hotseat convenience, now merely
+/// custodial rather than publicly forgeable.
 pub enum SeatCustody {
-    /// The party holds this seat's signing key: it can mint the seat's ballots itself
-    /// ([`Party::sign_ballot`]). Hotseat / demo / test play.
+    /// The party holds this seat's freshly-generated signing key: it can mint the seat's
+    /// ballots itself ([`Party::sign_ballot`]). Hotseat / demo / test play.
     Local(Custodian),
     /// The secret stays with the player; the party holds only the verifying key. The party
     /// CANNOT sign for this seat — a ballot must arrive from the player
@@ -364,6 +372,11 @@ pub struct Party {
     seats: Vec<Seat>,
     layout: Layout,
     quorum: u64,
+    /// The SECRET custody root every [`SeatCustody::Local`] seat's ballot key derives from
+    /// ([`Party::muster_with_roster`] draws it from OS entropy). `None` for a party mustered
+    /// by [`Party::muster_with_custody`] — those seats' secrets live with their players and
+    /// this party holds nothing.
+    custody_root: Option<[u8; 32]>,
 }
 
 impl Party {
@@ -398,19 +411,47 @@ impl Party {
     /// role must occur exactly once and every non-empty identity may occupy only
     /// one role. The resulting seat names are the supplied frontend identities;
     /// the role's capability set remains the executor-enforced mandate.
+    ///
+    /// **Each seat's ballot secret is FRESH OS entropy**, held by the party
+    /// ([`SeatCustody::Local`]) so a hotseat table can mint its own seats' ballots. A seat
+    /// name is a LABEL, never a key: nothing public reconstructs a seat's secret, and the
+    /// same roster mustered twice yields different ballot keys. A deployment where the
+    /// PLAYER must hold the secret uses [`Party::muster_with_custody`].
+    ///
+    /// Concretely: one 32-byte CUSTODY ROOT is drawn from the OS
+    /// (`dregg_types::generate_keypair` → `getrandom`) and each seat is
+    /// [`Custodian::under_root`] of it. The root stays with the party
+    /// ([`Party::custody_root`]) so a host that must rebuild the SAME seats later — the
+    /// crash-safe candidate image in [`crate::encounter`] — can, without any public value
+    /// ever standing in for the secret.
     pub fn muster_with_roster(roster: [(Role, String); 4]) -> Result<Party, PartyFormationError> {
-        Ok(Self::muster_canonical(Self::canonical_names(roster)?.map(
-            |name| {
-                let custody = SeatCustody::Local(Custodian::demo(&name));
-                (name, custody)
-            },
-        )))
+        let (seed, _) = dregg_types::generate_keypair();
+        Self::muster_under_custody_root(seed.to_bytes(), roster)
+    }
+
+    /// [`Party::muster_with_roster`] under a caller-supplied 32-byte custody root.
+    ///
+    /// `root` is a SECRET and MUST carry real entropy — every seat's ballot key is
+    /// `blake3::derive_key(ctx, root ‖ name)`, so a guessable root is a guessable ballot
+    /// key for every seat. Pass a root only to REBUILD a party whose root you already hold;
+    /// to make a new one, call [`Party::muster_with_roster`] and let it draw its own.
+    pub fn muster_under_custody_root(
+        root: [u8; 32],
+        roster: [(Role, String); 4],
+    ) -> Result<Party, PartyFormationError> {
+        let mut party = Self::muster_canonical(Self::canonical_names(roster)?.map(|name| {
+            let custody = SeatCustody::Local(Custodian::under_root(&name, &root));
+            (name, custody)
+        }));
+        party.custody_root = Some(root);
+        Ok(party)
     }
 
     /// **Muster a party whose seats hold their OWN ballot secrets.** Same shape as
     /// [`Party::muster_with_roster`], except each entry supplies the player's real custody
-    /// PUBLIC key: the party never sees a secret, so a seat's ballot key is not derivable
-    /// from its public identity the way [`Custodian::demo`]'s is.
+    /// PUBLIC key: the party never sees a secret at all. [`Party::muster_with_roster`]'s
+    /// seat secrets are already unguessable (fresh OS entropy), but the PARTY holds them —
+    /// here the PLAYER does, which is what "nobody forges your vote" actually needs.
     ///
     /// A [`SeatCustody::Remote`] seat cannot have its ballot minted by the party
     /// ([`Party::sign_ballot`] is unavailable, [`Party::try_sign_ballot`] returns `None`);
@@ -567,7 +608,21 @@ impl Party {
                 loot,
             },
             quorum: 3,
+            custody_root: None,
         }
+    }
+
+    /// **The party's SECRET custody root** — the 32 bytes every local seat's ballot key
+    /// derives from, or `None` when the players hold their own secrets
+    /// ([`Party::muster_with_custody`]).
+    ///
+    /// ⚠ This is key material. It exists so a host can REBUILD the identical seats
+    /// ([`Party::muster_under_custody_root`]) — a crash-safe replay image, a resumed
+    /// session. A host that persists it must persist it PRIVATELY: writing it into a record
+    /// it publishes hands every seat's ballot key to every reader, which is exactly the hole
+    /// deriving seats from their public names used to be.
+    pub fn custody_root(&self) -> Option<[u8; 32]> {
+        self.custody_root
     }
 
     /// The party's shared cell [`Layout`].
@@ -1465,25 +1520,76 @@ mod tests {
         );
     }
 
-    /// A NAME IS NOT A BALLOT KEY. [`Party::muster_with_roster`] mints [`Custodian::demo`]
-    /// seats, whose ed25519 seed is derived from the seat's PUBLIC name — so anyone who
-    /// knows "Bramwen" can mint Bramwen's ballot, and the demo path admits it. A party
-    /// mustered by [`Party::muster_with_custody`] holds only the players' verifying keys:
-    /// the same name-derived forgery is `Ineligible`, and only the real holder's signature
-    /// is admitted.
+    /// **A NAME IS NOT A BALLOT KEY — on the DEFAULT muster.** The falsifier for the repair:
+    /// [`Party::muster_with_roster`] (and so [`Party::muster`], and so
+    /// [`crate::lobby::PartyLobby::launch`], the live surface path) used to mint
+    /// [`Custodian::demo`] seats whose ed25519 seed is `blake3::derive_key(ctx, name)` over
+    /// the seat's PUBLIC display name. Anyone who knew "Bramwen" reconstructed Bramwen's
+    /// secret and the party ADMITTED the forged ballot.
+    ///
+    /// This test FAILS on that behaviour: it casts exactly that name-derived forgery at a
+    /// party mustered the DEFAULT way and requires `Ineligible` — under the old
+    /// `Custodian::demo` muster the cast is `Ok` and the tally moves to 1.
     #[test]
-    fn a_custody_party_refuses_the_name_derived_ballot_the_demo_party_admits() {
-        // The hole, exhibited on the demo path: a name is enough to vote as that seat.
-        let demo_party = Party::muster();
-        let mut demo_fork = demo_party
+    fn a_name_is_not_a_ballot_key_on_the_default_muster() {
+        let party = Party::muster();
+        let mut fork = party
             .open_fork("Fork?", vec![("Left".into(), 1), ("Right".into(), 2)])
             .expect("open");
-        let name_derived = Custodian::demo("Bramwen").sign_ballot(demo_fork.poll(), 0);
-        assert!(
-            demo_fork.cast(&name_derived).is_ok(),
-            "the demo roster's ballot key IS its public name — this is the hole"
+
+        // The old hole: the seat's public name, run through the demo derivation, was the
+        // seat's ballot key. It is now a stranger's key.
+        let forged = Custodian::demo("Bramwen").sign_ballot(fork.poll(), 0);
+        match fork.cast(&forged) {
+            Err(CollectiveError::Vote(VoteError::Ineligible)) => {}
+            other => panic!(
+                "a ballot signed by the NAME-derived key must be Ineligible on the default \
+                 muster, got {other:?}"
+            ),
+        }
+        assert_eq!(
+            fork.tally().expect("tally").total,
+            0,
+            "the board did not move — no name-derived ballot landed"
         );
 
+        // The seat's real (party-held) key still votes: local custody still works, it is
+        // merely no longer PUBLIC.
+        fork.cast(&party.sign_ballot(&fork, TANK, 0))
+            .expect("the party's own held custody signs the Tank seat");
+        assert_eq!(fork.tally().expect("tally").total, 1);
+    }
+
+    /// **The default muster draws its seat secrets from OS entropy, not from the roster.**
+    /// The complementary falsifier: mustering the SAME four names twice must yield DIFFERENT
+    /// ballot keys. Under the old `Custodian::demo` muster every seat pk is a pure function
+    /// of its name, so both musters agree on all four and this fails.
+    #[test]
+    fn two_musters_of_the_same_roster_do_not_share_ballot_keys() {
+        let a = Party::muster();
+        let b = Party::muster();
+        for seat in 0..4 {
+            assert_eq!(
+                a.seat(seat).name(),
+                b.seat(seat).name(),
+                "the roster names are the same in both musters"
+            );
+            assert_ne!(
+                a.seat(seat).electorate_seat().pk,
+                b.seat(seat).electorate_seat().pk,
+                "seat {seat} ({}) must draw a fresh secret per muster, not derive one from \
+                 its public name",
+                a.seat(seat).name()
+            );
+        }
+    }
+
+    /// A party mustered by [`Party::muster_with_custody`] holds NO seat secret at all: the
+    /// players keep their own, the party cannot mint their ballots, and a stranger's valid
+    /// signature is `Ineligible`. This is the deployment shape (the default muster is
+    /// custodial-but-unguessable; this one is not custodial at all).
+    #[test]
+    fn a_custody_party_holds_no_secret_and_only_the_holder_votes() {
         // The deployment path: the players generate their own secrets; the party holds
         // only the public keys.
         let players: Vec<Custodian> = ["Bramwen", "Corvin", "Della", "Ferro"]

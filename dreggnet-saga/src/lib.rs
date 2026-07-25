@@ -153,21 +153,40 @@ use dungeon_on_dregg::collective::Custodian;
 /// * the **asset holder** label ([`dreggnet_asset::AssetWorld`]'s per-label
 ///   `blake3::derive_key` holder key, shared by craft / trade / cheevo).
 ///
-/// A small adapter, not a redesign: all three already derive from one `name`, so ONE
-/// [`PlayerIdentity`] yields the seat key, the member, AND the holder — the same actor is
-/// present across the crates by a single object, not three look-alikes stitched by
-/// convention. (A production deployment mints the custody secret in the seat's own device —
-/// the demo derivation is deterministic so the saga reproduces stable identities.)
-#[derive(Clone, Debug)]
+/// A small adapter, not a redesign: ONE [`PlayerIdentity`] yields the seat key, the member,
+/// AND the holder — the same actor is present across the crates by a single object, not
+/// three look-alikes stitched by convention.
+///
+/// The unifying thing is the OBJECT, not the name. The guild handle and the asset holder
+/// label ARE the name (both are public identifiers); the ballot key is a real keypair
+/// GENERATED here from OS entropy and carried by the object. It was `Custodian::demo(name)`
+/// — derived from the public name — which made "one identity" true only because the secret
+/// was public. A party seats this player by its public key
+/// ([`dreggnet_party::Party::muster_with_custody`]), so the thread holds and the secret
+/// stays the player's.
+#[derive(Clone)]
 pub struct PlayerIdentity {
     name: String,
+    custody: std::sync::Arc<Custodian>,
+}
+
+impl std::fmt::Debug for PlayerIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The secret never prints; the public ballot identity does.
+        f.debug_struct("PlayerIdentity")
+            .field("name", &self.name)
+            .field("seat_pk", &self.custody.public_key().0)
+            .finish()
+    }
 }
 
 impl PlayerIdentity {
     /// The canonical player named `name` (the single derivation input the three
     /// representations share).
     pub fn new(name: impl Into<String>) -> Self {
-        PlayerIdentity { name: name.into() }
+        let name = name.into();
+        let custody = std::sync::Arc::new(Custodian::generate(name.clone()));
+        PlayerIdentity { name, custody }
     }
 
     /// The player's canonical name (the derivation input).
@@ -187,15 +206,18 @@ impl PlayerIdentity {
     }
 
     /// The **party seat's custody keypair** — the ed25519 identity a
-    /// [`dreggnet_party`] seat signs its ballots with.
-    pub fn custodian(&self) -> Custodian {
-        Custodian::demo(self.name.as_str())
+    /// [`dreggnet_party`] seat signs its ballots with. Generated from OS entropy at
+    /// [`PlayerIdentity::new`] and HELD here; it is not a function of the name (it was
+    /// `Custodian::demo(name)`, which handed the secret to anyone who could read the
+    /// roster). A party seats this player by [`seat_pk`](Self::seat_pk).
+    pub fn custodian(&self) -> &Custodian {
+        &self.custody
     }
 
-    /// The party seat's electorate PUBLIC key (its ballot identity) — the same key
-    /// [`dreggnet_party::Seat::electorate_seat`] carries for a seat of this name.
+    /// The party seat's electorate PUBLIC key — this player's ballot identity, which a
+    /// party seats via [`dreggnet_party::Party::muster_with_custody`].
     pub fn seat_pk(&self) -> PublicKey {
-        self.custodian().public_key()
+        self.custody.public_key()
     }
 }
 
@@ -214,7 +236,7 @@ mod saga {
     };
     use dreggnet_guild::Guild;
     use dreggnet_offerings::DreggIdentity;
-    use dreggnet_party::{Party, PartyMove};
+    use dreggnet_party::{Party, PartyMove, Role};
     use dreggnet_trade::{LegSpec, TradeSide, TradeWorld};
     use procgen_dregg::CommittedSeed;
     use spween_dregg::WorldError;
@@ -565,15 +587,45 @@ mod saga {
     /// object, not three look-alikes matched by name convention.
     #[test]
     fn one_identity_is_a_party_seat_a_guild_member_and_an_asset_holder() {
-        // The mustered party seats four canonical identities; take the Tank seat's name.
-        let party = Party::muster();
-        let hero = PlayerIdentity::new(party.seat(0).name());
+        // The one identity holds its OWN ballot key; a party seats it BY that key.
+        let hero = PlayerIdentity::new("Bramwen");
+        let escorts: [PlayerIdentity; 3] = [
+            PlayerIdentity::new("Corvin"),
+            PlayerIdentity::new("Della"),
+            PlayerIdentity::new("Ferro"),
+        ];
+        let party = Party::muster_with_custody([
+            (Role::Tank, hero.name().to_string(), hero.seat_pk()),
+            (
+                Role::Scout,
+                escorts[0].name().to_string(),
+                escorts[0].seat_pk(),
+            ),
+            (
+                Role::Mage,
+                escorts[1].name().to_string(),
+                escorts[1].seat_pk(),
+            ),
+            (
+                Role::Healer,
+                escorts[2].name().to_string(),
+                escorts[2].seat_pk(),
+            ),
+        ])
+        .expect("the roster is valid");
 
-        // (a) THE PARTY SEAT — the one identity derives the seat's ed25519 ballot key.
+        // (a) THE PARTY SEAT — the one identity IS the seat's ed25519 ballot identity.
         assert_eq!(
             hero.seat_pk(),
             party.seat(0).electorate_seat().pk,
             "the one identity's custody key IS the party seat's ballot identity"
+        );
+        // ...and the NAME alone is not that key: a second player of the same name is a
+        // different actor, which is what makes the seat unforgeable from public data.
+        assert_ne!(
+            PlayerIdentity::new(hero.name()).seat_pk(),
+            hero.seat_pk(),
+            "a name is a label, not a ballot key"
         );
 
         // (b) THE GUILD MEMBER — the SAME identity is admitted and counts a verified clear.
@@ -619,12 +671,13 @@ mod saga {
         // (1) THE PARTY MUSTERS — four seated roles on one shared world.
         let mut party = Party::muster();
         assert_eq!(party.seat_count(), 4);
-        // Each party seat IS a canonical PlayerIdentity — its ed25519 ballot key derives from
-        // the one identity object, not a bespoke seat key.
-        assert_eq!(
+        // Each party seat carries a real ed25519 ballot identity that is NOT recoverable
+        // from its public name: re-deriving from the name yields a different key, and the
+        // party's own seat key is the one the electorate registered.
+        assert_ne!(
             PlayerIdentity::new(party.seat(0).name()).seat_pk(),
             party.seat(0).electorate_seat().pk,
-            "the party seat's ballot identity is the one-identity derivation"
+            "a party seat's ballot key must not be reconstructible from its public name"
         );
         // The seated co-op is executor-refereed: a seat acts IN role -> commits.
         assert!(

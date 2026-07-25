@@ -68,14 +68,34 @@ pub const CROWNED_LINE: [(&str, i64); 18] = [
 // One identity across party custody, native actor, assets, and guild membership.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+/// One player across party custody, native actor, assets, and guild membership.
+///
+/// The name is a LABEL (the asset holder key, the guild handle); the ballot identity is a
+/// real ed25519 keypair generated from OS entropy at [`PlayerIdentity::new`] and held here.
+/// It used to be `Custodian::demo(name)` — derived from the public name — which meant
+/// anyone who could read the roster held the player's ballot secret. The custodian is
+/// shared by `Clone` (an `Arc`) so cloning a player is the SAME player, not a look-alike.
+#[derive(Clone)]
 pub struct PlayerIdentity {
     name: String,
+    custody: std::sync::Arc<Custodian>,
+}
+
+impl std::fmt::Debug for PlayerIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The secret never prints; the public ballot identity does.
+        f.debug_struct("PlayerIdentity")
+            .field("name", &self.name)
+            .field("seat_pk", &self.custody.public_key().0)
+            .finish()
+    }
 }
 
 impl PlayerIdentity {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
+        let name = name.into();
+        let custody = std::sync::Arc::new(Custodian::generate(name.clone()));
+        Self { name, custody }
     }
 
     pub fn name(&self) -> &str {
@@ -90,12 +110,13 @@ impl PlayerIdentity {
         DreggIdentity(self.name.clone())
     }
 
-    pub fn custodian(&self) -> Custodian {
-        Custodian::demo(&self.name)
+    /// This player's own ballot custodian — the secret is theirs, not a function of the name.
+    pub fn custodian(&self) -> &Custodian {
+        &self.custody
     }
 
     pub fn seat_pk(&self) -> PublicKey {
-        self.custodian().public_key()
+        self.custody.public_key()
     }
 }
 
@@ -1244,12 +1265,32 @@ impl Adventure {
 
         let hero = &self.hero;
 
-        // The hero is a real seat, rather than merely sharing a label with a fixed demo roster.
-        let mut party = Party::muster_with_roster([
-            (Role::Tank, hero.name().to_string()),
-            (Role::Scout, format!("{}-scout", hero.name())),
-            (Role::Mage, format!("{}-mage", hero.name())),
-            (Role::Healer, format!("{}-healer", hero.name())),
+        // The hero is a real seat, rather than merely sharing a label with a fixed demo
+        // roster — and the seat carries the hero's OWN ballot public key, so the Tank seat
+        // is that player by KEY, not by a name anyone could re-derive a secret from. The
+        // escorts likewise hold their own generated secrets; the party holds none of them.
+        let escorts: [PlayerIdentity; 3] = [
+            PlayerIdentity::new(format!("{}-scout", hero.name())),
+            PlayerIdentity::new(format!("{}-mage", hero.name())),
+            PlayerIdentity::new(format!("{}-healer", hero.name())),
+        ];
+        let mut party = Party::muster_with_custody([
+            (Role::Tank, hero.name().to_string(), hero.seat_pk()),
+            (
+                Role::Scout,
+                escorts[0].name().to_string(),
+                escorts[0].seat_pk(),
+            ),
+            (
+                Role::Mage,
+                escorts[1].name().to_string(),
+                escorts[1].seat_pk(),
+            ),
+            (
+                Role::Healer,
+                escorts[2].name().to_string(),
+                escorts[2].seat_pk(),
+            ),
         ])
         .map_err(|error| AdventureError::at("party", error.to_string()))?;
         if party.seat(0).electorate_seat().pk != hero.seat_pk() {

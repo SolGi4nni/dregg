@@ -7,6 +7,14 @@ use dreggnet_party::encounter::{
 };
 use dungeon_on_dregg::combat::{Arena, WARDEN, is_hero};
 
+/// The host-private custody root a resume needs. A host that persists an `EncounterRecord`
+/// stores this beside it in its OWN storage — it is key material and never enters the record.
+fn host_root(encounter: &PartyArenaEncounter) -> [u8; 32] {
+    encounter
+        .custody_root()
+        .expect("a locally-custodied party carries its custody root")
+}
+
 fn roster() -> [String; 4] {
     ["alice", "bob", "cara", "devi"].map(str::to_string)
 }
@@ -129,7 +137,11 @@ fn prepared_wire_is_bounded_checksummed_and_compare_and_swap() {
     let mut forged = prepared.clone();
     forged.actor = "alice".to_string();
     assert!(matches!(
-        PartyArenaEncounter::recover_prepared(&encounter.export_record(), &forged),
+        PartyArenaEncounter::recover_prepared(
+            &encounter.export_record(),
+            host_root(&encounter),
+            &forged
+        ),
         Err(EncounterError::MalformedPrepared(_))
     ));
 }
@@ -142,8 +154,9 @@ fn restart_recovery_completes_or_recognizes_exact_command_and_refuses_conflict()
         .prepare_contribution("bob", Role::Scout)
         .expect("prepare scout contribution");
 
-    let (applied, outcome) = PartyArenaEncounter::recover_prepared(&base_record, &prepared)
-        .expect("old exact base completes after restart");
+    let (applied, outcome) =
+        PartyArenaEncounter::recover_prepared(&base_record, host_root(&base), &prepared)
+            .expect("old exact base completes after restart");
     assert_eq!(outcome, ContributionRecovery::Applied);
     assert_eq!(applied.revision(), prepared.base_revision + 1);
     assert_eq!(
@@ -155,18 +168,24 @@ fn restart_recovery_completes_or_recognizes_exact_command_and_refuses_conflict()
     );
 
     let committed_record = applied.export_record();
-    let (recovered, outcome) = PartyArenaEncounter::recover_prepared(&committed_record, &prepared)
-        .expect("restart after record persistence is idempotent");
+    let (recovered, outcome) =
+        PartyArenaEncounter::recover_prepared(&committed_record, host_root(&base), &prepared)
+            .expect("restart after record persistence is idempotent");
     assert_eq!(outcome, ContributionRecovery::AlreadyCommitted);
     assert_eq!(recovered.root(), applied.root());
     assert_eq!(recovered.revision(), applied.revision());
 
-    let mut conflict = PartyArenaEncounter::resume(&base_record).expect("base resumes");
+    let mut conflict =
+        PartyArenaEncounter::resume(&base_record, host_root(&base)).expect("base resumes");
     conflict
         .contribute("alice", Role::Tank)
         .expect("a different valid command occupies the next revision");
     assert!(matches!(
-        PartyArenaEncounter::recover_prepared(&conflict.export_record(), &prepared),
+        PartyArenaEncounter::recover_prepared(
+            &conflict.export_record(),
+            host_root(&conflict),
+            &prepared
+        ),
         Err(EncounterError::StalePrepared)
     ));
 }
@@ -199,17 +218,19 @@ fn file_journal_survives_both_sides_of_record_persistence() {
     ));
 
     // Crash after intent fsync, before any encounter-record write.
-    let (applied, _loaded, phase) = PartyArenaEncounter::recover_journaled(&base_record, &journal)
-        .expect("journal recovery")
-        .expect("outstanding command");
+    let (applied, _loaded, phase) =
+        PartyArenaEncounter::recover_journaled(&base_record, host_root(&base), &journal)
+            .expect("journal recovery")
+            .expect("outstanding command");
     assert_eq!(phase, ContributionRecovery::Applied);
 
     // Model the host's durable EncounterRecord replacement, followed by a crash
     // before clearing the intent. The next process recognizes, never duplicates.
     let durable_after = applied.export_record();
-    let (same, loaded, phase) = PartyArenaEncounter::recover_journaled(&durable_after, &journal)
-        .expect("journal recovery")
-        .expect("outstanding command");
+    let (same, loaded, phase) =
+        PartyArenaEncounter::recover_journaled(&durable_after, host_root(&applied), &journal)
+            .expect("journal recovery")
+            .expect("outstanding command");
     assert_eq!(phase, ContributionRecovery::AlreadyCommitted);
     assert_eq!(same.root(), applied.root());
     journal
