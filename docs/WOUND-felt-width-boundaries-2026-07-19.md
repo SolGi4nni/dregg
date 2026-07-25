@@ -350,7 +350,8 @@ shape and is untouched — see below.
    wide recipe, `turn-prover/src/rotation_witness.rs`). The generator OVERWRITES limb 0 (and now the
    whole group) with its own root, so on a birth turn the executor's committed anchor and the proof's
    published `STATE_COMMIT` do not describe the same tree. That divergence predates this repair and is
-   NOT closed by it.
+   NOT closed by it. **→ ADJUDICATED as #32 below: REAL, broader than "birth turns", and NOT a
+   felt-width wound (cost is ZERO, not 2^n) — a model/producer CORRESPONDENCE gap.**
 
 **`iroot` — the other bare `BabyBear` in `V9RotationContext` — is NOT closed by this move, and cannot
 be by the same shape.** It is a left-leaning MMR fold whose every intermediate `root: BabyBear` is
@@ -360,6 +361,125 @@ whole chain has to be re-folded at 8 felts. It stays DOMINATED-BY-ABSENCE for no
 `consensus_ctx` pins it to ZERO and no deployed path opens a receipt against it) and remains its own
 **standing falsifier**: the moment a live receipt-index MMR root is threaded into the anchor, the
 deployed consensus commitment reacquires a ~31-bit component, and this repair will not have covered it.
+
+### #32 — The executor's cells tree and the circuit's accounts tree are DIFFERENT OBJECTS. GENUINE. **NOT A FELT-WIDTH WOUND** — a model/producer CORRESPONDENCE gap, catalogued here only because #23's residual 3 points at it. Soundness NONE on the deployed executor path (fails closed) / OVER-CLAIM on the light-client surface / availability NONE. Cost to exploit the over-claim: **ZERO**, not 2^n.
+
+**Why it lives here and not in the felt-width catalogue.** Nothing here is narrow. Both trees are
+faithful 8-felt `CanonicalHeapTree8` folds; widening changes nothing. The wound is that the two
+folds are over **different sets, keyed in different domains, with different values, under different
+insert laws** — a correspondence failure, not a width failure. If the felt-width campaign ever spins
+out a "producer↔model correspondence" catalogue, this row moves there whole.
+
+**THE TWO OBJECTS, quoted.**
+
+- **Executor (the consensus anchor's component).** `turn/src/rotation_witness.rs:323`
+  `cells_root(ledger) -> Faithful8`: one existence leaf per **present cell in the whole ledger**,
+  `HeapLeaf::entry(heap_addr(CELLS_COLLECTION, hash_bytes(id)), 1)`, folded by `CanonicalHeapTree8`
+  (sort by `addr`, dedup, relink, **sorted-compact rebuild**). Lands at limb 0 ‖ 169..=175 via
+  `compute_rotated_pre_limbs`, chip-chained by `state_commit::consensus_state_commitment` into the
+  receipt `pre_state_hash`/`post_state_hash`.
+- **Circuit (what `STATE_COMMIT` absorbs on a birth turn).**
+  `circuit/src/effect_vm/trace_rotated.rs:1687` `generate_rotated_create_cell_trace_with_accounts_tree`:
+  `before_tree = CanonicalHeapTree8::new(before_accounts)` over a **caller-supplied** leaf set, and
+  `after = before_tree.insert_witness_aafi(HeapLeaf::entry(cell_key, cell_key))` — **append-at-free-index**,
+  not the sorted-compact rebuild. `cell_key = trace[0][PARAM_BASE + key_col]`, i.e. `create_hash[0]`
+  (`trace.rs:686`), the limb-0 projection of `BLAKE3(public_key ‖ token_id ‖ balance)`
+  (`turn/src/executor/effect_vm_bridge.rs:246-253`). The Lean is the same object:
+  `EffectVmEmitRotationV3.{cellsFreshOp,cellsInsertOp}` — `key := .var keyCol`, `value := .var keyCol`,
+  `op := .aafiInsert`, `root/newRoot := before/afterCellsRootGroup`.
+
+**FOUR independent divergences**, so this is not one object under two encodings:
+1. **Key domain.** `heap_addr(CELLS, hash_bytes(CellId::derive_raw(pk, token)))` vs the raw felt
+   `create_hash[0]`. Different preimage (the circuit's includes `balance`, the id's does not) *and*
+   different projection (Poseidon2 fold + collection tag vs a BLAKE3 lane-0 `u32`).
+2. **Value.** existence bit `1` vs the key as its own value (`entry(k, k)`).
+3. **Population.** the whole ledger vs `before_accounts`, which every deployed caller passes as
+   **`&[]`** (`sdk/src/cipherclerk.rs:6050,6070,6093`; `sdk/src/full_turn_proof.rs:3121`).
+4. **Insert law.** sorted-compact rebuild vs AAFI append-at-free-index.
+
+**PREMISE CORRECTION — it is NOT birth-only.** The key/value/insert-law divergence is birth-only (only
+the grow-gate generators overwrite the group; `fill_block` otherwise carries the producer's value by
+`copy_from_slice`). But a **population** divergence is on EVERY turn: the deployed producer builds its
+`cells_root` from `ctx_ledger`, a **single-cell ledger holding only the before-cell**
+(`sdk/src/cipherclerk.rs:5806-5807`), while the anchor folds the executor's whole ledger. So the two
+values disagree on every turn with more than one cell; birth is where they stop being even the same
+*kind* of object.
+
+**DIRECTION — (b) coverage, not (a) soundness. NOTHING reconciles them.** The executor's anchor is not
+weakened: it genuinely folds the executor's cells tree. The proof's limb 0 is a *different,
+prover-chosen* object, and the executor's verifier never recomputes it — `verify_one_cohort_run`
+reconstructs PIs from **all-zero placeholder** block witnesses and OVERRIDES the 16 wide commit PIs
+from the stored OLD / claimed NEW sovereign commitments (`proof_verify.rs:1192-1195,1407-1411`), so
+limb 0 is never compared with anything the executor holds. The nearest candidate for a reconciling
+check is the producer-side cross-check in `cipherclerk.rs:6199-6239` — and it is **explicitly skipped**
+for grow-gate leads (`lead_is_grow_gate`), on the stated ground that "the executor anchors it through
+the grow-gate's own opening". It does not; see reachability.
+
+**REACHABILITY (established before pricing).**
+- **Producer: LIVE.** cipherclerk mints createCell / factory / spawn wide proofs
+  (`generate_rotated_{create_cell,create_from_factory,spawn}_wide`), all at `before_accounts = &[]`.
+- **Deployed executor verify: UNREACHABLE, fails closed.** `verify_one_cohort_run`'s PI-reconstruction
+  dispatch (`proof_verify.rs:1201-1356`) has **no birth arm**; a birth lead falls through to
+  `generate_rotated_transfer_shape_wide` → 66 PIs, while the resolved descriptor wants 67
+  (`createCellVmDescriptor2R24` / `spawnVmDescriptor2R24`) or 83 (`factoryVmDescriptor2R24`) —
+  registry-committed values. The `dpis.len() != desc.public_input_count` gate (`proof_verify.rs:1385`)
+  rejects **before** the cap-open candidate set is built, so `spawn{,Write}CapOpenVmDescriptor2R24`
+  never gets a chance either. No birth turn commits through the proof-carrying path.
+- **SDK chained full-turn path: explicit NAMED refusal** for birth leads
+  (`sdk/src/full_turn_proof.rs:478-490`).
+- **Pure wire / light-client verify (`verify_effect_vm_rotated_with_cutover`) DOES accept a birth
+  proof** — and has **no in-tree production caller** (tests and doc references only).
+- Hosted (non-sovereign) births run with **no proof at all**.
+
+**SOUNDNESS — the over-claim, priced honestly.** The birth family is advertised as light-client
+FORCED-ON-WIRE for freshness: Lean `EffectVmEmitRotationV3` says "a re-creation of an existing cell id
+has no bracketing witness and is UNSAT (no account-id collision)", and
+`circuit/tests/vk_epoch_birth_light_client_binding.rs`'s header terminates its binding chain at
+"key ∉ BEFORE". **That last link does not reach the ledger.** `.absent` is opened against a tree the
+prover chooses, which is EMPTY on every deployed producer path, and which is keyed in a domain
+disjoint from the executor's — so a present cell is a non-member at the gate's key *even when the
+executor's real leaf set is threaded*. **Cost to exhibit: ZERO.** No grinding, no collision, no 2^31;
+the collision is simply invisible to the gate. ⚑ Do not price this as a width wound.
+What the gate *does* force is real and holds: the after-root is the genuine AAFI insert of the
+published key into the published before-root (forged and frozen after-roots are UNSAT — both
+polarities exercised in that same test). It just says nothing about the ledger.
+
+**AVAILABILITY — NONE.** The gate never refuses an honest turn on this account (the empty before-set
+always brackets). The adjacent liveness fact — birth turns cannot ride the proof-carrying executor
+path at all — is the pre-existing coverage gap named above, not a cost of this.
+
+**EXHIBIT.** `turn/tests/executor_cells_tree_vs_circuit_accounts_tree.rs`, 3 tests, no proving,
+~0.1 s:
+1. `executor_cells_leaf_construction_is_the_deployed_one` — the quote check (also pins the private
+   `CELLS_COLLECTION == 0`), so the rest is not argued against a reconstruction.
+2. `circuit_accounts_limb_is_independent_of_the_executor_ledger` — two ledgers with **different**
+   `cells_root` produce **byte-identical** committed limb-0 groups (BEFORE and AFTER), neither equal
+   to the producer's own committed group, and the AFTER root is not the executor's post-birth
+   `cells_root`. The proof's tree is a free-floating prover object.
+3. `freshness_gate_admits_the_birth_of_an_already_present_cell` — the money exhibit. A cell that IS in
+   the ledger (and whose re-creation the executor refuses, `CellAlreadyExists`) is born again through
+   the deployed wiring, at `&[]` **and** with the executor's real leaf set threaded; the opposite
+   polarity (a before-set carrying the gate's OWN key) is refused, so the tooth is live and this is an
+   ENCODING miss, not a dead gate. **MUTATION CANARY run:** forcing `create_hash[0] :=
+   heap_addr(CELLS, hash_bytes(id))` flips it to a distinct RED at the key-domain assertion — i.e. if
+   the encodings agreed, the bracket WOULD see the collision. Restored, green.
+
+**WHY THERE IS NO BYTE-SAFE FIX (scoped, deliberately not forced).** Aligning the two requires all
+three of: (i) the AIR's map-op key changed from `create_hash[0]` to the executor's addr encoding
+(Lean `DescriptorIR2`'s scalar `key : EmittedExpr`, plus the executor bridge putting that felt in
+`param0`), (ii) the leaf value changed from `k` to the existence bit `1`, and (iii) the insert law
+reconciled — AAFI vs the executor's sorted-compact rebuild. All three are **descriptor/VK bytes**, and
+they ride the same `MapOp` key epoch as felt-width #5/#11/#20. It also needs the producer to thread
+the executor's real leaf set, which the **ledgerless** SDK producers structurally cannot do — the
+same shape as the `.absent` divergence adjudicated elsewhere in this sweep. So: model the deployed
+reality, do not force an equivalence that does not hold. Until the epoch runs, the honest statement is
+**"the birth grow-gate binds the published before/after accounts roots to each other, and to nothing
+in the executor's ledger."**
+
+**Related, noted not chased.** `TurnReceipt::{pre,post}_state_hash` carries two different objects
+depending on path: `consensus_state_commitment` on the classical path (`executor/execute.rs:596,694,1484`)
+but the sovereign OLD/NEW commitments on the atomic path (`executor/atomic.rs:653-654`). Same field,
+two meanings — its own question, not this one.
 
 ### #24 — The cap LEAF's `target` (and `breadstuff`) is a 1-felt fold INSIDE the faithful 8-felt leaf digest. GENUINE, rung-level, Kind D. Soundness HIGH-when-anchored / NONE today / availability NONE.
 
