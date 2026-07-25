@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use super::ir::{ConsumableEffect, DialogueGrant, GameWorld, Gate, SpellEffect};
+use super::ir::{ConsumableEffect, DialogueGrant, GameWorld, Gate, OathRule, SpellEffect};
 use super::parse::Prov;
 
 /// The weight of a validator [`Issue`]: an `Error` refuses the dungeon; a `Warning`
@@ -101,18 +101,21 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
                     ),
                 );
             }
-            // A gate needing an item that exists nowhere.
-            if let Some(Gate::NeedsItem(item)) = &exit.gate {
-                if !obtainable.contains(item) {
-                    let line = prov
-                        .and_then(|p| p.exit_line.get(&(room.id.clone(), dir.clone())).copied());
-                    err!(
-                        line,
-                        format!(
-                            "gate on exit `{dir}` (room `{}`) needs item `{item}`, which exists nowhere",
-                            room.id
-                        ),
-                    );
+            // A gate needing an item that exists nowhere — EVERY conjunct is checked.
+            for atom in atoms(&exit.gate) {
+                if let Gate::NeedsItem(item) = atom {
+                    if !obtainable.contains(item) {
+                        let line = prov.and_then(|p| {
+                            p.exit_line.get(&(room.id.clone(), dir.clone())).copied()
+                        });
+                        err!(
+                            line,
+                            format!(
+                                "gate on exit `{dir}` (room `{}`) needs item `{item}`, which exists nowhere",
+                                room.id
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -239,6 +242,15 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
             );
         }
     }
+    for o in &world.oaths {
+        if !room_ids.contains(&o.room) {
+            err!(
+                prov.and_then(|p| p.oath_line.get(&o.id).copied()),
+                format!("oath `{}` is sworn in unknown room `{}`", o.id, o.room),
+            );
+        }
+    }
+
     for (idx, u) in world.use_rules.iter().enumerate() {
         if !room_ids.contains(&u.room) {
             err!(
@@ -333,33 +345,43 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
     for s in &world.statuses {
         settable.insert(s.flag.clone());
     }
+    // An oath's branch flags and its spend counter ARE set by swearing it — a gate on
+    // `oath_<id>_<branch>` is the whole point of the fork, not a sealed door.
+    for o in &world.oaths {
+        settable.insert(OathRule::sworn_flag(&o.id));
+        for br in &o.branches {
+            settable.insert(OathRule::branch_flag(&o.id, &br.name));
+        }
+    }
 
     // Spells: a learn source must exist.
     for s in &world.spells {
         let line = prov.and_then(|p| p.spell_line.get(&s.word).copied());
-        match &s.learned {
-            None => {}
-            Some(Gate::NeedsItem(item)) => {
-                if !obtainable.contains(item) {
-                    err!(
-                        line,
-                        format!(
-                            "spell `{}` is learned by holding `{item}`, which is never placed",
-                            s.word
-                        ),
-                    );
+        for atom in atoms(&s.learned) {
+            match atom {
+                Gate::NeedsItem(item) => {
+                    if !obtainable.contains(item) {
+                        err!(
+                            line,
+                            format!(
+                                "spell `{}` is learned by holding `{item}`, which is never placed",
+                                s.word
+                            ),
+                        );
+                    }
                 }
-            }
-            Some(Gate::NeedsFlag(flag, _)) => {
-                if !settable.contains(flag) {
-                    err!(
-                        line,
-                        format!(
-                            "spell `{}` is learned via flag `{flag}`, but no rule ever sets that flag",
-                            s.word
-                        ),
-                    );
+                Gate::NeedsFlag(flag, _) | Gate::FlagIs(flag, _) => {
+                    if !settable.contains(flag) {
+                        err!(
+                            line,
+                            format!(
+                                "spell `{}` is learned via flag `{flag}`, but no rule ever sets that flag",
+                                s.word
+                            ),
+                        );
+                    }
                 }
+                Gate::All(_) => unreachable!("`Gate::atoms` never yields an `All`"),
             }
         }
     }
@@ -371,7 +393,16 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
     // valid exotic design.
     for room in world.rooms.values() {
         for (dir, exit) in &room.exits {
-            if let Some(Gate::NeedsFlag(flag, _)) = &exit.gate {
+            for atom in atoms(&exit.gate) {
+                let (Gate::NeedsFlag(flag, _) | Gate::FlagIs(flag, _)) = atom else {
+                    continue;
+                };
+                // `flag X is 0` is the OPENING state of a fork gate — a flag nothing
+                // sets is exactly what it means to still be unsworn, so it is not a
+                // sealed door.
+                if matches!(atom, Gate::FlagIs(_, 0)) {
+                    continue;
+                }
                 if !settable.contains(flag) {
                     let line = prov
                         .and_then(|p| p.exit_line.get(&(room.id.clone(), dir.clone())).copied());
@@ -390,7 +421,13 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
         }
     }
     for r in &world.dialogue {
-        if let Some(Gate::NeedsFlag(flag, _)) = &r.requires {
+        for atom in atoms(&r.requires) {
+            let (Gate::NeedsFlag(flag, _) | Gate::FlagIs(flag, _)) = atom else {
+                continue;
+            };
+            if matches!(atom, Gate::FlagIs(_, 0)) {
+                continue;
+            }
             if !settable.contains(flag) {
                 out.push((
                     None,
@@ -444,8 +481,10 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
         }
     }
     for r in &world.dialogue {
-        if let Some(Gate::NeedsItem(item)) = &r.requires {
-            ref_item!(item, format!("required to talk to `{}`", r.npc));
+        for atom in atoms(&r.requires) {
+            if let Gate::NeedsItem(item) = atom {
+                ref_item!(item, format!("required to talk to `{}`", r.npc));
+            }
         }
     }
 
@@ -467,6 +506,14 @@ pub(crate) fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize
     }
 
     out
+}
+
+/// The atomic requirements of an optional gate, flattening a `Gate::All` conjunction.
+/// Every gate-inspecting lint goes through here, so adding a conjunction to the grammar
+/// could not silently un-lint the terms inside it — the failure mode where a
+/// `requires A and B` deploys with `B` never checked for existence.
+fn atoms(gate: &Option<Gate>) -> Vec<&Gate> {
+    gate.as_ref().map(Gate::atoms).unwrap_or_default()
 }
 
 /// Rooms reachable from `start` by following exits (gates ignored — a gate is a

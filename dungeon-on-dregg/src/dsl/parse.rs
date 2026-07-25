@@ -59,8 +59,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::ir::{
     CombatEnemy, ConsumableEffect, ConsumableRule, DialogueGrant, DialogueRule, Exit, GameWorld,
-    Gate, Hostile, LightRule, LoseCondition, Npc, Objective, RefuelRule, Room, Spell, SpellEffect,
-    SpellRule, StatusKind, StatusRule, UseRule,
+    Gate, Hostile, LightRule, LoseCondition, Npc, OathBranch, OathRule, Objective, RefuelRule,
+    Room, Spell, SpellEffect, SpellRule, StatusKind, StatusRule, UseRule,
 };
 use super::validate::{Severity, check};
 
@@ -310,18 +310,73 @@ fn keyword_pos(toks: &[Tok], kw: &str) -> Option<usize> {
     toks.iter().position(|t| t.word() == Some(kw))
 }
 
-/// Parse a `flag NAME [>= v]` / `item NAME` requirement from a token slice into a
-/// [`Gate`].
+/// Parse a CONJUNCTION of requirements — `item lantern and flag toll_paid and flag oath
+/// is 2` — into a [`Gate`] (an atom for one term, a [`Gate::All`] for several).
+///
+/// Splitting on `and` FIRST is what makes the conjunction real rather than decorative:
+/// before this, `parse_gate` read the first two tokens and let the rest fall on the
+/// floor, so an author who wrote a two-part gate deployed a one-part one — a silent
+/// weakening in the fail-OPEN direction, the worst kind. Every term must now parse.
 fn parse_gate(toks: &[Tok], line: usize) -> Result<Gate, DungeonError> {
+    let mut gates = Vec::new();
+    for term in toks.split(|t| t.word() == Some("and")) {
+        if term.is_empty() {
+            return Err(DungeonError::at(
+                line,
+                "a dangling `and` in a requirement (each `and` needs a requirement on both sides)",
+            ));
+        }
+        gates.push(parse_gate_atom(term, line)?);
+    }
+    Gate::all(gates)
+        .ok_or_else(|| DungeonError::at(line, "expected a requirement after `requires`"))
+}
+
+/// Parse ONE atomic requirement: `item NAME` / `flag NAME [>= v]` / `flag NAME is v`.
+/// Trailing tokens are REFUSED, not ignored — an unrecognized tail is an author who
+/// meant something the grammar does not say, and dropping it deploys a weaker gate.
+fn parse_gate_atom(toks: &[Tok], line: usize) -> Result<Gate, DungeonError> {
+    let refuse_tail = |consumed: usize| -> Result<(), DungeonError> {
+        match toks.get(consumed) {
+            None => Ok(()),
+            Some(t) => {
+                let w = match t {
+                    Tok::Word(w) => w.clone(),
+                    Tok::Str(s) => format!("\"{s}\""),
+                };
+                Err(DungeonError::at(
+                    line,
+                    format!(
+                        "unexpected `{w}` in a requirement — a requirement is `item <name>`, \
+                         `flag <name> [>= v]` or `flag <name> is <v>`, joined by `and`"
+                    ),
+                ))
+            }
+        }
+    };
     match toks.first().and_then(Tok::word) {
         Some("item") => {
             let name = word_at(toks, 1, line, "an item name after `item`")?;
+            refuse_tail(2)?;
             Ok(Gate::NeedsItem(name.to_string()))
         }
         Some("flag") => {
-            let name = word_at(toks, 1, line, "a flag name after `flag`")?;
-            let (v, _) = parse_flag_val(&toks[2.min(toks.len())..]);
-            Ok(Gate::NeedsFlag(name.to_string(), v))
+            let name = word_at(toks, 1, line, "a flag name after `flag`")?.to_string();
+            let rest = &toks[2.min(toks.len())..];
+            // `flag X is v` — the EXCLUSIVE gate. `>=` cannot express it: `>= 1` admits
+            // 2, so a `>=` gate can never say "this branch of the fork and not that one".
+            if rest.first().and_then(Tok::word) == Some("is") {
+                let v = parse_num(
+                    word_at(rest, 1, line, "the exact value after `is`")?,
+                    line,
+                    "an `is` requirement",
+                )?;
+                refuse_tail(4)?;
+                return Ok(Gate::FlagIs(name, v));
+            }
+            let (v, used) = parse_flag_val(rest);
+            refuse_tail(2 + used)?;
+            Ok(Gate::NeedsFlag(name, v))
         }
         other => Err(DungeonError::at(
             line,
@@ -372,6 +427,7 @@ pub(crate) struct Prov {
     pub(crate) spellrule_line: Vec<usize>,
     pub(crate) consumable_line: Vec<usize>,
     pub(crate) status_line: BTreeMap<String, usize>,
+    pub(crate) oath_line: BTreeMap<String, usize>,
     pub(crate) objective_line: usize,
     pub(crate) start_line: usize,
 }
@@ -391,6 +447,7 @@ struct Builder {
     spell_rules: Vec<SpellRule>,
     consumables: Vec<ConsumableRule>,
     statuses: Vec<StatusRule>,
+    oaths: Vec<OathRule>,
     player_max_hp: i64,
     light: Option<LightRule>,
     start: Option<String>,
@@ -412,6 +469,7 @@ fn build(src: &str) -> Result<(GameWorld, Prov), DungeonError> {
         spell_rules: Vec::new(),
         consumables: Vec::new(),
         statuses: Vec::new(),
+        oaths: Vec::new(),
         player_max_hp: 0,
         light: None,
         start: None,
@@ -507,6 +565,9 @@ fn build(src: &str) -> Result<(GameWorld, Prov), DungeonError> {
             "npc" => {
                 i = parse_npc(&mut b, &lines, i)?;
             }
+            "oath" => {
+                i = parse_oath(&mut b, &lines, i)?;
+            }
             "hostile" => {
                 i = parse_hostile(&mut b, &lines, i)?;
             }
@@ -549,6 +610,7 @@ fn build(src: &str) -> Result<(GameWorld, Prov), DungeonError> {
         spell_rules: b.spell_rules,
         consumables: b.consumables,
         statuses: b.statuses,
+        oaths: b.oaths,
         player_max_hp: b.player_max_hp,
         light: b.light,
         start,
@@ -661,6 +723,8 @@ fn parse_use(b: &mut Builder, line: &Line) -> Result<(), DungeonError> {
         target,
         sets_flag: (flag, v),
         narration,
+        // `use <item> once in <room> -> …` — the interaction spends itself.
+        once: keyword_pos(&toks[..arrow], "once").is_some(),
     });
     Ok(())
 }
@@ -990,7 +1054,67 @@ fn parse_topic(
         grant,
         granted_narration: strs.first().cloned().unwrap_or_default(),
         withheld_narration: strs.get(1).cloned().unwrap_or_default(),
+        // `topic <t> once [requires …] -> …` — the NPC says it exactly once, ever.
+        once: keyword_pos(&toks[..arrow], "once").is_some(),
     })
+}
+
+/// Parse an `oath <id> in <room> "<prompt>"` block and its indented
+/// `branch <name> -> "<narration>"` lines into an [`OathRule`].
+fn parse_oath(b: &mut Builder, lines: &[Line], header: usize) -> Result<usize, DungeonError> {
+    let hl = &lines[header];
+    let toks = lex(&hl.text, hl.no)?;
+    // oath <id> in <room> "<prompt>"
+    let id = word_at(&toks, 1, hl.no, "an oath id after `oath`")?.to_string();
+    let room = kv(&toks, "in", hl.no, "an oath needs `in <room>`")?;
+    let prompt = first_str(&toks).unwrap_or_else(|| format!("Swear the {id}"));
+
+    let mut branches: Vec<OathBranch> = Vec::new();
+    let (start, end) = body_range(lines, header);
+    for line in &lines[start..end] {
+        let toks = lex(&line.text, line.no)?;
+        match first_word(&line.text) {
+            "branch" => {
+                let name = word_at(&toks, 1, line.no, "a branch name after `branch`")?.to_string();
+                if branches.iter().any(|b: &OathBranch| b.name == name) {
+                    return Err(DungeonError::at(
+                        line.no,
+                        format!("oath `{id}` declares branch `{name}` twice"),
+                    ));
+                }
+                let narration = first_str(&toks).ok_or_else(|| {
+                    DungeonError::at(line.no, "an oath branch needs a \"narration\" string")
+                })?;
+                branches.push(OathBranch { name, narration });
+            }
+            other => {
+                return Err(DungeonError::at(
+                    line.no,
+                    format!("unexpected `{other}` in an oath block (branches start with `branch`)"),
+                ));
+            }
+        }
+    }
+    // A one-way oath is not a fork — it is a `use`. Refuse it here rather than emit a
+    // "choice" with one arm that reads like a decision and is not one.
+    if branches.len() < 2 {
+        return Err(DungeonError::at(
+            hl.no,
+            format!(
+                "oath `{id}` declares {} branch(es); a fork needs at least 2 (a single \
+                 irreversible action is a `use … once`)",
+                branches.len()
+            ),
+        ));
+    }
+    b.prov.oath_line.insert(id.clone(), hl.no);
+    b.oaths.push(OathRule {
+        id,
+        room,
+        prompt,
+        branches,
+    });
+    Ok(end)
 }
 
 fn parse_spell(b: &mut Builder, lines: &[Line], header: usize) -> Result<usize, DungeonError> {

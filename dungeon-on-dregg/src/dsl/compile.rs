@@ -24,6 +24,38 @@
 //! | `npc topic … -> opens <f>`        | a gated choice: `{ <requires> } ~ flag_<f> = v`               |
 //! | `npc topic … -> reveals`          | an ungated pure-narration choice (no effects)                 |
 //! | `objective: reach <r> holding <i>`| a `Claim` choice in `<r>`: `{ has_<i> >= 1 } ~ dungeon_won = 1 -> END` |
+//! | `requires A and B`                | the CONJUNCTION of both gates' teeth on that one case         |
+//! | `requires flag <f> is <v>`        | choice condition `{ flag_<f> == v }` → executor `FieldEquals` |
+//! | `topic … once` / `use … once`     | `{ once_<tag> <= 0 } ~ once_<tag> += 1` → executor `FieldLte` |
+//! | `oath <o>` branch `<b>`           | `{ flag_sworn_<o> <= 0 } ~ flag_sworn_<o> += 1, flag_oath_<o>_<b> = 1` |
+//!
+//! ## Exclusion is a real tooth, not a convention
+//!
+//! Three of those rows exist to make a dungeon capable of saying NO. Everything else in
+//! the grammar is monotone — a flag rises, an item is held, and nothing ever closes — so
+//! before them an authored dungeon could only be a checklist: no oath, no betrayal, no
+//! burned bridge, no revelation you get once. The mechanism is one primitive used three
+//! ways: a SPEND COUNTER the choice both gates on (`<= 0`, pre-state) and bumps (`+= 1`),
+//! which the v0 compiler lifts to a post-state `FieldLte { value: 1 }`. A second attempt
+//! has a pre-state of `1`, a post-state of `2`, and is a real
+//! [`WorldError`](spween_dregg::WorldError)`::Refused` that commits nothing. An `oath`
+//! shares ONE counter across its branches, so swearing any branch forecloses the rest.
+//!
+//! Note the shape this forces: the gated var must be bumped by a `+=`, never assigned.
+//! The v0 compiler treats a `Set` on a var the same choice gates as un-lowerable
+//! (`Delta::Overwritten`) and clears `fully_gated`, which [`check_lowering`] then refuses
+//! — so a spend counter written with `=` fails the build rather than deploying ungated.
+//!
+//! ## Substrate posture, said out loud
+//!
+//! These constructs introduce NO new constraint kind and no new admitted verb. They
+//! compose `FieldGte` / `FieldLte` / `FieldEquals` / `Immutable` / `HeapField{Gte,Lte,
+//! Equals,Immutable}` — all inside the subset that `Dregg2.Exec.DeployedConstraint`
+//! decides and that a deployed node routes through the verified
+//! `dregg_constraint_admits` oracle. What is Rust here is the LOWERING FUNCTION
+//! ([`choice_spec`] and [`augment`]), and that is the honest debt: the Descent's teeth are
+//! a Lean-authored value emitted to `dungeon-on-dregg/program/dungeon_program.json`,
+//! whereas an authored world's teeth are computed by this file. See the module footer.
 //!
 //! Item possession / flag state are cell registers allocated by the v0 compiler
 //! (spilling to the committed ext plane past the 15th var, same as every compiled
@@ -85,14 +117,15 @@ use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, field_f
 use dregg_cell::program::HeapAtom;
 use spween::{
     Choice, CompareClause, CompareOp, Condition, ConditionClause, ConditionExpr, Effect,
-    NavigationTarget, Passage, PassageContent, Prose, Scene, SceneMeta, SetEffect, Value,
+    ModifyEffect, NavigationTarget, Passage, PassageContent, Prose, Scene, SceneMeta, SetEffect,
+    Value,
 };
 use spween_dregg::{
     CompiledStory, GENESIS_DONE_EXT_KEY, GENESIS_METHOD, HEAP_HATCH_METHOD, PASSAGE_ENDED,
     PASSAGE_SLOT, STATE_SLOTS, WorldCell, WorldError, choice_method, compile_scene,
 };
 
-use super::ir::{DialogueGrant, GameWorld, Gate};
+use super::ir::{DialogueGrant, GameWorld, Gate, OathRule};
 use super::validate::validate;
 
 /// The compiled var holding "the objective was claimed" (`1` after the win choice).
@@ -106,6 +139,26 @@ pub fn item_var(item: &str) -> String {
 /// The compiled var carrying world flag `flag`.
 pub fn flag_var(flag: &str) -> String {
     format!("flag_{flag}")
+}
+
+/// The compiled SPEND COUNTER for a `once` construct tagged `tag` — `0` while unspent,
+/// bumped to `1` by the turn that fires it. Its own namespace, so it can never collide
+/// with an author's flag (`flag_…`) or item (`has_…`).
+pub fn once_var(tag: &str) -> String {
+    format!("once_{tag}")
+}
+
+/// The `once` tag of the dialogue rule at `dialogue_index`.
+fn talk_once_tag(world: &GameWorld, dialogue_index: usize) -> String {
+    let d = &world.dialogue[dialogue_index];
+    format!("talk_{}_{}", d.npc, d.topic)
+}
+
+/// The `once` tag of the use-rule at `use_index`. Positional: a use-rule's identity in
+/// the source IS its position, and two rules that agreed on room+item+target would
+/// otherwise silently SHARE a counter (either one firing closing both).
+fn use_once_tag(use_index: usize) -> String {
+    format!("use_{use_index}")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +237,14 @@ pub enum ChoiceKind {
     Talk {
         /// Index into [`GameWorld::dialogue`].
         dialogue_index: usize,
+    },
+    /// Swear one branch of an oath — the irreversible fork. Spends the oath's shared
+    /// counter, so every sibling branch is foreclosed by an executor tooth.
+    Swear {
+        /// Index into [`GameWorld::oaths`].
+        oath_index: usize,
+        /// Index into that oath's [`OathRule::branches`](super::ir::OathRule::branches).
+        branch_index: usize,
     },
     /// Walk the exit `dir` (to `world.rooms[room].exits[dir]`).
     Exit {
@@ -286,6 +347,17 @@ impl CompiledDungeon {
         self.find_index(room, |k| matches!(k, ChoiceKind::Objective))
     }
 
+    /// The choice index of swearing branch `branch` of oath `oath` (in the oath's room).
+    pub fn swear_index(&self, room: &str, oath: usize, branch: usize) -> Option<usize> {
+        self.find_index(room, |k| {
+            matches!(
+                k,
+                ChoiceKind::Swear { oath_index, branch_index }
+                    if *oath_index == oath && *branch_index == branch
+            )
+        })
+    }
+
     /// The executor-enforced constraints installed on the case guarded by (`room`,
     /// `index`)'s method — introspection proof the gate is a real kernel predicate.
     pub fn gate_constraints(&self, room: &str, index: usize) -> Vec<StateConstraint> {
@@ -325,6 +397,16 @@ fn room_choice_kinds(world: &GameWorld, room_id: &str) -> Vec<ChoiceKind> {
             kinds.push(ChoiceKind::Talk { dialogue_index: i });
         }
     }
+    for (oi, o) in world.oaths.iter().enumerate() {
+        if o.room == room_id {
+            for bi in 0..o.branches.len() {
+                kinds.push(ChoiceKind::Swear {
+                    oath_index: oi,
+                    branch_index: bi,
+                });
+            }
+        }
+    }
     for dir in room.exits.keys() {
         kinds.push(ChoiceKind::Exit { dir: dir.clone() });
     }
@@ -342,26 +424,151 @@ fn room_order(world: &GameWorld) -> Vec<String> {
     order
 }
 
-/// One lowered choice, source-derived: its gate (as a compiled var + minimum), the
-/// vars its effects legitimately write, and its navigation target.
+/// The comparison one gate term makes against the PRE-state of its var. Each maps to
+/// exactly one `spween` [`CompareOp`], hence to exactly one executor tooth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GateOp {
+    /// `var >= base` — the ordinary "you have it" gate.
+    Gte,
+    /// `var == base` — the EXCLUSIVE gate (`requires flag oath is 2`).
+    Eq,
+    /// `var <= base` — the SPEND gate (`once` / an oath's counter).
+    Lte,
+}
+
+impl GateOp {
+    fn compare_op(self) -> CompareOp {
+        match self {
+            GateOp::Gte => CompareOp::Ge,
+            GateOp::Eq => CompareOp::Eq,
+            GateOp::Lte => CompareOp::Le,
+        }
+    }
+}
+
+/// One term of a choice's gate: `var <op> base`, over the PRE-state.
+#[derive(Clone, Debug)]
+struct GateTerm {
+    var: String,
+    op: GateOp,
+    base: i64,
+}
+
+/// How one of a choice's effects writes its var.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WriteKind {
+    /// `~ var = v` — an assignment. Never permitted on a var the SAME choice gates
+    /// (the v0 compiler cannot lift a gate over an overwritten var).
+    Set(i64),
+    /// `~ var += d` — a bump. This is what a spend counter uses, so its own gate stays
+    /// liftable.
+    Add(i64),
+}
+
+/// One lowered write: the compiled var and how it moves.
+#[derive(Clone, Debug)]
+struct Write {
+    var: String,
+    kind: WriteKind,
+}
+
+impl Write {
+    fn set(var: String, v: i64) -> Write {
+        Write {
+            var,
+            kind: WriteKind::Set(v),
+        }
+    }
+    fn add(var: String, d: i64) -> Write {
+        Write {
+            var,
+            kind: WriteKind::Add(d),
+        }
+    }
+}
+
+/// One lowered choice, source-derived: its gate (a CONJUNCTION of terms), the vars its
+/// effects legitimately write, and its navigation target.
 struct ChoiceSpec {
+    #[allow(dead_code)]
     kind: ChoiceKind,
-    /// `(var, min)` — the source gate, in compiled-var terms. `None` = ungated.
-    gate: Option<(String, i64)>,
-    /// The compiled vars this choice's effects write (value each, for the builder).
-    writes: Vec<(String, i64)>,
+    /// The source gate as a conjunction of terms, in compiled-var terms. Empty = ungated.
+    gates: Vec<GateTerm>,
+    /// The compiled vars this choice's effects write.
+    writes: Vec<Write>,
     /// The navigation target: `Some(room)` or `None` for `-> END`.
     nav: Option<String>,
     /// The display label.
     label: String,
 }
 
-/// A source [`Gate`] in compiled-var terms.
-fn gate_to_var(gate: &Gate) -> (String, i64) {
-    match gate {
-        Gate::NeedsItem(item) => (item_var(item), 1),
-        Gate::NeedsFlag(flag, v) => (flag_var(flag), *v),
+impl ChoiceSpec {
+    /// The set of vars this choice legitimately writes (what write-confinement spares).
+    fn written(&self) -> BTreeSet<&String> {
+        self.writes.iter().map(|w| &w.var).collect()
     }
+
+    /// The choice's NET additive delta on `var` — the shift the v0 compiler applies when
+    /// it lifts a pre-state comparison to a post-state tooth. A `Set` yields `None`: the
+    /// v0 compiler refuses to lift a gate over an overwritten var, so a spec that
+    /// produced one would silently deploy ungated. [`check_lowering`] turns that `None`
+    /// into a named build failure.
+    fn delta_on(&self, var: &str) -> Option<i64> {
+        let mut sum = 0;
+        for w in &self.writes {
+            if w.var == var {
+                match w.kind {
+                    WriteKind::Set(_) => return None,
+                    WriteKind::Add(d) => sum += d,
+                }
+            }
+        }
+        Some(sum)
+    }
+}
+
+/// A source [`Gate`] as a conjunction of compiled-var terms. The one place the source
+/// gate vocabulary meets the executor's comparison vocabulary.
+fn gate_terms(gate: &Gate) -> Vec<GateTerm> {
+    gate.atoms()
+        .into_iter()
+        .map(|atom| match atom {
+            Gate::NeedsItem(item) => GateTerm {
+                var: item_var(item),
+                op: GateOp::Gte,
+                base: 1,
+            },
+            Gate::NeedsFlag(flag, v) => GateTerm {
+                var: flag_var(flag),
+                op: GateOp::Gte,
+                base: *v,
+            },
+            Gate::FlagIs(flag, v) => GateTerm {
+                var: flag_var(flag),
+                op: GateOp::Eq,
+                base: *v,
+            },
+            Gate::All(_) => unreachable!("`Gate::atoms` never yields an `All`"),
+        })
+        .collect()
+}
+
+/// The gate terms of an optional source gate (empty for ungated).
+fn opt_gate_terms(gate: &Option<Gate>) -> Vec<GateTerm> {
+    gate.as_ref().map(gate_terms).unwrap_or_default()
+}
+
+/// The spend-counter pair a `once` construct contributes: gate the counter unspent,
+/// then bump it. Used by `once` topics, `once` use-rules, and every oath branch.
+fn spend(counter: String) -> (GateTerm, Write) {
+    (
+        GateTerm {
+            var: counter.clone(),
+            op: GateOp::Lte,
+            base: 0,
+        },
+        Write::add(counter, 1),
+    )
 }
 
 /// The full source-derived spec of one choice — THE single place a source construct's
@@ -371,8 +578,8 @@ fn choice_spec(world: &GameWorld, room_id: &str, kind: &ChoiceKind) -> ChoiceSpe
     match kind {
         ChoiceKind::Take { item } => ChoiceSpec {
             kind: kind.clone(),
-            gate: None,
-            writes: vec![(item_var(item), 1)],
+            gates: vec![],
+            writes: vec![Write::set(item_var(item), 1)],
             nav: Some(room_id.to_string()),
             label: format!("Take the {item}"),
         },
@@ -382,34 +589,71 @@ fn choice_spec(world: &GameWorld, room_id: &str, kind: &ChoiceKind) -> ChoiceSpe
                 Some(t) => format!("Use the {} on the {t}", u.item),
                 None => format!("Use the {}", u.item),
             };
+            let mut gates = vec![GateTerm {
+                var: item_var(&u.item),
+                op: GateOp::Gte,
+                base: 1,
+            }];
+            let mut writes = vec![Write::set(flag_var(&u.sets_flag.0), u.sets_flag.1)];
+            if u.once {
+                let (g, w) = spend(once_var(&use_once_tag(*use_index)));
+                gates.push(g);
+                writes.push(w);
+            }
             ChoiceSpec {
                 kind: kind.clone(),
-                gate: Some((item_var(&u.item), 1)),
-                writes: vec![(flag_var(&u.sets_flag.0), u.sets_flag.1)],
+                gates,
+                writes,
                 nav: Some(room_id.to_string()),
                 label,
             }
         }
         ChoiceKind::Talk { dialogue_index } => {
             let d = &world.dialogue[*dialogue_index];
-            let writes = match &d.grant {
-                DialogueGrant::GivesItem(i) => vec![(item_var(i), 1)],
-                DialogueGrant::OpensFlag(k, v) => vec![(flag_var(k), *v)],
+            let mut writes = match &d.grant {
+                DialogueGrant::GivesItem(i) => vec![Write::set(item_var(i), 1)],
+                DialogueGrant::OpensFlag(k, v) => vec![Write::set(flag_var(k), *v)],
                 DialogueGrant::Reveals => vec![],
             };
+            let mut gates = opt_gate_terms(&d.requires);
+            if d.once {
+                let (g, w) = spend(once_var(&talk_once_tag(world, *dialogue_index)));
+                gates.push(g);
+                writes.push(w);
+            }
             ChoiceSpec {
                 kind: kind.clone(),
-                gate: d.requires.as_ref().map(gate_to_var),
+                gates,
                 writes,
                 nav: Some(room_id.to_string()),
                 label: format!("Ask {} about {}", d.npc, d.topic),
+            }
+        }
+        ChoiceKind::Swear {
+            oath_index,
+            branch_index,
+        } => {
+            let o = &world.oaths[*oath_index];
+            let br = &o.branches[*branch_index];
+            // ONE counter shared by every branch: swearing any of them spends it, so the
+            // siblings are foreclosed by the same tooth that stops a re-swear.
+            let (g, w) = spend(flag_var(&OathRule::sworn_flag(&o.id)));
+            ChoiceSpec {
+                kind: kind.clone(),
+                gates: vec![g],
+                writes: vec![
+                    w,
+                    Write::set(flag_var(&OathRule::branch_flag(&o.id, &br.name)), 1),
+                ],
+                nav: Some(room_id.to_string()),
+                label: format!("Swear the {}: {}", o.id, br.name),
             }
         }
         ChoiceKind::Exit { dir } => {
             let exit = &world.rooms[room_id].exits[dir];
             ChoiceSpec {
                 kind: kind.clone(),
-                gate: exit.gate.as_ref().map(gate_to_var),
+                gates: opt_gate_terms(&exit.gate),
                 writes: vec![],
                 nav: Some(exit.to_room.clone()),
                 label: format!("Go {dir}"),
@@ -417,8 +661,12 @@ fn choice_spec(world: &GameWorld, room_id: &str, kind: &ChoiceKind) -> ChoiceSpe
         }
         ChoiceKind::Objective => ChoiceSpec {
             kind: kind.clone(),
-            gate: Some((item_var(&world.objective.holding), 1)),
-            writes: vec![(DUNGEON_WON_VAR.to_string(), 1)],
+            gates: vec![GateTerm {
+                var: item_var(&world.objective.holding),
+                op: GateOp::Gte,
+                base: 1,
+            }],
+            writes: vec![Write::set(DUNGEON_WON_VAR.to_string(), 1)],
             nav: None,
             label: format!(
                 "Claim the objective, the {} in hand",
@@ -487,17 +735,26 @@ fn reject_unsupported(world: &GameWorld) -> Result<(), CompileError> {
     Ok(())
 }
 
-/// A `{ var >= min }` spween condition.
-fn ge_condition(var: &str, min: i64) -> Condition {
-    Condition {
-        expr: ConditionExpr::Atom(ConditionClause::Compare(CompareClause {
-            var: var.into(),
-            op: CompareOp::Ge,
-            value: Value::Int(min),
-            span: 0..0,
-        })),
+/// One gate term as a spween condition atom.
+fn term_expr(term: &GateTerm) -> ConditionExpr {
+    ConditionExpr::Atom(ConditionClause::Compare(CompareClause {
+        var: term.var.as_str().into(),
+        op: term.op.compare_op(),
+        value: Value::Int(term.base),
         span: 0..0,
-    }
+    }))
+}
+
+/// A conjunction of gate terms as a spween [`Condition`] (`None` when ungated). Folded
+/// LEFT into nested `And`s, which is the shape `lower_expr` walks into a flat
+/// constraint list — so `requires A and B and C` installs three teeth on one case.
+fn gate_condition(terms: &[GateTerm]) -> Option<Condition> {
+    let mut it = terms.iter();
+    let first = term_expr(it.next()?);
+    let expr = it.fold(first, |acc, t| {
+        ConditionExpr::And(Box::new(acc), Box::new(term_expr(t)))
+    });
+    Some(Condition { expr, span: 0..0 })
 }
 
 /// Build the spween [`Scene`] mirroring the world's room graph — constructed as AST
@@ -526,12 +783,17 @@ fn build_scene(world: &GameWorld) -> Scene {
             let effects = spec
                 .writes
                 .iter()
-                .map(|(var, v)| {
-                    Effect::Set(SetEffect {
-                        var: var.as_str().into(),
-                        value: Value::Int(*v),
+                .map(|w| match w.kind {
+                    WriteKind::Set(v) => Effect::Set(SetEffect {
+                        var: w.var.as_str().into(),
+                        value: Value::Int(v),
                         span: 0..0,
-                    })
+                    }),
+                    WriteKind::Add(d) => Effect::Modify(ModifyEffect {
+                        var: w.var.as_str().into(),
+                        delta: d,
+                        span: 0..0,
+                    }),
                 })
                 .collect();
             let target = match &spec.nav {
@@ -548,7 +810,7 @@ fn build_scene(world: &GameWorld) -> Scene {
             };
             content.push(PassageContent::Choice(Choice {
                 text: spec.label.into(),
-                condition: spec.gate.as_ref().map(|(var, min)| ge_condition(var, *min)),
+                condition: gate_condition(&spec.gates),
                 effects,
                 target: Some(target),
                 span: 0..0,
@@ -589,21 +851,47 @@ fn freeze_tooth(key: u64) -> StateConstraint {
     }
 }
 
-/// The expected executor tooth of a `{ var >= min }` gate whose choice does not touch
-/// `var` (all this compiler's gates), on whichever plane the var landed. Thresholds
-/// floor at zero exactly as the v0 lowering's shifted threshold does.
-fn gate_tooth(key: u64, min: i64) -> StateConstraint {
-    let value = field_from_u64(min.max(0) as u64);
+/// The expected executor tooth of a gate term `{ var <op> base }` on a choice whose net
+/// additive delta on `var` is `d`, on whichever plane the var landed.
+///
+/// This mirrors `spween_dregg`'s `compare_constraint` arm-for-arm: a gate is stated over
+/// the PRE-state and the executor checks the POST-state, so the threshold shifts by the
+/// choice's own delta on that var (`post = pre + d`), flooring at zero exactly as the v0
+/// lowering's `thr` does. The `d` term is what makes a SPEND counter checkable: the gate
+/// says `pre <= 0` and the installed tooth says `post <= 1`, because the same turn bumps
+/// it. Re-derived here from the SOURCE rather than read off the program — a shift this
+/// module got wrong would be a `MISSING`/`PHANTOM` build failure, not a silent gate.
+fn gate_tooth(key: u64, op: GateOp, base: i64, d: i64) -> StateConstraint {
+    let thr = |t: i64| field_from_u64(t.max(0) as u64);
     if key < STATE_SLOTS as u64 {
-        StateConstraint::FieldGte {
-            index: key as u8,
-            value,
+        let index = key as u8;
+        match op {
+            GateOp::Gte => StateConstraint::FieldGte {
+                index,
+                value: thr(base + d),
+            },
+            GateOp::Lte => StateConstraint::FieldLte {
+                index,
+                value: thr(base + d),
+            },
+            GateOp::Eq => StateConstraint::FieldEquals {
+                index,
+                value: thr(base + d),
+            },
         }
     } else {
-        StateConstraint::HeapField {
-            key,
-            atom: HeapAtom::Gte { value },
-        }
+        let atom = match op {
+            GateOp::Gte => HeapAtom::Gte {
+                value: thr(base + d),
+            },
+            GateOp::Lte => HeapAtom::Lte {
+                value: thr(base + d),
+            },
+            GateOp::Eq => HeapAtom::Equals {
+                value: thr(base + d),
+            },
+        };
+        StateConstraint::HeapField { key, atom }
     }
 }
 
@@ -690,7 +978,7 @@ fn augment(world: &GameWorld, story: &mut CompiledStory) {
             per_method.insert(
                 symbol(&choice_method(&room_id, index)),
                 (
-                    spec.writes.iter().map(|(v, _)| v.clone()).collect(),
+                    spec.writes.iter().map(|w| w.var.clone()).collect(),
                     spec.nav,
                 ),
             );
@@ -796,10 +1084,25 @@ pub fn check_lowering(world: &GameWorld, d: &CompiledDungeon) -> Result<(), Comp
             let spec = choice_spec(world, &room_id, &kind);
             let method = choice_method(&room_id, index);
             let mut teeth = Vec::new();
-            if let Some((var, min)) = &spec.gate {
-                teeth.push(gate_tooth(var_key(var)?, *min));
-                // The gate must have lowered FULLY to executor constraints — a
-                // handler-only clause is not an enforced gate.
+            for term in &spec.gates {
+                // The choice's OWN delta on the gated var — `None` iff the spec assigns
+                // it, which the v0 compiler cannot lift. Refuse the build rather than
+                // ship a choice whose gate silently fell through to the handler.
+                let Some(delta) = spec.delta_on(&term.var) else {
+                    return fail(format!(
+                        "case `{method}` ({kind:?} in `{room_id}`) gates on `{}` and also ASSIGNS it — \
+                         a gate over an overwritten var does not lower to an executor tooth (use `+=`)",
+                        term.var
+                    ));
+                };
+                teeth.push(gate_tooth(var_key(&term.var)?, term.op, term.base, delta));
+            }
+            if !spec.gates.is_empty() {
+                // Every gate must have lowered FULLY to executor constraints — a
+                // handler-only clause is not an enforced gate. With a CONJUNCTION this
+                // is the tooth that catches a partially-lowered `A and B`: the v0
+                // compiler clears the flag for the whole choice if any conjunct is
+                // un-lowerable, so `A and B` can never deploy as just `A`.
                 if d.story.fully_gated.get(&method) != Some(&true) {
                     return fail(format!(
                         "gate on `{method}` ({kind:?} in `{room_id}`) did not fully lower to executor constraints"
@@ -808,7 +1111,7 @@ pub fn check_lowering(world: &GameWorld, d: &CompiledDungeon) -> Result<(), Comp
             }
             teeth.push(sentinel_freeze());
             teeth.push(nav_pin(&d.story, &spec.nav));
-            let writes: BTreeSet<&String> = spec.writes.iter().map(|(v, _)| v).collect();
+            let writes = spec.written();
             for (var, key) in &all_vars {
                 if !writes.contains(var) {
                     teeth.push(freeze_tooth(*key));

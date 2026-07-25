@@ -36,6 +36,39 @@ pub enum Gate {
     NeedsItem(String),
     /// The exit is open only while world flag `k >= v` (e.g. `door_unlocked >= 1`).
     NeedsFlag(String, i64),
+    /// The exit is open only while world flag `k` is EXACTLY `v` — the *exclusive*
+    /// gate (`requires flag oath is 2`). Distinct from [`Gate::NeedsFlag`]: `>= 1`
+    /// admits every higher value, so a `>=` gate can never express "this branch and
+    /// not that one". Lowers to a real `FieldEquals` / `HeapAtom::Equals` tooth.
+    FlagIs(String, i64),
+    /// **Every** sub-gate must hold — `requires item lantern and flag toll_paid`.
+    /// Produced flat and never empty (the parser folds a singleton back to the atom),
+    /// so `All` never nests inside `All`. Lowers to the conjunction of its atoms'
+    /// teeth on the choice's case, which is exactly what a `Cases` constraint list
+    /// already means.
+    All(Vec<Gate>),
+}
+
+impl Gate {
+    /// The flat list of ATOMIC requirements this gate is a conjunction of (itself, for
+    /// an atom). The single place `All` is unfolded, so no consumer has to recurse.
+    pub fn atoms(&self) -> Vec<&Gate> {
+        match self {
+            Gate::All(gs) => gs.iter().flat_map(Gate::atoms).collect(),
+            atom => vec![atom],
+        }
+    }
+
+    /// Fold a conjunction list into a gate: `None` for empty, the atom itself for a
+    /// singleton, an `All` otherwise. Keeps `All` off the single-gate path so existing
+    /// pattern matches on `Some(Gate::NeedsItem(..))` keep meaning what they meant.
+    pub fn all(mut gates: Vec<Gate>) -> Option<Gate> {
+        match gates.len() {
+            0 => None,
+            1 => gates.pop(),
+            _ => Some(Gate::All(gates)),
+        }
+    }
 }
 
 /// An exit from a room — where it leads, and the (optional) [`Gate`] that must be met
@@ -126,6 +159,10 @@ pub struct UseRule {
     pub sets_flag: (String, i64),
     /// The world's account of what the interaction does.
     pub narration: String,
+    /// **Fires at most ONCE, executor-enforced.** The compiler allocates this rule a
+    /// spend counter, gates the choice on the counter being unspent, and bumps it — so
+    /// a second attempt is a real `WorldError::Refused`, not app bookkeeping.
+    pub once: bool,
 }
 
 /// **A one-shot hostile in a room.** Defeated only if the player holds `defeated_by`;
@@ -214,6 +251,12 @@ pub struct DialogueRule {
     pub granted_narration: String,
     /// The world's account when `requires` is not met.
     pub withheld_narration: String,
+    /// **The topic CLOSES after it is answered**, executor-enforced: the compiler gates
+    /// this choice on a spend counter it also bumps, so the NPC says it exactly once and
+    /// a second asking is a real refusal. This is the DSL's reach into the `WriteOnce`
+    /// memory idiom [`crate::dialogue`] demonstrates by hand — a revelation that cannot
+    /// be farmed, and the primitive an [`OathRule`] fork is built out of.
+    pub once: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,6 +446,51 @@ pub struct ConsumableRule {
 // Objective, lose conditions, the world.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Oaths — the irreversible fork.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **One branch of an [`OathRule`]** — swearing it sets flag `oath_<oath>_<name>`
+/// (which every ordinary `requires flag …` can then read) and, because the oath's
+/// counter is spent in the same turn, permanently forecloses its siblings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OathBranch {
+    /// The branch's id; its world flag is `oath_<oath>_<name>`.
+    pub name: String,
+    /// The world's account of swearing it.
+    pub narration: String,
+}
+
+/// **An irreversible fork.** The player may swear exactly one branch, in `room`, ever.
+/// This is the one thing the rest of the grammar structurally could not say: every other
+/// directive is ADDITIVE (a flag goes up, an item is held, and nothing ever closes), so a
+/// dungeon had no oaths, no betrayals, no burned bridges — only a checklist. The compiler
+/// lowers it to the same spend-counter tooth `once` uses, so exclusivity is an executor
+/// refusal, not a convention.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OathRule {
+    /// The oath's id; its spend counter is world flag `sworn_<id>`.
+    pub id: String,
+    /// The room the oath is sworn in.
+    pub room: String,
+    /// The world's framing of the choice (pure narration).
+    pub prompt: String,
+    /// The mutually exclusive branches (at least two — a one-way oath is a `use`).
+    pub branches: Vec<OathBranch>,
+}
+
+impl OathRule {
+    /// The world flag set by swearing `branch` — the name downstream gates read.
+    pub fn branch_flag(oath: &str, branch: &str) -> String {
+        format!("oath_{oath}_{branch}")
+    }
+
+    /// The oath's spend counter flag: `0` until sworn, `1` after.
+    pub fn sworn_flag(oath: &str) -> String {
+        format!("sworn_{oath}")
+    }
+}
+
 /// **The win condition** — reach `room` while HOLDING `holding`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Objective {
@@ -447,6 +535,8 @@ pub struct GameWorld {
     pub consumables: Vec<ConsumableRule>,
     /// The timed statuses this world declares.
     pub statuses: Vec<StatusRule>,
+    /// The irreversible forks this world declares.
+    pub oaths: Vec<OathRule>,
     /// The player's maximum hit points (combat dungeons only; `0` = no HP dimension).
     pub player_max_hp: i64,
     /// The optional LIGHT budget, or `None` for a dungeon with no light dimension.

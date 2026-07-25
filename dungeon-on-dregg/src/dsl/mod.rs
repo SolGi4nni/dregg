@@ -24,7 +24,7 @@ pub mod validate;
 
 pub use compile::{
     ChoiceKind, CompileError, CompiledDungeon, DUNGEON_WON_VAR, LoweredChoice, check_lowering,
-    compile_world, flag_var, item_var,
+    compile_world, flag_var, item_var, once_var,
 };
 pub use ir::GameWorld;
 pub use parse::{DungeonError, parse_dungeon, parse_world};

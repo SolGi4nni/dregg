@@ -1,0 +1,99 @@
+# THE SALT RELIQUARY
+#
+# An authoring MEASUREMENT, not a demo: a dungeon written to find out what a `.dungeon`
+# author can express without touching Rust. Every construct below either compiles to a real
+# executor tooth or is named in the REMAINING WALLS block at the bottom.
+#
+# The shape: a drowned reliquary with two ways down and a warden who wants to know whose
+# side you are on before he wants your money. You swear to the LEDGER and Ferrun sells you
+# the gate; you swear to the DROWNED and he never deals with you again, but the long stair
+# is not watched. The reliquary door asks a question you have to have LISTENED to answer,
+# and Ferrun will only answer it once.
+
+name: The Salt Reliquary
+start: strand
+objective: reach reliquary holding drowned_crown
+
+room strand "The Bleaching Strand"
+  Salt crust to the horizon, and a stair of black basalt going down into the water that is
+  not there any more. A tithe-box, long since forced, spills tarnished coin into the crust.
+  items: salt_tithe, tide_lamp
+  exit down -> tidegate
+
+room tidegate "The Tide-Gate"
+  A drowned arch, the water pulled back off it, weed hanging in dead ropes. Ferrun the
+  tide-warden sits in the arch's throat with a ledger and no particular hurry.
+  exit up -> strand
+  # THE FORK, made of teeth: the paid gate wants Ferrun's toll, and the toll is only for
+  # sale to someone who swore to his ledger. The stair is only walked by the other side.
+  exit east -> undervault requires flag toll_paid
+  exit west -> longstair requires flag oath_allegiance_drowned
+
+room longstair "The Long Stair"
+  Three hundred steps of wet basalt with nothing on them. It is the honest way and it is
+  the slow way, and the warden has never once looked down it.
+  exit east -> tidegate
+  exit down -> undervault
+
+room undervault "The Undervault"
+  A hall of salt-rimed niches, each one a name worn smooth. One niche is open and empty,
+  and something has been dragged out of it recently.
+  items: rimed_censer
+  exit up -> longstair
+  exit west -> tidegate
+  exit north -> antechapel
+
+room antechapel "The Antechapel"
+  A low room before the reliquary door. The door is a slab of green bronze with a
+  question cut into it in a script nobody living reads, and no handle at all.
+  exit south -> undervault
+  # The door opens for someone who knows the answer — learned by TALKING, not by looting.
+  exit north -> reliquary requires flag door_answered
+
+room reliquary "The Salt Reliquary"
+  A drowned chapel with the tide still held out of it by something. On a bier of black
+  salt lies the drowned crown, and it is much smaller than the stories.
+  items: drowned_crown
+  exit south -> antechapel
+
+# THE OATH. Sworn once, in the arch, and it decides the rest of the dungeon. There is no
+# directive that unswears it and no second branch after the first — the counter is spent.
+oath allegiance in tidegate "Ferrun turns the ledger around. 'Before coin: whose side.'"
+  branch ledger "You put your hand on the ledger. Ferrun almost smiles, and writes."
+  branch drowned "You look past him at the niches. He closes the ledger, and does not look at you again."
+
+# Ferrun REMEMBERS, and Ferrun CLOSES. The toll is only sold to the ledger's side; the
+# name in the niche is a revelation he makes exactly once, to someone who asked properly.
+npc ferrun "Ferrun, Tide-Warden" in tidegate
+  about "a warden with a ledger, who has been here longer than the water has been gone"
+  topic toll once -> opens toll_asked "'The toll is a tithe of salt. Not for me — for the one in the niche.'"
+  topic pay once requires item salt_tithe and flag oath_allegiance_ledger -> opens toll_paid "Ferrun takes the tarnished coin, writes a line, and stands out of the arch." else "'A tithe of salt, and a hand on the ledger. I am not particular but I am not free.'"
+  topic niche once requires flag toll_asked and flag oath_allegiance_ledger -> opens door_answered "'The empty niche was Aveth. The door asks who is missing. That is the answer.'" else "'Ask me a proper question, and be someone I answer.'"
+  topic crown -> reveals "'It is smaller than the stories. Everything down there is.'"
+
+# The censer against the bronze: one swing, and the salt smoke is spent.
+use rimed_censer once on door in antechapel -> flag censer_swung "Salt smoke curls against the bronze. The question does not care, and the censer is cold."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REMAINING WALLS — things I wanted writing this file and still cannot say.
+# (W2 forks, W5 conjunctions and W6 once-only were walls when this file was first
+# written; they are the constructs used above. These four are what is left.)
+#
+#  W1. NO COST. `salt_tithe` is still in hand after Ferrun takes it. `has_<item>` is a
+#      monotone boolean and nothing in the grammar lowers it. Tolls, offerings,
+#      ammunition, rations — every economy is unwritable. `once` gets me "you may pay
+#      only one toll"; it does not get me "and now the coin is gone".
+#
+#  W3. ONE ENDING. `objective:` is a single `reach ROOM holding ITEM`. The oath forks the
+#      MIDDLE of the dungeon and both branches still end the same way — the drowned's
+#      ending, where you leave the crown on the bier, is not representable.
+#
+#  W4. NO RISK. `lose:`, `hostile`, `combat`, `light`, `spell`, `consumable`, `status` and
+#      `player_hp:` all parse and are then refused BY NAME at compile. A deployed authored
+#      dungeon is a puzzle box you cannot die in. The long stair is supposed to cost you
+#      lamp-oil; the `light` block that says so does not deploy, so `tide_lamp` is scenery.
+#
+#  W7. NO CHECK. Nothing rolls. `skills.rs` has d20-vs-DC on the real substrate; the
+#      grammar cannot name an ability, a DC, or an outcome that differs on success.
+# ─────────────────────────────────────────────────────────────────────────────
