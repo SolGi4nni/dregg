@@ -215,7 +215,23 @@ async fn main() {
                 tick.tick().await;
                 // `sweep` ships a job to the host's owning thread; run it off the async worker.
                 let catalog = catalog.clone();
-                let report = tokio::task::spawn_blocking(move || catalog.sweep()).await;
+                // THE TABLE CLOCK's no-traffic half. Every seat-locked route reaps the table its
+                // visitor is looking at, which covers the case that matters most (the player who
+                // comes back to a match their opponent abandoned). This covers the rest: a table
+                // NOBODY is looking at still resolves, so an abandoned match is not left pinning a
+                // live session and its own outcome forever. Runs on the blocking pool beside the
+                // sweep because both ship jobs to the host's owning thread.
+                let report = tokio::task::spawn_blocking(move || {
+                    let forfeited = dreggnet_web::table_seats::reap_all(&catalog);
+                    if !forfeited.is_empty() {
+                        tracing::info!(
+                            tables = forfeited.len(),
+                            "table clock resolved abandoned tables by forfeit"
+                        );
+                    }
+                    catalog.sweep()
+                })
+                .await;
                 match report {
                     Ok(r) if !r.evicted.is_empty() => tracing::info!(
                         evicted = r.evicted.len(),

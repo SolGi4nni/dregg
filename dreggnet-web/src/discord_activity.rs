@@ -1835,11 +1835,12 @@ async fn post_da_act(
         Err(resp) => return resp,
     };
     let sid = SessionId::new(id);
-    // THE SEAT LOCK on a minted automatafl table (see `automatafl_web::enforce_seat_lock`): such a
-    // table binds its two seats to two unguessable BROWSER link labels, and a custodial Discord
-    // identity is never one of them — admitting it would let an Activity user take a seat the
-    // invite link was supposed to hold. `af1-` automatafl sessions ONLY; nothing else changes.
-    if let Err(why) = crate::automatafl_web::enforce_seat_lock(&key, &sid.0, "") {
+    // THE SEAT LOCK on a minted table (see `table_seats::refuse_non_seat_route`): such a table
+    // binds its two seats to two unguessable BROWSER link labels, and a custodial Discord identity
+    // is never one of them — admitting it would let an Activity user take a seat the invite link
+    // was supposed to hold. Minted `af1-` automatafl and `tug1-` tug sessions ONLY; every ad-hoc
+    // id and every other key is untouched, and this Activity never mints one.
+    if let Err(why) = crate::table_seats::refuse_non_seat_route(&key, &sid.0) {
         return (StatusCode::FORBIDDEN, why).into_response();
     }
     let audit_detail = serde_json::json!({

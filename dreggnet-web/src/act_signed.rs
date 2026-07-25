@@ -416,12 +416,12 @@ pub async fn post_offering_act_signed(
 ) -> Response {
     let sid = SessionId::new(id);
 
-    // THE SEAT LOCK on a minted automatafl table. A seat-locked table binds its two seats to two
-    // unguessable BROWSER labels; a signed envelope carries a pubkey-derived actor instead, which
-    // can never be one of them. Refuse the whole route for such a table rather than let a signed
-    // stranger claim a seat the link was supposed to hold — fail-closed, and before any crypto or
-    // any open, so nothing commits.
-    if let Err(why) = crate::automatafl_web::enforce_seat_lock(&key, &sid.0, "") {
+    // THE SEAT LOCK on a minted table (automatafl `af1-…` or tug `tug1-…`). A seat-locked table
+    // binds its two seats to two unguessable BROWSER labels; a signed envelope carries a
+    // pubkey-derived actor instead, which can never be one of them. Refuse the whole route for
+    // such a table rather than let a signed stranger claim a seat the link was supposed to hold —
+    // fail-closed, and before any crypto or any open, so nothing commits.
+    if let Err(why) = crate::table_seats::refuse_non_seat_route(&key, &sid.0) {
         audit::log().emit(
             signed_audit_event(
                 audit::Actor::unattributed(),

@@ -119,6 +119,18 @@ async fn get_as(app: &axum::Router, uri: &str, user: Option<&str>) -> (StatusCod
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+fn hidden_value<'a>(html: &'a str, name: &str) -> Option<&'a str> {
+    let marker = format!("name=\"{name}\" value=\"");
+    Some(html.split_once(&marker)?.1.split_once('"')?.0)
+}
+
+/// Post one turn as `user`.
+///
+/// ⚠ THIS HELPER WAS DARK. `tug` is a SPINED game key (`game_spine::game_kind`), so `POST …/act`
+/// requires the server-presented route authority (`{incarnation, generation, pre-head, token}`)
+/// the play surface stamps into its own form. Posting a bare `turn=&arg=` was answered `409
+/// invalid game reference`, so the seated-user own-hand assertion below never reached a landed
+/// turn. It now reads the authority off that user's live page, as their browser would.
 async fn post_as(
     app: &axum::Router,
     uri: &str,
@@ -126,6 +138,18 @@ async fn post_as(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
+    let surface_uri = uri.strip_suffix("/act").unwrap_or(uri);
+    let (_, surface) = get_as(app, surface_uri, Some(user)).await;
+    let authority = [
+        "game_host_incarnation",
+        "game_session_generation",
+        "game_expected_pre_head",
+        "game_form_token",
+    ]
+    .iter()
+    .map(|name| hidden_value(&surface, name).map(|value| format!("&{name}={value}")))
+    .collect::<Option<String>>()
+    .unwrap_or_default();
     let resp = app
         .clone()
         .oneshot(
@@ -134,7 +158,7 @@ async fn post_as(
                 .uri(uri)
                 .header("content-type", "application/x-www-form-urlencoded")
                 .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
+                .body(Body::from(format!("turn={turn}&arg={arg}{authority}")))
                 .unwrap(),
         )
         .await

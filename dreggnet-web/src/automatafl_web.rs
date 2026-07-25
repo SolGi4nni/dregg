@@ -61,6 +61,34 @@ pub const TABLE_PREFIX: &str = table_seats::AUTOMATAFL.table_prefix;
 /// The automatafl seat lock — the id/label derivation and the act-path gate.
 pub const LOCK: TableLock = table_seats::AUTOMATAFL;
 
+pub use crate::table_seats::SeatSlot;
+
+/// Mint a seat-locked automatafl table id (`af1-` + 96 random bits) — [`LOCK`]'s minter, kept as a
+/// free function because that is how the table test and every existing caller reach it.
+pub fn mint_table_id() -> String {
+    LOCK.mint_table_id()
+}
+
+/// The secret label for `seat` at automatafl table `id` — see [`crate::table_seats::TableLock`].
+pub fn seat_label(id: &str, seat: SeatSlot) -> String {
+    LOCK.seat_label(id, seat)
+}
+
+/// The seat `label` holds at automatafl table `id`, if any.
+pub fn seat_of_label(id: &str, label: &str) -> Option<SeatSlot> {
+    LOCK.seat_of_label(id, label)
+}
+
+/// The seat link for `seat` at automatafl table `id`.
+pub fn seat_link(id: &str, seat: SeatSlot) -> String {
+    LOCK.seat_link(id, seat)
+}
+
+/// Whether `id` names a seat-locked automatafl table.
+pub fn is_locked_table(id: &str) -> bool {
+    LOCK.is_locked_table(id)
+}
+
 /// **Assemble the automatafl front door.** Merged into the demo app by `make_app`; additive — it
 /// adds no route that overlaps the catalog's `/offerings/**` surface.
 pub fn automatafl_router(state: Arc<CatalogState>) -> Router {

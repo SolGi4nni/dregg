@@ -56,6 +56,21 @@ async fn get_as(app: &axum::Router, uri: &str, user: Option<&str>) -> (StatusCod
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
+fn hidden_value<'a>(html: &'a str, name: &str) -> Option<&'a str> {
+    let marker = format!("name=\"{name}\" value=\"");
+    Some(html.split_once(&marker)?.1.split_once('"')?.0)
+}
+
+/// Post one turn as `user`.
+///
+/// ⚠ THIS HELPER WAS DARK. `automatafl` has been a SPINED game key since the common game-session
+/// spine landed (`game_spine::game_kind`), so `POST …/act` requires the server-presented route
+/// authority (`{incarnation, generation, pre-head, token}`) that the play surface stamps into its
+/// own form. This helper posted a bare `turn=&arg=`, so every act in this file was answered `409
+/// invalid game reference` and the four properties the file exists to pin — the seat lock, the
+/// fog, the realtime push, the spectator — had not actually been checked at the act layer for as
+/// long as the spine has existed. It now reads the authority off that user's live page, exactly as
+/// their browser would, so the assertions below reach the executor again.
 async fn post_act(
     app: &axum::Router,
     id: &str,
@@ -63,6 +78,22 @@ async fn post_act(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
+    let (_, surface) = get_as(
+        app,
+        &format!("/offerings/automatafl/session/{id}"),
+        Some(user),
+    )
+    .await;
+    let authority = [
+        "game_host_incarnation",
+        "game_session_generation",
+        "game_expected_pre_head",
+        "game_form_token",
+    ]
+    .iter()
+    .map(|name| hidden_value(&surface, name).map(|value| format!("&{name}={value}")))
+    .collect::<Option<String>>()
+    .unwrap_or_default();
     let resp = app
         .clone()
         .oneshot(
@@ -71,7 +102,7 @@ async fn post_act(
                 .uri(format!("/offerings/automatafl/session/{id}/act"))
                 .header("content-type", "application/x-www-form-urlencoded")
                 .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
+                .body(Body::from(format!("turn={turn}&arg={arg}{authority}")))
                 .unwrap(),
         )
         .await

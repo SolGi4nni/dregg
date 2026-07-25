@@ -146,6 +146,45 @@ impl Offering for SeatedTug {
         }
     }
 
+    /// **The affordances THIS seat may fire right now** — the per-seat projection of
+    /// [`Offering::actions`].
+    ///
+    /// The tug ALTERNATES, but `actions` paints one anonymous list, so before this override both
+    /// seats were shown the same lit action menu and the seat whose turn it was not learned that
+    /// only by pressing and being refused.
+    ///
+    /// It is also the only oracle a host outside this crate has for **which seat owes the next
+    /// move**: the `Offering` boundary erases `TugSession`, so `dreggnet-web`'s table clock cannot
+    /// call [`dregg_multiway_tug::TugSession::to_move`] directly. It asks THIS once per seat
+    /// instead, and forfeits the seat still being offered something after the deadline.
+    ///
+    /// Every turn NAME is still emitted, disabled rather than dropped, so a frontend validating a
+    /// POST against this list still reaches the executor and gets ITS refusal ("not your turn").
+    /// The executor remains the sole referee; `enabled` is decoration.
+    fn actions_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Vec<Action> {
+        let mut all = self.inner.actions(&session.inner);
+        if all.is_empty() {
+            return all;
+        }
+        // The seat this viewer holds, or the one they would claim by acting — the same rule
+        // `advance` applies, so a first-time visitor is offered what their first press would use.
+        let seat = session.seat_of(viewer).or_else(|| session.claimable_seat());
+        let owes = match seat {
+            // All eight action turns are spent and the round is waiting to be revealed and
+            // scored. Either seat may fire that, so both owe it.
+            Some(_) if session.inner.scheduled_action().is_none() => !session.inner.ended(),
+            Some(seat) => seat == session.inner.to_move(),
+            // Both seats are held by other identities: a spectator.
+            None => false,
+        };
+        if !owes {
+            for action in &mut all {
+                action.enabled = false;
+            }
+        }
+        all
+    }
+
     /// The seat adapter hides exactly what the wrapped game hides — the seat lookup only decides
     /// WHOSE projection to serve, never whether one carries secrets.
     fn hidden_information(&self) -> bool {

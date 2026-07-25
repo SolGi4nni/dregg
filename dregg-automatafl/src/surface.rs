@@ -434,6 +434,36 @@ impl AutomataflSession {
     /// The seat `who` holds, CLAIMING one if they hold none: their canonical seat if they present
     /// one and it is free, else the first free seat (A, then B). `None` when both seats are taken by
     /// other identities (a spectator).
+    /// **The seat a not-yet-seated viewer would claim on their first accepted move** — the
+    /// read-only half of [`claim_seat`](Self::claim_seat), which is the mutating one. `None` once
+    /// both seats are held (that viewer is a spectator). Rendering never reserves a seat.
+    pub fn claimable_seat(&self) -> Option<Seat> {
+        [Seat::A, Seat::B]
+            .into_iter()
+            .find(|seat| self.seats[seat.idx()].is_none())
+    }
+
+    /// **Whether `seat` still owes a move in the CURRENT phase.** The whole simultaneous-move
+    /// wound in one predicate: in `Phase::Reveal` the seat that already opened owes nothing while
+    /// the one that never opened owes the reveal, so a host with a clock can tell WHICH seat
+    /// walked away instead of guessing or blaming both. Pure — reads the phase and that seat's own
+    /// commit/reveal flags, nothing else.
+    pub fn owes_a_move(&self, seat: Seat) -> bool {
+        if self.ended {
+            return false;
+        }
+        let i = seat.idx();
+        match self.phase() {
+            Phase::Commit => self.committed[i].is_none(),
+            Phase::Reveal => !self.revealed[i],
+            // Either seat may fire the resolution, so both owe it: a table left sitting in
+            // `Resolve` was abandoned by both, and recording that as a double abandonment is
+            // honest where blaming one of them would be arbitrary.
+            Phase::Resolve => true,
+            Phase::Over => false,
+        }
+    }
+
     fn claim_seat(&mut self, who: &DreggIdentity) -> Option<Seat> {
         for seat in [Seat::A, Seat::B] {
             if self.seats[seat.idx()].as_ref() == Some(who) {
@@ -1363,6 +1393,52 @@ impl Offering for AutomataflOffering {
     /// a commitment (the simultaneous-secret fog), and the viewer's selection lights its rook line.
     fn render_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Surface {
         session.surface_for(session.seat_of(viewer))
+    }
+
+    /// **The affordances THIS seat may fire right now** — the per-seat projection of
+    /// [`actions`](Offering::actions).
+    ///
+    /// `actions` paints the anonymous union: every seat's live selection targets plus both phase
+    /// buttons, enabled by PHASE alone. That is right for a viewer-blind render and wrong for a
+    /// player, who should not be shown the reveal they already made lit up as if it were theirs to
+    /// press.
+    ///
+    /// It is also the only oracle a host OUTSIDE this crate has for **which seat owes the next
+    /// move** ([`AutomataflSession::owes_a_move`], threaded through the `Offering` boundary that
+    /// erases the session type). `dreggnet-web`'s table clock asks it once per seat and forfeits
+    /// the seat still being offered something after the deadline — which is how a match parked in
+    /// `Phase::Reveal` because one seat walked away now ends instead of hanging forever.
+    ///
+    /// Every turn NAME `actions` emits is still emitted here, disabled rather than dropped, so a
+    /// frontend validating a POST against this list still reaches the executor and gets ITS
+    /// refusal. The executor remains the sole referee of what lands; `enabled` is decoration.
+    fn actions_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Vec<Action> {
+        let mut all = self.actions(session);
+        if all.is_empty() {
+            return all;
+        }
+        // The seat this viewer holds — or, if they hold none and one is free, the seat they would
+        // claim by acting. That is exactly the rule `advance`'s `claim_seat` applies, so the
+        // affordances a first-time visitor is offered are the ones their first press would use.
+        let Some(seat) = session.seat_of(viewer).or_else(|| session.claimable_seat()) else {
+            // Both seats are held by other identities: a spectator. Everything is shown, inert.
+            for action in &mut all {
+                action.enabled = false;
+            }
+            return all;
+        };
+        let i = seat.idx();
+        let phase = session.phase();
+        for action in &mut all {
+            let mine = match action.turn.as_str() {
+                SELECT | COMMIT => matches!(phase, Phase::Commit) && session.committed[i].is_none(),
+                REVEAL => matches!(phase, Phase::Reveal) && !session.revealed[i],
+                RESOLVE => matches!(phase, Phase::Resolve),
+                _ => false,
+            };
+            action.enabled = action.enabled && mine;
+        }
+        all
     }
 
     /// **Hidden information: YES.** `render_for` shows the viewer their own SEALED move before it
