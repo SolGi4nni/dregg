@@ -34,6 +34,7 @@ use starbridge_governed_namespace::{VoteKind, build_vote_on_proposal_action};
 
 use crate::BotState;
 use crate::cipherclerk::UserCipherclerk;
+use crate::commands::ack;
 use crate::db::{IdentityMode, StarbridgeActivity};
 use crate::embeds;
 
@@ -132,15 +133,15 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         let (vote, activity_id) = match rest.split_once(':') {
             Some((v @ ("yes" | "no"), n)) => match n.parse::<i64>() {
                 Ok(n) => (v, n),
-                Err(_) => return ack(ctx, component, "Malformed vote button.").await,
+                Err(_) => return refuse(ctx, component, "Malformed vote button.").await,
             },
-            _ => return ack(ctx, component, "Malformed vote button.").await,
+            _ => return refuse(ctx, component, "Malformed vote button.").await,
         };
         handle_vote(ctx, component, state, vote, activity_id).await;
         return;
     }
     // Never a silent drop (backlog #31): an unrecognized govprop press says so.
-    ack(
+    refuse(
         ctx,
         component,
         "This governance control is not recognized by this bot build.",
@@ -218,6 +219,18 @@ async fn handle_list(ctx: &Context, component: &ComponentInteraction, state: &Bo
 
 /// A vote press: load the proposal's durable facts by activity id, build the SAME signed
 /// governance action the modal path builds, submit, and report the node's own verdict.
+///
+/// **ACK FIRST — this press CASTS A REAL ON-CHAIN VOTE.** Two database reads, a signature, and
+/// `DevnetClient::submit_app_action` — a network round-trip to the node, which is the referee and
+/// the point of no return — all used to run before the press's first Discord response. A vote
+/// that outran the 3-second window was CAST, recorded as `starbridge_activity`, and then answered
+/// with **"This interaction failed"**: the presser is told their vote did not happen, and the
+/// ballot is write-once, so pressing again gets the node's own duplicate refusal at the nullifier.
+/// The only honest reading of that screen is the false one.
+///
+/// The submit now runs through [`ack::async_work_after`], which takes an [`ack::Acked`] — a
+/// witness this interaction was already answered, mintable only by an ACK. The ordering is a
+/// type, not a comment.
 async fn handle_vote(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -225,13 +238,16 @@ async fn handle_vote(
     vote: &str,
     activity_id: i64,
 ) {
+    // The presser's own vote receipt is theirs alone (rule 3) — a deferred EPHEMERAL, so the
+    // public proposal card the button sits on is left exactly as it is.
+    let acked = ack::defer_component_ephemeral(ctx, component).await;
     let user_id = component.user.id.get();
 
     // A hosted cipherclerk signs the vote (the same requirement the modal path enforces).
     match state.db.get_user_identity(&user_id.to_string()).await {
         Ok(Some(identity)) if identity.mode == IdentityMode::Hosted => {}
         Ok(_) => {
-            return ack(
+            return note(
                 ctx,
                 component,
                 "Voting signs a real governance action, which needs a hosted identity — \
@@ -239,11 +255,11 @@ async fn handle_vote(
             )
             .await;
         }
-        Err(e) => return ack(ctx, component, &format!("Database error: {e}")).await,
+        Err(e) => return note(ctx, component, &format!("Database error: {e}")).await,
     }
 
     let Ok(Some(activity)) = state.db.get_starbridge_activity(activity_id).await else {
-        return ack(
+        return note(
             ctx,
             component,
             "That proposal is no longer on record — list current ones with the Proposals button.",
@@ -254,7 +270,7 @@ async fn handle_vote(
         detail(&activity, "namespace_cell"),
         detail(&activity, "proposed_root"),
     ) else {
-        return ack(
+        return note(
             ctx,
             component,
             "The proposal record is missing its namespace/root.",
@@ -262,7 +278,7 @@ async fn handle_vote(
         .await;
     };
     let Some(namespace_cell) = decode32(&ns_hex) else {
-        return ack(
+        return note(
             ctx,
             component,
             "The recorded namespace cell does not parse.",
@@ -270,7 +286,7 @@ async fn handle_vote(
         .await;
     };
     let Some(prior_proposal_root) = decode32(&root_hex) else {
-        return ack(ctx, component, "The recorded proposal root does not parse.").await;
+        return note(ctx, component, "The recorded proposal root does not parse.").await;
     };
 
     let vote_kind = if vote == "yes" {
@@ -289,17 +305,19 @@ async fn handle_vote(
     );
 
     let guild = component.guild_id.map(|g| g.get().to_string());
-    let result = state
-        .devnet
-        .submit_app_action(
+    // THE POINT OF NO RETURN, and it cannot be reached without `acked` in hand.
+    let result = ack::async_work_after(
+        &acked,
+        state.devnet.submit_app_action(
             &cclerk,
             action,
             Some(format!(
                 "discord:governance:vote:{vote}:guild:{}",
                 guild.as_deref().unwrap_or("dm")
             )),
-        )
-        .await;
+        ),
+    )
+    .await;
 
     let embed = match result {
         Ok(result) if result.accepted => {
@@ -342,17 +360,21 @@ async fn handle_vote(
         ),
         Err(e) => embeds::error_embed("Node Unreachable", &e.to_string()),
     };
-    let msg = CreateInteractionResponseMessage::new()
-        .embed(embed)
-        .ephemeral(true);
-    let _ = component
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-        .await;
+    ack::edit_component(ctx, component, embed, Vec::new()).await;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-async fn ack(ctx: &Context, component: &ComponentInteraction, text: &str) {
+/// A one-line private answer landed as an EDIT of the already-deferred press. (It used to be a
+/// fresh ephemeral `create_response`, which is only legal on a press nothing has answered yet —
+/// exactly the ordering this module no longer takes.)
+async fn note(ctx: &Context, component: &ComponentInteraction, text: &str) {
+    ack::edit_component_full(ctx, component, text, None, Vec::new()).await;
+}
+
+/// A one-line private refusal on a press NOTHING has answered yet — a malformed / unrecognised
+/// button, decided before any work and therefore before any ACK.
+async fn refuse(ctx: &Context, component: &ComponentInteraction, text: &str) {
     let msg = CreateInteractionResponseMessage::new()
         .content(text.to_string())
         .ephemeral(true);

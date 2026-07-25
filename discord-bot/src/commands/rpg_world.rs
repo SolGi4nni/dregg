@@ -1,5 +1,5 @@
 //! **The per-identity PERSISTENT RPG world** behind `/play trade|craft|inventory|guild|cheevos|
-//! companion|tavern|party` — the fix for the audit's biggest depth failure (backlog #15, folding
+//! companion|quest|tavern` — the fix for the audit's biggest depth failure (backlog #15, folding
 //! in #24).
 //!
 //! Before this module those eight `/play` keys each opened a THROWAWAY demo world
@@ -60,7 +60,7 @@ use dreggnet_offerings::resume::{SessionMoveLog, SessionResumeStore};
 use dreggnet_offerings::{Action, DreggIdentity, OfferingHost, SessionId, VerifyReport};
 use dreggnet_surfaces::{
     AshenmoorErrandOffering, CheevoShowcase, CompanionOffering, CraftOffering, GuildPage,
-    InventoryOffering, PartyOffering, TavernOffering, TradeOffering, register_player_surfaces_for,
+    InventoryOffering, TavernOffering, TradeOffering, register_player_surfaces_for,
 };
 use ugc_dregg::{Completion, Universe, record_playthrough};
 
@@ -93,48 +93,167 @@ fn session_id() -> SessionId {
     SessionId::new(SESSION)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ONE table. A key with a card and no buttons is a COMPILE ERROR.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The surfaces this module renders — the single table both routers expand from.**
+///
+/// It used to be two hand-maintained `match`es, and they had drifted: `meta` knew nine keys and
+/// the row router knew eight, missing `"quest"`. `AshenmoorErrandOffering` therefore rendered a
+/// complete card — title, colour, tagline, the world's real state — with **zero buttons**, so
+/// `/play open offering:quest` looked exactly like a game and could not be played. Nothing could
+/// go red: the card was fine, the actions were fine, and an empty affordance row is
+/// indistinguishable from a surface that genuinely has no moves left.
+///
+/// This is the same failure the `⛓ re-verify chain` button had (`cfd728a4e9`: eight offerings
+/// minting a button a second hand-typed list did not route), and it gets the same treatment —
+/// not "add the missing arm", but make the drift **unrepresentable**. Both routers come from
+/// here, so a key cannot have an identity without controls; and [`RPG_TABLE_COVERS_EXACTLY_THE_RPG_KEYS`]
+/// binds this table to `dreggnet_catalog::RPG_KEYS` **at compile time** (both directions), so the
+/// next surface added to the shared catalog breaks the build here until it is mounted, rather than
+/// shipping a buttonless card for a player to find.
+macro_rules! rpg_surface_table {
+    ($m:ident) => {
+        // Exactly the eight identity-owned keys `dreggnet_catalog::RPG_KEYS` names — the same
+        // eight `dreggnet_surfaces::register_player_surfaces_for` mounts on a player's host, and
+        // the same eight `is_rpg_key` routes here. `party` is deliberately absent: it is a
+        // multi-identity lobby (a party with one role per private host is not a party), so it is
+        // not an `RPG_KEY`, is not mounted on a player host, and never reaches this module — it
+        // lives on the per-channel generic-adapter store (`commands::portfolio`). It had arms in
+        // both routers here regardless, dead in a table whose whole job is to be exact.
+        $m!("trade", TradeOffering);
+        $m!("inventory", InventoryOffering);
+        $m!("cheevos", CheevoShowcase);
+        $m!("guild", GuildPage);
+        $m!("craft", CraftOffering);
+        $m!("companion", CompanionOffering);
+        $m!("quest", AshenmoorErrandOffering);
+        $m!("tavern", TavernOffering);
+    };
+}
+
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether `key` is mounted — **expanded from [`rpg_surface_table`] itself**, so it cannot be a
+/// second list that drifts. `const`, which is what lets the gate below run at compile time.
+pub(crate) const fn is_mounted(key: &str) -> bool {
+    macro_rules! probe {
+        ($k:literal, $ty:ty) => {
+            if const_str_eq($k, key) {
+                return true;
+            }
+        };
+    }
+    rpg_surface_table!(probe);
+    false
+}
+
+/// Every key [`rpg_surface_table`] mounts, in table order — again expanded from the one table, so
+/// the tests that sweep "every mounted surface" cannot sweep a stale list.
+#[cfg(test)]
+pub(crate) fn mounted_keys() -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    macro_rules! collect {
+        ($k:literal, $ty:ty) => {
+            keys.push($k);
+        };
+    }
+    rpg_surface_table!(collect);
+    keys
+}
+
+/// **The gate.** Every key the shared catalog calls an RPG surface must be mounted here, or this
+/// crate does not compile. Not a test, not a startup assertion — the drift class simply stops
+/// existing, because the only way to add an `RPG_KEY` without a Discord surface is to break the
+/// build of the thing that would have shipped the buttonless card.
+///
+/// It runs in BOTH directions. Forwards catches the defect that was live (a catalog key with no
+/// rows → a card with no buttons). Backwards catches its twin (a key mounted here that
+/// [`is_rpg_key`] never routes → arms that look like coverage and are simply unreachable, which
+/// is what `party` was).
+const RPG_TABLE_COVERS_EXACTLY_THE_RPG_KEYS: () = {
+    let mut i = 0;
+    while i < RPG_KEYS.len() {
+        assert!(
+            is_mounted(RPG_KEYS[i]),
+            "an RPG_KEYS surface is not mounted in `rpg_surface_table` — it would render a full \
+             card with ZERO buttons: a game a player can open and cannot play"
+        );
+        i += 1;
+    }
+    // Backwards: the table's own arms, checked against the catalog.
+    macro_rules! is_catalog_key {
+        ($k:literal, $ty:ty) => {
+            let mut j = 0;
+            let mut found = false;
+            while j < RPG_KEYS.len() {
+                if const_str_eq(RPG_KEYS[j], $k) {
+                    found = true;
+                }
+                j += 1;
+            }
+            assert!(
+                found,
+                "`rpg_surface_table` mounts a key the shared catalog does not call an RPG \
+                 surface — this module never receives it, so the arms are unreachable"
+            );
+        };
+    }
+    rpg_surface_table!(is_catalog_key);
+};
+const _: () = RPG_TABLE_COVERS_EXACTLY_THE_RPG_KEYS;
+
 /// The per-key embed identity — the SAME `TITLE`/`COLOR`/`TAGLINE` the generic adapter's
 /// `DiscordOffering` impls (`commands::portfolio`) declare, so the persistent surface renders
 /// byte-consistent with the rest of the offering family.
 fn meta(key: &str) -> Option<(&'static str, u32, &'static str)> {
-    macro_rules! m {
-        ($ty:ty) => {
-            Some((
-                <$ty as DiscordOffering>::TITLE,
-                <$ty as DiscordOffering>::COLOR,
-                <$ty as DiscordOffering>::TAGLINE,
-            ))
+    macro_rules! arm {
+        ($k:literal, $ty:ty) => {
+            if key == $k {
+                return Some((
+                    <$ty as DiscordOffering>::TITLE,
+                    <$ty as DiscordOffering>::COLOR,
+                    <$ty as DiscordOffering>::TAGLINE,
+                ));
+            }
         };
     }
-    match key {
-        "trade" => m!(TradeOffering),
-        "inventory" => m!(InventoryOffering),
-        "cheevos" => m!(CheevoShowcase),
-        "guild" => m!(GuildPage),
-        "craft" => m!(CraftOffering),
-        "companion" => m!(CompanionOffering),
-        "quest" => m!(AshenmoorErrandOffering),
-        "tavern" => m!(TavernOffering),
-        "party" => m!(PartyOffering),
-        _ => None,
-    }
+    rpg_surface_table!(arm);
+    None
 }
 
 /// The affordance rows for `key`'s current actions — through the generic adapter's own
 /// [`offering::action_rows_at`] (same custom-id wire, same 🔒-shown-not-hidden styling), so a press
 /// on a persistent surface routes exactly like every other offering press.
-fn rows_for(key: &str, actions: &[Action], stamp: ControlStamp) -> Vec<CreateActionRow> {
-    match key {
-        "trade" => offering::action_rows_at::<TradeOffering>(actions, stamp),
-        "inventory" => offering::action_rows_at::<InventoryOffering>(actions, stamp),
-        "cheevos" => offering::action_rows_at::<CheevoShowcase>(actions, stamp),
-        "guild" => offering::action_rows_at::<GuildPage>(actions, stamp),
-        "craft" => offering::action_rows_at::<CraftOffering>(actions, stamp),
-        "companion" => offering::action_rows_at::<CompanionOffering>(actions, stamp),
-        "tavern" => offering::action_rows_at::<TavernOffering>(actions, stamp),
-        "party" => offering::action_rows_at::<PartyOffering>(actions, stamp),
-        _ => Vec::new(),
+///
+/// `None` means **this build mounts no surface for `key`** — a different fact from "this surface
+/// currently offers no moves", which is `Some(vec![])`. The old signature collapsed the two into
+/// an empty `Vec`, which is precisely how a whole unrouted offering hid inside a normal-looking
+/// card for as long as it did.
+fn rows_for(key: &str, actions: &[Action], stamp: ControlStamp) -> Option<Vec<CreateActionRow>> {
+    macro_rules! arm {
+        ($k:literal, $ty:ty) => {
+            if key == $k {
+                return Some(offering::action_rows_at::<$ty>(actions, stamp));
+            }
+        };
     }
+    rpg_surface_table!(arm);
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -477,7 +596,10 @@ fn surface_from_host(
             &format!("{turns} verified turns · {tagline} · your own world — it persists"),
             2040,
         )));
-    Some((embed, rows_for(key, &actions, stamp)))
+    // A key with an identity but no row router would render a full, playable-looking card with
+    // no controls. That pairing is now impossible (both come from `rpg_surface_table!`), and the
+    // `?` says so: if one is missing there is no surface, not a silent buttonless one.
+    Some((embed, rows_for(key, &actions, stamp)?))
 }
 
 /// The `Send` result of an open or press against a player's persistent world.
@@ -763,6 +885,87 @@ mod tests {
             count.is_ok(),
             "the host thread must survive a panicking job and keep serving"
         );
+    }
+
+    /// **THE BUTTONLESS CARD.** `/play open offering:quest` rendered a complete
+    /// Ashenmoor errand-board card — title, colour, the world's real state — and **no buttons**,
+    /// because `rows_for`'s hand-typed match had drifted one arm behind the shared catalog's
+    /// `RPG_KEYS`. It looked exactly like a game and could not be played.
+    ///
+    /// This drives the REAL surface build for every mounted key against a real player host and
+    /// demands that a key which offers actions also offers controls. On the old `rows_for` (a
+    /// `_ => Vec::new()` fallthrough) `quest` comes back with actions and zero rows, and this
+    /// goes red naming it.
+    #[test]
+    fn every_mounted_surface_that_has_actions_renders_controls() {
+        let mut host = build_player_host(Box::new(InMemoryResumeStore::new()), Vec::new());
+        let who = me();
+        let id = session_id();
+        let mut buttonless: Vec<&str> = Vec::new();
+        for key in mounted_keys() {
+            host.ensure_open(key, &id)
+                .unwrap_or_else(|e| panic!("`{key}` opens: {e}"));
+            let actions = host.actions_for(key, &id, &who).unwrap_or_default();
+            if actions.is_empty() {
+                continue;
+            }
+            let (_, rows) = surface_from_host(&host, key, &who)
+                .unwrap_or_else(|| panic!("`{key}` renders a surface"));
+            if rows.is_empty() {
+                buttonless.push(key);
+            }
+        }
+        assert!(
+            buttonless.is_empty(),
+            "these surfaces render a full card with ZERO buttons — a game you can open and \
+             cannot play: {buttonless:?}"
+        );
+    }
+
+    /// The catalog's own key list is what a player's `/play open offering:<key>` is validated
+    /// against, so a key it names and this module does not mount is a card with no controls.
+    /// [`RPG_TABLE_COVERS_EXACTLY_THE_RPG_KEYS`] makes that a COMPILE error; this test names the fact in
+    /// a form that reads at review time, and pins `quest` — the one that was actually stranded —
+    /// by hand, so a re-typed table cannot quietly drop it again.
+    #[test]
+    fn the_catalogs_rpg_keys_are_all_mounted() {
+        let mounted = mounted_keys();
+        let unmounted: Vec<&str> = RPG_KEYS
+            .into_iter()
+            .filter(|k| !mounted.contains(k))
+            .collect();
+        assert!(
+            unmounted.is_empty(),
+            "the shared catalog calls these RPG surfaces, and this build mounts no rows for \
+             them: {unmounted:?}"
+        );
+        assert!(
+            mounted.contains(&"quest"),
+            "`quest` is the key that shipped buttonless"
+        );
+        assert!(
+            !mounted.contains(&"party"),
+            "`party` is a multi-identity lobby on the per-channel store — arms for it here are \
+             unreachable, not coverage"
+        );
+        assert_eq!(
+            mounted.len(),
+            RPG_KEYS.len(),
+            "the table is exactly the catalog's RPG keys, in both directions"
+        );
+    }
+
+    /// A key this build mounts NO surface for is a `None`, never an empty row set — the
+    /// distinction the old signature collapsed, and the reason a whole unrouted offering could
+    /// hide inside a normal-looking card.
+    #[test]
+    fn an_unmounted_key_has_no_rows_rather_than_empty_rows() {
+        let stamp = ControlStamp {
+            generation: 1,
+            head: 2,
+        };
+        assert!(rows_for("no-such-offering", &[], stamp).is_none());
+        assert!(rows_for("quest", &[], stamp).is_some());
     }
 
     fn view_text(surface: &Surface) -> String {

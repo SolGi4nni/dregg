@@ -22,6 +22,7 @@ use serenity::all::{
 };
 
 use crate::BotState;
+use crate::commands::ack;
 use dregg_pay::{ChainId, CreditOutcome, Network, WatchError};
 
 /// The bot-branded purple (matches the dungeon surface).
@@ -160,9 +161,24 @@ fn truncate_reason(reason: &str) -> String {
 }
 
 /// `/buy-credits` — issue the caller's deposit address, price, and pay instructions.
+///
+/// **ACK FIRST — this command MOVES MONEY.** [`execute_buy`] persists the user→deposit-index
+/// assignment and then runs [`crate::pay::PayState::poll_and_credit`], which is a Solana RPC
+/// round-trip that CREDITS run-credits and records the payment in the treasury. All of it used to
+/// happen before the first Discord response, so an RPC that outran the 3-second window credited a
+/// real payment and then told the buyer **"This interaction failed"** — the funds were fine
+/// (crediting is idempotent by payment reference) but the bot's last word about a payment it had
+/// just processed was that nothing happened. The menus' `run:buy` button already deferred first;
+/// the slash command did not.
 pub async fn handle_buy(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let embed = execute_buy(state, command.user.id.get()).await;
-    respond_ephemeral(ctx, command, embed).await;
+    let embed = ack::defer_slash_then_async(
+        ctx,
+        command,
+        true,
+        execute_buy(state, command.user.id.get()),
+    )
+    .await;
+    ack::edit_slash(ctx, command, embed, Vec::new()).await;
 }
 
 /// Build the buy-credits surface (deposit address + price + poll outcome) —
@@ -201,9 +217,18 @@ pub(crate) async fn execute_buy(state: &BotState, user_id: u64) -> CreateEmbed {
 }
 
 /// `/credits` — poll for new payments, then show the caller's run-credit balance.
+///
+/// ACK FIRST, for the same reason as [`handle_buy`]: the balance read is preceded by a real
+/// crediting poll over the chain RPC.
 pub async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let embed = execute_balance(state, command.user.id.get()).await;
-    respond_ephemeral(ctx, command, embed).await;
+    let embed = ack::defer_slash_then_async(
+        ctx,
+        command,
+        true,
+        execute_balance(state, command.user.id.get()),
+    )
+    .await;
+    ack::edit_slash(ctx, command, embed, Vec::new()).await;
 }
 
 /// Build the caller's run-credit balance (poll + checked ledger read) — the

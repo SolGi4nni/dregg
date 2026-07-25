@@ -27,6 +27,7 @@ use serenity::all::{
     CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
+use crate::commands::ack;
 use crate::embeds;
 
 /// The Confirm button id.
@@ -53,6 +54,19 @@ fn pending() -> &'static Mutex<HashMap<u64, Pending>> {
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Park a channel's pending replacement open under the requester's id (the table write behind
+/// [`refuse_with_confirm`], split out so the tests can drive the real Confirm job).
+fn stash(channel: u64, requested_by: u64, key: &str, open: PendingOpenFn) {
+    pending().lock().expect("open-guard pending table").insert(
+        channel,
+        Pending {
+            key: key.to_string(),
+            requested_by,
+            open,
+        },
+    );
+}
+
 /// **Refuse a live-session replacement and stash the pending open.** The caller has already
 /// established a live session of `key` exists in the command's channel; this responds with the
 /// refuse-with-confirm card and parks `open` for the Confirm press.
@@ -65,14 +79,7 @@ pub async fn refuse_with_confirm(
 ) {
     let channel = command.channel_id.get();
     let requested_by = command.user.id.get();
-    pending().lock().expect("open-guard pending table").insert(
-        channel,
-        Pending {
-            key: key.to_string(),
-            requested_by,
-            open,
-        },
-    );
+    stash(channel, requested_by, key, open);
 
     let mut embed = embeds::warning_embed(
         &format!("A live {key} session is already open here"),
@@ -136,12 +143,97 @@ fn claim(channel: u64, presser: u64) -> Claim {
 }
 
 /// Route an `openguard:` press (Confirm/Cancel), always ACKing (backlog #31).
+///
+/// # Confirm is a WIPE, so it answers FIRST
+///
+/// The Confirm arm used to `claim()` the pending open and RUN it — replacing a live session,
+/// destroying its moves and receipts — and only then send its first Discord response. Every one of
+/// those steps is inside the 3-second interaction window, and `(p.open)()` is a real offering
+/// deploy on a store thread other players' moves also queue on. Losing that race is the worst
+/// shape in this file: the chain is **gone**, the pending entry is **gone** (claimed), and the
+/// presser is shown "This interaction failed" — a phrase that means *nothing happened* — with a
+/// re-press answering "Nothing pending here". Somebody's game is deleted and the bot's last word
+/// about it is a lie.
+///
+/// The confirm itself was never the missing piece: **this press IS the confirmation**
+/// ([`refuse_with_confirm`] already refused the bare open and parked it behind this button; every
+/// production open path in the bot routes through it, so there is no unconfirmed wipe), and a
+/// second Are-you-sure would be ceremony, not safety. What was missing is that the answer must be
+/// guaranteed BEFORE the wipe, and the wipe must not run on the async worker — so the Confirm arm
+/// goes through [`ack::ack_component_then`], and a job the blocking pool drops is reported as
+/// exactly that instead of being rendered as a success. **Cancel** keeps its direct response: it
+/// touches only the in-memory pending table (one mutex lookup) and runs nothing.
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
     let channel = component.channel_id.get();
     let presser = component.user.id.get();
     let id = component.data.custom_id.as_str();
 
     match id {
+        ID_CONFIRM => {
+            // ACK, THEN WIPE — and the wipe runs on the blocking pool, never on the async
+            // worker (`(p.open)()` bottoms out in a `sync_channel` `recv()` against the
+            // offering's store thread).
+            let done =
+                ack::ack_component_then(ctx, component, move || confirm_job(channel, presser))
+                    .await;
+
+            match done {
+                Some(Confirmed::Replaced { key, embed, rows }) => {
+                    ack::edit_component_full(
+                        ctx,
+                        component,
+                        &format!(
+                            "**Replaced.** The previous {key} session's chain is gone; this is a \
+                             fresh one."
+                        ),
+                        Some(*embed),
+                        rows,
+                    )
+                    .await;
+                }
+                Some(Confirmed::Refused { key, why }) => {
+                    edit_plain(
+                        ctx,
+                        component,
+                        &format!(
+                            "The replacement {key} session refused to open ({why}) — the previous \
+                             session, if still live, was not touched."
+                        ),
+                    )
+                    .await;
+                }
+                Some(Confirmed::NotYours) => {
+                    ack::followup_ephemeral(
+                        ctx,
+                        component,
+                        "Only the user who asked to replace the session can confirm the wipe.",
+                    )
+                    .await;
+                }
+                Some(Confirmed::Nothing) => {
+                    edit_plain(
+                        ctx,
+                        component,
+                        "Nothing pending here (a restart clears pending replacements) — \
+                         re-run the open command.",
+                    )
+                    .await;
+                }
+                // NEVER render a dropped job as a wipe that worked. The pending entry was
+                // claimed inside the job, so it is gone either way; say so rather than
+                // implying a fresh session is live.
+                None => {
+                    edit_plain(
+                        ctx,
+                        component,
+                        "The replacement could not be run (the offering service dropped the \
+                         job). Nothing here is trustworthy to report as replaced — re-run the \
+                         open command and check `status` before playing on.",
+                    )
+                    .await;
+                }
+            }
+        }
         ID_CANCEL => {
             let text = match claim(channel, presser) {
                 Claim::Taken(p) => format!(
@@ -162,59 +254,57 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction) {
             };
             update_plain(ctx, component, &text).await;
         }
-        ID_CONFIRM => {
-            let p = match claim(channel, presser) {
-                Claim::Taken(p) => p,
-                Claim::NotYours => {
-                    return ephemeral(
-                        ctx,
-                        component,
-                        "Only the user who asked to replace the session can confirm the wipe.",
-                    )
-                    .await;
-                }
-                Claim::Nothing => {
-                    return update_plain(
-                        ctx,
-                        component,
-                        "Nothing pending here (a restart clears pending replacements) — \
-                         re-run the open command.",
-                    )
-                    .await;
-                }
-            };
-            // Run the real open (one short store-thread job) and post the fresh surface.
-            match (p.open)() {
-                Ok((embed, rows)) => {
-                    let msg = CreateInteractionResponseMessage::new()
-                        .content(format!(
-                            "**Replaced.** The previous {} session's chain is gone; this is a \
-                             fresh one.",
-                            p.key
-                        ))
-                        .embed(embed)
-                        .components(rows);
-                    let _ = component
-                        .create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(msg))
-                        .await;
-                }
-                Err(e) => {
-                    update_plain(
-                        ctx,
-                        component,
-                        &format!(
-                            "The replacement refused to open ({e}) — the previous session, if \
-                             still live, was not touched."
-                        ),
-                    )
-                    .await;
-                }
-            }
-        }
         _ => {
             ephemeral(ctx, component, "This open-guard control is not recognized.").await;
         }
     }
+}
+
+/// What the Confirm job did — the whole outcome, computed on the blocking pool and carried back
+/// as plain data so the async side does nothing but paint it.
+enum Confirmed {
+    /// The wipe ran and the fresh surface rendered.
+    Replaced {
+        key: String,
+        /// Boxed: a `CreateEmbed` is large, and this enum is returned by value.
+        embed: Box<CreateEmbed>,
+        rows: Vec<CreateActionRow>,
+    },
+    /// The replacement itself refused to open — the previous session, if live, was untouched.
+    Refused { key: String, why: String },
+    /// Someone else's ask is pending here.
+    NotYours,
+    /// Nothing was pending (a restart clears the table).
+    Nothing,
+}
+
+/// **The whole Confirm press, as one blocking job.** Claim the channel's pending replacement
+/// (atomically, so two simultaneous presses cannot both wipe), run it, and hand back plain data.
+///
+/// Sync and `Send`, which is exactly what lets it run through [`ack::ack_component_then`]: the
+/// interaction is answered first and this never touches the async worker. Named (not an inline
+/// closure) so the tests can drive the real job — including a deliberately slow one — rather than
+/// a re-typed imitation of it.
+fn confirm_job(channel: u64, presser: u64) -> Confirmed {
+    let p = match claim(channel, presser) {
+        Claim::Taken(p) => p,
+        Claim::NotYours => return Confirmed::NotYours,
+        Claim::Nothing => return Confirmed::Nothing,
+    };
+    match (p.open)() {
+        Ok((embed, rows)) => Confirmed::Replaced {
+            key: p.key,
+            embed: Box::new(embed),
+            rows,
+        },
+        Err(why) => Confirmed::Refused { key: p.key, why },
+    }
+}
+
+/// Land a one-line answer as an EDIT of an already-ACKed press (the deferred-update counterpart
+/// of [`update_plain`]): the card collapses to the sentence, embeds and buttons cleared.
+async fn edit_plain(ctx: &Context, component: &ComponentInteraction, text: &str) {
+    ack::edit_component_full(ctx, component, text, None, Vec::new()).await;
 }
 
 async fn update_plain(ctx: &Context, component: &ComponentInteraction, text: &str) {
@@ -234,4 +324,158 @@ async fn ephemeral(ctx: &Context, component: &ComponentInteraction, text: &str) 
     let _ = component
         .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn a_card() -> Result<(CreateEmbed, Vec<CreateActionRow>), String> {
+        Ok((CreateEmbed::new().title("fresh session"), Vec::new()))
+    }
+
+    /// **THE WIPE ANSWERS FIRST, EVEN WHEN IT IS SLOW.**
+    ///
+    /// This drives the REAL Confirm job ([`confirm_job`]) through the REAL ordering helper the
+    /// handler uses, with an open that takes 3.5s — past Discord's 3-second interaction window,
+    /// which is what a contended offering store thread actually looks like. Under the old
+    /// ordering (`claim()`, `(p.open)()`, *then* the first response) the wipe had destroyed a live
+    /// session's receipt chain and consumed the pending entry before Discord ever heard from us:
+    /// the player saw "This interaction failed" over a game that no longer existed, and a second
+    /// press answered "Nothing pending here".
+    ///
+    /// The assertion is the ordering itself: the ACK is recorded BEFORE the open runs, and the
+    /// open still completes. Revert the handler to work-first and the recorded trace inverts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_wipe_is_answered_before_it_destroys_anything() {
+        let channel = 0xA4_0001;
+        let presser = 777;
+        let trace: Arc<std::sync::Mutex<Vec<&'static str>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let open_trace = Arc::clone(&trace);
+        stash(
+            channel,
+            presser,
+            "market",
+            Box::new(move || {
+                // The wipe: on the real path this is `offering::open_in`, a store-thread job
+                // every other player's move also queues on.
+                std::thread::sleep(std::time::Duration::from_millis(3_500));
+                open_trace.lock().unwrap().push("wiped");
+                a_card()
+            }),
+        );
+
+        let ack_trace = Arc::clone(&trace);
+        let done = super::ack::testing::ack_then_blocking_for_test(
+            async move {
+                tokio::task::yield_now().await;
+                ack_trace.lock().unwrap().push("acked");
+            },
+            move || confirm_job(channel, presser),
+        )
+        .await;
+
+        assert!(
+            matches!(done, Some(Confirmed::Replaced { .. })),
+            "the confirmed replacement must still run to completion"
+        );
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["acked", "wiped"],
+            "the receipt chain was destroyed before Discord was told anything — lose that race \
+             and the player's game is gone with no message explaining why"
+        );
+    }
+
+    /// The press IS the confirmation, and it is single-use: the claim and the wipe are ONE
+    /// atomic job, so a second Confirm (a double-click, a second player on the same card) finds
+    /// nothing pending and cannot wipe the freshly-opened session too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_confirmed_wipe_cannot_be_replayed() {
+        let channel = 0xA4_0002;
+        let presser = 778;
+        let opened_twice = Arc::new(AtomicBool::new(false));
+        let ran_once = Arc::new(AtomicBool::new(false));
+
+        let (a, b) = (Arc::clone(&ran_once), Arc::clone(&opened_twice));
+        stash(
+            channel,
+            presser,
+            "council",
+            Box::new(move || {
+                if a.swap(true, Ordering::SeqCst) {
+                    b.store(true, Ordering::SeqCst);
+                }
+                a_card()
+            }),
+        );
+
+        assert!(matches!(
+            confirm_job(channel, presser),
+            Confirmed::Replaced { .. }
+        ));
+        assert!(matches!(confirm_job(channel, presser), Confirmed::Nothing));
+        assert!(
+            !opened_twice.load(Ordering::SeqCst),
+            "one confirmation must wipe at most once"
+        );
+    }
+
+    /// Only the user who ASKED may confirm the wipe — and a refused press must not consume the
+    /// pending entry, or a bystander's click would silently cancel the real requester's ask.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_bystander_can_neither_wipe_nor_consume_the_ask() {
+        let channel = 0xA4_0003;
+        let (requester, bystander) = (779, 780);
+        let opened = Arc::new(AtomicBool::new(false));
+
+        let flag = Arc::clone(&opened);
+        stash(
+            channel,
+            requester,
+            "doc",
+            Box::new(move || {
+                flag.store(true, Ordering::SeqCst);
+                a_card()
+            }),
+        );
+
+        assert!(matches!(
+            confirm_job(channel, bystander),
+            Confirmed::NotYours
+        ));
+        assert!(
+            !opened.load(Ordering::SeqCst),
+            "a bystander's press ran the wipe"
+        );
+        assert!(
+            matches!(confirm_job(channel, requester), Confirmed::Replaced { .. }),
+            "the requester's own ask must survive a bystander's press"
+        );
+    }
+
+    /// A replacement that REFUSES to open is reported as a refusal — the previous session, if
+    /// still live, was never touched, and the surface must not claim a fresh one exists.
+    #[test]
+    fn a_refused_replacement_says_so() {
+        let channel = 0xA4_0004;
+        let presser = 781;
+        stash(
+            channel,
+            presser,
+            "grain",
+            Box::new(|| Err("the cell exceeded its computron budget".to_string())),
+        );
+        match confirm_job(channel, presser) {
+            Confirmed::Refused { key, why } => {
+                assert_eq!(key, "grain");
+                assert!(why.contains("computron"), "{why}");
+            }
+            _ => panic!("a refusing open must come back as Refused, never as Replaced"),
+        }
+    }
 }

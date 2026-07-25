@@ -2370,6 +2370,57 @@ mod tests {
         );
     }
 
+    /// **THE MONEY MOVES AFTER THE ANSWER.**
+    ///
+    /// `/buy-credits` and `/credits` both run [`PayState::poll_and_credit`] before rendering: a
+    /// chain RPC round-trip that CREDITS run-credits to the ledger and records the payment in the
+    /// treasury. Both used to do it before their first Discord response, so an RPC that outran the
+    /// 3-second window credited a real payment and then told the buyer **"This interaction
+    /// failed"**. The funds were never at risk (crediting is idempotent by payment reference), but
+    /// the bot's last word about a payment it had just processed was that nothing happened.
+    ///
+    /// This drives the REAL crediting poll against a REAL mock chain through the REAL ordering
+    /// helper `commands::pay` now uses (`ack_then_async`, the single source both handlers call).
+    /// The trace is the assertion, and the credit is checked to have actually landed — so it
+    /// cannot pass by not doing the work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_crediting_poll_is_answered_before_the_money_moves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!("sqlite://{}?mode=rwc", tmp.path().join("c.db").display());
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(FailingBackend);
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), backend, tmp.path().join("runs"), price);
+        let user = "4242";
+        chain.credit_onchain(&pay.deposit_address(user), price * 3);
+
+        let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let ack_trace = Arc::clone(&trace);
+        let work_trace = Arc::clone(&trace);
+        let credited = crate::commands::ack::testing::ack_then_async_for_test(
+            async move {
+                tokio::task::yield_now().await;
+                ack_trace.lock().unwrap().push("acked");
+            },
+            async {
+                let out = pay.poll_and_credit(user);
+                work_trace.lock().unwrap().push("credited");
+                (out, pay.balance(user))
+            },
+        )
+        .await;
+
+        let (outcomes, balance) = credited;
+        assert!(outcomes.is_ok(), "{outcomes:?}");
+        assert_eq!(balance, 3, "the real payment must genuinely credit");
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["acked", "credited"],
+            "the payment was credited before Discord was told anything"
+        );
+    }
+
     /// A paid-backend FAILURE must NOT burn a credit — the caller falls back to the free tier and
     /// the user keeps their balance.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

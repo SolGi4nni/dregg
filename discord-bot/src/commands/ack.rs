@@ -5,11 +5,20 @@
 //! failed" — on a move that permanently landed.
 //!
 //! The discipline these helpers carry (every path that commits a turn adopts it):
-//! 1. **ACK first** ([`defer_slash`] / [`ack_component`]) — inside the 3s window, BEFORE the
-//!    commit and BEFORE any network narration;
-//! 2. **commit the turn** (the store-thread advance);
-//! 3. **EDIT the deferred response** ([`edit_slash`] / [`edit_component`]) with the narrated
-//!    re-render — a slow narrator now only delays prose; it can never falsify the outcome.
+//! 1. **ACK first** ([`defer_slash`] / [`ack_component`] / [`defer_component_ephemeral`] /
+//!    [`defer_modal`]) — inside the 3s window, BEFORE the commit and BEFORE any network work;
+//! 2. **commit the turn** ([`work_after`] on a blocking thread, [`async_work_after`] for an RPC);
+//! 3. **EDIT the deferred response** ([`edit_slash`] / [`edit_component`] / [`edit_modal`]) with
+//!    the re-render — a slow narrator now only delays prose; it can never falsify the outcome.
+//!
+//! **It is a TYPE now, not a discipline.** A discipline is something six handlers forgot: a real
+//! on-chain governance vote, a match fold on the proving pool, a modal-typed turn, a live
+//! session's receipt chain WIPED, a council cell deployed, and an RPC that credits money all ran
+//! BEFORE their first response. So the work handles take an [`Acked`] — a witness only an ACK can
+//! mint — and the `*_then` helpers ([`ack_component_then`], [`defer_slash_then`],
+//! [`defer_modal_then`], [`defer_slash_then_async`]) take the job as an ARGUMENT, so a call site
+//! cannot put it first. Losing the race never *delays* work; it ORPHANS it — the work landed, and
+//! the user is shown "This interaction failed", the one message that means nothing happened.
 //!
 //! A press ACKed with [`ack_component`] (a deferred UPDATE of the pressed message) can still
 //! answer ephemerally afterwards via [`followup_ephemeral`] (the no-run / expired cases).
@@ -66,16 +75,117 @@
 //! [`crate::commands::offering::channel_surfaces`], kept pure so tests can inspect exactly what
 //! reaches the channel.)
 
+use std::future::Future;
+
 use serenity::all::{
     CommandInteraction, ComponentInteraction, Context, CreateActionRow, CreateEmbed,
     CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
-    EditInteractionResponse,
+    EditInteractionResponse, ModalInteraction,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACK-THEN-WORK, as a TYPE rather than a discipline.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **A witness that this interaction has already been ANSWERED** inside Discord's 3-second window.
+///
+/// It has a private field, so the only way to obtain one is to await [`defer_slash`],
+/// [`ack_component`], [`defer_component_ephemeral`] or [`defer_modal`] — and [`work_after`] /
+/// [`async_work_after`], the handles the repaired sites run their irreversible job through, take
+/// one by reference. So "commit the turn, THEN ack" is not a rule a call site has to remember:
+/// it does not typecheck.
+///
+/// Why that matters concretely, and it is not hypothetical — a survey of the live bot found six
+/// handlers doing the work first, and losing the race there does not delay the work, it ORPHANS
+/// it: a real on-chain governance vote, a match fold enqueued on the proving pool, a modal-typed
+/// turn, a live session's receipt chain WIPED, a council cell deployed, and an RPC that credits
+/// money. Each of them landed, and each of them then showed the user **"This interaction
+/// failed"** — the one message that means "nothing happened".
+pub struct Acked(());
+
+/// Run a **blocking, irreversible** job after the interaction was answered — on a blocking thread,
+/// never on the async worker.
+///
+/// The `&Acked` is the whole point (see [`Acked`]). The `spawn_blocking` is the other half: every
+/// one of these jobs ends in a `sync_channel` `rx.recv()` against a store thread that owns
+/// `!Send` sessions (`offering::Store::run`, `crown::run`), so calling it inline parks a Tokio
+/// worker for the length of a real executor turn — and *that* latency lands on every other
+/// in-flight interaction's 3-second clock at once.
+///
+/// `None` means the blocking pool dropped the job (a panic inside it, or runtime shutdown); the
+/// caller reports that honestly rather than pretending the work succeeded.
+pub async fn work_after<T: Send + 'static>(
+    _acked: &Acked,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    tokio::task::spawn_blocking(job).await.ok()
+}
+
+/// The already-async counterpart of [`work_after`] — an RPC or a database write needs no blocking
+/// thread, but it still must not run before the interaction is answered.
+pub async fn async_work_after<F: Future>(_acked: &Acked, job: F) -> F::Output {
+    job.await
+}
+
+/// The ordering itself, factored out of the concrete Discord types so a test can drive it: ACK
+/// (await it to completion), and only then hand the job to the blocking pool. Every `*_then`
+/// helper below is a one-line wrapper over this, so there is exactly ONE place the order lives.
+async fn ack_then_blocking<A, T: Send + 'static>(
+    ack: impl Future<Output = A>,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let _acked: A = ack.await;
+    tokio::task::spawn_blocking(job).await.ok()
+}
+
+/// The already-async twin of [`ack_then_blocking`], for work that is a future rather than a
+/// blocking job (an RPC, a database write): ACK to completion, and only then poll the job. Futures
+/// are lazy, so constructing `job` at the call site does not start it — the `await` here does.
+async fn ack_then_async<A, F: Future>(ack: impl Future<Output = A>, job: F) -> F::Output {
+    let _acked: A = ack.await;
+    job.await
+}
+
+/// [`defer_slash`] then the async job, as one call.
+pub async fn defer_slash_then_async<F: Future>(
+    ctx: &Context,
+    command: &CommandInteraction,
+    ephemeral: bool,
+    job: F,
+) -> F::Output {
+    ack_then_async(defer_slash(ctx, command, ephemeral), job).await
+}
+
+/// The ordering helpers, reachable from the OTHER modules' tests so a repaired site can be driven
+/// through the very function its handler runs — never a re-typed imitation of it. Test-only on
+/// purpose: a real call site must not be able to hand these a fake ACK.
+///
+/// These are thin wrappers, not `use` re-exports: a private item cannot be re-exported at wider
+/// visibility (E0364), but a CHILD module may call it — so the ordering functions stay private to
+/// production code while the tests still drive the real ones.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::future::Future;
+
+    pub(crate) async fn ack_then_blocking_for_test<A, T: Send + 'static>(
+        ack: impl Future<Output = A>,
+        job: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        super::ack_then_blocking(ack, job).await
+    }
+
+    pub(crate) async fn ack_then_async_for_test<A, F: Future>(
+        ack: impl Future<Output = A>,
+        job: F,
+    ) -> F::Output {
+        super::ack_then_async(ack, job).await
+    }
+}
 
 /// ACK a slash command with a deferred ("thinking…") response — call BEFORE committing a turn
 /// or narrating. `ephemeral` fixes the final message's visibility once and for all (Discord
 /// decides it at defer time; the later edit cannot change it).
-pub async fn defer_slash(ctx: &Context, command: &CommandInteraction, ephemeral: bool) {
+pub async fn defer_slash(ctx: &Context, command: &CommandInteraction, ephemeral: bool) -> Acked {
     let mut msg = CreateInteractionResponseMessage::new();
     if ephemeral {
         msg = msg.ephemeral(true);
@@ -83,6 +193,36 @@ pub async fn defer_slash(ctx: &Context, command: &CommandInteraction, ephemeral:
     let _ = command
         .create_response(&ctx.http, CreateInteractionResponse::Defer(msg))
         .await;
+    Acked(())
+}
+
+/// [`defer_slash`] then [`work_after`], as one call — the shape a slash command whose work is a
+/// blocking store-thread job takes, with no way to invert the two.
+pub async fn defer_slash_then<T: Send + 'static>(
+    ctx: &Context,
+    command: &CommandInteraction,
+    ephemeral: bool,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    ack_then_blocking(defer_slash(ctx, command, ephemeral), job).await
+}
+
+/// [`ack_component`] then [`work_after`], as one call.
+pub async fn ack_component_then<T: Send + 'static>(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    ack_then_blocking(ack_component(ctx, component), job).await
+}
+
+/// [`defer_modal`] then [`work_after`], as one call.
+pub async fn defer_modal_then<T: Send + 'static>(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    ack_then_blocking(defer_modal(ctx, modal), job).await
 }
 
 /// Resolve a [`defer_slash`] — EDIT the deferred response into the real embed (+ button rows).
@@ -122,10 +262,109 @@ pub(crate) fn warn_dropped_edit<T>(result: &serenity::Result<T>, surface: &str, 
 /// ACK a component press with a deferred UPDATE of the pressed message — call BEFORE
 /// committing the turn. The press stops spinning immediately; [`edit_component`] lands the
 /// post-turn re-render whenever the narrator finishes.
-pub async fn ack_component(ctx: &Context, component: &ComponentInteraction) {
+pub async fn ack_component(ctx: &Context, component: &ComponentInteraction) -> Acked {
     let _ = component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await;
+    Acked(())
+}
+
+/// ACK a component press with a deferred **ephemeral** answer to the PRESSER, leaving the pressed
+/// message untouched. The counterpart of [`ack_component`] for rule 3 (a message about one
+/// person's press): a press whose whole answer is private — a vote receipt, a balance — defers
+/// like this and lands the real embed through [`edit_component`], which is what the presser sees.
+pub async fn defer_component_ephemeral(ctx: &Context, component: &ComponentInteraction) -> Acked {
+    let _ = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
+    Acked(())
+}
+
+/// ACK a **modal submit** — the interaction with the same 3-second clock as a press, and the one
+/// most likely to blow it, because a typed move (a bid, a reserve price, a paragraph) resolves a
+/// real turn on the store thread before anything is painted.
+///
+/// A modal opened from a component press carries its origin message, so the deferred UPDATE is
+/// legal and a later [`edit_modal`] MUTATES the board the move was typed on (rule 1). A modal
+/// reached without one has no board to mutate, so it defers a fresh message instead.
+pub async fn defer_modal(ctx: &Context, modal: &ModalInteraction) -> Acked {
+    let response = if modal.message.is_some() {
+        CreateInteractionResponse::Acknowledge
+    } else {
+        CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new())
+    };
+    let _ = modal.create_response(&ctx.http, response).await;
+    Acked(())
+}
+
+/// Resolve a [`defer_modal`] — EDIT the deferred response (the origin board, or the fresh
+/// message) into the typed move's outcome.
+pub async fn edit_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    content: &str,
+    embed: Option<CreateEmbed>,
+    rows: Vec<CreateActionRow>,
+) {
+    let mut edit = EditInteractionResponse::new()
+        .content(content.to_string())
+        .components(rows);
+    edit = match embed {
+        Some(embed) => edit.embed(embed),
+        None => edit.embeds(Vec::new()),
+    };
+    let result = modal.edit_response(&ctx.http, edit).await;
+    warn_dropped_edit(&result, "modal", &modal.data.custom_id);
+}
+
+/// A one-line private answer after [`defer_modal`], landed the way that submit's deferral
+/// requires.
+///
+/// The two cases are NOT interchangeable, and getting it wrong is visible: a submit that carried
+/// an origin board deferred as an UPDATE, so the note must be a followup — editing would blow the
+/// board's embed and buttons away. A submit with no board deferred a fresh message, so the note
+/// must be that EDIT — a followup would leave the deferred "thinking" message hanging empty
+/// forever.
+pub async fn note_modal(ctx: &Context, modal: &ModalInteraction, text: &str) {
+    if modal.message.is_some() {
+        let _ = modal
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .content(text)
+                    .ephemeral(true),
+            )
+            .await;
+    } else {
+        edit_modal(ctx, modal, text, None, Vec::new()).await;
+    }
+}
+
+/// Resolve an [`ack_component`] / [`defer_component_ephemeral`] with a message that carries a
+/// leading CONTENT line as well as the re-rendered board — the shape a turn whose outcome is a
+/// sentence ("**Replaced.** …", a landed receipt) takes. `embed: None` clears the embeds, which
+/// is how a card collapses to a one-line answer.
+pub async fn edit_component_full(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    content: &str,
+    embed: Option<CreateEmbed>,
+    rows: Vec<CreateActionRow>,
+) {
+    let mut edit = EditInteractionResponse::new()
+        .content(content.to_string())
+        .components(rows);
+    edit = match embed {
+        Some(embed) => edit.embed(embed),
+        None => edit.embeds(Vec::new()),
+    };
+    let result = component.edit_response(&ctx.http, edit).await;
+    warn_dropped_edit(&result, "component", &component.data.custom_id);
 }
 
 /// Resolve an [`ack_component`] — EDIT the pressed message into the post-turn render.
@@ -234,4 +473,72 @@ pub async fn followup_slash_ephemeral_surface(
                 .ephemeral(true),
         )
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    /// **The ordering, driven.** [`super::ack_then_blocking`] is the ONE place the ack-then-work
+    /// order lives — every `*_then` helper is a one-line wrapper over it — so this is the test
+    /// that goes red the moment somebody reverts a repaired site to "commit the turn, then
+    /// answer". Swap the two statements in `ack_then_blocking` and the recorded trace reads
+    /// `["work", "ack"]`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_ack_completes_before_the_work_starts() {
+        let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let ack_trace = Arc::clone(&trace);
+        let ack = async move {
+            // A real ACK is an HTTP round-trip to Discord; yield so a work-first ordering has
+            // every chance to interleave ahead of it rather than being hidden by an eager future.
+            tokio::task::yield_now().await;
+            ack_trace.lock().unwrap().push("ack");
+        };
+
+        let work_trace = Arc::clone(&trace);
+        let done = super::ack_then_blocking(ack, move || {
+            work_trace.lock().unwrap().push("work");
+            "landed"
+        })
+        .await;
+
+        assert_eq!(done, Some("landed"));
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["ack", "work"],
+            "the irreversible job ran before the interaction was answered — losing Discord's 3s \
+             race there ORPHANS the work: it happened, and the user is told it failed"
+        );
+    }
+
+    /// **The amplifier.** The job must not run on the async worker: every one of these jobs ends
+    /// in a blocking `rx.recv()` against a store thread, and blocking a worker puts that latency
+    /// on every other in-flight interaction's 3-second clock at once. Fails on the old
+    /// `let x = drive::<O>(…);` inline shape, which runs on the caller's thread.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_work_leaves_the_async_worker() {
+        let caller = std::thread::current().id();
+        let ran_on = super::ack_then_blocking(async {}, move || std::thread::current().id())
+            .await
+            .expect("the blocking pool ran the job");
+        assert_ne!(
+            ran_on, caller,
+            "the blocking store-thread job ran ON the async worker — a real executor turn now \
+             parks a Tokio worker, and every other interaction's clock pays for it"
+        );
+    }
+
+    /// A job that PANICS is contained: the helper reports `None` rather than unwinding into the
+    /// handler (which would drop the interaction entirely — the failure mode this module exists
+    /// to abolish).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_panicking_job_is_reported_not_propagated() {
+        let out: Option<()> =
+            super::ack_then_blocking(async {}, || panic!("the store fell over")).await;
+        assert!(
+            out.is_none(),
+            "a panicking job must come back as an honest None"
+        );
+    }
 }
