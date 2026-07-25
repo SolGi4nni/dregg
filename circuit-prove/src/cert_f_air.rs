@@ -345,6 +345,12 @@ struct RegisteredCertFProgram {
     /// historical 28-bit flow/slack decomposition.
     flow_bits: usize,
     slack_bits: usize,
+    /// The fixed-point scale whose image of a solver f64 program is exactly this
+    /// registration's integer `(w, c)`.  This is BRIDGE metadata, not an AIR constant: the
+    /// descriptor bakes in `(w, c, epsilon)` as integers, and this records which f64 program
+    /// those integers are the `×scale` image of, so a live batch can RESOLVE ITSELF to this
+    /// registration instead of an operator guessing `CERT_F_SCALE`.
+    scale: i64,
     descriptor_json: &'static str,
 }
 
@@ -361,6 +367,7 @@ const CERT_F_REGISTRY: &[RegisteredCertFProgram] = &[
         epsilon: 0,
         flow_bits: 28,
         slack_bits: 28,
+        scale: 1,
         descriptor_json: CERT_F_RING3_DESCRIPTOR_JSON,
     },
     RegisteredCertFProgram {
@@ -371,6 +378,7 @@ const CERT_F_REGISTRY: &[RegisteredCertFProgram] = &[
         epsilon: 2000,
         flow_bits: 21,
         slack_bits: 19,
+        scale: 100,
         descriptor_json: CERT_F_MARKET4_DESCRIPTOR_JSON,
     },
 ];
@@ -405,6 +413,155 @@ pub fn try_cert_f_descriptor(cert: &CertFWitness) -> Result<EffectVmDescriptor2,
 /// Infallible compatibility wrapper for the registered ring-3 program.
 pub fn cert_f_descriptor(cert: &CertFWitness) -> EffectVmDescriptor2 {
     try_cert_f_descriptor(cert).expect("Cert-F descriptor program must be Lean-registered")
+}
+
+// ============================================================================
+// DYNAMIC REGISTRATION — a live batch resolves ITSELF to a registered program.
+// ============================================================================
+
+/// How a solver f64 Cert-F program bridges onto one registered Lean-emitted program: the
+/// fixed-point `scale` whose image is that registration's integer `(w, c)`, and the
+/// prescriptive `epsilon` budget the registration grants in the scaled integer grid.
+///
+/// `epsilon` here is not a number this crate chose. It is `p.eps` of the `CertFProg` that
+/// `Market.CertFDescriptor` authored and byte-pinned; the Rust side only reports it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegisteredScaling {
+    pub scale: i64,
+    pub epsilon: i64,
+    /// Solver-unit budget: `epsilon / scale^2`. The bridge scales both factors of every
+    /// product in `cᵀs − wᵀf`, so an integer budget is this much in the solver's own units.
+    pub solver_epsilon: f64,
+}
+
+/// The public program half of a solver f64 certificate — the part registration is decided on.
+struct SolverProgram {
+    n_nodes: usize,
+    edges: Vec<(u32, u32)>,
+    w: Vec<f64>,
+    c: Vec<f64>,
+}
+
+fn parse_solver_program(json: &str) -> Result<SolverProgram, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("cert JSON parse: {e}"))?;
+    let n_nodes = v["n_nodes"].as_u64().ok_or("missing n_nodes")? as usize;
+    let edges: Vec<(u32, u32)> = v["edges"]
+        .as_array()
+        .ok_or("missing edges")?
+        .iter()
+        .map(|p| {
+            let a = p[0].as_u64().unwrap_or(0) as u32;
+            let b = p[1].as_u64().unwrap_or(0) as u32;
+            (a, b)
+        })
+        .collect();
+    let read = |k: &str| -> Result<Vec<f64>, String> {
+        v[k].as_array()
+            .ok_or_else(|| format!("missing {k}"))?
+            .iter()
+            .map(|x| x.as_f64().ok_or_else(|| format!("{k} not f64")))
+            .collect()
+    };
+    Ok(SolverProgram {
+        n_nodes,
+        edges,
+        w: read("w")?,
+        c: read("c")?,
+    })
+}
+
+/// `x·scale`, but only when that product is an exact integer to within float noise.
+///
+/// This is the tooth that keeps resolution HONEST. Rounding `1.005 × 100 = 100.5` down to
+/// `100` would let a batch whose weights are NOT the registered program's be certified
+/// against the registered program's constants — the certificate would then be about a
+/// program nobody ran. A non-integral image is refused, never rounded into a registration.
+fn exact_scaled(x: f64, scale: i64) -> Option<i64> {
+    if !x.is_finite() {
+        return None;
+    }
+    let scaled = x * scale as f64;
+    if scaled.abs() > (i64::MAX / 2) as f64 {
+        return None;
+    }
+    let rounded = scaled.round();
+    let tolerance = 1e-9 * scaled.abs().max(1.0);
+    ((scaled - rounded).abs() <= tolerance).then_some(rounded as i64)
+}
+
+fn matches_registration(program: &SolverProgram, reg: &RegisteredCertFProgram) -> bool {
+    if program.n_nodes != reg.n_nodes
+        || program.edges.as_slice() != reg.edges
+        || program.w.len() != reg.w.len()
+        || program.c.len() != reg.c.len()
+    {
+        return false;
+    }
+    program
+        .w
+        .iter()
+        .zip(reg.w)
+        .all(|(x, &want)| exact_scaled(*x, reg.scale) == Some(want))
+        && program
+            .c
+            .iter()
+            .zip(reg.c)
+            .all(|(x, &want)| exact_scaled(*x, reg.scale) == Some(want))
+}
+
+/// **Resolve a live batch to its registration.** Given a solver f64 Cert-F emission (the
+/// wire `fhegg_clear` writes under `solverCert`), find the registered Lean-emitted program
+/// whose integer `(w, c)` is exactly the `×scale` image of this batch's public program, and
+/// return that registration's fixed-point scale and prescriptive `epsilon` budget.
+///
+/// This is what makes the STARK wrap REACHABLE without an operator supplying `CERT_F_SCALE`
+/// and `CERT_F_EPSILON` by hand: an unset scale defaulted to `1`, which is the image of
+/// almost no registered program, so every live batch was refused before it ever reached the
+/// prover. Resolution is still FAIL-CLOSED — a batch that is not the preimage of a
+/// registration is refused with the exact artifact it is missing, and nothing is
+/// specialised at runtime.
+pub fn resolve_registered_scaling(json: &str) -> Result<RegisteredScaling, String> {
+    let program = parse_solver_program(json)?;
+    let Some(reg) = CERT_F_REGISTRY
+        .iter()
+        .find(|reg| matches_registration(&program, reg))
+    else {
+        return Err(format!(
+            "this batch's public program (nodes={}, edges={}, w={:?}, c={:?}) is the \
+             fixed-point preimage of NO registered Cert-F program. The registry holds {} \
+             Lean-emitted programs. To admit this shape: author its `CertFProg` in \
+             `metatheory/Market/CertFDescriptor.lean`, discharge `CertFProg.IntegerAdmission` \
+             for it, `#guard` the `emitVmJson2` byte pin, commit the artifact under \
+             `circuit/descriptors/`, and add its registry entry. Nothing here specialises \
+             constraints at runtime.",
+            program.n_nodes,
+            program.edges.len(),
+            program.w,
+            program.c,
+            CERT_F_REGISTRY.len(),
+        ));
+    };
+    Ok(RegisteredScaling {
+        scale: reg.scale,
+        epsilon: reg.epsilon,
+        solver_epsilon: reg.epsilon as f64 / (reg.scale as f64 * reg.scale as f64),
+    })
+}
+
+/// **The solver bridge, DYNAMICALLY REGISTERED** — resolve the batch to its registration
+/// (scale and prescriptive epsilon both read off the Lean-emitted program, never guessed),
+/// then bridge prescriptively. Returns the integer witness together with the registration
+/// it landed on.
+///
+/// REFUSES, without proving anything, when the batch is not the preimage of a registration
+/// or when its achieved integer gap exceeds the budget that registration grants.
+pub fn from_solution_json_registered(
+    json: &str,
+) -> Result<(CertFWitness, RegisteredScaling), String> {
+    let scaling = resolve_registered_scaling(json)?;
+    let cert = from_solution_json_with_epsilon(json, scaling.scale, scaling.epsilon)?;
+    Ok((cert, scaling))
 }
 
 /// **Prove a Cert-F certificate in a real dregg STARK.** Lowers the certificate to
@@ -650,9 +807,47 @@ fn bridge_solution_json(json: &str, scale: i64) -> Result<CertFWitness, String> 
     let w: Vec<i64> = wf.iter().map(|&x| round(x)).collect();
     let c: Vec<i64> = cf.iter().map(|&x| round(x)).collect();
     let f: Vec<i64> = ff.iter().map(|&x| round(x)).collect();
-    let pi: Vec<i64> = pif.iter().map(|&x| round(x)).collect();
+    let mut pi: Vec<i64> = pif.iter().map(|&x| round(x)).collect();
+
+    // CANONICAL POTENTIAL REPRESENTATIVE. Every Cert-F clause that mentions `π` mentions it
+    // only as the difference `π_head − π_tail` (dual feasibility, and nothing else — the gap
+    // and the objective do not involve π at all), so the certificate is invariant under a
+    // common shift of all potentials. A first-order solver has no reason to return a
+    // nonnegative dual: a real market4 solve returns `π = (1, −1, 0)`, whose ×100 image
+    // carries `−100`. In BabyBear that lifts to `p − 100`, which has no 28-bit
+    // decomposition, so the descriptor's potential range gadget REFUSES it — an honest,
+    // Cert-F-valid certificate that the deployed AIR cannot accept.
+    //
+    // The bridge therefore presents the canonical translate `π − min(π) ≥ 0`. This is a
+    // change of REPRESENTATIVE, not of the certificate: `Aᵀπ` is unchanged, hence `s`, the
+    // dual slacks, the gap and the objective are all unchanged, and `Market.Certified` holds
+    // for exactly the same set of certificates. It removes no tooth: the range gadget still
+    // rejects any potential at or above `2^VALUE_BITS`, which is what
+    // `air_rejects_unranged_potential_shift` pins.
+    if let Some(&min_pi) = pi.iter().min() {
+        if min_pi < 0 {
+            for value in &mut pi {
+                *value -= min_pi;
+            }
+        }
+    }
+    // Assert nothing we do not verify: if the canonical translate still does not fit the
+    // deployed range gadget, refuse here rather than mint a witness the AIR will reject.
+    let potential_bound: i64 = 1i64 << VALUE_BITS;
+    if let Some(&max_pi) = pi.iter().max() {
+        if max_pi >= potential_bound {
+            return Err(format!(
+                "the canonical potential translate spans {max_pi} >= 2^{VALUE_BITS}: the dual \
+                 prices of this batch do not fit the deployed potential range gadget at \
+                 scale={scale}. Lower the fixed-point scale or register a program with a wider \
+                 potential decomposition; nothing here widens a deployed range."
+            ));
+        }
+    }
 
     // s = (w − Aᵀπ)₊ in the integer grid (so s ≥ 0 and Aᵀπ + s ≥ w by construction).
+    // Shift-invariant: `at_pi` is a difference, so this is the same `s` either side of the
+    // canonicalisation above.
     let at_pi = |e: usize| -> i64 {
         let (t, h) = edges[e];
         pi[h as usize] - pi[t as usize]

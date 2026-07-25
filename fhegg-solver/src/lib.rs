@@ -65,6 +65,7 @@
 //! solver's job is to produce a small-gap certificate FAST; the checker decides.
 
 pub mod air;
+pub mod book;
 pub mod cert;
 pub mod cfmm;
 pub mod clearing;

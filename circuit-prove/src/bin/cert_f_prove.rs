@@ -9,8 +9,11 @@
 //! wire shape — exactly what `fhegg_clear` now emits under `solverCert`) and PROVES it in a REAL
 //! dregg STARK:
 //!
-//!   1. [`from_solution_json`] — fixed-point-scale the solver's f64 certificate into the integer
-//!      `CertFWitness` the STARK proves over (`s` re-derived nonneg, `ε` absorbs quantization);
+//!   1. [`from_solution_json_registered`] — RESOLVE the batch against the Lean-emitted Cert-F
+//!      registry (the fixed-point scale and the prescriptive `ε` budget are both read off the
+//!      registered `CertFProg` this batch is the preimage of, never guessed by an operator),
+//!      then fixed-point-scale the solver's f64 certificate into the integer `CertFWitness`
+//!      the STARK proves over (`s` re-derived nonneg);
 //!   2. `cert.check()` — the native Cert-F predicate (`Market.Certified`) must hold before proving;
 //!   3. [`prove_cert_f`] — the production IR-v2 STARK (BabyBear + FRI, `prove_vm_descriptor2`): the
 //!      witness `(f, π, s)` lives ONLY in the trace (hidden under the PCS), the sole public value is
@@ -37,8 +40,8 @@ use std::io::Read;
 use std::time::Instant;
 
 use dregg_circuit_prove::cert_f_air::{
-    CertFWitness, VALUE_BITS, from_solution_json, from_solution_json_with_epsilon, prove_cert_f,
-    verify_cert_f,
+    CertFWitness, VALUE_BITS, from_solution_json, from_solution_json_registered,
+    from_solution_json_with_epsilon, prove_cert_f, verify_cert_f,
 };
 
 /// The trace width the descriptor commits (public — a function of the program shape only).
@@ -78,39 +81,82 @@ fn main() {
     if std::io::stdin().read_to_string(&mut buf).is_err() {
         emit_err("cert_f_prove: failed to read stdin");
     }
-    // The fixed-point scale for the f64→integer bridge. The DrEX demo batch clears at integer
-    // flows, so scale=1 is exact; override with CERT_F_SCALE for finer grids.
-    let scale: i64 = std::env::var("CERT_F_SCALE")
+    // Operator OVERRIDES for the f64→integer bridge. Both are deliberately optional and
+    // deliberately NOT defaulted: the historical `CERT_F_SCALE` default of `1` was the
+    // reason this binary could never fire for a live batch. A batch quoted in whole units
+    // has an integer image only at the scale its registration was emitted at, and unset
+    // scale=1 is the preimage of almost no registered program — so every live order was
+    // refused before it reached the prover.
+    let scale_override: Option<i64> = std::env::var("CERT_F_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .filter(|&s: &i64| s >= 1)
-        .unwrap_or(1);
-
-    // The PRESCRIPTIVE accuracy budget (the registered program's ε, in the scaled integer
-    // grid). When set, the bridged certificate carries this ε — matching an ε-budget
-    // registration — and the bridge refuses a solve whose achieved gap exceeds it. Unset,
-    // the descriptive form is used (ε := achieved gap; only matches a registration when
-    // exactly tight).
-    let epsilon: Option<i64> = std::env::var("CERT_F_EPSILON")
+        .filter(|&s: &i64| s >= 1);
+    let epsilon_override: Option<i64> = std::env::var("CERT_F_EPSILON")
         .ok()
         .and_then(|s| s.parse().ok());
 
     // [1] bridge the solver's f64 certificate into the integer STARK witness.
-    let bridged = match epsilon {
-        Some(eps) => from_solution_json_with_epsilon(&buf, scale, eps),
-        None => from_solution_json(&buf, scale),
-    };
-    let cert = match bridged {
-        Ok(c) => c,
-        Err(e) => emit_err(&format!("cert bridge failed: {e}")),
+    //
+    // DEFAULT (no overrides): the batch RESOLVES ITSELF against the Lean-emitted registry —
+    // the fixed-point scale and the prescriptive ε budget are both read off the registered
+    // `CertFProg` the batch is the preimage of. Fail-closed: an unregistered shape is
+    // refused, naming the artifact it is missing.
+    let (cert, scale, registration) = match (scale_override, epsilon_override) {
+        (None, None) => match from_solution_json_registered(&buf) {
+            Ok((cert, scaling)) => (
+                cert,
+                scaling.scale,
+                format!(
+                    "resolved against the Lean-emitted registry: scale {}, prescriptive epsilon {} ({} in solver units)",
+                    scaling.scale, scaling.epsilon, scaling.solver_epsilon
+                ),
+            ),
+            Err(e) => emit_err(&format!("cert bridge failed: {e}")),
+        },
+        // An explicit operator override bypasses resolution. It cannot bypass registration:
+        // `prove_cert_f` still refuses a program with no Lean-emitted descriptor.
+        (scale, epsilon) => {
+            let scale = scale.unwrap_or(1);
+            let bridged = match epsilon {
+                Some(eps) => from_solution_json_with_epsilon(&buf, scale, eps),
+                None => from_solution_json(&buf, scale),
+            };
+            match bridged {
+                Ok(cert) => (
+                    cert,
+                    scale,
+                    format!(
+                        "operator override: CERT_F_SCALE={scale}, CERT_F_EPSILON={}",
+                        epsilon
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "unset (descriptive epsilon := achieved gap)".into())
+                    ),
+                ),
+                Err(e) => emit_err(&format!("cert bridge failed: {e}")),
+            }
+        }
     };
 
     // [2] the native Cert-F predicate must hold before we prove (the bridge asserts nothing it
     // does not verify). If the fixed-point rounding broke conservation/box, say so honestly.
     let chk = cert.check();
     if !chk.valid {
+        // Name the RIGHT diagnosis. A broken conservation or box is a broken CLEARING —
+        // value appearing from nowhere, or a fill above a posted offerAmount — and no
+        // fixed-point scale repairs it. Only a gap that missed the granted budget is the
+        // quantization/convergence story.
+        let diagnosis = if !chk.conserves || !chk.box_ok {
+            "the CLEARING itself is not a feasible circulation (value is not conserved, or a \
+             fill exceeds its posted capacity); this is not a quantization artefact and no \
+             scale repairs it"
+        } else if !chk.gap_ok {
+            "the achieved gap missed the budget this program grants; converge tighter or \
+             raise CERT_F_SCALE for a finer grid"
+        } else {
+            "the dual witness is not feasible at this fixed-point resolution"
+        };
         emit_err(&format!(
-            "bridged certificate is NOT Cert-F-valid at scale={scale} (conserves={} box={} slackSign={} dualFeasible={} gapOk={}); raise CERT_F_SCALE",
+            "bridged certificate is NOT Cert-F-valid at scale={scale} (conserves={} box={} slackSign={} dualFeasible={} gapOk={}) — {diagnosis}",
             chk.conserves, chk.box_ok, chk.slack_sign_ok, chk.dual_feasible, chk.gap_ok
         ));
     }
@@ -151,6 +197,7 @@ fn main() {
 \"mEdges\":{m_edges},\
 \"epsilon\":{epsilon},\
 \"scale\":{scale},\
+\"registration\":{registration},\
 \"traceWidth\":{width},\
 \"valueBits\":{vbits},\
 \"proveMs\":{prove_ms},\
@@ -167,6 +214,7 @@ fn main() {
         m_edges = m_edges,
         epsilon = cert.epsilon,
         scale = scale,
+        registration = json_str(&registration),
         width = width,
         vbits = VALUE_BITS,
         prove_ms = prove_ms,

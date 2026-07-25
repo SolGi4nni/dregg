@@ -26,40 +26,129 @@
 //! every check), the AIR accept + the tamper reject, and the two clearing tiers (solver-sees vs
 //! world-sees-only-the-proof).
 //!
+//! ## The accuracy budget `ε` — derived or declared, never a literal
+//!
+//! `gap ≤ ε` is the ε-optimality clause of Cert-F, so `ε` decides what the certificate
+//! actually claims. This binary DERIVES it from the program (a fraction of the public
+//! bound `Σ_e w_e·c_e ≥ wᵀf`, so the budget moves with the batch), or takes it DECLARED
+//! as the prescriptive integer ε of a registered Lean-emitted program at that
+//! registration's fixed-point scale:
+//!
+//! ```text
+//! {"orders": [...], "accuracy": {"scale": 100, "integerEpsilon": 2000}}
+//! {"orders": [...], "accuracy": {"relative": 0.005}}
+//! [...]                                    # bare array: the derived default
+//! ```
+//!
+//! The declared form is the one that makes the STARK wrap reachable: the certificate is
+//! then claimed against exactly the budget the registration grants, instead of against a
+//! number this binary invented. The output's `accuracy` block reports `ε`, its derivation,
+//! the achieved gap, and whether the solve landed inside the budget.
+//!
 //! ## The single-phase SHIELDED boundary — what is REAL here and what is NAMED
 //!
 //! Everything above is REAL and runs in this binary: the fair-batch clearing, the Cert-F certificate,
 //! and the verified AIR accept/reject (the fairness/soundness gate). What this binary does NOT run is
 //! the STARK-ZK wrap that HIDES `(f, π, s)` so the world sees only the proof — that is
-//! `circuit-prove/src/cert_f_air.rs::{from_solution_json, prove_cert_f, verify_cert_f}` (a dregg
-//! BabyBear+FRI proof over this SAME AIR; the reveal-nothing floor rests on its zero-knowledge). This
-//! CLI emits the exact `(f, π, s)` + public `(A, w, c)` that `from_solution_json` ingests, so the
-//! wire to the real STARK is a call away — see `stark_stage` in the output. Shown honestly: in THIS
-//! demo the certificate is in the clear; the shielded wrap is named, not run.
+//! `circuit-prove/src/cert_f_air.rs::{resolve_registered_scaling, from_solution_json_registered,
+//! prove_cert_f, verify_cert_f}`, driven by the `cert_f_prove` binary (a dregg BabyBear+FRI proof
+//! over this SAME AIR; the reveal-nothing floor rests on its zero-knowledge). This CLI emits the
+//! exact `(f, π, s)` + public `(A, w, c)` that bridge ingests under `solverCert`.
+//!
+//! That wrap now FIRES for a live batch whose public program is the fixed-point preimage of a
+//! REGISTERED Lean-emitted Cert-F program: the batch resolves itself to its registration, and the
+//! scale and ε budget are read off the Lean artifact rather than guessed by an operator. A batch of
+//! any other shape is refused, naming the Lean artifact it is missing. Shown honestly: in THIS
+//! binary the certificate is in the clear, and this binary does not decide admissibility.
 
-use std::collections::BTreeMap;
 use std::io::Read;
 
 use fhegg_solver::air::ConstraintSystem;
+use fhegg_solver::book::{map_book, weighted_capacity_bound, AccuracyBudget, BookOrder};
 use fhegg_solver::cert::CertF;
-use fhegg_solver::pdhg::{restore_feasibility, solve_cpu, FlowLp};
+use fhegg_solver::pdhg::{restore_feasibility, solve_cpu};
 
 use serde::{Deserialize, Serialize};
 
-/// One revealed order as posted by the web app (same shape as `drex_clear`).
+/// The batch as posted. Historically a bare array of orders; a batch may now also declare
+/// the ACCURACY BUDGET its certificate is claimed against (see [`AccuracyIn`]).
 #[derive(Deserialize)]
-struct OrderIn {
-    trader: String,
-    #[serde(rename = "offerAsset")]
-    offer_asset: String,
-    #[serde(rename = "offerAmount")]
-    offer_amount: u64,
-    #[serde(rename = "wantAsset")]
-    want_asset: String,
-    #[serde(rename = "wantMin")]
-    want_min: u64,
-    #[serde(default)]
-    priority: u64,
+#[serde(untagged)]
+enum BatchIn {
+    Bare(Vec<BookOrder>),
+    Declared {
+        orders: Vec<BookOrder>,
+        #[serde(default)]
+        accuracy: Option<AccuracyIn>,
+    },
+}
+
+/// A DECLARED accuracy budget. Either the prescriptive integer `epsilon` of a registered
+/// Lean-emitted Cert-F program at its fixed-point `scale` (the form that makes the STARK
+/// wrap reachable — the certificate is then claimed against exactly the budget the
+/// registration grants), or a `relative` fraction of the program's own weighted-capacity
+/// bound. Absent, the relative form is derived at [`AccuracyBudget::DEFAULT_RELATIVE`].
+#[derive(Deserialize)]
+struct AccuracyIn {
+    scale: Option<i64>,
+    #[serde(rename = "integerEpsilon")]
+    integer_epsilon: Option<i64>,
+    relative: Option<f64>,
+}
+
+impl AccuracyIn {
+    fn budget(&self) -> Result<AccuracyBudget, String> {
+        match (self.scale, self.integer_epsilon, self.relative) {
+            (Some(scale), Some(integer_epsilon), None) => {
+                if scale < 1 {
+                    return Err(format!("accuracy.scale must be >= 1, got {scale}"));
+                }
+                if integer_epsilon < 0 {
+                    return Err(format!(
+                        "accuracy.integerEpsilon must be >= 0, got {integer_epsilon}"
+                    ));
+                }
+                Ok(AccuracyBudget::Registered {
+                    scale,
+                    integer_epsilon,
+                })
+            }
+            (None, None, Some(relative)) => {
+                if !(relative.is_finite() && relative >= 0.0) {
+                    return Err(format!(
+                        "accuracy.relative must be a finite non-negative fraction, got {relative}"
+                    ));
+                }
+                Ok(AccuracyBudget::RelativeToWeightedCapacity { relative })
+            }
+            _ => Err(
+                "accuracy must declare EITHER {scale, integerEpsilon} (a registered \
+                      Lean-emitted program's prescriptive budget) OR {relative} (a fraction \
+                      of the program's own weighted-capacity bound) — never a mix, and never \
+                      a bare literal"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+/// The accuracy budget as it appears in the output: what `ε` is, and where it came from.
+/// A relying party must be able to see whether the certificate's ε-optimality claim rests
+/// on a registration or on a batch-relative derivation.
+#[derive(Serialize)]
+struct AccuracyOut {
+    epsilon: f64,
+    /// `Σ_e w_e·c_e` — the public upper bound on `wᵀf` the relative form is a fraction of.
+    #[serde(rename = "weightedCapacityBound")]
+    weighted_capacity_bound: f64,
+    /// The achieved gap `cᵀs − wᵀf` this solve actually reached.
+    #[serde(rename = "achievedGap")]
+    achieved_gap: f64,
+    /// How `epsilon` was obtained — "derived: …" or "declared: …". Never a literal.
+    derivation: String,
+    /// Whether the achieved gap is inside the budget the certificate is claimed against.
+    #[serde(rename = "withinBudget")]
+    within_budget: bool,
 }
 
 #[derive(Serialize)]
@@ -149,6 +238,7 @@ struct Cleared {
     edges: usize,
     iters: usize,
     orders: Vec<ClearedOrder>,
+    accuracy: AccuracyOut,
     certificate: CertReportOut,
     air: AirOut,
     tamper: TamperOut,
@@ -171,59 +261,40 @@ fn main() {
         eprintln!("fhegg_clear: failed to read stdin");
         std::process::exit(2);
     }
-    let orders: Vec<OrderIn> = match serde_json::from_str(&buf) {
+    let batch: BatchIn = match serde_json::from_str(&buf) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("fhegg_clear: bad orders JSON: {e}");
+            eprintln!("fhegg_clear: bad batch JSON: {e}");
             std::process::exit(2);
         }
+    };
+    let (orders, declared) = match batch {
+        BatchIn::Bare(orders) => (orders, None),
+        BatchIn::Declared { orders, accuracy } => (orders, accuracy),
     };
     if orders.is_empty() {
         eprintln!("fhegg_clear: empty batch");
         std::process::exit(2);
     }
+    // The accuracy budget the certificate will be claimed against: DECLARED by the batch
+    // (a registered Lean-emitted program's prescriptive epsilon at its fixed-point scale,
+    // or an explicit relative fraction), else DERIVED from the program itself. Never a
+    // literal — a bare number is a tolerance of nothing.
+    let budget = match declared.as_ref().map(AccuracyIn::budget) {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => {
+            eprintln!("fhegg_clear: bad accuracy declaration: {e}");
+            std::process::exit(2);
+        }
+        None => AccuracyBudget::derived_default(),
+    };
 
     // ---- [1] map the batch to the trade-circulation LP (assets = nodes, orders = edges). ----
-    // Node index per asset symbol, assigned in first-seen order.
-    let mut asset_idx: BTreeMap<String, u32> = BTreeMap::new();
-    let mut assets: Vec<String> = Vec::new();
-    let idx_of =
-        |sym: &str, asset_idx: &mut BTreeMap<String, u32>, assets: &mut Vec<String>| -> u32 {
-            if let Some(&i) = asset_idx.get(sym) {
-                i
-            } else {
-                let i = assets.len() as u32;
-                asset_idx.insert(sym.to_string(), i);
-                assets.push(sym.to_string());
-                i
-            }
-        };
-
-    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(orders.len());
-    let mut w: Vec<f64> = Vec::with_capacity(orders.len());
-    let mut c: Vec<f64> = Vec::with_capacity(orders.len());
-    for o in &orders {
-        // An order OFFERS `offerAsset` to OBTAIN `wantAsset`: value releases at the
-        // want node and lands at the offer node as the ring circulates, so the edge runs
-        // wantAsset → offerAsset. Conservation `Af=0` at each asset node is exactly DrEX
-        // per-asset conservation (what flows out as offers equals what flows in as wants).
-        let tail = idx_of(&o.want_asset, &mut asset_idx, &mut assets);
-        let head = idx_of(&o.offer_asset, &mut asset_idx, &mut assets);
-        edges.push((tail, head));
-        c.push(o.offer_amount.max(1) as f64);
-        // Weight = priority (gains-from-trade proxy); default 1.0 so every order can clear.
-        w.push(if o.priority == 0 {
-            1.0
-        } else {
-            o.priority as f64
-        });
-    }
-    let lp = FlowLp {
-        n_nodes: assets.len(),
-        edges,
-        w,
-        c,
-    };
+    // ONE derivation, shared with the STARK bridge (`fhegg_solver::book::map_book`), so the
+    // certificate is about the same public program the prover resolves against.
+    let program = map_book(&orders);
+    let assets = program.assets;
+    let lp = program.lp;
 
     // ---- [2] fast UNTRUSTED search: PDHG → exact-feasibility restore. ----
     let iters = 4000usize;
@@ -231,8 +302,7 @@ fn main() {
     let (f_exact, _box_viol) = restore_feasibility(&lp, approx.f.clone());
 
     // ---- [3] the Cert-F primal-dual certificate (f, π, s) + public (A, w, c). ----
-    // epsilon: the optimality tolerance the certificate is claimed against.
-    let epsilon = 0.5f64;
+    let epsilon = budget.epsilon_for(&lp);
     let cert = CertF::from_solution(&lp, &f_exact, &approx.y, epsilon);
     let report = cert.check_strict();
 
@@ -276,6 +346,13 @@ fn main() {
         edges: lp.m(),
         iters,
         orders: cleared_orders,
+        accuracy: AccuracyOut {
+            epsilon,
+            weighted_capacity_bound: weighted_capacity_bound(&lp),
+            achieved_gap: report.gap,
+            derivation: budget.derivation(&lp),
+            within_budget: report.gap_ok,
+        },
         certificate: CertReportOut {
             cleared_volume: (cert.primal_obj * 1e6).round() / 1e6,
             dual_objective: (cert.dual_obj * 1e6).round() / 1e6,
@@ -309,12 +386,12 @@ fn main() {
                 .collect(),
         },
         stark_stage: StarkStage {
-            status: "NAMED, not run in this demo".to_string(),
+            status: "NOT run in this binary — `cert_f_prove` runs it, and it ADMITS this batch only if the batch's fixed-point image is a REGISTERED Lean-emitted Cert-F program. This binary does not and must not decide admissibility.".to_string(),
             reveal_nothing_floor:
                 "the world sees only a STARK over this SAME AIR; the reveal-nothing floor rests on its zero-knowledge"
                     .to_string(),
             wire_entry_point:
-                "circuit-prove/src/cert_f_air.rs::{from_solution_json → prove_cert_f → verify_cert_f}"
+                "circuit-prove/src/cert_f_air.rs::{resolve_registered_scaling → from_solution_json_registered → prove_cert_f → verify_cert_f}"
                     .to_string(),
             hides: vec![
                 "f (the primal flow — who cleared how much)".to_string(),

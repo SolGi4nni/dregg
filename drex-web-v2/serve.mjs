@@ -309,7 +309,11 @@ async function route(req, res, url) {
       proofBytes: prove.proofBytes,
       clearedVolume: prove.clearedVolume,   // the public input wᵀf
       publicInputs: prove.publicInputs,     // the STARK's exposed field elements = [wᵀf]
-      program: { nodes: prove.nNodes, edges: prove.mEdges, epsilon: prove.epsilon, scale: prove.scale },
+      // `registration` is how the batch found its program: the fixed-point scale and the
+      // prescriptive epsilon are read off the Lean-emitted Cert-F registry the batch is the
+      // preimage of, not from an operator-supplied CERT_F_SCALE/CERT_F_EPSILON. An
+      // unregistered shape is refused upstream and never reaches this response.
+      program: { nodes: prove.nNodes, edges: prove.mEdges, epsilon: prove.epsilon, scale: prove.scale, registration: prove.registration },
       conserves,
       trace: { width: prove.traceWidth, valueBits: prove.valueBits },
       descriptor: prove.descriptor,
