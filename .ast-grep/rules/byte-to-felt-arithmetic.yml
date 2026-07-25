@@ -1,0 +1,64 @@
+# THE BYTE→FELT ALLOWLIST GATE (ast-grep) — shape, not name.
+#
+# Law: `docs/DESIGN-canonical-byte-felt-codec.md` §4.3. **No byte→felt arithmetic may appear
+# anywhere in the repository outside `dregg-codec/src/limbs.rs`.**
+#
+# Why this replaces `degraded-felt-commitment` rather than extending it. That rule is a SYMBOL
+# BLOCKLIST: it matches one name (`fold_bytes32_to_bb`, family F4 = 109 of ~900 references) in
+# three files. A blocklist cannot catch a NEW NAME for the SAME arithmetic, which is the exact
+# failure mode that produced ~17 implementations of 4 arithmetics. Nothing stops an author writing
+#
+#     BabyBear::new(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+#
+# inline — a type-correct expression, invisible to every symbol rule, and precisely how the zoo
+# grew. So this rule matches the SHAPE.
+#
+# Coverage today: L1 (mod-p alias reinvention, the seed of 3 of the 4 families) and L3 (any new
+# byte→felt map, named or not). L2/L4/L5/L6 from §4.3 are lexical rather than syntactic and are
+# implemented in `scripts/check-byte-to-felt.sh` alongside this rule; that script is also what
+# prints the scanned/matched counts, so a green that scanned nothing is distinguishable from a
+# green that scanned everything.
+#
+# ⚠ SEVERITY IS `warning` ON PURPOSE. Stage 0 of the plan lands this gate in REPORT-ONLY mode so
+# the true site count is MEASURED, not estimated — the tree currently contains ~52 security site
+# groups this rule is supposed to find, and arming it at `error` today would only mean adding ~52
+# suppressions, which is a blocklist with extra steps. Flip to `error` when Stage 2/3 have drained
+# the count; `scripts/check-byte-to-felt.sh --baseline` is what holds the line meanwhile.
+#
+# Allowlisting a genuine residual: human reason on the line ABOVE, then a trailing
+#   // ast-grep-ignore: byte-to-felt-arithmetic
+# (text after the colon is parsed as a rule-id list, so the REASON must be its own comment line).
+id: byte-to-felt-arithmetic
+language: rust
+severity: warning
+rule:
+  any:
+    # ── L1: a felt constructed from a byte-derived u32. `BabyBear::new` reduces mod p, and a
+    # uniformly random 4-byte chunk needs reducing 53.1% of the time, so this shape IS the O(1)
+    # alias. Covers the `% BABYBEAR_P` spelling too, which is the same map.
+    - pattern: BabyBear::new(u32::from_le_bytes($$$))
+    - pattern: BabyBear::new(u32::from_be_bytes($$$))
+    - pattern: BabyBear::new_canonical(u32::from_le_bytes($$$))
+    - pattern: BabyBear::new_canonical(u32::from_be_bytes($$$))
+    - pattern: $$$BabyBear::new(u32::from_le_bytes($$$))
+    - pattern: $$$BabyBear::new(u32::from_be_bytes($$$))
+    - pattern: BabyBear::new($_ % BABYBEAR_P)
+    - pattern: BabyBear::new($_ % $$$::BABYBEAR_P)
+    - pattern: BabyBear($_ % BABYBEAR_P)
+    - pattern: BabyBear($_ % $$$::BABYBEAR_P)
+    # ── L3: a fixed-width map built with `array::from_fn` whose body reads a byte array and
+    # constructs a felt. This is the spelling four of the copies used, and it has no symbol to
+    # blocklist at all.
+    - pattern: core::array::from_fn(|$I| BabyBear::new($$$))
+    - pattern: std::array::from_fn(|$I| BabyBear::new($$$))
+    - pattern: array::from_fn(|$I| BabyBear::new($$$))
+message: >-
+  BYTE→FELT ARITHMETIC OUTSIDE THE CODEC. This constructs a field element from bytes; the only
+  place in the repository allowed to do that is `dregg-codec/src/limbs.rs`. A `mod p` reduction of
+  a 4-byte chunk identifies `x` with `x + p` — 53.1% of chunks alias — so a colliding pair is
+  CONSTRUCTED in O(1), not searched, wherever the bytes are attacker-chosen. Use
+  `dregg_codec::Bytes32::limbs()` (Layer L, injective) when the value must be recoverable, ordered
+  or range-checked, or `Bytes32::digest8(domain)` (Layer D, 8 felts, birthday-hard) when it must
+  sit in a fixed-width committed slot. See docs/DESIGN-canonical-byte-felt-codec.md §2.3. If this
+  is a deliberate pre-migration residual, put the reason on the line above and add a trailing
+  `// ast-grep-ignore: byte-to-felt-arithmetic`.
