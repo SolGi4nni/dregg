@@ -24,6 +24,30 @@ satisfied with the seven completion lanes set to two DIFFERENT felt vectors.
 lane-0 felt (~2^15.5), so the automaton binding is NOT yet a deployed security property. The weld is
 necessary but not sufficient.
 
+⚠ AND THE SECOND, INDEPENDENT SCOPE LIMIT — the one removing a false floor does NOT touch: NOTHING
+SHIPPED EMITS THIS DESCRIPTOR. Asked directly, because the sibling `CommittedRowsSemantics` carries a
+limit of this shape and records it at the top: is `weldDesc`/`autoRoot8` a SHADOW? Answered in both
+directions, because they differ.
+
+  * `autoRoot8` is NOT a shadow. It is `MapMerkleRoot.mapRoot8` at a `Heap8Scheme`, and
+    `DeployedHeapTree.deployedHeap8Scheme` is a CONSTRUCTED inhabitant of that class — the object
+    `heap_root.rs::CanonicalHeapTree8::root` computes. §2 quantifies over `∀ S8 : Heap8Scheme`, so it
+    is a theorem about the real deployed hash tree, not a modelled stand-in.
+  * `weldDesc` is NOT a shadow declaration either — unlike `CommittedRowsSemantics.committedRows`,
+    which is not a `RowSemantics` constructor at all and can only ride one, `weldDesc` is a real
+    `EffectVmDescriptor2` over real `VmConstraint2` constructors, and §5 EMITS it (`emitVmJson2`).
+  * ⚠ BUT IT IS UNROUTED. `WELD_NAME` ("dregg-attested-automaton::map-committed-weld8-v1") has NO
+    entry in `EmitByName.routing`, NO `circuit/descriptors/by-name/*.json` artifact, and NO arm in
+    `circuit/src/descriptor_by_name.rs`. Neither does the unwelded `AttestedAutomatonEmit`
+    `attestedInstance`: the whole attested-automaton family is Lean-side only today. So no shipped
+    prover or verifier ever builds this object, and §2's binding is a theorem about a deployed hash
+    tree that NO SHIPPED DESCRIPTOR CURRENTLY OPENS.
+
+⇒ so a floor-free theorem here is not yet a deployed one for TWO separate reasons, and they have two
+separate repairs: the denotation move below (`DescriptorIR2`, shared, in flight), and a routing entry
+plus a Rust dispatch arm (mechanical, not started). The denotation half is the hard one; neither is
+done, and neither is claimed.
+
 THE REMAINING FIX, named precisely: move `MapOp.holdsAt`/`MapOp.rowAt` off `(m.root 0)` onto
 `opensToMerkle8`/`writesToMerkle8` so the denotation forces all eight lanes. That edit touches
 `DescriptorIR2` and therefore every MapOp consumer in the tree — a genuine red-umbrella change.
@@ -237,24 +261,45 @@ CARRIER of a hypothesis this tree PROVES FALSE at deployed BabyBear parameters
 (`VacuitySweepTeeth.deployedHeap8Scheme_chip_not_Compress8CR`) — a theorem the accrual gate must
 then grandfather as knowingly vacuous. This spelling assumes no floor, so it is exempt by
 construction, and it says strictly MORE: not "at an injective chip the disjunct is empty" but "the
-disjunct IS a chip collision". Contrapositively it still delivers everything the bridge form did —
-`root8_binds_automaton_of_injective` below is one line from it. -/
+disjunct IS a chip collision".
+
+⚑ **AND IT IS THE ONLY BRIDGE THIS FILE NEEDS — `root8_binds_automaton_of_injective` IS DELETED
+(2026-07-25).** That theorem used to sit immediately below: "given `hCR : Compress8CR
+S8.chipAbsorb8`, two automata committed by ONE 8-felt root agree on the whole declared domain",
+i.e. the injective special case of the line above. It was never a second result. Its type is
+inhabited by `Or.resolve_right` over the two theorems that flanked it, in ONE constructive term,
+at the same implicit heaps and with no other input:
+
+    Or.resolve_right (root8_binds_automaton_or_collides S8 R8 d e hd he)
+                     (fun hc => weld_collision_disjunct_refutable S8 _ _ hc hCR)
+
+So the strength relation is still EXHIBITED, by the pair (`root8_binds_automaton_or_collides`,
+this canary), and both halves are floor-free. What the bridge added was the carrier: `Compress8CR`
+in binder position, a hypothesis `VacuitySweepTeeth.compress8CR_false_babyBear` PROVES FALSE at
+deployed BabyBear parameters and `deployedHeap8Scheme_chip_not_Compress8CR` refutes at the very
+scheme it ranged over. It was vacuously true at deployment, it had NO consumer anywhere in the
+tree, and keeping it meant recording a knowingly-vacuous theorem in `FloorRatchetBaseline`.
+
+⚑ AND IT IS NOT THE GRANDFATHERED-SIBLING CASE. `DeployedCapTree` §5.1 already settled this exact
+question, in prose, before this file existed: *"Deliberately NOT restated as … per-theorem
+`…_of_injective` bridges. Each such restatement would be a NEW declaration taking a hypothesis this
+tree PROVES FALSE at deployed BabyBear parameters — i.e. a new VACUOUS declaration, which is the
+accrual `#floor_ratchet` exists to stop. The 8-felt sibling's `…8_injective_of_injective` family
+predates the gate and is grandfathered; this one does not get to add to that pile … One bridge,
+used."* The baselined siblings are that grandfathered pile — the six on
+`DeployedCapTree.Cap8Scheme` and the four in `MapMerkleRoot` §5b.S. Each one that is spelled
+"NO STRENGTH LOST" recovers a NAMED STATEMENT THAT WAS DELETED (`capLeafDigest8_injective`,
+`nodeOf8_injective`, `recomposeUp8_inj_of_path`, `mapRoot8_injective`, the existential-level
+`opensToMerkle8_functional`, `writesToMerkle8_functional`), so grandfathering it records that a
+specific removal cost nothing; the remaining `…Coll_refutable_of_injective` ones are the canary in
+the pre-2026-07-25 CARRIER spelling — exactly the content this one now states floor-free. This
+bridge is in neither class. It recovered nothing: `root8_binds_automaton_or_collides` was born
+unconditional in the SAME commit that introduced the bridge (`915437862f`), and the 1-felt original
+it was the analog of (`AttestedAutomatonEmit.root_binds_automaton`) is still in the tree and still
+baselined. Deleting is therefore unadditive bookkeeping, not a judgement call. -/
 theorem weld_collision_disjunct_refutable (S8 : Heap8Scheme) (m₁ m₂ : Heap.FeltHeap)
     (hc : MapRootColl S8 MAP_TREE_DEPTH m₁ m₂) : ¬ Compress8CR S8.chipAbsorb8 :=
   fun hCR => mapRootColl_refutable_of_injective S8 hCR MAP_TREE_DEPTH m₁ m₂ hc
-
-/-- **NO STRENGTH LOST** — under chip injectivity the welded root determines the machine outright:
-the exact 8-felt analog of `AttestedAutomatonEmit.root_binds_automaton`. ⚠ `Compress8CR` is FALSE at
-deployed BabyBear parameters for a 16→8 compression (`VacuitySweepTeeth.compress8CR_false_babyBear`),
-which is precisely why the EXPORTED form is the disjunction above; this bridge exists to show the
-disjunction is not weaker, never to be cited as the deployed property. -/
-theorem root8_binds_automaton_of_injective (S8 : Heap8Scheme) (hCR : Compress8CR S8.chipAbsorb8)
-    (R8 : Digest8) (d e : TableDfa Nat Nat) {m₁ m₂ : Heap.FeltHeap}
-    (hd : CommitsAutomaton8By S8 m₁ R8 d) (he : CommitsAutomaton8By S8 m₂ R8 e) :
-    ∀ s y : Nat, s < ASTATES → y < ASYM → d.step s y = e.step s y := by
-  rcases root8_binds_automaton_or_collides S8 R8 d e hd he with h | hc
-  · exact h
-  · exact absurd hCR (weld_collision_disjunct_refutable S8 m₁ m₂ hc)
 
 /-- ⚑ **`forged_edge_refused_8` — THE OTHER POLARITY, WELDED.** A prover opening an edge the
 committed automaton does NOT have, at the SAME 8-felt root, must exhibit the named arity-16 chip
@@ -811,8 +856,7 @@ expensive per permutation than an arity-2 one) is NOT counted above and is NOT c
 
 #assert_all_clean [autoHeapW_length, autoHeapW_sorted, autoHeapW_get, autoRoot8_commits,
   CommitsAutomaton8By.opens, autoRoot8_opens,
-  root8_binds_automaton_or_collides, weld_collision_disjunct_refutable,
-  root8_binds_automaton_of_injective, forged_edge_refused_8,
+  root8_binds_automaton_or_collides, weld_collision_disjunct_refutable, forged_edge_refused_8,
   weld_memOps, weld_memLog, weld_mapOps, weld_mapLog, weldLane_classify,
   rowsW_length, rowsW_shape, rowsW_chain, rowsW_root, rowsW_head_current, rowsW_last_next,
   weldWit_satisfies, weldWit_satisfies_constructed, weld_completion_lanes_free]
