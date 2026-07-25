@@ -164,10 +164,10 @@
 <!-- ==================== PLAY WITH IT ==================== -->
 <section class="section" id="play">
   <span class="section__label">Play with it</span>
-  <h2 class="section__title">Everything here is live, in your tab</h2>
+  <h2 class="section__title">Everything here is live &mdash; most of it in your tab</h2>
   <p class="section__intro">
-    Each surface below loads a verified executor compiled to WebAssembly and runs it in your browser.
-    Click an affordance and you fire a real cap-gated turn against an in-tab ledger; the bound fields
+    The surfaces in the first group below load a verified executor compiled to WebAssembly and run it in
+    your browser. Click an affordance and you fire a real cap-gated turn against an in-tab ledger; the bound fields
     re-paint from the committed state. No install, no account, no server.
   </p>
   <p class="live-note"><span class="live-dot"></span> client-side WebAssembly &middot; real verified turns &middot; nothing leaves your machine</p>
@@ -213,6 +213,36 @@
       <span class="tile__name">gpui cockpit</span>
       <span class="tile__desc">The full native gpui renderer — the same one the desktop draws with — on a WebGPU canvas, driving the same in-tab executor. Heavier; shown when the build is available in this deploy.</span>
       <span class="tile__go">open the full cockpit &rsaquo;</span>
+    </a>
+  </div>
+
+  <span class="section__label" style="margin-top:var(--s7)">Also live &mdash; hosted, not in your tab</span>
+  <p class="section__intro">
+    Three surfaces run <em>server-side</em>, on a devnet box, served over the public web: you play against a
+    real executor there rather than one in your tab. The rule enforcement is the same &mdash; an illegal move is
+    refused and commits nothing &mdash; and two limits are named on the surfaces themselves: a run is checked by
+    deterministic <em>replay</em> re-execution (a stranger re-runs it), not by checking a STARK, and a web player
+    is a self-asserted cookie, not a signature.
+  </p>
+  <p class="live-note"><span class="live-dot"></span> hosted devnet &middot; real verified turns &middot; replay-checked, not proof-checked</p>
+  <div class="tiles">
+    <a class="tile" href="https://hbox-dregg.skunk-emperor.ts.net/descent/play">
+      <span class="tile__eyebrow">daily roguelite</span>
+      <span class="tile__name">The Descent</span>
+      <span class="tile__desc">Carry relics through a finite light clock. Keys attenuate as you descend, and what you do not bank on a proved exit never became yours. One dungeon a day, the same for everyone; every move is a real turn on the Lean-authored executor.</span>
+      <span class="tile__go">play today&rsquo;s run &rsaquo;</span>
+    </a>
+    <a class="tile" href="https://hbox-dregg.skunk-emperor.ts.net/offerings">
+      <span class="tile__eyebrow">the catalog</span>
+      <span class="tile__name">Council, market, tug, automatafl</span>
+      <span class="tile__desc">Every offering the host serves, each one a session of the same open / act / verify path: crowd rounds that close by quorum in the Council, sealed bids in the Market and the Dark Bazaar, a hidden-hand Multiway-Tug, and a clickable Automatafl board. One executor referees them all.</span>
+      <span class="tile__go">open the catalog &rsaquo;</span>
+    </a>
+    <a class="tile" href="https://hbox-dregg.skunk-emperor.ts.net/descent">
+      <span class="tile__eyebrow">no-cheat board</span>
+      <span class="tile__name">Re-run a stranger&rsquo;s descent</span>
+      <span class="tile__desc">The leaderboard re-executes a run from its recorded moves before it ranks, and re-checks every row on boot &mdash; a tampered row cannot resurrect a cheat. Open any run card and re-run someone else&rsquo;s descent yourself.</span>
+      <span class="tile__go">open the board &rsaquo;</span>
     </a>
   </div>
 </section>
