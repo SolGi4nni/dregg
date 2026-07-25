@@ -13,6 +13,20 @@
 #   scripts/test-gauntlet.sh ci             # default coverage, fail-fast
 #   scripts/test-gauntlet.sh armed          # THE ARMED TEETH: the #[ignore]d suite, --release
 #   scripts/test-gauntlet.sh gpu            # THE GPU LANE: the #[ignore]d GPU teeth (needs an adapter)
+#   scripts/test-gauntlet.sh dark           # THE UNRUNNABLE SET: targets NO workflow can execute
+#
+# ⚠ NOTHING INVOKES THIS SCRIPT. Measured 2026-07-25 across every file in
+# `.github/workflows/`: `scripts/test-gauntlet.sh` appears exactly twice, both times
+# inside a COMMENT (armed-teeth.yml's header prose). No workflow runs it. That matters
+# because this header used to end the `armed` paragraph with "and it is what
+# .github/workflows/armed-teeth.yml runs on a schedule", and `.config/nextest.toml`
+# repeats the claim — both are FALSE. That workflow runs a hand-built
+# `cargo test -p dregg-circuit-prove --release … -- --ignored`; it has never invoked this
+# script or the `armed` nextest profile. The name outlived its referent again, and this
+# time the referent was the only thing making the sentence a coverage claim.
+#
+# So read every mode below as "a command a human types", not as CI coverage. If you want
+# one of them to be coverage, wire it into a workflow — and then correct this paragraph.
 #
 # ── THE ARMED LANE (`armed`) ────────────────────────────────────────────────
 # "Expensive" must mean "runs nightly", never "runs never." A large set of this
@@ -25,8 +39,9 @@
 #
 # `armed` runs them: `--run-ignored ignored-only`, `--release` (debug is the
 # dominant slowness in a fold). It is the nextest twin of
-# `cargo test -- --ignored`, and it is what .github/workflows/armed-teeth.yml
-# runs on a schedule.
+# `cargo test -- --ignored`. (armed-teeth.yml runs the SAME TEETH on a schedule,
+# but by its own hand-built cargo invocation — not through this script. See the
+# ⚠ block at the top: nothing invokes this file.)
 #
 # The GPU teeth are EXCLUDED from `armed` and get their own `gpu` mode: they
 # fail CLOSED on a missing adapter (they assert `adapter_available()`), so
@@ -68,6 +83,25 @@ case "$mode" in
   heavy)         exec cargo nextest run --profile heavy --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
   heavy-release) exec cargo nextest run --profile heavy --release --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
   list-heavy)    exec cargo nextest list --profile heavy --features fhegg-fhe/amm-input-binding,dreggnet-market/private-attested-clearing,dreggnet-market/fhegg-settlement "$@" ;;
+  # ── THE UNRUNNABLE SET ────────────────────────────────────────────────────
+  # 59 test targets in this workspace compile, are wired, and CANNOT BE EXECUTED by any
+  # workflow, because their feature gate is never activated by a `cargo test` anywhere in
+  # `.github/`. `.github/dark-targets.txt`'s `never-run ` rows enumerate all of them with
+  # a per-row verdict; `scripts/check-never-run-targets.py` is the ratchet.
+  #
+  # This mode runs the subset whose verdict is FORGOTTEN — cheap, hosted-runnable, and
+  # dark for no reason anyone chose. It is deliberately NOT the whole 59: the EXPENSIVE
+  # rows want a nightly and the ENVIRONMENT rows want a seeded box, and sweeping all three
+  # verdicts into one command is how a mode becomes something nobody runs.
+  #
+  # ⚠ These have never executed in CI. Expect real failures; that is the information.
+  dark)
+    exec cargo test \
+      -p deos-view --features deos-view/discord \
+      -p dregg-tee-produce --features dregg-tee-produce/fixture-backend \
+      -p dreggnet-web --features dreggnet-web/hosted-binary-operations \
+      -p dreggnet-market --features dreggnet-market/dark-pool-offering,dreggnet-market/oracle-pit \
+      "$@" ;;
   armed)         exec cargo nextest run --profile armed --release --run-ignored ignored-only "$@" ;;
   list-armed)    exec cargo nextest list --profile armed --run-ignored ignored-only "$@" ;;
   gpu)           exec cargo nextest run --profile gpu   --release --run-ignored ignored-only "$@" ;;
@@ -76,6 +110,6 @@ case "$mode" in
     # bare flags → default profile (e.g. `test-gauntlet.sh -p dregg-turn`)
     exec cargo nextest run --profile default "$mode" "$@" ;;
   *)
-    echo "usage: $0 [default|ci|full|heavy|heavy-release|armed|gpu|list-heavy|list-armed|list-gpu] [nextest args...]" >&2
+    echo "usage: $0 [default|ci|full|heavy|heavy-release|armed|gpu|dark|list-heavy|list-armed|list-gpu] [nextest args...]" >&2
     exit 2 ;;
 esac

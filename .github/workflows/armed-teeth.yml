@@ -34,11 +34,40 @@
 #     infrastructure that does not exist yet; the first publish flips it on with no edit here.
 name: Armed teeth
 
+#
+# ── SHOULD THE TEETH GATE A PR? DECIDED 2026-07-25: NO — AND THAT IS NOT THE SAME AS
+#    "INVISIBLE ON A PR". ────────────────────────────────────────────────────────────
+# The teeth themselves stay nightly. The reason is the one in the header and it has not
+# changed: these are minute-scale REAL recursion folds (the last full measurement took
+# the lane to hours), and a per-push gate that slow gets deleted the first slow week.
+# Running them on `pull_request` would also mean every PR pays for a fold that is
+# CURRENTLY RED for a reason that has nothing to do with that PR (the
+# `generate_rotated_transfer_shape_wide` ↔ `transferVmDescriptor2R24` producer/descriptor
+# drift, measured 2026-07-15). That is how a lane gets silenced.
+#
+# But "does not gate" had silently become "does not exist". The `page-on-red` job below
+# files an issue, which is real — and is still a place nobody looks during a review. The
+# signal a reviewer actually reads is the checkmark, and the checkmark said nothing at all
+# while 11 of 17 teeth were failing every single night.
+#
+# So `nightly-verdict` runs on `pull_request` and mirrors the LAST scheduled run onto the
+# PR as a check. It runs no folds and costs seconds. It goes RED on two things:
+#
+#   1. THE LAST NIGHTLY FAILED. A PR should not be reviewed against a green wall while the
+#      deployed binding teeth are known-broken. This is deliberately a merge-blocking red:
+#      the escape is to fix the teeth, not to route around the report.
+#   2. THE SCHEDULE HAS STOPPED FIRING (no completed run in 48h). This is the failure that
+#      no issue and no annotation can ever report, because the thing that would report it
+#      is the thing that died. GitHub also disables `schedule` triggers on repositories
+#      with no recent activity, entirely silently. A nightly nobody can tell has stopped is
+#      worth exactly as much as a tooth nobody runs.
 on:
   schedule:
     # Daily, 05:00 UTC — two hours ahead of the proof-integrity canary (07:00) so the two
     # long-running scheduled gates do not contend for runners.
     - cron: '0 5 * * *'
+  pull_request:
+    # ONLY `nightly-verdict` runs here — every heavy job below is guarded off PRs.
   workflow_dispatch:
     inputs:
       runner:
@@ -54,8 +83,9 @@ env:
 jobs:
   binding-teeth:
     name: Deployed light-client binding teeth (--ignored)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Eight binaries of real recursion folds. Generous but bounded: a lane that hangs to the
+    # Thirteen binaries of real recursion folds. Generous but bounded: a lane that hangs to the
     # 6h ceiling is a lane nobody reads.
     timeout-minutes: 300
     steps:
@@ -81,13 +111,13 @@ jobs:
       # --release is not a nicety: these are FRI folds, and debug is the dominant cost (the
       # nextest heavy profile documents the same reasoning). A debug run would not finish.
       #
-      # The 8 tooth binaries are named EXPLICITLY rather than using a bare
+      # The tooth binaries are named EXPLICITLY rather than using a bare
       # `-p dregg-circuit-prove -- --ignored`. That bare form is what the plan prescribed, but it
       # also sweeps in the GPU binaries (guaranteed red here — no adapter, and they now fail
-      # closed) and the apex-shrink/gnark-fixture/mpt-pilot probes, whose external prerequisites
-      # are a separate question from these teeth. Naming the binaries makes the lane's claim exact:
-      # THESE teeth ran, and they either bit or they did not. Widening it is a follow-up, not a
-      # thing to do silently by leaving a wildcard in.
+      # closed), whose external prerequisites are a separate question from these teeth. Naming the
+      # binaries makes the lane's claim exact: THESE teeth ran, and they either bit or they did not.
+      # (The apex-shrink tooth is no longer among the excluded: it is a real `#[ignore]`d wrap-capstone
+      # fold with no external prerequisite, and the old glob was the only reason it ran nowhere.)
       # `--no-fail-fast` is load-bearing, not a nicety. `cargo test` aborts the whole run at the
       # first failing test BINARY, so without it this lane reports 1 of 8 and hides the other 7 —
       # measured: the first run stopped at `bridge` and said nothing about the rest. A nightly
@@ -121,32 +151,70 @@ jobs:
       # failing to prove, which the drift gate cannot see. It was invisible for exactly one reason:
       # nothing ran these tests. Do NOT silence this lane to make it green, and do NOT `#[ignore]`
       # them again. Fix the producer/descriptor pair.
+      # ⚠ THE GLOB WAS NARROWER THAN THE NOUN, and that cost two teeth (found 2026-07-25).
+      # It read `*_binding_deployed_tooth.rs` and matched 8 of the 13 tooth/teeth files in
+      # `circuit-prove/tests/`. Five were invisible to it. Three of those five carry no
+      # `#[ignore]` at all, so `cargo test --workspace` already runs them and nothing was
+      # lost — but the other two are `#[ignore]`d minute-scale folds that ran NOWHERE:
+      #
+      #   * `apex_shrink_bn254_tooth.rs`            — THE wrap capstone: one real 2-turn
+      #                                               fold + a BN254-native-hash shrink prove
+      #   * `private_graph_rewrite_deployed_tooth.rs` — real private-graph HidingFri +
+      #                                               deployed direct-IR2 whole-chain recursion
+      #
+      # Both are exactly the shape this lane exists to arm, and both were `#[ignore]`d (so
+      # ci.yml skipped them) AND unmatched by the glob (so the nightly skipped them too).
+      # The glob now spans the NOUN — any `*tooth*`/`*teeth*` file — because the naming
+      # convention is what a new tooth follows, not one particular suffix.
+      #
+      # AND A DERIVED LIST STILL NEEDS A FLOOR. Deriving instead of transcribing stops the
+      # list going STALE; it does not stop it going EMPTY or SHRINKING. A glob that stops
+      # matching (a rename, a directory move) yields a green lane that ran nothing, which is
+      # the failure mode this whole workflow is a response to. So both counts are floored
+      # against a MEASURED baseline, and the run's own libtest output — not its exit code —
+      # is what proves the teeth executed.
       - name: Arm the deployed binding teeth
         run: |
-          set -euo pipefail
-          # DERIVED FROM THE TOOTH FILES, NOT TRANSCRIBED. This was eight hand-typed `--test`
-          # flags: right the day they were written, and one new tooth file away from a tooth that
-          # runs NOWHERE with nothing red — which is precisely the hole this workflow exists to
-          # close (a tooth nothing runs provides zero assurance; they were documentation that
-          # compiled). A transcription of a growing set cannot go red, it just covers less, so the
-          # arming list is not allowed to be one.
+          set -uo pipefail
+          # Measured 2026-07-25: 13 tooth/teeth files in circuit-prove/tests/, carrying 17
+          # `#[ignore]`d teeth under the old 8-file glob. Floors are a RATCHET — raise them
+          # when the set grows; never lower one to make a red lane green.
+          FLOOR_FILES=13
+          FLOOR_TEETH=17
           shopt -s nullglob
           TEETH=()
-          for f in circuit-prove/tests/*_binding_deployed_tooth.rs; do
+          FILES=()
+          for f in circuit-prove/tests/*tooth*.rs circuit-prove/tests/*teeth*.rs; do
+            FILES+=("$f")
             TEETH+=(--test "$(basename "$f" .rs)")
           done
-          if [ "${#TEETH[@]}" -eq 0 ]; then
-            echo "armed-teeth: FATAL — derived NO binding teeth from" >&2
-            echo "  circuit-prove/tests/*_binding_deployed_tooth.rs. Arming nothing would make" >&2
-            echo "  this lane GREEN having run zero adversarial tests — the exact failure it" >&2
-            echo "  exists to prevent. Re-point the glob; never let it come back empty." >&2
+          n_files=${#FILES[@]}
+          echo "armed-teeth: derived $n_files tooth/teeth file(s):"
+          printf '  %s\n' "${FILES[@]}"
+          if [ "$n_files" -lt "$FLOOR_FILES" ]; then
+            echo "::error::armed-teeth derived $n_files tooth file(s), below the measured floor of $FLOOR_FILES."
+            echo "::error::Arming fewer teeth than exist makes this lane GREEN over tests it never ran —"
+            echo "::error::the exact failure it exists to prevent. Re-point the glob, or (if teeth were"
+            echo "::error::deliberately deleted) lower FLOOR_FILES in the SAME commit that deletes them."
             exit 1
           fi
-          echo "armed-teeth: arming $(( ${#TEETH[@]} / 2 )) deployed binding teeth:"
-          printf '  %s\n' "${TEETH[@]}" | paste - - | sed 's/--test\t*//'
           cargo test -p dregg-circuit-prove --release --no-fail-fast \
             "${TEETH[@]}" \
-            -- --ignored --nocapture
+            -- --ignored --nocapture 2>&1 | tee armed-teeth.log
+          status=${PIPESTATUS[0]}
+          # THE FLOOR ON WHAT ACTUALLY RAN. `cargo test` exits 0 for a binary that matched no
+          # test, so an exit code cannot tell "17 teeth bit" from "the filter matched nothing".
+          # Sum libtest's own report instead; a zero here is a hard failure, not a quiet pass.
+          ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' armed-teeth.log \
+                 | awk '{s+=$1+$2} END {print s+0}')
+          echo "armed-teeth: $ran tooth assertion(s) actually executed (floor $FLOOR_TEETH)."
+          if [ "$ran" -lt "$FLOOR_TEETH" ]; then
+            echo "::error::only $ran armed tooth(s) executed, below the measured floor of $FLOOR_TEETH."
+            echo "::error::A lane that runs fewer teeth than it claims is a lane reporting on tests"
+            echo "::error::that did not happen. Do not lower the floor to clear this."
+            exit 1
+          fi
+          exit "$status"
 
   # THE HARD-MODE LANE. Every load-bearing verified-gate test in `dregg-node` opens with
   # `if !<export>_available() { eprintln!("SKIP"); return; }` — reporting `ok` having asserted
@@ -158,6 +226,7 @@ jobs:
   # can FETCH the seed lean-seed.yml publishes for Linux-x86_64 — which is what ubuntu-latest is.
   lean-hard-mode:
     name: Verified-gate hard mode (DREGG_TEST_REQUIRE_LEAN=1)
+    if: github.event_name != 'pull_request'
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 180
     steps:
@@ -247,8 +316,9 @@ jobs:
     # failure (never on cancelled/skipped — lean-hard-mode is dispatch-gated and is
     # `skipped` on every scheduled run).
     if: >-
-      ${{ always() && (needs.binding-teeth.result == 'failure'
-          || needs.lean-hard-mode.result == 'failure') }}
+      ${{ always() && github.event_name != 'pull_request'
+          && (needs.binding-teeth.result == 'failure'
+              || needs.lean-hard-mode.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -280,3 +350,76 @@ jobs:
           else
             gh issue create --title "${TITLE}" --body-file /tmp/body.md
           fi
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE PR-VISIBLE HALF. Runs on `pull_request` only, runs no folds, costs seconds.
+  # It answers the one question a reviewer cannot otherwise ask from the checkmark:
+  # "are the deployed binding teeth currently biting, and is the nightly still alive?"
+  #
+  # It reads the workflow's OWN run history through the API rather than re-running
+  # anything. Two hard reds, both argued in the `on:` block above: a failing last
+  # nightly, and a schedule that has stopped firing.
+  nightly-verdict:
+    name: Nightly armed-teeth verdict (mirrored onto this PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Read the last completed scheduled run of this workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # A fork PR gets a read-only token that cannot always reach the Actions API.
+          # Say so and pass rather than red a contributor's PR for our infrastructure.
+          if ! runs=$(gh api "repos/${REPO}/actions/workflows/armed-teeth.yml/runs?event=schedule&status=completed&per_page=1" 2>/dev/null); then
+            echo "::notice::Actions API unreachable from this PR (fork token). Nightly verdict not mirrored."
+            exit 0
+          fi
+          count=$(printf '%s' "$runs" | jq -r '.total_count // 0')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::this workflow has NO completed scheduled run. Either the nightly has"
+            echo "::error::never fired, or GitHub disabled the schedule (it does this silently on"
+            echo "::error::repositories with no recent activity). The deployed binding teeth are"
+            echo "::error::therefore running NOWHERE, which is the state this workflow was created"
+            echo "::error::to end. Trigger it once via workflow_dispatch and confirm the cron fires."
+            exit 1
+          fi
+          concl=$(printf '%s' "$runs" | jq -r '.workflow_runs[0].conclusion')
+          when=$(printf '%s'  "$runs" | jq -r '.workflow_runs[0].updated_at')
+          url=$(printf '%s'   "$runs" | jq -r '.workflow_runs[0].html_url')
+          age_h=$(( ( $(date -u +%s) - $(date -u -d "$when" +%s) ) / 3600 ))
+          {
+            echo "### Nightly armed-teeth verdict"
+            echo
+            echo "- last scheduled run: **${concl}** (${age_h}h ago)"
+            echo "- run: ${url}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "last scheduled run: ${concl}, ${age_h}h ago — ${url}"
+
+          # 1. THE SCHEDULE IS DEAD. Nothing else in this repository can notice this:
+          #    `page-on-red` only fires from inside a run that happened.
+          if [ "$age_h" -gt 48 ]; then
+            echo "::error::the last completed scheduled armed-teeth run is ${age_h}h old (cron is"
+            echo "::error::daily). The nightly has stopped firing — GitHub disables schedules"
+            echo "::error::silently — so the deployed binding teeth are once again running nowhere."
+            echo "::error::Re-enable the schedule; do not delete this check to clear it."
+            exit 1
+          fi
+
+          # 2. THE TEETH ARE RED. Deliberately merge-blocking: a review conducted against a
+          #    green wall while the deployed binding teeth are broken is a review of a claim
+          #    nobody checked. The escape is fixing the teeth (see the header's root-cause
+          #    note on the producer/descriptor drift), never muting this job.
+          if [ "$concl" != "success" ]; then
+            echo "::error::the last nightly armed-teeth run concluded '${concl}'. The DEPLOYED"
+            echo "::error::light-client binding teeth are not biting. This blocks the PR on"
+            echo "::error::purpose: ci.yml stayed green through 11 of 17 teeth failing every night"
+            echo "::error::and the checkmark said nothing. Triage ${url}."
+            exit 1
+          fi
+          echo "nightly armed-teeth: green (${age_h}h ago)."

@@ -154,3 +154,148 @@ file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/tr
 file docs/deos/artifacts/direct-logic-dregg-workloads-2026-07-22-stability-v2/verify-transcript-sweep.rs
 
 # Rows go below this line. Keep it empty.
+
+# ── NEVER-RUN: `never-run ` ROWS (the execution sweep) ───────────────────────────────
+# The compile-fail ratchet catches a target rustc REFUSES. The mod sweep catches a file
+# rustc NEVER OPENS. This third sweep catches the quietest one of all: a target that
+# compiles, is wired, is named in a manifest — and that NO WORKFLOW CAN EXECUTE.
+#
+# `scripts/check-never-run-targets.py` (the `execution sweep` step of the SAME
+# `clippy-correctness` job) is the reader. Rows are prefixed `never-run ` so all three
+# readers partition one list:
+#
+#     never-run <package> <kind> <name>   # verdict, why, and what would arm it
+#
+# Reproduce locally:  python3 scripts/check-never-run-targets.py --explain
+#
+# ⚠ WHY THIS ONE IS WORSE THAN `#[ignore]`. An ignored test at least PRINTS `ignored`.
+# These print nothing. Cargo emits no line whatsoever for a target whose
+# `required-features` are off — not a skip, not a count, nothing — so a green run is
+# indistinguishable from a green run that covered them. A whole-file
+# `#![cfg(feature = "x")]` is worse still: the binary is built, executes, and reports
+# `test result: ok. 0 passed; 0 failed`, which reads exactly like a passing suite.
+#
+# ⚠⚠ DO NOT COUNT THESE FROM THE MANIFESTS. The sweep that discovered this population
+# did, and reported 32 against a true 63 — wrong in BOTH directions at once. Cargo
+# UNIFIES features across a `--workspace` resolve, INCLUDING THROUGH DEV-DEPENDENCIES:
+# `dreggnet-market` dev-depends on `dreggnet-catalog` with
+# `features = ["private-fhegg-game-consequence"]`, that turns on
+# `dreggnet-market/private-attested-clearing`, which turns on `private-clearing` AND
+# `fhegg-fhe/amm-input-binding`. So FIFTEEN targets whose manifests say
+# `required-features = ["amm-input-binding"]` / `["private-clearing"]` — counted as dark
+# by the hand sweep — are ACTIVE on every `cargo test --workspace` and always were.
+# Conversely `lean-seed.yml` passes `--features lean-lib`, which arms nothing, because it
+# is a `cargo run` and `cargo build/run --bin` never compiles a test target. The oracle
+# is CARGO'S OWN RESOLVE, and a `required-features` line is not evidence in either
+# direction.
+#
+# THE VERDICT IS PER-ROW AND THE THREE ANSWERS DIFFER. "Expensive" wants a nightly.
+# "Environment" wants a seeded runner or an honest, PRINTED skip. "Forgotten" wants
+# nothing but the wiring, and every row under that heading is a guard that could be
+# green this week. Do not apply one policy to all of them.
+
+# ── EXPENSIVE (28): real recursion folds, FHE, or MPC-TLS 2PC. A nightly, not a push. ─
+# These are the class `armed-teeth.yml` already exists for: minutes-to-hours of genuine
+# proving. Putting them on the per-push gate is how the gate gets deleted. The residual
+# is that no nightly arms them YET — `armed-teeth.yml` covers `dregg-circuit-prove`'s
+# `#[ignore]`d teeth only, and these are gated by FEATURE rather than by `#[ignore]`, so
+# `--run-ignored` cannot reach them. Owner: the crate named in each row.
+never-run dregg-braid-hook test weld_canary   # `prove` mints a wide Custom leg and drives the DEPLOYED app-root fold (plonky3). Real prover.
+never-run dregg-entity-compose test leaf_prove   # `prove` = the SLOW real-STARK leaf prove; its own doc gives the `--ignored` command.
+never-run dreggnet-companion test wing_weld   # `prove` forwards to the hook's real fold for `wing::Wing::seal`.
+never-run dreggnet-party test away_team   # `private-role-assignment` links the heavy proof PRODUCER (dregg-circuit-prove + plonky3).
+never-run dreggnet-market test dark_amm_collective_session   # `dark-amm-game`: BFV producer/verifier boundary + HidingFri tower.
+never-run dreggnet-market test dark_amm_collective_worker   # `dark-amm-game`, ditto — the multi-process worker half.
+never-run dreggnet-market test dark_amm_game   # `dark-amm-game`, ditto.
+never-run dreggnet-market test dark_amm_private_tool   # `dark-amm-game`, ditto.
+never-run dreggnet-market test dark_amm_proved_game   # `dark-amm-game`, ditto — the PROVED variant, the most expensive of the set.
+never-run dreggnet-market test dark_amm_same_opening_game   # `dark-amm-game`, ditto.
+never-run dreggnet-market test dark_amm_same_opening_tool   # `dark-amm-game`, ditto.
+never-run dreggnet-web test dark_amm_game   # `dark-amm-game` through the web adapter; same tower.
+never-run dreggnet-web test dark_amm_proved_game   # `dark-amm-game` through the web adapter; same tower.
+never-run dreggnet-web test fhegg_operation   # `fhegg-settlement` pulls the full TFHE stack (its own manifest says so).
+never-run dreggnet-web test private_raid_operation   # `private-raid-operation` = real HidingFri-backed raid assignment.
+never-run dreggnet-web test private_preference_operation   # `private-preference-operation`, same HidingFri tower.
+never-run dreggnet-web test private_fair_shuffle_operation   # `private-fair-shuffle-operation`, same HidingFri tower.
+never-run dreggnet-web test private_quest_operation   # `private-quest-operation`, same HidingFri tower.
+never-run dreggnet-web test private_chat_affordances   # needs THREE of the private-operation towers at once.
+never-run dreggnet-web test private_operation_no_viewer   # `private-preference-operation`; the no-viewer boundary assertion.
+never-run dreggnet-web test private_operation_web_boundary   # needs three private-operation towers at once.
+never-run dreggnet-web test public_shielded_games   # `public-shielded-games` pulls every completed mechanic's owning verifier stack.
+never-run fhegg-fhe test tfhe_high_level_wgpu   # `tfhe-integer` compiles tfhe-rs 1.6 (a monster) AND wants a GPU adapter. See ENVIRONMENT note below.
+never-run fhegg-fhe test tfhe_wgpu_blind_rotation   # `tfhe-integer`, ditto.
+never-run fhegg-fhe test tfhe_wgpu_cmux   # `tfhe-integer`, ditto.
+never-run fhegg-fhe test tfhe_wgpu_ntt_crossover   # `tfhe-integer`, ditto.
+never-run fhegg-fhe test tfhe_wgpu_parity   # `tfhe-integer`, ditto.
+never-run fhegg-fhe test tfhe_wgpu_pbs_deployed_envelope   # `tfhe-integer`, ditto.
+never-run fhegg-fhe test tfhe_wgpu_pbs_extract_keyswitch   # `tfhe-integer`, ditto.
+#
+# ⚠ THE SEVEN `tfhe-*` ROWS ARE DOUBLE-DARK, and turning the feature on does NOT fix
+# them. Every one opens with `if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
+# eprintln!("skipped"); return; }` — the SELF-SKIPPING-TEST shape this repository has now
+# found in eight costumes in one day. So a lane that pays tfhe-rs's compile cost and does
+# not also set `DREGG_REQUIRE_WGPU=1` on a box with a real adapter buys a suite that
+# reports `ok` having asserted nothing. Their `ristretto_*_wgpu_required` siblings show
+# the correct shape: `#[ignore]` + a HARD `assert_eq!(env, Ok("1"))` + a refusal of a
+# software adapter, so an opted-in lane cannot hollowly pass and a GPU-less lane skips
+# EXPLICITLY. Fixing the polarity is the fhegg-fhe lane's, not a wiring change.
+
+# ── ENVIRONMENT (12): needs a seeded runner, an adapter, or a runtime CI does not have. ─
+# The right answer here is a seeded runner where one is affordable, and an HONEST,
+# PRINTED skip where it is not — never silence.
+#
+# FOUR ROWS WERE HERE AND ARE NOW ARMED INSTEAD OF LISTED. `dregg-lean-ffi`'s
+# `handler_cutover_probe`, `deployed_constraint_probe`, `multiway_tug_oracle_probe` and
+# `embeddable_runtime_probe_linux` needed a linked `libdregg_lean.a` — and ci.yml's
+# `lean-marshal-gate` job already FETCHES one. The environment was not missing; nobody
+# had pointed a `--test` at them. They now run there, under an assertion-count floor of
+# 18, because every one of them reports `ok. 0 passed` rather than failing when its cfg
+# is off. "Needs an environment" is a verdict to CHECK, not to assume: three of these
+# four cost nothing but a line.
+never-run fhegg-fhe test party_mpc_certified_preprocessing   # `verified-pq-runtime-tests` links dregg-lean-ffi for the Lean-verified ML-DSA cores, and re-execs itself as a child process.
+never-run fhegg-fhe test party_mpc_preprocessing_use   # `verified-pq-runtime-tests`, ditto.
+never-run fhegg-fhe test distributed_threshold_committee   # `verified-pq-runtime-tests`; spawns THREE party processes + a relying party via CARGO_BIN_EXE.
+never-run deos-hermes test hermes_runs_js   # `js-agent` pulls deos-js (real SpiderMonkey/mozjs) — its own manifest calls it "the mozjs elephant".
+never-run deos-hermes test hermes_authors_cards   # `js-agent`, ditto.
+never-run deos-hermes test hermes_authors_card_via_run_js   # `js-agent`, ditto.
+never-run deos-hermes test hermes_composes_multi_cell   # `js-agent`, ditto.
+never-run deos-hermes test agent_memory_as_umem   # `js-agent`, ditto.
+never-run deos-hermes test paid_agent_drives_the_world   # `js-agent`, ditto.
+never-run deos-hermes test red_team_run_js_server_surface   # `js-agent`, ditto — and it is a RED-TEAM surface test, so its darkness is the expensive kind.
+never-run deos-hermes test node_backed_hands   # `node-brain`: a confined brain driving a REMOTE node's World over a granted egress door.
+never-run deos-hermes test node_backed_round_trip   # `node-brain`, ditto.
+#
+# ⚠ PLATFORM DARKNESS, WHICH THIS SWEEP CANNOT SEE AND WHICH ALREADY COST.
+# `scripts/check-lean-marshal.sh` (ci.yml's `lean-marshal-gate`) arms exactly two of
+# dregg-lean-ffi's SIX whole-file `#![cfg(feature = "lean-lib")]` probes by name:
+# `embeddable_runtime_probe` and `overspend_probe`. So the four above are unarmed — but
+# `embeddable_runtime_probe` is ALSO `#![cfg(target_os = "macos")]` and that job runs on
+# `ubuntu-latest`, so it has reported `ok. 0 passed` on every CI run since it was wired,
+# while `embeddable_runtime_probe_linux` — the Linux twin written precisely for that
+# runner — is named by nothing at all. One probe runs empty, its twin never runs, and
+# the gate is green. This sweep keys on FEATURES, not on the runner's OS, so it can see
+# the twin and not the empty one. Stated, not hidden.
+
+# ── ENVIRONMENT / PLATFORM (3) ───────────────────────────────────────────────────────
+never-run starbridge-web test pty_ws_e2e   # `pty-ws-server`: a real PTY + websocket server end to end.
+never-run starbridge-web test web_panes_wasm   # `gpui-web` + `target_arch = "wasm32"`: needs wasm-pack in a browser, not `cargo test`.
+never-run starbridge-v2 test migrate_shell_dispatch   # `process-pd`: unix fork/socketpair + seatbelt-or-LSM sandbox; also needs `embedded-executor`.
+
+# ── FORGOTTEN (16): nothing but wiring stands between these and a green run. ──────────
+# Every row here is cheap, hosted-runnable, and dark for no reason anyone chose. This is
+# the heading to empty first.
+never-run deos-view test discord_projection_renders_card   # `discord` is gpui-free and deos-js-free — serde + serenity builders, the FOURTH backend over the one IR. Costs nothing.
+never-run deos-view test cross_surface_affordance_differential   # needs `web`+`wechat`+`discord`; the resolve already has web and wechat, so ONLY `discord` is missing. This is the differential that proves four surfaces agree.
+never-run dregg-tee-produce test fixture_loop   # `fixture-backend` is explicitly the NO-ENCLAVE aid ("tests this crate with no enclave anywhere"). Nothing external required.
+never-run dreggnet-web test binary_artifact   # `hosted-binary-operations = []` — an EMPTY feature. It pulls no dependency and costs no compile time; three guards sit behind a flag that does nothing but exist.
+never-run dreggnet-web test private_raid_catalog   # `hosted-binary-operations`, the same empty feature.
+never-run dreggnet-web test private_raid_player_journey   # `hosted-binary-operations`, the same empty feature.
+never-run dreggnet-market test dark_pool_offering   # `dark-pool-offering` is DELIBERATELY the light one — its own manifest: "mounting a pool costs a BFV key ceremony and not a prover". 8 tests.
+never-run dreggnet-market test oracle_pit_descent_market   # `oracle-pit` rides BFV under an n-of-n collective key and settles by EXACT re-execution — no proof tower. 7 tests.
+never-run dreggnet-catalog test private_bazaar_production_relation   # `private-bazaar-live` needs a pinned roster/reward/executor policy + a durable authority directory. Deployment config, not infrastructure.
+never-run dreggnet-telegram test private_bazaar_live_mount   # `private-bazaar-live`, ditto.
+never-run dreggnet-web test private_bazaar_shared_contract   # `private-bazaar-live`, ditto.
+never-run attested-dm test dm_model_provenance   # `tlsn-live` runs the MPC-TLS 2PC REAL-LOCALLY (vendored TLSNotary, local Notary+Prover). Heavy to compile, but needs no external network.
+never-run dregg-deco-prove test tlsn_live_roundtrip   # `tlsn-live`, ditto — local 2PC roundtrip.
+never-run dungeon-on-dregg test bedrock_brain_live   # `tlsn-live`, ditto.
+never-run deos-hermes test narrator_model_provenance_live   # `zk-live` reuses zkoracle-prove's local `tlsn-live`; the LIVE-Anthropic session is separately named as an operational remainder.
