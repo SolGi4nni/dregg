@@ -51,6 +51,19 @@ use dregg_turn::{
     ComputronCosts, TurnExecutor,
 };
 
+// Test-only instrumentation: count `History::replay_to` invocations on the
+// current thread, so the panel-build test can PROVE the O(1) umem-boundary path
+// (`reify_to`) replaced the old per-frame genesis re-execution (#4). Thread-local
+// so parallel tests never interfere; zero cost in non-test builds.
+#[cfg(test)]
+thread_local! {
+    static REPLAY_TO_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+fn replay_to_call_count() -> usize {
+    REPLAY_TO_CALLS.with(std::cell::Cell::get)
+}
+
 // ===========================================================================
 // The recorded history
 // ===========================================================================
@@ -224,9 +237,12 @@ impl History {
 
     /// The canonical root tooth recorded after `step` steps (`step` in
     /// `0..=len()`; `step = 0` is the empty-ledger root, `step = len()` the
-    /// head). Panics out of range.
-    pub fn root_at(&self, step: usize) -> [u8; 32] {
-        self.roots[step]
+    /// head). Returns `None` for a `step` beyond the recorded head — an
+    /// unclamped scrub index lands as `None`, never a panic (the accessor is
+    /// index-safe; every caller already clamps, so `None` is the guard rail, not
+    /// a routine outcome).
+    pub fn root_at(&self, step: usize) -> Option<[u8; 32]> {
+        self.roots.get(step).copied()
     }
 
     /// All checkpoints (every step is a landing point with a recorded root).
@@ -298,6 +314,9 @@ impl History {
     /// model — re-executing every recorded turn up to k against a fresh
     /// executor over a fresh ledger.
     pub fn replay_to(&self, k: usize) -> Result<Ledger, ReplayError> {
+        // Instrumented (test builds only): a genesis re-execution from scratch.
+        #[cfg(test)]
+        REPLAY_TO_CALLS.with(|c| c.set(c.get() + 1));
         if k > self.steps.len() {
             return Err(ReplayError::OutOfRange {
                 step: k,
@@ -864,6 +883,13 @@ pub struct CursorState {
     pub root: [u8; 32],
     /// True iff the reconstructed root matched the recorded tooth (verified).
     pub root_verified: bool,
+    /// Which reconstruction path restored the cursor: `Some(UmemBoundary)` for the
+    /// O(1) [`reify_ledger`] inverse fold (the fast path the panel build now takes,
+    /// #4), `Some(ReplayFallback)` for the genesis-replay safety net (a cell outside
+    /// the faithful class), or `None` if the reconstruction was refused
+    /// (`root_verified == false`). Surfaced so the cockpit — and the build test —
+    /// can SEE the umem boundary is the path actually exercised per frame.
+    pub scrub_source: Option<ScrubSource>,
     /// The cells at the cursor (id, balance, caps), sorted by id.
     pub cells: Vec<(CellId, i64, usize)>,
 }
@@ -880,9 +906,18 @@ pub struct ForkSummary {
 
 impl ReplayPanelModel {
     /// Build the panel model for `history` with the scrubber at `cursor`,
-    /// optionally pinning a `fork` summary. Performs the VERIFIED replay at the
-    /// cursor (and the prev-step diff); a replay error is surfaced as an
-    /// unverified cursor state rather than a panic.
+    /// optionally pinning a `fork` summary.
+    ///
+    /// The cursor reconstruction (and the prev→cursor diff) restore through the
+    /// O(1) UMEM BOUNDARY ([`History::reify_to`] — the `reify_ledger` inverse fold,
+    /// root-verified), NOT genesis re-execution. The old build ran
+    /// `replay_to(cursor)` + `diff(cursor-1, cursor)` = THREE genesis re-executions
+    /// (per-turn crypto) EVERY FRAME the Replay panel was visible (#4); this
+    /// consolidates it onto the same reify path the live time-scrub already uses
+    /// ([`crate::time_travel`]). The reified cursor ledger is REUSED for the diff, so
+    /// a frame pays at most two boundary restores and — on the faithful class — ZERO
+    /// genesis replays. A refused reconstruction is surfaced as an unverified cursor
+    /// state (a red mismatch pill), never a panic.
     pub fn build(history: &History, cursor: usize, fork: Option<&Fork>) -> Self {
         let timeline = history
             .checkpoints()
@@ -899,32 +934,50 @@ impl ReplayPanelModel {
             .collect();
 
         let cursor = cursor.min(history.len());
-        let cursor_state = match history.replay_to(cursor) {
-            Ok(ledger) => {
+        // The recorded root tooth (always in range — cursor is clamped to len, and
+        // `roots` has one entry per landing 0..=len); default only on the impossible
+        // out-of-range, which degrades to a visibly-empty root rather than panicking
+        // on the paint path.
+        let cursor_root = history.root_at(cursor).unwrap_or_default();
+        let (cursor_state, cursor_ledger) = match history.reify_to(cursor) {
+            Ok((ledger, source)) => {
                 let mut cells: Vec<(CellId, i64, usize)> = ledger
                     .iter()
                     .map(|(id, c)| (*id, c.state.balance(), c.capabilities.len()))
                     .collect();
                 cells.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                (
+                    CursorState {
+                        step: cursor,
+                        root: cursor_root,
+                        root_verified: true,
+                        scrub_source: Some(source),
+                        cells,
+                    },
+                    Some(ledger),
+                )
+            }
+            Err(_) => (
                 CursorState {
                     step: cursor,
-                    root: history.root_at(cursor),
-                    root_verified: true,
-                    cells,
-                }
-            }
-            Err(_) => CursorState {
-                step: cursor,
-                root: history.root_at(cursor.min(history.len())),
-                root_verified: false,
-                cells: Vec::new(),
-            },
+                    root: cursor_root,
+                    root_verified: false,
+                    scrub_source: None,
+                    cells: Vec::new(),
+                },
+                None,
+            ),
         };
 
-        let diff_from_prev = if cursor > 0 {
-            history.diff(cursor - 1, cursor).ok()
-        } else {
-            None
+        // The prev→cursor diff — the SAME O(1) boundary restore for the previous
+        // landing, reusing the already-reified cursor ledger (no genesis replay).
+        // Matches the old `history.diff(cursor - 1, cursor)` (prev vs cursor).
+        let diff_from_prev = match (cursor_ledger, cursor.checked_sub(1)) {
+            (Some(cur), Some(prev_step)) => history
+                .reify_to(prev_step)
+                .ok()
+                .map(|(prev, _src)| diff_ledgers(&prev, &cur)),
+            _ => None,
         };
 
         let fork = fork.map(|f| ForkSummary {
@@ -1264,7 +1317,7 @@ mod tests {
             let rebuilt = h.replay_to(k).expect("replay must verify");
             // The verified replay's own root equals the recorded tooth.
             let mut rebuilt = rebuilt;
-            assert_eq!(rebuilt.root(), h.root_at(k), "step {k} root tooth");
+            assert_eq!(rebuilt.root(), h.root_at(k).unwrap(), "step {k} root tooth");
         }
         // The head replay reproduces the LIVE ledger exactly (root agreement).
         let mut head = h.replay_to(h.len()).unwrap();
@@ -1288,7 +1341,7 @@ mod tests {
                 "step {k} restored via the umem boundary (the faithful class)"
             );
             // Root-verified: the restored boundary reproduces the recorded tooth…
-            assert_eq!(reified.root(), h.root_at(k), "step {k} root tooth");
+            assert_eq!(reified.root(), h.root_at(k).unwrap(), "step {k} root tooth");
             // …and equals the independent genesis-replay reconstruction exactly.
             let mut replayed = h.replay_to(k).expect("replay reference");
             assert_eq!(
@@ -1309,7 +1362,7 @@ mod tests {
         // Tamper the recorded root tooth at step 3: the umem-boundary restore must
         // refuse it (the reified ledger commits to the honest root, not the forge).
         let forged = {
-            let mut r = h.root_at(3);
+            let mut r = h.root_at(3).unwrap();
             r[0] ^= 0xff;
             r
         };
@@ -1352,7 +1405,7 @@ mod tests {
         for k in 2..steps.len() {
             assert_eq!(
                 steps[k].root_after(),
-                Some(h.root_at(k + 1)),
+                h.root_at(k + 1),
                 "committed step {k} per-step tooth == History.roots[{}]",
                 k + 1
             );
@@ -1413,7 +1466,7 @@ mod tests {
         for step in h.steps() {
             apply_step(&ex, &mut scratch, step).unwrap();
         }
-        assert_eq!(scratch.root(), h.root_at(h.len()));
+        assert_eq!(scratch.root(), h.root_at(h.len()).unwrap());
     }
 
     // --- checkpoint ⊕ overlay == replay (CrashRecovery identity) -------------
@@ -1432,7 +1485,7 @@ mod tests {
                     via_cp.root(),
                     "checkpoint {cp} ⊕ overlay != genesis replay at k={k}"
                 );
-                assert_eq!(via_cp.root(), h.root_at(k));
+                assert_eq!(via_cp.root(), h.root_at(k).unwrap());
             }
         }
     }
@@ -1445,7 +1498,7 @@ mod tests {
         // Tamper the recorded root at step 3 (anti-substitution): replay must
         // refuse it (the reconstructed root won't match the forged tooth).
         let forged = {
-            let mut r = h.root_at(3);
+            let mut r = h.root_at(3).unwrap();
             r[0] ^= 0xff;
             r
         };
@@ -1466,7 +1519,7 @@ mod tests {
     fn fork_diverges_and_leaves_the_mainline_intact() {
         let (h, _l, a, b) = fixture();
         // Mainline head root before forking.
-        let mainline_head = h.root_at(h.len());
+        let mainline_head = h.root_at(h.len()).unwrap();
 
         // Branch at step 3 (after t1: a=900,b=100) with a DIFFERENT turn:
         // transfer a bigger amount than the mainline's t2.
@@ -1494,7 +1547,7 @@ mod tests {
 
         // MAINLINE INTACT: the history's recorded roots are unchanged, and a
         // fresh replay still lands on the same head root.
-        assert_eq!(h.root_at(h.len()), mainline_head);
+        assert_eq!(h.root_at(h.len()).unwrap(), mainline_head);
         let mut head = h.replay_to(h.len()).unwrap();
         assert_eq!(head.root(), mainline_head);
     }
@@ -1604,10 +1657,40 @@ mod tests {
             model.cursor_state.root_verified,
             "cursor reconstruction must verify"
         );
-        assert_eq!(model.cursor_state.root, h.root_at(5));
+        assert_eq!(model.cursor_state.root, h.root_at(5).unwrap());
         // The timeline has one entry per landing (len+1).
         assert_eq!(model.timeline.len(), h.len() + 1);
         // The cursor is mid-history so a prev-step diff exists.
+        assert!(model.diff_from_prev.is_some());
+    }
+
+    #[test]
+    fn panel_build_restores_via_umem_boundary_not_per_frame_genesis_replay() {
+        // #4: the old `ReplayPanelModel::build` reconstructed the cursor via
+        // `replay_to(cursor)` + `diff(cursor-1, cursor)` = THREE genesis re-executions
+        // (per-turn crypto) EVERY frame the Replay panel was visible. It now restores
+        // through the O(1) umem boundary (`reify_to`). PROVE it on a fully-faithful
+        // history (the `fixture()` used by `reify_to_restores_via_umem_boundary_*`,
+        // where every step reifies via the boundary — no fallback): a build performs
+        // ZERO `replay_to` calls (no genesis re-execution), and the cursor reports the
+        // UmemBoundary path.
+        let (h, _l, _a, _b) = fixture();
+        let before = replay_to_call_count();
+        let model = ReplayPanelModel::build(&h, 3, None);
+        let after = replay_to_call_count();
+        assert_eq!(
+            after - before,
+            0,
+            "panel build must NOT re-execute history from genesis (replay_to) per frame"
+        );
+        assert_eq!(
+            model.cursor_state.scrub_source,
+            Some(ScrubSource::UmemBoundary),
+            "the cursor is restored via the O(1) umem-boundary reify_to, not genesis replay"
+        );
+        // The reconstruction and the prev→cursor diff still render correctly.
+        assert!(model.cursor_state.root_verified);
+        assert_eq!(model.cursor_state.root, h.root_at(3).unwrap());
         assert!(model.diff_from_prev.is_some());
     }
 

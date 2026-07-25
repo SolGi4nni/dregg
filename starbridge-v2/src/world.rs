@@ -128,6 +128,16 @@ pub struct World {
     /// lock-step). NOT a second source of truth — the engine is authoritative;
     /// this is the replay tape's substrate so the recorded roots are real.
     record_ledger: Ledger,
+    /// Whether `record_ledger` still owes a DEFERRED clone of the live ledger
+    /// (#7 — the fork double-clone). A [`World::fork`] used for what-if prediction
+    /// (`simulate`) clones the whole ledger ONCE for the engine substrate; the
+    /// replay-tape clone is DEFERRED (this flag `true`, `record_ledger` empty) and
+    /// only paid — from the engine's pre-turn ledger, exactly the fork snapshot —
+    /// if the fork actually commits ([`Self::ensure_record_ledger`]). A predict
+    /// that never commits pays only one whole-ledger clone, not two. The live world
+    /// (`new`/`open`) materializes eagerly, so this is always `false` there and
+    /// `ensure_record_ledger` is a no-op on the live path (zero behavior change).
+    record_ledger_deferred: bool,
     /// The history recorder's executor (pinned to the same timestamp/costs as
     /// the engine's), used only to re-derive the recorded receipts/roots.
     record_exec: TurnExecutor,
@@ -268,6 +278,8 @@ impl World {
             engine: DreggEngine::new(config),
             history,
             record_ledger: Ledger::new(),
+            // The live world starts empty and grows in lock-step — never deferred.
+            record_ledger_deferred: false,
             record_exec,
             receipts: Vec::new(),
             dynamics: Dynamics::new(),
@@ -718,7 +730,12 @@ impl World {
         // The fork's replay-tape executor (kept in lock-step with the live one so
         // `commit_turn`'s `record_commit` re-derives the SAME post-root as the
         // authoritative engine — the fork stays internally consistent even though
-        // simulate never replays it).
+        // simulate never replays it). Its parallel `record_ledger` is a whole-ledger
+        // clone; on the predict path (fork → inspect, never commit) that second
+        // clone is pure waste, so it is DEFERRED (#7): the fork carries an EMPTY
+        // record_ledger + `record_ledger_deferred = true`, and `ensure_record_ledger`
+        // materializes it from the engine's pre-turn ledger (the fork snapshot) only
+        // when the fork actually commits.
         let mut record_exec = TurnExecutor::new(self.engine.executor().costs.clone());
         record_exec.set_timestamp(self.timestamp);
         record_exec.set_block_height(self.engine.executor().block_height);
@@ -744,7 +761,10 @@ impl World {
             // re-derive past history (its own commit still records onto this tape,
             // harmlessly, so the fork stays internally consistent).
             history: History::with_costs(self.timestamp, self.engine.executor().costs.clone()),
-            record_ledger: self.engine.ledger().clone(),
+            // DEFERRED (#7): no second whole-ledger clone at fork time. Empty until
+            // the fork's first commit materializes it from the pre-turn engine ledger.
+            record_ledger: Ledger::new(),
+            record_ledger_deferred: true,
             record_exec,
             receipts: Vec::new(),
             dynamics: Dynamics::new(),
@@ -786,6 +806,11 @@ impl World {
     /// tooth is captured), and emits the `CellBorn` dynamics. Returns the id.
     fn install_genesis(&mut self, cell: Cell, balance: i64) -> CellId {
         let id = cell.id();
+        // Materialize a deferred replay-tape clone BEFORE the engine insert, so a
+        // fork that genesis-installs before committing records onto the fork snapshot
+        // (not an empty ledger) and record_genesis inserts into a fresh slot. No-op
+        // on the live world (#7).
+        self.ensure_record_ledger();
         // Install into the AUTHORITATIVE engine ledger.
         self.engine
             .ledger_mut()
@@ -813,6 +838,35 @@ impl World {
         // a receipt, so the witness tooth is unchanged — bust the state_root memo.
         self.state_root_memo.set(None);
         id
+    }
+
+    /// Materialize a DEFERRED replay-tape ledger clone (#7 — the fork double-clone).
+    ///
+    /// A [`World::fork`] defers the whole-ledger clone of its replay tape: it carries
+    /// an EMPTY `record_ledger` + `record_ledger_deferred = true`, so a what-if
+    /// prediction that never commits pays only ONE whole-ledger clone (the engine
+    /// substrate). This clones the tape's substrate from the engine's CURRENT ledger
+    /// — which, called before the engine executes the fork's first turn, is exactly
+    /// the fork snapshot (the fork's pre-state) — so the recorded roots re-derive
+    /// identically to an eagerly-cloned fork. Idempotent, and a no-op on the live
+    /// world (never deferred), so it is free to call on every commit / genesis path.
+    fn ensure_record_ledger(&mut self) {
+        if self.record_ledger_deferred {
+            self.record_ledger = self.engine.ledger().clone();
+            self.record_ledger_deferred = false;
+        }
+    }
+
+    /// TEST ONLY (#7): the number of cells in the replay-tape recorder ledger and
+    /// whether its clone is still DEFERRED — so a test can PROVE a predict fork that
+    /// never commits pays no second whole-ledger clone (0 cells + deferred), then
+    /// materializes it on commit.
+    #[cfg(test)]
+    pub(crate) fn record_tape_cells_and_deferred(&self) -> (usize, bool) {
+        (
+            self.record_ledger.iter().count(),
+            self.record_ledger_deferred,
+        )
     }
 
     /// Re-record a cell's current post-state into the durable genesis table (the
@@ -1121,6 +1175,12 @@ impl World {
 
         // Thread the chain head the engine's executor will check.
         turn.previous_receipt_hash = self.engine.executor().get_last_receipt_hash(&turn.agent);
+
+        // Materialize a DEFERRED replay-tape clone (#7) BEFORE the engine mutates the
+        // ledger, so `record_commit` re-executes against the fork's pre-turn snapshot
+        // (this is where a fork finally pays its second clone — a predict that never
+        // reaches here paid nothing). No-op on the live world (never deferred).
+        self.ensure_record_ledger();
 
         // Snapshot the pre-state balances of touched cells so we can describe
         // the flow in the dynamics stream.
@@ -1493,6 +1553,12 @@ impl World {
     /// path until repaired. See the section banner above.
     #[doc(hidden)]
     pub fn collapse(&mut self) -> Result<usize, String> {
+        // Defensive (#7): materialize any deferred replay-tape clone before the
+        // Full re-execution reads/writes it. A fork is always Full (never symbolic),
+        // so it never reaches collapse deferred; a live symbolic world is never
+        // deferred — so this is a no-op today, keeping the invariant robust if the
+        // deferral surface ever widens.
+        self.ensure_record_ledger();
         let buffered = std::mem::take(&mut self.symbolic_turns);
         let n = buffered.len();
 
@@ -2626,6 +2692,56 @@ mod tests {
         assert_eq!(w.cell_count(), 0);
         assert_eq!(w.height(), 0);
         assert!(w.receipts().is_empty());
+    }
+
+    #[test]
+    fn fork_defers_the_record_ledger_clone_until_it_commits() {
+        // #7: fork() used to clone the whole ledger TWICE (engine substrate + the
+        // replay tape). The replay-tape clone is now DEFERRED — a predict/simulate
+        // fork that never commits pays only ONE whole-ledger clone (the engine), not
+        // two. On a large live world that halves the per-hover fork cost.
+        let mut world = World::new();
+        let a = world.genesis_cell(1, 1_000);
+        let b = world.genesis_cell(2, 0);
+        let live_cells = world.ledger().iter().count();
+        assert!(live_cells >= 2);
+
+        // A bare fork (the predict path, before any commit): the engine substrate is
+        // a full clone, but the replay-tape clone has NOT been paid.
+        let mut fork = world.fork();
+        assert_eq!(
+            fork.ledger().iter().count(),
+            live_cells,
+            "the engine substrate IS cloned (a fork must predict against the real state)"
+        );
+        assert_eq!(
+            fork.record_tape_cells_and_deferred(),
+            (0, true),
+            "the second whole-ledger clone (replay tape) is DEFERRED on a predict fork"
+        );
+
+        // Committing on the fork materializes the tape lazily and predicts correctly.
+        let turn = fork.turn(a, vec![transfer(a, b, 100)]);
+        assert!(
+            matches!(fork.commit_turn(turn), CommitOutcome::Committed { .. }),
+            "the fork commits the predicted turn"
+        );
+        let (tape_cells, deferred) = fork.record_tape_cells_and_deferred();
+        assert!(
+            !deferred,
+            "the tape clone is materialized once the fork commits"
+        );
+        assert_eq!(
+            tape_cells, live_cells,
+            "the materialized tape carries the forked cells (the fork snapshot)"
+        );
+        assert_eq!(fork.ledger().get(&a).unwrap().state.balance(), 900);
+        assert_eq!(fork.ledger().get(&b).unwrap().state.balance(), 100);
+
+        // ISOLATION (unchanged): the live world is untouched by the fork's commit.
+        assert_eq!(world.ledger().get(&a).unwrap().state.balance(), 1_000);
+        assert_eq!(world.ledger().get(&b).unwrap().state.balance(), 0);
+        assert_eq!(world.height(), 0, "the live world never advanced");
     }
 
     #[test]
@@ -4028,6 +4144,12 @@ mod tests {
             full.recorded_turns().root_at(full.recorded_turns().len()),
             "collapsed head root tooth == Full head root tooth"
         );
+        // (both are `Some` — the head is always in range — so the Option compare is
+        // a real tooth compare, not a vacuous `None == None`.)
+        assert!(sym
+            .recorded_turns()
+            .root_at(sym.recorded_turns().len())
+            .is_some());
 
         // Every collapsed receipt is real (no longer deferred) and byte-identical.
         for (cr, fr) in sym.receipts().iter().zip(full.receipts().iter()) {

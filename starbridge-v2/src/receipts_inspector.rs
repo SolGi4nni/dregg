@@ -1077,14 +1077,17 @@ impl<'h> TimeTravel<'h> {
                 cells.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
                 TimeLanding {
                     step,
-                    root: self.history.root_at(step),
+                    root: self.history.root_at(step).unwrap_or_default(),
                     root_verified: true,
                     cells,
                 }
             }
             Err(_) => TimeLanding {
                 step,
-                root: self.history.root_at(step.min(self.history.len())),
+                root: self
+                    .history
+                    .root_at(step.min(self.history.len()))
+                    .unwrap_or_default(),
                 root_verified: false,
                 cells: Vec::new(),
             },
@@ -1455,7 +1458,7 @@ mod tests {
         assert!(mid.root_verified);
         assert_eq!(
             mid.root,
-            history.root_at(4),
+            history.root_at(4).unwrap(),
             "the landing root IS replay.rs's recorded tooth"
         );
 
@@ -1484,7 +1487,7 @@ mod tests {
         assert!(h.record_commit(&ex, &mut l, t1).is_some());
 
         let tt = TimeTravel::over(&h);
-        let mainline_head = h.root_at(h.len());
+        let mainline_head = h.root_at(h.len()).unwrap();
 
         // Fork at the branch point (after the genesis installs, before the turn)
         // with a DIFFERENT turn.
@@ -1501,7 +1504,7 @@ mod tests {
         );
 
         // The mainline is intact (its recorded head root is unchanged + replays).
-        assert_eq!(h.root_at(h.len()), mainline_head);
+        assert_eq!(h.root_at(h.len()).unwrap(), mainline_head);
         let mut head = tt.replay_to(h.len()).unwrap();
         assert_eq!(head.root(), mainline_head);
     }
@@ -1516,7 +1519,7 @@ mod tests {
         assert_eq!(tl.events[0].label, "genesis (empty)");
         // Each event's navigable hash IS the recorded canonical root tooth.
         for (k, ev) in tl.events.iter().enumerate() {
-            assert_eq!(ev.hash, Some(history.root_at(k)));
+            assert_eq!(ev.hash, history.root_at(k));
         }
     }
 

@@ -184,7 +184,7 @@ impl TimeCockpitModel {
             }
             Err(_) => (Vec::new(), false, false),
         };
-        let cursor_root = history.root_at(cursor);
+        let cursor_root = history.root_at(cursor).unwrap_or_default();
 
         // The liveness badge: Live iff the cursor names the head (the live present);
         // ReplayedDeterministic once it falls into the past (the image rewound).
@@ -846,7 +846,7 @@ mod tests {
         // The fork LANDED on the parent's recorded root at k (no re-execution drift).
         assert_eq!(
             branch.fork_root,
-            w.recorded_turns().root_at(k),
+            w.recorded_turns().root_at(k).unwrap(),
             "fork_at lands on the recorded tooth"
         );
 

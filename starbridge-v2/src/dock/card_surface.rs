@@ -2650,6 +2650,7 @@ mod tests {
                 step: cursor,
                 root: [cursor as u8; 32],
                 root_verified: verified,
+                scrub_source: None,
                 cells: vec![(CellId([2u8; 32]), 100, 1)],
             },
             diff_from_prev: None,

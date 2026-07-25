@@ -269,7 +269,7 @@ fn reconstruct(history: &History, step: usize, receipt_hash: [u8; 32]) -> GotoCu
     GotoCursor {
         receipt_hash,
         step,
-        root: history.root_at(step),
+        root: history.root_at(step).unwrap_or_default(),
         verified,
         liveness,
         cells,
@@ -486,7 +486,7 @@ mod tests {
         );
         assert_eq!(g1.balance_of(&treasury), Some(900));
         assert_eq!(g1.balance_of(&user), Some(100));
-        assert_eq!(g1.root, w.recorded_turns().root_at(g1.step));
+        assert_eq!(g1.root, w.recorded_turns().root_at(g1.step).unwrap());
 
         // Go to the SECOND turn's receipt: treasury = 1000 − 100 − 200 = 700,
         // user = 300.

@@ -146,7 +146,7 @@ pub fn project(history: &History, live: &Ledger, step: usize) -> RewindProjectio
         // Fail-closed: an unverifiable past renders as NOTHING, not a guess.
         Err(_) => (Ledger::new(), false, false),
     };
-    let root = history.root_at(step);
+    let root = history.root_at(step).unwrap_or_default();
     let changed: HashSet<CellId> = if verified {
         diff_ledgers(&ledger, live)
             .changed_ids()
@@ -603,7 +603,7 @@ impl DeosDesktop {
         let (total, live_height, live_root) = {
             let w = self.world.borrow();
             let h = w.recorded_turns();
-            (h.len(), w.height(), h.root_at(h.len()))
+            (h.len(), w.height(), h.root_at(h.len()).unwrap_or_default())
         };
         let scrub = self.rewind.projection();
         let scrubbing = scrub.is_some();
@@ -859,7 +859,11 @@ mod tests {
         // Step 2: both genesis installs, no transfers yet.
         let p = project(h, w.ledger(), 2);
         assert!(p.verified);
-        assert_eq!(p.root, h.root_at(2), "the projection carries the tooth");
+        assert_eq!(
+            p.root,
+            h.root_at(2).unwrap(),
+            "the projection carries the tooth"
+        );
         assert_eq!(p.ledger.get(&a).unwrap().state.balance(), 1_000);
         assert_eq!(p.ledger.get(&b).unwrap().state.balance(), 0);
         // The diff vs live names exactly the cells the later transfers moved.
