@@ -37,6 +37,24 @@
 //! roll/rarity that is not what the seed produces — fails reverify and **no asset is
 //! minted** ([`LootError::Forged`]). So "loot" cannot be conjured; it must be *drawn*.
 //!
+//! ## What a drop IS, downstream — the typed material kind
+//!
+//! A drop is not just a rarity badge: [`LootDraw::material_kind`] derives the item's typed
+//! crafting kind, `"{class}:{rarity}"` (`"relic:legendary"`, `"salvage:common"`), from the
+//! chest's [`drop_class`] and the FAIR DRAW's rarity. It is **derived, never declared** — a
+//! player cannot present a common drop as a legendary crafting input, because relabelling the
+//! chest changes the loot seed and fails [`reverify_drop`]. That is what lets a forge recipe
+//! demand real dungeon output ("two legendary relics") instead of a faucet label.
+//!
+//! ## Adoption, not re-minting
+//!
+//! [`expected_asset_id`] recomputes the exact address a claimed drop mints at
+//! (`blake3(player_pk ‖ `[`drop_commitment`]`)`), so a downstream sink can ADOPT the
+//! player's existing note by identity — checking the note it was handed is the one this run
+//! really dropped — rather than minting a look-alike in its own ledger. Paired with
+//! [`LootVault::into_assets`] / [`LootVault::assets_mut`] (which hand over the live note
+//! ledger), a relic banked in a run stays ONE object all the way through crafting and trade.
+//!
 //! ## Honest scope
 //!
 //! REAL here: the fair-draw -> owned-transferable-asset mint, the run/seed-bound
@@ -258,7 +276,11 @@ pub fn reverify_drop(draw: &LootDraw) -> Result<(), LootError> {
 /// the run-seed, the loot-seed, the fair roll, the rarity, and the chest. The
 /// [`dreggnet_asset::AssetId`] is derived from `blake3(player_pk ‖ this)`, so the item's
 /// content address itself encodes the drop it came from (its provenance).
-fn drop_commitment(draw: &LootDraw) -> Vec<u8> {
+///
+/// Public because it is half of [`expected_asset_id`]: a downstream layer that ADOPTS an
+/// already-minted loot note (rather than re-minting a look-alike) must be able to recompute
+/// the address the presented note is obliged to have.
+pub fn drop_commitment(draw: &LootDraw) -> Vec<u8> {
     let mut h = blake3::Hasher::new();
     h.update(&(DOMAIN_LOOT_COMMIT.len() as u64).to_le_bytes());
     h.update(DOMAIN_LOOT_COMMIT);
@@ -269,6 +291,51 @@ fn drop_commitment(draw: &LootDraw) -> Vec<u8> {
     h.update(&(draw.chest.len() as u64).to_le_bytes());
     h.update(draw.chest.as_bytes());
     h.finalize().as_bytes().to_vec()
+}
+
+/// **The [`AssetId`] a drop MUST have** if `owner_pk` claimed it — `blake3(owner_pk ‖
+/// [`drop_commitment`]`(draw))`, exactly what [`LootVault::claim`] mints under.
+///
+/// This is the tooth that lets a downstream sink (the forge, a market, a second game) ADOPT
+/// a player's existing loot note by identity instead of re-minting a look-alike from its
+/// display metadata: the adopter recomputes this address from the claimed drop and the
+/// claiming player's key and refuses any note that is not it. Combined with
+/// [`reverify_drop`] (which pins the drop to the run's committed seed), an adopted note is
+/// provably "the item THAT run dropped for THAT player" — a claim recomputable by anyone
+/// holding the run seed, with no access to the ledger.
+pub fn expected_asset_id(draw: &LootDraw, owner_pk: &[u8; 32]) -> AssetId {
+    AssetId::derive(owner_pk, &drop_commitment(draw))
+}
+
+/// The **class** of a drop, read off its chest label — the coarse semantic type the drop's
+/// material kind is built from. A banked descent relic ([`banked_relic_chest`]) is a
+/// `relic`; a named boss kill is a `trophy`; anything else is `salvage`.
+///
+/// A pure function of the (committed, provenance-bound) chest string, so it carries no
+/// forgery surface of its own: a claimant cannot relabel a salvage drop as a relic without
+/// changing the chest, which changes the loot seed, which fails [`reverify_drop`].
+pub fn drop_class(chest: &str) -> &'static str {
+    if chest.starts_with("descent:banked-relic:") {
+        "relic"
+    } else if chest.starts_with("boss:") {
+        "trophy"
+    } else {
+        "salvage"
+    }
+}
+
+impl LootDraw {
+    /// **The typed MATERIAL KIND this drop is, as a crafting input** — `"{class}:{rarity}"`,
+    /// e.g. `"relic:legendary"` for a legendary banked descent relic, `"salvage:common"` for
+    /// an ordinary chest drop.
+    ///
+    /// A pure function of the drop ([`drop_class`] of its chest + the fair draw's rarity), so
+    /// **the fair draw decides what a material IS**. A player cannot present a common drop as
+    /// a legendary crafting input: the kind is derived, never declared. This is what lets a
+    /// recipe demand real dungeon output ("two legendary relics") rather than a faucet label.
+    pub fn material_kind(&self) -> String {
+        format!("{}:{}", drop_class(&self.chest), self.rarity.label())
+    }
 }
 
 /// A minted loot item — a real owned [`dreggnet_asset`] note. Its [`AssetId`] is
@@ -362,9 +429,38 @@ impl LootVault {
         self.world
     }
 
+    /// Borrow the live owned-note world — the same bridge as [`Self::into_assets`] for a
+    /// consumer that must keep the vault (and so its per-item drop records) alive alongside.
+    pub fn assets_mut(&mut self) -> &mut AssetWorld {
+        &mut self.world
+    }
+
     /// The deterministic pubkey of a player label (creating the identity if new).
     pub fn pubkey_of(&mut self, label: &str) -> [u8; 32] {
         self.world.pubkey_of(label)
+    }
+
+    /// The drop a looted item was minted from — the record a downstream sink needs to
+    /// re-verify the item's run provenance ([`reverify_drop`] + [`expected_asset_id`]) when it
+    /// adopts the note.
+    pub fn drop_of(&self, asset_id: AssetId) -> Option<&LootDraw> {
+        self.drops.get(&asset_id.bytes())
+    }
+
+    /// **A player's live looted inventory** — every item they still hold, in a stable
+    /// content-address order (items transferred away or consumed by a sink are gone).
+    pub fn inventory_of(&self, player: &str) -> Vec<AssetId> {
+        self.world
+            .assets_held_by(player)
+            .into_iter()
+            .filter(|id| self.drops.contains_key(&id.bytes()))
+            .collect()
+    }
+
+    /// The typed crafting **material kind** of a looted item — the kind its fair draw fixes
+    /// ([`LootDraw::material_kind`]), not a label anyone declared.
+    pub fn material_kind_of(&self, asset_id: AssetId) -> Option<String> {
+        self.drops.get(&asset_id.bytes()).map(|d| d.material_kind())
     }
 
     /// **Claim a drop as a real owned item** — the forged-claim gate + the mint. The drop
@@ -381,8 +477,19 @@ impl LootVault {
             return Err(LootError::AlreadyClaimed);
         }
 
-        // The mint seed IS the drop commitment, so the asset id encodes the drop.
-        let asset_id = self.world.mint(player, &commit);
+        // The mint seed IS the drop commitment, so the asset id encodes the drop. Minted
+        // fail-closed: if this world ALREADY carries that content address (e.g. the vault was
+        // opened over a ledger a previous run's notes live in), a second "mint" would append a
+        // bogus origin and break the note's lineage — refuse instead of corrupting it.
+        let asset_id = self.world.try_mint(player, &commit).map_err(|e| match e {
+            AssetError::DuplicateMint => LootError::AlreadyClaimed,
+            other => LootError::Asset(other),
+        })?;
+        debug_assert_eq!(
+            asset_id.bytes(),
+            expected_asset_id(draw, &self.world.pubkey_of(player)).bytes(),
+            "a claimed drop lands on the address a third party recomputes for it"
+        );
         self.drops.insert(asset_id.bytes(), draw.clone());
         let owner = self
             .world
@@ -631,6 +738,92 @@ mod tests {
             .expect("the honest drop mints");
         assert_eq!(vault.rarity_of(item.asset_id), Some(honest.rarity));
         assert_eq!(vault.item_count(), 1, "exactly the honest drop is an item");
+    }
+
+    /// **The claimed note sits where a third party computes it will.** `expected_asset_id`
+    /// recomputes the mint address from the drop + the claimant's public key alone, so a
+    /// downstream sink can ADOPT the player's real note by identity instead of re-minting a
+    /// look-alike. Sensitive to both halves: another player's key, or a different drop, lands
+    /// somewhere else.
+    #[test]
+    fn a_claimed_note_sits_at_the_address_anyone_recomputes_for_it() {
+        let mut vault = LootVault::new();
+        let draw = roll_drop(&run_seed(11), "chest:strongbox", 0);
+        let alice_pk = vault.pubkey_of("alice");
+        let bob_pk = vault.pubkey_of("bob");
+
+        let item = vault.claim("alice", &draw).expect("the drop mints");
+        assert_eq!(
+            item.asset_id.bytes(),
+            expected_asset_id(&draw, &alice_pk).bytes(),
+            "the note is exactly where (drop, claimant key) says it is"
+        );
+        assert_ne!(
+            expected_asset_id(&draw, &bob_pk).bytes(),
+            item.asset_id.bytes(),
+            "a different claimant would hold a different note"
+        );
+        let other = roll_drop(&run_seed(12), "chest:strongbox", 0);
+        assert_ne!(
+            expected_asset_id(&other, &alice_pk).bytes(),
+            item.asset_id.bytes(),
+            "and a different drop is a different note"
+        );
+    }
+
+    /// **The FAIR DRAW decides what a material IS.** A drop's crafting kind is derived from its
+    /// chest class and the draw's rarity — never declared — so a common drop cannot be
+    /// presented as legendary crafting stock. Relabelling the chest to claim a different class
+    /// changes the loot seed, so the relabelled draw fails `reverify_drop`.
+    #[test]
+    fn a_drops_material_kind_is_derived_from_the_fair_draw_not_declared() {
+        // `find_seed_for` scans at seq 0, so the drops below must be rolled at seq 0 too — a
+        // different seq is a different loot seed and so a different draw.
+        let chest = "descent:banked-relic:2";
+        let leg = roll_drop(&find_seed_for(chest, Rarity::Legendary), chest, 0);
+        let com = roll_drop(&find_seed_for(chest, Rarity::Common), chest, 0);
+        assert_eq!(leg.material_kind(), "relic:legendary");
+        assert_eq!(com.material_kind(), "relic:common");
+
+        // The class comes off the chest, and the three classes are distinct.
+        assert_eq!(drop_class("descent:banked-relic:7"), "relic");
+        assert_eq!(drop_class("boss:the-tide-warden"), "trophy");
+        assert_eq!(drop_class("chest:reliquary"), "salvage");
+        let boss = roll_drop(&run_seed(4), "boss:the-tide-warden", 0);
+        assert!(boss.material_kind().starts_with("trophy:"));
+
+        // A claimant who rewrites the chest to upgrade the class is caught: the loot seed no
+        // longer binds the claimed run/chest/seq.
+        let mut relabelled = com.clone();
+        relabelled.chest = "descent:banked-relic:0".to_string();
+        assert_eq!(relabelled.material_kind(), "relic:common");
+        assert!(
+            matches!(reverify_drop(&relabelled), Err(LootError::Forged(_))),
+            "relabelling the chest breaks the seed binding"
+        );
+    }
+
+    /// The vault answers "what does this player still hold?" off the real ledger — the
+    /// inventory read a bench or a market renders, which follows transfers.
+    #[test]
+    fn the_vault_reports_a_players_live_inventory() {
+        let mut vault = LootVault::new();
+        let one = roll_drop(&run_seed(31), "chest:a", 0);
+        let two = roll_drop(&run_seed(32), "chest:b", 1);
+        let a = vault.claim("alice", &one).expect("a").asset_id;
+        let b = vault.claim("alice", &two).expect("b").asset_id;
+        assert_eq!(vault.inventory_of("alice").len(), 2);
+        assert!(vault.inventory_of("bob").is_empty());
+        assert_eq!(
+            vault.material_kind_of(a),
+            Some(one.material_kind()),
+            "each held item reports the kind its draw fixed"
+        );
+
+        vault.transfer(a, "alice", "bob").expect("a gift");
+        assert_eq!(vault.inventory_of("alice"), vec![b]);
+        assert_eq!(vault.inventory_of("bob"), vec![a]);
+        assert_eq!(vault.drop_of(a).map(|d| d.roll), Some(one.roll));
     }
 
     /// A drop mints exactly once: re-claiming the same drop is refused (no lineage

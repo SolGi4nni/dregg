@@ -764,3 +764,407 @@ mod saga {
         assert_eq!(party.loot_share(0), 40);
     }
 }
+
+#[cfg(test)]
+mod economy {
+    //! **THE ECONOMY LOOP** — one object followed by identity from the dungeon floor to a
+    //! stranger's inventory.
+    //!
+    //! The sibling `saga` module proves craft -> trade is object-identical. It starts,
+    //! though, from `forge.mint_material(...)`: a faucet. This module closes the loop at the
+    //! other end, where the items an economy actually circulates come from — a real Descent
+    //! run — and follows them through every station without re-minting a look-alike at any
+    //! step:
+    //!
+    //! ```text
+    //!   a real run banks relics  ──▶  LootVault::claim mints owned notes
+    //!            │                              │  (into_assets: ONE ledger, handed on)
+    //!            │                              ▼
+    //!            │                    CraftForge ADOPTS the exact notes as typed materials
+    //!            │                              │  (the sink BURNS them — the same notes)
+    //!            │                              ▼
+    //!            │                    one crafted output note
+    //!            │                              │  (into_assets: still ONE ledger)
+    //!            │                              ▼
+    //!            └──── provenance ────▶  a Bazaar sale crosses it to a stranger
+    //! ```
+    //!
+    //! The strongest claim it drives is the **recomputation**: a third party who knows only
+    //! the run's day-seed, the banked slots, the two players' public keys and the craft
+    //! beacon re-derives every address in the chain — the relics' ids from the run, and the
+    //! sigil's id from the relics' — with no access to any ledger. A re-minted look-alike
+    //! anywhere in the chain would break that arithmetic.
+
+    use super::*;
+
+    use dreggnet_asset::AssetId;
+    use dreggnet_craft::{
+        CraftDraw, CraftError, CraftForge, CraftProvenance, Recipe, craft_commitment,
+        relic_sigil_id, resolve_artifact, roll_craft,
+    };
+    use dreggnet_trade::{Bazaar, LegSpec, TradeWorld};
+    use dungeon_on_dregg::descent::{BANKED, Descent, day_seed_from_deploy_seed};
+    use dungeon_on_dregg::loot::{
+        LootDraw, LootVault, Rarity, banked_relic_chest, banked_relic_drop, expected_asset_id,
+    };
+    use procgen_dregg::CommittedSeed;
+
+    const DELVER: &str = "Alkas";
+    const STRANGER: &str = "Brenna";
+
+    /// The relic slots the run script below banks: on floor 1 the lootable relics are the ones
+    /// whose home floor is 1 (`HOME = [4,1,2,3,1,1,2,3]`) — the way-2 key and two treasures.
+    const BANKED_SLOTS: [usize; 3] = [1, 4, 5];
+
+    /// Drive a REAL Descent: delve to floor 1, fell the guardian, take the three relics that
+    /// lie there, and flee (the terminal bank). Every verb is a committed executor turn the
+    /// Lean-sourced referee admits — nothing here is a fixture.
+    fn bank_a_run(deploy_seed: u8) -> Descent {
+        let mut d = Descent::deploy(deploy_seed).expect("deploy + genesis");
+        d.delve().expect("the way down is open");
+        d.smite().expect("the floor-1 guardian falls");
+        for slot in BANKED_SLOTS {
+            d.loot(slot).expect("the relic lies here");
+        }
+        d.flee().expect("bank the pack — the run ends");
+        for slot in BANKED_SLOTS {
+            assert_eq!(
+                d.read_relic(slot),
+                BANKED,
+                "relic {slot} is a committed BANKED custody fact on the cell"
+            );
+        }
+        d
+    }
+
+    /// The three drops the run seeded by `deploy_seed` would bank — a PURE function of the
+    /// day-seed and the custody slots, so we can scan for an interesting run without deploying
+    /// one. (That the deployed run really produces exactly these is asserted in the test.)
+    fn prospective_drops(deploy_seed: u8) -> Vec<LootDraw> {
+        let day = day_seed_from_deploy_seed(deploy_seed);
+        BANKED_SLOTS
+            .iter()
+            .map(|slot| banked_relic_drop(&day, *slot))
+            .collect()
+    }
+
+    /// Find a deploy seed whose banked relics contain a PAIR of the same tier — what the relic
+    /// ladder's rung consumes. The recipe is not tailored to the run; the run is chosen to
+    /// satisfy a recipe the catalog already ships.
+    fn find_a_run_that_banks_a_matching_pair() -> (u8, Rarity, [usize; 2]) {
+        for seed in 0u16..=255 {
+            let seed = seed as u8;
+            let drops = prospective_drops(seed);
+            for i in 0..drops.len() {
+                for j in (i + 1)..drops.len() {
+                    if drops[i].rarity == drops[j].rarity {
+                        return (seed, drops[i].rarity, [BANKED_SLOTS[i], BANKED_SLOTS[j]]);
+                    }
+                }
+            }
+        }
+        panic!("no deploy seed in 0..256 banks two relics of one tier");
+    }
+
+    /// Scan beacons for one whose fair draw over `recipe` + `inputs` MINTS (the relic ladder is
+    /// a risky recipe — it can botch and eat the relics, which is the point of the gamble, but
+    /// this test is about the object's journey, not the gamble).
+    fn find_a_minting_beacon(recipe: &Recipe, inputs: &[AssetId]) -> (CommittedSeed, CraftDraw) {
+        for n in 0u32..100_000 {
+            let mut b = [0u8; 32];
+            b[..4].copy_from_slice(&n.to_le_bytes());
+            let beacon = CommittedSeed::from_bytes(b);
+            let draw = roll_craft(&beacon, recipe, inputs);
+            if draw.granted_quality().is_some() {
+                return (beacon, draw);
+            }
+        }
+        panic!("no beacon in 0..100000 mints for `{}`", recipe.id);
+    }
+
+    /// **THE LOOP.** A relic banked in a real run becomes an owned note, that exact note becomes
+    /// a crafting input, the sink burns it into one crafted output, and that output crosses a
+    /// Bazaar sale to a stranger — with the whole chain of content addresses recomputable from
+    /// the run's day-seed alone.
+    #[test]
+    fn a_banked_relic_becomes_a_crafted_item_a_stranger_buys() {
+        // ── (1) A REAL RUN BANKS RELICS ────────────────────────────────────────────────
+        let (deploy_seed, tier, pair) = find_a_run_that_banks_a_matching_pair();
+        let run = bank_a_run(deploy_seed);
+        let day_seed = *run.day_seed();
+
+        // ── (2) THE BANK → ASSET WIRE: the banked relics mint as real owned notes ──────
+        let mut vault = LootVault::new();
+        let delver_pk = vault.pubkey_of(DELVER);
+        let minted = run
+            .mint_banked_relics(&mut vault, DELVER)
+            .expect("the banked relics mint");
+        assert_eq!(
+            minted.len(),
+            BANKED_SLOTS.len(),
+            "one note per banked relic"
+        );
+
+        // Each note's provenance replays to THIS run's day-seed and THAT custody slot — and a
+        // third party recomputes the note's address from those two facts plus the delver's key.
+        let mut relic_of_slot = std::collections::BTreeMap::new();
+        for m in &minted {
+            let prov = vault.provenance(m.item.asset_id).expect("known loot");
+            assert_eq!(prov.run_seed, day_seed, "provenance root = the banked run");
+            assert_eq!(prov.chest, banked_relic_chest(m.slot), "names the slot");
+            assert!(prov.asset.verified, "the note's lineage verifies");
+            assert_eq!(
+                m.item.asset_id.bytes(),
+                expected_asset_id(&banked_relic_drop(&day_seed, m.slot), &delver_pk).bytes(),
+                "the note sits at the address (day_seed, slot, delver_pk) alone fixes"
+            );
+            relic_of_slot.insert(m.slot, m.item.asset_id);
+        }
+        // The deployed run really produced the drops we prospected for.
+        for (i, slot) in BANKED_SLOTS.iter().enumerate() {
+            assert_eq!(
+                banked_relic_drop(&day_seed, *slot).rarity,
+                prospective_drops(deploy_seed)[i].rarity
+            );
+        }
+
+        let inputs: Vec<AssetId> = pair.iter().map(|s| relic_of_slot[s]).collect();
+        let input_ids: Vec<[u8; 32]> = inputs.iter().map(|a| a.bytes()).collect();
+        let drops: Vec<LootDraw> = pair
+            .iter()
+            .map(|s| banked_relic_drop(&day_seed, *s))
+            .collect();
+
+        // ── (3) THE FORGE ADOPTS THOSE EXACT NOTES ────────────────────────────────────
+        // The vault hands over its LIVE ledger; the forge types the notes already in it.
+        let mut forge = CraftForge::with_assets(vault.into_assets());
+        for (id, drop) in inputs.iter().zip(&drops) {
+            let kind = forge
+                .adopt_loot_material(DELVER, *id, drop)
+                .expect("the delver's own banked relic is adoptable");
+            assert_eq!(
+                kind.as_str(),
+                format!("relic:{}", tier.label()),
+                "the FAIR DRAW fixed the material kind — nobody declared it"
+            );
+            assert_eq!(
+                forge.asset_provenance(*id).length,
+                1,
+                "the adopted note IS the dungeon's origin mint; its lineage did not restart"
+            );
+            assert!(forge.owns_live(DELVER, *id), "still the delver's live note");
+        }
+        // The catalog — not the test — says what this pair is good for.
+        let recipe_id = relic_sigil_id(tier);
+        assert!(
+            forge.craftable_by(DELVER).contains(&recipe_id),
+            "the bench reports the pair unlocks its ladder rung"
+        );
+        let recipe = forge
+            .recipe(&recipe_id)
+            .expect("the rung is stocked")
+            .clone();
+
+        // ── (4) THE SINK BURNS THOSE EXACT NOTES INTO ONE OUTPUT ──────────────────────
+        let (beacon, draw) = find_a_minting_beacon(&recipe, &inputs);
+        let output = forge
+            .craft(DELVER, &draw)
+            .expect("the forge accepts the honest craft")
+            .output()
+            .expect("a minting band")
+            .clone();
+        let sigil: AssetId = output.asset_id;
+
+        for id in &inputs {
+            assert!(forge.is_destroyed(*id), "the banked relic was consumed");
+            assert_eq!(
+                forge.owner_of(*id),
+                None,
+                "and it is GONE on-chain — the delver cannot still hold it"
+            );
+        }
+        // The crafted note's provenance still names the runs its materials came from, even
+        // though those materials no longer exist.
+        let craft_prov: CraftProvenance = forge.provenance(sigil).expect("a crafted output");
+        assert_eq!(craft_prov.recipe_id, recipe_id);
+        assert_eq!(
+            craft_prov.material_origins.len(),
+            2,
+            "both consumed inputs were real dungeon drops"
+        );
+        for origin in &craft_prov.material_origins {
+            assert_eq!(
+                origin.run_seed, day_seed,
+                "the sigil names the RUN its relics were banked on"
+            );
+            assert_eq!(origin.rarity, tier);
+            assert!(input_ids.contains(&origin.input_id));
+        }
+
+        // ── (5) THE STRANGER FINDS IT ON A STALL AND BUYS IT ──────────────────────────
+        // The trade world adopts the forge's ledger: the sigil is already its live note.
+        let mut market = TradeWorld::with_assets(forge.into_assets());
+        assert_eq!(
+            market.lineage_len(sigil),
+            1,
+            "the traded note IS the craft's origin mint — no re-mint at the handoff"
+        );
+        assert_eq!(
+            market.current_owner(sigil),
+            Some(market.pubkey_of(DELVER)),
+            "and it is still the delver's"
+        );
+        market.fund_dregg(STRANGER, 300);
+
+        let mut stall = Bazaar::new();
+        let offer = stall
+            .post(&mut market, DELVER, sigil, 120)
+            .expect("the delver posts the sigil");
+        // The stranger was never told about it — they BROWSE and find it.
+        let purse = market.dregg_balance(STRANGER) as u64;
+        let shelf = stall.affordable(&market, purse);
+        assert!(
+            shelf.iter().any(|e| e.asset.bytes() == sigil.bytes()),
+            "the sigil is discoverable to a buyer who did not know it existed"
+        );
+        let settlement = stall
+            .buy(&mut market, offer, STRANGER)
+            .expect("the sale settles atomically");
+        assert_eq!(settlement.a_gave, LegSpec::Asset(sigil));
+        assert_eq!(settlement.b_gave, LegSpec::Dregg(120));
+
+        // ── (6) THE CHAIN HELD ────────────────────────────────────────────────────────
+        assert_eq!(
+            market.current_owner(sigil),
+            Some(market.pubkey_of(STRANGER)),
+            "the stranger owns the identical note the forge minted"
+        );
+        let report = market.verify_provenance(sigil);
+        assert!(
+            report.verified,
+            "the sigil's lineage re-verifies: {:?}",
+            report.reasons
+        );
+        assert_eq!(
+            report.length, 3,
+            "mint(craft) -> escrow -> buyer, ONE continuous lineage across craft and trade"
+        );
+        assert_eq!(market.dregg_balance(DELVER), 120, "the delver was paid");
+
+        // ── (7) THE RECOMPUTATION — the whole chain, from the run seed, with no ledger ──
+        // A third party holding only (day_seed, banked slots, delver_pk, beacon, the public
+        // catalog) re-derives every address. This is the property a re-mint anywhere in the
+        // chain would destroy.
+        let recomputed_relics: Vec<AssetId> = pair
+            .iter()
+            .map(|slot| expected_asset_id(&banked_relic_drop(&day_seed, *slot), &delver_pk))
+            .collect();
+        let mut recomputed_ids: Vec<[u8; 32]> =
+            recomputed_relics.iter().map(|a| a.bytes()).collect();
+        recomputed_ids.sort_unstable();
+        assert_eq!(
+            recomputed_ids, draw.input_ids,
+            "the crafted item's declared inputs ARE the run's relics, re-derived"
+        );
+        let recomputed_draw = roll_craft(&beacon, &recipe, &recomputed_relics);
+        let quality = recomputed_draw
+            .granted_quality()
+            .expect("the fair draw mints");
+        let artifact = resolve_artifact(&recipe, quality);
+        let recomputed_sigil = AssetId::derive(
+            &market.pubkey_of(DELVER),
+            &craft_commitment(&recomputed_draw, &artifact),
+        );
+        assert_eq!(
+            recomputed_sigil.bytes(),
+            sigil.bytes(),
+            "run day-seed -> relic ids -> craft commitment -> the sigil the stranger now holds"
+        );
+        assert_eq!(artifact, output.artifact, "and the same concrete artifact");
+    }
+
+    /// The loop's refusals, on the SAME shape: a burned relic cannot be re-adopted or
+    /// re-crafted (the sink is real, not bookkeeping), and the delver cannot sell the sigil
+    /// after selling it. Non-vacuous — each refusal is preceded by the move that works.
+    #[test]
+    fn a_spent_relic_cannot_be_crafted_twice_and_a_sold_sigil_cannot_be_resold() {
+        let (deploy_seed, tier, pair) = find_a_run_that_banks_a_matching_pair();
+        let run = bank_a_run(deploy_seed);
+        let day_seed = *run.day_seed();
+
+        let mut vault = LootVault::new();
+        let minted = run
+            .mint_banked_relics(&mut vault, DELVER)
+            .expect("the banked relics mint");
+        let inputs: Vec<AssetId> = pair
+            .iter()
+            .map(|slot| {
+                minted
+                    .iter()
+                    .find(|m| m.slot == *slot)
+                    .expect("the slot banked")
+                    .item
+                    .asset_id
+            })
+            .collect();
+        let drops: Vec<LootDraw> = pair
+            .iter()
+            .map(|s| banked_relic_drop(&day_seed, *s))
+            .collect();
+
+        let mut forge = CraftForge::with_assets(vault.into_assets());
+        for (id, drop) in inputs.iter().zip(&drops) {
+            forge
+                .adopt_loot_material(DELVER, *id, drop)
+                .expect("adopt the real relic");
+        }
+        let recipe = forge
+            .recipe(&relic_sigil_id(tier))
+            .expect("the rung")
+            .clone();
+        let (_, draw) = find_a_minting_beacon(&recipe, &inputs);
+        let sigil = forge
+            .craft(DELVER, &draw)
+            .expect("the first craft commits")
+            .output()
+            .expect("a minting band")
+            .asset_id;
+
+        // The relics are gone: re-adopting one is refused (it is no longer a live held note),
+        // and a second craft over them is refused with nothing minted.
+        let re_adopt = forge.adopt_loot_material(DELVER, inputs[0], &drops[0]);
+        assert!(
+            matches!(re_adopt, Err(CraftError::InputsUnavailable(_))),
+            "a burned relic is not an adoptable material, got {re_adopt:?}"
+        );
+        let before = forge.output_count();
+        let (_, redraw) = find_a_minting_beacon(&recipe, &inputs);
+        let recraft = forge.craft(DELVER, &redraw);
+        assert!(
+            matches!(recraft, Err(CraftError::InputsUnavailable(_))),
+            "no dupe-then-craft: spent relics cannot be forged again, got {recraft:?}"
+        );
+        assert_eq!(forge.output_count(), before, "anti-ghost: nothing minted");
+
+        // Sell it once — then the delver, no longer the owner, cannot sell it again.
+        let mut market = TradeWorld::with_assets(forge.into_assets());
+        market.fund_dregg(STRANGER, 200);
+        let mut stall = Bazaar::new();
+        let offer = stall
+            .post(&mut market, DELVER, sigil, 50)
+            .expect("the first posting");
+        stall.buy(&mut market, offer, STRANGER).expect("the sale");
+        assert_eq!(market.current_holder_label(sigil), Some(STRANGER));
+
+        let resell = stall.post(&mut market, DELVER, sigil, 50);
+        assert!(
+            resell.is_err(),
+            "the delver cannot post an item they have sold, got {resell:?}"
+        );
+        assert_eq!(
+            market.current_holder_label(sigil),
+            Some(STRANGER),
+            "anti-ghost: the stranger still holds it"
+        );
+    }
+}

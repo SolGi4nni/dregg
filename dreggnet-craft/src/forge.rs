@@ -10,7 +10,8 @@
 use std::collections::{HashMap, HashSet};
 
 use dreggnet_asset::{AssetError, AssetId, AssetWorld, ProvenanceReport};
-use dungeon_on_dregg::loot::{LootDraw, reverify_drop};
+use dungeon_on_dregg::loot::{LootDraw, Rarity as LootRarity, expected_asset_id, reverify_drop};
+use procgen_dregg::CommittedSeed;
 
 use crate::draw::{CraftDraw, craft_commitment, resolve_artifact, reverify_craft};
 use crate::quality::{CraftOutcome, CraftQuality};
@@ -123,6 +124,26 @@ struct CraftRecord {
     draw: CraftDraw,
     artifact: CraftedArtifact,
     quality: CraftQuality,
+    /// The dungeon runs the consumed inputs came from, snapshotted at craft time — the
+    /// inputs themselves are destroyed by the sink, so this is the only surviving link.
+    material_origins: Vec<MaterialOrigin>,
+}
+
+/// Where one consumed craft input came from, when it was a real, verified dungeon drop
+/// rather than a faucet material — the hop that carries a crafted item's provenance back
+/// PAST its own mint to the RUN the materials were banked on.
+#[derive(Clone, Debug)]
+pub struct MaterialOrigin {
+    /// The consumed input's asset id.
+    pub input_id: [u8; 32],
+    /// The committed day-seed of the run the material dropped from (its provenance root).
+    pub run_seed: CommittedSeed,
+    /// The chest / boss / banked-custody slot it dropped from.
+    pub chest: String,
+    /// The fair draw's rarity.
+    pub rarity: LootRarity,
+    /// The typed material kind the drop fixed (`"{class}:{rarity}"`).
+    pub kind: String,
 }
 
 /// The provenance of a crafted item — the recipe + inputs + fair draw + artifact it was
@@ -141,6 +162,11 @@ pub struct CraftProvenance {
     pub artifact: CraftedArtifact,
     /// The asset layer's provenance report for the output (its lineage re-verifies).
     pub asset: ProvenanceReport,
+    /// For each consumed input that was a real dungeon drop, the run + chest + rarity it came
+    /// from — recorded at craft time, since the inputs themselves are destroyed by the sink.
+    /// Empty for a craft over faucet materials. This is what makes "forged from two relics
+    /// banked on day X" a checkable statement about a burned object.
+    pub material_origins: Vec<MaterialOrigin>,
 }
 
 /// **The craft forge** — see the module doc. Crafts against a committed [`RecipeBook`]; a
@@ -150,6 +176,11 @@ pub struct CraftForge {
     book: RecipeBook,
     /// Material AssetId bytes -> the typed kind it satisfies in a recipe.
     material_kinds: HashMap<[u8; 32], MaterialKind>,
+    /// Material AssetId bytes -> the verified dungeon drop it came from, for materials the
+    /// forge ADOPTED ([`CraftForge::adopt_loot_material`]) or sourced
+    /// ([`CraftForge::mint_loot_material`]). The link that lets a crafted item's provenance
+    /// name the RUN its materials were banked on, not merely their ids.
+    loot_sources: HashMap<[u8; 32], LootDraw>,
     /// Output AssetId bytes -> the craft it was forged from (its provenance record).
     crafts: HashMap<[u8; 32], CraftRecord>,
     /// The craft commitments already forged (a minting craft mints exactly once).
@@ -176,10 +207,30 @@ impl CraftForge {
     /// A fresh forge over a given recipe catalog (an empty [`RecipeBook`] for a forge whose
     /// recipes are all registered by the caller).
     pub fn with_book(book: RecipeBook) -> Self {
+        Self::with_book_and_assets(book, AssetWorld::new())
+    }
+
+    /// **A forge that ADOPTS an existing note ledger** — the shared-world seam on the INPUT
+    /// side, mirroring [`dreggnet_trade::TradeWorld::with_assets`] on the output side.
+    ///
+    /// Hand it [`dungeon_on_dregg::loot::LootVault::into_assets`] and the player's real banked
+    /// relics are already live notes in the forge's own world: the forge can then
+    /// [`adopt_loot_material`](Self::adopt_loot_material) them as typed inputs and BURN the
+    /// exact notes the dungeon minted. Without this, the only way to feed dungeon loot to a
+    /// forge was [`mint_loot_material`](Self::mint_loot_material), which mints a *second*
+    /// note in a *second* ledger — a look-alike, and a duplication of the item.
+    pub fn with_assets(assets: AssetWorld) -> Self {
+        Self::with_book_and_assets(RecipeBook::starter(), assets)
+    }
+
+    /// A forge over a given catalog AND an existing note ledger — the union of
+    /// [`Self::with_book`] and [`Self::with_assets`].
+    pub fn with_book_and_assets(book: RecipeBook, assets: AssetWorld) -> Self {
         CraftForge {
-            world: AssetWorld::new(),
+            world: assets,
             book,
             material_kinds: HashMap::new(),
+            loot_sources: HashMap::new(),
             crafts: HashMap::new(),
             claimed: HashSet::new(),
             destroyed: HashSet::new(),
@@ -234,12 +285,73 @@ impl CraftForge {
         id
     }
 
-    /// **Source a material FROM a real, verified loot drop.** The [`LootDraw`] is re-verified
-    /// through the loot layer's own [`reverify_drop`] tooth — a forged / rewritten drop is
-    /// refused with [`CraftError::ForgedLoot`] and no material is minted. On a genuine drop a
-    /// material of `kind` is minted for `player`, its content address binding the drop's
-    /// provenance (loot seed + roll + rarity + chest), so the material is provably a real
-    /// dungeon drop, not a demo faucet. This is the input side wired to the real economy.
+    /// **ADOPT a player's EXISTING loot note as a typed craft material** — the identity-
+    /// preserving loot → craft wire, and the reason a banked relic and the material it becomes
+    /// are ONE object rather than two.
+    ///
+    /// Nothing is minted. The forge's world must already carry the note (open the forge over
+    /// the vault's ledger with [`Self::with_assets`] /
+    /// [`dungeon_on_dregg::loot::LootVault::into_assets`]); this call only *types* it. Three
+    /// gates, all before any bookkeeping:
+    ///
+    /// 1. **the drop is a real fair draw** — [`reverify_drop`], the loot layer's own tooth: a
+    ///    fabricated or rewritten drop is [`CraftError::ForgedLoot`];
+    /// 2. **the presented note IS that drop's note** — the forge recomputes
+    ///    [`expected_asset_id`]`(drop, player_pk)`, the exact address
+    ///    [`LootVault::claim`](dungeon_on_dregg::loot::LootVault::claim) mints at, and refuses
+    ///    any other id. So a player cannot point a genuine legendary draw at a *different*
+    ///    note they happen to own; the drop and the note are bound to each other;
+    /// 3. **the player really holds it, live** — [`Self::owns_live`] over the real ledger.
+    ///
+    /// The material's typed kind is then **derived from the drop**
+    /// ([`LootDraw::material_kind`]), never supplied: the fair draw decides whether this is a
+    /// `relic:legendary` or a `salvage:common`, so a recipe demanding legendary relics cannot
+    /// be satisfied by relabelling a common one.
+    pub fn adopt_loot_material(
+        &mut self,
+        player: &str,
+        asset_id: AssetId,
+        drop: &LootDraw,
+    ) -> Result<MaterialKind, CraftError> {
+        // (1) a forged / rewritten drop is not a material.
+        reverify_drop(drop).map_err(|e| CraftError::ForgedLoot(e.to_string()))?;
+        // (2) the note must be the one THIS drop mints for THIS player.
+        let player_pk = self.world.pubkey_of(player);
+        let expected = expected_asset_id(drop, &player_pk);
+        if expected.bytes() != asset_id.bytes() {
+            return Err(CraftError::ForgedLoot(format!(
+                "note {} is not the note this drop mints for `{player}` (expected {})",
+                hex4(&asset_id.bytes()),
+                hex4(&expected.bytes()),
+            )));
+        }
+        // (3) and it must be a live asset the player actually holds in THIS ledger.
+        if !self.owns_live(player, asset_id) {
+            return Err(CraftError::InputsUnavailable(format!(
+                "looted note {} is not a live asset `{player}` holds in this forge's ledger",
+                hex4(&asset_id.bytes())
+            )));
+        }
+        let kind = MaterialKind::new(&drop.material_kind());
+        self.material_kinds.insert(asset_id.bytes(), kind.clone());
+        self.loot_sources.insert(asset_id.bytes(), drop.clone());
+        Ok(kind)
+    }
+
+    /// **FAUCET a material from a verified loot drop, in this forge's OWN ledger.** The
+    /// [`LootDraw`] is re-verified through the loot layer's own [`reverify_drop`] tooth — a
+    /// forged / rewritten drop is refused with [`CraftError::ForgedLoot`] and no material is
+    /// minted — and a genuine drop mints a material of `kind` for `player` whose content
+    /// address binds the drop's provenance (loot seed + roll + rarity + chest).
+    ///
+    /// ⚠ **This MINTS a new note; it does not adopt the player's looted one.** The address it
+    /// derives is deliberately its own (`DOMAIN_LOOT_MATERIAL`), NOT the loot vault's
+    /// [`dungeon_on_dregg::loot::drop_commitment`] address, so calling this on a drop the
+    /// player already banked leaves *two* notes in existence — the vault's and this one. It is
+    /// the right call when a forge stands alone with no vault behind it (a demo bench, a
+    /// standalone offering); when the player's real loot note exists, use
+    /// [`adopt_loot_material`](Self::adopt_loot_material), which types the EXACT note and
+    /// duplicates nothing.
     pub fn mint_loot_material(
         &mut self,
         player: &str,
@@ -260,12 +372,48 @@ impl CraftForge {
         let id = self.world.mint(player, seed.as_bytes());
         self.material_kinds
             .insert(id.bytes(), MaterialKind::new(kind));
+        self.loot_sources.insert(id.bytes(), drop.clone());
         Ok(id)
     }
 
     /// The typed kind of a material asset (if the forge minted it as one).
     pub fn material_kind(&self, asset_id: AssetId) -> Option<&MaterialKind> {
         self.material_kinds.get(&asset_id.bytes())
+    }
+
+    /// The verified dungeon drop a material came from, for materials the forge adopted or
+    /// sourced from loot — the link that lets a crafted item's provenance name the RUN
+    /// (day-seed + custody slot) its materials were banked on.
+    pub fn loot_source(&self, asset_id: AssetId) -> Option<&LootDraw> {
+        self.loot_sources.get(&asset_id.bytes())
+    }
+
+    /// **What `player` can actually forge right now** — every catalog recipe whose required
+    /// typed multiset is covered by the live materials they hold, in sorted id order. The
+    /// bench read a UI renders and the answer to "what are my relics good for?"; previously a
+    /// caller had to enumerate the catalog and re-derive the multiset itself.
+    pub fn craftable_by(&self, player: &str) -> Vec<String> {
+        let held: Vec<AssetId> = self.world.assets_held_by(player);
+        let mut have: HashMap<MaterialKind, usize> = HashMap::new();
+        for id in &held {
+            if let Some(kind) = self.material_kinds.get(&id.bytes()) {
+                *have.entry(kind.clone()).or_insert(0) += 1;
+            }
+        }
+        let mut ids: Vec<String> = self
+            .book
+            .ids()
+            .into_iter()
+            .filter(|id| {
+                self.book.get(id).is_some_and(|r| {
+                    r.required_kinds()
+                        .iter()
+                        .all(|(kind, n)| have.get(kind).copied().unwrap_or(0) >= *n)
+                })
+            })
+            .collect();
+        ids.sort();
+        ids
     }
 
     /// Is `asset_id` a live asset the crafter `player` owns (owned by their key AND not yet
@@ -336,28 +484,44 @@ impl CraftForge {
         };
 
         // The SINK: burn every input on-chain (fires on BOTH a mint and a botch). The burn is
-        // an OWNER-SIGNED spend: `AssetWorld::revoke` drives a real `player`-signed executor
-        // turn on the input note, admitted only because `player`'s signature matches the note's
-        // owner key (the ISA owner-signature gate). So crafter-authorization to consume the
-        // materials is enforced at the executor — the `player` who crafts must be the notes'
-        // owner — not merely by the host-side `owns_live` pre-flight in `check_inputs`.
-        // (The forge only ever mints a material FOR its crafter, so owner == minter; a fully
-        // general owner≠minter burn would want an owner-burn primitive on the asset layer.)
+        // an OWNER-SIGNED spend: `AssetWorld::burn` drives a real `player`-signed executor turn
+        // on the input note, admitted only because `player`'s signature verifies against the
+        // note cell's own owner key (the ISA owner-signature gate). So crafter-authorization to
+        // consume the materials is enforced at the executor — not merely by the host-side
+        // `owns_live` pre-flight in `check_inputs`.
+        //
+        // `burn` and not `revoke`: revoke additionally demands the burner be the original
+        // MINTER, which silently made every material a player *acquired* uncraftable — a
+        // relic looted by a friend and traded over, or an adopted note whose minter is the
+        // loot vault's claimer, could pass every input check and then fail at the sink. The
+        // asset layer's owner-gated burn is the primitive an economy needs here.
+        // Snapshot where the inputs CAME FROM before the sink destroys them — a crafted item's
+        // provenance must be able to name the runs its materials were banked on, and after the
+        // burn the inputs are gone.
+        let material_origins = self.origins_of(&inputs);
+
         for id in &inputs {
-            self.world.revoke(*id, player).map_err(CraftError::Asset)?;
+            self.world.burn(*id, player).map_err(CraftError::Asset)?;
             self.destroyed.insert(id.bytes());
         }
 
         match mint_plan {
             Some((quality, artifact, commit)) => {
                 self.claimed.insert(commit.clone());
-                let asset_id = self.world.mint(player, &commit);
+                // Fail-closed: the craft commitment is once-only (checked above), so a
+                // duplicate content address here would mean two distinct crafts collided —
+                // minting over the existing lineage would silently break it.
+                let asset_id = self
+                    .world
+                    .try_mint(player, &commit)
+                    .map_err(CraftError::Asset)?;
                 self.crafts.insert(
                     asset_id.bytes(),
                     CraftRecord {
                         draw: draw.clone(),
                         artifact: artifact.clone(),
                         quality,
+                        material_origins,
                     },
                 );
                 let owner = self
@@ -381,6 +545,23 @@ impl CraftForge {
                 }))
             }
         }
+    }
+
+    /// The dungeon origins of whichever of `inputs` were real loot drops, in input order.
+    fn origins_of(&self, inputs: &[AssetId]) -> Vec<MaterialOrigin> {
+        inputs
+            .iter()
+            .filter_map(|id| {
+                let drop = self.loot_sources.get(&id.bytes())?;
+                Some(MaterialOrigin {
+                    input_id: id.bytes(),
+                    run_seed: drop.run_seed,
+                    chest: drop.chest.clone(),
+                    rarity: drop.rarity,
+                    kind: drop.material_kind(),
+                })
+            })
+            .collect()
     }
 
     /// The atomic typed-input check: exact count, distinct ids, each a live asset `player`
@@ -461,6 +642,7 @@ impl CraftForge {
             quality: rec.quality,
             artifact: rec.artifact.clone(),
             asset: self.world.verify_provenance(asset_id),
+            material_origins: rec.material_origins.clone(),
         })
     }
 

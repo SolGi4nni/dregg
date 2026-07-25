@@ -575,3 +575,221 @@ fn the_recipe_catalog_is_committed() {
     assert!(!book.register(bad), "a degenerate recipe is rejected");
     assert!(book.is_empty());
 }
+
+// ============================================================================
+// LOOT -> CRAFT BY IDENTITY: the forge ADOPTS the player's real note
+// ============================================================================
+
+/// **The identity wire.** A player claims a real drop into a `LootVault`; the forge opens over
+/// THAT vault's ledger and ADOPTS the exact note as a typed material — no second mint. The
+/// adopted material's id IS the looted item's id, and the sink burns the very note the dungeon
+/// minted. Contrast the faucet: `mint_loot_material` on the same drop lands on a DIFFERENT
+/// address, leaving two items in existence.
+#[test]
+fn the_forge_adopts_the_players_real_loot_note_instead_of_re_minting_it() {
+    use dungeon_on_dregg::loot::{LootVault, expected_asset_id};
+
+    let drop = roll_drop(&CommittedSeed::from_bytes([13u8; 32]), "chest:vault", 0);
+
+    // The player banks the drop as a real owned note.
+    let mut vault = LootVault::new();
+    let player_pk = vault.pubkey_of("hero");
+    let item = vault.claim("hero", &drop).expect("a real drop mints");
+    assert_eq!(
+        item.asset_id.bytes(),
+        expected_asset_id(&drop, &player_pk).bytes(),
+        "the claimed note lands on the address a third party recomputes for the drop"
+    );
+
+    // The FORGE opens over the vault's own ledger and adopts that note — nothing is minted.
+    let mut forge = CraftForge::with_assets(vault.into_assets());
+    let kind = forge
+        .adopt_loot_material("hero", item.asset_id, &drop)
+        .expect("the player's real looted note is adoptable");
+
+    // The kind is DERIVED from the fair draw, not declared by the caller.
+    assert_eq!(
+        kind.as_str(),
+        drop.material_kind(),
+        "the fair draw fixes what the material IS"
+    );
+    assert_eq!(
+        forge.material_kind(item.asset_id).map(|k| k.as_str()),
+        Some(drop.material_kind().as_str())
+    );
+    assert!(
+        forge.owns_live("hero", item.asset_id),
+        "the adopted note is the SAME live owned note, still the player's"
+    );
+    assert_eq!(
+        forge.asset_provenance(item.asset_id).length,
+        1,
+        "the lineage continued (it is the dungeon's origin mint), it did not restart"
+    );
+    assert_eq!(
+        forge.loot_source(item.asset_id).map(|d| d.roll),
+        Some(drop.roll),
+        "the forge carries the run provenance forward"
+    );
+
+    // THE CONTRAST: the faucet mints a look-alike at a DIFFERENT address — two items.
+    let faucet = forge
+        .mint_loot_material("hero", "ore:iron", &drop)
+        .expect("the faucet mints");
+    assert_ne!(
+        faucet.bytes(),
+        item.asset_id.bytes(),
+        "mint_loot_material is a faucet: it creates a SECOND note, it does not adopt"
+    );
+}
+
+/// The adoption gates, each non-vacuously: a FORGED drop is refused; a genuine drop pointed at
+/// SOMEONE ELSE'S note is refused (the recomputed content address does not match); a genuine
+/// drop for a player who does not hold the note is refused. None of them mints or types
+/// anything, and the honest adoption still lands.
+#[test]
+fn adopting_a_loot_material_is_gated_on_the_drop_the_note_and_the_holder() {
+    use dungeon_on_dregg::loot::LootVault;
+
+    let mine = roll_drop(&CommittedSeed::from_bytes([21u8; 32]), "chest:mine", 0);
+    let theirs = roll_drop(&CommittedSeed::from_bytes([22u8; 32]), "chest:mine", 1);
+
+    let mut vault = LootVault::new();
+    let my_item = vault.claim("hero", &mine).expect("hero's drop");
+    let their_item = vault.claim("rival", &theirs).expect("rival's drop");
+    let mut forge = CraftForge::with_assets(vault.into_assets());
+
+    // (a) a FORGED drop — a roll the seed never produced — is not a material.
+    let mut forged = mine.clone();
+    forged.roll = forged.roll.wrapping_add(1);
+    assert!(
+        matches!(
+            forge.adopt_loot_material("hero", my_item.asset_id, &forged),
+            Err(CraftError::ForgedLoot(_))
+        ),
+        "a rewritten drop cannot type a note"
+    );
+
+    // (b) a GENUINE drop pointed at a note it does not address is refused — a player cannot
+    // borrow a real legendary draw to bless some other note they own.
+    let mismatch = forge.adopt_loot_material("hero", their_item.asset_id, &mine);
+    assert!(
+        matches!(mismatch, Err(CraftError::ForgedLoot(_))),
+        "the drop and the note must address each other, got {mismatch:?}"
+    );
+
+    // (c) a genuine (drop, note) pair claimed by someone who does not hold it: the recomputed
+    // address is keyed by the CLAIMANT, so it does not match either.
+    let wrong_holder = forge.adopt_loot_material("rival", my_item.asset_id, &mine);
+    assert!(
+        wrong_holder.is_err(),
+        "only the holder the drop was claimed by can adopt it, got {wrong_holder:?}"
+    );
+
+    // Anti-ghost: none of the refusals typed anything.
+    assert!(forge.material_kind(my_item.asset_id).is_none());
+    assert!(forge.material_kind(their_item.asset_id).is_none());
+
+    // NON-VACUOUS: the honest adoption lands.
+    forge
+        .adopt_loot_material("hero", my_item.asset_id, &mine)
+        .expect("the honest (holder, note, drop) triple adopts");
+}
+
+/// **The sink consumes materials the crafter did NOT mint.** A relic looted by one player and
+/// traded to another is craftable: the forge's burn is owner-gated, not minter-gated. This is
+/// the case the old `revoke`-based sink silently refused — every input check passed and then
+/// the burn failed.
+#[test]
+fn a_material_acquired_from_another_player_is_craftable() {
+    let mut forge = CraftForge::new();
+    let recipe = greatblade(&forge);
+
+    // `rival` mints the materials, then hands them to `smith`.
+    let a = forge.mint_material("rival", "ore:iron", b"t-a");
+    let b = forge.mint_material("rival", "ore:iron", b"t-b");
+    let haft = forge.mint_material("rival", "haft:oak", b"t-c");
+    for id in [a, b, haft] {
+        forge
+            .assets_mut()
+            .transfer(id, "rival", "smith")
+            .expect("the sale");
+    }
+    assert!(forge.owns_live("smith", a), "smith now holds them");
+
+    // The crafter is not the minter — and the craft still lands, burning notes they bought.
+    let draw = roll_craft(&beacon(3), &recipe, &[a, b, haft]);
+    let out = forge
+        .craft("smith", &draw)
+        .expect("a craft over acquired materials commits")
+        .output()
+        .expect("a safe recipe mints")
+        .clone();
+    assert_eq!(forge.owner_of(out.asset_id), Some(forge.pubkey_of("smith")));
+    for id in [a, b, haft] {
+        assert!(forge.is_destroyed(id), "the acquired input was consumed");
+        assert_eq!(forge.owner_of(id), None, "and it is gone on-chain");
+    }
+}
+
+/// The catalog knows the DUNGEON's material vocabulary: the relic tier ladder consumes exactly
+/// the kinds a verified banked-relic drop derives, and `craftable_by` answers "what can this
+/// player actually forge?" off the real ledger.
+#[test]
+fn the_reliquary_catalog_consumes_real_drop_kinds() {
+    use dreggnet_craft::{relic_kind, relic_sigil_id};
+    use dungeon_on_dregg::loot::Rarity;
+
+    let mut forge = CraftForge::new();
+    for rarity in [
+        Rarity::Common,
+        Rarity::Uncommon,
+        Rarity::Rare,
+        Rarity::Legendary,
+    ] {
+        let recipe = forge
+            .recipe(&relic_sigil_id(rarity))
+            .unwrap_or_else(|| panic!("the ladder holds a rung for {rarity:?}"))
+            .clone();
+        assert_eq!(recipe.input_count(), 2, "a sigil takes a PAIR of relics");
+        for kind in &recipe.inputs {
+            assert_eq!(
+                kind.as_str(),
+                relic_kind(rarity),
+                "the rung consumes exactly its tier's relic kind"
+            );
+        }
+    }
+    // The aspirational sink and the floor sink both exist.
+    assert!(forge.recipe("forge:wardens-reliquary").is_some());
+    assert!(forge.recipe("forge:salvaged-charm").is_some());
+
+    // `craftable_by` reads the real ledger: nothing craftable until the materials exist.
+    assert!(
+        !forge
+            .craftable_by("hero")
+            .contains(&relic_sigil_id(Rarity::Common)),
+        "an empty inventory forges nothing"
+    );
+    let k = relic_kind(Rarity::Common);
+    forge.mint_material("hero", &k, b"r-1");
+    assert!(
+        !forge
+            .craftable_by("hero")
+            .contains(&relic_sigil_id(Rarity::Common)),
+        "ONE relic is not a pair"
+    );
+    forge.mint_material("hero", &k, b"r-2");
+    assert!(
+        forge
+            .craftable_by("hero")
+            .contains(&relic_sigil_id(Rarity::Common)),
+        "two common relics unlock the common rung, and only that rung"
+    );
+    assert!(
+        !forge
+            .craftable_by("hero")
+            .contains(&relic_sigil_id(Rarity::Legendary)),
+        "common relics do NOT unlock the legendary rung — the tier is the gate"
+    );
+}

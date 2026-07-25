@@ -69,16 +69,30 @@
 //!   than re-implementing a no-transfer rule one layer up.
 //! * **batch mint** — [`AssetWorld::mint_batch`] mints a collection (a pack, a loot table
 //!   drop) in one call.
-//! * **revocation** — [`AssetWorld::revoke`] lets a minter burn a *mis-minted* asset while
-//!   they still hold the untransferred origin, via a real minter-signed spend (no successor).
-//!   A non-owner revoke, or a revoke after the asset was handed off, is refused.
+//! * **burn / revocation (the sink)** — a note is DESTROYED by a real owner-signed spend
+//!   under [`BURN_METHOD`] that mints no successor. [`AssetWorld::burn`] is the general
+//!   **owner-gated** sink (the *current holder* burns, whoever minted it) — what a crafting
+//!   sink needs so a material a player *bought* can be consumed; [`AssetWorld::revoke`] is
+//!   the narrower minter's-mis-mint door (minter must still hold the untransferred origin).
+//!   The burn case deliberately omits the transfer case's `FieldEquals(soulbound, 0)`: a burn
+//!   moves authority to nobody, so a soulbound credential stays non-transferable forever yet
+//!   its holder can still destroy it.
+//! * **inventory** — [`AssetWorld::assets_held_by`] lists a holder's live notes (the
+//!   wallet/bench read), [`AssetWorld::all_assets`] the whole census.
 //!
 //! ## Honest scope — what is real, what is a named seam
 //!
 //! REAL: the owned + transfer-gated + provenance-chained + content-addressed asset, plus
-//! the committed `trait_root` / `soulbound` properties, batch mint and minter revocation —
-//! executor-refereed on every gate (owner-signature, double-spend, forged-owner, soulbound
-//! non-transfer, non-owner revoke), driven and asserted in `tests/asset_layer.rs`.
+//! the committed `trait_root` / `soulbound` properties, batch mint, the owner-gated burn and
+//! minter revocation — executor-refereed on every gate (owner-signature, double-spend,
+//! forged-owner, soulbound non-transfer, non-owner burn, non-minter revoke), driven and
+//! asserted in `tests/asset_layer.rs`.
+//!
+//! Mint is **content-addressed, so it is idempotent, not a fresh-object factory**: the same
+//! `(minter, seed)` names the same asset. [`AssetWorld::mint`] returns the existing id
+//! unchanged on a repeat; [`AssetWorld::try_mint`] refuses with [`AssetError::DuplicateMint`]
+//! for callers that must know they minted something new. (Before this, a repeat silently
+//! appended a second bogus origin to the live lineage and broke its re-derivation.)
 //!
 //! Each holder runs its own sovereign [`EmbeddedExecutor`] (ledger) — a note lives in its
 //! current holder's ledger and the lineage links across them by content address, exactly
@@ -113,8 +127,18 @@ const ASSET_FEDERATION: [u8; 32] = [0xA5; 32];
 
 /// The dispatch method a transfer (spend) turn presents. Its `CellProgram::Cases` case
 /// carries the double-spend teeth; every other method default-denies (a version can ONLY
-/// be moved by a transfer).
+/// be moved by a transfer or a [`BURN_METHOD`] burn).
 pub const TRANSFER_METHOD: &str = "asset/transfer";
+
+/// The dispatch method a **burn** (destroy, no successor) turn presents. Its case carries
+/// the same identity-freeze + `StrictMonotonic(spent)` double-spend teeth as a transfer,
+/// but does NOT require `soulbound == 0`: a burn destroys the note rather than moving
+/// authority to another key, so a **soulbound** asset is burnable by its holder while
+/// remaining non-transferable forever. (Before this case existed, the transfer case's
+/// `FieldEquals(soulbound, 0)` made [`AssetWorld::revoke`] of a soulbound asset a real
+/// executor refusal even though the API doc claimed otherwise —
+/// `burn_and_revoke_of_a_soulbound_asset_is_admitted` is the driven tooth.)
+pub const BURN_METHOD: &str = "asset/burn";
 
 /// A stable, content-addressed asset identity — the cross-cell / cross-game address.
 /// `blake3_derive_key("dreggnet-asset-id-v1") over (minter_pubkey ‖ mint_seed)`. Carried
@@ -123,12 +147,27 @@ pub const TRANSFER_METHOD: &str = "asset/transfer";
 pub struct AssetId(pub [u8; 32]);
 
 impl AssetId {
-    fn compute(minter_pk: &[u8; 32], mint_seed: &[u8]) -> Self {
+    /// **The content address a mint of `(minter_pk, mint_seed)` produces** —
+    /// `blake3_derive_key("dreggnet-asset-id-v1")` over `minter_pk ‖ mint_seed`.
+    ///
+    /// Public so a third party can RECOMPUTE an asset's identity from its origin material
+    /// without holding the ledger: a looted note's id is
+    /// `derive(player_pk, drop_commitment(draw))`, a crafted note's is
+    /// `derive(crafter_pk, craft_commitment(draw, artifact))`. That makes an "adopt this
+    /// existing note" seam checkable — an adopter recomputes the address the presented
+    /// note *must* have and refuses anything else — instead of trusting the caller to hand
+    /// over the right id.
+    pub fn derive(minter_pk: &[u8; 32], mint_seed: &[u8]) -> Self {
         let mut h = blake3::Hasher::new_derive_key("dreggnet-asset-id-v1");
         h.update(minter_pk);
         h.update(mint_seed);
         AssetId(*h.finalize().as_bytes())
     }
+
+    fn compute(minter_pk: &[u8; 32], mint_seed: &[u8]) -> Self {
+        AssetId::derive(minter_pk, mint_seed)
+    }
+
     /// The raw 32-byte address.
     pub fn bytes(&self) -> [u8; 32] {
         self.0
@@ -244,47 +283,74 @@ fn resolve_slots() -> Slots {
     }
 }
 
-/// The note version program: a single `transfer`-method case. Its teeth freeze the
-/// version's immutable identity (`WriteOnce` on every identity field, including the
-/// first-class `trait_root` + `soulbound` commitments) and gate the spend
-/// (`StrictMonotonic(spent)` + `FieldEquals(spent, 1)`) so a transfer lands exactly once —
-/// a double-spend (`1 → 1`) is refused. The case ALSO requires `FieldEquals(soulbound, 0)`,
-/// so a **soulbound** note (`soulbound = 1`) refuses a transfer turn cryptographically at
-/// the ISA (the executor evaluates the case constraints and the turn fails). Every
-/// non-`transfer` method default-denies (a `Cases` program with a method-dispatching case
-/// rejects an unmatched method), so a version can be moved ONLY by a transfer.
+/// The **identity freeze + spend-once** teeth every spending case carries: `WriteOnce` on
+/// every immutable identity field (including the first-class `trait_root` + `soulbound`
+/// commitments), then `StrictMonotonic(spent)` + `FieldEquals(spent, 1)` so the spend lands
+/// exactly once — a double-spend (`1 → 1`) is not a strict increase and is refused.
+///
+/// Shared by BOTH method cases so no slot is left unconstrained under either method (the
+/// stapleable-slot hazard: a case that gates only on `MethodIs` while leaving a slot free
+/// lets that slot ride another method's turn). The ONLY difference between the two cases is
+/// the soulbound gate the transfer case adds on top.
+fn spend_teeth(s: &Slots) -> Vec<StateConstraint> {
+    vec![
+        StateConstraint::WriteOnce { index: s.asset_id },
+        StateConstraint::WriteOnce { index: s.minter },
+        StateConstraint::WriteOnce { index: s.owner },
+        StateConstraint::WriteOnce { index: s.prev },
+        StateConstraint::WriteOnce { index: s.serial },
+        StateConstraint::WriteOnce {
+            index: s.trait_root,
+        },
+        StateConstraint::WriteOnce { index: s.soulbound },
+        // 0 → 1 once; a re-spend (1 → 1) is not a strict increase → refused.
+        StateConstraint::StrictMonotonic { index: s.spent },
+        // the spend must actually mark the version spent.
+        StateConstraint::FieldEquals {
+            index: s.spent,
+            value: field_from_u64(1),
+        },
+    ]
+}
+
+/// The note version program: two method cases over the same [`spend_teeth`].
+///
+/// * **`transfer`** ([`TRANSFER_METHOD`]) — the teeth PLUS `FieldEquals(soulbound, 0)`, so a
+///   **soulbound** note (`soulbound = 1`) refuses a transfer turn cryptographically at the
+///   ISA (the executor evaluates the case constraints and the turn fails). This is the
+///   authority-moving spend: the host mints a successor owned by the new holder off the
+///   committed receipt.
+/// * **`burn`** ([`BURN_METHOD`]) — the teeth alone. A burn destroys the note (NO successor
+///   is ever minted from a burn receipt), so it moves authority to nobody and the soulbound
+///   gate does not apply: a soulbound credential stays non-transferable forever yet its
+///   holder can still destroy it. This is also the general owner-gated sink a craft consumes
+///   materials through ([`AssetWorld::burn`]).
+///
+/// Every other method default-denies (a `Cases` program with method-dispatching cases
+/// rejects an unmatched method), so a version can be moved ONLY by a transfer or a burn — and
+/// in either case only under a signature verifying against the version cell's own owner key.
 fn note_program(s: &Slots) -> CellProgram {
+    let mut transfer_constraints = spend_teeth(s);
+    // SOULBOUND GATE: a note minted soulbound (soulbound = 1) can never satisfy this, so its
+    // transfer turn is refused by the executor — non-transferability is a first-class ISA
+    // property, not app bookkeeping one layer up.
+    transfer_constraints.push(StateConstraint::FieldEquals {
+        index: s.soulbound,
+        value: field_from_u64(0),
+    });
     let transfer = TransitionCase {
         guard: TransitionGuard::MethodIs {
             method: symbol(TRANSFER_METHOD),
         },
-        constraints: vec![
-            StateConstraint::WriteOnce { index: s.asset_id },
-            StateConstraint::WriteOnce { index: s.minter },
-            StateConstraint::WriteOnce { index: s.owner },
-            StateConstraint::WriteOnce { index: s.prev },
-            StateConstraint::WriteOnce { index: s.serial },
-            StateConstraint::WriteOnce {
-                index: s.trait_root,
-            },
-            StateConstraint::WriteOnce { index: s.soulbound },
-            // SOULBOUND GATE: a note minted soulbound (soulbound = 1) can never satisfy
-            // this, so its transfer turn is refused by the executor — non-transferability
-            // is a first-class ISA property, not app bookkeeping one layer up.
-            StateConstraint::FieldEquals {
-                index: s.soulbound,
-                value: field_from_u64(0),
-            },
-            // 0 → 1 once; a re-spend (1 → 1) is not a strict increase → refused.
-            StateConstraint::StrictMonotonic { index: s.spent },
-            // the transfer must actually mark the version spent.
-            StateConstraint::FieldEquals {
-                index: s.spent,
-                value: field_from_u64(1),
-            },
-        ],
+        constraints: transfer_constraints,
     };
-    CellProgram::Cases(vec![transfer])
+    let burn = TransitionCase {
+        guard: TransitionGuard::MethodIs {
+            method: symbol(BURN_METHOD),
+        },
+        constraints: spend_teeth(s),
+    };
+    CellProgram::Cases(vec![transfer, burn])
 }
 
 /// A holder identity + its sovereign ledger (a real [`EmbeddedExecutor`]). Deterministic
@@ -377,6 +443,12 @@ pub enum AssetError {
     Refused(String),
     /// No asset with this id has been minted in this world.
     UnknownAsset,
+    /// A mint would re-open a content address this world already carries a lineage for.
+    /// An [`AssetId`] is `blake3(minter_pk ‖ mint_seed)`, so the same `(minter, seed)` names
+    /// the SAME object: minting it twice does not create a second asset, it appends a second
+    /// bogus "origin" to the existing lineage (whose `prev = 0` then fails the
+    /// content-address re-derivation, silently breaking provenance). Refused instead.
+    DuplicateMint,
 }
 
 impl std::fmt::Display for AssetError {
@@ -384,6 +456,12 @@ impl std::fmt::Display for AssetError {
         match self {
             AssetError::Refused(r) => write!(f, "asset turn refused: {r}"),
             AssetError::UnknownAsset => write!(f, "unknown asset id"),
+            AssetError::DuplicateMint => {
+                write!(
+                    f,
+                    "an asset with this content address is already minted here"
+                )
+            }
         }
     }
 }
@@ -511,9 +589,11 @@ pub struct AssetWorld {
     program: CellProgram,
     holders: HashMap<String, Holder>,
     lineages: HashMap<[u8; 32], Vec<Version>>,
-    /// Assets the minter has revoked (burned while still holding the untransferred origin).
-    /// A revoked asset has no live holder and refuses transfer.
-    revoked: std::collections::HashSet<[u8; 32]>,
+    /// Assets that have been BURNED — destroyed by a real owner-signed [`BURN_METHOD`]
+    /// spend with no successor, either as the minter's [`AssetWorld::revoke`] of a mis-mint or
+    /// as the general owner-gated [`AssetWorld::burn`] sink a craft consumes materials through.
+    /// A burned asset has no live holder and refuses transfer.
+    burned: std::collections::HashSet<[u8; 32]>,
 }
 
 impl Default for AssetWorld {
@@ -533,7 +613,7 @@ impl AssetWorld {
             program,
             holders: HashMap::new(),
             lineages: HashMap::new(),
-            revoked: std::collections::HashSet::new(),
+            burned: std::collections::HashSet::new(),
         }
     }
 
@@ -551,7 +631,7 @@ impl AssetWorld {
         for label in self.holders.keys() {
             staged.ensure_holder(label);
         }
-        staged.revoked = self.revoked.clone();
+        staged.burned = self.burned.clone();
         for (asset, versions) in &self.lineages {
             let mut staged_versions = Vec::with_capacity(versions.len());
             for version in versions {
@@ -613,7 +693,7 @@ impl AssetWorld {
                     self.holders[&version.holder].is_spent(version.cell, &self.slots) as u8,
                 ]);
             }
-            hasher.update(&[self.revoked.contains(asset) as u8]);
+            hasher.update(&[self.burned.contains(asset) as u8]);
         }
         *hasher.finalize().as_bytes()
     }
@@ -694,7 +774,64 @@ impl AssetWorld {
         AssetId::compute(&self.holders[minter_label].pubkey(), mint_seed)
     }
 
+    /// **MINT, fail-closed on a duplicate content address** — the checked form of
+    /// [`Self::mint`]. Because an [`AssetId`] is `blake3(minter_pk ‖ mint_seed)`, a repeat of
+    /// the same `(minter, seed)` names the SAME object; minting it again would append a
+    /// bogus second "origin" (`prev = 0`, `serial = 1`) to the live lineage and silently
+    /// break [`Self::verify_provenance`]. This returns [`AssetError::DuplicateMint`] instead,
+    /// so a faucet that must mint a FRESH object learns it did not.
+    pub fn try_mint(
+        &mut self,
+        minter_label: &str,
+        mint_seed: &[u8],
+    ) -> Result<AssetId, AssetError> {
+        let asset_id = self.peek_asset_id(minter_label, mint_seed);
+        let trait_root = default_trait_root(&asset_id);
+        self.mint_checked(minter_label, mint_seed, trait_root, false)
+    }
+
+    /// [`Self::try_mint`] with an explicit committed trait root ([`Self::mint_with_traits`]).
+    pub fn try_mint_with_traits(
+        &mut self,
+        minter_label: &str,
+        mint_seed: &[u8],
+        trait_root: [u8; 32],
+    ) -> Result<AssetId, AssetError> {
+        self.mint_checked(minter_label, mint_seed, trait_root, false)
+    }
+
+    /// [`Self::try_mint`] for a soulbound note ([`Self::mint_soulbound`]).
+    pub fn try_mint_soulbound(
+        &mut self,
+        minter_label: &str,
+        mint_seed: &[u8],
+    ) -> Result<AssetId, AssetError> {
+        let asset_id = self.peek_asset_id(minter_label, mint_seed);
+        let trait_root = default_trait_root(&asset_id);
+        self.mint_checked(minter_label, mint_seed, trait_root, true)
+    }
+
+    /// The checked mint: refuse a duplicate content address rather than corrupting its lineage.
+    fn mint_checked(
+        &mut self,
+        minter_label: &str,
+        mint_seed: &[u8],
+        trait_root: [u8; 32],
+        soulbound: bool,
+    ) -> Result<AssetId, AssetError> {
+        let asset_id = self.peek_asset_id(minter_label, mint_seed);
+        if self.lineages.contains_key(&asset_id.0) {
+            return Err(AssetError::DuplicateMint);
+        }
+        Ok(self.mint_inner(minter_label, mint_seed, trait_root, soulbound))
+    }
+
     /// The shared mint tail: install the origin note carrying `trait_root` + `soulbound`.
+    ///
+    /// A repeat of an already-minted `(minter, seed)` is a NO-OP returning the existing id —
+    /// the content address already names that object, and appending a second origin would
+    /// break the lineage's re-derivation. Callers that need to KNOW use
+    /// [`Self::try_mint`] and friends, which refuse instead.
     fn mint_inner(
         &mut self,
         minter_label: &str,
@@ -705,6 +842,9 @@ impl AssetWorld {
         self.ensure_holder(minter_label);
         let pk = self.holders[minter_label].pubkey();
         let asset_id = AssetId::compute(&pk, mint_seed);
+        if self.lineages.contains_key(&asset_id.0) {
+            return asset_id;
+        }
         let desc = NoteDesc {
             asset_id: asset_id.0,
             minter: pk,
@@ -739,10 +879,10 @@ impl AssetWorld {
         if !self.lineages.contains_key(&asset_id.0) {
             return Err(AssetError::UnknownAsset);
         }
-        if self.revoked.contains(&asset_id.0) {
+        if self.burned.contains(&asset_id.0) {
             // The origin is already spent (burned); the executor would also refuse the
             // double-spend. Report the specific reason.
-            return Err(AssetError::Refused("asset was revoked".to_string()));
+            return Err(AssetError::Refused("asset was burned".to_string()));
         }
         self.ensure_holder(from_label);
         self.ensure_holder(to_label);
@@ -751,24 +891,10 @@ impl AssetWorld {
             .expect("a minted asset has at least the origin version")
             .clone();
 
-        // The spend action is signed by `from` (its key). It is submitted through the
-        // note's OWN ledger (the tail owner's executor) as the turn envelope, so the
-        // refusal, when `from` is not the owner, is precisely the signature-vs-cell-pubkey
-        // ownership gate.
-        let effects = vec![Effect::SetField {
-            cell: tail.cell,
-            index: self.slots.spent as u64,
-            value: field_from_u64(1),
-        }];
-        let action =
-            self.holders[from_label]
-                .cclerk
-                .make_action(tail.cell, TRANSFER_METHOD, effects);
-        let tail_holder = &self.holders[&tail.holder];
-        let spend = tail_holder
-            .exec
-            .submit_action(&tail_holder.cclerk, action)
-            .map_err(|e| AssetError::Refused(e.to_string()))?;
+        // The spend action is signed by `from` (its key) and submitted through the note's OWN
+        // ledger, so the refusal — when `from` is not the owner, or when the note is soulbound
+        // — is precisely the executor's own gate, not a host `if`.
+        let spend = self.spend_tail(&tail, from_label, TRANSFER_METHOD)?;
 
         // The spend committed → mint the successor version owned by `to`.
         let to_pk = self.holders[to_label].pubkey();
@@ -829,7 +955,7 @@ impl AssetWorld {
     /// The current holder's pubkey for `asset_id` (the tail version's owner), or `None` if
     /// the asset was revoked (burned by its minter).
     pub fn current_owner(&self, asset_id: AssetId) -> Option<[u8; 32]> {
-        if self.revoked.contains(&asset_id.0) {
+        if self.burned.contains(&asset_id.0) {
             return None;
         }
         self.lineages
@@ -862,17 +988,66 @@ impl AssetWorld {
 
     /// Whether `asset_id` was revoked (burned by its minter).
     pub fn is_revoked(&self, asset_id: AssetId) -> bool {
-        self.revoked.contains(&asset_id.0)
+        self.burned.contains(&asset_id.0)
     }
 
-    /// **REVOKE a mis-minted asset** — the minter burns it while they still hold the
-    /// untransferred origin. Drives a real, minter-signed spend turn on the origin version
-    /// (marking it `spent`) but mints NO successor: the asset is gone. This is gated exactly
-    /// like a transfer — the minter must be the *current owner* (i.e. the asset has not been
-    /// handed off), so the executor refuses a revoke by a non-owner, and a revoke after a
-    /// transfer is impossible (the origin is already spent → the executor refuses the
-    /// double-spend). A soulbound asset can still be revoked by its minter (revocation is
-    /// the minter's own burn, not a transfer of authority away).
+    /// Whether `asset_id` was BURNED — destroyed with no successor, by either the minter's
+    /// [`Self::revoke`] or the general owner-gated [`Self::burn`]. The same fact
+    /// [`Self::is_revoked`] reports, under the name that covers both doors.
+    pub fn is_burned(&self, asset_id: AssetId) -> bool {
+        self.burned.contains(&asset_id.0)
+    }
+
+    /// **BURN an asset — the general OWNER-gated sink.** Drives a real spend turn on the
+    /// current (tail) version signed by `owner_label`'s key under [`BURN_METHOD`], marking it
+    /// `spent` and minting NO successor: the note is destroyed and
+    /// [`Self::current_owner`] goes `None`.
+    ///
+    /// There is **no host-side owner `if`** here: the executor admits the turn IFF the
+    /// signature verifies against the tail version cell's own birth pubkey, so a burn by
+    /// anyone but the current holder is a real cryptographic [`AssetError::Refused`], and a
+    /// re-burn of an already-spent version is refused by the `StrictMonotonic(spent)` tooth.
+    ///
+    /// Unlike [`Self::revoke`] this does **not** require the burner be the original minter —
+    /// which is what an economy needs: a crafting sink must be able to consume materials a
+    /// player *bought or looted from someone else*, not only ones they minted themselves.
+    /// (Craft's own sink previously ran through `revoke`, so a traded material could never be
+    /// consumed; `dreggnet_craft::CraftForge::craft` now burns.)
+    ///
+    /// A **soulbound** note is burnable by its holder: [`BURN_METHOD`]'s case omits the
+    /// transfer case's `FieldEquals(soulbound, 0)` because a burn moves authority to nobody.
+    pub fn burn(
+        &mut self,
+        asset_id: AssetId,
+        owner_label: &str,
+    ) -> Result<TurnReceipt, AssetError> {
+        if !self.lineages.contains_key(&asset_id.0) {
+            return Err(AssetError::UnknownAsset);
+        }
+        if self.burned.contains(&asset_id.0) {
+            return Err(AssetError::Refused("asset was already burned".to_string()));
+        }
+        self.ensure_holder(owner_label);
+        let tail = self.lineages[&asset_id.0]
+            .last()
+            .expect("a minted asset has at least the origin version")
+            .clone();
+        let receipt = self.spend_tail(&tail, owner_label, BURN_METHOD)?;
+        self.burned.insert(asset_id.0);
+        Ok(receipt)
+    }
+
+    /// **REVOKE a mis-minted asset** — the MINTER's burn, allowed only while they still hold
+    /// the untransferred origin. A host guard first gives the precise reason (the caller is
+    /// not the minter, or has handed the asset off), then the same real owner-signed
+    /// [`BURN_METHOD`] spend as [`Self::burn`] destroys it with no successor. A revoke after a
+    /// transfer is impossible twice over: the guard refuses it, and the origin is already
+    /// spent so the executor would refuse the double-spend anyway.
+    ///
+    /// A soulbound asset CAN be revoked by its minter — the burn case carries no soulbound
+    /// gate. (This doc-comment used to claim that while the code routed the burn through
+    /// [`TRANSFER_METHOD`], whose `FieldEquals(soulbound, 0)` made it a real refusal; the
+    /// claim is now true and driven.)
     pub fn revoke(
         &mut self,
         asset_id: AssetId,
@@ -897,31 +1072,79 @@ impl AssetWorld {
                     .to_string(),
             ));
         }
-        // The real gated burn: a minter-signed spend on the origin, no successor.
+        let receipt = self.spend_tail(&tail, minter_label, BURN_METHOD)?;
+        self.burned.insert(asset_id.0);
+        Ok(receipt)
+    }
+
+    /// Drive one real `signer_label`-signed spend turn on `tail` under `method`, submitted
+    /// through the note's OWN ledger (the tail owner's executor). The refusal, when the
+    /// signer is not the owner, is precisely the signature-vs-cell-pubkey ownership gate.
+    fn spend_tail(
+        &self,
+        tail: &Version,
+        signer_label: &str,
+        method: &str,
+    ) -> Result<TurnReceipt, AssetError> {
         let effects = vec![Effect::SetField {
             cell: tail.cell,
             index: self.slots.spent as u64,
             value: field_from_u64(1),
         }];
-        let action =
-            self.holders[minter_label]
-                .cclerk
-                .make_action(tail.cell, TRANSFER_METHOD, effects);
-        let holder = &self.holders[&tail.holder];
-        let receipt = holder
+        let action = self.holders[signer_label]
+            .cclerk
+            .make_action(tail.cell, method, effects);
+        let tail_holder = &self.holders[&tail.holder];
+        tail_holder
             .exec
-            .submit_action(&holder.cclerk, action)
-            .map_err(|e| AssetError::Refused(e.to_string()))?;
-        self.revoked.insert(asset_id.0);
-        Ok(receipt)
+            .submit_action(&tail_holder.cclerk, action)
+            .map_err(|e| AssetError::Refused(e.to_string()))
     }
 
-    /// The current holder's label for `asset_id`.
+    /// The current holder's label for `asset_id`, or `None` if it was burned — the label-side
+    /// twin of [`Self::current_owner`], and `None` in exactly the same cases. (It previously
+    /// kept naming the last holder of a BURNED note, so a consumer that asked by label — a
+    /// market stall checking "does the seller still have it?" — saw a destroyed item as
+    /// live, while the same question asked by pubkey correctly said no.)
     pub fn current_holder_label(&self, asset_id: AssetId) -> Option<&str> {
+        if self.burned.contains(&asset_id.0) {
+            return None;
+        }
         self.lineages
             .get(&asset_id.0)
             .and_then(|c| c.last())
             .map(|v| v.holder.as_str())
+    }
+
+    /// **A holder's live inventory** — every asset whose tail version is owned by `label` and
+    /// which has not been burned, in a stable (content-address-sorted) order. This is the
+    /// wallet/inventory read a frontend or a market renders a player's holdings from, and the
+    /// query a crafting bench uses to answer "what can I actually forge with?". Previously
+    /// every consumer had to keep its own side-map of ids because the ledger could only be
+    /// asked about one id at a time.
+    pub fn assets_held_by(&self, label: &str) -> Vec<AssetId> {
+        let Some(holder) = self.holders.get(label) else {
+            return Vec::new();
+        };
+        let pk = holder.pubkey();
+        let mut held: Vec<AssetId> = self
+            .lineages
+            .iter()
+            .filter(|(id, versions)| {
+                !self.burned.contains(*id) && versions.last().is_some_and(|v| v.desc.owner == pk)
+            })
+            .map(|(id, _)| AssetId(*id))
+            .collect();
+        held.sort_by_key(|a| a.0);
+        held
+    }
+
+    /// Every asset id this world carries a lineage for (minted, transferred, or burned), in a
+    /// stable content-address order — the census a market/audit view enumerates.
+    pub fn all_assets(&self) -> Vec<AssetId> {
+        let mut all: Vec<AssetId> = self.lineages.keys().map(|id| AssetId(*id)).collect();
+        all.sort_by_key(|a| a.0);
+        all
     }
 
     /// The number of versions in `asset_id`'s lineage (1 after mint, +1 per transfer).
@@ -945,7 +1168,7 @@ impl AssetWorld {
     /// asset the tail expectation flips: the tail must be spent too (the minter's burn
     /// genuinely happened), so a clean revocation still verifies.
     pub fn verify_provenance(&self, asset_id: AssetId) -> ProvenanceReport {
-        let revoked = self.revoked.contains(&asset_id.0);
+        let revoked = self.burned.contains(&asset_id.0);
         let chain = match self.lineages.get(&asset_id.0) {
             Some(c) if !c.is_empty() => c,
             _ => {

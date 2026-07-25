@@ -38,13 +38,35 @@
 //!    (equippable by the `Armory`) or a companion egg. The output's content address therefore
 //!    encodes exactly what was forged from what.
 //!
-//! ## Wired to the real economy
+//! ## Wired to the real economy — the SAME note, not a look-alike
 //!
-//! Inputs can be SOURCED from real dungeon loot: [`CraftForge::mint_loot_material`] gates a
-//! material on the loot layer's own [`dungeon_on_dregg::loot::reverify_drop`] tooth, so a
-//! material is provably a real, fair drop — not a demo faucet. Outputs are the SHARED gear /
-//! companion schemas, so a forged item is a real, equippable [`dreggnet_gear::StatBlock`],
-//! not a craft-local shadow of one.
+//! Open the forge over the player's real loot ledger
+//! ([`CraftForge::with_assets`] ← [`dungeon_on_dregg::loot::LootVault::into_assets`]) and
+//! [`CraftForge::adopt_loot_material`] TYPES the exact banked-relic note as a craft input —
+//! minting nothing. It gates on three things: the drop re-verifies as a real fair draw; the
+//! presented note's id IS [`dungeon_on_dregg::loot::expected_asset_id`] for that drop and that
+//! player (so a genuine draw cannot be pointed at some other note); and the player really
+//! holds it live. The material's typed kind is then **derived from the drop**
+//! ([`dungeon_on_dregg::loot::LootDraw::material_kind`], `"{class}:{rarity}"`), never
+//! supplied — so [`RecipeBook::reliquary`]'s `relic:legendary` recipes demand the real ~3%
+//! tail of a real run.
+//!
+//! [`CraftForge::mint_loot_material`] remains, but it is a FAUCET: it mints a *second* note
+//! in the forge's own ledger under its own address, so on a drop the player already banked it
+//! leaves two items in existence. Use it only for a standalone bench with no vault behind it.
+//!
+//! Outputs are the SHARED gear / companion schemas, so a forged item is a real, equippable
+//! [`dreggnet_gear::StatBlock`], not a craft-local shadow of one — and
+//! [`CraftProvenance::material_origins`] carries, past the sink that destroyed them, which
+//! RUNS the consumed materials were banked on.
+//!
+//! ## Named residual — input quality does not yet bias the draw
+//!
+//! Better materials buy you access to a better RECIPE (the tier ladder), but they do not bend
+//! an individual craft's odds. Making them would mean binding the inputs' typed kinds into the
+//! craft seed and re-deriving effective weights from them in [`reverify_craft`] — otherwise
+//! the bonus would be unverifiable. That is a change to [`roll_craft`]'s signature, which
+//! several sibling crates call; named here rather than done unilaterally.
 //!
 //! ## A forged craft mints NOTHING
 //!
@@ -65,11 +87,12 @@ pub use draw::{
 };
 pub use forge::{
     BotchReceipt, CraftError, CraftForge, CraftOutput, CraftProvenance, CraftResolution,
+    MaterialOrigin,
 };
 pub use quality::{CraftOutcome, CraftQuality};
 pub use recipe::{
     CraftedArtifact, DEFAULT_QUALITY_WEIGHTS, GearTemplate, MaterialKind, OutputSpec, Recipe,
-    RecipeBook,
+    RecipeBook, relic_kind, relic_sigil_id, salvage_kind, trophy_kind,
 };
 
 // Re-exported from siblings so callers name the shared schemas through the forge.

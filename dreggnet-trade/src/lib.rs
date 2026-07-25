@@ -52,10 +52,23 @@
 //! sealed escrow's both-present-atomic + one-shot teeth + the asset transfer's
 //! signature gate), not by policy.
 //!
+//! ## Discovery — [`Bazaar`]
+//!
+//! The swap primitive could settle a matched trade but gave no way to FIND one: a
+//! [`Listing`] was a bare value the caller had to already hold, so two players who did
+//! not know each other could never meet. [`Bazaar`] is a posted-offer registry over the
+//! same [`TradeWorld`] — post / [`browse`](Bazaar::browse) /
+//! [`affordable`](Bazaar::affordable) / [`by_seller`](Bazaar::by_seller) /
+//! [`buy`](Bazaar::buy) / [`cancel`](Bazaar::cancel) — adding discovery and NOT trust:
+//! every sale still runs through the same atomic escrow crossing, and because a post
+//! locks nothing, `browse` re-reads the ledger so an offer whose seller has since traded
+//! the item away is filtered out instead of being shown as buyable.
+//!
 //! ## Named residuals (not built here)
 //!
-//! * an **order book / auction house** over sealed-auction (this layer settles ONE
-//!   matched trade at a time; [`Listing`] is a single offer, not a book);
+//! * an **auction / matching engine** — [`Bazaar`] is one in-process stall of
+//!   fixed-price offers: no bids, no order matching, no cross-node gossip.
+//!   `dreggnet-market`'s sealed Dark Bazaar is the auction surface;
 //! * a **market frontend** (wallet / stall UI);
 //! * a **fee sink to the treasury** (a marketplace cut at settle — no settlement
 //!   path takes a cut today).
@@ -652,6 +665,15 @@ impl TradeWorld {
                 "the seller does not own the listed asset".to_string(),
             )));
         }
+        // A soulbound note can never leave its holder (the asset layer's transfer case gates
+        // on `soulbound == 0`), so a listing for one is an offer that could only ever fail at
+        // settlement. Refuse it here, where the seller finds out — matching the check
+        // `prepare_atomic_sale` already made and `list` did not.
+        if self.assets.is_soulbound(asset) {
+            return Err(TradeError::Asset(AssetError::Refused(
+                "the listed asset is soulbound and can never be transferred".to_string(),
+            )));
+        }
         Ok(Listing {
             asset,
             price,
@@ -702,3 +724,167 @@ impl TradeWorld {
 // Re-export the sealed-escrow `Side` so callers can name trade sides without a second
 // dependency.
 pub use starbridge_escrow_market::Side as TradeSide;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISCOVERY — the market stall over the swap primitive
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A handle on one posted offer in a [`Bazaar`]. Stable for the life of the stall.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ListingId(pub u64);
+
+/// One posted offer as a browser sees it — what, from whom, for how much, and whether the
+/// seller still holds it.
+#[derive(Clone, Debug)]
+pub struct StallEntry {
+    /// The offer's handle (what [`Bazaar::buy`] / [`Bazaar::cancel`] take).
+    pub id: ListingId,
+    /// The offered asset.
+    pub asset: AssetId,
+    /// The asking price in $DREGG.
+    pub price: u64,
+    /// The seller's label.
+    pub seller: String,
+    /// Whether the seller STILL owns the asset. A listing is a standing offer, not a lock, so
+    /// a seller can trade or burn the item out from under it; such an offer is **stale** and
+    /// would be refused at [`Bazaar::buy`] by the ownership gate. [`Bazaar::browse`] hides
+    /// stale entries so a browser is never shown something unbuyable.
+    pub live: bool,
+}
+
+/// **A bazaar — the discovery layer the swap primitive was missing.**
+///
+/// [`TradeWorld`] can settle a matched trade atomically, but before this a listing was a bare
+/// value the caller had to hold onto: there was no way to ask "what is for sale?", "what can I
+/// afford?", or "what has this seller got?" — so nobody could find a counterparty without
+/// already knowing them. A `Bazaar` is a posted-offer registry over the same `TradeWorld`,
+/// with the sale still running through [`TradeWorld::buy`]'s atomic escrow crossing.
+///
+/// It adds discovery, **not** trust: the ownership gate, the both-legs-or-nothing settlement,
+/// and the reclaim path are unchanged and still the escrow's. Posting is checked (a
+/// non-owner, or a soulbound asset, is refused at post time) but a post locks nothing, so an
+/// offer can go stale — [`Self::browse`] filters those out by re-reading the ledger rather
+/// than trusting the posting.
+///
+/// **Honest scope**: one in-process stall — a flat list, no bids, no auction, no matching
+/// engine, no fee to a treasury, and no gossip between nodes. `dreggnet-market`'s sealed Dark
+/// Bazaar is the auction; this is the "browse the stalls and buy at the asking price" surface.
+#[derive(Default)]
+pub struct Bazaar {
+    listings: std::collections::BTreeMap<u64, Listing>,
+    next: u64,
+}
+
+impl Bazaar {
+    /// An empty stall.
+    pub fn new() -> Self {
+        Bazaar::default()
+    }
+
+    /// **Post an offer.** Validated through [`TradeWorld::list`] — a seller who does not own
+    /// the asset, or one offering a soulbound note, is refused and nothing is posted. Nothing
+    /// is locked: the item stays with the seller until a buyer matches.
+    pub fn post(
+        &mut self,
+        world: &mut TradeWorld,
+        seller: &str,
+        asset: AssetId,
+        price: u64,
+    ) -> Result<ListingId, TradeError> {
+        let listing = world.list(seller, asset, price)?;
+        let id = self.next;
+        self.next += 1;
+        self.listings.insert(id, listing);
+        Ok(ListingId(id))
+    }
+
+    /// **Browse every BUYABLE offer**, cheapest first (ties broken by post order). Re-reads
+    /// the ledger for each entry, so an offer whose seller has since traded or burned the item
+    /// is filtered out rather than shown as buyable.
+    pub fn browse(&self, world: &TradeWorld) -> Vec<StallEntry> {
+        let mut open: Vec<StallEntry> = self
+            .entries(world)
+            .into_iter()
+            .filter(|entry| entry.live)
+            .collect();
+        open.sort_by_key(|entry| (entry.price, entry.id));
+        open
+    }
+
+    /// Every un-consumed offer INCLUDING stale ones, in post order — the seller's own
+    /// "my listings" view, where a stale entry is the useful thing to see.
+    pub fn entries(&self, world: &TradeWorld) -> Vec<StallEntry> {
+        self.listings
+            .iter()
+            .filter(|(_, listing)| !listing.consumed)
+            .map(|(id, listing)| StallEntry {
+                id: ListingId(*id),
+                asset: listing.asset,
+                price: listing.price,
+                seller: listing.seller.clone(),
+                live: world.current_holder_label(listing.asset) == Some(listing.seller.as_str()),
+            })
+            .collect()
+    }
+
+    /// Buyable offers a wallet holding `budget` $DREGG can actually afford, cheapest first.
+    pub fn affordable(&self, world: &TradeWorld, budget: u64) -> Vec<StallEntry> {
+        self.browse(world)
+            .into_iter()
+            .filter(|entry| entry.price <= budget)
+            .collect()
+    }
+
+    /// Buyable offers posted by `seller`, cheapest first.
+    pub fn by_seller(&self, world: &TradeWorld, seller: &str) -> Vec<StallEntry> {
+        self.browse(world)
+            .into_iter()
+            .filter(|entry| entry.seller == seller)
+            .collect()
+    }
+
+    /// The buyable offer for `asset`, if one is posted.
+    pub fn offer_for(&self, world: &TradeWorld, asset: AssetId) -> Option<StallEntry> {
+        self.browse(world)
+            .into_iter()
+            .find(|entry| entry.asset.bytes() == asset.bytes())
+    }
+
+    /// **Buy a posted offer** — the same atomic crossing as [`TradeWorld::buy`]: both legs
+    /// deposit into sealed escrow and settle together, or nothing moves and the seller keeps
+    /// the item. A stale offer (the seller no longer holds it) is refused by the ownership
+    /// gate, an unknown or already-bought handle by [`EscrowError::LegAlreadyConsumed`].
+    pub fn buy(
+        &mut self,
+        world: &mut TradeWorld,
+        id: ListingId,
+        buyer: &str,
+    ) -> Result<Settlement, TradeError> {
+        let listing = self
+            .listings
+            .get_mut(&id.0)
+            .ok_or(TradeError::Escrow(EscrowError::LegAlreadyConsumed(Side::A)))?;
+        world.buy(listing, buyer)
+    }
+
+    /// **Cancel an offer** — only its own seller may. Nothing was locked, so the seller
+    /// already holds the item; this just voids the standing offer.
+    pub fn cancel(&mut self, id: ListingId, seller: &str) -> Result<(), TradeError> {
+        let listing = self
+            .listings
+            .get_mut(&id.0)
+            .ok_or(TradeError::Escrow(EscrowError::LegAlreadyConsumed(Side::A)))?;
+        if listing.seller != seller {
+            return Err(TradeError::Asset(AssetError::Refused(
+                "only the offer's own seller may cancel it".to_string(),
+            )));
+        }
+        listing.consumed = true;
+        Ok(())
+    }
+
+    /// How many offers are still open (bought/cancelled ones excluded), stale included.
+    pub fn open_count(&self) -> usize {
+        self.listings.values().filter(|l| !l.consumed).count()
+    }
+}

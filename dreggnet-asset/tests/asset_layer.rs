@@ -12,7 +12,8 @@
 //!   * the asset id is STABLE / content-addressed across versions + independent of cells.
 
 use dreggnet_asset::{
-    AssetError, AssetWorld, NoteDesc, ProvenanceBreak, default_trait_root, verify_desc_chain,
+    AssetError, AssetId, AssetWorld, NoteDesc, ProvenanceBreak, default_trait_root,
+    verify_desc_chain,
 };
 
 #[test]
@@ -442,6 +443,204 @@ fn a_minter_can_revoke_a_still_held_asset() {
         "a cleanly revoked asset verifies as a burn: {:?}",
         report.reasons
     );
+}
+
+/// A **soulbound** asset is BURNABLE by its holder while staying non-transferable — the
+/// property `revoke`'s doc-comment always claimed and the code did not deliver, because the
+/// burn was driven through `TRANSFER_METHOD`, whose case gates on `FieldEquals(soulbound, 0)`.
+/// Both polarities on ONE note, so this cannot pass vacuously: the transfer is refused, the
+/// burn commits.
+#[test]
+fn a_soulbound_asset_is_burnable_by_its_holder_though_never_transferable() {
+    let mut w = AssetWorld::new();
+    let earner = w.pubkey_of("earner");
+    let id = w.mint_soulbound("earner", b"platinum-badge");
+    assert!(w.is_soulbound(id));
+
+    // Non-transferable, even owner-signed — the ISA gate.
+    assert!(
+        matches!(
+            w.transfer(id, "earner", "buyer"),
+            Err(AssetError::Refused(_))
+        ),
+        "a soulbound note refuses transfer"
+    );
+    assert_eq!(
+        w.current_owner(id),
+        Some(earner),
+        "still bound to the earner"
+    );
+
+    // ...yet the SAME note burns under the holder's own signature.
+    w.burn(id, "earner")
+        .expect("the holder can destroy their own soulbound credential");
+    assert!(w.is_burned(id), "the badge is gone");
+    assert_eq!(
+        w.current_owner(id),
+        None,
+        "a burned note has no live holder"
+    );
+    let report = w.verify_provenance(id);
+    assert!(
+        report.verified,
+        "a cleanly burned soulbound note verifies as a burn: {:?}",
+        report.reasons
+    );
+
+    // And a minter's revoke of a soulbound asset — the exact doc claim — now really commits.
+    let other = w.mint_soulbound("earner", b"gold-badge");
+    w.revoke(other, "earner")
+        .expect("the minter can revoke a soulbound mis-mint");
+    assert!(w.is_revoked(other));
+}
+
+/// The general OWNER-gated burn: whoever CURRENTLY holds a note can destroy it, minter or
+/// not — the primitive a crafting sink needs so a material a player *bought* is consumable.
+/// Non-vacuous in both directions: the minter (who handed it off) can no longer burn it, the
+/// new holder can; and after the burn nobody can burn it again.
+#[test]
+fn the_current_holder_can_burn_a_note_they_did_not_mint() {
+    let mut w = AssetWorld::new();
+    let _minter = w.pubkey_of("minter");
+    let holder = w.pubkey_of("holder");
+    let id = w.mint("minter", b"traded-material");
+    w.transfer(id, "minter", "holder").expect("the sale");
+    assert_eq!(w.current_owner(id), Some(holder));
+
+    // The MINTER is no longer the owner: their burn is a real cryptographic refusal (the
+    // signature does not verify against the tail version cell's key).
+    let by_minter = w.burn(id, "minter");
+    assert!(
+        matches!(by_minter, Err(AssetError::Refused(_))),
+        "a former owner cannot burn what they handed off, got {by_minter:?}"
+    );
+    assert_eq!(
+        w.current_owner(id),
+        Some(holder),
+        "anti-ghost: the refused burn destroyed nothing"
+    );
+    // A third party who never held it cannot either.
+    assert!(
+        matches!(w.burn(id, "mallory"), Err(AssetError::Refused(_))),
+        "a stranger cannot burn someone else's note"
+    );
+    assert!(!w.is_burned(id));
+
+    // The CURRENT holder can — this is exactly what `revoke` (minter-gated) refuses, so the
+    // owner-gated door is doing real work, not duplicating the old one.
+    assert!(
+        matches!(w.revoke(id, "holder"), Err(AssetError::Refused(_))),
+        "revoke still demands the minter; burn is the general door"
+    );
+    w.burn(id, "holder")
+        .expect("the current holder burns the note they acquired");
+    assert!(w.is_burned(id));
+    assert_eq!(w.current_owner(id), None);
+
+    // Once burned: no re-burn, no transfer, and the lineage still re-verifies as a burn.
+    assert!(matches!(w.burn(id, "holder"), Err(AssetError::Refused(_))));
+    assert!(matches!(
+        w.transfer(id, "holder", "minter"),
+        Err(AssetError::Refused(_))
+    ));
+    let report = w.verify_provenance(id);
+    assert!(report.revoked, "the report marks it burned");
+    assert!(
+        report.verified,
+        "the burned lineage verifies: {:?}",
+        report.reasons
+    );
+    assert_eq!(report.length, 2, "mint + one transfer, then the burn");
+}
+
+/// **A duplicate mint does not corrupt a lineage.** An `AssetId` is
+/// `blake3(minter_pk ‖ mint_seed)`, so the same `(minter, seed)` names the SAME object.
+/// Re-minting used to append a second bogus origin (`prev = 0`, `serial = 1`) to the live
+/// lineage, which then failed its own content-address re-derivation — silently. Now `mint` is
+/// a no-op returning the existing id, and `try_mint` refuses so a caller that needs a FRESH
+/// object finds out.
+#[test]
+fn a_duplicate_mint_is_refused_and_never_breaks_the_lineage() {
+    let mut w = AssetWorld::new();
+    let alice = w.pubkey_of("alice");
+    let id = w.mint("alice", b"one-of-a-kind");
+    w.transfer(id, "alice", "bob").expect("a real transfer");
+    assert_eq!(w.lineage_len(id), 2);
+
+    // The checked door refuses.
+    assert!(
+        matches!(
+            w.try_mint("alice", b"one-of-a-kind"),
+            Err(AssetError::DuplicateMint)
+        ),
+        "a repeat of the same (minter, seed) is not a second asset"
+    );
+    // The infallible door is a no-op returning the same address — NOT a second origin.
+    let again = w.mint("alice", b"one-of-a-kind");
+    assert_eq!(again.bytes(), id.bytes());
+    assert_eq!(
+        w.lineage_len(id),
+        2,
+        "the duplicate mint appended no bogus origin"
+    );
+    let report = w.verify_provenance(id);
+    assert!(
+        report.verified,
+        "the lineage still re-verifies after a duplicate mint: {:?}",
+        report.reasons
+    );
+    assert_eq!(report.current_owner, w.pubkey_of("bob"));
+
+    // NON-VACUOUS: a genuinely different seed still mints a fresh asset.
+    let fresh = w
+        .try_mint("alice", b"a-different-thing")
+        .expect("a new content address mints");
+    assert_ne!(fresh.bytes(), id.bytes());
+    assert_eq!(w.current_owner(fresh), Some(alice));
+}
+
+/// The content address is RECOMPUTABLE by a third party with no ledger: `AssetId::derive`
+/// reproduces exactly what a mint of `(minter_pk, seed)` lands on. This is what lets a
+/// downstream layer ADOPT an existing note by identity instead of re-minting a look-alike.
+#[test]
+fn asset_id_derive_reproduces_the_minted_address() {
+    let mut w = AssetWorld::new();
+    let alice = w.pubkey_of("alice");
+    let id = w.mint("alice", b"recomputable");
+    assert_eq!(
+        AssetId::derive(&alice, b"recomputable").bytes(),
+        id.bytes(),
+        "anyone holding the minter key + seed recomputes the address"
+    );
+    assert_ne!(
+        AssetId::derive(&alice, b"other").bytes(),
+        id.bytes(),
+        "and a different seed does not collide"
+    );
+}
+
+/// The holder inventory read: `assets_held_by` names exactly the live notes a label owns, and
+/// tracks transfers and burns.
+#[test]
+fn assets_held_by_is_the_live_inventory() {
+    let mut w = AssetWorld::new();
+    let a = w.mint("alice", b"i-1");
+    let b = w.mint("alice", b"i-2");
+    let c = w.mint("bob", b"i-3");
+    assert_eq!(w.assets_held_by("alice").len(), 2);
+    assert_eq!(w.assets_held_by("bob"), vec![c]);
+    assert_eq!(w.assets_held_by("nobody"), vec![]);
+
+    w.transfer(a, "alice", "bob").expect("hand one over");
+    assert_eq!(w.assets_held_by("alice"), vec![b]);
+    assert_eq!(w.assets_held_by("bob").len(), 2, "bob now holds two");
+
+    w.burn(b, "alice").expect("alice burns hers");
+    assert!(
+        w.assets_held_by("alice").is_empty(),
+        "a burned note leaves the inventory"
+    );
+    assert_eq!(w.all_assets().len(), 3, "the census still knows all three");
 }
 
 #[test]

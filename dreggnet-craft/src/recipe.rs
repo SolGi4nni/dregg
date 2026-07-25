@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use dreggnet_gear::{GearSlot, StatBlock};
+use dungeon_on_dregg::loot::Rarity as LootRarity;
 
 use crate::quality::CraftQuality;
 
@@ -115,21 +116,12 @@ impl CraftedArtifact {
                 let mut h = blake3::Hasher::new_derive_key("dreggnet-craft-egg-artifact-v1");
                 h.update(&(species.len() as u64).to_le_bytes());
                 h.update(species.as_bytes());
-                h.update(&[rarity_tag(*rarity)]);
+                // The loot layer's OWN canonical tag byte, not a parallel table here — the
+                // egg's committed rarity and a loot drop's are the same encoding.
+                h.update(&[rarity.tag()]);
                 *h.finalize().as_bytes()
             }
         }
-    }
-}
-
-/// A stable byte tag for the shared loot rarity (the loot layer keeps its own tag private).
-fn rarity_tag(r: dungeon_on_dregg::loot::Rarity) -> u8 {
-    use dungeon_on_dregg::loot::Rarity;
-    match r {
-        Rarity::Common => 0,
-        Rarity::Uncommon => 1,
-        Rarity::Rare => 2,
-        Rarity::Legendary => 3,
     }
 }
 
@@ -211,6 +203,68 @@ impl Recipe {
 /// [`procgen_dregg`]'s provably-fair `weighted` draw.
 pub const DEFAULT_QUALITY_WEIGHTS: [u64; 4] = [60, 25, 12, 3];
 
+// ── the DUNGEON-SOURCED material vocabulary ──────────────────────────────────────────
+//
+// These kinds are not free labels a faucet stamps on: `dungeon_on_dregg::loot`'s
+// `LootDraw::material_kind` DERIVES `"{class}:{rarity}"` from the drop's chest and its FAIR
+// DRAW's rarity, so a material's kind is fixed by the run that dropped it. A recipe naming
+// `relic:legendary` therefore demands a genuinely legendary banked relic — the ~3% tail of a
+// real run — and cannot be satisfied by relabelling a common drop.
+
+/// The material kind a **banked descent relic** of `rarity` presents as a craft input —
+/// the kind `dungeon_on_dregg::loot::LootDraw::material_kind` derives for a
+/// `descent:banked-relic:*` drop. The vocabulary that ties the forge's catalog to the
+/// dungeon's actual output.
+pub fn relic_kind(rarity: LootRarity) -> String {
+    format!("relic:{}", rarity.label())
+}
+
+/// The material kind an ordinary chest **salvage** drop of `rarity` presents as a craft input.
+pub fn salvage_kind(rarity: LootRarity) -> String {
+    format!("salvage:{}", rarity.label())
+}
+
+/// The material kind a named-boss **trophy** drop of `rarity` presents as a craft input.
+pub fn trophy_kind(rarity: LootRarity) -> String {
+    format!("trophy:{}", rarity.label())
+}
+
+/// The catalog id of the relic-sigil forge at `rarity` — the tier ladder's rung for relics of
+/// that tier (see [`RecipeBook::reliquary`]).
+pub fn relic_sigil_id(rarity: LootRarity) -> String {
+    format!("forge:relic-sigil:{}", rarity.label())
+}
+
+/// One rung of the relic ladder: TWO banked relics of `rarity` forge a sigil.
+///
+/// Both the reward and the risk climb with the tier — a legendary pair carries the fattest
+/// legendary quality tail AND the steepest botch chance, so spending the ~3% tail of two real
+/// runs is a genuine gamble rather than a guaranteed upgrade. The odds are committed to the
+/// catalog, so a crafter cannot bring their own.
+fn relic_sigil(rarity: LootRarity) -> Recipe {
+    let kind = relic_kind(rarity);
+    let (outcome, quality, base) = match rarity {
+        //                botch/partial/success      C   U   R   L      base stat
+        LootRarity::Common => ([10, 30, 60], [70, 22, 7, 1], 8),
+        LootRarity::Uncommon => ([10, 30, 60], [45, 33, 17, 5], 14),
+        LootRarity::Rare => ([15, 30, 55], [20, 35, 32, 13], 22),
+        LootRarity::Legendary => ([20, 30, 50], [5, 20, 40, 35], 34),
+    };
+    Recipe::risky(
+        &relic_sigil_id(rarity),
+        &[kind.as_str(), kind.as_str()],
+        outcome,
+        quality,
+        OutputSpec::Gear(GearTemplate {
+            slot: GearSlot::Trinket,
+            rune: 0x40 + rarity.tag() as u64,
+            base_might: base,
+            base_ward: base,
+            base_guile: base * 2,
+        }),
+    )
+}
+
 /// The **recipe catalog** — the registered set a forge crafts against. A craft can only
 /// present a recipe the book holds (by id), so the weight tables (the odds) and the typed
 /// input requirements are committed to the catalog, never chosen per-craft.
@@ -289,6 +343,82 @@ impl RecipeBook {
                 species: "companion:frostwyrm".to_string(),
             },
         ));
+        // The DUNGEON-SOURCED half of the catalog — recipes over kinds the fair loot draw
+        // actually produces, so a real run's output has somewhere to go.
+        book.extend(RecipeBook::reliquary());
+        book
+    }
+
+    /// **The reliquary catalog** — the recipes that consume REAL dungeon output.
+    ///
+    /// Every input kind here is one the loot layer *derives* from a verified drop
+    /// (`dungeon_on_dregg::loot::LootDraw::material_kind`), never one a faucet stamps on:
+    ///
+    /// * **the relic ladder** — [`relic_sigil_id`]`(t)` for each tier, `2 × relic:t → a sigil`.
+    ///   Reward and risk both climb with the tier, so a legendary pair is a real gamble;
+    /// * **the Warden's Reliquary** — the aspirational sink: two legendary relics AND a rare
+    ///   one, forging a weapon. Costs the tail of several real runs;
+    /// * **the salvage bench** — three common salvage drops into a modest charm, so the
+    ///   bottom of the drop table is not pure dead weight (an economy needs a floor sink, not
+    ///   only a jackpot one);
+    /// * **the trophy mount** — a rare boss trophy plus salvage, the cosmetic-ish middle.
+    pub fn reliquary() -> RecipeBook {
+        let mut book = RecipeBook::new();
+        for rarity in [
+            LootRarity::Common,
+            LootRarity::Uncommon,
+            LootRarity::Rare,
+            LootRarity::Legendary,
+        ] {
+            book.register(relic_sigil(rarity));
+        }
+        let leg = relic_kind(LootRarity::Legendary);
+        let rare = relic_kind(LootRarity::Rare);
+        book.register(Recipe::risky(
+            "forge:wardens-reliquary",
+            &[leg.as_str(), leg.as_str(), rare.as_str()],
+            [25, 25, 50],
+            [0, 10, 40, 50],
+            OutputSpec::Gear(GearTemplate {
+                slot: GearSlot::Weapon,
+                rune: 0x4f,
+                base_might: 70,
+                base_ward: 18,
+                base_guile: 18,
+            }),
+        ));
+        let com_salvage = salvage_kind(LootRarity::Common);
+        book.register(Recipe::gear(
+            "forge:salvaged-charm",
+            &[
+                com_salvage.as_str(),
+                com_salvage.as_str(),
+                com_salvage.as_str(),
+            ],
+            GearTemplate {
+                slot: GearSlot::Trinket,
+                rune: 0x41,
+                base_might: 3,
+                base_ward: 3,
+                base_guile: 9,
+            },
+        ));
+        book.register(Recipe::risky(
+            "forge:trophy-mount",
+            &[
+                trophy_kind(LootRarity::Rare).as_str(),
+                salvage_kind(LootRarity::Uncommon).as_str(),
+            ],
+            [5, 25, 70],
+            [30, 35, 25, 10],
+            OutputSpec::Gear(GearTemplate {
+                slot: GearSlot::Armor,
+                rune: 0x42,
+                base_might: 4,
+                base_ward: 26,
+                base_guile: 8,
+            }),
+        ));
         book
     }
 
@@ -302,9 +432,30 @@ impl RecipeBook {
         true
     }
 
+    /// Fold every recipe of `other` into this catalog (later registrations win, as with
+    /// [`Self::register`]).
+    pub fn extend(&mut self, other: RecipeBook) {
+        for (_, recipe) in other.recipes {
+            self.register(recipe);
+        }
+    }
+
     /// The recipe with `id`, if the catalog holds it.
     pub fn get(&self, id: &str) -> Option<&Recipe> {
         self.recipes.get(id)
+    }
+
+    /// Every recipe whose required multiset mentions `kind` — "what is this material FOR?",
+    /// the lookup a bench UI does when a player selects a relic they just banked.
+    pub fn recipes_using(&self, kind: &str) -> Vec<&Recipe> {
+        let want = MaterialKind::new(kind);
+        let mut hits: Vec<&Recipe> = self
+            .recipes
+            .values()
+            .filter(|r| r.inputs.contains(&want))
+            .collect();
+        hits.sort_by(|a, b| a.id.cmp(&b.id));
+        hits
     }
 
     /// Every registered recipe id (sorted, for a stable listing).
