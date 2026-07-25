@@ -37,6 +37,7 @@ pub mod base_fault_proof;
 pub mod evm;
 pub mod execution;
 pub mod finality;
+pub mod store;
 
 use blst::min_pk::{AggregatePublicKey, PublicKey, Signature};
 use blst::BLST_ERROR;
