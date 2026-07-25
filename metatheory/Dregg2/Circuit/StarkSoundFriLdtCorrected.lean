@@ -1,10 +1,19 @@
 /-
-# `Dregg2.Circuit.StarkSoundFriLdtCorrected` — the NON-VACUOUS replacement for the landed
+# `Dregg2.Circuit.StarkSoundFriLdtCorrected` — the NON-VACUOUS replacement for the RETIRED shape of
 `StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3`.
 
-## §A why the landed apex has nowhere to go
+⚑ 2026-07-25 STATUS UPDATE. This module was written while `StarkSoundFriLdt`'s apex still carried the
+singleton-shaped `FriLdtExtractV3`. That apex has since been CUT OVER in place: it now carries
+`FriLdtExtractDeployed.FriLdtExtractV3Faithful`, i.e. exactly this module's
+`starkSound_of_friLdtExtractFaithful_deployed`. So wherever the text below says "the landed apex",
+read "the RETIRED shape of the apex" — the statement no longer exists in the tree, and §2's
+`starkSound_of_friLdtExtract_transferV3_via_corrected` is now a RECEIPT that the retired shape's
+conclusion was never lost, not a parallel replacement for a live theorem. Everything proved here is
+unaffected; only the relation to `StarkSoundFriLdt` changed.
 
-`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` (`StarkSoundFriLdt.lean:18`) is conditioned
+## §A why the retired apex shape had nowhere to go
+
+The retired `starkSound_of_friLdtExtract_transferV3` was conditioned
 on `AlgoStarkSoundTransferV3.FriLdtExtractV3` at the deployed `cfg*` arguments. That bundle concludes
 `oodPoint = [ood]` — ONE base felt — on every accepting run, and
 `FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything` PROVES that at those
@@ -29,10 +38,11 @@ The replacement apexes, over the CORRECTED bundles of `Dregg2.Circuit.FriLdtExtr
   * `starkSound_of_noOodShape_transferV3` — the same conclusion from a premise that mentions NO OOD
     shape at all.
 
-Relation to the landed apex (§2): `FriLdtExtractV3 → FriLdtExtractV3Cons → FriLdtExtractV3Faithful`,
-so `starkSound_of_friLdtExtract_transferV3_via_corrected` re-proves the landed statement VERBATIM
-through the corrected chain. The corrected premise is thus weaker; the landed apex is subsumed, not
-contradicted. The converse transport does not exist as an acceptance argument
+Relation to the RETIRED apex shape (§2): `FriLdtExtractV3 → FriLdtExtractV3Cons →
+FriLdtExtractV3Faithful`, so `starkSound_of_friLdtExtract_transferV3_via_corrected` re-proves the
+retired statement VERBATIM through the corrected chain. The corrected premise is thus weaker; the
+retired apex is subsumed, not contradicted — which is exactly why cutting `StarkSoundFriLdt` over cost
+its consumers nothing. The converse transport does not exist as an acceptance argument
 (`FriLdtExtractDeployed.bundles_are_not_interchangeable`).
 
 ## §C the inhabitability argument — why this repair is not a second vacuity
@@ -123,7 +133,8 @@ theorem starkSound_of_friLdtExtractFaithful_deployed
     sponge hCR hash hfri
 
 /-- **`StarkSound` for the deployed `transferV3` slice from the CORRECTED BARE-verifier bundle** —
-the drop-in replacement for `StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3`: same
+the drop-in replacement for the RETIRED shape of
+`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3`: same
 conclusion, same floors, and a premise differing from the landed one in exactly one conjunct
 (`oodPoint = ood :: oodRest` instead of `oodPoint = [ood]`). -/
 theorem starkSound_of_friLdtExtractCons_transferV3
@@ -135,10 +146,11 @@ theorem starkSound_of_friLdtExtractCons_transferV3
     (friLdtExtractV3Cons_imp_faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
       cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView hfri)
 
-/-- **The landed apex is SUBSUMED, not contradicted.** This is the statement of
+/-- **The RETIRED apex shape is SUBSUMED, not contradicted.** This is the RETIRED statement of
 `StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` VERBATIM, re-proved through the corrected
-chain `FriLdtExtractV3 → FriLdtExtractV3Cons → FriLdtExtractV3Faithful → StarkSound`. So migrating a
-consumer costs it nothing: anything the landed apex gave, the corrected one gives. -/
+chain `FriLdtExtractV3 → FriLdtExtractV3Cons → FriLdtExtractV3Faithful → StarkSound`. It is the
+RECEIPT that the 2026-07-25 cutover of that apex cost its consumers nothing: anything the retired
+shape gave, the migrated one gives. -/
 theorem starkSound_of_friLdtExtract_transferV3_via_corrected
     (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
     (hfri : FriLdtExtractV3 sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA

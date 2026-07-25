@@ -27,13 +27,17 @@ reason a premise is empty.
 theorems, so the broken shape cannot be reintroduced silently. It has NO consumers left in the tree
 outside the vacuity instruments.
 
+⚑ 2026-07-25, second pass: `algoStarkSound_transferV3_subsumed` — which rode
+`AlgoStarkSoundTransferV3.FriLdtExtractV3`, itself PROVED EMPTY at the deployed configuration
+(`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything`) — is now DELETED too
+and RELOCATED to `ApexOodLaneRepair.algoStarkSound_transferV3_subsumed_cons`, same statement over
+`FriLdtExtractV3Cons`, still routed through the ∀-d modeler `hood_of_oodColumnLayout_cons`. NO
+consumer of a proved-empty premise remains in this module.
+
 ⚠ The rest of this header is the PRE-DELETION text, kept because it still describes §1's bundles,
-§2's `hbus` arm, §4's memory-leg machinery and `algoStarkSound_transferV3_subsumed` accurately.
-Wherever it says `algoStarkSound_of_memoryLegs` / `_of_memoryFree` / `_transferV3_ofBusModels`,
-read the `_cons` form in `ApexOodLaneRepair`. ⚠ `algoStarkSound_transferV3_subsumed` (still here)
-rides `FriLdtExtractV3`, which is ITSELF proved empty
-(`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything`); its corrected chain
-is `StarkSoundFriLdtCorrected`, and it is NOT migrated as of this date.
+§2's `hbus` arm and §4's memory-leg machinery accurately. Wherever it says
+`algoStarkSound_of_memoryLegs` / `_of_memoryFree` / `_transferV3_ofBusModels` /
+`_transferV3_subsumed`, read the `_cons` form in `ApexOodLaneRepair`.
 
 ## What this closes (the one-line honest claim)
 
@@ -406,43 +410,26 @@ vacuously true. Replacement: `ApexOodLaneRepair.algoStarkSound_transferV3_ofBusM
 discharges the same per-effect side conditions (`hbus_is_lookup`, `transferV3_hashSites`,
 `transferV3_ranges`) over `FriLdtExtractCons … transferV3`. -/
 
-/-- **The hand-wired `algoStarkSound_transferV3`, RE-DERIVED through the general modeler** —
-the EXACT statement of `AlgoStarkSoundTransferV3.algoStarkSound_transferV3`, with the
-`hood`/`MainAirAcceptF` wiring now the ∀-d `hood_of_oodColumnLayout` (the template's §3
-`hood_of_reductions`/`mainAirAcceptF_of_floor` chain, subsumed; the bundle's hand-stated
-layout equation IS the general `oodBatchResidual transferV3` equation definitionally).
+/-! **⚑ DELETED 2026-07-25 — `algoStarkSound_transferV3_subsumed`.** The LAST consumer in this module
+of a proved-empty premise: it rode `AlgoStarkSoundTransferV3.FriLdtExtractV3`, which at the deployed
+`cfg*` arguments forces `CircuitSoundness.verifyBatch` to return `Verdict.reject` on EVERY
+key/public-input/proof triple (`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything`),
+because the bundle concludes `oodPoint = [ood]` — one base felt — while acceptance forces four
+extension lanes.
 
-THE NAMED GAP: this is NOT literally `algoStarkSound_of_memoryFree transferV3` applied to
-`FriLdtExtractV3`, because `FriLdtExtractV3`'s bus slot carries the POST-discharge LogUp arm
-(`hbus : … c.holdsAt …`) while the general residual carries the PRE-discharge `BusModelOk`
-family, and the proven arrow (`busModel_forces_lookup_holds`) only runs bus ⟹ arm. The
-general instance with the modeled bus is `algoStarkSound_transferV3_ofBusModels` above; closing
-the gap = restating the deployed bundle with `BusModelOk` in its bus slot (an edit to the
-read-only template, out of this lane's charter). -/
-theorem algoStarkSound_transferV3_subsumed
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (hfri : FriLdtExtractV3 sponge hash perm RATE toNat params vk core A initState logN view) :
-    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view :=
-  Dregg2.Circuit.AlgoStarkSoundInstance.algoStarkSound_of_bricks_transferV3
-    hash perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
-    (by
-      intro pi π hacc
-      obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
-        hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
-      refine ⟨t, ?_, hbus, hMem, hMap, hPub⟩
-      -- the bundle's hand-stated layout equation feeds the GENERAL modeler definitionally
-      -- (`oodBatchResidual transferV3 = batchResidual (Rfam transferV3 …)` is `rfl`):
-      exact ood_forces_mainAirAccept_field_of_residuals transferV3 t hcap ζ qp
-        (hood_of_oodColumnLayout transferV3 sponge hCR perm RATE toNat params vk core A
-          initState logN (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root
-          idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
-        hnonexc)
+RELOCATED, not restated in place. Correcting it here would need BOTH the corrected bundle
+`FriLdtExtractDeployed.FriLdtExtractV3Cons` AND a cons-shaped `hood_of_oodColumnLayout`; the latter
+(`ApexOodLaneRepair.hood_of_oodColumnLayout_cons`) lives in a module that IMPORTS this one, so naming
+it here is a cycle, and re-deriving it locally would duplicate an existing lemma. The replacement is
+`ApexOodLaneRepair.algoStarkSound_transferV3_subsumed_cons` — the SAME statement over
+`FriLdtExtractV3Cons`, still routed through the GENERAL modeler `hood_of_oodColumnLayout_cons` (so
+the "subsumed through the ∀-d modeler" character of the theorem is preserved exactly, which is why it
+was relocated rather than re-proved through the template chain). The named bus-slot gap described in
+this file's header is unchanged by the relocation.
+
+`hood_of_oodColumnLayout` (`OodColumnLayout.lean:218`) is UNAFFECTED: it takes the OOD shape as a
+parameter rather than asserting it, so it rides no empty premise; its cons-shaped counterpart exists
+for callers that hold the corrected shape. -/
 
 /-! ## §6 — THE FAN-OUT RECEIPT: per-effect obligations at the deployed descriptor are
 mechanical (rfl + the committed shape brick). What remains per effect for a mem/map-free
@@ -464,7 +451,6 @@ theorem transferV3_sideConditions_mechanical :
 #assert_axioms memLog_eq_nil_of_lookupShape
 #assert_axioms mapLog_eq_nil_of_lookupShape
 #assert_axioms memoryLegs_of_lookupShape
-#assert_axioms algoStarkSound_transferV3_subsumed
 #assert_axioms transferV3_sideConditions_mechanical
 
 end Dregg2.Circuit.AlgoStarkSoundGeneral

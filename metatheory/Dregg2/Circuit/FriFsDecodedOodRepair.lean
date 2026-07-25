@@ -58,7 +58,8 @@ which are NOT edited):
   * `ExtractBundleSansFSCons` (§3), with `oodPoint = ood :: oodRest`. Implied by the landed
     `ExtractBundleSansFS` (`extractBundleSansFS_imp_cons`) and discharged by the corrected upstream
     bundle `FriLdtExtractDeployed.FriLdtExtractV3Cons` (`friLdtExtractV3Cons_imp_sansFSCons` — the
-    same ten-conjunct audit gate `friLdtExtractV3_imp_sansFS` is).
+    same ten-conjunct audit gate `friLdtExtractV3_imp_sansFS` was — ⚑ that landed gate is DELETED as
+    of 2026-07-25, and `friLdtExtractV3Cons_imp_sansFSCons` below is its sole replacement).
   * `DecodedLdtLinkCons` (§6), with `oodPoint = ood :: oodRest`. Implied by the landed
     `DecodedLdtLink` (`decodedLdtLink_imp_cons`), and — the point of the exercise — the ENTIRE L5·R4b
     assembly is re-derived from it: `positiveRadiusTraceDecode_decoded_cons` /
@@ -263,8 +264,9 @@ theorem extractBundleSansFS_imp_cons
   exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
     hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hbus, hMem, hMap, hPub⟩
 
-/-- **The corrected ADVERSARIAL-AUDIT GATE** — the cons-shaped analogue of
-`FriVerifierFS.friLdtExtractV3_imp_sansFS`: the corrected upstream extraction bundle
+/-- **The corrected ADVERSARIAL-AUDIT GATE** — ⚑ as of 2026-07-25 the SOLE audit gate: the landed
+`FriVerifierFS.friLdtExtractV3_imp_sansFS` (empty premise ⟹ empty conclusion) is DELETED and this is
+its replacement. The corrected upstream extraction bundle
 `FriLdtExtractDeployed.FriLdtExtractV3Cons` discharges `ExtractBundleSansFSCons` purely by
 destructuring its twelve conjuncts and reassembling ten of them, dropping exactly the two
 Fiat–Shamir non-exceptionality conjuncts (`hLam`, `hnonexc`). This typechecks ONLY if the ten kept

@@ -27,9 +27,18 @@ form, since the escape is real and cannot be unconditional. Their honest bounded
 exhibited by `OodSoundnessGame.ood_hnonexc_escape_prob_le` / `batchResidual_exceptionalSet_card_lt`
 (ε ≤ deg/|F|), quoted in §4 as `hnonexc_is_bounded_fs_form` / `rlc_lambda_is_bounded_fs_form`.
 
+## ⚑ 2026-07-25 — `algoStarkSound_transferV3` is GONE from this module
+
+It consumed `FriLdtExtractV3`, PROVED EMPTY at the deployed configuration
+(`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything`). It was RELOCATED to
+`FriLdtExtractDeployed.algoStarkSound_transferV3_cons` over the corrected bundle
+`FriLdtExtractV3Cons` — relocated rather than corrected in place because the corrected bundle lives
+in a module that IMPORTS this one. See the `⚑ DELETED` marker at the end of §3 for the full record.
+`FriLdtExtractV3` itself is RETAINED here as the SUBJECT of the theorems that prove it empty.
+
 ## The residual floor (exactly two, both honest)
 
-`algoStarkSound_transferV3` (§3) rests on:
+The relocated `algoStarkSound_transferV3_cons` rests on:
   1. `Poseidon2SpongeCR sponge`  — the Merkle/commitment-opening hash floor (`hood.b`), GENUINELY USED
      (not re-assumed): `commitmentOpening_binds_of_poseidon2CR` is invoked on the bundle's recompute data.
   2. `FriLdtExtractV3 …`  — the FRI-LDT-@-deployed extraction bundle: FRI delivers, per accepting run, the
@@ -244,36 +253,27 @@ theorem mainAirAcceptF_of_floor
       t ζ Λ qp topen ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
     hnonexc
 
-/-- **`algoStarkSound_transferV3` — the REAL `AlgoStarkSound` for the deployed `transferV3` slice, with
-`hood`/`hnonexc` DISCHARGED, resting on ONLY `{Poseidon2SpongeCR, FRI-LDT@deployed}`.**
+/-! **⚑ DELETED 2026-07-25 — `algoStarkSound_transferV3`.** It was the ONE consumer in this module of
+`FriLdtExtractV3`, a premise PROVED EMPTY at the deployed configuration:
+`FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything` shows that at the `cfg*`
+arguments the bundle forces `CircuitSoundness.verifyBatch` to return `Verdict.reject` on EVERY
+key/public-input/proof triple, because it concludes `oodPoint = [ood]` — ONE base felt — while
+acceptance forces `cfgParams.extDeg = 4` extension lanes. Every deployed instance of the theorem was
+therefore vacuously true.
 
-From the two honest floor hypotheses — `Poseidon2SpongeCR sponge` (genuinely used in the commitment
-binding) and `FriLdtExtractV3` (the FRI-LDT-@-deployed extraction bundle, containing neither `hood` nor
-`MainAirAcceptF`) — the full `AlgoStarkSound` class holds. Per accepting run,
-`mainAirAcceptF_of_floor` DERIVES `MainAirAcceptF` from the bundle's primitives (table
-identity + commitment binding + column layout + RLC de-batch), and the aux legs come straight from the
-bundle; `algoStarkSound_of_bricks_transferV3` then closes the class. -/
-theorem algoStarkSound_transferV3
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (hfri : FriLdtExtractV3 sponge hash perm RATE toNat params vk core A initState logN view) :
-    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view :=
-  Dregg2.Circuit.AlgoStarkSoundInstance.algoStarkSound_of_bricks_transferV3
-    hash perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
-    (by
-      intro pi π hacc
-      obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
-        hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
-      exact ⟨t,
-        mainAirAcceptF_of_floor transferV3 sponge hCR perm RATE toNat params vk core A initState logN
-          (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root idx siblings
-          hcap hoodPt hmem hCommitted hOpened hlayout hLam hnonexc,
-        hbus, hMem, hMap, hPub⟩)
+RELOCATED, not restated in place: the corrected bundle `FriLdtExtractV3Cons` lives in
+`Dregg2.Circuit.FriLdtExtractDeployed`, which IMPORTS this module, so naming it here would be a
+cycle. The replacement is `FriLdtExtractDeployed.algoStarkSound_transferV3_cons` — the same
+statement, the same `Poseidon2SpongeCR` floor, the same generic arguments, over
+`FriLdtExtractV3Cons`; its `MainAirAcceptF` is derived by `mainAirAcceptF_of_floor_cons`, the
+cons-shaped `mainAirAcceptF_of_floor` retained below. That the corrected premise adds ZERO strength
+(it is equivalent to itself with the OOD conjunct deleted) is
+`ApexOodLaneRepair.friLdtExtractV3Cons_iff_noOodShape`; the sharper OOD-free form is
+`ApexOodLaneRepair.algoStarkSound_transferV3_cons_noOodShape`.
+
+`FriLdtExtractV3` (§2) and `hood_of_reductions` / `mainAirAcceptF_of_floor` (above) are RETAINED: the
+bundle is the SUBJECT of the vacuity theorems that prove it empty, and the two reduction lemmas take
+the OOD shape as a parameter rather than asserting it, so neither rides an empty premise. -/
 
 /-! ## §4 — the FS residuals are the HONEST bounded-advantage form (ε ≤ deg/|F|), not free assumptions.
 
@@ -300,7 +300,6 @@ theorem rlc_lambda_is_bounded_fs_form (t : VmTrace) (ζ : BabyBear)
 #assert_axioms isArithB_iff
 #assert_axioms hood_of_reductions
 #assert_axioms mainAirAcceptF_of_floor
-#assert_axioms algoStarkSound_transferV3
 #assert_axioms hnonexc_is_bounded_fs_form
 #assert_axioms rlc_lambda_is_bounded_fs_form
 

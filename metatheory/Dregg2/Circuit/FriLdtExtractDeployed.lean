@@ -21,8 +21,9 @@ That is proved here, not asserted: `faithfulExt_forces_oodPoint_length` (§1) an
 `singletonBundle_makes_deployed_verifier_accept_nothing` /
 `friLdtExtractV3_makes_verifyBatch_reject_everything` (§2). The consequence is stated at the apex:
 under the landed bundle at the deployed config, `verifyBatch` returns `reject` on EVERY input, so
-`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` — and any other apex conditioned on that
-bundle — is vacuously true.
+any apex conditioned on that bundle is vacuously true. (⚑ 2026-07-25: every such apex has since been
+CUT OVER — `StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` now carries
+`FriLdtExtractV3Faithful`; see §5 and `StarkSoundFriLdt`'s header.)
 
 Root cause: the base-field-versus-quartic-extension modeling wound in its terminal form. `[ood]` with
 `ood : BabyBear` is a single base felt standing in for a 4-lane `Challenge`. Same wound, still open
@@ -42,7 +43,10 @@ the repair is entirely on the bundle side:
     transcript's `d.ζ`, of length `params.extDeg` (= 4 on every accepting run), with `ood` its head lane.
   * §4 re-proves the OOD reduction chain at the `ood :: oodRest` shape
     (`batchTablesCheck`/`verifyAlgo`/`hood`/`MainAirAcceptF`); nothing in it ever needed a singleton.
-  * §5 re-derives the apex `starkSound_of_friLdtExtractFaithful_transferV3` from the corrected bundle.
+  * §5 re-derives the apex `starkSound_of_friLdtExtractFaithful_transferV3` from the corrected
+    bundle, and is the new home of `algoStarkSound_transferV3_cons` — the RELOCATED
+    `AlgoStarkSoundTransferV3.algoStarkSound_transferV3`, which could not be corrected in place
+    because its module defines `FriLdtExtractV3` and is upstream of this one (2026-07-25 cutover).
 
 ## §C Why the repair is not a second vacuity (§6)
 
@@ -291,8 +295,9 @@ theorem friLdtExtractV3_imp_faithfulSingleton
         extCore extA W initState logN (view pi π).1 (view pi π).2 (extView pi π) hacc))
 
 /-- **The apex consequence, at the deployed config.** Under the LANDED `FriLdtExtractV3` at the
-deployed `cfg*` arguments — exactly the hypothesis of
-`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` — `CircuitSoundness.verifyBatch` returns
+deployed `cfg*` arguments — the RETIRED hypothesis of
+`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3`, and of the deleted
+`AlgoStarkSoundTransferV3.algoStarkSound_transferV3` — `CircuitSoundness.verifyBatch` returns
 `Verdict.reject` on EVERY key/public-input/proof triple. Any `StarkSound`-shaped conclusion drawn
 from that hypothesis therefore quantifies over an empty set of accepting batches. -/
 theorem friLdtExtractV3_makes_verifyBatch_reject_everything
@@ -620,6 +625,41 @@ theorem starkSound_of_friLdtExtractFaithful_transferV3
         hbus hMem hMap,
       hPub⟩
 
+/-- **`algoStarkSound_transferV3_cons` — the RELOCATED `AlgoStarkSoundTransferV3.algoStarkSound_transferV3`.**
+
+⚑ WHY IT LIVES HERE. The landed theorem was stated in `AlgoStarkSoundTransferV3`, the module that
+DEFINES `FriLdtExtractV3` and is therefore UPSTREAM of this one: the corrected bundle cannot be named
+there without a cycle. So the theorem was relocated rather than restated in place — this is its only
+home, and the upstream site carries a `⚑ DELETED` pointer, not a deprecated twin.
+
+The statement is the landed one with `FriLdtExtractV3` replaced by `FriLdtExtractV3Cons`: same
+conclusion, same `Poseidon2SpongeCR` floor, same generic arguments, and a premise differing in
+exactly one conjunct (`oodPoint = ood :: oodRest` instead of `oodPoint = [ood]`) — the shape
+`FriVerifier.batchTablesCheck` matches and the bundle's own antecedent forces. `MainAirAcceptF` is
+DERIVED per accepting run by `mainAirAcceptF_of_floor_cons`, exactly as the landed proof derived it
+by `mainAirAcceptF_of_floor`. -/
+theorem algoStarkSound_transferV3_cons
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (hfri : FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view) :
+    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  Dregg2.Circuit.AlgoStarkSoundInstance.algoStarkSound_of_bricks_transferV3
+    hash perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
+    (by
+      intro pi π hacc
+      obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+        hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
+      exact ⟨t,
+        mainAirAcceptF_of_floor_cons transferV3 sponge hCR perm RATE toNat params vk core A
+          initState logN (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root
+          oodRest idx siblings hcap hoodPt hmem hCommitted hOpened hlayout hLam hnonexc,
+        hbus, hMem, hMap, hPub⟩)
+
 /-! ## §6 — the repair is not a second vacuity. -/
 
 /-- The corrected bundle with the three OOD conjuncts DELETED (`ood`/`oodRest` do not occur anywhere
@@ -906,6 +946,7 @@ theorem bundles_are_not_interchangeable :
 #assert_axioms hood_of_reductions_cons
 #assert_axioms mainAirAcceptF_of_floor_cons
 #assert_axioms starkSound_of_friLdtExtractFaithful_transferV3
+#assert_axioms algoStarkSound_transferV3_cons
 #assert_axioms friLdtExtractV3Faithful_iff_noOodShape
 #assert_axioms deployed_predicate_accepts_pole
 #assert_axioms deployed_accepting_pole_nonempty

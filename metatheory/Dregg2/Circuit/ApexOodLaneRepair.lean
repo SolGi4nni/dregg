@@ -112,7 +112,11 @@ open Dregg2.Circuit.ExtFieldChallenge
 open Dregg2.Circuit.FriChallengerUnified (verifyAlgoUnified_imp_verifyAlgo)
 open Dregg2.Circuit.FriLdtExtractDeployed
   (ExtProofView faithfulExt_forces_oodPoint_ne_singleton hood_of_reductions_cons
-   deployed_accepting_pole_nonempty corrected_ood_shape_inhabited)
+   deployed_accepting_pole_nonempty corrected_ood_shape_inhabited
+   FriLdtExtractV3Cons algoStarkSound_transferV3_cons
+   friLdtExtractV3_makes_verifyBatch_reject_everything)
+open Dregg2.Circuit.AlgoStarkSoundTransferV3 (Rfam FriLdtExtractV3)
+open Dregg2.Circuit.OodSoundnessGame (batchResidual)
 
 set_option autoImplicit false
 
@@ -612,8 +616,212 @@ theorem cons_tooth_hypothesis_inhabited_at_deployed_shape :
   exact ⟨perm, RATE, toNat, params, vk, core, A, extCore, extA, Wres, initState, logN, proof, pub,
     view, ood, oodRest, hacc, hcons, hlen, hne⟩
 
+/-! ## §8 — ⚑ THE RELOCATED `transferV3` ASSEMBLERS (2026-07-25 `FriLdtExtractV3` cutover).
+
+Two landed theorems rode `AlgoStarkSoundTransferV3.FriLdtExtractV3`, a premise PROVED EMPTY at the
+deployed configuration (`deleted_transferV3_assembler_premises_were_empty`, §8.3). NEITHER could be
+corrected where it stood, because the corrected objects each needs live DOWNSTREAM of its module:
+
+  * `AlgoStarkSoundTransferV3.algoStarkSound_transferV3` — that module DEFINES `FriLdtExtractV3` and
+    is IMPORTED by `FriLdtExtractDeployed`, so `FriLdtExtractV3Cons` cannot be named there at all. It
+    was relocated to `FriLdtExtractDeployed.algoStarkSound_transferV3_cons`; the non-emptiness
+    receipts for it are §8.2/§8.3 below (they need `acceptsFull_gives_cons_shape`, which lives here).
+  * `AlgoStarkSoundGeneral.algoStarkSound_transferV3_subsumed` — needs BOTH `FriLdtExtractV3Cons` and
+    a cons-shaped `hood_of_oodColumnLayout`. The latter is §4's `hood_of_oodColumnLayout_cons`, and
+    this file imports `AlgoStarkSoundGeneral`, so its relocation lands HERE (§8.1) — relocated rather
+    than re-proved through the template's `hood_of_reductions` chain precisely so that "the ∀-d
+    modeler subsumes the hand-wired chain" survives the cutover unchanged.
+
+Neither is a deprecated twin: both landed statements are DELETED at their sites, with pointers here.
+
+### §8.1 — the ∀-d-modeler assembler, at the corrected shape. -/
+
+/-- **`algoStarkSound_transferV3_subsumed_cons` — the RELOCATED
+`AlgoStarkSoundGeneral.algoStarkSound_transferV3_subsumed`.** The landed statement with
+`FriLdtExtractV3` replaced by `FriLdtExtractV3Cons`: same conclusion, same `Poseidon2SpongeCR` floor,
+same generic arguments, premise differing in exactly one conjunct (`oodPoint = ood :: oodRest`
+instead of `oodPoint = [ood]`). The `hood`/`MainAirAcceptF` wiring is still the GENERAL ∀-d modeler,
+now at the corrected shape (`hood_of_oodColumnLayout_cons`), and the bundle's hand-stated layout
+equation still feeds it DEFINITIONALLY (`oodBatchResidual transferV3` is `batchResidual
+(Rfam transferV3 …)`). The named bus-slot gap of the landed version is untouched by the relocation:
+`FriLdtExtractV3Cons` still carries the POST-discharge LogUp arm. -/
+theorem algoStarkSound_transferV3_subsumed_cons
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (hfri : FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view) :
+    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  Dregg2.Circuit.AlgoStarkSoundInstance.algoStarkSound_of_bricks_transferV3
+    hash perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
+    (by
+      intro pi π hacc
+      obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+        hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
+      refine ⟨t, ?_, hbus, hMem, hMap, hPub⟩
+      exact ood_forces_mainAirAccept_field_of_residuals transferV3 t hcap ζ qp
+        (hood_of_oodColumnLayout_cons transferV3 sponge hCR perm RATE toNat params vk core A
+          initState logN (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root
+          oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+        hnonexc)
+
+/-! ### §8.2 — THE MIGRATION OBLIGATION for both relocated assemblers. -/
+
+/-- `FriLdtExtractV3Cons` with the OOD-shape conjunct DELETED (`ood`/`oodRest` occur nowhere else in
+the body). Used only to state the equivalence below. -/
+def FriLdtExtractV3ConsNoOodShape
+    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) : Prop :=
+  ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk (fullChecks core A toNat params.powBits)
+        initState logN (view pi π).1 (view pi π).2 = true →
+    ∃ (t : VmTrace) (ζ Λ : BabyBear) (qp : VmConstraint2 → Polynomial BabyBear)
+      (topen : TableOpening ℤ) (vCommitted root : ℤ) (idx : Nat) (siblings : List ℤ),
+      t.rows.length ≤ domainSize ∧
+      topen ∈ (view pi π).1.tableOpenings ∧
+      merkleRecomputeZ sponge idx vCommitted siblings = root ∧
+      merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      (batchResidual (Rfam transferV3 t ζ qp)).eval Λ
+        = ((vCommitted : ℤ) : BabyBear)
+            - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
+      Λ ∉ exceptionalSet (batchResidual (Rfam transferV3 t ζ qp)) ∧
+      (∀ c ∈ transferV3.constraints, isArith c →
+          ζ ∉ exceptionalSet (constraintPoly transferV3 t c - vanishingPoly t * qp c)) ∧
+      (∀ i < t.rows.length, ∀ c ∈ transferV3.constraints, ¬ isArith c →
+          c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
+      t.tf .memory = [] ∧ t.tf .mapOps = [] ∧
+      tracePublishedCommit t = pi.toPublished
+
+/-- **THE CORRECTED PREMISE ADDS EXACTLY ZERO STRENGTH.** `FriLdtExtractV3Cons` is EQUIVALENT to
+itself with the OOD-shape conjunct DELETED. The `mpr` direction is the whole point: the conjunct is
+supplied by the bundle's OWN antecedent (`acceptsFull_gives_cons_shape` — `batchTablesCheck` returns
+`false` on an empty `oodPoint`), so it can never shrink, let alone empty, the set of accepting runs
+the premise must cover. Contrast the DELETED singleton conjunct, which acceptance CONTRADICTS
+(`landed_bundle_conjunct_refuted_on_an_accepting_run`, §2). -/
+theorem friLdtExtractV3Cons_iff_noOodShape
+    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) :
+    FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view
+      ↔ FriLdtExtractV3ConsNoOodShape sponge hash perm RATE toNat params vk core A initState logN
+        view := by
+  constructor
+  · intro h pi π hacc
+    obtain ⟨t, ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
+      hcap, _hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hbus, hMem, hMap, hPub⟩ := h pi π hacc
+    exact ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
+      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+  · intro h pi π hacc
+    obtain ⟨ood, oodRest, hcons⟩ :=
+      acceptsFull_gives_cons_shape perm RATE toNat params vk core A initState logN
+        (view pi π).1 (view pi π).2 hacc
+    obtain ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
+      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hbus, hMem, hMap, hPub⟩ := h pi π hacc
+    exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+      hcap, hcons, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+
+/-- **★ SHARPER, for the relocated template assembler: NO OOD SHAPE IS NEEDED AT ALL.**
+`FriLdtExtractDeployed.algoStarkSound_transferV3_cons`'s whole conclusion follows from a premise that
+MENTIONS NO OOD-SHAPE CONJUNCT WHATSOEVER. A premise cannot be emptied by a conjunct it does not
+contain, so the OOD repair contributes exactly none of whatever residual emptiness remains — all of
+it is the FRI-LDT / Merkle / Fiat–Shamir floor. This and `algoStarkSound_transferV3_cons` are
+INTERDERIVABLE through `friLdtExtractV3Cons_iff_noOodShape`. It does NOT say the premise is
+inhabited; that is the separate, still-open question §8.4 records. -/
+theorem algoStarkSound_transferV3_cons_noOodShape
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (hfri : FriLdtExtractV3ConsNoOodShape sponge hash perm RATE toNat params vk core A initState
+      logN view) :
+    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_transferV3_cons sponge hCR hash perm RATE toNat params vk core A initState logN
+    view
+    ((friLdtExtractV3Cons_iff_noOodShape sponge hash perm RATE toNat params vk core A initState
+      logN view).mpr hfri)
+
+/-- **★ The same sharper form for the relocated ∀-d-modeler assembler.** Same argument, same
+`.mpr`, so `algoStarkSound_transferV3_subsumed_cons` likewise depends on NO OOD-shape conjunct. -/
+theorem algoStarkSound_transferV3_subsumed_cons_noOodShape
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (hfri : FriLdtExtractV3ConsNoOodShape sponge hash perm RATE toNat params vk core A initState
+      logN view) :
+    AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_transferV3_subsumed_cons sponge hCR hash perm RATE toNat params vk core A
+    initState logN view
+    ((friLdtExtractV3Cons_iff_noOodShape sponge hash perm RATE toNat params vk core A initState
+      logN view).mpr hfri)
+
+/-! ### §8.3 — THE RECEIPT for what the two deletions removed. -/
+
+/-- **THE RECEIPT.** The premise BOTH deleted assemblers carried —
+`AlgoStarkSoundTransferV3.FriLdtExtractV3` at the deployed `cfg*` arguments — forces
+`CircuitSoundness.verifyBatch` to return `Verdict.reject` on EVERY key/public-input/proof triple. So
+`AlgoStarkSoundTransferV3.algoStarkSound_transferV3` and
+`AlgoStarkSoundGeneral.algoStarkSound_transferV3_subsumed` quantified over an EMPTY accepting set:
+both were vacuously true at deployment. That is what the cutover removed, and why no deprecated twin
+at the singleton shape is retained anywhere. -/
+theorem deleted_transferV3_assembler_premises_were_empty
+    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
+    (h : FriLdtExtractV3 sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
+      cfgInitState cfgLogN cfgView)
+    (vkey : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) :
+    verifyBatch vkey pi π = Verdict.reject :=
+  friLdtExtractV3_makes_verifyBatch_reject_everything sponge hash h vkey pi π
+
+/-! ### §8.4 — ⚠ THE CAVEAT THE RELOCATIONS INHERIT, AS A THEOREM RATHER THAN A NOTE. -/
+
+/-- **⚠ `FriLdtExtractV3Cons` is refutable at an accepting run with no table openings.** It RETAINS
+the conjunct `topen ∈ (view pi π).1.tableOpenings`, and acceptance does NOT supply it: at ANY
+arguments admitting an accepting run whose mapped proof opens no table, the migrated premise of both
+relocated assemblers is FALSE. The condition is not hypothetical —
+`FriLdtExtractDeployed.deployed_accepting_pole_has_no_tableOpenings` exhibits a `decide`-backed
+accepting run with `tableOpenings = []`.
+
+That pole is `Nat`-typed at CONCRETE arguments while this premise is `ℤ`-typed and the deployed
+instantiation is at the `opaque` `cfg*` ones, so what is refuted is the SCHEMA at the arguments where
+anything is exhibitable — NOT the deployed instance, which nobody has decided in either direction.
+The cutover therefore trades a premise empty EVERYWHERE for one whose emptiness is CONDITIONAL and
+UNDECIDED: a strict improvement, not a closure. -/
+theorem friLdtExtractV3Cons_false_of_accepting_run_without_tableOpenings
+    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hacc : verifyAlgo perm RATE toNat params vk (fullChecks core A toNat params.powBits)
+        initState logN (view pi π).1 (view pi π).2 = true)
+    (hnil : (view pi π).1.tableOpenings = []) :
+    ¬ FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view := by
+  intro h
+  obtain ⟨_t, _ζ, _Λ, _qp, _topen, _ood, _vC, _root, _oodRest, _idx, _sib,
+    _hcap, _hoodPt, hmem, _⟩ := h pi π hacc
+  rw [hnil] at hmem
+  simp at hmem
+
 /-! ## Kernel-clean keystones. -/
 
+#assert_axioms algoStarkSound_transferV3_subsumed_cons
+#assert_axioms friLdtExtractV3Cons_iff_noOodShape
+#assert_axioms algoStarkSound_transferV3_cons_noOodShape
+#assert_axioms algoStarkSound_transferV3_subsumed_cons_noOodShape
+#assert_axioms deleted_transferV3_assembler_premises_were_empty
+#assert_axioms friLdtExtractV3Cons_false_of_accepting_run_without_tableOpenings
 #assert_axioms acceptsFull_forces_oodPoint_ne_nil
 #assert_axioms acceptsFull_gives_cons_shape
 #assert_axioms friLdtExtract_makes_deployed_verifier_accept_nothing

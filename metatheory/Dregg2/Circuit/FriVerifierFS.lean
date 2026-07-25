@@ -9,9 +9,13 @@ non-exceptionality conjuncts of `FriLdtExtractV3` — `Λ ∉ exceptionalSet …
 ## The two deliverables
 
   **1. `ExtractBundleSansFS`** — `FriLdtExtractV3`'s existential body with EXACTLY the two FS conjuncts
-  removed (the ten remaining conjuncts copied token-for-token). `friLdtExtractV3_imp_sansFS` proves it is
-  genuinely the sub-conjunction (the containment holds ONLY because the ten conjuncts match verbatim — a
-  paraphrase would not typecheck through the destructure/reassemble).
+  removed (the ten remaining conjuncts copied token-for-token). ⚑ 2026-07-25: the audit gate proving it
+  is genuinely the sub-conjunction — `friLdtExtractV3_imp_sansFS` — is DELETED here and RELOCATED to
+  `FriFsDecodedOodRepair.friLdtExtractV3Cons_imp_sansFSCons`, the same destructure/reassemble audit at
+  the CORRECTED OOD shape. Both the landed gate's premise and its conclusion are PROVED EMPTY at the
+  deployed configuration (`deleted_sansFS_gate_premise_was_empty` below,
+  `FriFsDecodedOodRepair.extractBundleSansFS_makes_verifyBatch_reject_everything`); the singleton
+  `oodPoint = [ood]` at `:112` is the cause. The DEFINITION is retained as the subject of those receipts.
 
   **2. The FS ε-theorem `fs_epsilon_bound`.** For a Q-attempt oracle adversary (each attempt a FRESH
   squeeze point `∉ S` — the honest carrier, see below), the probability that ANY attempt's derived
@@ -59,6 +63,7 @@ no fresh `axiom`, no `native_decide`. Builds targeted (`lake build Dregg2.Circui
 import Dregg2.Crypto.RomCounting
 import Dregg2.Circuit.OodSoundnessGame
 import Dregg2.Circuit.AlgoStarkSoundTransferV3
+import Dregg2.Circuit.FriLdtExtractDeployed
 import Dregg2.Tactics
 import Mathlib.Tactic
 
@@ -124,25 +129,48 @@ def ExtractBundleSansFS
       t.tf .memory = [] ∧ t.tf .mapOps = [] ∧
       tracePublishedCommit t = pi.toPublished
 
-/-- **ADVERSARIAL-AUDIT GATE.** `FriLdtExtractV3 → ExtractBundleSansFS`: the ten conjuncts of
-`ExtractBundleSansFS` are exactly the ten remaining after deleting the two FS conjuncts — the implication
-goes through purely by destructuring the twelve-conjunct witness and reassembling ten of them, dropping
-`hLam` and `hnonexc`. This typechecks ONLY if the ten kept conjuncts match `FriLdtExtractV3`'s body
-token-for-token; a paraphrase would fail. Hence `ExtractBundleSansFS` is `FriLdtExtractV3`'s body minus
-exactly the two FS conjuncts, mechanically verified. -/
-theorem friLdtExtractV3_imp_sansFS
+/-! **⚑ DELETED 2026-07-25 — `friLdtExtractV3_imp_sansFS`.** The adversarial-audit gate
+`FriLdtExtractV3 → ExtractBundleSansFS`, and the LAST consumer in this module of a proved-empty
+premise: at the deployed `cfg*` arguments `FriLdtExtractV3` forces `CircuitSoundness.verifyBatch` to
+return `Verdict.reject` on EVERY key/public-input/proof triple
+(`deleted_sansFS_gate_premise_was_empty` below), because it concludes `oodPoint = [ood]` — one base
+felt — while acceptance forces four extension lanes. Its CONCLUSION was empty for the same reason
+(`FriFsDecodedOodRepair.extractBundleSansFS_makes_verifyBatch_reject_everything`): the gate was an
+empty ⟹ empty implication.
+
+RELOCATED, not restated in place. The gate's value is the mechanical token-for-token check that
+`ExtractBundleSansFS` IS `FriLdtExtractV3`'s body minus exactly the two FS conjuncts; performing that
+check at the CORRECTED shape needs `FriLdtExtractDeployed.FriLdtExtractV3Cons` on the left and a
+cons-shaped `ExtractBundleSansFS` on the right, and the latter
+(`FriFsDecodedOodRepair.ExtractBundleSansFSCons`) lives in a module that IMPORTS this one. So the
+corrected gate is `FriFsDecodedOodRepair.friLdtExtractV3Cons_imp_sansFSCons` — the SAME destructure /
+reassemble / drop-exactly-`hLam`-and-`hnonexc` audit, at the shape the verifier actually forces.
+Redefining `ExtractBundleSansFS` here instead would have destroyed the downstream vacuity receipts
+that take it as their subject.
+
+`ExtractBundleSansFS` the DEFINITION (above) is deliberately RETAINED, as the SUBJECT of those
+receipts and of `PremiseInhabitability`'s E3 row, so the broken shape cannot reappear silently. It
+has no consumers left outside the vacuity instruments and
+`FriFsDecodedOodRepair.extractBundleSansFS_imp_cons`. -/
+
+/-- **THE RECEIPT for the deleted gate.** Its premise — `AlgoStarkSoundTransferV3.FriLdtExtractV3` at
+the deployed `cfg*` arguments — forces `CircuitSoundness.verifyBatch` to return `Verdict.reject` on
+EVERY key/public-input/proof triple. The gate therefore said nothing about any run the deployed
+verifier accepts, for the simple reason that there are none under that hypothesis. -/
+theorem deleted_sansFS_gate_premise_was_empty
     (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (hfri : FriLdtExtractV3 sponge hash perm RATE toNat params vk core A initState logN view) :
-    ExtractBundleSansFS sponge hash perm RATE toNat params vk core A initState logN view := by
-  intro pi π hacc
-  obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, _hLam, _hnonexc,
-    hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
-  exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hbus, hMem, hMap, hPub⟩
+    (h : FriLdtExtractV3 sponge hash
+      Dregg2.Circuit.CircuitSoundness.cfgPerm Dregg2.Circuit.CircuitSoundness.cfgRATE
+      Dregg2.Circuit.CircuitSoundness.cfgToNat Dregg2.Circuit.CircuitSoundness.cfgParams
+      Dregg2.Circuit.CircuitSoundness.cfgVk Dregg2.Circuit.CircuitSoundness.cfgCore
+      Dregg2.Circuit.CircuitSoundness.cfgA Dregg2.Circuit.CircuitSoundness.cfgInitState
+      Dregg2.Circuit.CircuitSoundness.cfgLogN Dregg2.Circuit.CircuitSoundness.cfgView)
+    (vkey : Dregg2.Circuit.CircuitSoundness.VerifyKey)
+    (pi : BatchPublicInputs) (π : BatchProof) :
+    Dregg2.Circuit.CircuitSoundness.verifyBatch vkey pi π
+      = Dregg2.Circuit.CircuitSoundness.Verdict.reject :=
+  Dregg2.Circuit.FriLdtExtractDeployed.friLdtExtractV3_makes_verifyBatch_reject_everything
+    sponge hash h vkey pi π
 
 /-! ## §2 — The `condProb` union-bound layer (additive over `RomCounting`).
 
@@ -416,7 +444,7 @@ theorem fs_epsilon_lt_one_example :
 /-! ## Kernel-clean keystones. -/
 
 #assert_all_clean [
-  friLdtExtractV3_imp_sansFS,
+  deleted_sansFS_gate_premise_was_empty,
   condProb_or_le,
   condProb_exists_le,
   condProb_fresh_mem_le,
