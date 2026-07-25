@@ -176,6 +176,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
         "the verified ML-KEM decaps core is unexercised (the implicit-reject divergence \
          assertion compiles out)",
     ),
+    (
+        "dregg_automatafl_rules",
+        "the automatafl GAME ORACLE compiles out: board resolution, move legality, the conflict \
+         set and the win have no answer source at all, so `dregg-automatafl` cannot fill a \
+         witness or run a match (there is no Rust twin left to fall back to — `reference.rs` was \
+         DELETED because it carried the non-canonical experiment's 2-cycle and path-check bugs)",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2032,6 +2039,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_eth_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_tm_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -2749,6 +2758,54 @@ fn main() {
         absent_export_warn("dregg_interchain_reached_consensus");
     }
 
+    // FRI SOUNDNESS LEDGER (`Dregg2.Circuit.FriLedger.friLedgerFFI`): the computable per-config FRI
+    // soundness ledger. Same shape as the decisions above — probe the spliced archive, gate the
+    // extern + the C shim string bridge, and (self-contained core — like R3/holding/interchain) NO
+    // module initializer. `circuit-prove/tests/fri_params_soundness_budget.rs` and
+    // `circuit-prove/tests/fri_regrid_post_s2_measure.rs` marshal each DEPLOYED knob set through this
+    // so the gate reports the numbers `Dregg2.Circuit.FriLedgerSound` proves, rather than re-deriving
+    // the capacity/Johnson/per-fold/ε_C arithmetic in hand-written Rust (the twin that gate used to
+    // be). `friLedgerFFI` is in the `Dregg2.FFI` import closure (§1.5), so its IR emits under
+    // `.lake/build/ir/Dregg2/` and the `build_dregg2_archive` splice picks up the symbol like every
+    // other export.
+    //
+    // ⚑ RESTORED 2026-07-25. This probe, its check-cfg, the `DREGG_FRI_LEDGER` shim define, the
+    // `lean_init.c` bridge and the whole `dregg-lean-ffi` wrapper were removed as collateral by two
+    // PQ-lane commits that never mentioned FRI (7ebe7b7d4b, 0f2802a0ca — a shared-tree clobber from a
+    // stale base). The Lean `@[export]` survived, so nothing went red in metatheory; what went red was
+    // `cargo test -p dregg-circuit-prove`, which could not COMPILE its test targets because two
+    // committed tests import symbols that had ceased to exist. That took the law-1 ratchet and ~25
+    // emit gates off the board for five days without a single failing check.
+    let fri_ledger_present = archive_exports(&build_archive, "dregg_fri_ledger");
+    if fri_ledger_present {
+        println!("cargo:rustc-cfg=dregg_fri_ledger_present");
+    } else {
+        absent_export_warn("dregg_fri_ledger");
+    }
+
+    // AUTOMATAFL GAME ORACLE (`Dregg2.Games.AutomataflFFI.rulesFFI`): the verb-dispatched wire over
+    // the rules-faithful spec `Dregg2.Games.AutomataflRules` — board resolution (`mid`), the
+    // automaton step and its whole decision (`step` / `sense`), move legality, the round's conflict
+    // set, `roundStep`, the stock 11x11 opening, the stock two-player goals, and the win. Same shape
+    // as the decisions above: probe the spliced archive, gate the extern + the C shim string bridge.
+    //
+    // ⚑ THIS ONE **IS** INITIALIZED in `lean_init.c` (unlike R3/holding/interchain/FRI): the `stock`
+    // verb reads `AutomataflRules.stockTwoPlayer`, a nullary def the generated C compiles to a module
+    // global that only the module initializer fills.
+    //
+    // ⚑ AND THERE IS NO FALLBACK ARM. `dregg-automatafl/src/reference.rs` — the hand transcription of
+    // `~/dev/automatafl/logic` this replaces — is DELETED, because the conformance audit found that
+    // lineage divergent from the Creator-Approved ruleset on 2-cycles (it SWAPPED the pair) and on
+    // the path check (its occlusion scan skipped the DESTINATION, so a mover DESTROYED a stationary
+    // piece). Absent ⇒ the crate's oracle calls return `Err` and the surface refuses; it does not
+    // quietly answer with a twin, because there is no twin.
+    let automatafl_rules_present = archive_exports(&build_archive, "dregg_automatafl_rules");
+    if automatafl_rules_present {
+        println!("cargo:rustc-cfg=dregg_automatafl_rules_present");
+    } else {
+        absent_export_warn("dregg_automatafl_rules");
+    }
+
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
     // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
@@ -2961,6 +3018,17 @@ fn main() {
     }
     if interchain_reached_consensus_present {
         shim.define("DREGG_INTERCHAIN_REACHED_CONSENSUS", None);
+    }
+    // FRI SOUNDNESS LEDGER: `DREGG_FRI_LEDGER` gates BOTH the extern decl and the `_str` bridge in
+    // `lean_init.c` (no module initializer — see the extern-decl note there).
+    if fri_ledger_present {
+        shim.define("DREGG_FRI_LEDGER", None);
+    }
+    // AUTOMATAFL GAME ORACLE: `DREGG_AUTOMATAFL_RULES` gates the extern decls, the `_str` bridge AND
+    // the explicit `initialize_Dregg2_Dregg2_Games_AutomataflFFI` call in `lean_init.c` (this export
+    // DOES need its module initializer — see the extern-decl note there).
+    if automatafl_rules_present {
+        shim.define("DREGG_AUTOMATAFL_RULES", None);
     }
     // The three light-client gates: each define gates BOTH the extern decl and the `_str` bridge in
     // `lean_init.c` (no module initializer — see the extern-decl note there). Independently probed,
