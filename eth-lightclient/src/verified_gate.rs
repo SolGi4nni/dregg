@@ -121,12 +121,6 @@ pub fn available() -> bool {
 /// fail-closed inside the gate itself). `Err(VerifiedGateUnavailable)` means the archive did not
 /// export the decision — the caller must refuse, and every caller in this crate does.
 pub fn decide(p: &EthProjections) -> Result<bool, Error> {
-    if std::env::var("DREGG_LANE_AA_MUTANT").as_deref() == Ok("accept") {
-        return Ok(true);
-    }
-    if std::env::var("DREGG_LANE_AA_MUTANT").as_deref() == Ok("reject") {
-        return Ok(false);
-    }
     match verified_eth_lc_verify(
         p.committee_len,
         p.bits_len,
