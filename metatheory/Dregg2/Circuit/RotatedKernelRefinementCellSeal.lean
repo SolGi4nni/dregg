@@ -66,10 +66,12 @@ already use, never a fresh axiom. NEW file; imports are read-only.
 -/
 import Dregg2.Circuit.RotatedKernelRefinementIncNonce
 import Dregg2.Circuit.ListCommit
+import Dregg2.Circuit.ListCommitRegrounded
 import Dregg2.Circuit.Spec.celllifecycle
 
 namespace Dregg2.Circuit.RotatedKernelRefinementCellSeal
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -121,16 +123,17 @@ def lifecycleRoot (compressN : List FieldElem → FieldElem) (k : RecordKernelSt
   listDigest lifecycleLeaf compressN [k.lifecycle cell]
 
 /-- **`lifecycleRoot_binds`** — equal lifecycle roots (over the SAME `cell`) force the SAME entry
-value. Off the realizable `compressN`-injectivity carrier + the injective leaf: the digest binds the
-one-element entry list, so the entry value is pinned. This is the `systemRootsDigest_binds_or_collides` shape for
-the lifecycle side-table — the anti-ghost foundation a forged un-sealed post must clear. -/
+value, under the per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted
+`compressNInjective` floor; endpoint `ListCommitRegrounded.listDigest_binds_of_noCNColl`). The
+anti-ghost foundation a forged un-sealed post must clear. -/
 theorem lifecycleRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (k k' : RecordKernelState) (cell : CellId)
-    (h : lifecycleRoot compressN k cell = lifecycleRoot compressN k' cell) :
+    (k k' : RecordKernelState) (cell : CellId)
+    (h : lifecycleRoot compressN k cell = lifecycleRoot compressN k' cell)
+    (hno : ¬ CNColl lifecycleLeaf compressN [k.lifecycle cell] [k'.lifecycle cell]) :
     k.lifecycle cell = k'.lifecycle cell := by
   unfold lifecycleRoot at h
   have hlist : ([k.lifecycle cell] : List Nat) = [k'.lifecycle cell] :=
-    ListDigestBindsList lifecycleLeaf compressN hN lifecycleLeaf_injective _ _ h
+    listDigest_binds_of_noCNColl lifecycleLeaf compressN lifecycleLeaf_injective _ _ hno h
   exact List.head_eq_of_cons_eq hlist
 
 /-! ## §1 — the FIX descriptor's lifecycle-root gate (the column-forcing gate).
@@ -172,7 +175,8 @@ theorem lifecycleSealForced (compressN : List FieldElem → FieldElem)
       = lifecycleRoot compressN (setLifecycle preK cell lcSealed) cell := by
     rw [← hpost]; exact hgate
   -- digest injectivity ⇒ equal entry value; the sealed kernel's entry IS `lcSealed`.
-  have hval := lifecycleRoot_binds compressN hN postK (setLifecycle preK cell lcSealed) cell hroots
+  have hval := lifecycleRoot_binds compressN postK (setLifecycle preK cell lcSealed) cell hroots
+    (noCNColl_of_inj hN)
   rw [hval]
   show (if cell = cell then lcSealed else preK.lifecycle cell) = lcSealed
   rw [if_pos rfl]

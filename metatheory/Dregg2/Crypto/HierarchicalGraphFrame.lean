@@ -1,4 +1,31 @@
 /-
+
+⚠⚠ ADVERSARIAL VERIFY: **HOLES — THE TWO RESOLUTIONS NEVER MEET.** Read this before citing anything
+below as "the frame theorem for the deployed commitment", because it is not that yet.
+
+* §1 (`frame_of_absorbInjective`, `afterGraph_eq_replaceSlot`) IS over the real `AncestorUpdate.check`
+  and the real `semanticRoot` — but it is conditional on `TreeAbsorbInjective`, and THIS FILE ITSELF
+  REFUTES that hypothesis for every bounded-lane digest (`not_treeAbsorbInjective_of_boundedLanes`,
+  :329, a pinned keystone). So §1 carries a hypothesis no deployed digest satisfies: its price is ZERO.
+* §2 (`frame_binds_rom`) has no such assumption — but its objects (`romRootFromPath`, `hgcRomRoot`,
+  `GraphSlots`, `romPathFor`) are hand-written ROM ANALOGUES. There is NO lemma anywhere in `Dregg2/`
+  relating them to `rootFromPath` / `pathFor` / `semanticRoot` / `AncestorUpdate`. `frame_violation_wins`
+  reads like an object-level tooth but takes only a `FrameAns` plus ROM-level hypotheses — no
+  `AncestorUpdate`, no `BoundedGraph`.
+* CONSEQUENCE: **no theorem here (or anywhere in the tree) says anything UNCONDITIONAL about the
+  deployed `AncestorUpdate.check`.** The frame converse is NOT closed at the deployed resolution.
+
+THE FIX IS NAMED AND THE TEMPLATE EXISTS: the sibling `HierarchicalGraphCommitment.lean` ships exactly
+the bridge this file omits — `hgcRom_graph_forgery_is_break` (:423) — connecting its ROM game to its
+object-level statement. Supplying the analogous ROM↔object bridge here (romRootFromPath ↔ rootFromPath,
+romPathFor ↔ pathFor, hgcRomRoot ↔ semanticRoot) is what would make §2's price land on §1's objects and
+actually close the converse. Until then this file is: a correct conditional (§1, vacuous premise) plus a
+correct ROM game about analogue objects (§2), and the join is missing.
+
+(What IS real and worth keeping: §1's conclusion is a genuine frame statement — `g₁.slots upd.index =
+upd.before ∧ g₂ = replaceSlot …`, i.e. AGREES OFF THE INDEX, not a "roots differ" triviality; the escape
+branch is a first-class `RomForgery` rather than a free `∨ ∃ collision`; and the whole file is
+#guard-free — 25 keystones, every claim a Prop, axiom-clean.)
 # Dregg2.Crypto.HierarchicalGraphFrame — ⚑ THE FRAME CONVERSE of the hierarchical graph commitment.
 
 `Crypto.HierarchicalGraphCommitment` builds the depth-two domain-separated tree over the four

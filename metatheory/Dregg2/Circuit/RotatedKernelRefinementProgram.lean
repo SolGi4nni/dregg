@@ -31,6 +31,7 @@ import Dregg2.Circuit.Spec.cellstateprogram
 
 namespace Dregg2.Circuit.RotatedKernelRefinementProgram
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -124,14 +125,15 @@ theorem setProgram_rcp_graduable :
 `setProgramV3`.** The LAST-row record pin forces the committed AFTER record-digest limb EQUAL to the
 published PI (`rotateV3WithRecordPin_pins`); the readout's `recordLimbDecodes` ties that limb to the
 post program-slot root and `piAnchored` ties the verifier PI to the digest of the declared program value
-`prog`. Digest injectivity then pins the slot value. Editing `setProgramV3`'s record pin turns this RED. -/
-theorem setProgram_forced (compressN : List ℤ → ℤ)
-    (hN : compressNInjective compressN) (hash : List ℤ → ℤ)
+`prog`. The per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted floor) then pins
+the slot value. Editing `setProgramV3`'s record pin turns this RED. -/
+theorem setProgram_forced (compressN : List ℤ → ℤ) (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash setProgramV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId) (prog : Int)
-    (rd : SetProgramTraceReadout compressN hash t pre post actor cell prog) :
+    (rd : SetProgramTraceReadout compressN hash t pre post actor cell prog)
+    (hno : ¬ CNColl auditLeaf compressN [fieldOf programField (post.kernel.cell cell)] [prog]) :
     fieldOf programField (post.kernel.cell cell) = prog := by
   have hv1 : satisfiedVm hash (rotateV3WithRecordPin B_RECORD_DIGEST setVKface)
       (envAt t rd.lastRow) (rd.lastRow == 0) (rd.lastRow + 1 == t.rows.length) :=
@@ -151,7 +153,7 @@ theorem setProgram_forced (compressN : List ℤ → ℤ)
   -- post program-slot root = digest of `[prog]` ⟹ (binds) the slot value is `prog`.
   unfold auditSlotRoot at hpin
   have hlist : ([fieldOf programField (post.kernel.cell cell)] : List Int) = [prog] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ hpin
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno hpin
   exact List.head_eq_of_cons_eq hlist
 
 /-- **`setProgram_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for SetProgram.** A
@@ -184,7 +186,8 @@ theorem setProgram_sat_rejects_unwritten (compressN : List ℤ → ℤ)
     (rd : SetProgramTraceReadout compressN hash t pre post actor cell prog)
     (hwrong : fieldOf programField (post.kernel.cell cell) ≠ prog) :
     False :=
-  hwrong (setProgram_forced compressN hN hash hside hsat pre post actor cell prog rd)
+  hwrong (setProgram_forced compressN hash hside hsat pre post actor cell prog rd
+    (noCNColl_of_inj hN))
 
 /-! ## §axioms — the CLASS-A tripwires (whitelist {propext, Classical.choice, Quot.sound}). -/
 

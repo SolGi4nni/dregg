@@ -6,13 +6,19 @@ This module re-runs the elaborated-term analysis of every direct threader of
 `ListCommit.ListDigestBindsList` on every build and checks each site's outcome against the pinned
 expectation. Any drift — a pinned-portable site that refuses, a pinned-refusal that ports, a
 refusal for the wrong REASON — is a BUILD ERROR, not a warning: the census may only get more true
-(`SWEPT ≠ VERIFIED`, mechanized). It never writes files during a normal build; the one-shot
-generation of `Circuit/ListCommitPortedCone.lean` is triggered by the `CONE_PORT_WRITE` environment
-variable and the output is committed as audited source.
+(`SWEPT ≠ VERIFIED`, mechanized). Write mode is RETIRED: the cluster was CUT OVER in place
+(`Tools/ConeCutoverListCommit`, 2026-07-24) and the generated cone module deleted — emitting it
+again would resurrect the additive scaffolding.
 
-The pinned split (measured 2026-07-24, the prototype throughput number):
-  * 13 threader theorems PORT with zero human proof work (kernel-checked, round-tripped, no
-    explicit-printer fallback needed);
+The pinned split (re-pinned POST-CUTOVER 2026-07-24; the prototype 13/13-portable split is
+superseded — the cutover REMOVED those floor binders):
+  * the 13 CUT-OVER theorems REFUSE as NOT-A-CARRIER — the floor binder is GONE from each
+    statement (this pin IS the standing, build-time proof the cutover holds);
+  * 3 LEVEL-2 threaders (consumers rewired through the `noCNColl_of_inj` bridge) PORT
+    mechanically via the ONE bridge AppRule (`bridgeRules` — the AppRule-from-PortResult
+    composition gap, closed by the cutover's uniform bridge); their own in-place cutover is the
+    next wave; `cellCommit_binds_tail` REFUSES (DAG-order: `cellCommit_binds_fieldsRoot` is an
+    unported endpoint-shaped consumer) — the negative control;
   * the endpoint itself REFUSES (`floor APPLIED` — an ENDPOINT; it needed the hand S2 in
     `Circuit/ListCommitRegrounded`);
   * the 2 structure-bundle defs (`accountsComponent`, `listComponent`) REFUSE at the
@@ -37,6 +43,7 @@ import Dregg2.Circuit.RotatedKernelRefinementBirth
 import Dregg2.Circuit.RotatedKernelRefinementLifecycle
 import Dregg2.Circuit.RotatedKernelRefinementPermsVK
 import Dregg2.Exec.FieldsMap
+import Dregg2.Exec.RecordCommit
 import Dregg2.Tools.ConePort
 
 namespace Dregg2.Tools.ConePortListCommitRun
@@ -77,10 +84,25 @@ def rules : List AppRule :=
       argMap := #[some 0, some 1, some 2, some 3, some 5, some 6, none, some 7],
       tag := "noLeafColl" } ]
 
+/-- ⚑ the LEVEL-2 COMPOSITION rules — the AppRule-from-PortResult gap, closed by the cutover's
+UNIFORM bridge: every still-floored consumer's floor now flows into ONE bridge application
+(`noCNColl_of_inj` / `noColl_of_carriers`), so the whole NEXT cone level is portable with ONE
+rule per bridge (the side condition passes through `noCNColl_self`/`noListColl_self`), never a
+per-theorem rule table. -/
+def bridgeRules : List AppRule :=
+  [ { orig := `Dregg2.Circuit.ListCommitRegrounded.noCNColl_of_inj, arity := 6,
+      floorIdxs := #[3],
+      repl := `Dregg2.Circuit.ListCommitRegrounded.noCNColl_self,
+      argMap := #[some 0, some 1, some 2, some 4, some 5, none], tag := "bridge-noCNColl" }
+  , { orig := `Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers, arity := 7,
+      floorIdxs := #[3, 4],
+      repl := `Dregg2.Circuit.ListCommitRegrounded.noListColl_self,
+      argMap := #[some 0, some 1, some 2, some 5, some 6, none], tag := "bridge-noColl" } ]
+
 def cfg : PortConfig :=
   { floors := [ `Dregg2.Circuit.StateCommit.compressNInjective
               , `Dregg2.Circuit.ListCommit.listLeafInjective ]
-  , rules := rules
+  , rules := rules ++ bridgeRules
   , genNamespace := `Dregg2.Circuit.ListCommitPortedCone
   , forbidden := [ `Dregg2.Circuit.StateCommit.compressNInjective
                  , `Dregg2.Circuit.ListCommit.ListDigestBindsList ] }
@@ -88,25 +110,49 @@ def cfg : PortConfig :=
 /-- Every direct in-tree consumer of `ListDigestBindsList`, plus the endpoint itself — the whole
 cluster, with its pinned outcome. -/
 def targets : List Target :=
-  [ -- the 13 threader theorems: pinned PORTABLE.
-    { decl := `Dregg2.Circuit.RotatedKernelRefinementNotes.noteListRoot_binds, expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementMisc.fixRootBinds, expected := .port }
+  [ -- ⚑ the 13 CUT-OVER theorems: pinned NOT-A-CARRIER — the floor binder is GONE from each
+    -- statement (Tools/ConeCutoverListCommit). This pin is the standing, build-time proof the
+    -- cutover HOLDS; if anyone re-adds a floor binder, the build goes red HERE.
+    { decl := `Dregg2.Circuit.RotatedKernelRefinementNotes.noteListRoot_binds,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementMisc.fixRootBinds,
+      expected := .refuse "not a carrier" }
   , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycleDisc.discRoot_binds,
-      expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementProgram.setProgram_forced, expected := .port }
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementProgram.setProgram_forced,
+      expected := .refuse "not a carrier" }
   , { decl := `Dregg2.Circuit.RotatedKernelRefinementCellSeal.lifecycleRoot_binds,
-      expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsRoot_binds, expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsGrowForced, expected := .port }
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsRoot_binds,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsGrowForced,
+      expected := .refuse "not a carrier" }
   , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.deathCertRoot_binds,
-      expected := .port }
+      expected := .refuse "not a carrier" }
   , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditSlotRoot_binds,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditSlotForced,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_forced,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementPermsVK.slotSetForced,
+      expected := .refuse "not a carrier" }
+  , { decl := `Dregg2.Exec.FieldsMap.fieldsRoot_binds_tail,
+      expected := .refuse "not a carrier" }
+    -- ⚑ LEVEL-2: consumers rewired through the bridge PORT via the ONE bridge AppRule — the
+    -- 2-level cone, kernel-checked in-env on every build. In-place cutover of THESE is the
+    -- next wave.
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementNotes.noteGrowForced, expected := .port }
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementCellSeal.lifecycleSealForced,
       expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditSlotForced, expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_forced, expected := .port }
-  , { decl := `Dregg2.Circuit.RotatedKernelRefinementPermsVK.slotSetForced, expected := .port }
-  , { decl := `Dregg2.Exec.FieldsMap.fieldsRoot_binds_tail, expected := .port }
-    -- the endpoint: REFUSES — it applies the floor; the S2 extractor was the hand port.
+  , { decl := `Dregg2.Circuit.RotatedKernelRefinementMisc.makeSovereign_commit_forced,
+      expected := .port }
+    -- LEVEL-2 NEGATIVE CONTROL: `hN` also flows into `cellCommit_binds_fieldsRoot` (an
+    -- endpoint-shaped consumer not yet ported) — the DAG-order refusal, demonstrated.
+  , { decl := `Dregg2.Exec.RecordCommit.cellCommit_binds_tail,
+      expected := .refuse "unported consumer" }
+    -- the endpoint: REFUSES — it applies the floor; the S2 extractor was the hand port. Its
+    -- remaining consumers are the two bundle defs below — the cluster's residual, named.
   , { decl := `Dregg2.Circuit.ListCommit.ListDigestBindsList,
       expected := .refuse "ENDPOINT" }
     -- the 2 structure bundles: REFUSE at the compiler-lifted `_proof_1` AUX sink (risk-#3 live);
@@ -122,55 +168,15 @@ def targets : List Target :=
   , { decl := `Dregg2.Circuit.ListCommit.listDigest_congr,
       expected := .refuse "not a carrier" } ]
 
-def clusterImports : List Name :=
-  [ `Dregg2.Circuit.ListCommitRegrounded
-  , `Dregg2.Circuit.RotatedKernelRefinementNotes
-  , `Dregg2.Circuit.RotatedKernelRefinementMisc
-  , `Dregg2.Circuit.RotatedKernelRefinementLifecycleDisc
-  , `Dregg2.Circuit.RotatedKernelRefinementProgram
-  , `Dregg2.Circuit.RotatedKernelRefinementCellSeal
-  , `Dregg2.Circuit.RotatedKernelRefinementBirth
-  , `Dregg2.Circuit.RotatedKernelRefinementLifecycle
-  , `Dregg2.Circuit.RotatedKernelRefinementPermsVK
-  , `Dregg2.Exec.FieldsMap
-  , `Dregg2.Tactics ]
-
-def genHeader : String :=
-"# Dregg2.Circuit.ListCommitPortedCone — the MACHINE-PORTED S3 cone of `ListDigestBindsList`.
-
-GENERATED by `Dregg2.Tools.ConePort` (driver: `Tools/ConePortListCommitRun`, regenerate with
-`CONE_PORT_WRITE=1 lake env lean Dregg2/Tools/ConePortListCommitRun.lean`), then AUDITED and
-committed as source. Do not hand-edit ports in place; regenerate or supersede explicitly.
-
-Each theorem below is a direct threader of `ListCommit.ListDigestBindsList` with the refuted
-`compressNInjective` floor binder (and, where it was binder-carried, `listLeafInjective`) replaced
-by per-instance `¬ Coll` side conditions instantiated at the EXACT arguments the original proof
-passes — the elaborated term decided, never a regex. Conclusions are UNCHANGED (the S3 discipline:
-the shape change is confined to the endpoint file, `Circuit/ListCommitRegrounded`).
-
-HONEST-BUT-CONDITIONAL, stated rather than smuggled: each port is conditional on the deployed hash
-not colliding at the NAMED per-instance points — a refutable, decidable-per-instance claim (at
-1-felt widths ~2^15.5-breakable, `docs/WOUND-felt-width-boundaries-2026-07-19.md`), NOT a security
-proof and NOT the refuted universal injectivity. The unconditional content lives in the endpoint's
-S2 (`listDigest_binds_or_collides`) and the ROM headline (`listDigestRom_binds`); the teeth
-(`canary_drop_moves_digest_or_collides`, `listDigest_binds_unconditional_false`,
-`noColl_satisfiable`/`listColl_refutable`) live there too and gate this whole family.
-
-Every port re-verifies at build; the pins below re-prove: axiom-clean, and the refuted floor +
-the old endpoint are UNREACHABLE from every port."
-
 elab "#cone_port_run" : command => do
-  let write := (← IO.getEnv "CONE_PORT_WRITE").isSome
+  if (← IO.getEnv "CONE_PORT_WRITE").isSome then
+    throwError "CONE_PORT_WRITE is RETIRED: the ListDigestBindsList cluster was CUT OVER in place (Tools/ConeCutoverListCommit) and the generated cone deleted — re-emitting it would resurrect the additive scaffolding"
   liftTermElabM do
     let rep ← runCluster cfg targets
-    logInfo m!"=== ConePort ListDigestBindsList cluster: ported={rep.ported.size} refused={rep.refusals.size} mismatches={rep.mismatches.size} ==="
+    logInfo m!"=== ConePort ListDigestBindsList cluster (POST-CUTOVER): ported={rep.ported.size} refused={rep.refusals.size} mismatches={rep.mismatches.size} ==="
     unless rep.mismatches.isEmpty do
       for m in rep.mismatches do logError m
       throwError "ConePort: the cluster moved under the pinned measurement — re-measure, understand WHY, then re-pin"
-    if write then
-      let txt := emitModule cfg clusterImports rep.ported genHeader
-      IO.FS.writeFile "Dregg2/Circuit/ListCommitPortedCone.lean" txt
-      logInfo "WROTE Dregg2/Circuit/ListCommitPortedCone.lean"
 
 #cone_port_run
 

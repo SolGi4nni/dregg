@@ -58,6 +58,7 @@ import Dregg2.Circuit.RotatedKernelRefinementCellSeal
 
 namespace Dregg2.Circuit.RotatedKernelRefinementLifecycleDisc
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -93,16 +94,18 @@ def discRoot (compressN : List FieldElem → FieldElem) (k : RecordKernelState) 
     FieldElem :=
   listDigest lifecycleLeaf compressN [k.lifecycle cell]
 
-/-- **`discRoot_binds`** — equal disc roots (over the SAME `cell`) force the SAME discriminant. Off the
-realizable `compressN`-injectivity + the injective `lifecycleLeaf`. The anti-ghost foundation: a forged
-after-disc must clear this. -/
+/-- **`discRoot_binds`** — equal disc roots (over the SAME `cell`) force the SAME discriminant,
+under the per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted `compressNInjective`
+floor; endpoint `ListCommitRegrounded.listDigest_binds_of_noCNColl`). The anti-ghost foundation: a
+forged after-disc must clear this. -/
 theorem discRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (k k' : RecordKernelState) (cell : CellId)
-    (h : discRoot compressN k cell = discRoot compressN k' cell) :
+    (k k' : RecordKernelState) (cell : CellId)
+    (h : discRoot compressN k cell = discRoot compressN k' cell)
+    (hno : ¬ CNColl lifecycleLeaf compressN [k.lifecycle cell] [k'.lifecycle cell]) :
     k.lifecycle cell = k'.lifecycle cell := by
   unfold discRoot at h
   have hlist : ([k.lifecycle cell] : List Nat) = [k'.lifecycle cell] :=
-    ListDigestBindsList lifecycleLeaf compressN hN lifecycleLeaf_injective _ _ h
+    listDigest_binds_of_noCNColl lifecycleLeaf compressN lifecycleLeaf_injective _ _ hno h
   exact List.head_eq_of_cons_eq hlist
 
 /-! ## §1 — the per-effect DISC-transition gate.
@@ -142,7 +145,8 @@ theorem discBeforeForced (compressN : List FieldElem → FieldElem)
   obtain ⟨hgpre, _⟩ := hgate
   have hroots : discRoot compressN preK cell
       = discRoot compressN (setLifecycle preK cell before) cell := by rw [← hpre]; exact hgpre
-  have hval := discRoot_binds compressN hN preK (setLifecycle preK cell before) cell hroots
+  have hval := discRoot_binds compressN preK (setLifecycle preK cell before) cell hroots
+    (noCNColl_of_inj hN)
   rw [hval]
   simp [setLifecycle]
 
@@ -159,7 +163,8 @@ theorem discAfterForced (compressN : List FieldElem → FieldElem)
   obtain ⟨_, hgpost⟩ := hgate
   have hroots : discRoot compressN postK cell
       = discRoot compressN (setLifecycle preK cell after) cell := by rw [← hpost]; exact hgpost
-  have hval := discRoot_binds compressN hN postK (setLifecycle preK cell after) cell hroots
+  have hval := discRoot_binds compressN postK (setLifecycle preK cell after) cell hroots
+    (noCNColl_of_inj hN)
   rw [hval]
   simp [setLifecycle]
 

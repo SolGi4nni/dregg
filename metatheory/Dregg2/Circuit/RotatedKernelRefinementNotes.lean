@@ -82,6 +82,7 @@ import Dregg2.Circuit.Spec.notecommitment
 
 namespace Dregg2.Circuit.RotatedKernelRefinementNotes
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -129,14 +130,16 @@ FIX adds to `compute_commitment`. Absorbed into `state_commit` exactly as a `sys
 def noteListRoot (compressN : List FieldElem → FieldElem) (xs : List Nat) : FieldElem :=
   listDigest noteLeaf compressN xs
 
-/-- **`noteListRoot_binds`** — equal note-list roots force the SAME `List Nat`. Off the realizable
-`compressN`-injectivity carrier + the injective leaf (`ListDigestBindsList`): the digest binds the
-whole ordered list. The anti-ghost foundation a forged drop/reorder must clear. -/
-theorem noteListRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (xs ys : List Nat)
-    (h : noteListRoot compressN xs = noteListRoot compressN ys) :
+/-- **`noteListRoot_binds`** — equal note-list roots force the SAME `List Nat`, under the
+per-instance `¬ CNColl` side condition at the named pair (⚙ S3 CUTOVER of the refuted
+`compressNInjective` floor; endpoint `ListCommitRegrounded.listDigest_binds_of_noCNColl`).
+HONEST-BUT-CONDITIONAL, never universal. The anti-ghost foundation a forged drop/reorder must
+clear. -/
+theorem noteListRoot_binds (compressN : List FieldElem → FieldElem) (xs ys : List Nat)
+    (h : noteListRoot compressN xs = noteListRoot compressN ys)
+    (hno : ¬ CNColl noteLeaf compressN xs ys) :
     xs = ys :=
-  ListDigestBindsList noteLeaf compressN hN noteLeaf_injective _ _ h
+  listDigest_binds_of_noCNColl noteLeaf compressN noteLeaf_injective _ _ hno h
 
 /-! ## §1 — the FIX descriptor's note-root gate (the column-forcing gate).
 
@@ -170,7 +173,7 @@ theorem noteGrowForced (compressN : List FieldElem → FieldElem)
   -- the POST column is BOTH `noteListRoot postList` (decode) AND the grown-list digest (gate).
   have hroots : noteListRoot compressN postList = noteListRoot compressN (x :: preList) := by
     rw [← hpost]; exact hgate
-  exact noteListRoot_binds compressN hN _ _ hroots
+  exact noteListRoot_binds compressN _ _ hroots (noCNColl_of_inj hN)
 
 /-! ## §2 — noteSpend: the active-row ⟷ kernel decode + the refinement (VALUE_PARTIAL).
 

@@ -43,6 +43,7 @@ import Dregg2.Circuit.Spec.cellstatelog
 
 namespace Dregg2.Circuit.RotatedKernelRefinementPermsVK
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit
 open Dregg2.Circuit.ListCommit
@@ -87,18 +88,19 @@ def gSlotSet (compressN : List FieldElem → FieldElem) (cell : CellId) (f : Fie
     (target : Int) (postRoot : FieldElem) : Prop :=
   postRoot = listDigest auditLeaf compressN [target]
 
-/-- **`slotSetForced` — the FIX gate FORCES the committed record slot to `target`.** -/
+/-- **`slotSetForced` — the FIX gate FORCES the committed record slot to `target`**, under the
+per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted floor). -/
 theorem slotSetForced (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (postK : RecordKernelState) (cell : CellId) (f : FieldName) (target : Int) (postRoot : FieldElem)
     (hpost : postRoot = auditSlotRoot compressN postK cell f)
-    (hgate : gSlotSet compressN cell f target postRoot) :
+    (hgate : gSlotSet compressN cell f target postRoot)
+    (hno : ¬ CNColl auditLeaf compressN [fieldOf f (postK.cell cell)] [target]) :
     fieldOf f (postK.cell cell) = target := by
   have hroots : auditSlotRoot compressN postK cell f
       = listDigest auditLeaf compressN [target] := by rw [← hpost]; exact hgate
   unfold auditSlotRoot at hroots
   have hlist : ([fieldOf f (postK.cell cell)] : List Int) = [target] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ hroots
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno hroots
   exact List.head_eq_of_cons_eq hlist
 
 /-! ## §1 — setPermissions: `cell."permissions" := p`. A NEW committed slot-root, target `p`.
@@ -145,7 +147,8 @@ theorem setPermissions_slot_forced (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (p : Int)
     (henc : setPermissionsEncodes compressN pre post actor cell p) :
     fieldOf permsField (post.kernel.cell cell) = p :=
-  slotSetForced compressN hN post.kernel cell permsField p henc.postRoot henc.hpost henc.gate
+  slotSetForced compressN post.kernel cell permsField p henc.postRoot henc.hpost henc.gate
+    (noCNColl_of_inj hN)
 
 /-- **`setPermissions_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for setPermissions.** The
 `"permissions" := p` record-slot write is FORCED via the committed slot-root (`setPermissions_slot_forced`,
@@ -227,7 +230,8 @@ theorem setVK_slot_forced (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (vk : Int)
     (henc : setVKEncodes compressN pre post actor cell vk) :
     fieldOf vkField (post.kernel.cell cell) = vk :=
-  slotSetForced compressN hN post.kernel cell vkField vk henc.postRoot henc.hpost henc.gate
+  slotSetForced compressN post.kernel cell vkField vk henc.postRoot henc.hpost henc.gate
+    (noCNColl_of_inj hN)
 
 /-- **`setVK_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for setVK.** The
 `"verification_key" := vk` record-slot write is FORCED via the committed slot-root; the whole-map move,

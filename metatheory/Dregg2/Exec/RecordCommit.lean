@@ -44,6 +44,7 @@ import Dregg2.Exec.FieldsMap
 
 namespace Dregg2.Exec.RecordCommit
 
+open Dregg2.Circuit.ListCommitRegrounded (noColl_of_carriers)
 open Dregg2.Exec
 open Dregg2.Exec.FieldsMap
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -118,8 +119,9 @@ theorem cellCommit_binds_tail
     (rest : List ℤ) (v w : Value)
     (h : cellCommit compressN compress2 rest v = cellCommit compressN compress2 rest w) :
     userTail v = userTail w :=
-  fieldsRoot_binds_tail compress2 compressN hN hLE v w
+  fieldsRoot_binds_tail compress2 compressN v w
     (cellCommit_binds_fieldsRoot compressN compress2 hN rest v w h)
+    (noColl_of_carriers hN hLE _ _)
 
 /-! ## §3 — THE LEGACY NO-OP (byte-identical backward-compat keystone). -/
 

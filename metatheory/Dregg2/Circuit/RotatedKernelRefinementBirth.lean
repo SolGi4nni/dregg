@@ -65,6 +65,7 @@ legacy `spawnV3` rungs (`spawn_descriptorRefines_sat`) keep the frozen-root resi
 use). NEW file; all imports read-only.
 -/
 import Dregg2.Circuit.AccountsCommit
+import Dregg2.Circuit.ListCommitRegrounded
 import Dregg2.Circuit.Spec.accountgrowth
 import Dregg2.Circuit.Spec.factorycreation
 import Dregg2.Circuit.Emit.CapOpenEmit
@@ -72,6 +73,7 @@ import Dregg2.Circuit.Emit.CapInsertEmit
 
 namespace Dregg2.Circuit.RotatedKernelRefinementBirth
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -134,16 +136,18 @@ canonical sorted account index. The Lean mirror of the Rust `accounts_root` limb
 def accountsRoot (compressN : List FieldElem → FieldElem) (k : RecordKernelState) : FieldElem :=
   listDigest accountsLeaf compressN (accountsSorted k)
 
-/-- **`accountsRoot_binds`** — equal accounts roots force the SAME `accounts` Finset. Off the realizable
-`compressN`-injectivity carrier + the injective leaf + `accounts_eq_of_sorted_eq`: the digest binds the
-sorted index, hence the whole set. The anti-ghost foundation a forged drop/reorder must clear. -/
+/-- **`accountsRoot_binds`** — equal accounts roots force the SAME `accounts` Finset, under the
+per-instance `¬ CNColl` side condition at the named sorted pair (⚙ S3 CUTOVER of the refuted
+`compressNInjective` floor; endpoint `ListCommitRegrounded.listDigest_binds_of_noCNColl`, then
+`accounts_eq_of_sorted_eq`). The anti-ghost foundation a forged drop/reorder must clear. -/
 theorem accountsRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (k k' : RecordKernelState)
-    (h : accountsRoot compressN k = accountsRoot compressN k') :
+    (k k' : RecordKernelState)
+    (h : accountsRoot compressN k = accountsRoot compressN k')
+    (hno : ¬ CNColl accountsLeaf compressN (accountsSorted k) (accountsSorted k')) :
     k.accounts = k'.accounts := by
   unfold accountsRoot at h
   have hsorted : accountsSorted k = accountsSorted k' :=
-    ListDigestBindsList accountsLeaf compressN hN accountsLeaf_injective _ _ h
+    listDigest_binds_of_noCNColl accountsLeaf compressN accountsLeaf_injective _ _ hno h
   exact accounts_eq_of_sorted_eq _ _ hsorted
 
 /-! ## §1 — the FIX descriptor's accounts-root gate (the column-forcing gate).
@@ -169,10 +173,11 @@ def gAccountsGrow (compressN : List FieldElem → FieldElem)
 the POST accounts equal `insert newCell preK.accounts` (via `accountsRoot_binds`). This is the rung the
 deployed circuit is MISSING and the FIX supplies — exactly `lifecycleSealForced` for the account set. -/
 theorem accountsGrowForced (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (preK postK : RecordKernelState) (newCell : CellId) (preRoot postRoot : FieldElem)
     (henc : AccountsRootRow compressN preK postK preRoot postRoot)
-    (hgate : gAccountsGrow compressN preK newCell postRoot) :
+    (hgate : gAccountsGrow compressN preK newCell postRoot)
+    (hno : ¬ CNColl accountsLeaf compressN (accountsSorted postK)
+      ((insert newCell preK.accounts).sort (· ≤ ·))) :
     postK.accounts = insert newCell preK.accounts := by
   obtain ⟨_, hpost⟩ := henc
   -- the POST column is BOTH `accountsRoot postK` (decode) AND the grown-set digest (gate).
@@ -182,7 +187,7 @@ theorem accountsGrowForced (compressN : List FieldElem → FieldElem)
   -- digest injectivity ⇒ equal sorted indices ⇒ equal Finsets.
   unfold accountsRoot at hroots
   have hsorted : accountsSorted postK = (insert newCell preK.accounts).sort (· ≤ ·) :=
-    ListDigestBindsList accountsLeaf compressN hN accountsLeaf_injective _ _ hroots
+    listDigest_binds_of_noCNColl accountsLeaf compressN accountsLeaf_injective _ _ hno hroots
   exact accounts_eq_of_sorted_eq _ _ hsorted
 
 /-! ## §2 — createCell: the active-row ⟷ kernel decode + the refinement.
@@ -228,8 +233,8 @@ theorem createCell_accounts_forced (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor newCell : CellId)
     (henc : createCellGenuineEncodes compressN pre post actor newCell) :
     post.kernel.accounts = insert newCell pre.kernel.accounts :=
-  accountsGrowForced compressN hN pre.kernel post.kernel newCell henc.preRoot henc.postRoot
-    henc.hroots henc.gate
+  accountsGrowForced compressN pre.kernel post.kernel newCell henc.preRoot henc.postRoot
+    henc.hroots henc.gate (noCNColl_of_inj hN)
 
 /-- **`createCell_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for createCell.** A satisfying
 FIX createCell descriptor witness forces the KERNEL's birth step `CreateCellSpec pre actor newCell post`.
@@ -318,8 +323,8 @@ theorem createFromFactory_accounts_forced (compressN : List FieldElem → FieldE
     (pre post : RecChainedState) (actor newCell : CellId) (vk : Int)
     (henc : createFromFactoryGenuineEncodes compressN pre post actor newCell vk) :
     post.kernel.accounts = insert newCell pre.kernel.accounts :=
-  accountsGrowForced compressN hN pre.kernel post.kernel newCell henc.preRoot henc.postRoot
-    henc.hroots henc.gate
+  accountsGrowForced compressN pre.kernel post.kernel newCell henc.preRoot henc.postRoot
+    henc.hroots henc.gate (noCNColl_of_inj hN)
 
 /-- **`createCellFromFactory_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for
 createCellFromFactory.** A satisfying FIX witness forces `CreateFromFactorySpec pre actor newCell vk
@@ -421,8 +426,8 @@ theorem spawn_accounts_forced (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor child target : CellId)
     (henc : spawnGenuineEncodes compressN pre post actor child target) :
     post.kernel.accounts = insert child pre.kernel.accounts :=
-  accountsGrowForced compressN hN pre.kernel post.kernel child henc.preRoot henc.postRoot
-    henc.hroots henc.gate
+  accountsGrowForced compressN pre.kernel post.kernel child henc.preRoot henc.postRoot
+    henc.hroots henc.gate (noCNColl_of_inj hN)
 
 /-- **`spawn_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for spawn (VALUE_PARTIAL).** A
 satisfying FIX witness forces `SpawnSpec pre actor child target post`. The accounts insert + born-empty

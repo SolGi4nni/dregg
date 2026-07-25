@@ -28,9 +28,11 @@ name-keyed `Value`/`scalar`) and `Circuit.ListCommit` (the injective accumulator
 -/
 import Dregg2.Exec.Program
 import Dregg2.Circuit.ListCommit
+import Dregg2.Circuit.ListCommitRegrounded
 
 namespace Dregg2.Exec.FieldsMap
 
+open Dregg2.Circuit.ListCommitRegrounded (ListColl listDigest_binds_of_noColl)
 open Dregg2.Exec
 open Dregg2.Circuit.StateCommit (compressNInjective)
 open Dregg2.Circuit.ListCommit
@@ -141,14 +143,16 @@ theorem fieldsRoot_membership (v : Value) (k : FieldName) (x : Value) :
         subst h; subst hk; rfl
   · intro h; rw [h]; rfl
 
-/-- **Injectivity corollary** — two records whose `fields_root` agree (under an injective
-`listDigest`) have the SAME user tail, hence read back the SAME value at every user key. This is the
+/-- **Binding corollary (⚙ S3 CUTOVER)** — two records whose `fields_root` agree have the SAME
+user tail, hence read back the SAME value at every user key — under the per-instance `¬ ListColl`
+side condition at the named tail pair (endpoint `ListCommitRegrounded.listDigest_binds_of_noColl`;
+the refuted universal-injectivity floors are GONE from this statement). This is the
 "the root commits the data" guarantee that rules out a `:= 0` stub. -/
 theorem fieldsRoot_binds_tail (compress2 : Int → Int → Int) (compressN : List Int → Int)
-    (hN : compressNInjective compressN) (hLE : listLeafInjective (tailLeaf compress2))
-    (v w : Value) (h : fieldsRoot compress2 compressN v = fieldsRoot compress2 compressN w) :
+    (v w : Value) (h : fieldsRoot compress2 compressN v = fieldsRoot compress2 compressN w)
+    (hno : ¬ ListColl (tailLeaf compress2) compressN (userTail v) (userTail w)) :
     userTail v = userTail w :=
-  ListDigestBindsList (tailLeaf compress2) compressN hN hLE _ _ h
+  listDigest_binds_of_noColl (tailLeaf compress2) compressN _ _ hno h
 
 /-! ## §4 — VACUITY GUARD (`_RECORD-LAYER-UPGRADE.md` §D.4): pos + neg, no `native_decide`. -/
 

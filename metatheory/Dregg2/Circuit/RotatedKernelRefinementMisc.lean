@@ -44,6 +44,7 @@ import Dregg2.Circuit.Spec.queuepipelinedsend
 
 namespace Dregg2.Circuit.RotatedKernelRefinementMisc
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit
 open Dregg2.Circuit.ListCommit
@@ -97,18 +98,19 @@ the single target felt `target` (the value the protocol-managed write commits). 
 def gFixOne (compressN : List FieldElem → FieldElem) (target : Int) (postRoot : FieldElem) : Prop :=
   postRoot = listDigest auditLeaf compressN [target]
 
-/-- **`fixRootBinds` — equal one-felt digests force the SAME target.** From a post-root that equals
-both the digest of a witnessed value `w` and the digest of the target `target`, `w = target` (the
-`ListDigestBindsList` collision-resistance, off `compressNInjective` + the injective leaf). -/
+/-- **`fixRootBinds` — equal one-felt digests force the SAME target**, under the per-instance
+`¬ CNColl` side condition at the named pair `[w]`/`[target]` (⚙ S3 CUTOVER of the refuted
+`compressNInjective` floor; endpoint `ListCommitRegrounded.listDigest_binds_of_noCNColl`). -/
 theorem fixRootBinds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (w target : Int) (postRoot : FieldElem)
+    (w target : Int) (postRoot : FieldElem)
     (hw : postRoot = listDigest auditLeaf compressN [w])
-    (hgate : gFixOne compressN target postRoot) :
+    (hgate : gFixOne compressN target postRoot)
+    (hno : ¬ CNColl auditLeaf compressN [w] [target]) :
     w = target := by
   have hroots : listDigest auditLeaf compressN [w] = listDigest auditLeaf compressN [target] := by
     rw [← hw]; exact hgate
   have hlist : ([w] : List Int) = [target] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ hroots
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno hroots
   exact List.head_eq_of_cons_eq hlist
 
 /-! ## §1 — makeSovereign: `cell ↦ commitment-only record`. A NEW committed `sovereignCommitRoot`.
@@ -178,7 +180,7 @@ theorem makeSovereign_commit_forced (compressN : List FieldElem → FieldElem)
     (preCell' : CellId → Value)
     (hwit : henc.postRoot = sovereignCommitRoot compressN preCell' cell) :
     (stateCommitment (preCell' cell) : Int) = (stateCommitment (pre.kernel.cell cell) : Int) :=
-  fixRootBinds compressN hN _ _ henc.postRoot hwit henc.gate
+  fixRootBinds compressN _ _ henc.postRoot hwit henc.gate (noCNColl_of_inj hN)
 
 /-- **`makeSovereign_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for makeSovereign.** The
 commitment-rebind is FORCED via the committed sovereign-commit limb (the published digest IS the
@@ -252,7 +254,7 @@ theorem dynFieldSetForced (compressN : List FieldElem → FieldElem)
     (hpost : postRoot = dynFieldSlotRoot compressN postK cell f)
     (hgate : gDynFieldSet compressN cell f v postRoot) :
     fieldOf f (postK.cell cell) = v :=
-  fixRootBinds compressN hN _ _ postRoot hpost hgate
+  fixRootBinds compressN _ _ postRoot hpost hgate (noCNColl_of_inj hN)
 
 /-- The decode for a satisfying FIX setFieldDyn witness. Carries the FIX gate (the WITNESS leg forcing
 the committed dyn-field slot `= v`), the WHOLE `cell`-map move `setFieldCellMap` (the residual the

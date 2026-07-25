@@ -46,6 +46,7 @@ import Dregg2.Circuit.Spec.cellstateaudit
 
 namespace Dregg2.Circuit.RotatedKernelRefinementLifecycle
 
+open Dregg2.Circuit.ListCommitRegrounded (CNColl noCNColl_of_inj listDigest_binds_of_noCNColl)
 open Dregg2.Circuit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.StateCommit (compressNInjective)
@@ -111,7 +112,8 @@ theorem lifecycleSetForced (compressN : List FieldElem → FieldElem)
   have hroots : lifecycleRoot compressN postK cell
       = lifecycleRoot compressN (setLifecycle preK cell target) cell := by
     rw [← hpost]; exact hgate
-  have hval := lifecycleRoot_binds compressN hN postK (setLifecycle preK cell target) cell hroots
+  have hval := lifecycleRoot_binds compressN postK (setLifecycle preK cell target) cell hroots
+    (noCNColl_of_inj hN)
   rw [hval]
   show (if cell = cell then target else preK.lifecycle cell) = target
   rw [if_pos rfl]
@@ -227,14 +229,16 @@ def deathCertRoot (compressN : List FieldElem → FieldElem) (k : RecordKernelSt
     FieldElem :=
   listDigest lifecycleLeaf compressN [k.deathCert cell]
 
-/-- **`deathCertRoot_binds`** — equal death-cert roots (over the SAME `cell`) force the SAME entry. -/
+/-- **`deathCertRoot_binds`** — equal death-cert roots (over the SAME `cell`) force the SAME
+entry, under the per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted floor). -/
 theorem deathCertRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (k k' : RecordKernelState) (cell : CellId)
-    (h : deathCertRoot compressN k cell = deathCertRoot compressN k' cell) :
+    (k k' : RecordKernelState) (cell : CellId)
+    (h : deathCertRoot compressN k cell = deathCertRoot compressN k' cell)
+    (hno : ¬ CNColl lifecycleLeaf compressN [k.deathCert cell] [k'.deathCert cell]) :
     k.deathCert cell = k'.deathCert cell := by
   unfold deathCertRoot at h
   have hlist : ([k.deathCert cell] : List Nat) = [k'.deathCert cell] :=
-    ListDigestBindsList lifecycleLeaf compressN hN lifecycleLeaf_injective _ _ h
+    listDigest_binds_of_noCNColl lifecycleLeaf compressN lifecycleLeaf_injective _ _ hno h
   exact List.head_eq_of_cons_eq hlist
 
 /-- **`gDeathCertSet compressN preK cell certHash postRoot`** — the FIX gate: the POST death-cert-root
@@ -255,8 +259,9 @@ theorem deathCertSetForced (compressN : List FieldElem → FieldElem)
       = deathCertRoot compressN
           { preK with deathCert := fun c => if c = cell then certHash else preK.deathCert c } cell := by
     rw [← hpost]; exact hgate
-  have hval := deathCertRoot_binds compressN hN postK
+  have hval := deathCertRoot_binds compressN postK
     { preK with deathCert := fun c => if c = cell then certHash else preK.deathCert c } cell hroots
+    (noCNColl_of_inj hN)
   rw [hval]
   show (if cell = cell then certHash else preK.deathCert cell) = certHash
   rw [if_pos rfl]
@@ -398,15 +403,17 @@ def auditSlotRoot (compressN : List FieldElem → FieldElem) (k : RecordKernelSt
     (cell : CellId) (f : FieldName) : FieldElem :=
   listDigest auditLeaf compressN [fieldOf f (k.cell cell)]
 
-/-- **`auditSlotRoot_binds`** — equal audit-slot roots (same `cell`, same `f`) force the SAME slot
-value (off `compressNInjective` + the injective leaf). -/
+/-- **`auditSlotRoot_binds`** — equal audit-slot roots (same `cell`, same `f`) force the SAME
+slot value, under the per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted
+`compressNInjective` floor). -/
 theorem auditSlotRoot_binds (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (k k' : RecordKernelState) (cell : CellId) (f : FieldName)
-    (h : auditSlotRoot compressN k cell f = auditSlotRoot compressN k' cell f) :
+    (k k' : RecordKernelState) (cell : CellId) (f : FieldName)
+    (h : auditSlotRoot compressN k cell f = auditSlotRoot compressN k' cell f)
+    (hno : ¬ CNColl auditLeaf compressN [fieldOf f (k.cell cell)] [fieldOf f (k'.cell cell)]) :
     fieldOf f (k.cell cell) = fieldOf f (k'.cell cell) := by
   unfold auditSlotRoot at h
   have hlist : ([fieldOf f (k.cell cell)] : List Int) = [fieldOf f (k'.cell cell)] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ h
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno h
   exact List.head_eq_of_cons_eq hlist
 
 /-- **`gAuditSlotOne compressN cell f postRoot`** — the FIX gate: the POST audit-slot-root column IS the
@@ -415,18 +422,19 @@ def gAuditSlotOne (compressN : List FieldElem → FieldElem) (cell : CellId) (f 
     (postRoot : FieldElem) : Prop :=
   postRoot = listDigest auditLeaf compressN [(1 : Int)]
 
-/-- **`auditSlotForced` — the FIX gate FORCES the committed audit slot to `1`.** -/
+/-- **`auditSlotForced` — the FIX gate FORCES the committed audit slot to `1`**, under the
+per-instance `¬ CNColl` side condition (⚙ S3 CUTOVER of the refuted floor). -/
 theorem auditSlotForced (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (postK : RecordKernelState) (cell : CellId) (f : FieldName) (postRoot : FieldElem)
     (hpost : postRoot = auditSlotRoot compressN postK cell f)
-    (hgate : gAuditSlotOne compressN cell f postRoot) :
+    (hgate : gAuditSlotOne compressN cell f postRoot)
+    (hno : ¬ CNColl auditLeaf compressN [fieldOf f (postK.cell cell)] [(1 : Int)]) :
     fieldOf f (postK.cell cell) = 1 := by
   have hroots : auditSlotRoot compressN postK cell f
       = listDigest auditLeaf compressN [(1 : Int)] := by rw [← hpost]; exact hgate
   unfold auditSlotRoot at hroots
   have hlist : ([fieldOf f (postK.cell cell)] : List Int) = [(1 : Int)] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ hroots
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno hroots
   exact List.head_eq_of_cons_eq hlist
 
 /-- The decode for a satisfying FIX audit-slot witness. Carries the FIX gate (the WITNESS leg forcing the
@@ -469,7 +477,8 @@ theorem audit_slot_forced (compressN : List FieldElem → FieldElem)
     (pre post : RecChainedState) (actor cell : CellId) (f : FieldName)
     (henc : auditEncodes compressN pre post actor cell f) :
     fieldOf f (post.kernel.cell cell) = 1 :=
-  auditSlotForced compressN hN post.kernel cell f henc.postRoot henc.hpost henc.gate
+  auditSlotForced compressN post.kernel cell f henc.postRoot henc.hpost henc.gate
+    (noCNColl_of_inj hN)
 
 /-- **`refusal_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for refusal.** The `"refusal" := 1`
 audit-slot write is FORCED via the committed `auditSlotRoot`; the whole `cell`-map move, the guard, the
@@ -868,9 +877,9 @@ theorem cellDestroy_dc_forced (compressN : List FieldElem → FieldElem)
     canon_eq_of_modEq rd.recordLimbCanon rd.piCanon hpinCong
   -- chain the two realizable decodes: post death-cert root = PI = `certHash`-bind root ⟹ entry pinned.
   rw [rd.recordLimbDecodes, rd.piAnchored] at hpin
-  have hval := deathCertRoot_binds compressN hN post.kernel
+  have hval := deathCertRoot_binds compressN post.kernel
     { pre.kernel with deathCert := fun c => if c = cell then certHash else pre.kernel.deathCert c }
-    cell hpin
+    cell hpin (noCNColl_of_inj hN)
   rw [hval]
   show (if cell = cell then certHash else pre.kernel.deathCert cell) = certHash
   rw [if_pos rfl]
@@ -1019,13 +1028,14 @@ The LAST-row record pin forces the committed AFTER record-digest limb EQUAL to t
 (`rotateV3WithRecordPin_pins`); the readout's `recordLimbDecodes` ties that limb to the post audit-slot
 root and `piAnchored` ties the verifier PI to the digest of slot value `1`. Digest injectivity then pins
 the slot value. Editing `refusalV3`'s record pin turns this RED. -/
-theorem refusal_forced (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (hash : List ℤ → ℤ)
+theorem refusal_forced (compressN : List FieldElem → FieldElem) (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash refusalV3 minit mfin maddrs t)
     (pre post : RecChainedState) (actor cell : CellId)
-    (rd : RefusalTraceReadout compressN hash t pre post actor cell) :
+    (rd : RefusalTraceReadout compressN hash t pre post actor cell)
+    (hno : ¬ CNColl auditLeaf compressN [fieldOf refusalField (post.kernel.cell cell)]
+      [(1 : Int)]) :
     fieldOf refusalField (post.kernel.cell cell) = 1 := by
   have hv1 : satisfiedVm hash
       (rotateV3WithRecordPin B_RECORD_DIGEST Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor)
@@ -1050,7 +1060,7 @@ theorem refusal_forced (compressN : List FieldElem → FieldElem)
   -- post audit-slot root = digest of `[1]` ⟹ (binds) the slot value is `1`.
   unfold auditSlotRoot at hpin
   have hlist : ([fieldOf refusalField (post.kernel.cell cell)] : List Int) = [(1 : Int)] :=
-    ListDigestBindsList auditLeaf compressN hN auditLeaf_injective _ _ hpin
+    listDigest_binds_of_noCNColl auditLeaf compressN auditLeaf_injective _ _ hno hpin
   exact List.head_eq_of_cons_eq hlist
 
 /-- **`refusal_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for refusal.** A satisfying
@@ -1086,7 +1096,7 @@ theorem refusal_sat_rejects_unwritten (compressN : List FieldElem → FieldElem)
     (rd : RefusalTraceReadout compressN hash t pre post actor cell)
     (hwrong : fieldOf refusalField (post.kernel.cell cell) ≠ 1) :
     False :=
-  hwrong (refusal_forced compressN hN hash hside hsat pre post actor cell rd)
+  hwrong (refusal_forced compressN hash hside hsat pre post actor cell rd (noCNColl_of_inj hN))
 
 /-! ### receiptArchive — Class A from the DEPLOYED disc gate (`receiptArchiveV3`, AFTER disc = Archived).
 

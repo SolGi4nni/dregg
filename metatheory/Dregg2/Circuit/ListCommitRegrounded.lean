@@ -164,6 +164,30 @@ theorem listDigest_binds_of_carriers {α : Type u} (LE : α → ℤ) (cN : List 
     (h : listDigest LE cN xs = listDigest LE cN ys) : xs = ys :=
   listDigest_binds_of_noColl LE cN xs ys (noColl_of_carriers hN hLE xs ys) h
 
+/-! ## §4b — the CUTOVER bridges. After the in-place cutover
+(`Tools/ConeCutover` + `Tools/ConeCutoverListCommit`) a threader that STILL carries the refuted
+floor binder discharges its callee's per-instance side condition through exactly one of these.
+That makes the remaining floor use UNIFORM: every not-yet-ported consumer's floor flows into ONE
+bridge application, so the NEXT cone level is portable by ConePort with the single bridge
+`AppRule` (`orig := noCNColl_of_inj, repl := noCNColl_self` — the composition rule that closes
+the level-2 gap), never a per-theorem rule table. -/
+
+/-- Sponge-side bridge: the (refuted) universal injectivity kills the per-instance `CNColl`.
+Instance args implicit so a rewired call site is exactly `(noCNColl_of_inj hN)`. -/
+theorem noCNColl_of_inj {α : Type u} {LE : α → ℤ} {cN : List ℤ → ℤ}
+    (hN : compressNInjective cN) {xs ys : List α} : ¬ CNColl LE cN xs ys :=
+  fun hc => hc.1 (hN _ _ hc.2)
+
+/-- The identity carrier for the bridge's side condition — the constant-headed replacement the
+ConePort `AppRule` shape needs so a level-2 threader's `noCNColl_of_inj hN` application can be
+mechanically rewritten into a passed-through `hno` binder. -/
+theorem noCNColl_self {α : Type u} {LE : α → ℤ} {cN : List ℤ → ℤ} {xs ys : List α}
+    (hno : ¬ CNColl LE cN xs ys) : ¬ CNColl LE cN xs ys := hno
+
+/-- The `ListColl` twin of `noCNColl_self`, for sites bridged by `noColl_of_carriers`. -/
+theorem noListColl_self {α : Type u} {LE : α → ℤ} {cN : List ℤ → ℤ} {xs ys : List α}
+    (hno : ¬ ListColl LE cN xs ys) : ¬ ListColl LE cN xs ys := hno
+
 /-! ## §5 — TEETH: the port is not vacuous, the side condition is load-bearing, refutable, and
 satisfiable. Concrete carriers: the injective `Nat` leaf + the positional Horner fold (the same
 demo pair `ListCommit` §3 uses), and a CONSTANT sponge as the refuted pole. -/
@@ -286,6 +310,7 @@ theorem listRom_pole_defanged (Q : ℕ → ℕ)
 
 #assert_all_clean [listDigest_binds_or_collides, listDigest_binds_of_noColl,
   listDigest_binds_of_noCNColl, listDigest_binds_of_noLeafColl, listDigest_binds_of_carriers,
+  noCNColl_of_inj, noCNColl_self, noListColl_self,
   ListColl.extracts, canary_drop_moves_digest_or_collides, listDigest_binds_unconditional_false,
   listDigestRom_binds, listRom_pole_pos, listRom_pole_defanged]
 
