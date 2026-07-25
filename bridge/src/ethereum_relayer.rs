@@ -35,12 +35,28 @@
 //! contract's storage against the finalized state root) is the mainnet/in-circuit
 //! route.
 //!
-//! Crucially, the relayer is **not** the soundness root. Even a lying RPC cannot
-//! make the relayer mint something unbacked past these gates:
+//! Crucially, the relayer is **not** the soundness root, and — the fix for the
+//! forged-inbound-message drain — a plain/forged/MITM RPC **cannot make the
+//! committed mint move value**. The RPC-only verify reaches only
+//! [`EthDepositTrust::RpcStructureOnly`]: the finalized-tag + contract-address +
+//! receipt-presence checks are ALL sourced from the same (untrusted) RPC, so a
+//! lying node can fabricate the whole bundle (a `Deposit` log + a matching receipt
+//! + an over-reported finalized head). That grade sets
+//! `BridgeMintRequest::consensus_verified = false` (and the escrow leg likewise),
+//! so the committed `bridge_mint_against_lock` / `bridge_record_escrow` refuse it
+//! with [`dregg_turn::BridgeMintError::TrustTooLow`] BEFORE any state moves — the
+//! SAME fail-closed dial the Solana leg uses ([`crate::solana_trustless::LockProofTrust`]
+//! → [`crate::interchain_adapter::TrustRung`]). Two further gates back that up:
 //! - the log MUST be emitted by the configured bridge contract, with the canonical
 //!   `Deposit` event `topic0` (BR-2-B — [`EthBridgeConfig::deposit_topic0`]); and
 //! - the mint is the committed `bridge_mint_against_lock`, whose consume-once
 //!   nullifier + conserving ledger are the global authority.
+//!
+//! Only a genuinely light-client-verified deposit ([`EthDepositTrust::LightClientVerified`]
+//! — an EIP-1186 MPT inclusion under a beacon-finalized + sync-committee-verified
+//! execution state root) sets `consensus_verified = true` and can mint. Wiring that
+//! verdict from [`eth_lightclient`] is the FULL path (see [`EthDepositTrust`]); the
+//! RPC-only relayer here never produces it, so it fails closed.
 //!
 //! ## The in-circuit seam (the parallel circuit swarm's, NOT this module's)
 //!
@@ -555,6 +571,56 @@ impl EthBridgeConfig {
     }
 }
 
+/// How much authority backs an [`ObservedDeposit`] — the Ethereum-inbound analog
+/// of the Solana bridge's [`crate::solana_trustless::LockProofTrust`] rungs (and of
+/// `eth_lightclient::evm::HoldingTrust`). It is the ONLY thing that sets
+/// [`dregg_turn::BridgeMintRequest::consensus_verified`]; a low rung fails closed.
+///
+/// The forged-inbound-message drain (this crate's finding #1) was the relayer
+/// hard-coding `consensus_verified = true` over RPC-only data. Making the mint bool
+/// DERIVED from this dial — RPC-only ⇒ `RpcStructureOnly` ⇒ `false` ⇒ `TrustTooLow`
+/// — closes it: a lying/MITM/compromised RPC that fabricates a `Deposit` log +
+/// receipt + finalized head can no longer mint attacker `$DREGG` or draw escrow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EthDepositTrust {
+    /// A re-executing-validator verify over PLAIN RPC: the `finalized` tag, the
+    /// emitting contract address, and the transaction receipt are all reported by
+    /// the SAME (untrusted) RPC — no beacon sync-committee signature, no
+    /// EIP-1186 MPT inclusion against a verified execution state root. A
+    /// lying/MITM/compromised node fabricates the entire bundle, so this grade is
+    /// NEVER trustless: it maps to the fail-closed
+    /// [`crate::interchain_adapter::TrustRung::Rpc`] and cannot mint. This is the
+    /// only grade the RPC-only relayer here produces.
+    RpcStructureOnly,
+    /// The deposit was verified against a beacon-finalized + sync-committee-verified
+    /// (≥ 2/3 BLS) execution state root via an EIP-1186 MPT inclusion proof of the
+    /// bridge contract's deposit record — the real trustless verdict. Maps to
+    /// [`crate::interchain_adapter::TrustRung::Proof`] and is the ONLY grade that
+    /// mints.
+    ///
+    /// # Not yet produced here (the FULL-path residual)
+    ///
+    /// Reaching this rung requires wiring [`eth_lightclient`] into the relayer:
+    /// `eth_lightclient::finality::verify_finalized_update` (→ a `FinalizedExecution`
+    /// carrying the verified execution `state_root`) then
+    /// `eth_lightclient::evm::verify_evm_account_proof` +
+    /// `eth_lightclient::evm::verify_evm_storage_slot` for the deposit's
+    /// `lockId → amount` slot, plus the finding-#13 committee-pinning duty (a
+    /// governance-pinned genesis committee + `genesis_validators_root`
+    /// weak-subjectivity checkpoint, advanced only via
+    /// `eth_lightclient::verify_committee_update`). Until that lands the relayer
+    /// stays fail-closed at `RpcStructureOnly`.
+    LightClientVerified,
+}
+
+impl EthDepositTrust {
+    /// True iff a real light-client consensus proof backs the deposit — the single
+    /// bool the committed mint gate reads. Fail-closed for `RpcStructureOnly`.
+    pub fn is_light_client_verified(self) -> bool {
+        matches!(self, EthDepositTrust::LightClientVerified)
+    }
+}
+
 /// A finalized, structurally-verified deposit observed on Ethereum — the relayer's
 /// output. It carries the consume-once [`Self::nullifier`] ready to feed the
 /// committed `bridge_mint_against_lock`.
@@ -578,6 +644,11 @@ pub struct ObservedDeposit {
     pub tx_hash: [u8; 32],
     /// The log index within its block.
     pub log_index: u64,
+    /// The trust the off-chain verify achieved. The RPC-only relayer here always
+    /// yields [`EthDepositTrust::RpcStructureOnly`] (fail-closed); only the
+    /// light-client path sets [`EthDepositTrust::LightClientVerified`]. This — NOT
+    /// a hard-coded `true` — decides `consensus_verified` on the mint/escrow legs.
+    pub trust: EthDepositTrust,
 }
 
 impl ObservedDeposit {
@@ -585,6 +656,14 @@ impl ObservedDeposit {
     /// SOUND, multi-relayer-safe path: `actor` holds the mirror's mint-cap and
     /// `ledger_cell` is the committed mirror-ledger cell. The consume-once
     /// nullifier carried here is the GLOBAL double-mint authority once consumed.
+    ///
+    /// `consensus_verified` is **DERIVED** from this deposit's [`Self::trust`] dial
+    /// (red-team BR-1), never hard-coded: an RPC-only observation is
+    /// [`EthDepositTrust::RpcStructureOnly`], which yields `false`, so the committed
+    /// `bridge_mint_against_lock` refuses it with
+    /// [`dregg_turn::BridgeMintError::TrustTooLow`]. A lying/MITM RPC that fabricates
+    /// a `Deposit` log + receipt + finalized head CANNOT mint. Only a
+    /// [`EthDepositTrust::LightClientVerified`] deposit sets `true`.
     pub fn to_bridge_mint_request(
         &self,
         actor: CellId,
@@ -596,14 +675,7 @@ impl ObservedDeposit {
             lock_nullifier: self.nullifier,
             recipient: self.recipient,
             amount: self.amount,
-            // The EVM relayer's trust gate is its finalized-head check + the
-            // escrow-to-bridge-contract binding (BR-2-B): a deposit is surfaced
-            // only from the configured bridge contract at the finalized head, and
-            // the committed mint draws against the independent escrow leg recorded
-            // by `to_escrow_record`. (The in-circuit witness of EVM finality — so a
-            // dregg LIGHT client, not this re-executing relayer, sees the backing —
-            // is the circuit swarm's VK-epoch.)
-            consensus_verified: true,
+            consensus_verified: self.trust.is_light_client_verified(),
         }
     }
 
@@ -611,12 +683,18 @@ impl ObservedDeposit {
     /// `currently_locked` this deposit will be minted against (red-team
     /// BR-2/BR-3). The mint draws against it separately, so a draw with no
     /// matching escrow is refused by conservation.
+    ///
+    /// Gated on the same [`Self::trust`] dial: an [`EthDepositTrust::RpcStructureOnly`]
+    /// observation cannot raise the backing (`consensus_verified = false` ⇒
+    /// [`dregg_turn::BridgeMintError::TrustTooLow`]), so a later mint against it is
+    /// refused by conservation — the escrow leg no longer draws against fabricated
+    /// backing.
     pub fn to_escrow_record(&self, ledger_cell: CellId) -> dregg_turn::BridgeEscrowRecord {
         dregg_turn::BridgeEscrowRecord {
             ledger_cell,
             escrow_nullifier: dregg_turn::escrow_nullifier_for(&self.nullifier),
             escrowed: self.amount,
-            consensus_verified: true,
+            consensus_verified: self.trust.is_light_client_verified(),
         }
     }
 }
@@ -834,6 +912,12 @@ impl<R: EthRpc> EthRelayer<R> {
             finalized_block: finalized,
             tx_hash: log.tx_hash,
             log_index: log.log_index,
+            // RPC-only re-executing-validator verify: the finalized tag, contract
+            // address, and receipt are all from the (untrusted) RPC. This is the
+            // fail-closed grade — it cannot mint. Only the light-client path
+            // (EIP-1186 MPT inclusion under a sync-committee-verified state root)
+            // reaches `LightClientVerified`.
+            trust: EthDepositTrust::RpcStructureOnly,
         })
     }
 
@@ -1231,6 +1315,53 @@ mod tests {
         assert_eq!(obs.lock_id, lock_id(1));
         assert_eq!(obs.finalized_block, 100);
         assert_eq!(obs.nullifier, eth_deposit_nullifier(&CONTRACT, &lock_id(1)));
+        // The RPC-only verify is the fail-closed grade, never trustless.
+        assert_eq!(obs.trust, EthDepositTrust::RpcStructureOnly);
+    }
+
+    #[test]
+    fn rpc_only_deposit_derives_false_consensus_verified() {
+        // THE forged-inbound-message closure (finding #1): an RPC-only observation
+        // is `RpcStructureOnly`, so BOTH the mint leg and the escrow leg DERIVE
+        // `consensus_verified = false` — never the old hard-coded `true`. The
+        // executor's `TrustTooLow` gate then refuses the mint AND the escrow draw.
+        let recipient = CellId::from_bytes([0x44u8; 32]);
+        let mut rpc = MockEthRpc::new(100, 105, 110);
+        rpc.insert_deposit(MockEthRpc::deposit_log(
+            CONTRACT,
+            lock_id(1),
+            recipient,
+            500,
+            90,
+            tx(1),
+            0,
+        ));
+        let relayer = EthRelayer::new(config(), rpc);
+        let obs = relayer.observe_deposits().expect("scan")[0]
+            .as_ref()
+            .expect("observed")
+            .clone();
+        assert_eq!(obs.trust, EthDepositTrust::RpcStructureOnly);
+        let cell = CellId::from_bytes([0x55u8; 32]);
+        assert!(
+            !obs.to_bridge_mint_request(cell, cell).consensus_verified,
+            "an RPC-only mint request is NOT consensus_verified (fail-closed)"
+        );
+        assert!(
+            !obs.to_escrow_record(cell).consensus_verified,
+            "an RPC-only escrow record cannot raise backing (fail-closed)"
+        );
+
+        // The test's verified-path equivalent: a genuinely light-client-verified
+        // deposit flips both legs to `true` — the dial is DERIVED, not hard-coded.
+        let mut verified = obs.clone();
+        verified.trust = EthDepositTrust::LightClientVerified;
+        assert!(
+            verified
+                .to_bridge_mint_request(cell, cell)
+                .consensus_verified
+        );
+        assert!(verified.to_escrow_record(cell).consensus_verified);
     }
 
     #[test]

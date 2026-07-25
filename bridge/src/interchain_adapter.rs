@@ -6,10 +6,12 @@
 //! - **WHAT** is being minted — the `(nullifier, recipient, destination, amount)`
 //!   tuple, carried by a [`PortableActionBinding`] whose IR-v2 proof algebraically
 //!   attests those exact bytes.
-//! - **HOW TRUSTED** is the evidence — a per-chain dial today spelled four
-//!   different ways: Solana's [`LockProofTrust`], Ethereum's [`SnarkSystem`]
-//!   (`is_snark_backed`), Midnight's optimistic-watchtower [`Verdict`], and a
-//!   committee-finalized [`FinalizedAttestation`] quorum.
+//! - **HOW TRUSTED** is the evidence — a per-chain dial today spelled five
+//!   different ways: Solana's [`LockProofTrust`], Ethereum outbound-settlement's
+//!   [`SnarkSystem`] (`is_snark_backed`), Ethereum inbound-deposit's
+//!   [`EthDepositTrust`] (light-client vs RPC-only), Midnight's
+//!   optimistic-watchtower [`Verdict`], and a committee-finalized
+//!   [`FinalizedAttestation`] quorum.
 //!
 //! This module collapses those four dials onto ONE ordinal, [`TrustRung`], with a
 //! single fail-closed predicate, [`TrustRung::reached_consensus`], which becomes
@@ -39,6 +41,7 @@ use std::marker::PhantomData;
 
 use crate::action_binding::PortableActionBinding;
 use crate::ethereum::SnarkSystem;
+use crate::ethereum_relayer::EthDepositTrust;
 use crate::midnight_gateway::Verdict;
 use crate::solana_trustless::LockProofTrust;
 
@@ -132,13 +135,28 @@ impl From<LockProofTrust> for TrustRung {
 }
 
 impl From<SnarkSystem> for TrustRung {
-    /// Ethereum: a real SNARK (`Groth16Bn254`/`PlonkBn254`, i.e. `is_snark_backed`)
-    /// is a [`TrustRung::Proof`]; the `BindingOnly` scaffold (no SNARK yet) is the
-    /// fail-closed [`TrustRung::Rpc`].
+    /// Ethereum (OUTBOUND settlement): a real SNARK (`Groth16Bn254`/`PlonkBn254`,
+    /// i.e. `is_snark_backed`) is a [`TrustRung::Proof`]; the `BindingOnly` scaffold
+    /// (no SNARK yet) is the fail-closed [`TrustRung::Rpc`].
     fn from(s: SnarkSystem) -> Self {
         match s {
             SnarkSystem::Groth16Bn254 | SnarkSystem::PlonkBn254 => TrustRung::Proof,
             SnarkSystem::BindingOnly => TrustRung::Rpc,
+        }
+    }
+}
+
+impl From<EthDepositTrust> for TrustRung {
+    /// Ethereum (INBOUND deposit relayer): a light-client-verified deposit
+    /// (EIP-1186 MPT inclusion under a beacon-finalized + sync-committee-verified
+    /// execution state root) is a [`TrustRung::Proof`]; an `RpcStructureOnly`
+    /// observation over plain/forged/MITM RPC is the fail-closed [`TrustRung::Rpc`]
+    /// — the SAME rung Solana's `StructureOnly` maps to, so a forged inbound deposit
+    /// can never mint.
+    fn from(t: EthDepositTrust) -> Self {
+        match t {
+            EthDepositTrust::LightClientVerified => TrustRung::Proof,
+            EthDepositTrust::RpcStructureOnly => TrustRung::Rpc,
         }
     }
 }
@@ -187,6 +205,12 @@ impl TrustDial for LockProofTrust {
 }
 
 impl TrustDial for SnarkSystem {
+    fn rung(&self) -> TrustRung {
+        (*self).into()
+    }
+}
+
+impl TrustDial for EthDepositTrust {
     fn rung(&self) -> TrustRung {
         (*self).into()
     }
@@ -440,6 +464,17 @@ mod interchain_adapter_tests {
         assert_eq!(TrustRung::from(SnarkSystem::Groth16Bn254), TrustRung::Proof);
         assert_eq!(TrustRung::from(SnarkSystem::PlonkBn254), TrustRung::Proof);
         assert_eq!(TrustRung::from(SnarkSystem::BindingOnly), TrustRung::Rpc);
+
+        // Ethereum INBOUND deposit relayer: light-client-verified → Proof; the
+        // RPC-only grade a forged/MITM RPC produces → the fail-closed Rpc rung.
+        assert_eq!(
+            TrustRung::from(EthDepositTrust::LightClientVerified),
+            TrustRung::Proof
+        );
+        assert_eq!(
+            TrustRung::from(EthDepositTrust::RpcStructureOnly),
+            TrustRung::Rpc
+        );
 
         assert_eq!(
             TrustRung::from(&Verdict::Valid {

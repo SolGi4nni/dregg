@@ -151,9 +151,9 @@ pub use conditional_interchain_adapter::{
 pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
 pub use ethereum_relayer::{
-    BlockTag, DEPOSIT_EVENT_SIGNATURE, ETH_DEPOSIT_NULLIFIER_DOMAIN, EthBridgeConfig, EthJsonRpc,
-    EthLog, EthProof, EthReceipt, EthRelayer, EthRelayerError, EthRpc, EthStorageSlot,
-    ObservedDeposit, deposit_event_topic0, encode_amount_word, eth_deposit_nullifier,
+    BlockTag, DEPOSIT_EVENT_SIGNATURE, ETH_DEPOSIT_NULLIFIER_DOMAIN, EthBridgeConfig,
+    EthDepositTrust, EthJsonRpc, EthLog, EthProof, EthReceipt, EthRelayer, EthRelayerError, EthRpc,
+    EthStorageSlot, ObservedDeposit, deposit_event_topic0, encode_amount_word, eth_deposit_nullifier,
 };
 pub use interchain_adapter::{
     AdapterError, ChainAttestation, DialAdapter, InterchainAdapter, TrustDial, TrustRung,

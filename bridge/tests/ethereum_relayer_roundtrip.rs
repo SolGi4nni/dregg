@@ -7,13 +7,20 @@
 //! 1. a finalized `Deposit` into the bridge contract → the relayer observes it
 //!    ([`EthRelayer::observe_deposits`]), verifying finality + the
 //!    escrow-to-contract binding (BR-2-B) + receipt inclusion;
-//! 2. the verified deposit mints CONSERVING mirror credit through the SAME
-//!    committed, multi-relayer-safe `bridge_mint_against_lock` (Σδ=0, consume-once
-//!    nullifier);
-//! 3. a SECOND relayer racing the same deposit is REFUSED by the committed
-//!    nullifier (no double-mint), even though it observed the deposit independently;
-//! 4. a deposit from an attacker contract is refused at observe;
-//! 5. an un-finalized deposit (a lying RPC leaks it) is refused at observe.
+//! 2. THE forged-inbound-message fix (finding #1): an RPC-only observation
+//!    ([`EthDepositTrust::RpcStructureOnly`]) is FAIL-CLOSED — both the mint leg and
+//!    the escrow leg DERIVE `consensus_verified = false`, so the committed
+//!    `bridge_mint_against_lock` / `bridge_record_escrow` refuse it with
+//!    `TrustTooLow`. A lying/MITM RPC that fabricates a `Deposit` log + receipt +
+//!    finalized head mints NOTHING and draws NO escrow;
+//! 3. only a light-client-verified deposit ([`EthDepositTrust::LightClientVerified`]
+//!    — the test's verified-path equivalent until the full `eth_lightclient` wiring
+//!    lands) mints CONSERVING mirror credit through the committed,
+//!    multi-relayer-safe path (Σδ=0, consume-once nullifier);
+//! 4. a SECOND relayer racing the same verified deposit is REFUSED by the committed
+//!    nullifier (no double-mint);
+//! 5. a deposit from an attacker contract is refused at observe;
+//! 6. an un-finalized deposit (a lying RPC leaks it) is refused at observe.
 //!
 //! The mock RPC models the real finalized/safe/latest split, so the finality gate
 //! is genuinely exercised; the same `observe → BridgeMintRequest` path runs against
@@ -23,7 +30,7 @@
 //! (`dregg_circuit::bridge_action_witness`) — out of scope here.
 
 use dregg_bridge::ethereum_relayer::{
-    EthBridgeConfig, EthRelayer, EthRelayerError, MockEthRpc, eth_deposit_nullifier,
+    EthBridgeConfig, EthDepositTrust, EthRelayer, EthRelayerError, MockEthRpc, eth_deposit_nullifier,
 };
 use dregg_cell::{AuthRequired, Cell, CellId, EFFECT_MINT, Ledger, Permissions};
 use dregg_turn::{
@@ -101,6 +108,60 @@ fn tx(n: u8) -> [u8; 32] {
     t
 }
 
+/// THE FALSIFIER (finding #1): a deposit backed only by RPC data — no light-client
+/// verification — is REFUSED. Both the escrow leg and the mint leg carry
+/// `consensus_verified = false` (DERIVED from `RpcStructureOnly`, never hard-coded
+/// `true`), so the committed executor refuses each with `TrustTooLow`: NO mint, NO
+/// escrow draw, NO unbacked supply. This is the forged-inbound-message bridge drain,
+/// closed — a lying/MITM/compromised RPC that fabricates a `Deposit` log + matching
+/// receipt + finalized head can no longer mint attacker `$DREGG`.
+#[test]
+fn rpc_only_forged_deposit_is_refused() {
+    let (mut ledger, recipient, issuer, ledger_cell) = scaffold(MIRROR_ASSET);
+    let exec = TurnExecutor::new(ComputronCosts::zero());
+    let amount = 500u64;
+    let lock_id = [0x11u8; 32];
+
+    // Exactly what a lying/MITM RPC fabricates: a "finalized" Deposit + a matching
+    // success receipt over plain RPC. The relayer's structural gates (contract
+    // address, topic, finality tag, receipt inclusion) all PASS — they are RPC-only.
+    let mut rpc = MockEthRpc::new(100, 105, 110);
+    rpc.insert_deposit(MockEthRpc::deposit_log(
+        CONTRACT, lock_id, recipient, amount, 90, tx(1), 0,
+    ));
+    let relayer = EthRelayer::new(config(), rpc);
+    let observed = relayer.observe_deposits().expect("scan")[0]
+        .as_ref()
+        .expect("the structural verify still SURFACES the deposit (the gate refuses, not the observe)")
+        .clone();
+
+    // It reaches only the fail-closed RPC grade.
+    assert_eq!(observed.trust, EthDepositTrust::RpcStructureOnly);
+
+    // The escrow leg cannot raise the backing (consensus_verified = false).
+    assert!(!observed.to_escrow_record(ledger_cell).consensus_verified);
+    assert_eq!(
+        exec.bridge_record_escrow(&mut ledger, &observed.to_escrow_record(ledger_cell))
+            .unwrap_err(),
+        BridgeMintError::TrustTooLow,
+        "an RPC-only deposit cannot record escrow backing"
+    );
+
+    // And the committed mint itself REFUSES it (TrustTooLow) — the drain is closed.
+    let req = observed.to_bridge_mint_request(issuer, ledger_cell);
+    assert!(!req.consensus_verified);
+    assert_eq!(
+        exec.bridge_mint_against_lock(&mut ledger, &req).unwrap_err(),
+        BridgeMintError::TrustTooLow,
+        "an RPC-only (forged/MITM) deposit CANNOT mint"
+    );
+
+    // Nothing moved: no backing, no supply, no recipient credit.
+    let (locked, live) = read_supply(ledger.get(&ledger_cell).unwrap());
+    assert_eq!((locked, live), (0, 0), "no unbacked supply was created");
+    assert_eq!(ledger.get(&recipient).unwrap().state.balance(), 0);
+}
+
 #[test]
 fn relayer_deposit_to_finalized_to_conserving_mint() {
     let (mut ledger, recipient, issuer, ledger_cell) = scaffold(MIRROR_ASSET);
@@ -124,20 +185,30 @@ fn relayer_deposit_to_finalized_to_conserving_mint() {
     let relayer = EthRelayer::new(config(), rpc);
     let results = relayer.observe_deposits().expect("scan");
     assert_eq!(results.len(), 1);
-    let observed = results[0]
+    let observed_rpc = results[0]
         .as_ref()
         .expect("the relayer observes the finalized deposit")
         .clone();
-    assert_eq!(observed.amount, amount);
-    assert_eq!(observed.recipient, recipient);
-    assert_eq!(observed.finalized_block, 100);
+    assert_eq!(observed_rpc.amount, amount);
+    assert_eq!(observed_rpc.recipient, recipient);
+    assert_eq!(observed_rpc.finalized_block, 100);
+    // The RPC-only observe is fail-closed and cannot mint (see the falsifier above).
+    assert_eq!(observed_rpc.trust, EthDepositTrust::RpcStructureOnly);
+
+    // The TEST'S VERIFIED-PATH EQUIVALENT: promote the SAME observed deposit to the
+    // light-client-verified grade the full `eth_lightclient` wiring will produce
+    // (EIP-1186 MPT inclusion under a beacon-finalized + sync-committee-verified
+    // execution state root). Only this grade may mint.
+    let mut observed = observed_rpc.clone();
+    observed.trust = EthDepositTrust::LightClientVerified;
 
     // ── (2) MINT through the committed, conserving, multi-relayer-safe path ──
     // The INDEPENDENT escrow leg (raising committed currently_locked) is recorded
     // first; the mint DRAWS against it (non-vacuous conservation, red-team BR-2).
     exec.bridge_record_escrow(&mut ledger, &observed.to_escrow_record(ledger_cell))
-        .expect("the deposit's escrow backing is recorded");
+        .expect("the verified deposit's escrow backing is recorded");
     let req = observed.to_bridge_mint_request(issuer, ledger_cell);
+    assert!(req.consensus_verified);
     let receipt = exec
         .bridge_mint_against_lock(&mut ledger, &req)
         .expect("the verified deposit mints conserving mirror credit");
@@ -167,15 +238,17 @@ fn relayer_deposit_to_finalized_to_conserving_mint() {
         0,
     ));
     let relayer2 = EthRelayer::new(config(), rpc2);
-    let observed2 = relayer2.observe_deposits().expect("scan")[0]
+    let observed2_rpc = relayer2.observe_deposits().expect("scan")[0]
         .as_ref()
         .expect("a second relayer independently observes the same deposit")
         .clone();
     assert_eq!(
-        observed2.nullifier,
+        observed2_rpc.nullifier,
         eth_deposit_nullifier(&CONTRACT, &lock_id),
         "the same deposit yields the same committed consume-once nullifier"
     );
+    let mut observed2 = observed2_rpc;
+    observed2.trust = EthDepositTrust::LightClientVerified;
     let req2 = observed2.to_bridge_mint_request(issuer, ledger_cell);
     assert_eq!(
         exec.bridge_mint_against_lock(&mut ledger, &req2)
