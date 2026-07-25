@@ -1,0 +1,36 @@
+# deos-js-core — the SHARED SUBSTANCE the two deos-js engines both bind.
+#
+# THE DRIFT THIS CLOSES (backlog 2026-07-24 T2 / #5): deos-js (real SpiderMonkey via
+# `mozjs`) and deos-js-runtime (pure-Rust `boa`) were hand-synced twins whose ApplyOp
+# vocabularies DRIFTED — the SM side lacked the boa side's 5th `SetRegisterFromArgs`
+# variant, and the two `pack_u64`/arithmetic copies could diverge silently (each
+# compiled green, so nothing looked wrong). Every such twin is a standing drift source.
+#
+# This crate is the ONE source of truth for the write vocabulary both engines lower to:
+# the `ApplyOp` enum (all 5 variants), the little-endian `pack_u64`/`unpack_u64` codec,
+# the `CellModel` model-read, and the single canonical arithmetic. Both engines
+# `deos_js_core::ApplyOp` and delete their local copies, so a future edit lands in ONE
+# place and a cross-engine differential test guards byte-identity.
+#
+# PURE SUBSTANCE: NO `mozjs`, NO `boa` — this is engine-independent. `deos-js-runtime`'s
+# Cargo.toml already refused a code dep on `deos-js` ("that would drag mozjs in") and
+# named `deos-js-core` as the intended shared-substance crate; this is that crate.
+[package]
+name = "deos-js-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Shared substance for the two deos-js engines: the unified ApplyOp write vocabulary, model-read, and u64<->felt codec (no mozjs, no boa)."
+
+[dependencies]
+# THE SUBSTANCE — cell state + the felt shape. The SAME `FieldElement`/`Ledger`/`CellId`
+# both engines already bind; no engine (mozjs/boa) reaches this crate.
+dregg-cell = { path = "../cell" }   # CellState / FieldElement / Ledger / STATE_SLOTS.
+dregg-types = { path = "../types" } # CellId.
+
+# The `ApplyOp` (and `AffordanceSpec` in the SM `portable` manifest) serialize into the
+# cell heap as a program blob, so the write vocabulary is Serialize/Deserialize.
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

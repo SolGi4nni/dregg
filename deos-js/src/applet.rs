@@ -30,25 +30,11 @@ use dregg_types::CellId;
 use starbridge_web_surface::transclusion::{Provenance, TranscludedField};
 use starbridge_web_surface::web_of_cells::{DreggUri, WebOfCells};
 
-/// A named field of the applet's *model* (= cell state). Slots map to cell-state
-/// indices; the value is a 32-byte field element (we pack a u64 into the low bytes
-/// for the counter/todo-count shape).
-pub type Slot = usize;
-
-/// Pack a u64 into a [`FieldElement`] (little-endian low 8 bytes) — the model's
-/// scalar shape for the spike's counter.
-pub fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
-}
-
-/// Read a u64 back out of a [`FieldElement`].
-pub fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
-}
+// The model shape + the u64<->felt codec are the SHARED substance both engines bind —
+// re-exported from `deos-js-core` so this crate's public API (`crate::applet::pack_u64`,
+// `CellModel`, `Slot`, `ApplyFn`) is unchanged while the local copies are DELETED (the
+// boa twin, `deos-js-runtime`, re-exports the SAME symbols). One vocabulary, two engines.
+pub use deos_js_core::{pack_u64, unpack_u64, ApplyFn, CellModel, Slot};
 
 /// An **affordance** — a named direction of the polynomial-functor interface. Firing
 /// it commits ONE cap-gated verified turn. The `apply` closure is a *pure* function
@@ -62,73 +48,9 @@ pub struct Affordance {
     pub apply: ApplyFn,
 }
 
-/// The pure apply closure an affordance carries: live model + JS-supplied arg → field-writes.
-pub type ApplyFn = Box<dyn Fn(&CellModel, i64) -> Vec<(Slot, FieldElement)>>;
-
-/// A read-only view of the applet's MODEL (the cell's live state), the positions of
-/// the polynomial functor. Built from the engine ledger on demand.
-pub struct CellModel {
-    fields: BTreeMap<Slot, FieldElement>,
-    nonce: u64,
-}
-
-impl CellModel {
-    /// Project a cell's live state off a ledger into a model (the positions of the
-    /// polynomial functor). The SAME read [`Applet::model`] makes; shared with the
-    /// [`crate::attach::AttachedApplet`] so the attach path reads the live World's
-    /// cells identically.
-    pub fn from_ledger(ledger: &dregg_cell::Ledger, cell_id: &CellId) -> Self {
-        let mut fields = BTreeMap::new();
-        let mut nonce = 0;
-        if let Some(cell) = ledger.get(cell_id) {
-            for slot in 0..dregg_cell::state::STATE_SLOTS {
-                if let Some(fe) = cell.state.get_field(slot) {
-                    if *fe != [0u8; 32] {
-                        fields.insert(slot, *fe);
-                    }
-                }
-            }
-            nonce = cell.state.nonce();
-        }
-        CellModel { fields, nonce }
-    }
-
-    /// Read ONE model field as a u64 directly off the ledger — WITHOUT projecting the
-    /// whole cell into a [`CellModel`] (which builds an entire `BTreeMap` over all
-    /// `STATE_SLOTS`). The hot read path (`get_u64`, a `bind` re-read, a counter-bump's
-    /// current value) calls this per slot; building a map to pull one scalar is pure
-    /// waste. Absent cell / empty slot reads back 0 (the same default `field_u64` gives).
-    pub fn field_u64_direct(ledger: &dregg_cell::Ledger, cell_id: &CellId, slot: Slot) -> u64 {
-        ledger
-            .get(cell_id)
-            .and_then(|cell| cell.state.get_field(slot).copied())
-            .map(|fe| unpack_u64(&fe))
-            .unwrap_or(0)
-    }
-
-    /// An empty model (no fields, nonce 0) — the default a closure-passing ledger
-    /// read fills in (the attach path projects through `with_ledger`).
-    pub fn from_ledger_empty() -> Self {
-        CellModel {
-            fields: BTreeMap::new(),
-            nonce: 0,
-        }
-    }
-
-    /// Read a model field as a raw element.
-    pub fn field(&self, slot: Slot) -> FieldElement {
-        self.fields.get(&slot).copied().unwrap_or([0u8; 32])
-    }
-    /// Read a model field as a u64 (the scalar shape).
-    pub fn field_u64(&self, slot: Slot) -> u64 {
-        unpack_u64(&self.field(slot))
-    }
-    /// The cell's nonce — bumps once per committed turn (the "how many affordances
-    /// have fired" witness).
-    pub fn nonce(&self) -> u64 {
-        self.nonce
-    }
-}
+// `ApplyFn` and `CellModel` are re-exported from `deos-js-core` above — the model shape
+// and the apply-closure type are shared substance, so both engines read the model and
+// lower a write identically. (Their definitions moved to `deos-js-core::lib`.)
 
 /// EPHEMERAL view-state — draft text, hover, focus. A plain in-memory map. Setting it
 /// is a plain JS/Rust change that does NOT touch the ledger (NO turn, NO receipt).
@@ -546,7 +468,7 @@ impl Applet {
         let mut out = Vec::new();
         out.extend_from_slice(&self.cell.0);
         out.extend_from_slice(&model.nonce().to_le_bytes());
-        for (slot, fe) in &model.fields {
+        for (slot, fe) in model.iter_fields() {
             out.extend_from_slice(&(*slot as u64).to_le_bytes());
             out.extend_from_slice(fe);
         }

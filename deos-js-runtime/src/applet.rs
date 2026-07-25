@@ -8,98 +8,21 @@
 //! `boa` runtime in [`crate::runtime`] is a thin bridge onto this surface, so a cell's
 //! attached JS commits verified turns exactly as a static `{turn,arg}` button does.
 
-use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, Cell, Permissions};
 use dregg_sdk::embed::{DreggEngine, EngineConfig};
 use dregg_turn::builder::{ActionBuilder, TurnBuilder};
 use dregg_turn::TurnReceipt;
 use dregg_types::CellId;
 
-/// A model slot index (a cell-state field).
-pub type Slot = usize;
-
-/// Pack a `u64` into a [`FieldElement`] (little-endian low 8 bytes) — the model's
-/// scalar shape, matching `deos-js::applet::pack_u64`.
-pub fn pack_u64(v: u64) -> FieldElement {
-    let mut fe = [0u8; 32];
-    fe[..8].copy_from_slice(&v.to_le_bytes());
-    fe
-}
-
-/// Read a `u64` back out of a [`FieldElement`].
-pub fn unpack_u64(fe: &FieldElement) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
-}
-
-/// A declarative apply rule — the portable shape of an affordance's effect, mirroring
-/// `deos-js::portable::ApplyOp`. Reconstituting an affordance from this is what makes a
-/// fire deterministic (the same writes for the same model + args).
-///
-/// Every variant lowers to the SAME ordinary `Effect::SetField` the executor already
-/// enforces and a light client already witnesses — the op is purely a runtime-layer
-/// *write-shape*, NOT a kernel/effect-vocabulary or circuit change. The literal-write
-/// variants ([`ApplyOp::SetSlotFromArg`], [`ApplyOp::SetRegisterFromArgs`]) are the named
-/// power-up that lets a JS affordance write the JS-supplied VALUE to a register, instead
-/// of riding `AddToSlot` over a zeroed slot (which only lands `v` on a *fresh* `0`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ApplyOp {
-    /// `slot := slot + max(args[0], 0)` (the counter `inc`).
-    AddToSlot { slot: Slot },
-    /// `slot := slot - max(args[0], 0)` saturating at 0 (the counter `dec`).
-    SubFromSlot { slot: Slot },
-    /// `slot := value` — set a slot to a fixed `u64` (e.g. `reset` to 0).
-    SetSlot { slot: Slot, value: u64 },
-    /// `slot := max(args[0], 0)` — a **literal write**: write the JS-supplied value
-    /// DIRECTLY to a fixed register, overwriting whatever was there (a `put(v)` lands `v`
-    /// exactly, even over a non-zero slot — the gap `AddToSlot` left). The named power-up.
-    SetSlotFromArg { slot: Slot },
-    /// `args[0] := max(args[1], 0)` — a **register-addressed literal write**: write the
-    /// JS-supplied VALUE (`args[1]`) to the JS-supplied REGISTER (`args[0]`). This lets a
-    /// JS affordance reach an ARBITRARY register chosen at call time — exactly the kvstore
-    /// `put(reg, value)` shape, expressed in pure JS.
-    SetRegisterFromArgs,
-}
-
-impl ApplyOp {
-    /// The (slot, new-value) write this op produces against the current slot value and the
-    /// JS-supplied `args` (`args[0]` is the legacy single arg; later positions feed the
-    /// register-addressed write).
-    pub fn write(&self, current: u64, args: &[i64]) -> (Slot, FieldElement) {
-        let a0 = args.first().copied().unwrap_or(0);
-        match *self {
-            ApplyOp::AddToSlot { slot } => {
-                let next = current.saturating_add(a0.max(0) as u64);
-                (slot, pack_u64(next))
-            }
-            ApplyOp::SubFromSlot { slot } => {
-                let next = current.saturating_sub(a0.max(0) as u64);
-                (slot, pack_u64(next))
-            }
-            ApplyOp::SetSlot { slot, value } => (slot, pack_u64(value)),
-            ApplyOp::SetSlotFromArg { slot } => (slot, pack_u64(a0.max(0) as u64)),
-            ApplyOp::SetRegisterFromArgs => {
-                let reg = a0.max(0) as usize;
-                let value = args.get(1).copied().unwrap_or(0).max(0) as u64;
-                (reg, pack_u64(value))
-            }
-        }
-    }
-
-    /// The model slot this op reads for its `current` value before writing. For the
-    /// register-addressed write the target is dynamic (it comes from `args[0]`), and the
-    /// op ignores `current`, so slot `0` is reported as an innocuous read site.
-    pub fn slot(&self) -> Slot {
-        match *self {
-            ApplyOp::AddToSlot { slot }
-            | ApplyOp::SubFromSlot { slot }
-            | ApplyOp::SetSlot { slot, .. }
-            | ApplyOp::SetSlotFromArg { slot } => slot,
-            ApplyOp::SetRegisterFromArgs => 0,
-        }
-    }
-}
+// THE WRITE VOCABULARY IS SHARED SUBSTANCE — `Slot`, the `pack_u64`/`unpack_u64` codec,
+// and `ApplyOp` (all 5 variants + the single canonical `write`/`slot`/`apply` arithmetic)
+// live in `deos-js-core`, bound identically by the SM twin (`deos-js`). Re-exported here
+// so `crate::applet::{Slot, pack_u64, unpack_u64, ApplyOp}` are unchanged (`world.rs`
+// imports them), while the divergent local copy is DELETED. `CellApplet::fire` and
+// `world.rs::fire_on` still call `op.slot()` + `op.write(current, args)` — the SAME
+// arithmetic the SM engine's `into_closure` reaches through `op.apply` (backlog T2 / #5
+// drift closure).
+pub use deos_js_core::{pack_u64, unpack_u64, ApplyOp, CellModel, Slot};
 
 /// One named affordance — a direction of the cell's polynomial-functor interface. A
 /// fire is gated on `required` (the cap tooth) and commits `op`'s write as a verified

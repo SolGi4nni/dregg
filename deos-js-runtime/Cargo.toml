@@ -12,7 +12,8 @@
 # SAME crates `deos-js::applet` binds — proving the substance binding (the verified
 # turn path + the `is_attenuation` cap tooth) is genuinely engine-independent. No
 # dependency on `deos-js` itself (that would drag mozjs in). The shared-substance
-# crate (`deos-js-core`) that both engines would depend on is the named follow-up.
+# crate (`deos-js-core`) that both engines depend on is now LANDED — the `ApplyOp`
+# write vocabulary, model-read, and u64<->felt codec live there, bound by both engines.
 [package]
 name = "deos-js-runtime"
 version = "0.1.0"
@@ -33,6 +34,13 @@ dregg-sdk = { path = "../sdk" }     # DreggEngine: execute_turn -> real TurnRece
 dregg-cell = { path = "../cell" }   # Cell / AuthRequired / is_attenuation (the cap tooth).
 dregg-turn = { path = "../turn" }   # TurnBuilder / ActionBuilder / Effect / TurnReceipt.
 dregg-types = { path = "../types" } # CellId.
+
+# THE SHARED SUBSTANCE (the named follow-up this crate's header promised) — the ONE
+# ApplyOp write vocabulary (all 5 variants + one canonical arithmetic), the model-read,
+# and the u64<->felt codec, bound identically by the SM twin (`deos-js`). No mozjs, no
+# boa — pure substance; `ApplyOp`/`Slot`/`pack_u64` are re-exported from `applet` so this
+# crate's public API is unchanged while the divergent local copy is deleted (T2 / #5).
+deos-js-core = { path = "../deos-js-core" }
 
 # The view-tree node shape a `viewPatch` self-edit appends + serializes into the
 # cell's committed heap (the SAME {kind,props,children} JSON `deos-view` chunks), plus the

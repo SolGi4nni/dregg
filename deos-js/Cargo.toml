@@ -35,6 +35,12 @@ dregg-cell = { path = "../cell" }     # Cell / CellState / AuthRequired / is_att
 dregg-turn = { path = "../turn" }     # TurnBuilder / ActionBuilder / Effect / Turn / TurnReceipt.
 dregg-types = { path = "../types" }   # CellId.
 
+# THE SHARED SUBSTANCE — the ONE ApplyOp write vocabulary + model-read + u64<->felt codec
+# both engines bind (the boa twin, `deos-js-runtime`, binds the SAME crate). No mozjs/boa
+# in it; `ApplyOp`/`CellModel`/`pack_u64` are re-exported below so this crate's public API
+# is unchanged while the local copies are deleted (backlog T2 / #5 drift closure).
+deos-js-core = { path = "../deos-js-core" }
+
 # THE REFLECTIVE SUBSTRATE — cap-bounded, attested crawl of the live image (slice 2).
 # gpui-free; the JS `deos.world`/`deos.cell` object graph binds to it.
 deos-reflect = { path = "../deos-reflect" }
@@ -70,6 +76,14 @@ blake3 = "1"
 #    root, the repo-root `[patch]` does NOT reach it, so the transitive dregg deps
 #    cannot re-resolve without these. They revert with the others once the forks land.
 
+
+[dev-dependencies]
+# The boa twin engine — pulled ONLY for the cross-engine differential test
+# (`tests/cross_engine_applyop_differential.rs`): the same ApplyOp sequence fired through
+# both engines' drivers must leave byte-identical CellModel state. A dev-dependency (never
+# propagated), so the boa engine is NOT a runtime dep of the SM engine — the one-way
+# `deos-js (test) -> deos-js-runtime` edge is acyclic (the runtime never deps deos-js).
+deos-js-runtime = { path = "../deos-js-runtime" }
 
 [lints]
 workspace = true

@@ -40,55 +40,15 @@ pub const PROGRAM_COLL: u32 = 0xC0DE;
 /// holds the total byte length (little-endian u64) instead.
 const CHUNK_BYTES: usize = 31;
 
-/// A declarative apply rule — the portable shape of an affordance's effect. This is the
-/// part of the program that, in the live applet, is a Rust `Box<dyn Fn(&CellModel,
-/// i64)>`. Reconstituting it from the manifest is what makes a loaded affordance the
-/// SAME affordance (same writes for the same model+arg).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApplyOp {
-    /// `slot := slot + max(arg, 0)` (the counter `inc`).
-    AddToSlot { slot: Slot },
-    /// `slot := slot - max(arg, 0)` saturating at 0 (the counter `dec`).
-    SubFromSlot { slot: Slot },
-    /// `slot := value` — set a slot to a fixed u64 (the counter `reset` to 0).
-    SetSlot { slot: Slot, value: u64 },
-    /// `slot := max(arg, 0)` — TRACK an externally-observed value: the fire's arg is
-    /// the new slot value. This is the Pulse→Signals weld's write verb — the cockpit
-    /// mirrors a LIVE World reading (the ledger census) into a status card's model as
-    /// a receipted verified turn, so the card's `bind` rows re-read committed state
-    /// (never a side-channel), and the mirroring itself is on the audit tape. The
-    /// SAME named power-up the boa twin (`deos-js-runtime`'s `ApplyOp::SetSlotFromArg`)
-    /// already carries — one write vocabulary, two engines.
-    SetSlotFromArg { slot: Slot },
-}
-
-impl ApplyOp {
-    /// Reconstitute the live apply closure. The closure is a pure function of the live
-    /// model + the JS-supplied arg, exactly as the originally-minted affordance was.
-    pub(crate) fn into_closure(self) -> crate::applet::ApplyFn {
-        match self {
-            ApplyOp::AddToSlot { slot } => Box::new(move |model, arg| {
-                let cur = model.field_u64(slot);
-                // SATURATING — matches `SubFromSlot`'s saturating_sub AND the boa twin
-                // (`deos-js-runtime`'s AddToSlot saturates). A plain `cur + arg` panicked
-                // in debug / wrapped in release, so the two "twin" engines produced
-                // DIFFERENT receipted state (or a crash) for the same authored applet on
-                // an overflow. One vocabulary, one arithmetic, both engines.
-                vec![(slot, pack_u64(cur.saturating_add(arg.max(0) as u64)))]
-            }),
-            ApplyOp::SubFromSlot { slot } => Box::new(move |model, arg| {
-                let cur = model.field_u64(slot);
-                vec![(slot, pack_u64(cur.saturating_sub(arg.max(0) as u64)))]
-            }),
-            ApplyOp::SetSlot { slot, value } => {
-                Box::new(move |_model, _arg| vec![(slot, pack_u64(value))])
-            }
-            ApplyOp::SetSlotFromArg { slot } => {
-                Box::new(move |_model, arg| vec![(slot, pack_u64(arg.max(0) as u64))])
-            }
-        }
-    }
-}
+// THE APPLY VOCABULARY IS SHARED SUBSTANCE — `ApplyOp` (all 5 variants, incl the
+// register-addressed `SetRegisterFromArgs` the boa twin `deos-js-runtime` carries and
+// this SM side previously LACKED) + its single canonical arithmetic + `into_closure`
+// live in `deos-js-core`. This crate re-exports it so `crate::portable::ApplyOp` and the
+// serde-derived `AffordanceSpec` below are unchanged, while the divergent local copy is
+// DELETED. `into_closure()` threads the SM engine's single `fire` arg as a 1-element
+// slice into the shared `ApplyOp::apply`, so the SM closure and the boa driver compute
+// byte-identical writes (backlog T2 / #5 drift closure).
+pub use deos_js_core::ApplyOp;
 
 /// The portable description of one affordance: its name, the authority it requires, and
 /// its declarative apply rule.
