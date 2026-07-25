@@ -1073,11 +1073,24 @@ def _rust_comment_spans(text: str, path: str) -> tuple[list[tuple[int, int]], li
         elif c == "'":
             # char literal (`'a'`, `'\n'`, `'\u{1F600}'`) vs lifetime/label (`'a`, `'static:`).
             if i + 1 < n and text[i + 1] == "\\":
-                j = i + 2
-                while j < n and text[j] != "'":
-                    j = j + 2 if text[j] == "\\" else j + 1
-                strings.append((i, min(j + 1, n)))
-                i = min(j + 1, n)
+                # An escape's LENGTH is decided by its FORM, never by scanning for the next
+                # `'`: in `b'\\'` the char after the backslash IS a backslash, and a scanner
+                # that treats it as opening another escape steps OVER the closing quote and
+                # swallows the file to the next tick — which is how this lexer read
+                # `circuit-prove/tests/law1_enforcement_gate.rs` as an unterminated string and
+                # FATALed the whole descriptor gate. `\u{..}` is the one variable-length form.
+                if text.startswith("u{", i + 2):
+                    j = text.find("}", i + 4)
+                    end = j + 2 if j >= 0 else -1
+                else:
+                    end = i + 4  # `'` `\` <one escape char> `'`
+                if end < 0 or end > n or text[end - 1] != "'":
+                    sys.exit(
+                        f"emit_descriptors: {path} — unterminated char literal at offset {i} "
+                        f"({text[i:i + 12]!r}). This lexer will not report on a file it cannot read."
+                    )
+                strings.append((i, end))
+                i = end
             elif i + 2 < n and text[i + 2] == "'":
                 strings.append((i, i + 3))
                 i += 3
