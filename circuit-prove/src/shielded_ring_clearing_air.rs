@@ -1307,7 +1307,7 @@ mod tests {
         prove_shielded_spend_leaf, prove_shielded_spend_leaf_with_claim,
         shielded_spend_leaf_public_inputs,
     };
-    use dregg_circuit::refusal::{must_refuse, must_refuse_or_unsat_panic};
+    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
 
     /// The descriptor lowers to the expected shape: note binding, two receipt-chain
     /// hashes, two 60-step wide commitment chains, and all 27 endpoint PI pins.
@@ -1407,6 +1407,17 @@ mod tests {
     /// THE ENDPOINT TOOTH: the honest witness computes the post eight-lane commitment
     /// in-circuit.  Flipping one published lane while leaving the witness untouched is
     /// UNSAT at the PI binding; endpoint lanes are constraints, not metadata carriers.
+    ///
+    /// WHICH REFUSAL MECHANISM, AND WHY IT IS NOT `must_refuse`: a `PiBinding` is an AIR
+    /// constraint of the Main instance (`lean_descriptor_air.rs`'s `when_last_row` block), so
+    /// a forged PI is caught by p3's debug-gated `check_constraints`, which PANICS inside
+    /// `prove_batch` — BEFORE `prove_vm_descriptor2_inner`'s `check && debug_assertions`
+    /// self-verify could return `Err`. `prove_vm_descriptor2_for_config` passes `check: true`,
+    /// but that pre-flight replay covers only the mem/map/umem/exact-public/submask witnesses,
+    /// NOT the algebraic gates or the PI pins.  So for a gate/PI forgery on this entry point the
+    /// documented unsat panic IS the mechanism, and the `Err` arm `must_refuse` demands is
+    /// unreachable.  The reason assertion below keeps this a discriminating tooth: acceptance,
+    /// any non-unsat panic, and a shape/arity `Err` all still RED.
     #[test]
     fn forged_post_endpoint_lane_is_unsat() {
         let config = ir2_leaf_wrap_config();
@@ -1415,8 +1426,14 @@ mod tests {
         let trace = r.base_trace();
         let mut pis = r.public_inputs();
         pis[endpoint_pi::POST_COMMIT_8 + 7] += BabyBear::ONE;
+        dregg_circuit::refusal::assert_committed_shape(
+            "a forged ring post-commitment lane",
+            &desc,
+            &trace,
+            &pis,
+        );
 
-        must_refuse("a forged ring post-commitment lane", || {
+        let refusal = must_refuse_or_unsat_panic("a forged ring post-commitment lane", || {
             prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
                 &desc,
                 &trace,
@@ -1427,10 +1444,17 @@ mod tests {
                 &config,
             )
         });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("constraints not satisfied on row"),
+            "the forged post-commitment lane must be refused by a VIOLATED CONSTRAINT (the \
+             last-row PI pin), not by a bus imbalance or any other path: {reason}"
+        );
     }
 
     /// The receipt chain is part of the post commitment.  Forging the published
     /// post-receipt root fails its direct pin even before the wide-commit pin is read.
+    /// Same refusal mechanism as [`forged_post_endpoint_lane_is_unsat`] — see its note.
     #[test]
     fn forged_receipt_log_endpoint_is_unsat() {
         let config = ir2_leaf_wrap_config();
@@ -1439,8 +1463,14 @@ mod tests {
         let trace = r.base_trace();
         let mut pis = r.public_inputs();
         pis[endpoint_pi::POST_RECEIPT_ROOT] += BabyBear::ONE;
+        dregg_circuit::refusal::assert_committed_shape(
+            "a forged two-action receipt root",
+            &desc,
+            &trace,
+            &pis,
+        );
 
-        must_refuse("a forged two-action receipt root", || {
+        let refusal = must_refuse_or_unsat_panic("a forged two-action receipt root", || {
             prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
                 &desc,
                 &trace,
@@ -1451,6 +1481,12 @@ mod tests {
                 &config,
             )
         });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("constraints not satisfied on row"),
+            "the forged receipt root must be refused by a VIOLATED CONSTRAINT (its first-row PI \
+             pin), not by a bus imbalance or any other path: {reason}"
+        );
     }
 
     /// THE NEGATIVE POLE (conservation): a NON-conserving ring (a value-minting output)

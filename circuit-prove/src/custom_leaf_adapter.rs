@@ -1473,7 +1473,7 @@ mod tests {
         PolyTerm,
     };
     use dregg_circuit::lean_descriptor_air::VmConstraint;
-    use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+    use dregg_circuit::refusal::{must_refuse_or_unsat_panic, must_refuse_shape_fault};
 
     /// The same minimal-but-REAL custom program the off-AIR engine's tests use: one
     /// boolean column (`dir`) + one conservation polynomial
@@ -2214,6 +2214,12 @@ mod tests {
     /// descriptor is REFUSED outright (`public_inputs.len()` must equal the
     /// descriptor's `public_input_count`), so a shortened input can never reach a
     /// shorter-length commitment.
+    ///
+    /// This tooth's SUBJECT **is** the prover's arity pre-flight, so it says so with the named
+    /// [`must_refuse_shape_fault`] hatch rather than hiding behind `must_refuse*` (which now
+    /// RED on a shape-marked `Err`, `circuit/src/refusal.rs::SHAPE_FAULT_MARKERS`).  Naming it
+    /// is strictly stronger than the generic form: the refusal must carry THIS marker, not
+    /// merely be some error.
     #[test]
     fn thirtytwo_pi_leaf_refuses_declared_length_mismatch() {
         let program = wide_pi_program(32);
@@ -2221,8 +2227,9 @@ mod tests {
         let short = pis[..31].to_vec();
         let config = ir2_leaf_wrap_config();
 
-        must_refuse_or_unsat_panic(
+        must_refuse_shape_fault(
             "a declared-length mismatch minted a leaf — the length is not bound",
+            "!= descriptor public_input_count",
             || prove_custom_leaf_with_commitment(&program, &w, rows, &short, &config),
         );
     }

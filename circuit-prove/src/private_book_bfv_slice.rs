@@ -589,7 +589,14 @@ mod tests {
         let mut u = vec![0i64; DEGREE];
         u[0] = 2;
         u[1] = -3;
-        let message = 0;
+        // The message is NOT free: the Lean-emitted last-row limb gates derive it IN-AIR from
+        // the book's order-0 `(kind, quantity)` one-hots (columns 21..28 x the qty selectors),
+        // so only the deployed table entry satisfies the descriptor.  `book()`'s order 0 is
+        // `bid(qty = 10, limit = 2)`, i.e. `kind = 2`, so this is `MESSAGE_COEFF0[2 * 16 + 10]`
+        // — the same constant `fused::tests::fixture` already carries for the same book.  It was
+        // `0` here, which no book satisfies: `build_trace` does not bind the message to the book,
+        // so the trace assembled fine and only the AIR rejected it (constraint 1258, row 4095).
+        let message = 34_437_628_850;
         let error = 5;
         let mut coefficient = 0i128;
         for i in 0..DEGREE {

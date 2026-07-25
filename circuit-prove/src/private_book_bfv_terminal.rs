@@ -690,13 +690,24 @@ mod tests {
         assert!(verify_zk(&proof, wrong_h).is_err());
     }
 
+    /// A mutated hidden quotient / equality carry has no satisfying assembly.
+    ///
+    /// REFUSAL MECHANISM: both mutations violate ordinary AIR gates of the Main instance, and
+    /// p3's debug-gated `check_constraints` PANICS inside `prove_batch` before
+    /// `prove_vm_descriptor2_inner`'s self-verify can return `Err` — `check: true` replays the
+    /// mem/map/umem/exact-public witnesses, not the algebra.  A bare `assert!(….is_err())`
+    /// therefore cannot survive its own tooth biting; `must_refuse_or_unsat_panic` is the
+    /// discriminator that can (and it additionally REDs on a shape/arity `Err`, which the old
+    /// `is_err()` would have swallowed).
     #[test]
     fn hidden_quotient_and_carry_mutations_are_unsatisfiable() {
+        use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+
         let context = [7u32; 8];
         let (trace, public) = trace_and_public(&terminal(), context).expect("honest trace");
         let mut wrong_quotient = trace.clone();
         wrong_quotient[0][QUOTIENT_SHIFT] += BabyBear::ONE;
-        assert!(
+        let refusal = must_refuse_or_unsat_panic("a mutated hidden BFV terminal quotient", || {
             prove_vm_descriptor2_for_config(
                 &descriptor().unwrap(),
                 &wrong_quotient,
@@ -706,12 +717,16 @@ mod tests {
                 &UMemBoundaryWitness::default(),
                 &create_zk_config(),
             )
-            .is_err()
+        });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("constraints not satisfied on row"),
+            "the mutated quotient must be refused by a VIOLATED CONSTRAINT: {reason}"
         );
 
         let mut wrong_carry = trace;
         wrong_carry[0][EQ_CARRY_SHIFT + 3] += BabyBear::ONE;
-        assert!(
+        let refusal = must_refuse_or_unsat_panic("a mutated hidden BFV equality carry", || {
             prove_vm_descriptor2_for_config(
                 &descriptor().unwrap(),
                 &wrong_carry,
@@ -721,7 +736,11 @@ mod tests {
                 &UMemBoundaryWitness::default(),
                 &create_zk_config(),
             )
-            .is_err()
+        });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("constraints not satisfied on row"),
+            "the mutated equality carry must be refused by a VIOLATED CONSTRAINT: {reason}"
         );
     }
 }

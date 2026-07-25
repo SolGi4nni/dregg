@@ -44,6 +44,29 @@
 //!
 //!    Under `cargo test` (a debug build) these fire *before* the prover could return anything, so
 //!    for a `check: false` site the panic genuinely **is** the refusal. [`must_refuse_or_unsat_panic`]
+//!
+//! ⚑ **CORRECTION (2026-07-25) — the discriminator above is WRONG, and it misrouted a real tooth.**
+//! The unsat-panic mechanism is NOT about `check: false`. The real discriminator is **whether the
+//! descriptor has LOOKUPS**:
+//!
+//!   * **With lookups** — p3's debug check runs inside `prove_batch` and PANICS
+//!     (`batch-stark/src/check_constraints.rs:133`, "constraints not satisfied on row N") **before**
+//!     the `check && debug_assertions` self-verify can return anything. So even at a `check: true`
+//!     site, `Err` is **structurally unreachable** and [`must_refuse`] can never pass.
+//!   * **Without lookups** — p3 gates that check on `if !all_lookups[i].is_empty()`
+//!     (`batch-stark/src/prover.rs:232`), so it never runs at all, and only the producer's self-verify
+//!     `Err` fires (surfacing as e.g. `OodEvaluationMismatch`).
+//!
+//! Note also that `prove_vm_descriptor2_for_config`'s `check: true` pre-flight replays only the
+//! mem/map/umem/exact-public/submask witnesses — **not** the algebraic gates or the PI pins
+//! (`descriptor_ir2.rs:4432-5471`). So `check: true` does not mean "an `Err` will describe a bad
+//! witness".
+//!
+//! This is why the same helper was correct in `custom_leaf_adapter` (an arity pre-flight, a genuine
+//! `Err`) and wrong in `shielded_ring_clearing_air` (a lookup-carrying descriptor, an unavoidable
+//! panic). Two forgery teeth sat RED for ten days on that mistake while asserting the *right* thing —
+//! the constraint system refused every forgery; the harness just could not observe it. **Pick the
+//! helper by whether the descriptor has lookups, not by the `check` flag.**
 //!    accepts it — but **only** it, matched by message against [`P3_UNSAT_PANIC_MARKERS`]. Any other
 //!    panic (a trace-assembly `debug_assert`, a stray `unwrap`, an index OOB, an OOM) is a **test
 //!    failure**, because it is not a refusal — it is a crash wearing a refusal's clothes.
