@@ -93,6 +93,82 @@ fn heap_empty_subtree_root(level: usize) -> BabyBear {
     EMPTY_SUBTREE_ROOTS[level]
 }
 
+// ============================================================================
+// THE PAD-FREENESS GUARD — shared by the sorted openable trees (heap / cap /
+// fields), same home as the sentinels above.
+// ============================================================================
+
+/// **`assert_pad_free`** — refuse to build a sorted openable tree whose stored
+/// leaf-digest prefix contains the PADDING digest.
+///
+/// ## Why a tree that does contain it is ambiguous
+///
+/// Every tree in this family commits a *dense* `2^depth` digest vector: the
+/// stored prefix followed by `capacity - n` copies of the padding digest (the
+/// sparse fold reads [`heap_empty_subtree_root`] instead of materialising them,
+/// but it is byte-identical to that dense build — see [`CanonicalHeapTree::new`]).
+/// Two prefixes therefore fold to the SAME root exactly when one is the other
+/// extended by padding values. So a stored digest equal to the padding digest at
+/// the END of the prefix makes its entry INVISIBLE: the tree presents the key
+/// (the leaf is in `sorted_leaves`, `position_of` finds it, `prove_membership`
+/// opens it) and simultaneously denies it (the identical root is also the root of
+/// the tree without it, against which a sorted-gap opening reports it ABSENT).
+///
+/// This is machine-checked on the Lean side against a hash that IS injective:
+/// `Dregg2.Circuit.MapPaddedDenotation.padded_imt_injectivity_is_refuted`, at the
+/// deployed arity-3 relinked leaf and the deployed depth, with the witness pair
+/// `padded_ghost3`. Collision-resistance does not exclude it — `Poseidon2SpongeCR`
+/// says nothing about whether the padding constant lies in the leaf-digest image —
+/// so it is a SEPARATE event from the hash floor and needs a separate check.
+///
+/// ## What this function is
+///
+/// The decision procedure for that module's named residual `PadGhost3`
+/// (*"the committed digest vector contains the padding constant"*) — deliberately
+/// a property of COMMITTED DATA, not the unconditionally-true `∃ e, leafOf e = pad`.
+/// It is decidable and O(n), against O(n·depth) hashes for the fold, so it is free.
+///
+/// FAILS CLOSED: panics rather than returning an ambiguous root, the same
+/// discipline as the capacity assertion in [`CanonicalHeapTree::new`] ("fail
+/// loudly rather than silently truncate"). Release-active — a `debug_assert`
+/// here would be a guard that cannot go red where it matters.
+pub fn assert_pad_free<T: PartialEq + core::fmt::Debug>(digests: &[T], pad: &T, tree: &str) {
+    if let Some(i) = digests.iter().position(|d| d == pad) {
+        panic!(
+            "{tree}: leaf digest at position {i} of {n} EQUALS the padding digest \
+             ({pad:?}) — this tree both presents and denies its key (the padding \
+             ghost, Lean `padded_imt_injectivity_is_refuted`). Refusing to commit \
+             an ambiguous root.",
+            n = digests.len()
+        );
+    }
+}
+
+/// **`assert_pad_free_tail`** — the WEAKER guard for a tree that stores the
+/// padding value at live positions on purpose.
+///
+/// The cap tree's revoke semantics deliberately place the padding digest at a
+/// revoked slot's position (a TOMBSTONE: the position is held so unrelated
+/// capabilities keep their witnesses, but the slot carries no authority —
+/// `CanonicalCapTree::new_with_tombstones`). Such a tree cannot satisfy
+/// [`assert_pad_free`], so it is checked against the exact ambiguity condition
+/// instead: a pad-valued digest is only invisible when nothing distinguishable
+/// follows it, i.e. when the prefix ENDS in padding.
+///
+/// FAILS CLOSED, for the reason given on [`assert_pad_free`].
+pub fn assert_pad_free_tail<T: PartialEq + core::fmt::Debug>(digests: &[T], pad: &T, tree: &str) {
+    if digests.last() == Some(pad) {
+        panic!(
+            "{tree}: the LAST stored leaf digest (position {i}) EQUALS the padding \
+             digest ({pad:?}) — the trailing run is indistinguishable from padding, \
+             so this root is also the root of the tree without it (the padding \
+             ghost, Lean `padded_imt_injectivity_is_refuted`). Refusing to commit \
+             an ambiguous root.",
+            i = digests.len() - 1
+        );
+    }
+}
+
 /// The canonical heap ADDRESS of a `(collection_id, key)` pair: the arity-2
 /// Poseidon2 image `hash[coll, key]` — the sorted-tree sort key. This is the
 /// exact image the descriptor gadget's `siteHeapAddr` recomputes in-row
@@ -178,6 +254,40 @@ fn relink_next_addrs(leaves: &mut [HeapLeaf]) {
             SENTINEL_MAX
         };
     }
+    // ── THE WELL-LINKED GUARD — and the STRUCTURAL half of the padding-ghost fix ──
+    //
+    // `ImtSorted` requires `addr < next_addr` at every leaf. Sort+dedup already give
+    // it for every leaf but the LAST, whose pointer is the terminal `SENTINEL_MAX`;
+    // that one fails exactly when a live leaf sits AT `SENTINEL_MAX`. Enforcing it
+    // here is what makes the padding ghost UNCONSTRUCTIBLE in this tree, not merely
+    // expensive:
+    //
+    //   For a ghost, two heaps must commit digest prefixes `D` and `D ++ [pad × k]`
+    //   — the shorter is then the same tree with the tail deleted. The shorter heap's
+    //   last leaf points at `SENTINEL_MAX`; the longer heap's leaf at that SAME
+    //   position points at its successor's `addr`. Equal digests force
+    //   `successor.addr = SENTINEL_MAX`, which this guard refuses. So no pair exists,
+    //   whatever the padding constant is and whoever finds a preimage of it.
+    //
+    // This is also the constraint the deployed AIR already imposes and the producer
+    // did not: the in-circuit pointer bracket `low_addr < k < low_next` forces
+    // `k < SENTINEL_MAX` on every insert (`descriptor_ir2` `MAP_CMP_LO0`/`MAP_CMP_HI0`),
+    // and `insert_witness` refuses `key >= SENTINEL_MAX` — but the ROOT BUILDERS
+    // accepted such a leaf. Every production `addr` is a folded hash
+    // (`fold_bytes32_to_bb` / [`heap_addr`]), so this refuses a ~2^-31 accident, and
+    // refusing is the correct answer: the entry is unrepresentable in a sorted IMT
+    // whose terminal pointer IS that value. Fails closed.
+    for (i, l) in leaves.iter().enumerate() {
+        assert!(
+            l.addr.as_u32() < l.next_addr.as_u32(),
+            "heap leaf {i} of {n} violates the ImtSorted well-linked invariant: \
+             addr {} is not < next_addr {} (a live leaf AT the terminal SENTINEL_MAX \
+             would make the padding ghost constructible — see `assert_pad_free`). \
+             Refusing to commit.",
+            l.addr.as_u32(),
+            l.next_addr.as_u32()
+        );
+    }
 }
 
 /// The canonical heap tree: a sorted binary Poseidon2 Merkle tree over the
@@ -237,6 +347,14 @@ impl CanonicalHeapTree {
         // precomputed empty-subtree roots.
         let leaf_digests: Vec<BabyBear> = leaves.iter().map(HeapLeaf::digest).collect();
         debug_assert!(leaf_digests.len() <= capacity);
+        // The tree has no legitimate pad-valued leaf, so the STRONG form applies.
+        // Load-bearing at this width: a 1-felt digest hitting the padding constant
+        // is a ~2^31 single-target preimage, not a ~2^248 one.
+        assert_pad_free(
+            &leaf_digests,
+            &heap_empty_subtree_root(0),
+            "CanonicalHeapTree",
+        );
 
         // Fold ONLY the non-empty prefix at each level (see CanonicalCapTree::new
         // for the contiguous-prefix argument): a parent at index `i` covers
@@ -649,6 +767,11 @@ pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> Faithful8 {
     // Sparse 8-felt fold: only the non-empty prefix per level; a child outside
     // the stored prefix is the 8-felt empty-subtree root for the child's level.
     let mut cur: Vec<[BabyBear; HEAP_DIGEST_W]> = leaves.iter().map(HeapLeaf::digest8).collect();
+    assert_pad_free(
+        &cur,
+        &heap_empty_subtree_root_8(0),
+        "compute_canonical_heap_root_8",
+    );
     for level in 0..depth {
         let prev_len = cur.len();
         let next_len = prev_len.div_ceil(2);
@@ -776,6 +899,11 @@ impl CanonicalHeapTree8 {
 
         let leaf_digests: Vec<[BabyBear; HEAP_DIGEST_W]> =
             leaves.iter().map(HeapLeaf::digest8).collect();
+        assert_pad_free(
+            &leaf_digests,
+            &heap_empty_subtree_root_8(0),
+            "CanonicalHeapTree8",
+        );
         let mut levels: Vec<Vec<[BabyBear; HEAP_DIGEST_W]>> = Vec::with_capacity(depth + 1);
         levels.push(leaf_digests);
         for level in 0..depth {
@@ -1116,6 +1244,13 @@ fn fold_append_order_8(leaves: &[HeapLeaf], depth: usize) -> [BabyBear; HEAP_DIG
         return heap_empty_subtree_root_8(depth);
     }
     let mut cur: Vec<[BabyBear; HEAP_DIGEST_W]> = leaves.iter().map(HeapLeaf::digest8).collect();
+    // The AAFI coordinate is where the padding digest is not merely a filler but a
+    // SEMANTIC marker: the in-circuit append gate (d1) proves "the free slot was
+    // empty" by folding the padding digest up PATH2 (`descriptor_ir2.rs`, the
+    // `MAP_FREE_EMPTY` block). A live leaf whose digest equalled it would satisfy
+    // that emptiness gate at an OCCUPIED position — i.e. the append would overwrite
+    // a live entry with the circuit's blessing. Refuse to produce such a tree.
+    assert_pad_free(&cur, &heap_empty_subtree_root_8(0), "fold_append_order_8");
     for level in 0..depth {
         let prev_len = cur.len();
         let next_len = prev_len.div_ceil(2);

@@ -199,7 +199,25 @@ pub enum ExactFieldsTreeError {
     DuplicateKey(u64),
     DuplicateReservedKey(u64),
     NonCanonicalReservedValue(u64),
-    CapacityExceeded { entries: usize, capacity: usize },
+    CapacityExceeded {
+        entries: usize,
+        capacity: usize,
+    },
+    /// A stored leaf digest equals the tree's PADDING digest
+    /// ([`exact_fields_empty_leaf8`]), which would make that entry invisible: the
+    /// committed dense vector is the stored prefix followed by padding, so a
+    /// pad-valued digest at the end of the prefix yields the same root as the tree
+    /// without it. See `dregg_circuit::heap_root::assert_pad_free` for the full
+    /// argument and the Lean refutation it decides.
+    ///
+    /// Unreachable except through a collision against `EXACT_FIELDS_EMPTY_DOMAIN`:
+    /// this tree's empty leaf is already domain-separated from a real leaf (distinct
+    /// domain felt, distinct occupancy tag, distinct preimage length), which is why
+    /// it is the model the heap and cap trees should follow. Checked anyway — an
+    /// assumption nothing tests is not an invariant.
+    PaddingCollision {
+        position: usize,
+    },
 }
 
 impl fmt::Display for ExactFieldsTreeError {
@@ -215,6 +233,11 @@ impl fmt::Display for ExactFieldsTreeError {
             Self::CapacityExceeded { entries, capacity } => write!(
                 f,
                 "exact fields map ({entries} entries) exceeds tree capacity {capacity}"
+            ),
+            Self::PaddingCollision { position } => write!(
+                f,
+                "exact fields leaf digest at position {position} equals the padding \
+                 digest — refusing to commit an ambiguous root"
             ),
         }
     }
@@ -283,6 +306,11 @@ impl CanonicalExactFieldsTree8 {
         let empty_roots = exact_fields_empty_roots(depth);
         let leaf_digests: Vec<[BabyBear; HEAP_DIGEST_W]> =
             leaves.iter().map(ExactFieldsLeaf::digest8).collect();
+        // THE PAD-FREENESS GUARD. This tree returns a typed error, so it fails closed
+        // through `Result` rather than by panicking as the heap/cap builders must.
+        if let Some(position) = leaf_digests.iter().position(|d| *d == empty_roots[0]) {
+            return Err(ExactFieldsTreeError::PaddingCollision { position });
+        }
         let mut levels = Vec::with_capacity(depth + 1);
         levels.push(leaf_digests);
         for level in 0..depth {
@@ -616,6 +644,12 @@ impl OpenableFieldsTree {
         );
 
         let mut leaf_digests: Vec<BabyBear> = leaves.iter().map(FieldsLeaf::digest).collect();
+        // THE PAD-FREENESS GUARD, before the `resize` that makes the ambiguity: at
+        // this width a pad-valued digest is a ~2^31 single-target preimage. (This V1
+        // tree has no production caller — the live fields tree is
+        // `CanonicalExactFieldsTree8` — but it is the literal-ZERO dense build the
+        // Lean `padTo` models, so it is guarded like the rest.)
+        crate::heap_root::assert_pad_free(&leaf_digests, &BabyBear::ZERO, "OpenableFieldsTree");
         leaf_digests.resize(capacity, BabyBear::ZERO);
 
         let mut levels = vec![leaf_digests];

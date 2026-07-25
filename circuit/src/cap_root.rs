@@ -399,6 +399,22 @@ impl CanonicalCapTree {
         // carry ZERO. `sorted_leaves` stores the leaf, `levels[0]` the digest.
         let mut keyed: Vec<(CapLeaf, [BabyBear; CAP_DIGEST_W])> =
             leaves.into_iter().map(|l| (l, l.digest())).collect();
+        // ── THE PAD-FREENESS GUARD, LIVE HALF ─────────────────────────────────
+        // Checked BEFORE the tombstone ghosts are merged, because a ghost carries
+        // the padding digest ON PURPOSE (the tombstone semantics above) while a LIVE
+        // capability never may. Two things break if a live leaf's digest equals it:
+        // the padding ghost (Lean `padded_imt_injectivity_is_refuted`), and — sooner
+        // — `live_and_tombstones` below, which classifies a slot as REVOKED from its
+        // digest ALONE, so a live capability would be silently reclassified as dead
+        // on the grant path. Fails closed.
+        {
+            let live: Vec<[BabyBear; CAP_DIGEST_W]> = keyed.iter().map(|(_, d)| *d).collect();
+            crate::heap_root::assert_pad_free(
+                &live,
+                &cap_empty_subtree_root(0),
+                "CanonicalCapTree (live c-list leaf)",
+            );
+        }
         let mut seen_tomb: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for &k in tombstone_keys {
             let ku = k.as_u32();
@@ -429,6 +445,19 @@ impl CanonicalCapTree {
         // precomputed empty-subtree roots.
         let leaf_digests: Vec<[BabyBear; CAP_DIGEST_W]> = keyed.iter().map(|(_, d)| *d).collect();
         debug_assert!(leaf_digests.len() <= capacity);
+        // ── THE PAD-FREENESS GUARD, TOMBSTONE HALF ────────────────────────────
+        // The live half above cannot cover the ghosts, so the exact ambiguity
+        // condition is checked here instead: a pad-valued digest is invisible only
+        // when the prefix ENDS in padding. The MAX sentinel leaf normally holds the
+        // last position and its digest is a fixed non-pad constant, which is what
+        // makes the cap tree structurally safer here than the heap tree (which
+        // retired its separate MAX leaf). This asserts that structural fact rather
+        // than assuming it — a trailing tombstone would be a silent entry deletion.
+        crate::heap_root::assert_pad_free_tail(
+            &leaf_digests,
+            &cap_empty_subtree_root(0),
+            "CanonicalCapTree (tombstoned prefix)",
+        );
 
         // Fold ONLY the non-empty prefix at each level. A parent at index `i`
         // (level `k+1`) covers children `2i`, `2i+1` at level `k`; a child index
