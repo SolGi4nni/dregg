@@ -29,6 +29,14 @@ Layers (each `lake build`-verified, kernel-clean; `#assert_axioms` on stated the
                     (fuel-structural `powMonFuel`, no `native_decide`); BUILDS `Field Fp6` and
                     `Field Fp12` (norm + explicit inverse), so the pairing target `Fp12` supports
                     INVERSION.  The whole tower is now genuine fields.
+* `BN254.Bilinearity`— WIRES the pairing to the real point groups (`pairingP : G1Point × G2Point →
+                    Fp12`, infinity ↦ 1) and states BILINEARITY non-vacuously over the group `+`/`•`
+                    (`PairingBilinear{Left,Right}Goal`, `PairingScalar{Left,Right}Goal`; §5 KATs
+                    kernel-compute the Miller value ≠ 1, so the equations bite).  PROVEN: `finalExp`
+                    is a monoid hom (`finalExp_mul/one/pow`), the infinity cases, the scalar law at
+                    `a=0,1`, and the reductions of each goal to a single NAMED Miller-loop residual
+                    (`MillerQuasiMult{Left,Right}`, `MillerScalar{Left,Right}` — the Weil-reciprocity
+                    / divisor cofactor `finalExp c = 1`), which is left OPEN, not faked.
 -/
 import Dregg2.Crypto.BN254.Fq
 import Dregg2.Crypto.BN254.Fp2
@@ -39,3 +47,4 @@ import Dregg2.Crypto.BN254.Pairing
 import Dregg2.Crypto.BN254.Groth16
 import Dregg2.Crypto.BN254.Primality
 import Dregg2.Crypto.BN254.TowerField
+import Dregg2.Crypto.BN254.Bilinearity

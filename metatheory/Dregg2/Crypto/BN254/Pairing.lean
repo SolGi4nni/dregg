@@ -184,9 +184,11 @@ would be exactly the vacuity this project must not launder.  They are named in p
 
 * **Bilinearity** — `e(a·P, b·Q) = e(P,Q)^{a·b}`.  Its honest statement quantifies over the point
   SCALAR ACTION (`nsmul`/`zsmul` of Mathlib's `WeierstrassCurve.Affine.Point` `AddCommGroup`, which
-  needs the field seam `[Fact (Nat.Prime pBN254)]`).  Wiring the affine loop inputs to that point
-  group is the immediate next brick; the proof is the standard divisor-theoretic (Weil-reciprocity)
-  argument on the Miller function.  NOT stateable as a non-vacuous `Prop` until that wiring exists.
+  needs the field seam `[Fact (Nat.Prime pBN254)]`).  With that seam now discharged, the wiring is
+  DONE and bilinearity is STATED non-vacuously in `BN254.Bilinearity` (`pairingP` over `G1Point`/
+  `G2Point`; `PairingBilinear{Left,Right}Goal`, `PairingScalar{Left,Right}Goal`).  There the
+  `finalExp` layer is PROVEN a monoid hom and each goal is REDUCED to a single named Miller-loop
+  residual — the standard divisor-theoretic (Weil-reciprocity) cofactor — which stays OPEN.
 
 * **Miller-loop faithfulness** — with the two trailing optimal-ate Frobenius line-additions
   appended, `pairing` equals the value the `alt_bn128` precompile / gnark computes.  Its discharge is
