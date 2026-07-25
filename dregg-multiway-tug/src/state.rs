@@ -29,10 +29,14 @@
 //!   `Equals{0} ∧ DeltaEquals{0}`; and only `respond_gift`/`respond_comp` may take it back
 //!   down (`DeltaEquals{-1}/{-2}`). So a seat cannot walk away from a standing offer, and the
 //!   marker cannot be cleared except by answering the offer that raised it.
-//! * **the win** — the `score` method binds `winner == p ⇒ (charm_p >= 11 OR guilds_p >=
-//!   4)` via `AnyOf[Not(FieldEquals(winner,p)), FieldGte(charm_p,11), FieldGte(guilds_p,4)]`,
-//!   plus `WriteOnce(winner)` and `FieldGte(round_actions, 8)` (scoring only after the
-//!   round completes). A false win claim is refused.
+//! * **the win** — ⚑ the deployed gate is the model's TERMINAL RULE `roundWinner`, not the
+//!   absolute bar `Won`. Each of the rule's nine clauses is its own transition case
+//!   (`score_charm_a` … `score_draw`, see [`score_method`]), carrying that clause's guard —
+//!   thresholds as `FieldGte` / `AnyOf[Not(FieldGte)]`, leads as the cross-register
+//!   `FieldLteOther` — conjoined with `winner == w` for the seat that clause names, plus
+//!   `WriteOnce(winner)` and `FieldGte(round_actions, 12)`. The clauses partition, so exactly one
+//!   case can admit a scored state and it is the one the proven rule selects
+//!   (`scoreBranchTeeth_admits_iff_branch`). A false win claim, and a false CLAUSE, are refused.
 //!
 //! `genesis` is the one permissive case (it seeds the initial counts + the heap keys the
 //! relational teeth read as an `old` value).
@@ -48,8 +52,24 @@ use crate::reference::{ActionKind, N_GUILDS, Player};
 pub const SCENE_ID: &str = "dregg-multiway-tug/phase0";
 /// The permissive seeding method.
 pub const GENESIS: &str = "genesis";
-/// The scoring method.
-pub const SCORE: &str = "score";
+
+/// **The deployed method a scoring turn commits under, for clause `branch` of the terminal rule.**
+///
+/// ⚑ There is no single `score` method any more, and that is the repair rather than a refactor.
+/// The terminal rule is `roundWinner`, a PRECEDENCE of nine clauses (absolute charm bar, absolute
+/// row bar, then charm lead, then row lead at equal charm, then an exact dead heat). Its tail
+/// compares REGISTER TO REGISTER, and the deployed alphabet carries such a comparison only at top
+/// level (`StateConstraint::FieldLteOther`) — never inside `AnyOf`, whose `SimpleStateConstraint`
+/// variants are all register-vs-literal. Top-level constraints in a case conjoin, so a disjunction
+/// over cross-register tests cannot live in one case at all. `CellProgram::Cases` dispatches on the
+/// method name, so the disjunction BECOMES the method: one case per clause, each carrying that
+/// clause's guard and the `winner` value it names.
+///
+/// The clause comes from the Lean oracle ([`crate::rules::adjudicate`]) and the NAME comes from the
+/// Lean-emitted artifact ([`crate::program_loader::score_branch_method`]). Rust holds neither.
+pub fn score_method(branch: u8) -> String {
+    crate::program_loader::score_branch_method(branch)
+}
 
 /// The 16 register components, in allocation order (slots `0..16`).
 ///

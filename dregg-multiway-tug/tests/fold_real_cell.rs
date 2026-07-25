@@ -35,7 +35,7 @@ fn winning_game() -> (MultiwayTug, u64, u64) {
     let seed = (0u8..=255)
         .find(|&s| {
             let (mut e, _) = play_round(s as u64);
-            if e.score().is_some() {
+            if e.score().expect("the Lean oracle adjudicates").is_some() {
                 let p = e.projection();
                 p.winner != 0 && p.charm[(p.winner - 1) as usize] >= 11
             } else {
@@ -55,7 +55,7 @@ fn winning_game() -> (MultiwayTug, u64, u64) {
         game.commit_projection(mv.method(), &proj)
             .expect("legal play commits");
     }
-    let _ = eng.score();
+    eng.score().expect("the Lean oracle adjudicates");
     let scored = eng.projection();
     game.commit_score(&scored).expect("scoring commits");
     let winner = scored.winner;

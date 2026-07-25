@@ -460,7 +460,8 @@ fn mint_turn(bundle: &LeafBundle, nonce: u64) -> FinalizedTurn {
 
 /// Mint the terminal WIN turn folded over the REAL WorldCell cell. `cell` is the game's OWN
 /// committed cell after the `score` turn — the transition the deployed win implication
-/// (`winner==p ⇒ charm_p>=11 OR guilds_p>=4`, plus `WriteOnce(winner)`) already gated at
+/// (one case per clause of `roundWinner`, each pinning `winner == w`, plus `WriteOnce(winner)`)
+/// already gated at
 /// admission, so a false winner never reaches a foldable cell. The win leaf publishes
 /// `[old8 ‖ new8 ‖ charm ‖ winner]` with `old8/new8` = the cell's real rotated roots, so the
 /// deployed custom state-binding node ties the win sub-proof to THIS cell's committed state

@@ -94,6 +94,7 @@ flags without a translation table.
 | `score STATE`             | `1 charm₁ rows₁ charm₂ rows₂`     | `charmScore` / `geishaScore`             |
 | `won STATE SEAT`          | `1 0` / `1 1`                     | `Won` (via the proven reflection `wonB`) |
 | `winner STATE`            | `1 0` / `1 1` / `1 2`             | ⚑ `roundWinner` — `0` is a DRAW          |
+| `branch STATE`            | `1 b w` (`b` in `0..8`)           | ⚑ `roundWinnerBranch` + its seat         |
 | `total STATE`             | `1 CARDS`                         | `totalCards` — the conserved multiset    |
 
 `kinds` answers the RULES half of "what may this seat do": `kᵏ = 1` iff action-kind `k` is open for
@@ -106,6 +107,13 @@ rule in Rust.
 
 `winner`'s `0` means DRAW (an exact dead heat, `roundWinner_draw_iff`), NOT "unadjudicated". The
 deleted Rust returned "no winner" for every sub-threshold round; this verb returns a seat there.
+
+`branch` answers WHICH of `roundWinner`'s nine clauses fired, and the seat that clause names
+(`winnerTok_branch_agrees`: the seat is the same one `winner` reports). It exists because the
+DEPLOYED teeth need it: the tug constraint vocabulary has no register-vs-register comparison
+inside a disjunction, so `MultiwayTugProgram` gives each clause its own transition case and a
+scoring turn NAMES its clause. Without this verb the caller would have to re-derive the clause —
+i.e. re-implement the precedence in Rust, which is the exact twin this module exists to delete.
 
 ## Faithfulness of the codec
 
@@ -375,6 +383,14 @@ def winnerTok : Option Player → String
   | some .p1 => "1"
   | some .p2 => "2"
 
+/-- **`winnerTok_branch_agrees`** — reading the seat off the CLAUSE gives the same token as reading
+it off `roundWinner`. So a caller that takes the `branch` verb's answer and a caller that takes the
+`winner` verb's answer cannot disagree; `branch` carries strictly more information (WHICH clause),
+never different information. -/
+theorem winnerTok_branch_agrees (s : GState) :
+    winnerTok (branchWinner (roundWinnerBranch s)) = winnerTok (roundWinner s) := by
+  rw [roundWinner_eq_branchWinner]
+
 /-- The controller token for one row. -/
 def controlTok : Option Player → String
   | none => "0"
@@ -471,6 +487,12 @@ def decide? : List String → Option String
   | "winner" :: rest => do
     let (s, r1) ← stateOf? rest
     if r1.isEmpty then some (winnerTok (roundWinner s)) else none
+  | "branch" :: rest => do
+    let (s, r1) ← stateOf? rest
+    if r1.isEmpty then
+      some (String.intercalate " "
+        [toString (roundWinnerBranch s), winnerTok (branchWinner (roundWinnerBranch s))])
+    else none
   | "total" :: rest => do
     let (s, r1) ← stateOf? rest
     if r1.isEmpty then some (encodeCards (totalCards s)) else none
@@ -570,6 +592,20 @@ def demoCut : GState := applyAction demo .p1 (Action.offerGift 3 3 5)
 -- A GENUINE dead heat is a draw.
 #guard rulesFFI ("winner " ++ encodeState blankState) == "1 0"
 
+-- ⚑ THE CLAUSE, which is what a deployed scoring turn must name. `winState` fires clause 0
+-- (charm threshold, p1); `blankState` clause 8 (dead heat); `undecidedState` clause 4 (charm LEAD,
+-- p1 — no threshold cleared); `rowTieState` clause 7 (charm tied, ROW lead, p2). Clauses 4 and 7
+-- are precisely the ones the deleted Rust could not reach. `straddleState` is the case where BOTH
+-- seats are `Won` — the precedence, not exclusivity, decides it (clause 0, p1 on charm).
+#guard rulesFFI ("branch " ++ encodeState winState) == "1 0 1"
+#guard rulesFFI ("branch " ++ encodeState blankState) == "1 8 0"
+#guard rulesFFI ("branch " ++ encodeState undecidedState) == "1 4 1"
+#guard rulesFFI ("branch " ++ encodeState rowTieState) == "1 7 2"
+#guard rulesFFI ("branch " ++ encodeState straddleState) == "1 0 1"
+-- A malformed `branch` wire REFUSES like every other verb.
+#guard rulesFFI "branch" == "0"
+#guard rulesFFI ("branch " ++ encodeState blankState ++ " 0") == "0"
+
 -- ⚑⚑ THE PROVENANCE TOOTH — `undecidedState`, the round the Rust twin THREW AWAY.
 -- p1 holds rows 5,6 (charm 9, two rows); p2 holds row 3 (charm 3, one row). NEITHER seat clears a
 -- threshold, so `won` is 0 for BOTH (`undecidedState_not_Won`) — and yet the round HAS a winner
@@ -608,5 +644,6 @@ def demoCut : GState := applyAction demo .p1 (Action.offerGift 3 3 5)
 #assert_axioms legalRespB_iff_respOpen
 #assert_axioms wonB_iff_Won
 #assert_axioms cardOf?_digitOf
+#assert_axioms winnerTok_branch_agrees
 
 end Dregg2.Games.MultiwayTugFFI

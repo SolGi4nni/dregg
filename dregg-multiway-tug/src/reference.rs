@@ -8,7 +8,16 @@
 //! re-theming "multiway-tug". Seven **guilds** with **influence** `[2,2,2,3,3,4,5]` (21
 //! total), a 21-card **favor** deck whose cards have distinct ids, a hidden 6-card hand,
 //! four once-per-round actions (Secret / Discard / Gift / Competition), win at `>= 11`
-//! influence OR `>= 4` guilds.
+//! influence OR `>= 4` guilds — and short of that the round is still ADJUDICATED, on total
+//! influence then on rows held, with only an exact dead heat a draw.
+//!
+//! ## ⚑ THE TERMINAL RULE IS NOT DECIDED HERE
+//!
+//! [`Engine::score`] calls the proven Lean (`crate::rules`), which is where row control, both
+//! tallies, the winner and the deciding CLAUSE come from. The Rust `winner_of` that used to end
+//! that function is DELETED: it was the model's `roundWinner` truncated to its two
+//! absolute-threshold branches, so it answered "no winner" on every round the ruleset
+//! adjudicates — a measured 78.5% played draw rate against the model's 5.1%.
 //!
 //! ## ⚑ THE ENGINE IS `I-CUT-YOU-CHOOSE`, AND THE CALLER DECIDES
 //!
@@ -501,6 +510,8 @@ pub struct Engine {
     charm: [u64; 2],
     guilds_controlled: [u64; 2],
     winner: u64,
+    /// The clause of `roundWinner` the ORACLE named for this round (`0..8`); `0` until scored.
+    win_branch: u8,
     current: Player,
     /// Committed turns: actions AND responses.
     round_actions: u64,
@@ -556,6 +567,7 @@ impl Engine {
             charm: [0; 2],
             guilds_controlled: [0; 2],
             winner: 0,
+            win_branch: 0,
             current: Player::A,
             round_actions: 0,
             scored: false,
@@ -895,10 +907,20 @@ impl Engine {
         Ok(mv)
     }
 
-    /// Reveal the secrets, compute control / charm / guild counts / winner. The secret card
-    /// is placed on its owner's side BEFORE control is computed. Returns the resolved winner
-    /// (`None` = no win threshold reached).
-    pub fn score(&mut self) -> Option<Player> {
+    /// Reveal the secrets and take the round's verdict FROM THE PROVEN LEAN. The secret card is
+    /// placed on its owner's side before the tallies are read (`secret_is_scored`); everything
+    /// after that — row control, both tallies, the winner, and WHICH clause of the terminal rule
+    /// decided — is [`crate::rules::adjudicate`], i.e. `Dregg2.Games.MultiwayTug`.
+    ///
+    /// ⚑ This used to end in `winner_of`, a Rust re-expression of `roundWinner` truncated to its
+    /// two absolute-threshold branches. It had no charm tie-break and no row tie-break, so on
+    /// every round where neither seat cleared the bar it answered "no winner" where the ruleset
+    /// names a seat — a **78.5% played draw rate against the model's 5.1%**. It is deleted; this
+    /// call is the only remaining answer source, and there is no fallback.
+    ///
+    /// `Err` iff the archive lacks the export or Lean refused the wire — fail-closed, because the
+    /// alternative is answering with the semantics that caused the bug.
+    pub fn score(&mut self) -> Result<Option<Player>, String> {
         assert!(
             self.round_complete(),
             "cannot score before the round completes"
@@ -908,54 +930,21 @@ impl Engine {
                 self.place_card(p, c);
             }
         }
-        let mut charm = [0u64; 2];
-        let mut controlled = [0u64; 2];
-        for g in 0..N_GUILDS {
-            let a = self.score[g][0];
-            let b = self.score[g][1];
-            let owner = if a > b {
-                Some(0usize)
-            } else if b > a {
-                Some(1usize)
-            } else {
-                None
-            };
-            if let Some(o) = owner {
-                charm[o] += INFLUENCE[g] as u64;
-                controlled[o] += 1;
-            }
-        }
-        self.charm = charm;
-        self.guilds_controlled = controlled;
-        self.winner = winner_of(charm, controlled)
-            .map(|p| p as u64 + 1)
-            .unwrap_or(0);
+        let v = crate::rules::adjudicate(&self.score)?;
+        self.charm = v.charm;
+        self.guilds_controlled = v.guilds;
+        self.winner = v.winner_code;
+        self.win_branch = v.branch;
         self.scored = true;
-        match self.winner {
-            1 => Some(Player::A),
-            2 => Some(Player::B),
-            _ => None,
-        }
+        Ok(v.winner())
     }
-}
 
-/// The win rule: `>= 11` influence wins first, else `>= 4` controlled guilds. Ties on a
-/// threshold resolve to whichever player reaches it (A checked first). Returns the winning
-/// player index.
-pub fn winner_of(charm: [u64; 2], controlled: [u64; 2]) -> Option<usize> {
-    if charm[0] >= 11 && charm[0] >= charm[1] {
-        return Some(0);
+    /// The clause of the terminal rule that decided this round (`roundWinnerBranch`, `0..8`), as
+    /// the oracle answered it. Meaningless before [`Engine::score`]; it is what names the deployed
+    /// scoring method (`state::score_method`).
+    pub fn win_branch(&self) -> u8 {
+        self.win_branch
     }
-    if charm[1] >= 11 {
-        return Some(1);
-    }
-    if controlled[0] >= 4 && controlled[0] >= controlled[1] {
-        return Some(0);
-    }
-    if controlled[1] >= 4 {
-        return Some(1);
-    }
-    None
 }
 
 /// **ONE example agent** — a deterministic policy over [`Engine::legal_decisions`], nothing

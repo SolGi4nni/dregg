@@ -9,7 +9,9 @@
 //! (designer Kota Nakayama). This crate ships an ORIGINAL re-theming — "multiway-tug":
 //! two players tug over seven **guilds** (influence `[2,2,2,3,3,4,5]`, 21 total) by
 //! playing **favor** cards through four once-per-round actions (Secret / Discard / Gift /
-//! Competition); win at `>= 11` influence OR `>= 4` guilds controlled.
+//! Competition); win at `>= 11` influence OR `>= 4` guilds controlled, and short of that the round
+//! is ADJUDICATED on total influence then rows held — only an exact dead heat is a draw. That
+//! terminal rule is the proven Lean's, called through [`rules`]; there is no Rust copy of it.
 //!
 //! ## The pieces
 //!
@@ -36,7 +38,7 @@
 //! | placements never un-placed | `HeapAtom::Monotonic` on each per-guild score |
 //! | strict round sequencing | `StrictMonotonic(round_actions)` |
 //! | a standing offer must be answered | `pending_kind` `Equals`/`DeltaEquals` per method |
-//! | win only at a real threshold | `winner==p ⇒ FieldGte(charm_p,11) ∨ FieldGte(guilds_p,4)` |
+//! | the winner IS the terminal rule | one case per `roundWinner` clause (`score_charm_a` … `score_draw`), each pinning `winner == w` |
 //! | scoring only after the round | `FieldGte(round_actions, 12)` |
 //! | forged / unknown method | `Cases` method-default-deny (`NoTransitionCaseMatched`) |
 //!
@@ -67,8 +69,12 @@ pub mod fold;
 pub mod game;
 pub mod hidden_hand;
 pub mod packs;
-mod program_loader;
+pub mod program_loader;
 pub mod reference;
+/// ⚑ THE TERMINAL ORACLE — `@[export] dregg_multiway_tug_rules` over the proven
+/// `Dregg2.Games.MultiwayTug`. The round's control, tallies, winner and deciding CLAUSE come from
+/// here; `reference.rs::winner_of` (the truncated Rust twin that drew 78.5% of rounds) is deleted.
+pub mod rules;
 pub mod state;
 /// Phase 5 — the [`dreggnet_offerings::Offering`] + the per-player HIDDEN-HAND surface (the
 /// guild-lane table, the coordinate-grid hand, the greyed action menu; a play is a real turn).
@@ -86,5 +92,6 @@ pub use reference::{
     ActionKind, Decision, Engine, MoveError, OfferShape, PendingOffer, Player, Projection,
     ResolvedMove,
 };
+pub use rules::Verdict;
 pub use state::Deployment;
 pub use surface::{TugOffering, TugPrivateMatchRecord, TugSession};

@@ -176,8 +176,10 @@ impl TugSession {
 
     /// The terminal WIN facts once the round has scored: `(winner, charm)` where `winner` is
     /// `1` (seat A) / `2` (seat B) and `charm` is the winner's total influence — exactly the two
-    /// bound public inputs of the whole-match fold's win leaf. `None` while the round runs (or
-    /// if it ended with no winner).
+    /// bound public inputs of the whole-match fold's win leaf. `None` while the round runs, or on
+    /// a genuine DRAW — which since the terminal rule reached the deployed teeth means an EXACT
+    /// dead heat on both influence and rows held (`roundWinner_draw_iff`), not merely "nobody
+    /// cleared 11".
     pub fn win_facts(&self) -> Option<(u64, u64)> {
         let proj = self.projection();
         match proj.winner {
@@ -390,7 +392,10 @@ impl TugSession {
         let status = match (proj.scored, proj.winner) {
             (1, 1) => "ROUND COMPLETE · WINNER: A".to_string(),
             (1, 2) => "ROUND COMPLETE · WINNER: B".to_string(),
-            (1, _) => "ROUND COMPLETE · DRAW".to_string(),
+            // A DRAW is now an EXACT DEAD HEAT on both tallies (`roundWinner_draw_iff`), not
+            // "nobody cleared 11" — the word is kept so the surfaces' terminal-status checks
+            // still bite, and the parenthetical is what actually changed for a player.
+            (1, _) => "ROUND COMPLETE · DRAW (an exact dead heat)".to_string(),
             (_, _) if self.engine.round_complete() => {
                 "All favors placed · awaiting reveal and score".to_string()
             }
@@ -623,7 +628,11 @@ impl Offering for TugOffering {
                 );
             }
             let mut scored = session.engine.clone();
-            let _ = scored.score();
+            // The verdict is the PROVEN Lean's (`rules::adjudicate`); an oracle that cannot answer
+            // refuses the turn rather than reporting a winner nothing decided.
+            if let Err(e) = scored.score() {
+                return Outcome::Refused(format!("the round cannot be adjudicated: {e}"));
+            }
             return match session.runtime.score_projection(&scored.projection()) {
                 Ok(receipt) => {
                     session.engine = scored;

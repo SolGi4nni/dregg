@@ -108,7 +108,11 @@ handled by the "translation-validated" `dregg-schema` allocator (a layout discip
 - **Ceilings, all honestly named in the file:** it is **FORWARD ONLY** (legal ⇒ admitted); the
   reverse (admitted ⇒ legal) is `airPlay`'s membership job, **NAMED**, gated on a carried
   `MerkleSound` hypothesis (`MultiwayTugAir.airPlay_iff_applyAction`). The **win-gate `iff`**
-  (`winTooth_admits_iff_Won_p1/p2`, `:704/:714`) is a genuine non-vacuous soundness bridge but at the
+  (`winTooth_admits_iff_Won_p1/p2`, `:704/:714`; ⚑ **DELETED 2026-07-25** — it certified the gate
+  was the ABSOLUTE bar `Won` while the terminal rule is `roundWinner`, so the referee refused the
+  adjudicated winner and the played game drew 78.5% of rounds; successor is
+  `scoreBranchTeeth_admits_iff_branch`, one deployed case per clause) is a genuine non-vacuous
+  soundness bridge but at the
   **SYMBOLIC** `Constraint.admits` layer — `anyOf` is recursive and is **NOT** in the exported pure
   subset, so the win-gate stays Rust-evaluated (`eval.rs:1377`); win-safety is **PROVEN-TO-MODEL**,
   not to the deployed evaluator.

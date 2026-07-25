@@ -96,8 +96,13 @@ fn rules_html() -> String {
          you and to nobody else.</li>\
          <li><strong>Four actions, once each per round</strong> — Secret, Discard, Gift, \
          Competition — spending 1, 2, 3 and 4 cards. Whoever leads a guild lane takes its weight. \
-         <strong>Win at 11 influence or 4 guilds</strong>, and that threshold is a tooth too: the \
-         executor refuses a claimed win that does not meet it.</li>\
+         <strong>Win at 11 influence or 4 guilds</strong>; short of that the round is still \
+         decided — on total influence, then on lanes held — and only an exact dead heat on both \
+         is a draw. Every one of those clauses is a tooth: the executor refuses a claimed win the \
+         rules do not make.</li>\
+         <li><strong>A Gift or a Competition only PRESENTS favors.</strong> You cut; your opponent \
+         chooses which side they take, and you cannot answer your own cut. Which of your four \
+         actions to spend, in which order, and which cards to put in the cut, are all yours.</li>\
          <li><strong>Then reveal and score.</strong> The Secret is turned face up onto its owner's \
          side before control is counted.</li>\
          </ul>\
@@ -105,11 +110,10 @@ fn rules_html() -> String {
          hidden-hand membership witness land together or not at all, an out-of-order press is \
          REFUSED with nothing committed, and the whole round re-verifies by replaying every \
          accepted input through a fresh executor.</p>\
-         <p class=\"prose\"><strong>Honest about the play:</strong> in this build a seat does not \
-         yet choose which action to take or which cards to spend — the action order is fixed and \
-         the engine picks the cards, so a round is determined by its deal and the presses advance \
-         it. The verification is real; the decisions are not there yet. Play it to watch a \
-         hidden-hand round prove itself, not to outplay anybody.</p>\
+         <p class=\"prose\"><strong>Honest about the play:</strong> a round is one round — there \
+         is no match, no alternating opener, and the seat that answers the last cut has a real \
+         measured edge. The rules themselves are authored in Lean and the winner is decided by \
+         that proof, not by this page.</p>\
          <p class=\"prose\">Mechanics derived from Hanamikoji (Kota Nakayama); this is an original \
          re-theming.</p>\
          </section>"
@@ -159,13 +163,47 @@ mod tests {
         );
     }
 
+    /// ⚑ This test used to PIN THE MARKETING COPY: it asserted the page still contained the
+    /// strings "does not yet choose" and "the engine picks the cards". Those sentences described
+    /// an engine that had already been replaced — a hardcoded action order and a `max_by_key`
+    /// standing in for the opponent — so the test stayed green while the page UNDERSTATED the
+    /// game, and it would have gone red if anyone corrected the page. A test that pins prose
+    /// rather than behaviour is a lock on the documentation, not a check of it.
+    ///
+    /// What it checks now is the property the old test was reaching for — that the copy does not
+    /// promise more than the build has — stated against the CODE rather than against a sentence:
+    /// the seat really does choose (the decision space is bigger than one), and the rules block
+    /// says so.
     #[test]
-    fn the_rules_do_not_claim_decisions_the_engine_actually_makes() {
-        // `Engine::order` is a fixed schedule and `pick_lowest`/`pick_highest` choose the cards,
-        // so copy promising a choice would be false. Pin the disclosure instead.
+    fn the_rules_describe_the_decisions_the_engine_actually_offers() {
         let rules = rules_html();
-        assert!(rules.contains("does not yet choose"), "{rules}");
-        assert!(rules.contains("the engine picks the cards"), "{rules}");
+        // The seat genuinely chooses: a fresh round offers a real decision space, not a schedule.
+        let engine = dregg_multiway_tug::reference::Engine::new(1);
+        let options = engine.legal_decisions();
+        assert!(
+            options.len() > 1,
+            "the engine offers {} decisions — if it is back to a schedule the copy below is a lie",
+            options.len()
+        );
+        assert!(
+            rules.contains(
+                "your opponent \
+         chooses which side they take"
+            ),
+            "the cut/choose step must be disclosed: {rules}"
+        );
+        // The round is DECIDED short of a threshold, and the page must not still claim otherwise.
+        assert!(
+            rules.contains(
+                "the round is still \
+         decided"
+            ),
+            "the adjudication must be disclosed: {rules}"
+        );
+        assert!(
+            !rules.contains("does not yet choose") && !rules.contains("engine picks the cards"),
+            "the page still carries the retired no-decisions disclosure: {rules}"
+        );
         for lie in ["outplay your opponent", "bluff", "read your opponent"] {
             assert!(!rules.contains(lie), "the rules copy promises `{lie}`");
         }

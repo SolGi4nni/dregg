@@ -20,7 +20,7 @@ use dregg_app_framework::{CellId, Effect, TurnReceipt, field_from_u64};
 use spween_dregg::{WorldCell, WorldError};
 
 use crate::reference::{ActionKind, N_GUILDS, Player, Projection};
-use crate::state::{Deployment, GENESIS, SCORE};
+use crate::state::{Deployment, GENESIS};
 
 /// A deployed multiway-tug game on a real world-cell.
 pub struct MultiwayTug {
@@ -121,9 +121,25 @@ impl MultiwayTug {
         self.world.apply_raw(method, self.effects_for(proj))
     }
 
-    /// Commit the scoring turn.
+    /// Commit the scoring turn, **under the deployed method for the clause of `roundWinner` that
+    /// decided the round**.
+    ///
+    /// The clause comes from the Lean oracle (over the committed per-`(seat, row)` tallies the
+    /// projection carries) and the method NAME from the Lean-emitted artifact; this function holds
+    /// no rule. It also refuses locally when the projection's `winner` register disagrees with the
+    /// oracle's — the executor's clause teeth would refuse it anyway, but a caller deserves the
+    /// divergence named rather than a bare `Refused`.
     pub fn commit_score(&self, proj: &Projection) -> Result<TurnReceipt, WorldError> {
-        self.commit_projection(SCORE, proj)
+        let v = crate::rules::adjudicate(&proj.score)
+            .map_err(|e| WorldError::Refused(format!("tug rules oracle unavailable: {e}")))?;
+        if v.winner_code != proj.winner {
+            return Err(WorldError::Refused(format!(
+                "scoring turn claims winner {} but the proven terminal rule adjudicates {} \
+                 (clause {})",
+                proj.winner, v.winner_code, v.branch
+            )));
+        }
+        self.commit_projection(&crate::state::score_method(v.branch), proj)
     }
 
     /// Drive a raw turn (for the illegal-play tests): whatever `effects`, under `method`.

@@ -24,7 +24,10 @@ estimates; this file is the weekend-scale proof-of-pattern for ONE game.
   * `fieldGte` (`round_actions >= 8` scoring gate; the win-gate charm/guild thresholds)
   * `heapField` with atoms `writeOnce`/`monotonic`/`immutable`/`equals`/`deltaEquals`
     (the per-guild `Monotonic` scores, the genesis one-shot sentinel + freeze)
-  * `anyOf` over `fieldEquals`/`fieldGte`/`not` (the `winner==p ⇒ charm>=11 ∨ guilds>=4` tooth)
+  * `anyOf` over `fieldEquals`/`fieldGte`/`not` (the threshold + `winner==w` leaves of the
+    nine scoring clauses; a singleton `anyOf` is how `≤` and `=` are spelled)
+  * `fieldLteOther` (the cross-register `b_charm < a_charm` the terminal rule's tie-breaks need —
+    the ONE deployed comparison that reads two registers)
 
 ## The proof connection (T4 payoff — done vs NAMED, honestly)
 
@@ -65,8 +68,26 @@ agrees with `DeployedConstraint.admits` on the tug pure subset, and
 evaluator itself. So tug's action-teeth admission IS now proven-to-DeployedConstraint (FORWARD:
 legal ⇒ the deployed evaluator admits). What remains NAMED: the REVERSE (admitted ⇒ legal, =
 `airPlay`'s membership job, `§4H`) and the recursive `anyOf` win-teeth (NOT in the exported pure
-subset — the score-case win-gate reaches the referee at the SYMBOLIC layer via
-`winTooth_admits_iff_Won`, `§4F`).
+subset — the score cases' win-gate reaches the referee at the SYMBOLIC layer via
+`scoreBranchTeeth_admits_iff_branch`, `§4F`).
+
+## ⚑ THE SCORING GATE IS THE TERMINAL RULE (2026-07-25)
+
+The score method used to be ONE case whose win-gate was `AnyOf[¬(winner=w), charm≥11, guilds≥4]`,
+and `winTooth_admits_iff_Won` proved that gate IS the model's absolute bar `Won`. But the model's
+terminal rule is `roundWinner`, which ADJUDICATES a round where neither seat clears a bar (§7B of
+`MultiwayTug.lean` — the fix that takes draws from 66.1% to 5.1%). So the deployed referee REFUSED
+the very winner the proven rule names, the adjudication could never reach the played game, and the
+shipped draw rate was MEASURED at 78.5%. The gate was not wrong about `Won`; `Won` was the wrong
+thing for it to be.
+
+It is now one transition case PER CLAUSE of `roundWinner` (`score_charm_a` … `score_draw`), because
+the deployed `SimpleStateConstraint` — what `AnyOf` ranges over — has no register-vs-register
+comparison, so a disjunction over `b_charm < a_charm` cannot be written inside a single case at
+all. `CellProgram::Cases` dispatches on the method, so the disjunction became the method.
+`scoreBranchTeeth_admits_iff_branch` proves each clause's teeth admit exactly when the model selects
+that clause AND the `winner` register carries the seat it names; `winTooth` and
+`winTooth_admits_iff_Won` are DELETED rather than kept beside it.
 -/
 import Dregg2.Games.MultiwayTugAir
 import Dregg2.Exec.DeployedConstraint
@@ -108,6 +129,14 @@ inductive Constraint where
   | fieldGte (reg : String) (value : Nat)
   | heapField (key : HeapKeyRef) (atom : HeapAtom)
   | anyOf (variants : List SimpleConstraint)
+  /-- `new[reg] ≤ new[other] + delta` (signed `delta`) — the deployed
+  `StateConstraint::FieldLteOther`, the ONE cross-register comparison in the deployed alphabet.
+  Tug needs it because `roundWinner` adjudicates on `charmScore p2 < charmScore p1`, which no
+  amount of literal thresholds can express. It is a TOP-LEVEL constraint on purpose: the deployed
+  `SimpleStateConstraint` (what `anyOf` ranges over) has no cross-register variant, so a
+  register-vs-register test can never sit under a disjunction — which is exactly why the score
+  method below splits into one case PER CLAUSE of the terminal rule. -/
+  | fieldLteOther (reg other : String) (delta : Int)
 deriving Repr, DecidableEq
 
 /-- One method-scoped case: the `MethodIs { method }` guard (by name) + its constraints. -/
@@ -262,21 +291,116 @@ model moves BOTH `Won` and this emitted gate. -/
 abbrev winCharmThreshold : Nat := MultiwayTug.charmWinThreshold
 abbrev winGuildThreshold : Nat := MultiwayTug.guildWinThreshold
 
-/-- The `winner == who ⇒ (charm >= 11 OR guilds >= 4)` tooth for one player. -/
-def winTooth (who : Nat) (charmReg guildsReg : String) : Constraint :=
-  Constraint.anyOf
-    [ SimpleConstraint.negate (SimpleConstraint.fieldEquals "winner" who),
-      SimpleConstraint.fieldGte charmReg winCharmThreshold,
-      SimpleConstraint.fieldGte guildsReg winGuildThreshold ]
+/-! ### ⚑ THE ADJUDICATION TEETH — the deployed gate is `roundWinner`, not `Won`
 
-/-- The score method's extra teeth: round complete (`round_actions >= roundTurns = 12` — the
-response turns are real committed turns and scoring waits for them), `winner` write-once, and
-the two per-player win-gates. -/
+**The wound this closes.** The score case used to carry `winTooth 1` and `winTooth 2` and nothing
+else about the winner, and `winTooth_admits_iff_Won` proved that gate IS the predicate `Won`. But
+the terminal rule is `roundWinner`, which ADJUDICATES a round where neither seat cleared a
+threshold (§7B of the model — the fix that takes draws from 66.1% to 5.1%). So the deployed referee
+REFUSED the very `winner` the proven rule names, and the shipped game had to keep answering "no
+winner": the adjudication was Lean-only and the played draw rate stayed at the absolute bar's.
+
+**Why one case cannot express it.** `roundWinner`'s tail compares REGISTER TO REGISTER
+(`b_charm < a_charm`), and the deployed alphabet has such a comparison only at TOP LEVEL
+(`StateConstraint::FieldLteOther`) — `SimpleStateConstraint`, which is what `AnyOf` ranges over,
+has none. Top-level constraints in a case are conjunctive, so a disjunction over cross-register
+tests is not expressible inside a single case at all. It is not a matter of writing it more
+cleverly; the vocabulary forbids it.
+
+**What replaces it.** `CellProgram::Cases` dispatches on the method name and a turn carries exactly
+one method, so the DISJUNCTION becomes the method: each of `roundWinner`'s nine clauses gets its own
+transition case, whose teeth are that clause's guard (the earlier clauses negated, then its own
+test) CONJOINED with the `winner` value that clause names. The clauses partition, so at most one
+case can admit any scored state, and a prover choosing the method chooses nothing — it names the
+clause the executor then checks. The seat is not a free variable either: `winner == w` is a tooth.
+
+The scoring turn is told WHICH clause by the Lean oracle (`MultiwayTugFFI`'s `branch` verb over
+`roundWinnerBranch`), never by re-deciding the precedence in Rust. -/
+
+/-- `new[reg] ≤ v`, spelled as a one-element disjunction of the negated `≥ v+1` — the deployed
+`AnyOf[Not(FieldGte)]`. Using the EXISTING vocabulary rather than adding a `fieldLte` variant:
+the loader, the AIR lowering and the reality-gated evaluator all already carry these two. -/
+def regLte (reg : String) (v : Nat) : Constraint :=
+  Constraint.anyOf [SimpleConstraint.negate (SimpleConstraint.fieldGte reg (v + 1))]
+
+/-- `new[reg] = v`, as a one-element disjunction (the deployed `AnyOf[FieldEquals]`). -/
+def regEquals (reg : String) (v : Nat) : Constraint :=
+  Constraint.anyOf [SimpleConstraint.fieldEquals reg v]
+
+/-- `new[lo] < new[hi]` — `lo ≤ hi - 1` as the deployed signed `FieldLteOther`. -/
+def regLt (lo hi : String) : Constraint := Constraint.fieldLteOther lo hi (-1)
+
+/-- `new[a] = new[b]`, as the two-sided `FieldLteOther` sandwich. -/
+def regEq (a b : String) : List Constraint :=
+  [Constraint.fieldLteOther a b 0, Constraint.fieldLteOther b a 0]
+
+/-- Neither seat cleared the CHARM bar (the guard shared by clauses `2..8`). -/
+def subCharm : List Constraint :=
+  [regLte "a_charm" (winCharmThreshold - 1), regLte "b_charm" (winCharmThreshold - 1)]
+
+/-- Neither seat cleared the ROW bar (the guard shared by clauses `4..8`). -/
+def subRows : List Constraint :=
+  [regLte "a_guilds" (winGuildThreshold - 1), regLte "b_guilds" (winGuildThreshold - 1)]
+
+/-- Neither bar was cleared at all — the sub-threshold region every ADJUDICATED clause lives in. -/
+def subThreshold : List Constraint := subCharm ++ subRows
+
+/-- **`scoreBranchTeeth b` — the win-teeth of clause `b` of `roundWinner`.** Each list is that
+clause's guard (earlier clauses' tests negated, then its own) plus the `winner` value it names.
+Out-of-range indices get an unsatisfiable tooth so the table is total and fail-closed. -/
+def scoreBranchTeeth : Nat → List Constraint
+  -- 0: p1 clears the charm bar.
+  | 0 => [Constraint.fieldGte "a_charm" winCharmThreshold, regEquals "winner" 1]
+  -- 1: p1 did not, p2 did.
+  | 1 => [regLte "a_charm" (winCharmThreshold - 1),
+          Constraint.fieldGte "b_charm" winCharmThreshold, regEquals "winner" 2]
+  -- 2: no charm bar cleared; p1 clears the ROW bar.
+  | 2 => subCharm ++ [Constraint.fieldGte "a_guilds" winGuildThreshold, regEquals "winner" 1]
+  -- 3: no charm bar; p1 did not clear the row bar, p2 did.
+  | 3 => subCharm ++ [regLte "a_guilds" (winGuildThreshold - 1),
+          Constraint.fieldGte "b_guilds" winGuildThreshold, regEquals "winner" 2]
+  -- 4: no bar cleared; p1 leads on CHARM. ⚑ Unreachable under the old gate.
+  | 4 => subThreshold ++ [regLt "b_charm" "a_charm", regEquals "winner" 1]
+  -- 5: no bar cleared; p2 leads on CHARM. ⚑ Unreachable under the old gate.
+  | 5 => subThreshold ++ [regLt "a_charm" "b_charm", regEquals "winner" 2]
+  -- 6: charm TIED; p1 holds more rows. ⚑ Unreachable under the old gate.
+  | 6 => subThreshold ++ regEq "a_charm" "b_charm" ++ [regLt "b_guilds" "a_guilds",
+          regEquals "winner" 1]
+  -- 7: charm TIED; p2 holds more rows. ⚑ Unreachable under the old gate.
+  | 7 => subThreshold ++ regEq "a_charm" "b_charm" ++ [regLt "a_guilds" "b_guilds",
+          regEquals "winner" 2]
+  -- 8: an EXACT dead heat — and only that is a draw (`roundWinner_draw_iff`).
+  | 8 => subThreshold ++ regEq "a_charm" "b_charm" ++ regEq "a_guilds" "b_guilds"
+          ++ [regEquals "winner" 0]
+  | _ => [regEquals "winner" 0, regEquals "winner" 1]
+
+/-- The nine clause indices, in precedence order. -/
+def scoreBranches : List Nat := [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+/-- The method a scoring turn names for clause `b`. The suffix says WHY the seat won, which is
+information the old single `score` method threw away. -/
+def scoreBranchMethod : Nat → String
+  | 0 => "score_charm_a"
+  | 1 => "score_charm_b"
+  | 2 => "score_rows_a"
+  | 3 => "score_rows_b"
+  | 4 => "score_lead_a"
+  | 5 => "score_lead_b"
+  | 6 => "score_rowlead_a"
+  | 7 => "score_rowlead_b"
+  | _ => "score_draw"
+
+/-- The score method's extra teeth, shared by every clause: round complete
+(`round_actions >= roundTurns = 12` — the response turns are real committed turns and scoring waits
+for them) and `winner` write-once. -/
 def scoreExtra : List Constraint :=
   [ Constraint.fieldGte "round_actions" roundTurns,
-    Constraint.writeOnce "winner",
-    winTooth 1 "a_charm" "a_guilds",
-    winTooth 2 "b_charm" "b_guilds" ]
+    Constraint.writeOnce "winner" ]
+
+/-- The teeth of one scoring clause: the shared teeth, the score teeth, the clause's win-gate, and
+`pendingHeld` (you cannot score out from under a live cut). -/
+def scoreCase (b : Nat) : List Constraint :=
+  commonTeeth ++ scoreExtra ++ scoreBranchTeeth b ++ pendingHeld
 
 /-- The one-shot genesis teeth (`genesis_oneshot_teeth()`): the `0 → 1` sentinel transition. -/
 def genesisTeeth : List Constraint :=
@@ -290,21 +414,22 @@ def actionCase (pendingPart : List Constraint) : List Constraint :=
 
 /-- **`multiwayTugProgram` — the DEPLOYED tug play-teeth, authored in Lean.**
 
-EIGHT cases: genesis (one-shot); the two private actions (`secret`/`discard`, which must leave
+SIXTEEN cases: genesis (one-shot); the two private actions (`secret`/`discard`, which must leave
 the table clear); the two OFFERING actions (`gift`/`comp`, which open the pending offer); the two
 RESPONSE methods (`respond_gift`/`respond_comp`, which close it — and which only exist because
-the split is the other seat's to make); and `score` (which refuses to run with an offer
-outstanding, or before all `roundTurns` turns are in). -/
+the split is the other seat's to make); and the NINE scoring clauses (each of which refuses to run
+with an offer outstanding, or before all `roundTurns` turns are in, and each of which admits
+exactly the seat its clause of `roundWinner` names). -/
 def multiwayTugProgram : CellProgram :=
   .cases
-    [ ⟨"genesis",      genesisTeeth⟩,
-      ⟨"secret",       actionCase pendingHeld⟩,
-      ⟨"discard",      actionCase pendingHeld⟩,
-      ⟨"gift",         actionCase (pendingOpen giftCode)⟩,
-      ⟨"comp",         actionCase (pendingOpen compCode)⟩,
-      ⟨"respond_gift", actionCase (pendingClose giftCode)⟩,
-      ⟨"respond_comp", actionCase (pendingClose compCode)⟩,
-      ⟨"score",        commonTeeth ++ scoreExtra ++ pendingHeld⟩ ]
+    ([ ⟨"genesis",      genesisTeeth⟩,
+       ⟨"secret",       actionCase pendingHeld⟩,
+       ⟨"discard",      actionCase pendingHeld⟩,
+       ⟨"gift",         actionCase (pendingOpen giftCode)⟩,
+       ⟨"comp",         actionCase (pendingOpen compCode)⟩,
+       ⟨"respond_gift", actionCase (pendingClose giftCode)⟩,
+       ⟨"respond_comp", actionCase (pendingClose compCode)⟩ ]
+     ++ scoreBranches.map (fun b => ⟨scoreBranchMethod b, scoreCase b⟩))
 
 /-! ## 3. The JSON emit (the `EmitAllJsonV2`-style artifact renderer). -/
 
@@ -337,6 +462,9 @@ def Constraint.toJson : Constraint → String
   | .fieldGte r v      => "{\"kind\":\"fieldGte\",\"reg\":" ++ jStr r ++ ",\"value\":" ++ toString v ++ "}"
   | .heapField k a     => "{\"kind\":\"heapField\",\"key\":" ++ k.toJson ++ ",\"atom\":" ++ a.toJson ++ "}"
   | .anyOf vs          => "{\"kind\":\"anyOf\",\"variants\":" ++ jList (vs.map SimpleConstraint.toJson) ++ "}"
+  | .fieldLteOther r o d =>
+      "{\"kind\":\"fieldLteOther\",\"reg\":" ++ jStr r ++ ",\"other\":" ++ jStr o
+        ++ ",\"delta\":" ++ toString d ++ "}"
 
 def TransitionCase.toJson (c : TransitionCase) : String :=
   "    {\"method\":" ++ jStr c.method ++ ",\"constraints\":["
@@ -350,7 +478,9 @@ stable diffs; the byte string is a deterministic function of `multiwayTugProgram
 def emitJson (p : CellProgram) : String :=
   match p with
   | .cases cs =>
-    "{\n  \"scene\": " ++ jStr sceneId ++ ",\n  \"cases\": [\n"
+    "{\n  \"scene\": " ++ jStr sceneId ++ ",\n  \"score_branches\": "
+      ++ jList (scoreBranches.map (fun b => jStr (scoreBranchMethod b)))
+      ++ ",\n  \"cases\": [\n"
       ++ String.intercalate ",\n" (cs.map TransitionCase.toJson)
       ++ "\n  ]\n}\n"
 
@@ -367,7 +497,7 @@ theorem winGate_thresholds_match_Won :
 
 /-- **`Won_iff_program_thresholds` (the emitted win-gate's LITERAL numbers ARE the model win
 predicate).** `Won` holds IFF a score meets the LITERAL `11`/`4` the emitted win-gate JSON carries
-(`winTooth_shape`: the gate is `AnyOf[¬(winner=who), FieldGte _ 11, FieldGte _ 4]`).
+(`scoreBranchTeeth_threshold_shape`: clause 0 is `FieldGte a_charm 11 ∧ winner = 1`).
 
 ⚑ LARP-audit fix: this is NO LONGER the old `Iff.rfl` self-identity (`Won ↔ Won-unfolded`, which
 survived any value edit because both sides read the same abbrev — the "reds on edit" claim was
@@ -387,14 +517,13 @@ theorem Won_iff_program_thresholds (s : GState) (p : Player) :
       show (4 : ℕ) = winGuildThreshold from winGate_thresholds_match_Won.2.symm]
   exact Iff.rfl
 
-/-- The win-tooth for a player is exactly the `AnyOf[Not(winner=who), charm>=11, guilds>=4]`
-implication `state.rs::win_tooth` builds — pinned so the emit's win leaf is legible. -/
-theorem winTooth_shape (who : Nat) (c g : String) :
-    winTooth who c g =
-      Constraint.anyOf
-        [ SimpleConstraint.negate (SimpleConstraint.fieldEquals "winner" who),
-          SimpleConstraint.fieldGte c 11,
-          SimpleConstraint.fieldGte g 4 ] := rfl
+/-- The two THRESHOLD clauses' teeth carry the model's literal bars (`11` charm, `4` rows) —
+pinned so the emit's win leaves stay legible after the clause split. Editing the model threshold
+moves these AND reds `winGate_thresholds_match_Won`. -/
+theorem scoreBranchTeeth_threshold_shape :
+    scoreBranchTeeth 0 = [Constraint.fieldGte "a_charm" 11, regEquals "winner" 1] ∧
+    scoreBranchTeeth 2
+      = subCharm ++ [Constraint.fieldGte "a_guilds" 4, regEquals "winner" 1] := ⟨rfl, rfl⟩
 
 /-- **`conservation_tooth_covers_totalCards`.** The conservation tooth sums EXACTLY the eight card
 zones the model's `totalCards` conserves — the deployed `SumEquals` reads the same eight
@@ -407,39 +536,65 @@ theorem conservation_tooth_covers_totalCards :
       ["deck", "oop", "a_hand", "b_hand", "a_secret", "b_secret", "a_board", "b_board"] :=
   ⟨rfl, rfl⟩
 
-/-- **`program_has_one_case_per_method`.** The deployed program has exactly the eight method
-cases — genesis + the four action methods + **the two response methods** + score — one per game
-verb, in dispatch order. The two `respond_*` cases are the deployed footprint of the restored
-I-cut-you-choose step; before this change the referee had no case for the other seat's answer
-because there was no such turn. -/
+/-- **`program_has_one_case_per_method`.** The deployed program has exactly the sixteen method
+cases — genesis + the four action methods + **the two response methods** + **the nine scoring
+CLAUSES** — one per game verb, in dispatch order. The two `respond_*` cases are the deployed
+footprint of the restored I-cut-you-choose step; the nine `score_*` cases are the deployed
+footprint of `roundWinner`'s precedence, which the single `score` case could not carry. -/
 theorem program_has_one_case_per_method :
     (match multiwayTugProgram with | .cases cs => cs.map (·.method)) =
       ["genesis", "secret", "discard", "gift", "comp",
-       "respond_gift", "respond_comp", "score"] := rfl
+       "respond_gift", "respond_comp",
+       "score_charm_a", "score_charm_b", "score_rows_a", "score_rows_b",
+       "score_lead_a", "score_lead_b", "score_rowlead_a", "score_rowlead_b",
+       "score_draw"] := rfl
 
-/-- **`score_case_carries_both_win_gates` (win-safety reaches the deployed score method).** The
-score method's teeth include both per-player win-gates AND the round-complete gate at the DERIVED
-`roundTurns` — a false win claim, or a score taken before the round's twelve turns are in, is
-refused by exactly this case. -/
-theorem score_case_carries_both_win_gates :
-    (match multiwayTugProgram with
-     | .cases cs => (cs.filter (·.method == "score")).any
-         (fun c => c.constraints.contains (winTooth 1 "a_charm" "a_guilds")
-                 && c.constraints.contains (winTooth 2 "b_charm" "b_guilds")
-                 && c.constraints.contains (Constraint.fieldGte "round_actions" 12))) = true := by
+/-- **`the old single `score` method is GONE`.** There is no case named `score` any more, so a
+turn submitted under the old method name is DEFAULT-DENIED (`CellProgram::Cases` rejects when no
+case matches). A stale caller fails loud rather than scoring under teeth that no longer exist. -/
+theorem no_bare_score_method :
+    (match multiwayTugProgram with | .cases cs => cs.any (·.method == "score")) = false := by
   decide
 
-/-- **`score_case_refuses_an_open_offer` (you cannot score out from under a live cut).** The score
-case carries `pendingHeld`, so a prover cannot present three favors, skip the opponent's answer,
-and jump straight to scoring — the escrowed cards would never reach anyone's board. -/
-theorem score_case_refuses_an_open_offer :
+/-- **`score_cases_carry_the_round_gate` (win-safety reaches EVERY deployed scoring clause).**
+Every one of the nine clause methods carries `WriteOnce(winner)` AND the round-complete gate at
+the DERIVED `roundTurns` — so a score taken before the round's twelve turns are in is refused
+whichever clause is named, and the winner register can be written only once. -/
+theorem score_cases_carry_the_round_gate :
     (match multiwayTugProgram with
-     | .cases cs => (cs.filter (·.method == "score")).any
+     | .cases cs => (cs.filter (fun c => scoreBranches.any (fun b => scoreBranchMethod b == c.method))).all
+         (fun c => c.constraints.contains (Constraint.fieldGte "round_actions" 12)
+                 && c.constraints.contains (Constraint.writeOnce "winner"))) = true := by
+  decide
+
+/-- **`score_cases_pin_their_winner` (a clause cannot name a seat other than its own).** Every
+clause carries `winner == w` as a TOOTH for exactly the `w` its clause of `roundWinner` names. So
+"which clause" and "who won" cannot come apart at the referee: naming `score_lead_a` and writing
+`winner = 2` is refused by the case's own teeth. -/
+theorem score_cases_pin_their_winner :
+    (scoreBranches.all (fun b =>
+      (scoreBranchTeeth b).contains
+        (regEquals "winner" (match MultiwayTug.branchWinner b with
+          | some .p1 => 1 | some .p2 => 2 | none => 0)))) = true := by
+  decide
+
+/-- **`score_cases_refuse_an_open_offer` (you cannot score out from under a live cut).** EVERY
+scoring clause carries `pendingHeld`, so a prover cannot present three favors, skip the opponent's
+answer, and jump straight to scoring — the escrowed cards would never reach anyone's board. -/
+theorem score_cases_refuse_an_open_offer :
+    (match multiwayTugProgram with
+     | .cases cs => (cs.filter (fun c => scoreBranches.any (fun b => scoreBranchMethod b == c.method))).all
          (fun c => c.constraints.contains
              (Constraint.heapField (.named pendingKindName) (.equals 0))
            && c.constraints.contains
              (Constraint.heapField (.named pendingKindName) (.deltaEquals 0)))) = true := by
   decide
+
+/-- **`score_branch_methods_are_distinct`** — the nine clause methods are nine DIFFERENT names, so
+`CellProgram::Cases` dispatch selects exactly one of them and the clauses cannot silently AND
+together into an unsatisfiable score case. -/
+theorem score_branch_methods_are_distinct :
+    (scoreBranches.map scoreBranchMethod).Nodup := by decide
 
 /-- **`respond_cases_require_their_own_offer` (the interlock is EXACT, not merely present).**
 `respond_gift` carries `equals 0 ∧ deltaEquals (-1)`, which together force `old = 1`; `respond_comp`
@@ -516,6 +671,10 @@ def Constraint.admits : Constraint → Counters → Counters → Bool
   | .fieldGte r v, _old, new     => decide (v ≤ new.reg r)
   | .heapField k a, old, new     => a.admits (old.heap k) (new.heap k)
   | .anyOf vs, _old, new         => vs.any (fun c => c.admits new)
+  -- `new[reg] ≤ new[other] + delta` over ℤ (the deployed lane lifts both slots to `i128` and adds
+  -- the SIGNED delta on the right, so a negative delta tightens the bound without underflow).
+  | .fieldLteOther r o d, _old, new =>
+      decide ((new.reg r : Int) ≤ (new.reg o : Int) + d)
 
 /-- A case admits iff every constraint admits (implicit conjunction, `cell/src/program/eval.rs`). -/
 def TransitionCase.admits (tc : TransitionCase) (old new : Counters) : Bool :=
@@ -580,7 +739,7 @@ def pendingKindOf (s : GState) : Nat :=
 zone (the proposer's hand counter INCLUDING their escrow) / the controlled score / the turn stamp.
 `winner`/`current`/`scored` are not card zones in the pure model (set by the finalization method),
 so they read `0` here; the score-method win-gate is bridged separately
-(`winTooth_admits_iff_Won`). -/
+(`scoreBranchTeeth_admits_iff_branch`). -/
 def absReg (s : GState) (name : String) : Nat :=
   if name = "deck" then (s.deck).card
   else if name = "oop" then (s.removed).card + (s.discardPile .p1).card + (s.discardPile .p2).card
@@ -787,7 +946,7 @@ theorem admitsMethod_action (a : Action) (old new : Counters) :
       = (actionCase (pendingPartOf a)).all (fun k => k.admits old new) := by
   cases a <;>
     simp [multiwayTugProgram, methodOf, pendingPartOf, CellProgram.admitsMethod,
-      List.filter_cons, TransitionCase.admits, reduceBEq]
+      scoreBranches, scoreBranchMethod, TransitionCase.admits]
 
 /-- For a response method, likewise. -/
 theorem admitsMethod_resp (r : Response) (old new : Counters) :
@@ -795,7 +954,7 @@ theorem admitsMethod_resp (r : Response) (old new : Counters) :
       = (actionCase (pendingPartOfResp r)).all (fun k => k.admits old new) := by
   cases r <;>
     simp [multiwayTugProgram, methodOfResp, pendingPartOfResp, CellProgram.admitsMethod,
-      List.filter_cons, TransitionCase.admits, reduceBEq]
+      scoreBranches, scoreBranchMethod, TransitionCase.admits]
 
 /-- **The shared teeth admit any transition that conserves 21, never clears a flag, never lowers
 a score, and leaves the sentinel alone.** Factored so the ACT and RESPOND legs share one proof. -/
@@ -900,7 +1059,7 @@ theorem program_admits_legal_response (o : GState) (p : Player) (r : Response)
         Bool.and_true] <;>
       simp_all [pendingRespCode]
 
-/-! ## 4F. The score method's win-gate IS the model win predicate `Won` (counter-level iff). -/
+/-! ## 4F. The score clauses' win-gate IS the model's terminal rule `roundWinner` (counter iff). -/
 
 /-- The counters at a scored state: registers as `α`, but `winner := who`. -/
 def scoredCounters (s : GState) (who : Nat) : Counters :=
@@ -917,28 +1076,134 @@ def scoredCounters (s : GState) (who : Nat) : Counters :=
 @[simp] theorem scoredCounters_b_guilds (s : GState) (who : Nat) :
     (scoredCounters s who).reg "b_guilds" = geishaScore s .p2 := rfl
 
-/-- **`winTooth_admits_iff_Won` (the deployed win-gate IS `Won`).** Player 1's deployed win-gate
-tooth admits a scored state IFF the win claim is honest: `winner = 1 → Won s p1`. So the emitted
-`AnyOf[¬(winner=1), a_charm≥11, a_guilds≥4]` refuses exactly the false win claims the proven model
-`Won` forbids — the win-safety of `MultiwayTug.lean`, reaching the DEPLOYED referee. -/
-theorem winTooth_admits_iff_Won_p1 (s : GState) (who : Nat) (old : Counters) :
-    (winTooth 1 "a_charm" "a_guilds").admits old (scoredCounters s who) = true
-      ↔ (who = 1 → Won s .p1) := by
-  simp only [winTooth, Constraint.admits, SimpleConstraint.admits, List.any_cons, List.any_nil,
-    scoredCounters_winner, scoredCounters_a_charm, scoredCounters_a_guilds, Bool.or_eq_true,
-    Bool.not_eq_true', decide_eq_false_iff_not, decide_eq_true_eq, Bool.false_eq_true, or_false,
-    Won, MultiwayTug.charmWinThreshold, MultiwayTug.guildWinThreshold]
-  tauto
+/-- The `winner` register value a clause names (`0` is the draw). -/
+def branchWinnerCode (b : Nat) : Nat :=
+  match MultiwayTug.branchWinner b with
+  | some .p1 => 1
+  | some .p2 => 2
+  | none => 0
 
-/-- The symmetric player-2 win-gate iff (same argument on `b_charm`/`b_guilds`, `winner = 2`). -/
-theorem winTooth_admits_iff_Won_p2 (s : GState) (who : Nat) (old : Counters) :
-    (winTooth 2 "b_charm" "b_guilds").admits old (scoredCounters s who) = true
-      ↔ (who = 2 → Won s .p2) := by
-  simp only [winTooth, Constraint.admits, SimpleConstraint.admits, List.any_cons, List.any_nil,
-    scoredCounters_winner, scoredCounters_b_charm, scoredCounters_b_guilds, Bool.or_eq_true,
-    Bool.not_eq_true', decide_eq_false_iff_not, decide_eq_true_eq, Bool.false_eq_true, or_false,
-    Won, MultiwayTug.charmWinThreshold, MultiwayTug.guildWinThreshold]
-  tauto
+/-- Clause `b`'s guard, as plain arithmetic over the four committed tallies. This is the SHARED
+statement the deployed teeth and the model's `roundWinnerBranch` are each proven equal to, which is
+what makes the two agree rather than merely resemble each other. -/
+def branchCond (ca ga cb gb : Nat) : Nat → Prop
+  | 0 => 11 ≤ ca
+  | 1 => ca ≤ 10 ∧ 11 ≤ cb
+  | 2 => ca ≤ 10 ∧ cb ≤ 10 ∧ 4 ≤ ga
+  | 3 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ 4 ≤ gb
+  | 4 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ gb ≤ 3 ∧ cb < ca
+  | 5 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ gb ≤ 3 ∧ ca < cb
+  | 6 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ gb ≤ 3 ∧ ca = cb ∧ gb < ga
+  | 7 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ gb ≤ 3 ∧ ca = cb ∧ ga < gb
+  | 8 => ca ≤ 10 ∧ cb ≤ 10 ∧ ga ≤ 3 ∧ gb ≤ 3 ∧ ca = cb ∧ ga = gb
+  | _ => False
+
+/-- **`roundWinnerBranch_iff_branchCond`** — the model's clause selector IS `branchCond`. -/
+theorem roundWinnerBranch_iff_branchCond (s : GState) (b : Nat) (hb : b < 9) :
+    MultiwayTug.roundWinnerBranch s = b ↔
+      branchCond (charmScore s .p1) (geishaScore s .p1)
+        (charmScore s .p2) (geishaScore s .p2) b := by
+  have hcase : b = 0 ∨ b = 1 ∨ b = 2 ∨ b = 3 ∨ b = 4 ∨ b = 5 ∨ b = 6 ∨ b = 7 ∨ b = 8 := by omega
+  unfold MultiwayTug.roundWinnerBranch
+  simp only [MultiwayTug.charmWinThreshold, MultiwayTug.guildWinThreshold]
+  rcases hcase with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    split_ifs <;> simp only [branchCond, true_iff, false_iff] <;> omega
+
+/-- **`scoreBranchTeeth_admits_iff_branch` — THE DEPLOYED SCORING GATE IS `roundWinner`.**
+
+Clause `b`'s deployed teeth admit a scored state IFF the model's terminal rule selects clause `b`
+at that state AND the `winner` register carries exactly the seat that clause names. Both halves
+matter: `←` is what makes the adjudicated winner COMMITTABLE (the wound — the old single `score`
+case carried only the absolute bar, so `roundWinner`'s tie-breaks were refused by the referee and
+the played game had to keep answering "draw"), and `→` is win-safety (no other seat, and no other
+clause, can be claimed).
+
+This REPLACES `winTooth_admits_iff_Won`, whose statement was true and whose CONSEQUENCE was the
+bug: the deployed gate really was `Won`, and `Won` is not the terminal rule. -/
+theorem scoreBranchTeeth_admits_iff_branch (s : GState) (who b : Nat) (old : Counters)
+    (hb : b < 9) :
+    ((scoreBranchTeeth b).all (fun k => k.admits old (scoredCounters s who))) = true
+      ↔ (MultiwayTug.roundWinnerBranch s = b ∧ who = branchWinnerCode b) := by
+  rw [roundWinnerBranch_iff_branchCond s b hb]
+  have hcase : b = 0 ∨ b = 1 ∨ b = 2 ∨ b = 3 ∨ b = 4 ∨ b = 5 ∨ b = 6 ∨ b = 7 ∨ b = 8 := by omega
+  rcases hcase with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    simp only [scoreBranchTeeth, branchCond, branchWinnerCode, MultiwayTug.branchWinner,
+      subThreshold, subCharm, subRows, regLte, regEquals, regLt, regEq,
+      winCharmThreshold, winGuildThreshold,
+      MultiwayTug.charmWinThreshold, MultiwayTug.guildWinThreshold,
+      List.append_assoc, List.cons_append, List.nil_append, List.all_cons, List.all_nil,
+      Constraint.admits, SimpleConstraint.admits, List.any_cons, List.any_nil,
+      scoredCounters_winner, scoredCounters_a_charm, scoredCounters_a_guilds,
+      scoredCounters_b_charm, scoredCounters_b_guilds,
+      Bool.and_true, Bool.or_false, Bool.and_eq_true, Bool.not_eq_true',
+      decide_eq_false_iff_not, decide_eq_true_eq, Nat.cast_le, Nat.cast_id] <;>
+    omega
+
+/-- **`score_gate_admits_the_adjudicated_winner` (the WOUND, closed, as one statement).** For EVERY
+scored state there IS a deployed clause method that admits the winner `roundWinner` names — so no
+round the proven terminal rule decides is refused by the referee. Under the previous single-`score`
+gate this was FALSE for every sub-threshold round, which is exactly why the shipped game drew. -/
+theorem score_gate_admits_the_adjudicated_winner (s : GState) (old : Counters) :
+    ((scoreBranchTeeth (MultiwayTug.roundWinnerBranch s)).all
+      (fun k => k.admits old
+        (scoredCounters s (branchWinnerCode (MultiwayTug.roundWinnerBranch s))))) = true := by
+  rw [scoreBranchTeeth_admits_iff_branch s _ _ old (MultiwayTug.roundWinnerBranch_lt s)]
+  exact ⟨rfl, rfl⟩
+
+/-- **`score_gate_refuses_any_other_seat` (win-safety, at the clause).** A scored state committed
+under clause `b` with any `winner` other than the seat clause `b` names is REFUSED. -/
+theorem score_gate_refuses_any_other_seat (s : GState) (who b : Nat) (old : Counters)
+    (hb : b < 9) (h : who ≠ branchWinnerCode b) :
+    ((scoreBranchTeeth b).all (fun k => k.admits old (scoredCounters s who))) = false := by
+  by_contra hc
+  rw [Bool.not_eq_false, scoreBranchTeeth_admits_iff_branch s who b old hb] at hc
+  exact h hc.2
+
+/-- **`score_gate_refuses_a_false_clause`** — and naming the WRONG clause is refused too, whatever
+seat is claimed: the clause guards partition the tallies, so only the clause the model selects can
+admit. Together with the previous theorem, a scoring turn can commit exactly one `(clause, seat)`
+pair and it is the model's. -/
+theorem score_gate_refuses_a_false_clause (s : GState) (who b : Nat) (old : Counters)
+    (hb : b < 9) (h : MultiwayTug.roundWinnerBranch s ≠ b) :
+    ((scoreBranchTeeth b).all (fun k => k.admits old (scoredCounters s who))) = false := by
+  by_contra hc
+  rw [Bool.not_eq_false, scoreBranchTeeth_admits_iff_branch s who b old hb] at hc
+  exact h hc.1
+
+/-- **`adjudicated_beats_Won` (the DIRECTION of the repair, witnessed at the referee).** At
+`undecidedState` — p1 on 9 charm / 2 rows, p2 on 3 charm / 1 row — NEITHER seat is `Won`, so the
+OLD deployed gate `AnyOf[¬(winner=w), charm≥11, guilds≥4]` admitted only `winner = 0` and the round
+had to be recorded as a draw. The new clause gate admits `winner = 1` under `score_lead_a`, and
+REFUSES the draw. This is the 78.5%-vs-5.1% divergence, at the deployed referee rather than in a
+Rust function. -/
+theorem adjudicated_beats_Won (old : Counters) :
+    (¬ Won MultiwayTug.undecidedState .p1 ∧ ¬ Won MultiwayTug.undecidedState .p2)
+    ∧ MultiwayTug.roundWinnerBranch MultiwayTug.undecidedState = 4
+    ∧ scoreBranchMethod 4 = "score_lead_a"
+    ∧ ((scoreBranchTeeth 4).all
+        (fun k => k.admits old (scoredCounters MultiwayTug.undecidedState 1))) = true
+    ∧ ((scoreBranchTeeth 8).all
+        (fun k => k.admits old (scoredCounters MultiwayTug.undecidedState 0))) = false := by
+  have hc1 : charmScore MultiwayTug.undecidedState .p1 = 9 := by
+    have h : controlledBy MultiwayTug.undecidedState .p1 = {5, 6} := by decide
+    simp only [charmScore, h]; decide
+  have hc2 : charmScore MultiwayTug.undecidedState .p2 = 3 := by
+    have h : controlledBy MultiwayTug.undecidedState .p2 = {3} := by decide
+    simp only [charmScore, h]; decide
+  have hg1 : geishaScore MultiwayTug.undecidedState .p1 = 2 := by
+    have h : controlledBy MultiwayTug.undecidedState .p1 = {5, 6} := by decide
+    simp only [geishaScore, h]; decide
+  have hg2 : geishaScore MultiwayTug.undecidedState .p2 = 1 := by
+    have h : controlledBy MultiwayTug.undecidedState .p2 = {3} := by decide
+    simp only [geishaScore, h]; decide
+  have hbr : MultiwayTug.roundWinnerBranch MultiwayTug.undecidedState = 4 := by
+    rw [roundWinnerBranch_iff_branchCond _ 4 (by omega)]
+    simp only [branchCond, hc1, hc2, hg1, hg2]
+    omega
+  refine ⟨⟨MultiwayTug.undecidedState_not_Won .p1, MultiwayTug.undecidedState_not_Won .p2⟩,
+    hbr, rfl, ?_, ?_⟩
+  · rw [scoreBranchTeeth_admits_iff_branch _ 1 4 old (by omega)]; exact ⟨hbr, rfl⟩
+  · exact score_gate_refuses_a_false_clause _ 0 8 old (by omega) (by omega)
 
 /-! ## 4G. The genesis one-shot (the Lean twin of the deployed genesis-restaple canary). -/
 
@@ -998,7 +1263,8 @@ deployed node routes through — on the tug action-teeth subset. The forward ref
 SCOPE (honest): the DEPLOYED PURE subset covers `sumEquals`/`writeOnce`/`strictMonotonic`/`fieldGte`
 /`heapField`-atoms — every action-case tooth. The score case's `anyOf` win-teeth are RECURSIVE and
 stay Rust-evaluated (NOT in the exported pure subset) — the named non-pure boundary; the win-gate's
-soundness reaches the referee via `winTooth_admits_iff_Won` at the SYMBOLIC layer (`§4F`). This is
+soundness reaches the referee via `scoreBranchTeeth_admits_iff_branch` at the SYMBOLIC layer
+(`§4F`). This is
 the FORWARD direction (legal ⇒ admitted); the reverse (admitted ⇒ legal) is `airPlay`'s membership
 job (NAMED, `§4H`), not claimed here. -/
 section DeployedRefinement
@@ -1125,6 +1391,7 @@ def Constraint.toDC : Constraint → DConstraint
   | .fieldGte r v => .fieldGte (tugRegIdx r) v
   | .heapField _ atom => .heapField atom.toDHeap
   | .anyOf _ => .fieldEquals 15 0
+  | .fieldLteOther r o d => .fieldLteOther (tugRegIdx r) (tugRegIdx o) d
 
 /-- The conservation-tooth forward bridge: with the eight zones summing to 21, the deployed
 `SumEquals` evaluator admits (`.ok`). Per-term smallness follows from the sum (each zone ≤ 21 <
@@ -1272,8 +1539,13 @@ end DeployedRefinement
 
 /-! ## 5. `#guard` smoke — the emit runs and is well-formed. -/
 
--- The program is the 6-case shape.
-#guard (match multiwayTugProgram with | .cases cs => cs.length) = 8
+-- The program is genesis + 4 actions + 2 responses + the NINE scoring clauses.
+#guard (match multiwayTugProgram with | .cases cs => cs.length) = 16
+-- Every clause of the terminal rule has a deployed case, and no case is named `score` any more.
+#guard scoreBranches.length = 9
+#guard (match multiwayTugProgram with
+        | .cases cs => scoreBranches.all (fun b => cs.any (·.method == scoreBranchMethod b)))
+#guard (match multiwayTugProgram with | .cases cs => cs.any (·.method == "score")) = false
 -- The genesis case carries exactly the two one-shot sentinel teeth.
 #guard (match multiwayTugProgram with
         | .cases (c :: _) => c.constraints.length
@@ -1285,10 +1557,13 @@ end DeployedRefinement
 
 #assert_axioms winGate_thresholds_match_Won
 #assert_axioms Won_iff_program_thresholds
-#assert_axioms winTooth_shape
+#assert_axioms scoreBranchTeeth_threshold_shape
 #assert_axioms conservation_tooth_covers_totalCards
 #assert_axioms program_has_one_case_per_method
-#assert_axioms score_case_carries_both_win_gates
+#assert_axioms score_cases_carry_the_round_gate
+#assert_axioms score_cases_pin_their_winner
+#assert_axioms score_branch_methods_are_distinct
+#assert_axioms no_bare_score_method
 -- The un-mirror (generated names / derived value) and the closed refinement, all kernel-clean.
 #assert_axioms flagNames_literal
 #assert_axioms scoreNames_literal
@@ -1306,15 +1581,19 @@ end DeployedRefinement
 #assert_axioms admitsMethod_resp
 #assert_axioms escrow_split
 #assert_axioms roundTurns_eq
-#assert_axioms score_case_refuses_an_open_offer
+#assert_axioms score_cases_refuse_an_open_offer
 #assert_axioms respond_cases_require_their_own_offer
 #assert_axioms pendingKind_before
 #assert_axioms pendingKind_after
 #assert_axioms pendingKind_after_resp
 #assert_axioms flag_writeOnce_admits_resp
 #assert_axioms score_monotonic_admits_resp
-#assert_axioms winTooth_admits_iff_Won_p1
-#assert_axioms winTooth_admits_iff_Won_p2
+#assert_axioms roundWinnerBranch_iff_branchCond
+#assert_axioms scoreBranchTeeth_admits_iff_branch
+#assert_axioms score_gate_admits_the_adjudicated_winner
+#assert_axioms score_gate_refuses_any_other_seat
+#assert_axioms score_gate_refuses_a_false_clause
+#assert_axioms adjudicated_beats_Won
 #assert_axioms genesis_admits_first
 #assert_axioms genesis_restaple_refused
 #assert_axioms play_admitted_by_both

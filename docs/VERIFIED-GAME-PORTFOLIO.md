@@ -13,8 +13,15 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
    the LEAN** — `@[export] dregg_automatafl_rules` over `Dregg2.Games.AutomataflRules`, called from
    `dregg-automatafl/src/rules.rs`; the vendored Rust oracle `src/reference.rs` is DELETED (2026-07-25)
    because the conformance audit found the transcribed lineage divergent from the ruleset, including
-   three divergences that destroy material. For multiway-tug it is still a vendored Rust engine
-   (`dregg-multiway-tug/src/reference.rs`) — the same wound, not yet closed.
+   three divergences that destroy material. For **multiway-tug the TERMINAL rule is now the LEAN
+   too** — `@[export] dregg_multiway_tug_rules` over `Dregg2.Games.MultiwayTug`, called from
+   `dregg-multiway-tug/src/rules.rs`; the Rust `winner_of` is DELETED (2026-07-25) because it was
+   `roundWinner` truncated to its two absolute-threshold branches and therefore drew **78.5%** of
+   played rounds against the model's 5.1%. ⚠ The wound is only PARTLY closed: `reference.rs` still
+   decides action legality and the transition itself (`legal_decisions`, `apply`, `apply_action`,
+   `apply_response`) in Rust. The FFI verbs for those exist (`legal`, `legalresp`, `kinds`, `act`,
+   `respond`); routing them is blocked on per-call FFI cost inside the agents' search, which wants a
+   batched verb rather than a bigger encoder.
 2. The STATE: simple scalars as dregg-schema register components; the board/deck/hand as a heap
    COLLECTION (the 16-register model doesn't hold a 121-cell board or a 21-card deck).
 3. The SIMPLE teeth lower via game-turn-slice's compiler (validity, counts, win-thresholds,

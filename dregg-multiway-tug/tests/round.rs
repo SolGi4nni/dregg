@@ -19,9 +19,9 @@
 use dregg_multiway_tug::game::MultiwayTug;
 use dregg_multiway_tug::reference::{
     ActionKind, Decision, Engine, INFLUENCE, OfferShape, PendingOffer, Player, ResolvedMove,
-    greedy_policy, winner_of,
+    greedy_policy,
 };
-use dregg_multiway_tug::state::SCORE;
+use dregg_multiway_tug::rules;
 
 /// Deploy + seed a game from `seed`, returning the driver and the reference engine.
 fn fresh(seed: u8) -> (MultiwayTug, Engine) {
@@ -67,7 +67,7 @@ fn drive_full_round(seed: u8) -> (MultiwayTug, Engine, Vec<ResolvedMove>) {
         let d = greedy_policy(&eng);
         moves.push(commit(&game, &mut eng, d));
     }
-    let _ = eng.score();
+    eng.score().expect("the Lean oracle adjudicates the round");
     let scored = eng.projection();
     game.commit_score(&scored).expect("scoring commits");
     assert_eq!(
@@ -117,9 +117,11 @@ fn full_round_plays_and_matches_reference() {
     let proj = eng.projection();
     assert_eq!(proj.scored, 1);
     assert_eq!(game.read_reg("scored"), 1);
-    let expected = winner_of(proj.charm, proj.guilds_controlled)
-        .map(|p| p as u64 + 1)
-        .unwrap_or(0);
+    // ⚑ The expected winner is the PROVEN Lean's, asked independently of the engine. There is no
+    // Rust rule left to compare against: `winner_of` is deleted.
+    let expected = rules::adjudicate(&proj.score)
+        .expect("the oracle answers")
+        .winner_code;
     assert_eq!(proj.winner, expected);
     assert_eq!(game.read_reg("winner"), expected);
 }
@@ -334,13 +336,14 @@ fn a_standing_offer_must_be_answered_before_play_continues() {
 
 #[test]
 fn win_fires_at_threshold_and_matches_reference() {
-    // Find a seed the greedy agent resolves to a real winner (>= 11 influence OR >= 4 guilds).
+    // Find a seed the greedy agent resolves to a real THRESHOLD winner (>= 11 influence OR >= 4
+    // guilds) — clause 0..3 of the terminal rule, the region the old gate could express.
     let seed = (0u8..=255)
         .find(|&s| {
             let (mut e, _) = dregg_multiway_tug::reference::play_round(s as u64);
-            e.score().is_some()
+            e.score().expect("oracle").is_some() && e.win_branch() <= 3
         })
-        .expect("some seed yields a winner");
+        .expect("some seed yields a threshold winner");
     let (game, eng, _) = drive_full_round(seed);
     let proj = eng.projection();
     assert_ne!(proj.winner, 0, "a winner fired");
@@ -356,47 +359,113 @@ fn win_fires_at_threshold_and_matches_reference() {
     );
 }
 
+/// ⚑ **THE FALSIFIER FOR THE WHOLE LANE, AT THE EXECUTOR.** A round where NEITHER seat cleared a
+/// threshold used to be uncommittable as a win: the single `score` case's gate was
+/// `AnyOf[not(winner==p), charm>=11, guilds>=4]`, and Lean's own `winTooth_admits_iff_Won` proved
+/// that gate IS the predicate `Won`. So the adjudicated winner the proven `roundWinner` names was
+/// refused BY THE DEPLOYED REFEREE, and the played game had to answer "draw" — 78.5% of the time.
+///
+/// This drives such a round on the real executor and requires the win to LAND, under the clause
+/// method (`score_lead_*` / `score_rowlead_*`) the oracle named. If the teeth ever regress to the
+/// absolute bar, this test goes red rather than the draw rate silently returning.
 #[test]
-fn false_win_claim_is_refused() {
-    // Find a seed + a player who meets NEITHER win threshold, and forge them as winner.
-    let mut chosen: Option<(u8, u64)> = None;
-    for s in 0u8..=255 {
-        let (mut e, _) = dregg_multiway_tug::reference::play_round(s as u64);
-        let _ = e.score();
-        let p = e.projection();
-        for who in 0..2usize {
-            if p.charm[who] < 11 && p.guilds_controlled[who] < 4 {
-                chosen = Some((s, who as u64 + 1));
-                break;
-            }
-        }
-        if chosen.is_some() {
-            break;
-        }
-    }
-    let (seed, forged_winner) = chosen.expect("a player failing both thresholds exists");
+fn an_adjudicated_sub_threshold_win_commits_on_the_executor() {
+    let seed = (0u8..=255)
+        .find(|&s| {
+            let (mut e, _) = dregg_multiway_tug::reference::play_round(s as u64);
+            let w = e.score().expect("oracle");
+            // A tie-break clause (4..7): a real winner that cleared NO absolute bar.
+            w.is_some() && e.win_branch() >= 4
+        })
+        .expect("some seed is decided by a tie-break clause, not a threshold");
 
-    // Drive the round to completion WITHOUT the score turn.
-    let (game, mut eng) = fresh(seed);
+    let (game, eng, _) = drive_full_round(seed);
+    let proj = eng.projection();
+    let who = (proj.winner - 1) as usize;
+    assert_ne!(proj.winner, 0, "the round has an adjudicated winner");
+    assert!(
+        proj.charm[who] < 11 && proj.guilds_controlled[who] < 4,
+        "the winner cleared NEITHER absolute bar (charm {} rows {}) — this is exactly the round \
+         the old gate refused",
+        proj.charm[who],
+        proj.guilds_controlled[who]
+    );
+    assert_eq!(
+        game.read_reg("winner"),
+        proj.winner,
+        "the EXECUTOR committed the adjudicated winner"
+    );
+    assert!(
+        eng.win_branch() >= 4 && eng.win_branch() <= 7,
+        "decided by a tie-break clause, got {}",
+        eng.win_branch()
+    );
+}
+
+/// The old `score` method is GONE from the emitted program, so a stale caller that still names it
+/// is DEFAULT-DENIED (`Cases` rejects when no case matches) rather than scoring under teeth that
+/// no longer exist. This is the atomicity tooth: artifact and caller move together or nothing
+/// commits.
+#[test]
+fn the_old_bare_score_method_is_default_denied() {
+    let (game, mut eng) = fresh(7);
     while !eng.round_complete() {
         let d = greedy_policy(&eng);
         commit(&game, &mut eng, d);
     }
-    let honest = {
-        let _ = eng.score();
-        eng.projection()
-    };
-    // Forge: claim `forged_winner` won though they met no threshold.
+    eng.score().expect("oracle");
+    let honest = eng.projection();
+    let err = game
+        .commit_projection("score", &honest)
+        .expect_err("the retired `score` method no longer matches any case");
+    assert!(
+        format!("{err}").to_lowercase().contains("refus")
+            || format!("{err}").to_lowercase().contains("case"),
+        "refusal cites method dispatch: {err}"
+    );
+    // And the round DOES score under the clause method (non-vacuous).
+    game.commit_score(&honest).expect("clause scoring commits");
+    assert_eq!(game.read_reg("winner"), honest.winner);
+}
+
+/// A win claim the terminal rule does NOT make is refused by the deployed clause teeth. The claim
+/// is forged under the clause the ORACLE named (so method dispatch cannot be what refuses it) —
+/// the `winner == w` tooth of that clause is what bites. Win-safety survived the gate change.
+#[test]
+fn false_win_claim_is_refused() {
+    // Drive the round to completion WITHOUT the score turn.
+    let (game, mut eng) = fresh(11);
+    while !eng.round_complete() {
+        let d = greedy_policy(&eng);
+        commit(&game, &mut eng, d);
+    }
+    eng.score().expect("oracle");
+    let honest = eng.projection();
+    let branch = eng.win_branch();
+    let method = dregg_multiway_tug::state::score_method(branch);
+
+    // Forge: claim a DIFFERENT seat won, under the very clause the model selected.
+    let forged_winner = if honest.winner == 1 { 2 } else { 1 };
     let mut forged = honest.clone();
     forged.winner = forged_winner;
     let err = game
-        .commit_projection(SCORE, &forged)
-        .expect_err("a false win claim is refused");
+        .commit_projection(&method, &forged)
+        .expect_err("a false win claim is refused by the clause's own winner tooth");
     assert!(
         format!("{err}").to_lowercase().contains("refus")
             || format!("{err}").to_lowercase().contains("any"),
-        "refusal cites the win implication: {err}"
+        "refusal cites the clause win tooth: {err}"
     );
+
+    // And naming a DIFFERENT clause for the honest winner is refused too (the clause guards
+    // partition, so only the model's clause can admit).
+    let other = if branch == 0 { 1 } else { 0 };
+    let wrong_clause = dregg_multiway_tug::state::score_method(other);
+    let err2 = game
+        .commit_projection(&wrong_clause, &honest)
+        .expect_err("naming the wrong clause is refused");
+    assert!(!format!("{err2}").is_empty());
+
     // The HONEST scoring commits (non-vacuous).
     game.commit_score(&honest).expect("honest scoring commits");
     assert_eq!(game.read_reg("winner"), honest.winner);

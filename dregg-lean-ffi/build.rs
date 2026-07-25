@@ -185,11 +185,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
     ),
     (
         "dregg_multiway_tug_rules",
-        "the multiway-tug RULES ORACLE compiles out: action/response legality, the escrow split, \
-         row control, the tallies and the ADJUDICATED round winner have no proven answer source, \
-         so `dregg-multiway-tug` falls back on `reference.rs` — whose `winner_of` is the model's \
-         `roundWinner` TRUNCATED to its two threshold branches, i.e. it answers 'no winner' on \
-         every sub-threshold round the model adjudicates (`undecidedState_adjudicates`)",
+        "the multiway-tug RULES ORACLE compiles out: row control, the tallies, the ADJUDICATED \
+         round winner and the CLAUSE of the terminal rule that named it have no answer source at \
+         all, so `dregg-multiway-tug` cannot score a round — `Engine::score` returns `Err` and the \
+         surface refuses the turn. There is NO Rust twin left to fall back to: `winner_of` was the \
+         model's `roundWinner` truncated to its two threshold branches (it answered 'no winner' on \
+         every sub-threshold round the model adjudicates, `undecidedState_adjudicates`, for a \
+         MEASURED 78.5% played draw rate against 5.1%) and it is DELETED",
     ),
     (
         "dregg_deleg_admit",
@@ -2876,12 +2878,14 @@ fn main() {
     // verb reads `MultiwayTug.charm`, and every `#guard` witness state reads `blankState` — nullary
     // defs the generated C compiles to module globals that only the module initializer fills.
     //
-    // ⚑ WHY THE ABSENT ARM IS A REAL DEGRADE, NOT A QUIETER ANSWER. The twin this replaces —
-    // `dregg-multiway-tug/src/reference.rs` — is a SPEC-twin (the twin-deletion sweep hunted AIR
-    // twins, so it was filed "not a twin" and survived), and it had already DRIFTED: `winner_of` is
-    // `roundWinner` truncated to its two absolute-threshold branches, with no charm tie-break and no
-    // row tie-break. On every round where neither seat clears the bar it answers "no winner" where
-    // the model ADJUDICATES a seat — the §7B fix that took the draw rate from 66.1% to 5.1%.
+    // ⚑ WHY THE ABSENT ARM IS A HARD REFUSAL, NOT A QUIETER ANSWER. The twin this replaced —
+    // `dregg-multiway-tug/src/reference.rs::winner_of` — was a SPEC-twin (the twin-deletion sweep
+    // hunted AIR twins, so it was filed "not a twin" and survived), and it had already DRIFTED:
+    // `winner_of` was `roundWinner` truncated to its two absolute-threshold branches, with no charm
+    // tie-break and no row tie-break. On every round where neither seat cleared the bar it answered
+    // "no winner" where the model ADJUDICATES a seat — a MEASURED 78.5% played draw rate against
+    // the model's 5.1%. It is DELETED, with no fallback of any kind, so an absent export now means
+    // the game cannot score at all rather than scoring wrongly and quietly.
     let multiway_tug_rules_present = archive_exports(&build_archive, "dregg_multiway_tug_rules");
     if multiway_tug_rules_present {
         println!("cargo:rustc-cfg=dregg_multiway_tug_rules_present");

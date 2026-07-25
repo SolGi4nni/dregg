@@ -392,7 +392,7 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     // telegram/wechat/discord byte-peers) claims seats for the first two identities that act.
     host.register(
         "tug",
-        "Multiway-Tug — a hidden-hand tug of influence (seven guilds · eight actions)",
+        "Multiway-Tug — a hidden-hand tug of influence (seven guilds · you cut, they choose)",
         seated::SeatedTug::new(),
     );
     host.register(

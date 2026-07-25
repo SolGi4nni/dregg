@@ -774,6 +774,84 @@ def roundWinner (s : GState) : Option Player :=
   else if geishaScore s .p1 < geishaScore s .p2 then some .p2
   else none
 
+/-! ### The CLAUSE that decided the round
+
+`roundWinner` is a PRECEDENCE, and which of its nine clauses fired is itself a fact about the
+round — "p1 won on charm" and "p1 won because p2 held fewer rows at equal charm" are different
+outcomes even though both name p1. `roundWinnerBranch` names the clause; `branchWinner` reads the
+seat back off it, and `roundWinner_eq_branchWinner` proves the two carry exactly the same content.
+
+This matters DOWNSTREAM rather than here: the deployed teeth (`MultiwayTugProgram`) cannot express
+a disjunction of cross-register comparisons inside one case, so each clause becomes its own
+transition case and the CLAUSE is what a scoring turn names. A caller therefore has to be told
+which clause fired — and it is told by this function through the oracle, not by re-deciding the
+precedence in its own language. -/
+
+/-- The clause of `roundWinner` that decides `s`, `0..8` in precedence order: charm-threshold p1,
+charm-threshold p2, row-threshold p1, row-threshold p2, charm-lead p1, charm-lead p2, row-lead p1,
+row-lead p2, dead heat. -/
+def roundWinnerBranch (s : GState) : Nat :=
+  if charmWinThreshold ≤ charmScore s .p1 then 0
+  else if charmWinThreshold ≤ charmScore s .p2 then 1
+  else if guildWinThreshold ≤ geishaScore s .p1 then 2
+  else if guildWinThreshold ≤ geishaScore s .p2 then 3
+  else if charmScore s .p2 < charmScore s .p1 then 4
+  else if charmScore s .p1 < charmScore s .p2 then 5
+  else if geishaScore s .p2 < geishaScore s .p1 then 6
+  else if geishaScore s .p1 < geishaScore s .p2 then 7
+  else 8
+
+/-- The seat a clause names (`8`, and every out-of-range index, is the draw). -/
+def branchWinner : Nat → Option Player
+  | 0 => some .p1
+  | 1 => some .p2
+  | 2 => some .p1
+  | 3 => some .p2
+  | 4 => some .p1
+  | 5 => some .p2
+  | 6 => some .p1
+  | 7 => some .p2
+  | _ => none
+
+/-- **`roundWinner_eq_branchWinner`** — the clause index loses nothing: reading the seat off the
+clause is the terminal rule. So a caller told only the CLAUSE knows the winner. -/
+theorem roundWinner_eq_branchWinner (s : GState) :
+    roundWinner s = branchWinner (roundWinnerBranch s) := by
+  unfold roundWinner roundWinnerBranch
+  split_ifs <;> rfl
+
+/-- The clause index is in range. -/
+theorem roundWinnerBranch_lt (s : GState) : roundWinnerBranch s < 9 := by
+  unfold roundWinnerBranch
+  split_ifs <;> omega
+
+/-- **`terminal_rule_reads_only_the_tallies`** — every terminal quantity (`control`, both scores,
+`Won`, `roundWinner` and its clause) is a function of the per-`(seat, row)` tallies ALONE. The deck,
+the hands, the discards, the removed favor and the turn stamp are irrelevant to it.
+
+This is what makes a caller's wire encoding faithful WITHOUT it having to reconstruct zones it does
+not track: a caller that reports the true `geishaCount` of every `(seat, row)` gets the true
+adjudication, whatever it writes in the other zones. It is stated as a theorem rather than left as
+an assumption in a comment because it is exactly the assumption the FFI caller relies on. -/
+theorem terminal_rule_reads_only_the_tallies (s t : GState)
+    (h : ∀ p g, geishaCount s p g = geishaCount t p g) :
+    (∀ g, control s g = control t g)
+    ∧ (∀ p, charmScore s p = charmScore t p)
+    ∧ (∀ p, geishaScore s p = geishaScore t p)
+    ∧ roundWinner s = roundWinner t
+    ∧ roundWinnerBranch s = roundWinnerBranch t := by
+  have hctl : ∀ g, control s g = control t g := by
+    intro g; simp only [control, h]
+  have hby : ∀ p, controlledBy s p = controlledBy t p := by
+    intro p; simp only [controlledBy, hctl]
+  have hc : ∀ p, charmScore s p = charmScore t p := by
+    intro p; simp only [charmScore, hby]
+  have hg : ∀ p, geishaScore s p = geishaScore t p := by
+    intro p; simp only [geishaScore, hby]
+  refine ⟨hctl, hc, hg, ?_, ?_⟩
+  · simp only [roundWinner, hc, hg]
+  · simp only [roundWinnerBranch, hc, hg]
+
 /-- **`roundWinner_extends_Won` (the fix is CONSERVATIVE).** -/
 theorem roundWinner_extends_Won (s : GState) (p : Player) (h : Won s p) (h' : ¬ Won s p.other) :
     roundWinner s = some p := by
@@ -1148,6 +1226,9 @@ def demo : GState :=
 #assert_axioms roundWinner_extends_Won
 #assert_axioms roundWinner_sound
 #assert_axioms roundWinner_draw_iff
+#assert_axioms roundWinner_eq_branchWinner
+#assert_axioms roundWinnerBranch_lt
+#assert_axioms terminal_rule_reads_only_the_tallies
 #assert_axioms undecidedState_not_Won
 #assert_axioms undecidedState_adjudicates
 #assert_axioms winState_roundWinner

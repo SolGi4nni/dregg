@@ -78,7 +78,7 @@ use dregg_turn::action::{Action, WitnessBlob, WitnessKind};
 use spween_dregg::{CompiledStory, GENESIS_DONE_EXT_KEY, WorldError};
 
 use crate::reference::{ActionKind, N_GUILDS, Player, Projection};
-use crate::state::{Deployment as GameDeployment, SCENE_ID as GAME_SCENE_ID, SCORE as GAME_SCORE};
+use crate::state::{Deployment as GameDeployment, SCENE_ID as GAME_SCENE_ID};
 
 pub use crate::reference::deck_guild;
 
@@ -1386,9 +1386,22 @@ impl HiddenHandLedger {
         let mut state = self.state;
         state.generation += 1;
         state.phase = PHASE_SCORE;
+        // ⚑ The GAME cell's scoring turn commits under the deployed method for the CLAUSE of
+        // `roundWinner` that decided the round — the clause named by the proven Lean oracle, the
+        // name read out of the Lean-emitted artifact. There is no bare `score` method any more:
+        // the single-case gate carried only the absolute bar and refused every adjudicated winner.
+        let verdict = crate::rules::adjudicate(&projection.score)
+            .map_err(|e| WorldError::Refused(format!("tug rules oracle unavailable: {e}")))?;
+        if verdict.winner_code != projection.winner {
+            return Err(WorldError::Refused(format!(
+                "scoring turn claims winner {} but the proven terminal rule adjudicates {} \
+                 (clause {})",
+                projection.winner, verdict.winner_code, verdict.branch
+            )));
+        }
         let game = self.action(
             self.game_cell,
-            GAME_SCORE,
+            &crate::state::score_method(verdict.branch),
             self.game_effects(projection),
             Vec::new(),
         );

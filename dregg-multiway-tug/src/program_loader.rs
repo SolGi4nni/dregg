@@ -12,7 +12,8 @@
 //!
 //! **What is Lean-sourced vs Rust-resolved.** The teeth STRUCTURE — which methods, which
 //! constraints, the conservation sum, the `WriteOnce`/`Monotonic`/`StrictMonotonic` atoms, and
-//! the win-gate thresholds (`charm >= 11`, `guilds >= 4`, `round_actions >= 12`) — is entirely
+//! the NINE scoring clauses with their thresholds, cross-register tie-breaks and pinned `winner`
+//! values (`charm >= 11`, `guilds >= 4`, `b_charm < a_charm`, `round_actions >= 12`) — is entirely
 //! the artifact's content. Rust only maps a symbolic NAME to its allocator-assigned index
 //! (`reg`/`key`) and a method NAME to its `symbol()` hash. The allocator is itself
 //! translation-validated (the RotatedLayout Legal discipline), so the name→index binding is not
@@ -35,6 +36,11 @@ pub const PROGRAM_JSON: &str = include_str!("../program/multiway_tug_program.jso
 #[derive(Debug, Deserialize)]
 struct SymProgram {
     scene: String,
+    /// ⚑ The nine scoring-clause METHOD NAMES, in `roundWinner` precedence order, emitted by Lean
+    /// (`MultiwayTugProgram.scoreBranchMethod` over `scoreBranches`). A scoring turn commits under
+    /// `score_branches[branch]` where `branch` is the clause the Lean oracle named — so Rust never
+    /// holds a branch→method table of its own and cannot drift from the emitted cases.
+    score_branches: Vec<String>,
     cases: Vec<SymCase>,
 }
 
@@ -48,12 +54,35 @@ struct SymCase {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum SymConstraint {
-    SumEquals { regs: Vec<String>, value: u64 },
-    WriteOnce { reg: String },
-    StrictMonotonic { reg: String },
-    FieldGte { reg: String, value: u64 },
-    HeapField { key: SymKey, atom: SymAtom },
-    AnyOf { variants: Vec<SymSimple> },
+    SumEquals {
+        regs: Vec<String>,
+        value: u64,
+    },
+    WriteOnce {
+        reg: String,
+    },
+    StrictMonotonic {
+        reg: String,
+    },
+    FieldGte {
+        reg: String,
+        value: u64,
+    },
+    HeapField {
+        key: SymKey,
+        atom: SymAtom,
+    },
+    AnyOf {
+        variants: Vec<SymSimple>,
+    },
+    /// `new[reg] <= new[other] + delta` (signed) — the deployed cross-register comparison
+    /// (`StateConstraint::FieldLteOther`). The scoring clauses need it: `roundWinner` adjudicates
+    /// on `b_charm < a_charm`, which no literal threshold can express.
+    FieldLteOther {
+        reg: String,
+        other: String,
+        delta: i64,
+    },
 }
 
 /// The symbolic heap-key reference (mirrors Lean `HeapKeyRef`).
@@ -147,6 +176,11 @@ impl SymConstraint {
             SymConstraint::AnyOf { variants } => StateConstraint::AnyOf {
                 variants: variants.iter().map(|v| v.resolve(dep)).collect(),
             },
+            SymConstraint::FieldLteOther { reg, other, delta } => StateConstraint::FieldLteOther {
+                index: dep.reg(reg),
+                other: dep.reg(other),
+                delta: *delta,
+            },
         }
     }
 }
@@ -158,8 +192,7 @@ pub const EXPECTED_SCENE: &str = "dregg-multiway-tug/phase0";
 /// allocator. Panics if the artifact fails to parse or names the wrong scene — a corrupt/stale
 /// artifact must fail loud at deploy, never silently ship a different program.
 pub fn load_program(dep: &Deployment) -> CellProgram {
-    let sym: SymProgram = serde_json::from_str(PROGRAM_JSON)
-        .expect("multiway_tug_program.json (Lean-emitted) parses");
+    let sym = parse();
     assert_eq!(
         sym.scene, EXPECTED_SCENE,
         "Lean-emitted program scene mismatch (stale/foreign artifact)"
@@ -175,4 +208,39 @@ pub fn load_program(dep: &Deployment) -> CellProgram {
         })
         .collect();
     CellProgram::Cases(cases)
+}
+
+/// Parse the checked-in artifact (panicking on a corrupt one — a stale artifact must fail loud at
+/// deploy, never silently ship a different program).
+fn parse() -> SymProgram {
+    serde_json::from_str(PROGRAM_JSON).expect("multiway_tug_program.json (Lean-emitted) parses")
+}
+
+/// The number of scoring clauses the terminal rule has (`roundWinner`'s precedence length).
+pub const SCORE_BRANCHES: usize = 9;
+
+/// **The deployed method a scoring turn commits under for clause `branch`** — read straight out of
+/// the Lean-emitted artifact, never from a Rust table. `branch` is what the Lean oracle answered
+/// (`MultiwayTugFFI`'s `branch` verb over `roundWinnerBranch`); this only looks it up.
+///
+/// Panics on an out-of-range clause or an artifact whose `score_branches` is the wrong length —
+/// both mean the emitted program and the oracle have come apart, which must fail loud.
+pub fn score_branch_method(branch: u8) -> String {
+    let sym = parse();
+    assert_eq!(
+        sym.score_branches.len(),
+        SCORE_BRANCHES,
+        "Lean-emitted score_branches has {} entries, expected {SCORE_BRANCHES} \
+         (the artifact and the terminal rule have come apart)",
+        sym.score_branches.len()
+    );
+    sym.score_branches
+        .get(branch as usize)
+        .unwrap_or_else(|| panic!("scoring clause {branch} is out of range 0..{SCORE_BRANCHES}"))
+        .clone()
+}
+
+/// Every scoring-clause method name, in precedence order (the artifact's own list).
+pub fn score_branch_methods() -> Vec<String> {
+    parse().score_branches
 }

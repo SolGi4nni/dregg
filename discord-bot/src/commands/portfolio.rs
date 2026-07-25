@@ -97,6 +97,12 @@ impl DiscordOffering for DescentCampaignOffering {
     const TAGLINE: &'static str =
         "player-driven native expeditions · replay-verified Crowns open real region roads";
 
+    /// **Deliberately not resumable**, for the same reason as `NativeDescentOffering`: it wraps
+    /// the day-bound native offering, so a rebuild on a later day is a different world.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(DescentCampaignOffering)
     }
@@ -121,6 +127,13 @@ impl DiscordOffering for SeatedTug {
     const COLOR: u32 = 0x8E5BD6;
     const TAGLINE: &'static str =
         "a hidden-hand tug of influence · your own hand revealed, the opponent fog";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(SeatedTug::new())
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(SeatedTug)
     }
@@ -140,6 +153,13 @@ impl DiscordOffering for AutomataflOffering {
     const COLOR: u32 = 0x3D8B7D;
     const TAGLINE: &'static str =
         "the simultaneous-move board · seal a move · reveal · the automaton steps";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(AutomataflOffering)
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(AutomataflOffering)
     }
@@ -181,6 +201,13 @@ impl DiscordOffering for HostedProofAssignedRaidOffering {
     const TAGLINE: &'static str =
         "four public identities · one shielded optimal role proof · real party capabilities";
 
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(HostedProofAssignedRaidOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(HostedProofAssignedRaidOffering)
     }
@@ -219,6 +246,13 @@ impl DiscordOffering for NamesOffering {
     const TITLE: &'static str = "DreggNet Names";
     const COLOR: u32 = 0x4A78C2;
     const TAGLINE: &'static str = "an identity / naming service · register · transfer · resolve";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(NamesOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(NamesOffering)
     }
@@ -237,6 +271,13 @@ impl DiscordOffering for ComputeOffering {
     const TITLE: &'static str = "DreggNet Compute";
     const COLOR: u32 = 0x2F8FA6;
     const TAGLINE: &'static str = "a confined compute-job market · post · claim · settle";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(ComputeOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(ComputeOffering)
     }
@@ -399,6 +440,13 @@ impl DiscordOffering for PartyOffering {
     const TITLE: &'static str = "Party";
     const COLOR: u32 = 0x5B8ED6;
     const TAGLINE: &'static str = "a seated roster + a quorum-certified fork ballot";
+    /// Rebuilt from a deterministic, argument-free constructor — identical to the
+    /// factory production opens it with — so a persisted session of this offering
+    /// resumes by replay into the SAME world its turns landed in.
+    fn rebuild() -> Option<Self> {
+        Some(PartyOffering::new())
+    }
+
     fn store() -> &'static Store<Self> {
         seat_of_store!(PartyOffering)
     }
@@ -1400,23 +1448,42 @@ mod tests {
         let alice = actor("al");
         let bob = actor("bo");
 
-        // Alice claims seat A by playing the opening Competition — a real landed receipt.
+        // ⚑ The `(turn, arg)` pair is DISCOVERED from the live offering, not hardcoded. It used
+        // to be a literal `("comp", 3)`, which assumed the scheduled engine's fixed action order
+        // and its fixed card pick — an assumption that stopped holding the moment I-cut-you-choose
+        // made the order and the cut a seat's own decision. A test that names a decision index by
+        // hand is pinned to one shape of the decision space; this asks for whatever the seat to
+        // move may actually do.
+        let first_enabled = |c: u64| {
+            with_live::<SeatedTug, _>(c, |live| {
+                live.offering
+                    .actions(&live.session)
+                    .into_iter()
+                    .find(|action| action.enabled)
+            })
+            .flatten()
+            .expect("the seat to move always has an enabled affordance")
+        };
+
+        // Alice claims seat A by landing her first play — a real landed receipt.
+        let a_move = first_enabled(channel);
         match drive::<SeatedTug>(
             channel,
-            &fire_id_in::<SeatedTug>(channel, "comp", 3).unwrap(),
+            &fire_id_in::<SeatedTug>(channel, &a_move.turn, a_move.arg).unwrap(),
             alice.clone(),
         ) {
-            Driven::Fired(o) => assert!(o.landed(), "alice's comp lands + claims seat A: {o:?}"),
+            Driven::Fired(o) => assert!(o.landed(), "alice's play lands + claims seat A: {o:?}"),
             other => panic!("alice's play must drive a turn, got {other:?}"),
         }
-        // Bob claims seat B only by LANDING the scheduled Competition. A refusal
-        // must never ghost-reserve a seat.
+        // Bob claims seat B only by LANDING his own first play. A refusal must never
+        // ghost-reserve a seat.
+        let b_move = first_enabled(channel);
         match drive::<SeatedTug>(
             channel,
-            &fire_id_in::<SeatedTug>(channel, "comp", 3).unwrap(),
+            &fire_id_in::<SeatedTug>(channel, &b_move.turn, b_move.arg).unwrap(),
             bob.clone(),
         ) {
-            Driven::Fired(o) => assert!(o.landed(), "bob's comp lands + claims seat B: {o:?}"),
+            Driven::Fired(o) => assert!(o.landed(), "bob's play lands + claims seat B: {o:?}"),
             other => panic!("bob's play must drive a turn, got {other:?}"),
         }
 

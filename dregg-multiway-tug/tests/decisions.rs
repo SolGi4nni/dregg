@@ -115,7 +115,7 @@ fn same_deal_different_outcomes() {
     'search: for seed in 0u64..128 {
         // The reference round: descending kinds, the responder always takes side 0.
         let mut base = drive(seed, ORDERS[0], 0);
-        let base_winner = base.score();
+        let base_winner = base.score().expect("the Lean oracle adjudicates");
         if base_winner.is_none() {
             continue;
         }
@@ -125,7 +125,7 @@ fn same_deal_different_outcomes() {
                     continue;
                 }
                 let mut alt = drive(seed, order, pick);
-                let alt_winner = alt.score();
+                let alt_winner = alt.score().expect("the Lean oracle adjudicates");
                 if alt_winner.is_some() && alt_winner != base_winner {
                     found = Some((base, alt, seed));
                     break 'search;
@@ -354,7 +354,7 @@ fn conservation_holds_mid_offer() {
     assert_eq!(turns, ROUND_TURNS as usize, "8 actions + 4 responses");
     // And through scoring.
     let mut scored = e;
-    let _ = scored.score();
+    scored.score().expect("the Lean oracle adjudicates");
     assert_eq!(scored.projection().conservation_sum(), 21);
 }
 
