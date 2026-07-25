@@ -5,6 +5,35 @@ and the compacted-session record on 2026-07-22. Authority cut:
 `6d0e024f19`. This is a present-tense handoff, not an append-only diary; older
 versions remain in git and `cv`.*
 
+## 0′. 2026-07-25 update (read this first; the 07-22 body below is still accurate for what it covers)
+
+Landed since the 07-22 cut (all committed; see `FHEGG-MALICE-ROADMAP-2026-07-25.md`,
+`DREX-TIER-STATUS-2026-07-24.md`, `FHEGG-SAME-OPENING-APEX.md`, and the re-grounded `THE-DARK-BAZAAR.md` §1 /
+`FHEGG-MATURITY-ROADMAP.md` §1):
+
+- **The same-opening apex is PROVED** — a 10-file kernel-clean Lean family (soundness + hiding + n-of-n
+  necessity + malicious-share validity) + an EMITTED descriptor — but has **ZERO Rust consumers**: a
+  proved+emitted **UNWIRED SEAM**, not a live binding.
+- **All four halls RUN house-blind under a collective key** (n−1 refused), oracle-validated — as `fhegg-fhe`
+  tests AND as `Offering`s (`DarkPoolOffering`, `OraclePitOffering`). **But**: every ceremony is SIMULATED in
+  one process; the offerings are NOT in `CATALOG_KEYS` (surface only in tests); decrypt/relin are honest-party
+  only; the MPC crossing is semi-honest.
+- **Malicious-security, honestly:** `quorum.rs` carries a REAL ZK decrypt-share certificate + Ed25519 combiner
+  + identifiable abort (t-of-n) — but it is **correctness-grade (verified >10min)**, throughput-blocked. The
+  relin **acceptance gate** (Build 4) is committed (detection, not attribution). The n-of-n path's top gap
+  (a party using its wrong secret decrypts to `Ok(attacker-chosen)` silently) is UNCLOSED (needs the certificate
+  ported / migration to `quorum.rs`).
+- **GPU wins MEASURED** (multiply 3.35×/5.13×, TFHE bootstrap 2.5–2.9× at deployed N=4096; fold loses) — but no
+  GPU BFV ct×ct is built (`bfv_gpu_mul` spec'd); halls run CPU.
+- **`fhe` compiles to wasm32** (confirmed) → the distributed extension ceremony is real-viable; the wasm party
+  needs a thin `fhegg-core` (GPU-excluded) — scoped, not yet built.
+- **DrEX `/clear` broken** by a named regression (`intent/verified_settle.rs:351`); `/prove-shielded`
+  structurally unreachable (ring3/market4 allowlist + hardcoded epsilon — a Lean-emission fix).
+
+Net: the crypto is proved + measured + running-in-test/simulation; the LIVE, DISTRIBUTED, MALICIOUS-SECURE,
+FAST wiring is the `streamed-cooking-shannon` program (partly executing). The game gauntlet proves it before
+any dreggfi. Keep the strict status words below; "runs in a test" is not "LIVE at the boundary."
+
 ## 0. How to read this file
 
 Status words are intentionally strict:
