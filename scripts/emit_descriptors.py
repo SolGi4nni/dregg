@@ -1121,10 +1121,25 @@ def verify_include_targets() -> list[str]:
         )
         tracked_paths = {p for p in out.stdout.split("\0") if p}
 
+    # Narrow to the files that can possibly matter BEFORE reading any. This is not a weaker
+    # filter — it is the SAME predicate ("the source contains the literal token `include_str!`
+    # or `include_bytes!`") that the per-file skip below applied, evaluated by git instead of by
+    # reading all ~3900 tracked .rs. `-a` keeps a NUL-bearing source in the candidate set so the
+    # unreadable-source tooth below still fires on it rather than the file being silently dropped.
+    candidates = set(files)
+    if have_index:
+        g = subprocess.run(
+            ["git", "-C", str(ROOT), "grep", "-l", "-a", "-z", "-F",
+             "-e", "include_str!", "-e", "include_bytes!", "--", "*.rs"],
+            capture_output=True, text=True,
+        )
+        if g.returncode in (0, 1):  # 1 == no matches, a legitimate (if surprising) answer
+            candidates = {p for p in g.stdout.split("\0") if p} & candidates
+
     findings: list[str] = []
     n_sites = n_nonliteral = 0
     excluded = 0
-    for rel in files:
+    for rel in sorted(candidates):
         if rel.startswith(INCLUDE_SCAN_EXCLUDED_DIRS):
             excluded += 1
             continue
@@ -1189,7 +1204,7 @@ def verify_include_targets() -> list[str]:
         f"verify-include-targets: {n_sites} literal include_str!/include_bytes! site(s) over "
         f"{len(files)} tracked .rs · checked {leg}"
         + (f" · {n_nonliteral} non-literal (macro-built path) site(s) NOT checkable" if n_nonliteral else "")
-        + (f" · {excluded} file(s) in named exclusions" if excluded else "")
+        + (f" · {excluded} candidate file(s) in named exclusions" if excluded else "")
     )
     return findings
 
