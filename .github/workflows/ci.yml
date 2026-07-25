@@ -695,6 +695,29 @@ jobs:
       # Same two-sided ratchet, same allowlist file, `file `-prefixed rows.
       - name: mod-declaration sweep
         run: python3 scripts/check-dark-modules.py
+      # ── THE EXECUTION SWEEP (the third darkness) ───────────────────────────
+      # The two steps above catch a target that FAILS TO COMPILE and a file rustc
+      # NEVER OPENS. Neither can see a target that compiles, is wired, and simply
+      # NEVER RUNS — and that one is the quietest of the three. Cargo prints
+      # *nothing whatsoever* for a target whose `required-features` are off: not
+      # `ignored`, not `0 filtered out`, no line at all. A whole-file
+      # `#![cfg(feature = "x")]` is worse — the binary builds, runs, and reports
+      # `test result: ok. 0 passed`, which reads exactly like a passing suite.
+      #
+      # MEASURED 2026-07-25: 63 such targets. ⚠ AND A MANIFEST-ONLY COUNT OF THEM
+      # IS WRONG IN BOTH DIRECTIONS — the sweep that found this population by
+      # grepping `required-features` reported 32, and was off by more than it was
+      # right. Cargo UNIFIES features across a `--workspace` resolve THROUGH
+      # DEV-DEPENDENCIES: `dreggnet-market` dev-depends on `dreggnet-catalog`
+      # with `private-fhegg-game-consequence`, which turns on
+      # `dreggnet-market/private-attested-clearing` → `private-clearing` →
+      # `fhegg-fhe/amm-input-binding`. Fifteen targets that a manifest reading
+      # calls dark are ACTIVE on every `cargo test --workspace`. So this sweep
+      # asks CARGO'S OWN RESOLVE (`cargo metadata`), never the manifest.
+      #
+      # Same two-sided ratchet, same allowlist file, `never-run `-prefixed rows.
+      - name: execution sweep (targets nothing can run)
+        run: python3 scripts/check-never-run-targets.py --summary
 
   fmt:
     name: Format
@@ -844,6 +867,53 @@ jobs:
           # script prints "NOTHING WAS CHECKED" rather than a green that means nothing.
           DREGG_REQUIRE_LEAN_GATE: ${{ steps.pin.outputs.armed }}
         run: bash scripts/check-lean-marshal.sh
+
+      # ── THE OTHER FOUR PROBES, AND THE ONE THAT RAN EMPTY ──────────────────
+      # `dregg-lean-ffi/tests/` holds SIX whole-file `#![cfg(feature = "lean-lib")]`
+      # probes. `check-lean-marshal.sh` above names exactly two of them by `--test`
+      # (`embeddable_runtime_probe`, `overspend_probe`), and `cargo test --test a --test b`
+      # runs ONLY a and b — so the other four have never been compiled by any workflow.
+      # This is the job that already has the archive, so it is where they belong.
+      #
+      # ⚠ AND ONE OF THE TWO ALREADY-NAMED PROBES HAS BEEN REPORTING `ok. 0 passed`
+      # SINCE IT WAS WIRED. `embeddable_runtime_probe.rs` carries
+      # `#![cfg(target_os = "macos")]` on the line after its feature gate, and this job
+      # runs on `ubuntu-latest`. So on every CI run it compiles to an empty crate and
+      # reports a passing suite of zero tests, while `embeddable_runtime_probe_linux.rs`
+      # — the Linux twin written for exactly this runner — was named by nothing at all.
+      # A macOS-only probe on a Linux lane and its unarmed Linux twin: the gate was
+      # green, and neither half of the measurement it claims ever happened.
+      #
+      # The count floor is what keeps this honest. Every one of these targets reports
+      # `ok. 0 passed` rather than failing when its cfg is off, so an exit code cannot
+      # distinguish "the probes ran" from "the probes compiled away". Assert the number
+      # of assertions, not the status.
+      - name: Lean runtime probes nothing else builds (4 unarmed + the Linux twin)
+        if: steps.pin.outputs.armed == '1'
+        run: |
+          set -uo pipefail
+          cargo test -p dregg-lean-ffi --features lean-lib \
+            --test handler_cutover_probe \
+            --test deployed_constraint_probe \
+            --test multiway_tug_oracle_probe \
+            --test embeddable_runtime_probe_linux \
+            -- --nocapture 2>&1 | tee lean-probes.log
+          status=${PIPESTATUS[0]}
+          ran=$(sed -nE 's/^test result:.* ([0-9]+) passed; ([0-9]+) failed.*/\1 \2/p' lean-probes.log \
+                 | awk '{s+=$1+$2} END {print s+0}')
+          echo "lean runtime probes: $ran assertion(s) executed."
+          # Measured 2026-07-25 from the sources: deployed_constraint_probe 8,
+          # multiway_tug_oracle_probe 8, handler_cutover_probe 1,
+          # embeddable_runtime_probe_linux 1 (Linux only) = 18.
+          if [ "$ran" -lt 18 ]; then
+            echo "::error::only $ran probe assertion(s) ran, below the measured floor of 18."
+            echo "::error::These probes report \`ok. 0 passed\` when their cfg is off, so a green"
+            echo "::error::exit code here means nothing on its own. Either \`lean-lib\` did not"
+            echo "::error::activate, or a whole-file cfg (platform!) emptied a probe. Do NOT lower"
+            echo "::error::this floor to clear it — that is how the macOS-only probe went unnoticed."
+            exit 1
+          fi
+          exit "$status"
 
   no-unchecked-auth:
     name: No-Unchecked-Auth grep guard (P2.F)

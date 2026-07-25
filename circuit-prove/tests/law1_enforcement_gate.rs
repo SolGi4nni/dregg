@@ -694,8 +694,15 @@ const BASELINE: &[(&str, usize)] = &[
     ("dregg-dsl-differential/src/plonky3_runner.rs", 10),
     ("dregg-dsl-runtime/src/composition.rs", 13),
     ("game-turn-slice/src/compiler.rs", 6),
-    ("param-compose/src/air.rs", 19),  // ⚑ a COMPLETE hand-written Rust AIR. No Lean route exists.
-    ("param-compose/src/builder.rs", 9),  // ⚑ the dregg-automatafl builder CLONE that survived the deletion.
+    // ⚑ A COMPLETE hand-written Rust AIR. The "No Lean route exists" note here is now STALE:
+    // Dregg2/Circuit/Emit/ParamComposeEmit.lean authors the whole AIR and byte-pins the wire
+    // (24540 B at pcMin, 314273 B deployed), refined by ParamComposeRefine.paramCompose_refines_law,
+    // and entity-compose no longer imports this crate's air/builder on any production path.
+    // WHAT STILL BLOCKS DELETION: param-compose/tests/*.rs (~1935 lines) exercise shapes Lean has
+    // NOT pinned, so they cannot be migrated faithfully without new #guard instances. Delete these
+    // two rows in the SAME change that deletes the files, or the stale-entry check below fires.
+    ("param-compose/src/air.rs", 19),
+    ("param-compose/src/builder.rs", 9),  // ⚑ the dregg-automatafl builder CLONE that survived that deletion (copied out first).
     ("perf/src/lib.rs", 28),  // ⚑ a hand-built VmConstraint2::{MapOp,UMemOp} descriptor.
     ("sdk/src/full_turn_proof.rs", 2),
     ("tests/src/dsl_pipeline.rs", 8),
