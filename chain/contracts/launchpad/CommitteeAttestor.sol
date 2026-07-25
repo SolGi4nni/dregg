@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IClearingAttestor} from "./IClearingAttestor.sol";
+import {DreggLaunchpad} from "./DreggLaunchpad.sol";
 
 /// @title CommitteeAttestor
 /// @notice The v1 `IClearingAttestor` — the PROVED-grade trust anchor the launchpad
@@ -45,6 +46,14 @@ contract CommitteeAttestor is IClearingAttestor {
     /// cannot be replayed against a different attestor or scheme.
     bytes32 public constant DOMAIN = keccak256("DreggCommitteeAttestor.v1");
 
+    /// The launchpad this attestor serves. `challengeAttestation` reads the
+    /// challenged launch's AUTHORITATIVE committed `saleSupply`/`reservePrice` from
+    /// it (via `checkSchedule` against the on-chain `scheduleCommit`), so neither can
+    /// be spoofed by a challenger to frame an honest committee (#15). Only the
+    /// fraud-proof path consults the launchpad — `attestClearing` is still a pure
+    /// committee-signature check, VK- and launchpad-state-independent.
+    DreggLaunchpad public immutable launchpad;
+
     /// The committee members and the quorum size.
     mapping(address => bool) public isSigner;
     address[] public signers;
@@ -62,6 +71,9 @@ contract CommitteeAttestor is IClearingAttestor {
     error BadThreshold(uint256 threshold, uint256 n);
     error ZeroSigner();
     error DuplicateSigner(address signer);
+    error LaunchpadHasNoCode(address launchpad); // fail-closed: a codeless launchpad cannot be trusted for scheduleCommit
+    error NoSuchLaunch(uint256 launchId); // the challenged launch was never registered on the launchpad
+    error ScheduleMismatch(uint256 launchId); // the supplied schedule is not the launch's committed schedule
     error NotAttested(); // the challenged tuple was never actually attested by a quorum
     error BookCommitMismatch(bytes32 got, bytes32 want); // the supplied book is not the attested book
     error NotFraudulent(); // the attested clearing IS consistent — an honest committee cannot be slashed
@@ -76,10 +88,16 @@ contract CommitteeAttestor is IClearingAttestor {
         uint256 qty;
     }
 
+    /// @param launchpad_ the launchpad served — read for a challenged launch's
+    ///        committed `saleSupply`/`reservePrice` (`checkSchedule` against
+    ///        `scheduleCommit`). Fail-closed: a codeless launchpad is refused, since
+    ///        its `checkSchedule` staticcall would "succeed" vacuously.
     /// @param signers_   the committee public keys (EOA addresses).
     /// @param threshold_ the quorum size k (1 <= k <= n). k>=2 makes a single rogue
     ///        signer insufficient to attest.
-    constructor(address[] memory signers_, uint256 threshold_) {
+    constructor(DreggLaunchpad launchpad_, address[] memory signers_, uint256 threshold_) {
+        if (address(launchpad_).code.length == 0) revert LaunchpadHasNoCode(address(launchpad_));
+        launchpad = launchpad_;
         uint256 n = signers_.length;
         if (n == 0) revert NoSigners();
         if (threshold_ == 0 || threshold_ > n) revert BadThreshold(threshold_, n);
@@ -187,6 +205,15 @@ contract CommitteeAttestor is IClearingAttestor {
     /// @notice CHALLENGE a committee attestation as inconsistent with its own
     ///         committed book. Fully on-chain, stateless, non-repudiable:
     ///
+    ///           0. Read the challenged launch's AUTHORITATIVE `saleSupply` +
+    ///              `reservePrice` from the on-chain `scheduleCommit`: the supplied
+    ///              `schedule` must fold to the launch's committed hash
+    ///              (`DreggLaunchpad.checkSchedule`), and both values are then taken
+    ///              from THAT schedule — never from raw caller input. This is the #15
+    ///              fix: `reservePrice` is NOT part of the signed tuple, so a caller
+    ///              who could pass an arbitrary `reservePrice` could bend the marginal
+    ///              to `!= clearingPrice` and slash an HONEST committee. Pinning it to
+    ///              the committed schedule removes that framing vector.
     ///           1. Re-derive the digest and require the committee ACTUALLY signed a
     ///              quorum over `(launchId, saleSupply, clearingPrice, bookCommit)`
     ///              (`proof`) — you cannot challenge what was never attested.
@@ -198,10 +225,13 @@ contract CommitteeAttestor is IClearingAttestor {
     ///                    price — the attested clearing order is non-canonical
     ///                    (`Market/Aggregation.lean` descending discipline). No other
     ///                    input needed; this arm is soundly false-positive-free.
-    ///                (b) CONDITIONAL on `reservePrice`: the marginal (lowest-winning)
-    ///                    price of the walk to `saleSupply` differs from the signed
+    ///                (b) The marginal (lowest-winning) price of the walk to the
+    ///                    committed `saleSupply`/`reservePrice` differs from the signed
     ///                    `clearingPrice` — the attested price is not the fair uniform
-    ///                    clearing of the committed book.
+    ///                    clearing of the committed book. Because `reservePrice` and
+    ///                    `saleSupply` are the launch's committed values (step 0) —
+    ///                    the SAME ones `DreggLaunchpad._runClearing` uses — this arm
+    ///                    is now false-positive-free too.
     ///
     ///         On proven fraud the committee is SLASHED: `attestClearing` returns
     ///         false forever, so pending/future launches degrade to the timeout-refund
@@ -209,21 +239,27 @@ contract CommitteeAttestor is IClearingAttestor {
     ///         An HONEST attestation (correct order + correct price) CANNOT be slashed
     ///         (`NotFraudulent`) — no false positives.
     ///
-    /// HONEST residual: arm (b) trusts the caller's `reservePrice`. A full integration
-    /// reads `reservePrice`/`saleSupply` from the launch's on-chain `scheduleCommit`
-    /// so neither can be spoofed to frame an honest committee, and binds this hook
-    /// into a `finalize → challenge-window → settle` path so a proven fraud reverts
-    /// settlement. That binding + a full succinct fraud-proof verifier is the NAMED
-    /// residual (§5); arm (a) is already unconditional here.
+    /// NAMED residual (§5): this hook is not yet bound into a `finalize →
+    /// challenge-window → settle` path (so a proven fraud reverts settlement), and the
+    /// full succinct fraud-proof verifier is still designed-not-built. The
+    /// caller-spoofable-`reservePrice` framing vector, however, is CLOSED here.
     function challengeAttestation(
         uint256 launchId,
-        uint256 saleSupply,
         uint256 clearingPrice,
         bytes32 bookCommit,
-        uint256 reservePrice,
+        DreggLaunchpad.Schedule calldata schedule,
         bytes calldata proof,
         BookEntry[] calldata book
     ) external {
+        // (0) Pin saleSupply + reservePrice to the launch's COMMITTED schedule — the
+        //     authoritative on-chain values, never caller input (#15). A schedule that
+        //     does not fold to the launch's `scheduleCommit` is rejected, so a spoofed
+        //     `reservePrice` can never be used to frame an honest committee.
+        if (launchpad.scheduleCommitOf(launchId) == bytes32(0)) revert NoSuchLaunch(launchId);
+        if (!launchpad.checkSchedule(launchId, schedule)) revert ScheduleMismatch(launchId);
+        uint256 saleSupply = schedule.saleSupply;
+        uint256 reservePrice = schedule.reservePrice;
+
         // (1) It must have actually been attested by a quorum (the non-repudiable evidence).
         bytes32 digest = attestationDigest(launchId, saleSupply, clearingPrice, bookCommit);
         if (!_quorumSigned(digest, proof)) revert NotAttested();
@@ -238,7 +274,7 @@ contract CommitteeAttestor is IClearingAttestor {
 
         // (3) Run the canonical mechanism over the committed book and detect fraud.
         (bool nonDescending, uint256 marginal) = _replayClearing(book, saleSupply, reservePrice);
-        bool priceWrong = marginal != clearingPrice; // arm (b), conditional on reservePrice
+        bool priceWrong = marginal != clearingPrice; // arm (b): now over the COMMITTED reserve
         if (!nonDescending && !priceWrong) revert NotFraudulent();
 
         fraudProven[digest] = true;

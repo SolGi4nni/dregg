@@ -38,16 +38,17 @@ contract DreggVaultEscrowTest is Test {
     // ─── helpers ──────────────────────────────────────────────────────────────
 
     /// Build an SP1 fill-proof envelope naming `escrowId` as filled: release
-    /// `amount` of `token` to `recipient` under `clearingRoot`.
+    /// `amount` of `token` to `recipient` under `clearingRoot`. Bound to THIS vault +
+    /// chain (the #8 deployment binding: `boundVault`, `boundChainId`).
     function _fillProof(
         bytes32 escrowId,
         address token_,
         uint256 amount,
         address recipient,
         bytes32 clearingRoot
-    ) internal pure returns (bytes memory) {
+    ) internal view returns (bytes memory) {
         bytes memory publicValues =
-            abi.encode(true, escrowId, token_, amount, recipient, clearingRoot);
+            abi.encode(true, escrowId, token_, amount, recipient, clearingRoot, address(vault), block.chainid);
         return abi.encode(hex"1234", publicValues);
     }
 

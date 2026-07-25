@@ -75,7 +75,7 @@ contract DreggLaunchpadConjunctiveAttestorTest is Test {
         signers[0] = vm.addr(PK1);
         signers[1] = vm.addr(PK2);
         signers[2] = vm.addr(PK3);
-        committee = new CommitteeAttestor(signers, 2);
+        committee = new CommitteeAttestor(pad, signers, 2);
 
         IClearingAttestor[] memory arms = new IClearingAttestor[](2);
         arms[0] = IClearingAttestor(address(committee));

@@ -75,13 +75,15 @@ contract DrexRoutingE2ETest is Test {
     }
 
     /// Build the SP1 fill-proof envelope naming `escrowId` filled: release `amount` of ETH
-    /// (address(0)) to `recipient` under `clearingRoot` — the exact shape `escrowRelease` decodes.
+    /// (address(0)) to `recipient` under `clearingRoot` — the exact shape `escrowRelease`
+    /// decodes, bound to THIS vault + chain (the #8 deployment binding).
     function _fillProof(bytes32 escrowId, uint256 amount, address recipient, bytes32 root)
         internal
-        pure
+        view
         returns (bytes memory)
     {
-        bytes memory pv = abi.encode(true, escrowId, address(0), amount, recipient, root);
+        bytes memory pv =
+            abi.encode(true, escrowId, address(0), amount, recipient, root, address(vault), block.chainid);
         return abi.encode(hex"1234", pv);
     }
 

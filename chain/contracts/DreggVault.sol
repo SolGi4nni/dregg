@@ -415,13 +415,25 @@ contract DreggVault is IDreggVault {
     ///         gated on a DrEX clearing/settlement proof. Terminal: `Released`.
     /// @dev Requires (i) the escrow is `Locked`; (ii) an SP1 fill proof whose public
     ///      outputs name THIS escrow as filled — `(valid, escrowId, token, amount,
-    ///      recipient, clearingRoot)` — and match the escrow record + `recipient`;
-    ///      (iii) `settlement.isProvenRoot(clearingRoot)` — dregg actually settled
-    ///      that clearing root (the rung-8 accept-path). No deadline check: a real
-    ///      fill proof wins over a timeout, but only while the escrow is still
-    ///      `Locked` — once refunded (or released) this reverts. Exactly-once: the
-    ///      status flips to `Released` BEFORE the external transfer (checks-effects-
-    ///      interactions + `nonReentrant`), so a second release reverts.
+    ///      recipient, clearingRoot, boundVault, boundChainId)` — and match the escrow
+    ///      record + `recipient` + the #8 deployment binding (`boundVault ==
+    ///      address(this)`, `boundChainId == block.chainid`); (iii)
+    ///      `settlement.isProvenRoot(clearingRoot)` — dregg actually settled that
+    ///      clearing root (the rung-8 accept-path). No deadline check: a real fill
+    ///      proof wins over a timeout, but only while the escrow is still `Locked` —
+    ///      once refunded (or released) this reverts. Exactly-once: the status flips
+    ///      to `Released` BEFORE the external transfer (checks-effects-interactions +
+    ///      `nonReentrant`), so a second release reverts.
+    ///
+    ///      DEPLOYMENT BINDING (#8, the same class as the #3 withdraw binding):
+    ///      before `boundVault`/`boundChainId` the fill statement carried nothing
+    ///      tying it to THIS vault, so a valid fill proof for one DreggVault could be
+    ///      replayed on any other DreggVault sharing `programVkey` (the same guest on
+    ///      another address or chain) to release a same-id escrow there. Folding
+    ///      `address(this)` + `block.chainid` into the checked statement stops that
+    ///      cross-deployment replay. The check bites once the SP1 guest COMMITS these
+    ///      values — the companion circuit change is off-chain (the guest fill
+    ///      statement), not here; landing the check on-chain first is fail-closed.
     function escrowRelease(
         bytes32 escrowId,
         address recipient,
@@ -430,22 +442,13 @@ contract DreggVault is IDreggVault {
         Escrow storage e = escrows[escrowId];
         if (e.status != EscrowStatus.Locked) revert EscrowNotLocked(escrowId);
 
-        // Verify the SP1 fill proof (fail-closed on a codeless verifier).
-        bytes memory publicValues = _verifySp1(sp1Proof);
-        (
-            bool valid,
-            bytes32 proofEscrowId,
-            address proofToken,
-            uint256 proofAmount,
-            address proofRecipient,
-            bytes32 clearingRoot
-        ) = abi.decode(publicValues, (bool, bytes32, address, uint256, address, bytes32));
-
-        if (!valid) revert ProofVerificationFailed();
-        if (proofEscrowId != escrowId) revert EscrowIdMismatch();
-        if (proofToken != e.token) revert TokenMismatch();
-        if (proofAmount != e.amount) revert AmountMismatch();
-        if (proofRecipient != recipient) revert RecipientMismatch();
+        // Verify the SP1 fill proof (fail-closed on a codeless verifier), then decode
+        // its public values and enforce every field match INCLUDING the #8 deployment
+        // binding. Split into a helper so `escrowRelease` stays under the stack-depth
+        // limit (same shape as `withdraw` / `_decodeAndCheckWithdraw`). Returns the
+        // committed clearing root.
+        bytes32 clearingRoot =
+            _decodeAndCheckFill(_verifySp1(sp1Proof), escrowId, e.token, e.amount, recipient);
 
         // The clearing root the fill proof commits to must be a genuinely SETTLED
         // dregg root — the rung-8 accept-path. A fresh-nullifier proof over an
@@ -651,6 +654,54 @@ contract DreggVault is IDreggVault {
 
         nullifier = nf;
         proofRoot = root;
+    }
+
+    /// Decode an escrow fill proof's public values and enforce EVERY field match:
+    /// validity, (escrowId, token, amount, recipient), and the #8 deployment binding
+    /// (`boundVault == address(this)`, `boundChainId == block.chainid`). Returns the
+    /// committed clearing root (checked against the settlement client by the caller).
+    /// Split out of `escrowRelease` to stay under the stack-depth limit — the twin of
+    /// `_decodeAndCheckWithdraw`.
+    ///
+    /// Expected public-values format (the SP1 guest fill statement):
+    ///   (bool valid, bytes32 escrowId, address token, uint256 amount,
+    ///    address recipient, bytes32 clearingRoot,
+    ///    address boundVault, uint256 boundChainId)
+    ///
+    /// `boundVault`/`boundChainId` are the DEPLOYMENT BINDING (#8): before them the
+    /// fill statement carried nothing tying it to THIS vault, so a valid fill proof
+    /// replayed on any DreggVault sharing `programVkey` (the same guest on another
+    /// address or chain) could release a same-id escrow there. The check bites once
+    /// the guest COMMITS these values — the companion circuit change is off-chain.
+    function _decodeAndCheckFill(
+        bytes memory publicValues,
+        bytes32 escrowId,
+        address token,
+        uint256 amount,
+        address recipient
+    ) internal view returns (bytes32 clearingRoot) {
+        (
+            bool valid,
+            bytes32 proofEscrowId,
+            address proofToken,
+            uint256 proofAmount,
+            address proofRecipient,
+            bytes32 root,
+            address boundVault,
+            uint256 boundChainId
+        ) = abi.decode(publicValues, (bool, bytes32, address, uint256, address, bytes32, address, uint256));
+
+        if (!valid) revert ProofVerificationFailed();
+        if (proofEscrowId != escrowId) revert EscrowIdMismatch();
+        if (proofToken != token) revert TokenMismatch();
+        if (proofAmount != amount) revert AmountMismatch();
+        if (proofRecipient != recipient) revert RecipientMismatch();
+
+        // Deployment binding: reject a fill proof built for a different vault or chain.
+        if (boundVault != address(this)) revert VaultBindingMismatch(boundVault, address(this));
+        if (boundChainId != block.chainid) revert ChainBindingMismatch(boundChainId, block.chainid);
+
+        clearingRoot = root;
     }
 
     /// Record a new root in the ring buffer of recent roots.

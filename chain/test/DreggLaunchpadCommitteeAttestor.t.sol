@@ -39,7 +39,7 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         signers[0] = vm.addr(PK1);
         signers[1] = vm.addr(PK2);
         signers[2] = vm.addr(PK3);
-        att = new CommitteeAttestor(signers, 2);
+        att = new CommitteeAttestor(pad, signers, 2);
 
         vm.deal(creator, 1 ether);
         vm.deal(alice, 1 ether);
@@ -267,11 +267,12 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
     /// the book it committed to. A challenge recomputes the canonical clearing and
     /// proves the lie → the committee is slashed.
     function test_FraudProof_WrongPriceSlashesCommittee() public {
-        // Book in canonical descending order; true marginal @ saleSupply 1000,
-        // reserve 1G is bob's 3G. The committee LIES and signs 5G.
+        // Book in canonical descending order; true marginal @ the launch's COMMITTED
+        // saleSupply 1000 / reserve 1G is bob's 3G. The committee LIES and signs 5G.
+        uint256 id = _register(att); // real launch so its scheduleCommit is on-chain
         bytes32 bookCommit = _twoBidderBookCommit();
         uint256 lyingPrice = 5 * G;
-        bytes32 digest = att.attestationDigest(7, 1000, lyingPrice, bookCommit);
+        bytes32 digest = att.attestationDigest(id, 1000, lyingPrice, bookCommit);
         uint256[] memory pks = new uint256[](2);
         pks[0] = PK1;
         pks[1] = PK2;
@@ -281,19 +282,21 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         book[0] = CommitteeAttestor.BookEntry(alice, 5 * G, 400);
         book[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
 
-        att.challengeAttestation(7, 1000, lyingPrice, bookCommit, 1 * G, proof, book);
+        // reservePrice/saleSupply are read from the committed schedule (#15), not caller input.
+        att.challengeAttestation(id, lyingPrice, bookCommit, _schedule(), proof, book);
         assertTrue(att.slashed(), "lying committee slashed");
         assertTrue(att.fraudProven(digest), "the fraudulent digest is recorded");
 
         // A slashed committee can no longer attest anything — even a truthful tuple.
-        bytes32 honestDigest = att.attestationDigest(7, 1000, 3 * G, bookCommit);
+        bytes32 honestDigest = att.attestationDigest(id, 1000, 3 * G, bookCommit);
         bytes memory honestProof = _proof(pks, honestDigest);
-        assertFalse(att.attestClearing(7, 1000, 3 * G, bookCommit, honestProof), "slashed committee attests nothing");
+        assertFalse(att.attestClearing(id, 1000, 3 * G, bookCommit, honestProof), "slashed committee attests nothing");
     }
 
     /// Arm (a), unconditional: the committee attests a NON-DESCENDING clearing order.
     /// The order alone is non-canonical → fraud, no reservePrice assumption needed.
     function test_FraudProof_NonDescendingOrderSlashesCommittee() public {
+        uint256 id = _register(att);
         // A non-descending committed order: bob(3G) BEFORE alice(5G).
         address[] memory b = new address[](2);
         uint256[] memory p = new uint256[](2);
@@ -306,7 +309,7 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         q[1] = 400;
         bytes32 bookCommit = _fold(b, p, q);
 
-        bytes32 digest = att.attestationDigest(9, 1000, 3 * G, bookCommit);
+        bytes32 digest = att.attestationDigest(id, 1000, 3 * G, bookCommit);
         uint256[] memory pks = new uint256[](2);
         pks[0] = PK1;
         pks[1] = PK3;
@@ -316,17 +319,18 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         book[0] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
         book[1] = CommitteeAttestor.BookEntry(alice, 5 * G, 400);
 
-        // reservePrice irrelevant for arm (a).
-        att.challengeAttestation(9, 1000, 3 * G, bookCommit, 0, proof, book);
+        // Arm (a) fires on the order alone; the committed schedule is still required.
+        att.challengeAttestation(id, 3 * G, bookCommit, _schedule(), proof, book);
         assertTrue(att.slashed(), "non-descending order slashes the committee");
     }
 
     /// NO FALSE POSITIVES: an HONEST attestation (correct descending order + correct
     /// marginal price) cannot be slashed.
     function test_FraudProof_HonestAttestationCannotBeSlashed() public {
+        uint256 id = _register(att);
         bytes32 bookCommit = _twoBidderBookCommit();
         uint256 honestPrice = 3 * G; // the true marginal @ 1000/reserve 1G
-        bytes32 digest = att.attestationDigest(11, 1000, honestPrice, bookCommit);
+        bytes32 digest = att.attestationDigest(id, 1000, honestPrice, bookCommit);
         uint256[] memory pks = new uint256[](2);
         pks[0] = PK1;
         pks[1] = PK2;
@@ -337,15 +341,53 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         book[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
 
         vm.expectRevert(CommitteeAttestor.NotFraudulent.selector);
-        att.challengeAttestation(11, 1000, honestPrice, bookCommit, 1 * G, proof, book);
+        att.challengeAttestation(id, honestPrice, bookCommit, _schedule(), proof, book);
         assertFalse(att.slashed(), "an honest committee is NOT slashed");
+    }
+
+    /// #15 — a SPOOFED `reservePrice` can no longer slash an HONEST committee. The
+    /// committee honestly signs the true marginal (3G at the launch's COMMITTED
+    /// reserve 1G). Pre-fix, an attacker could pass `reservePrice = 4G` (which drops
+    /// bob's 3G bid below reserve → marginal 5G != 3G) and slash the honest committee.
+    /// Now `reservePrice` is read from the on-chain `scheduleCommit`: a schedule that
+    /// does not fold to the committed hash is rejected (`ScheduleMismatch`), so the
+    /// framing vector is closed. A genuine mis-attestation is still slashable (see
+    /// `test_FraudProof_WrongPriceSlashesCommittee`).
+    function test_FraudProof_SpoofedReservePriceCannotSlashHonest() public {
+        uint256 id = _register(att); // committed schedule: saleSupply 1000, reserve 1G
+        bytes32 bookCommit = _twoBidderBookCommit();
+        uint256 honestPrice = 3 * G;
+        bytes32 digest = att.attestationDigest(id, 1000, honestPrice, bookCommit);
+        uint256[] memory pks = new uint256[](2);
+        pks[0] = PK1;
+        pks[1] = PK2;
+        bytes memory proof = _proof(pks, digest);
+
+        CommitteeAttestor.BookEntry[] memory book = new CommitteeAttestor.BookEntry[](2);
+        book[0] = CommitteeAttestor.BookEntry(alice, 5 * G, 400);
+        book[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
+
+        // The attacker's spoofed schedule: reservePrice bumped to 4G. Under it the
+        // marginal would be 5G != 3G — but it does not fold to the committed hash.
+        DreggLaunchpad.Schedule memory spoofed = _schedule();
+        spoofed.reservePrice = 4 * G;
+
+        vm.expectRevert(abi.encodeWithSelector(CommitteeAttestor.ScheduleMismatch.selector, id));
+        att.challengeAttestation(id, honestPrice, bookCommit, spoofed, proof, book);
+        assertFalse(att.slashed(), "a spoofed reservePrice cannot slash an honest committee");
+
+        // Control: with the REAL committed schedule the honest attestation is NOT fraudulent.
+        vm.expectRevert(CommitteeAttestor.NotFraudulent.selector);
+        att.challengeAttestation(id, honestPrice, bookCommit, _schedule(), proof, book);
+        assertFalse(att.slashed(), "honest committee still stands under the real schedule");
     }
 
     /// A challenge cannot FRAME the committee with a fabricated book (one that does
     /// not fold to the attested bookCommit).
     function test_FraudProof_FabricatedBookRejected() public {
+        uint256 id = _register(att);
         bytes32 bookCommit = _twoBidderBookCommit();
-        bytes32 digest = att.attestationDigest(13, 1000, 3 * G, bookCommit);
+        bytes32 digest = att.attestationDigest(id, 1000, 3 * G, bookCommit);
         uint256[] memory pks = new uint256[](2);
         pks[0] = PK1;
         pks[1] = PK2;
@@ -357,15 +399,16 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         fake[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 999);
 
         vm.expectPartialRevert(CommitteeAttestor.BookCommitMismatch.selector);
-        att.challengeAttestation(13, 1000, 3 * G, bookCommit, 1 * G, proof, fake);
+        att.challengeAttestation(id, 3 * G, bookCommit, _schedule(), proof, fake);
         assertFalse(att.slashed(), "cannot frame with a fabricated book");
     }
 
     /// A challenge over a tuple the committee NEVER attested (no quorum) is refused —
     /// you can only challenge a genuine, quorum-signed attestation.
     function test_FraudProof_UnattestedTupleRejected() public {
+        uint256 id = _register(att);
         bytes32 bookCommit = _twoBidderBookCommit();
-        bytes32 digest = att.attestationDigest(15, 1000, 5 * G, bookCommit);
+        bytes32 digest = att.attestationDigest(id, 1000, 5 * G, bookCommit);
         uint256[] memory pks = new uint256[](1);
         pks[0] = PK1; // only 1-of-2 — never a quorum
         bytes memory weak = _proof(pks, digest);
@@ -375,7 +418,7 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         book[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
 
         vm.expectRevert(CommitteeAttestor.NotAttested.selector);
-        att.challengeAttestation(15, 1000, 5 * G, bookCommit, 1 * G, weak, book);
+        att.challengeAttestation(id, 5 * G, bookCommit, _schedule(), weak, book);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -417,7 +460,7 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         signers[0] = vm.addr(PK1);
         signers[1] = vm.addr(PK2);
         vm.expectRevert(abi.encodeWithSelector(CommitteeAttestor.BadThreshold.selector, uint256(3), uint256(2)));
-        new CommitteeAttestor(signers, 3); // threshold > n
+        new CommitteeAttestor(pad, signers, 3); // threshold > n
     }
 
     function test_ConstructorRejectsDuplicateSigner() public {
@@ -425,6 +468,36 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
         signers[0] = vm.addr(PK1);
         signers[1] = vm.addr(PK1);
         vm.expectRevert(abi.encodeWithSelector(CommitteeAttestor.DuplicateSigner.selector, vm.addr(PK1)));
-        new CommitteeAttestor(signers, 1);
+        new CommitteeAttestor(pad, signers, 1);
+    }
+
+    /// Fail-closed: a codeless launchpad is refused at construction (its
+    /// `checkSchedule` staticcall would "succeed" vacuously).
+    function test_ConstructorRejectsCodelessLaunchpad() public {
+        address[] memory signers = new address[](2);
+        signers[0] = vm.addr(PK1);
+        signers[1] = vm.addr(PK2);
+        address codeless = address(0xBAD);
+        vm.expectRevert(abi.encodeWithSelector(CommitteeAttestor.LaunchpadHasNoCode.selector, codeless));
+        new CommitteeAttestor(DreggLaunchpad(codeless), signers, 2);
+    }
+
+    /// A challenge that names a launch never registered on the launchpad reverts —
+    /// you can only challenge a real launch's committed schedule.
+    function test_FraudProof_UnknownLaunchRejected() public {
+        bytes32 bookCommit = _twoBidderBookCommit();
+        uint256 ghostId = 4242; // never registered
+        bytes32 digest = att.attestationDigest(ghostId, 1000, 5 * G, bookCommit);
+        uint256[] memory pks = new uint256[](2);
+        pks[0] = PK1;
+        pks[1] = PK2;
+        bytes memory proof = _proof(pks, digest);
+
+        CommitteeAttestor.BookEntry[] memory book = new CommitteeAttestor.BookEntry[](2);
+        book[0] = CommitteeAttestor.BookEntry(alice, 5 * G, 400);
+        book[1] = CommitteeAttestor.BookEntry(bob, 3 * G, 400);
+
+        vm.expectRevert(abi.encodeWithSelector(CommitteeAttestor.NoSuchLaunch.selector, ghostId));
+        att.challengeAttestation(ghostId, 5 * G, bookCommit, _schedule(), proof, book);
     }
 }
