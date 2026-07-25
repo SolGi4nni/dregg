@@ -325,7 +325,7 @@ statement about a real turn.
 |---|---|---|
 | 1 | Do the four missing arity-3 opener laws (`.read`/`.write`/`.insert`/`.aafiInsert`) go through as smoothly as `.absent` did? The `.write`/`.insert` kinds must move a root, so they need `pathRecompute_binds_updates` at the arity-3 leaf — which exists post-cutover but was proved for the arity-2 leaf. | Attempt `.read` first (the easiest: one membership path, root preserved). If it lands in a day, stage 2 is a week; if the update law does not transfer, stage 2 is the whole programme. |
 | 2 | Does the **padded** `commit` admit a `SizeOk`/`HeapOk` pair that still leaves the two narrow `rfl`s intact? I argued yes structurally but did not build it. | Land the padded instance and re-run the two conservativity `rfl`s. Half a day. |
-| 3 | Is the category-(b) claim — that `MemoryLegs` and the 8 fan-outs are truly `Prop`-opaque and re-elaborate for free — true against the *kernel*, or does some proof accidentally rely on the arity-2 body? | The falsifier is cheap and decisive: temporarily rebind `MapOp.holdsAt` to `True` and run a whole-tree `lake build`. Every site that breaks is a site that was *not* opaque. This costs one build and would have caught a wrong scoping estimate before commit 40. **Recommend doing this before stage 2.** |
+| 3 | ~~Is the category-(b) claim — that `MemoryLegs` and the 8 fan-outs are truly `Prop`-opaque and re-elaborate for free — true against the *kernel*?~~ **SETTLED — the falsifier RAN; see §10.** (b) IS free: 522 of the 536 downstream modules are indifferent. But the transport bill is **20 sites across 10 modules**, not 3, and the whole-tree `lake build` the falsifier called for would have MISSED the tier it was aimed at. | — |
 | 4 | ~~Does the AIR enforce the relink?~~ **SETTLED this session — see below.** | — |
 | 5 | Whether rooting the 6 orphans surfaces failures that the allowlist has been hiding — they are green *in isolation*, which is not the same as green under CI's flags/targets. | Root them and run CI once. ~156 s of elaboration plus one CI cycle. |
 
@@ -377,9 +377,210 @@ In order:
 
 1. **Root the 6 apex orphans** (~156 s; §5) and register `MapDenotationSchema`. Cheap, unblocks
    everything, and makes stage 2/3 repairs build-checked.
-2. **Run unknown #3's falsifier** (rebind `MapOp.holdsAt` to `True`, whole-tree build). One build;
-   it either confirms the (b) category is free or reprices the whole programme. Do this *before*
-   committing to stage 2.
+2. ~~**Run unknown #3's falsifier**~~ — **DONE, §10.** (b) confirmed free; §1(c)'s tail repriced ~7×.
+   Its verdict re-orders what follows: restate the per-effect teeth over `MapOp.holdsAtS S`
+   **additively during stage 2**, or stage 3 stops being small.
 3. **Stage 2**: `.read` opener at the arity-3 leaf first, as the difficulty probe.
 4. **Stage 2b**: the padded/sparse instance (§3) — do not defer it; without it stage 3 buys nothing
    on a real turn.
+
+---
+
+## 10. MEASURED — unknown #3's falsifier RAN. §1(b) is CONFIRMED FREE; the transport bill is 20 sites, not 3
+
+**Date:** 2026-07-25, same day. **Isolation:** an APFS `clonefile` copy of `metatheory/` — sources *and*
+the 4.6 GB warm `.lake` — into a scratch dir. The shared checkout was never mutated, which mattered:
+~10 lanes were live in it, and `DescriptorIR2.lean` is upstream of **536** modules.
+
+### 10.1 The falsifier AS WRITTEN would have printed a FALSE GREEN
+
+"Rebind to `True` and run a whole-tree `lake build`" does not work as written. Two reasons, both found
+on contact:
+
+1. **`lake build` does not reach the tier under test.** Its default targets are the import closures of
+   `Dregg2`/`Metatheory`/`Polis`/`Market`/`Bfv`. Of the modules §1(b) names as the free tier, **six sit
+   outside that closure as allowlisted orphans** — `AlgoStarkSoundFanoutMemory` (which holds
+   `algoStarkSound_of_mapShape` *and* the 8 per-effect fan-outs), `AlgoStarkSoundFanoutMemFree`,
+   `AlgoStarkSoundFanoutSetField`, `AlgoStarkSoundKernel`, `AlgoStarkSoundKernelAvail` (the `Rfix`
+   route), `AcceptanceDischarge` — as does `MapDenotationSchema` itself (§8's unlanded import). §5 and
+   §7-#3 were written independently; this is where they collide.
+2. **`lake build` cascades and would have suppressed the evidence.** `MapOpsColumnLayout` is a §1(c)
+   producer, so it is *expected* to break — and it is upstream of the apex modules, so under
+   `lake build` its failure stops theirs from being built at all.
+
+**The instrument actually used.** Rebuild **only** `DescriptorIR2.olean` with the rebound body into a
+cloned build-lib dir, then elaborate every downstream module **independently** (`lean <file>` with
+`LEAN_PATH` pointed at the rebound dir). No cascade, complete coverage, and the only difference from
+baseline is one definition body. Verified by a positive control both ways: `MapOp.holdsAt ↔ True` is
+**not** `Iff.rfl` against the baseline olean and **is** `Iff.rfl` against the rebound one, so every green
+below is a green *under the rebinding*.
+
+**Probe set = the complete reverse-import cone of `Dregg2.Circuit.DescriptorIR2`: 536 modules** (460 in
+the root closure, 76 orphan-side) — every module in the tree that can see the definition.
+
+**Hardened against `True`'s one false-negative mode.** `True` cannot catch a producer whose goal is
+closable by `trivial`/`simp`. So the 24 named/apex modules were probed a **second** time with the body
+rebound to `False`, under which every producer must break and every consumer is only strengthened.
+**The `True` and `False` break sets are identical, module for module** — nothing was accidentally green.
+
+### 10.2 The result
+
+| | count |
+|---|---|
+| modules probed under the rebinding | **536** |
+| green under the rebinding | **522** |
+| red under the rebinding | 14 |
+| — FOREIGN (red in baseline too) | 4 |
+| — **GENUINE** (baseline green, rebound red) | **10 modules / 20 punch-through sites / 40 asserted theorems** |
+
+The four foreign reds were separated by re-running each module against the unmodified
+`DescriptorIR2.olean`, and all four are **byte-identical** between the two passes: the `Dregg2` root
+module trips `FloorRatchet`'s gate ("1559 NEW declaration(s) take a REFUTED floor" — 115 552 bytes of
+output, identical), `Emit.MerkleMembershipRung2` and `FriPositiveRadiusSchedule` are RED-AT-HEAD in this
+dirty tree, and `Dregg2.Claims` only reports the missing `Dregg2.olean` its own root failure implies.
+None of them is a finding of this experiment.
+
+### 10.3 §1(b) IS FREE — and the green is meaningful, not vacuous
+
+Every module §1(b) names re-elaborated **green** under both rebindings: `AlgoStarkSoundGeneral`
+(`MemoryLegs`:223) · `AlgoStarkSoundFanoutMemory` (`MapReconcileFamily`, `memoryLegs_of_mapShape`,
+`algoStarkSound_of_mapShape`, **all 8 per-effect fan-outs**) · `AlgoStarkSoundFanoutMemFree` ·
+`AlgoStarkSoundFanoutSetField` · `AlgoStarkSoundKernel` · `AlgoStarkSoundKernelAvail` (the `Rfix`
+route) · `AcceptanceDischarge` · `FriVerifierBridge` (`AlgoStarkSound`, the class) ·
+`AlgoStarkSoundInstance` · `AlgoStarkSoundTransferV3` · `DecideSatisfied2` · `DecideSatisfied2Golden` ·
+`Satisfied2Faithful` · `CustomApex` · `CustomCarrierAttack`.
+
+The green is *meaningful* rather than an artefact of not touching the arm:
+`AlgoStarkSoundFanoutMemory.lean:240` discharges the `.mapOp` arm by
+`exact mapOpsArm_of_modeler hash hCRh d (tr pi π) (hrec pi π hacc) i hi m hc` — a bare lemma application
+whose statement the rebinding does not change. **`Satisfied2` needs no schema parameter and the apex is
+not a rewrite.** That is the load-bearing half of §1, and it now has a machine check behind it instead of
+a grep.
+
+Also measured, and it cuts the *other* way from §1(c): of the six named producers, only **one** —
+`mapOp_holds_of_mapReconcile`:900 — is definitionally coupled to the denotation. `ReconcileGatesAt`:807
+and `reconcileGates_force_opening`:847 restate the per-kind match over `opensToMerkle`/`writesToMerkle`
+directly and are indifferent to the rebinding; `MapReconcileFamily` and `memoryLegs_of_mapShape` are in
+the green apex module. Their cost is real but it is **stage 2's gate-model cost**, which this experiment
+does not measure at all.
+
+### 10.4 What the grep MISSED — a FOURTH punch-through idiom, and it is the dominant one
+
+§1 counted punch-throughs by grepping `unfold MapOp.holdsAt` (2 hits) and `Iff.rfl` (1 hit). That method
+is structurally blind to the idiom that actually dominates: **applying the hypothesis to a proof of the
+guard.** The body is `guard = 1 → match m.op with …`, so `hfresh hspend` / `hc hfire` / `hh hguard` /
+`intro hg` all read *through* the definition without ever naming it. **15 of the 20 break sites are this
+idiom.**
+
+**Every genuine break, classified:**
+
+| file:line | declaration | idiom | §1's tier |
+|---|---|---|---|
+| `DecideMapMerkle.lean:154` | `mapDecMerkle_sound` | `unfold MapOp.holdsAt` | predicted |
+| `DecideMapMerkle.lean:211` | `mapDecMerkle_complete` | `unfold … at hhold` + guard application | predicted |
+| `MapOpWideKeyGate.lean:630` | `narrow_holdsAt_is_instance` | `Iff.rfl` — §1's named casualty | predicted |
+| `MapOpsColumnLayout.lean:904` | `mapOp_holds_of_mapReconcile` | producer: `intro` on the guard arrow | predicted |
+| `MapDenotationSchema.lean:218` | `narrow_holdsAtS_is_instance` | `unfold … MapOp.holdsAt … opensTo … writesTo` | §2's transport |
+| `MapReconcileImtRepoint.lean:196` | `mapOpHoldsAt_unsat_at_imtRoot` | **guard application** | **NOT in §1** |
+| `Emit/RotWideCompactS2.lean:670` (+`:698`) | `holdsAt_transport` (`.mapOp` case) | **`intro hg` + `simp only [MapOp.holdsAt]` + per-kind `cases`** | **NOT in §1** |
+| `Metatheory/EffectVmDescriptor2PassiveOptimization.lean:290` | `holdsAt_project` (a documented copy of `holdsAt_transport`) | **same** | **NOT in §1 — a whole tier §1 never mentions** |
+| `RotatedKernelRefinementExercise.lean:327` | `heapWrite_splice_forced` (**tooth: heapWriteV3**) | **guard application** + `.write`-arm content | §1(c) last row, understated |
+| `Emit/EffectVmEmitV2.lean:1077` | `attenuateV2_held_determined`, `attenuateV2_non_amp` | **guard application** ×2 + `.read`-arm `.1` | idem |
+| `Emit/EffectVmEmitV2.lean:1164` | `revokeV2_removes` / `_held_determined` / `_post_determined` | **guard application** ×2 | idem |
+| `Emit/EffectVmEmitRotationV3.lean:2466` | `noteSpendV3_grow_gate_forces_set_insert` (**noteSpendV3**) | **guard application** ×2 | idem |
+| `…:2488` | `noteSpendV3_opens_delegation_ancestor` | **guard application** | idem |
+| `…:2681` | `noteCreateV3_grow_gate_forces_set_insert` (**noteCreateV3**) | **guard application** | idem |
+| `…:2780` | `revokeV3_grow_gate_forces_set_insert` | **guard application** ×2 | idem |
+| `…:2973` | `createCellV3_grow_gate_forces_set_insert` (**createCellV3**) | **guard application** ×2 | idem |
+| `…:2993` | `factoryV3_grow_gate_forces_set_insert` (**factoryV3**) | **guard application** ×2 | idem |
+| `…:3013` | `spawnV3_grow_gate_forces_set_insert` (**spawnV3**) | **guard application** ×2 | idem |
+| `…:3035` | `spawnWriteV3_grow_gate_forces_set_insert` (**spawnWriteV3**) | **guard application** ×2 | idem |
+| `…:4971` | `refusalFieldsWriteV3_forces_write` (**refusalFieldsWriteV3**) | **guard application** | idem |
+
+**The symmetry is exact and it is the headline.** §1(b) lists the 8 per-effect fan-outs —
+noteSpendV3, noteCreateV3, createCellV3, factoryV3, spawnV3, spawnWriteV3, refusalFieldsWriteV3,
+heapWriteV3 — as free. They *are* free **at the apex**. **All eight break at the tooth.** The doc priced
+the fan-out and did not notice that each fan-out has a same-named tooth reaching into the row denotation.
+
+### 10.5 VERDICT — (b) CONFIRMED; §1(c)'s tail REPRICED ~7×
+
+* **Confirmed, and it is the important half.** `VmConstraint2.holdsAt`, `Satisfied2`,
+  `Satisfied2Public/U/Custom`, `MemoryLegs`, `algoStarkSound_of_mapShape` and its 8 fan-outs, the `Rfix`
+  route and the `AlgoStarkSound` class are genuinely `Prop`-opaque. **522 of 536** downstream modules do
+  not care. Stage 3 does **not** touch the apex, and `Satisfied2` needs no new parameter. §1's single most
+  important structural fact is true.
+* **Repriced.** §1's "the tree contains exactly one `Iff.rfl` … and two `unfold` sites. Those three are
+  the entire transport bill" is wrong by ~7×: it is **20 sites across 10 modules**, with **40 asserted
+  theorems** (`#assert_axioms` targets) sitting on them. The extra sites are concentrated in the
+  **per-effect teeth**, which §1's last table row dismissed with "they re-elaborate unless they open the
+  opening." **Measured: every one of them opens it.**
+* **And they are RESTATEMENTS, not re-proofs.** Their conclusions name `DescriptorIR2.opensTo` /
+  `writesTo` *directly*, so after the cutover they are claims about the arity-2 commitment the deployed
+  prover does not build — the same species of casualty as `narrow_holdsAt_is_instance`, which §1 called
+  the *single* one of its kind. There are at least **fourteen**, and they are exactly the theorems cited
+  as "the deployed descriptor FORCES the nullifier insert / the commitment insert / the refusal audit
+  write."
+* **The refutation module is itself a cutover casualty, and §1 does not list it.**
+  `mapOpHoldsAt_unsat_at_imtRoot`, `topGap_mapOpHoldsAt_false` and `topGap_apex_premise_repointed` break
+  — as they must, since the cutover is precisely what makes `¬ MapOp.holdsAt` false at the deployed
+  pre-root. That is the intended outcome, but it is three more asserted theorems to retire in the same
+  atomic commit, not zero.
+* **The probe is a LOWER BOUND on the cutover bill.** It measures *definitional* dependence on
+  `MapOp.holdsAt`. Declarations that name `opensTo`/`writesTo` without going through `holdsAt` stay green
+  and still need moving — notably the seven `*TraceReadout` witness-decode structures carrying arity-2
+  `writesTo`/`opensTo` **fields** (`NoteSpendTraceReadout.growthDecodes`:449,
+  `NoteCreateTraceReadout`:523, `CreateCellTraceReadout`:549, `CreateFromFactoryTraceReadout`:625,
+  `SpawnTraceReadout`:696, `RefusalTraceReadout`:993, and `HeapWriteTraceReadout` in
+  `RotatedKernelRefinementExercise`), together with their `*_forced_sat` users, which apply the field to
+  a broken-but-unchanged-in-statement tooth and therefore stay green under a per-module probe.
+  Comment-stripped, **48 code mentions of `opensTo`/`writesTo` across 9 files** is the true
+  statement-level surface.
+* **Effect on §4's staging table.** Stage 3's "1 def body, 6 producer theorems, 3 consumer sites, ~10
+  declarations across ~5 files" becomes **1 def body, 1 definitionally-coupled producer, 20 consumer
+  sites across 10 files, ~40 asserted theorems**. Still atomic, still tractable — but not "small". **The
+  fix is to move the per-effect teeth out of stage 3:** restate them over the schema-parametric
+  `MapOp.holdsAtS S` *additively, during stage 2*, so stage 3 rebinds one body and only the producer plus
+  the four bridge/decision/transport sites move with it. Do that and §4's "the atomic commit is small"
+  becomes true again instead of aspirational.
+
+### 10.6 BONUS, measured: the DENSITY surface is NOT an opacity surface at all
+
+The same trick was pointed at §3's density obstruction: relax `opensToMerkle`/`writesToMerkle`'s
+`h.length = 2 ^ d` to `h.length ≤ 2 ^ d` — exactly the `SizeOk` generalisation §3 proposes for the padded
+instance — and re-elaborate. **It does not survive its own defining module:**
+
+```
+MapMerkleRoot.lean:238:52  Application type mismatch: hl₁ : List.length m₁ ≤ 2 ^ d
+                           but is expected to have type  List.length m₁ = 2 ^ d
+                           in the application  mapRoot_injective hash hCR d hl₁
+MapMerkleRoot.lean:255:52  (idem)
+⇒ opensToMerkle_functional, opensToMerkle_some_excludes_none, writesToMerkle_functional  ALL RED
+```
+
+So the density equation is nowhere carried opaquely — it is **the hypothesis of `mapRoot_injective`**,
+hence proof content in the three FUNCTIONAL / anti-ghost teeth, plus their `DescriptorIR2` re-exports
+(`opensTo_functional`:546, `opensTo_some_excludes_none`:553, `writesTo_functional`:560) and the
+completeness producer `opensTo_none_of_gap`:568.
+
+**This corrects §3's "why the design survives it."** It is true that `SizeOk` lets the padded tree be a
+third *instance* with no structural change. It is **not** true that the instance arrives free: at a
+relaxed `SizeOk` the openings are **no longer functional**, and functionality is the entire anti-ghost
+argument (root + key determine the value; the `new_root` column cannot be forged) — the property
+`refusalFieldsWriteV3_forces_write`'s own docstring leans on by name. The landed `MapDenotationSchema`
+carries **no** schema-level functional theorem at all. So stage 2b must supply injectivity at the padded
+commitment before any tooth can be stated there, and `perfectRoot_injective` is stated for equal-length
+dense vectors. **Stage 2b is strictly larger than §7-#2's "half a day," and §3 is right to call it
+co-equal.**
+
+### 10.7 Method note
+
+Both rebindings and the density relaxation were built into throwaway olean dirs and discarded;
+**nothing from this experiment is landed** and `DescriptorIR2.lean` / `MapMerkleRoot.lean` are
+byte-identical to before. The `axiom-hygiene FAIL` lines in the rebound passes are *consequences* of the
+broken proofs above (a failed proof leaves `sorryAx`), not independent findings; they were excluded when
+diffing failure sets, and are what the 40-theorem blast radius is counted from.
+
+Unknown #3 is **SETTLED**: (b) free and confirmed against the kernel; (c)'s tail ~7× the estimate and
+concentrated in the per-effect teeth plus a descriptor-optimizer transport tier the doc never named; and
+the falsifier had to be run per-module rather than as one `lake build`, because six of the modules it was
+aimed at are in no build target at all.
