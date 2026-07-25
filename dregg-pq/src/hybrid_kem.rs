@@ -65,6 +65,8 @@ use std::sync::OnceLock;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
+use crate::audit::PqSite;
+
 /// A pluggable, Lean-VERIFIED ML-KEM (FIPS 203) encaps/decaps backend, installed by an integration layer
 /// — the KEM mirror of the ML-DSA verify/sign cores in [`crate::mldsa`].
 ///
@@ -699,6 +701,7 @@ pub fn initiate(offer: &HybridOffer) -> Result<(HybridInitiatorMessage, [u8; 32]
         // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
         // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
         crate::audit::guard_unaudited_fallback(
+            PqSite::MlKemEncaps,
             "ML-KEM-768 encaps (hybrid session KEM)",
             "ml-kem 0.2.3",
             "install_verified_mlkem_encaps_core",
@@ -766,6 +769,7 @@ impl HybridResponder {
             // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
             // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
             crate::audit::guard_unaudited_fallback(
+                PqSite::MlKemDecaps,
                 "ML-KEM-768 decaps (hybrid session KEM)",
                 "ml-kem 0.2.3",
                 "install_verified_mlkem_decaps_core",
@@ -820,6 +824,7 @@ pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
     // deployed, archive-linked processes install the verified core above (assert-fatal), so this branch is
     // only reached by a process that cannot link the archive.
     crate::audit::guard_no_verified_core(
+        PqSite::MlKemKeygen,
         "ML-KEM-768 KeyGen (bare, from OS entropy)",
         "ml-kem 0.2.3",
         "an ML-KEM-768 decapsulation key (2400 B) guarding every session secret it opens",
@@ -857,6 +862,7 @@ pub fn ml_kem768_encaps(ek: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
     // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
     // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
     crate::audit::guard_unaudited_fallback(
+        PqSite::MlKemEncaps,
         "ML-KEM-768 encaps (bare)",
         "ml-kem 0.2.3",
         "install_verified_mlkem_encaps_core",
@@ -891,6 +897,7 @@ pub fn ml_kem768_decaps(dk: &[u8], ct: &[u8]) -> Option<[u8; 32]> {
     // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
     // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
     crate::audit::guard_unaudited_fallback(
+        PqSite::MlKemDecaps,
         "ML-KEM-768 decaps (bare)",
         "ml-kem 0.2.3",
         "install_verified_mlkem_decaps_core",

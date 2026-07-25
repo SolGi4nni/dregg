@@ -69,32 +69,52 @@ the fallback to *run*; it weakens no falsifier's assertion (see `dregg-pq/src/au
   **Fast subset:** run one crate's falsifiers by temporarily filtering the registry, or just
   `cargo test -p <crate> --lib <fn>` directly.
 
-### The registered falsifiers (22)
+### The registered falsifiers (38)
+
+Generated from `scripts/ci-invariants/falsifiers.tsv` — the TSV is the registry, this table is
+the reading copy. (It had drifted: it said 22 while the TSV carried the twin#1 / twin#8b /
+twin#3b fail-closed rows too.)
 
 | Crate | Target | Test | Guards |
 |---|---|---|---|
-| dregg-credentials | tests/anonymity_soundness | `cross_credential_predicate_forgery_rejected` | CRITICAL predicate `x==x` forgery refused |
-| dregg-turn | lib | `test_cross_asset_excess_netting_rejected` | CRITICAL asset-inflation (per-asset conservation on main path) |
-| dregg-node | lib | `rust_tau_twin_forbidden_on_verified_full_node` | twin#8 tau twin forbidden on verified full node |
-| dregg-node | lib | `rust_quorum_twin_forbidden_on_verified_full_node` | twin#11 quorum twin forbidden on verified full node |
-| dregg-node | lib | `record_requires_root_agreement_not_bare_distinct_count` | quorum one-root agreement, not bare distinct count |
-| dregg-intent | lib | `test_verify_fulfillment_rejects_cross_state_predicate_forgery` | intent cross-state predicate forgery refused |
-| dregg-coord | tests/twin_fail_closed | `twoc_pc_fails_closed_without_gate` | twin#3 coord 2PC fails closed |
-| dregg-coord | tests/twin_fail_closed | `causal_happened_before_fails_closed_without_gate` | twin#4 causal order fails closed |
-| dregg-coord | tests/twin_fail_closed | `shared_budget_resolve_fails_closed_without_gate` | twin#5 shared-budget fails closed |
-| dregg-federation | tests/twin_fail_closed | `strand_admission_fails_closed_to_seeds_without_gate` | twin#7 strand admission fails closed |
-| dregg-node | lib | `f_crit_1_setup_gate_is_xff_aware_defended` | F-CRIT-1 WS setup gate XFF-aware |
-| dregg-node | lib | `audit_f_crit_1_loopback_predicate` | F-CRIT-1 loopback predicate resolves real IP |
-| dregg-node | lib | `f1_untrusted_xff_spoof_is_ignored_defended` | F1 untrusted XFF spoof ignored |
-| dregg-node | lib | `f1_proxied_clients_get_distinct_buckets_defended` | F1 proxied clients distinct buckets |
-| dregg-node | lib | `f1_xff_left_prepend_spoof_is_inert_defended` | F1 XFF left-prepend spoof inert |
-| dregg-node | lib | `f1_real_limiter_isolates_proxied_clients_defended` | F1 real limiter isolates proxied clients |
-| webauth-core | lib | `brute_force_over_uid_space_does_not_recover_uid_without_salt` | linked_platforms unlinkability |
-| dreggnet-game-board | tests/board | `a_forged_proof_is_rejected_by_the_light_client` | game-board light-client teeth |
-| dreggnet-game-board | tests/anchor_independence | `the_board_anchor_is_pinned_once_and_a_submission_cannot_recapture_it` | crown/board anchor binding |
-| collective-choice | lib | `a_certified_winner_is_final_even_when_later_casts_shift_the_argmax` | collective finality |
-| dreggnet-party | lib | `a_resolved_fork_is_final_and_later_votes_cannot_rewrite_it` | party finality |
-| dreggnet-telegram | tests/multi_chat_same_message_id | `presses_in_two_chats_with_the_same_message_id_route_to_their_own_sessions` | telegram cross-chat misroute |
+| dregg-credentials | tests/anonymity_soundness | `cross_credential_predicate_forgery_rejected` | CRITICAL predicate STARK verified against its own commitment (x==x) cross-credential forgery is refused |
+| dregg-turn | lib | `test_cross_asset_excess_netting_rejected` | CRITICAL asset-blind scalar excess netting (mint-from-nothing inflation) is refused by per-asset conservation on the … |
+| dregg-turn | tests/conservation_fails_closed_without_gate | `conservation_fails_closed_without_gate` | CRITICAL twin#1 with NO conservation oracle the asset-inflation boundary is REFUSED (ConservationGateUnavailable), … |
+| dregg-turn | tests/conservation_oracle_installed_poles | `conservation_gate_installed_admits_honest_and_refuses_violating` | twin#1 the OTHER pole: with a conservation gate installed an honest turn still passes and the cross-asset teleport … |
+| dregg-node | lib | `rust_tau_twin_forbidden_on_verified_full_node` | twin#8 the Rust tau ordering twin is forbidden on a verified full node |
+| dregg-node | lib | `rust_quorum_twin_forbidden_on_verified_full_node` | twin#11 the Rust finalization-quorum twin is forbidden on a verified full node |
+| dregg-node | lib | `record_requires_root_agreement_not_bare_distinct_count` | quorum attested requires one-root agreement not a bare distinct-signer count |
+| dregg-node | lib | `finality_fails_closed_when_the_verified_gate_is_unavailable` | twin#8b POLE A with the verified finality projection gate ARMED and UNANSWERABLE the poll REFUSES to advance … |
+| dregg-node | lib | `poll_refuses_to_advance_finality_when_the_belt_gate_cannot_answer` | twin#8b BOTH POLES at the poll: honest finality still advances when the belt gate answers, NOTHING reaches the … |
+| dregg-intent | lib | `test_verify_fulfillment_rejects_cross_state_predicate_forgery` | intent verify_fulfillment rejects a cross-state predicate forgery |
+| dregg-coord | tests/twin_fail_closed | `twoc_pc_fails_closed_without_gate` | twin#3 coord 2PC fails closed (Abort) when the verified Lean gate is absent |
+| dregg-coord | lib | `gate_absent_disposition_is_identical_under_cfg_test_and_in_production` | twin#3 the gate-absent disposition is the SAME fail-closed Abort under cfg(test) as in production (the cfg-divergent … |
+| dregg-node | lib | `coord_decision_fails_closed_when_the_verified_gate_is_unavailable` | twin#3b POLE A with the verified 2PC gate ARMED and UNANSWERABLE the node REFUSES (CoordDecisionGateUnavailable => … |
+| dregg-node | lib | `authoritative_decision_refuses_when_the_verified_2pc_gate_cannot_answer` | twin#3b BOTH POLES at the site: an honest unanimous tally still Commits when the gate answers or is bypassed, … |
+| dregg-coord | tests/twin_fail_closed | `causal_happened_before_fails_closed_without_gate` | twin#4 coord causal happened-before fails closed without the gate |
+| dregg-coord | tests/twin_fail_closed | `shared_budget_resolve_fails_closed_without_gate` | twin#5 coord shared-budget resolve fails closed without the gate |
+| dregg-federation | tests/twin_fail_closed | `strand_admission_fails_closed_to_seeds_without_gate` | twin#7 strand admission fails closed to seeds-only without the gate |
+| dregg-node | lib | `f_crit_1_setup_gate_is_xff_aware_defended` | F-CRIT-1 the WS setup gate is XFF-aware (no remote passphrase hijack behind a proxy) |
+| dregg-node | lib | `audit_f_crit_1_loopback_predicate` | F-CRIT-1 the loopback predicate resolves the real client IP via the XFF resolver |
+| dregg-node | lib | `f1_untrusted_xff_spoof_is_ignored_defended` | F1 an untrusted XFF spoof is ignored by the rate limiter |
+| dregg-node | lib | `f1_proxied_clients_get_distinct_buckets_defended` | F1 proxied clients get distinct rate-limit buckets |
+| dregg-node | lib | `f1_xff_left_prepend_spoof_is_inert_defended` | F1 an XFF left-prepend spoof is inert |
+| dregg-node | lib | `f1_real_limiter_isolates_proxied_clients_defended` | F1 the real limiter isolates proxied clients |
+| webauth-core | lib | `brute_force_over_uid_space_does_not_recover_uid_without_salt` | linked_platforms a brute force over the uid space does not recover the uid without the salt |
+| dreggnet-game-board | tests/board | `a_forged_proof_is_rejected_by_the_light_client` | game-board a forged proof is rejected by the light client |
+| dreggnet-game-board | tests/anchor_independence | `the_board_anchor_is_pinned_once_and_a_submission_cannot_recapture_it` | crown/board the anchor is pinned once and a submission cannot recapture it |
+| collective-choice | lib | `a_certified_winner_is_final_even_when_later_casts_shift_the_argmax` | collective a certified winner is final even when later casts shift the argmax |
+| dreggnet-party | lib | `a_resolved_fork_is_final_and_later_votes_cannot_rewrite_it` | party a resolved fork is final and later votes cannot rewrite it |
+| dreggnet-telegram | tests/multi_chat_same_message_id | `presses_in_two_chats_with_the_same_message_id_route_to_their_own_sessions` | telegram presses in two chats with the same message_id route to their own sessions |
+| dregg-pq | lib | `ml_dsa_verify_fails_closed_when_the_verified_core_cannot_answer` | twin#13 POLE A the ML-DSA-65 verify gate REFUSES when no verified core can answer (an Ok(()) in a no-bypass quadrant … |
+| dregg-pq | lib | `ml_dsa_verify_length_gate_short_circuits_ahead_of_the_pq_gate` | twin#13 the VACUITY short-circuit: a malformed PQ half is refused BEFORE the gate (no verdict exists on any backend) … |
+| dregg-pq | tests/unaudited_refusal | `require_lean_revokes_the_unaudited_opt_in_and_verify_refuses` | twin#13 THE REVOCATION POLE: DREGG_REQUIRE_LEAN=1 revokes DREGG_ALLOW_UNAUDITED_PQ=1 and the verify gate ABORTS … |
+| dregg-pq | tests/unaudited_refusal | `genuine_signature_verifies_and_forgery_rejects_under_the_declared_bypass` | twin#13 THE OTHER POLE: under the declared bypass an honest signature still ACCEPTS and a forgery / tamper / … |
+| dregg-pq | tests/unaudited_refusal | `verify_without_core_aborts_loudly` | twin#13 the unaudited fips204 crate must not decide a SECURITY accept/reject with no opt-in — uncatchable SIGABRT on … |
+| dregg-pq | tests/unaudited_refusal | `sign_without_core_aborts_loudly` | twin#13 the SIGN arm: bytes that go on the wire under a pinned identity must not be produced by the unaudited crate … |
+| dregg-pq | tests/unaudited_refusal | `encaps_without_core_aborts_loudly` | twin#13 the ML-KEM encaps arm of the same gate |
+| dregg-pq | tests/unaudited_refusal | `decaps_without_core_aborts_loudly` | twin#13 the ML-KEM decaps arm (the other direction that can FAIL, so the one besides verify where a fall-open is a … |
+| dregg-pq | tests/unaudited_refusal | `explicit_opt_in_permits_and_announces` | twin#13 the DECLARED bypass still works and still ANNOUNCES itself — an archive-less build (wasm / zkVM guest / dev … |
 
 ## Invariant 3 — NO SILENCED FALSIFIER
 
@@ -284,6 +304,52 @@ declaration is decoration."* Prefer the expression form in new bypass predicates
 spot (a bypass predicate widened to bare `true`) is structural and stays green either way; that one
 is invariant 2's job.
 
+**Twin#13 — the PQ ACCEPT/REJECT gate, and A DIFFERENT FLAVOUR of the class.** `dregg-pq/src/mldsa.rs
+::ml_dsa_verify` is the ML-DSA-65 accept/reject behind ~10 surfaces (token/revocation, lightclient,
+cell-crypto, wire, turn/authorize, captp, blocklace/pq). Twins #1/#3b/#8b each had a **hand-written
+Rust twin** as the fallback, so deleting or refusing was strictly an improvement. Here the fallback is
+a **real, reputable third-party crate** (`fips204` 0.4 / `ml-kem` 0.2.3), and a blanket refusal would
+brick every archive-less build — wasm, the zkVM guest, any dev box with no Lean archive, since
+`dregg-pq` is a LIGHT leaf that never links the 156 MB archive and takes its verified cores as
+injected `fn` pointers. So the requirement is not "refuse always". It is that the bypass be
+**declared, visible and revocable**.
+
+What was already true before this row (and worth not re-discovering): the fallback was **not silent**.
+`dregg-pq/src/audit.rs` already `process::abort()`ed — uncatchably, so no `tokio` task boundary could
+swallow it — on any PQ operation with no verified core and no `DREGG_ALLOW_UNAUDITED_PQ=1`, and
+`dregg-pq/tests/unaudited_refusal.rs` already drove that abort as a real subprocess on four arms.
+Three things were **not**:
+
+1. **The opt-in was IRREVOCABLE.** `DREGG_REQUIRE_LEAN=1` — the tree-wide "I demand the verified
+   artifact" switch that `turn::require_verified_conservation_gate`, twin#8b and twin#3b all honour —
+   had **no effect on any PQ path at all**. An operator could demand the verified artifact and still
+   have `fips204` deciding accept/reject. It now revokes the bypass
+   (`audit::unaudited_pq_bypass_allowed`).
+2. **Nothing was registered.** No `gate-dataflow.tsv` row for any of the seven PQ install sites, and
+   — separately — **no `falsifiers.tsv` row for any of the five existing subprocess teeth**, so
+   invariant 2 never ran them. One of them (`sign_without_core_aborts_loudly`) had been **RED,
+   unobserved**, since keygen was itself gated in `c4f4b9cc3a`: the abort fired at KEYGEN and the test
+   asserted SIGN needles against a KEYGEN message. A tooth with no row is a tooth nobody re-runs.
+3. **The provenance was one process-global line.** A boot `warn!` per install site says an *export*
+   was missing; it cannot say which implementation answered a given verification, or how often. Six
+   `PqSite` counters (`dregg_pq::pq_provenance`, published as
+   `dregg_pq_{verified_core,unaudited_crate}_answers_total{site="…"}` by
+   `node::metrics::publish_pq_provenance`) now answer that, and the warning fires once PER SITE.
+
+**And a THIRD blind spot, measured here.** A row registering the *site* —
+`dregg-pq/src/mldsa.rs  ml_dsa_verify  LEAN_VERIFY_CORE_REAL  -` — printed **PASS
+`[if-let-fallthrough]` "gate-absent path REFUSES immediately (`return false`)"** against the pre-fix
+code that fell straight through to `vk.verify(..)`. The `return false` it found is the
+**malformed-length** `let Ok(..) = .. else` guard further down the same region; strip that one line
+and the same row goes **RED**. A refusal about a wrong-length key can therefore stand in for a
+disposition about a missing verified core, so the row points at the extracted
+`mldsa_verify_disposition` instead. **When a site's gate-absent region contains an input-validation
+refusal ahead of the fallback, register the disposition, not the site.**
+
+Twin#13's vacuity short-circuit is also a **DoS boundary**, not only an over-refusal guard: the
+undeclared-bypass refusal is an uncatchable abort, so a gate placed ahead of `ml_dsa_verify`'s
+length check would let any peer kill the process with one truncated signature.
+
 ---
 
 ## Wiring
@@ -338,6 +404,21 @@ coord_decision_disposition`"; (c) the mutation canary (refusal arm ⇒ `return O
 declaration is decoration"**, but only because the bypass predicate is one expression — see the
 measured widening in invariant 6's section above. 12 of 12 sites pass post-fix and
 `ci-invariants.sh structural` reports ALL ENFORCED INVARIANTS PASS.
+
+Twin#13 (the PQ ML-DSA verify accept/reject gate) was demonstrated the same way on 2026-07-25, same
+scratch-tree method (`CI_INVARIANTS_ROOT` + `CI_INVARIANTS_DATAFLOW_TSV`, working tree untouched — no
+stash, no checkout), four ways: (a) the **site** registered as shipped (`ml_dsa_verify` /
+`LEAN_VERIFY_CORE_REAL`) is **PASS — and that PASS is the blind spot**, credited to the
+malformed-length `return false`; (b) the same row with the three `let Ok(..) = .. else { return false
+}` guards removed is **FAIL** — proof that (a)'s green came from input validation, not from a
+disposition; (c) the row as landed (`mldsa_verify_disposition`) against a tree with the refusal arm
+reverted to `return Ok(())` is **FAIL "the row DECLARES the carve-out `mldsa_verify_bypass_allowed`
+but the gate-absent path has NO refusal on the non-exempt arm — the declaration is decoration"**; and
+(d) the **blinding counter-experiment** — the *same* mutant as (c) plus `if require_lean { return
+false; }` restored at the top of the bypass predicate — is **GREEN**, reproducing `1736835f69`'s
+finality-site measurement at a second site. `lean-twins.tsv` therefore carries a line-based `forbid`
+on `^[[:space:]]*if require_lean \{` in both `dregg-pq/src/mldsa.rs` and `dregg-pq/src/audit.rs`.
+13 of 13 sites pass post-fix and `ci-invariants.sh structural` reports ALL ENFORCED INVARIANTS PASS.
 
 The 2-and-6 complementarity was demonstrated at twin#3b, not asserted: the pure decision logic was
 extracted into a standalone `rustc --test` harness carrying the falsifier's own body verbatim, and

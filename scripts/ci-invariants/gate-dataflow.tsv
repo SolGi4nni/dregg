@@ -113,3 +113,32 @@ node/src/blocklace_sync.rs	finality_belt_disposition	belt_gate\b	belt_gate_bypas
 # arm unread. MEASURED at this site: with the early return, a mutant reverting the refusal arm to
 # `Ok(())` stays GREEN here; as one expression it goes RED. Keep it an expression.
 node/src/coord_gate.rs	coord_decision_disposition	verified_verdict\b	coord_gate_bypass_allowed	twin#3b no verified 2PC verdict => CoordDecisionRefusal::CoordDecisionGateUnavailable, the site returns Decision::Abort; the un-verified Rust Coordinator verdict never reaches the ledger
+
+# ── twin#13 the PQ ACCEPT/REJECT GATE (ML-DSA-65 verify) — A DIFFERENT FLAVOUR OF THE CLASS ───
+# The first four members had a HAND-WRITTEN RUST TWIN as the fallback, so deleting or refusing was
+# strictly an improvement. Here the fallback is a REAL, REPUTABLE THIRD-PARTY CRATE (`fips204` 0.4),
+# and a blanket refusal would BRICK every archive-less build (wasm, the zkVM guest, any dev box with
+# no Lean archive — `dregg-pq` is a LIGHT leaf that never links the 156 MB archive). So the goal here
+# is not "refuse always": it is that the bypass be DECLARED, VISIBLE and REVOCABLE.
+#
+# ONE DECLARED BYPASS: no verified core installed in this process AT ALL **and** the operator
+# accepted the unaudited primitive (`DREGG_ALLOW_UNAUDITED_PQ=1`, which already aborted the process
+# by default — `dregg-pq/tests/unaudited_refusal.rs` drives that abort as a real subprocess).
+# `DREGG_REQUIRE_LEAN=1` REVOKES it; before this row existed that variable had NO EFFECT ON ANY PQ
+# PATH AT ALL, so an operator could demand the verified artifact and still have `fips204` deciding
+# accept/reject. Deliberately NOT a bypass: a core IS installed and FAULTED (`None`/`"ERR"` out of
+# the FFI) — that REJECTS, and never routes to the crate.
+#
+# ⚑ WHY THE ROW POINTS AT THE DISPOSITION AND NOT AT `ml_dsa_verify`. MEASURED, not assumed: a row
+# `dregg-pq/src/mldsa.rs  ml_dsa_verify  LEAN_VERIFY_CORE_REAL  -` printed
+#   PASS [if-let-fallthrough] gate-absent path REFUSES immediately (`return false`)
+# against the PRE-FIX code that fell straight through to `vk.verify(..)`. The `return false` it found
+# is the MALFORMED-LENGTH `let Ok(..) = .. else` guard further down the same region; delete that one
+# line and the same row goes RED. Registering the site directly would have been DECORATION.
+#
+# ⚑ AND `mldsa_verify_bypass_allowed` IS ONE BOOLEAN EXPRESSION THAT CALLS NOTHING. MEASURED HERE
+# TOO: with the sibling shape `if require_lean { return false; }` at the top of the predicate, a
+# mutant reverting the disposition's refusal arm to `Ok(())` stays GREEN (the checker finds that
+# `return false` while inlining the helper and stops); as one expression the same mutant goes RED
+# ("the declaration is decoration"). Do not reintroduce the early return.
+dregg-pq/src/mldsa.rs	mldsa_verify_disposition	verified_verdict\b	mldsa_verify_bypass_allowed	twin#13 no verified ML-DSA verify core => MlDsaVerifyRefusal (VerifiedCoreFaulted => REJECT; NoVerifiedCoreAndBypassNotDeclared => uncatchable abort); the unaudited fips204 crate decides accept/reject ONLY under the declared, DREGG_REQUIRE_LEAN-revocable bypass

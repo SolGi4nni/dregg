@@ -67,3 +67,19 @@ dreggnet-party	lib	a_resolved_fork_is_final_and_later_votes_cannot_rewrite_it	pa
 
 # ── telegram cross-chat message-id misroute ────────────────────────────────────
 dreggnet-telegram	test:multi_chat_same_message_id	presses_in_two_chats_with_the_same_message_id_route_to_their_own_sessions	telegram presses in two chats with the same message_id route to their own sessions
+
+# ── twin#13 the PQ ACCEPT/REJECT GATE + the four unaudited-crate refusals ──────
+# ⚑ THESE WERE NEVER REGISTERED. `dregg-pq` had FIVE subprocess teeth driving the real refusal on
+# the shipping code path and NOT ONE ROW HERE, so nothing ran them — and one of them
+# (`sign_without_core_aborts_loudly`) had been RED since keygen was itself gated (`c4f4b9cc3a`):
+# the abort fired at KEYGEN and the test asserted SIGN needles against a KEYGEN message. A tooth
+# with no row is a tooth nobody re-runs.
+dregg-pq	lib	ml_dsa_verify_fails_closed_when_the_verified_core_cannot_answer	twin#13 POLE A the ML-DSA-65 verify gate REFUSES when no verified core can answer (an Ok(()) in a no-bypass quadrant PANICS with a FAIL-OPEN message); pins the ONE declared bypass, that DREGG_REQUIRE_LEAN=1 revokes it, that a FAULTED installed core is never bypassable, and mldsa_verify_bypass_allowed's own quadrants (the mutation invariant 6 cannot see)
+dregg-pq	lib	ml_dsa_verify_length_gate_short_circuits_ahead_of_the_pq_gate	twin#13 the VACUITY short-circuit: a malformed PQ half is refused BEFORE the gate (no verdict exists on any backend) and, since the undeclared-bypass refusal is an uncatchable abort, a gate ahead of the length check would be a remote kill; its non-vacuity half shows a well-formed verify still reaches a backend and accepts
+dregg-pq	test:unaudited_refusal	require_lean_revokes_the_unaudited_opt_in_and_verify_refuses	twin#13 THE REVOCATION POLE: DREGG_REQUIRE_LEAN=1 revokes DREGG_ALLOW_UNAUDITED_PQ=1 and the verify gate ABORTS (SIGABRT) on a GENUINE signature the fips204 crate WOULD have accepted; asserts the negative three ways (no exit 0, no CHILD SURVIVED, no CHILD OBSERVED ACCEPT)
+dregg-pq	test:unaudited_refusal	genuine_signature_verifies_and_forgery_rejects_under_the_declared_bypass	twin#13 THE OTHER POLE: under the declared bypass an honest signature still ACCEPTS and a forgery / tamper / wrong-message still REJECTS (a refusal that bricks every archive-less build is not a fix), and pq_provenance() reports per-site which implementation answered
+dregg-pq	test:unaudited_refusal	verify_without_core_aborts_loudly	twin#13 the unaudited fips204 crate must not decide a SECURITY accept/reject with no opt-in — uncatchable SIGABRT on the shipping path, naming the crate and the install
+dregg-pq	test:unaudited_refusal	sign_without_core_aborts_loudly	twin#13 the SIGN arm: bytes that go on the wire under a pinned identity must not be produced by the unaudited crate with no opt-in
+dregg-pq	test:unaudited_refusal	encaps_without_core_aborts_loudly	twin#13 the ML-KEM encaps arm of the same gate
+dregg-pq	test:unaudited_refusal	decaps_without_core_aborts_loudly	twin#13 the ML-KEM decaps arm (the other direction that can FAIL, so the one besides verify where a fall-open is a verdict)
+dregg-pq	test:unaudited_refusal	explicit_opt_in_permits_and_announces	twin#13 the DECLARED bypass still works and still ANNOUNCES itself — an archive-less build (wasm / zkVM guest / dev box) must not be bricked

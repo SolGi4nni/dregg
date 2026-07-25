@@ -63,6 +63,10 @@ pub mod executor_setup;
 mod executor_side_state_persistence;
 mod executor_state_admission;
 pub mod finalization_votes;
+// DOES THE FAUCET MOVE THE MONEY? The e2e that asserts on the authoritative
+// ledger after finalization, not on the HTTP response (which is staging only).
+#[cfg(test)]
+mod faucet_grant_e2e;
 pub mod genesis;
 pub mod gossip;
 pub mod identity_export;
@@ -1013,11 +1017,9 @@ async fn run_node(
             "ML-DSA verify: a verified Lean core was already installed this process (install is \
              once-per-process) — the `fips204` crate remains out of the verify TCB"
         ),
-        MlDsaVerifyCoreInstall::ExportAbsent => tracing::warn!(
-            "ML-DSA verify: the linked Lean archive does NOT export `dregg_fips204_verify_real` \
-             (`fips204_verify_real_core_available()` is false) — the node's ML-DSA verify falls back to \
-             the `fips204` crate primitive (a valid FIPS-204 verify, but NOT the Lean-verified \
-             authority). Rebuild against a HEAD-matching archive to route verify through Lean."
+        MlDsaVerifyCoreInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlDsaVerify,
+            "the linked Lean archive does NOT export `dregg_fips204_verify_real`              (`fips204_verify_real_core_available()` is false), so `dregg_pq::ml_dsa_verify` has no              Lean-verified core to route its accept/reject through.",
         ),
     }
 
@@ -1044,11 +1046,9 @@ async fn run_node(
             "ML-DSA sign: a Lean scalar sign core was already installed this process (install is \
              once-per-process)"
         ),
-        MlDsaSignCoreInstall::ExportAbsent => warn!(
-            "ML-DSA sign: the linked Lean archive does NOT export `dregg_fips204_sign` \
-             (`fips204_sign_core_available()` is false) — no verified sign core installed; \
-             `ml_dsa_sign_core` returns None and callers use the `fips204` crate. Rebuild against a \
-             HEAD-matching archive to run the verified sign object live."
+        MlDsaSignCoreInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlDsaSign,
+            "the linked Lean archive does NOT export `dregg_fips204_sign`              (`fips204_sign_core_available()` is false), so the SCALAR verified sign object does not              run live and `ml_dsa_sign_core` returns None.",
         ),
     }
 
@@ -1073,11 +1073,9 @@ async fn run_node(
             "ML-DSA sign: a verified Lean REAL sign core was already installed this process (install is \
              once-per-process) — the `fips204` crate remains out of the SIGN TCB"
         ),
-        MlDsaSignCoreRealInstall::ExportAbsent => warn!(
-            "ML-DSA sign: the linked Lean archive does NOT export `dregg_fips204_sign_real` \
-             (`fips204_sign_real_core_available()` is false) — the deployed `MlDsaKey::sign` falls back to \
-             the hedged `fips204` crate primitive (a valid FIPS-204 sign, but NOT the Lean-verified \
-             producer). Rebuild against a HEAD-matching archive to route sign through Lean."
+        MlDsaSignCoreRealInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlDsaSign,
+            "the linked Lean archive does NOT export `dregg_fips204_sign_real`              (`fips204_sign_real_core_available()` is false), so the deployed `MlDsaKey::sign` has no              Lean-verified producer for the signature bytes it puts on the wire.",
         ),
     }
 
@@ -1094,10 +1092,9 @@ async fn run_node(
         MlDsaKeygenCoreRealInstall::AlreadyInstalled => {
             info!("ML-DSA keygen: a verified Lean core was already installed this process")
         }
-        MlDsaKeygenCoreRealInstall::ExportAbsent => warn!(
-            "ML-DSA keygen: the linked Lean archive does NOT export `dregg_mldsa_keygen_real`; keygen \
-             will fail closed unless DREGG_ALLOW_UNAUDITED_PQ=1 is explicitly set. Rebuild against a \
-             HEAD-matching archive containing all six PQ exports."
+        MlDsaKeygenCoreRealInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlDsaKeygen,
+            "the linked Lean archive does NOT export `dregg_mldsa_keygen_real`, so the node IDENTITY              key has no Lean-verified expander. This is the one keygen that mints LONG-LIVED key              material, and it REFUSES rather than warning (unlike the ephemeral ML-KEM keygen).",
         ),
     }
 
@@ -1122,11 +1119,9 @@ async fn run_node(
             "ML-KEM decaps: a verified Lean core was already installed this process (install is \
              once-per-process) — the `ml-kem` crate remains out of the KEM-decaps TCB"
         ),
-        MlKemDecapsCoreInstall::ExportAbsent => warn!(
-            "ML-KEM decaps: the linked Lean archive does NOT export `dregg_mlkem_decaps_real` \
-             (`mlkem_decaps_real_core_available()` is false) — the node's ML-KEM decaps falls back to the \
-             `ml-kem` crate primitive (a valid FIPS-203 decaps, but NOT the Lean-verified authority). \
-             Rebuild against a HEAD-matching archive to route decaps through Lean."
+        MlKemDecapsCoreInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlKemDecaps,
+            "the linked Lean archive does NOT export `dregg_mlkem_decaps_real`              (`mlkem_decaps_real_core_available()` is false), so the session shared secret behind              `HybridResponder::finish` is recovered with no Lean-verified authority.",
         ),
     }
 
@@ -1152,11 +1147,9 @@ async fn run_node(
             "ML-KEM encaps: a verified Lean core was already installed this process (install is \
              once-per-process) — the `ml-kem` crate remains out of the KEM-encaps TCB"
         ),
-        MlKemEncapsCoreInstall::ExportAbsent => warn!(
-            "ML-KEM encaps: the linked Lean archive does NOT export `dregg_mlkem_encaps_real` \
-             (`mlkem_encaps_real_core_available()` is false) — the node's ML-KEM encaps falls back to the \
-             `ml-kem` crate primitive (a valid FIPS-203 encaps, but NOT the Lean-verified authority). \
-             Rebuild against a HEAD-matching archive to route encaps through Lean."
+        MlKemEncapsCoreInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlKemEncaps,
+            "the linked Lean archive does NOT export `dregg_mlkem_encaps_real`              (`mlkem_encaps_real_core_available()` is false), so the session ciphertext+secret from              `hybrid_kem::initiate` is produced with no Lean-verified authority.",
         ),
     }
 
@@ -1171,10 +1164,9 @@ async fn run_node(
         MlKemKeygenCoreInstall::AlreadyInstalled => {
             info!("ML-KEM keygen: a verified Lean core was already installed this process")
         }
-        MlKemKeygenCoreInstall::ExportAbsent => warn!(
-            "ML-KEM keygen: the linked Lean archive does NOT export `dregg_mlkem_keygen_real`; hybrid \
-             responder offers will fail closed unless DREGG_ALLOW_UNAUDITED_PQ=1 is explicitly set. \
-             Rebuild against a HEAD-matching archive containing all six PQ exports."
+        MlKemKeygenCoreInstall::ExportAbsent => announce_unverified_pq_site(
+            dregg_pq::PqSite::MlKemKeygen,
+            "the linked Lean archive does NOT export `dregg_mlkem_keygen_real`, so hybrid responder              keypairs are minted with no Lean-verified expander. ⚑ THIS ONE WARNS AND PROCEEDS EVEN              UNDER DREGG_REQUIRE_LEAN=1 (a DECLARED exception, see dregg_pq::audit::             guard_no_verified_core): the key is EPHEMERAL per-session material and refusing bricks              every CaPTP/session handshake on an archive-less process.",
         ),
     }
 
@@ -1326,10 +1318,23 @@ async fn run_node(
                         }
                         if let Some(issuer_well_hex) = genesis["issuer_well"].as_str() {
                             match hex_decode_32(issuer_well_hex) {
-                                // The devnet issuer well backs the DEFAULT
-                                // asset (all-zero token domain).
+                                // The well backs the asset it is MINTED IN — read
+                                // it off the materialized cell instead of assuming
+                                // a domain. `issuer_well_for` looks the well up by
+                                // the burning cell's `token_id`, so registering the
+                                // well under the wrong asset silently unregisters
+                                // it (burns fall back to the lazily-derived well and
+                                // the genesis −supply account is orphaned). This
+                                // read is also what lets a data dir written by an
+                                // older genesis (all-zero domain) keep working.
                                 Some(id) => {
-                                    s.issuer_wells.push(([0u8; 32], dregg_cell::CellId(id)))
+                                    let well_id = dregg_cell::CellId(id);
+                                    let token_id = s
+                                        .ledger
+                                        .get(&well_id)
+                                        .map(|cell| *cell.token_id())
+                                        .unwrap_or_else(crate::executor_setup::default_token_id);
+                                    s.issuer_wells.push((token_id, well_id));
                                 }
                                 None => tracing::warn!(
                                     "genesis issuer_well is not a 32-byte hex cell id; burns stay non-conserving"
@@ -2212,6 +2217,17 @@ fn parse_ml_dsa_public_key(s: &str) -> Option<dregg_federation::frost::MlDsaPubl
         .map(dregg_federation::frost::MlDsaPublicKey)
 }
 
+/// Decode an even-length hex string into bytes (used for the variable-length
+/// ML-DSA-65 public key a genesis cell commits).
+fn hex_decode_vec(s: &str) -> Option<Vec<u8>> {
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
+}
+
 /// Decode a 64-char hex string into a [u8; 32].
 fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
     if !s.is_ascii() || s.len() != 64 {
@@ -2319,7 +2335,43 @@ fn materialize_genesis_cells(
         // Issuer-move seeding inserts the cell VALUE-EMPTY; legacy seeding
         // installs the declared balance directly.
         let initial_balance = if seed_by_moves { 0 } else { balance };
-        let ledger_cell = dregg_cell::Cell::with_balance(public_key, token_id, initial_balance);
+        // THE PQ IDENTITY COMMITMENT. Hybrid admission
+        // (`signed_turn_validation::validate_signed_turn`, required-PQ ON at
+        // every ingress) anchors the ML-DSA key a turn carries in the AGENT
+        // CELL's own `pq_identity`. A genesis cell without one is a cell that
+        // cannot act: every turn it is the agent of is refused
+        // `pq-identity-not-enrolled` — which, for the faucet cell, means every
+        // faucet grant dies at finalization after the endpoint said `success`.
+        // The key is NOT reconstructible from the published ed25519 pubkey (it
+        // derives from the SEED), so genesis publishes it and this is where it
+        // is committed. Absent field ⇒ classical-only cell, exactly as before.
+        let ledger_cell = match cell["ml_dsa_public_key"].as_str() {
+            Some(ml_dsa_hex) => {
+                let Some(ml_dsa_public_key) = hex_decode_vec(ml_dsa_hex) else {
+                    tracing::warn!(cell = %label, "skipping genesis cell with malformed ml_dsa_public_key");
+                    stats.invalid += 1;
+                    continue;
+                };
+                match dregg_cell::Cell::with_hybrid_balance(
+                    public_key,
+                    &ml_dsa_public_key,
+                    token_id,
+                    initial_balance,
+                ) {
+                    Ok(cell) => cell,
+                    Err(error) => {
+                        tracing::warn!(
+                            cell = %label,
+                            %error,
+                            "skipping genesis cell whose ml_dsa_public_key is not a canonical ML-DSA-65 key"
+                        );
+                        stats.invalid += 1;
+                        continue;
+                    }
+                }
+            }
+            None => dregg_cell::Cell::with_balance(public_key, token_id, initial_balance),
+        };
         let cell_id = ledger_cell.id();
         if let Some(declared_id_hex) = cell["id"].as_str().filter(|id| id.len() == 64) {
             match hex_decode_32(declared_id_hex) {
@@ -2661,6 +2713,47 @@ fn marshal_only_must_refuse(lean_available: bool, allow_unverified: bool) -> boo
 /// Re-exported from `dregg-pq` (the single, shared install object every deployed process routes through);
 /// node keeps the name for back-compat with `tests/mldsa_live_verify.rs` and `tests/mldsa_live_sign.rs`.
 pub use dregg_pq::MlDsaVerifyCoreInstall;
+
+/// Announce that a verified PQ core is ABSENT, so this process's `site` direction will be answered
+/// by the UNAUDITED `fips204`/`ml-kem` crate under `dregg-pq`'s DECLARED bypass.
+///
+/// ⚑ WHY THIS REPLACED SIX BARE `warn!`s (twin#13). Each install arm used to log its own
+/// warn-and-continue and stop there, which under-described the state three ways: it did not say that
+/// reaching the crate at all requires the operator's `DREGG_ALLOW_UNAUDITED_PQ=1` (without it
+/// `dregg-pq` ABORTS the process on the first such operation — the fallback is not silent), it did
+/// not say that `DREGG_REQUIRE_LEAN=1` now REVOKES that bypass, and it named no way to observe
+/// whether the crate ever actually answered. A boot line is a statement about EXPORTS; the live
+/// question is which implementation answered a given operation, and that is
+/// `dregg_pq_unaudited_crate_answers_total{site="…"}` (see `metrics::publish_pq_provenance`).
+///
+/// The ACCEPT/REJECT gate is logged at `error!`, the other five at `warn!`. That asymmetry is the
+/// point of `PqSite::is_accept_reject_gate`: `ml_dsa_verify` is the one direction whose answer is a
+/// security VERDICT, so an absent core there moves the accept/reject authority for ~10 surfaces onto
+/// a third-party crate. A keygen has no verdict to fail open on — it needs visibility, not an alarm.
+fn announce_unverified_pq_site(site: dregg_pq::PqSite, detail: &str) {
+    let common = format!(
+        "The `{label}` direction is answered by the UNAUDITED crate primitive ONLY under \
+         dregg-pq's DECLARED bypass: {allow}=1 must be set, or the process ABORTS (uncatchably) on \
+         the first such operation. `{require}=1` REVOKES that bypass. WATCH \
+         dregg_pq_unaudited_crate_answers_total{{site=\"{label}\"}} — a non-zero value means the \
+         unaudited crate answered this direction in this process, which one boot log line cannot \
+         tell you. Rebuild against a HEAD-matching archive containing all six PQ exports.",
+        label = site.label(),
+        allow = dregg_pq::ALLOW_UNAUDITED_PQ_ENV,
+        require = dregg_pq::REQUIRE_LEAN_ENV,
+    );
+    if site.is_accept_reject_gate() {
+        error!(
+            site = site.label(),
+            "UNVERIFIED PQ ACCEPT/REJECT GATE: {detail} This is the one PQ direction whose answer \
+             is a SECURITY VERDICT — with no verified core the accept/reject authority behind \
+             token/revocation, the lightclient, cell-crypto, the wire, turn/authorize, captp and \
+             blocklace/pq is a third-party crate. {common}"
+        );
+    } else {
+        warn!(site = site.label(), "UNVERIFIED PQ: {detail} {common}");
+    }
+}
 
 /// Install the extracted, Lean-verified REAL, full-byte ML-DSA verify core (`MlDsaVerifyReal.verifyCore`,
 /// BRICK 8) as the accept/reject AUTHORITY behind `dregg_pq::ml_dsa_verify` — taking the `fips204` crate

@@ -7,6 +7,8 @@ use fips204::ml_dsa_65;
 use fips204::traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _};
 use std::sync::OnceLock;
 
+use crate::audit::PqSite;
+
 /// A pluggable, Lean-VERIFIED ML-DSA verify backend, installed by an integration layer.
 ///
 /// The extracted core lives in `metatheory/Dregg2/Crypto/Fips204Verify.lean`
@@ -478,6 +480,7 @@ impl MlDsaKey {
             // IDENTITY key we fail CLOSED and refuse to silently fall back to the unaudited crate — an
             // uncatchable abort, the same posture `crate::audit` uses for the unaudited fallback.
             crate::audit::abort_verified_core_fault(
+                PqSite::MlDsaKeygen,
                 "ML-DSA-65 KeyGen (deterministic, from the ed25519 seed)",
                 "dregg_mldsa_keygen_real",
             );
@@ -486,6 +489,7 @@ impl MlDsaKey {
         // EXISTS and has an install fn, so this is the same shape as the sign/verify fallbacks — refuses
         // (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1, and names the install call. See `crate::audit`.
         crate::audit::guard_unaudited_fallback(
+            PqSite::MlDsaKeygen,
             "ML-DSA-65 KeyGen (deterministic, from the ed25519 seed)",
             "fips204 0.4",
             "install_verified_mldsa_keygen_core_real",
@@ -568,6 +572,7 @@ impl MlDsaKey {
         // FALLBACK (no verified core installed): the hedged `fips204` crate primitive.
         // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
         crate::audit::guard_unaudited_fallback(
+            PqSite::MlDsaSign,
             "ML-DSA-65 sign",
             "fips204 0.4",
             "install_verified_mldsa_sign_core_real",
@@ -592,6 +597,7 @@ impl MlDsaKey {
         }
 
         crate::audit::guard_unaudited_fallback(
+            PqSite::MlDsaSign,
             "ML-DSA-65 deterministic sign",
             "fips204 0.4",
             "install_verified_mldsa_sign_core_real",
@@ -617,6 +623,129 @@ pub fn ml_dsa_sign_from_seed(seed: &[u8; 32], ctx: &[u8], message: &[u8]) -> Opt
     MlDsaKey::from_ed25519_seed(seed).try_sign(ctx, message)
 }
 
+/// Why [`ml_dsa_verify`]'s accept/reject REFUSED rather than answering. Distinct from a
+/// cryptographic reject on purpose: mirroring twin#1's `ConservationGateUnavailable`,
+/// twin#8b's `FinalityGateUnavailable` and twin#3b's `CoordDecisionGateUnavailable`, a
+/// VERIFIER's missing or broken archive is not a SIGNER's fault. No signature is invalid in
+/// either variant — the verified core could not answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlDsaVerifyRefusal {
+    /// A Lean-verified REAL verify core IS installed and it produced no usable verdict (a
+    /// `None` from the FFI, an `"ERR"`/garbled reply). The signature is REJECTED and the
+    /// `fips204` crate is NOT consulted: routing to the crate here would silently re-admit
+    /// exactly the authority the install removed. NOT bypassable — an archive that faults is
+    /// an integrity failure, not a policy choice.
+    VerifiedCoreFaulted,
+    /// NO verified core is installed in this process AND the bypass is not declared —
+    /// `DREGG_ALLOW_UNAUDITED_PQ` is unset, or `DREGG_REQUIRE_LEAN=1` revoked it. The process
+    /// ABORTS rather than let the unaudited `fips204` crate decide accept/reject.
+    NoVerifiedCoreAndBypassNotDeclared,
+}
+
+impl std::fmt::Display for MlDsaVerifyRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VerifiedCoreFaulted => write!(
+                f,
+                "VerifiedCoreFaulted: the Lean-verified ML-DSA-65 verify core \
+                 (dregg_fips204_verify_real = MlDsaVerifyReal.verifyCore) IS installed and \
+                 produced no usable verdict — the signature is REJECTED and the unaudited \
+                 fips204 crate is NOT consulted (this is a BROKEN ARCHIVE, not a verdict about \
+                 any signature)"
+            ),
+            Self::NoVerifiedCoreAndBypassNotDeclared => write!(
+                f,
+                "NoVerifiedCoreAndBypassNotDeclared: no Lean-verified ML-DSA-65 verify core is \
+                 installed in this process and the declared unaudited bypass does not hold \
+                 (DREGG_ALLOW_UNAUDITED_PQ unset, or DREGG_REQUIRE_LEAN=1 revoked it) — the \
+                 process REFUSES to let the unaudited fips204 crate decide accept/reject"
+            ),
+        }
+    }
+}
+
+/// FAIL-CLOSED CLASS (twin#13): whether [`ml_dsa_verify`] may take its ACCEPT/REJECT verdict
+/// from the unaudited `fips204` crate. A thin, named alias of the shared
+/// `audit::unaudited_pq_bypass_allowed` so this site's bypass has a name of its own in
+/// `gate-dataflow.tsv` — the shape `belt_gate_bypass_allowed` / `coord_gate_bypass_allowed`
+/// already use.
+///
+/// ONE DECLARED BYPASS: no verified core is installed in this binary AT ALL (`dregg-pq` is a
+/// light leaf — an archive-less build, the wasm/zkVM guest, a host that cannot link the
+/// 156 MB archive) **and** the operator accepted the unaudited primitive
+/// (`DREGG_ALLOW_UNAUDITED_PQ=1`). `require_lean` (`DREGG_REQUIRE_LEAN=1`) REVOKES it — that
+/// variable previously had NO EFFECT ON THIS PATH AT ALL.
+///
+/// ⚑ ONE BOOLEAN EXPRESSION, AND IT CALLS NOTHING WHOSE BODY HOLDS A REFUSAL TOKEN. See
+/// `audit::unaudited_pq_bypass_allowed`'s header: a bare `return false` — or an inlined
+/// helper containing a bare `false` — reads to `gate-dataflow.py` as A REFUSAL and blinds the
+/// checker to the caller's real refusal arm. MEASURED at the finality site (`1736835f69`).
+/// Both booleans are computed by the CALLER (in `audit.rs`, a different file, so the checker
+/// cannot inline them) and passed in.
+fn mldsa_verify_bypass_allowed(
+    verified_core_installed: bool,
+    unaudited_accepted_by_operator: bool,
+    require_lean: bool,
+) -> bool {
+    !require_lean && !verified_core_installed && unaudited_accepted_by_operator
+}
+
+/// THE FAIL-CLOSED DISPOSITION for the Lean-verified ML-DSA-65 verify core — the
+/// ACCEPT/REJECT gate behind ~10 surfaces (token/revocation, lightclient, cell-crypto, wire,
+/// turn/authorize, captp, blocklace/pq). Called by [`ml_dsa_verify`] on every verification
+/// whose length gate passed. Registered as twin#13 in
+/// `scripts/ci-invariants/gate-dataflow.tsv`.
+///
+/// `Ok(())` ⇒ the caller may answer: either the verified core produced the verdict, or a
+/// DECLARED bypass permits the `fips204` crate to. `Err(..)` ⇒ REFUSE, and which refusal it
+/// is decides the shape (see [`MlDsaVerifyRefusal`]): a faulted core REJECTS the signature,
+/// an undeclared bypass ABORTS the process.
+///
+/// ## Why the row is on THIS function and not on `ml_dsa_verify`
+///
+/// MEASURED, not assumed. A `gate-dataflow.tsv` row pointing at `ml_dsa_verify` itself with
+/// `acquire = LEAN_VERIFY_CORE_REAL` printed **PASS — "gate-absent path REFUSES immediately
+/// (`return false`)"** against the pre-fix code that fell straight through to the crate. The
+/// `return false` it found is the MALFORMED-LENGTH `let Ok(..) = .. else` guard further down
+/// the same region; strip that one line and the same row goes RED. So registering the site
+/// directly would have been DECORATION — a refusal about a wrong-length key standing in for a
+/// disposition about a missing verified core. The disposition is its own function so the
+/// checker slices the decision and nothing else.
+///
+/// ## The vacuity short-circuit, and why it is REQUIRED
+///
+/// A refusal that fires where it means nothing is not a gate. `ml_dsa_verify`'s
+/// wrong-length-key / wrong-length-signature check runs BEFORE this disposition is consulted
+/// (it is the first statement of the function), and that ordering is load-bearing twice over.
+/// A malformed PQ half has NO cryptographic verdict for a missing core to have made — the
+/// answer is `false` on every backend — so refusing there would be the same over-refusal the
+/// conservation fix hit on a `set_state` with no value delta and twin#8b hit on a
+/// heartbeat-only poll. And because the undeclared-bypass refusal is an UNCATCHABLE ABORT, a
+/// gate placed ahead of the length check would hand any peer a REMOTE KILL: one truncated
+/// signature on a node with no verified core installed would take the process down.
+fn mldsa_verify_disposition(
+    verified_verdict: Option<bool>,
+    verified_core_installed: bool,
+    unaudited_accepted_by_operator: bool,
+    require_lean: bool,
+) -> Result<(), MlDsaVerifyRefusal> {
+    let Some(_accept_or_reject) = verified_verdict else {
+        if mldsa_verify_bypass_allowed(
+            verified_core_installed,
+            unaudited_accepted_by_operator,
+            require_lean,
+        ) {
+            return Ok(());
+        }
+        return Err(if verified_core_installed {
+            MlDsaVerifyRefusal::VerifiedCoreFaulted
+        } else {
+            MlDsaVerifyRefusal::NoVerifiedCoreAndBypassNotDeclared
+        });
+    };
+    Ok(())
+}
+
 /// Verify an ML-DSA-65 signature over `message` under the caller-supplied FIPS
 /// 204 `ctx`.
 ///
@@ -637,23 +766,80 @@ pub fn ml_dsa_sign_from_seed(seed: &[u8; 32], ctx: &[u8], message: &[u8]) -> Opt
 /// the `fips204` crate primitive. `dregg-pq` is a light leaf shared by 9 crates and cannot itself link the
 /// 195 MB Lean archive, so the routing is an install-time seam rather than a direct call; a deployed,
 /// verified node installs the real core at startup and thereby leaves the crate out of the verify TCB.
+///
+/// # ⚑ THE FALLBACK IS A DECLARED BYPASS, NOT A FALLTHROUGH
+///
+/// The disposition is the named, registered [`mldsa_verify_disposition`] (twin#13 in
+/// `scripts/ci-invariants/gate-dataflow.tsv`), and it is consulted on EVERY verification whose length
+/// gate passed. There are exactly three outcomes and each is legible in
+/// `audit::pq_provenance()`'s per-site counters:
+///
+///   * the verified core answered ⇒ its verdict, counted as `verified`;
+///   * no core installed AND the DECLARED bypass holds (`DREGG_ALLOW_UNAUDITED_PQ=1`, not revoked by
+///     `DREGG_REQUIRE_LEAN=1`) ⇒ the `fips204` crate answers, counted as `unaudited` and warned once
+///     for THIS site by name — so "which implementation answered a given verification" is a question
+///     with an answer, rather than one boot line nobody reads;
+///   * otherwise ⇒ REFUSE. A faulted-but-installed core REJECTS; an undeclared bypass ABORTS.
 pub fn ml_dsa_verify(public_bytes: &[u8], ctx: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
-    // Fail CLOSED on a wrong-length key/signature regardless of which backend answers.
+    // ⚑ THE VACUITY SHORT-CIRCUIT, AND IT MUST STAY AHEAD OF THE GATE. A wrong-length key or
+    // signature has NO cryptographic verdict on ANY backend, so there is nothing for a missing
+    // verified core to have decided — refusing here would be the over-refusal the conservation fix
+    // hit on a value-free `set_state`. It is also a DoS boundary: the undeclared-bypass refusal below
+    // is an UNCATCHABLE ABORT, so a gate placed ahead of this check would let any peer kill the
+    // process with one truncated signature.
     if public_bytes.len() != ml_dsa_65::PK_LEN || sig_bytes.len() != ml_dsa_65::SIG_LEN {
         return false;
     }
 
     // AUTHORITY: the Lean-verified real verify core over the real bytes, when installed. The `fips204`
-    // crate is not consulted on this path — it has left the verify TCB.
-    if let Some(core) = LEAN_VERIFY_CORE_REAL.get() {
+    // crate is not consulted on this path — it has left the verify TCB. `None` distinguishes A CORE
+    // THAT COULD NOT ANSWER (FFI/archive fault, `"ERR"`) from a core that answered REJECT — the old
+    // `matches!(.., Some("1"))` collapsed both to `false`, which is the right VERDICT but leaves an
+    // operator unable to tell a broken archive from a stream of bad signatures.
+    let installed_core = LEAN_VERIFY_CORE_REAL.get();
+    let verified_verdict = installed_core.and_then(|core| {
         let wire = real_verify_wire(public_bytes, message, ctx, sig_bytes);
-        // A `None` (FFI/archive fault) or any non-`"1"` reply fails CLOSED.
-        return matches!(core(&wire).as_deref(), Some("1"));
+        core(&wire).map(|reply| reply == "1")
+    });
+
+    if let Err(refusal) = mldsa_verify_disposition(
+        verified_verdict,
+        installed_core.is_some(),
+        crate::audit::unaudited_pq_accepted(),
+        crate::audit::require_verified_lean_gate(),
+    ) {
+        match refusal {
+            // The archive is BROKEN, not the signature. Reject (never consult the crate — that would
+            // re-admit exactly the authority the install removed) and make the fault countable so a
+            // node whose every verify suddenly fails is diagnosable as an archive fault.
+            // (`note_verified_core_fault` counts it and explains itself ONCE per site — a broken
+            // archive faults on every call, so an unlatched line would be one stderr write per
+            // verification.)
+            MlDsaVerifyRefusal::VerifiedCoreFaulted => {
+                crate::audit::note_verified_core_fault(PqSite::MlDsaVerify);
+                return false;
+            }
+            // No verified core and no declared bypass: the unaudited crate must NOT decide a
+            // security accept/reject. Uncatchable abort, naming the install that fixes it.
+            MlDsaVerifyRefusal::NoVerifiedCoreAndBypassNotDeclared => {
+                crate::audit::refuse_unaudited(
+                    "ML-DSA-65 verify",
+                    "fips204 0.4",
+                    "install_verified_mldsa_verify_core",
+                )
+            }
+        }
     }
 
-    // FALLBACK (no verified core installed): the `fips204` crate primitive.
-    // Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 — see `crate::audit`.
-    crate::audit::guard_unaudited_fallback(
+    if let Some(accept) = verified_verdict {
+        crate::audit::note_verified_answer(PqSite::MlDsaVerify);
+        return accept;
+    }
+
+    // THE DECLARED BYPASS (no verified core in this process + the operator accepted the unaudited
+    // primitive): the `fips204` crate answers, and the provenance says so per-site.
+    crate::audit::note_unaudited_answer(
+        PqSite::MlDsaVerify,
         "ML-DSA-65 verify",
         "fips204 0.4",
         "install_verified_mldsa_verify_core",
@@ -675,6 +861,151 @@ mod tests {
     use super::*;
 
     const CTX: &[u8] = b"dregg-pq-unit-test-ctx-v1";
+
+    /// ⚑ POLE A (the DISPOSITION, exhaustively): the Lean-verified ML-DSA-65 verify core cannot
+    /// answer, so the ACCEPT/REJECT gate REFUSES rather than handing the verdict to the unaudited
+    /// `fips204` crate. twin#13 — the fifth member of the fail-OPEN class, and the first whose
+    /// fallback is a real third-party crate rather than a hand-written Rust twin.
+    ///
+    /// The test asserts THE NEGATIVE the way conservation's, twin#8b's and twin#3b's Pole A do: an
+    /// `Ok(())` in a no-bypass quadrant PANICS with a FAIL-OPEN message, because `Ok(())` there means
+    /// the site went on to take a SECURITY ACCEPT/REJECT from a primitive nobody audited.
+    ///
+    /// It also pins the DECLARED bypass, that `DREGG_REQUIRE_LEAN=1` revokes it (that variable
+    /// previously had NO EFFECT ON THIS PATH AT ALL), and the bypass predicate's own quadrants —
+    /// invariant 6 checks that the region REACHES a refusal past the declared discriminator and does
+    /// NOT evaluate the discriminator, so a mutation of `mldsa_verify_bypass_allowed` to a bare `true`
+    /// stays GREEN there and must redden HERE.
+    #[test]
+    fn ml_dsa_verify_fails_closed_when_the_verified_core_cannot_answer() {
+        // ── THE HOLE, CLOSED (a). No verified core installed, and the operator did NOT accept the
+        //    unaudited primitive ⇒ REFUSE (the site aborts rather than let `fips204` decide).
+        match mldsa_verify_disposition(None, false, false, false) {
+            Err(MlDsaVerifyRefusal::NoVerifiedCoreAndBypassNotDeclared) => { /* fail-closed */ }
+            other => panic!(
+                "FAIL-OPEN: no Lean-verified ML-DSA-65 verify core is installed and the operator has \
+                 NOT set DREGG_ALLOW_UNAUDITED_PQ=1, yet the disposition returned {other:?} instead of \
+                 refusing. Permitting the site here means a SECURITY ACCEPT/REJECT — the verdict behind \
+                 token/revocation, the lightclient, cell-crypto, the wire, turn/authorize, captp and \
+                 blocklace/pq — is taken from the unaudited `fips204` crate."
+            ),
+        }
+
+        // ── THE HOLE, CLOSED (b): the core IS installed and FAULTED (a `None`/`\"ERR\"` out of the
+        //    FFI). NOT bypassable at all — routing to the crate here would silently re-admit exactly
+        //    the authority the install removed. Every combination of the two escapes must still refuse.
+        for (accepted, require_lean) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            match mldsa_verify_disposition(None, true, accepted, require_lean) {
+                Err(MlDsaVerifyRefusal::VerifiedCoreFaulted) => { /* fail-closed */ }
+                other => panic!(
+                    "FAIL-OPEN: a verified verify core IS installed and produced NO usable verdict, and \
+                     the disposition returned {other:?} (accepted={accepted}, \
+                     require_lean={require_lean}). A FAULTING archive must REJECT, never fall back to \
+                     the unaudited crate — that is the one state with no opt-out."
+                ),
+            }
+        }
+
+        // ── THE CORE ANSWERED: there is no missing gate to dispose of, whichever way it answered.
+        //    Both verdicts, so the disposition cannot be a disguised "reject everything".
+        for verdict in [true, false] {
+            assert!(
+                mldsa_verify_disposition(Some(verdict), true, false, false).is_ok(),
+                "an ANSWERING verified core must never be refused — {verdict} is the verified \
+                 object's own accept/reject, not a missing gate"
+            );
+        }
+
+        // ── THE DECLARED BYPASS: no core installed in this binary at all (an archive-less build /
+        //    the guest / every `dregg-pq` unit-test binary) AND the operator accepted it.
+        assert!(
+            mldsa_verify_disposition(None, false, true, false).is_ok(),
+            "with NO verified core linked and DREGG_ALLOW_UNAUDITED_PQ=1 this is the DECLARED bypass \
+             (gate-dataflow.tsv twin#13), not a silent fall-open — a blanket refusal would brick every \
+             wasm / zkVM / archive-less build"
+        );
+
+        // ── `DREGG_REQUIRE_LEAN=1` REVOKES IT. Before this existed the variable had NO EFFECT on any
+        //    PQ path: an operator could demand the verified artifact and still get `fips204`.
+        assert!(
+            mldsa_verify_disposition(None, false, true, true).is_err(),
+            "DREGG_REQUIRE_LEAN=1 must REVOKE the unaudited bypass — two switches with contradictory \
+             meanings must not resolve in favour of the permissive one"
+        );
+
+        // The bypass predicate's own quadrants, so a future widening is a visible diff and not a quiet
+        // boolean flip. Invariant 6 CANNOT see this (it does not evaluate the discriminator) — these
+        // lines are the complement that catches a `mldsa_verify_bypass_allowed -> true` mutant.
+        assert!(
+            mldsa_verify_bypass_allowed(false, true, false),
+            "the one declared bypass"
+        );
+        assert!(
+            !mldsa_verify_bypass_allowed(false, false, false),
+            "no opt-in ⇒ no bypass (the DEFAULT is the safe one)"
+        );
+        assert!(
+            !mldsa_verify_bypass_allowed(true, true, false),
+            "a core IS installed ⇒ never a bypass, whatever the operator set"
+        );
+        assert!(
+            !mldsa_verify_bypass_allowed(false, true, true),
+            "DREGG_REQUIRE_LEAN=1 revokes"
+        );
+    }
+
+    /// ⚑ POLE A AT THE SITE, plus its NON-OVER-FIRE companion: the ONLY thing that changes between
+    /// the two halves is whether the installed verified core can answer.
+    ///
+    /// The armed-and-unanswerable state is not producible from outside — with no core installed the
+    /// miss is a DECLARED bypass, and with a real archive `shadow_fips204_verify_real` answers — so it
+    /// is driven here by installing a core that returns `None`. `LEAN_VERIFY_CORE_REAL` is a
+    /// process-wide `OnceLock`, and `dregg-pq`'s unit tests run concurrently in ONE process, so this
+    /// test must NOT install into it (that would silently retarget `sign_then_verify_roundtrips` and
+    /// friends). It therefore drives the disposition + the length short-circuit, and the SITE with a
+    /// real installed core is `tests/mldsa_lean_verify.rs` (archive-present) and
+    /// `tests/unaudited_refusal.rs` (subprocess, archive-absent, both env poles).
+    ///
+    /// What it DOES pin at the site is the VACUITY SHORT-CIRCUIT, which is load-bearing twice: a
+    /// malformed PQ half has no verdict on any backend, and because the undeclared-bypass refusal is
+    /// an UNCATCHABLE ABORT, a gate ahead of the length check would hand any peer a remote kill.
+    #[test]
+    fn ml_dsa_verify_length_gate_short_circuits_ahead_of_the_pq_gate() {
+        // A wrong-length key / signature is refused WITHOUT the disposition being consulted at all.
+        // If this ever regressed, this very test would ABORT the test process (no core is installed
+        // in a `dregg-pq` unit binary), which is the loudest possible failure signal.
+        assert!(
+            !ml_dsa_verify(&[], CTX, b"msg", &[0u8; ML_DSA_SIG_LEN]),
+            "a wrong-length public key rejects on every backend — the length gate, not the PQ gate"
+        );
+        assert!(
+            !ml_dsa_verify(&[0u8; ML_DSA_PK_LEN], CTX, b"msg", &[]),
+            "a wrong-length signature rejects on every backend"
+        );
+        assert!(
+            !ml_dsa_verify(&[0u8; 7], CTX, b"msg", &[0u8; 11]),
+            "both wrong ⇒ reject, and no gate consulted"
+        );
+
+        // And the short-circuit is NOT vacuous: at CORRECT lengths the call does reach a backend.
+        // (In this binary that is the declared bypass — the `#[cfg(test)]` override stands in for the
+        // operator opt-in — so this line also witnesses that the bypass is live rather than the
+        // refusal firing on everything.)
+        let key = MlDsaKey::from_ed25519_seed(&[11u8; 32]);
+        let msg = b"the length gate must not swallow a well-formed verification";
+        let sig = key.sign(CTX, msg);
+        assert!(
+            ml_dsa_verify(&key.public_bytes(), CTX, msg, &sig),
+            "a WELL-FORMED verification must still reach a backend and accept — otherwise the three \
+             rejections above are satisfied by a function that rejects everything"
+        );
+        assert!(
+            crate::audit::any_unaudited_pq_answer(),
+            "and the PROVENANCE must record that it was the unaudited crate that answered it — a \
+             per-site count is the whole point of the legibility half of twin#13"
+        );
+    }
 
     #[test]
     fn from_seed_is_deterministic() {

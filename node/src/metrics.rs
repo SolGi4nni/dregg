@@ -79,15 +79,55 @@ pub fn install_recorder() -> PrometheusHandle {
             // the same "registered here, wired when its plane exports" posture as
             // `dregg_sandbox_denials_total` below.
             gauge!("dregg_bridge_conservation_ok").set(1.0);
+            // Pre-seed the PQ-PROVENANCE series for all six post-quantum directions so the
+            // panel renders a live "0 unaudited answers" from boot rather than "No data",
+            // and so `dregg_pq_unaudited_crate_answers_total > 0` is an ARMED alert rather
+            // than one matching no series. See `publish_pq_provenance`.
+            for site in dregg_pq::PqSite::ALL {
+                gauge!("dregg_pq_verified_core_answers_total", "site" => site.label()).set(0.0);
+                gauge!("dregg_pq_unaudited_crate_answers_total", "site" => site.label()).set(0.0);
+                gauge!("dregg_pq_verified_core_faults_total", "site" => site.label()).set(0.0);
+            }
             handle
         })
         .clone()
+}
+
+/// PUBLISH THE PQ PROVENANCE: for each of the six post-quantum directions, how many operations
+/// were answered by the Lean-VERIFIED core, how many by the UNAUDITED `fips204`/`ml-kem` crate,
+/// and how many refused because an installed core FAULTED.
+///
+/// ⚑ WHY THIS EXISTS. Until now the only signal that unaudited PQ was live in a process was ONE
+/// `warn!` at boot per install site (`lib.rs`, the `ExportAbsent` arms) plus one process-global
+/// stderr line from `dregg_pq::audit`. That tells an operator that an export was missing at
+/// startup; it does NOT tell them which implementation answered a given verification, or that
+/// the answer changed, or how many times. A non-zero
+/// `dregg_pq_unaudited_crate_answers_total{site="ml_dsa_verify"}` means the ACCEPT/REJECT
+/// AUTHORITY behind ~10 surfaces (token/revocation, lightclient, cell-crypto, wire,
+/// turn/authorize, captp, blocklace/pq) is the third-party crate RIGHT NOW — a SAFETY alarm, not
+/// a liveness one, and the only site of the six for which that is true
+/// (`PqSite::is_accept_reject_gate`). The other five are provenance: a keygen has no verdict to
+/// fail open on.
+///
+/// GAUGES, not counters, deliberately: the authoritative totals live in `dregg-pq`'s own atomics
+/// (it is a LIGHT leaf and cannot depend on a metrics recorder), so this mirrors an absolute
+/// value rather than emitting deltas that would double-count on every scrape.
+pub fn publish_pq_provenance() {
+    for (site, verified, unaudited, faults) in dregg_pq::pq_provenance() {
+        gauge!("dregg_pq_verified_core_answers_total", "site" => site.label()).set(verified as f64);
+        gauge!("dregg_pq_unaudited_crate_answers_total", "site" => site.label())
+            .set(unaudited as f64);
+        gauge!("dregg_pq_verified_core_faults_total", "site" => site.label()).set(faults as f64);
+    }
 }
 
 /// Axum handler for GET /metrics.
 pub async fn metrics_handler(
     axum::extract::State(handle): axum::extract::State<PrometheusHandle>,
 ) -> String {
+    // Refresh the pull-time mirrors before rendering, so a scrape always reflects the CURRENT
+    // PQ provenance rather than whatever it was at the last push.
+    publish_pq_provenance();
     handle.render()
 }
 

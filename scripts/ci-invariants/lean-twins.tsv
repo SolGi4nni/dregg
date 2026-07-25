@@ -94,3 +94,40 @@ route	sdk/src/tool_gateway.rs	tool == g\.tool_id && now <= g\.deadline && new ==
 route	sdk/src/tool_gateway.rs	fn tool_gateway_admit_mirrors_lean_delegadmit	twin#12 the hand-pinned §8 differential (the only Rust-drift alarm) must not be deleted
 route	starbridge-apps/tool-access-delegation/src/lib.rs	tool == g\.tool_id && now <= g\.deadline && new == old \+ 1 && 0 <= old && new <= g\.rate_limit	twin#12 the starbridge-apps mirror deleg_admit is conjunct-for-conjunct faithful to the Lean delegAdmit
 route	starbridge-apps/tool-access-delegation/tests/lean_differential.rs	fn corpus_matches_lean_pinned_literal	twin#12 the starbridge-apps corpus differential (the pinned-literal alarm) must not be deleted
+
+# ── twin#13 the PQ ACCEPT/REJECT GATE (ML-DSA-65 verify) + the shared PQ bypass predicate ──────
+# A DIFFERENT FLAVOUR from twins #1/#3b/#8b: the fallback is not a hand-written Rust twin but a real
+# third-party crate (`fips204` 0.4), so the discipline is DECLARED + VISIBLE + REVOCABLE rather than
+# deletion. These rows keep the three load-bearing pieces from being refactored away silently.
+route	dregg-pq/src/mldsa.rs	mldsa_verify_disposition	twin#13 the named fail-closed disposition for the ML-DSA verify gate must stay AT the site (invariant 6's registered fn; inlining it back into ml_dsa_verify re-hides the decision behind the malformed-length `return false` that made a site-level row read PASS on the pre-fix code)
+route	dregg-pq/src/mldsa.rs	MlDsaVerifyRefusal::NoVerifiedCoreAndBypassNotDeclared	twin#13 the refusal itself must still be CONSTRUCTED — the arm that stops the unaudited fips204 crate from deciding a security accept/reject
+route	dregg-pq/src/audit.rs	require_verified_lean_gate	twin#13 DREGG_REQUIRE_LEAN=1 must still be READ on the PQ path — before this existed it had NO EFFECT on any PQ site, so the DREGG_ALLOW_UNAUDITED_PQ bypass was irrevocable
+route	dregg-pq/src/audit.rs	!require_lean && !verified_core_installed && unaudited_accepted_by_operator	twin#13 the shared PQ bypass predicate stays ONE BOOLEAN EXPRESSION over its arguments; dropping the !require_lean conjunct (or splitting it into an early return) is what un-revokes the bypass
+route	dregg-pq/src/mldsa.rs	!require_lean && !verified_core_installed && unaudited_accepted_by_operator	twin#13 the same, at the ML-DSA verify site's own named predicate
+# ⚑ MEASURED at this site, not theorised: with `if require_lean { return false; }` at the top of
+# mldsa_verify_bypass_allowed, a mutant reverting mldsa_verify_disposition's refusal arm to `Ok(())`
+# stays GREEN under invariant 6 (gate-dataflow.py finds that `return false` while inlining the helper
+# and stops looking); as one expression the same mutant goes RED. `1736835f69` measured the identical
+# blinding at the finality site. This row is line-based, so it catches the exact shape.
+forbid	dregg-pq/src/mldsa.rs	^[[:space:]]*if require_lean \{	twin#13 no early `return false` in the bypass predicate — that token BLINDS invariant 6 to the disposition's real refusal arm
+forbid	dregg-pq/src/audit.rs	^[[:space:]]*if require_lean \{	twin#13 the same, for the shared PQ bypass predicate
+
+# ── twin#13's FIVE SIBLING PQ DIRECTIONS — guarded HERE, deliberately NOT in invariant 6 ───────
+# MEASURED (2026-07-25), not assumed: rows registering the sibling sites in `gate-dataflow.tsv` with
+# `guard_unaudited_fallback` as the declared discriminator are RED — 4 of 5 print "the row DECLARES
+# the carve-out but the gate-absent path has NO refusal on the non-exempt arm". They are not
+# fail-OPEN; the refusal is `audit::refuse_unaudited(..) -> !`, a DIVERGING call in ANOTHER FILE, and
+# `gate-dataflow.py` resolves helpers only within the same file and has no notion of `!`. The fifth
+# (`MlDsaKey::try_sign`) prints PASS on a `return None` inlined out of `decode_hex` — i.e. the one
+# green would have been DECORATION. Registering rows that are red-for-the-wrong-reason (or green for
+# the wrong reason) would make invariant 6 lie in both directions, so the sibling coverage is these
+# structural route rows plus the `dregg-pq` falsifier rows in `falsifiers.tsv`.
+route	dregg-pq/src/mldsa.rs	crate::audit::guard_unaudited_fallback\(	twin#13 the ML-DSA sign + keygen fallbacks stay behind the shared PQ refusal guard (deleting the call is how the unaudited crate becomes authoritative again with no signal)
+route	dregg-pq/src/hybrid_kem.rs	crate::audit::guard_unaudited_fallback\(	twin#13 the ML-KEM encaps + decaps fallbacks stay behind the shared PQ refusal guard
+route	dregg-pq/src/hybrid_kem.rs	crate::audit::guard_no_verified_core\(	twin#13 the ML-KEM keygen fallback keeps its DECLARED warn-and-proceed exception (an ephemeral session key; refusing bricks every handshake on an archive-less process) rather than losing the announcement entirely
+route	dregg-pq/src/mldsa.rs	PqSite::MlDsaVerify	twin#13 the verify direction is named at its site, so its provenance counter + per-site warning cannot be dropped
+route	dregg-pq/src/mldsa.rs	PqSite::MlDsaSign	twin#13 the sign direction is named at its site (both the hedged and the deterministic signer)
+route	dregg-pq/src/mldsa.rs	PqSite::MlDsaKeygen	twin#13 the IDENTITY-key keygen direction is named at its site — the one keygen that mints long-lived material and therefore REFUSES rather than warns
+route	dregg-pq/src/hybrid_kem.rs	PqSite::MlKemEncaps	twin#13 the KEM-encaps direction is named at both its sites (hybrid + bare)
+route	dregg-pq/src/hybrid_kem.rs	PqSite::MlKemDecaps	twin#13 the KEM-decaps direction is named at both its sites (hybrid + bare) — the other direction besides verify that can FAIL
+route	dregg-pq/src/hybrid_kem.rs	PqSite::MlKemKeygen	twin#13 the ephemeral KEM-keygen direction is named at its site

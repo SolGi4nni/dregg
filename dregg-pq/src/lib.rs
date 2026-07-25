@@ -35,7 +35,9 @@ mod audit;
 pub mod hybrid_kem;
 mod mldsa;
 
-pub use audit::ALLOW_UNAUDITED_PQ_ENV;
+pub use audit::{
+    ALLOW_UNAUDITED_PQ_ENV, PqSite, REQUIRE_LEAN_ENV, any_unaudited_pq_answer, pq_provenance,
+};
 
 pub use hybrid_kem::{
     MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCoreInstall,
@@ -49,11 +51,11 @@ pub use hybrid_kem::{
 
 pub use mldsa::{
     ML_DSA_PK_LEN, ML_DSA_SIG_LEN, ML_DSA_SK_LEN, MlDsaKey, MlDsaKeygenCoreRealInstall,
-    MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall, install_lean_keygen_core_real,
-    install_lean_sign_core, install_lean_sign_core_real, install_lean_verify_core,
-    install_lean_verify_core_real, install_verified_mldsa_keygen_core_real,
-    install_verified_mldsa_sign_core_real, install_verified_mldsa_verify_core,
-    lean_keygen_core_real_installed, lean_sign_core_installed, lean_sign_core_real_installed,
-    lean_verify_core_real_installed, ml_dsa_public_from_seed, ml_dsa_sign_core,
-    ml_dsa_sign_from_seed, ml_dsa_verify, ml_dsa_verify_core,
+    MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall, MlDsaVerifyRefusal,
+    install_lean_keygen_core_real, install_lean_sign_core, install_lean_sign_core_real,
+    install_lean_verify_core, install_lean_verify_core_real,
+    install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
+    install_verified_mldsa_verify_core, lean_keygen_core_real_installed, lean_sign_core_installed,
+    lean_sign_core_real_installed, lean_verify_core_real_installed, ml_dsa_public_from_seed,
+    ml_dsa_sign_core, ml_dsa_sign_from_seed, ml_dsa_verify, ml_dsa_verify_core,
 };
