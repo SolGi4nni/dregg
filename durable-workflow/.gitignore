@@ -1,2 +1,8 @@
 /target
-Cargo.lock
+# Cargo.lock is TRACKED here, deliberately. `.github/workflows/ci.yml`'s
+# excluded-workspaces matrix gates this directory with `cargo check --all-targets
+# --locked` (and `cargo test --locked --features deploy`), and --locked cannot
+# succeed against a lock the repo does not carry: the leg failed with "cannot
+# create the lock file ... because --locked was passed" from the day it was added.
+# This line was the library-crate default inherited at import; it outlived the
+# reason for it the moment a gate started reading the lock.
