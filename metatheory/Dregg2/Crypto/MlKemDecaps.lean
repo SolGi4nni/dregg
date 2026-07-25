@@ -50,6 +50,7 @@ import Dregg2.Crypto.Keccak
 import Dregg2.Crypto.MlKemRing
 import Dregg2.Crypto.MlKemSample
 import Dregg2.Crypto.MlKemCodec
+import Dregg2.Crypto.AcvpHex
 
 namespace Dregg2.Crypto.MlKemDecaps
 
@@ -232,32 +233,13 @@ so the `ml-kem` crate leaves the node's KEM-decaps TCB. `dregg-lean-ffi::shadow_
 natively; the transcript/KDF around the ML-KEM secret (X25519 combiner) is unchanged — only the `.decapsulate`
 call is replaced. -/
 
-/-- One lowercase/uppercase hex nibble → its `[0,16)` value; `none` on a non-hex char. -/
-def hexNibble? (c : Char) : Option UInt8 :=
-  let n := c.toNat
-  if '0'.toNat ≤ n ∧ n ≤ '9'.toNat then some (UInt8.ofNat (n - '0'.toNat))
-  else if 'a'.toNat ≤ n ∧ n ≤ 'f'.toNat then some (UInt8.ofNat (n - 'a'.toNat + 10))
-  else if 'A'.toNat ≤ n ∧ n ≤ 'F'.toNat then some (UInt8.ofNat (n - 'A'.toNat + 10))
-  else none
-
-/-- Decode a hex char list to bytes; `none` on an odd length or any non-hex char (fail-closed). -/
-def decodeHexChars : List Char → Option (List UInt8)
-  | [] => some []
-  | [_] => none
-  | hi :: lo :: rest => do
-    let h ← hexNibble? hi
-    let l ← hexNibble? lo
-    let rest' ← decodeHexChars rest
-    pure (UInt8.ofNat (h.toNat * 16 + l.toNat) :: rest')
-
-/-- One byte → two lowercase-hex chars. -/
-def toHexDigit (n : UInt8) : Char :=
-  let n := n.toNat
-  if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
-
-/-- Encode bytes as a lowercase-hex string (`decodeHexChars` is its left inverse). -/
-def hexEncode (bs : List UInt8) : String :=
-  String.ofList (bs.foldr (fun b acc => toHexDigit (b / 16) :: toHexDigit (b % 16) :: acc) [])
+/-! The hex codec is `Dregg2.Crypto.AcvpHex` — ONE implementation for every byte wire that crosses
+the `@[export]` boundary (see that module). The verbatim copy that used to sit here is gone; the
+shared decoder carries a proved `@[csimp]` tail-recursive implementation, so the 4,800-char `dk`
+field decodes in constant stack instead of one frame per byte. Same fail-closed contract, same bytes.
+Downstream modules that `open Dregg2.Crypto.MlKemDecaps (hexEncode decodeHexChars)` keep working
+unchanged: these are re-exported here under the same names. -/
+export Dregg2.Crypto.AcvpHex (hexNibble? decodeHexChars toHexDigit hexEncode)
 
 /-- The real byte wire `hex(dk) hex(ct)` the FFI reads. -/
 def realWireKem (dk ct : List UInt8) : String :=

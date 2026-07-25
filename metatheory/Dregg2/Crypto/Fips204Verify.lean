@@ -59,6 +59,7 @@ rejected mask is `none`, proved by `#guard` teeth) and their agreement with the 
 -/
 import Dregg2.Crypto.Fips204Spec
 import Dregg2.Crypto.MlDsaVerifyReal
+import Dregg2.Crypto.AcvpHex
 
 namespace Dregg2.Crypto.Fips204Verify
 
@@ -364,32 +365,12 @@ The wire reuses the SAME `String → String` ABI as `verifyFFI`/`signFFI` (so th
 hex(sig)`. An empty field (e.g. `ctx = ε`) is the empty token between two spaces. Fail-CLOSED (`"0"`) on any
 malformed wire: not exactly four fields, an odd-length field, or a non-hex character. -/
 
-/-- One lowercase/uppercase hex nibble → its `[0,16)` value; `none` on a non-hex char. -/
-def hexNibble? (c : Char) : Option UInt8 :=
-  let n := c.toNat
-  if '0'.toNat ≤ n ∧ n ≤ '9'.toNat then some (UInt8.ofNat (n - '0'.toNat))
-  else if 'a'.toNat ≤ n ∧ n ≤ 'f'.toNat then some (UInt8.ofNat (n - 'a'.toNat + 10))
-  else if 'A'.toNat ≤ n ∧ n ≤ 'F'.toNat then some (UInt8.ofNat (n - 'A'.toNat + 10))
-  else none
-
-/-- Decode a hex char list to bytes; `none` on an odd length or any non-hex char (fail-closed). -/
-def decodeHexChars : List Char → Option (List UInt8)
-  | [] => some []
-  | [_] => none
-  | hi :: lo :: rest => do
-    let h ← hexNibble? hi
-    let l ← hexNibble? lo
-    let rest' ← decodeHexChars rest
-    pure (UInt8.ofNat (h.toNat * 16 + l.toNat) :: rest')
-
-/-- One byte → two lowercase-hex chars. -/
-def toHexDigit (n : UInt8) : Char :=
-  let n := n.toNat
-  if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
-
-/-- Encode bytes as a lowercase-hex string (`decodeHexChars` is its left inverse). -/
-def hexEncode (bs : List UInt8) : String :=
-  String.ofList (bs.foldr (fun b acc => toHexDigit (b / 16) :: toHexDigit (b % 16) :: acc) [])
+/-! The hex codec is `Dregg2.Crypto.AcvpHex` — ONE implementation for every byte wire that crosses
+the `@[export]` boundary (see that module). The verbatim copy that used to sit here is gone; the
+shared decoder carries a proved `@[csimp]` tail-recursive implementation, so a long field decodes in
+constant stack instead of aborting the process. Same fail-closed contract, same bytes — the
+`native_decide` teeth below re-check it. -/
+export Dregg2.Crypto.AcvpHex (hexNibble? decodeHexChars toHexDigit hexEncode)
 
 /-- The real byte wire `hex(pk) hex(msg) hex(ctx) hex(sig)` the FFI reads. -/
 def realWire (pk M ctx sig : List UInt8) : String :=

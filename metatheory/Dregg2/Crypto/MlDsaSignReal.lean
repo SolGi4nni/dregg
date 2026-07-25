@@ -69,6 +69,7 @@ import Dregg2.Crypto.MlDsaSampleInBall
 import Dregg2.Crypto.MlDsaExpandA
 import Dregg2.Crypto.MlDsaCodec
 import Dregg2.Crypto.MlDsaVerifyReal
+import Dregg2.Crypto.AcvpHex
 
 namespace Dregg2.Crypto.MlDsaSignReal
 
@@ -337,32 +338,13 @@ signature). Fail-CLOSED (`"ERR"`) on any malformed wire: not exactly three field
 a non-hex character. Because `signCore` is `rnd = 0` deterministic, the exported signer is deterministic —
 the FIPS 204 deterministic variant, spec-valid. -/
 
-/-- One lowercase/uppercase hex nibble → its `[0,16)` value; `none` on a non-hex char. -/
-def hexNibble? (c : Char) : Option UInt8 :=
-  let n := c.toNat
-  if '0'.toNat ≤ n ∧ n ≤ '9'.toNat then some (UInt8.ofNat (n - '0'.toNat))
-  else if 'a'.toNat ≤ n ∧ n ≤ 'f'.toNat then some (UInt8.ofNat (n - 'a'.toNat + 10))
-  else if 'A'.toNat ≤ n ∧ n ≤ 'F'.toNat then some (UInt8.ofNat (n - 'A'.toNat + 10))
-  else none
-
-/-- Decode a hex char list to bytes; `none` on an odd length or any non-hex char (fail-closed). -/
-def decodeHexChars : List Char → Option (List UInt8)
-  | [] => some []
-  | [_] => none
-  | hi :: lo :: rest => do
-    let h ← hexNibble? hi
-    let l ← hexNibble? lo
-    let rest' ← decodeHexChars rest
-    pure (UInt8.ofNat (h.toNat * 16 + l.toNat) :: rest')
-
-/-- One byte → two lowercase-hex chars. -/
-def toHexDigit (n : UInt8) : Char :=
-  let n := n.toNat
-  if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
-
-/-- Encode bytes as a lowercase-hex string (`decodeHexChars` is its left inverse). -/
-def hexEncode (bs : List UInt8) : String :=
-  String.ofList (bs.foldr (fun b acc => toHexDigit (b / 16) :: toHexDigit (b % 16) :: acc) [])
+/-! The hex codec is `Dregg2.Crypto.AcvpHex` — ONE implementation, shared by every byte wire that
+crosses the `@[export]` boundary. It used to be copied here verbatim (and into `Fips204Verify`,
+`MlKemDecaps`, `MlDsaSigVerAcvp`); the copy is gone. `AcvpHex.decodeHexChars` carries a proved
+`@[csimp]` tail-recursive implementation, so the 8,064-char `sk` field decodes in constant stack
+rather than one frame per byte — the shape that ABORTED the process on a ~64 KiB field. Same
+fail-closed contract, same bytes: the `native_decide` ACVP pins below re-check it end to end. -/
+export Dregg2.Crypto.AcvpHex (hexNibble? decodeHexChars toHexDigit hexEncode)
 
 /-- The real byte wire `hex(sk) hex(msg) hex(ctx)` the SIGN FFI reads. -/
 def realSignWire (sk M ctx : List UInt8) : String :=

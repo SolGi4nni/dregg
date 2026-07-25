@@ -42,6 +42,7 @@ name. The `#guard` shape checks are commands with no proof term and add NO axiom
 `axiom`, no toy substitute.
 -/
 import Dregg2.Crypto.MlDsaVerifyReal
+import Dregg2.Crypto.AcvpHex
 
 namespace Dregg2.Crypto.MlDsaSigVerAcvp
 
@@ -50,22 +51,9 @@ open Dregg2.Crypto.MlDsaVerifyReal (verifyCore)
 set_option maxRecDepth 1000000
 set_option maxHeartbeats 0
 
-/-- One lowercase/uppercase hex nibble to its `[0,16)` value; `none` on a non-hex char. -/
-def hexNibble? (c : Char) : Option UInt8 :=
-  if '0' <= c && c <= '9' then some (UInt8.ofNat (c.toNat - '0'.toNat))
-  else if 'a' <= c && c <= 'f' then some (UInt8.ofNat (c.toNat - 'a'.toNat + 10))
-  else if 'A' <= c && c <= 'F' then some (UInt8.ofNat (c.toNat - 'A'.toNat + 10))
-  else none
-
-/-- Decode a hex char list to bytes; `none` on an odd length or any non-hex char (fail-closed). -/
-def decodeHexChars : List Char -> Option (List UInt8)
-  | [] => some []
-  | [_] => none
-  | a :: b :: rest => do
-      let hi <- hexNibble? a
-      let lo <- hexNibble? b
-      let tl <- decodeHexChars rest
-      return (hi * 16 + lo) :: tl
+/-! The hex codec is `Dregg2.Crypto.AcvpHex` — ONE implementation for every byte wire and every
+pinned ACVP vector (see that module). The verbatim copy that used to sit here is gone. -/
+export Dregg2.Crypto.AcvpHex (hexNibble? decodeHexChars)
 
 /-- Decode a hex string to bytes, `[]` on malformed input (never reached: every pinned string is
 even-length hex straight out of the ACVP JSON, which the `wellFormed` `#guard` below checks). -/
