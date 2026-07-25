@@ -79,6 +79,11 @@ corollary, all proven against green-at-HEAD imports:
 
 ## ⚑ Reported precisely: what the tree does NOT yet provide for the DEPLOYED multi-layer schedule
 
+  * **~~No welded setup TOWER~~ — STALE as of 2026-07-25: `Dregg2/Circuit/FriSetupTower.lean` LANDED it**
+    (five welded arity-8 layers at the `2^19` production domain, `tower_link` proving
+    `(towerS i).C' = (towerS (i+1)).C` across the real schedule, `chainStepIdx_tower`). What remains is
+    NOT the tower but its RADIUS: every landed schedule runs at `d = 0`, so the margin in
+    `goodδ_card_lt` is zero and `ChainStepGap` has no positive-radius instance. Original text follows.
   * **No welded setup TOWER.** A deployed `L`-layer instance of `ChainStepIdx` needs a family
     `S : Fin L → FriSetupK` with `(S i).C' = (S (i+1)).C` (the folded code of layer `i` IS the
     domain code of layer `i+1`, transported along `κ_i ≃ ι_{i+1}`). `FriFoldArity` provides ONE
