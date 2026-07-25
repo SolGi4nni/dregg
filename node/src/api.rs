@@ -7605,20 +7605,22 @@ async fn post_faucet(
 
     let mut s = state.write().await;
 
-    // MULTI-PARTY vs SOLO provisioning split. In a committee (n>1), consensus
-    // FINALIZATION is the single authoritative application of a turn — the SAME
-    // `execute_finalized_turn` runs on every node and provisions any missing
-    // cells DETERMINISTICALLY from the finalized turn's own data (see
-    // `provision_transfer_destinations`). The faucet endpoint must therefore NOT
-    // advance any authoritative state at submission: creating the faucet/recipient
-    // cell here would be LOCAL-ONLY (peers never see it) and, worse, NON-UNIFORM
-    // (the submitter would mint a canonical `with_balance(pk, …)` cell while peers
+    // Consensus FINALIZATION is the single authoritative application of a turn at
+    // EVERY committee size — the SAME `execute_finalized_turn` runs on every node
+    // and provisions any missing cells DETERMINISTICALLY from the finalized
+    // turn's own data (see `provision_transfer_destinations`). So this endpoint
+    // advances NO authoritative state for a funded grant: creating the recipient
+    // here would be LOCAL-ONLY (peers never see it) and, worse, NON-UNIFORM (the
+    // submitter would mint a canonical `with_balance(pk, …)` cell while peers
     // materialize a zero-pk stub at the same id — divergent ledger content the
-    // attested root does not catch, because it commits only `cell.state`). So in
-    // multi-party mode all provisioning + execution below runs against a SCRATCH
-    // CLONE purely to build the receipt/proof for the HTTP response; the
-    // authoritative ledger is untouched until finalization. Solo (n=1) has no
-    // finalization pass, so it provisions + commits authoritatively here.
+    // attested root does not catch, because it commits only `cell.state`). The
+    // provisioning + execution below runs against an undo journal purely to build
+    // the receipt/proof for the HTTP response, and is rolled back.
+    //
+    // `is_solo` survives for ONE decision: the zero-amount materialization path,
+    // which has no turn and therefore no finalized pass to provision it. A sole
+    // authority can mint the canonical pk-bound cell there; a committee member
+    // must mint the same uniform stub every other node would.
     let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
 
     // The faucet cell. Derived from the genesis faucet key in the canonical
@@ -7633,11 +7635,10 @@ async fn post_faucet(
     // recipient is provisioned by the finalized executor on every node from the
     // turn data alone (the recipient's public key is NOT carried over consensus,
     // so every node — including this submitter — must agree on the SAME provisioned
-    // cell). We therefore reuse the identical `remote_stub_with_id_and_balance`
-    // provisioning here (on the scratch clone) that `execute_finalized_turn` uses,
-    // so the receipt this node returns matches the authoritative finalized outcome.
-    // Solo mode mints the canonical hosted cell (with the known pk) directly, since
-    // it is the sole authority.
+    // cell). We therefore reuse the identical stub provisioning here that
+    // `execute_finalized_turn` uses, so the receipt this node returns matches the
+    // authoritative finalized outcome. Solo mode mints the canonical hosted cell
+    // (with the known pk) directly, since it is the sole authority.
     let provision_recipient = |ledger: &mut dregg_cell::Ledger| {
         if ledger.get(&recipient_cell_id).is_some() {
             return;
