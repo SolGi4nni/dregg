@@ -101,7 +101,21 @@ universal rejection. It does **not** prove satisfiability at the opaque `cfg*` a
 - `delegAdmit` — one Lean `def`, **three** Rust copies; export + FFI + delete (wasm seam to handle honestly)
 - `wide_value_binding` — 639 lines of Rust AIR added *for the felt-width repair*; Lean route
 
-## ⚑ HELD, PENDING TYPE-CHECK — do not commit until green
+## ⚑ LANDED: the param-compose production path is OFF the Rust AIR
+
+`param-compose/src/witness.rs` + `lean_descriptor.rs` + the `entity-compose` rewire are **committed and
+type-verified** — `CHECK_PARAM_COMPOSE=0` on the shared dir plus four green side-checks in a private
+target dir. Zero `param_compose::air|builder` imports remain on any production path;
+`entity-compose::air_accepts` is deleted. **1028 lines now dead to production but not yet removed.**
+
+Still held (correctly): `braid-hook` + `dreggnet-companion` — their `--features prove` surfaces are the
+deepest part of the rewire and are **not type-checked**. Also held: the `delegAdmit` Rust side.
+
+**Technique worth reusing:** when the shared cargo lock is saturated (this session hit **load 419 on 12
+cores**), a private `CARGO_TARGET_DIR` side channel gets an independent type-check through. It pays the
+cold-build cost but it is not blocked.
+
+## ⚑ (superseded) HELD, PENDING TYPE-CHECK — do not commit until green
 
 The `param-compose` witness producer + production rewire is **written but never compiled**: the shared
 cargo lock was saturated all session (75 procs, load 193/12 cores), so *not one* invocation ran.
