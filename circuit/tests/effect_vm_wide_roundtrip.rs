@@ -201,10 +201,14 @@ fn assert_executor_anchor(
     before_w: &rw::RotationWitness,
     nullifier_root: dregg_circuit::Faithful8,
     commitments_root: dregg_circuit::Faithful8,
+    // Wound #23: the turn-level boundary root is a FAITHFUL 8-felt group now, so the anchor's
+    // context takes the producer's `Faithful8` rather than reading limb 0 back off `pre_limbs`
+    // (which would have re-created the lane-0 squeeze inside the check meant to catch it).
+    cells_root: dregg_circuit::Faithful8,
     trace: &[Vec<BabyBear>],
 ) {
     let ctx = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root,
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -368,6 +372,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
         &before_w,
         nullifier_root,
         commitments_root,
+        rw::cells_root(&ledger),
         &trace,
     );
 }

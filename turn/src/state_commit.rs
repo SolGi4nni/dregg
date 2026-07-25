@@ -58,10 +58,22 @@
 //!    The whole-ledger 8-felt state root is the deferred `cells_root` Phase-E
 //!    work. The consequence is visible in [`consensus_state_commitment`]'s
 //!    contract: it binds the agent cell's own state faithfully and the rest of
-//!    the ledger only through the `cells_root` *existence* fold (limb 0), which
-//!    is a set-of-present-cells digest, not a state digest.
+//!    the ledger only through the `cells_root` *existence* fold, which is a
+//!    set-of-present-cells digest, not a state digest. That fold is now
+//!    **faithful in WIDTH** (wound #23: the 8-felt `CanonicalHeapTree8` group at
+//!    limb 0 ‖ 169..=175, `node8` at every intermediate) — but width is not
+//!    content: an existence bit per cell still says nothing about those cells'
+//!    balances, and the *keys* of that tree are still one-felt digests of the
+//!    32-byte `CellId` (the accumulator-KEY class, kind D, unclosed).
 //! 3. **The lane-0 waist persists** wherever a narrow leg still broadcasts into
-//!    slot 0 of a wide carrier. This anchor does not touch those sites.
+//!    slot 0 of a wide carrier. This anchor does not touch those sites. The one
+//!    that was IN this anchor — `cells_root` — is closed; `V9RotationContext.iroot`
+//!    is the remaining bare `BabyBear` in the same struct (see below).
+//! 3b. **`iroot` is STILL a 1-felt left-leaning fold** (`rotation_witness::iroot`,
+//!    every intermediate `root: BabyBear` ~31 bits). It is ZERO on this path — the
+//!    ctx builder below pins it, deliberately — so it contributes nothing to the
+//!    deployed anchor today; it is a standing falsifier the moment a live receipt
+//!    MMR root is threaded here, and widening `cells_root` did NOT close it.
 //! 4. **Cost.** `Ledger::root()` was an incrementally-maintained O(log n) leaf
 //!    patch. This anchor is O(n_cells) Poseidon2 for `cells_root` plus a
 //!    `CanonicalHeapTree8` rebuild per accumulator, twice per turn (pre + post).
@@ -140,11 +152,13 @@ pub fn consensus_ctx(
 /// A turn can remove its own agent cell (`MakeSovereign`, a destroy). The
 /// post-state then has no cell to commit. Rather than stamp a sentinel that
 /// collides across ledgers, the absent case commits the turn-level **boundary**:
-/// an all-zero limb vector carrying `cells_root` in limb 0, chip-chained under
-/// the same `iroot`. That value is well defined, distinct from any live cell's
-/// commitment (a live cell's limbs 1..3 carry balance/nonce, which the zero
-/// vector does not), and still MOVES when the set of present cells moves — so a
-/// removal is not a fixed point.
+/// an all-zero limb vector carrying the faithful 8-felt `cells_root` group (limb
+/// 0 ‖ 169..=175), chip-chained under the same `iroot`. That value is well
+/// defined, distinct from any live cell's commitment (a live cell's limbs 1..3
+/// carry balance/nonce, which the zero vector does not), and still MOVES when the
+/// set of present cells moves — so a removal is not a fixed point. Since wound
+/// #23 that "still MOVES" holds at ~124 bits: before the completion group was
+/// filled, the entire absent anchor was a chip chain over ONE ~31-bit felt.
 pub fn consensus_state_commitment(
     ledger: &Ledger,
     agent: &CellId,
@@ -167,7 +181,17 @@ pub fn cell_state_commitment(cell: &Cell, ctx: &V9RotationContext) -> [u8; 32] {
 /// [`consensus_state_commitment`]'s "absent agent" section.
 pub fn absent_cell_commitment(ctx: &V9RotationContext) -> [u8; 32] {
     let mut limbs = vec![BabyBear::ZERO; V9_NUM_PRE_LIMBS];
-    limbs[0] = ctx.cells_root;
+    // The FAITHFUL 8-felt `cells_root` group (lane 0 = limb 0 ‖ completion 169..=175) — the SAME
+    // fill `compute_rotated_pre_limbs` does, so the absent anchor is the boundary projection of
+    // the live one. This case is where wound #23 bit hardest: with a zero-filled completion group
+    // the WHOLE absent post-state anchor was one ~31-bit felt (every other limb is zero), so two
+    // present-cell sets colliding on the lane-0 fold produced one signed post-state for two
+    // different ledgers. At 8 felts the "still MOVES when the set of present cells moves" claim
+    // below holds at the chain's own ~124-bit width instead of ~31.
+    ctx.cells_root.write_lanes(
+        &mut limbs,
+        dregg_circuit::effect_vm::layout_generated::CELLS_ROOT_GROUP,
+    );
     Faithful8::from_wire_commit_chip(&limbs, ctx.iroot).to_bytes32()
 }
 

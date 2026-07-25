@@ -771,8 +771,9 @@ pub const V9_NUM_REGISTERS: usize = 24;
 /// widening of the base region (37→38): `revoked_root` is the new base limb 37 (right after
 /// `fields_root` at 36), so every limb index ≥ 37 shifts +1 — completion 38..=88, carrier 89..=112,
 /// fields[0..7] completion 113..=168. The tail 169..=177 is the CLEAN-ALIGNMENT region: limbs
-/// 169..=175 are the circuit-only `cells_root` 8-felt completion group (lanes 1..7 — ZERO in the
-/// producer, filled by the createCell trace generator; placed here so they never collide with
+/// 169..=175 are the `cells_root` 8-felt completion group (lanes 1..7 — FILLED BY BOTH PRODUCERS on
+/// every turn since wound #23; the createCell/factory/spawn trace generator overwrites the whole
+/// group with its own in-circuit accounts tree; placed here so they never collide with
 /// `revoked_root`'s committed group at 82..=88), and 176..=177 are the two zero pad limbs that land
 /// the body `[4..177]` = 174 = 58×3 (clean 3-grouping, NO arity-2 leftover — the wide 8-felt path's
 /// clean-grouping discipline). Lean `preLimbsAt_length = 178`.
@@ -788,8 +789,17 @@ pub const V9_NUM_PRE_LIMBS: usize = dregg_circuit::effect_vm::layout_generated::
 /// context so it reproduces the circuit's row-0 `STATE_COMMIT` for the same turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct V9RotationContext {
-    /// The turn-level boundary `cells_root` felt (limb 0).
-    pub cells_root: dregg_circuit::field::BabyBear,
+    /// The turn-level boundary FAITHFUL 8-felt `cells_root` (limb 0 lane-0 ‖ completion lanes
+    /// 169..=175). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 root over one
+    /// existence leaf per present cell, sourced from `dregg_turn::rotation_witness::cells_root`.
+    ///
+    /// ⚑ WOUND #23 (`docs/WOUND-felt-width-boundaries-2026-07-19.md`): this was a bare
+    /// `BabyBear` — a ~31-bit COMPONENT riding inside the faithful 8-felt consensus anchor, in
+    /// the same struct as three `Faithful8` siblings, with its completion group present in the
+    /// layout but ZERO in both producers. The TYPE is the repair: a bare limb carries no evidence
+    /// of faithful-vs-degraded, which is exactly why the wall's own complement went unseen here
+    /// for as long as it did.
+    pub cells_root: dregg_circuit::Faithful8,
     /// The cell's committed FAITHFUL 8-felt nullifier-accumulator root (limb 26 lane-0 ‖ completion
     /// lanes 68..=74). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 accumulator
     /// root the noteSpend grow-gate opens against (`EffectVmEmitRotationV3` writesTo8), sourced from
@@ -1098,15 +1108,24 @@ pub fn compute_rotated_pre_limbs(
 ) -> Vec<dregg_circuit::field::BabyBear> {
     use dregg_circuit::effect_vm::layout_generated::{
         AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
-        CAP_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
-        NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, VK_GROUP,
+        CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP,
+        HEAP_ROOT_GROUP, NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, VK_GROUP,
     };
     use dregg_circuit::effect_vm::split_u64;
     use dregg_circuit::field::BabyBear;
 
     let mut pre = vec![BabyBear::ZERO; V9_NUM_PRE_LIMBS];
-    // limb 0: cells_root (turn-level).
-    pre[0] = ctx.cells_root;
+    // limb 0: cells_root lane-0 ‖ lanes 169..=175: the SEVEN cells-root completion felts. THE
+    // FAITHFUL 8-FELT CELLS ROOT (wound #23) — the native `CanonicalHeapTree8` node8 (arity-16)
+    // sorted-Poseidon2 root over the present-cell existence leaves the circuit's 8-felt
+    // `cells_root` column GROUP carries (`EffectVmEmitRotationV3.cellsRootGroupCol`: lane 0 =
+    // limb 0, lanes 1..7 = limbs 169..175). Filled on EVERY turn: the completion group existed in
+    // the layout but was ZERO in both producers, so the boundary component of the consensus
+    // anchor was one ~31-bit felt inside an otherwise faithful chain. The createCell / factory /
+    // spawn trace generator OVERWRITES the whole group with the in-circuit accounts tree (its own
+    // grow-gate object); every other turn now commits this producer value at full width.
+    // Byte-identical to the `rotation_witness::produce` twin.
+    ctx.cells_root.write_lanes(&mut pre, CELLS_ROOT_GROUP);
     // limbs 1..=24: r0..r23 — welded scalars first.
     let balance = cell.state.balance();
     let (bal_lo, bal_hi) = split_u64(balance as u64);
@@ -1589,7 +1608,9 @@ mod tests {
     fn nullifier_root_faithful_8felt_and_cross_node_distinguishing() {
         let cell = Cell::new(test_key(7), test_token(11));
         let mk_ctx = |nr: dregg_circuit::Faithful8| V9RotationContext {
-            cells_root: BabyBear::ZERO,
+            // wound #23: `cells_root` is a `Faithful8` group now — the empty-ledger root is the
+            // named faithful constant a fixture uses in place of a bare felt.
+            cells_root: dregg_circuit::heap_root::empty_heap_root_8(),
             nullifier_root: nr,
             commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
             revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -1654,7 +1675,8 @@ mod tests {
     fn commitments_root_faithful_8felt_and_cross_node_distinguishing() {
         let cell = Cell::new(test_key(7), test_token(11));
         let mk_ctx = |cr: dregg_circuit::Faithful8| V9RotationContext {
-            cells_root: BabyBear::ZERO,
+            // wound #23: see the nullifier twin above — the empty-ledger faithful 8-felt root.
+            cells_root: dregg_circuit::heap_root::empty_heap_root_8(),
             nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
             commitments_root: cr,
             revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -2404,9 +2426,15 @@ mod tests {
 
     use dregg_circuit::field::BabyBear;
 
-    fn v9_ctx(cells_root: u32, iroot: u32) -> V9RotationContext {
+    /// A v9 turn context whose `cells_root` is a GENUINE one-leaf existence-tree root keyed by
+    /// `cells_root_seed` (wound #23: the field is a `Faithful8` group, so a fixture names a faithful
+    /// constructor instead of broadcasting one felt into lane 0).
+    fn v9_ctx(cells_root_seed: u32, iroot: u32) -> V9RotationContext {
         V9RotationContext {
-            cells_root: BabyBear::new(cells_root),
+            cells_root: dregg_circuit::heap_root::compute_canonical_heap_root_8_entries(&[(
+                (BabyBear::ZERO, BabyBear::new(cells_root_seed)),
+                BabyBear::ONE,
+            )]),
             nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
             commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
             revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -2427,12 +2455,29 @@ mod tests {
             178,
             "38 base (incl. revoked_root limb 37) + 51 faithful-8-felt completion limbs (38..88) \
              + 24 v12 carrier-material octets (89..112) + 56 v13 fields[0..7] completion lanes \
-             (113..168) + 7 circuit-only cells_root completion lanes (169..175, relocated off \
+             (113..168) + 7 cells_root completion lanes (169..175, relocated off \
              revoked's 82..88) + 2 pads (176..177) = 178, giving a clean 58x3 wire-commit body \
              (limbs 4..177 = 174 = 58*3, no leftover chunk for the wide chip to refuse)"
         );
-        // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
-        assert_eq!(pre[0], BabyBear::new(11));
+        // The FAITHFUL 8-felt cells_root (wound #23): lane 0 at limb 0, completion lanes 1..7 at
+        // limbs 169..=175 — filled by BOTH producers on EVERY turn, not zero-filled and left to the
+        // createCell trace generator. A check that only ever read limb 0 is how the ~31-bit
+        // component inside the faithful chain stayed invisible.
+        let ctx_cells = v9_ctx(11, 22).cells_root;
+        let cells_lanes = [0usize, 169, 170, 171, 172, 173, 174, 175];
+        for (lane, &pos) in cells_lanes.iter().enumerate() {
+            assert_eq!(
+                pre[pos],
+                ctx_cells.limbs()[lane],
+                "cells_root lane {lane} rides limb {pos}"
+            );
+        }
+        assert!(
+            cells_lanes[1..]
+                .iter()
+                .any(|&pos| pre[pos] != BabyBear::ZERO),
+            "the cells_root completion limbs 169..=175 must be NON-ZERO for a non-empty cells tree"
+        );
         let (lo, _hi) = dregg_circuit::effect_vm::split_u64(100_000u64);
         assert_eq!(pre[1], lo, "r0 ↔ balance_lo weld");
         // limb 27 is the commitments_root lane 0 (the flag-day faithful-8-felt shielded-set root).

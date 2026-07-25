@@ -6219,7 +6219,11 @@ impl AgentCipherclerk {
             let pre = compute_rotated_pre_limbs(
                 &before_cell,
                 &V9RotationContext {
-                    cells_root: before_w.pre_limbs[0],
+                    // wound #23: the turn-level boundary root is a FAITHFUL 8-felt group, so the
+                    // cross-check rebuilds it from the SAME single-cell context ledger `produce`
+                    // read — reading limb 0 back would re-create the lane-0 squeeze inside the
+                    // check meant to catch a producer disagreement.
+                    cells_root: rw::cells_root(&ctx_ledger),
                     nullifier_root,
                     commitments_root,
                     revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),

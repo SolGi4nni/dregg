@@ -321,6 +321,16 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     // producer's values must equal what the generated trace carries in BOTH blocks.
     for (idx, label) in [
         (0usize, "cells_root"),
+        // wound #23: the cells_root COMPLETION lanes (the group's lanes 1..7) are producer-filled
+        // on every turn now, so the differential must check them — a check that only ever read
+        // lane 0 is exactly how a zero-filled completion group stayed invisible.
+        (169, "cells_root lane1"),
+        (170, "cells_root lane2"),
+        (171, "cells_root lane3"),
+        (172, "cells_root lane4"),
+        (173, "cells_root lane5"),
+        (174, "cells_root lane6"),
+        (175, "cells_root lane7"),
         (26, "nullifier_root"),
         (27, "commitments_root"),
         (28, "heap_root"),
@@ -364,7 +374,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     //    circuit carries the same object on its row-0 carrier. This is the binding the
     //    cutover doc deferred to the flip — now CLOSED, additively (v9, v8 untouched). --
     let v9_ctx = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -585,7 +595,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
 
     // The cell v9 (now binding FULL authority state via r23) == the circuit STATE_COMMIT.
     let v9_ctx = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -1469,7 +1479,7 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
         let after_pre = compute_rotated_pre_limbs(
             &after_cell,
             &V9RotationContext {
-                cells_root: after_w.pre_limbs[0],
+                cells_root: rw::cells_root(&ledger),
                 nullifier_root,
                 commitments_root,
                 revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -2036,7 +2046,13 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let iroot = BabyBear::new(0x1234);
-    let cells_root = BabyBear::new(0x5678);
+    // Wound #23: `cells_root` is a FAITHFUL 8-felt group (limb 0 ‖ 169..=175), so the fixture is a
+    // genuine one-cell existence-tree root, not a bare felt. Its completion lanes are non-zero, so
+    // the "every OTHER named limb is unchanged" sweep below now genuinely covers 169..=175.
+    let cells_root = dregg_circuit::heap_root::compute_canonical_heap_root_8_entries(&[(
+        (BabyBear::ZERO, BabyBear::new(0x5678)),
+        BabyBear::ONE,
+    )]);
     let ctx = V9RotationContext {
         cells_root,
         nullifier_root,
@@ -2466,7 +2482,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     //     STATE_COMMIT == PI[42]. The non-zero field is absorbed by `wireCommitR` identically on
     //     both sides, so the agreement holds despite the field — the whole point of the lift.
     let v9_ctx_before = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -2493,7 +2509,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     //     STATE_COMMIT == PI[35]. (The after-cell's turn-invariant limbs ride the after-block; the
     //     welds carry the debited balance — the field is unchanged by a transfer, so it persists.)
     let v9_ctx_after = V9RotationContext {
-        cells_root: after_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),

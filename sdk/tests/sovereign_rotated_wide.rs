@@ -140,7 +140,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // -- EXECUTOR LEG: anchor the 16 wide PIs to the TRUSTED before/after cell chip-commits (the wide
     //    analog of the live `dpis[42]/[43]` override — the 1-felt-retire the flip performs). --
     let before_ctx = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -148,7 +148,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
         material: Default::default(),
     };
     let after_ctx = V9RotationContext {
-        cells_root: after_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -418,7 +418,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     // -- EXECUTOR LEG: anchor the 16 wide commit PIs to the TRUSTED before/after cell chip-commits
     //    (the wide analog of the live executor's 1-felt-retire override). --
     let before_ctx = V9RotationContext {
-        cells_root: before_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -426,7 +426,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         material: Default::default(),
     };
     let after_ctx = V9RotationContext {
-        cells_root: after_w.pre_limbs[0],
+        cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root,
         commitments_root,
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),

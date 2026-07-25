@@ -142,6 +142,104 @@ committed `cells_root` is lane 0 alone.
   existing 1-felt `cells_root` is `finalSqueezeOnly_still_conflates` (#12). Committed-state binding
   change ⇒ flag-day, ember-gated; NOT a `MapOp` key change and NOT new combinatorics.
 
+### #23 — CLOSED 2026-07-24. The repair was PRODUCER-ONLY; the price is a receipt/consensus epoch.
+
+**The lead question the repair had to answer first — producer-only, AIR, or consensus epoch? — has a
+three-part answer, established by read before anything was changed.**
+
+**(i) The AIR constrains limbs 169..=175 ONLY under the createCell / factory / spawn selectors.** The
+`.cells` group is the subject of exactly two `MapOp`s, `cellsFreshOp` (`.absent`) and `cellsInsertOp`
+(`.aafiInsert`), both `guard := .var sel` and both appended only by `createCellV3` / `factoryV3` /
+`spawnV3` (`Emit/EffectVmEmitRotationV3.lean:2850-2890`; the member lists at
+`AlgoStarkSoundFanoutMemory.lean:284-316`). `rotated178` is a pure column ALLOCATOR — `Legal` obliges
+disjointness / bounds / body-alignment and **nothing about a limb's value**, so no constraint pins
+169..=175 to zero on any member. On every non-birth member those seven limbs are absorbed by
+`wireCommitR` (they are `< NUM_PRE_LIMBS`) and gated by nothing at all.
+
+**(ii) Filling them changes NO descriptor byte and NO VK — only the committed VALUE.** The trace's
+rotated blocks take those limbs straight from the producer: `fill_block`
+(`circuit/src/effect_vm/trace_rotated.rs`) opens with
+`row[base..base + NUM_PRE_LIMBS].copy_from_slice(&w.pre_limbs[..NUM_PRE_LIMBS])`, then recomputes the
+chain and `STATE_COMMIT` on this row's own limbs. So a producer that fills the group is carried into
+the trace by copy, the chain stays satisfiable, and the descriptor — which encodes columns and ops,
+never producer values — is byte-identical. **No VK regen, no Lean AIR change, no `MapOp` key change.**
+
+**(iii) It IS a receipt/consensus epoch, and the price is exactly that.** Every
+`pre_state_hash` / `post_state_hash` moves (the anchor absorbs limb 0 and 169..=175, and lane 0 itself
+moves too — the 8-felt fold is a genuine `node8` re-fold, not a widening of the old value). Therefore:
+`TurnReceipt::receipt_hash` (`dregg-receipt-v5`) moves ⇒ the executor signature signs a different
+message ⇒ the federation receipt QC aggregates over a different body ⇒ `receipt_stream_root` and the
+`AttestedRoot` quorum move. **Retained receipts do not verify against re-derived anchors across the
+boundary, and `verify_receipt_chain`'s continuity check
+(`curr.pre_state_hash == prev.post_state_hash`) is only satisfiable within one side of it.** The
+`AttestedRoot::merkle_root` / `FinalizationVote::merkle_root` BLAKE3 whole-image restart anchor is
+UNAFFECTED (it is `dregg_persist::canonical_ledger_root`, not this value). Priced against reality: the
+devnet ledger was already lost on reboot, nothing is deployed, and the campaign has run this exact
+flag-day before (the REVOKED-ROOT base widen 37→38), so the epoch costs a re-genesis, not a migration.
+
+**What changed.**
+- `turn/src/rotation_witness.rs` — `cells_root(ledger) -> Faithful8` via
+  `heap_root::compute_canonical_heap_root_8_entries` (was `compute_heap_root_entries -> BabyBear`);
+  `produce` writes the group with `write_lanes(&mut pre_limbs, CELLS_ROOT_GROUP)`.
+- `cell/src/commitment.rs` — **the TYPE**: `V9RotationContext.cells_root : dregg_circuit::Faithful8`,
+  matching its three `Faithful8` siblings; `compute_rotated_pre_limbs` writes the group.
+- `turn/src/state_commit.rs` — `absent_cell_commitment` fills the group (the case where the anchor WAS
+  the narrow felt).
+- Consumers rewired to the producer rather than to `pre_limbs[0]`: `sdk/src/cipherclerk.rs` (the live
+  producer cross-check), `sdk/tests/{sovereign_rotated_c1,sovereign_rotated_wide,executor_welded_commit}.rs`,
+  `circuit/tests/{effect_vm_rotation_flip,effect_vm_wide_roundtrip}.rs`, `perf`, `turn-prover` tests.
+- Lean docstrings (`Emit/RotatedLayout.lean`, `Emit/EffectVmEmitRotationV3.lean`) — they ASSERTED
+  "producer-zero"; leaving that in the authoritative source is what let a detector read the layout and
+  call the site SAVED. No emitted object changed (comments only; the group table is unchanged).
+
+**ANTI-LAUNDER — the fold's internals, checked, not assumed.** `compute_canonical_heap_root_8_entries`
+is wide at every intermediate: each leaf is `HeapLeaf::digest8` = `chip_absorb_all_lanes(3, [addr,
+value, next_addr])` (all 8 output lanes of the arity-3 chip) and each node is `heap_node8` =
+`chip_absorb_all_lanes(16, L8 ‖ R8)` (all 8 lanes of the arity-16 `node8` chip); every value in the
+fold is `[BabyBear; 8]`, including `EMPTY_SUBTREE_ROOTS_8`. There is **no ~31-bit waist anywhere** and
+the wide root is **not** a re-hash of the narrow one (a pinned assertion: `wide.limbs()[0] != narrow`).
+This is not `finalSqueezeOnly_still_conflates` (#12). Contrast the `iroot` sibling, which IS that
+shape and is untouched — see below.
+
+**FALSIFIED, both polarities** (`turn/tests/cells_root_width_falsification.rs`, 3 tests + an
+`#[ignore]`d reproducible search). Two present-cell sets `{agent, filler_4084}` and
+`{agent, filler_7322}`, identical agent leg, distinct filler ids AND distinct existence keys:
+- **BEFORE** — the pre-fix producer shape (lane 0 = the narrow fold, completion ZERO) gives ONE anchor
+  for both ledgers, agent-present AND agent-absent. The narrow fold value is pinned (`1976398739`).
+- **AFTER** — `consensus_state_commitment` and `absent_cell_commitment` both SEPARATE them.
+- The pair was found in **7 323 offline folds** (~3 s, unoptimized, no chain interaction). The analytic
+  birthday price for a full 31-bit fold is ~2^16 samples; landing at 7.3k is either a lucky draw or a
+  hint that the fold carried fewer than 31 effective bits. One sample settles neither — recorded as an
+  observation, not a claim, and the search is kept runnable rather than asserted.
+
+**WHAT THIS DOES NOT CLOSE — three residuals, all named at the sites.**
+1. **The tree's KEYS are still ONE felt.** A leaf address is `heap_addr(CELLS_COLLECTION,
+   hash_bytes(id))`, a 1-felt digest of a 32-byte `CellId`. Two ids whose key folds collide produce
+   literally the SAME leaf at ANY root width. That is the accumulator-KEY class (kind D — #5/#9/#11/#20),
+   un-widenable producer-side (`DescriptorIR2.lean:301-313`'s scalar `key : EmittedExpr`), and it must
+   ride the `MapOp` key epoch. The falsifier REFUSES a key-collision pair so the fixture cannot launder
+   one as a root collision.
+2. **Width is not content, and it is not AIR-forced.** `cells_root` is an EXISTENCE fold — an
+   attacker-visible set of present ids, not their states — and on every non-birth member NOTHING in the
+   AIR constrains it. It is an executor-computed witness limb absorbed by the commitment chain.
+3. **The executor's cells tree and the circuit's accounts tree are DIFFERENT OBJECTS** (found while
+   pricing this, worth its own entry): the anchor folds `heap_addr(CELLS_COLLECTION, hash_bytes(id)) ↦ 1`
+   through `CanonicalHeapTree8`, while the createCell/factory/spawn grow-gate opens
+   `HeapLeaf::entry(cell_key, cell_key)` over the threaded `before_accounts` (empty `&[]` on the deployed
+   wide recipe, `turn-prover/src/rotation_witness.rs`). The generator OVERWRITES limb 0 (and now the
+   whole group) with its own root, so on a birth turn the executor's committed anchor and the proof's
+   published `STATE_COMMIT` do not describe the same tree. That divergence predates this repair and is
+   NOT closed by it.
+
+**`iroot` — the other bare `BabyBear` in `V9RotationContext` — is NOT closed by this move, and cannot
+be by the same shape.** It is a left-leaning MMR fold whose every intermediate `root: BabyBear` is
+~31 bits (`rotation_witness::iroot`), i.e. widening only its carrier would be exactly the
+`finalSqueezeOnly_still_conflates` laundering this entry's anti-launder check exists to refuse — the
+whole chain has to be re-folded at 8 felts. It stays DOMINATED-BY-ABSENCE for now (#28: the executor's
+`consensus_ctx` pins it to ZERO and no deployed path opens a receipt against it) and remains its own
+**standing falsifier**: the moment a live receipt-index MMR root is threaded into the anchor, the
+deployed consensus commitment reacquires a ~31-bit component, and this repair will not have covered it.
+
 ### #24 — The cap LEAF's `target` (and `breadstuff`) is a 1-felt fold INSIDE the faithful 8-felt leaf digest. GENUINE, rung-level, Kind D. Soundness HIGH-when-anchored / NONE today / availability NONE.
 
 Distinct from #3 (the cap **root**) and #5 (accumulator **keys**): this is a leaf **VALUE** fold, so
@@ -1041,7 +1139,7 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
 
 | # | Site | file:line | Cost | Kind | Prov |
 |---|------|-----------|------|------|------|
-| 23 | **Ledger `cells_root` is ONE felt in the FAITHFUL 8-felt consensus anchor** — the receipt the executor signs and the federation QC aggregates over binds the rest of the ledger through a 31-bit existence fold; the absent-agent anchor IS that felt | `turn/src/rotation_witness.rs:297`; `cell/src/commitment.rs:1109`, `:773-776`; `turn/src/state_commit.rs:121,170` | ~2^31 **offline** ⇒ present-cell-set equivocation under an honest signature/QC | C | **[V] DEPLOYED** soundness MODERATE-HIGH / availability NONE. Completion lanes 169..=175 are **ZERO in the producer** (filled only by the createCell generator). Three sibling fields in the SAME struct are `Faithful8`; `cells_root`+`iroot` are bare `BabyBear`. A detector's SAVED verdict FLIPPED here |
+| 23 | ~~**Ledger `cells_root` is ONE felt in the FAITHFUL 8-felt consensus anchor**~~ **CLOSED 2026-07-24 (producer-only; a receipt/consensus epoch, NO VK regen)** | `turn/src/rotation_witness.rs:297`; `cell/src/commitment.rs:791,1128`; `turn/src/state_commit.rs:132,181` | — | C | **[V] FIXED** `cells_root : Faithful8` (the TYPE, not just the value); both producers fill limbs 0 ‖ 169..=175 from `compute_canonical_heap_root_8_entries` (`node8` at every intermediate — NOT a re-hash of the narrow root); `absent_cell_commitment` fills the group too. Falsified BOTH polarities in `turn/tests/cells_root_width_falsification.rs`. **Residual: the tree's KEYS are still 1 felt** (kind D) and the AIR still constrains this group only on createCell/factory/spawn |
 | 24 | **Cap LEAF `target`/`breadstuff` — a 1-felt `fold_bytes32(cell_id)` INSIDE the faithful 8-felt leaf digest**, so the proven leaf injectivity is over a tuple that already lost 93 bits | `circuit/src/cap_root.rs:209,254`; `cell/src/commitment.rs:547`; `Dregg2/Circuit/DeployedCapOpen.lean:225` | ~2^31 **offline** ⇒ a cap for cell A authorizes an exercise on B | D | **[V]** soundness HIGH-**when-anchored** / NONE today / availability NONE. Runtime authorizes over full `CellId`s (`authorize.rs:1329`); step-9 leaf binding is 8-felt but against a CALLER-declared leaf; `targetBindGate`'s `src` PI (46) is **unanchored** and `target_is` has zero production callers. **STANDING FALSIFIER: realizing `TurnIdentityAnchored`** (the node producer already publishes the folds) |
 | 1 | ~~BFT finality cert — signed message is 4 bytes of lane-0~~ **REMEDIATED at HEAD (row was STALE)** | `lightclient/src/lib.rs:311-321,732,740` | — | E | **[V] FIXED** v2 domain tag, ALL 8 lanes absorbed, `finalized_root: [BabyBear; 8]`, seam compares FULL arrays; the `.as_u32()` at `:720-743` is error-display only; lane-0 signing survives ONLY inside the test that demonstrates the closed hole |
 | 2 | Federation membership gate — bare 1-felt PI compare, public SDK export | `sdk/src/verify.rs:137,202,214` | ~2^31 **offline** (attacker owns the whole ring preimage) + 1 proof | E | **[V]** CONFIRMED narrow by read ([A][?]→[V]); action-binding 15 lines below correctly loops all 8. Soundness HIGH / availability NONE — **on a library surface: `verify_authorization_proof` has NO in-tree deployed caller** (`verify_production`/`verify_any_tier` are themselves uncalled). Close before a consumer wires it |
@@ -1096,9 +1194,12 @@ not itemized.
   arm; no AIR involved).
 - **C — No wide scheme exists; must BUILD it — and these are circuit commitments ⇒ authored in
   Lean, Rust calls in.** ⚠️ TRIPWIRE (`~/.claude/CLAUDE.md` law #1). #4, #7, #10, #12, #13, #18, #19,
-  **#23**, **#25**, **#27**. #23 is the cheapest C in the list — `CanonicalHeapTree8`/`root8` is
-  already what the three sibling `Faithful8` roots in the SAME struct use, and the 8-felt completion
-  group is already in the layout — but it is a committed-state binding change (flag-day, ember-gated).
+  ~~**#23**~~ (**CLOSED 07-24** — and it turned out to be the cheapest C for a reason the entry
+  under-called: the wide scheme did NOT have to be BUILT, so it was never really a C. `compute_canonical_heap_root_8_entries` already existed as the exact 8-felt twin, the completion group
+  was already in the verified layout, and the AIR constrains that group ONLY under the
+  createCell/factory/spawn selectors — so the repair was PRODUCER-ONLY: no descriptor byte, no VK, no
+  Lean AIR change. What it DOES change is the committed value of every `pre_state_hash`/`post_state_hash`,
+  i.e. a receipt/consensus epoch), **#25**, **#27**.
   #27 is C/E and its width lives in the **Lean portal types**, so it starts in Lean by construction.
   Substrate partly exists (`CommitmentTreeAccumulator`, `DeployedHeapTree`/`Heap8Scheme` are
   Lean+wide); the work is authoring the wide note/nullifier/interface/attestation schemes there and
@@ -1147,7 +1248,7 @@ not itemized.
   proof; same path as the action-binding 15 lines below (`sdk/src/verify.rs:216-221`) which correctly
   loops all 8 felts. Residual question answered too: **there is no in-tree deployed caller** of
   `verify_authorization_proof`, so this is a library-surface wound, not a live in-tree verdict.
-- **#23 residual question:** how expensive is *mounting* a present-cell-set collision, as opposed to
+- **#23 residual question — MOOT for the root, LIVE for the KEYS (the entry is CLOSED, see above):** how expensive is *mounting* a present-cell-set collision, as opposed to
   finding one? The grind is offline, but planting the colliding cell requires a real createCell turn
   (permissioned/priced per deployment). Nothing about the ~2^31 search changes; the deployment cost of
   the final step was not measured here.
@@ -1164,12 +1265,19 @@ check whether the deployed value equals what the proof/scheme actually binds.
 
 **Added by the 07-24 sweep, three sharpenings of that lesson:**
 1. **"Widened roots, not values" now has its sharpest instance: a FAITHFUL 8-felt chain can absorb a
-   ~31-bit COMPONENT.** #23's `cells_root` and #28's `iroot` ride the genuine `Faithful8` chip chain as
+   ~31-bit COMPONENT.** #23's `cells_root` and #28's `iroot` rode the genuine `Faithful8` chip chain as
    bare `BabyBear` limbs, three fields away from three siblings that are `Faithful8`. "The commitment is
    8-felt" is a statement about the CHAIN, never about what was fed to it. Read the component types.
-2. **A layout slot for the wide lanes is not a wide binding.** #23's completion group 169..=175 exists
-   and is documented — and is ZERO in the producer, filled only by one specialized trace generator. A
-   detector read the layout and called the site safe. Check the WRITER, not the layout.
+   **Repaired for `cells_root` 07-24 by changing the TYPE, not the value** — `V9RotationContext.cells_root`
+   is now `Faithful8`, so the next component of this anchor that is narrow will not compile. `iroot` is
+   still bare, and deliberately: its FOLD is narrow too, so widening its carrier alone would launder.
+2. **A layout slot for the wide lanes is not a wide binding.** #23's completion group 169..=175 existed
+   and was documented — and was ZERO in the producer, filled only by one specialized trace generator. A
+   detector read the layout and called the site safe. Check the WRITER, not the layout. **Corollary
+   learned in the repair: an existing-but-unfilled slot can make a wound look expensive and be cheap.**
+   #23 was catalogued kind C ("no wide scheme exists; must BUILD it") and was in fact producer-only —
+   the wide twin already existed, the layout slot already existed, and the AIR gated the group only
+   under three selectors. Price the WRITER and the SELECTOR before pricing the epoch.
 3. **An unanchored gate hides a width question rather than answering it.** #24's `targetBindGate` and
    #25's `burn_target` PI both look like authorizing equalities and neither is compared against a
    trusted value today (the producer sets both sides; the one trusted-side comparer is dead code). That

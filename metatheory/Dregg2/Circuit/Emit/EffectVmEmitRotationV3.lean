@@ -1695,9 +1695,17 @@ def commitmentsRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
 
 /-- The cells-root 8-felt column at lane `i` (lane 0 = limb 0 = accounts root; the seven completion
 limbs 169..175 for lanes 1..7 — RELOCATED off revoked's 82..88 by the revoked-root flag-day so the
-two groups are now DISJOINT, not shared). The producer leaves 169..175 zero (circuit-only
-completion); `revoked_root` is the committed-limb-only faithful root (hole #139), sourced from
-`V9RotationContext.revoked_root`. -/
+two groups are now DISJOINT, not shared).
+
+⚑ WOUND #23 (`docs/WOUND-felt-width-boundaries-2026-07-19.md`): this docstring used to say "the
+producer leaves 169..175 zero (circuit-only completion)", and that was TRUE of both Rust producers —
+which made the committed `cells_root` ONE ~31-bit felt sitting inside the faithful 8-felt consensus
+anchor the executor signs and the receipt QC aggregates over. Both producers
+(`rotation_witness::produce`, `commitment::compute_rotated_pre_limbs`) now write all eight lanes on
+EVERY turn from the native `CanonicalHeapTree8` existence-tree root; the createCell/factory/spawn
+trace generator still OVERWRITES the whole group with its own in-circuit accounts tree, which is the
+object the two map-ops below actually gate. Only those three members constrain this group; on every
+other member the lanes are absorbed by `wireCommitR` and gated by nothing. -/
 def cellsRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
   blockBase + layoutGroupCol .cells i
 

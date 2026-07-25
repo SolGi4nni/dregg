@@ -52,7 +52,8 @@ fn actor() -> Cell {
 
 fn context(prior_fns3: Digest8) -> V9RotationContext {
     V9RotationContext {
-        cells_root: BabyBear::new(101),
+        // wound #23: `cells_root` is a `Faithful8` group; a fixture names a faithful constructor.
+        cells_root: dregg_circuit::heap_root::empty_heap_root_8(),
         nullifier_root: Faithful8::from_bytes32(&digest8_to_bytes32(prior_fns3)),
         commitments_root: Faithful8::ZERO,
         revoked_root: Faithful8::ZERO,

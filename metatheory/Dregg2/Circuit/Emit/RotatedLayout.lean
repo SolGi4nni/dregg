@@ -39,7 +39,7 @@ structure RotatedLayout where
   groups          : List (GroupName × LayoutGroup)  -- the faithful-8-felt roots, name-tagged
   octets          : List Nat                    -- octet BASES (each occupies base .. base+8)
   fieldsOctet     : List Nat                    -- the 56 fields[0..7] completion lanes
-  cellsCompletion : List Nat                    -- circuit-only, producer-zero (still OCCUPIED)
+  cellsCompletion : List Nat                    -- legacy slot, now empty (cells is a named group)
   pads            : List Nat
 deriving Repr
 
@@ -98,7 +98,14 @@ def rotated178 : RotatedLayout where
     (.vk,          ⟨34, [45, 46, 47, 48, 49, 50, 51]⟩),
     (.fields,      ⟨36, [66, 67, 19, 20, 21, 22, 23]⟩),  -- non-contiguous: reuses headroom 19..23
     (.revoked,     ⟨37, [82, 83, 84, 85, 86, 87, 88]⟩),
-    (.cells,       ⟨0, [169, 170, 171, 172, 173, 174, 175]⟩)]  -- completion circuit-only, producer-zero
+    -- WOUND #23 (`docs/WOUND-felt-width-boundaries-2026-07-19.md`): this completion group used to be
+    -- documented "circuit-only, producer-zero" — and it WAS zero in both Rust producers, which made
+    -- the committed `cells_root` a ~31-bit COMPONENT inside the faithful 8-felt consensus anchor.
+    -- Both producers (`rotation_witness::produce`, `commitment::compute_rotated_pre_limbs`) now fill
+    -- all eight lanes on EVERY turn from the native `CanonicalHeapTree8` root; the
+    -- createCell/factory/spawn trace generator still OVERWRITES the group with its own in-circuit
+    -- accounts tree (the grow-gate's object). A layout slot is not a binding — read the WRITER.
+    (.cells,       ⟨0, [169, 170, 171, 172, 173, 174, 175]⟩)]
   octets := [89, 97, 105]                    -- child_vk, contract_hash, pubkey octet bases
   fieldsOctet := (List.range 56).map (· + 113)   -- 113..168
   cellsCompletion := []                      -- (cells is now a group; kept for structural symmetry)

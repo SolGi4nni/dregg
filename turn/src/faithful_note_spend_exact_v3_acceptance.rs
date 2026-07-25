@@ -497,7 +497,9 @@ mod tests {
 
     fn context(prior_fns3: Digest8) -> V9RotationContext {
         V9RotationContext {
-            cells_root: BabyBear::new(101),
+            // the empty-ledger faithful 8-felt cells root (wound #23: the field is `Faithful8`,
+            // so a fixture must name a faithful constructor, not an arbitrary felt)
+            cells_root: dregg_circuit::heap_root::empty_heap_root_8(),
             nullifier_root: Faithful8::from_bytes32(&digest8_to_bytes32(prior_fns3)),
             commitments_root: Faithful8::ZERO,
             revoked_root: Faithful8::ZERO,

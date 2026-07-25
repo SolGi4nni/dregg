@@ -457,7 +457,9 @@ pub fn commitment_cell() -> Cell {
 /// bench — the rotation long pole the umem path drives.
 pub fn v9_context() -> dregg_cell::commitment::V9RotationContext {
     dregg_cell::commitment::V9RotationContext {
-        cells_root: BabyBear::new(0),
+        // wound #23: `cells_root` is a FAITHFUL 8-felt group — the empty-ledger root is the
+        // named faithful constant a zeroed bench context uses in place of a bare felt.
+        cells_root: dregg_circuit::heap_root::empty_heap_root_8(),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
         commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
         revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),

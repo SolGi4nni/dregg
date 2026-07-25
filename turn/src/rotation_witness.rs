@@ -54,12 +54,12 @@ use dregg_cell::{Cell, Ledger, lifecycle::CellLifecycle};
 pub use dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS;
 use dregg_circuit::effect_vm::layout_generated::{
     AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
-    CAP_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
+    CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
     NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, VK_GROUP,
 };
 use dregg_circuit::effect_vm::split_u64;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::heap_root::{compute_heap_root_entries, empty_heap_root};
+use dregg_circuit::heap_root::compute_canonical_heap_root_8_entries;
 use dregg_circuit::poseidon2::{hash_bytes, hash_many};
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
@@ -70,9 +70,10 @@ pub const NUM_REGISTERS: usize = 24;
 /// perms_digest · vk_digest · mode · fields_root · revoked_root). Matches Lean
 /// `preLimbsAt_length = 178`, after the REVOKED-ROOT flag-day widening of the base region (37→38):
 /// `revoked_root` is the new base limb 37, so every limb index ≥ 37 shifts +1 (completion 38..=88,
-/// carrier 89..=112, fields 113..=168). The tail 169..=177 is the clean-alignment region: circuit-only
-/// `cells_root` completion 169..=175 (ZERO here; filled by the createCell trace generator, kept off
-/// `revoked_root`'s 82..=88 group) + pads 176..=177, landing body `[4..177]` = 174 = 58×3 (clean).
+/// carrier 89..=112, fields 113..=168). The tail 169..=177 is the clean-alignment region: the
+/// `cells_root` completion lanes 169..=175 (FILLED HERE on every turn since wound #23 — kept off
+/// `revoked_root`'s 82..=88 group; the createCell/factory/spawn trace generator overwrites the whole
+/// group with the in-circuit accounts tree) + pads 176..=177, body `[4..177]` = 174 = 58×3 (clean).
 /// The collection id under which a present-cell existence leaf is keyed in the cells tree.
 const CELLS_COLLECTION: u32 = 0;
 
@@ -286,15 +287,40 @@ pub fn empty_revoked_root_8() -> dregg_circuit::Faithful8 {
     dregg_circuit::heap_root::empty_heap_root_8()
 }
 
-/// **THE `cells_root` PRODUCER** — the turn-level boundary view over the present cells.
+/// **THE `cells_root` PRODUCER** — the turn-level boundary view over the present cells,
+/// as a FAITHFUL 8-felt root.
 ///
-/// The sorted-Poseidon2 root over one existence leaf per present cell (`value = 1`,
-/// keyed by a felt digest of the cell id under `CELLS_COLLECTION`). Input-order
-/// independent (the underlying `CanonicalHeapTree` sorts by address — see
+/// The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 root over one existence
+/// leaf per present cell (`value = 1`, keyed by a felt digest of the cell id under
+/// `CELLS_COLLECTION`). Input-order independent (the underlying tree sorts by address — see
 /// `heap_root::root_is_input_order_independent`), so the root is a function of the SET of
 /// present cells, never the ledger's iteration order. The empty ledger yields the empty
-/// sorted-tree sentinel root.
-pub fn cells_root(ledger: &Ledger) -> BabyBear {
+/// sorted-tree sentinel root (`compute_canonical_heap_root_8_entries(&[]) ==
+/// heap_root::empty_heap_root_8()`).
+///
+/// ## Why this is 8 felts and not one (wound #23,
+/// `docs/WOUND-felt-width-boundaries-2026-07-19.md`)
+///
+/// This root is limb 0 of the rotated block, i.e. a COMPONENT of the deployed consensus anchor
+/// (`state_commit::consensus_state_commitment` → `pre_state_hash`/`post_state_hash` on every
+/// receipt, which the executor signature signs and the federation receipt QC aggregates over).
+/// It used to be `compute_heap_root_entries -> BabyBear`: a 1-felt (~31-bit) fold riding as a
+/// bare limb inside the faithful 8-felt chain, three fields away from three siblings
+/// (`nullifier_root`/`commitments_root`/`revoked_root`) that were already `Faithful8`. Two
+/// different present-cell SETS colliding on that one felt gave ONE signed anchor for two
+/// different ledgers — a ~2^31 offline grind (`CellId::derive_raw` is BLAKE3 over
+/// attacker-chosen `(public_key, token_id)`). The fold is now wide at EVERY intermediate: each
+/// leaf is `HeapLeaf::digest8` (all 8 lanes of the arity-3 chip absorb) and each node is
+/// `heap_node8` (all 8 lanes of the arity-16 `node8` chip), so no ~31-bit waist survives
+/// anywhere in the tree — this is NOT a re-hash of the narrow root
+/// (`finalSqueezeOnly_still_conflates`, #12).
+///
+/// ⚑ STILL NARROW, and NOT closed by this widening: the leaf ADDRESS is
+/// `heap_addr(CELLS_COLLECTION, hash_bytes(id))`, a ONE-felt digest of the 32-byte `CellId`.
+/// Two cell ids whose key folds collide produce literally the SAME leaf at ANY root width.
+/// That is the accumulator-KEY width class (kind D — #5/#9/#11/#20), which must ride the
+/// `MapOp` key epoch (`DescriptorIR2.lean`'s scalar `key : EmittedExpr`), not this one.
+pub fn cells_root(ledger: &Ledger) -> dregg_circuit::Faithful8 {
     let mut entries: Vec<((BabyBear, BabyBear), BabyBear)> = Vec::new();
     for (id, _) in ledger.iter() {
         let key = hash_bytes(id.as_bytes());
@@ -303,10 +329,7 @@ pub fn cells_root(ledger: &Ledger) -> BabyBear {
             BabyBear::ONE, // existence bit
         ));
     }
-    if entries.is_empty() {
-        return empty_heap_root();
-    }
-    compute_heap_root_entries(&entries)
+    compute_canonical_heap_root_8_entries(&entries)
 }
 
 /// **THE `iroot` PRODUCER** — the MMR root over the receipt log.
@@ -387,8 +410,15 @@ pub fn produce(
     material: &dregg_cell::commitment::RotationCarrierMaterial,
 ) -> RotationWitness {
     let mut pre_limbs = vec![BabyBear::ZERO; NUM_PRE_LIMBS];
-    // limb 0: cells_root (turn-level).
-    pre_limbs[0] = cells_root(ledger);
+    // limb 0: cells_root lane-0 ‖ lanes 169..=175: the SEVEN cells-root completion felts. THE
+    // FAITHFUL 8-FELT CELLS ROOT (wound #23) — the native `CanonicalHeapTree8` node8 (arity-16)
+    // sorted-Poseidon2 root over the present-cell existence leaves, filling the group the layout
+    // has always carried (`EffectVmEmitRotationV3.cellsRootGroupCol`, `rotated178`'s `.cells`
+    // group). Filled on EVERY turn, not only the createCell/factory/spawn ones the trace
+    // generator overwrites: this is the turn-level boundary component of the consensus anchor,
+    // and a producer-zero completion made it a ~31-bit component inside a faithful chain.
+    // Byte-identical to the cell twin `commitment::compute_rotated_pre_limbs`.
+    cells_root(ledger).write_lanes(&mut pre_limbs, CELLS_ROOT_GROUP);
     // limbs 1..=24: r0..r23. Welded scalars first (r0,r1,r2,r3..r10), then app registers.
     pre_limbs[1] = balance_lo_felt(cell.state.balance()); // r0
     pre_limbs[2] = nonce_felt(cell.state.nonce()); // r1
@@ -1502,8 +1532,21 @@ mod tests {
         let mut l3 = Ledger::new();
         l3.insert_cell(cell(1, 10)).unwrap();
         assert_ne!(cells_root(&l1), cells_root(&l3));
-        // the empty ledger is the empty-tree sentinel root
-        assert_eq!(cells_root(&Ledger::new()), empty_heap_root());
+        // the empty ledger is the empty-tree sentinel root — at FULL 8-felt width
+        assert_eq!(
+            cells_root(&Ledger::new()),
+            dregg_circuit::heap_root::empty_heap_root_8()
+        );
+        // wound #23: the root is a genuine 8-felt octet, not a lane-0 squeeze wearing a wide
+        // coat. A different cell set must move MORE than lane 0 (a lane-0-only difference would
+        // be exactly the ~31-bit component the widening exists to retire).
+        assert!(
+            cells_root(&l1).limbs()[1..]
+                .iter()
+                .zip(cells_root(&l3).limbs()[1..].iter())
+                .any(|(a, b)| a != b),
+            "cells_root must differ in the COMPLETION lanes, not only lane 0"
+        );
     }
 
     /// The chained `wire_commit` binds every pre-iroot limb and the iroot: moving any limb

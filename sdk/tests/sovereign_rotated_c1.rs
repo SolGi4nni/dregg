@@ -388,7 +388,7 @@ mod record_pin_anchor {
         let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
             &forged_after,
             &dregg_cell::commitment::V9RotationContext {
-                cells_root: after_w.pre_limbs[0],
+                cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
                 revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -589,7 +589,7 @@ mod record_pin_anchor {
         let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
             &forged_after,
             &dregg_cell::commitment::V9RotationContext {
-                cells_root: after_w.pre_limbs[0],
+                cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
                 revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
@@ -843,7 +843,7 @@ mod record_pin_anchor {
         let new_commit_felt = dregg_cell::commitment::compute_canonical_state_commitment_v9_felt(
             forged_after,
             &dregg_cell::commitment::V9RotationContext {
-                cells_root: after_w.pre_limbs[0],
+                cells_root: rw::cells_root(&ctx_ledger),
                 nullifier_root,
                 commitments_root,
                 revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
