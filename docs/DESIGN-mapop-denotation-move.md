@@ -723,8 +723,10 @@ What is **not** closed, and must not be laundered:
 2. **The 1-felt scalar denotation layer remains the wrong width.** At 1 felt the ghost costs ~2^31; the
    deployed tree is 8-felt. This is `MapMerkleRoot`'s own named residue (the §2–§5 scalar model vs the
    §5b `node8` model), and stage 3 should cut the denotation to the 8-felt objects, not the scalar ones.
-3. **Stage 2 proper is untouched** — `.read`/`.write`/`.insert`/`.aafiInsert` still have no arity-3
-   opener law, so the modeller still cannot DERIVE `holdsAtS` for them (§7-#1).
+3. ~~**Stage 2 proper is untouched** — `.read`/`.write`/`.insert`/`.aafiInsert` still have no arity-3
+   opener law, so the modeller still cannot DERIVE `holdsAtS` for them (§7-#1).~~ **CLOSED — §12.
+   Two of the four got the law the `.absent` arm has; the other two got a REFUTATION instead, and
+   the reason is a deployed-AIR gap, not a proof gap.**
 4. **§10.5's repricing stands.** The 20 punch-through sites / 40 asserted theorems are unaffected by
    this lane; the recommendation to restate the per-effect teeth over `MapOp.holdsAtS S` additively
    *during* stage 2 is unchanged and is now cheaper, because the teeth they lean on by name
@@ -740,3 +742,161 @@ What is **not** closed, and must not be laundered:
    invisible" argument applies verbatim to the CAP tree and the fields tree. **The domain-separated
    padding fix in item 1 should be applied to all three at once**, and until it is, every padded
    sorted-tree denotation in this family owes the same named residual.
+
+
+---
+
+## 12. ⚑⚑ STAGE 2 PROPER IS LANDED — two openers, two REFUTATIONS, and the eighth impossibility
+
+**Date:** 2026-07-25, same day. **Module:** `metatheory/Dregg2/Circuit/MapKindImtGates.lean` (NEW,
+additive, 1370 lines, rooted in `metatheory/Dregg2.lean` on the line after `MapPaddedDenotation`).
+`lake build Dregg2.Circuit.MapKindImtGates` exit 0 at **155 s**; 43 `#assert_axioms` all clean
+(⊆ propext/Classical.choice/Quot.sound); no `sorry`/`admit`/`native_decide`; **no new floor and
+`Poseidon2SpongeCR` appears in no type in the file.** No landed file edited.
+
+### 12.1 The work order said "ground each arm against the deployed AIR". Three of four DIVERGE.
+
+Read this session in `circuit/src/descriptor_ir2.rs` (`Ir2Air::MapOps`, `:3232-3541`) and
+`circuit/src/heap_root.rs`:
+
+| kind | op | the DEPLOYED gates | divergence from `ReconcileGatesAt` |
+|---|---|---|---|
+| `.read` | 0 | old-leaf `hash[key, old_value, next]` folds PATH1 → `MAP_ROOT`; new-leaf `hash[key, value, next]` folds the **same** PATH1 → `MAP_NEW_ROOT`; `MAP_OLD_VALUE = MAP_VALUE` forced (`:3283`) | arity, and **`new_root = root` is DERIVED, never a column** — the model asserts a gate the AIR does not write |
+| `.write` | 1 | the same minus `old_value = value`; `MAP_NEXT` is ONE column shared by both absorbs | arity + the shared pointer |
+| `.insert` | 3 | `rw_sel = 0`, `not_insert3 = 0` (`:3277-3278`) ⇒ **no old-leaf absorb and no fold to `MAP_ROOT` at all**; the only gate is new-leaf → `MAP_NEW_ROOT` | ⚑⚑ the model demands a PRE-root opening the AIR does not carry, at a key `insert_witness` REQUIRES to be absent |
+| `.aafiInsert` | 4 | low-open → root, bracket, low-update → `R1`, free slot **pinned to `ZERO8`** (`:3493-3495`) → `R1`, append → `new_root` | the Lean `AafiGatesAt` leaves `freeEmpty` FREE; the AIR pins it to the **padding constant** |
+
+`map_leaf_input_cols(v) = [MAP_KEY, v, MAP_NEXT]` (`:2198`) is arity-3 for every kind, as the
+brief said — but arity was the *smallest* of the four gaps.
+
+### 12.2 The two openers that exist
+
+Both are stated at `MapPaddedDenotation.padImtSchema` (arity-3 relinked leaves + zero padding, the
+deployed shape in BOTH dimensions), and both come in the post-cutover idiom:
+
+* `readImtGates_opens_or_resid` / `readImtRow_opens_of_good` — an accepting deployed read row FORCES
+  `opensToMerkleS (padImtSchema sent) hash dep root key (some value)` **and** `newRoot = root`.
+* `writeImtGates_writes_or_resid` / `writeImtRow_writes_of_good` — an accepting deployed write row
+  FORCES `writesToMerkleS (padImtSchema sent) hash dep root key value newRoot`: the `new_root`
+  column is the genuine padded commitment of `Heap.set h key value`.
+
+**The write proof pins a deployed design decision as load-bearing.** It runs through
+`imtChainOf_set` — "a positional VALUE update leaves every pointer alone" — which is available only
+because the deployed old- and new-leaf absorbs read ONE `MAP_NEXT` column. `unshared_pointer_write_is_not_a_relink`
+states the converse: a row free to move the pointer produces a digest vector **outside the image of
+`relink_next_addrs`**, i.e. the commitment of no heap at all. The column sharing is not an
+optimisation; it is what makes the write denotation derivable.
+
+### 12.3 ⚑ `.insert` — REFUTED, and the model was already unsatisfiable
+
+`insertImtGates_cannot_force_the_write_denotation`: there is **no** `.insert` opener law of the shape
+the other arms enjoy, because op=3 constrains only the post-root. The same accepting gate data sits
+beside a pre-root at which `writesToMerkleS` is FALSE — exhibited at `MAP_TREE_DEPTH = 16` by
+`bite_insert_preroot_is_unforced`. What IS forced is the post side:
+`insertImtRow_post_opens_of_good` (the committed post-tree opens the key to the written value).
+The deployment agrees with the verdict in its own words: *"Freshness must be established separately,
+e.g. by a paired `MapKind::Absent` opening against the same pre-root"* (`descriptor_ir2.rs:540-542`).
+
+And the mirror image, which nobody had looked at: `reconcileGates_insert_forces_key_present` proves
+the EXISTING arity-2 `.insert` model demands the row's key ALREADY committed, so
+`reconcileGates_insert_unsat_at_fresh_key` — **on every honest deployed insert row the model's
+hypothesis is FALSE**, exactly the `.absent` top-gap finding on a second arm. ⚠ The epoch's own
+`.insert` non-vacuity exhibit does not catch it: `MapOpsColumnLayout.toy_insert_gates` writes key
+`20`, which `toyHeap` HOLDS (`toyGrown = Heap.set toyHeap 20 9` is an in-place update, same length).
+**The `.insert` teeth have only ever been exercised on a value update.**
+
+### 12.4 `.aafiInsert` — the pre-side law, and ⚑⚑ THE EIGHTH IMPOSSIBILITY
+
+`aafiImtRow_forces_absence_of_good` re-derives the double-spend tooth at the deployed padded
+commitment: an accepting AAFI row forces `opensToMerkleS … oldRoot key none`. It is *cheaper* than
+the `.absent` arm's law — `ImtSorted` on the pre-chain is DERIVED from the schema's own `HeapOk`
+field (`imtSchema_chain_imtSorted`) rather than taken as a hypothesis.
+
+The POST side is where the eighth impossibility lives, and it is **structural, not cryptographic**.
+`heap_root.rs::insert_witness_aafi` (`:1077-1156`) appends at `next_free_index` and folds
+`append_order_after` — the code calls it *"a distinct commitment lineage from the sorted-compacted
+`root8` (same leaf SET, different positions)"* (`:1139-1141`). But
+`MapLeafSchema.commit : (List ℤ → ℤ) → Nat → Heap.FeltHeap → ℤ` is a **function of the logical
+sorted map**, and the append-order fold depends on insertion HISTORY.
+
+> `no_schema_commits_the_append_order_layout` — for EVERY schema `S`, at every depth ≥ 1, at a hash
+> that is injective AND pad-free, *"the padded fold of the physical layout equals `S.commit` of the
+> logical chain"* is **FALSE**. Witness: one sorted chain and its own transposition.
+> `aafi_post_is_not_the_sorted_commit` exhibits the separation concretely at the deployed arity-3
+> leaf (insert `5` into `[(1,7),(9,3)]`: append order ≠ sorted order ⇒ different roots).
+
+So the `.aafiInsert` arm of `MapOp.holdsAtS S` — which is `writesToMerkleS S`, a statement about the
+logical map — **cannot** be the deployed AAFI post-condition at ANY instance of the landed schema.
+The pre-side absence law is what that arm can have; the post side needs either an order-carrying
+denotation (`IndexedMerkleTree.ImtVecCorr`'s `phys ~ c` shape) or a deployed change that re-sorts.
+⚠ This corrects the framing under which `padImtTeeth` was called "the deployed shape": it is faithful
+to `CanonicalHeapTree::new`'s sorted-prefix build (which is what the pre-root is), **not** to the
+AAFI post-layout.
+
+### 12.5 The insert/write GROWTH question, answered
+
+The sibling's finding is confirmed *and moved*:
+
+* `denseSchema_write_forces_key_present` — at any schema whose `SizeOk` is `h.length = 2 ^ d`, a
+  `writesToMerkleS` witness must have the written key ALREADY committed (a fresh key would grow the
+  heap by one). Instantiated at `narrowSchema` (`narrow_write_forces_key_present`, i.e. the deployed
+  `DescriptorIR2.writesTo` today) and at `imtSchema`. So `.write`/`.insert` denote an in-place
+  UPDATE at every dense instance, exactly as reported.
+* `padImt_write_admits_growth` — at `padImtSchema`, `SizeOk` is `≤`, and here is a `writesToMerkleS`
+  witness **at `MAP_TREE_DEPTH = 16` whose key is FRESH and whose heap gains one entry**.
+
+**So yes: stage 2b changed what these laws can say.** Genuine fresh-key growth is representable at
+the padded instance and was not at the dense one, and `bite_aafi_grows` shows the deployed AAFI row
+realising it at the deployed depth (there the appended key is the new maximum, so append order and
+sorted order coincide — §12.4 is precisely the statement that this coincidence does not generalise).
+
+### 12.6 Non-vacuity, all four arms, at `MAP_TREE_DEPTH = 16` over a SPARSE tree
+
+Every exhibit is on a `2^16`-leaf commitment holding ONE live leaf — the occupancy `heap_root.rs`
+builds and the one the dense `opensToMerkle` has no witness for at all. Nothing is enumerated: the
+depth-16 membership paths are the symbolic `leftPadPath` / `slot1Path` cons-recursions (whose
+siblings are `heap_root.rs`'s `EMPTY_SUBTREE_ROOTS`, welded by stage 2b's `perfectRoot_all_padding`),
+and every root is NAMED as the schema's own `commit`.
+
+| arm | accepting row | tooth that REFUSES |
+|---|---|---|
+| `.read` | `bite_read_row` → `bite_read_fires` | `bite_read_forged_value_refused` (a forged value has no accepting row, for any post-root and any pointer) |
+| `.write` | `bite_write_row` → `bite_write_fires` | `bite_write_frozen_root_refused` (the frozen post-root forgery) |
+| `.insert` | `bite_insert_row` → `bite_insert_post_opens` | `bite_insert_preroot_is_unforced` (the impossibility, concrete) |
+| `.aafiInsert` | `bite_aafi_row` → `bite_aafi_absence_fires` | `bite_aafi_present_key_refused` (a present key has no bracket) |
+
+Plus `aafi_free_slot_is_padding`: gate (d1)'s pinned `ZERO8` opens a PADDING cell, so the deployed
+AAFI append grows into exactly the padding stage 2b modelled.
+
+### 12.7 Floors and the disposition, stated at the current resolution
+
+`Poseidon2SpongeCR` appears in **no type** in the module. Every extraction law is a pair:
+
+* `…_or_resid` — **no hypothesis on `hash` at all**, with three NAMED, per-row, refutable residuals
+  bundled as `OpenResid`: a genuine collision at the pair `pathCollFind` returns for THIS path and
+  THIS committed vector; a genuine collision at the arity-3 leaf pair the TOTAL extractor `chainAt`
+  names; and `imtLeafHash hash l = padDigest` — the opened digest IS `heap_root.rs`'s padding
+  constant, which is stage 2b's ghost localized to one row (a FIXED-TARGET PREIMAGE of a literal,
+  which collision-resistance does not exclude).
+* `…_of_good` — the strength bridge at `MapGood hash := Function.Injective hash ∧ PadFree3 hash`,
+  which is `padImtTeeth`'s own `Good` FIELD by `Iff.rfl` (`mapGood_is_teeth_good`). **No new hash
+  property is introduced**, and `good_inhabited` is inherited (`oddSponge`). ⚠ LABELLED: the bridge
+  is at an injective idealisation; only the `_or_resid` halves are statements about the deployed
+  sponge.
+
+`ImtSorted` / the committed heap behind a root stays a HYPOTHESIS, in the same knowledge-extraction
+slot `ReconcileGatesAt`'s `∃ h` occupies — and on the `.aafiInsert` arm it is *derived* rather than
+assumed. No floor carrier added; the FloorRatchet gate is unaffected.
+
+### 12.8 What stage 3 now faces, repriced
+
+* **Two arms can be cut over on gate-forced grounds** (`.read`, `.write`), and `.absent` already
+  could. Three of five.
+* **`.insert` cannot**, and no amount of Lean fixes it: the deployed op=3 row must be paired with an
+  `.absent`/AAFI row, or the AIR must gate the pre-root. That is a **deployed-side action item**,
+  and it is the same species as stage 2b's "pad with a domain-separated digest".
+* **`.aafiInsert`'s post side cannot at any `MapLeafSchema`**, by §12.4. Either the denotation grows
+  an order coordinate or the deployed AAFI re-sorts. Also a deployed-side decision.
+* §10.5's 20 punch-through sites / 40 asserted theorems are untouched by this lane; the
+  recommendation to restate the per-effect teeth over `MapOp.holdsAtS S` additively still stands and
+  is now backed by two arms' worth of gate-forced denotation.
