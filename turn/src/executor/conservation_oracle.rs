@@ -69,3 +69,77 @@ pub(crate) fn installed_conservation_oracle() -> Option<&'static dyn Conservatio
 pub fn conservation_oracle_installed() -> bool {
     ORACLE.get().is_some()
 }
+
+/// Whether THIS build expects a Lean-backed conservation oracle to be installed.
+///
+/// `true` on **native** (full-Lean) builds — the deployed node links `libdregg_lean.a` via
+/// `dregg-exec-lean` and MUST route the per-asset `Σδ=0` decision through the verified Lean
+/// `conservesFFI`. `false` on the **wasm32 / zkVM guest**, which cannot link the archive and
+/// legitimately decides with the labeled Rust fallback in [`super::atomic`]. The only cfg the
+/// crate actually distinguishes is `target_arch = "wasm32"`; the zkVM guest is compiled for a
+/// non-host target the same way, so "native" == "not wasm32".
+#[inline]
+pub const fn native_build_requires_oracle() -> bool {
+    cfg!(not(target_arch = "wasm32"))
+}
+
+/// FAIL-CLOSED startup check: on a native full-Lean build the conservation oracle MUST be
+/// installed. Returns `Err` when it is absent so the deployed node can REFUSE to boot instead of
+/// silently deciding conservation with the UNVERIFIED Rust `BlockConservation` fallback — the twin
+/// that drifted once into the asset-blind inflation bug.
+///
+/// The hole this closes: without it, a **missing or stale** Lean archive (whose startup install
+/// path never fired) leaves `installed_conservation_oracle()` returning `None`, and
+/// [`super::atomic::TurnExecutor::check_per_asset_conservation_by_asset`] silently falls through to
+/// the drifting Rust twin — the same asset-blind decision the whole oracle seam exists to retire.
+/// A native node that calls this at startup (see `dregg-exec-lean`) can no longer boot in that
+/// state, so the twin can never run on a deployed node.
+///
+/// On the wasm32 / zkVM guest (no archive, no Lean) this is a **no-op** `Ok(())`: the labeled Rust
+/// fallback is that build's legitimate, documented no-Lean path.
+pub fn ensure_conservation_oracle_installed() -> Result<(), &'static str> {
+    if native_build_requires_oracle() && !conservation_oracle_installed() {
+        return Err(
+            "native full-Lean build expects the verified conservation oracle but none is installed \
+             (missing/stale libdregg_lean.a, or the startup install did not fire) — refusing to \
+             decide per-asset conservation with the unverified Rust twin",
+        );
+    }
+    Ok(())
+}
+
+/// Panicking variant of [`ensure_conservation_oracle_installed`] for the deployed node's startup
+/// path: aborts boot with a loud message rather than running the unverified twin.
+pub fn assert_conservation_oracle_installed() {
+    if let Err(e) = ensure_conservation_oracle_installed() {
+        panic!("{e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2 fail-closed reality gate: on a **native** build with NO oracle installed the executor
+    /// must REFUSE (here: the startup check errors), never silently accept via the drifting Rust
+    /// twin. `dregg-turn`'s own test binary can never link the Lean archive, so it never installs
+    /// an oracle — making this the exact "missing Lean archive" state on a native build. On the
+    /// wasm32 / zkVM guest the fallback is legitimate and the check is a no-op.
+    #[test]
+    fn native_no_oracle_fails_closed() {
+        if native_build_requires_oracle() {
+            // No Lean backend is (or can be) installed in this test binary.
+            assert!(
+                !conservation_oracle_installed(),
+                "dregg-turn's own test binary cannot link libdregg_lean.a; no oracle should be installed"
+            );
+            assert!(
+                ensure_conservation_oracle_installed().is_err(),
+                "native build with no oracle MUST fail closed, not run the unverified twin"
+            );
+        } else {
+            // Guest build: the labeled Rust fallback is the legitimate no-Lean path.
+            assert!(ensure_conservation_oracle_installed().is_ok());
+        }
+    }
+}

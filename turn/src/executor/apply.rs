@@ -656,6 +656,33 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
+        // KERNEL ALIGNMENT (single asset column): the verified kernel's asset
+        // move `recKExecAsset` (`Dregg2.Exec.RecordKernel.lean:655`, via
+        // `recTransferBal`) rewrites ONLY the `a` column of the
+        // `CellId → AssetId → ℤ` ledger — it debits `src` and credits `dst` in
+        // ONE asset. A cell's committed `token_id` IS its asset identity, so a
+        // faithful single-column move requires `from.token_id() == to.token_id()`.
+        // A CROSS-asset Transfer (source asset X, dest asset Y, X ≠ Y) is NOT a
+        // single-column move: it debits Σbal[X] and credits Σbal[Y], minting
+        // value in asset Y out of worthless asset X. The apply-time Transfer path
+        // NEVER feeds the per-asset `asset_deltas` conservation accumulator (only
+        // an action's `balance_change` does, in `execute_tree`), so the turn-end
+        // per-asset `Σδ=0` gate cannot see this teleport — the guard MUST live
+        // here. A value SWAP is two same-asset transfers (or a dedicated effect),
+        // never one cross-asset Transfer.
+        if from_cell.token_id() != to_cell.token_id() {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: format!(
+                        "cross-asset Transfer rejected: source {from} and destination {to} hold \
+                         different asset classes (token_id) — a Transfer moves a SINGLE asset \
+                         column (kernel recTransferBal); a value swap is two same-asset transfers \
+                         or a dedicated effect, never one cross-asset Transfer"
+                    ),
+                },
+                path.to_vec(),
+            ));
+        }
         let to_balance = ledger.get(to).unwrap().state.balance();
         if to_balance.checked_add(amount_i).is_none() {
             return Err((TurnError::BalanceOverflow { cell: *to }, path.to_vec()));

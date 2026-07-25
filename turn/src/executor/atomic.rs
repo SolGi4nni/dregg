@@ -2844,8 +2844,13 @@ mod hardening_tests {
     /// THE FORGING TURN, REJECTED. A mixed-atomic hosted Transfer of 10 from a
     /// cell of asset 7 to a cell of asset 8 nets to zero in the OLD scalar sum
     /// (so the old check accepted it), but asset 7 is short −10 and asset 8 is
-    /// long +10 — each asset is independently unbalanced. The per-asset check
-    /// REJECTS it, and the hosted mutation is rolled back.
+    /// long +10. `apply_transfer` now carries the SAME-ASSET guard (welded to the
+    /// verified kernel single-column move `recTransferBal`), so this cross-asset
+    /// Transfer is REJECTED at apply-time — BEFORE it can reach the turn-end
+    /// per-asset conservation gate — and the hosted mutation is rolled back. (The
+    /// per-asset `Σδ=0` gate remains the backstop for cross-asset forges that do
+    /// NOT flow through a single Transfer, e.g. a `balance_change` action on a
+    /// different-asset cell.)
     #[test]
     fn cross_asset_forge_rejected_mixed_atomic() {
         let mut ledger = Ledger::new();
@@ -2861,9 +2866,10 @@ mod hardening_tests {
 
         let executor = TurnExecutor::new(ComputronCosts::zero());
 
-        // Move 10 from asset-7 cell A to asset-8 cell B. apply_transfer permits
-        // a cross-token move (no token check there), so without the per-asset
-        // gate this would commit: A −10 (asset 7), B +10 (asset 8), scalar sum 0.
+        // Move 10 from asset-7 cell A to asset-8 cell B. apply_transfer's
+        // same-asset guard now REFUSES this cross-token move at apply-time; before
+        // the guard it committed (A −10 asset 7, B +10 asset 8, scalar sum 0) and
+        // only the per-asset gate caught it.
         let forge = Action {
             target: cell_a_id,
             method: [0u8; 32],
@@ -2891,6 +2897,16 @@ mod hardening_tests {
 
         let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
         match r {
+            // Primary defense (new): the apply-time same-asset guard refuses the
+            // cross-asset Transfer before it can mutate value.
+            Err(AtomicTurnError::HostedApplyFailed { reason, .. }) => {
+                assert!(
+                    reason.contains("cross-asset"),
+                    "cross-asset Transfer must be refused by the same-asset guard, got: {reason}"
+                );
+            }
+            // Backstop: the turn-end per-asset Σδ=0 gate (for forge shapes that do
+            // not flow through a single Transfer).
             Err(AtomicTurnError::PerAssetConservationViolation { imbalance, .. }) => {
                 assert!(
                     imbalance == 10 || imbalance == -10,
@@ -2898,7 +2914,7 @@ mod hardening_tests {
                 );
             }
             other => panic!(
-                "cross-asset forge MUST be rejected per-asset, got: {:?}",
+                "cross-asset forge MUST be rejected (same-asset guard or per-asset gate), got: {:?}",
                 other
             ),
         }

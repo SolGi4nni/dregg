@@ -633,6 +633,14 @@ pub async fn run(cli: Cli) {
             "conservation oracle: verified Lean cross-cell per-asset Σδ=0 decision installed"
         );
     }
+    // FAIL-CLOSED (twin-deletion #1, gap #2): a native full-Lean node MUST decide per-asset
+    // conservation with the verified Lean oracle installed above. If registration was a no-op
+    // (missing/stale `libdregg_lean.a`, or the archive lacks the `dregg_cross_cell_conserves`
+    // export), the executor would otherwise silently fall through to the UNVERIFIED Rust
+    // `BlockConservation` twin — the asset-blind decision that already drifted into an inflation
+    // bug. Refuse to boot instead of running the drifting twin. On the wasm32 / zkVM guest this is
+    // a no-op (that build's fallback is the legitimate no-Lean path), but the node is always native.
+    dregg_turn::executor::assert_conservation_oracle_installed();
 
     // Initialize tracing. Write to stderr so the MCP stdio subcommand (which
     // serves JSON-RPC on stdout) doesn't get corrupted by log lines.
