@@ -184,6 +184,30 @@ NEEDLE=$(printf 'Authorization%s%s' '::' 'Unchecked')
 
 offenders=()
 
+# Prints 1 when the LAST defensive invocation in $1 is still unclosed at the end of
+# it, i.e. the next line is an argument of a `matches!` / `assert!` / `debug_assert!`
+# and not of whatever else was on the way. Used only for a line that holds the
+# variant and nothing else, so the cost of the awk call is paid a handful of times
+# per run, not once per line.
+defensive_call_still_open() {
+    awk -v s="$1" 'BEGIN {
+        split("matches!( assert!( debug_assert!( assert_eq!( assert_ne!(", marks, " ")
+        best = 0
+        for (i = 1; i in marks; i++) {
+            p = 0
+            while ((k = index(substr(s, p + 1), marks[i])) > 0) {
+                p += k
+                if (p > best) best = p
+            }
+        }
+        if (best == 0) { print 0; exit }
+        t = substr(s, best)
+        opens = gsub(/\(/, "(", t)
+        closes = gsub(/\)/, ")", t)
+        print (opens > closes) ? 1 : 0
+    }'
+}
+
 # shellcheck disable=SC2207
 files=($(git ls-files '*.rs' 2>/dev/null || find . -name '*.rs' -type f))
 
@@ -199,7 +223,19 @@ if [ "${#files[@]}" -eq 0 ]; then
     exit 2
 fi
 
+missing=0
 for file in "${files[@]}"; do
+    # `git ls-files` lists the INDEX; a file deleted in the working tree but not yet
+    # committed is still in it. Reading it made the awk pre-filter die
+    # ("can't open file …") and `set -e` took the whole run down with a message that
+    # reads like a broken script rather than a dirty tree — which is how nobody can
+    # run this guard locally while another lane has a pending deletion. In CI the
+    # checkout is clean and this counter stays 0; it is REPORTED, not silent, so a
+    # nonzero count cannot be mistaken for a clean scan.
+    if [ ! -f "$file" ]; then
+        missing=$((missing + 1))
+        continue
+    fi
     # Skip test-shaped paths.
     case "$file" in
         */tests/*) continue ;;
@@ -261,8 +297,19 @@ for file in "${files[@]}"; do
     )
 
     lineno=0
+    # A window of the lines STRICTLY BEFORE the current one, joined with spaces and
+    # capped, so `defensive_call_still_open` can see a macro rustfmt wrapped. Capped
+    # because it only ever needs to reach back over one wrapped invocation, and an
+    # unbounded window would let an unrelated `matches!` far above claim a line.
+    ctx_before=""
     while IFS= read -r line; do
         lineno=$((lineno + 1))
+        this_ctx=$ctx_before
+        ctx_before="$ctx_before $line"
+        # Guarded: bash yields the EMPTY STRING for `${v: -n}` when n exceeds the
+        # length, which silently emptied the window on every short file and made the
+        # look-back below a no-op the first time it was written.
+        if [ ${#ctx_before} -gt 400 ]; then ctx_before=${ctx_before: -400}; fi
 
         case "$line" in
             *"$NEEDLE"*) ;;
@@ -294,6 +341,38 @@ for file in "${files[@]}"; do
         case "$line" in
             *"matches!"*|*"debug_assert"*|*"refusing"*|*"Refusing"*) continue ;;
         esac
+        # ⚑ …and the SAME defensive shape when RUSTFMT WRAPPED the macro (2026-07-25).
+        # This guard is line-local, so it read
+        #
+        #     || !matches!(
+        #         root.action.authorization,
+        #         dregg_turn::Authorization::Unchecked
+        #     )
+        #
+        # (node/src/exact_fnsp_v3_execution_authority.rs:333) as a production
+        # CONSTRUCTION and failed the job — while the policy block at the top of this
+        # file has always said `!matches!` is allowed. The check was contradicting its
+        # own stated rule purely on where rustfmt chose to break the line, and the
+        # advertised remedy ("add the file to ALLOWLIST_FILE_PATTERNS") would have
+        # blanket-exempted an executor authority file forever to paper over it.
+        #
+        # The skip is deliberately NARROW, because a wrapped line is also how a real
+        # construction looks (`Action::new(\n  …::Unchecked,\n)`): it applies only when
+        # (a) the line carries the variant and NOTHING else — a path prefix and a
+        # trailing comma are all that is tolerated, so `authorization: …::Unchecked,`
+        # and any call/assignment on the line still count — and (b) a DEFENSIVE
+        # invocation is still unclosed above it. In `Action::new(` the nearest open
+        # call is `new(`, not `matches!(`, so it is reported exactly as before. Inside
+        # an open `matches!` a bare variant line can only be a PATTERN; Rust has no
+        # constructor there.
+        # `[[ =~ ]]` rather than an extglob `case` pattern: `shopt -s extglob` is a
+        # RUNTIME setting, so an extglob pattern here parses fine when the script runs
+        # and makes `bash -n scripts/no-unchecked-auth.sh` fail outright — a syntax
+        # check that reds on a working script is its own small trap.
+        if [[ $trimmed =~ ^[A-Za-z0-9_:]*"$NEEDLE",?$ ]] \
+            && [ "$(defensive_call_still_open "$this_ctx")" = 1 ]; then
+            continue
+        fi
 
         offenders+=("$file:$lineno: $line")
     done < "$file"
@@ -308,6 +387,13 @@ if [ ${#offenders[@]} -gt 0 ]; then
     echo "wire-layer bridging surface), add the file to ALLOWLIST_FILE_PATTERNS"
     echo "with a reason. Otherwise use a real Authorization variant."
     exit 1
+fi
+
+if [ "$missing" -gt 0 ]; then
+    echo "no-unchecked-auth.sh: ok — but $missing indexed .rs file(s) are absent from the"
+    echo "  working tree and were NOT scanned (a pending deletion in this tree; CI's fresh"
+    echo "  checkout has none). This green covers everything else, not those."
+    exit 0
 fi
 
 echo "no-unchecked-auth.sh: ok"
