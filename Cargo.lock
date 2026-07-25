@@ -2195,20 +2195,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "automatafl-logic"
-version = "0.1.0"
-source = "git+https://github.com/emberian/automatafl?rev=253bafa5dcad7c40b4d71ac0861ee0c9728a7dcd#253bafa5dcad7c40b4d71ac0861ee0c9728a7dcd"
-dependencies = [
- "displaydoc",
- "ndarray 0.16.1",
- "petgraph 0.8.3",
- "serde",
- "smallvec",
- "tracing",
- "vec_map",
-]
-
-[[package]]
 name = "av-scenechange"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5285,6 +5271,8 @@ name = "deos-js"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "deos-js-core",
+ "deos-js-runtime",
  "deos-reflect",
  "dregg-cell",
  "dregg-doc",
@@ -5299,11 +5287,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "deos-js-core"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+]
+
+[[package]]
 name = "deos-js-runtime"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "boa_engine",
+ "deos-js-core",
  "dregg-cell",
  "dregg-sdk",
  "dregg-turn",
@@ -5990,13 +5988,13 @@ dependencies = [
 name = "dregg-automatafl"
 version = "0.1.0"
 dependencies = [
- "automatafl-logic",
  "blake3",
  "deos-view",
  "dregg-app-framework",
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-lean-ffi",
  "dregg-lightclient",
  "dregg-schema",
  "dregg-turn",
@@ -6024,6 +6022,7 @@ dependencies = [
 name = "dregg-braid-hook"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
@@ -6863,6 +6862,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-lean-ffi",
  "dregg-lightclient",
  "dregg-schema",
  "dregg-turn",
@@ -6958,6 +6958,9 @@ dependencies = [
  "dregg-types",
  "dregg-verifier",
  "ed25519-dalek",
+ "fhe",
+ "fhe-traits",
+ "fhegg-fhe",
  "fips204",
  "futures-util",
  "getrandom 0.3.4",
@@ -6968,6 +6971,7 @@ dependencies = [
  "pg-dregg",
  "postcard",
  "quinn",
+ "rand 0.8.6",
  "rand_core 0.6.4",
  "realm-model",
  "reqwest 0.12.28",
@@ -7042,7 +7046,6 @@ dependencies = [
  "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-turn",
- "postcard",
 ]
 
 [[package]]
@@ -7794,6 +7797,7 @@ dependencies = [
  "deos-view",
  "dregg-app-framework",
  "dregg-automatafl",
+ "dregg-exec-lean",
  "dregg-multiway-tug",
  "dregg-persist",
  "dregg-turn",
@@ -8035,6 +8039,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-app-framework",
+ "dregg-lean-ffi",
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",
@@ -8266,6 +8271,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber 0.3.23",
  "ugc-dregg",
@@ -8761,6 +8767,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-trie",
  "blst",
+ "dregg-lean-ffi",
  "hex",
  "sha2 0.10.9",
 ]
@@ -8980,7 +8987,7 @@ dependencies = [
  "fhe-traits",
  "fhe-util",
  "itertools 0.14.0",
- "ndarray 0.17.2",
+ "ndarray",
  "num-bigint",
  "num-traits",
  "once_cell",
@@ -9002,7 +9009,7 @@ dependencies = [
  "fhe-traits",
  "fhe-util",
  "itertools 0.14.0",
- "ndarray 0.17.2",
+ "ndarray",
  "num-bigint",
  "num-bigint-dig 0.9.1",
  "num-complex 0.4.6",
@@ -9038,6 +9045,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhegg-core"
+version = "0.1.0"
+
+[[package]]
 name = "fhegg-fhe"
 version = "0.1.0"
 dependencies = [
@@ -9054,7 +9065,10 @@ dependencies = [
  "fhe",
  "fhe-math",
  "fhe-traits",
+ "fhegg-core",
  "fhegg-solver",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "hkdf",
  "hmac 0.12.1",
  "merlin",
@@ -14532,22 +14546,6 @@ dependencies = [
 
 [[package]]
 name = "ndarray"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
-dependencies = [
- "matrixmultiply",
- "num-complex 0.4.6",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
- "serde",
-]
-
-[[package]]
-name = "ndarray"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
@@ -16459,18 +16457,6 @@ checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset 0.5.7",
  "indexmap 2.14.0",
-]
-
-[[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset 0.5.7",
- "hashbrown 0.15.5",
- "indexmap 2.14.0",
- "serde",
 ]
 
 [[package]]
@@ -22277,6 +22263,7 @@ dependencies = [
  "axum",
  "blake3",
  "dregg-app-framework",
+ "dregg-bridge",
  "dregg-cell",
  "dregg-circuit",
  "dregg-credentials",
@@ -22474,6 +22461,7 @@ dependencies = [
  "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-lean-ffi",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",
@@ -25493,15 +25481,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "vec_map"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "vello_common"

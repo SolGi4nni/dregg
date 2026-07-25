@@ -107,6 +107,9 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 # evidence (`certf_integrity.rs`). Library-only dependency; the solver's GPU bench
 # bins are not pulled in.
 fhegg-solver = { path = "../fhegg-solver" }
+# The wasm-clean core: bfv_lean (now) + the threshold party ops (next) live here, GPU/tfhe-free, so the
+# browser-extension ceremony party can cross-compile them to wasm32. Re-exported at their original paths.
+fhegg-core = { path = "../fhegg-core" }
 
 # wasm32 ONLY (the browser extension's threshold-BFV ceremony party): getrandom 0.2 needs its `js`
 # backend on wasm. Scoped to wasm32 so native builds are byte-identical. getrandom 0.3 (via fhe/rand_09)

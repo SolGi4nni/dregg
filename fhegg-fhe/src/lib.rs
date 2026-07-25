@@ -59,7 +59,10 @@ pub mod bfv_gpu;
 /// Lean-first BFV stone 1: a FROM-SCRATCH RNS fold-add over fhe.rs's own wire
 /// format, differentially anchored to fhe.rs as the oracle
 /// (`tests/bfv_lean_oracle.rs`).
-pub mod bfv_lean;
+///
+/// MOVED to the wasm-clean `fhegg-core` crate (streamed-cooking-shannon Track B); re-exported here at its
+/// original path so every `crate::bfv_lean::…` / `fhegg_fhe::bfv_lean::…` consumer is unchanged.
+pub use fhegg_core::bfv_lean;
 /// The MULTIPLICATIVE stone: wrap-guarded BFV ct×ct multiply + relinearization
 /// over fhe.rs's `Multiplicator`, oracle-anchored in `tests/bfv_mul_oracle.rs`.
 pub mod bfv_mul;

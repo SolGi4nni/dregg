@@ -1,0 +1,12 @@
+[package]
+name = "fhegg-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "fhEgg core: wasm-clean BFV/threshold primitives shared by fhegg-fhe and the browser-extension ceremony party. No GPU/wgpu/tfhe deps — this is the surface that must cross-compile to wasm32 for the distributed no-single-viewer ceremony (streamed-cooking-shannon Track B)."
+
+# Deliberately dependency-light: bfv_lean is pure std (byte-interop RNS, no fhe/rand/serde). Threshold party
+# ops (to be moved here next) add fhe/rand_09 only. NO wgpu/tfhe — that is what keeps this wasm-clean.
+[dependencies]
+
+[dev-dependencies]
