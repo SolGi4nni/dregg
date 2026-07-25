@@ -170,6 +170,26 @@ fi
 # rule. If the archive is absent locally the rule is simply a no-op, and the preflight
 # below says so out loud rather than letting the remote discover it as a signal 6.
 LEAN_ARCHIVE="dregg-lean-ffi/libdregg_lean.a"
+
+# ⚠ THE ARCHIVE IS AN ARCH-SPECIFIC BUILD PRODUCT — never ship it cross-platform.
+# The first version of this fix rsync'd it unconditionally and immediately broke a
+# macOS->Linux lane: the members are `Mach-O 64-bit object arm64`, so `rust-lld` on
+# x86_64 reports "archive member 'Aesop.o' is neither ET_REL nor LLVM bitcode" and
+# then `undefined symbol: dregg_exec_full_forest_auth`. Loud, at least — a link
+# error naming the symbol beats the bare SIGABRT it replaced — but still wrong.
+# Ship it only when host and remote agree on OS and machine; otherwise the remote
+# must build its own, which `lake exe cache get` below now makes affordable.
+LOCAL_PLATFORM="$(uname -s)-$(uname -m)"
+REMOTE_PLATFORM="$(ssh "$HOST" 'echo "$(uname -s)-$(uname -m)"' 2>/dev/null || echo unknown)"
+ARCHIVE_FILTER=()
+if [ "$LOCAL_PLATFORM" = "$REMOTE_PLATFORM" ]; then
+  ARCHIVE_FILTER=(--filter="+ /${LEAN_ARCHIVE}")
+else
+  echo "pbuild: host is ${LOCAL_PLATFORM}, ${HOST} is ${REMOTE_PLATFORM} — NOT shipping" >&2
+  echo "        ${LEAN_ARCHIVE} (it is arch-specific; a cross-shipped archive links as" >&2
+  echo "        'neither ET_REL nor LLVM bitcode'). The lane must build its own." >&2
+fi
+
 if [ ! -f "${SRC%/}/${LEAN_ARCHIVE}" ]; then
   printf '%s\n' \
     "pbuild: WARNING — ${LEAN_ARCHIVE} is absent locally, so the lane will not receive it." \
@@ -182,7 +202,7 @@ fi
 # shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
 ssh "$HOST" "mkdir -p '${REMOTE}'"
 rsync -az --delete \
-  --filter="+ /${LEAN_ARCHIVE}" \
+  "${ARCHIVE_FILTER[@]}" \
   --filter=':- .gitignore' --exclude='.git/' \
   "$SRC" "${HOST}:${REMOTE}/"
 
