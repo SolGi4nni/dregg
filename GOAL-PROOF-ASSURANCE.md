@@ -62,21 +62,34 @@ proves migration costs a consumer nothing. What it buys, exactly: the premise no
 universal rejection. It does **not** prove satisfiability at the opaque `cfg*` args — nothing can.
 
 ## In flight (background agents)
-- `cut:memfree-fanout` — migrate ~25 `hfri : FriLdtExtract` consumers to the cons-shape assembler
-- `cut:memory-and-kernel` — memory fanout + kernel/config, **and the true census** (35 is an estimate)
-- `instrument-sweep` — `PremiseInhabitability` across every accepts-implies-exists class; `UNKNOWN`
-  is a first-class verdict, not a pass
+- `carrier-content-fix` — R11's repair reported green on a file with 8 compile errors; fixing
+- `unknown-triage` — settle the sweep's ~28 `UNKNOWN` verdicts
+- `ext-form-cutover` — the extension-typed work is *additive*; rewire the deployed chains onto it
 
 ## Next moves (my pick)
-0. ~~Cut over the bare-premise consumers~~ **DONE** — zero soundness consumers remain on it.
-1. ~~Give `TranscriptWordCommitment` content~~ **DONE** — and *characterized*.
-2. **Kill the duplication debt** — verdict in (SAME, not drifted; keep `FriChainStepIdx`'s copy, have
-   `FriVerifierCompose` import + re-export so its four consumers need no edit). **Blocked** until the
-   `∀ S` lane lands, since it is writing those exact files.
-3. Then: the ~11 remaining base-field-challenge typing sites.
-4. Then: the ~28 declarations the sweep left `UNKNOWN` at deployment.
+0. ~~Bare-premise cutover~~ · ~~`TranscriptWordCommitment`~~ · ~~duplication debt~~ · ~~base-field
+   typing sites~~ · ~~`∀ S`~~ — **all DONE**.
+1. **The felt-width adjacency**: `SingleAirOpening.alpha`, `TableOpening.constraintEval` /
+   `vanishingAtZeta` / `quotientAtZeta` still store ONE felt. The ext work types the *statement's*
+   challenge; it does not widen the serialized record.
+2. **Price the LogUp ε** — `LogUpSoundness.exceptionalSet_card_lt` exists; nobody has put it in the
+   game frame, so `BusModelOk.nonexceptional` has no `winProb` bound at either field.
+3. **The other branch of the dichotomy** — `∀ S` proves farness survives for a *fold-consistent* prover;
+   that a fold-**inconsistent** prover is caught by the query phase is proved nowhere in-tree.
 
 ## Done log
+- **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
+  `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
+  `honest_foldConsistentAlong` proving nothing is lost and the existing statements becoming one-line
+  instances. The **canary** is the point: `consistencyFreeSurvival_false` *refutes* the ungated
+  statement, and at the **same instance** with the gate restored the bound is `≤ 0`. One instance, both
+  signs. Honest scope in all four headers: this is strategy-quantification, **not** prover soundness.
+- **A RED module at HEAD leaking `sorryAx` into 3 keystones** (`7abd7f6dbf`) — two lanes had written it
+  off as contention; it wasn't. `maxRecDepth` was *masking* the real fault: `noteSpendV3` had grown a
+  third map op and the `rfl`-fed shape lemma still passed two. Fixing it also unblocked the kernel/config
+  receipts that had been stranded unverified behind it.
+- **Duplication killed** (`672c169a31`) — `hitWin`/`hit_cond`/`hit_bound` deduped by measured closures
+  (51 vs 295 modules), 661→538 lines, all four consumers build **unedited**.
 - L0–L6 correlated-agreement ladder landed; crux `polishchuk_spielman` PROVEN (Cramér–Nardi-fixed).
   No Mathlib gap blocked it — the `resultant` API carried it, refuting the plan's own fragility §.
 - `DecimLift` discharged from the landed tower; `RlcDistributes` discharged at deployed params.
