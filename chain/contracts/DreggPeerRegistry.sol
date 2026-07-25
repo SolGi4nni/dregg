@@ -183,5 +183,14 @@ contract DreggPeerRegistry is IDreggPeerRegistry {
 
         emit PeerFinalityProven(srcChainId, height, finalizedRoot, msg.sender);
         emit PeerRootAdvanced(srcChainId, oldRoot, finalizedRoot, height);
+
+        // THE CAPABILITY RECEIPT: fingerprint the exact proof object that was
+        // exercised and bind it to the triple it authorized. The proof IS the
+        // authority; this leaves an on-chain trace auditable to that specific
+        // capability (never to an owner/committee). Emitted AFTER the finality
+        // receipts so existing consumers of the two events above are unaffected.
+        bytes32 proofDigest =
+            keccak256(abi.encode(a, b, c, commitments, commitmentPok));
+        emit PeerProofReceipt(srcChainId, height, finalizedRoot, proofDigest, msg.sender);
     }
 }

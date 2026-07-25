@@ -71,6 +71,23 @@ interface IDreggPeerRegistry {
         uint64 height
     );
 
+    /// THE CAPABILITY RECEIPT. Where `PeerFinalityProven` records WHAT finalized,
+    /// this binds the exercised proof's `proofDigest` (the keccak fingerprint of
+    /// the Groth16 proof object that was just verified) to the exact
+    /// `(srcChainId, height, finalizedRoot)` triple it authorized. The proof is
+    /// the authority (a capability); this receipt is the on-chain trace of that
+    /// capability being exercised — auditable to the specific proof object, not to
+    /// an owner or a committee. `relayer` is attribution only (submission is
+    /// permissionless). A downstream indexer can match this digest to the proof it
+    /// saw relayed and confirm no root advanced without a proof behind it.
+    event PeerProofReceipt(
+        uint256 indexed srcChainId,
+        uint64 indexed height,
+        bytes32 indexed finalizedRoot,
+        bytes32 proofDigest,
+        address relayer
+    );
+
     // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
