@@ -32,6 +32,16 @@ Cutovers, not parallel towers.
 6. **Out-of-CI proof.** A seven-file subtree outside the build target; committed imports pointing
    at untracked files (has broken a fresh checkout **three times** today).
 
+## ⚑ VERIFICATION HYGIENE — a false green this lane produced twice
+
+**`lake build … | tail` reports the PIPELINE's exit status, not lake's.** A failing build reads as
+success. This produced a false green twice today: once in my own check, and once in a lane that
+*reported green on a file with 8 compile errors*. Capture the status **inside** the subshell before any
+pipe (`( lake build X; echo EXIT=$? ) | tail`), or redirect to a file and grep. And `lake env lean <file>`
+is fast and authoritative for compile errors — use it before reporting.
+
+This is the "greens that mean something" class turned on our own tooling, which is why it belongs here.
+
 ## The instrument
 `Dregg2/Circuit/PremiseInhabitability.lean` — `Empties P acc := P → RejectsAll acc`, `Extracts`,
 `empties_of_refuted`, `empties_proves_anything`, `not_of_empties_of_acceptsSome`. Turns "audit note"
