@@ -81,3 +81,35 @@ AND theory-complete (soundness + hiding + necessity + malicious-security are the
 construction — the runtime same-opening emitter + the distributed prover (§3.3) + wiring — which is codex's
 circuit-prove/product turf. Two dragons: the theory + perf foundation is proved and measured on our lane; the
 live wiring is codex's. When they meet, the dark clearing is real.
+
+---
+
+## 6. The halls RUN — all four, oracle-validated (the tangible outcome)
+
+After the theory + perf foundation, all four Dark Bazaar halls were driven to RUNNING, oracle-validated FHE
+code (test files in `fhegg-fhe/tests/`, no `lib.rs` touch, non-colliding with codex's lanes). `cargo test -p
+fhegg-fhe --test oracle_pit_pricing --test netting_vault_running --test dark_pool_invariant --test
+e2e_private_derivative` → **17 passed together**:
+
+| hall | running artifact | tests |
+|---|---|---|
+| **Oracle Pit** | complete tradeable quadratic prediction market: arbitrary cost matrix (pricing), marginal price (public odds over hidden positions), batched-SIMD pricing, wrap guard | 5 |
+| **Netting Vault** | homomorphic multilateral netting, reveal-only-the-net; **guild scale** (8 parties, 56 hidden obligations → 8 nets), conservation holds | 3 |
+| **Dark Pool** | constant-product invariant on hidden reserves; **batched** 6-pool verification (the GPU-favorable shape); unfair swaps caught | 3 |
+| **Sealed Exchange** | end-to-end private derivative: collective-key encrypt → convex solve → threshold decrypt | 6 |
+
+Each is the running witness of a proved Lean relation (OraclePitQuadratic / NettingVault / DarkAmm / the apex),
+validated bit-for-bit against real fhe.rs — agreement with a real BFV library cannot be faked. Every hall's
+compute rides the ct×ct multiply / additive fold that MEASURES its own GPU numbers (multiply 5.13×/10× batched).
+
+**Net state of the vision:** proved (14 Lean files) + measured (compute-bound wins on real AMD) + RUNNING (all
+four halls, 17 tests). The Dark Bazaar is no longer a design with proofs — it executes, all four corners.
+
+**The honest remaining frontier is the directed LEAPS (each needs a strategic pick / codex-convergence):**
+1. Host a hall as a LIVE product (wire a running demo into cells/receipts/finality + a UX) — codex's turf.
+2. Wire the batched GPU multiply into the running multiply consumers (the fhe.rs↔RnsPoly bridge is codex's
+   additive area) — turns the measured 5-10× into a running throughput win.
+3. The distributed prover (§3.3) — protocol-level, real design.
+4. The F2 FPGA — needs an F2 instance + HDL build; scope is written.
+
+The proved + measured + running layer is complete on our lane; the leaps are where the two dragons converge.
