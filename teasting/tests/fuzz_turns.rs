@@ -213,7 +213,7 @@ fn test_fuzz_turns_conservation_and_nonce() {
                     updated: vec![(
                         cell_id,
                         CellStateDelta {
-                            field_updates: vec![(*index, *value)],
+                            field_updates: vec![(*index as u64, *value)],
                             nonce_increment: false,
                             balance_change: 0,
                             permission_changes: None,
@@ -481,7 +481,7 @@ fn test_fuzz_mixed_effects_500_turns() {
                     updated: vec![(
                         cell_id,
                         CellStateDelta {
-                            field_updates: vec![(*index, *value)],
+                            field_updates: vec![(*index as u64, *value)],
                             nonce_increment: false,
                             balance_change: 0,
                             permission_changes: None,

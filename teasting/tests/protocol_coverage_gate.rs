@@ -69,6 +69,14 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::SetPermissions { .. } => true,
         Effect::Refusal { .. } => true,
 
+        // PQ hybrid-identity effects (post-quantum cell identity material):
+        // driven end-to-end through `TurnExecutor::execute` by
+        // turn::tests::pq_cell_identity — a sponsor `CreateHybridCell` COMMITS,
+        // a child `RotatePqIdentity` COMMITS, and the hostile / stale (epoch-bound)
+        // rotations REFUSE, ledger state checked on both sides.
+        Effect::CreateHybridCell { .. } => true,
+        Effect::RotatePqIdentity { .. } => true,
+
         // coverage_misc_effects Seal->Unseal round-trip (#144 fixed)
 
         // ── Not yet covered: documented blockers (#142 work-list) ────────
@@ -330,6 +338,12 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::DigFieldEq { .. } => false,
         StateConstraint::ClearanceDominates { .. } => false,
         StateConstraint::FieldsCollectionAggregate { .. } => false,
+        // The named-collection cardinality caveat (`fields_map` count == N) — the
+        // sibling of `FieldsCollectionAggregate`. The scalar `evaluate_constraint_full`
+        // evaluator handles it, but no accept+reject EXECUTOR-commit pair has been
+        // authored yet (#142 work-list), so conservatively `false` per the honesty
+        // contract (under-claim, never over-claim).
+        StateConstraint::FieldsCountEquals { .. } => false,
 
         // The register-reading temporal-algebra caveats (rate/until/since/cooled/
         // challenge), landed STAGED — the temporal algebra made WRITABLE. Not yet
@@ -401,6 +415,7 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     "DigFieldEq",
     "ClearanceDominates",
     "FieldsCollectionAggregate",
+    "FieldsCountEquals",
     // Temporal-algebra caveats landed STAGED (writable rate/until/since/cooled/
     // challenge); no executor accept/reject coverage pair authored yet (#142).
     "RateBound",
@@ -437,8 +452,11 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
 /// STAGED (in-circuit weld, teeth circuit-side); 23 → 24 when the cross-KEY heap
 /// relation `HeapFieldLteOther` was appended (host-evaluated only — the heap-lift of
 /// `FieldLteOther`; no in-circuit teeth, no dedicated teasting executor accept/reject
-/// pair yet). Shrink as each gains an executor accept/reject coverage pair.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 24;
+/// pair yet); 24 → 25 when the migration added `FieldsCountEquals` (the `fields_map`
+/// cardinality caveat, sibling of `FieldsCollectionAggregate`) — scalar-evaluator-wired
+/// but no executor accept/reject pair authored yet. Shrink as each gains an executor
+/// accept/reject coverage pair.
+const MAX_UNCOVERED_CONSTRAINTS: usize = 25;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {

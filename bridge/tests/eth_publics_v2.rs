@@ -272,6 +272,9 @@ fn ethereum_publics_v2_from_whole_chain_bytes() {
         final_root: G_FINAL,
         chain_digest: G_DIGEST,
         num_turns: G_NUM_TURNS,
+        // Non-automatafl envelope: no board window (the migration added this field;
+        // the correct default for a chain that declares no state window is `None`).
+        board_window: None,
     };
     let p = EthPublicInputsV2::from_whole_chain_bytes(&env).expect("canonical envelope converts");
     assert_eq!(p, golden(), "the envelope fields land in the pinned lanes");

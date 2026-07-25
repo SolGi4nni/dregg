@@ -49,7 +49,7 @@ fn set_field(
         "set",
         vec![Effect::SetField {
             cell: ex.cell_id(),
-            index,
+            index: index as u64,
             value,
         }],
     )
