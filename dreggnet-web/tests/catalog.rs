@@ -201,9 +201,17 @@ async fn a_market_list_bid_settle_plays_through_the_catalog() {
     );
 
     // Settle — reveal + clear to the high bid (bob, 500 ≥ reserve 100), value conserved.
+    //
+    // ⚑ `contains("committed")` USED TO BE SATISFIED BY THE REFUSAL. The anti-ghost banner reads
+    // "Refused: … (nothing committed — anti-ghost)", so the substring matched a settle that landed
+    // NOTHING. Match the landed-receipt banner exactly, and say out loud that a refusal is not it.
     let (_s, bs) = post(&app, &act, "settle", 0, "alice").await;
     assert!(
-        bs.contains("committed") || bs.contains("objective"),
+        !bs.contains("Refused"),
+        "the settle must LAND, not refuse: {bs}"
+    );
+    assert!(
+        bs.contains("Turn committed") || bs.contains("objective"),
         "the auction cleared: {bs}"
     );
     assert!(
