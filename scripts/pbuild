@@ -152,9 +152,36 @@ fi
 
 # Sync working tree (WIP included) -> isolated lane dir. gitignore filter keeps
 # target/.lake out so persvati's per-lane build cache survives across invocations.
+#
+# ⚠ THE LEAN ARCHIVE IS AN EXPLICIT EXCEPTION TO THE GITIGNORE FILTER (2026-07-25).
+# `dregg-lean-ffi/.gitignore` says `*.a`, which catches `libdregg_lean.a` (~106 MB) — so
+# for as long as this script has existed, the verified Lean archive NEVER REACHED the
+# remote lane. The failure mode is silent and expensive: every executor-touching test
+# binary there dies with a bare `SIGABRT` and NO Rust panic message, because
+# `Custodian::generate` -> ML-DSA-65 keygen aborts without the verified cores. Three
+# separate lanes hit it in one night; one lost hours before proving it was not their code
+# (it reproduced only where the archive was absent, and vanished on two boxes once
+# present). `dregg-app-framework`'s own 164 tests abort identically, so a lane cannot even
+# use a neighbouring crate as a control.
+#
+# The `+` rule is listed BEFORE the merge filter because rsync takes the first matching
+# rule. If the archive is absent locally the rule is simply a no-op, and the preflight
+# below says so out loud rather than letting the remote discover it as a signal 6.
+LEAN_ARCHIVE="dregg-lean-ffi/libdregg_lean.a"
+if [ ! -f "${SRC%/}/${LEAN_ARCHIVE}" ]; then
+  printf '%s\n' \
+    "pbuild: WARNING — ${LEAN_ARCHIVE} is absent locally, so the lane will not receive it." \
+    "        Executor-touching tests on ${HOST} will abort with a bare SIGABRT and no panic" \
+    "        message (ML-DSA keygen without the verified cores). That is an ENVIRONMENT" \
+    "        fault, not your code. Seed it with ./scripts/bootstrap.sh, or set" \
+    "        DREGG_ALLOW_UNAUDITED_PQ=1 to run marshal-only knowing what you traded away." >&2
+fi
+
 # shellcheck disable=SC2029 # REMOTE is a locally-owned, validated lane path.
 ssh "$HOST" "mkdir -p '${REMOTE}'"
-rsync -az --delete --filter=':- .gitignore' --exclude='.git/' \
+rsync -az --delete \
+  --filter="+ /${LEAN_ARCHIVE}" \
+  --filter=':- .gitignore' --exclude='.git/' \
   "$SRC" "${HOST}:${REMOTE}/"
 
 # Build with cargo + elan env sourced (non-login shells lack them). Persvati's
