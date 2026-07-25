@@ -20,6 +20,17 @@ namespace Dregg2.Games.Dungeon.Prog
 
 open Dregg2.Exec (Value)
 
+/-! ⚑ Every law below is stated over the DAY'S WORLD (`Dungeon.WorldParam`): the map is
+drawn from the committed day-seed, so `homeCode` and `guardHp` are parameters, not
+constants. The completeness boundary (`ModelProgramInv`) is therefore uniform over the
+whole drawn family, not a fact about one shipped layout. -/
+variable [WorldParam]
+
+-- The world parameter is blanket-scoped over the file (every rule and law is stated over
+-- the day's drawn map); a handful of pure list/count helpers legitimately do not mention
+-- it, and the section-variable linter would otherwise report each one.
+set_option linter.unusedSectionVars false
+
 /-! ## 1. Every deployed way exercises its corresponding key capability. -/
 
 open Dregg2.Exec in
@@ -39,10 +50,12 @@ theorem way_flip_key_mutation_refused (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ F
     exact False.elim (hmut ((way_flip_exhibits_key w hw hm hadm hflip).1))
 
 -- The generic theorem bites away from the old way-2-only canary: way 3 cannot be
--- opened from genesis while key relic 2 remains in its floor-2 hoard.
-#guard
-  (Dregg2.Exec.RecordProgram.admits dungeonExec 2 (encode genesisState)
-    (setF (setF (encode genesisState) (wayName 3) 1) "spent" 1)) = false
+-- opened from genesis while its key relic remains in the deep — driven on EVERY day of
+-- the drawn family, not just the shipped map.
+#guard (List.range dayCount).all (fun k =>
+  (Dregg2.Exec.RecordProgram.admits (@dungeonExec (instAt k)) 2
+      (encode (@genesisState (instAt k)))
+      (setF (setF (encode (@genesisState (instAt k))) (wayName 3) 1) "spent" 1)) == false)
 
 /-! ## 2. The exact model-to-program completeness boundary. -/
 
@@ -189,13 +202,15 @@ open Dregg2.Exec in
     (encode s).scalar "relic_7" = some (s.custody.getD 7 0 : Int) := by
   simpa using encode_scalar_relic s 7 (by decide)
 
+/-- Every relic's minted home is a real floor — now a consequence of the DAY'S world law
+(`Dungeon.wf_home_floor`), where it used to be a `decide` on a hard-wired list. -/
 private theorem homeCode_le_floors (i : Nat) (hi : i < RELICS) :
     homeCode i ≤ FLOORS := by
-  have hi' : i < 8 := hi
-  have hiCases : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 ∨ i = 4 ∨ i = 5 ∨ i = 6 ∨ i = 7 := by
-    omega
-  rcases hiCases with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-    decide
+  have hlen : homeFloors.length = RELICS := wf_homes_length
+  have hi' : i < homeFloors.length := by rw [hlen]; exact hi
+  show homeFloors.getD i 0 ≤ FLOORS
+  rw [← List.getElem_eq_getD (l := homeFloors) (i := i) (h := hi') 0]
+  exact (wf_home_floor (List.getElem_mem hi')).2
 
 /-- The extra relation the authored program enforces beyond `Dungeon.Inv`: each
 relic may occupy its own minted home, carried, or banked -- never another relic's
@@ -213,11 +228,11 @@ def ModelProgramInv (s : DState) : Prop := Inv s ∧ CustodyHomeWF s
 theorem modelProgramInv_genesis : ModelProgramInv genesisState := by
   refine ⟨inv_genesis, ?_⟩
   intro i hi
-  have hi' : i < 8 := hi
-  have hiCases : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 ∨ i = 4 ∨ i = 5 ∨ i = 6 ∨ i = 7 := by
-    omega
-  rcases hiCases with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-    simp [genesisState, homeFloors, homeCode]
+  left
+  have hlen : homeFloors.length = RELICS := wf_homes_length
+  have hi' : i < homeFloors.length := by rw [hlen]; exact hi
+  show homeFloors[i]? = some (homeFloors.getD i 0)
+  rw [List.getElem?_eq_getElem hi', List.getElem_eq_getD (0 : Nat)]
 
 /-- The home-specific custody alphabet is preserved by every legal model move. -/
 theorem modelProgramInv_step {s s' : DState} {m : Move}
@@ -288,12 +303,16 @@ theorem wrongHomeState_inv : Inv wrongHomeState := by
   simp [wrongHomeState, Inv, CustodyWF, pack, bank, FLOORS, RELICS,
         CAP, CARRIED, BANKED]
 
+/-- The obstruction is exhibited on DAY 0's map (`instAt 0`, the shipped layout): a
+concrete counterexample needs a concrete world. Nothing about it is special to day 0 —
+`Inv` is world-blind, while the provenance tooth is minted per-relic on whatever map the
+day drew. -/
 theorem wrongHomeState_delve_legal :
-    step wrongHomeState .delve = some { wrongHomeState with
+    @step (instAt 0) wrongHomeState .delve = some { wrongHomeState with
       depth := 1, wounds := 0, spent := 1 } := by decide
 
 theorem wrongHomeState_delve_refused :
-    Dregg2.Exec.RecordProgram.admits dungeonExec (moveIdx .delve)
+    Dregg2.Exec.RecordProgram.admits (@dungeonExec (instAt 0)) (moveIdx .delve)
       (encode wrongHomeState)
       (encode { wrongHomeState with depth := 1, wounds := 0, spent := 1 }) = false := by
   decide
@@ -1677,8 +1696,8 @@ there is an `Inv` state and a legal model transition which the authored program
 correctly refuses because the state violates per-relic minted-home provenance. -/
 theorem inv_not_sufficient_for_step_admission :
     ∃ s s' : DState,
-      Inv s ∧ step s .delve = some s' ∧
-        Dregg2.Exec.RecordProgram.admits dungeonExec (moveIdx .delve)
+      Inv s ∧ @step (instAt 0) s .delve = some s' ∧
+        Dregg2.Exec.RecordProgram.admits (@dungeonExec (instAt 0)) (moveIdx .delve)
           (encode s) (encode s') = false := by
   refine ⟨wrongHomeState,
     { wrongHomeState with depth := 1, wounds := 0, spent := 1 },

@@ -31,6 +31,34 @@
 //! structurally while keeping the executor's method-default-deny (the method disjunct
 //! inside the rider guard).
 //!
+//! ## The map is DAILY — drawn from the committed day-seed
+//!
+//! The descent used to ship one compile-time map: the same eight mint floors and the same
+//! four guardians every day, so a solved line replayed forever. It no longer does. The
+//! Lean model takes the world as a parameter (`Dungeon.WorldParam` — where each relic is
+//! minted and how tough each floor's guardian is), and `Dungeon.drawFamily` is the family
+//! of [`DAYS`] maps the committed drand day-seed draws from ([`day_index`]).
+//!
+//! Every drawn map is CHECKED and DRIVEN in Lean, not hoped:
+//!
+//! * `Dungeon.drawFamily_wf` — each map is structurally legal: relic 0 (THE PRIZE) lies
+//!   at the bottom, and **no key is ever minted behind the door it opens**
+//!   (`homes (keyFor w) < w`), so every way is openable from the surface;
+//! * `Dungeon.winsAt_true` / `Dungeon.draw_completable` — for each map, the crowned line
+//!   GENERATED from that map replays legally through the real rulebook and banks the
+//!   prize. Completability is a witness, not an assumption;
+//! * `Dungeon.costAt_tense` — every day's perfect line costs 20–26 of the 26 breath, and
+//!   capacity stays exactly as tight as the shipped map's (`pack + depth ≤ CAP` means the
+//!   bottom holds three keys plus the prize and nothing else);
+//! * `DungeonProgram.crownedRunAdmitted` — each day's crowned line is admitted end to end
+//!   by the teeth emitted for THAT day.
+//!
+//! [`PROGRAM_JSON`] therefore carries the whole family: one fully emitted 13-case program
+//! per map. Rust picks the index and resolves names to slots — it never assembles or
+//! edits a constraint. [`Descent::deploy_on_day`] is the daily entry (the beacon draws the
+//! map); [`Descent::deploy`] pins day 0, the shipped map, so a fixed script stays a fixed
+//! dungeon for tests and replays.
+//!
 //! ## The mover vs. the referee
 //!
 //! [`Sim`] is the ENGINE (the mover): it computes the next projection off-circuit, in
@@ -79,17 +107,74 @@ pub const BREATH: u64 = 26;
 pub const CAP: u64 = 8;
 pub const CARRIED: u64 = 8;
 pub const BANKED: u64 = 9;
-/// Relic mint homes: relic 0 = THE PRIZE (floor 4); relics 1–3 = the keys to ways 2–4;
-/// relics 4–7 = treasures. (The Lean `homeFloors`.)
+/// **The number of distinct maps the committed day-seed draws from** (the Lean
+/// `Dregg2.Games.Dungeon.dayCount`). Every member is checked legal and DRIVEN to a win in
+/// Lean (`drawFamily_wf`, `winsAt_true`), and every member has its own fully emitted
+/// 13-case program in [`PROGRAM_JSON`].
+pub const DAYS: usize = 16;
+
+/// Day 0 — the shipped map, kept as the canonical/default world. Relic 0 = THE PRIZE
+/// (floor 4); relics 1–3 = the keys to ways 2–4; relics 4–7 = treasures.
+/// (The Lean `drawFamily[0]`.)
 pub const HOME: [u64; RELICS] = [4, 1, 2, 3, 1, 1, 2, 3];
 
-/// Per-floor guardian vitality (the Lean `guardHp`).
-pub fn guard_hp(depth: u64) -> u64 {
-    match depth {
-        1 | 2 => 1,
-        3 | 4 => 2,
-        _ => 0,
+/// **The day's map, read out of the Lean-emitted artifact.** The mint homes and the
+/// per-floor guardian vitalities are NOT constants any more: they are drawn from the
+/// committed day-seed, and the deployed teeth for that draw are the ones the loader
+/// installs. Rust reads the numbers Lean emitted; it never picks them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DayWorld {
+    /// Per-relic minted floor (the Lean `World.homes`).
+    pub homes: [u64; RELICS],
+    /// Per-floor guardian vitality, index 0 = the surface (the Lean `World.ghp`).
+    pub ghp: [u64; FLOORS as usize + 1],
+}
+
+impl DayWorld {
+    /// Floor `depth`'s guardian vitality (the Lean `guardHp`).
+    pub fn guard_hp(&self, depth: u64) -> u64 {
+        self.ghp.get(depth as usize).copied().unwrap_or(0)
     }
+}
+
+/// Day 0's world (the shipped map).
+pub const CANON_WORLD: DayWorld = DayWorld {
+    homes: HOME,
+    ghp: [0, 1, 1, 2, 2],
+};
+
+/// **The day's world for family index `day`** — parsed from the Lean-emitted artifact so
+/// the mover and the installed teeth cannot describe different dungeons. Out-of-range
+/// indices fold to day 0, exactly as the Lean `worldAt` does.
+pub fn day_world(day: usize) -> DayWorld {
+    let sym = family();
+    match sym.worlds.iter().find(|w| w.day == day) {
+        Some(w) => DayWorld {
+            homes: w.homes.as_slice().try_into().expect("8 minted relic homes"),
+            ghp: w
+                .ghp
+                .as_slice()
+                .try_into()
+                .expect("FLOORS+1 guardian vitalities"),
+        },
+        None => CANON_WORLD,
+    }
+}
+
+/// Reduce a committed day-seed to a family index. This is the ONLY place the beacon
+/// touches the map: everything downstream is a total function of the index, and every
+/// index in range is a Lean-checked, Lean-driven-completable dungeon.
+pub fn day_index(day_seed: &CommittedSeed) -> usize {
+    let bytes = day_seed.as_bytes();
+    let mut acc = [0u8; 8];
+    acc.copy_from_slice(&bytes[..8]);
+    (u64::from_le_bytes(acc) % DAYS as u64) as usize
+}
+
+/// Per-floor guardian vitality on DAY 0 (the shipped map's Lean `guardHp`). Day-varying
+/// callers use [`DayWorld::guard_hp`] / [`Sim::guard_hp`].
+pub fn guard_hp(depth: u64) -> u64 {
+    CANON_WORLD.guard_hp(depth)
 }
 
 /// The 13 register components, in allocation order.  The six custody
@@ -112,10 +197,14 @@ pub fn schema() -> Schema {
     let mut s = Schema::new(SCENE_ID)
         .stat("pack", 0, RELICS as u64)
         .stat("bank", 0, RELICS as u64)
-        .stat("hoard_1", 0, 3)
-        .stat("hoard_2", 0, 2)
-        .stat("hoard_3", 0, 2)
-        .stat("hoard_4", 0, 1)
+        // A drawn map may pile several relics on one floor, so each hoard carries the
+        // whole conservation range (the Lean `rangeTeeth` says exactly `[0, RELICS]`).
+        // Register slots are assigned in DECLARATION order, so widening the ranges does
+        // not move any slot.
+        .stat("hoard_1", 0, RELICS as u64)
+        .stat("hoard_2", 0, RELICS as u64)
+        .stat("hoard_3", 0, RELICS as u64)
+        .stat("hoard_4", 0, RELICS as u64)
         .stat("depth", 0, FLOORS)
         .stat("spent", 0, BREATH)
         .stat("wounds", 0, 2)
@@ -129,15 +218,32 @@ pub fn schema() -> Schema {
     s
 }
 
-/// The consumed, Legal-checked layout + the Lean-loaded teeth.
+/// The consumed, Legal-checked layout + the Lean-loaded teeth for ONE day's map.
 pub struct Deployment {
     pub layout: CheckedLayout,
+    /// Which map of the drawn family this deployment installs the teeth for.
+    pub day: usize,
 }
 
 impl Deployment {
+    /// Day 0 — the shipped map.
     pub fn new() -> Self {
+        Self::for_day(0)
+    }
+
+    /// The deployment for family index `day` (the committed day-seed picks it via
+    /// [`day_index`]). The layout is identical across days — only the teeth differ.
+    pub fn for_day(day: usize) -> Self {
         let layout = allocate_checked(&schema()).expect("descent layout is Legal");
-        Deployment { layout }
+        Deployment {
+            layout,
+            day: day % DAYS,
+        }
+    }
+
+    /// The day's map (mint homes + guardian vitalities), read from the Lean artifact.
+    pub fn world(&self) -> DayWorld {
+        day_world(self.day)
     }
 
     /// Resolve a register component to its slot index.
@@ -160,11 +266,12 @@ impl Deployment {
         self.key(&relic_name(i))
     }
 
-    /// The descent teeth, **LOADED from the Lean source of truth** — see
-    /// [`load_program`]. No hand-rolled `CellProgram` exists in this crate for the
-    /// descent; the deployed program IS the Lean object.
+    /// The descent teeth for THIS deployment's day, **LOADED from the Lean source of
+    /// truth** — see [`load_program_for_day`]. No hand-rolled `CellProgram` exists in
+    /// this crate for the descent; the deployed program IS the Lean object, emitted once
+    /// per drawn map.
     pub fn program(&self) -> CellProgram {
-        load_program(self)
+        load_program_for_day(self, self.day)
     }
 
     /// The compiled story to install on the world-cell.
@@ -198,9 +305,23 @@ impl Default for Deployment {
 /// Lean is the source of truth, regenerated by `program/regen.sh`).
 pub const PROGRAM_JSON: &str = include_str!("../program/dungeon_program.json");
 
+/// The Lean-emitted artifact: the scene, the family size, and one FULLY emitted program
+/// per drawn map. Rust picks an index and resolves symbolic names to slots; it neither
+/// authors nor assembles a constraint.
 #[derive(Debug, Deserialize)]
 struct SymProgram {
     scene: String,
+    days: usize,
+    worlds: Vec<SymWorld>,
+}
+
+/// One day of the drawn family: the map itself (so the mover reads the same numbers the
+/// teeth were emitted from) plus that day's complete case list.
+#[derive(Debug, Deserialize)]
+struct SymWorld {
+    day: usize,
+    homes: Vec<u64>,
+    ghp: Vec<u64>,
     cases: Vec<SymCase>,
 }
 
@@ -444,13 +565,61 @@ impl SymConstraint {
 /// scene — a corrupt/stale artifact must fail loud at deploy, never silently ship a
 /// different program.
 pub fn load_program(dep: &Deployment) -> CellProgram {
-    let sym: SymProgram =
-        serde_json::from_str(PROGRAM_JSON).expect("dungeon_program.json (Lean-emitted) parses");
-    assert_eq!(
-        sym.scene, SCENE_ID,
-        "Lean-emitted descent program scene mismatch (stale/foreign artifact)"
-    );
-    let cases = sym
+    load_program_for_day(dep, dep.day)
+}
+
+/// Parse the Lean-emitted family once. Panics loud on a corrupt/foreign artifact — a
+/// stale cache must never silently ship a different program.
+fn family() -> &'static SymProgram {
+    static FAMILY: std::sync::OnceLock<SymProgram> = std::sync::OnceLock::new();
+    FAMILY.get_or_init(|| {
+        let sym: SymProgram =
+            serde_json::from_str(PROGRAM_JSON).expect("dungeon_program.json (Lean-emitted) parses");
+        assert_eq!(
+            sym.scene, SCENE_ID,
+            "Lean-emitted descent program scene mismatch (stale/foreign artifact)"
+        );
+        assert_eq!(
+            sym.days, DAYS,
+            "Lean-emitted family size disagrees with descent::DAYS (stale artifact)"
+        );
+        assert_eq!(sym.worlds.len(), DAYS, "one emitted program per drawn map");
+        // [`HOME`] / [`CANON_WORLD`] are the only map numbers written in Rust (they exist
+        // so day 0 is a `const`). Pin them to the Lean emission so they cannot drift:
+        // a re-emit that moves day 0 fails LOUD here instead of silently disagreeing with
+        // the teeth the executor installs.
+        let day0 = sym
+            .worlds
+            .iter()
+            .find(|w| w.day == 0)
+            .expect("the family has a day 0");
+        assert_eq!(
+            day0.homes.as_slice(),
+            CANON_WORLD.homes.as_slice(),
+            "descent::HOME drifted from the Lean-emitted day 0 map"
+        );
+        assert_eq!(
+            day0.ghp.as_slice(),
+            CANON_WORLD.ghp.as_slice(),
+            "descent::CANON_WORLD.ghp drifted from the Lean-emitted day 0 map"
+        );
+        sym
+    })
+}
+
+/// **Load the Lean-authored descent program for family index `day`**, resolving the
+/// symbolic slot/method names against the allocator. The day's map is a parameter of the
+/// LEAN emit: every one of the `DAYS` case lists was authored in Lean for exactly its own
+/// minted homes and guardian vitalities, so choosing a day is choosing an emitted
+/// program, never editing one.
+pub fn load_program_for_day(dep: &Deployment, day: usize) -> CellProgram {
+    let sym = family();
+    let world = sym
+        .worlds
+        .iter()
+        .find(|w| w.day == day % DAYS)
+        .expect("every day index in range has an emitted program");
+    let cases = world
         .cases
         .iter()
         .map(|c| TransitionCase {
@@ -477,19 +646,41 @@ pub struct Sim {
     pub ways: [u64; 3],
     /// Per-relic custody code: `1..=4` deep at that floor, `8` carried, `9` banked.
     pub custody: [u64; RELICS],
+    /// **The day's map** — where the relics were minted and how tough each floor's
+    /// guardian is. The world is minted once and never moves during a run, which is why
+    /// it rides the state: `guard_hp` and the genesis custody are functions of THIS, not
+    /// of a compile-time constant (the Lean `WorldParam`).
+    pub world: DayWorld,
 }
 
 impl Sim {
-    /// The minted world (the Lean `genesisState`).
+    /// The minted world for DAY 0 — the shipped map (the Lean `genesisState` at
+    /// `instAt 0`).
     pub fn genesis() -> Self {
+        Sim::genesis_on_day(0)
+    }
+
+    /// The minted world for family index `day` (the Lean `genesisState` at `instAt k`).
+    pub fn genesis_on_day(day: usize) -> Self {
+        Sim::genesis_in(day_world(day))
+    }
+
+    /// The minted world for an explicit drawn map.
+    pub fn genesis_in(world: DayWorld) -> Self {
         Sim {
             depth: 0,
             spent: 0,
             wounds: 0,
             fate: 0,
             ways: [0, 0, 0],
-            custody: HOME,
+            custody: world.homes,
+            world,
         }
+    }
+
+    /// The standing floor's guardian vitality on THIS run's map (the Lean `guardHp`).
+    pub fn guard_hp(&self, depth: u64) -> u64 {
+        self.world.guard_hp(depth)
     }
 
     pub fn pack(&self) -> u64 {
@@ -559,7 +750,7 @@ impl Sim {
         if self.depth < 1 {
             return Err("no guardian on the surface");
         }
-        if self.wounds + 1 > guard_hp(self.depth) {
+        if self.wounds + 1 > self.guard_hp(self.depth) {
             return Err("the guardian is already slain");
         }
         let mut s = self.clone();
@@ -577,7 +768,7 @@ impl Sim {
         if self.custody[r] != self.depth {
             return Err("the relic does not lie here");
         }
-        if self.wounds != guard_hp(self.depth) {
+        if self.wounds != self.guard_hp(self.depth) {
             return Err("the guardian still stands");
         }
         if self.pack() + 1 + self.depth > CAP {
@@ -646,30 +837,47 @@ pub struct Descent {
 
 impl Descent {
     /// Deploy the Lean-loaded story on a real world-cell (deterministic in
-    /// `SCENE_ID` + `seed`) and commit the one-shot genesis mint. The run's committed day-seed —
-    /// the provenance root a banked relic's loot note is minted under
-    /// ([`mint_banked_relics`](Self::mint_banked_relics)) — is derived deterministically from
-    /// `seed`, so a replay of the same deploy re-derives the same day-seed (hence the same minted
-    /// notes). Use [`deploy_on_day`](Self::deploy_on_day) to bind a real beacon day-seed instead.
+    /// `SCENE_ID` + `seed`) and commit the one-shot genesis mint, on the SHIPPED map
+    /// (family index 0). The run's committed day-seed — the provenance root a banked relic's loot
+    /// note is minted under ([`mint_banked_relics`](Self::mint_banked_relics)) — is derived
+    /// deterministically from `seed`, so a replay of the same deploy re-derives the same day-seed
+    /// (hence the same minted notes).
+    ///
+    /// This is the reproducible dev/test entry: it pins day 0 so a fixed script stays a fixed
+    /// dungeon. The DAILY entry is [`deploy_on_day`](Self::deploy_on_day), where the committed
+    /// beacon day-seed draws the map as well as the loot provenance.
     pub fn deploy(seed: u8) -> Result<Self, WorldError> {
-        Self::deploy_on_day(seed, day_seed_from_deploy_seed(seed))
+        Self::deploy_on_world(seed, day_seed_from_deploy_seed(seed), 0)
     }
 
-    /// Deploy on a world-cell birthed under `seed`, binding an explicit committed `day_seed` as
-    /// the run's provenance root (the flagship supplies the verified drand-beacon day-seed the run
-    /// is played on, so a banked relic's minted note is unpredictable-until-revealed). Everything
-    /// else matches [`deploy`](Self::deploy).
+    /// **THE DAILY.** Deploy on a world-cell birthed under `seed`, binding an explicit committed
+    /// `day_seed` as the run's provenance root — and DRAWING THE DAY'S MAP FROM IT
+    /// ([`day_index`]): which floor each relic (and each way-key) is minted on and how tough each
+    /// floor's guardian is. The flagship supplies the verified drand-beacon day-seed, so the map is
+    /// unpredictable-until-revealed exactly like the loot notes, and every drawn map is a
+    /// Lean-checked, Lean-driven-completable dungeon (`Dungeon.draw_completable`).
     pub fn deploy_on_day(seed: u8, day_seed: CommittedSeed) -> Result<Self, WorldError> {
-        let dep = Deployment::new();
+        let day = day_index(&day_seed);
+        Self::deploy_on_world(seed, day_seed, day)
+    }
+
+    /// Deploy on an explicit family index — the shared body of [`deploy`] and
+    /// [`deploy_on_day`], and the entry a replay uses when it already knows which map was played.
+    pub fn deploy_on_world(
+        seed: u8,
+        day_seed: CommittedSeed,
+        day: usize,
+    ) -> Result<Self, WorldError> {
+        let dep = Deployment::for_day(day);
         let story = dep.story();
         let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
+        let genesis = Sim::genesis_on_day(dep.day);
         let mut game = Descent {
             dep,
             world,
-            sim: Sim::genesis(),
+            sim: genesis.clone(),
             day_seed,
         };
-        let genesis = Sim::genesis();
         game.world.apply_raw(GENESIS, game.effects_for(&genesis))?;
         game.sim = genesis;
         Ok(game)
@@ -677,6 +885,15 @@ impl Descent {
 
     pub fn dep(&self) -> &Deployment {
         &self.dep
+    }
+    /// The family index this run is being played on — which of the `DAYS` maps the
+    /// committed day-seed drew.
+    pub fn day(&self) -> usize {
+        self.dep.day
+    }
+    /// The day's map: where each relic was minted, and each floor's guardian vitality.
+    pub fn day_world(&self) -> DayWorld {
+        self.sim.world
     }
     pub fn world(&self) -> &WorldCell {
         &self.world

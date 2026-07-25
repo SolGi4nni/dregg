@@ -64,10 +64,6 @@ abbrev BREATH : Nat := 26
 /-- Carrying rights at the surface; the capacity law is `pack + depth ≤ CAP`. -/
 abbrev CAP : Nat := 8
 
-/-- Per-floor guardian vitality (wounds required to slay). The surface has no guardian. -/
-def guardHp : Nat → Nat
-  | 1 => 1 | 2 => 1 | 3 => 2 | 4 => 2 | _ => 0
-
 /-! ### Custody codes — the provenance ratchet's ordered alphabet.
 
 `1..FLOORS` = lying in that floor's hoard; `CARRIED = 8` = in the pack; `BANKED = 9`.
@@ -77,13 +73,130 @@ code is the no-return ratchet. -/
 abbrev CARRIED : Nat := 8
 abbrev BANKED : Nat := 9
 
-/-- Where each relic is minted. Relic 0 is THE PRIZE (floor `FLOORS`); relics 1–3 are
-the KEYS to ways 2–4, each found one floor above the way it opens; relics 4–7 are
-treasures. -/
-def homeFloors : List Nat := [4, 1, 2, 3, 1, 1, 2, 3]
-
 /-- The key-relic that opens way `w` (ways 2..FLOORS ⇒ relics 1..3). -/
 def keyFor (w : Nat) : Nat := w - 1
+
+/-! ## 1b. THE DAY'S WORLD — the map is a PARAMETER, not a compile-time constant.
+
+The descent is a DAILY: the committed drand day-seed must move the *map*, not only the
+loot-note provenance. So the two facts that used to be hard-wired constants — where each
+relic is minted and how tough each floor's guardian is — become a `World`, and every
+rule, invariant and law below is stated over an ARBITRARY well-formed world (`WorldParam`).
+The day's world is DRAWN from the committed seed (`drawWorld`, §9) and the deployed teeth
+are emitted once per family member (`Dregg2.Games.DungeonProgram`). -/
+
+/-- The day's map. `homes i` = relic `i`'s minted floor; `ghp d` = floor `d`'s guardian
+vitality (index 0 is the surface, which has no guardian). -/
+structure World where
+  /-- Per-relic minted floor, length `RELICS`. -/
+  homes : List Nat
+  /-- Per-floor guardian vitality, length `FLOORS + 1` (index 0 = the surface). -/
+  ghp   : List Nat
+deriving Repr, DecidableEq
+
+/-- **The structural law of a legal map.** Decidable, so every drawn world is CHECKED,
+never hoped. The three clauses that keep the dungeon playable:
+
+* `homes 0 = FLOORS` — relic 0 is THE PRIZE and it lies at the bottom (so the crowned
+  run must stand on the deepest floor, which is what `crowned_bank_le_four` cashes in);
+* `homes (keyFor w) < w` for every keyed way — **no key behind the door it opens**. The
+  key to way `w` is minted strictly above floor `w`, so by induction on `w` every way is
+  openable from the surface;
+* every guardian is real (`1 ≤ ghp d`) and slayable in at most two blows (`ghp d ≤ 2`),
+  which is what keeps `wounds` inside its deployed register range.
+
+Completability under BREATH and CAP is *not* structural — it is DRIVEN, per drawn world,
+by replaying an actual winning line (`crownedWins`, §8). -/
+def WorldWF (W : World) : Bool :=
+  (W.homes.length == RELICS) &&
+  (W.ghp.length == FLOORS + 1) &&
+  (W.ghp.getD 0 1 == 0) &&
+  W.homes.all (fun c => 1 ≤ c && c ≤ FLOORS) &&
+  W.ghp.all (fun h => h ≤ 2) &&
+  (W.homes.getD 0 0 == FLOORS) &&
+  (List.range' 2 (FLOORS - 1)).all (fun w => W.homes.getD (keyFor w) 0 < w) &&
+  (List.range' 1 FLOORS).all (fun d => 1 ≤ W.ghp.getD d 0)
+
+/-- **The world under which a descent is played**, carried as a parameter of every rule
+and every law below. It carries its own well-formedness proof, so no theorem downstream
+has to re-plumb a hypothesis: possessing a `WorldParam` IS possessing a legal map. -/
+class WorldParam where
+  world : World
+  wf    : WorldWF world = true
+
+section
+variable [WorldParam]
+
+/-- The day's map. -/
+abbrev theWorld : World := WorldParam.world
+
+/-- Per-floor guardian vitality (wounds required to slay). The surface has no guardian. -/
+def guardHp (d : Nat) : Nat := theWorld.ghp.getD d 0
+
+/-- Where each relic is minted. Relic 0 is THE PRIZE (floor `FLOORS`); relics 1–3 are
+the KEYS to ways 2–4, each minted strictly above the way it opens; relics 4–7 are
+treasures. THE DAY'S DRAW decides the exact floors. -/
+def homeFloors : List Nat := theWorld.homes
+
+/-- Relic `i`'s minted floor. -/
+def homeOf (i : Nat) : Nat := homeFloors.getD i 0
+
+/-! ### Reading the world law back out (used by `inv_genesis` and the program weld). -/
+
+theorem wf_homes_length : homeFloors.length = RELICS := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  exact h.1.1.1.1.1.1.1
+
+theorem wf_ghp_length : theWorld.ghp.length = FLOORS + 1 := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  exact h.1.1.1.1.1.1.2
+
+theorem wf_home_floor {c : Nat} (hc : c ∈ homeFloors) : 1 ≤ c ∧ c ≤ FLOORS := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  have := (List.all_eq_true.mp h.1.1.1.1.2) c hc
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at this
+  exact this
+
+theorem wf_guardHp_le (d : Nat) : guardHp d ≤ 2 := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  show theWorld.ghp.getD d 0 ≤ 2
+  by_cases hd : d < theWorld.ghp.length
+  · rw [← List.getElem_eq_getD (l := theWorld.ghp) (i := d) (h := hd) 0]
+    simpa using (List.all_eq_true.mp h.1.1.1.2) _ (List.getElem_mem hd)
+  · rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)]
+    exact Nat.zero_le _
+
+theorem wf_prize_home : homeOf 0 = FLOORS := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  exact h.1.1.2
+
+/-- **No key behind the door it opens**: the key to way `w` is minted strictly above
+floor `w`. -/
+theorem wf_key_above_its_way {w : Nat} (hlo : 2 ≤ w) (hhi : w ≤ FLOORS) :
+    homeOf (keyFor w) < w := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  have hmem : w ∈ List.range' 2 (FLOORS - 1) := by
+    have : w = 2 ∨ w = 3 ∨ w = 4 := by
+      have : w ≤ 4 := hhi; omega
+    rcases this with rfl | rfl | rfl <;> decide
+  have := (List.all_eq_true.mp h.1.2) w hmem
+  simpa only [homeOf, homeFloors, decide_eq_true_eq] using this
+
+theorem wf_guardian_stands {d : Nat} (hlo : 1 ≤ d) (hhi : d ≤ FLOORS) : 1 ≤ guardHp d := by
+  have h := WorldParam.wf (self := ‹WorldParam›)
+  simp only [WorldWF, Bool.and_eq_true, beq_iff_eq] at h
+  have hmem : d ∈ List.range' 1 FLOORS := by
+    have : d = 1 ∨ d = 2 ∨ d = 3 ∨ d = 4 := by
+      have : d ≤ 4 := hhi; omega
+    rcases this with rfl | rfl | rfl | rfl <;> decide
+  have := (List.all_eq_true.mp h.2) d hmem
+  simpa only [guardHp, decide_eq_true_eq] using this
 
 /-! ## 2. The model state — relics first; counters are projections. -/
 
@@ -305,14 +418,42 @@ def Inv (s : DState) : Prop :=
     ∧ (s.depth = 0 → pack s = 0 ∧ bank s = 0)
     ∧ (s.custody[0]? = some FLOORS ∨ s.depth = FLOORS)
 
+/-- No relic is minted already-carried or already-banked (every home is a real floor). -/
+private theorem genesis_pack_zero : pack genesisState = 0 := by
+  simp only [pack, genesisState, List.countP_eq_zero]
+  intro c hc
+  have hc' := wf_home_floor hc
+  have hF : (FLOORS : Nat) = 4 := rfl
+  have hC : (CARRIED : Nat) = 8 := rfl
+  simp only [beq_iff_eq]
+  omega
+
+private theorem genesis_bank_zero : bank genesisState = 0 := by
+  simp only [bank, genesisState, List.countP_eq_zero]
+  intro c hc
+  have hc' := wf_home_floor hc
+  have hF : (FLOORS : Nat) = 4 := rfl
+  have hB : (BANKED : Nat) = 9 := rfl
+  simp only [beq_iff_eq]
+  omega
+
+private theorem genesis_prize : genesisState.custody[0]? = some FLOORS := by
+  have h0 : (0 : Nat) < homeFloors.length := by rw [wf_homes_length]; decide
+  show homeFloors[0]? = some FLOORS
+  rw [List.getElem?_eq_getElem h0, List.getElem_eq_getD (0 : Nat)]
+  exact congrArg some wf_prize_home
+
 theorem inv_genesis : Inv genesisState := by
-  refine ⟨⟨rfl, ?_⟩, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
-    first
-      | (intro c hc
-         simp only [genesisState, homeFloors, List.mem_cons, List.not_mem_nil, or_false] at hc
-         rcases hc with h | h | h | h | h | h | h | h <;>
-           simp [h, FLOORS, CARRIED, BANKED])
-      | decide
+  refine ⟨⟨wf_homes_length, ?_⟩,
+    (Nat.zero_le _), (Nat.zero_le _), (Nat.zero_le _), rfl, ?_, ?_, ?_, ?_,
+    Or.inl genesis_prize⟩
+  · intro c hc
+    exact Or.inl (wf_home_floor hc)
+  · show pack genesisState + 0 ≤ CAP
+    rw [genesis_pack_zero]; decide
+  · intro _; exact genesis_bank_zero
+  · intro hf; exact absurd (show (0 : Nat) = 1 from hf) (by decide)
+  · intro _; exact ⟨genesis_pack_zero, genesis_bank_zero⟩
 
 /-- **Invariant preservation** — every legal turn preserves the design laws. -/
 theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some s') :
@@ -652,30 +793,193 @@ theorem crowned_bank_le_four {s : DState} (h : Reachable s)
     simp [CAP, FLOORS] at *
     omega
 
-/-! ## 8. The driven crowned run — the design is PLAYABLE (`#guard`, executable). -/
+/-! ## 8. THE CROWNED LINE — a winning receipt chain GENERATED from the day's world.
 
-/-- The perfect crowned descent: win the keys floor by floor, slay each guardian,
-take the prize at the bottom, flee. 16 verbs, 24 breath. -/
+The old file hard-coded one 18-verb script for one hard-coded map. Now the winning line
+is a FUNCTION of the world, and `crownedWins` REPLAYS it through the actual rulebook: a
+world is completable because a real receipt chain banks THE PRIZE, not because we hoped. -/
+
+/-- The relics a crowned line must win on floor `d`: the way-keys minted there, then
+THE PRIZE at the bottom (a key is never minted at `FLOORS`, by `wf_key_above_its_way`). -/
+def needAt (d : Nat) : List Nat :=
+  (List.range' 2 (FLOORS - 1)).filterMap
+      (fun w => if homeOf (keyFor w) == d then some (keyFor w) else none)
+    ++ (if d == FLOORS then [0] else [])
+
+/-- The ways whose key is won on floor `d` — exercised the moment it is in hand. -/
+def unlocksAt (d : Nat) : List Nat :=
+  (List.range' 2 (FLOORS - 1)).filter (fun w => homeOf (keyFor w) == d)
+
+/-- One floor of the crowned line: descend; if anything needed lies here, fell the
+guardian and take it; then exercise every key just won. A floor holding nothing the line
+needs costs exactly one breath — the day's map decides where the fighting happens. -/
+def floorLine (d : Nat) : List Move :=
+  (Move.delve ::
+      (if (needAt d).isEmpty then []
+       else List.replicate (guardHp d) Move.smite ++ (needAt d).map Move.loot))
+    ++ (unlocksAt d).map Move.unlock
+
+/-- The perfect crowned descent for the DAY'S world: win each key where it lies, exercise
+it, fell the deep guardian, take the prize, flee. -/
 def crownedRun : List Move :=
-  [ .delve,                      -- to floor 1 (way 1 always open)          spent 1
-    .smite,                      -- guardian 1 (hp 1) falls                 spent 3
-    .loot 1,                     -- the key to way 2                        spent 4
-    .unlock 2,                   -- exercise it                             spent 5
-    .delve,                      -- floor 2                                 spent 6
-    .smite,                      -- guardian 2 (hp 1) falls                 spent 8
-    .loot 2,                     -- the key to way 3                        spent 9
-    .unlock 3,                   --                                        spent 10
-    .delve,                      -- floor 3                                 spent 11
-    .smite, .smite,              -- guardian 3 (hp 2) falls                 spent 15
-    .loot 3,                     -- the key to way 4                        spent 16
-    .unlock 4,                   --                                        spent 17
-    .delve,                      -- floor 4 — the bottom                    spent 18
-    .smite, .smite,              -- guardian 4 (hp 2) falls                 spent 22
-    .loot 0,                     -- THE PRIZE                               spent 23
-    .flee ]                      -- bank it                                 spent 24
+  ((List.range' 1 FLOORS).flatMap floorLine) ++ [Move.flee]
 
--- The crowned run replays, ends banked, with the prize + three keys banked (bank = 4,
--- the `crowned_bank_le_four` bound met with equality) and 2 breath to spare.
+def crownedOutcome : Option DState := replay crownedRun
+
+/-- **The completability check, DRIVEN**: the generated line is legal end to end under
+the real `step`, ends banked, and banks THE PRIZE. -/
+def crownedWins : Bool :=
+  match crownedOutcome with
+  | some s => (s.fate == 1) && (s.custody.getD 0 0 == BANKED)
+  | none   => false
+
+/-- The breath the crowned line costs on the day's world (`0` if it does not replay). -/
+def crownedCost : Nat := (crownedOutcome.map (·.spent)).getD 0
+
+/-- **The dungeon is completable**: some receipt chain from the mint banks THE PRIZE. -/
+def Completable : Prop :=
+  ∃ ms s, replay ms = some s ∧ s.fate = 1 ∧ s.custody[0]? = some BANKED
+
+/-- Driving the generated line IS the completability proof — witness and all. -/
+theorem completable_of_crownedWins (h : crownedWins = true) : Completable := by
+  simp only [crownedWins] at h
+  cases hc : crownedOutcome with
+  | none => rw [hc] at h; exact absurd h (by simp)
+  | some s =>
+    rw [hc] at h
+    simp only [Bool.and_eq_true, beq_iff_eq] at h
+    have hrep : replay crownedRun = some s := hc
+    have hlen := (inv_reachable ⟨crownedRun, hrep⟩).1.1
+    have h0 : 0 < s.custody.length := by rw [hlen]; decide
+    refine ⟨crownedRun, s, hrep, h.1, ?_⟩
+    rw [List.getElem?_eq_getElem h0, List.getElem_eq_getD (0 : Nat)]
+    exact congrArg some h.2
+
+end
+
+/-! ## 9. THE DAY'S DRAW — the map is a function of the committed day-seed.
+
+`drawFamily` is the whole space of maps the descent can be played on. Every member is
+CHECKED (`drawFamily_wf`, by `decide`) and every member is DRIVEN to a win
+(`winsAt_true`, by `decide` over the family) — a drawn dungeon that cannot be finished is
+not a hypothesis we carry, it is a proposition we refute.
+
+Family shape (the axes the day moves):
+* **where the keys lie** — the key to way 3 on floor 1 or 2; the key to way 4 on floor
+  1, 2 or 3. All three keys on floor 1 is a *different puzzle*: you skip two guardians
+  entirely but haul three keys the whole way down against `pack + depth ≤ CAP`.
+* **which guardians are tough** — per-floor vitality 1 or 2, so the breath the line
+  costs moves with the map.
+* **where the treasures lie** — the greed decisions (never needed by the crowned line,
+  always competing with it for capacity).
+
+Capacity keeps the tension the fixed map had, on EVERY member: at the bottom you may
+carry `CAP - FLOORS = 4`, which is exactly three keys plus the prize. One extra treasure
+past floor 3 forfeits the crown. -/
+
+/-- Day 0 — the map the descent shipped with, kept as the canonical/default world. -/
+def canonWorld : World := ⟨[4, 1, 2, 3, 1, 1, 2, 3], [0, 1, 1, 2, 2]⟩
+
+/-- The number of distinct maps in the draw. Growing the family is one line here plus a
+re-emit; the artifact grows linearly (one emitted program per member). -/
+def dayCount : Nat := 16
+
+/-- **The family of maps the day-seed draws from.** Index 0 is the shipped map. -/
+def drawFamily : List World :=
+  [ ⟨[4, 1, 2, 3, 1, 1, 2, 3], [0, 1, 1, 2, 2]⟩,   -- 0  the shipped map        cost 24
+    ⟨[4, 1, 2, 3, 2, 1, 3, 4], [0, 2, 1, 2, 2]⟩,   -- 1  every key one floor up  cost 26
+    ⟨[4, 1, 2, 3, 1, 2, 2, 4], [0, 1, 1, 1, 2]⟩,   -- 2  a soft descent          cost 22
+    ⟨[4, 1, 2, 3, 3, 1, 1, 2], [0, 2, 2, 1, 1]⟩,   -- 3  the teeth are up top    cost 24
+    ⟨[4, 1, 1, 3, 1, 2, 3, 4], [0, 2, 1, 2, 2]⟩,   -- 4  floor 2 holds nothing   cost 24
+    ⟨[4, 1, 1, 3, 2, 2, 3, 3], [0, 2, 2, 2, 1]⟩,   -- 5  a shallow bottom        cost 22
+    ⟨[4, 1, 1, 3, 1, 1, 4, 4], [0, 2, 1, 1, 2]⟩,   -- 6  treasure in the deep    cost 22
+    ⟨[4, 1, 1, 2, 1, 3, 3, 4], [0, 2, 2, 1, 2]⟩,   -- 7  floor 3 holds nothing   cost 24
+    ⟨[4, 1, 1, 2, 2, 2, 4, 4], [0, 1, 2, 1, 2]⟩,   -- 8  an easy door            cost 22
+    ⟨[4, 1, 1, 2, 1, 2, 3, 4], [0, 2, 2, 2, 2]⟩,   -- 9  every guardian tough    cost 24
+    ⟨[4, 1, 2, 2, 1, 1, 3, 4], [0, 1, 2, 2, 2]⟩,   -- 10 two keys on floor 2     cost 22
+    ⟨[4, 1, 2, 2, 3, 3, 4, 4], [0, 2, 2, 1, 2]⟩,   -- 11 the deep is crowded     cost 24
+    ⟨[4, 1, 1, 1, 2, 2, 3, 3], [0, 2, 1, 1, 2]⟩,   -- 12 all keys on floor 1     cost 20
+    ⟨[4, 1, 1, 1, 1, 3, 4, 4], [0, 2, 2, 2, 2]⟩,   -- 13 all keys, all tough     cost 20
+    ⟨[4, 1, 2, 1, 1, 2, 2, 4], [0, 1, 2, 2, 2]⟩,   -- 14 the deep key lies high  cost 22
+    ⟨[4, 1, 2, 1, 3, 4, 4, 4], [0, 2, 2, 1, 2]⟩ ]  -- 15 a hoard at the bottom   cost 24
+
+theorem canonWorld_wf : WorldWF canonWorld = true := by decide
+
+/-- **Every drawn map is a LEGAL map** — checked, not assumed. -/
+theorem drawFamily_wf : drawFamily.all WorldWF = true := by decide
+
+#guard drawFamily.length = dayCount
+#guard drawFamily.getD 0 canonWorld = canonWorld
+
+/-- The map at family index `k` (out-of-range folds to the canonical map). -/
+def worldAt (k : Nat) : World := drawFamily.getD k canonWorld
+
+theorem worldAt_wf (k : Nat) : WorldWF (worldAt k) = true := by
+  simp only [worldAt]
+  by_cases hk : k < drawFamily.length
+  · rw [← List.getElem_eq_getD (l := drawFamily) (i := k) (h := hk) canonWorld]
+    exact (List.all_eq_true.mp drawFamily_wf) _ (List.getElem_mem hk)
+  · rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega)]
+    exact canonWorld_wf
+
+/-- The world parameter for family index `k`. -/
+@[reducible] def instAt (k : Nat) : WorldParam := ⟨worldAt k, worldAt_wf k⟩
+
+def winsAt (k : Nat) : Bool := @crownedWins (instAt k)
+def costAt (k : Nat) : Nat := @crownedCost (instAt k)
+
+private theorem lt_dayCount_cases {k : Nat} (hk : k < dayCount) :
+    k = 0 ∨ k = 1 ∨ k = 2 ∨ k = 3 ∨ k = 4 ∨ k = 5 ∨ k = 6 ∨ k = 7 ∨
+    k = 8 ∨ k = 9 ∨ k = 10 ∨ k = 11 ∨ k = 12 ∨ k = 13 ∨ k = 14 ∨ k = 15 := by
+  simp only [dayCount] at hk; omega
+
+/-- **EVERY map in the family is finishable**, driven through the real rulebook. -/
+theorem winsAt_true (k : Nat) (hk : k < dayCount) : winsAt k = true := by
+  rcases lt_dayCount_cases hk with
+    rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> decide
+
+/-- **The tension survives the draw**: every day's perfect line costs at least 20 of the
+26 breath, and (by `winsAt_true`) at most all of it. -/
+theorem costAt_tense (k : Nat) (hk : k < dayCount) : 20 ≤ costAt k ∧ costAt k ≤ BREATH := by
+  rcases lt_dayCount_cases hk with
+    rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;>
+    exact ⟨by decide, by decide⟩
+
+/-- **The day's map, drawn from the committed day-seed.** The caller reduces the beacon
+to a family index; the map is then a total function of it. -/
+def drawWorld (n : Nat) : World := worldAt (n % dayCount)
+
+@[reducible] def drawInst (n : Nat) : WorldParam := instAt (n % dayCount)
+
+/-- **THE LAW OF THE DAILY**: whatever the beacon says, the dungeon it draws can be
+finished — there is a legal receipt chain from the mint that banks THE PRIZE. -/
+theorem draw_completable (n : Nat) : @Completable (drawInst n) :=
+  @completable_of_crownedWins (drawInst n) (winsAt_true _ (Nat.mod_lt _ (by decide)))
+
+/-- And the drawn map is a legal map. -/
+theorem draw_wf (n : Nat) : WorldWF (drawWorld n) = true := worldAt_wf _
+
+-- Every day of the family, driven end to end (the theorems above, as executable checks).
+#guard (List.range dayCount).all winsAt
+#guard (List.range dayCount).all (fun k => 20 ≤ costAt k && costAt k ≤ BREATH)
+#guard (List.range dayCount).map costAt
+        = [24, 26, 22, 24, 24, 22, 22, 24, 22, 24, 22, 24, 20, 20, 22, 24]
+-- The days are genuinely different dungeons (no two draws share a map).
+#guard ((List.range dayCount).map worldAt).Nodup
+
+/-! ## 10. Day 0 driven — the shipped map still plays exactly as it did. -/
+
+section Canon
+local instance : WorldParam := instAt 0
+
+-- The crowned line for the shipped map is the same 18-verb script the file used to
+-- hard-code, and it still costs 24 of 26 breath and banks the prize + three keys.
+#guard crownedRun =
+  [ .delve, .smite, .loot 1, .unlock 2,
+    .delve, .smite, .loot 2, .unlock 3,
+    .delve, .smite, .smite, .loot 3, .unlock 4,
+    .delve, .smite, .smite, .loot 0,
+    .flee ]
 #guard (replay crownedRun).isSome
 #guard (replay crownedRun).map (·.fate) = some 1
 #guard (replay crownedRun).map bank = some 4
@@ -694,7 +998,9 @@ def crownedRun : List Move :=
 -- fleeing twice:
 #guard (replay [.delve, .flee, .flee]) = none
 
-/-! ## 9. Axiom hygiene. -/
+end Canon
+
+/-! ## 11. Axiom hygiene. -/
 
 #assert_axioms capacity_attenuates
 #assert_axioms the_light_dies
@@ -704,5 +1010,10 @@ def crownedRun : List Move :=
 #assert_axioms custody_ratchet
 #assert_axioms no_run_banks_everything
 #assert_axioms crowned_bank_le_four
+#assert_axioms drawFamily_wf
+#assert_axioms winsAt_true
+#assert_axioms costAt_tense
+#assert_axioms draw_completable
+#assert_axioms draw_wf
 
 end Dregg2.Games.Dungeon

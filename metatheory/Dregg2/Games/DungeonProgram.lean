@@ -122,6 +122,18 @@ namespace Dregg2.Games.Dungeon.Prog
 
 open Dregg2.Exec (Value)
 
+/-! ⚑ THE TEETH ARE PARAMETRIC IN THE DAY'S WORLD. `homeCode`, `genesisHoard` and the
+guardian teeth read `Dungeon.homeFloors` / `Dungeon.guardHp`, which are now functions of
+the drawn map (`Dungeon.WorldParam`) rather than compile-time constants — so every
+definition and every inversion below carries the world it is stated over, and the emit
+(§6) renders ONE program per family member. -/
+variable [WorldParam]
+
+-- The world parameter is blanket-scoped over the file (every rule and law is stated over
+-- the day's drawn map); a handful of pure list/count helpers legitimately do not mention
+-- it, and the section-variable linter would otherwise report each one.
+set_option linter.unusedSectionVars false
+
 /-! ## 1. The symbolic vocabulary (names, not indices — the loader resolves). -/
 
 /-- A heap-key reference: a schema collection by NAME, or the spween genesis-done
@@ -783,7 +795,13 @@ private def dungeonExecWithoutProjection : Dregg2.Exec.RecordProgram :=
 the model-legal crowned run is admitted END TO END by the deployed program object,
 and the named attacks are refused. ⚑ This is the FORWARD weld for ONE run; the general
 ∀-weld (every legal step admitted) is the NAMED remainder — see the module header's WELD note.
-The reverse direction (admitted ⇒ the named laws) IS ∀-proven by the inversions in §4. -/
+The reverse direction (admitted ⇒ the named laws) IS ∀-proven by the inversions in §4.
+The runs below are driven on DAY 0 (the shipped map); the family-wide drive — every
+drawn day's crowned line admitted by that day's emitted teeth — is `crownedRunAdmitted`
+at the end of this section. -/
+
+section CanonWeld
+local instance : WorldParam := instAt 0
 
 -- ⚑ THE CROWNED RUN IS ADMITTED (genesis + all 17 verbs, each step model-legal AND
 -- program-admitted on the same encoded transition).
@@ -873,6 +891,17 @@ The reverse direction (admitted ⇒ the named laws) IS ∀-proven by the inversi
      (setF (encode s) "spent" 26)
      (setF (setF (encode s) "spent" 28) "wounds" 1)) = false
 
+end CanonWeld
+
+/-- **THE FAMILY WELD**: for the day at family index `k`, the crowned line generated from
+that day's map is model-legal AND admitted end to end by the teeth emitted for that day.
+This is the day-varying twin of the single `programAdmitsRun crownedRun` drive above. -/
+def crownedRunAdmitted (k : Nat) : Bool :=
+  @programAdmitsRun (instAt k) (@crownedRun (instAt k))
+
+-- ⚑ EVERY DAY IN THE FAMILY IS PLAYABLE ON ITS OWN DEPLOYED TEETH.
+#guard (List.range dayCount).all crownedRunAdmitted
+
 /-! ## 6. The JSON emit (the checked-in artifact renderer — names, not indices). -/
 
 private def jList (xs : List String) : String :=
@@ -937,7 +966,7 @@ def Case.toJson (c : Case) : String :=
 (must match `dungeon_on_dregg::descent::SCENE_ID`). -/
 def sceneId : String := "dungeon-on-dregg/descent1"
 
-/-- **`emitJson` — render the descent program to the checked-in artifact bytes.**
+/-- **`emitJson` — render ONE day's descent program to artifact bytes.**
 One case per line for stable diffs; a deterministic function of `dungeonProgram`. -/
 def emitJson (p : CellProgram) : String :=
   match p with
@@ -946,9 +975,39 @@ def emitJson (p : CellProgram) : String :=
       ++ String.intercalate ",\n" (cs.map Case.toJson)
       ++ "\n  ]\n}\n"
 
--- The emit runs and carries the scene header + all 13 cases.
+/-- One family member as an artifact entry: the drawn map (for the loader's mover) plus
+the FULL teeth emitted for exactly that map. The loader never assembles a constraint —
+it resolves names to slots inside the case list Lean wrote. -/
+def worldJson (k : Nat) : String :=
+  let W := worldAt k
+  "    {\"day\":" ++ toString k
+    ++ ",\"homes\":" ++ jList (W.homes.map toString)
+    ++ ",\"ghp\":" ++ jList (W.ghp.map toString)
+    ++ ",\"cases\":[\n"
+    ++ String.intercalate ",\n" ((match (@dungeonProgram (instAt k)) with | .cases cs => cs).map Case.toJson)
+    ++ "\n    ]}"
+
+/-- **The deployed artifact: the WHOLE drawn family, one emitted program per day.**
+The committed day-seed picks the index; every index here is a checked, driven-completable
+map (`Dungeon.drawFamily_wf`, `Dungeon.winsAt_true`). -/
+def emitFamilyJson : String :=
+  "{\n  \"scene\": " ++ jStr sceneId
+    ++ ",\n  \"days\": " ++ toString dayCount
+    ++ ",\n  \"worlds\": [\n"
+    ++ String.intercalate ",\n" ((List.range dayCount).map worldJson)
+    ++ "\n  ]\n}\n"
+
+section CanonEmit
+local instance : WorldParam := instAt 0
+
+-- The emit runs and carries the scene header + all 13 cases, for every day.
 #guard (emitJson dungeonProgram).startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\""
 #guard (match dungeonProgram with | .cases cs => cs.length) = 13
+#guard emitFamilyJson.startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\",\n  \"days\": 16"
+#guard (List.range dayCount).all
+        (fun k => (match (@dungeonProgram (instAt k)) with | .cases cs => cs).length == 13)
+
+end CanonEmit
 
 /-! ## 7. Axiom hygiene — every connection theorem on the standard kernel triple. -/
 

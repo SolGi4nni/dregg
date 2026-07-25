@@ -81,6 +81,16 @@ namespace Dregg2.Games.Dungeon.Prog
 open Dregg2.Exec (Value evalConstraint evalSimple sumScalars)
 open Dregg2.Exec.DeployedConstraint
 
+/-! ⚑ The deployed teeth are stated over the DAY'S WORLD (`Dungeon.WorldParam`): the map
+is drawn from the committed day-seed, so `guardHp` and the minted-home teeth are
+parameters. Every bridge theorem below therefore holds for the whole drawn family. -/
+variable [WorldParam]
+
+-- The world parameter is blanket-scoped over the file (every rule and law is stated over
+-- the day's drawn map); a handful of pure list/count helpers legitimately do not mention
+-- it, and the section-variable linter would otherwise report each one.
+set_option linter.unusedSectionVars false
+
 /-! ## 0. Name pins (`Nat.repr` is opaque to `simp`) + encode-scalar pins.
 
 These mirror the (private, hence not importable) pins of `DungeonCompleteness.lean`. -/
@@ -100,6 +110,8 @@ These mirror the (private, hence not importable) pins of `DungeonCompleteness.le
 @[simp] private theorem relicName_5 : relicName 5 = "relic_5" := by decide
 @[simp] private theorem relicName_6 : relicName 6 = "relic_6" := by decide
 @[simp] private theorem relicName_7 : relicName 7 = "relic_7" := by decide
+@[simp] private theorem range_relics :
+    List.range RELICS = [0, 1, 2, 3, 4, 5, 6, 7] := by decide
 
 /-- Membership transfers back through the `Nat → Int` cast map (local, cast-stable). -/
 private theorem mem_map_natcast {l : List Nat} {x : Nat}
@@ -202,8 +214,9 @@ private theorem resolveHeap (s : DState) {k : HeapKeyRef} (hk : k ∈ keyList) :
 /-- The two value bounds `Inv` does not carry: wounds and the way flags. -/
 private def Tight (s : DState) : Prop := s.wounds ≤ 2 ∧ ∀ w ∈ s.ways, w ≤ 1
 
-private theorem guardHp_le (d : Nat) : guardHp d ≤ 2 := by
-  unfold guardHp; split <;> omega
+/-- Guardians are slayable in at most two blows — on EVERY drawn map (the day's world
+law, `Dungeon.wf_guardHp_le`), which is what keeps `wounds` inside its deployed range. -/
+private theorem guardHp_le (d : Nat) : guardHp d ≤ 2 := wf_guardHp_le d
 
 private theorem mem_of_mem_set' {l : List Nat} {i v c : Nat}
     (hc : c ∈ l.set i v) : c ∈ l ∨ c = v := by
@@ -219,7 +232,7 @@ private theorem mem_of_mem_set' {l : List Nat} {i v c : Nat}
       · rcases ih h with h' | h' <;> tauto
 
 private theorem tight_genesis : Tight genesisState := by
-  refine ⟨by decide, ?_⟩
+  refine ⟨Nat.zero_le _, ?_⟩
   intro w hw
   simp only [genesisState, List.mem_cons, List.not_mem_nil, or_false] at hw
   rcases hw with rfl | rfl | rfl <;> omega
@@ -421,7 +434,7 @@ def toothOK : Constraint → Bool
 /-- EVERY tooth of the deployed program satisfies the transport side conditions —
 kernel-checked over the concrete authored object. -/
 private theorem programOK :
-    (programCases.all fun tc => tc.constraints.all toothOK) = true := by decide
+    (programCases.all fun tc => tc.constraints.all toothOK) = true := by rfl
 
 /-! ## 5. Per-shape transport: Exec truth ⇒ deployed `.ok` on the marshalled image. -/
 
@@ -1259,6 +1272,9 @@ EVERY in-subset tooth of its verb case AND its spent rider admitted (kernel-chec
 the same battery under a mutated register allocation would fail (the pins above and
 the negative twins hold the mapping honest). -/
 
+section CanonStep
+local instance : WorldParam := instAt 0
+
 #guard
   (let s := st [.delve]
    let s' := st [.delve, .smite]
@@ -1266,6 +1282,8 @@ the negative twins hold the mapping honest). -/
      match Constraint.toDTop c with
      | some dt => decide (admitsTop dt (dgInput s s' c) = DAdmit.ok)
      | none => true)
+
+end CanonStep
 
 /-! ## 9. THE DESIGNED REMAINDER — the `countFieldsEq` census teeth (NOT fired).
 
@@ -1326,10 +1344,12 @@ private theorem census_is_the_remainder :
     (programCases.all fun tc => tc.constraints.all fun c =>
       (Constraint.toDTop c).isSome
         == !(match c with | .countFieldsEq _ _ _ => true | _ => false)) = true := by
-  decide
+  rfl
 
--- The spent rider carries exactly six out-of-subset teeth: the census.
-#guard (spentRider.constraints.filter fun c => (Constraint.toDTop c).isNone).length = 6
+-- The spent rider carries exactly six out-of-subset teeth: the census — on EVERY day of
+-- the drawn family (the remainder is a fact about the tooth SHAPES, not the map).
+#guard (List.range dayCount).all (fun k =>
+  ((@spentRider (instAt k)).constraints.filter fun c => (Constraint.toDTop c).isNone).length == 6)
 #guard projectionTeeth.all fun c => (Constraint.toDTop c).isNone
 
 /-! ### The forged census transition, marshalled (attack 1b at deployed width). -/
@@ -1369,11 +1389,16 @@ private def censusInput : Constraint → DInput
 -- ⚑ THE FALSIFIER: every in-subset tooth of the spent rider ADMITS the census
 -- forgery at deployed width. The refusal lives ONLY in the out-of-subset census teeth
 -- (trusted Rust) — the load-bearing gap the §9 extension design closes.
+section CanonCensus
+local instance : WorldParam := instAt 0
+
 #guard
   spentRider.constraints.all fun c =>
     match Constraint.toDTop c with
     | some dt => decide (admitsTop dt (censusInput c) = DAdmit.ok)
     | none => true
+
+end CanonCensus
 
 /-! ## 10. Axiom hygiene — every bridge theorem on the standard kernel triple. -/
 
