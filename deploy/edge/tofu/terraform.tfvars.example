@@ -1,7 +1,0 @@
-# Copy to terraform.tfvars (gitignored) and fill in.
-hcloud_token      = "…"                        # Hetzner Cloud → Security → API tokens
-ssh_public_key    = "ssh-ed25519 AAAA… you@host"
-tailscale_authkey = "tskey-auth-…"             # reusable, NOT ephemeral
-# ssh_source_ips  = ["203.0.113.4/32"]         # narrow SSH if you have a stable address
-# location        = "ash"                      # ash=Ashburn hil=Hillsboro nbg1/fsn1=EU
-# network_zone    = "us-east"                  # must match: us-east / us-west / eu-central
