@@ -1,5 +1,34 @@
 # RUNBOOK — the Dragon's Egg Discord bot on hbox
 
+> ## ⚠ 2026-07-25 — REDEPLOY IS CURRENTLY BLOCKED. Read before you rebuild.
+>
+> A rebuild from HEAD **boots but cannot drive turns**, and the failure mode differs per
+> surface. Verified end-to-end on hbox (two live rollbacks). The deployed binaries are
+> still the 2026-07-19 build; that is deliberate, not neglect.
+>
+> 1. **The build line below is WRONG.** `--features dregg-sdk/no-lean-link` yields a binary
+>    with no verified PQ cores, which the `dregg-pq` audit gate **fail-closes** on at startup
+>    (process exits; `Restart=always` turns it into a crash-loop). The maintained recipe is
+>    `deploy/games/deploy-hbox.sh`, which uses **`DREGG_REQUIRE_LEAN=0`** instead — that lets
+>    the `dregg-lean-ffi` build script degrade rather than fail.
+> 2. **But `DREGG_REQUIRE_LEAN=0` is not sufficient either, as of HEAD.** Those binaries have
+>    no **constraint oracle**, so any world-cell turn is refused
+>    (`program violation on cell …: no constraint oracle installed`). Observed:
+>    - discord — boots and connects, then `reveal_cron: Daily reveal did not fire` (degraded,
+>      not obvious from the unit state: `is-active` reports `active`);
+>    - telegram — **panics at startup**, `dreggnet-surfaces/src/cheevo.rs:155` (its
+>      "the deep winning run drives cleanly" self-check drives a real turn);
+>    - web games funnel — **panics at startup**, `today's descent opens: Deploy(... refused)`.
+>    `DREGG_ALLOW_UNAUDITED_PQ=1` clears (1) but NOT (2) — it is a different gate.
+> 3. **The unblock is a real Lean archive** matching HEAD (`pbuild` is shipping one). Until
+>    then a rebuilt game surface cannot serve turns, so do not redeploy one.
+>
+> **If you deploy anyway:** back up first, install with an atomic rename (`cp` to `.new` then
+> `mv -f` — a plain `cp` over the running binary fails `Text file busy`), and after a
+> crash-loop clear systemd's start limit with `systemctl --user reset-failed <unit>` before
+> starting again. Test a new binary on a spare port *before* installing it — that is how the
+> web surface avoided a third outage.
+
 **Status: LIVE on hbox (2026-07-17).** Rehosted off the AWS edge — AWS is now
 caddy/gateway ONLY. Connected to Discord as "Dragon's Egg", 52 global slash
 commands, offerings bootstrapped, the daily-Descent cron live (rolls today's
