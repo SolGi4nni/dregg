@@ -5413,7 +5413,16 @@ async fn revalidate_play_static(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> Response {
-    if !play_static_is_revalidatable(request.uri().path()) {
+    // GET only, and the method check is load-bearing rather than defensive. axum answers `HEAD` on a
+    // `get` route by running the handler and then emptying the body in `routing/route.rs` — INSIDE
+    // the router, i.e. BELOW this layer. So on a `HEAD` the body reaching here is already gone, and
+    // hashing it would mint the validator for the empty string: one identical, wrong `ETag` on every
+    // route, contradicting the one the same URL hands a `GET`. Uptime monitors are exactly the
+    // clients that send `HEAD`, so this is a real path, not a hypothetical one. There is no correct
+    // validator to compute here, so this attaches none.
+    if request.method() != axum::http::Method::GET
+        || !play_static_is_revalidatable(request.uri().path())
+    {
         return next.run(request).await;
     }
     let requested = request.headers().get(header::IF_NONE_MATCH).cloned();
@@ -5986,6 +5995,35 @@ mod transport_layer_tests {
             String::from_utf8_lossy(&body).contains("No offering registered"),
             "the honest body is kept; only the status line was wrong"
         );
+    }
+
+    /// A `HEAD` must not be handed a validator computed over the body axum already removed. Before
+    /// the method guard this returned the blake3 of the empty string — one identical `ETag` on every
+    /// route, and not the one a `GET` of the same URL reports.
+    #[tokio::test]
+    async fn a_head_is_not_given_an_etag_minted_from_the_discarded_body() {
+        let head = super::make_app()
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri(PLAY_ASSET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(head.status(), StatusCode::OK);
+        match head.headers().get(header::ETAG) {
+            None => {}
+            Some(head_etag) => {
+                let get_etag = get(PLAY_ASSET, &[]).await;
+                assert_eq!(
+                    head_etag,
+                    get_etag.headers().get(header::ETAG).unwrap(),
+                    "a HEAD validator that disagrees with the GET one is worse than none"
+                );
+            }
+        }
     }
 
     #[test]
