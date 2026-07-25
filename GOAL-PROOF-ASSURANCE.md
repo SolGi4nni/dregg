@@ -46,6 +46,7 @@ none, because it looks fixed.
   is a first-class verdict, not a pass
 
 ## Next moves (my pick)
+0. ~~Cut over the bare-premise consumers~~ **DONE** — zero soundness consumers remain on it.
 1. **De-honest the fold chain** — every survival theorem instantiates `Strategy := honestStrategy`,
    so the tree's deepest probabilistic object bounds the *honest* prover. Generalize to `∀ S` under
    a path-local fold-consistency predicate. Highest value on the adversary axis.
@@ -58,5 +59,20 @@ none, because it looks fixed.
   No Mathlib gap blocked it — the `resultant` API carried it, refuting the plan's own fragility §.
 - `DecimLift` discharged from the landed tower; `RlcDistributes` discharged at deployed params.
 - Apex premise vacuity **PROVED**; repair pattern + `PremiseInhabitability` instrument built.
-- `docs/WOUND-apex-premise-vacuity-2026-07-24.md` — wound proved, replacement path built,
-  **apex NOT closed** (nothing migrated yet; that's what the cutover lanes are for).
+- `docs/WOUND-apex-premise-vacuity-2026-07-24.md` — wound proved, replacement path built.
+- **CENSUS corrected**: 392 occurrences / 35 files, not the doc's "~35 consumers" (prose conflated with
+  code). By binder position: bare `FriLdtExtract` 8 — *all vacuity-subjects*; `Cons` 47 migrated;
+  `V3` 14 with 8 genuine consumers still empty; `V3Cons/Faithful` 7 migrated.
+- **Bare-premise cutover COMPLETE** (`756efedb01`, `fb741c815f`) — zero soundness consumers left on it,
+  verified by grepping binder positions myself. Found + migrated an **orphan fan-out**
+  (`AlgoStarkSoundFanoutSetField`) the campaign inventory never listed.
+- **The subtle find**: `decodedLdtLink_of_friLdtExtract` was the ONLY entry into `DecodedLdtLink`, and
+  composing `_imp_cons` downstream would NOT have repaired it — *composing after an empty premise leaves
+  the entry empty*. Deleted; cons-shaped entry written. This is why a cutover ≠ adding a variant beside.
+- **Non-emptiness went past the bar**: `..._noOodShape` derives the conclusion from a premise mentioning
+  no OOD conjunct *at all* — a premise cannot be emptied by a conjunct it does not contain.
+- **Caveat promoted to theorem, not inherited quietly**: an accepting run with `tableOpenings = []`
+  refutes the corrected premise. So the cutover trades a premise empty *everywhere* for one whose
+  emptiness is *conditional and undecided* at the opaque `cfg*` args — an improvement, **not a closure**.
+  And the exhibited pole is `Nat`-typed while the premises are `ℤ`-typed: what is refuted is the
+  **schema**, not the deployed instance.
