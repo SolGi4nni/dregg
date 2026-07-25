@@ -1,6 +1,11 @@
 //! **THE REFERENCE ORACLE** — the host-side composition, the canonical field streams, and
 //! the roots. It computes the outcome OFF-circuit; `crate::air` RE-CHECKS it in-circuit
-//! (translation validation, automatafl's posture).
+//! (a DIFFERENTIAL TEST — NOT translation validation, and NOT refinement or verification.
+//! There is no formal semantics of Rust, so comparing this reference against the AIR proves
+//! NOTHING about all inputs; it is unit testing on cases. The real refinement lives in Lean:
+//! `metatheory/Dregg2/Circuit/Emit/ParamComposeRefine.lean::paramCompose_refines_law`, a theorem
+//! over the ACTUAL emitted descriptor. This comment previously called itself "translation
+//! validation, automatafl's posture" — corrected 2026-07-25.)
 //!
 //! This module is where §9.3's "define now" list is actually decided:
 //!
