@@ -29,6 +29,28 @@ pub use distributed_ffi::{
     strand_admit_available, tau_order_available, verified_2pc_decide, verified_admits,
     verified_handoff_non_amplifying, verified_happened_before, verified_tau_order, Decision2pc,
 };
+
+/// The VERIFIED LIGHT-CLIENT verify-logic gates (ETH sync-committee / Tendermint stake-weighted /
+/// EVM state-inclusion) — the foreign-chain admission decisions the interchain bridge routes
+/// through, sibling to `distributed_ffi` above.
+///
+/// ⚠ THIS `mod` LINE IS LOAD-BEARING AND WAS MISSING. `bridge_lc_ffi.rs` existed on disk, fully
+/// written and documented, referenced by NO `mod` declaration and no `[[bin]]` — so rustc never
+/// compiled a byte of it. That is a strictly WORSE failure than the `#[cfg]` holes it sat behind:
+/// a cfg-gated module at least compiles its absent arm, whereas an undeclared file has no arms at
+/// all, `cargo test` reports the surviving tests green, and `eth_lc_verify_available()` is not
+/// merely false — it does not exist. Four independent layers had to be closed for this gate to
+/// bite (archive facet, `cfg`, C `_str` shim, and this line); each one alone kept the ETH relayer
+/// un-gated, and none announced itself.
+#[path = "bridge_lc_ffi.rs"]
+pub mod bridge_lc_ffi;
+
+pub use bridge_lc_ffi::{
+    eth_lc_verify_available, eth_lc_verify_wire, mpt_lc_verify_available, mpt_lc_verify_wire,
+    shadow_eth_lc_verify, shadow_mpt_lc_verify, shadow_tm_lc_verify, tm_lc_verify_available,
+    tm_lc_verify_wire, verified_eth_lc_verify, verified_mpt_lc_verify, verified_tm_lc_verify,
+    EthLcVerdict, MptLcVerdict, TmLcVerdict,
+};
 pub use marshal::{AdmissionReason, TurnStatus, WireState};
 
 // STORAGE-IN-LEAN EXTRACTION — force-link circuit's `dregg_poseidon2_2to1` into the binary. The

@@ -592,6 +592,130 @@ mod tests {
         }
     }
 
+    // ========================================================================
+    // THE TEETH: the gate DISCRIMINATES through the real C shim + Lean archive
+    // ========================================================================
+    //
+    // Everything above this line is a wire-FORMAT mirror: it proves what bytes `*_wire` emits and
+    // nothing about what decides on them. A gate that is merely REACHABLE is not a gate. These
+    // three tests drive the actual `dregg_*_lc_verify_str` shim into the actual archive and pin
+    // both polarities on the sharpest available boundary, so a gate that has become a constant —
+    // always-accept (the un-gated relayer this whole bridge exists to close) or always-reject (a
+    // dead shim that merely looks safe) — FAILS here.
+    //
+    // WHY NOT `#[cfg(dregg_*_present)]`: that is precisely the mechanism that hid the hole. A
+    // cfg-gated test module CEASES TO EXIST when the cfg is off and the crate reports the survivors
+    // as green. These are ungated and route the absence through `demand_lean`, which panics under
+    // `DREGG_TEST_REQUIRE_LEAN=1` (the CI/verification lane) and prints an honest SKIP otherwise.
+    // Against the pre-fix tree — no `_str` shim, no cfg — `eth_lc_verify_available()` is false and
+    // the armed lane fails on the missing export instead of passing on a hollow assertion.
+
+    #[test]
+    fn eth_gate_refuses_forged_updates_through_the_real_ffi() {
+        if !crate::demand_lean(
+            eth_lc_verify_available(),
+            "dregg_eth_lc_verify ETH light-client gate",
+        ) {
+            return;
+        }
+
+        // ACCEPT — a genuine full-participation depth-6 (Altair..Deneb) update. Present so the
+        // test cannot be satisfied by a shim that rejects everything.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, true, 6, true, 4, true),
+            Ok(EthLcVerdict::Accept),
+            "the verified gate must ACCEPT a genuine update"
+        );
+        // ACCEPT — the EXACT-quorum boundary (3·342 = 1026 ≥ 1024 = 2·512) at Electra depth 7.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 342, true, 7, true, 4, true),
+            Ok(EthLcVerdict::Accept)
+        );
+
+        // REJECT — one BELOW the threshold (3·341 = 1023 < 1024). The sharpest tooth: it shows the
+        // gate computes the ≥ 2/3 multiply-form threshold, not "somebody signed".
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 341, true, 6, true, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a SUB-QUORUM update (341/512 < 2/3) must be REFUSED"
+        );
+        // REJECT — a FORGED aggregate signature: everything else genuine, `blst` said no.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, false, 6, true, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a failed BLS aggregate verify must be REFUSED"
+        );
+        // REJECT — a finality branch of an inadmissible DEPTH (5): the depth check is what stops a
+        // proof rooted at the wrong generalized-index from being replayed as a finality proof.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, true, 5, true, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a wrong-depth finality branch must be REFUSED"
+        );
+        // REJECT — the finality branch does NOT reconstruct into the attested state root.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, true, 6, false, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a finality branch that does not reconstruct must be REFUSED"
+        );
+        // REJECT — the trusted committee is not exactly `syncCommitteeSize` (511 ≠ 512). Both
+        // `committeeLen` and `bitsLen` are pinned to 512 by `syncDecision`, so a short committee
+        // cannot be used to shrink the denominator the 2/3 threshold divides.
+        assert_eq!(
+            verified_eth_lc_verify(511, 512, 512, true, 6, true, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a committee that is not exactly 512 keys must be REFUSED"
+        );
+        // REJECT — the Nomad ZERO floor (`0 < participantCount`): nobody signed.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 0, true, 6, true, 4, true),
+            Ok(EthLcVerdict::Reject),
+            "a zero-participant update must be REFUSED"
+        );
+        // REJECT — wrong execution-payload branch depth (3, not 4).
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, true, 6, true, 3, true),
+            Ok(EthLcVerdict::Reject),
+            "a wrong-depth execution branch must be REFUSED"
+        );
+        // REJECT — the execution payload does not reconstruct into the finalized body root.
+        assert_eq!(
+            verified_eth_lc_verify(512, 512, 512, true, 6, true, 4, false),
+            Ok(EthLcVerdict::Reject),
+            "an execution branch that does not reconstruct must be REFUSED"
+        );
+
+        // The RAW gate outputs, so we know we are reading the Lean verdict and not a Rust default:
+        // exactly `"1"` / `"0"`, and `"ERR"` (fail-closed) on a malformed wire.
+        let accept_raw = shadow_eth_lc_verify("cl=512;bl=512;pc=512;bls=1;fl=6;fr=1;el=4;er=1");
+        let reject_raw = shadow_eth_lc_verify("cl=512;bl=512;pc=341;bls=1;fl=6;fr=1;el=4;er=1");
+        assert_eq!(accept_raw.as_deref(), Ok("1"));
+        assert_eq!(reject_raw.as_deref(), Ok("0"));
+        assert_eq!(shadow_eth_lc_verify("garbage").as_deref(), Ok("ERR"));
+
+        // THE STANDING NON-CONSTANCY CANARY. The two wires above differ in ONE field (`pc`,
+        // 512 vs 341) and straddle the 2/3 threshold. If the gate ever becomes a CONSTANT —
+        // always-accept (the un-gated relayer), always-reject (a dead but safe-looking shim),
+        // always-`"ERR"` (a wire-grammar drift that silently fail-closes everything and would
+        // otherwise satisfy every REJECT assertion above) — these two collapse to the same
+        // answer and this fires. It is the assertion that cannot be satisfied by a gate that
+        // decides nothing, which is the failure mode every other line here shares a blind spot for.
+        assert_ne!(
+            accept_raw, reject_raw,
+            "the ETH gate returned the SAME verdict on both sides of the 2/3 quorum threshold — \
+             it is a constant, not a gate"
+        );
+        // …and a malformed wire decodes to REJECT at the verdict layer, never to an accept.
+        assert_eq!(
+            shadow_eth_lc_verify("garbage").map(|o| if o == "1" {
+                EthLcVerdict::Accept
+            } else {
+                EthLcVerdict::Reject
+            }),
+            Ok(EthLcVerdict::Reject)
+        );
+    }
+
     #[test]
     fn tm_wire_grammar_matches_lean_decodeTmWire() {
         // The exact accepting witness `LightClientTendermintGate.tm_decision_discriminates` /
@@ -634,5 +758,137 @@ mod tests {
                 verified_mpt_lc_verify("5", "100", "100", "1", "1", "0", "0", true, true).is_err()
             );
         }
+    }
+
+    #[test]
+    fn tm_gate_refuses_forged_headers_through_the_real_ffi() {
+        if !crate::demand_lean(
+            tm_lc_verify_available(),
+            "dregg_tm_lc_verify Tendermint light-client gate",
+        ) {
+            return;
+        }
+
+        // ACCEPT — a genuine adjacent advance, full stake signed, both hash bindings hold.
+        assert_eq!(
+            verified_tm_lc_verify(5, 5, 11, 10, 50, 55, 60, 5, 100, true, true, 3, 3),
+            Ok(TmLcVerdict::Accept)
+        );
+        // REJECT — EXACTLY 2/3 signed (2·3 = 6 ≮ 3·2 = 6). The threshold is STRICT `>`, and this
+        // is the case a `>=` transcription would wrongly admit.
+        assert_eq!(
+            verified_tm_lc_verify(5, 5, 11, 10, 50, 55, 60, 5, 100, true, true, 3, 2),
+            Ok(TmLcVerdict::Reject),
+            "exactly-2/3 signed power must be REFUSED (the threshold is strict)"
+        );
+        // REJECT — a header from a DIFFERENT chain (the cross-chain replay).
+        assert_eq!(
+            verified_tm_lc_verify(6, 5, 11, 10, 50, 55, 60, 5, 100, true, true, 3, 3),
+            Ok(TmLcVerdict::Reject),
+            "a chain-id mismatch must be REFUSED"
+        );
+        // REJECT — the epoch binding fails: the trusted `next_validators_hash` does not match the
+        // hash of the supplied validator set (a swapped validator set).
+        assert_eq!(
+            verified_tm_lc_verify(5, 5, 11, 10, 50, 55, 60, 5, 100, false, true, 3, 3),
+            Ok(TmLcVerdict::Reject),
+            "a failed epoch binding must be REFUSED"
+        );
+        // REJECT — the header does not self-bind its own validator set.
+        assert_eq!(
+            verified_tm_lc_verify(5, 5, 11, 10, 50, 55, 60, 5, 100, true, false, 3, 3),
+            Ok(TmLcVerdict::Reject),
+            "a failed validator-set self binding must be REFUSED"
+        );
+
+        let accept_raw = shadow_tm_lc_verify(
+            "ci=5;tci=5;h=11;th=10;ht=50;t=55;nw=60;cd=5;tp=100;eb=1;vb=1;tot=3;sp=3",
+        );
+        let reject_raw = shadow_tm_lc_verify(
+            "ci=5;tci=5;h=11;th=10;ht=50;t=55;nw=60;cd=5;tp=100;eb=1;vb=1;tot=3;sp=2",
+        );
+        assert_eq!(accept_raw.as_deref(), Ok("1"));
+        assert_eq!(reject_raw.as_deref(), Ok("0"));
+        assert_eq!(shadow_tm_lc_verify("garbage").as_deref(), Ok("ERR"));
+
+        // THE STANDING NON-CONSTANCY CANARY (see the ETH test): the two wires differ in ONE field
+        // (`sp`, 3 vs 2) and straddle the STRICT `> 2/3` stake threshold. A constant gate — or a
+        // `>=` transcription that admits the exactly-2/3 boundary — collapses them and fires this.
+        assert_ne!(
+            accept_raw, reject_raw,
+            "the Tendermint gate returned the SAME verdict on both sides of the strict 2/3 stake \
+             threshold — it is a constant, not a gate"
+        );
+    }
+
+    #[test]
+    fn mpt_gate_refuses_forged_holdings_through_the_real_ffi() {
+        if !crate::demand_lean(
+            mpt_lc_verify_available(),
+            "dregg_mpt_lc_verify EVM-inclusion light-client gate",
+        ) {
+            return;
+        }
+
+        // ACCEPT — a genuine holding: nonzero balance, all three anchors match the trusted ones,
+        // both keccak path walks opened.
+        assert_eq!(
+            verified_mpt_lc_verify("5", "100", "100", "1", "1", "0", "0", true, true),
+            Ok(MptLcVerdict::Accept)
+        );
+        // REJECT — the Nomad-law ZERO floor: a zero-balance "holding" claims nothing and must not
+        // be admitted as governance weight.
+        assert_eq!(
+            verified_mpt_lc_verify("0", "100", "100", "1", "1", "0", "0", true, true),
+            Ok(MptLcVerdict::Reject),
+            "a zero claimed balance must be REFUSED (the Nomad-law floor)"
+        );
+        // REJECT — the proof opens under a state root that is NOT the trusted anchor. This is the
+        // forged-anchor attack: a perfectly valid MPT proof against an attacker-chosen root.
+        assert_eq!(
+            verified_mpt_lc_verify("5", "999", "100", "1", "1", "0", "0", true, true),
+            Ok(MptLcVerdict::Reject),
+            "a proof against an UNTRUSTED state root must be REFUSED"
+        );
+        // REJECT — the wrong token contract (a holding in some other ERC-20).
+        assert_eq!(
+            verified_mpt_lc_verify("5", "100", "100", "9", "1", "0", "0", true, true),
+            Ok(MptLcVerdict::Reject),
+            "a holding in the WRONG token must be REFUSED"
+        );
+        // REJECT — the wrong balances mapping slot (reading some other mapping's storage).
+        assert_eq!(
+            verified_mpt_lc_verify("5", "100", "100", "1", "1", "7", "0", true, true),
+            Ok(MptLcVerdict::Reject),
+            "a proof against the WRONG mapping slot must be REFUSED"
+        );
+        // REJECT — the account trie walk failed (no such account under the state root).
+        assert_eq!(
+            verified_mpt_lc_verify("5", "100", "100", "1", "1", "0", "0", false, true),
+            Ok(MptLcVerdict::Reject),
+            "a failed account-proof walk must be REFUSED"
+        );
+        // REJECT — the storage trie walk failed (the slot does not open to the claimed balance).
+        assert_eq!(
+            verified_mpt_lc_verify("5", "100", "100", "1", "1", "0", "0", true, false),
+            Ok(MptLcVerdict::Reject),
+            "a failed storage-proof walk must be REFUSED"
+        );
+
+        let accept_raw =
+            shadow_mpt_lc_verify("bal=5;sr=100;tsr=100;tk=1;ttk=1;ms=0;tms=0;ap=1;sp=1");
+        let reject_raw =
+            shadow_mpt_lc_verify("bal=0;sr=100;tsr=100;tk=1;ttk=1;ms=0;tms=0;ap=1;sp=1");
+        assert_eq!(accept_raw.as_deref(), Ok("1"));
+        assert_eq!(reject_raw.as_deref(), Ok("0"));
+        assert_eq!(shadow_mpt_lc_verify("garbage").as_deref(), Ok("ERR"));
+
+        // THE STANDING NON-CONSTANCY CANARY (see the ETH test): the two wires differ in ONE field
+        // (`bal`, 5 vs 0) and straddle the Nomad-law zero floor. A constant gate collapses them.
+        assert_ne!(
+            accept_raw, reject_raw,
+            "the EVM-inclusion gate returned the SAME verdict across the zero-balance floor — \
+             it is a constant, not a gate"
+        );
     }
 }

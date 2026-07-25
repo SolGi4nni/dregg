@@ -120,6 +120,23 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
         "the bridge-trust verdict is unverifiable (both polarities go untested)",
     ),
     (
+        "dregg_eth_lc_verify",
+        "the ETHEREUM light-client verify gate compiles out and the ETH relayer path runs \
+         UN-GATED: `eth_lc_verify_available()` is constantly false, so sync-committee quorum, \
+         branch depth and the BLS/SHA-256 result bits are decided by the Rust twin that \
+         `verifyFinalizedUpdate` was supposed to replace",
+    ),
+    (
+        "dregg_tm_lc_verify",
+        "the TENDERMINT/COSMOS light-client verify gate compiles out — the strict `2·tot < 3·sp` \
+         stake threshold, chain-id match and trusting-window revert to the Rust twin",
+    ),
+    (
+        "dregg_mpt_lc_verify",
+        "the EVM state-inclusion (EIP-1186) verify gate compiles out — the Nomad-law nonzero \
+         balance floor and the state-root/token/slot anchor bindings revert to the Rust twin",
+    ),
+    (
         "dregg_blocklace_finalize",
         "the finality + τ-order gate compiles out and the node runs the un-gated path",
     ),
@@ -2012,6 +2029,9 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_constraint_admits_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_cross_cell_conserves_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_eth_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_tm_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -2729,11 +2749,44 @@ fn main() {
         absent_export_warn("dregg_interchain_reached_consensus");
     }
 
+    // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
+    // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
+    // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
+    // the Rust `extern "C"` block in `bridge_lc_ffi.rs` AND the C `_str` bridge in `lean_init.c`;
+    // absent ⇒ `{eth,tm,mpt}_lc_verify_available()` is constantly false and the caller FAILS CLOSED.
+    // Self-contained cores (static-const string literals, an assign-nothing module initializer), so
+    // like R3/holding/interchain: NO module initializer is referenced from the shim.
+    //
+    // ⚠ THIS PROBE IS THE THIRD OF THREE LAYERS, and all three were dark at once. The gates were
+    // absent from the archive (no `:c` facet — fixed by rooting the build on `Dregg2.FFI`'s import
+    // closure), this cfg was never declared OR set, and `dregg_eth_lc_verify_str` was CALLED from
+    // `bridge_lc_ffi.rs` but DEFINED NOWHERE. Any one of the three suffices to keep the ETH relayer
+    // running with its verification gate compiled out, green and silent. They are on
+    // REQUIRED_DECISION_EXPORTS now, so a strict build cannot re-enter that state quietly.
+    let eth_lc_verify_present = archive_exports(&build_archive, "dregg_eth_lc_verify");
+    if eth_lc_verify_present {
+        println!("cargo:rustc-cfg=dregg_eth_lc_verify_present");
+    } else {
+        absent_export_warn("dregg_eth_lc_verify");
+    }
+    let tm_lc_verify_present = archive_exports(&build_archive, "dregg_tm_lc_verify");
+    if tm_lc_verify_present {
+        println!("cargo:rustc-cfg=dregg_tm_lc_verify_present");
+    } else {
+        absent_export_warn("dregg_tm_lc_verify");
+    }
+    let mpt_lc_verify_present = archive_exports(&build_archive, "dregg_mpt_lc_verify");
+    if mpt_lc_verify_present {
+        println!("cargo:rustc-cfg=dregg_mpt_lc_verify_present");
+    } else {
+        absent_export_warn("dregg_mpt_lc_verify");
+    }
+
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
     // "Nothing errors. The build is green. The deployed binary runs crypto nobody audited."
-    // That was true of exactly 6 of the 20 exports that carry a proven verdict. This block is the
-    // other 14 — everything whose absence silently reverts a Lean-PROVEN decision to a Rust twin,
+    // That was true of exactly 6 of the 23 exports that carry a proven verdict. This block is the
+    // other 17 — everything whose absence silently reverts a Lean-PROVEN decision to a Rust twin,
     // a fail-closed refusal, or (for the `#[cfg(all(test, …))]` modules) to a test that no longer
     // EXISTS TO RUN. Nine test functions vanish that way, and the crate then reports `11 passed`,
     // not `0` — a zero gets noticed, eleven green tests look like a healthy crate. The worst
@@ -2908,6 +2961,18 @@ fn main() {
     }
     if interchain_reached_consensus_present {
         shim.define("DREGG_INTERCHAIN_REACHED_CONSENSUS", None);
+    }
+    // The three light-client gates: each define gates BOTH the extern decl and the `_str` bridge in
+    // `lean_init.c` (no module initializer — see the extern-decl note there). Independently probed,
+    // because an archive can carry one and not the others.
+    if eth_lc_verify_present {
+        shim.define("DREGG_ETH_LC_VERIFY", None);
+    }
+    if tm_lc_verify_present {
+        shim.define("DREGG_TM_LC_VERIFY", None);
+    }
+    if mpt_lc_verify_present {
+        shim.define("DREGG_MPT_LC_VERIFY", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

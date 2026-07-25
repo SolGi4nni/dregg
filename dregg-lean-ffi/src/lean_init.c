@@ -363,6 +363,50 @@ extern lean_object *dregg_holding_grant_weight(lean_object *input);
 extern lean_object *dregg_interchain_reached_consensus(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED LIGHT-CLIENT verify-logic gates — the three
+ * foreign-chain admission decisions the interchain bridge routes through
+ * (`Dregg2.Bridge.LightClient{Eth,Mpt,Tendermint}Gate`):
+ *
+ *   dregg_eth_lc_verify — the Ethereum sync-committee update decision (`ethLcVerifyGate`). Input
+ *     `"cl=<committee-len>;bl=<bitfield-len>;pc=<popcount>;bls=<BIT>;fl=<finality-depth>;fr=<BIT>;
+ *     el=<exec-depth>;er=<BIT>"`. Runs the PROVED `ethVerifyDecision` — the ≥ 2/3 multiply-form
+ *     quorum (`3·pc ≥ 2·cl`), the committee-size/bitfield agreement, and the branch-DEPTH
+ *     admissibility (6|7 finality, 4 execution) — which `ethVerifyDecision_refines` proves is
+ *     DEFINITIONALLY `verifyFinalizedUpdate`, the decision `eth_no_forgery` is proven over. The
+ *     heavy crypto (BLS12-381 aggregate verify, SHA-256 SSZ branch folds) stays in Rust and enters
+ *     as the `bls`/`fr`/`er` RESULT bits — the named `blsSound`/`hashPairCR` carriers.
+ *   dregg_tm_lc_verify — the Tendermint/Cosmos adjacent-advance decision (`tmLcVerifyGate`), incl.
+ *     the STRICT stake-weighted `2·total < 3·signed` threshold, chain-id match, height advance and
+ *     the trusting-period/clock-drift window. Refined to `tmVerify` (`tmVerifyDecision_refines`).
+ *   dregg_mpt_lc_verify — the EIP-1186 EVM state-inclusion decision (`mptLcVerifyGate`): the
+ *     Nomad-law nonzero-balance floor plus the three anchor bindings (state root / token /
+ *     mapping slot must equal the TRUSTED ones). Refined to `mptVerify`
+ *     (`mptVerifyDecision_refines`). The keccak MPT path walk stays in Rust (alloy-trie) and
+ *     enters as the `ap`/`sp` RESULT bits.
+ *
+ * All three return `"1"` (ACCEPT) / `"0"` (REJECT) / `"ERR"` (malformed wire ⇒ the caller REJECTS:
+ * fail-closed, an unproven foreign update is never admitted).
+ *
+ * GATED on DREGG_{ETH,TM,MPT}_LC_VERIFY (build.rs probes the archive and defines each only when
+ * its symbol is present). NOTE: like the R3 / holding / interchain verdict cores these need NO
+ * module initializer, and this is CHECKED against the emitted C rather than assumed: every string
+ * literal in `LightClient{Eth,Mpt,Tendermint}Gate.c` is a STATIC CONST `lean_string_object` and the
+ * generated `initialize_Dregg2_Dregg2_Bridge_LightClient*Gate` body assigns NO module global (it
+ * only chains its imports) — so each gate is self-contained on the always-initialized Init runtime.
+ * We therefore deliberately do NOT reference those initializers: they chain into the light-client
+ * models' Mathlib-tactic import closure, whose init symbols the leanc-native archive does not
+ * carry, and referencing them would drag undefined symbols into the final link. Leaving them
+ * unreferenced lets `-dead_strip` drop the proof closure while the pure verdict cores link. */
+#ifdef DREGG_ETH_LC_VERIFY
+extern lean_object *dregg_eth_lc_verify(lean_object *input);
+#endif
+#ifdef DREGG_TM_LC_VERIFY
+extern lean_object *dregg_tm_lc_verify(lean_object *input);
+#endif
+#ifdef DREGG_MPT_LC_VERIFY
+extern lean_object *dregg_mpt_lc_verify(lean_object *input);
+#endif
+
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
  * `lean_dec_ref`, `lean_box`, and `lean_string_cstr` are `static inline` in the header (no
@@ -792,6 +836,83 @@ size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, si
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_interchain_reached_consensus(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_ETH_LC_VERIFY
+/* dregg_eth_lc_verify_str — the C string bridge over the VERIFIED Lean `String -> String` ETHEREUM
+ * light-client verify-logic gate (`Dregg2.Bridge.LightClientEthGate.dregg_eth_lc_verify`). Input:
+ * `"cl=<Nat>;bl=<Nat>;pc=<Nat>;bls=<BIT>;fl=<Nat>;fr=<BIT>;el=<Nat>;er=<BIT>"`. Output: `"1"`
+ * (ACCEPT) / `"0"` (REJECT) / `"ERR"` (malformed wire — the caller treats it as REJECT). Runs the
+ * PROVED `ethVerifyDecision`, which `ethVerifyDecision_refines` proves is DEFINITIONALLY
+ * `verifyFinalizedUpdate` — so an ACCEPT here is, with the named `blsSound`/`hashPairCR` crypto
+ * carriers sound, exactly `eth_no_forgery`'s `EthValidAt`. Same return contract as the bridges
+ * above. */
+size_t dregg_eth_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_eth_lc_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_TM_LC_VERIFY
+/* dregg_tm_lc_verify_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * TENDERMINT/COSMOS light-client verify-logic gate
+ * (`Dregg2.Bridge.LightClientTendermintGate.dregg_tm_lc_verify`). Input:
+ * `"ci=<Nat>;tci=<Nat>;h=<Nat>;th=<Nat>;ht=<Nat>;t=<Nat>;nw=<Nat>;cd=<Nat>;tp=<Nat>;eb=<BIT>;
+ * vb=<BIT>;tot=<Nat>;sp=<Nat>"`. Output: `"1"` / `"0"` / `"ERR"` (fail-closed). Runs the PROVED
+ * `tmVerifyDecision` — the STRICT stake-weighted `2·tot < 3·sp` threshold plus chain-id / adjacent
+ * height / trusting-window / epoch-binding rules — which `tmVerifyDecision_refines` proves is
+ * DEFINITIONALLY `tmVerify`, the decision `tmNoForgery` is proven over. Same return contract as the
+ * bridges above. */
+size_t dregg_tm_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_tm_lc_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MPT_LC_VERIFY
+/* dregg_mpt_lc_verify_str — the C string bridge over the VERIFIED Lean `String -> String` EVM
+ * state-inclusion (EIP-1186 / MPT) light-client verify-logic gate
+ * (`Dregg2.Bridge.LightClientMptGate.dregg_mpt_lc_verify`). Input:
+ * `"bal=<Nat>;sr=<Nat>;tsr=<Nat>;tk=<Nat>;ttk=<Nat>;ms=<Nat>;tms=<Nat>;ap=<BIT>;sp=<BIT>"`.
+ * Output: `"1"` / `"0"` / `"ERR"` (fail-closed). Runs the PROVED `mptVerifyDecision` — the
+ * Nomad-law nonzero-balance floor plus the state-root / token / mapping-slot anchor bindings —
+ * which `mptVerifyDecision_refines` proves is DEFINITIONALLY `mptVerify`, the decision
+ * `mpt_noForgery` AND `mpt_balance_binding` are proven over. Same return contract as the bridges
+ * above. */
+size_t dregg_mpt_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mpt_lc_verify(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
