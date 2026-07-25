@@ -99,6 +99,7 @@ import Dregg2.Circuit.FriVerifierMerkle
 import Dregg2.Circuit.RecursiveSoundFromNodes
 import Dregg2.Tactics
 import Mathlib.Tactic
+import Dregg2.Circuit.FriChainStepIdx
 
 namespace Dregg2.Circuit.FriVerifierCompose
 
@@ -153,149 +154,25 @@ happens after `d` is answered", and `RomCounting.condProb_split` conditions on t
 missing is not a `queriedBefore` predicate but the per-query HIT bound, which the tree induction
 proves directly. `hitWin` is the event Stage 2 should have bounded. -/
 
-/-- **THE HIT EVENT.** `hitWin E M H` = SOME query along `M`'s run against `H` receives an answer in
-that point's target set `E d`. For FS this is "some derived challenge is exceptional"; for grinding,
-"some PoW squeeze hits the mask". Unlike `∉ queriedFinset`, this quantifies over the adversary's
-ACTUAL queries and excludes no one. -/
-def hitWin {D R A : Type} [DecidableEq R] (E : D → Finset R) :
-    OracleComp D R A → (D → R) → Bool
-  | .pure _,    _ => false
-  | .query d k, H => decide (H d ∈ E d) || hitWin E (k (H d)) H
+/-! ### `hitWin` / `hit_cond` / `hit_bound` — DEDUPLICATED (2026-07-25).
 
-theorem hitWin_pure {D R A : Type} [DecidableEq R] (E : D → Finset R) (a : A) (H : D → R) :
-    hitWin E (OracleComp.pure a : OracleComp D R A) H = false := rfl
+These five declarations existed here AND in `Dregg2.Circuit.FriChainStepIdx`, byte-identical but for
+three comment lines and one opened namespace — a genuine duplicate, not a drift (verified by textual
+diff before removal). They were re-derived here because that closure was red at authoring time; the
+`SpongeForgeReduction` import break that forced it has since been repaired, and `FriChainStepIdx` flags
+the debt in its own header.
 
-theorem hitWin_query {D R A : Type} [DecidableEq R] (E : D → Finset R) (d : D)
-    (k : R → OracleComp D R A) (H : D → R) :
-    hitWin E (OracleComp.query d k) H = (decide (H d ∈ E d) || hitWin E (k (H d)) H) := rfl
+`FriChainStepIdx`'s copy is kept because it is the LOWER module: its import closure is 51 modules
+against this one's 295, so importing it here costs two new closure members while the other direction
+would push all 295 into `FriSetupTower`, `FriGoodCountWeld` and `CorrelatedAgreement.Interface`. The
+`export` below re-exposes the names at their original path, so the four consumers
+(`FriQueryAdversary`, `FriEpsFriComposedAdversary`, `FriVerifierComposeDefected`,
+`FriQuerySamplingBias`) need no edit. The Compose-only tooth `hitWin_fires` is retained below. -/
+export Dregg2.Circuit.FriChainStepIdx (hitWin hitWin_pure hitWin_query hit_cond hit_bound)
 
 section HitBound
 
 variable {D R A : Type} [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
-
-/-- **⚑⚑ THE FRESHNESS SEAM, CLOSED.** A `Q`-query adversary, run against an oracle already pinned on
-`S` to values that are NOT already hits, receives an answer in its point's target set at SOME query
-with probability at most `Q·b/|R|`, where `b` caps every target set.
-
-THE ARGUMENT — and why it needs no ordered-log data. Induction on the query tree:
-  * a REPEAT query (`d ∈ S`) is answered by the conditioning and hits nothing new — the prefix
-    already pinned it to a non-hit, so it costs ZERO;
-  * a FRESH query (`d ∉ S`) is split on its answer by `condProb_split` — the LAW OF TOTAL PROBABILITY
-    OVER THE PREFIX. At most `|E d| ≤ b` of the `|R|` answers are hits (pay full price, `≤ 1` each);
-    on the rest the invariant extends to `insert d S` and the IH pays `n·b/|R|`. Total
-    `(b + n·b)/|R| = (n+1)·b/|R|`.
-The "before" relation the design wanted is the tree's own structure: `k r` IS the suffix, `S` IS the
-prefix's read set. NOTHING is assumed; no adversary is excluded — this holds for the honest prover,
-which §1.1 shows the old carrier did not. -/
-theorem hit_cond {Q b : ℕ} {M : OracleComp D R A} (hM : QueryBounded Q M)
-    (E : D → Finset R) (hE : ∀ d, (E d).card ≤ b) :
-    ∀ (S : Finset D) (σ : D → R), (∀ d ∈ S, σ d ∉ E d) →
-      condProb (cyl S σ) (hitWin E M) ≤ ((Q : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) := by
-  have hRpos : (0 : ℝ) < (Fintype.card R : ℝ) := by exact_mod_cast Fintype.card_pos
-  induction hM with
-  | pure n a =>
-      intro S σ _
-      refine le_trans (le_of_eq (condProb_eq_zero (fun H _ => by rw [hitWin_pure]))) ?_
-      positivity
-  | query n d k _hk ih =>
-      intro S σ hσ
-      by_cases hd : d ∈ S
-      · -- REPEAT: the conditioning already answered `d`, to a non-hit. Costs nothing.
-        have hcongr : condProb (cyl S σ) (hitWin E (OracleComp.query d k))
-            = condProb (cyl S σ) (hitWin E (k (σ d))) := by
-          refine condProb_congr (fun H hH => ?_)
-          have hpin : H d = σ d := (mem_cyl.1 hH) d hd
-          rw [hitWin_query, hpin]
-          have hno : decide (σ d ∈ E d) = false := by
-            simp only [decide_eq_false_iff_not]; exact hσ d hd
-          rw [hno, Bool.false_or]
-        rw [hcongr]
-        refine (ih (σ d) S σ hσ).trans ?_
-        rw [div_le_div_iff_of_pos_right hRpos]
-        have hb : (0 : ℝ) ≤ (b : ℝ) := Nat.cast_nonneg b
-        push_cast
-        nlinarith
-      · -- FRESH: split on the answer — the law of total probability over the prefix.
-        rw [condProb_split S σ d hd]
-        set B : ℝ := ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) with hB
-        have hBnn : 0 ≤ B := by rw [hB]; positivity
-        -- On the `r`-slice the head answer is pinned to `r`.
-        have hterm : ∀ r : R,
-            condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k))
-              = condProb (cyl (insert d S) (Function.update σ d r))
-                  (fun H => decide (r ∈ E d) || hitWin E (k r) H) := by
-          intro r
-          refine condProb_congr (fun H hH => ?_)
-          have hpin : H d = r := by
-            have := (mem_cyl.1 hH) d (Finset.mem_insert_self d S)
-            simpa using this
-          rw [hitWin_query, hpin]
-        -- NON-HIT answers: the invariant extends, the IH pays.
-        have hgood : ∀ r ∈ Finset.univ \ E d,
-            condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k))
-              ≤ B := by
-          intro r hr
-          simp only [Finset.mem_sdiff, Finset.mem_univ, true_and] at hr
-          rw [hterm r]
-          have hdec : decide (r ∈ E d) = false := by
-            simp only [decide_eq_false_iff_not]; exact hr
-          rw [condProb_congr (win' := hitWin E (k r)) (fun H _ => by rw [hdec, Bool.false_or])]
-          refine ih r (insert d S) (Function.update σ d r) ?_
-          intro e he
-          rcases Finset.mem_insert.1 he with rfl | he'
-          · rw [Function.update_self]; exact hr
-          · have hne : e ≠ d := fun h => hd (h ▸ he')
-            rw [Function.update_of_ne hne]
-            exact hσ e he'
-        -- HIT answers: at most `|E d| ≤ b` of them; pay full price.
-        have hsub : E d ⊆ (Finset.univ : Finset R) := Finset.subset_univ _
-        have hsplit : (∑ r : R,
-              condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            = (∑ r ∈ Finset.univ \ E d,
-                condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-              + (∑ r ∈ E d,
-                condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            := (Finset.sum_sdiff hsub).symm
-        have hbad : (∑ r ∈ E d,
-              condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            ≤ (b : ℝ) := by
-          refine (Finset.sum_le_card_nsmul _ _ 1 (fun r _ => condProb_le_one _ _)).trans ?_
-          rw [nsmul_eq_mul, mul_one]
-          exact_mod_cast hE d
-        have hgoodsum : (∑ r ∈ Finset.univ \ E d,
-              condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            ≤ (Fintype.card R : ℝ) * B := by
-          refine (Finset.sum_le_card_nsmul _ _ B hgood).trans ?_
-          rw [nsmul_eq_mul]
-          refine mul_le_mul_of_nonneg_right ?_ hBnn
-          have hc : (Finset.univ \ E d).card ≤ Fintype.card R := by
-            simpa using Finset.card_le_card (Finset.subset_univ (Finset.univ \ E d))
-          exact_mod_cast hc
-        have hRB : (Fintype.card R : ℝ) * B = (n : ℝ) * (b : ℝ) := by
-          rw [hB, mul_comm, div_mul_cancel₀ _ (ne_of_gt hRpos)]
-        rw [hsplit, div_le_iff₀ hRpos]
-        have hnum : (∑ r ∈ Finset.univ \ E d,
-              condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            + (∑ r ∈ E d,
-              condProb (cyl (insert d S) (Function.update σ d r)) (hitWin E (OracleComp.query d k)))
-            ≤ (n : ℝ) * (b : ℝ) + (b : ℝ) := add_le_add (hgoodsum.trans (le_of_eq hRB)) hbad
-        refine hnum.trans ?_
-        rw [div_mul_cancel₀ _ (ne_of_gt hRpos)]
-        push_cast
-        ring_nf
-        nlinarith [Nat.cast_nonneg (α := ℝ) b]
-
-/-- **THE UNCONDITIONAL HIT BOUND.** At the empty conditioning — the adversary starts knowing nothing
-— a `Q`-query adversary ever draws an answer in its point's target set with probability `≤ Q·b/|R|`.
-This is the FS/grind ε with NO freshness hypothesis and NO excluded adversary: the Stage-2 headline,
-now true of everyone. -/
-theorem hit_bound {Q b : ℕ} (M : OracleComp D R A) (hM : QueryBounded Q M)
-    (E : D → Finset R) (hE : ∀ d, (E d).card ≤ b) :
-    Dregg2.Crypto.ProbCrypto.winProb (hitWin E M)
-      ≤ ((Q : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) := by
-  have h := hit_cond hM E hE ∅ (fun _ => Classical.arbitrary R) (by simp)
-  rw [condProb_cyl_empty] at h
-  exact h
 
 /-- **(TOOTH — `hit_cond` is not vacuous: the hit event genuinely FIRES.)** A 1-query adversary whose
 target set is ALL of `R` hits with probability `1` — so `hitWin` is a real event with a real
