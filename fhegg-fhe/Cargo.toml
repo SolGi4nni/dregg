@@ -108,6 +108,17 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 # bins are not pulled in.
 fhegg-solver = { path = "../fhegg-solver" }
 
+# wasm32 ONLY (the browser extension's threshold-BFV ceremony party): getrandom 0.2 needs its `js`
+# backend on wasm. Scoped to wasm32 so native builds are byte-identical. getrandom 0.3 (via fhe/rand_09)
+# takes the `--cfg getrandom_backend="wasm_js"` RUSTFLAG. `fhe` itself is confirmed wasm32-compatible
+# (2026-07-25). This unblocks compiling the threshold/partial_decrypt surface to wasm for the distributed
+# no-single-viewer ceremony (streamed-cooking-shannon Track B).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+# getrandom 0.3 (via fhe/rand_09) needs the wasm_js FEATURE too (plus the RUSTFLAG cfg). Enable it via a
+# renamed dep so feature-unification turns it on for the transitive 0.3 crate.
+getrandom_v3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
 [dev-dependencies]
 # The integration test drives a real PDHG solve to produce a genuine Cert-F
 # certificate; it needs the solver's pdhg/cert API directly.
