@@ -53,6 +53,19 @@
 //! Those are **shape/deploy faults**, not unsat verdicts. A tooth that "passes" because the trace
 //! was the wrong height has not witnessed a refusal, so those panics red the test.
 //!
+//! # The `Err` side of the same disease
+//!
+//! The paragraph above closed the discrimination on the **panic** side only. A shape fault reached
+//! through an `Err` was still laundered: `Ok(Err(e)) => e` handed **any** error back as a refusal, so
+//! `base row width 3065 must equal descriptor trace_width 1963` — the prover's *pre-flight arity
+//! check*, fired before the constraint system reads one cell of the witness — satisfied a forgery
+//! tooth exactly as a stray `unwrap` used to. That was found in the wild
+//! (`circuit/tests/heap_write_roundtrip.rs`, which was green with the forgery neutered) and repaired
+//! only in that one file. [`SHAPE_FAULT_MARKERS`] and [`assert_committed_shape`] are that repair,
+//! lifted here so every site inherits it; [`must_refuse`], [`must_refuse_or_unsat_panic`] and
+//! [`classify`] all RED on a shape-marked `Err`. A tooth whose *subject* is the arity pre-flight says
+//! so by name with [`must_refuse_shape_fault`].
+//!
 //! # Placement
 //!
 //! This is test-support code living in a production crate's `src/`, which deserves a justification:
@@ -71,6 +84,123 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use crate::descriptor_ir2::EffectVmDescriptor2;
+use crate::field::BabyBear;
+
+/// Substrings of a refusal `Err` that name a **SHAPE / ARITY fault** — the prover complaining about
+/// the trace's *geometry* — rather than a verdict on the WITNESS.
+///
+/// This is the `Err`-side twin of the panic-side discrimination already documented above. The panic
+/// side was closed at the module's birth ([`P3_UNSAT_PANIC_MARKERS`] excludes the height
+/// `assert_eq!`s on purpose); the `Err` side was not, and `Ok(Err(e)) => e` accepted **any** error
+/// as a refusal. A tooth handed a mis-shaped trace gets
+///
+/// ```text
+/// base row width 3065 must equal descriptor trace_width 1963
+/// ```
+///
+/// back from `prove_vm_descriptor2`'s pre-flight — **before** `check_descriptor2`'s replay or
+/// `prove_batch`'s constraint check sees a single cell of the forgery — and a tooth reading that as
+/// "refused" has recorded a refusal it never earned. This was found in the wild
+/// (`circuit/tests/heap_write_roundtrip.rs`, whose header narrates it) and repaired only locally.
+///
+/// Every marker here is a substring of a **pre-flight arity check** in
+/// [`crate::descriptor_ir2::prove_vm_descriptor2_inner`] / [`crate::lean_descriptor_air`], verified
+/// unique in-tree:
+///
+/// * `descriptor_ir2.rs:5958`, `lean_descriptor_air.rs:1822` — base row width vs `trace_width`.
+/// * `descriptor_ir2.rs:5965` — PI vector length vs `public_input_count`.
+/// * `descriptor_ir2.rs:5949`, `lean_descriptor_air.rs:1818` — empty base trace.
+/// * `descriptor_ir2.rs:5952` — base trace height not a power of two.
+///
+/// Deliberately **absent**, because they are real verdicts a tooth may legitimately earn: bare
+/// `"must be a power of two"` and `"length mismatch"` (witness-builder validation that several teeth
+/// genuinely test — `membership_descriptor_4ary`, `note_spend_witness`, `merkle_air`), the verifier's
+/// instance-count refusal, the range-table-degree refusal (a taller byte table widens every limb
+/// range — that one IS a tooth), and `"descriptor declares no {mem,map,umem} ops but a … witness was
+/// supplied"` (`descriptor_ir2.rs:5974/5981/5987`). That last set is a JUDGEMENT CALL: they are
+/// pre-flight and the trace is never read, but refusing an uncommitted-table witness is itself a
+/// soundness gate a tooth may want to attack, so marking them would risk turning a genuine tooth red.
+/// If one is ever found satisfying a forgery tooth, move it here.
+pub const SHAPE_FAULT_MARKERS: [&str; 4] = [
+    "must equal descriptor trace_width",
+    "!= descriptor public_input_count",
+    "base trace must be non-empty",
+    "base trace height",
+];
+
+/// The [`SHAPE_FAULT_MARKERS`] entry `msg` trips, if any.
+pub fn shape_fault(msg: &str) -> Option<&'static str> {
+    SHAPE_FAULT_MARKERS
+        .iter()
+        .copied()
+        .find(|m| msg.contains(m))
+}
+
+/// RED if `rendered` is a shape/arity complaint. Called on every `Err` that this module would
+/// otherwise hand back as a refusal, so all `must_refuse*` / [`classify`] sites inherit it.
+#[track_caller]
+fn reject_shape_fault(what: &str, rendered: &str) {
+    if let Some(m) = shape_fault(rendered) {
+        panic!(
+            "{what}: the call refused with a SHAPE/ARITY fault, NOT a verdict on the witness.\n  \
+             matched marker: {m:?}\n  error: {rendered}\n\
+             The prover rejected the trace's GEOMETRY in its pre-flight, before the constraint \
+             system examined one cell of the witness — so this tooth witnessed NOTHING and the \
+             refusal it recorded was never earned. Fix the fixture so the trace/PI vector has the \
+             committed member's shape (`refusal::assert_committed_shape` pins it structurally). If \
+             the arity check itself IS the tooth, say so with `must_refuse_shape_fault`."
+        );
+    }
+}
+
+/// **`assert_committed_shape`** — pin, STRUCTURALLY, that `trace`/`dpis` already have exactly the
+/// committed member's shape, so a subsequent prover `Err` cannot be an arity complaint.
+///
+/// This is the primary guard and [`SHAPE_FAULT_MARKERS`] is only the second net behind it: string
+/// matching catches the faults we have *seen*, whereas this catches the class. Call it before
+/// proving in any tooth that assembles or mutates a trace by hand.
+///
+/// It is deliberately stricter than the prover in ONE direction, which is why it is not redundant
+/// with the marker net: `trace_with_chip_lanes` (`descriptor_ir2.rs:6075`) zero-`resize`s a row that
+/// is NARROWER than `trace_width` up to the committed width before the arity pre-flight runs, so a
+/// short row PROVES and emits no marker at all (measured, `heap_write_roundtrip.rs`). Only an
+/// OVER-WIDE row reaches `descriptor_ir2.rs:5957`. A tooth should hand the prover the exact committed
+/// shape rather than rely on that pad, so this pins equality in both directions.
+#[track_caller]
+pub fn assert_committed_shape(
+    what: &str,
+    desc: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    dpis: &[BabyBear],
+) {
+    assert!(
+        !trace.is_empty(),
+        "{what}: the trace is EMPTY — a SHAPE fault, not a refusal"
+    );
+    for (i, row) in trace.iter().enumerate() {
+        assert_eq!(
+            row.len(),
+            desc.trace_width,
+            "{what}: row {i} is {} wide but the committed {} is {} — a SHAPE fault. The prover \
+             reports it as an Err, and a tooth that reads any Err as 'refused' would pass here with \
+             the forgery never examined.",
+            row.len(),
+            desc.name,
+            desc.trace_width
+        );
+    }
+    assert_eq!(
+        dpis.len(),
+        desc.public_input_count,
+        "{what}: PI vector is {} long but the committed {} declares {} — a SHAPE fault, not a \
+         refusal",
+        dpis.len(),
+        desc.name,
+        desc.public_input_count
+    );
+}
 
 /// The p3 batch prover's two DOCUMENTED unsatisfiable-witness panics, verified by reading
 /// Plonky3 @ `82cfad73cd734d37a0d51953094f970c531817ec`:
@@ -134,7 +264,7 @@ pub enum Outcome<T, E> {
 /// directly only when acceptance at this layer is legitimately not a failure (see [`Outcome`]);
 /// otherwise prefer the `must_*` wrappers, which cannot forget to assert.
 #[track_caller]
-pub fn classify<T, E, F>(what: &str, f: F) -> Outcome<T, E>
+pub fn classify<T, E: std::fmt::Debug, F>(what: &str, f: F) -> Outcome<T, E>
 where
     F: FnOnce() -> Result<T, E>,
 {
@@ -155,7 +285,10 @@ where
             }
         }
         Ok(Ok(v)) => Outcome::Accepted(v),
-        Ok(Err(e)) => Outcome::Err(e),
+        Ok(Err(e)) => {
+            reject_shape_fault(what, &format!("{e:?}"));
+            Outcome::Err(e)
+        }
     }
 }
 
@@ -190,7 +323,10 @@ fn catch_quietly<T>(f: impl FnOnce() -> T) -> Result<T, Box<dyn Any + Send>> {
 /// * `f` **panicked** → this test **FAILS**. A panic is not a refusal. This is the whole point: a
 ///   stray `unwrap` in trace assembly now reds the suite instead of silently satisfying the tooth.
 /// * `f` returned `Ok` → this test **FAILS**: the forgery was ACCEPTED, the tooth is OPEN.
-/// * `f` returned `Err(e)` → returns `e`.
+/// * `f` returned `Err(e)` naming a [`SHAPE_FAULT_MARKERS`] fault → this test **FAILS**. A width /
+///   PI-arity complaint is the prover refusing the trace's GEOMETRY in its pre-flight; the forgery
+///   was never examined, so it is a crash wearing a refusal's clothes exactly as a stray panic is.
+/// * `f` returned `Err(e)` otherwise → returns `e`.
 ///
 /// `what` names the forgery under test and is quoted in every failure message, so a red says which
 /// tooth broke without a backtrace.
@@ -198,7 +334,7 @@ fn catch_quietly<T>(f: impl FnOnce() -> T) -> Result<T, Box<dyn Any + Send>> {
 /// Use [`must_refuse_or_unsat_panic`] **only** for a site that calls `prove_vm_descriptor2_inner`
 /// with `check: false`, where the p3 debug prover's panic is genuinely the mechanism.
 #[track_caller]
-pub fn must_refuse<T, E, F>(what: &str, f: F) -> E
+pub fn must_refuse<T, E: std::fmt::Debug, F>(what: &str, f: F) -> E
 where
     F: FnOnce() -> Result<T, E>,
 {
@@ -212,7 +348,42 @@ where
             panic_message(&*p)
         ),
         Ok(Ok(_)) => panic!("{what}: the forgery was ACCEPTED — this tooth is OPEN."),
-        Ok(Err(e)) => e,
+        Ok(Err(e)) => {
+            reject_shape_fault(what, &format!("{e:?}"));
+            e
+        }
+    }
+}
+
+/// **`must_refuse_shape_fault`** — the NAMED escape hatch for a tooth whose subject genuinely IS the
+/// prover's shape/arity pre-flight ("a mis-sized trace must be rejected, not silently padded").
+///
+/// Such a check is a real refusal, but of a **different statement** than an in-circuit one, and it
+/// says nothing about any forged witness. Naming it keeps the distinction visible instead of letting
+/// it hide behind a generic [`must_refuse`], which now reds on shape faults. `expected` must be one
+/// of [`SHAPE_FAULT_MARKERS`] (or a substring of the specific message), and the error must contain it.
+#[track_caller]
+pub fn must_refuse_shape_fault<T, E: std::fmt::Debug, F>(what: &str, expected: &str, f: F) -> E
+where
+    F: FnOnce() -> Result<T, E>,
+{
+    match catch_quietly(f) {
+        Err(p) => panic!(
+            "{what}: expected a fail-closed SHAPE-fault Err, but the call PANICKED: {}",
+            panic_message(&*p)
+        ),
+        Ok(Ok(_)) => panic!(
+            "{what}: the mis-shaped input was ACCEPTED — the prover's arity pre-flight is OPEN."
+        ),
+        Ok(Err(e)) => {
+            let rendered = format!("{e:?}");
+            assert!(
+                rendered.contains(expected),
+                "{what}: refused, but not with the expected shape fault.\n  expected to contain: \
+                 {expected}\n  got: {rendered}"
+            );
+            e
+        }
     }
 }
 
@@ -229,9 +400,11 @@ where
 /// * panic **not** matching → this test **FAILS**. A trace-assembly `debug_assert`, a stray
 ///   `unwrap`, a height-mismatch `assert_eq!` — none of those are the constraint system refusing.
 /// * `Ok(Ok(_))` → this test **FAILS**: forgery accepted, tooth OPEN.
-/// * `Ok(Err(e))` → `Refusal::Err(e)`.
+/// * `Ok(Err(e))` naming a [`SHAPE_FAULT_MARKERS`] fault → this test **FAILS** (inherited from
+///   [`classify`]): a width / PI-arity complaint is the pre-flight refusing the trace's geometry.
+/// * `Ok(Err(e))` otherwise → `Refusal::Err(e)`.
 #[track_caller]
-pub fn must_refuse_or_unsat_panic<T, E, F>(what: &str, f: F) -> Refusal<E>
+pub fn must_refuse_or_unsat_panic<T, E: std::fmt::Debug, F>(what: &str, f: F) -> Refusal<E>
 where
     F: FnOnce() -> Result<T, E>,
 {
@@ -368,6 +541,127 @@ mod tests {
             None::<()>.expect("a stray unwrap in trace assembly");
             Ok(())
         });
+    }
+
+    // ------------------------------------------------------------------
+    // THE Err-SIDE SHAPE GUARD — both poles.
+    // ------------------------------------------------------------------
+
+    /// POLE 1, the defect closed: the EXACT `Err` the heap-write tooth was passing on. Before this
+    /// guard, `must_refuse` handed this back as a refusal reason and the tooth went green with the
+    /// forgery never examined.
+    #[test]
+    #[should_panic(expected = "refused with a SHAPE/ARITY fault")]
+    fn must_refuse_reds_on_a_row_width_complaint() {
+        must_refuse("forged heap-write", || {
+            Err::<(), _>("base row width 3065 must equal descriptor trace_width 1963".to_string())
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "refused with a SHAPE/ARITY fault")]
+    fn must_refuse_reds_on_a_pi_arity_complaint() {
+        must_refuse("forged PI", || {
+            Err::<(), _>("public input count 7 != descriptor public_input_count 76".to_string())
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "refused with a SHAPE/ARITY fault")]
+    fn unsat_tolerant_variant_reds_on_a_row_width_complaint() {
+        must_refuse_or_unsat_panic("forged heap-write", || {
+            Err::<(), _>("base row width 3065 must equal descriptor trace_width 1963".to_string())
+        });
+    }
+
+    /// `classify` is the primitive under ~100 emit-gate `rejects()` helpers, which return a `bool`.
+    /// A shape fault flowing back as `true` == "rejected" is the same vacuity one layer out.
+    #[test]
+    #[should_panic(expected = "refused with a SHAPE/ARITY fault")]
+    fn classify_reds_on_a_row_width_complaint() {
+        let _: Outcome<(), String> = classify("emit gate", || {
+            Err("base trace height 3 must be a power of two".to_string())
+        });
+    }
+
+    /// POLE 2, THE ANTI-OVER-STRICTNESS POLE: a genuine constraint refusal must still pass through
+    /// untouched. Without this, a guard that redded on *every* `Err` would look identical.
+    #[test]
+    fn a_genuine_replay_refusal_still_passes_through() {
+        let e = must_refuse("forged opening", || {
+            Err::<(), _>("in-trace replay refused: old path does not authenticate against root8")
+        });
+        assert!(e.contains("replay refused"));
+    }
+
+    /// Refusals that MENTION shape-ish words but are real verdicts must NOT be laundered into reds:
+    /// the witness-builder validations several teeth genuinely test.
+    #[test]
+    fn near_miss_refusals_are_not_treated_as_shape_faults() {
+        for msg in [
+            "membership depth 3 must be a power of two ≥ 2 (the trace-height requirement)",
+            "siblings/positions length mismatch (4 vs 3)",
+            "range-table instance committed at 2^9 rows; the deployed table is 2^8 under this PCS",
+            "IR v2 proof carries 3 instances but the descriptor's present-table set is 4",
+        ] {
+            assert!(
+                shape_fault(msg).is_none(),
+                "{msg:?} is a real verdict, not a shape fault — marking it would break a genuine \
+                 tooth into a false red"
+            );
+            let e = must_refuse("near miss", || Err::<(), _>(msg.to_string()));
+            assert_eq!(e, msg);
+        }
+    }
+
+    /// The named escape hatch: a tooth whose SUBJECT is the arity pre-flight still has a way to say
+    /// so, and it must name the fault it expects.
+    #[test]
+    fn shape_fault_tooth_can_name_its_subject() {
+        let e = must_refuse_shape_fault(
+            "arity pre-flight",
+            "must equal descriptor trace_width",
+            || Err::<(), _>("base row width 4 must equal descriptor trace_width 8".to_string()),
+        );
+        assert!(e.contains("trace_width"));
+    }
+
+    #[test]
+    #[should_panic(expected = "the mis-shaped input was ACCEPTED")]
+    fn shape_fault_tooth_reds_if_the_preflight_is_open() {
+        must_refuse_shape_fault("arity pre-flight", "trace_width", || Ok::<_, String>(()));
+    }
+
+    #[test]
+    #[should_panic(expected = "row 1 is 4 wide but the committed")]
+    fn assert_committed_shape_reds_on_a_ragged_trace() {
+        let desc = EffectVmDescriptor2 {
+            name: "probe".to_string(),
+            trace_width: 8,
+            public_input_count: 1,
+            tables: vec![],
+            constraints: vec![],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let trace = vec![vec![BabyBear::new(0); 8], vec![BabyBear::new(0); 4]];
+        assert_committed_shape("probe", &desc, &trace, &[BabyBear::new(0)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "PI vector is 2 long but the committed")]
+    fn assert_committed_shape_reds_on_a_mis_sized_pi_vector() {
+        let desc = EffectVmDescriptor2 {
+            name: "probe".to_string(),
+            trace_width: 8,
+            public_input_count: 1,
+            tables: vec![],
+            constraints: vec![],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let trace = vec![vec![BabyBear::new(0); 8]];
+        assert_committed_shape("probe", &desc, &trace, &[BabyBear::new(0); 2]);
     }
 
     #[test]

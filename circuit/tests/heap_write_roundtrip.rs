@@ -93,7 +93,7 @@ use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
-use dregg_circuit::refusal::{Outcome, classify};
+use dregg_circuit::refusal::{Outcome, assert_committed_shape, classify, shape_fault};
 use dregg_turn::rotation_witness as rw;
 
 const KEY: &str = "heapWriteVmDescriptor2R24";
@@ -231,56 +231,17 @@ fn compact_like_the_producer(trace: &mut Vec<Vec<BabyBear>>) {
     compact_e1_columns(trace, KEY).expect("deployed E1 compaction of the heap-write row");
 }
 
-/// Substrings of a prover `Err` that name a SHAPE/deploy fault rather than a witness refusal. This
-/// file's repaired vacuity WAS one of these being read as an unsat verdict.
-const SHAPE_FAULT_MARKERS: [&str; 3] = [
-    "must equal descriptor trace_width",
-    "public_input",
-    "public input",
-];
-
-/// Pin that `trace`/`dpis` have EXACTLY the committed member's shape, so a subsequent prover `Err`
-/// cannot be a width complaint. Structural, not string-matched: this is the guard, and
-/// [`SHAPE_FAULT_MARKERS`] is only the second net behind it.
-fn assert_committed_shape(
-    what: &str,
-    desc: &EffectVmDescriptor2,
-    trace: &[Vec<BabyBear>],
-    dpis: &[BabyBear],
-) {
-    for (i, row) in trace.iter().enumerate() {
-        assert_eq!(
-            row.len(),
-            desc.trace_width,
-            "{what}: row {i} is {} wide but the committed {} is {} — a SHAPE fault. The prover \
-             reports it as an Err, and a tooth that reads any Err as 'refused' would pass here with \
-             the forgery never examined.",
-            row.len(),
-            desc.name,
-            desc.trace_width
-        );
-    }
-    assert_eq!(
-        dpis.len(),
-        desc.public_input_count,
-        "{what}: PI vector is {} long but the committed {} declares {} — a SHAPE fault, not a \
-         refusal",
-        dpis.len(),
-        desc.name,
-        desc.public_input_count
-    );
-}
-
 /// **THE REFUSAL DISCRIMINATOR.** Run prove+verify and return the refusal REASON, or `None` if the
 /// witness was ACCEPTED.
 ///
-/// Three layers keep a non-refusal from wearing a refusal's clothes:
+/// Both layers now live in [`dregg_circuit::refusal`], so every tooth in the tree inherits them —
+/// this file's private copies were lifted there:
 ///
 ///  * the committed SHAPE is pinned first ([`assert_committed_shape`]), so the prover is genuinely
 ///    asked about this witness rather than about the row's width;
 ///  * [`classify`] REDs on any panic that is not the p3 debug prover's documented unsat verdict (a
-///    stray unwrap, a trace-assembly `debug_assert`, a height assert);
-///  * an `Err` naming a [`SHAPE_FAULT_MARKERS`] fault REDs even so.
+///    stray unwrap, a trace-assembly `debug_assert`, a height assert) **and** on any `Err` naming a
+///    `refusal::SHAPE_FAULT_MARKERS` arity fault.
 fn refusal_reason(
     what: &str,
     desc: &EffectVmDescriptor2,
@@ -297,17 +258,8 @@ fn refusal_reason(
         // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal by the constraint system.
         Outcome::UnsatPanic(m) => Some(format!("p3 unsat verdict — {m}")),
         // The pre-flight in-trace replay refusing fail-closed (the PREFERRED mechanism per
-        // `dregg_circuit::refusal`) — but never a width complaint.
-        Outcome::Err(e) => {
-            let msg = e.to_string();
-            assert!(
-                !SHAPE_FAULT_MARKERS.iter().any(|m| msg.contains(m)),
-                "{what}: the prover refused with a SHAPE/deploy fault, not a witness refusal: \
-                 {msg}\nThat is not the constraint system rejecting the forgery — it is the exact \
-                 vacuity this tooth was repaired for."
-            );
-            Some(format!("fail-closed replay refusal — {msg}"))
-        }
+        // `dregg_circuit::refusal`); `classify` has already redded any width/arity complaint.
+        Outcome::Err(e) => Some(format!("fail-closed replay refusal — {e}")),
         Outcome::Accepted(_) => None,
     }
 }
@@ -645,5 +597,85 @@ fn after_root_completion_lane_forge_is_unsat() {
         "AFTER-ROOT FORGE: a heap-write forged to differ ONLY in the after-root's high seven \
          completion lanes proves+verifies through the deployed descriptor — the 8-felt AFTER-root is \
          NOT bound (lane-0 only). This is a live light-client soundness gap."
+    );
+}
+
+/// **THE SHAPE-VACUITY GUARD, DEMONSTRATED AGAINST THE REAL PROVER** — the reason
+/// `dregg_circuit::refusal` now reds on an arity `Err`, proved rather than documented.
+///
+/// This file's repaired vacuity (header §"Why (b) is built on the RAW row") was a *string* the real
+/// prover emits. The lifted guard nets that string — but a marker list is only as good as its match
+/// against what the prover ACTUALLY says, and that is a fact about `prove_vm_descriptor2`, not about
+/// `refusal.rs`. So: take the HONEST fixture (which `after_root_completion_lane_forge_is_unsat`
+/// proves + verifies), mis-shape it, and hand it to the SAME `classify` every tooth uses.
+///
+/// **The mis-shape is a WIDENING, and the direction is load-bearing.** Measured here: a row one
+/// column SHORT of `trace_width` PROVES, because `trace_with_chip_lanes`
+/// (`descriptor_ir2.rs:6075`) zero-`resize`s any short row up to the descriptor width *before* the
+/// arity pre-flight sees it — by design, so a producer may build at the pre-lane width. Only a row
+/// WIDER than the committed width reaches `descriptor_ir2.rs:5957` and returns the width `Err`. That
+/// is exactly the historical fault (`append_wide_carriers` re-inflating 1963 → 3065), so widening is
+/// what this gate reproduces. It is also why `assert_committed_shape` — which catches BOTH directions
+/// structurally — is the primary guard and the marker list only the second net.
+///
+/// Both poles are asserted:
+///
+///  * the prover's own message must still trip `refusal::shape_fault` (if the string ever drifts, the
+///    marker list is stale and this reds — the marker net cannot silently stop netting);
+///  * `classify` must therefore PANIC rather than return `Outcome::Err`. Before the lift it returned
+///    `Outcome::Err`, and any tooth reading that as "refused" recorded a refusal it never earned.
+#[test]
+fn a_misshaped_trace_reds_instead_of_counting_as_a_refusal() {
+    let wide_desc = parse_vm_descriptor2(registry_json(WIDE_REGISTRY_STAGED_TSV, KEY)).unwrap();
+    let (raw_trace, raw_dpis, map_heaps) = heap_write_fixture(true);
+    let mb = MemBoundaryWitness::default();
+
+    let mut htrace = raw_trace;
+    compact_like_the_producer(&mut htrace);
+    assert_committed_shape("honest heap-write", &wide_desc, &htrace, &raw_dpis);
+
+    // THE MIS-SHAPE: one column WIDER than the committed width, everything else honest.
+    let mut wide = htrace.clone();
+    for row in wide.iter_mut() {
+        row.push(BabyBear::ZERO);
+    }
+    assert_eq!(wide[0].len(), wide_desc.trace_width + 1);
+
+    // POLE 1 — the prover's ACTUAL words are still what the marker list nets.
+    // (`Ir2BatchProof` is not `Debug`, so no `expect_err` — match it.)
+    let raw_err = match prove_vm_descriptor2(&wide_desc, &wide, &raw_dpis, &mb, &map_heaps) {
+        Err(e) => e,
+        Ok(_) => panic!(
+            "an over-wide trace PROVED — the arity pre-flight at descriptor_ir2.rs:5957 is GONE, and \
+             the shape-vacuity class is wide open again"
+        ),
+    };
+    let marker = shape_fault(&raw_err).unwrap_or_else(|| {
+        panic!(
+            "the prover's arity complaint is no longer matched by \
+             refusal::SHAPE_FAULT_MARKERS — the marker net has gone STALE and every tooth is \
+             exposed again. Prover said: {raw_err}"
+        )
+    });
+    eprintln!("SHAPE-VACUITY GUARD: prover said {raw_err:?}; netted by marker {marker:?}");
+
+    // POLE 2 — so `classify`, the primitive under every tooth, REFUSES TO RETURN a verdict.
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        classify("misshaped heap-write", || {
+            let proof = prove_vm_descriptor2(&wide_desc, &wide, &raw_dpis, &mb, &map_heaps)?;
+            verify_vm_descriptor2(&wide_desc, &proof, &raw_dpis)
+        })
+    }));
+    let payload = verdict
+        .err()
+        .expect(
+            "classify RETURNED a verdict for a mis-shaped trace — the shape guard is not armed, and \
+             a tooth reading Outcome::Err as 'refused' is once again vacuous",
+        )
+        .downcast::<String>()
+        .expect("the guard panics with a formatted message");
+    assert!(
+        payload.contains("SHAPE/ARITY fault"),
+        "the panic must NAME the shape fault, not merely happen: {payload}"
     );
 }
