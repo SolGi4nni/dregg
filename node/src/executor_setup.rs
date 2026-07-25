@@ -241,7 +241,10 @@ pub fn configure_turn_executor(
     // verifier on every production executor: the predicate-less entry refuses,
     // and the named entry accepts only the exact Lean-emitted v2 relation and
     // fixed 44-felt statement reconstructed by the executor.
-    executor.set_proof_verifier(Box::new(dregg_turn::FaithfulNoteSpendVerifier::new()));
+    // (The verifier moved to `dregg-turn-prover` with the prover-crate extraction: core
+    // `dregg-turn` no longer links `dregg-circuit-prove`, so the concrete HidingFRI
+    // verifier lives on the prover side and the node injects it here.)
+    executor.set_proof_verifier(Box::new(dregg_turn_prover::FaithfulNoteSpendVerifier::new()));
 
     // The spent-note accumulator is durable finalized state, not executor-local
     // scratch.  Every short-lived production executor must begin at that exact
