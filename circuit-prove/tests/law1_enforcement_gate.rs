@@ -633,6 +633,16 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit-prove/src/private_preference_cell.rs", 2),
     ("circuit-prove/src/shielded/attest.rs", 11),
     ("circuit-prove/src/shielded/spend_circuit.rs", 11),
+    // ⚑ 639 lines of Rust-authored CircuitDescriptor added FOR the felt-width repair — the drift
+    // the law names, arriving inside a correctness fix. A LEAN ROUTE NOW EXISTS:
+    // Dregg2/Circuit/Emit/WideValueBindingEmit.lean authors the whole AIR (byte-pinned, 29874 B)
+    // and WideValueBindingRefine proves EVERY emitted constraint — including
+    // legacy_join_cannot_separate_aliases, which needs no crypto: the one-felt legacy join is
+    // provably blind to a v / v+p alias pair, for ANY hash.
+    // WHAT BLOCKS DELETION IS NOT LEAN: the deployed sidecar rides prove_dsl_zk on a v1
+    // DslCircuit and there is no IR-2 -> v1 lowering, so moving it changes the proof BYTES on
+    // the Turn wire (turn/src/action.rs:995, turn-prover/src/shielded_transfer_verifier.rs).
+    // That is a deploy decision, not a proof gap. Delete this row in the SAME commit as the file.
     ("circuit-prove/src/shielded/wide_value_binding.rs", 7),
     ("circuit-prove/src/shielded_ring_clearing_air.rs", 75),
     ("circuit-prove/src/shielded_ring_clearing_nleg_air.rs", 32),
