@@ -64,6 +64,16 @@ import Dregg2.Circuit.Emit.PredicatesNeqEmit
 import Dregg2.Circuit.Emit.PresentationEmit
 import Dregg2.Circuit.Emit.QuantifiedAbsenceEmit
 import Dregg2.Circuit.Emit.TemporalPredicateEmit
+-- The four STARK-ified peer-chain lightclient verification AIRs (bridge tree). Each emits its
+-- consensus-verification as an `EffectVmDescriptor2` carrying the chain's no-forgery obligation
+-- (`eth_no_forgery` / `tmNoForgery` / `sol_no_forgery` / `mid_no_forgery`); routing them here puts
+-- their byte-pinned descriptors under the same Lean-authored drift gate as every other by-name
+-- artifact, so a dregg node emits + proves them from the VERIFIED Lean emission (the prerequisite
+-- for the gnark peer-wrap → on-chain DreggPeerRegistry flow).
+import Dregg2.Circuit.Emit.LightClientEthAir
+import Dregg2.Circuit.Emit.LightClientTendermintAir
+import Dregg2.Circuit.Emit.LightClientSolanaAir
+import Dregg2.Circuit.Emit.LightClientMidnightAir
 import Dregg2.Crypto.PrivateGraphRewriteDescriptor
 import Dregg2.Games.PrivateQuestGraphDescriptor
 import Dregg2.Crypto.PrivateGraphRewriteCellDescriptor
@@ -253,6 +263,21 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
   -- DELETED in the felt-width cutover of 2026-07-23 — it must never re-enter this table.
   , ("guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json",
       Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit.guardedHidingSpanWideBlindDesc)
+  -- ⚑ The four peer-chain lightclient verification AIRs. Each is byte-pinned by a machine-checked
+  -- `#guard emitVmJson2 <desc> == <GOLDEN>` in its authoring module (`LightClient*Air.lean`); this
+  -- table makes those bytes the SOLE checked-in artifact and RE-DERIVABLE from the Lean author
+  -- (house-law #1). The descriptors carry the chain's consensus no-forgery obligation, so a dregg
+  -- node can now emit + prove the STARK from `descriptor_by_name` — the producibility prerequisite
+  -- for the gnark peer-wrap → on-chain `DreggPeerRegistry` true-peers flow. Soundness WHEN USED
+  -- still rests on the undischarged FRI/STARK floor and each chain's trusted-instance mirror.
+  , ("dregg-eth-lightclient-verify-v1.json",
+      Dregg2.Circuit.Emit.LightClientEthAir.ethLcVerifyDesc)
+  , ("dregg-tm-lightclient-verify-v1.json",
+      Dregg2.Circuit.Emit.LightClientTendermintAir.tmLcVerifyDesc)
+  , ("dregg-solana-lightclient-verify-v1.json",
+      Dregg2.Circuit.Emit.LightClientSolanaAir.solLcVerifyDesc)
+  , ("dregg-midnight-lightclient-verify-v1.json",
+      Dregg2.Circuit.Emit.LightClientMidnightAir.midLcVerifyDesc)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -267,7 +292,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 63
+#guard byNameDescriptors.length == 67
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

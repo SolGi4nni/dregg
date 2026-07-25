@@ -239,6 +239,26 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-automatafl-step-marks-n11",
         AUTOMATAFL_STEP_MARKS_N11_JSON,
     ),
+    // The four peer-chain lightclient verification AIRs — dispatched by EXACT NAME (they are not a
+    // `PredicateKind` family). Keys are the descriptors' self-declared `name` fields; the golden's
+    // `name` must equal the key (checked by `every_static_golden_decodes_and_dispatches`). This is
+    // what makes the STARK-ified lightclients PRODUCIBLE by a node (`descriptor_by_name` → prove).
+    (
+        "dregg-eth-lightclient-verify::v1",
+        ETH_LIGHTCLIENT_VERIFY_JSON,
+    ),
+    (
+        "dregg-tm-lightclient-verify::v1",
+        TM_LIGHTCLIENT_VERIFY_JSON,
+    ),
+    (
+        "dregg-solana-lightclient-verify::v1",
+        SOLANA_LIGHTCLIENT_VERIFY_JSON,
+    ),
+    (
+        "dregg-midnight-lightclient-verify::v1",
+        MIDNIGHT_LIGHTCLIENT_VERIFY_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -406,6 +426,23 @@ const AUTOMATAFL_STEP_MARKS_N2_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-step-marks-n2.json");
 const AUTOMATAFL_STEP_MARKS_N11_JSON: &str =
     include_str!("../descriptors/by-name/automatafl-step-marks-n11.json");
+
+/// The four STARK-ified peer-chain lightclient VERIFICATION AIRs (bridge tree), each authored +
+/// byte-pinned in `metatheory/Dregg2/Circuit/Emit/LightClient{Eth,Tendermint,Solana,Midnight}Air.lean`
+/// (`ethLcVerifyDesc` / `tmLcVerifyDesc` / `solLcVerifyDesc` / `midLcVerifyDesc`, each with an
+/// `emitVmJson2` `#guard`) and re-derived onto `by-name/` by `EmitByName.lean`. Dispatched here so a
+/// dregg node can `descriptor_by_name(name)` → `prove_vm_descriptor2` the consensus-verification STARK
+/// (the producibility prerequisite for the gnark peer-wrap → on-chain `DreggPeerRegistry` flow). Each
+/// descriptor carries the chain's no-forgery obligation; soundness WHEN USED still rests on the
+/// undischarged FRI/STARK floor and the chain's trusted-instance mirror.
+const ETH_LIGHTCLIENT_VERIFY_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-eth-lightclient-verify-v1.json");
+const TM_LIGHTCLIENT_VERIFY_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-tm-lightclient-verify-v1.json");
+const SOLANA_LIGHTCLIENT_VERIFY_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-solana-lightclient-verify-v1.json");
+const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-midnight-lightclient-verify-v1.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
