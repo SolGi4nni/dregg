@@ -77,6 +77,19 @@ universal rejection. It does **not** prove satisfiability at the opaque `cfg*` a
 3. **The other branch of the dichotomy** — `∀ S` proves farness survives for a *fold-consistent* prover;
    that a fold-**inconsistent** prover is caught by the query phase is proved nowhere in-tree.
 
+## ⚑ R11 REFINED — honest `True` vs evasive `True`
+
+Both look identical to `rg "extractable := True"`. They are not the same finding:
+
+* **EVASIVE** (the wound; all eight carrier-gated reference kernels): the carrier is `True` to AVOID
+  proving something, so the soundness theorem is true-and-unappliable. `CarrierAudit` catches these —
+  it demands a *refutation* at a broken sibling oracle, which `True` can never have.
+* **HONEST** (`PrivateLeg.honestPrivVerifier`, retired as a false positive): the proof TYPE is
+  `Σ pl, PLift (PrivLegHolds …)`, so the witness is structurally present and extraction is free *by
+  construction*; the real content is in `verify_sound`, which is **proved**.
+
+The checkable test: **is the carrier discharging work, or recording that there is none?**
+
 ## Done log
 - **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
   `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
@@ -88,6 +101,10 @@ universal rejection. It does **not** prove satisfiability at the opaque `cfg*` a
   off as contention; it wasn't. `maxRecDepth` was *masking* the real fault: `noteSpendV3` had grown a
   third map op and the `rfl`-fed shape lemma still passed two. Fixing it also unblocked the kernel/config
   receipts that had been stranded unverified behind it.
+- **The R11 repair BIT a real victim** (`d59290c4d1`): `StripeAttest` was discharging
+  `DecoVerifierKernel.extractable` with `trivial : True` — which only typechecked *because* the carrier
+  was `True`. RED at HEAD, leaking `sorryAx` into a pinned keystone. Fixed with the real proof, not by
+  restoring `trivial`. **Second** RED-at-HEAD `sorryAx` leak found today.
 - **Duplication killed** (`672c169a31`) — `hitWin`/`hit_cond`/`hit_bound` deduped by measured closures
   (51 vs 295 modules), 661→538 lines, all four consumers build **unedited**.
 - L0–L6 correlated-agreement ladder landed; crux `polishchuk_spielman` PROVEN (Cramér–Nardi-fixed).
