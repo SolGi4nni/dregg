@@ -635,10 +635,16 @@ pub fn grain_r3_verify_core_available() -> bool {
 /// R3-ACCEPT DECISION as a Lean-verified object (leanc-native): a whole-history proof cannot be
 /// re-pointed at a foreign anchor (`r3_head_mismatch_rejected`), and a non-verifying aggregate rejects.
 ///
-/// Wire grammar the export reads:
-///   * in:  `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints — the whole-chain STARK
-///     verifier's status as 0/1, the aggregate's committed head, and the R1-anchored attestation head).
-///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed wire).
+/// Wire grammar the export reads (WIDENED by wound #22 — `docs/WOUND-felt-width-boundaries-2026-07-19.md`;
+/// the pre-repair three-int form now fails CLOSED, so a stale caller cannot re-open the ~31-bit binding):
+///   * in:  33 decimal ints — `"aggregateVerified presentedVk[0..8] expectedVk[0..8]
+///     aggregateHead[0..8] anchoredHead[0..8]"`. The status is the whole-chain STARK verifier's 0/1
+///     (run against the CALLER'S anchor); `presentedVk` is the fingerprint RECOMPUTED from the
+///     presented root and `expectedVk` the caller's out-of-band anchor, each as a `RecursionVk`'s 32
+///     bytes in eight big-endian `u32` lanes; the two heads are the FULL 8-felt (~124-bit) state
+///     anchors (`SEG_ANCHOR_WIDTH` lanes), not a lane-0 projection.
+///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed or wrong-arity
+///     wire — the parse is strict, so a non-integer token cannot be dropped and shift the lanes).
 ///
 /// `grain-verify::r3_verify` folds the finalized-turn chain, reads the verified-status from
 /// `verify_whole_chain_proof_bytes`, and routes the accept decision through THIS entry — the DECISION is
@@ -1532,19 +1538,63 @@ mod ffi {
         use super::*;
         /// THE R3 DECISION IN LEAN: the verified GRAIN R3 whole-history verify core runs
         /// (leanc-compiled native) — the object `grain-verify::r3_verify` routes its accept decision
-        /// through. Mirrors the Lean `#guard`s in `Dregg2.Grain.R3Verify` on the wire: a verified
-        /// aggregate with matching heads ACCEPTS ("1"); a MISMATCHED anchored head REJECTS ("0", the
-        /// anti-ghost head tooth); a NON-verifying aggregate REJECTS ("0"); a malformed wire fails
-        /// CLOSED ("0"). The extracted `r3VerifyCore` is the real gate, not `fun _ => true`.
+        /// through. Mirrors the Lean `#guard`s in `Dregg2.Grain.R3Verify` on the POST-WOUND-#22 wire
+        /// (33 ints: status ‖ presentedVk[8] ‖ expectedVk[8] ‖ aggregateHead[8] ‖ anchoredHead[8]):
+        /// honest facts ACCEPT ("1"); an aggregate head differing ONLY OUTSIDE LANE 0 REJECTS ("0" —
+        /// the anti-ghost tooth at full 8-felt width, where the pre-repair lane-0 core ACCEPTED); a
+        /// presented VK that is not the caller's anchor REJECTS ("0" — the anti-self-anchor tooth); a
+        /// NON-verifying aggregate REJECTS ("0"); and the PRE-REPAIR three-int wire plus any malformed
+        /// wire fail CLOSED ("0"). The extracted `r3VerifyCore` is the real gate, not `fun _ => true`.
         #[test]
         fn verified_grain_r3_verify_runs_in_lean() {
             lean_init_once().expect("init the Lean runtime");
-            // Verified aggregate + matching heads ACCEPT.
-            assert_eq!(lean_grain_r3_verify("1 42 42").expect("round-trip"), "1");
-            // Mismatched anchored head REJECTS (a whole-history proof cannot be re-pointed).
-            assert_eq!(lean_grain_r3_verify("1 42 43").unwrap(), "0");
-            // Non-verifying aggregate REJECTS regardless of the heads.
-            assert_eq!(lean_grain_r3_verify("0 42 42").unwrap(), "0");
+            // One wire: status, then four eight-lane values.
+            let wire = |st: u8, p: [u32; 8], e: [u32; 8], a: [u32; 8], b: [u32; 8]| -> String {
+                let mut s = st.to_string();
+                for v in p.iter().chain(&e).chain(&a).chain(&b) {
+                    s.push(' ');
+                    s.push_str(&v.to_string());
+                }
+                s
+            };
+            let vk_a = [11u32, 22, 33, 44, 55, 66, 77, 88];
+            // A DIFFERENT circuit's fingerprint (lane 0 bumped).
+            let vk_b = [12u32, 22, 33, 44, 55, 66, 77, 88];
+            let head = [7u32, 101, 102, 103, 104, 105, 106, 107];
+            // The ~2^31 grind product: lane 0 IDENTICAL, lane 1 different.
+            let forged = [7u32, 999, 102, 103, 104, 105, 106, 107];
+
+            // Verified aggregate + the caller's own anchor + matching 8-felt heads ACCEPT.
+            assert_eq!(
+                lean_grain_r3_verify(&wire(1, vk_a, vk_a, head, head)).expect("round-trip"),
+                "1"
+            );
+            // THE WIDTH TOOTH: a head differing ONLY OUTSIDE LANE 0 REJECTS. Everything the
+            // pre-repair seam compared (`final_root[0]`) is equal here, so it accepted this.
+            assert_eq!(
+                lean_grain_r3_verify(&wire(1, vk_a, vk_a, forged, head)).unwrap(),
+                "0"
+            );
+            // THE ANTI-SELF-ANCHOR TOOTH: a presented fingerprint that is not the caller's anchor
+            // REJECTS …
+            assert_eq!(
+                lean_grain_r3_verify(&wire(1, vk_b, vk_a, head, head)).unwrap(),
+                "0"
+            );
+            // … while the self-anchored shape (presented == expected, as the pre-repair seam had it)
+            // accepts that very same foreign fingerprint — the vacuity the repair removed.
+            assert_eq!(
+                lean_grain_r3_verify(&wire(1, vk_b, vk_b, head, head)).unwrap(),
+                "1"
+            );
+            // Non-verifying aggregate REJECTS regardless of the VKs and heads.
+            assert_eq!(
+                lean_grain_r3_verify(&wire(0, vk_a, vk_a, head, head)).unwrap(),
+                "0"
+            );
+            // The PRE-REPAIR three-int wire fails CLOSED — a stale caller cannot re-open the
+            // ~31-bit binding by accident.
+            assert_eq!(lean_grain_r3_verify("1 42 42").unwrap(), "0");
             // Malformed wire fails CLOSED.
             assert_eq!(lean_grain_r3_verify("garbage").unwrap(), "0");
         }

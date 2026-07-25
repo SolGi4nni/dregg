@@ -21,19 +21,20 @@
 
 use dregg_agent::agent::GrainTurnMinter;
 use grain_turn::{ToolGatewayMinter, finalize_session};
-use grain_verify::{R3Error, r3_verify};
+use grain_verify::{R3Error, r3_setup_anchor, r3_verify};
 
-/// The wide (8-felt, ~124-bit) head-lane commit of the last leg in the chain — the
-/// fold's committed head, exactly the anchor the honest case pins (mirrors the R3
-/// whole-history test's `final_root.as_u32()`).
-fn chain_head(legs: &[dregg_circuit_prove::ivc_turn_chain::FinalizedTurn]) -> u32 {
-    legs.last()
+/// The FULL wide (8-felt, ~124-bit) head commit of the last leg in the chain — the fold's
+/// committed head, exactly the anchor the honest case pins. All eight lanes: the pre-repair
+/// seam projected this to lane 0 (~31 bits), which is wound #22.
+fn chain_head(legs: &[dregg_circuit_prove::ivc_turn_chain::FinalizedTurn]) -> [u32; 8] {
+    let wide = legs
+        .last()
         .expect("non-empty chain")
         .participant
         .rotated
         .wide_new_root8()
-        .expect("deployed grain leg is wide-anchored")[0]
-        .as_u32()
+        .expect("deployed grain leg is wide-anchored");
+    core::array::from_fn(|i| wide[i].as_u32())
 }
 
 #[test]
@@ -78,19 +79,29 @@ fn r3_verifies_a_real_driven_grain_session() {
     );
     let head = chain_head(&legs);
 
-    // (i) HONEST — the real driven session, anchored at its genuine folded head → "1".
+    // SETUP — the honest party mints its OWN trust anchor from a fold IT produced (the
+    // `fold_and_attest` role). Verifying against the presented proof's own fingerprint is
+    // what wound #22 removed.
+    let anchor = r3_setup_anchor(&legs).expect("the honest setup fold mints an anchor");
+
+    // (i) HONEST — the real driven session, anchored at its genuine folded 8-felt head → "1".
     let t_fold = std::time::Instant::now();
-    let v = r3_verify(&legs, head).expect("a real driven grain session R3-verifies");
+    let v = r3_verify(&legs, &head, &anchor).expect("a real driven grain session R3-verifies");
     let fold_elapsed = t_fold.elapsed();
     assert_eq!(v.num_turns, legs.len());
     assert_eq!(v.anchored_head, head);
     assert_eq!(
         v.aggregate_head, head,
-        "the aggregate's committed head IS the genuine fold head (head-binding holds)"
+        "the aggregate's committed 8-felt head IS the genuine fold head, in every lane"
     );
 
-    // (ii) WRONG-HEAD — the SAME chain anchored at head+1 → the Lean anti-ghost tooth rejects.
-    match r3_verify(&legs, head.wrapping_add(1)) {
+    // (ii) WOUND #22 — THE WIDTH TOOTH, on a real driven session. The SAME chain anchored at
+    // a head byte-identical in LANE 0 and different only at lane 1: everything the pre-repair
+    // seam compared is equal, so it ACCEPTED this. The widened binding must REJECT.
+    let mut lane1_forged = head;
+    lane1_forged[1] = lane1_forged[1].wrapping_add(1);
+    assert_eq!(lane1_forged[0], head[0], "invisible to the lane-0 seam");
+    match r3_verify(&legs, &lane1_forged, &anchor) {
         Err(R3Error::Rejected {
             aggregate_verified,
             anchored_head,
@@ -100,14 +111,17 @@ fn r3_verifies_a_real_driven_grain_session() {
                 aggregate_verified,
                 "the aggregate itself DID verify — only the anchor is foreign"
             );
-            assert_eq!(anchored_head, head.wrapping_add(1));
+            assert_eq!(anchored_head, lane1_forged);
         }
-        other => panic!("a foreign anchor must be Lean-REJECTED; got {other:?}"),
+        other => panic!(
+            "a foreign anchor differing ONLY OUTSIDE LANE 0 must be Lean-REJECTED (wound #22); \
+             got {other:?}"
+        ),
     }
 
     // (iii) TAMPER — forge the last leg's claimed post-state PI → the fold does not verify.
     let forged = forge_last_post_state(minter.records());
-    match r3_verify(&forged, head) {
+    match r3_verify(&forged, &head, &anchor) {
         Err(R3Error::Rejected {
             aggregate_verified, ..
         }) => assert!(

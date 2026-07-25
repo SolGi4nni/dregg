@@ -21,7 +21,8 @@ use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
 use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 
-use grain_verify::{R3Error, r3_verify};
+use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
+use grain_verify::{R3Error, r3_setup_anchor, r3_verify};
 
 // ── The canonical rotated mint fixture (copied from whole_history_demo). ──────────────
 
@@ -51,8 +52,14 @@ fn producer_cell(balance: i64, nonce: u64) -> dregg_cell::Cell {
 }
 
 /// ONE real finalized turn on the production descriptor path (mandatory rotated leg).
-/// Returns the turn + its REAL rotated `(old_root, new_root)` head-lane commitments.
-fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear, BabyBear) {
+/// Returns the turn + its REAL rotated `(old_root, new_root)` commitments as the FULL
+/// 8-felt (~124-bit) wide anchors — `wide_old_root8()` / `wide_new_root8()`, not a lane-0
+/// projection of them (wound #22).
+fn make_turn(
+    balance: u64,
+    nonce: u32,
+    amount: u64,
+) -> (FinalizedTurn, [BabyBear; 8], [BabyBear; 8]) {
     let state = CellState::new(balance, nonce);
     let effects = vec![Effect::Transfer {
         amount,
@@ -74,8 +81,8 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear,
         None,
     )
     .expect("rotated transfer leg mints + self-verifies");
-    let old_root = leg.wide_old_root8().expect("deployed leg is wide-anchored")[0];
-    let new_root = leg.wide_new_root8().expect("deployed leg is wide-anchored")[0];
+    let old_root = leg.wide_old_root8().expect("deployed leg is wide-anchored");
+    let new_root = leg.wide_new_root8().expect("deployed leg is wide-anchored");
     (
         FinalizedTurn::new(DescriptorParticipant::rotated(leg)),
         old_root,
@@ -90,11 +97,11 @@ fn make_chain(
     start_nonce: u32,
     step: u64,
     k: usize,
-) -> (Vec<FinalizedTurn>, BabyBear, BabyBear) {
+) -> (Vec<FinalizedTurn>, [BabyBear; 8], [BabyBear; 8]) {
     let mut turns = Vec::with_capacity(k);
     let mut balance = start_balance;
-    let mut genesis = BabyBear::ZERO;
-    let mut final_root = BabyBear::ZERO;
+    let mut genesis = [BabyBear::ZERO; 8];
+    let mut final_root = [BabyBear::ZERO; 8];
     for i in 0..k {
         let nonce = start_nonce + i as u32;
         let (turn, old_root, new_root) = make_turn(balance, nonce, step);
@@ -103,7 +110,7 @@ fn make_chain(
         } else {
             assert_eq!(
                 old_root, final_root,
-                "real chain: turn {i} continues the previous"
+                "real chain: turn {i} continues the previous (all 8 lanes)"
             );
         }
         final_root = new_root;
@@ -111,6 +118,11 @@ fn make_chain(
         balance -= step;
     }
     (turns, genesis, final_root)
+}
+
+/// The 8-felt wide anchor as the canonical `u32` lanes `r3_verify` takes.
+fn lanes(w: &[BabyBear; 8]) -> [u32; 8] {
+    core::array::from_fn(|i| w[i].as_u32())
 }
 
 /// Forge the LAST turn's claimed post-state (the genuine 8-felt wide AFTER-commit PI):
@@ -141,7 +153,7 @@ fn forge_last_post_state(mut chain: Vec<FinalizedTurn>) -> Vec<FinalizedTurn> {
 // ── THE R3 END-TO-END TEST (SLOW: real recursion folds; #[ignore]'d). ─────────────────
 
 #[test]
-#[ignore = "SLOW: real recursion folds (~minutes each, 3 folds); run with --ignored"]
+#[ignore = "SLOW: real recursion folds (~minutes each, 5 folds: 1 honest-setup anchor + 4 poles); run with --ignored"]
 fn r3_whole_history_unfoolable_decided_by_lean() {
     // The DECISION is the Lean-proven verifier: without the extracted core in the linked
     // archive there is NO Rust fallback (by design). If it is absent, the archive needs a
@@ -158,23 +170,38 @@ fn r3_whole_history_unfoolable_decided_by_lean() {
 
     // A small genuine chain (K = 2 — the minimum non-trivial recursion tree).
     let (turns, _genesis, final_root) = make_chain(1_000, 0, 7, 2);
-    let genuine_head = final_root.as_u32();
+    let genuine_head = lanes(&final_root);
 
-    // (i) HONEST — anchored at the GENUINE head → the Lean verifier returns "1".
+    // SETUP — the honest party mints its OWN trust anchor from a fold IT produced. This is
+    // the `fold_and_attest` role; verifying against the presented proof's own fingerprint
+    // (what the pre-fix seam did) establishes nothing (wound #22).
+    let ts = std::time::Instant::now();
+    let anchor = r3_setup_anchor(&turns).expect("the honest setup fold mints an anchor");
+    let setup_fold = ts.elapsed();
+
+    // (i) HONEST — anchored at the GENUINE 8-felt head, under the honest anchor → "1".
     let t0 = std::time::Instant::now();
-    let v = r3_verify(&turns, genuine_head).expect("a genuine whole history R3-verifies");
+    let v = r3_verify(&turns, &genuine_head, &anchor).expect("a genuine whole history R3-verifies");
     let honest_fold = t0.elapsed();
     assert_eq!(v.num_turns, 2);
     assert_eq!(v.anchored_head, genuine_head);
     assert_eq!(
         v.aggregate_head, genuine_head,
-        "the aggregate's committed head IS the genuine fold head (head-binding holds)"
+        "the aggregate's committed 8-felt head IS the genuine fold head, in every lane"
     );
 
-    // (ii) WRONG-HEAD — the SAME genuine chain anchored at head+1 → the Lean anti-ghost
-    // head tooth rejects (aggregate verified true, but the head does not bind).
+    // (ii) WOUND #22 FALSIFICATION — THE WIDTH TOOTH. The SAME genuine chain anchored at a
+    // head that is byte-identical in LANE 0 and differs only at lane 1: exactly the product
+    // of the ~2^31 offline grind the wound described. The pre-fix seam compared lane 0 ONLY,
+    // so it ACCEPTED this; the widened binding must REJECT it.
+    let mut lane1_forged = genuine_head;
+    lane1_forged[1] = lane1_forged[1].wrapping_add(1);
+    assert_eq!(
+        lane1_forged[0], genuine_head[0],
+        "the forgery must be INDISTINGUISHABLE to the pre-fix lane-0 seam"
+    );
     let t1 = std::time::Instant::now();
-    let wrong = r3_verify(&turns, genuine_head.wrapping_add(1));
+    let wrong = r3_verify(&turns, &lane1_forged, &anchor);
     let wrong_fold = t1.elapsed();
     match wrong {
         Err(R3Error::Rejected {
@@ -186,18 +213,52 @@ fn r3_whole_history_unfoolable_decided_by_lean() {
                 aggregate_verified,
                 "the aggregate itself DID verify — only the foreign anchor is rejected"
             );
-            assert_eq!(anchored_head, genuine_head.wrapping_add(1));
+            assert_eq!(anchored_head, lane1_forged);
         }
-        other => panic!("a foreign anchor must be Lean-REJECTED; got {other:?}"),
+        other => panic!(
+            "a foreign anchor differing ONLY OUTSIDE LANE 0 must be Lean-REJECTED (wound #22); \
+             got {other:?}"
+        ),
     }
 
-    // (iii) FABRICATION — a chain whose last turn's post-state is forged → the fold does
-    // not verify → verified-status false → the Lean verifier rejects. Anchor at the
-    // (honest) head so ONLY the verified-status differs.
-    let forged = forge_last_post_state(make_chain(1_000, 0, 7, 2).0);
+    // (iii) WOUND #22 FALSIFICATION — THE ANTI-SELF-ANCHOR TOOTH. The SAME genuine chain,
+    // the GENUINE head, but a trust anchor that is not the one this fold shape carries. The
+    // pre-fix seam read the anchor off the proof, so this input was indistinguishable from
+    // the honest one; now it must REJECT.
+    let mut swapped = anchor.0;
+    swapped[0] ^= 0x01;
+    let swapped_vk = RecursionVk(swapped);
+    assert_ne!(swapped_vk, anchor, "the swapped anchor must differ");
     let t2 = std::time::Instant::now();
-    let fab = r3_verify(&forged, genuine_head);
-    let fab_fold = t2.elapsed();
+    let foreign = r3_verify(&turns, &genuine_head, &swapped_vk);
+    let foreign_fold = t2.elapsed();
+    match foreign {
+        Err(R3Error::Rejected {
+            presented_vk,
+            expected_vk,
+            ..
+        }) => {
+            assert_eq!(expected_vk, swapped_vk, "the caller's anchor is reported");
+            assert_eq!(
+                presented_vk,
+                Some(anchor),
+                "the fingerprint RECOMPUTED from the presented root is reported as a claim, \
+                 and it is NOT the anchor the decision ran against"
+            );
+        }
+        other => panic!(
+            "a root whose fingerprint is not the caller's anchor must be Lean-REJECTED \
+             (wound #22); got {other:?}"
+        ),
+    }
+
+    // (iv) FABRICATION — a chain whose last turn's post-state is forged → the fold does
+    // not verify → verified-status false → the Lean verifier rejects. Anchor at the
+    // (honest) head and anchor so ONLY the verified-status differs.
+    let forged = forge_last_post_state(make_chain(1_000, 0, 7, 2).0);
+    let t3 = std::time::Instant::now();
+    let fab = r3_verify(&forged, &genuine_head, &anchor);
+    let fab_fold = t3.elapsed();
     match fab {
         Err(R3Error::Rejected {
             aggregate_verified, ..
@@ -209,7 +270,9 @@ fn r3_whole_history_unfoolable_decided_by_lean() {
     }
 
     eprintln!(
-        "R3 folds (K=2): honest {honest_fold:?}, wrong-head {wrong_fold:?}, fabrication {fab_fold:?} \
-         — all three ACCEPT decisions rendered by the Lean-proven r3VerifyCore."
+        "R3 folds (K=2): setup-anchor {setup_fold:?}, honest {honest_fold:?}, \
+         lane-1-only forged head {wrong_fold:?}, foreign anchor {foreign_fold:?}, \
+         fabrication {fab_fold:?} — every ACCEPT decision rendered by the Lean-proven \
+         r3VerifyCore, now binding all 8 anchor lanes and a caller-held VK."
     );
 }
