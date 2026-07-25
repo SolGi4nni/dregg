@@ -62,6 +62,16 @@ name = "receipt_rail_pane"
 path = "tests/receipt_rail_pane.rs"
 required-features = ["firmament", "cockpit-surface", "screenshot"]
 
+# THE SAVE-ROLLBACK test — drives the REAL gpui `Editor` in a headless gpui app
+# over a deliberately-failing `Fs` and asserts a refused save accrues NO patch
+# (the receipt↔patch weld: a patch exists iff the save committed). Needs the gpui
+# editor (`gui`) + the headless harness (`screenshot`); no firmament required (a
+# plain failing `Fs` is enough).
+[[test]]
+name = "save_rollback_pane"
+path = "tests/save_rollback_pane.rs"
+required-features = ["gui", "screenshot"]
+
 [features]
 # By default the editor builds the full windowed gpui surface with
 # rust/json/toml/markdown tree-sitter grammars so a real source file highlights

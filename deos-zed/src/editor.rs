@@ -384,17 +384,20 @@ impl Editor {
             anyhow::bail!("no file open");
         };
         let content = self.text(cx);
-        // The save ACCRUES A PATCH: diff the current buffer against the durable
-        // document's content and commit the minimal patch (the editor edit -> a
-        // verifiable, provenance-bearing patch over the document history). This is
-        // the editor-buffer-as-document weld — the durable form is the history,
-        // not the bytes we also write to disk for readability.
-        if let Some(doc) = self.doc.as_mut() {
-            doc.edit_rope(self.author, &Rope::from_str(&content));
-        }
-        let patches = self.patch_count();
         match self.fs.save(&path, &content) {
             Ok(()) => {
+                // The save COMMITTED — only NOW accrue the patch: diff the current
+                // buffer against the durable document's content and commit the minimal
+                // patch (the editor edit -> a verifiable, provenance-bearing patch over
+                // the document history). Accruing AFTER the save is the receipt↔patch
+                // weld: a patch exists iff the save landed, so a refused/failed cap-save
+                // leaves patch_count and the history untouched (no phantom patch, no
+                // Structure/Ledger drift). This is the editor-buffer-as-document weld —
+                // the durable form is the history, not the bytes we also write to disk.
+                if let Some(doc) = self.doc.as_mut() {
+                    doc.edit_rope(self.author, &Rope::from_str(&content));
+                }
+                let patches = self.patch_count();
                 self.dirty = false;
                 let name = path
                     .file_name()
