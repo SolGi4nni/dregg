@@ -32,19 +32,26 @@ THE ABSTRACT MODULE ELEMENT `A·z − c·t1·2^d`, not to a re-expression of the
   the `Fips204Spec.RoundingScheme.useHint` field, at the executable types, applied to the genuine module
   element the spec quantifies over — NOT `challengeMatches`, NOT a bisection.
 
-## HONEST FRONTIER — the ONE remaining leg, stated as the exact open goal (NAMED, not laundered)
+## WHERE THIS LEG GOES — both steps above it are now CLOSED (the frontier moved)
 
 `w1Row_recovers_arg` closes the `useHint`-of-argument step: the input to verifyCore's per-coefficient rounding
-IS the coordinates of the abstract `A·z − c·t1·2^d`. What remains between this and the full FIPS 204 hash
-conjunct `decide (verifyB.hash μ (round.useHint h (A·z − c·t1·2^d)) = c̃)` is exactly:
+IS the coordinates of the abstract `A·z − c·t1·2^d`. Two things used to stand between that and the full
+FIPS 204 hash conjunct `decide (verifyB.hash μ (round.useHint h (A·z − c·t1·2^d)) = c̃)`; both have since
+landed, and NEITHER is in this file:
 
-    THE HASH-FRAMING LEG (OPEN):  shake256 (μ ‖ w1Encode w1') 48 == c̃   =   decide (hash μ w1' = c̃)
+* **the HASH-FRAMING leg** — `VerifyCoreHashFrame.hashFrame`, resting on `Fips204ChallengeHash`: the spec
+  side is FIPS 204 Alg. 8 line 5 with the Alg. 28 encoder and the FIPS 202 §6.2 BIT-ADDRESSED sponge, so the
+  step is a theorem (`w1Encode_eq_spec` + the sponge refinement), not an instantiation of `hash` by the
+  implementation. (An earlier version of that file DID instantiate `hash` with the executable and project it
+  back out by `rfl`; read its VACUITY LEDGER before touching it.)
+* **the SIX-ROW ASSEMBLY** — `Dregg2.Crypto.VerifyCoreArgAssembly`: `challengeMatches_rows` resolves
+  verifyCore's four nested do-loops into six closed `w1Row ∘ wRowHat` rows, `execRow_eq_hbRow` lifts THIS
+  file's per-coefficient result to a whole row, and `hArg_discharged` lifts the six rows through
+  `w1Encode` — discharging the `hArg` hypothesis of `verifyCore_eq_specVerifyB`.
 
-where `hash := (μ, w1') ↦ shake256 (μ ‖ w1Encode w1') 48` is a legitimate INSTANTIATION of `verifyB`'s generic
-`hash` field (its collision-resistance is the `HashSig`/`FoQrom` floor, a separate axis — not a soundness gap
-here). Performing that instantiation and discharging the equality — threading the six per-row `w1Row` results
-through `w1Encode`'s `packBits` concatenation and the SHAKE framing — is NOT done in the tree. It is the exact
-residual; `w1Row_recovers_arg` is the leg immediately below it, now closed for all inputs.
+What is still OPEN downstream is NOT this leg: it is `hnorm` (the codec-side norm agreement) and
+`HighBitsStableK` (Dilithium high-bits stability over `R_q`), both named there. Collision resistance of
+SHAKE256 is the `HashSig`/`FoQrom` floor, a separate axis.
 -/
 import Dregg2.Crypto.VerifyCoreEqSpecW
 

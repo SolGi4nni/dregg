@@ -30,21 +30,28 @@ and `squeeze` use (byte `i` of a lane at shift `8·(i mod 8)`), so `getLsbD z` p
   × 64 bits) — it is a statement about 24 constants, so it could not be anything else — but nothing
   outside the kernel is trusted. The `∀`-form headline is `Fips202Lfsr.round_constants_are_lfsr`.
 
-## What is OPEN (stated explicitly, NOT `sorry`-ed — see the `Prop`s at the end)
+## What is STATED here as a `Prop` (not `sorry`-ed) and PROVEN DOWNSTREAM — see the end of the file
 
 `chi_bit`/`theta_D_bit`/`rotl64_getLsbD` establish that the per-lane `UInt64` COMBINATORS the
 executable uses compute the FIPS 202 step maps bit-for-bit. The remaining obligation is that the
 monolithic `keccakRound` (an `Id.run do` with `Array.set!` at literal indices) WIRES those
 combinators at the FIPS-mandated lane indices — the θ `C[x]` fan-in, the ρ+π index permutation
 `(x,y) ↦ (y, (2x+3y) mod 5)` with the `rho` offset table, and ι touching only lane 0 — i.e. that
-`toSpec (Keccak.keccakRound a rc) = Fips202.rnd (…) (toSpec a)`. `keccakRound` exposes no per-step
-`def`, so this composition cannot be a gap-free step lemma; it is stated as `RoundCompositionObligation`.
+`toSpec (Keccak.keccakRound a rc) = Fips202.rnd (…) (toSpec a)`. It is stated here as
+`RoundCompositionObligation`. `keccakRound` still exposes no per-step `def`, so the composition is
+not a chain of step lemmas over the executable's own definitions; `Fips202Round` instead proves the
+monolith EQUAL to an explicitly layered θ/ρπ/χ/ι form (`keccakRound_layered`) and reasons there.
 `KeccakFRefinesObligation` (24-fold) and `SpongeRefinesObligation` (pad10*1/absorb/squeeze) complete
-the chain. None is discharged IN THIS FILE, but all three are now discharged DOWNSTREAM:
-`RoundCompositionObligation` by `Fips202Round.keccakRound_refines_spec_RC`,
-`KeccakFRefinesObligation` by `Fips202Round.keccakF_refines_spec`, and `SpongeRefinesObligation` by
-`Fips202SpongeRefine.sponge_refines`, against the FIPS 202 sec. 4 sponge specification of
-`Dregg2.Crypto.Keccak.Fips202Sponge`.
+the chain. None is discharged IN THIS FILE; downstream, two of the three are discharged LITERALLY and
+the third only in the specialization that carries its whole content:
+
+* `KeccakFRefinesObligation` — PROVEN AS STATED by `Fips202Round.keccakF_refines_spec`.
+* `SpongeRefinesObligation` — PROVEN AS STATED by `Fips202SpongeRefine.sponge_refines`, against the
+  FIPS 202 sec. 4 sponge specification of `Dregg2.Crypto.Keccak.Fips202Sponge`.
+* `RoundCompositionObligation` — proven for `ir < 24` (`Fips202Round.keccakRound_refines_spec_RC`),
+  i.e. for every round the permutation actually performs, on top of the fully general
+  `Fips202Round.keccakRound_refines_spec` (ALL states, ALL round-constant words). The `∀ ir : ℕ` form
+  as literally written is NOT proven and is in fact FALSE for `ir ≥ 24`; see that `Prop`'s docstring.
 -/
 import Dregg2.Crypto.Keccak
 import Dregg2.Crypto.Keccak.Fips202Spec
@@ -171,16 +178,30 @@ theorem rc_lanes_eq_exec :
           == (Dregg2.Crypto.Keccak.RC[ir]!).toBitVec.getLsbD z)) = true :=
   Dregg2.Crypto.Keccak.Fips202Lfsr.rc_lanes_all
 
-/-! ## The OPEN obligations — stated exactly, discharged NOWHERE. -/
+/-! ## The composition obligations — stated exactly HERE, discharged DOWNSTREAM. -/
 
 /-- The round-composition obligation: `keccakRound` wires the proven per-lane combinators at the
-FIPS 202 lane indices. NOT proven (the executable round is a monolithic `Id.run do`). -/
+FIPS 202 lane indices.
+
+**Proven in its `ir < 24` specialization — and that specialization is the whole content.** As
+LITERALLY written this quantifies `ir` over ALL of `ℕ`, and in that form it is not merely unproven,
+it is FALSE: for `ir ≥ 24` the executable reads `RC[ir]! = 0` (the out-of-bounds `getElem!`
+default, so ι is the identity) while the spec's `rcLaneOf ir` keeps running Algorithm 5's LFSR and
+yields a genuine, generally nonzero, round-constant lane — the two sides diverge at lane `(0,0)`.
+The meaningful statement, covering every round Keccak-f actually performs, is
+`Fips202Round.keccakRound_refines_spec_RC` (`ir < 24`), which IS proven; it specializes the fully
+general `Fips202Round.keccakRound_refines_spec` (ALL 25-lane states, ALL round-constant words, ANY
+`rcLane` matching that word's bits — the executable round is no longer an opaque `Id.run do`).
+This `Prop` is kept as written rather than quietly narrowed to `ir < 24`, so the gap between what
+was originally demanded and what is proven stays visible. -/
 def RoundCompositionObligation : Prop :=
   ∀ (a : Array UInt64) (ir : Nat), a.size = 25 →
     toSpec (Dregg2.Crypto.Keccak.keccakRound a (Dregg2.Crypto.Keccak.RC[ir]!))
       = Fips202.rnd (Fips202.rcLaneOf ir) (toSpec a)
 
-/-- The permutation obligation: the 24-fold round is Keccak-f[1600]. NOT proven. -/
+/-- The permutation obligation: the 24-fold round is Keccak-f[1600]. **PROVEN AS STATED** by
+`Fips202Round.keccakF_refines_spec` — the same proposition, same `a.size = 25` side condition and no
+other, obtained by folding `keccakRound_refines_spec_RC` over the 24 rounds. -/
 def KeccakFRefinesObligation : Prop :=
   ∀ (a : Array UInt64), a.size = 25 →
     toSpec (Dregg2.Crypto.Keccak.keccakF a) = Fips202.keccakF (toSpec a)

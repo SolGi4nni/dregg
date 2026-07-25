@@ -55,15 +55,25 @@ Collision resistance of SHAKE256 is a different axis (`HashSig`/`FoQrom` floor) 
   an explicit hypothesis, so `mldsaParams` is a FUNCTION of it and the gap sits in the type.
   `highBits_noWrap_stable` proves the WRAP-FREE fragment at the deployed `α = 523776`, `β = 196`,
   `q = 8380417` — pinning the residue to exactly the `ℤ_q` wrap and the `q−1` case.
-* **the ARGUMENT leg** — that the `w₁` verify actually hashes is `UseHint(h, A·z − c·t₁·2^d)`. This is
-  the `VerifyCoreEqSpec` / `VerifyCoreEqSpecW` / `VerifyCoreUseHint` line, closed per-coefficient
-  (`w1Row_recovers_arg`) but NOT assembled into the six-row `w1Encode` argument. It enters
-  `challengeMatches_eq_specHash` / `verifyCore_eq_specVerifyB` as the typed hypothesis `hArg` — a
-  signature in the symbol table, not a paragraph.
+* **the ARGUMENT leg — NOW DISCHARGED, one module downstream.** That the `w₁` the verifier hashes is
+  `UseHint(h, A·z − c·t₁·2^d)` is the `VerifyCoreEqSpec` / `VerifyCoreEqSpecW` / `VerifyCoreUseHint`
+  line, closed per-coefficient by `w1Row_recovers_arg`, and now ASSEMBLED over the six rows in
+  `Dregg2.Crypto.VerifyCoreArgAssembly` (`challengeMatches_rows` resolves verifyCore's four nested
+  do-loops into six closed rows, `rqMatvec_row` identifies each row's list-shaped accumulator with the
+  `Matrix.mulVecLin` component of `A·z − c·t₁·2^d`, `execRow_eq_hbRow` composes them ⇒
+  `hArg_discharged`). The theorems in THIS file still TAKE `hArg` — they are the general statements over
+  arbitrary `μ`, `thi`, `z`, `hint`; `VerifyCoreArgAssembly.verifyCore_eq_specVerifyB_noArg` is the same
+  conclusion with `hArg` GONE, at the DECODED instantiation (`zv sig`, `thiv pk`, `muOf pk M ctx`,
+  `hintOf pk sig`), leaving `hnorm` and `HighBitsStableK` — both untouched and still OPEN — plus
+  operational decode guards on `expandA`/`sigDecode`/`sampleInBall` shapes. Read that module's
+  "WHAT IS NOT CLAIMED": the abstract hint it supplies is the DIFFERENCE-form hint `roundK` requires and
+  is NOT recovered from the signature bytes alone.
 * **the sponge refinement** is threaded as the named `Fips202Refine.SpongeRefinesObligation` in the
-  `#assert_axioms`-clean statements, and DISCHARGED in the `_deployed` corollaries, which therefore
-  inherit the Keccak floor's single compiled-evaluation residual (the `rc_lanes_eq_exec` round-constant
-  table KAT). Reported by `#print axioms`, never laundered.
+  `#assert_axioms`-clean statements, and DISCHARGED in the `_deployed` corollaries. That discharge is
+  now FREE: `rc_lanes_eq_exec` is a KERNEL `decide` (`Keccak.Fips202Lfsr.rc_lanes_all`), so the Keccak
+  floor carries NO compiled-evaluation residual and the `_deployed` corollaries measure
+  `[propext, Classical.choice, Quot.sound]` — the same axiom set as the hypothesis forms. Still
+  reported by `#print axioms`, never laundered. Table: `Dregg2/Crypto/AXIOM-PICTURE.md`.
 -/
 import Dregg2.Crypto.VerifyCoreUseHint
 import Dregg2.Crypto.Fips204Spec
@@ -350,9 +360,12 @@ theorem verifyCore_eq_specVerifyB (hSponge : SpongeRefinesObligation)
 /-! ### The same two statements with the sponge obligation DISCHARGED.
 
 `Fips202SpongeRefine.sponge_refines` proves `SpongeRefinesObligation`, so these hold unconditionally in
-the sponge. They inherit the Keccak floor's single compiled-evaluation residual (`rc_lanes_eq_exec`, the
-24×64-bit round-constant table cross-check), which is why they are pinned by `#print axioms` below and
-NOT by `#assert_axioms`. -/
+the sponge. They inherit NOTHING extra: `rc_lanes_eq_exec` (the 24×64-bit round-constant cross-check
+against FIPS 202 Alg. 5's LFSR) is now a KERNEL `decide`, so the Keccak floor has no
+compiled-evaluation residual left, and these corollaries measure
+`[propext, Classical.choice, Quot.sound]` — the same as the hypothesis forms. They are still reported
+by `#print axioms` below rather than pinned by `#assert_axioms`, so a future regression in the Keccak
+floor shows up in the build log here instead of being silently inherited. -/
 
 /-- `hashFrame` with the sponge refinement discharged. -/
 theorem hashFrame_deployed (ρ : List UInt8) (hbStable : HighBitsStableK)
@@ -411,8 +424,10 @@ theorem hashSpec_witness :
 #assert_axioms challengeMatches_eq_specHash
 #assert_axioms verifyCore_eq_specVerifyB
 
--- Reported, NOT asserted: the `_deployed` corollaries inherit the Keccak floor's one
--- compiled-evaluation residual (`Fips202Refine.rc_lanes_eq_exec`, the round-constant table KAT).
+-- Reported, NOT asserted. These USED to inherit a compiled-evaluation residual from the Keccak
+-- floor; they no longer do — `Fips202Refine.rc_lanes_eq_exec` is a kernel `decide` now, and both
+-- corollaries measure `[propext, Classical.choice, Quot.sound]`. Kept as `#print axioms` (not
+-- `#assert_axioms`) so a regression in the Keccak floor surfaces here in the build log.
 #print axioms hashFrame_deployed
 #print axioms verifyCore_eq_specVerifyB_deployed
 

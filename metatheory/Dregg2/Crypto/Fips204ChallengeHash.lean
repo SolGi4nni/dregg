@@ -58,9 +58,13 @@ that is what this file does. (Collision resistance of SHAKE256 is a different ax
 
 Everything here is stated with the sponge refinement as an EXPLICIT hypothesis, so the theorems are
 `#assert_axioms`-clean. The instantiated corollary `challengeHash_frames_deployed` discharges that
-hypothesis with `Fips202SpongeRefine.sponge_refines` and therefore inherits — and is annotated with —
-the ONE pre-existing `Lean.ofReduceBool` residual of the whole Keccak stack: `rc_lanes_eq_exec`, the
-compiled-evaluation cross-check of the 24 precomputed round-constant lanes against the Alg. 5 LFSR.
+hypothesis with `Fips202SpongeRefine.sponge_refines` — and that discharge now costs NOTHING. The whole
+Keccak refinement chain is AXIOM-CLEAN: `rc_lanes_eq_exec` (the cross-check of the 24 precomputed
+round-constant lanes against FIPS 202 Alg. 5's LFSR) is closed by a KERNEL `decide` on top of the
+structurally recursive twin in `Keccak.Fips202Lfsr`, so `Lean.ofReduceBool` and `Lean.trustCompiler`
+are GONE from it and from everything above it. Measured: `challengeHash_frames_deployed` depends on
+axioms `[propext, Classical.choice, Quot.sound]`. The full re-measured table is in
+`Dregg2/Crypto/AXIOM-PICTURE.md`.
 -/
 import Dregg2.Crypto.Fips204BitPack
 import Dregg2.Crypto.Keccak.Fips202SpongeRefine
@@ -161,12 +165,14 @@ theorem challengeHash_frames (hSponge : SpongeRefinesObligation)
 /-- **The framing theorem with the sponge obligation DISCHARGED.** `Fips202SpongeRefine.sponge_refines`
 is a proof of `SpongeRefinesObligation`, so the deployed digest IS the standard's, unconditionally.
 
-AXIOM NOTE (checked, not asserted): this corollary carries `Lean.ofReduceBool` — the single
-compiled-evaluation residual of the Keccak stack, `Fips202Refine.rc_lanes_eq_exec`, which cross-checks
-the 24 precomputed round-constant LANES against the FIPS 202 Alg. 5 LFSR (a 24×64-bit constant table,
-not a `∀`). Everything else in the chain is a `∀`-theorem. `#assert_axioms` is therefore pinned on
-`challengeHash_frames` (hypothesis form) and this one is reported by `#print axioms` instead of being
-laundered. -/
+AXIOM NOTE (measured, not asserted): this corollary is axiom-CLEAN —
+`[propext, Classical.choice, Quot.sound]`. It USED to carry `Lean.ofReduceBool` via
+`Fips202Refine.rc_lanes_eq_exec`; that cross-check of the 24 precomputed round-constant LANES against
+the FIPS 202 Alg. 5 LFSR is now a KERNEL `decide` (`Keccak.Fips202Lfsr.rc_lanes_all`), so no
+compiled-evaluation trust enters here at all. That one step is still FINITE (a 24×64-bit constant
+table, not a `∀`), but the checker is the kernel. Everything else in the chain is a `∀`-theorem.
+`#assert_axioms` is pinned on `challengeHash_frames` (hypothesis form) and this one is reported by
+`#print axioms`, so a regression in the Keccak floor surfaces here rather than being laundered. -/
 theorem challengeHash_frames_deployed
     (μ : List UInt8) (w1 : Array Poly) (hrow : ∀ i, i < paramK → (w1[i]!).size = 256) :
     shake256 (μ ++ w1Encode w1) 48 = challengeHashSpec μ w1 :=
