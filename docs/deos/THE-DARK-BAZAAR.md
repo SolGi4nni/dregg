@@ -46,19 +46,35 @@ shipped claim.
   claim.
 - **FRONTIER** — the relation, protocol, or product remains to be built.
 
-## 1. The four halls, regraded
+## 1. The four halls, regraded (re-grounded 2026-07-25 against the code)
 
-| Hall | Mechanic | Current cut | What still makes it dark |
+*This table was stale in BOTH directions. It understated the crypto — the halls now have viewer-blind
+`Offering`s that run house-blind end-to-end under a collective key (n−1 refused), oracle-validated. And it
+overstated the product — none of that runs on a live path yet: the ceremonies are SIMULATED in one process,
+the halls are unregistered (surface only in tests), and the one "LIVE" hall's actual clearing still settles by
+plaintext bid revelation. Both truths below.*
+
+| Hall | Mechanic | Current cut (2026-07-25) | The gap to a live game hall |
 |---|---|---|---|
-| **The Sealed Exchange** | A private allocation whose public output is a receipted winner/result and one exact game effect | **LIVE PATH / bounded shape.** The deployment-owned Bazaar offering, viewer-blind publication, private receipt worker, crash recovery, and Dungeon consequence path exist. Fixed private-book and uniform-allocation proof families exist. | The live player path is not yet the full combinatorial exchange, nor a fully distributed same-opening prover. |
-| **The Dark Pool** | A constant-product transition over hidden reserves | **GATED SUBSTRATE / hosted research path.** Exact encrypted arithmetic, threshold-BFV machinery, Dark-AMM relations, HidingFRI proofs, public-host lifecycle laws, and portable GPU kernels exist. | One canonical full-width shielded relation must join the hidden reserve opening, AMM lanes, exact spend, output notes, persistence, and committee authority. |
-| **The Oracle Pit** | Confidential prediction positions and privately certified pricing | **FRONTIER.** fhIR and the convex/certificate tower provide the language and proof architecture. | A production quadratic/PWL market, oracle policy, private ingestion, and game consequence have not been composed. |
-| **The Netting Vault** | Hidden guild obligations, revealing only final net settlement | **GATED SUBSTRATE / FRONTIER product.** Ring conservation, whole-note swap proof substrate, private aggregation/shuffle organs, and exact receipt machinery exist. | General N-way no-viewer compression, distributed witness production, and a live settlement application remain. |
+| **The Sealed Exchange** | private allocation → receipted winner + one game effect | **LIVE consequence spine; clearing privacy UNWIRED.** The Bazaar journey, viewer-blind publication, durable private-receipt worker, crash recovery, and Dungeon consequence are LIVE (`private_bazaar_worker.rs` → `private_clearing_consequence.rs` → a cap-bounded `SignedTurn`). But the live clearing settles by **plaintext bid revelation**; the N4K4 HidingFRI private-book relation (`circuit-prove/dark_bazaar_private.rs`) is proved + emitted + unit-tested but a **test-only producer** — the worker never calls `settle_private_verified`. | Wire the private producer into the live worker; pin `order_root`; lift the fixed N4K4 cap (a new Lean-emitted descriptor); a no-single-viewer producer is a further composition. |
+| **The Dark Pool** | constant-product over hidden reserves | **Full viewer-blind Offering + house-blind ceremony RUN — but SIMULATED + unregistered.** `DarkPoolOffering` (`dark_pool_offering.rs:813`, render/render_for) + the threshold-BFV + n-of-n relin collective ceremony execute; the `x·y=k` invariant is verified under the collective key, n−1 refused, unfair swaps caught. The ceremony is **in-process (one machine, simulated parties — its own doc says so)** and the Offering is **not in `CATALOG_KEYS`** (surfaces only in tests). | Register it (→ auto-surfaces on Telegram); make the ceremony **distributed across clients** (each extension holds a share); the swap-*output* needs division (a real crypto gap — start verify-only). |
+| **The Oracle Pit** | confidential prediction / quadratic pricing | **Full viewer-blind Offering + house-blind pricing RUN — but SIMULATED + unregistered + no market lifecycle.** `OraclePitOffering` (`oracle_pit.rs:684`) + the quadratic-cost / public-odds pricing run under the collective key (oracle-validated bit-exact). Missing everything that makes it a *market*. | Build order intake, **outcome resolution** (the oracle), settlement/payout, a positions ledger; register; distribute the ceremony. (Lead vertical — most new build.) |
+| **The Netting Vault** | hidden guild obligations → reveal only the net | **Crypto RUNS house-blind (test-only); NO Offering yet.** Multilateral netting (conservation + compression) runs under the collective key at guild scale (8 parties, n−1 refused), signed nets, in `fhegg-fhe/tests/` + `metatheory/Market/NettingVault.lean`. **No `Offering` exists** — a proposed panel. | Build `NettingVaultOffering`; wire to the consequence plane; distribute the ceremony. Simplest (additive, no relin). |
 
-The old table called the Dark Pool “the next stone” and the Sealed Exchange
-“not yet one Tier-0 product execution.” Those descriptions are obsolete. The
-correct boundary is now between a real shared private-game organ and its final
-house-blind cryptographic apex.
+**The crypto keystone — the same-opening apex — is PROVED + EMITTED but a pure UNWIRED SEAM.** A 10-file
+kernel-clean Lean family (`FHEGG-SAME-OPENING-APEX.md`) proves the relation that turns *proof-blind* (a trace
+builder sees the bids) into *house-blind* (no single party ever does), and it is emitted as a descriptor — but
+it has **zero Rust consumers** (no `circuit-prove` call, no registry). Wiring it is what upgrades the halls'
+"house-blind" from a threshold-decrypt property to the full apex.
+
+The correct boundary today is: **the game-consequence plane is genuinely LIVE**; the market-clearing
+**privacy is proved + running-in-test/simulation but not wired into that plane**; and "no single viewer" is a
+**simulated in-process property, not yet a real distributed one**. Turning all three real — hall by hall,
+across web/Telegram/Discord, with the player's extension participating in a real distributed FHE ceremony — is
+the build (`streamed-cooking-shannon` program plan). The **game gauntlet is the proving ground**: the halls
+must survive the full cell/receipt/finality/consequence loop as game mechanics, house-blind and malicious-
+secure, before any of it graduates to real "dreggfi" (the `DREGGFI-*` docs) — the game is the honest,
+low-stakes testbed where privacy + proof + enactment are exercised end-to-end.
 
 ## 2. What the sprint actually landed
 
