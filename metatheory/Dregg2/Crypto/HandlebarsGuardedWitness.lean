@@ -78,6 +78,15 @@ def guardedRenderWithProof (T : GuardedTemplate) (d : Nat → List Value) :
 matcher `derives` on every hole entry. No trust in the prover's claim — the guard-acceptance is
 recomputed per slot. (`T` is threaded for signature symmetry with the prover side; the recheck is
 entirely determined by the self-describing witness — each entry names its own guard and data.) -/
+/-- ⚠⚠ SCOPE — READ BEFORE CITING `guardedVerify_iff` AS A VERIFIER SOUNDNESS RESULT (adversarial
+review finding). This function DISCARDS the template (`_T`) entirely and never checks the witness
+against the presented OUTPUT — it only asks that each entry's data derives its own guard. So
+`guardedVerify_iff` is an iff whose BOTH sides quantify over an honest `d`; there is NO theorem of the
+form "for an ARBITRARY prover-supplied witness, accept ⇒ ∃ d, guardedSafe T d ∧ render T d = output".
+An adversarial witness listing convenient (guard, data) pairs — for a DIFFERENT template, or with no
+relation to any rendered output — passes this check trivially. Closing that needs the witness to be
+bound to `T`'s hole/guard list AND to the output; the membership correspondence in §2 is the start of
+that binding, not its completion. -/
 def guardedVerify (_T : GuardedTemplate) (witness : List HoleEntry) : Bool :=
   witness.all (fun e => derives e.data e.guard)
 

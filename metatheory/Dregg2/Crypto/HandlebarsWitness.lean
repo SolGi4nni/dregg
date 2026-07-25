@@ -205,9 +205,17 @@ def renderWithProof (T : HandlebarsTemplate) (d : HoleId → List Tok) :
 /-! ## §7 CONSISTENCY TOOTH — the materialized witness agrees with the existence proof. -/
 
 /-- **`materialized_agrees`** — feeding the materialized certificate through `CfgCompact.compact_sound`
-reproduces `Handlebars.render_mem_language` ON THE NOSE. Both are proofs of the same membership
-`render T d ∈ (handlebarsToGrammar T).language`, so proof irrelevance makes them the SAME term: the
-concrete replay witness and the existential generation proof are one fact, reached two ways. -/
+⚠⚠ CONTENT-FREE — DO NOT CITE THIS AS A CONSISTENCY TOOTH (an adversarial review caught it, and it
+had already propagated into commit messages). Lean 4 has DEFINITIONAL PROOF IRRELEVANCE: any two terms
+of the same `Prop` are defeq. Both sides here are proofs of the same membership
+`render T d ∈ (handlebarsToGrammar T).language`, so this `rfl` holds for ANY pair of proofs of that
+statement — including a garbage one. It therefore establishes NOTHING about the materialized witness
+agreeing with the generation proof; it is a tautology, not evidence.
+
+What WOULD be a real tooth: an equation between the DATA (e.g. `renderRules T d` equalling an
+independently-computed rule list), or a `Bool`-level agreement via the decider `replayCheckB` — both of
+which live in `Type`, where `rfl` carries content. The genuine result in this file is
+`renderRules_accepts` (the materialized witness IS accepted, one-way: safe ⇒ accepts). -/
 theorem materialized_agrees (T : HandlebarsTemplate) (d : HoleId → List Tok) (hsafe : safe T d) :
     compact_sound (handlebarsToGrammar T) (renderRules T d) (render T d)
         (renderRules_accepts T d hsafe)
