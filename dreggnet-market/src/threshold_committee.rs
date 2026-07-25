@@ -37,7 +37,7 @@ use fhe::bfv::{Ciphertext, Encoding, Plaintext, RelinearizationKey};
 use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
 use fhegg_fhe::bfv_lean::LeanCiphertext;
 use fhegg_fhe::bfv_mul::{BoundedCiphertext, MulEngine};
-use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
+use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key_verified};
 use fhegg_fhe::threshold::{
     BfvParams, CollectivePublicKey, DecryptShare, KeygenCoordinator, KeygenSession,
     MIN_SMUDGE_BITS, ThresholdParty, combine,
@@ -284,9 +284,16 @@ impl ThresholdCommittee {
             self.relin_timeout,
         )
         .map_err(|e| CommitteeError::Relin(format!("session: {e}")))?;
-        let relin =
-            generate_relinearization_key(&session, &self.params, &self.collective, &self.parties)
-                .map_err(|e| CommitteeError::Relin(e.to_string()))?;
+        // Build 4: the VERIFIED generator runs the mandatory acceptance gate (fresh trial products must
+        // decrypt to the exact product under the quorum) before returning — a silently-corrupt relin key
+        // (malformed party contribution) is refused fail-closed, never cached.
+        let relin = generate_relinearization_key_verified(
+            &session,
+            &self.params,
+            &self.collective,
+            &self.parties,
+        )
+        .map_err(|e| CommitteeError::Relin(e.to_string()))?;
         // A racing caller may have won; either key is the same object, so keep whichever landed.
         let _ = self.relin.set(relin);
         self.relin.get().ok_or_else(|| {
