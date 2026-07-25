@@ -372,6 +372,16 @@ fn run_ranlib(archive: &Path) -> std::io::Result<std::process::ExitStatus> {
 /// box alike). `CARGO_MANIFEST_DIR` is `.../dregg-lean-ffi`; the sibling is
 /// `.../metatheory`. An explicit `DREGG_METATHEORY_DIR` override wins if set.
 fn metatheory_dir() -> Option<PathBuf> {
+    // ⚑ RESTORED 2026-07-25. Dropped by 7ebe7b7d4b (a build.rs rewrite whose subject was PQ
+    // substitution) along with DREGG_LEAN_SYSROOT's and DREGG_LEAN_FFI_NO_ARCHIVE_GC's. Cargo
+    // auto-tracks only env read through the `env!`/`option_env!` MACROS; a runtime
+    // `std::env::var` is invisible to it, and this script already declares SOME
+    // `rerun-if-env-changed`, which replaces the default heuristic with exactly the declared
+    // set. Without this line, repointing the build at another metatheory checkout does NOT
+    // re-run build.rs: every `archive_exports` verdict and every `dregg_*_present` cfg stays
+    // CACHED from the previous tree — the failure mode being a build that silently keeps the
+    // old tree's gate decisions. Same convention as `shared_link_mode`: declared where it is read.
+    println!("cargo:rerun-if-env-changed=DREGG_METATHEORY_DIR");
     if let Ok(dir) = std::env::var("DREGG_METATHEORY_DIR") {
         let p = PathBuf::from(dir);
         if p.join("lean-toolchain").exists() {
@@ -386,6 +396,11 @@ fn metatheory_dir() -> Option<PathBuf> {
 fn lean_sysroot() -> Option<PathBuf> {
     // Prefer `lake env` (authoritative for the project's toolchain). `DREGG_LEAN_SYSROOT`
     // overrides for environments where `lake` is not on PATH at build time.
+    // ⚑ RESTORED 2026-07-25 (dropped by 7ebe7b7d4b — see `metatheory_dir`). This one is the
+    // sharpest of the three: the sysroot decides whether `lean_lib_present` is emitted AT ALL,
+    // so an untracked change to it can leave a build linked against one toolchain while every
+    // cached probe verdict describes another.
+    println!("cargo:rerun-if-env-changed=DREGG_LEAN_SYSROOT");
     if let Ok(s) = std::env::var("DREGG_LEAN_SYSROOT") {
         if !s.trim().is_empty() {
             return Some(PathBuf::from(s.trim()));
@@ -1006,6 +1021,10 @@ fn build_dregg2_archive(
     // those functions need — leaving `_lp_mathlib_*` unresolved at the final Rust link. When a FULL
     // archive was just restored out-of-band, set this to keep EVERY member (correct, larger) rather
     // than risk the destructive prune. Off by default (the GC stays the steady-state size payoff).
+    // ⚑ RESTORED 2026-07-25 (dropped by 7ebe7b7d4b — see `metatheory_dir`). Without it, setting
+    // the escape hatch after a failed link does NOT re-run this script, so the operator's fix
+    // appears not to work — the destructive prune stays cached.
+    println!("cargo:rerun-if-env-changed=DREGG_LEAN_FFI_NO_ARCHIVE_GC");
     if std::env::var("DREGG_LEAN_FFI_NO_ARCHIVE_GC").as_deref() == Ok("1") {
         println!(
             "cargo:warning=dregg-lean-ffi: DREGG_LEAN_FFI_NO_ARCHIVE_GC=1 — skipping archive \
