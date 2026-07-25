@@ -91,4 +91,5 @@ import Dregg2.Circuit.ExtChallengeOodSites
 import Dregg2.Circuit.ExtChallengeLogUpSite
 import Dregg2.Circuit.ExtOpeningRecordWidth
 import Dregg2.Circuit.FriPositiveRadiusSchedule
+import Dregg2.Storage.DeployedFloorRefuted
 import Dregg2.Crypto.CarrierContent
