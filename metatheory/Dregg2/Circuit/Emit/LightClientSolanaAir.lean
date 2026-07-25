@@ -49,16 +49,25 @@ same posture as the ETH `PC` participant count.
 
 ## Public inputs (the addressing layer — what the proof is ABOUT)
 
-`PI[0] = ANCHOR_ROOT` — the pinned WS stake-table root (the governance trust anchor the STAKE_TABLE_OK
-                        carrier is a compare against). The trust root the proof is relative to.
-`PI[1] = BANK_ROOT`   — the claimed ROOTED bank/state hash B at slot S (what a proof-of-holdings later
-                        opens against).
-`PI[2] = SLOT`        — the rooted slot S (the epoch/slot the finality is claimed at).
+`PI[0]    = ANCHOR_ROOT`     — the pinned WS stake-table root (the governance trust anchor the
+                            STAKE_TABLE_OK carrier is a compare against). The trust root the proof is
+                            relative to.
+`PI[1..9] = BANK_ROOT[0..8]` — the claimed ROOTED bank/state hash B at slot S (what a proof-of-holdings
+                            later opens against): the FULL 256-bit bank hash exposed as its NINE
+                            radix-`2^31`, MOST-SIGNIFICANT-limb-first limbs (`⌈256/31⌉ = 9`; the top
+                            limb carries the residual 8 bits). FELT-WIDTH CLOSE: the earlier single
+                            anchor felt bound only a 31-bit PROJECTION of the bank hash (two 256-bit
+                            roots agreeing in 31 bits both verified — a soundness gap at the peer-wrap
+                            boundary); nine PI-bound limbs bind the WHOLE root, recomposed by the
+                            peer-wrap's radix-`2^31` MSB-first pack before its 128-bit split.
+`PI[10]   = SLOT`           — the rooted slot S (the epoch/slot the finality is claimed at).
 
 These ride as published witness columns pinned to the public inputs (`.piBinding`). NOT-YET-CLOSED
-(named residual, identical to the ETH slice): the anchors are published but not yet arithmetically bound
-to the carrier bits (that binding IS the in-AIR-crypto iteration — `ED_OK` derived from the vote message
-built on `BANK_ROOT`+`SLOT`, `STAKE_TABLE_OK` derived from the table fold into `ANCHOR_ROOT`).
+(named residual, identical to the ETH slice, UNCHANGED by this widening): the anchors are published
+but not yet arithmetically bound to the carrier bits (that binding IS the in-AIR-crypto iteration —
+`ED_OK` derived from the vote message built on `BANK_ROOT`+`SLOT`, `STAKE_TABLE_OK` derived from the
+table fold into `ANCHOR_ROOT`). This change widens the BANK-ROOT anchor from 31 bits to the full 256,
+orthogonal to (and leaving untouched) the logic refinement.
 
 ## Axiom hygiene
 Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load-bearing
@@ -83,7 +92,8 @@ open Dregg2.Bridge.LightClientSolana
 
 /-! ## §1 — the trace column layout (one logical row). Columns 0..7 are the six verify-logic
 projections `solVerifyDecision` composes over (two crypto carriers) plus the two range slacks; columns
-8..10 are the published PUBLIC anchors. -/
+8..18 are the published PUBLIC anchors: `ANCHOR_ROOT` (8), the NINE bank-root limbs `BANK_ROOT 0..8`
+(cols 9..17 — the full 256-bit bank hash, radix-`2^31`, MSB-first), and `SLOT_COL` (18). -/
 
 /-- Counted rooted authorized voting stake (`voted_stake`); range-bounded via the quorum slack. Witness. -/
 def ROOTED_STK : Nat := 0
@@ -108,22 +118,33 @@ def AUTH_OK : Nat := 7
 
 /-- **PUBLIC ANCHOR** — the pinned WS stake-table root (the governance trust anchor). PI-bound. -/
 def ANCHOR_ROOT : Nat := 8
-/-- **PUBLIC ANCHOR** — the claimed rooted bank/state root B. PI-bound. -/
-def BANK_ROOT : Nat := 9
-/-- **PUBLIC ANCHOR** — the rooted slot S (epoch/slot). PI-bound. -/
-def SLOT_COL : Nat := 10
 
-/-- Total main-trace width: 8 logic columns + 3 published anchors. -/
-def SOL_LC_WIDTH : Nat := 11
+/-- The number of ~31-bit limbs the FULL 256-bit rooted bank hash is exposed as: `⌈256 / 31⌉ = 9`.
+Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits.
+This is the felt-width close — a SINGLE anchor felt bound only a 31-bit PROJECTION of the 256-bit bank
+hash (two roots agreeing in 31 bits both verified); nine limbs bind the WHOLE root. -/
+def BANK_ROOT_LIMBS : Nat := 9
+
+/-- **PUBLIC ANCHOR (limb `i`)** — the claimed rooted bank/state root B as its radix-`2^31`,
+MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `9 + i` (cols 9..17); limb `0` is
+the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
+MSB-first pack over `PI[1..9]` recomposes the 256-bit bank hash exactly before its 128-bit split. -/
+def BANK_ROOT (i : Nat) : Nat := 9 + i
+
+/-- **PUBLIC ANCHOR** — the rooted slot S (epoch/slot). PI-bound. -/
+def SLOT_COL : Nat := 9 + BANK_ROOT_LIMBS
+
+/-- Total main-trace width: 8 logic columns + 1 anchor-root + 9 bank-root limbs + 1 slot anchor. -/
+def SOL_LC_WIDTH : Nat := 19
 
 /-- PI slot 0: the pinned WS anchor root. -/
 def PI_ANCHOR_ROOT : Nat := 0
-/-- PI slot 1: the claimed rooted bank root. -/
-def PI_BANK_ROOT : Nat := 1
-/-- PI slot 2: the rooted slot. -/
-def PI_SLOT : Nat := 2
-/-- Number of public inputs. -/
-def PI_COUNT : Nat := 3
+/-- PI slot of bank-root limb `i` (slots 1..9), MSB-first. -/
+def PI_BANK_ROOT (i : Nat) : Nat := 1 + i
+/-- PI slot of the rooted slot (slot 10). -/
+def PI_SLOT : Nat := 1 + BANK_ROOT_LIMBS
+/-- Number of public inputs: anchor root + 9 bank-root limbs + slot. -/
+def PI_COUNT : Nat := 11
 
 /-- The range width — the u128 stake tally width the Rust `is_supermajority` uses (`saturating_mul` over
 `u128`). `3·rooted − 2·total ∈ [0, 2^128)` and `total − 1 ∈ [0, 2^128)` for any real stake distribution;
@@ -162,24 +183,36 @@ def authGate : VmConstraint2 := .base (.gate authBody)
 /-- Published-anchor pin: the pinned WS anchor root is `PI[0]`. -/
 def anchorRootPin : VmConstraint2 :=
   .base (.piBinding VmRow.first ANCHOR_ROOT PI_ANCHOR_ROOT)
-/-- Published-anchor pin: the claimed rooted bank root is `PI[1]`. -/
-def bankRootPin : VmConstraint2 :=
-  .base (.piBinding VmRow.first BANK_ROOT PI_BANK_ROOT)
-/-- Published-anchor pin: the rooted slot is `PI[2]`. -/
+/-- Published-anchor pins: the NINE rooted-bank-root limbs are `PI[1..9]` (MSB-first). Each limb rides
+its own PI slot, so the peer-wrap's radix-`2^31` pack over `PI[1..9]` recovers the FULL 256-bit bank
+hash — not a 31-bit projection. Written as an explicit literal (limb `i` → col `9+i` → PI `1+i`) so
+the byte-golden `#guard` reduces to the exact wire string with no fold. -/
+def bankRootPins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (BANK_ROOT 0) (PI_BANK_ROOT 0))
+  , .base (.piBinding VmRow.first (BANK_ROOT 1) (PI_BANK_ROOT 1))
+  , .base (.piBinding VmRow.first (BANK_ROOT 2) (PI_BANK_ROOT 2))
+  , .base (.piBinding VmRow.first (BANK_ROOT 3) (PI_BANK_ROOT 3))
+  , .base (.piBinding VmRow.first (BANK_ROOT 4) (PI_BANK_ROOT 4))
+  , .base (.piBinding VmRow.first (BANK_ROOT 5) (PI_BANK_ROOT 5))
+  , .base (.piBinding VmRow.first (BANK_ROOT 6) (PI_BANK_ROOT 6))
+  , .base (.piBinding VmRow.first (BANK_ROOT 7) (PI_BANK_ROOT 7))
+  , .base (.piBinding VmRow.first (BANK_ROOT 8) (PI_BANK_ROOT 8)) ]
+/-- Published-anchor pin: the rooted slot is `PI[10]`. -/
 def slotPin : VmConstraint2 :=
   .base (.piBinding VmRow.first SLOT_COL PI_SLOT)
 
 /-- **`solLcVerifyDesc`** — the Solana rooted-finality verify-decision as an emitted IR-v2 AIR. PIs
-`[anchor_root, bank_root, slot]`; the six verify-logic projections + two range slacks as hidden
-witnesses, the two crypto results as carrier bits. One range table (`TID_range`) carries both the quorum
-tooth and the total-positivity tooth. -/
+`[anchor_root, bank_root[0..8], slot]` (11 total — the rooted bank hash is the FULL 256-bit value as
+nine radix-`2^31` MSB-first limbs, not a 31-bit projection); the six verify-logic projections + two
+range slacks as hidden witnesses, the two crypto results as carrier bits. One range table
+(`TID_range`) carries both the quorum tooth and the total-positivity tooth. -/
 def solLcVerifyDesc : EffectVmDescriptor2 :=
   { name        := "dregg-solana-lightclient-verify::v1"
   , traceWidth  := SOL_LC_WIDTH
   , piCount     := PI_COUNT
   , tables      := [rangeTableDef RANGE_BITS]
   , constraints := [qDiffGate, qRangeLookup, tPosGate, tPosRangeLookup, edGate, stakeGate,
-                    rootedGate, authGate, anchorRootPin, bankRootPin, slotPin]
+                    rootedGate, authGate, anchorRootPin] ++ bankRootPins ++ [slotPin]
   , hashSites   := []
   , ranges      := [] }
 
@@ -327,18 +360,28 @@ theorem solLcAir_complete (a : Assignment)
 /-! ## §6 — the emitted wire JSON (byte-pinned golden) + shape pins. -/
 
 -- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on either
--- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission.
+-- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The rooted bank
+-- root is now NINE `pi_binding`s (cols 9..17 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 solLcVerifyDesc ==
-  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":11,\"public_input_count\":3,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":19,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard solLcVerifyDesc.traceWidth == SOL_LC_WIDTH
 #guard solLcVerifyDesc.piCount == PI_COUNT
-#guard solLcVerifyDesc.constraints.length == 11
+#guard solLcVerifyDesc.constraints.length == 19
 #guard solLcVerifyDesc.tables.length == 1
 -- The two crypto carriers are real trace columns, and none is PI-bound (the results ride hidden).
 #guard ED_OK < SOL_LC_WIDTH
 #guard STAKE_TABLE_OK < SOL_LC_WIDTH
+-- The widened rooted-bank-root anchor: nine limbs, contiguous cols 9..17 → PI 1..9, MSB-first, all
+-- within width and below the slot anchor; `⌈256/31⌉ = 9` covers the full 256 bits.
+#guard BANK_ROOT_LIMBS == 9
+#guard bankRootPins.length == BANK_ROOT_LIMBS
+#guard SLOT_COL == 18
+#guard PI_SLOT == 10
+#guard decide (BANK_ROOT 0 == 9 ∧ BANK_ROOT 8 == 17 ∧ BANK_ROOT 8 < SLOT_COL)
+#guard decide (PI_BANK_ROOT 0 == 1 ∧ PI_BANK_ROOT 8 == 9 ∧ PI_BANK_ROOT 8 < PI_SLOT)
+#guard decide (31 * BANK_ROOT_LIMBS ≥ 256)
 
 /-! ## §7 — NON-VACUITY: the emitted teeth DISCRIMINATE (the 2/3 boundary + the closed holes, in-AIR). -/
 

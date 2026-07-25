@@ -51,15 +51,15 @@
 //
 // ## HONEST SCOPE / NAMED RESIDUALS (current-resolution)
 //
-//   - ETH now exposes the FULL 256-bit finalized state root as 9 radix-2^31
-//     limbs (LightClientEthAir.lean, FIN_STATE_ROOT_LIMBS=9, MSB-first),
-//     bound one-limb-per-PI; BindPeerFinalityLanes packs them radix-2^31 and
-//     128-bit-splits into (rootHi, rootLo), which the on-chain splitRoot
-//     recomposes exactly — so the wrap binds all 256 bits (no 31-bit collision).
-//     tm/sol/mid still expose a SINGLE BabyBear anchor felt (a 31-bit stand-in,
-//     the published-not-yet-bound residual); for the length-1 anchor rootHi=0,
-//     rootLo=anchor. The SAME gadget serves both (RootLanes grows) — the next
-//     tm/sol/mid AIR iteration widens them to 9 limbs with no interface change.
+//   - ALL FOUR chains now expose the FULL 256-bit finality root as 9 radix-2^31
+//     limbs (LightClient{Eth,Tendermint,Solana,Midnight}Air.lean, *_LIMBS=9,
+//     MSB-first), bound one-limb-per-PI; BindPeerFinalityLanes packs them
+//     radix-2^31 and 128-bit-splits into (rootHi, rootLo), which the on-chain
+//     splitRoot recomposes exactly — so the wrap binds all 256 bits on every
+//     chain (the 31-bit collision gap is closed uniformly). The per-chain root:
+//     eth = fin_state_root, tm = app_hash, sol = bank_root, mid = target_root;
+//     RootLanes = [1..9] on every map. The non-root anchors shift past the 9 root
+//     limbs: tm chain_id 2->10, sol slot 2->10, mid round 2->10 / era 3->11.
 //   - eth/tm expose no HEIGHT felt yet; for those chains Height rides as a
 //     published peer lane not yet bound to a claim felt (HeightLane = -1). sol
 //     (slot) and mid (round) DO expose a height felt and bind it.
@@ -171,39 +171,45 @@ func EthLcPeerMap(chainID *big.Int) PeerLaneMap {
 	}
 }
 
-// TmLcPeerMap — Tendermint/Cosmos LC (PIs next_vals_root[0], app_hash[1],
-// chain_id[2]). Records app_hash as the finality (application-state) root, and
-// cross-checks the baked chainId against the descriptor's own chain_id felt.
-// No height felt yet.
+// TmLcPeerMap — Tendermint/Cosmos LC (PIs next_vals_root[0], app_hash as 9
+// radix-2^31 limbs[1..9] (full 256-bit, MSB-first), chain_id[10]). Records
+// app_hash as the finality (application-state) root, and cross-checks the baked
+// chainId against the descriptor's own chain_id felt (now at PI 10, shifted past
+// the 9 root limbs). No height felt yet.
 var TmLcPeerMap = PeerLaneMap{
 	Name:        "tm-lightclient",
-	PiCount:     3,
+	PiCount:     11,
 	ChainID:     PeerChainIdCosmos,
-	ChainIDLane: 2, // chain_id
+	ChainIDLane: 10, // chain_id (shifted past the 9 app_hash limbs)
 	HeightLane:  -1,
-	RootLanes:   []int{1}, // app_hash
+	RootLanes:   []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, // app_hash, 9 limbs (full 256-bit)
 }
 
-// SolLcPeerMap — Solana LC (PIs anchor_root[0], bank_root[1], slot[2]). Records
-// bank_root as the finality (bank/account-state) root; binds height to slot.
+// SolLcPeerMap — Solana LC (PIs anchor_root[0], bank_root as 9 radix-2^31
+// limbs[1..9] (full 256-bit, MSB-first), slot[10]). Records bank_root as the
+// finality (bank/account-state) root; binds height to slot (now at PI 10,
+// shifted past the 9 root limbs).
 var SolLcPeerMap = PeerLaneMap{
 	Name:        "solana-lightclient",
-	PiCount:     3,
+	PiCount:     11,
 	ChainID:     PeerChainIdSolana,
 	ChainIDLane: -1,
-	HeightLane:  2, // slot
-	RootLanes:   []int{1}, // bank_root
+	HeightLane:  10, // slot (shifted past the 9 bank_root limbs)
+	RootLanes:   []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, // bank_root, 9 limbs (full 256-bit)
 }
 
-// MidLcPeerMap — Midnight LC (PIs anchor_root[0], target_root[1], round[2],
-// era[3]). Records target_root as the finality root; binds height to round.
+// MidLcPeerMap — Midnight LC (PIs anchor_root[0], target_root as 9 radix-2^31
+// limbs[1..9] (full 256-bit, MSB-first), round[10], era[11]). Records
+// target_root as the finality root; binds height to round (now at PI 10, shifted
+// past the 9 root limbs). The era felt (PI 11) rides as an unbound published PI,
+// as before.
 var MidLcPeerMap = PeerLaneMap{
 	Name:        "midnight-lightclient",
-	PiCount:     4,
+	PiCount:     12,
 	ChainID:     PeerChainIdMidnight,
 	ChainIDLane: -1,
-	HeightLane:  2, // round
-	RootLanes:   []int{1}, // target_root
+	HeightLane:  10, // round (shifted past the 9 target_root limbs)
+	RootLanes:   []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, // target_root, 9 limbs (full 256-bit)
 }
 
 // BindPeerFinalityLanes is THE peer-wrap public-input mapping (the only new

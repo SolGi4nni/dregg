@@ -79,12 +79,15 @@ func TestPeerLaneBindAccepts(t *testing.T) {
 		{"eth", EthLcPeerMap(PeerChainIdEth), []uint64{0xC0FFEE, 0, 0, 0, 0, 0, 0, 0, 0, 123456789, 0x7ABCDEF}, 0},
 		// base: same map, chainId 8453; root value 222 in the LSB limb.
 		{"base", EthLcPeerMap(PeerChainIdBase), []uint64{111, 0, 0, 0, 0, 0, 0, 0, 0, 222, 333}, 0},
-		// tm: [next_vals_root, app_hash, chain_id=118]; app_hash is the root.
-		{"tm", TmLcPeerMap, []uint64{777, 987654321, 118}, 0},
-		// sol: [anchor_root, bank_root, slot]; height := slot.
-		{"sol", SolLcPeerMap, []uint64{444, 555666777, 250000000}, 250000000},
-		// mid: [anchor_root, target_root, round, era]; height := round.
-		{"mid", MidLcPeerMap, []uint64{1, 2013265900, 42, 7}, 42},
+		// tm: [next_vals_root, app_hash×9 limbs (full 256-bit, MSB-first),
+		// chain_id=118]; app_hash value 987654321 in the LSB limb, chain_id at PI 10.
+		{"tm", TmLcPeerMap, []uint64{777, 0, 0, 0, 0, 0, 0, 0, 0, 987654321, 118}, 0},
+		// sol: [anchor_root, bank_root×9 limbs, slot]; height := slot (PI 10). Root
+		// value 555666777 in the LSB limb.
+		{"sol", SolLcPeerMap, []uint64{444, 0, 0, 0, 0, 0, 0, 0, 0, 555666777, 250000000}, 250000000},
+		// mid: [anchor_root, target_root×9 limbs, round, era]; height := round (PI
+		// 10), era at PI 11. Root value 2013265900 in the LSB limb.
+		{"mid", MidLcPeerMap, []uint64{1, 0, 0, 0, 0, 0, 0, 0, 0, 2013265900, 42, 7}, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,7 +103,8 @@ func TestPeerLaneBindAccepts(t *testing.T) {
 // TestPeerLaneBindRejects: the mapping is a real binding — a wrong lane fails.
 func TestPeerLaneBindRejects(t *testing.T) {
 	base := SolLcPeerMap
-	claim := []uint64{444, 555666777, 250000000}
+	// [anchor_root, bank_root×9 limbs (root value in LSB limb), slot@PI10].
+	claim := []uint64{444, 0, 0, 0, 0, 0, 0, 0, 0, 555666777, 250000000}
 	hi, lo := packRootFeltsRef(claim, base.RootLanes)
 	height := big.NewInt(250000000)
 
@@ -120,15 +124,17 @@ func TestPeerLaneBindRejects(t *testing.T) {
 			t.Fatal("accepted a rootLo the LC root felt does not pack to")
 		}
 	})
-	t.Run("nonzero-rootHi-for-single-felt", func(t *testing.T) {
-		// A single 31-bit anchor packs to < 2^128, so rootHi MUST be 0.
+	t.Run("nonzero-rootHi-for-low-root", func(t *testing.T) {
+		// The 9-limb root here has only the LSB limb set, so it packs to < 2^128
+		// and rootHi MUST be 0.
 		if err := solve(t, base, claim, base.ChainID, height, big.NewInt(1), lo); err == nil {
-			t.Fatal("accepted a nonzero rootHi for a single-felt anchor")
+			t.Fatal("accepted a nonzero rootHi for a root that packs below 2^128")
 		}
 	})
 	t.Run("tm-wrong-descriptor-chainId-felt", func(t *testing.T) {
-		// tm cross-checks claim[chain_id] == the baked const; a forged felt fails.
-		bad := []uint64{777, 987654321, 999}
+		// tm cross-checks claim[chain_id] == the baked const; a forged felt (PI 10,
+		// past the 9 app_hash limbs) fails.
+		bad := []uint64{777, 0, 0, 0, 0, 0, 0, 0, 0, 987654321, 999}
 		bhi, blo := packRootFeltsRef(bad, TmLcPeerMap.RootLanes)
 		if err := solve(t, TmLcPeerMap, bad, TmLcPeerMap.ChainID, big.NewInt(0), bhi, blo); err == nil {
 			t.Fatal("accepted a tm proof whose descriptor chain_id felt != the baked const")

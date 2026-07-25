@@ -50,19 +50,27 @@ posture as the ETH `PC` / Solana `ROOTED_STK` participant count.
 
 ## Public inputs (the addressing layer — what the proof is ABOUT)
 
-`PI[0] = ANCHOR_ROOT`  — the pinned WS authority-set root (the governance trust anchor the AUTHSET_OK
-                         carrier is a compare against). The trust root the proof is relative to.
-`PI[1] = TARGET_ROOT`  — the claimed finalized block/state hash B (what a proof-of-holdings later opens
-                         against).
-`PI[2] = ROUND`        — the GRANDPA round R the commit is for.
-`PI[3] = ERA`          — the authority-set id (era) E the finality is claimed under (the ERA_OK gate binds
-                         the counted precommits + the anchored set id to this).
+`PI[0]    = ANCHOR_ROOT`       — the pinned WS authority-set root (the governance trust anchor the
+                              AUTHSET_OK carrier is a compare against). The trust root the proof is
+                              relative to.
+`PI[1..9] = TARGET_ROOT[0..8]` — the claimed finalized block/state hash B (what a proof-of-holdings
+                              later opens against): the FULL 256-bit target root exposed as its NINE
+                              radix-`2^31`, MOST-SIGNIFICANT-limb-first limbs (`⌈256/31⌉ = 9`; the top
+                              limb carries the residual 8 bits). FELT-WIDTH CLOSE: the earlier single
+                              anchor felt bound only a 31-bit PROJECTION of the target root (two
+                              256-bit roots agreeing in 31 bits both verified — a soundness gap at the
+                              peer-wrap boundary); nine PI-bound limbs bind the WHOLE root, recomposed
+                              by the peer-wrap's radix-`2^31` MSB-first pack before its 128-bit split.
+`PI[10]   = ROUND`            — the GRANDPA round R the commit is for.
+`PI[11]   = ERA`             — the authority-set id (era) E the finality is claimed under (the ERA_OK
+                              gate binds the counted precommits + the anchored set id to this).
 
 These ride as published witness columns pinned to the public inputs (`.piBinding`). NOT-YET-CLOSED
-(named residual, identical to the other slices): the anchors are published but not yet arithmetically
-bound to the carrier bits (that binding IS the in-AIR-crypto iteration — `ED_OK` derived from the
-precommit message built on `TARGET_ROOT`+`ROUND`+`ERA`, `AUTHSET_OK` derived from the set fold into
-`ANCHOR_ROOT`).
+(named residual, identical to the other slices, UNCHANGED by this widening): the anchors are published
+but not yet arithmetically bound to the carrier bits (that binding IS the in-AIR-crypto iteration —
+`ED_OK` derived from the precommit message built on `TARGET_ROOT`+`ROUND`+`ERA`, `AUTHSET_OK` derived
+from the set fold into `ANCHOR_ROOT`). This change widens the TARGET-ROOT anchor from 31 bits to the
+full 256, orthogonal to (and leaving untouched) the logic refinement.
 
 ## Axiom hygiene
 Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load-bearing
@@ -86,8 +94,9 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Bridge.LightClientMidnight
 
 /-! ## §1 — the trace column layout (one logical row). Columns 0..7 are the six verify-logic projections
-`midVerifyDecision` composes over (two crypto carriers) plus the two range slacks; columns 8..11 are the
-published PUBLIC anchors. -/
+`midVerifyDecision` composes over (two crypto carriers) plus the two range slacks; columns 8..19 are the
+published PUBLIC anchors: `ANCHOR_ROOT` (8), the NINE target-root limbs `TARGET_ROOT 0..8` (cols 9..17 —
+the full 256-bit target root, radix-`2^31`, MSB-first), `ROUND_COL` (18), and `ERA_COL` (19). -/
 
 /-- Counted signed authority weight; range-bounded via the quorum slack. Witness. -/
 def SIGNED_WEIGHT : Nat := 0
@@ -113,26 +122,37 @@ def ERA_OK : Nat := 7
 
 /-- **PUBLIC ANCHOR** — the pinned WS authority-set root (the governance trust anchor). PI-bound. -/
 def ANCHOR_ROOT : Nat := 8
-/-- **PUBLIC ANCHOR** — the claimed finalized block/state root B. PI-bound. -/
-def TARGET_ROOT : Nat := 9
-/-- **PUBLIC ANCHOR** — the GRANDPA round R. PI-bound. -/
-def ROUND_COL : Nat := 10
-/-- **PUBLIC ANCHOR** — the authority-set id (era) E. PI-bound. -/
-def ERA_COL : Nat := 11
 
-/-- Total main-trace width: 8 logic columns + 4 published anchors. -/
-def MID_LC_WIDTH : Nat := 12
+/-- The number of ~31-bit limbs the FULL 256-bit finalized target root is exposed as: `⌈256 / 31⌉ = 9`.
+Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits. This
+is the felt-width close — a SINGLE anchor felt bound only a 31-bit PROJECTION of the 256-bit target root
+(two roots agreeing in 31 bits both verified); nine limbs bind the WHOLE root. -/
+def TARGET_ROOT_LIMBS : Nat := 9
+
+/-- **PUBLIC ANCHOR (limb `i`)** — the claimed finalized block/state root B as its radix-`2^31`,
+MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `9 + i` (cols 9..17); limb `0` is
+the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
+MSB-first pack over `PI[1..9]` recomposes the 256-bit target root exactly before its 128-bit split. -/
+def TARGET_ROOT (i : Nat) : Nat := 9 + i
+
+/-- **PUBLIC ANCHOR** — the GRANDPA round R. PI-bound. -/
+def ROUND_COL : Nat := 9 + TARGET_ROOT_LIMBS
+/-- **PUBLIC ANCHOR** — the authority-set id (era) E. PI-bound. -/
+def ERA_COL : Nat := 10 + TARGET_ROOT_LIMBS
+
+/-- Total main-trace width: 8 logic columns + 1 anchor-root + 9 target-root limbs + round + era. -/
+def MID_LC_WIDTH : Nat := 20
 
 /-- PI slot 0: the pinned WS anchor root. -/
 def PI_ANCHOR_ROOT : Nat := 0
-/-- PI slot 1: the claimed finalized target root. -/
-def PI_TARGET_ROOT : Nat := 1
-/-- PI slot 2: the GRANDPA round. -/
-def PI_ROUND : Nat := 2
-/-- PI slot 3: the authority-set id (era). -/
-def PI_ERA : Nat := 3
-/-- Number of public inputs. -/
-def PI_COUNT : Nat := 4
+/-- PI slot of target-root limb `i` (slots 1..9), MSB-first. -/
+def PI_TARGET_ROOT (i : Nat) : Nat := 1 + i
+/-- PI slot of the GRANDPA round (slot 10). -/
+def PI_ROUND : Nat := 1 + TARGET_ROOT_LIMBS
+/-- PI slot of the authority-set id / era (slot 11). -/
+def PI_ERA : Nat := 2 + TARGET_ROOT_LIMBS
+/-- Number of public inputs: anchor root + 9 target-root limbs + round + era. -/
+def PI_COUNT : Nat := 12
 
 /-- The range width — a u128 tally width comfortably above the u64 authority-weight sums; `3·signed −
 2·total − 1 ∈ [0, 2^128)` and `total − 1 ∈ [0, 2^128)` for any real weight distribution; the interval's
@@ -173,27 +193,39 @@ def eraGate : VmConstraint2 := .base (.gate eraBody)
 /-- Published-anchor pin: the pinned WS anchor root is `PI[0]`. -/
 def anchorRootPin : VmConstraint2 :=
   .base (.piBinding VmRow.first ANCHOR_ROOT PI_ANCHOR_ROOT)
-/-- Published-anchor pin: the claimed finalized target root is `PI[1]`. -/
-def targetRootPin : VmConstraint2 :=
-  .base (.piBinding VmRow.first TARGET_ROOT PI_TARGET_ROOT)
-/-- Published-anchor pin: the GRANDPA round is `PI[2]`. -/
+/-- Published-anchor pins: the NINE finalized-target-root limbs are `PI[1..9]` (MSB-first). Each limb
+rides its own PI slot, so the peer-wrap's radix-`2^31` pack over `PI[1..9]` recovers the FULL 256-bit
+target root — not a 31-bit projection. Written as an explicit literal (limb `i` → col `9+i` → PI `1+i`)
+so the byte-golden `#guard` reduces to the exact wire string with no fold. -/
+def targetRootPins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (TARGET_ROOT 0) (PI_TARGET_ROOT 0))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 1) (PI_TARGET_ROOT 1))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 2) (PI_TARGET_ROOT 2))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 3) (PI_TARGET_ROOT 3))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 4) (PI_TARGET_ROOT 4))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 5) (PI_TARGET_ROOT 5))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 6) (PI_TARGET_ROOT 6))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 7) (PI_TARGET_ROOT 7))
+  , .base (.piBinding VmRow.first (TARGET_ROOT 8) (PI_TARGET_ROOT 8)) ]
+/-- Published-anchor pin: the GRANDPA round is `PI[10]`. -/
 def roundPin : VmConstraint2 :=
   .base (.piBinding VmRow.first ROUND_COL PI_ROUND)
-/-- Published-anchor pin: the era (set id) is `PI[3]`. -/
+/-- Published-anchor pin: the era (set id) is `PI[11]`. -/
 def eraPin : VmConstraint2 :=
   .base (.piBinding VmRow.first ERA_COL PI_ERA)
 
 /-- **`midLcVerifyDesc`** — the Midnight GRANDPA verify-decision as an emitted IR-v2 AIR. PIs
-`[anchor_root, target_root, round, era]`; the six verify-logic projections + two range slacks as hidden
-witnesses, the two crypto results as carrier bits. One range table (`TID_range`) carries both the quorum
-tooth and the total-positivity tooth. -/
+`[anchor_root, target_root[0..8], round, era]` (12 total — the finalized target root is the FULL
+256-bit value as nine radix-`2^31` MSB-first limbs, not a 31-bit projection); the six verify-logic
+projections + two range slacks as hidden witnesses, the two crypto results as carrier bits. One range
+table (`TID_range`) carries both the quorum tooth and the total-positivity tooth. -/
 def midLcVerifyDesc : EffectVmDescriptor2 :=
   { name        := "dregg-midnight-lightclient-verify::v1"
   , traceWidth  := MID_LC_WIDTH
   , piCount     := PI_COUNT
   , tables      := [rangeTableDef RANGE_BITS]
   , constraints := [wDiffGate, wRangeLookup, tPosGate, tPosRangeLookup, edGate, authsetGate,
-                    roundGate, eraGate, anchorRootPin, targetRootPin, roundPin, eraPin]
+                    roundGate, eraGate, anchorRootPin] ++ targetRootPins ++ [roundPin, eraPin]
   , hashSites   := []
   , ranges      := [] }
 
@@ -341,18 +373,30 @@ theorem midLcAir_complete (a : Assignment)
 /-! ## §6 — the emitted wire JSON (byte-pinned golden) + shape pins. -/
 
 -- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on either
--- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission.
+-- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The finalized
+-- target root is now NINE `pi_binding`s (cols 9..17 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 midLcVerifyDesc ==
-  "{\"name\":\"dregg-midnight-lightclient-verify::v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":4,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-midnight-lightclient-verify::v1\",\"ir\":2,\"trace_width\":20,\"public_input_count\":12,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":11}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard midLcVerifyDesc.traceWidth == MID_LC_WIDTH
 #guard midLcVerifyDesc.piCount == PI_COUNT
-#guard midLcVerifyDesc.constraints.length == 12
+#guard midLcVerifyDesc.constraints.length == 20
 #guard midLcVerifyDesc.tables.length == 1
 -- The two crypto carriers are real trace columns, and none is PI-bound (the results ride hidden).
 #guard ED_OK < MID_LC_WIDTH
 #guard AUTHSET_OK < MID_LC_WIDTH
+-- The widened finalized-target-root anchor: nine limbs, contiguous cols 9..17 → PI 1..9, MSB-first,
+-- all within width and below the round/era anchors; `⌈256/31⌉ = 9` covers the full 256 bits.
+#guard TARGET_ROOT_LIMBS == 9
+#guard targetRootPins.length == TARGET_ROOT_LIMBS
+#guard ROUND_COL == 18
+#guard ERA_COL == 19
+#guard PI_ROUND == 10
+#guard PI_ERA == 11
+#guard decide (TARGET_ROOT 0 == 9 ∧ TARGET_ROOT 8 == 17 ∧ TARGET_ROOT 8 < ROUND_COL)
+#guard decide (PI_TARGET_ROOT 0 == 1 ∧ PI_TARGET_ROOT 8 == 9 ∧ PI_TARGET_ROOT 8 < PI_ROUND)
+#guard decide (31 * TARGET_ROOT_LIMBS ≥ 256)
 
 /-! ## §7 — NON-VACUITY: the emitted teeth DISCRIMINATE (the strict > 2/3 boundary + the closed holes,
 in-AIR). -/

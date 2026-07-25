@@ -78,19 +78,29 @@ anchors below are the hook it attaches to.
 
 ## Public inputs (the addressing layer — what the proof is ABOUT)
 
-`PI[0] = TRUSTED_NEXT_VALS_ROOT` — the TRUSTED `next_validators_hash` (the WS-checkpoint anchor the
-                                   EPOCH_OK carrier is a verify against). The trust root the proof is
-                                   relative to.
-`PI[1] = COMMITTED_APP_HASH`     — the claimed committed app_hash / state root A (what ICS-23
-                                   membership later opens against).
-`PI[2] = CHAIN_ID_DOMAIN`        — the chain-id + epoch/height domain the proof speaks for.
+`PI[0]    = TRUSTED_NEXT_VALS_ROOT`  — the TRUSTED `next_validators_hash` (the WS-checkpoint anchor
+                                    the EPOCH_OK carrier is a verify against). The trust root the
+                                    proof is relative to.
+`PI[1..9] = COMMITTED_APP_HASH[0..8]`— the claimed committed app_hash / state root A: the FULL 256-bit
+                                    application-state root (what ICS-23 membership later opens
+                                    against) exposed as its NINE radix-`2^31`, MOST-SIGNIFICANT-limb-
+                                    first limbs (`⌈256/31⌉ = 9`; the top limb carries the residual 8
+                                    bits). FELT-WIDTH CLOSE: the earlier single anchor felt bound only
+                                    a 31-bit PROJECTION of the app-hash, so two 256-bit roots agreeing
+                                    in 31 bits both verified — a soundness gap at the peer-wrap
+                                    boundary. Nine PI-bound limbs bind the WHOLE root; the peer-wrap's
+                                    radix-`2^31` MSB-first pack over `PI[1..9]` recomposes it before
+                                    its 128-bit split.
+`PI[10]   = CHAIN_ID_DOMAIN`         — the chain-id + epoch/height domain the proof speaks for.
 
 These ride as published witness columns pinned to the public inputs (`.piBinding`), so a verifier
-sees WHICH trust root and WHICH app-hash the proof is about. NOT-YET-CLOSED (named residual): in this
-carrier slice the anchors are published but not yet arithmetically bound to the carrier bits (that
-binding IS the in-AIR-crypto iteration — `EPOCH_OK` derived from `TRUSTED_NEXT_VALS_ROOT`, the app
-hash opened against `COMMITTED_APP_HASH`). So `airAccepts` (the LOGIC refinement) is stated over the
-eleven projections; the anchor pins are the addressing layer around it.
+sees WHICH trust root and WHICH (full 256-bit) app-hash the proof is about. NOT-YET-CLOSED (named
+residual, UNCHANGED by this widening): in this carrier slice the anchors are published but not yet
+arithmetically bound to the carrier bits (that binding IS the in-AIR-crypto iteration — `EPOCH_OK`
+derived from `TRUSTED_NEXT_VALS_ROOT`, the app hash opened against `COMMITTED_APP_HASH`). So
+`airAccepts` (the LOGIC refinement) is stated over the eleven projections; the anchor pins are the
+addressing layer around it — this change widens the APP-HASH anchor from 31 bits to the full 256,
+orthogonal to (and leaving untouched) the logic refinement.
 
 ## Witness (the update)
 
@@ -119,8 +129,8 @@ SAME no-forgery theorem the gate carries (the carriers are the `CryptoLeaf` fiel
 | header self-binds valset (carrier)         | `selfBindOk`                               | `.gate (VSET_OK − 1)`                         |
 | next-validators epoch binding (carrier)    | `epochBindOk`                              | `.gate (EPOCH_OK − 1)`                        |
 | trusted next-vals root is public           | (addressing)                               | `.piBinding first TRUSTED_NEXT_VALS_ROOT 0`   |
-| claimed committed app-hash is public       | (addressing)                               | `.piBinding first COMMITTED_APP_HASH 1`       |
-| chain-id / epoch domain is public          | (addressing)                               | `.piBinding first CHAIN_ID_DOMAIN 2`          |
+| committed app-hash (full 256b) is public   | (addressing; nine limbs)                   | `.piBinding first (COMMITTED_APP_HASH i) (1+i)`, `i<9` |
+| chain-id / epoch domain is public          | (addressing)                               | `.piBinding first CHAIN_ID_DOMAIN 10`         |
 
 The four range lookups are the LOAD-BEARING teeth: each slack `∈ [0, 2^TM_BITS)` iff its inequality
 holds with no field-wrap escape. The threshold slack is the exact strict-`>2/3` boundary — a
@@ -163,7 +173,9 @@ open Dregg2.Bridge.LightClientTendermintGate
 /-! ## §1 — the trace column layout (one logical row).
 
 Columns 0..17 are the eleven VERIFY-LOGIC projections `tmVerifyDecision` composes over (three of
-them crypto carriers), plus the four range slacks. Columns 18..20 are the published PUBLIC anchors. -/
+them crypto carriers), plus the four range slacks. Columns 18..28 are the published PUBLIC anchors:
+`TRUSTED_NEXT_VALS_ROOT` (18), the NINE app-hash limbs `COMMITTED_APP_HASH 0..8` (cols 19..27 — the
+full 256-bit app-hash, radix-`2^31`, MSB-first), and `CHAIN_ID_DOMAIN` (28). -/
 
 /-- Untrusted header chain-id. Witness. -/
 def CHAIN_ID : Nat := 0
@@ -211,22 +223,34 @@ def EPOCH_OK : Nat := 17
 
 /-- **PUBLIC ANCHOR** — the TRUSTED `next_validators_hash` (the WS-checkpoint trust anchor). PI-bound. -/
 def TRUSTED_NEXT_VALS_ROOT : Nat := 18
-/-- **PUBLIC ANCHOR** — the claimed committed app_hash / state root A. PI-bound. -/
-def COMMITTED_APP_HASH : Nat := 19
-/-- **PUBLIC ANCHOR** — the chain-id + epoch/height domain. PI-bound. -/
-def CHAIN_ID_DOMAIN : Nat := 20
 
-/-- Total main-trace width: 18 logic columns + 3 published anchors. -/
-def TM_LC_WIDTH : Nat := 21
+/-- The number of ~31-bit limbs the FULL 256-bit committed app-hash is exposed as: `⌈256 / 31⌉ = 9`.
+Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits.
+This is the felt-width close — a SINGLE anchor felt bound only a 31-bit PROJECTION of the 256-bit
+app-hash (two roots agreeing in 31 bits both verified); nine limbs bind the WHOLE root. -/
+def COMMITTED_APP_HASH_LIMBS : Nat := 9
+
+/-- **PUBLIC ANCHOR (limb `i`)** — the claimed committed app_hash / state root A as its radix-`2^31`,
+MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `19 + i` (cols 19..27); limb `0`
+is the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
+MSB-first pack over `PI[1..9]` recomposes the 256-bit app-hash exactly before its 128-bit split. -/
+def COMMITTED_APP_HASH (i : Nat) : Nat := 19 + i
+
+/-- **PUBLIC ANCHOR** — the chain-id + epoch/height domain. PI-bound. -/
+def CHAIN_ID_DOMAIN : Nat := 19 + COMMITTED_APP_HASH_LIMBS
+
+/-- Total main-trace width: 18 logic columns + 1 next-vals anchor + 9 app-hash limbs + 1 domain
+anchor. -/
+def TM_LC_WIDTH : Nat := 29
 
 /-- PI slot 0: the trusted next-validators root. -/
 def PI_TRUSTED_NEXT_VALS_ROOT : Nat := 0
-/-- PI slot 1: the claimed committed app-hash. -/
-def PI_COMMITTED_APP_HASH : Nat := 1
-/-- PI slot 2: the chain-id / epoch domain. -/
-def PI_CHAIN_ID_DOMAIN : Nat := 2
-/-- Number of public inputs. -/
-def PI_COUNT : Nat := 3
+/-- PI slot of app-hash limb `i` (slots 1..9), MSB-first. -/
+def PI_COMMITTED_APP_HASH (i : Nat) : Nat := 1 + i
+/-- PI slot of the chain-id / epoch domain (slot 10). -/
+def PI_CHAIN_ID_DOMAIN : Nat := 1 + COMMITTED_APP_HASH_LIMBS
+/-- Number of public inputs: next-vals root + 9 app-hash limbs + chain-id domain. -/
+def PI_COUNT : Nat := 11
 
 /-- The range-slack width. `TM_BITS = 64` fits real Tendermint u64 timestamps and (with
 `MaxTotalVotingPower ≈ 2^60`) the aggregate-power slack `3·signedPow − 2·totalPow − 1 < 2^62`, so
@@ -287,17 +311,30 @@ def epochGate : VmConstraint2 := .base (.gate epochBody)
 /-- Published-anchor pin: the trusted next-validators root is `PI[0]`. -/
 def nextValsRootPin : VmConstraint2 :=
   .base (.piBinding VmRow.first TRUSTED_NEXT_VALS_ROOT PI_TRUSTED_NEXT_VALS_ROOT)
-/-- Published-anchor pin: the claimed committed app-hash is `PI[1]`. -/
-def appHashPin : VmConstraint2 :=
-  .base (.piBinding VmRow.first COMMITTED_APP_HASH PI_COMMITTED_APP_HASH)
-/-- Published-anchor pin: the chain-id / epoch domain is `PI[2]`. -/
+/-- Published-anchor pins: the NINE committed-app-hash limbs are `PI[1..9]` (MSB-first). Each limb
+rides its own PI slot, so the peer-wrap's radix-`2^31` pack over `PI[1..9]` recovers the FULL 256-bit
+app-hash — not a 31-bit projection. Written as an explicit literal (limb `i` → col `19+i` → PI `1+i`)
+so the byte-golden `#guard` reduces to the exact wire string with no fold. -/
+def appHashPins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (COMMITTED_APP_HASH 0) (PI_COMMITTED_APP_HASH 0))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 1) (PI_COMMITTED_APP_HASH 1))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 2) (PI_COMMITTED_APP_HASH 2))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 3) (PI_COMMITTED_APP_HASH 3))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 4) (PI_COMMITTED_APP_HASH 4))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 5) (PI_COMMITTED_APP_HASH 5))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 6) (PI_COMMITTED_APP_HASH 6))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 7) (PI_COMMITTED_APP_HASH 7))
+  , .base (.piBinding VmRow.first (COMMITTED_APP_HASH 8) (PI_COMMITTED_APP_HASH 8)) ]
+/-- Published-anchor pin: the chain-id / epoch domain is `PI[10]`. -/
 def chainDomainPin : VmConstraint2 :=
   .base (.piBinding VmRow.first CHAIN_ID_DOMAIN PI_CHAIN_ID_DOMAIN)
 
 /-- **`tmLcVerifyDesc`** — the Cosmos/Tendermint light-client verify-decision as an emitted IR-v2
-AIR. PIs `[trusted_next_vals_root, committed_app_hash, chain_id_domain]`; the eleven verify-logic
-projections + four range slacks as hidden witnesses, the three crypto results as carrier bits. The
-range table (`TID_range`) carries the strict-threshold and time-window teeth. -/
+AIR. PIs `[trusted_next_vals_root, committed_app_hash[0..8], chain_id_domain]` (11 total — the
+committed app-hash is the FULL 256-bit value as nine radix-`2^31` MSB-first limbs, not a 31-bit
+projection); the eleven verify-logic projections + four range slacks as hidden witnesses, the three
+crypto results as carrier bits. The range table (`TID_range`) carries the strict-threshold and
+time-window teeth. -/
 def tmLcVerifyDesc : EffectVmDescriptor2 :=
   { name        := "dregg-tm-lightclient-verify::v1"
   , traceWidth  := TM_LC_WIDTH
@@ -305,7 +342,7 @@ def tmLcVerifyDesc : EffectVmDescriptor2 :=
   , tables      := [rangeTableDef TM_BITS]
   , constraints := [chainMatchGate, heightAdjGate, tdiffGate, tdiffRange, twMonoGate, twMonoRange,
                     twDriftGate, twDriftRange, twTrustGate, twTrustRange, edGate, vsetGate, epochGate,
-                    nextValsRootPin, appHashPin, chainDomainPin]
+                    nextValsRootPin] ++ appHashPins ++ [chainDomainPin]
   , hashSites   := []
   , ranges      := [] }
 
@@ -535,19 +572,29 @@ theorem tmLcAir_complete (a : Assignment)
 /-! ## §6 — the emitted wire JSON (captured for the byte-pinned golden on first build) + shape pins. -/
 
 -- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on
--- either side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission.
+-- either side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The
+-- committed app-hash is now NINE `pi_binding`s (cols 19..27 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 tmLcVerifyDesc ==
-  "{\"name\":\"dregg-tm-lightclient-verify::v1\",\"ir\":2,\"trace_width\":21,\"public_input_count\":3,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":64}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":9}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"var\",\"v\":5}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":8}}},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":15},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":17},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":2}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-tm-lightclient-verify::v1\",\"ir\":2,\"trace_width\":29,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":64}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":9}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"var\",\"v\":5}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":8}}},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":15},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":17},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":24,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":25,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":26,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":27,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":28,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard tmLcVerifyDesc.traceWidth == TM_LC_WIDTH
 #guard tmLcVerifyDesc.piCount == PI_COUNT
-#guard tmLcVerifyDesc.constraints.length == 16
+#guard tmLcVerifyDesc.constraints.length == 24
 #guard tmLcVerifyDesc.tables.length == 1
 -- The three crypto carriers are real trace columns, and none is PI-bound (the results ride hidden).
 #guard ED_OK < TM_LC_WIDTH
 #guard VSET_OK < TM_LC_WIDTH
 #guard EPOCH_OK < TM_LC_WIDTH
+-- The widened committed-app-hash anchor: nine limbs, contiguous cols 19..27 → PI 1..9, MSB-first, all
+-- within width and below the domain anchor; `⌈256/31⌉ = 9` covers the full 256 bits.
+#guard COMMITTED_APP_HASH_LIMBS == 9
+#guard appHashPins.length == COMMITTED_APP_HASH_LIMBS
+#guard CHAIN_ID_DOMAIN == 28
+#guard PI_CHAIN_ID_DOMAIN == 10
+#guard decide (COMMITTED_APP_HASH 0 == 19 ∧ COMMITTED_APP_HASH 8 == 27 ∧ COMMITTED_APP_HASH 8 < CHAIN_ID_DOMAIN)
+#guard decide (PI_COMMITTED_APP_HASH 0 == 1 ∧ PI_COMMITTED_APP_HASH 8 == 9 ∧ PI_COMMITTED_APP_HASH 8 < PI_CHAIN_ID_DOMAIN)
+#guard decide (31 * COMMITTED_APP_HASH_LIMBS ≥ 256)
 
 /-! ## §7 — NON-VACUITY: the emitted teeth DISCRIMINATE (the strict >2/3 boundary, in-AIR). -/
 
