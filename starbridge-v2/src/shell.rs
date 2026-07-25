@@ -1913,6 +1913,7 @@ mod tests {
     fn a_surface_migrates_to_a_federation_and_its_glass_follows() {
         use crate::dock::migrate::{DistributedTransport, MigrationTarget};
         use dregg_firmament::{AuthRequired, Target};
+        crate::dock::migrate::assume_non_amplifying_handoffs();
         let (mut shell, world, anchors, _console) = shell_with_console();
         // A held surface (full rights) over the service cell; it is focused on open.
         let cap = shell.open_cell_view(anchors[1], "Service");
@@ -1965,6 +1966,7 @@ mod tests {
     fn a_forged_cap_for_a_federation_migrated_surface_is_refused() {
         use crate::dock::migrate::{DistributedTransport, MigrationTarget};
         use dregg_firmament::{AuthRequired, Capability, CellId as FCellId};
+        crate::dock::migrate::assume_non_amplifying_handoffs();
         let (mut shell, world, anchors, _console) = shell_with_console();
         let cap = shell.open_cell_view(anchors[1], "Service");
         let (transport, cell) =
@@ -2010,6 +2012,7 @@ mod tests {
     fn a_widening_distributed_migration_is_refused() {
         use crate::dock::migrate::{DistributedTransport, MigrationTarget};
         use dregg_firmament::AuthRequired;
+        crate::dock::migrate::assume_non_amplifying_handoffs();
         let (mut shell, _world, anchors, _console) = shell_with_console();
         let a = shell.open_cell_view(anchors[1], "Service"); // rights None
                                                              // A read-only Signature mirror via a REAL narrowing share.

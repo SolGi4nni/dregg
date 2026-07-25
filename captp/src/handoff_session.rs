@@ -374,6 +374,9 @@ mod tests {
         SwissTable,
         CellId,
     ) {
+        // Route the target's `validate_handoff` §6 verdict through the real-verdict
+        // test gate (the lib fail-closes without one — see `handoff::install_test_lattice_gate`).
+        crate::handoff::install_test_lattice_gate();
         let (intro_sk, intro_pk): (SigningKey, PublicKey) = generate_keypair();
         let intro_fed = FederationId(intro_pk.0);
         let (recip_sk, recip_pk) = generate_keypair();

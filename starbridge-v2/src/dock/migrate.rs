@@ -548,6 +548,50 @@ pub mod distributed {
 
 pub use distributed::{DistributedError, DistributedTransport};
 
+/// Register a permissive stand-in for captp's verified §6 non-amplification gate
+/// for THIS test process (idempotent).
+///
+/// captp's `validate_handoff` (which [`DistributedTransport::establish`] drives)
+/// decides §6 non-amplification ONLY through the verified Lean gate and FAILS
+/// CLOSED — refusing EVERY handoff, including legitimate attenuations — when no
+/// gate is registered (the twin-deletion posture; commit 1b8d7827c2). This
+/// starbridge test binary installs no Lean gate, so without this stand-in the
+/// distributed carriage tests below see even an attenuating handoff (e.g.
+/// `Either`→`Signature`, `None`→`Signature`) refused as `Amplification`.
+///
+/// These tests exercise the CARRIAGE mechanism (re-mint, one-shot nonce, target
+/// binding, forged-cap refusal, present/route turns), not the non-amplification
+/// lattice — which is pinned Rust↔Lean in captp's `handoff_lattice_differential`
+/// and exercised over the real archive in `dregg-exec-lean`. The anti-widening
+/// tooth these tests DO assert fires earlier, at the migrate `is_attenuation`
+/// gate (before any handoff) and at the one-shot nonce — never at this stand-in —
+/// so admitting non-amplification here weakens no assertion. Mirrors
+/// `captp/tests/common/mod.rs::assume_non_amplifying_handoffs`.
+#[cfg(test)]
+pub(crate) fn assume_non_amplifying_handoffs() {
+    use dregg_captp::{register_captp_verified_gate, CaptpVerifiedGate};
+    use std::sync::Once;
+
+    struct AssumeNonAmplifyingGate;
+    impl CaptpVerifiedGate for AssumeNonAmplifyingGate {
+        fn distributed_exports_available(&self) -> bool {
+            true
+        }
+        fn handoff_non_amplifying(&self, _wire: &str) -> Option<bool> {
+            Some(true)
+        }
+        fn process_drop(&self, _wire: &str) -> Option<String> {
+            None
+        }
+        fn pipeline_resolve(&self, _wire: &str) -> Option<String> {
+            None
+        }
+    }
+
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| register_captp_verified_gate(Box::new(AssumeNonAmplifyingGate)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,6 +770,7 @@ mod tests {
     #[test]
     fn distributed_carriage_establishes_and_present_resolves() {
         use super::distributed::DistributedTransport;
+        super::assume_non_amplifying_handoffs();
         // Held Either, carry Signature (attenuating). The handoff lands.
         let (transport, cell) =
             DistributedTransport::establish(AuthRequired::Either, AuthRequired::Signature)
@@ -762,6 +807,7 @@ mod tests {
     fn distributed_carriage_refuses_a_replayed_handoff() {
         use super::distributed::DistributedTransport;
         use dregg_captp::handoff::HandoffError;
+        super::assume_non_amplifying_handoffs();
         let (mut transport, _cell) =
             DistributedTransport::establish(AuthRequired::None, AuthRequired::Signature)
                 .expect("first handoff accepted");

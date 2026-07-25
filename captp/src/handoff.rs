@@ -1008,6 +1008,117 @@ pub fn validate_handoff_hybrid(
 }
 
 // =============================================================================
+// TEST-ONLY: the §6 non-amplification gate for the in-crate unit tests
+// =============================================================================
+//
+// `validate_handoff` decides §6 non-amplification ONLY through the verified Lean
+// gate and FAILS CLOSED (refuses) when none is registered (the twin-deletion
+// posture). The lib's own unit tests below drive both LEGITIMATE (attenuating)
+// and AMPLIFYING handoffs through `validate_handoff` and must observe the REAL
+// verdict — so the permissive "assume non-amplifying" stand-in used by the
+// integration tests (`tests/common/mod.rs`) is WRONG here: it would ADMIT the
+// amplifying cases the `amplifying_*_rejected` tests require to be refused.
+//
+// This installs a gate that computes the verdict from the SAME retained,
+// Lean-pinned lattice the live path deleted only as a *decider*:
+// `AuthRequired::is_narrower_or_equal` + `dregg_cell::is_facet_attenuation`,
+// which `handoff_lattice_differential.rs` pins clause-for-clause to the Lean
+// `Dregg2.Exec.CapTPConcrete.authNarrowerOrEqual` decision table. It is
+// `#[cfg(test)]`, never a live path (integration binaries compile the crate
+// WITHOUT `cfg(test)`, so `validate_handoff` still fail-closes there); the live
+// verdict routes to `dregg-exec-lean`'s real Lean gate.
+#[cfg(test)]
+struct LatticeVerdictGate;
+
+#[cfg(test)]
+impl crate::verified_gate::CaptpVerifiedGate for LatticeVerdictGate {
+    fn distributed_exports_available(&self) -> bool {
+        true
+    }
+
+    fn handoff_non_amplifying(&self, wire: &str) -> Option<bool> {
+        // wire: "h=<held_tag>;g=<granted_tag>;he=<held_eff>;ge=<granted_eff>"
+        // built by `verified_non_amplifying` via `auth_required_tag` /
+        // `effect_mask_field`; an effect field of "x" means unrestricted (None).
+        let (mut held_tag, mut granted_tag) = (None, None);
+        let (mut held_eff, mut granted_eff) = (None, None);
+        for field in wire.split(';') {
+            let (k, v) = field.split_once('=')?;
+            match k {
+                "h" => held_tag = Some(v.parse::<u64>().ok()?),
+                "g" => granted_tag = Some(v.parse::<u64>().ok()?),
+                "he" => held_eff = Some(parse_test_effect_field(v)),
+                "ge" => granted_eff = Some(parse_test_effect_field(v)),
+                _ => {}
+            }
+        }
+        let held = auth_required_from_tag(held_tag?);
+        let granted = auth_required_from_tag(granted_tag?);
+        // Non-amplifying ⟺ granted ⊆ held on BOTH the permission lattice and the
+        // effect facet — the exact two-leg predicate `validate_handoff` used
+        // before the twin-deletion (and that `handoffNonAmplifyingC` proves).
+        let perm_ok = granted.is_narrower_or_equal(&held);
+        let eff_ok = match (granted_eff?, held_eff?) {
+            (_, None) => true,        // held unrestricted: granted always attenuates
+            (None, Some(_)) => false, // held restricted, granted unrestricted: amplify
+            (Some(g), Some(h)) => dregg_cell::is_facet_attenuation(h, g),
+        };
+        Some(perm_ok && eff_ok)
+    }
+
+    fn process_drop(&self, _wire: &str) -> Option<String> {
+        None
+    }
+    fn pipeline_resolve(&self, _wire: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Parse an `effect_mask_field` wire value: `"x"` ⇒ unrestricted (`None`), a
+/// decimal ⇒ the concrete `EffectMask`. (`EffectMask` is a `u32`.)
+#[cfg(test)]
+fn parse_test_effect_field(v: &str) -> Option<EffectMask> {
+    if v == "x" {
+        None
+    } else {
+        v.parse::<EffectMask>().ok()
+    }
+}
+
+/// Invert `auth_required_tag` for the test gate. Tags 0..=4 are the concrete
+/// variants; ≥5 is `Custom` (the `auth_required_tag` fold of the first 8 vk_hash
+/// bytes — reconstructed into those bytes so two wires with the same tag rebuild
+/// the SAME `Custom`, matching the tag-equality the lattice uses for `Custom`).
+#[cfg(test)]
+fn auth_required_from_tag(t: u64) -> AuthRequired {
+    match t {
+        0 => AuthRequired::None,
+        1 => AuthRequired::Signature,
+        2 => AuthRequired::Proof,
+        3 => AuthRequired::Either,
+        4 => AuthRequired::Impossible,
+        n => {
+            let mut vk_hash = [0u8; 32];
+            vk_hash[..8].copy_from_slice(&n.saturating_sub(5).to_le_bytes());
+            AuthRequired::Custom { vk_hash }
+        }
+    }
+}
+
+/// Install the real-verdict §6 gate for THIS test process (idempotent). Called by
+/// the setup helpers of the handoff unit tests (here and in `handoff_session`) so
+/// every unit test observes the true attenuation verdict rather than the
+/// no-gate fail-closed refusal.
+#[cfg(test)]
+pub(crate) fn install_test_lattice_gate() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        crate::verified_gate::register_captp_verified_gate(Box::new(LatticeVerdictGate));
+    });
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -1035,6 +1146,7 @@ mod tests {
         FederationId, // target federation
         SwissTable,   // target's swiss table (with the swiss pre-registered)
     ) {
+        super::install_test_lattice_gate();
         let (intro_sk, intro_pk, intro_fed) = setup_introducer();
         let (recip_sk, recip_pk) = setup_recipient();
         let target_fed = FederationId([0xDD; 32]);
@@ -1305,6 +1417,7 @@ mod tests {
         FederationId, // introducer federation
         SwissTable,   // target's swiss table (held entry registered)
     ) {
+        super::install_test_lattice_gate();
         let (intro_sk, intro_pk, intro_fed) = setup_introducer();
         let (recip_sk, recip_pk) = setup_recipient();
         let target_fed = FederationId([0xDD; 32]);
@@ -1476,6 +1589,7 @@ mod tests {
 
     #[test]
     fn out_of_band_scenario() {
+        super::install_test_lattice_gate();
         // Simulates: create certificate offline, transport as string, present later
         let (intro_sk, intro_pk, intro_fed) = setup_introducer();
         let (recip_sk, recip_pk) = setup_recipient();
@@ -1535,6 +1649,7 @@ mod tests {
         FederationId, // introducer HYBRID federation id (commits to ed25519 ∧ ml-dsa)
         SwissTable,
     ) {
+        super::install_test_lattice_gate();
         let (intro_sk, intro_pk) = generate_keypair();
         let (recip_sk, recip_pk) = setup_recipient();
         let target_fed = FederationId([0xDD; 32]);
