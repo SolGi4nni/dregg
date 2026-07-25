@@ -500,12 +500,21 @@ pub enum TokenKeyRef {
 /// `Authorization::Token` path is the real, in-runtime gate — not an out-of-band
 /// `cap.verify()`.
 ///
-/// HMAC macaroons require the verifier to hold the root secret, so this path is
-/// only sound where the federation legitimately owns the cell's secret. The
-/// secret is a domain-separated BLAKE3 KDF over the federation id + the cell id,
-/// so it is deterministic (consensus-safe, no wall-clock), cell-scoped (a
-/// different cell yields a different secret), and federation-scoped (a
-/// cross-federation mint produces a different secret and will not verify).
+/// ⚠ **THIS IS NOT A SECRET.** Both inputs are public — the federation id is
+/// served by the node's own public endpoints, and the cell id is the thing a
+/// caller names in an action — so every reader can recompute this value. An HMAC
+/// macaroon authorizes by POSSESSION OF THE ROOT KEY, so a root key everyone can
+/// compute authorizes everyone. The executor therefore REFUSES
+/// [`TokenKeyRef::CellScopedMacaroon`] outright
+/// (`TurnExecutor::verify_token_authorization`); before that it accepted a bare,
+/// no-caveat macaroon minted from these two public values and committed a
+/// `Signature`-gated state write on the named cell.
+///
+/// It is kept only so the refusal has something to test against, and to name the
+/// wound. A cell-scoped macaroon becomes possible again when the executor holds a
+/// real per-cell secret that is not a function of public data; a credential the
+/// cell itself authorizes goes through the biscuit path, which anchors on the
+/// cell's own public key or verification key.
 pub fn derive_cell_macaroon_secret(federation_id: &[u8; 32], cell: &CellId) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("dregg-cell-macaroon-secret-v1");
     hasher.update(federation_id);

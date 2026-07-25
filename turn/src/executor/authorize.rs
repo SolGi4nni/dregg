@@ -2005,39 +2005,42 @@ impl TurnExecutor {
                 })?;
                 Box::new(bt)
             }
-            (TokenFormat::Macaroon, TokenKeyRef::CellScopedMacaroon { cell }) => {
-                // Cell-scoped macaroon: the verifier may only hold the secret
-                // for the target cell. Reject cross-cell key refs outright.
-                if cell != &action.target {
-                    return Err((
-                        TurnError::TokenAuthInvalid {
-                            reason: "cell-scoped macaroon key_ref does not name the action's \
-                                     target cell; a macaroon is only sound where the verifier \
-                                     legitimately holds the cell's secret"
-                                .to_string(),
-                        },
-                        path.to_vec(),
-                    ));
-                }
-                let root_key = self.derive_cell_macaroon_secret(&action.target);
-                // Discharge macaroons are raw serialized bytes (NOT UTF-8
-                // strings — the macaroon backend `deserialize`s them).
-                let mt = if discharges.is_empty() {
-                    dregg_token::MacaroonToken::from_encoded(token_str, root_key)
-                } else {
-                    dregg_token::MacaroonToken::from_encoded_with_discharges(
-                        token_str, root_key, discharges,
-                    )
-                }
-                .map_err(|e| {
-                    (
-                        TurnError::TokenAuthInvalid {
-                            reason: format!("macaroon decode failed: {e}"),
-                        },
-                        path.to_vec(),
-                    )
-                })?;
-                Box::new(mt)
+            (TokenFormat::Macaroon, TokenKeyRef::CellScopedMacaroon { .. }) => {
+                // FAIL CLOSED. An HMAC macaroon authorizes by POSSESSION OF THE
+                // ROOT SECRET, and this arm's "root secret" was
+                // `derive_cell_macaroon_secret(local_federation_id, target)` — a
+                // BLAKE3 KDF over two PUBLIC values. The federation id is served
+                // by the node's own public endpoints and the cell id is the thing
+                // the caller is naming, so every reader could recompute the
+                // "secret", mint a bare macaroon, and reach the `Ok(())` this
+                // branch feeds — which returns BEFORE the target cell's
+                // permission lattice is consulted. A `Signature`-gated state
+                // write committed on a no-caveat token minted from public data
+                // (`token_macaroon_same_cell_public_derivation_refuses` is the
+                // falsifier).
+                //
+                // The cross-cell key_ref guard that used to stand here checked a
+                // real thing and stopped nothing: the attack names the target
+                // cell, which is exactly what that guard requires.
+                //
+                // Nothing in the tree mints a legitimate cell-scoped macaroon —
+                // the doc names a hypothetical SDK sub-agent minter that does not
+                // exist — so refusing costs no caller. A cell-scoped macaroon can
+                // return only when the executor holds a real per-cell secret that
+                // is not a function of public data; until then this is a bypass
+                // wearing a credential's clothes. Cross-domain / cell-authorized
+                // credentials go through the biscuit arm above, which anchors on
+                // the cell's own public key or verification key.
+                return Err((
+                    TurnError::TokenAuthInvalid {
+                        reason: "cell-scoped macaroons are refused: the root key is derived \
+                                 from the federation id and the cell id, both public, so it \
+                                 is not a secret and possession of it proves nothing; use a \
+                                 biscuit anchored on the cell's own key"
+                            .to_string(),
+                    },
+                    path.to_vec(),
+                ));
             }
             (TokenFormat::Biscuit, TokenKeyRef::CellScopedMacaroon { .. }) => {
                 return Err((
