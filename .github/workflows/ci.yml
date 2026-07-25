@@ -851,6 +851,32 @@ jobs:
           AXIOM_GUARD_TARGETS: Dregg2.Crypto.CryptoVerifyAll
         run: bash scripts/axiom-hygiene-guard.sh
 
+      # ⚑ THE CONE-CUTOVER TEXTUAL POST-STATE, FORCED FRESH (2026-07-25).
+      #
+      # `Tools/ConeCutover.assertPostState` verifies that a landed cutover still HOLDS in the
+      # source: every pre-cutover fragment absent, every post-cutover fragment present, the retired
+      # scaffolding file gone — and, uniquely, that `metatheory/Dregg2.lean` still IMPORTS the
+      # cutover's teeth. No Lean module can check the latter from inside itself.
+      #
+      # It was written as a build-time check and COULD NOT STAND there: it reads the tree through
+      # `IO.FS`, and lake's dependency graph is built from IMPORTS, so lake cannot see those reads
+      # and replays the module from its cached olean forever. Measured 2026-07-25 on a tree whose
+      # root had been truncated out from under the spec (`6b1e156bdf`, then `8a28420ec9`):
+      #
+      #     lake build Dregg2.Tools.ConeCutoverListCommit           EXIT=0   ← the cache answering
+      #     lake env lean Dregg2/Tools/ConeCutoverListCommit.lean   EXIT=1   ← same bytes, fresh
+      #       post-state VIOLATED (2): REGRESSED (old text back) / MISSING new text: Dregg2.lean
+      #
+      # i.e. it neither fired on a real regression nor was honestly green. The build-time tooth is
+      # now SEMANTIC (over the environment, which lake DOES track); this step is where the textual
+      # half runs, on a `lake env lean` that re-elaborates the file from source by construction.
+      # COST: the corpus is already built by the zero-sorry step above, so this is seconds. The
+      # script additionally requires the tool's own success line in the output — a run that
+      # silently skipped the check fails here rather than passing.
+      - name: Cone-cutover textual post-state (the Dregg2.lean WIRING check, no cache can answer it)
+        working-directory: metatheory
+        run: bash scripts/cone_cutover_textual_check.sh
+
       # THE CORPUS-WIDE AXIOM-HYGIENE LEDGER, ARMED (2026-07-17, wiring hunt round 2).
       # `Dregg2/Claims.lean` is THE `#assert_axioms` net: 202 per-decl pins +
       # 51 `#assert_namespace_axioms` (~1500 theorems) that each FAIL THE BUILD unless

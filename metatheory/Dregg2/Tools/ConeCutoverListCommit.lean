@@ -14,16 +14,36 @@ the level-2 composition gap). The additive scaffolding module `Circuit/ListCommi
 is RETIRED in the same transaction: a port that leaves the vacuous original standing reduces the
 surface by zero, and so does a cutover that leaves the duplicate port standing.
 
-In DEFAULT mode (every build) this module is the standing textual tooth that the cutover HOLDS:
-every pre-cutover fragment absent, every cutover fragment present, the retired file gone. The
-semantic teeth live beside it: `ListCommitCutoverCheck` (statement identity to the ConePort-pinned
-types + floor unreachability) and the re-pinned `ConePortListCommitRun` driver (the 13 now REFUSE
-as not-a-carrier — the floor binders are measurably gone).
+⚑ In DEFAULT mode (every build) this module runs the SEMANTIC post-state tooth, not the textual
+one. The textual assertion reads the tree through `IO.FS`, which lake's import-based dependency
+graph cannot see, so in a build it is answered from a cached olean and never re-checked — measured
+2026-07-25: `lake build` on this module EXIT=0 while a forced-fresh `lake env lean` on the same
+bytes EXIT=1 on two real violations. `Tools/ConeCutover`'s module note records that measurement in
+full. What runs at build time now reads only the ENVIRONMENT — the 13 cut-over declarations are
+floor-free in STATEMENT and in PROOF CLOSURE, the retired scaffolding module is absent, the check
+modules are in the build, and two blindness controls (one over a TYPE, one over a PROOF TERM) prove
+the scanner and the walk can still see a floor at all — every one of which lake re-runs whenever any
+of those declarations changes.
+
+The textual assertion keeps the one job nothing else can do: it is the only check that reads
+`Dregg2.lean`, i.e. the WIRING (twice in this campaign a commit truncated the root and silently
+unbuilt whole modules — including this one). It runs fresh from
+`scripts/cone_cutover_textual_check.sh`.
+
+The other semantic teeth, now imported here so one root import wires the whole cluster:
+`ListCommitCutoverCheck` (statement identity to the ConePort-pinned types + floor unreachability)
+and the re-pinned `ConePortListCommitRun` driver (the 13 now REFUSE as not-a-carrier — the floor
+binders are measurably gone).
 
 One-shot application: `scripts/cone_cutover_run.sh` (backups → `CONE_CUTOVER_WRITE=1` staged
 transaction → closure build → ruler; rollback on any red).
 -/
 import Dregg2.Tools.ConeCutover
+-- The cutover's own teeth, pulled in so (a) the semantic post-state below can actually SEE the 13
+-- cut-over declarations in the environment, and (b) one root import wires the whole cluster.
+import Dregg2.Circuit.ListCommitCutoverCheck
+import Dregg2.Tools.ConePortListCommitRun
+import Dregg2.Exec.RecordCommit
 
 namespace Dregg2.Tools.ConeCutoverListCommit
 
@@ -234,11 +254,72 @@ def spec : CutoverSpec where
     --  the cluster wiring, re-pinned post-cutover, and wires the cutover + check modules.)
     ed ROOT
       "32 keystones #assert_all_clean\nimport Dregg2.Circuit.PeepholeDeployedShape"
-      "32 keystones #assert_all_clean\nimport Dregg2.Circuit.ListCommitRegrounded -- ⚑ the ListDigestBindsList ENDPOINT re-grounded (the vacuity-elimination port exemplar): S2 listDigest_binds_or_collides is HYPOTHESIS-FREE (equal digests ⇒ equal lists OR a NAMED ListColl = CNColl ∨ LeafColl with distinctness intrinsic + .extracts specs); S3 _of_noColl/_of_noCNColl/_of_noLeafColl restore the OLD conclusion under a per-instance refutable ¬Coll (HONEST-BUT-CONDITIONAL, ~2^15.5 at 1-felt); no strength lost (listDigest_binds_of_carriers re-derives the old statement THROUGH the port); S1 listDigestRom_binds = the keyed-ROM headline over length-bounded felt-lists (keyedRom_hard birthday bound, labelled Fin(2^l) modelling caveat, poles priced pos+defanged). TEETH: canary_drop_moves_digest_or_collides, listDigest_binds_unconditional_false, noColl_satisfiable/listColl_refutable. #assert_all_clean. NOW ALSO: the CUTOVER bridges noCNColl_of_inj/noCNColl_self/noListColl_self (every rewired consumer's floor flows through ONE bridge — the level-2 composition rule).\nimport Dregg2.Tools.ConePort -- ⚑ the mechanical S3 threader-port METAPROGRAM (the campaign's transform, prototyped): analysis on the ELABORATED TERM (floor binders by constant identity, floor-flow walk of the proof, per-site side conditions instantiated at the EXACT argument exprs, read off the replacement lemma's own telescope); surgery on the proof Expr; VERIFIED before emission (Meta.check + isDefEq + real kernel addDecl) with a MANDATORY delaboration round-trip; emits auditable source. FAIL-CLOSED refusal classes: ENDPOINT (floor applied — needs hand S2), unported-consumer/DAG-order, COMPILER-LIFTED AUX (_proof_N — the bundle case), LEAKY (proof-local binders in the side condition), floor-in-conclusion, partial application, residual floor, kernel-reject, round-trip failure. A port may only make the measurement MORE true.\nimport Dregg2.Tools.ConePortListCommitRun -- the ConePort DRIVER + pinned MEASUREMENT for the ListDigestBindsList cluster, re-run as a build-time tooth, RE-PINNED POST-CUTOVER: the 13 cut-over theorems REFUSE as not-a-carrier (their floor binders are GONE — this pin IS the standing proof the cutover holds); 3 level-2 threaders PORT through the ONE noCNColl_of_inj bridge AppRule (bridgeRules — the AppRule-from-PortResult composition gap closed by the cutover's uniform bridge; 2-level cone demonstrated in-env every build) + cellCommit_binds_tail = the DAG-order refusal control; endpoint REFUSES as ENDPOINT; accountsComponent/listComponent REFUSE at the compiler-lifted _proof_1 AUX sink; leakyExhibit REFUSES as LEAKY; listDigest_congr = not-a-carrier negative control. Any drift is a BUILD ERROR. CONE_PORT_WRITE RETIRED (the cone was cut over in place and deleted).\nimport Dregg2.Tools.ConeCutover -- ⚑ the CUTOVER step of the ConePort toolkit (a port only counts when the floor-carrying original is GONE — the additive-regrounding sin, mechanized away): transactional textual surgery, stage verifies EVERY edit (exact match-count, no residual old text) against the real tree before ANY byte is written, ONE failure refuses the WHOLE cutover with nothing touched; apply backs up + writes + retires the additive scaffolding; default mode = the standing post-state tooth (every old fragment absent, every new fragment present, every retired file gone) re-checked on every build. In-place (same name, same conclusion, floor binder → per-instance side condition) is the only import-cycle-free cutover shape, and it keeps every #assert_axioms pin aimed at the now-successor name.\nimport Dregg2.Tools.ConeCutoverListCommit -- ⚑⚑ THE FIRST REALIZED SURFACE REDUCTION of the vacuity-elimination campaign: the ListDigestBindsList cluster CUT OVER — all 13 ConePort-verified threaders lost their refuted compressNInjective (+listLeafInjective) binders IN PLACE (same names, same conclusions, per-instance ¬CNColl/¬ListColl side conditions at the exact proof arguments); 17 consumer call sites rewired through the noCNColl_of_inj/noColl_of_carriers bridges (which makes level-2 uniformly portable — the composition rule); Circuit/ListCommitPortedCone.lean (the additive scaffolding) DELETED in the same transaction. Standing textual post-state tooth on every build. (This block RESTORES the cluster wiring that commit 799b5a6e27 dropped from this file wholesale — the four imports vanished under an unrelated Peephole commit.)\nimport Dregg2.Circuit.ListCommitCutoverCheck -- the cutover's SEMANTIC teeth, re-proved by the KERNEL on every build: for each of the 13 cut-over theorems, example : ⟨the ConePort-kernel-checked S3 type⟩ := @original (statement identity to the verified port — a silent weakening or binder drift turns this red) + #assert_axioms + #assert_not_depends_on [compressNInjective, ListDigestBindsList] (the refuted floor AND the old endpoint UNREACHABLE from every cut-over theorem).\nimport Dregg2.Circuit.PeepholeDeployedShape"
+      "32 keystones #assert_all_clean\nimport Dregg2.Circuit.ListCommitRegrounded -- ⚑ the ListDigestBindsList ENDPOINT re-grounded (the vacuity-elimination port exemplar): S2 listDigest_binds_or_collides is HYPOTHESIS-FREE (equal digests ⇒ equal lists OR a NAMED ListColl = CNColl ∨ LeafColl with distinctness intrinsic + .extracts specs); S3 _of_noColl/_of_noCNColl/_of_noLeafColl restore the OLD conclusion under a per-instance refutable ¬Coll (HONEST-BUT-CONDITIONAL, ~2^15.5 at 1-felt); no strength lost (listDigest_binds_of_carriers re-derives the old statement THROUGH the port); S1 listDigestRom_binds = the keyed-ROM headline over length-bounded felt-lists (keyedRom_hard birthday bound, labelled Fin(2^l) modelling caveat, poles priced pos+defanged). TEETH: canary_drop_moves_digest_or_collides, listDigest_binds_unconditional_false, noColl_satisfiable/listColl_refutable. #assert_all_clean. NOW ALSO: the CUTOVER bridges noCNColl_of_inj/noCNColl_self/noListColl_self (every rewired consumer's floor flows through ONE bridge — the level-2 composition rule).\nimport Dregg2.Tools.ConePort -- ⚑ the mechanical S3 threader-port METAPROGRAM (the campaign's transform, prototyped): analysis on the ELABORATED TERM (floor binders by constant identity, floor-flow walk of the proof, per-site side conditions instantiated at the EXACT argument exprs, read off the replacement lemma's own telescope); surgery on the proof Expr; VERIFIED before emission (Meta.check + isDefEq + real kernel addDecl) with a MANDATORY delaboration round-trip; emits auditable source. FAIL-CLOSED refusal classes: ENDPOINT (floor applied — needs hand S2), unported-consumer/DAG-order, COMPILER-LIFTED AUX (_proof_N — the bundle case), LEAKY (proof-local binders in the side condition), floor-in-conclusion, partial application, residual floor, kernel-reject, round-trip failure. A port may only make the measurement MORE true.\nimport Dregg2.Tools.ConePortListCommitRun -- the ConePort DRIVER + pinned MEASUREMENT for the ListDigestBindsList cluster, re-run as a build-time tooth, RE-PINNED POST-CUTOVER: the 13 cut-over theorems REFUSE as not-a-carrier (their floor binders are GONE — this pin IS the standing proof the cutover holds); 3 level-2 threaders PORT through the ONE noCNColl_of_inj bridge AppRule (bridgeRules — the AppRule-from-PortResult composition gap closed by the cutover's uniform bridge; 2-level cone demonstrated in-env every build) + cellCommit_binds_tail = the DAG-order refusal control; endpoint REFUSES as ENDPOINT; accountsComponent/listComponent REFUSE at the compiler-lifted _proof_1 AUX sink; leakyExhibit REFUSES as LEAKY; listDigest_congr = not-a-carrier negative control. Any drift is a BUILD ERROR. CONE_PORT_WRITE RETIRED (the cone was cut over in place and deleted).\nimport Dregg2.Tools.ConeCutover -- ⚑ the CUTOVER step of the ConePort toolkit (a port only counts when the floor-carrying original is GONE — the additive-regrounding sin, mechanized away): transactional textual surgery, stage verifies EVERY edit (exact match-count, no residual old text) against the real tree before ANY byte is written, ONE failure refuses the WHOLE cutover with nothing touched; apply backs up + writes + retires the additive scaffolding; default mode = the standing SEMANTIC post-state tooth, re-checked on every build over the ENVIRONMENT (each cut-over declaration floor-free in STATEMENT and in PROOF CLOSURE, retired scaffolding absent from the environment, the check modules present, plus type- and proof-term BLINDNESS CONTROLS so a rejector cannot pass vacuously). The TEXTUAL post-state moved OUT of the build (scripts/cone_cutover_textual_check.sh): it reads the tree through IO.FS, which lake's import graph cannot see, so a build answers it from a cached olean — measured 2026-07-25, lake build EXIT=0 while a forced-fresh elaboration EXIT=1 on two real violations. In-place (same name, same conclusion, floor binder → per-instance side condition) is the only import-cycle-free cutover shape, and it keeps every #assert_axioms pin aimed at the now-successor name.\nimport Dregg2.Tools.ConeCutoverListCommit -- ⚑⚑ THE FIRST REALIZED SURFACE REDUCTION of the vacuity-elimination campaign: the ListDigestBindsList cluster CUT OVER — all 13 ConePort-verified threaders lost their refuted compressNInjective (+listLeafInjective) binders IN PLACE (same names, same conclusions, per-instance ¬CNColl/¬ListColl side conditions at the exact proof arguments); 17 consumer call sites rewired through the noCNColl_of_inj/noColl_of_carriers bridges (which makes level-2 uniformly portable — the composition rule); Circuit/ListCommitPortedCone.lean (the additive scaffolding) DELETED in the same transaction. Standing SEMANTIC post-state tooth on every build; the textual wiring check (the only one that reads Dregg2.lean itself, which no module can check from inside) runs FRESH from scripts/cone_cutover_textual_check.sh. (This block RESTORES the cluster wiring that commit 799b5a6e27 dropped from this file wholesale — the four imports vanished under an unrelated Peephole commit.)\nimport Dregg2.Circuit.ListCommitCutoverCheck -- the cutover's SEMANTIC teeth, re-proved by the KERNEL on every build: for each of the 13 cut-over theorems, example : ⟨the ConePort-kernel-checked S3 type⟩ := @original (statement identity to the verified port — a silent weakening or binder drift turns this red) + #assert_axioms + #assert_not_depends_on [compressNInjective, ListDigestBindsList] (the refuted floor AND the old endpoint UNREACHABLE from every cut-over theorem).\nimport Dregg2.Circuit.PeepholeDeployedShape"
   ]
 
+/-! ## §2 — the SEMANTIC post-state: what the cutover means in the ENVIRONMENT.
+
+This is the part that runs on every build, because every input to it is an imported declaration and
+lake re-elaborates an importer whenever an import changes. Restore a floor binder in any of the 13,
+route any of their proofs back through the refuted floor, resurrect the retired cone module, or
+drop a check module out of the build — each is a build error HERE. -/
+
+/-- The refuted floor and the floor-APPLYING endpoint it made vacuous. Both must still resolve:
+a pin whose target has vanished is a re-pin, not a pass. -/
+def FLOOR_CN : Lean.Name := `Dregg2.Circuit.StateCommit.compressNInjective
+def FLOOR_ENDPOINT : Lean.Name := `Dregg2.Circuit.ListCommit.ListDigestBindsList
+
+/-! ### The blindness controls.
+
+`assertSemanticPostState` is a pure rejector over the 13, and a rejector cannot detect its own
+blindness — a walk that has lost `allowOpaque := true` sees every theorem's proof term as EMPTY and
+reports the whole cluster clean, vacuously. These two declarations are the dual: each MUST still
+reach the floor, one through the type and one through the proof term ONLY. -/
+
+/-- PROOF-TERM CONTROL. The statement is `True` — no floor anywhere in the type — while the proof
+term carries `@ListDigestBindsList`, whose own type is where `compressNInjective` lives. So the
+walk reaches the floor from here IF AND ONLY IF it is still opening theorem values. -/
+-- NOT `private`: a private declaration is stored under a mangled `_private.…` name, so
+-- `Environment.find?` on the source name misses it and the control reports MISSING (measured).
+theorem walkControl : True := by
+  have _h := fun (LE : ℕ → ℤ) (cN : List ℤ → ℤ) =>
+    @Dregg2.Circuit.ListCommit.ListDigestBindsList ℕ LE cN
+  trivial
+#assert_axioms Dregg2.Tools.ConeCutoverListCommit.walkControl
+
+def semantic : SemanticSpec where
+  -- the 13 cut-over theorems, in the order `Circuit/ListCommitCutoverCheck` pins them
+  ported :=
+    [ `Dregg2.Circuit.RotatedKernelRefinementNotes.noteListRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementMisc.fixRootBinds
+    , `Dregg2.Circuit.RotatedKernelRefinementLifecycleDisc.discRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementProgram.setProgram_forced
+    , `Dregg2.Circuit.RotatedKernelRefinementCellSeal.lifecycleRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementBirth.accountsGrowForced
+    , `Dregg2.Circuit.RotatedKernelRefinementLifecycle.deathCertRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditSlotRoot_binds
+    , `Dregg2.Circuit.RotatedKernelRefinementLifecycle.auditSlotForced
+    , `Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_forced
+    , `Dregg2.Circuit.RotatedKernelRefinementPermsVK.slotSetForced
+    , `Dregg2.Exec.FieldsMap.fieldsRoot_binds_tail ]
+  floors := [FLOOR_CN, FLOOR_ENDPOINT]
+  -- the additive scaffolding the cutover retired in the same transaction
+  retiredModules := [`Dregg2.Circuit.ListCommitPortedCone]
+  -- the cutover's teeth: in the build, or they are not teeth
+  wiredModules :=
+    [ `Dregg2.Circuit.ListCommitCutoverCheck
+    , `Dregg2.Tools.ConePortListCommitRun
+    , `Dregg2.Circuit.ListCommitRegrounded ]
+  -- statement scanner alive: the bridge carries the floor in its telescope, by construction
+  typeControls := [(`Dregg2.Circuit.ListCommitRegrounded.noCNColl_of_inj, FLOOR_CN)]
+  -- closure walk alive (and still opening theorem values): floor-free statement, floor-reaching proof
+  proofControls :=
+    [ (`Dregg2.Tools.ConeCutoverListCommit.walkControl, FLOOR_CN)
+    , (`Dregg2.Tools.ConeCutoverListCommit.walkControl, FLOOR_ENDPOINT) ]
+
 elab "#cone_cutover_listcommit" : command =>
-  runCutoverCmd spec "ListDigestBindsList"
+  runCutoverCmd spec semantic "ListDigestBindsList"
 
 #cone_cutover_listcommit
 
