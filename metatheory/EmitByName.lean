@@ -44,6 +44,7 @@ import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
 import Dregg2.Circuit.Emit.DerivationEmit
 import Dregg2.Circuit.Emit.DfaRoutingEmit
+import Dregg2.Circuit.Emit.DfaRoutingTableEmit
 import Dregg2.Circuit.Emit.DyckStackEmit
 import Dregg2.Circuit.Emit.GuardedHidingSpanWideBlindEmit
 import Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
@@ -149,6 +150,16 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.DerivationEmit.derivationDesc)
   , ("dfa-routing.json",
       Dregg2.Circuit.Emit.DfaRoutingEmit.dfaRoutingDesc)
+  -- The TABLE-AS-INPUT DFA-routing instance (`DfaRoutingTableEmit.lean`). Its refinement
+  -- `tableRouting_refines_classify` is over the WHOLE emitted descriptor and GENERAL over the
+  -- transition table `tbl`, the automaton `d` and the descriptor `name` — strictly
+  -- better-conditioned than `dfa-routing.json`'s per-automaton refinement, which carries a
+  -- terminal-step hypothesis (`hterm`: the transition-zerofier leaves the last row unasserted) and
+  -- a mod-`p` canonicality envelope. Here the transition tooth is ONE `exactPublicRows` lookup
+  -- (row-uniform: no last-row exemption) and table membership is an exact ℤ equality, so neither
+  -- residual exists. Routed here so the served bytes are RE-DERIVED from that Lean author.
+  , ("dfa-routing-table-exact-public-v1.json",
+      Dregg2.Circuit.Emit.DfaRoutingTableEmit.demoRoutingDesc)
   , ("dyck-parse.json",
       Dregg2.Circuit.Emit.DyckStackEmit.dyckParseDesc)
   , ("field-delta-result-range.json",
@@ -256,7 +267,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 62
+#guard byNameDescriptors.length == 63
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
