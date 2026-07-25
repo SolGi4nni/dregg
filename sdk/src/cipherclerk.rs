@@ -7229,15 +7229,36 @@ impl AgentCipherclerk {
 
     /// Checked producer-side EffectVM projection. Runtime keys are canonical
     /// `u64`; the current AIR can bind only `u32` field indices.
+    ///
+    /// The PQ identity verbs have no AIR row at all, so they are refused by name — a
+    /// producer must not mint a cohort proof over a turn whose identity mutation the
+    /// circuit never constrained. The search RECURSES through
+    /// `ExerciseViaCapability`: the executor applies inner effects through the same
+    /// `apply_effect` dispatch, while this projector only folds `inner.hash()` into
+    /// `exercise_hash`, so a top-level-only scan let a nested `RotatePqIdentity` mint a
+    /// proof the verify-side bridge then refuses. Mirrors
+    /// `dregg_turn::executor::try_convert_turn_effects_to_vm`.
     pub fn try_convert_effects_to_vm(
         cell_id: &CellId,
         effects: &[Effect],
     ) -> Result<Vec<dregg_circuit::effect_vm::Effect>, SdkError> {
-        if let Some(effect) = effects.iter().find_map(|effect| match effect {
-            Effect::CreateHybridCell { .. } => Some("CreateHybridCell"),
-            Effect::RotatePqIdentity { .. } => Some("RotatePqIdentity"),
-            _ => None,
-        }) {
+        fn find_pq_identity_effect(effects: &[Effect]) -> Option<&'static str> {
+            for effect in effects {
+                match effect {
+                    Effect::CreateHybridCell { .. } => return Some("CreateHybridCell"),
+                    Effect::RotatePqIdentity { .. } => return Some("RotatePqIdentity"),
+                    Effect::ExerciseViaCapability { inner_effects, .. } => {
+                        if let Some(found) = find_pq_identity_effect(inner_effects) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        if let Some(effect) = find_pq_identity_effect(effects) {
             return Err(SdkError::InvalidWitness(format!(
                 "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
             )));

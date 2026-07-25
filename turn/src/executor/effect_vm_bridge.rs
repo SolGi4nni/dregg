@@ -718,13 +718,37 @@ fn convert_turn_effects_to_vm_unchecked(
 /// carries a single `u32` index column. A wider key is a valid classical
 /// committed-map write but is not yet provable by that circuit. Report it
 /// explicitly so verifier paths can refuse instead of truncating or panicking.
+///
+/// The PQ identity verbs (`CreateHybridCell` / `RotatePqIdentity`) have NO AIR row
+/// at all — the cell PQ authority anchor lives outside every deployed descriptor's
+/// modelled state (`turn/src/umem.rs`: "outside the current universal-memory key
+/// planes"). Projecting them to nothing would let a prover carry an identity
+/// mutation the circuit never constrained, so the checked projection refuses them
+/// BY NAME. That refusal is the whole basis on which
+/// `circuit/tests/effect_enum_descriptor_residual_gate.rs` classifies them as
+/// REFUSED residuals rather than silent ones.
 pub fn try_convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
 ) -> Result<Vec<dregg_circuit::effect_vm::Effect>, EffectVmProjectionError> {
-    fn check(tree: &CallTree, cell_id: &CellId) -> Result<(), EffectVmProjectionError> {
-        for effect in &tree.action.effects {
+    /// The per-effect-list arm. Recurses through `ExerciseViaCapability` because
+    /// `apply_exercise_via_capability` (`apply.rs`) dispatches every inner effect
+    /// back through `apply_effect` — a nested `RotatePqIdentity` mutates the
+    /// committed PQ anchor exactly as a top-level one does — while the projection
+    /// above only folds `inner.hash()` into `exercise_hash` and emits NO row for
+    /// it. Without this recursion the refusal was bypassable by nesting: the
+    /// identity op would ride an `exerciseVmDescriptor2R24` proof that constrains
+    /// nothing about the rotation. Facets make that reachable, not theoretical —
+    /// `EFFECT_ROTATE_PQ_IDENTITY` (`cell/src/facet.rs:113`) is a grantable
+    /// `allowed_effects` bit.
+    fn check_effects(effects: &[Effect], cell_id: &CellId) -> Result<(), EffectVmProjectionError> {
+        for effect in effects {
             match effect {
+                // Top-level ONLY, deliberately: this refusal exists because a wide
+                // key would be TRUNCATED into the u32 index lane. An inner effect is
+                // never lowered to a `VmEffect::SetField` (it is hash-bound into
+                // `exercise_hash`), so there is no truncation to refuse and
+                // recursing here would reject provable turns.
                 Effect::SetField { cell, index, .. }
                     if cell == cell_id && *index > u32::MAX as u64 =>
                 {
@@ -740,9 +764,41 @@ pub fn try_convert_turn_effects_to_vm(
                         "RotatePqIdentity",
                     ));
                 }
+                Effect::ExerciseViaCapability { inner_effects, .. } => {
+                    check_inner(inner_effects)?;
+                }
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    /// The nested arm: only the NO-AIR-ROW verbs refuse here (see the SetField note
+    /// above). Exercises nest, so this recurses too.
+    fn check_inner(effects: &[Effect]) -> Result<(), EffectVmProjectionError> {
+        for effect in effects {
+            match effect {
+                Effect::CreateHybridCell { .. } => {
+                    return Err(EffectVmProjectionError::PqIdentityEffect(
+                        "CreateHybridCell",
+                    ));
+                }
+                Effect::RotatePqIdentity { .. } => {
+                    return Err(EffectVmProjectionError::PqIdentityEffect(
+                        "RotatePqIdentity",
+                    ));
+                }
+                Effect::ExerciseViaCapability { inner_effects, .. } => {
+                    check_inner(inner_effects)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn check(tree: &CallTree, cell_id: &CellId) -> Result<(), EffectVmProjectionError> {
+        check_effects(&tree.action.effects, cell_id)?;
         for child in &tree.children {
             check(child, cell_id)?;
         }

@@ -139,3 +139,55 @@ half's *cryptographic* floor is still the lattice/hash floor documented in
 adversary-indexed statement in `CryptoFloorTeeth`). "require_pq ON" means the node
 demands a verifying ML-DSA half bound to an enrolled identity — it does not by itself
 add cryptographic hardness beyond that floor.
+
+## 6. ⚠ WOUND — the PQ identity authority plane has NO AIR row (coverage gap, 2026-07-25)
+
+§1-§5 assess **admission policy**. This section records what §2's "cells born via
+`Effect::CreateHybridCell` commit a `pq_identity` at birth" does **not** say: neither
+PQ verb has a circuit.
+
+`Effect::CreateHybridCell` (`turn/src/action.rs:1569`) and `Effect::RotatePqIdentity`
+(`:1582`) are the only two verbs that install and advance the committed
+`CellPqIdentity { key_epoch, ml_dsa_key_commitment }`. Both are **executor-only**:
+
+- The checks — ML-DSA-65 possession over `pq::cell_pq_{creation,rotation}_message`,
+  epoch-zero-at-birth, `expected_epoch` equality, new-key-differs, exactly-+1 with
+  overflow refusal — live in `apply_create_hybrid_cell` / `apply_rotate_pq_identity`
+  (`turn/src/executor/apply.rs`) and `Cell::{install,rotate}_pq_identity`
+  (`cell/src/cell.rs:656` / `:674`). All **trusted Rust**; none is a constraint.
+- The anchor **is** bound into committed state — `compute_canonical_state_commitment`
+  (`cell/src/commitment.rs:223`) and the 8-felt `authority_residue_bytes` (`:978`)
+  both absorb it, so it cannot be omitted or substituted without moving the root.
+  **Binding is not constraining:** the root moves, and no circuit says the move was a
+  legal rotation.
+- **What a light client learns: nothing about the identity op.** The checked EffectVM
+  projection (`try_convert_turn_effects_to_vm`) **refuses** turns carrying either verb
+  by name (`EffectVmProjectionError::PqIdentityEffect`), so no cohort proof over such a
+  turn exists at all. Descriptor refinement / the per-turn fold / cohort-run
+  verification all quantify over projected VM effect rows; there is no row here to
+  quantify over. Fail-closed and honest — but it means PQ authority is exactly as
+  strong as trust in the executor, which is the thing PQ was meant to survive.
+- **Partially closed already:** a Lean-authored, Lean-proven rotation authority
+  descriptor exists — `dregg-pq-identity-rotation::v1`
+  (`metatheory/Dregg2/Circuit/Emit/PqIdentityAuthorityEmit.lean`,
+  `satisfied_implies_exact_rotation`; width 127 / 108 PIs / 120 constraints, parsed by
+  the production IR2 parser in `circuit/tests/pq_identity_authority_descriptor.rs`).
+  It is **not** a `V3_STAGED_REGISTRY_TSV` member, has no producer and no committed VK,
+  and its own header says parsing it "does not make the row deployable and does not
+  discharge either ML-DSA premise". There is **no** PQ *birth* descriptor, not even
+  staged.
+
+**Not a felt-width wound.** `docs/WOUND-felt-width-boundaries-2026-07-19.md` catalogues
+32-byte digests NARROWED to ~31 bits at a security boundary; nothing is narrowed here
+(the anchor rides its full 32-byte key commitment into the 8-felt authority digest).
+This is a **coverage** gap: a kernel verb with no AIR row.
+
+**Live record / drift gate.** The classification is pinned in
+`circuit/tests/effect_enum_descriptor_residual_gate.rs` as the
+`EXPECTED_REFUSED_RESIDUALS` set, whose `refused_residuals_are_refused_by_the_live_projection`
+test executes the production projection (top-level and nested under
+`ExerciseViaCapability`) to keep "fail-closed" a checked fact rather than prose. A verb
+leaves that set only by gaining a deployed rung.
+
+**Closure route.** Deploy the Lean rotation row (registry membership + producer + VK
+epoch) and discharge the ML-DSA premises; author the birth row. Both are VK-affecting.
