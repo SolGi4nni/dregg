@@ -20,8 +20,14 @@ teeth — teeth handle the simple state-shape + validity; the Custom AIR proves 
    played rounds against the model's 5.1%. ⚠ The wound is only PARTLY closed: `reference.rs` still
    decides action legality and the transition itself (`legal_decisions`, `apply`, `apply_action`,
    `apply_response`) in Rust. The FFI verbs for those exist (`legal`, `legalresp`, `kinds`, `act`,
-   `respond`); routing them is blocked on per-call FFI cost inside the agents' search, which wants a
-   batched verb rather than a bigger encoder.
+   `respond`). ⚑ An earlier note here claimed routing them was blocked on per-call FFI cost — that
+   claim was made without measuring and is WRONG: a wire call costs **31 us isolated / 112 us under
+   concurrent load** (measured both, persvati 2026-07-25, `rules::tests::one_oracle_call_costs` —
+   quote the RANGE), so the ~3.8e5 calls a routed maximin search would make cost **12-43 s** per
+   200-round run — ordinary, not prohibitive. The LEGALITY half is
+   routable now. What actually blocks the TRANSITION half is that `MultiwayTug.lean` models cards
+   at guild-row resolution and has no notion of a distinct card id, so the id bookkeeping has no
+   spec to route to.
 2. The STATE: simple scalars as dregg-schema register components; the board/deck/hand as a heap
    COLLECTION (the 16-register model doesn't hold a 121-cell board or a 21-card deck).
 3. The SIMPLE teeth lower via game-turn-slice's compiler (validity, counts, win-thresholds,

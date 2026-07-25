@@ -183,3 +183,86 @@ pub fn round_turns() -> Result<u64, String> {
     let toks = ask("turns")?;
     nat(toks.first(), "turns")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **What ONE oracle call costs** — the number that decides whether the four remaining Rust
+    /// deciders in `reference.rs` (`legal_decisions`, `apply`, `apply_action`, `apply_response`)
+    /// can be routed verb-by-verb or need a BATCHED verb first.
+    ///
+    /// The arithmetic this exists to settle:
+    ///
+    /// * the terminal adjudication — the part this lane routed — is **2 wire calls per scored
+    ///   round** (`score` + `branch`), so a 200-round balance run makes **400** of them. That
+    ///   cannot dominate anything, which is why the balance run's cost is build/lock, not FFI.
+    /// * routing the legality/transition half is a different order entirely: the maximin agent
+    ///   enumerates a seat's legal decisions (~86 at a fresh hand: 45 competitions, 20 gifts,
+    ///   15 discards, 6 secrets) and APPLIES every one of them, plus each offer's responses — so
+    ///   it would be ~200-300 calls per turn, ~12 turns, ~200 rounds ≈ **5 x 10^5 calls**.
+    ///
+    /// At `t` per call that second figure costs `5e5 * t`. This test measures `t` so the decision
+    /// is made on a number rather than on the word "expensive".
+    ///
+    /// [MEASURED] persvati, 2026-07-25: **31 us per wire call ISOLATED, 112 us under concurrent
+    /// test load** — a 3.6x spread on the same box in the same hour, so this is a RANGE and not a
+    /// constant; quote it as one. At both ends:
+    ///
+    /// * the landed adjudication (400 calls per 200-round run) costs **12-45 ms** — invisible. The
+    ///   balance run finishes in ~0.5 s, so its cost was never FFI; the 34 minutes it once spent
+    ///   were the shared cargo lock and nothing else.
+    /// * a fully routed maximin search (~3.8e5 calls, grounded below) costs **12-43 s** per run.
+    ///   Real, but ORDINARY.
+    ///
+    /// That REFUTES the "per-call FFI cost blocks the remaining twins, they need a batched verb
+    /// first" claim this lane made BEFORE measuring. The legality half (`legal_decisions`,
+    /// `apply`'s legality test) has no such blocker and is routable now. What genuinely blocks the
+    /// TRANSITION half (`apply_action`/`apply_response`) is unrelated to speed: `MultiwayTug.lean`
+    /// models cards at guild-row resolution (`Geisha := Fin 7`, zones are `Multiset Geisha`) and
+    /// has no notion of a distinct card id, so the id bookkeeping has no spec to route to.
+    ///
+    /// The ~3.8e5 figure is arithmetic, not a guess: a 6-card hand offers 6 secrets + 15 discards
+    /// + 20 gifts + 45 competitions = 86 options; maximin applies every one, plus every response
+    /// to each offer (20*3 + 45*2 = 150), so ~236 calls per action turn, ~1900 per round, ~380k
+    /// over 200 rounds.
+    #[test]
+    fn one_oracle_call_costs() {
+        if !available() {
+            // Fail-closed, like every other oracle test in the tree: an absent archive means
+            // there is no answer source at all, not a quieter one.
+            panic!(
+                "the multiway-tug rules oracle is absent — no timing can be taken, and there is \
+                 no Rust twin to fall back on"
+            );
+        }
+        // A realistic adjudication wire (the shape `adjudicate` actually sends).
+        let tallies = [[1, 0], [0, 1], [2, 0], [0, 1], [1, 1], [1, 0], [0, 2]];
+        let n = 2000;
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            adjudicate(&tallies).expect("the oracle answers");
+        }
+        let elapsed = start.elapsed();
+        // `adjudicate` is TWO wire calls, so divide by 2n for the per-call figure.
+        let per_call = elapsed / (2 * n);
+        println!("=== ORACLE CALL COST ===");
+        println!("  {n} adjudications ({} wire calls) in {elapsed:?}", 2 * n);
+        println!("  per wire call: {per_call:?}");
+        println!(
+            "  a 200-round balance run makes 400 calls  -> {:?}",
+            per_call * 400
+        );
+        println!(
+            "  routing the legality/transition half (~5e5 calls) -> {:?}",
+            per_call * 500_000
+        );
+        // A tooth, not just a print: an oracle call must stay under a millisecond, because the
+        // whole route-through argument for the remaining twins rests on it being cheap.
+        assert!(
+            per_call < std::time::Duration::from_millis(1),
+            "one oracle wire call took {per_call:?} — over a millisecond, routing the legality \
+             half would cost minutes per run and needs a batched verb first"
+        );
+    }
+}

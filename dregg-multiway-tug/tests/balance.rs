@@ -25,18 +25,33 @@
 //! one: `Engine::score` calls `@[export] dregg_multiway_tug_rules`, and the committed `winner`
 //! goes through the deployed clause teeth.
 //!
+//! ⚑ MEASURED 2026-07-25, n=200, both seats maximin, THROUGH THE PLAYED PATH
+//! (`cargo test -p dregg-multiway-tug --test balance`, 0.63s):
+//!
 //! ```text
 //!                       BEFORE (`winner_of`)   NOW (Lean `roundWinner`, PLAYED)
-//!   draws                     78.5%                    see the printout
-//!   LAST-TURN seat wins       77.6%                    see the printout
+//!   draws                     78.5%                    8.5%   (17/200)
+//!   seat A / seat B        55.0 / 45.0              53.6 / 46.4
+//!   LAST-TURN seat wins       77.6%                   62.3%
+//!
+//!   which clause decided (the deployed method the turn commits under):
+//!     absolute bars  (score_charm_*, score_rows_*)   23.5%   <- ALL the old gate could commit
+//!     tie-breaks     (score_lead_*, score_rowlead_*) 68.0%   <- ALL of it the old gate REFUSED
+//!     dead heat      (score_draw)                     8.5%
 //! ```
+//!
+//! Read the clause histogram, not just the draw rate: **68% of played rounds are decided by a
+//! clause the previous deployed gate refused to admit**. The draw rate falling 78.5% -> 8.5% is
+//! that same fact seen from the other side. (Independently, over ALL 2187 control-splits of the
+//! seven rows the tie-break clauses decide 54.5% — the play-induced distribution leans on them
+//! even harder than the uniform one.)
 //!
 //! The test ASSERTS the repair rather than printing it: a draw rate anywhere near the old bar's
 //! is a failure, because a draw is now an EXACT dead heat on both charm and rows
 //! (`roundWinner_draw_iff`) rather than "nobody cleared 11".
 //!
 //! Second finding, independent of the draw rate and NOT fixed here: **restoring I-cut-you-choose
-//! made the last-mover edge LARGER, ~57% -> ~65%**, because the final act of a round is now a free
+//! made the last-mover edge LARGER, ~57% -> 62.3% measured**, because the final act of a round is a free
 //! pick of the better half, so whoever answers last is handed value. 56.7% of rounds end on a
 //! response, and a response after seat B's fourth action belongs to seat A. The honest port is
 //! Hanamikoji's own — a multi-round match with an alternating opener — which is a match-state
