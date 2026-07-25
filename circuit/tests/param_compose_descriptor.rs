@@ -23,25 +23,24 @@
 //! ## Why it exists (the crate it replaces)
 //!
 //! `param-compose/src/air.rs` + `src/builder.rs` hand-write this AIR in Rust — constraints, gadgets
-//! and an `air_accepts` predicate, the three things the Lean-authored-AIR law names — and
-//! `entity-compose/src/lib.rs` rides it on the deployed `Effect::Custom` door. The Lean family here
-//! is the replacement route; this test is the evidence the route REACHES Rust.
+//! and an `air_accepts` predicate, the three things the Lean-authored-AIR law names. The Lean family
+//! here is the replacement route; this test is the evidence the route REACHES Rust.
 //!
-//! ## The remaining rewiring (NOT done here, stated precisely)
+//! ## The rewiring — DONE; the deletion — NOT
 //!
-//! `entity-compose::LandedComposition::fold_leaf_inputs` currently calls
-//! `dregg_param_compose::air::build(..)` and reads `air.builder.cellprogram()` /
-//! `trace_witness()` / `pis`. The replacement is:
+//! The production consumer no longer touches the Rust AIR. `param-compose/src/lean_descriptor.rs`
+//! resolves the byte-pinned goldens, `param-compose/src/witness.rs` is the WITNESS PRODUCER filling
+//! the Lean column layout (`ComposeShape.sBase`/`lBase`/`kBase`/`digBase`, §2 of the emit module),
+//! and `entity-compose::LandedComposition::direct_ir2_leaf_inputs` hands the emitted descriptor +
+//! that trace to `braid-hook`'s direct-IR2 leaf
+//! (`prove_direct_ir2_leaf_with_app_root_commitment`) — the leaf re-proves the LEAN object rather
+//! than lowering a second Rust `CellProgram`.
 //!
-//!   1. `parse_vm_descriptor2(PARAM_COMPOSE_REALISTIC_GOLDEN)` for the descriptor (or resolve it by
-//!      name once the by-name install is provenance-stamped);
-//!   2. a WITNESS PRODUCER that fills the Lean column layout (`ComposeShape.sBase`/`lBase`/`kBase`/
-//!      `digBase`, §2 of the emit module) rather than the Rust `Builder::alloc` order — the two
-//!      layouts differ by exactly the 33 constant-pinned columns the Lean family drops;
-//!   3. `prove_vm_descriptor2(&desc, &base_trace, &pis, &mem_boundary, &[])` — `trace_with_chip_lanes`
-//!      fills the Poseidon2 lane columns, so the producer supplies only the main trace.
-//!
-//! Only step 2 is real work, and it is the piece that must land before `param-compose` is deleted.
+//! `air.rs` / `builder.rs` still exist, unreferenced by any production path, because
+//! `param-compose`'s own test corpus (`tests/{composition,size,turn_door,prove_fold}.rs`) is written
+//! against them at shapes Lean has NOT byte-pinned (only `pcMin` and `pcRealistic` are). Deleting
+//! them needs that corpus migrated or dropped, plus two now-stale `BASELINE` rows removed from
+//! `circuit-prove/tests/law1_enforcement_gate.rs`.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, parse_vm_descriptor2};
 use dregg_circuit::lean_descriptor_air::VmConstraint;

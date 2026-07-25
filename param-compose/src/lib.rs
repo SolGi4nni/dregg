@@ -104,6 +104,34 @@
 //! shape), so it is a fold-node cost, not a new mechanism. This is the automatafl width
 //! residual in the same shape and closed the same way — named here, not discovered later.
 //!
+//! ## SAY THE SUBSTRATE OUT LOUD — the AIR is LEAN-AUTHORED
+//!
+//! The constraint system lives in `metatheory/Dregg2/Circuit/Emit/ParamComposeEmit.lean`
+//! (`paramComposeDesc`, a shape-parametric family byte-pinned by an `emitVmJson2` `#guard`, with
+//! the SAT ⟹ law bridge in `ParamComposeRefine.lean`). The Rust side of that route is two modules
+//! that author NO constraints:
+//!
+//!   * [`lean_descriptor`] — resolve the emitted descriptor for a shape, straight out of the Lean
+//!     source (no transcription hop). A shape Lean has not pinned is BLOCKED, not faked.
+//!   * [`witness`] — the WITNESS PRODUCER: fill that descriptor's column layout from this crate's
+//!     host-side composition data, so `prove_vm_descriptor2` can prove the Lean object. Acceptance
+//!     is judged by the DEPLOYED IR-v2 evaluator over the emitted descriptor
+//!     ([`witness::compose_trace_accepts`]), never by a predicate this crate wrote.
+//!
+//! The production consumer (`entity-compose` on the deployed `Effect::Custom` door, and
+//! `braid-hook`'s direct-IR2 fold) rides THAT route: the leaf re-proves the emitted descriptor
+//! itself, so the relation has exactly one semantics.
+//!
+//! ### The hand-written Rust AIR ([`air`] + [`builder`]) is RETIRED DEBT, still standing
+//!
+//! [`air`] and [`builder`] hand-write the same AIR in Rust — constraints, gadgets and an
+//! `air_accepts` predicate, the three things the Lean-authored-AIR law names. NOTHING ON A
+//! PRODUCTION PATH CALLS THEM ANY MORE. They remain only because this crate's own test corpus
+//! (`tests/{composition,size,turn_door,prove_fold}.rs`) is written against them at shapes Lean has
+//! not byte-pinned; deleting the modules requires migrating or dropping that corpus, and dropping
+//! two now-stale rows from `circuit-prove/tests/law1_enforcement_gate.rs`'s `BASELINE`. Do not
+//! extend them, and do not build anything new on them.
+//!
 //! ## Honest scope
 //!
 //! Things this crate does NOT do, stated at current resolution:
@@ -140,14 +168,18 @@ pub mod air;
 pub mod builder;
 pub mod digest;
 pub mod field;
+pub mod lean_descriptor;
 pub mod model;
 pub mod pi;
 pub mod reference;
 pub mod shape;
+pub mod witness;
 
 pub use air::{ComposeAir, Forgery, build, build_forged};
 pub use builder::{Builder, Head};
 pub use digest::DIGEST_FELTS;
+pub use lean_descriptor::lean_descriptor_for;
 pub use model::{ComposeError, Composition, Knot, LinearTerm, Ruleset, Subject};
 pub use reference::{Composed, compose_over};
 pub use shape::{ComposeShape, PARAM_COMPOSE_ABI_VERSION};
+pub use witness::{ComposeLayout, ComposeWitness, compose_witness};

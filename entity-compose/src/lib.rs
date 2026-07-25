@@ -10,6 +10,14 @@
 //! 2. **`dregg-param-compose`** — the GENERAL Custom-VK AIR proving
 //!    `outcome = Σ_linear coeff·P[role].params[i] + Σ_knots coeff·P[a].params[i]·P[b].params[j]`
 //!    over N typed subjects composed by a versioned, publicly-committed ruleset.
+//!    **SAY THE SUBSTRATE OUT LOUD: that AIR is LEAN-AUTHORED**
+//!    (`metatheory/Dregg2/Circuit/Emit/ParamComposeEmit.lean`, byte-pinned by an `emitVmJson2`
+//!    `#guard`, with the SAT ⟹ law bridge in `ParamComposeRefine.lean`). This crate resolves the
+//!    emitted descriptor and FILLS ITS COLUMNS
+//!    ([`dregg_param_compose::witness`]); it authors no constraint and carries no acceptance
+//!    predicate. A shape Lean has not pinned is BLOCKED, not faked
+//!    ([`dregg_param_compose::model::ComposeError::NoLeanDescriptor`]) — there is no Rust-AIR
+//!    fallback.
 //! 3. **The Door** (`dregg_turn::action::Effect::Custom`) — a custom proof reaches
 //!    `TurnExecutor::execute`, which verifies the VK, the registry dispatch, and the STATE
 //!    WELD (`pis[0..8] == the cell's stored commitment`, `pis[8..16] == the claimed new`).
@@ -30,7 +38,7 @@
 //! proves under the ruleset; the turn carrying it passes the Door and the state weld against
 //! the entity's REAL commitment; a proof about a DIFFERENT entity (different params → different
 //! commitment) is refused by the weld; a composition the ruleset does not license has no
-//! satisfying witness. The realistic composition rides `dregg-param-compose`'s 803-column leaf
+//! satisfying witness. The realistic composition rides the LEAN-AUTHORED 770-column leaf
 //! (`tests/budget.rs`), and the composition leaf really proves + binds its commitment
 //! (`tests/leaf_prove.rs`, `#[ignore]`, minutes).
 //!
@@ -65,20 +73,19 @@
 //! [`LandedComposition::harness_verify_outcome_welded`] reads back the committed octet as a fast
 //! shadow of the equality the fold now enforces for real.
 
-use std::collections::HashMap;
-
 use dregg_cell::commitment::{
     self, V9RotationContext, bytes32_to_felt8, compute_canonical_state_commitment_v9_8,
 };
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
-use dregg_circuit::dsl::circuit::CellProgram;
+use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::effect_vm::custom_state_binding::AppRootBinding;
 use dregg_circuit::effect_vm::field_limbs8;
 use dregg_circuit::field::BabyBear;
-use dregg_param_compose::air::{ComposeAir, build};
+use dregg_param_compose::lean_descriptor::{lean_descriptor_for, lean_descriptor_json};
 use dregg_param_compose::model::{ComposeError, Composition, Ruleset, Subject};
 use dregg_param_compose::pi;
 use dregg_param_compose::shape::ComposeShape;
+use dregg_param_compose::witness::{ComposeWitness, compose_trace_accepts, compose_witness};
 
 pub use dregg_param_compose::model::{Knot, LinearTerm};
 pub use dregg_param_compose::{ComposeShape as Shape, Composition as Comp};
@@ -289,8 +296,13 @@ pub struct LandedComposition {
     pub new_commitment: [u8; 32],
     /// The post cell (a clone of the entity's cell with `outcome_commitment` in its wide plane).
     pub post_cell: Cell,
-    /// The composition sub-proof's public inputs `[old8 ‖ new8 ‖ ..app]`.
+    /// The composition sub-proof's public inputs `[old8 ‖ new8 ‖ ..app]` — produced by, and
+    /// identical to, [`LandedComposition::witness`]'s.
     pub pis: Vec<BabyBear>,
+    /// **The produced witness for the LEAN-AUTHORED AIR.** The trace row filling the column layout
+    /// `metatheory/Dregg2/Circuit/Emit/ParamComposeEmit.lean` §2 declares, from this composition's
+    /// host-side data. Rust fills columns here; it authors no constraint.
+    pub witness: ComposeWitness,
 }
 
 impl LandedComposition {
@@ -303,8 +315,8 @@ impl LandedComposition {
     /// PIs `[outcome_commitment_base .. +8)`, and it MUST equal the entity cell's committed native
     /// `fields[0..8]` octet (`field_key = OUTCOME_NATIVE_BASE`, width 8). This is the deployed
     /// [`AppRootBinding`] a game/offering hands to the chain prover
-    /// (`bundle.app_root_binding = Some(landed.app_root_binding())`); the prover then routes the
-    /// custom turn through `prove_custom_binding_node_app_root_segmented`, whose in-circuit
+    /// (`bundle.app_root_binding = landed.app_root_binding()`); the prover then routes the
+    /// custom turn through `prove_direct_ir2_binding_node_app_root_segmented`, whose in-circuit
     /// `connect` forces published-outcome == committed-octet lane-by-lane. NOT hand-written AIR —
     /// see the crate doc.
     pub fn app_root_binding(&self) -> AppRootBinding {
@@ -315,34 +327,39 @@ impl LandedComposition {
         }
     }
 
-    /// **The fold-leaf inputs, bound to a leg's REAL rotated roots.** Rebuild the composition AIR
-    /// with the door prefix set to `(old8, new8)` — the wide Custom leg's real rotated anchors,
-    /// which are computed from the leg's rotation witness and differ from the crate's own
-    /// `v9_commitment` context — and return `(program, witness, num_rows, public_inputs)` ready
-    /// for `prove_custom_leaf_with_app_root_commitment` / a `CustomWitnessBundle`. The published
-    /// `outcome_commitment` (PI `[outcome_commitment_base .. +8)`) is a function of the
+    /// **The direct-IR2 fold-leaf inputs, bound to a leg's REAL rotated roots.** Re-produce the
+    /// witness with the door prefix set to `(old8, new8)` — the wide Custom leg's real rotated
+    /// anchors, which are computed from the leg's rotation witness and differ from the crate's own
+    /// `v9_commitment` context — and return `(descriptor, base_trace, public_inputs)` ready for
+    /// `prove_direct_ir2_leaf_with_app_root_commitment` / a `CustomIr2WitnessBundle`.
+    ///
+    /// **The descriptor is the LEAN-AUTHORED one** — `paramComposeDesc` at this shape, decoded
+    /// straight out of its byte-pinned Lean golden. Rust supplies only the trace fill. The
+    /// published `outcome_commitment` (PI `[outcome_commitment_base .. +8)`) is a function of the
     /// composition alone, so it is UNCHANGED by the roots and equals the committed native octet.
-    pub fn fold_leaf_inputs(
+    ///
+    /// Fail-closed twice: [`ComposeError::NoLeanDescriptor`] at a shape Lean has not pinned (there
+    /// is no Rust-AIR fallback to degrade to), and [`ComposeError::WitnessRefusedByDescriptor`] if
+    /// the produced trace does not satisfy the emitted gates — a witness-generator fault is refused
+    /// here rather than handed to the prover.
+    pub fn direct_ir2_leaf_inputs(
         &self,
         old8: &[BabyBear; 8],
         new8: &[BabyBear; 8],
         num_rows: usize,
-    ) -> Result<
-        (
-            CellProgram,
-            HashMap<String, Vec<BabyBear>>,
-            usize,
-            Vec<BabyBear>,
-        ),
-        ComposeError,
-    > {
-        let air = build(&self.shape, &self.composition, old8, new8)?;
-        Ok((
-            air.builder.cellprogram(),
-            air.builder.trace_witness(num_rows),
-            num_rows,
-            air.builder.pis.clone(),
-        ))
+    ) -> Result<(EffectVmDescriptor2, Vec<Vec<BabyBear>>, Vec<BabyBear>), ComposeError> {
+        let desc = lean_descriptor_for(&self.shape).ok_or(ComposeError::NoLeanDescriptor)?;
+        let w = compose_witness(&self.shape, &self.composition, old8, new8)?;
+        if !compose_trace_accepts(&desc, &w) {
+            return Err(ComposeError::WitnessRefusedByDescriptor);
+        }
+        Ok((desc, w.base_trace(num_rows), w.pis))
+    }
+
+    /// The canonical program bytes the composition's `vk_hash` binds: the Lean-emitted descriptor's
+    /// own wire string. `None` at a shape Lean has not pinned.
+    pub fn program_bytes(&self) -> Option<Vec<u8>> {
+        program_bytes(&self.shape)
     }
 
     /// **The outcome→cell-field weld, fast shadow.** Returns true iff the POST cell's native
@@ -368,15 +385,18 @@ impl LandedComposition {
         true
     }
 
-    /// Whether the honest composition self-accepts (the fast `air_accepts` shadow of "the leaf
-    /// proves"). A composition the ruleset does not license returns false — no turn to carry.
-    pub fn air_accepts(&self) -> bool {
-        // Rebuild the AIR to evaluate the emitted constraints over the emitted witness row.
-        let old8 = bytes32_to_felt8(&self.old_commitment);
-        let new8 = bytes32_to_felt8(&self.new_commitment);
-        build(&self.shape, &self.composition, &old8, &new8)
-            .map(|a| a.builder.air_accepts())
-            .unwrap_or(false)
+    /// **THE FAIL-CLOSED PRODUCER CANARY** — whether the produced witness satisfies the
+    /// LEAN-AUTHORED descriptor, judged by the DEPLOYED IR-v2 row-local evaluator
+    /// (`Ir2Air::Main::eval`). This is the gate the deleted Rust-AIR `air_accepts` used to be, with
+    /// the authority moved from a Rust predicate to the emitted object.
+    ///
+    /// `false` at a shape Lean has not pinned — blocked, not faked: there is no Rust-authored AIR
+    /// to fall back to, so a shape without an emitted descriptor cannot be attested.
+    pub fn lean_descriptor_accepts(&self) -> bool {
+        match lean_descriptor_for(&self.shape) {
+            Some(desc) => compose_trace_accepts(&desc, &self.witness),
+            None => false,
+        }
     }
 }
 
@@ -432,13 +452,10 @@ pub fn compose_onto(
     let (new_commitment, _post_ctx) = v9_commitment(&post_cell);
     let new8 = bytes32_to_felt8(&new_commitment);
 
-    // Build the AIR bound to the entity's REAL (old8, new8) and package its genuine PIs.
-    let air: ComposeAir = build(&shape, &composition, &old8, &new8)?;
-    debug_assert!(
-        air.builder.air_accepts(),
-        "a well-formed composition must self-accept"
-    );
-    let pis = air.builder.pis.clone();
+    // Produce the LEAN-AUTHORED AIR's witness bound to the entity's REAL (old8, new8). The PIs are
+    // the producer's — one source, so the packaged PIs and the proven trace cannot disagree.
+    let witness = compose_witness(&shape, &composition, &old8, &new8)?;
+    let pis = witness.pis.clone();
 
     Ok(LandedComposition {
         cell_id: entity.cell_id(),
@@ -450,6 +467,7 @@ pub fn compose_onto(
         new_commitment,
         post_cell,
         pis,
+        witness,
     })
 }
 
@@ -464,17 +482,18 @@ pub fn commitment_felt8(commitment: &[u8; 32]) -> [BabyBear; 8] {
     bytes32_to_felt8(commitment)
 }
 
-/// The composition program's circuit descriptor (a function of the SHAPE, not the content —
-/// see `dregg-param-compose`'s `two_unrelated_rulesets_share_one_vk`). Its serialization is the
-/// `program_bytes` a genuine v2 `vk_hash` binds, so a turn names the composition program's own
-/// verification key rather than a stand-in.
-pub fn program_descriptor(
-    shape: &ComposeShape,
-    comp: &Composition,
-) -> dregg_circuit::dsl::circuit::CircuitDescriptor {
-    let air = build(shape, comp, &[BabyBear::ZERO; 8], &[BabyBear::ZERO; 8])
-        .expect("the composition program descriptor builds");
-    air.builder.descriptor()
+/// **The composition program's descriptor — the LEAN-AUTHORED one.** A function of the SHAPE, not
+/// the content (two unrelated rulesets share one VK; that is the whole point of the crate), decoded
+/// from its byte-pinned Lean golden. `None` at a shape Lean has not pinned.
+pub fn program_descriptor(shape: &ComposeShape) -> Option<EffectVmDescriptor2> {
+    lean_descriptor_for(shape)
+}
+
+/// The `program_bytes` a genuine v2 `vk_hash` binds: the Lean-emitted descriptor's own wire string,
+/// so a turn names the composition program's own verification key rather than a stand-in — and the
+/// key is over the LEAN object, not over a Rust re-authoring of it. `None` at an unpinned shape.
+pub fn program_bytes(shape: &ComposeShape) -> Option<Vec<u8>> {
+    lean_descriptor_json(shape).map(|j| j.as_bytes().to_vec())
 }
 
 /// Re-export the raw commitment helper for tests that want to assert the executor's comparand.
