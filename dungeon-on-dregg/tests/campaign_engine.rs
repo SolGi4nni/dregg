@@ -13,8 +13,8 @@ use dungeon_on_dregg::campaign::{
     bound_campaign_narration, bound_relic_context, max_campaign_xp, verify_expedition_seal,
 };
 use dungeon_on_dregg::descent::{
-    BANKED, BREATH, CAP, CARRIED, DAYS, DELVE, FLEE, FLOORS, LOOT, RELICS, SMITE, Sim, UNLOCK,
-    crowned_line, day_world,
+    ASCEND, BANKED, BREATH, CAP, CARRIED, DAYS, DELVE, FLEE, FLOORS, LOOT, RELICS, SMITE, Sim,
+    UNLOCK, crowned_line, day_world,
 };
 use dungeon_on_dregg::progression::MAGE;
 
@@ -26,6 +26,7 @@ fn crowned_actions(day: usize) -> Vec<DescentAction> {
         .into_iter()
         .map(|(verb, argument)| match verb {
             DELVE => DescentAction::Delve,
+            ASCEND => DescentAction::Ascend,
             SMITE => DescentAction::Smite,
             LOOT => DescentAction::Loot {
                 relic: argument as u8,
@@ -72,6 +73,10 @@ fn treasure_actions(day: usize, held: &[RelicState; RELICS]) -> (usize, Vec<Desc
         if floor < target_floor {
             line.push(DescentAction::Unlock { way: floor + 1 });
         }
+    }
+    // ⚑ AND WALK OUT. `flee` demands the surface; the climb is one light per floor.
+    for _ in 0..target_floor {
+        line.push(DescentAction::Ascend);
     }
     line.push(DescentAction::Flee);
     (target, line)
@@ -129,6 +134,7 @@ fn drive_prefix(day: usize, tape: &[(&'static str, i64)]) -> Sim {
     for (verb, argument) in tape {
         sim = match *verb {
             DELVE => sim.delve(),
+            ASCEND => sim.ascend(),
             SMITE => sim.smite(),
             LOOT => sim.loot(*argument as usize),
             UNLOCK => sim.unlock(*argument as u64),
@@ -557,7 +563,9 @@ fn the_crown_and_a_treasure_never_come_home_together() {
         // DRIVEN through the mover, never hand-assembled, so this test does not couple to
         // the Lean register file's shape.
         let line = crowned_line(day);
-        let at_the_bottom = drive_prefix(day, &line[..line.len() - 2]);
+        // Stop at the lip of the last loot: the tail is now `loot 0` + `FLOORS` climbs +
+        // `flee`, so the prefix drops `FLOORS + 2` moves rather than 2.
+        let at_the_bottom = drive_prefix(day, &line[..line.len() - (FLOORS as usize + 2)]);
         assert_eq!(at_the_bottom.depth, FLOORS);
         assert_eq!(
             at_the_bottom.pack(),

@@ -17,17 +17,29 @@ dreggic object it wants to be:
    PROJECTIONS of custody (they are *definitions* here), not independent facts.
 
 2. **Descent attenuates capability.** Carrying rights shrink with depth: every reachable
-   state satisfies `pack + depth ≤ CAP` (`capacity_attenuates`). Descending with a full
-   pack is not "discouraged" — the deeper turn is *unprovable*. Attenuation as
-   arithmetic, not flavor. Corollary `crowned_bank_le_four`: a run that banks THE PRIZE
-   (relic 0, floor 4) banks at most `CAP − FLOORS = 4` relics — reaching the bottom
-   costs half your carrying rights. And `no_run_banks_everything`: no receipt chain
-   whatsoever banks all `RELICS` relics.
+   state satisfies `pack + depth + harm ≤ CAP` (`capacity_attenuates`). Descending with a
+   full pack is not "discouraged" — the deeper turn is *unprovable*. Attenuation as
+   arithmetic, not flavor. Corollary `hoard_never_leaves_whole`: EVERY relic that leaves
+   the dungeon was looted at `depth ≥ 1`, and every point of `harm` was bought there too,
+   so `pack + bank + harm ≤ CAP − 1` on every reachable state — one carry slot is spoken
+   for however the run is played, and each broken grip eats another. Hence
+   `no_run_banks_everything`: no receipt chain whatsoever banks all `RELICS` relics.
 
-3. **The light is the clock.** Every verb has a posted price in `spent`; `spent`
-   strictly increases on every turn and is capped at `BREATH`. Permadeath is a theorem:
-   a run is at most `BREATH` turns (`run_bounded`) and at `spent = BREATH` no verb is
-   legal (`the_light_dies`).
+   ⚑ This clause REPLACES the retired `crowned_bank_le_four` (`bank ≤ CAP − FLOORS − harm`
+   for a crowned run). That bound was true, but true only BECAUSE THERE WAS NO WAY BACK
+   UP: banking the prize forced `depth = FLOORS` in the terminal state. It was an artifact
+   of the one-way descent, not a design intent, and `ascend` falsifies it. What replaces
+   it never mentions one-way descent at all — which is why it survives.
+
+3. **The light is the clock, and the climb is part of the bill.** Every verb has a posted
+   price in `spent`; `spent` strictly increases and is capped at `BREATH`. `flee` demands
+   the SURFACE (`depth = 0`) and `ascend` costs one breath per floor, so the clock a run
+   really plays against is the TOLL, `spent + depth`: breath burned plus breath the climb
+   home will cost. `toll_ratchets` — no verb rewinds it; the climb repays the descent at
+   par, never at a discount. `doomed_never_banks` — from a living state with
+   `BREATH ≤ toll`, NO continuation banks. That is permadeath as a reachable event
+   (`doomed_every_day`, driven on all 16 maps), not merely `the_light_dies` at the end of
+   an unlosable run.
 
 3b. **The guardian does not kill you — it BREAKS YOUR GRIP.** There are no hit points to
    take, so the descent's HP-analogue is CAPACITY. `harm` is a run-long ratchet in
@@ -38,14 +50,23 @@ dreggic object it wants to be:
    depth 1 (7 slots) and ruinous at depth 4 (4 slots — exactly three keys plus the
    prize), so a `guardHp = 2` floor is a mixable decision rather than a quotient. Unlike
    `wounds`, `harm` is NOT reset by `delve` (`harm_ratchets`); and taking any harm at all
-   forfeits the full crown (`crowned_full_bank_harmless`).
+   forfeits carry slots that never come back — `banked_bank_pays_for_harm`:
+   `bank + harm ≤ CAP − 1`, so each point of harm is EXACTLY one relic that did not leave
+   the dungeon, whatever route the run took to the surface. (The old, stronger-sounding
+   `crowned_full_bank_harmless` retired with `crowned_bank_le_four`: it was a corollary of
+   the same one-way accident.)
 
 4. **Keys are capabilities.** The way to floor `w` opens only by EXERCISING the carried
    key-relic for `w` (`keyless_unlock_impossible`): a key is an owned, un-dupable relic
    whose own provenance chain proves where it was won.
 
-5. **Banking is terminal.** `flee` banks the pack and writes the run's fate exactly
-   once; a banked run is a frozen tomb (`banked_run_frozen`).
+5. **Banking is terminal, and it happens at the mouth.** `flee` banks the pack and writes
+   the run's fate exactly once; a banked run is a frozen tomb (`banked_run_frozen`)
+   standing at the surface (`banked_at_the_surface`). You climb out; you do not teleport
+   out. `ascend` is the climb: `depth ≥ 1`, one breath, `wounds` reset — and `harm`
+   emphatically NOT reset, so the grip the guardians broke is not laundered by a walk
+   upstairs (`harm_ratchets` still holds of it). A way you have passed stays open
+   (`ways_behind_stay_open`), so nothing but the light can keep you down.
 
 6. **The world is minted once**; every relic's provenance replays to the mint
    (`genesisState` is the only entry; `Reachable` quantifies over receipt chains).
@@ -68,9 +89,11 @@ abbrev FLOORS : Nat := 4
 /-- Number of relics minted into the world; conservation is over this total. -/
 abbrev RELICS : Nat := 8
 
-/-- The light: total exertion a run may spend. A perfect crowned run costs 24; a full
-clear is impossible (see `no_run_banks_everything` — by capacity, not by breath). -/
-abbrev BREATH : Nat := 26
+/-- The light: total exertion a run may spend. A perfect crowned run costs 24–30 of it,
+and — since `flee` now demands the surface and the climb home is priced one breath per
+floor — the light running out while you are still below IS death (`doomed_never_banks`).
+A full clear is impossible (see `no_run_banks_everything` — by capacity, not by breath). -/
+abbrev BREATH : Nat := 30
 
 /-- Carrying rights at the surface; the capacity law is `pack + depth + harm ≤ CAP`. -/
 abbrev CAP : Nat := 8
@@ -114,7 +137,9 @@ deriving Repr, DecidableEq
 never hoped. The three clauses that keep the dungeon playable:
 
 * `homes 0 = FLOORS` — relic 0 is THE PRIZE and it lies at the bottom (so the crowned
-  run must stand on the deepest floor, which is what `crowned_bank_le_four` cashes in);
+  run must stand on the deepest floor to take it — see
+  `prize_leaves_home_only_at_the_bottom`, the local fact `crowned_bank_le_four` used to
+  cash in globally);
 * `homes (keyFor w) < w` for every keyed way — **no key behind the door it opens**. The
   key to way `w` is minted strictly above floor `w`, so by induction on `w` every way is
   openable from the surface;
@@ -257,11 +282,12 @@ def wayOpen (s : DState) (d : Nat) : Bool :=
 
 inductive Move where
   | delve                  -- descend one floor (the way must be open; wounds reset)
+  | ascend                 -- climb one floor toward the surface (wounds reset; harm does NOT)
   | unlock (w : Nat)       -- exercise the carried key-relic to open way w
   | smite                  -- THE PRESS: wound the guardian (price 2 — it strikes back)
   | lunge                  -- wound the guardian for 1 breath and +1 HARM (a carry slot)
   | loot (r : Nat)         -- take relic r from the standing floor's hoard (guardian slain)
-  | flee                   -- surface and bank the pack; the run ends
+  | flee                   -- bank the pack AT THE SURFACE; the run ends
 deriving Repr, DecidableEq
 
 /-- The posted price of a verb in breath. `smite` alone costs two: `lunge` buys that
@@ -280,6 +306,16 @@ def step (s : DState) : Move → Option DState
         -- `wounds` resets (a fresh guardian stands below); `harm` does NOT — it is a
         -- run-long ratchet, and `{s with …}` carries it forward by construction.
         some { s with depth := s.depth + 1, wounds := 0, spent := s.spent + 1 }
+      else none
+  | .ascend =>
+      -- THE ONE-WAY DOOR, RUNNING THE OTHER WAY. The climb is unconditional except for
+      -- the light: no way to re-open, no capacity to re-earn (going up only ever loosens
+      -- `pack + depth + harm ≤ CAP`), no guardian to re-fell. What it costs is a breath
+      -- PER FLOOR, and that is exactly why `spent + depth` is a ratchet no verb rewinds
+      -- (`toll_ratchets`) — descending buys a debt the climb must repay at par.
+      -- `wounds` resets (the guardian above stands again); `harm` does NOT.
+      if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ 1 ≤ s.depth then
+        some { s with depth := s.depth - 1, wounds := 0, spent := s.spent + 1 }
       else none
   | .unlock w =>
       if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ 2 ≤ w ∧ w ≤ FLOORS
@@ -310,7 +346,10 @@ def step (s : DState) : Move → Option DState
         some { s with custody := s.custody.set r CARRIED, spent := s.spent + 1 }
       else none
   | .flee =>
-      if s.fate = 0 ∧ s.spent + 1 ≤ BREATH then
+      -- ⚑ YOU CLIMB OUT; YOU DO NOT TELEPORT OUT. Banking demands the surface. This one
+      -- clause is what turns the whole descent into a wager: every floor you take is a
+      -- breath you must still have when you want to leave.
+      if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ s.depth = 0 then
         some { s with fate := 1, spent := s.spent + 1, custody := s.custody.map (fun c => if c = CARRIED then BANKED else c) }
       else none
 
@@ -433,6 +472,25 @@ private theorem countP_pos_of_getElem {l : List Nat} {i v : Nat}
     (hget : l[i]? = some v) : 1 ≤ l.countP (· == v) :=
   countP_pos_of_mem (List.mem_of_getElem? hget)
 
+/-- Opening a way never shuts one: `unlock` only ever writes a `1`. -/
+private theorem wayOpen_set_true {s : DState} {w d : Nat} (h : wayOpen s d = true) :
+    wayOpen { s with ways := s.ways.set (w - 2) 1 } d = true := by
+  by_cases hd : d ≤ 1
+  · simp only [wayOpen, if_pos hd]
+  · simp only [wayOpen, if_neg hd] at h ⊢
+    cases hg : s.ways[d - 2]? with
+    | none => rw [hg] at h; exact absurd h (by simp)
+    | some v =>
+      rw [hg] at h
+      have hv : v = 1 := by simpa using h
+      have hlt : d - 2 < s.ways.length := by
+        by_contra hge
+        rw [List.getElem?_eq_none (by omega)] at hg
+        exact absurd hg (by simp)
+      by_cases hw : w - 2 = d - 2
+      · rw [hw, List.getElem?_set_self hlt]; rfl
+      · rw [List.getElem?_set_ne hw, hg, hv]; rfl
+
 /-! ## 6. The inductive invariant — the design laws as one package. -/
 
 /-- Custody well-formedness: exactly `RELICS` relics forever (no mint, no burn — the
@@ -440,6 +498,13 @@ no-dupe law is STRUCTURAL: a relic is one list entry), every code legal. -/
 def CustodyWF (s : DState) : Prop :=
   s.custody.length = RELICS ∧
   ∀ c ∈ s.custody, (1 ≤ c ∧ c ≤ FLOORS) ∨ c = CARRIED ∨ c = BANKED
+
+/-- **A way you have passed stays open.** No verb ever shuts a way, and you can only
+have reached depth `d` by exercising the key to every way above it — so the climb home
+never meets a locked door. This is the clause that makes `ascend` unconditional, and it
+is what the deployed depth-rider's `wayTooth` cashes in on an ASCENDING turn (the
+post-state depth is one you already stood on). -/
+def WaysBehind (s : DState) : Prop := ∀ d, 2 ≤ d → d ≤ s.depth → wayOpen s d = true
 
 def Inv (s : DState) : Prop :=
   CustodyWF s
@@ -449,9 +514,27 @@ def Inv (s : DState) : Prop :=
     ∧ s.ways.length = FLOORS - 1
     ∧ pack s + s.depth + s.harm ≤ CAP
     ∧ (s.fate = 0 → bank s = 0)
-    ∧ (s.fate = 1 → pack s = 0 ∧ bank s + s.depth + s.harm ≤ CAP)
-    ∧ (s.depth = 0 → pack s = 0 ∧ bank s = 0)
-    ∧ (s.custody[0]? = some FLOORS ∨ s.depth = FLOORS)
+    -- ⚑ RESTATED FOR THE CLIMB: `flee` demands the surface, so a banked run is standing
+    -- at the mouth. (It used to only need an emptied pack, because banking was a
+    -- teleport.)
+    ∧ (s.fate = 1 → pack s = 0 ∧ s.depth = 0)
+    -- ⚑ THE REPLACEMENT FOR `crowned_bank_le_four`. Every relic that leaves the dungeon
+    -- was looted at depth ≥ 1 under `pack + 1 + depth + harm ≤ CAP`, and every point of
+    -- `harm` was bought at depth ≥ 1 too — so one carry slot is spoken for no matter how
+    -- the run is played, and each broken grip eats another. Nothing about the ONE-WAY
+    -- descent is needed to see it, which is exactly why this clause survives `ascend`
+    -- and the old bound did not.
+    ∧ pack s + bank s + s.harm ≤ CAP - 1
+    -- ⚑ RESTATED FOR THE CLIMB: the surface has no guardian. (It used to say the surface
+    -- held nothing at all — `pack = bank = 0` — which was true only because the only way
+    -- to stand here was to have never left.)
+    ∧ (s.depth = 0 → s.wounds = 0)
+    ∧ WaysBehind s
+    -- ⚑ RESTATED FOR THE CLIMB: THE PRIZE lies at the bottom or it is in your hands.
+    -- (It used to say `custody 0 = FLOORS ∨ depth = FLOORS` — that you could not be
+    -- holding the prize anywhere but standing on it. You can now: you carry it up.)
+    ∧ (s.custody[0]? = some FLOORS ∨ s.custody[0]? = some CARRIED
+        ∨ s.custody[0]? = some BANKED)
     ∧ s.harm ≤ HARMCAP
 
 /-- No relic is minted already-carried or already-banked (every home is a real floor). -/
@@ -481,7 +564,7 @@ private theorem genesis_prize : genesisState.custody[0]? = some FLOORS := by
 
 theorem inv_genesis : Inv genesisState := by
   refine ⟨⟨wf_homes_length, ?_⟩,
-    (Nat.zero_le _), (Nat.zero_le _), (Nat.zero_le _), rfl, ?_, ?_, ?_, ?_,
+    (Nat.zero_le _), (Nat.zero_le _), (Nat.zero_le _), rfl, ?_, ?_, ?_, ?_, ?_, ?_,
     Or.inl genesis_prize, Nat.zero_le _⟩
   · intro c hc
     exact Or.inl (wf_home_floor hc)
@@ -489,13 +572,17 @@ theorem inv_genesis : Inv genesisState := by
     rw [genesis_pack_zero]; decide
   · intro _; exact genesis_bank_zero
   · intro hf; exact absurd (show (0 : Nat) = 1 from hf) (by decide)
-  · intro _; exact ⟨genesis_pack_zero, genesis_bank_zero⟩
+  · show pack genesisState + bank genesisState + 0 ≤ CAP - 1
+    rw [genesis_pack_zero, genesis_bank_zero]; decide
+  · intro _; rfl
+  · intro d hlo hhi
+    exact absurd (show d ≤ 0 from hhi) (by omega)
 
 /-- **Invariant preservation** — every legal turn preserves the design laws. -/
 theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some s') :
     Inv s' := by
-  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hd0, hprize,
-    hharm⟩ := hInv
+  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hcap1, hd0, hwb,
+    hprize, hharm⟩ := hInv
   cases m with
   | delve =>
     simp only [step] at h
@@ -503,7 +590,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3, h4⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, ?_, ?_, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, ?_, ?_, hways, ?_, ?_, ?_, hcap1, ?_, ?_, ?_, hharm⟩
       · show s.spent + 1 ≤ BREATH; omega
       · show s.depth + 1 ≤ FLOORS; omega
       · exact hfate
@@ -511,9 +598,36 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
       · intro hf; exact hb0 hf
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
       · intro hd; exact absurd (show s.depth + 1 = 0 from hd) (by omega)
-      · rcases hprize with hp | hp
-        · exact Or.inl hp
-        · exact absurd hp (by omega)
+      · -- ⚑ THE WAY BEHIND YOU: every way at or above the new depth is open — the ones
+        -- above by hypothesis, the one just taken by this delve's own guard.
+        intro d hlo hhi
+        have hhi' : d ≤ s.depth + 1 := hhi
+        by_cases hd : d ≤ s.depth
+        · exact hwb d hlo hd
+        · have hdd : d = s.depth + 1 := by omega
+          subst hdd
+          exact h3
+      · exact hprize
+    case isFalse => exact absurd h (by simp)
+  | ascend =>
+    simp only [step] at h
+    split at h
+    case isTrue hcond =>
+      obtain ⟨h0, h1, h2⟩ := hcond
+      cases h
+      refine ⟨⟨hlen, hcodes⟩, ?_, ?_, hfate, hways, ?_, ?_, ?_, hcap1, ?_, ?_, hprize,
+        hharm⟩
+      · show s.spent + 1 ≤ BREATH; omega
+      · show s.depth - 1 ≤ FLOORS; omega
+      · -- Climbing only ever LOOSENS the capacity law; that is why `ascend` needs no
+        -- capacity guard of its own.
+        show pack s + (s.depth - 1) + s.harm ≤ CAP; omega
+      · intro hf; exact hb0 hf
+      · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
+      · intro _; rfl
+      · intro d hlo hhi
+        have hhi' : d ≤ s.depth - 1 := hhi
+        exact hwb d hlo (by omega)
     case isFalse => exact absurd h (by simp)
   | unlock w =>
     simp only [step] at h
@@ -521,15 +635,14 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3, h4, h5⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, ?_, hcap, ?_, ?_, hd0, ?_, hharm⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, ?_, hcap, ?_, ?_, hcap1, hd0, ?_,
+        hprize, hharm⟩
       · show s.spent + 1 ≤ BREATH; omega
       · show (s.ways.set (w - 2) 1).length = FLOORS - 1
         simpa using hways
       · intro hf; exact hb0 hf
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
-      · rcases hprize with hp | hp
-        · exact Or.inl hp
-        · exact Or.inr hp
+      · intro d hlo hhi; exact wayOpen_set_true (hwb d hlo hhi)
     case isFalse => exact absurd h (by simp)
   | smite =>
     simp only [step] at h
@@ -537,13 +650,12 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, hcap, ?_, ?_, hd0, ?_, hharm⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, hcap, ?_, ?_, hcap1, ?_, hwb,
+        hprize, hharm⟩
       · show s.spent + 2 ≤ BREATH; omega
       · intro hf; exact hb0 hf
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
-      · rcases hprize with hp | hp
-        · exact Or.inl hp
-        · exact Or.inr hp
+      · intro hdz; exact absurd (show s.depth = 0 from hdz) (by omega)
     case isFalse => exact absurd h (by simp)
   | lunge =>
     simp only [step] at h
@@ -551,14 +663,19 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3, h4, h5⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, hd0, ?_, ?_⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, ?_, ?_, hwb, hprize,
+        ?_⟩
       · show s.spent + 1 ≤ BREATH; omega
       · show pack s + s.depth + (s.harm + 1) ≤ CAP; exact h5
       · intro hf; exact hb0 hf
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
-      · rcases hprize with hp | hp
-        · exact Or.inl hp
-        · exact Or.inr hp
+      · -- ⚑ THE GRIP IS BOUGHT AT DEPTH, so it is bought against a slot that was already
+        -- spoken for: `1 ≤ depth` turns the capacity guard into `pack + harm' ≤ CAP - 1`.
+        show pack s + bank s + (s.harm + 1) ≤ CAP - 1
+        have hbz : bank s = 0 := hb0 h0
+        have hCAP : (CAP : Nat) = 8 := rfl
+        omega
+      · intro hdz; exact absurd (show s.depth = 0 from hdz) (by omega)
       · show s.harm + 1 ≤ HARMCAP; exact h4
     case isFalse => exact absurd h (by simp)
   | loot r =>
@@ -580,7 +697,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
           (s.custody.set r CARRIED).countP (· == BANKED)
             = s.custody.countP (· == BANKED) :=
         countP_set_same _ h3 (by simp [hdB])
-      refine ⟨⟨?_, ?_⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
+      refine ⟨⟨?_, ?_⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, ?_, ?_, hwb, ?_, hharm⟩
       · show (s.custody.set r CARRIED).length = RELICS
         simpa using hlen
       · intro c hc
@@ -595,33 +712,45 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
         show (s.custody.set r CARRIED).countP (· == BANKED) = 0
         rw [hbankSame]; exact hb0 h0
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
+      · -- ⚑ EVERY RELIC IS TAKEN AT DEPTH, so the loot guard `pack + 1 + depth + harm ≤
+        -- CAP` with `1 ≤ depth` is already `pack' + harm ≤ CAP - 1`. THIS is what used to
+        -- be `crowned_bank_le_four`, stated without a word about one-way descent.
+        show (s.custody.set r CARRIED).countP (· == CARRIED)
+              + (s.custody.set r CARRIED).countP (· == BANKED) + s.harm ≤ CAP - 1
+        rw [hpackBump, hbankSame]
+        have hbz : bank s = 0 := hb0 h0
+        simp only [pack, bank] at h5 hbz ⊢
+        have hCAP : (CAP : Nat) = 8 := rfl
+        omega
       · intro hdz; exact absurd (show s.depth = 0 from hdz) (by omega)
-      · rcases hprize with hp | hp
-        · by_cases hr0 : r = 0
-          · subst hr0
-            rw [hp] at h3
-            injection h3 with heq
-            right
-            show s.depth = FLOORS
-            omega
-          · left
-            show (s.custody.set r CARRIED)[0]? = some FLOORS
-            rw [List.getElem?_set_ne (by omega)]
-            exact hp
-        · exact Or.inr hp
+      · -- ⚑ THE PRIZE stays at the bottom, or THIS loot is the one that lifts it.
+        by_cases hr0 : r = 0
+        · right; left
+          have hlt : (0 : Nat) < s.custody.length := by rw [hlen]; decide
+          have hgot : (s.custody.set r CARRIED)[0]? = some CARRIED := by
+            rw [hr0, List.getElem?_set_self (by simpa using hlt)]
+          exact hgot
+        · have hset : ∀ v : Nat, s.custody[0]? = some v →
+              (s.custody.set r CARRIED)[0]? = some v := by
+            intro v hv
+            rw [List.getElem?_set_ne (by omega)]; exact hv
+          rcases hprize with hp | hp | hp
+          · exact Or.inl (hset _ hp)
+          · exact Or.inr (Or.inl (hset _ hp))
+          · exact Or.inr (Or.inr (hset _ hp))
     case isFalse => exact absurd h (by simp)
   | flee =>
     simp only [step] at h
     split at h
     case isTrue hcond =>
-      obtain ⟨h0, h1⟩ := hcond
+      obtain ⟨h0, h1, h2⟩ := hcond
       cases h
       have hpack0 : (s.custody.map fleeMap).countP (· == CARRIED) = 0 :=
         countP_fleeMap_carried _
       have hbank : (s.custody.map fleeMap).countP (· == BANKED)
           = s.custody.countP (· == CARRIED) + s.custody.countP (· == BANKED) :=
         countP_fleeMap_banked _
-      refine ⟨⟨?_, ?_⟩, ?_, hdepth, ?_, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
+      refine ⟨⟨?_, ?_⟩, ?_, hdepth, ?_, hways, ?_, ?_, ?_, ?_, ?_, hwb, ?_, hharm⟩
       · show (s.custody.map fleeMap).length = RELICS
         simpa using hlen
       · intro c hc
@@ -641,31 +770,31 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
         simp only [pack] at hcap'
         omega
       · intro hf; exact absurd (show (1 : Nat) = 0 from hf) (by omega)
-      · intro _
-        refine ⟨hpack0, ?_⟩
-        show (s.custody.map fleeMap).countP (· == BANKED) + s.depth + s.harm ≤ CAP
-        rw [hbank]
-        have hbz := hb0 h0
-        simp only [bank] at hbz
-        rw [hbz]
-        have hcap' : pack s + s.depth + s.harm ≤ CAP := hcap
-        simp only [pack] at hcap'
+      · -- ⚑ THE BANKED RUN STANDS AT THE MOUTH. `flee` demands `depth = 0`, so this is
+        -- no longer "the pack emptied somewhere" — it is a receipt that the climb was
+        -- paid for.
+        intro _
+        exact ⟨hpack0, h2⟩
+      · show (s.custody.map fleeMap).countP (· == CARRIED)
+              + (s.custody.map fleeMap).countP (· == BANKED) + s.harm ≤ CAP - 1
+        rw [hpack0, hbank]
+        have hcap1' : pack s + bank s + s.harm ≤ CAP - 1 := hcap1
+        simp only [pack, bank] at hcap1'
         omega
-      · intro hdz
-        have hdz' : s.depth = 0 := hdz
-        obtain ⟨hp, hb⟩ := hd0 hdz'
-        refine ⟨hpack0, ?_⟩
-        show (s.custody.map fleeMap).countP (· == BANKED) = 0
-        rw [hbank]
-        simp only [pack] at hp
-        simp only [bank] at hb
-        rw [hp, hb]
-      · rcases hprize with hp | hp
+      · intro _; exact hd0 h2
+      · rcases hprize with hp | hp | hp
         · left
           show (s.custody.map fleeMap)[0]? = some FLOORS
           rw [List.getElem?_map, hp]
           rfl
-        · exact Or.inr hp
+        · right; right
+          show (s.custody.map fleeMap)[0]? = some BANKED
+          rw [List.getElem?_map, hp]
+          rfl
+        · right; right
+          show (s.custody.map fleeMap)[0]? = some BANKED
+          rw [List.getElem?_map, hp]
+          rfl
     case isFalse => exact absurd h (by simp)
 
 /-- Every reachable state satisfies the design laws. -/
@@ -707,11 +836,26 @@ theorem harm_ratchets {s s' : DState} {m : Move} (h : step s m = some s') :
     first
       | (cases h; exact Nat.le_refl _)
       | (cases h; exact Nat.le_succ _)
-      | (cases h; omega)
       | exact absurd h (by simp)
 
 theorem harm_bounded {s : DState} (h : Reachable s) : s.harm ≤ HARMCAP :=
-  (inv_reachable h).2.2.2.2.2.2.2.2.2.2
+  (inv_reachable h).2.2.2.2.2.2.2.2.2.2.2.2
+
+/-- Named accessor for the invariant's ways clause (positional projections into a
+thirteen-clause conjunction are a footgun; downstream files use this). -/
+theorem inv_waysBehind {s : DState} (h : Inv s) : WaysBehind s :=
+  h.2.2.2.2.2.2.2.2.2.2.1
+
+/-- **The climb is unconditional** — a way you have already passed is still open, so
+`ascend` never meets a locked door. Only the light can keep you down. -/
+theorem ways_behind_stay_open {s : DState} (h : Reachable s) :
+    ∀ d, 2 ≤ d → d ≤ s.depth → wayOpen s d = true :=
+  inv_waysBehind (inv_reachable h)
+
+/-- **The surface has no guardian.** -/
+theorem surface_is_unguarded {s : DState} (h : Reachable s) (hd : s.depth = 0) :
+    s.wounds = 0 :=
+  (inv_reachable h).2.2.2.2.2.2.2.2.2.1 hd
 
 /-- **Law 3a — the light dies**: at `spent = BREATH` no verb is legal. Permadeath is a
 theorem, not a timer. -/
@@ -721,7 +865,6 @@ theorem the_light_dies {s : DState} (hs : s.spent = BREATH) (m : Move) :
     first
       | rfl
       | (rename_i hc; exact absurd hc.2.1 (by omega))
-      | (rename_i hc; exact absurd hc.2 (by omega))
 
 /-- Every legal turn strictly spends breath. -/
 theorem step_spends {s s' : DState} {m : Move} (h : step s m = some s') :
@@ -786,6 +929,10 @@ theorem custody_ratchet {s s' : DState} {m : Move} (hInv : Inv s)
     simp only [step] at h; split at h
     · cases h; simp only at hgb; rw [hga] at hgb; cases hgb; omega
     · exact absurd h (by simp)
+  | ascend =>
+    simp only [step] at h; split at h
+    · cases h; simp only at hgb; rw [hga] at hgb; cases hgb; omega
+    · exact absurd h (by simp)
   | unlock w =>
     simp only [step] at h; split at h
     · cases h; simp only at hgb; rw [hga] at hgb; cases hgb; omega
@@ -831,59 +978,258 @@ theorem custody_ratchet {s s' : DState} {m : Move} (hInv : Inv s)
     · exact absurd h (by simp)
 
 /-- **Law 2 corollary — no receipt chain banks everything**: the full hoard can never
-be banked; the capacity attenuation makes a full clear UNPROVABLE, not merely hard. -/
+be banked. It used to follow from "the surface holds nothing"; that clause died with the
+one-way descent, and this one stands on `hoard_never_leaves_whole` instead — which is
+where it always belonged. -/
 theorem no_run_banks_everything {s : DState} (h : Reachable s) :
     bank s < RELICS := by
-  have hInv := inv_reachable h
-  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, _, hharm⟩ := hInv
-  by_cases hf : s.fate = 0
-  · have := hb0 hf
-    simp [RELICS] at *
-    omega
-  · have hf1 : s.fate = 1 := by omega
-    obtain ⟨hp, hb⟩ := hb1 hf1
-    by_cases hdz : s.depth = 0
-    · have := (hd0 hdz).2
-      simp [RELICS] at *
-      omega
-    · simp [CAP, RELICS] at *
-      omega
-
-/-- **The crowned run banks at most half the hoard, MINUS what the guardians took**:
-banking THE PRIZE (relic 0) means the run stood at the bottom, and capacity at the
-bottom is `CAP − FLOORS = 4` less every point of `harm`. Glory costs carrying rights,
-and each lunge on the way down is one relic that does not leave the dungeon. -/
-theorem crowned_bank_le_four {s : DState} (h : Reachable s)
-    (hcrown : s.custody[0]? = some BANKED) :
-    bank s ≤ CAP - FLOORS - s.harm := by
-  have hInv := inv_reachable h
-  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, hprize, hharm⟩ := hInv
-  have hdF : s.depth = FLOORS := by
-    rcases hprize with hp | hp
-    · rw [hcrown] at hp
-      simp only [Option.some.injEq] at hp
-      simp [BANKED, FLOORS] at hp
-    · exact hp
-  have hbank1 : 1 ≤ bank s := countP_pos_of_getElem hcrown
-  by_cases hf : s.fate = 0
-  · have := hb0 hf; omega
-  · have hf1 : s.fate = 1 := by omega
-    obtain ⟨_, hb⟩ := hb1 hf1
-    have hCAP : (CAP : Nat) = 8 := rfl
-    have hFL : (FLOORS : Nat) = 4 := rfl
-    omega
-
-/-- **THE STAKE, AS LAW: the full crown is HARMLESS.** A run that banks the prize AND
-all three way-keys (`bank = CAP − FLOORS = 4`) took no harm at all — there is no line
-in which you trade a breath for a broken grip and still walk out with everything. This
-is what makes `lunge` a decision rather than a discount. -/
-theorem crowned_full_bank_harmless {s : DState} (h : Reachable s)
-    (hcrown : s.custody[0]? = some BANKED) (hfull : bank s = CAP - FLOORS) :
-    s.harm = 0 := by
-  have hle := crowned_bank_le_four h hcrown
+  have hcap1 : pack s + bank s + s.harm ≤ CAP - 1 :=
+    (inv_reachable h).2.2.2.2.2.2.2.2.1
   have hCAP : (CAP : Nat) = 8 := rfl
-  have hFL : (FLOORS : Nat) = 4 := rfl
+  have hREL : (RELICS : Nat) = 8 := rfl
   omega
+
+/-- ⚑ **THE REPLACEMENT FOR `crowned_bank_le_four`, and the law that made it retirable.**
+
+`crowned_bank_le_four` (`bank ≤ CAP − FLOORS − harm` for a run that banked THE PRIZE) was
+TRUE, and it was true BECAUSE THERE WAS NO WAY BACK UP: banking the prize forced
+`depth = FLOORS` in the terminal state, so the capacity law could be read at the bottom.
+That is an artifact of the one-way descent, not a design intent — and `ascend` falsifies
+it (crown at depth 4, climb, re-fight a floor, take more, climb out: `maxbank(crowned)`
+reaches 5–6 on ten of the sixteen daily maps).
+
+What survives — and what was doing the real work all along — is this: EVERY relic that
+leaves the dungeon was looted at `depth ≥ 1` under `pack + 1 + depth + harm ≤ CAP`, and
+every point of `harm` was bought at `depth ≥ 1` too. One carry slot is therefore spoken
+for no matter how the run is played, and each broken grip eats another. No clause about
+one-way descent appears anywhere in it, which is exactly why it outlives `ascend`. -/
+theorem hoard_never_leaves_whole {s : DState} (h : Reachable s) :
+    pack s + bank s + s.harm ≤ CAP - 1 :=
+  (inv_reachable h).2.2.2.2.2.2.2.2.1
+
+/-- **The lunge keeps its price, stated on the only ledger that matters.** A banked run
+took `harm` broken grips and banked at most `CAP − 1 − harm` relics: every point of harm
+is EXACTLY one relic that did not leave the dungeon, whatever route the run took to the
+surface. This is the `bank + harm ≤ CAP` the retirement owed, proven one tighter. -/
+theorem banked_bank_pays_for_harm {s : DState} (h : Reachable s) (hf : s.fate = 1) :
+    bank s + s.harm ≤ CAP - 1 := by
+  have hcap1 := hoard_never_leaves_whole h
+  have hp : pack s = 0 := ((inv_reachable h).2.2.2.2.2.2.2.1 hf).1
+  omega
+
+/-- **You climb out; you do not teleport out.** A banked run is standing at the mouth of
+the dungeon — `flee` demands the surface, so `fate = 1` is a receipt that the climb was
+paid for, one breath per floor. -/
+theorem banked_at_the_surface {s : DState} (h : Reachable s) (hf : s.fate = 1) :
+    s.depth = 0 :=
+  ((inv_reachable h).2.2.2.2.2.2.2.1 hf).2
+
+/-- **THE PRIZE lies at the bottom or it is in your hands.** The old form of this clause
+(`custody 0 = FLOORS ∨ depth = FLOORS`) said you could not be holding the prize anywhere
+but standing on it. You can now — you carry it up — and what remains true is that it
+never lies on any other floor. -/
+theorem prize_never_lies_elsewhere {s : DState} (h : Reachable s) :
+    s.custody[0]? = some FLOORS ∨ s.custody[0]? = some CARRIED
+      ∨ s.custody[0]? = some BANKED :=
+  (inv_reachable h).2.2.2.2.2.2.2.2.2.2.2.1
+
+/-- **And the prize is still won at the bottom** — the content `crowned_bank_le_four`
+carried that is not an artifact of the one-way descent, restated as the local fact it
+actually is: the only step that takes THE PRIZE out of its home is a `loot 0` standing on
+floor `FLOORS`. A run holding the prize stood at the bottom; it simply need not still be
+standing there. -/
+theorem prize_leaves_home_only_at_the_bottom {s s' : DState} {m : Move}
+    (hp : s.custody[0]? = some FLOORS) (h : step s m = some s')
+    (hmoved : s'.custody[0]? ≠ some FLOORS) :
+    m = .loot 0 ∧ s.depth = FLOORS := by
+  cases m with
+  | delve => simp only [step] at h; split at h
+             · cases h; exact absurd hp hmoved
+             · exact absurd h (by simp)
+  | ascend => simp only [step] at h; split at h
+              · cases h; exact absurd hp hmoved
+              · exact absurd h (by simp)
+  | unlock w => simp only [step] at h; split at h
+                · cases h; exact absurd hp hmoved
+                · exact absurd h (by simp)
+  | smite => simp only [step] at h; split at h
+             · cases h; exact absurd hp hmoved
+             · exact absurd h (by simp)
+  | lunge => simp only [step] at h; split at h
+             · cases h; exact absurd hp hmoved
+             · exact absurd h (by simp)
+  | loot r =>
+    simp only [step] at h; split at h
+    · rename_i hc
+      obtain ⟨_, _, _, h3, _, _⟩ := hc
+      cases h
+      by_cases hr0 : r = 0
+      · subst hr0
+        rw [hp] at h3
+        exact ⟨rfl, (Option.some.injEq _ _ ▸ h3).symm⟩
+      · exfalso
+        apply hmoved
+        show (s.custody.set r CARRIED)[0]? = some FLOORS
+        rw [List.getElem?_set_ne (by omega)]
+        exact hp
+    · exact absurd h (by simp)
+  | flee =>
+    simp only [step] at h; split at h
+    · cases h
+      exfalso
+      apply hmoved
+      show (s.custody.map fleeMap)[0]? = some FLOORS
+      rw [List.getElem?_map, hp]
+      rfl
+    · exact absurd h (by simp)
+
+/-! ### ⚑ THE TOLL — why the descent can now kill you.
+
+`flee` demands the surface and `ascend` costs one breath per floor, so the real clock a
+run plays against is not `spent` but `spent + depth`: the breath already burned PLUS the
+breath the climb home will cost. `toll_ratchets` says no verb ever rewinds it — `ascend`
+is the only verb that lowers `depth`, and it pays exactly the floor it removes, so the
+toll is preserved rather than refunded. `flee_needs_toll` says banking demands
+`toll < BREATH`. Together: a reachable state with `BREATH ≤ toll` is DEAD — not stuck,
+not disadvantaged, but incapable of ever banking, from any continuation whatsoever. -/
+
+/-- The TOLL: breath already spent, plus the breath the climb home will cost. -/
+def toll (s : DState) : Nat := s.spent + s.depth
+
+/-- Every verb but `flee` leaves `fate` alone. -/
+private theorem step_fate_frozen {s s' : DState} {m : Move} (hm : m ≠ Move.flee)
+    (h : step s m = some s') : s'.fate = s.fate := by
+  cases m with
+  | flee => exact absurd rfl hm
+  | delve => simp only [step] at h; split at h
+             · cases h; rfl
+             · exact absurd h (by simp)
+  | ascend => simp only [step] at h; split at h
+              · cases h; rfl
+              · exact absurd h (by simp)
+  | unlock w => simp only [step] at h; split at h
+                · cases h; rfl
+                · exact absurd h (by simp)
+  | smite => simp only [step] at h; split at h
+             · cases h; rfl
+             · exact absurd h (by simp)
+  | lunge => simp only [step] at h; split at h
+             · cases h; rfl
+             · exact absurd h (by simp)
+  | loot r => simp only [step] at h; split at h
+              · cases h; rfl
+              · exact absurd h (by simp)
+
+/-- **The toll is a RATCHET no verb rewinds.** Descending buys a debt at par; the climb
+repays it at par (`ascend` spends exactly the floor it removes); everything else only
+ever adds. This is the whole reason `ascend` makes the game lethal instead of merely
+longer — you cannot walk a bad clock off. -/
+theorem toll_ratchets {s s' : DState} {m : Move} (h : step s m = some s') :
+    toll s ≤ toll s' := by
+  cases m with
+  | delve =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 1 + (s.depth + 1); omega
+    · exact absurd h (by simp)
+  | ascend =>
+    simp only [step] at h; split at h
+    · rename_i hc
+      obtain ⟨_, _, hd1⟩ := hc
+      cases h; show s.spent + s.depth ≤ s.spent + 1 + (s.depth - 1); omega
+    · exact absurd h (by simp)
+  | unlock w =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 1 + s.depth; omega
+    · exact absurd h (by simp)
+  | smite =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 2 + s.depth; omega
+    · exact absurd h (by simp)
+  | lunge =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 1 + s.depth; omega
+    · exact absurd h (by simp)
+  | loot r =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 1 + s.depth; omega
+    · exact absurd h (by simp)
+  | flee =>
+    simp only [step] at h; split at h
+    · cases h; show s.spent + s.depth ≤ s.spent + 1 + s.depth; omega
+    · exact absurd h (by simp)
+
+/-- **Banking demands an unspent toll**: `flee` is legal only from the surface with a
+breath still in hand — which is exactly `toll s < BREATH`. -/
+theorem flee_needs_toll {s s' : DState} (h : step s .flee = some s') : toll s < BREATH := by
+  simp only [step] at h
+  split at h
+  · rename_i hc
+    obtain ⟨_, h1, h2⟩ := hc
+    show s.spent + s.depth < BREATH
+    omega
+  · exact absurd h (by simp)
+
+/-- **⚑ LAW 3c — THE DESCENT CAN KILL YOU.** From a living state whose toll has reached
+`BREATH`, NO continuation banks — not a shorter route, not a cheaper verb, not luck. The
+run is over and the pack is lost where it lies.
+
+This is the theorem the descent claimed in prose and did not have. Before `ascend`,
+`flee` cost ONE breath from ANY depth, so `toll` was just `spent`, every reachable
+position could still go home, and on fourteen of the sixteen daily maps there was no
+losable position at all. -/
+theorem doomed_never_banks {s : DState} (halive : s.fate = 0) (hdoom : BREATH ≤ toll s)
+    (ms : List Move) (t : DState)
+    (ht : ms.foldl (fun acc m => acc.bind (fun u => step u m)) (some s) = some t) :
+    t.fate = 0 := by
+  suffices H : ∀ (ms : List Move) (s0 s1 : DState), s0.fate = 0 → BREATH ≤ toll s0 →
+      (ms.foldl (fun acc m => acc.bind (fun u => step u m)) (some s0)) = some s1 →
+      s1.fate = 0 by
+    exact H ms s t halive hdoom ht
+  intro ms
+  induction ms with
+  | nil => intro s0 s1 h0 _ h1; simp at h1; exact h1 ▸ h0
+  | cons m rest ih =>
+    intro s0 s1 h0 hd h1
+    simp only [List.foldl_cons, Option.bind_some] at h1
+    cases hstep : step s0 m with
+    | none => rw [hstep, foldl_none] at h1; simp at h1
+    | some smid =>
+      rw [hstep] at h1
+      refine ih smid s1 ?_ (le_trans hd (toll_ratchets hstep)) h1
+      by_cases hf : m = Move.flee
+      · subst hf
+        exact absurd (flee_needs_toll hstep) (by omega)
+      · rw [step_fate_frozen hf hstep]; exact h0
+
+/-- **Death is REACHABLE — driven, on every map, with breath still in hand.** The witness
+below walks fourteen floors down-and-up (28 breath, back at the surface) and then takes
+one more step down. It stands on floor 1 with 29 of 30 spent: the last breath buys the
+climb, and there is nothing left to flee with. It dies at the mouth of the dungeon.
+
+Only `delve`/`ascend` appear, and way 1 is always open, so this is legal on EVERY drawn
+map regardless of where the keys lie (`doomed_every_day`). -/
+def doomedRun : List Move :=
+  (List.replicate 14 [Move.delve, Move.ascend]).flatten ++ [Move.delve]
+
+def doomedOutcome : Option DState := replay doomedRun
+
+/-- The doomed witness, as a decidable predicate over the day's world. -/
+def doomExists : Bool :=
+  match doomedOutcome with
+  | some s => (s.fate == 0) && (s.spent + 1 ≤ BREATH) && decide (BREATH ≤ toll s)
+  | none   => false
+
+/-- **`doomExists` really is a doomed reachable state** — alive, with breath left, and
+past the toll. Everything it can still do, `doomed_never_banks` says, ends unbanked. -/
+theorem doomed_of_doomExists (h : doomExists = true) :
+    ∃ s, Reachable s ∧ s.fate = 0 ∧ s.spent < BREATH ∧ BREATH ≤ toll s := by
+  unfold doomExists at h
+  split at h
+  · rename_i s hc
+    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h
+    have hrep : replay doomedRun = some s := hc
+    exact ⟨s, ⟨doomedRun, hrep⟩, h.1.1, by omega, h.2⟩
+  · exact absurd h (by simp)
 
 /-! ## 8. THE CROWNED LINE — a winning receipt chain GENERATED from the day's world.
 
@@ -912,9 +1258,13 @@ def floorLine (d : Nat) : List Move :=
     ++ (unlocksAt d).map Move.unlock
 
 /-- The perfect crowned descent for the DAY'S world: win each key where it lies, exercise
-it, fell the deep guardian, take the prize, flee. -/
+it, fell the deep guardian, take the prize — and then CLIMB OUT, one breath per floor,
+before banking. The four trailing `ascend`s are not decoration: `flee` is illegal below
+the surface, so the crowned line now pays `FLOORS` breath for the way home, which is
+exactly why `BREATH` moved 26 → 30. -/
 def crownedRun : List Move :=
-  ((List.range' 1 FLOORS).flatMap floorLine) ++ [Move.flee]
+  ((List.range' 1 FLOORS).flatMap floorLine)
+    ++ List.replicate FLOORS Move.ascend ++ [Move.flee]
 
 def crownedOutcome : Option DState := replay crownedRun
 
@@ -1030,9 +1380,11 @@ theorem winsAt_true (k : Nat) (hk : k < dayCount) : winsAt k = true := by
   rcases lt_dayCount_cases hk with
     rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> decide
 
-/-- **The tension survives the draw**: every day's perfect line costs at least 20 of the
-26 breath, and (by `winsAt_true`) at most all of it. -/
-theorem costAt_tense (k : Nat) (hk : k < dayCount) : 20 ≤ costAt k ∧ costAt k ≤ BREATH := by
+/-- **The tension survives the draw**: every day's perfect line costs at least 24 of the
+30 breath, and (by `winsAt_true`) at most all of it. The slack band is UNCHANGED by the
+climb — 0–6 spare breath, exactly as when the line cost 20–26 of 26 — because `ascend`
+added `FLOORS` breath to every day's line and `BREATH` grew by the same `FLOORS`. -/
+theorem costAt_tense (k : Nat) (hk : k < dayCount) : 24 ≤ costAt k ∧ costAt k ≤ BREATH := by
   rcases lt_dayCount_cases hk with
     rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;>
     exact ⟨by decide, by decide⟩
@@ -1051,11 +1403,29 @@ theorem draw_completable (n : Nat) : @Completable (drawInst n) :=
 /-- And the drawn map is a legal map. -/
 theorem draw_wf (n : Nat) : WorldWF (drawWorld n) = true := worldAt_wf _
 
+/-- **⚑ EVERY DRAWN MAP CAN KILL YOU.** `doomedRun` uses only `delve`/`ascend` and way 1
+is always open, so the doomed witness exists on every member of the family — checked, not
+argued. Together with `doomed_never_banks` this is the retirement of "the descent is
+deathless": there is a reachable, living position on EVERY day from which no continuation
+whatsoever banks. -/
+theorem doomed_every_day (k : Nat) (hk : k < dayCount) : @doomExists (instAt k) = true := by
+  rcases lt_dayCount_cases hk with
+    rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> decide
+
+/-- The daily form: whatever the beacon says, the dungeon it draws has a losable position. -/
+theorem draw_can_kill (n : Nat) :
+    ∃ s, @Reachable (drawInst n) s ∧ s.fate = 0 ∧ s.spent < BREATH ∧ BREATH ≤ toll s :=
+  @doomed_of_doomExists (drawInst n) (doomed_every_day _ (Nat.mod_lt _ (by decide)))
+
+#guard (List.range dayCount).all (fun k => @doomExists (instAt k))
+
 -- Every day of the family, driven end to end (the theorems above, as executable checks).
 #guard (List.range dayCount).all winsAt
-#guard (List.range dayCount).all (fun k => 20 ≤ costAt k && costAt k ≤ BREATH)
+#guard (List.range dayCount).all (fun k => 24 ≤ costAt k && costAt k ≤ BREATH)
+-- The old vector was [24,26,22,24,24,22,22,24,22,24,22,24,20,20,22,24]; every entry is
+-- now exactly `+ FLOORS`, the price of the climb home.
 #guard (List.range dayCount).map costAt
-        = [24, 26, 22, 24, 24, 22, 22, 24, 22, 24, 22, 24, 20, 20, 22, 24]
+        = [28, 30, 26, 28, 28, 26, 26, 28, 26, 28, 26, 28, 24, 24, 26, 28]
 -- The days are genuinely different dungeons (no two draws share a map).
 #guard ((List.range dayCount).map worldAt).Nodup
 
@@ -1064,19 +1434,53 @@ theorem draw_wf (n : Nat) : WorldWF (drawWorld n) = true := worldAt_wf _
 section Canon
 local instance : WorldParam := instAt 0
 
--- The crowned line for the shipped map is the same 18-verb script the file used to
--- hard-code, and it still costs 24 of 26 breath and banks the prize + three keys.
+-- The crowned line for the shipped map is the old 18-verb script plus THE CLIMB: four
+-- `ascend`s before the `flee`, because banking now demands the surface. It costs 28 of
+-- 30 breath (was 24 of 26 — the same 2 spare) and banks the prize + three keys.
 #guard crownedRun =
   [ .delve, .smite, .loot 1, .unlock 2,
     .delve, .smite, .loot 2, .unlock 3,
     .delve, .smite, .smite, .loot 3, .unlock 4,
     .delve, .smite, .smite, .loot 0,
+    .ascend, .ascend, .ascend, .ascend,
     .flee ]
 #guard (replay crownedRun).isSome
 #guard (replay crownedRun).map (·.fate) = some 1
 #guard (replay crownedRun).map bank = some 4
-#guard (replay crownedRun).map (·.spent) = some 24
+#guard (replay crownedRun).map (·.spent) = some 28
 #guard (replay crownedRun).map (fun s => s.custody[0]?) = some (some BANKED)
+-- The banked run stands at the mouth (`banked_at_the_surface`), driven.
+#guard (replay crownedRun).map (·.depth) = some 0
+
+-- ⚑ THE ONE-WAY DOOR CLOSED: the SAME crowned script without the climb is REFUSED. This
+-- is the falsifier for the whole change — if `flee` were still a teleport this would
+-- still bank, and nothing below would be lethal.
+#guard replay
+  [ .delve, .smite, .loot 1, .unlock 2,
+    .delve, .smite, .loot 2, .unlock 3,
+    .delve, .smite, .smite, .loot 3, .unlock 4,
+    .delve, .smite, .smite, .loot 0,
+    .flee ] = none
+
+-- ⚑ THE CLIMB IS UNCONDITIONAL — no key, no guardian, no capacity, only breath. From the
+-- bottom with a full pack, four ascends always get you home.
+#guard (replay ([.delve, .smite, .loot 1, .unlock 2,
+                 .delve, .smite, .loot 2, .unlock 3,
+                 .delve, .smite, .smite, .loot 3, .unlock 4,
+                 .delve, .smite, .smite, .loot 0] ++
+                List.replicate 4 Move.ascend)).map (·.depth) = some 0
+
+-- ⚑ AND THE DESCENT KILLS. Fourteen floors down-and-up (28 breath) then one step down:
+-- alive at floor 1, 29 of 30 spent, one breath in hand — and no way to spend it that
+-- ends banked. The last breath buys the climb; the flee is one breath too late.
+#guard (replay doomedRun).map (·.spent) = some 29
+#guard (replay doomedRun).map (·.depth) = some 1
+#guard (replay doomedRun).map (·.fate)  = some 0
+#guard (replay doomedRun).map toll      = some 30
+#guard doomExists
+#guard (replay (doomedRun ++ [.ascend])).map (·.spent) = some 30    -- the climb is paid
+#guard replay (doomedRun ++ [.ascend, .flee]) = none                -- and there is nothing left
+#guard replay (doomedRun ++ [.flee]) = none                         -- fleeing from below: illegal
 
 -- Illegal moves are REFUSED by the rulebook (driven, not asserted):
 -- keyless descent past floor 1 (way 2 shut):
@@ -1085,10 +1489,14 @@ local instance : WorldParam := instAt 0
 #guard (replay [.delve, .loot 1]) = none
 -- a second unlock of the same way (the way is no longer 0):
 #guard (replay [.delve, .smite, .loot 1, .unlock 2, .unlock 2]) = none
--- moving after banking (the frozen tomb):
-#guard (replay [.delve, .flee, .delve]) = none
+-- ⚑ FLEEING FROM BELOW is now itself illegal (`flee` demands `depth = 0`):
+#guard (replay [.delve, .flee]) = none
+-- climbing above the surface is not a verb you get:
+#guard (replay [.ascend]) = none
+-- moving after banking (the frozen tomb) — reached by the climb now:
+#guard (replay [.delve, .ascend, .flee, .delve]) = none
 -- fleeing twice:
-#guard (replay [.delve, .flee, .flee]) = none
+#guard (replay [.delve, .ascend, .flee, .flee]) = none
 
 /-! ### THE LUNGE, DRIVEN (day 0: `ghp = [0, 1, 1, 2, 2]`).
 
@@ -1112,17 +1520,24 @@ Everything below is `decide`-evaluated through the real `step`; nothing is asser
 #guard (replay [.delve, .lunge, .loot 1, .unlock 2,
                 .delve, .lunge, .loot 2, .unlock 3, .delve, .lunge]) = none
 
--- ⚑ THE DECISION AT THE BOTTOM: the crowned line with ONE breath saved by a lunge on
--- floor 1 CANNOT take the prize — at depth 4 the pack holds three keys and capacity is
--- `CAP - FLOORS - harm = 3`. One saved breath, one forfeited crown.
+-- ⚑ THE DECISION AT THE BOTTOM SURVIVES THE CLIMB: the crowned line with ONE breath
+-- saved by a lunge on floor 1 STILL cannot take the prize — at depth 4 the pack holds
+-- three keys and capacity is `CAP - FLOORS - harm = 3`. The refusal lands on the `loot 0`,
+-- before the climb is even reached. One saved breath, one forfeited crown.
 #guard replay
   [ .delve, .lunge, .loot 1, .unlock 2,
     .delve, .smite, .loot 2, .unlock 3,
     .delve, .smite, .smite, .loot 3, .unlock 4,
     .delve, .smite, .smite, .loot 0,
+    .ascend, .ascend, .ascend, .ascend,
     .flee ] = none
--- …and the same line with the press (today's smite) still crowns, for 24 of 26 breath.
+-- …and the same line with the press (today's smite) still crowns, for 28 of 30 breath.
 #guard (replay crownedRun).map (·.harm) = some 0
+
+-- ⚑ THE PRICE OF HARM, ON THE BANKED LEDGER (`banked_bank_pays_for_harm`): a run that
+-- lunges once banks at most `CAP - 1 - harm = 6`. Driven at the edge — six relics out
+-- with one broken grip, and the seventh refused by capacity, not by breath.
+#guard (replay crownedRun).map (fun s => bank s + s.harm) = some 4
 
 end Canon
 
@@ -1131,14 +1546,25 @@ end Canon
 #assert_axioms capacity_attenuates
 #assert_axioms harm_ratchets
 #assert_axioms harm_bounded
-#assert_axioms crowned_full_bank_harmless
 #assert_axioms the_light_dies
 #assert_axioms run_bounded
 #assert_axioms banked_run_frozen
 #assert_axioms keyless_unlock_impossible
 #assert_axioms custody_ratchet
 #assert_axioms no_run_banks_everything
-#assert_axioms crowned_bank_le_four
+#assert_axioms hoard_never_leaves_whole
+#assert_axioms banked_bank_pays_for_harm
+#assert_axioms banked_at_the_surface
+#assert_axioms prize_never_lies_elsewhere
+#assert_axioms prize_leaves_home_only_at_the_bottom
+#assert_axioms ways_behind_stay_open
+#assert_axioms surface_is_unguarded
+#assert_axioms toll_ratchets
+#assert_axioms flee_needs_toll
+#assert_axioms doomed_never_banks
+#assert_axioms doomed_of_doomExists
+#assert_axioms doomed_every_day
+#assert_axioms draw_can_kill
 #assert_axioms drawFamily_wf
 #assert_axioms winsAt_true
 #assert_axioms costAt_tense

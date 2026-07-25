@@ -39,6 +39,29 @@ fn seating() -> CrewSeating {
     .expect("a permutation of the four jobs")
 }
 
+/// ⚑ CARRY OUT A CERTIFIED `ClimbOut` TO ITS END. `flee` demands the surface, so the
+/// Mender's writ is spent over `depth + 1` moves — one `ascend` per floor, then the
+/// `flee` that banks. The writ stays LIVE across the climb, which is what this exercises.
+fn bring_home(mission: &mut CrewDescent) -> crate::crew_descent::MissionStep {
+    let mut last = None;
+    for floor in 0..=dungeon_on_dregg::descent::FLOORS {
+        assert!(
+            mission.writ().is_some(),
+            "the climb writ is still live at floor {floor}"
+        );
+        last = Some(mission.carry_out(MENDER).expect("the Mender climbs"));
+        if mission.is_home() {
+            break;
+        }
+    }
+    assert!(mission.is_home(), "the crew reached the mouth and banked");
+    assert!(
+        mission.writ().is_none(),
+        "and the writ is spent by the flee that ended the run"
+    );
+    last.expect("the climb landed at least one move")
+}
+
 fn depart(seed: u8) -> CrewDescent {
     seating()
         .depart_on_map(seed, DAY_SEED, 0)
@@ -83,7 +106,7 @@ fn push(mission: &mut CrewDescent) {
 fn a_crew_descends_argues_and_divides_the_haul() {
     let mut mission = depart(11);
     assert_eq!(mission.depth(), 0);
-    assert_eq!(mission.breath_left(), 26, "the light is full");
+    assert_eq!(mission.breath_left(), 30, "the light is full");
     assert_eq!(
         mission.seating().provenance(),
         RoleProvenance::Declared,
@@ -116,7 +139,7 @@ fn a_crew_descends_argues_and_divides_the_haul() {
         "two of four certifies nothing"
     );
     assert_eq!(mission.depth(), 0, "anti-ghost: the crew did not move");
-    assert_eq!(mission.breath_left(), 26, "and spent no light");
+    assert_eq!(mission.breath_left(), 30, "and spent no light");
     assert!(
         mission.council_poll().is_some(),
         "the council stays open for the third ballot"
@@ -166,7 +189,7 @@ fn a_crew_descends_argues_and_divides_the_haul() {
     mission
         .act(STRIKER, SeatMove::Strike)
         .expect("the Striker fells floor one's guardian");
-    assert_eq!(mission.breath_left(), 26 - 1 - 2, "a blow costs two");
+    assert_eq!(mission.breath_left(), 30 - 1 - 2, "a blow costs two");
 
     // THE GREED. The Bearer takes way two's key — and two treasures nobody voted for.
     // `pack + depth <= CAP` is the whole game, and the Bearer alone spends it.
@@ -263,7 +286,7 @@ fn a_crew_descends_argues_and_divides_the_haul() {
         ),
         "the Mender takes the crew home"
     );
-    let home = mission.carry_out(MENDER).expect("the crew climbs out");
+    let home = bring_home(&mut mission);
     assert!(
         mission.is_home(),
         "the run is banked and the tomb is frozen"
@@ -447,7 +470,7 @@ fn a_disciplined_crew_banks_the_prize() {
 
     mission.call_council(MENDER, Question::ClimbOut).unwrap();
     decide(&mut mission, 0, [BEARER, STRIKER, MENDER]);
-    mission.carry_out(MENDER).expect("home");
+    bring_home(&mut mission);
 
     assert!(mission.crowned(), "the crew banked the prize");
     assert_eq!(mission.haul(), 4, "the crown and three keys");
@@ -467,7 +490,7 @@ fn a_certified_hold_moves_nothing() {
         "a hold mints no writ"
     );
     assert_eq!(mission.depth(), 0);
-    assert_eq!(mission.breath_left(), 26);
+    assert_eq!(mission.breath_left(), 30);
 }
 
 /// **Nobody makes your move.** A move signature is verified before any turn is built: a

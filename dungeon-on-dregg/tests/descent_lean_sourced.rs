@@ -63,7 +63,7 @@ fn evaluator_state(dep: &Deployment, sim: &Sim) -> CellState {
 }
 
 /// The artifact is the Lean emission: it parses, names OUR scene, and the loaded
-/// program is `Cases` with the six verb arms + six riders — and the genesis arm
+/// program is `Cases` with the seven verb arms + eight riders — and the genesis arm
 /// carries the spween one-shot sentinel teeth (so the world births + injects the
 /// sentinel; a genesis replay is structurally unsatisfiable).
 #[test]
@@ -74,7 +74,7 @@ fn loaded_program_is_the_lean_object() {
     let CellProgram::Cases(cases) = &program else {
         panic!("descent program must be Cases");
     };
-    assert_eq!(cases.len(), 15, "6 verb arms + 7 riders + genesis");
+    assert_eq!(cases.len(), 16, "genesis + 7 verb arms + 8 riders");
     // The genesis arm is MethodIs("genesis") and carries a HeapField tooth on the
     // genesis sentinel (spween keys the sentinel machinery off exactly this shape).
     let genesis = cases
@@ -398,14 +398,33 @@ fn fake_flee_keeping_the_pack_is_refused() {
     d.delve().expect("delve");
     d.smite().expect("smite");
     d.loot(1).expect("loot the key");
+    // ⚑ CLIMB OUT FIRST, so the refusal below is about the PACK and nothing else. Fleeing
+    // from floor 1 is now refused by `FieldEquals{depth, 0}` too, and a test that let two
+    // teeth answer at once would keep passing if the pack law were deleted.
+    d.ascend().expect("the climb home");
     let sim = d.sim().clone();
     assert_eq!(sim.pack(), 1);
+    assert_eq!(sim.depth, 0, "standing at the mouth");
     let mut forged = sim.clone();
     forged.fate = 1; // bank…
     forged.spent += 1; // …but never empty the pack (custody stays CARRIED).
     let effects = d.effects_for(&forged);
     assert!(refused(d.commit_raw(FLEE, effects)));
     assert_eq!(d.read_reg("fate"), 0);
+    // …and the honest twin: the same turn WITH the pack emptied is admitted.
+    let mut honest = sim.clone();
+    honest.spent += 1;
+    honest.fate = 1;
+    for c in honest.custody.iter_mut() {
+        if *c == CARRIED {
+            *c = BANKED;
+        }
+    }
+    let effects = d.effects_for(&honest);
+    assert!(
+        d.commit_raw(FLEE, effects).is_ok(),
+        "a lawful bank at the mouth still lands — the test above is not vacuous"
+    );
 }
 
 /// RELIC TELEPORT: moving a relic's custody floor→floor (code 1 → 2) is refused — the

@@ -26,7 +26,7 @@ use dreggnet_offerings::native_descent::{
     NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{DELVE, LOOT, RELICS as DESCENT_RELICS, SMITE};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, LOOT, RELICS as DESCENT_RELICS, SMITE};
 
 /// The map's column count — the row marker, the way, the guardian, then one column per relic.
 const MAP_COLS: usize = 3 + DUNGEON_RELICS;
@@ -256,7 +256,11 @@ fn a_relic_travels_from_its_floor_into_the_pack_and_then_the_vault() {
         "the pack row is marked as yours-but-losable"
     );
 
-    // Climb out. The proved exit banks it: the same column, one row lower.
+    // ⚑ CLIMB, then bank. `flee` is illegal below the surface now, so the way out is a
+    // real move that costs a light — the relic is still LOSABLE while you are down here.
+    land(&offering, &mut session, ASCEND, 0);
+
+    // The proved exit banks it: the same column, one row lower.
     let exit = offering
         .actions(&session)
         .into_iter()

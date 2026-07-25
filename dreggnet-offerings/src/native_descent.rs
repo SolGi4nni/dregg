@@ -44,8 +44,8 @@ use dregg_app_framework::TurnReceipt;
 /// settled run's owned notes without its own dependency on the asset layer.
 pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
-    BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, HARMCAP, LOOT,
-    LUNGE, PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed,
+    ASCEND, BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, HARMCAP,
+    LOOT, LUNGE, PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed,
     day_world,
 };
 /// **The world's presentation constants**, re-exported so a FRONTEND can size a light bar or a
@@ -164,6 +164,9 @@ pub const NATIVE_DESCENT_PRIVATE_DEAL_DISCLOSURE: &str = "A Lean-authored Hiding
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeDescentMove {
     Delve,
+    /// **The climb** — rise one floor toward the surface for one light. `Flee` is illegal
+    /// below the surface, so this is the only way home and it is priced per floor.
+    Ascend,
     Unlock {
         way: u64,
     },
@@ -191,6 +194,7 @@ impl NativeDescentMove {
                 way: u64::try_from(action.arg)
                     .expect("the matched native unlock argument is non-negative"),
             }),
+            (ASCEND, 0) => Ok(Self::Ascend),
             (SMITE, 0) => Ok(Self::Smite),
             (LUNGE, 0) => Ok(Self::Lunge),
             (LOOT, 0..=7) => Ok(Self::Loot {
@@ -198,7 +202,7 @@ impl NativeDescentMove {
                     .expect("the matched native relic argument is non-negative"),
             }),
             (FLEE, 0) => Ok(Self::Flee),
-            (verb, _) if matches!(verb, DELVE | UNLOCK | SMITE | LUNGE | LOOT | FLEE) => {
+            (verb, _) if matches!(verb, DELVE | ASCEND | UNLOCK | SMITE | LUNGE | LOOT | FLEE) => {
                 Err(format!("invalid argument for native Descent verb {verb:?}"))
             }
             (verb, _) => Err(format!("unknown native Descent affordance {verb:?}")),
@@ -208,6 +212,7 @@ impl NativeDescentMove {
     fn execute(self, game: &mut Descent) -> Result<TurnReceipt, WorldError> {
         match self {
             Self::Delve => game.delve(),
+            Self::Ascend => game.ascend(),
             Self::Unlock { way } => game.unlock(way),
             Self::Smite => game.smite(),
             Self::Lunge => game.lunge(),
@@ -246,6 +251,10 @@ impl NativeDescentMove {
             // run's move-tape hash is unchanged by the arrival of the lunge.
             Self::Lunge => {
                 hasher.update(&[5]);
+            }
+            // …and the same discipline for the climb: tag 6, nothing below it moves.
+            Self::Ascend => {
+                hasher.update(&[6]);
             }
         }
     }
@@ -891,12 +900,28 @@ impl NativeDescentOffering {
                 0,
                 sim.lunge().is_ok(),
             ),
+            // ⚑ THE CLIMB. One floor, one light — and it is the ONLY way out, so its price
+            // is part of every plan made below the surface, not an afterthought at the end.
+            Action::new(
+                format!(
+                    "↑ Climb to {}{}",
+                    if sim.depth <= 1 {
+                        "the surface".to_string()
+                    } else {
+                        format!("floor {}", sim.depth - 1)
+                    },
+                    light_cost(LIGHT_ASCEND)
+                ),
+                ASCEND,
+                0,
+                sim.ascend().is_ok(),
+            ),
             Action::new(
                 if pack == 0 {
-                    format!("↑ Climb out with nothing{}", light_cost(LIGHT_FLEE))
+                    format!("⌂ Bank nothing and end the run{}", light_cost(LIGHT_FLEE))
                 } else {
                     format!(
-                        "↑ Climb out and bank {} carried relic{}{}",
+                        "⌂ Bank {} carried relic{} and end the run{}",
                         pack,
                         if pack == 1 { "" } else { "s" },
                         light_cost(LIGHT_FLEE)
@@ -2642,6 +2667,7 @@ const MAP_COLS: usize = 3 + RELICS;
 /// thing a stranger can be told, because the light IS the game. The mover still prices every turn;
 /// a label can only describe.
 const LIGHT_DELVE: u64 = 1;
+const LIGHT_ASCEND: u64 = 1;
 const LIGHT_UNLOCK: u64 = 1;
 const LIGHT_SMITE: u64 = 2;
 const LIGHT_LUNGE: u64 = 1;

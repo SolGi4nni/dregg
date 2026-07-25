@@ -46,7 +46,7 @@ use dregg_app_framework::{Event, TurnReceipt, field_from_u64, symbol};
 use procgen_dregg::CommittedSeed;
 use spween_dregg::WorldError;
 
-use crate::descent::{BankedRelicMint, DELVE, Descent, FLEE, LOOT, SMITE, Sim, UNLOCK};
+use crate::descent::{ASCEND, BankedRelicMint, DELVE, Descent, FLEE, LOOT, SMITE, Sim, UNLOCK};
 use crate::loot::{LootError, LootVault};
 
 /// The event topic every authorized descent turn emits under. Distinct from the campaign
@@ -57,9 +57,13 @@ pub const AUTHORIZATION_TOPIC: &str = "dungeon-on-dregg/authorized-descent/autho
 /// ([`crate::descent`]) — this module adds none and removes none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
-    /// Descend one floor. Burns a breath, tightens the carry ceiling (`pack + depth ≤ CAP`),
-    /// and cannot be undone: there is no ascent verb, only [`Verb::Flee`].
+    /// Descend one floor. Burns a breath and tightens the carry ceiling
+    /// (`pack + depth + harm ≤ CAP`). It CAN be undone — by [`Verb::Ascend`], at one
+    /// breath per floor, which is the whole reason the light can run out on you.
     Delve,
+    /// Climb one floor toward the surface. One breath, no key and no guardian. Since
+    /// [`Verb::Flee`] demands `depth = 0`, this is the only way home.
+    Ascend,
     /// Exercise the carried key-relic for `way`.
     Unlock {
         /// The way to open (`2..=FLOORS`).
@@ -81,6 +85,7 @@ impl Verb {
     pub const fn method(self) -> &'static str {
         match self {
             Verb::Delve => DELVE,
+            Verb::Ascend => ASCEND,
             Verb::Unlock { .. } => UNLOCK,
             Verb::Smite => SMITE,
             Verb::Loot { .. } => LOOT,
@@ -96,6 +101,8 @@ impl Verb {
             Verb::Smite => 2,
             Verb::Loot { .. } => 3,
             Verb::Flee => 4,
+            // A NEW tag, never a renumber: an existing authorization's hash is unchanged.
+            Verb::Ascend => 5,
         }
     }
 
@@ -104,7 +111,7 @@ impl Verb {
         match self {
             Verb::Unlock { way } => way,
             Verb::Loot { relic } => relic as u64,
-            Verb::Delve | Verb::Smite | Verb::Flee => 0,
+            Verb::Delve | Verb::Smite | Verb::Flee | Verb::Ascend => 0,
         }
     }
 
@@ -113,6 +120,7 @@ impl Verb {
     fn project(self, sim: &Sim) -> Result<Sim, &'static str> {
         match self {
             Verb::Delve => sim.delve(),
+            Verb::Ascend => sim.ascend(),
             Verb::Unlock { way } => sim.unlock(way),
             Verb::Smite => sim.smite(),
             Verb::Loot { relic } => sim.loot(relic),

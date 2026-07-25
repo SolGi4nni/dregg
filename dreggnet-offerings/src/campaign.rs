@@ -29,7 +29,7 @@
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, LUNGE, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, LUNGE, SMITE, UNLOCK};
 use dungeon_on_dregg::overworld::{RegionCell, RegionMap, deepening_ways};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
@@ -839,6 +839,7 @@ impl RecordVerify for DescentCampaignOffering {
 fn parse_native_move(action: &Action) -> Result<NativeDescentMove, String> {
     match (action.turn.as_str(), action.arg) {
         (DELVE, 0) => Ok(NativeDescentMove::Delve),
+        (ASCEND, 0) => Ok(NativeDescentMove::Ascend),
         (UNLOCK, way @ 2..=4) => Ok(NativeDescentMove::Unlock {
             way: u64::try_from(way).expect("the matched campaign unlock argument is non-negative"),
         }),
@@ -856,6 +857,7 @@ fn parse_native_move(action: &Action) -> Result<NativeDescentMove, String> {
 fn action_for_native_move(command: NativeDescentMove) -> Result<Action, String> {
     let action = match command {
         NativeDescentMove::Delve => Action::new("replay delve", DELVE, 0, true),
+        NativeDescentMove::Ascend => Action::new("replay ascend", ASCEND, 0, true),
         NativeDescentMove::Unlock { way } => Action::new(
             "replay unlock",
             UNLOCK,
@@ -983,6 +985,10 @@ fn hash_command(hasher: &mut blake3::Hasher, command: &DescentCampaignMove) {
                 // campaign's command hash is unchanged by the arrival of the lunge.
                 NativeDescentMove::Lunge => {
                     hasher.update(&[5]);
+                }
+                // …and tag 6 for the climb, on the same discipline.
+                NativeDescentMove::Ascend => {
+                    hasher.update(&[6]);
                 }
             }
         }

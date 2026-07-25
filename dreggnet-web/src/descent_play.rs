@@ -853,7 +853,7 @@ function maybeAutoAnchor() {
 // `day.json` / the shell's `data-guard-hp` below, resolved by the same offering the tab opens.
 const FLOORS = 4;
 const RELICS = 8;
-const BREATH = 26;
+const BREATH = 30;
 const CAP = 8;
 const CARRIED = 8;
 const BANKED = 9;

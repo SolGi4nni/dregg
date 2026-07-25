@@ -6,7 +6,7 @@
 
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, RELICS, SMITE};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, RELICS, SMITE};
 
 fn land(
     offering: &NativeDescentOffering,
@@ -39,15 +39,22 @@ fn enabled_moves_lead_locked_catalogue_and_exit_follows_nonterminal_play() {
     let fresh = offering.actions(&session);
     assert_eq!(
         fresh.len(),
-        14,
-        "the complete anti-ghost vocabulary remains"
+        15,
+        "the complete anti-ghost vocabulary remains (the climb joined it)"
     );
     assert_eq!(fresh[0].turn, DELVE);
     assert_eq!(fresh[1].turn, FLEE);
     assert!(fresh[..2].iter().all(|action| action.enabled));
     assert!(fresh[2..].iter().all(|action| !action.enabled));
+    // ⚑ ON THE SURFACE the climb is the one thing you cannot do — you are already home.
+    assert!(
+        fresh
+            .iter()
+            .any(|action| action.turn == ASCEND && !action.enabled),
+        "the climb is catalogued but locked at depth 0"
+    );
     // The exit names WHAT IT BANKS and WHAT IT COSTS — an irreversible move a newcomer can weigh.
-    assert_eq!(fresh[1].label, "↑ Climb out with nothing · 1 light");
+    assert_eq!(fresh[1].label, "⌂ Bank nothing and end the run · 1 light");
 
     // Kill floor one's guardian. Every relic MINTED ON THIS FLOOR becomes legal, and all of them
     // must be shown before the irreversible-but-legal exit, with locked actions still visible
@@ -81,27 +88,56 @@ fn enabled_moves_lead_locked_catalogue_and_exit_follows_nonterminal_play() {
         world.homes
     );
 
+    // ⚑ BELOW THE SURFACE THE EXIT IS LOCKED. `flee` demands `depth = 0`, so the way out
+    // of floor 1 is the CLIMB — and it costs a light. The enabled band is therefore "this
+    // floor's spoils plus the climb", and the exit has moved down into the locked
+    // catalogue where a player can still see what it will do without being able to do it.
     let spoils = offering.actions(&session);
-    let exit = spoils
+    let boundary = spoils
         .iter()
-        .position(|action| action.turn == FLEE)
-        .expect("exit remains offered");
-    let mut playable_loot: Vec<_> = spoils[..exit]
+        .position(|action| !action.enabled)
+        .unwrap_or(spoils.len());
+    let mut playable_loot: Vec<_> = spoils[..boundary]
         .iter()
         .filter(|action| action.turn == LOOT)
         .map(|action| action.arg)
         .collect();
     playable_loot.sort_unstable();
     assert_eq!(playable_loot, expected_loot);
-    assert!(spoils[..exit].iter().all(|action| action.enabled));
-    assert!(spoils[exit + 1..].iter().all(|action| !action.enabled));
+    assert!(spoils[..boundary].iter().all(|action| action.enabled));
+    assert!(spoils[boundary..].iter().all(|action| !action.enabled));
+    assert!(
+        spoils[..boundary]
+            .iter()
+            .any(|action| action.turn == ASCEND),
+        "the climb is playable from floor 1"
+    );
+    assert!(
+        spoils[boundary..].iter().any(|action| action.turn == FLEE),
+        "the exit is offered but LOCKED below the surface — you climb out, you do not \
+         teleport out"
+    );
 
     let first_relic = expected_loot[0];
     land(&offering, &mut session, &actor, LOOT, first_relic);
+    // The carried relic is still LOSABLE: the exit names what it would bank, and stays locked.
     let exit = offering
         .actions(&session)
         .into_iter()
         .find(|action| action.turn == FLEE)
         .expect("exit remains offered");
-    assert_eq!(exit.label, "↑ Climb out and bank 1 carried relic · 1 light");
+    assert_eq!(
+        exit.label,
+        "⌂ Bank 1 carried relic and end the run · 1 light"
+    );
+    assert!(!exit.enabled, "the exit is not reachable from floor 1");
+
+    // Climb out, and NOW it is.
+    land(&offering, &mut session, &actor, ASCEND, 0);
+    let exit = offering
+        .actions(&session)
+        .into_iter()
+        .find(|action| action.turn == FLEE)
+        .expect("exit remains offered");
+    assert!(exit.enabled, "at the mouth, the exit opens");
 }

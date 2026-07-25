@@ -579,6 +579,7 @@ fn drive_commands(
 fn command_action(command: NativeDescentMove) -> Result<(&'static str, i64), NativeBoardError> {
     match command {
         NativeDescentMove::Delve => Ok(("delve", 0)),
+        NativeDescentMove::Ascend => Ok(("ascend", 0)),
         NativeDescentMove::Unlock { way } => i64::try_from(way)
             .map(|way| ("unlock", way))
             .map_err(|_| malformed("unlock argument exceeds the action wire")),
@@ -601,6 +602,8 @@ fn encode_command(out: &mut Vec<u8>, command: NativeDescentMove) {
         // A NEW tag, never a renumber: tags 0–4 keep their bytes, so a board snapshot
         // recorded before the lunge existed still decodes to the same command sequence.
         NativeDescentMove::Lunge => (5, 0),
+        // …and tag 6 for the climb, on the same discipline.
+        NativeDescentMove::Ascend => (6, 0),
     };
     out.push(tag);
     put_u64(out, arg);
@@ -616,6 +619,7 @@ fn decode_command(cursor: &mut Cursor<'_>) -> Result<NativeDescentMove, NativeBo
         (3, relic) => Ok(NativeDescentMove::Loot { relic }),
         (4, 0) => Ok(NativeDescentMove::Flee),
         (5, 0) => Ok(NativeDescentMove::Lunge),
+        (6, 0) => Ok(NativeDescentMove::Ascend),
         _ => Err(malformed("non-canonical native command")),
     }
 }

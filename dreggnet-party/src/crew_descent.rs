@@ -357,11 +357,14 @@ fn seat_move_message(
 /// **A question only the crew may answer** — the irreversible choices.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Question {
-    /// One more floor. Burns breath, tightens the carry ceiling, and cannot be undone —
-    /// there is no ascent verb. Certified, the **Pathfinder** takes the step.
+    /// One more floor. Burns breath and tightens the carry ceiling. It CAN be undone — the
+    /// crew can climb back — but the climb costs a breath per floor, so a floor taken is a
+    /// breath owed. Certified, the **Pathfinder** takes the step.
     Push,
-    /// Take what we have and go. Terminal: the pack banks and the tomb freezes. Certified,
-    /// the **Mender** takes the crew home.
+    /// Take what we have and go. Certified, the **Mender** brings the crew home ONE FLOOR
+    /// AT A TIME (`ascend`), and banks (`flee`) once they stand at the mouth — banking from
+    /// below is not a move the rules have. The writ stays live for the whole climb, so the
+    /// journal records every floor of it and the run is not home until it says so.
     ClimbOut,
     /// How the banked haul divides. Only askable once the crew is home, and only over splits
     /// that sum to what the ledger says was actually banked.
@@ -376,7 +379,8 @@ pub enum Question {
 pub enum Mandate {
     /// Go one floor deeper. The Pathfinder's hand.
     Descend,
-    /// End the run and bank the pack. The Mender's hand.
+    /// Bring the crew home and bank the pack. The Mender's hand. Carried out one floor per
+    /// turn: `ascend` while below, `flee` at the mouth.
     ClimbOut,
     /// Stay where we are — a real outcome, and the reason a council is not a rubber stamp.
     Hold,
@@ -397,11 +401,20 @@ impl Mandate {
         }
     }
 
-    /// The admitted verb this mandate submits, if any.
-    const fn verb(&self) -> Option<Verb> {
+    /// The admitted verb this mandate submits from `depth`, if any.
+    ///
+    /// ⚑ `ClimbOut` is depth-dependent because `flee` demands the surface: from below, the
+    /// mandate's verb is the CLIMB, and the writ is only spent when the crew actually banks.
+    const fn verb(&self, depth: u64) -> Option<Verb> {
         match self {
             Mandate::Descend => Some(Verb::Delve),
-            Mandate::ClimbOut => Some(Verb::Flee),
+            Mandate::ClimbOut => {
+                if depth == 0 {
+                    Some(Verb::Flee)
+                } else {
+                    Some(Verb::Ascend)
+                }
+            }
             Mandate::Hold | Mandate::Split(_) => None,
         }
     }
@@ -754,9 +767,10 @@ impl CrewDescent {
             ),
             Question::ClimbOut => (
                 format!(
-                    "Take what we have and go? ({} in the pack, {} breath left)",
+                    "Take what we have and go? ({} in the pack, {} breath left, {} floors to climb)",
                     self.pack(),
-                    self.breath_left()
+                    self.breath_left(),
+                    self.depth()
                 ),
                 vec![
                     ("Climb out".to_string(), Mandate::ClimbOut),
@@ -990,7 +1004,9 @@ impl CrewDescent {
                 }
             }
             ref mandate => {
-                let verb = mandate.verb().expect("descend and climb-out carry a verb");
+                let verb = mandate
+                    .verb(self.run.sim().depth)
+                    .expect("descend and climb-out carry a verb");
                 let step = self.run.step();
                 let warrant = self.council_warrant(&writ, step, verb);
                 let receipt = self.run.commit(verb, warrant).map_err(world_error)?;
@@ -1006,7 +1022,14 @@ impl CrewDescent {
                     warrant,
                     receipt: receipt.turn_hash,
                 };
-                self.writ = None;
+                // ⚑ A CLIMB IS NOT AN ARRIVAL. The writ authorised bringing the crew home,
+                // and one `ascend` is one floor of that — it stays live until the `flee`
+                // that actually banks. Every other mandate is spent by its single move.
+                if verb == Verb::Ascend {
+                    self.writ = Some(writ.clone());
+                } else {
+                    self.writ = None;
+                }
                 self.journal.push(record.clone());
                 Ok(record)
             }

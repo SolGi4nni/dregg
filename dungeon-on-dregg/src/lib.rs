@@ -188,9 +188,10 @@ pub mod spells;
 /// hands — so a death seals a [`tomb::Tomb`] certificate read off those registers, and interring it
 /// is the only way the meta-currency and the RETURN RIGHT (the right to go back to a map that
 /// killed you) are earned. A tomb returns no relic and no breath: dying pays the currency that
-/// cannot buy a relic and costs the one that is a relic. ⚠ The module also carries the census
-/// showing that on **14 of the 16 daily maps the deployed rules make permadeath unreachable**, and
-/// the checked Lean design (the one-way door) that fixes it.
+/// cannot buy a relic and costs the one that is a relic. ⚑ The module also carries the census —
+/// which used to show that on 14 of the 16 daily maps permadeath was UNREACHABLE, and now shows
+/// that on **all 16 there are positions from which the surface is out of reach**, since the
+/// one-way door landed (`ascend`; `flee` gated on the surface; `BREATH` 26 → 30).
 pub mod tomb;
 
 /// THE OVERWORLD — the connective layer above the universes. A [`overworld::RegionMap`] of named

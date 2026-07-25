@@ -42,7 +42,7 @@
 //! [`CampaignAction::Embark`] deploys a *fresh* [`Descent`] through
 //! [`Descent::deploy_on_day`], whose genesis is the Lean `genesisState` committed under
 //! the Lean `genesis` case. Depth, breath, wounds, ways and custody all return to the
-//! minted world. [`crate::descent::BREATH`] (26 light) and [`crate::descent::CAP`] (the
+//! minted world. [`crate::descent::BREATH`] (30 light) and [`crate::descent::CAP`] (the
 //! `pack + depth <= CAP` carry ceiling) are Lean constants; no amount of persistence
 //! moves them. **Run ten is exactly as hard as run one.**
 //!
@@ -102,8 +102,8 @@ use serde::{Deserialize, Serialize};
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
 use crate::descent::{
-    BANKED, BREATH, CAP, CARRIED, DELVE, DayWorld, Descent, FLEE, FLOORS, LOOT, REGISTERS, RELICS,
-    SMITE, Sim, UNLOCK, crowned_line, day_world,
+    ASCEND, BANKED, BREATH, CAP, CARRIED, DELVE, DayWorld, Descent, FLEE, FLOORS, LOOT, REGISTERS,
+    RELICS, SMITE, Sim, UNLOCK, crowned_line, day_world,
 };
 use crate::meta;
 use crate::overworld::{RegionCell, RegionMap, deepening_ways};
@@ -170,9 +170,16 @@ impl CampaignConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DescentAction {
     Delve,
-    Unlock { way: u64 },
+    /// Climb one floor toward the surface. One light. `Flee` demands the surface, so this
+    /// is the only way home.
+    Ascend,
+    Unlock {
+        way: u64,
+    },
     Smite,
-    Loot { relic: u8 },
+    Loot {
+        relic: u8,
+    },
     Flee,
 }
 
@@ -283,12 +290,15 @@ impl ExpeditionOutcome {
     }
     /// The run ended because the light ran out, not because the traveller banked.
     pub fn light_died(&self) -> bool {
-        self.fate == 0 && self.spent >= BREATH
+        // ⚑ THE TOLL, not the clock: `flee` demands the surface and the climb costs one
+        // light per floor, so a run is dead once `spent + depth` reaches `BREATH`
+        // (`Dungeon.doomed_never_banks`), whatever light is nominally left.
+        self.fate == 0 && self.spent + self.depth >= BREATH
     }
     /// The expedition is finished: banked, or out of light. The precondition of
     /// [`CampaignAction::Return`].
     pub fn over(&self) -> bool {
-        self.fate != 0 || self.spent >= BREATH
+        self.fate != 0 || self.spent + self.depth >= BREATH
     }
 }
 
@@ -1391,6 +1401,7 @@ fn descent_projection(
 ) -> (&'static str, Result<Sim, &'static str>) {
     match command {
         DescentAction::Delve => (DELVE, sim.delve()),
+        DescentAction::Ascend => (ASCEND, sim.ascend()),
         DescentAction::Unlock { way } => (UNLOCK, sim.unlock(way)),
         DescentAction::Smite => (SMITE, sim.smite()),
         DescentAction::Loot { relic } => (LOOT, sim.loot(usize::from(relic))),
@@ -1741,6 +1752,8 @@ fn hash_action(hasher: &mut blake3::Hasher, action: &CampaignAction) {
             hasher.update(&[0]);
             match command {
                 DescentAction::Delve => hasher.update(&[0]),
+                // A NEW tag, never a renumber: tags 0–4 keep their bytes.
+                DescentAction::Ascend => hasher.update(&[5]),
                 DescentAction::Unlock { way } => {
                     hasher.update(&[1]);
                     hasher.update(&way.to_be_bytes())

@@ -111,6 +111,11 @@ fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
         ("smite", 0),
         ("smite", 0),
         ("loot", 0),
+        // ⚑ THE CLIMB HOME: `flee` is illegal below the surface, one light per floor.
+        ("ascend", 0),
+        ("ascend", 0),
+        ("ascend", 0),
+        ("ascend", 0),
         ("flee", 0),
     ] {
         land(&offering, &mut session, actor, turn, arg);
@@ -163,6 +168,7 @@ fn sim_wire(sim: &Sim) -> serde_json::Value {
 fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
     match command {
         NativeDescentMove::Delve => ("delve", 0),
+        NativeDescentMove::Ascend => ("ascend", 0),
         NativeDescentMove::Unlock { way } => (
             "unlock",
             i64::try_from(way).expect("native way index fits the action wire"),

@@ -395,6 +395,7 @@ pub fn replay_portable_record(
 fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
     match command {
         NativeDescentMove::Delve => ("delve", 0),
+        NativeDescentMove::Ascend => ("ascend", 0),
         NativeDescentMove::Unlock { way } => (
             "unlock",
             i64::try_from(way).expect("native way index fits the action wire"),

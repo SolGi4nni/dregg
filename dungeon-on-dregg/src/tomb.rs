@@ -11,70 +11,62 @@
 //! What you were carrying is gone, permanently, and the [`epitaph`](Tomb::epitaph) says so by name.
 //! The ratchet is paid in a currency that cannot buy a relic, and the return right is paid in
 //! *agency over which map you fight next*, which is not power because every drawn map is
-//! Lean-checked completable in 20–26 of the 26 breath (`Dungeon.costAt_tense`). You cannot die your
+//! Lean-checked completable in 24–30 of the 30 breath (`Dungeon.costAt_tense`). You cannot die your
 //! way to wealth, and you cannot die your way to an easier dungeon.
 //!
-//! ## ⚠ WHAT THE CENSUS SAYS: on 14 of the 16 daily maps, the light CANNOT run out
+//! ## ⚑ THE ONE-WAY DOOR — LANDED. Death is now reachable on every map.
 //!
-//! The crate's prose (and [`crate::bloodgate`]'s header, and the flagship plan) says the Descent
-//! has permadeath and that the light is the clock. **Exhaustive search of the emitted rules says
-//! otherwise.** Enumerating every reachable state of every one of the [`DAYS`] maps under the
-//! Lean-emitted teeth (`delve`/`unlock`/`smite`/`loot` prices, `pack + depth ≤ CAP`, the guardian
-//! vitalities) gives, per map, the largest breath a non-fleeing run can burn:
+//! This module's header used to carry a census, and the census was an accusation: **on 14 of the 16
+//! daily maps the light could not run out.** `flee` cost ONE breath from any depth, so every
+//! reachable position could go home, the pack was never lost, and every run banked. Days 9 and 13
+//! each held exactly one lethal state. The crate said permadeath; the rules said otherwise.
 //!
-//! | day | 0  | 1  | 2  | 3  | 4  | 5  | 6  | 7  | 8  | 9      | 10 | 11 | 12 | 13     | 14 | 15 |
-//! |-----|----|----|----|----|----|----|----|----|----|--------|----|----|----|--------|----|----|
-//! | max | 23 | 25 | 21 | 23 | 25 | 25 | 23 | 25 | 23 | **26** | 25 | 25 | 23 | **26** | 25 | 25 |
+//! The rules changed, in Lean, where rules live:
 //!
-//! `flee` costs ONE breath from any depth, so on every map except 9 and 13 there is **no reachable
-//! position from which a player cannot go home**. The pack is never lost; every run banks. Days 9
-//! and 13 each contain exactly ONE lethal state. The Descent as deployed is not a permadeath
-//! roguelite — it is a puzzle whose worst outcome is banking less than you hoped.
+//! * **`ascend`** — `depth ≥ 1`, price 1, `depth' = depth − 1`, `wounds' = 0` (the dark closes
+//!   behind you: a floor you re-enter has its guardian standing again). It does NOT reset `harm` —
+//!   a walk upstairs launders nothing (`Dungeon.harm_ratchets`).
+//! * **`flee` gated `FieldEquals(depth, 0)`** — you bank at the mouth, not from the bottom.
+//! * **`BREATH` 26 → 30**, which is exactly the `FLOORS` breath the climb home now costs.
 //!
-//! The cause is structural, not a number to tune: every verb is productive, bounded and monotone
-//! (`delve` ≤ 4, `unlock` ≤ 3, `smite` bounded by guardian vitality, `loot` bounded by capacity),
-//! so the total light a map lets you *waste* is barely more than the light a perfect line *needs*.
-//! Raising the flee price and raising `BREATH` together is a no-op — it shifts both sides equally,
-//! and a search over `flee ∈ {1, 2, depth, depth−1, ⌈depth/2⌉, depth+pack, pack+1}` ×
-//! `BREATH ∈ [26, 36]` finds **no** completable configuration where more than 2 of the 16 maps can
-//! kill you.
+//! What that buys, as law rather than as census: the clock a run plays against is no longer `spent`
+//! but the TOLL, `spent + depth` — breath burned plus breath the climb will cost.
+//! `Dungeon.toll_ratchets` proves no verb rewinds it (the climb repays the descent at par, never at
+//! a discount); `Dungeon.flee_needs_toll` proves banking demands `toll < BREATH`; and
+//! `Dungeon.doomed_never_banks` proves that from a living state with `BREATH ≤ toll` **no
+//! continuation whatsoever banks** — not a shorter route, not a cheaper verb, not luck.
+//! `Dungeon.doomed_every_day` drives a witness on all 16 maps.
 //!
-//! **THE FIX IS A RULES CHANGE, AND RULES ARE LEAN.** It is specified — and checked — in
-//! [`the Lean remainder`](self#the-lean-remainder-the-one-way-door) below. This module is
-//! deliberately built so that when that lands, nothing here changes shape: a tomb is sealed from
-//! committed registers, and the death it recognises becomes the common case instead of a curiosity.
+//! Re-verified by exhaustive enumeration of every reachable state of all 16 emitted maps under the
+//! new rules (state = depth × spent × wounds × harm × fate × ways × per-relic custody):
 //!
-//! ## The Lean remainder: THE ONE-WAY DOOR
+//! * all 16 stay completable, the perfect line costing 24–30 of 30 — the SAME 0–6 slack band the
+//!   shipped 20–26 of 26 had, because `BREATH` and the line both grew by `FLOORS`;
+//! * reachable states per map: 3 832–15 426 (was 212–1 137) — you can go back up for what you left;
+//! * **living positions from which no continuation banks: 624–1 929 per map**, of which 249–823 are
+//!   states with no legal move at all;
+//! * **days on which nothing can be lost: 0, down from 14.**
 //!
-//! The Descent cannot kill you because **going home is a single breath from anywhere**. Make the
-//! way out the way you came:
+//! [`Tomb::seal`] therefore no longer waits for `spent = BREATH`. It seals when the TOLL reaches
+//! `BREATH`, which is the moment the surface goes out of reach — with light still in your hand, and
+//! nothing you can spend it on that gets you home.
 //!
-//! * a new verb `ascend` — `depth ≥ 1`, price 1, `depth' = depth − 1`, `wounds' = 0` (the dark
-//!   closes behind you: a floor you re-enter has its guardian standing again), everything else
-//!   immutable;
-//! * `flee` gated `FieldEquals(depth, 0)` — you bank at the mouth, not from the bottom;
-//! * `BREATH` 26 → 30.
+//! ## The remainder: `snuff`, and why its first spec could not be built
 //!
-//! Exhaustively checked over all 16 emitted maps under exactly those rules: **all 16 stay
-//! completable** (the perfect line costs 24–30 of 30, the same 0–6 slack band the shipped 20–26 of
-//! 26 has), the reachable state space per map grows from 50–232 to 1 172–5 004 (a genuinely richer
-//! decision space — you can now go back up for what you left), and **every one of the 16 maps
-//! gains 252–789 reachable positions from which the surface is out of reach.** Days with no
-//! possible death: **0**, down from 14.
+//! A death is still an INFERENCE (a certificate read off committed registers) rather than a
+//! committed turn. Making it a turn wants a `snuff` verb: terminal, admissible IFF the surface is
+//! out of reach — an [`AffineLe`](dregg_app_framework::StateConstraint::AffineLe) over exactly the
+//! shape the descent already emits for `pack + depth + harm ≤ CAP` — writing `fate = 2` (a
+//! tomb-fate distinct from `1` = banked).
 //!
-//! With the one-way door, the terminal "you are dead" predicate is `fate = 0 ∧ spent + depth + 1 >
-//! BREATH` — an [`AffineLe`](dregg_app_framework::StateConstraint::AffineLe) over exactly the shape
-//! the descent already emits for `pack + depth ≤ CAP`. That makes a `snuff` verb expressible: a
-//! terminal turn admissible IFF the surface is out of reach, writing `fate = 2` (a tomb-fate
-//! distinct from `1` = banked) and dropping the pack to the floor you fell on (custody
-//! `CARRIED → depth`, so the conservation tooth `Σ = RELICS` still holds). Then a death is a real
-//! committed turn with a real receipt, and [`Tomb::seal`] reads a *fact* rather than inferring one.
-//!
-//! That work is `metatheory/Dregg2/Games/{Dungeon,DungeonProgram}.lean` plus a re-emit through
-//! `program/regen.sh`, plus `descent.rs` (the `Sim` mover, `BREATH`, the `ASCEND`/`SNUFF` method
-//! names, and `fate`'s schema range `0..1 → 0..2`). `descent.rs` is another lane's file this lane
-//! was scoped out of, so it is designed here and not written. **It is a rules change; it does not
-//! go in Rust.**
+//! ⚠ Its first specification, written here, said the pack **drops to the floor you fell on**
+//! (custody `CARRIED → depth`). That is unimplementable as stated: it DECREASES the custody code,
+//! contradicting `Dungeon.custody_ratchet` and the deployed `heapField .monotonic` tooth. The
+//! corrected spec is a terminal `LOST` code **above** `CARRIED` (so the ratchet still only climbs)
+//! plus a `lost` zone in the conservation sum, so `Σ = RELICS` keeps holding across the six zones
+//! plus the seventh. That is a Lean change (`Dungeon.lean` + `DungeonProgram.lean` + a re-emit) and
+//! a `fate` schema widening `0..1 → 0..2`; it is designed here and not written. **It is a rules
+//! change; it does not go in Rust.**
 //!
 //! ## What this module IS, honestly
 //!
@@ -108,12 +100,13 @@ use crate::{meta, progression};
 /// still being played, or the player got out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TombError {
-    /// The light is still burning — the run is not over. Carries the breath spent and the breath
-    /// left.
+    /// The run can still get home — it is not over. Carries the breath spent and the breath
+    /// that is genuinely free (i.e. not already owed to the climb).
     StillBurning {
         /// Breath spent so far.
         spent: u64,
-        /// Breath remaining before the light dies.
+        /// Breath left AFTER reserving the climb home: `BREATH - spent - depth`. At zero the
+        /// run is dead even if `spent < BREATH`.
         left: u64,
     },
     /// The player got out: the run ended in a terminal [`flee`](Descent::flee) and its pack is
@@ -130,7 +123,8 @@ impl std::fmt::Display for TombError {
         match self {
             TombError::StillBurning { spent, left } => write!(
                 f,
-                "the light still burns: {spent} of {BREATH} breath spent, {left} left"
+                "the surface is still in reach: {spent} of {BREATH} breath spent, {left} free \
+                 after the climb home"
             ),
             TombError::Banked { banked } => write!(
                 f,
@@ -165,8 +159,10 @@ impl Tomb {
     /// sealing one instead of passing a number.
     ///
     /// Refuses with [`TombError::Banked`] if the run ended in a `flee` (`fate != 0`) and with
-    /// [`TombError::StillBurning`] if there is breath left. Under the deployed rules those two
-    /// refusals cover every reachable state on 14 of the 16 maps — see the module header.
+    /// [`TombError::StillBurning`] if the surface is still in reach. ⚑ That second test is the
+    /// TOLL (`spent + depth`), not the clock — see the module header. Under the pre-`ascend`
+    /// rules it was `spent < BREATH`, and those two refusals then covered every reachable state
+    /// on 14 of the 16 maps; they now cover none of them.
     pub fn seal(run: &Descent) -> Result<Tomb, TombError> {
         let fate = run.read_reg("fate");
         let spent = run.read_reg("spent");
@@ -175,10 +171,19 @@ impl Tomb {
                 banked: run.read_reg("bank"),
             });
         }
-        if spent < BREATH {
+        // ⚑ THE TOLL, NOT THE CLOCK. `flee` demands the surface and the climb costs one
+        // breath per floor, so what ends a run is `spent + depth` reaching `BREATH` — the
+        // Lean `Dungeon.toll`, a ratchet no verb rewinds (`toll_ratchets`), and
+        // `doomed_never_banks` proves no continuation from such a state ever banks. A run
+        // that still has light but not enough of it to climb out is ALREADY dead; it just
+        // has not stopped moving yet. (Before `ascend` this read `spent < BREATH`, which
+        // is why 14 of the 16 maps could not kill anyone.)
+        let depth = run.read_reg("depth");
+        let toll = spent + depth;
+        if toll < BREATH {
             return Err(TombError::StillBurning {
                 spent,
-                left: BREATH - spent,
+                left: BREATH - toll,
             });
         }
         let mut custody = [0u64; RELICS];
@@ -187,7 +192,7 @@ impl Tomb {
         }
         Ok(Tomb {
             day: run.day(),
-            depth: run.read_reg("depth"),
+            depth,
             pack: run.read_reg("pack"),
             spent,
             custody,
@@ -200,8 +205,10 @@ impl Tomb {
     pub fn day(&self) -> usize {
         self.day
     }
-    /// How far from the surface the light died. This is also the deepest depth the run ever
-    /// reached: the Descent has no way back up, so `depth` only ever rises.
+    /// How far from the surface the light died — and, since the way home is priced at one
+    /// breath per floor, the exact size of the debt the run could not pay. (It is NOT the
+    /// deepest depth reached: a run can climb, so `depth` falls as well as rises. What only
+    /// ever rises is `spent + depth`, the toll.)
     pub fn depth(&self) -> u64 {
         self.depth
     }
@@ -209,7 +216,9 @@ impl Tomb {
     pub fn pack(&self) -> u64 {
         self.pack
     }
-    /// Breath spent (always [`BREATH`] — a tomb is sealed only when the light is out).
+    /// Breath spent. Not necessarily all of [`BREATH`]: a tomb is sealed when the TOLL
+    /// (`spent + depth`) reaches `BREATH`, which can happen with light still in hand — you
+    /// simply cannot spend it on anything that reaches the surface.
     pub fn spent(&self) -> u64 {
         self.spent
     }
@@ -275,13 +284,18 @@ impl Tomb {
         } else {
             ""
         };
+        // ⚑ THE EPITAPH NAMES THE TOLL, not just the clock. A run dies when
+        // `spent + depth` reaches `BREATH` — so the honest sentence is not "you burned it
+        // all" but "you were N floors down with M breath, and the climb wanted more".
         format!(
-            "Day {}: the light died on floor {} of {}, {} of {} breath spent, {carried}{prize}.",
+            "Day {}: the dark took you on floor {} of {}, {} of {} breath spent and {} \
+             floors to climb, {carried}{prize}.",
             self.day,
             self.depth,
             crate::descent::FLOORS,
             self.spent,
             BREATH,
+            self.depth,
         )
     }
 }
@@ -367,7 +381,7 @@ mod tomb_tests {
     //! The dying run is a genuine 18-move line on day 9's real daily map — one of the only two
     //! maps the deployed rules let the light run out on at all (module header).
     use super::*;
-    use crate::descent::{BANKED, DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, UNLOCK};
+    use crate::descent::{ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, UNLOCK};
     use crate::loot::LootVault;
 
     /// The one lethal line day 9's map admits: down to the bottom, every guardian felled, the three
@@ -396,6 +410,7 @@ mod tomb_tests {
     fn step(run: &mut Descent, verb: &str, arg: u64) {
         let r = match verb {
             DELVE => run.delve(),
+            ASCEND => run.ascend(),
             SMITE => run.smite(),
             UNLOCK => run.unlock(arg),
             LOOT => run.loot(arg as usize),
@@ -417,13 +432,17 @@ mod tomb_tests {
         run
     }
 
-    /// A run that walks out with what it has.
+    /// A run that walks out with what it has — CLIMBING first, because banking demands
+    /// the surface.
     fn a_run_that_banks() -> Descent {
         let seed = deploy_seed_drawing_day(9).expect("day 9 seed");
         let day_seed = crate::descent::day_seed_from_deploy_seed(seed);
         let mut run = Descent::deploy_on_day(seed, day_seed).expect("deploy");
         for (verb, arg) in DAY_9_DEATH_LINE.iter().take(5) {
             step(&mut run, verb, *arg);
+        }
+        while run.sim().depth > 0 {
+            step(&mut run, ASCEND, 0);
         }
         step(&mut run, FLEE, 0);
         run
@@ -484,55 +503,91 @@ mod tomb_tests {
         let ep = tomb.epitaph();
         assert!(ep.contains("Day 9"), "the epitaph names the map: {ep}");
         assert!(ep.contains("floor 4"), "and how deep: {ep}");
-        assert!(ep.contains("26 of 26"), "and that the light ran out: {ep}");
+        assert!(
+            ep.contains("26 of 30 breath spent and 4 floors to climb"),
+            "and the exact shape of the toll — light in hand, and no way to spend it that \
+             reaches the surface: {ep}"
+        );
         assert!(
             ep.contains("no breath to take it"),
             "and the exact shape of the loss: {ep}"
         );
     }
 
-    /// THE DEAD CANNOT MOVE — and it is the REFEREE that says so, not the Rust mover.
+    /// THE DOOMED CANNOT BANK — and it is the REFEREE that says so, not the Rust mover.
     ///
-    /// This is the tooth that makes the certificate's precondition worth anything: if a dead run
-    /// could still commit a turn, "the light went out" would be a state you pass through rather
-    /// than a state you end in. Every projection here is built with `Descent::effects_for` and
-    /// driven through `commit_raw`, which bypasses `Sim`'s Rust guards entirely — so what refuses
-    /// them is the Lean-emitted `FieldLte{spent, 26}` / `FieldDelta{spent, k}` / `StrictMonotonic`
-    /// teeth on the real executor.
+    /// ⚑ This test used to be called "the dead cannot move", and that is no longer the truth. A
+    /// doomed run CAN still move: `a_run_that_dies` ends on floor 4 with 26 of 30 breath and four
+    /// perfectly legal climbs left in it. What it cannot do — from any continuation whatsoever — is
+    /// reach the surface and bank, which is exactly `Dungeon.doomed_never_banks`: the toll
+    /// `spent + depth` has reached `BREATH`, and no verb rewinds a toll.
+    ///
+    /// Every projection here is built with `Descent::effects_for` and driven through `commit_raw`,
+    /// which bypasses `Sim`'s Rust guards entirely — so what refuses them is the Lean-emitted
+    /// `FieldEquals{depth, 0}` / `FieldLte{spent, 30}` / `FieldDelta{spent, k}` /
+    /// `StrictMonotonic` teeth on the real executor.
     #[test]
-    fn the_dead_cannot_move_and_it_is_the_referee_that_refuses() {
-        let run = a_run_that_dies();
+    fn the_doomed_cannot_bank_and_it_is_the_referee_that_refuses() {
+        let mut run = a_run_that_dies();
         let dark = run.sim().clone();
-        assert_eq!(dark.spent, BREATH);
+        assert_eq!(
+            dark.spent, 26,
+            "the light is not out — the CLIMB is unaffordable"
+        );
+        assert_eq!(dark.depth, FLOORS);
+        assert_eq!(
+            dark.spent + dark.depth,
+            BREATH,
+            "the toll has reached BREATH"
+        );
 
-        // Every verb's honest projection now overruns the breath: delve/unlock/loot/flee want
-        // spent 27, smite wants 28. `FieldLte{spent, 26}` refuses all of them.
-        let mut overrun: Vec<(&str, Sim)> = Vec::new();
-        for (method, cost) in [(DELVE, 1u64), (UNLOCK, 1), (LOOT, 1), (FLEE, 1), (SMITE, 2)] {
-            let mut s = dark.clone();
-            s.spent += cost;
-            match method {
-                DELVE => s.depth += 1,
-                SMITE => s.wounds += 1,
-                FLEE => {
-                    for c in s.custody.iter_mut() {
-                        if *c == CARRIED {
-                            *c = BANKED;
-                        }
-                    }
-                    s.fate = 1;
-                }
-                _ => {}
+        // ⚑ THE TELEPORT BANK: an otherwise-perfect flee from floor 4. One breath paid, pack
+        // emptied into the bank, fate 0 -> 1 — the exact turn that was LEGAL before the climb
+        // existed, and the reason 14 of the 16 maps could not kill anyone. The Lean-emitted
+        // `FieldEquals{depth, 0}` on the flee arm (and, method-independently, the fate/bank
+        // riders) refuses it.
+        let mut teleport = dark.clone();
+        teleport.spent += 1;
+        for c in teleport.custody.iter_mut() {
+            if *c == CARRIED {
+                *c = BANKED;
             }
-            overrun.push((method, s));
         }
-        for (method, s) in &overrun {
-            let refused = run.commit_raw(method, run.effects_for(s));
-            assert!(
-                matches!(refused, Err(WorldError::Refused(_))),
-                "`{method}` past the last breath must be a REFEREE refusal, got {refused:?}"
-            );
+        teleport.fate = 1;
+        let refused = run.commit_raw(FLEE, run.effects_for(&teleport));
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "banking from the bottom must be a REFEREE refusal, got {refused:?}"
+        );
+
+        // ⚑ AND THE HONEST ROUTE DOES NOT SAVE YOU EITHER. The four climbs are legal and land on
+        // the real executor — the run is not stuck, it is doomed. They take the clock to exactly
+        // `BREATH`, and then the flee that would bank is one breath too late.
+        for floor in 0..FLOORS {
+            run.ascend().unwrap_or_else(|e| {
+                panic!("the climb from floor {} is legal: {e:?}", FLOORS - floor)
+            });
         }
+        assert_eq!(run.sim().depth, 0, "the crew reached the mouth");
+        assert_eq!(run.sim().spent, BREATH, "and paid every breath doing it");
+        assert!(
+            run.sim().flee().is_err(),
+            "there is nothing left to bank with"
+        );
+        let mut too_late = run.sim().clone();
+        too_late.spent += 1;
+        for c in too_late.custody.iter_mut() {
+            if *c == CARRIED {
+                *c = BANKED;
+            }
+        }
+        too_late.fate = 1;
+        let refused = run.commit_raw(FLEE, run.effects_for(&too_late));
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "the 31st breath must be a REFEREE refusal, got {refused:?}"
+        );
+        let dark = run.sim().clone();
 
         // Nor can the dead move for FREE: a projection that changes the world without spending
         // breath is refused by the per-verb exact `FieldDelta{spent, k}`.
@@ -676,52 +731,111 @@ mod tomb_tests {
         assert!(meta::has_boon(&hero), "the next run starts holding it");
     }
 
-    /// THE CENSUS, AS A TEST: on 14 of the 16 daily maps the deployed rules make permadeath
-    /// UNREACHABLE — `flee` costs one breath from any depth, and no reachable position on those
-    /// maps has spent all 26. This is the wound the module header specifies the Lean fix for; it is
-    /// pinned here so that the day the one-way door lands, this test fails LOUD and gets rewritten
-    /// to the new truth rather than quietly continuing to describe a game that no longer exists.
+    /// ⚑ **THE CENSUS, REARMED.** This test used to pin the WOUND: on 14 of the 16 daily maps
+    /// permadeath was UNREACHABLE, because `flee` cost one breath from any depth and no reachable
+    /// position on those maps could ever fail to go home. The one-way door has landed (`ascend`;
+    /// `flee` gated on `depth = 0`; `BREATH` 26 → 30), so the census now pins the FIX — same
+    /// method, same shape, opposite conclusion: exhaustive enumeration of every reachable state
+    /// under exactly the deployed mover rules.
+    ///
+    /// It checks three things, and the third is the interesting one:
+    ///
+    /// 1. **Every map has doomed positions.** Not one of the sixteen is deathless any more.
+    /// 2. **The closed form is right.** A living state can bank iff `spent + depth + 1 ≤ BREATH`
+    ///    — the climb is unconditional, so the cheapest escape is exactly `depth` ascends plus one
+    ///    flee. For every escapable state that route is DRIVEN through the mover, not assumed.
+    /// 3. **Doom is closed under every legal move.** From a doomed state, `flee` is illegal AND
+    ///    every legal successor is doomed too. Those two facts together are the whole induction:
+    ///    they are the Rust twin, checked exhaustively rather than symbolically, of
+    ///    `Dungeon.doomed_never_banks`.
+    ///
+    /// (The old version of this test silently omitted `harm` from its state key and `lunge` from
+    /// its successors — a guard that had gone stale against the verbs it was meant to cover. This
+    /// one enumerates all seven.)
     #[test]
-    fn the_light_cannot_run_out_on_fourteen_of_the_sixteen_maps() {
-        /// Exhaustively reachable non-fled states, under exactly the deployed mover rules.
-        fn deadly(day: usize) -> bool {
+    fn every_daily_map_has_positions_from_which_the_surface_is_out_of_reach() {
+        type Key = (u64, u64, u64, u64, u64, [u64; 3], [u64; RELICS]);
+        fn key(s: &Sim) -> Key {
+            (
+                s.depth, s.spent, s.wounds, s.harm, s.fate, s.ways, s.custody,
+            )
+        }
+        fn successors(s: &Sim) -> Vec<Sim> {
+            let mut nexts = vec![s.delve(), s.ascend(), s.smite(), s.lunge(), s.flee()];
+            for w in 2..=FLOORS {
+                nexts.push(s.unlock(w));
+            }
+            for r in 0..RELICS {
+                nexts.push(s.loot(r));
+            }
+            nexts.into_iter().flatten().collect()
+        }
+        /// Can this living state still reach the surface and pay the flee?
+        fn escapable(s: &Sim) -> bool {
+            s.fate == 0 && s.spent + s.depth + 1 <= BREATH
+        }
+
+        let mut deathless = Vec::new();
+        for day in 0..DAYS {
             let genesis = Sim::genesis_on_day(day);
-            let key = |s: &Sim| (s.depth, s.spent, s.wounds, s.fate, s.ways, s.custody);
             let mut seen = std::collections::HashSet::new();
             let mut stack = vec![genesis.clone()];
             seen.insert(key(&genesis));
-            let mut lethal = false;
+            let mut all = vec![genesis];
             while let Some(s) = stack.pop() {
-                // A position is lethal iff the light is out and the run never banked — under the
-                // deployed rules, `flee` costs 1, so this is exactly `spent == BREATH`.
-                if s.fate == 0 && s.spent >= BREATH {
-                    lethal = true;
+                if s.fate != 0 {
+                    continue;
                 }
-                let mut nexts = vec![s.delve(), s.smite()];
-                for w in 2..=FLOORS {
-                    nexts.push(s.unlock(w));
-                }
-                for r in 0..RELICS {
-                    nexts.push(s.loot(r));
-                }
-                for n in nexts.into_iter().flatten() {
+                for n in successors(&s) {
                     if seen.insert(key(&n)) {
+                        all.push(n.clone());
                         stack.push(n);
                     }
                 }
             }
-            lethal
-        }
 
-        let deadly_days: Vec<usize> = (0..DAYS).filter(|d| deadly(*d)).collect();
-        assert_eq!(
-            deadly_days,
-            vec![9, 13],
-            "PERMADEATH CENSUS: only these daily maps have ANY reachable position where the light \
-             runs out. On the other {} maps `flee` (one breath, from any depth) is available from \
-             every reachable state, so nothing is ever lost and the Descent is not a permadeath \
-             roguelite. See the `tomb` module header for the checked Lean fix (the one-way door).",
-            DAYS - 2
+            let living: Vec<&Sim> = all.iter().filter(|s| s.fate == 0).collect();
+            let doomed: Vec<&&Sim> = living.iter().filter(|s| !escapable(s)).collect();
+
+            for s in &living {
+                if escapable(s) {
+                    // (2) DRIVE the escape: `depth` climbs, then the bank.
+                    let mut t = (*s).clone();
+                    while t.depth > 0 {
+                        t = t.ascend().unwrap_or_else(|e| {
+                            panic!("day {day}: the climb from {:?} is not free: {e}", key(s))
+                        });
+                    }
+                    let banked = t.flee().unwrap_or_else(|e| {
+                        panic!("day {day}: the escape from {:?} did not bank: {e}", key(s))
+                    });
+                    assert_eq!(banked.fate, 1);
+                } else {
+                    // (3) DOOM IS ABSORBING — this is the induction, exhaustively.
+                    assert!(
+                        s.flee().is_err(),
+                        "day {day}: a doomed state {:?} could still bank",
+                        key(s)
+                    );
+                    for n in successors(s) {
+                        assert!(
+                            n.fate == 0 && !escapable(&n),
+                            "day {day}: a legal move out of doomed {:?} escaped it",
+                            key(s)
+                        );
+                    }
+                }
+            }
+
+            if doomed.is_empty() {
+                deathless.push(day);
+            }
+        }
+        assert!(
+            deathless.is_empty(),
+            "PERMADEATH CENSUS: these daily maps still cannot kill anyone: {deathless:?}. Before \
+             the one-way door landed that list was fourteen maps long — `flee` cost one breath \
+             from any depth, so nothing was ever lost. See the `tomb` module header."
         );
     }
 }

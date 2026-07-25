@@ -92,11 +92,22 @@ const CROWNED_RUN: &[(&str, i64)] = &[
     ("smite", 0),
     ("smite", 0),
     ("loot", 0),
+    // ⚑ THE CLIMB HOME: `flee` is illegal below the surface, one light per floor.
+    ("ascend", 0),
+    ("ascend", 0),
+    ("ascend", 0),
+    ("ascend", 0),
     ("flee", 0),
 ];
 
 /// A timid run: one floor, one relic, bank and go home. No crown.
-const TIMID_RUN: &[(&str, i64)] = &[("delve", 0), ("smite", 0), ("loot", 1), ("flee", 0)];
+const TIMID_RUN: &[(&str, i64)] = &[
+    ("delve", 0),
+    ("smite", 0),
+    ("loot", 1),
+    ("ascend", 0),
+    ("flee", 0),
+];
 
 /// A run that is still going: a genuine record, but of an unfinished descent.
 const UNFINISHED_RUN: &[(&str, i64)] = &[("delve", 0), ("smite", 0)];

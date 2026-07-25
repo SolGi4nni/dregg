@@ -31,6 +31,24 @@
 //! structurally while keeping the executor's method-default-deny (the method disjunct
 //! inside the rider guard).
 //!
+//! ## The climb — and why the Descent can now kill you
+//!
+//! [`FLEE`] demands the SURFACE. The only way up is [`ASCEND`]: one floor, one breath,
+//! no key and no guardian (a way you have passed stays open — `ways_behind_stay_open`).
+//! So the clock a run really plays against is not `spent` but the TOLL, `spent + depth`:
+//! breath burned plus breath the climb home will cost. Lean proves the toll is a ratchet
+//! no verb rewinds (`Dungeon.toll_ratchets` — the climb repays the descent at par, never
+//! at a discount) and that a living state with `BREATH <= toll` can NEVER bank, from any
+//! continuation whatsoever (`Dungeon.doomed_never_banks`, witnessed on all 16 maps by
+//! `Dungeon.doomed_every_day`).
+//!
+//! This is a real change of stakes, not flavour. Before it, `flee` cost one breath from
+//! any depth and a non-fleeing run could waste at most 21-26 of 26 breath, so on **14 of
+//! the 16 daily maps there was no reachable position from which you could not go home**.
+//! The crate said permadeath; the rules said otherwise. `BREATH` moved 26 -> 30 to pay
+//! for the climb, and every day's crowned line now costs 24-30 of 30 — the same 0-6
+//! slack it always had.
+//!
 //! ## Two blows: the press and the LUNGE (the guardian breaks your grip)
 //!
 //! The Descent has no hit points to take, so the guardian's counter-blow is priced in the
@@ -43,9 +61,10 @@
 //!
 //! It is a real decision because capacity already attenuates with depth: the same posted
 //! price is cheap at depth 1 (7 slots) and ruinous at depth 4 (4 slots — exactly three keys
-//! plus the prize). Lean states the stake as law: `Dungeon.crowned_full_bank_harmless` — a
-//! run that banks the prize AND all three keys took NO harm at all. Unlike `wounds`, `harm`
-//! is NOT reset by [`Sim::delve`] (`Dungeon.harm_ratchets`).
+//! plus the prize). Lean states the stake as law: `Dungeon.banked_bank_pays_for_harm` —
+//! `bank + harm <= CAP - 1`, so every point of harm is EXACTLY one relic that did not
+//! leave the dungeon, whatever route the run took to the surface. Unlike `wounds`, `harm`
+//! is NOT reset by [`Sim::delve`] OR by [`Sim::ascend`] (`Dungeon.harm_ratchets`).
 //!
 //! ## The map is DAILY — drawn from the committed day-seed
 //!
@@ -63,13 +82,12 @@
 //! * `Dungeon.winsAt_true` / `Dungeon.draw_completable` — for each map, the crowned line
 //!   GENERATED from that map replays legally through the real rulebook and banks the
 //!   prize. Completability is a witness, not an assumption;
-//! * `Dungeon.costAt_tense` — every day's perfect line costs 20–26 of the 26 breath, and
-//!   capacity stays exactly as tight as the shipped map's (`pack + depth ≤ CAP` means the
-//!   bottom holds three keys plus the prize and nothing else);
+//! * `Dungeon.costAt_tense` — every day's perfect line costs 24–30 of the 30 breath
+//!   (the climb home included), and capacity stays exactly as tight as the shipped map's;
 //! * `DungeonProgram.crownedRunAdmitted` — each day's crowned line is admitted end to end
 //!   by the teeth emitted for THAT day.
 //!
-//! [`PROGRAM_JSON`] therefore carries the whole family: one fully emitted 15-case program
+//! [`PROGRAM_JSON`] therefore carries the whole family: one fully emitted 16-case program
 //! per map. Rust picks the index and resolves names to slots — it never assembles or
 //! edits a constraint. [`Descent::deploy_on_day`] is the daily entry (the beacon draws the
 //! map); [`Descent::deploy`] pins day 0, the shipped map, so a fixed script stays a fixed
@@ -109,6 +127,9 @@ pub const SCENE_ID: &str = "dungeon-on-dregg/descent1";
 /// sentinel teeth).
 pub const GENESIS: &str = "genesis";
 pub const DELVE: &str = "delve";
+/// **The climb** — rise one floor toward the surface for 1 breath. `flee` is illegal
+/// below the surface, so this is the only way home, and it costs a breath per floor.
+pub const ASCEND: &str = "ascend";
 pub const UNLOCK: &str = "unlock";
 /// **The press** — wound the guardian for 2 breath and no harm.
 pub const SMITE: &str = "smite";
@@ -122,7 +143,10 @@ pub const FLEE: &str = "flee";
 /// Rust mover can compute projections; the referee is the loaded program.
 pub const FLOORS: u64 = 4;
 pub const RELICS: usize = 8;
-pub const BREATH: u64 = 26;
+/// The light. 26 before the climb existed; `flee` now demands `depth = 0` and every
+/// floor costs a breath to leave, so the crowned line pays `FLOORS` more and the budget
+/// grew by exactly `FLOORS`. The slack band is unchanged (0–6 spare on every day).
+pub const BREATH: u64 = 30;
 pub const CAP: u64 = 8;
 pub const CARRIED: u64 = 8;
 pub const BANKED: u64 = 9;
@@ -741,6 +765,23 @@ impl Sim {
         Ok(())
     }
 
+    /// **The climb** (the Lean `step .ascend`): rise one floor for 1 breath. No key, no
+    /// guardian, no capacity — going up only ever loosens `pack + depth + harm <= CAP`,
+    /// and a way you have passed stays open (`Dungeon.ways_behind_stay_open`). `wounds`
+    /// resets because the guardian above stands again; `harm` does NOT — a walk upstairs
+    /// never launders the grip the guardians broke (`Dungeon.harm_ratchets`).
+    pub fn ascend(&self) -> Result<Sim, &'static str> {
+        self.alive_and_paid(1)?;
+        if self.depth < 1 {
+            return Err("you are already at the mouth");
+        }
+        let mut s = self.clone();
+        s.depth -= 1;
+        s.wounds = 0;
+        s.spent += 1;
+        Ok(s)
+    }
+
     /// The delve rule (the Lean `step .delve`).
     pub fn delve(&self) -> Result<Sim, &'static str> {
         self.alive_and_paid(1)?;
@@ -840,9 +881,19 @@ impl Sim {
         Ok(s)
     }
 
-    /// The flee rule: bank the pack; the run ends.
+    /// The flee rule: bank the pack AT THE SURFACE; the run ends.
+    ///
+    /// ⚑ You climb out; you do not teleport out. This one check is what makes the descent
+    /// lethal: before it, `flee` cost one breath from any depth, every reachable position
+    /// could go home, and on 14 of the 16 daily maps nothing could ever be lost. The real
+    /// clock is now `spent + depth` — the Lean `Dungeon.toll`, a ratchet no verb rewinds
+    /// (`toll_ratchets`) — and a living state with `toll >= BREATH` can never bank
+    /// (`doomed_never_banks`).
     pub fn flee(&self) -> Result<Sim, &'static str> {
         self.alive_and_paid(1)?;
+        if self.depth != 0 {
+            return Err("you cannot bank from below — climb out first");
+        }
         let mut s = self.clone();
         for c in s.custody.iter_mut() {
             if *c == CARRIED {
@@ -1048,6 +1099,9 @@ impl Descent {
     pub fn delve(&mut self) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(DELVE, self.sim.delve())
     }
+    pub fn ascend(&mut self) -> Result<TurnReceipt, WorldError> {
+        self.commit_verb(ASCEND, self.sim.ascend())
+    }
     pub fn unlock(&mut self, w: u64) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(UNLOCK, self.sim.unlock(w))
     }
@@ -1181,6 +1235,13 @@ pub fn crowned_line(day: usize) -> Vec<(&'static str, i64)> {
             tape.push((UNLOCK, (floor + 1) as i64));
         }
     }
+    // ⚑ THE CLIMB HOME. `flee` is illegal below the surface, so the line pays one breath
+    // per floor to get back out — `FLOORS` breath, which is exactly why `BREATH` moved
+    // 26 -> 30 and the slack band did not move at all. This mirrors the Lean `crownedRun`
+    // (`List.replicate FLOORS Move.ascend ++ [Move.flee]`).
+    for _ in 0..FLOORS {
+        tape.push((ASCEND, 0));
+    }
     tape.push((FLEE, 0));
     tape
 }
@@ -1199,6 +1260,7 @@ mod crowned_line_tests {
             for (turn, arg) in crowned_line(day) {
                 sim = match turn {
                     DELVE => sim.delve(),
+                    ASCEND => sim.ascend(),
                     SMITE => sim.smite(),
                     LOOT => sim.loot(arg as usize),
                     UNLOCK => sim.unlock(arg as u64),
@@ -1217,9 +1279,18 @@ mod crowned_line_tests {
             // completability survived the change by construction rather than by luck.
             // This is the Rust half of `Dungeon.crowned_full_bank_harmless`.
             assert_eq!(sim.harm, 0, "day {day}: the crowned line must take no harm");
+            // ⚑ THE BANKED RUN STANDS AT THE MOUTH (`Dungeon.banked_at_the_surface`).
+            assert_eq!(sim.depth, 0, "day {day}: the crowned line must climb out");
             assert!(
                 sim.spent <= BREATH,
                 "day {day}: the line costs {} of {BREATH} light",
+                sim.spent
+            );
+            // The whole point of the climb: it is not free. Every day's line pays
+            // `FLOORS` breath for the way home and still fits, with 0-6 to spare.
+            assert!(
+                sim.spent >= 24,
+                "day {day}: the line costs only {} of {BREATH} — too slack",
                 sim.spent
             );
         }

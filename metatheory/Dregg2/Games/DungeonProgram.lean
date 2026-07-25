@@ -230,7 +230,8 @@ def homeCode (i : Nat) : Nat := homeFloors.getD i 0
 /-- The genesis hoard census — a PROJECTION of `homeFloors` (relics at floor d). -/
 def genesisHoard (d : Nat) : Nat := (homeFloors.filter (· == d)).length
 
-def verbs : List String := ["delve", "unlock", "smite", "loot", "flee", "lunge"]
+def verbs : List String :=
+  ["delve", "unlock", "smite", "loot", "flee", "lunge", "ascend"]
 
 /-- **The core commons** — on EVERY verb case and every rider:
 conservation, capacity attenuation **including the broken grip** (`pack + depth + harm ≤
@@ -319,6 +320,23 @@ def delveCase : Case :=
                hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
     ++ relicFreeze⟩
 
+/-- **ascend** — THE CLIMB. Rise exactly one floor toward the surface: pay 1 breath, the
+guardian above stands fresh again (`wounds = 0`), and nothing else moves — in particular
+`harm` is FROZEN, so a walk upstairs never launders the grip the guardians broke. The
+step is posted as an exact `allowedTransitions` rather than a delta because the descent's
+vocabulary prices deltas as unsigned; enumerating `4→3→2→1→0` is both the honest form and
+strictly stronger (it pins `depth ≤ FLOORS` in the same tooth). -/
+def ascendCase : Case :=
+  ⟨.methodIs "ascend",
+    coreTeeth ++
+    [ .fieldDelta "spent" 1,
+      .allowedTransitions "depth" [(1, 0), (2, 1), (3, 2), (4, 3)],
+      .fieldEquals "wounds" 0, .fieldEquals "fate" 0,
+      wayTooth 2, wayTooth 3, wayTooth 4 ]
+    ++ frozen ["pack", "bank", wayName 2, wayName 3, wayName 4,
+               hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
+    ++ relicFreeze⟩
+
 /-- **unlock** — exercise a carried key: pay 1 breath; WHICH way may flip (and that its
 key is exhibited) is the way-riders' law. Everything else frozen. -/
 def unlockCase : Case :=
@@ -371,21 +389,29 @@ def lootCase : Case :=
       hoardFrameTooth 1, hoardFrameTooth 2, hoardFrameTooth 3, hoardFrameTooth 4 ]
     ++ frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm"]⟩
 
-/-- **flee** — the run ends: pay 1 breath, the pack empties into the bank
+/-- **flee** — the run ends AT THE MOUTH: pay 1 breath, stand on the surface
+(`depth = 0` — you climb out, you do not teleport out), the pack empties into the bank
 (`pack' = 0` + hoards frozen + conservation ⇒ `bank' = bank + pack`), fate `0→1`. -/
 def fleeCase : Case :=
   ⟨.methodIs "flee",
     coreTeeth ++
-    [ .fieldDelta "spent" 1, .fieldEquals "fate" 1, .fieldEquals "pack" 0 ]
+    [ .fieldDelta "spent" 1, .fieldEquals "fate" 1, .fieldEquals "pack" 0,
+      .fieldEquals "depth" 0 ]
     ++ frozen ["depth", "wounds", wayName 2, wayName 3, wayName 4,
                hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]⟩
 
 /-! ### The riders — `SlotChanged` carries the gate (the stapleable-slot fix). -/
 
-/-- ANY verb that moves `depth` pays the delve law. -/
+/-- ANY verb that moves `depth` pays the stair law — in EITHER direction. One floor at a
+time, a fresh guardian tally, and the way to the floor you land on must be open (on an
+ascent that is a way you have already passed — `Dungeon.ways_behind_stay_open`). The
+eight enumerated transitions are the whole staircase; there is no verb from which a
+two-floor drop, a two-floor climb, or a landing on a shut floor is admissible. -/
 def depthRider : Case :=
   ⟨.slotChangedForMethods "depth" verbs,
-    coreTeeth ++ [.fieldDelta "depth" 1, .fieldEquals "wounds" 0,
+    coreTeeth ++ [.allowedTransitions "depth"
+                    [(0, 1), (1, 2), (2, 3), (3, 4), (1, 0), (2, 1), (3, 2), (4, 3)],
+                  .fieldEquals "wounds" 0,
                   wayTooth 2, wayTooth 3, wayTooth 4]⟩
 
 /-- ANY verb that flips `way_w` must carry the `0→1` transition AND exhibit the carried
@@ -396,15 +422,20 @@ def wayRider (w : Nat) : Case :=
     [ .allowedTransitions (wayName w) [(0, 1)],
       .heapField (.named (relicName (keyFor w))) (.equals CARRIED) ]⟩
 
-/-- ANY verb that flips `fate` is a lawful banking (`0→1`, pack emptied). -/
+/-- ANY verb that flips `fate` is a lawful banking (`0→1`, pack emptied, AT THE SURFACE).
+⚑ The `depth = 0` clause is new with the climb: without it the surface gate would be a
+property of the `flee` arm alone and therefore stapleable onto any other verb's turn. -/
 def fateRider : Case :=
   ⟨.slotChangedForMethods "fate" verbs,
-    coreTeeth ++ [.allowedTransitions "fate" [(0, 1)], .fieldEquals "pack" 0]⟩
+    coreTeeth ++ [.allowedTransitions "fate" [(0, 1)], .fieldEquals "pack" 0,
+                  .fieldEquals "depth" 0]⟩
 
-/-- ANY verb that moves `bank` is a banking turn (`fate' = 1`, pack emptied). -/
+/-- ANY verb that moves `bank` is a banking turn (`fate' = 1`, pack emptied, at the
+surface). -/
 def bankRider : Case :=
   ⟨.slotChangedForMethods "bank" verbs,
-    coreTeeth ++ [.fieldEquals "fate" 1, .fieldEquals "pack" 0]⟩
+    coreTeeth ++ [.fieldEquals "fate" 1, .fieldEquals "pack" 0,
+                  .fieldEquals "depth" 0]⟩
 
 /-- ⚑ **ANY verb that moves `harm` is a lawful lunge.** Without this rider the `harm`
 slot would be STAPLEABLE onto another method's turn — the standing hole class this
@@ -424,9 +455,10 @@ def spentRider : Case :=
     coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
       [.heapField .sentinel .immutable]⟩
 
-/-- The deployed case list: the seven verb arms + the seven riders. -/
+/-- The deployed case list: the eight verb arms + the seven riders. -/
 def programCases : List Case :=
   [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+    ascendCase,
     depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
     spentRider ]
 
@@ -451,6 +483,7 @@ def methodIdx : String → Nat
   | "loot"    => 4
   | "flee"    => 5
   | "lunge"   => 6
+  | "ascend"  => 7
   | _         => 1000
 
 def Simple.toExec : Simple → Dregg2.Exec.SimpleConstraint
@@ -522,11 +555,11 @@ theorem admits_cases_mem {tcs : List TransitionCase} {m : Nat} {o n : Value}
 open Dregg2.Exec in
 /-- Every verb case's teeth BEGIN with `coreTeeth`; an admitted verb turn therefore
 satisfies every core tooth. (`m` ranges over the five verb indices.) -/
-theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     ∀ c ∈ coreTeeth, evalConstraint c.toExec o n = true := by
   intro c hc
-  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact admits_cases_mem (tcs := programCases.map Case.toExec) h
       (tc := delveCase.toExec)
       (List.mem_map_of_mem (by simp [programCases])) (by rfl)
@@ -551,12 +584,16 @@ theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ 
       (tc := lungeCase.toExec)
       (List.mem_map_of_mem (by simp [programCases])) (by rfl)
       c.toExec (List.mem_map_of_mem (by simp [lungeCase, List.mem_append, hc]))
+  · exact admits_cases_mem (tcs := programCases.map Case.toExec) h
+      (tc := ascendCase.toExec)
+      (List.mem_map_of_mem (by simp [programCases])) (by rfl)
+      c.toExec (List.mem_map_of_mem (by simp [ascendCase, List.mem_append, hc]))
 
 open Dregg2.Exec in
 /-- **No dupe, no burn — deployed**: any admitted verb turn's post-state sums the six
 relic zones to exactly `RELICS`, whatever the writes were. -/
 theorem admitted_verb_conserves {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     sumScalars n zones = some (RELICS : Int) := by
   have := verb_core_teeth hm h (.sumEquals zones RELICS) (by simp [coreTeeth])
@@ -568,7 +605,7 @@ open Dregg2.Exec in
 something on the deployed teeth rather than in prose: a broken grip is a carry slot the
 capacity commons will not give back, on EVERY verb. -/
 theorem admitted_verb_capacity {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     ∃ p d x : Int, n.scalar "pack" = some p ∧ n.scalar "depth" = some d
       ∧ n.scalar "harm" = some x ∧ p + d + x ≤ (CAP : Int) := by
@@ -600,7 +637,7 @@ open Dregg2.Exec in
 /-- **The clock — deployed**: any admitted verb turn strictly spends breath, and the
 post-state clock is capped at `BREATH`. -/
 theorem admitted_verb_pays {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     ∃ a b : Int, o.scalar "spent" = some a ∧ n.scalar "spent" = some b
       ∧ a < b ∧ b ≤ (BREATH : Int) := by
@@ -617,7 +654,7 @@ open Dregg2.Exec in
 /-- **Aliveness — deployed**: any admitted verb turn STARTS alive (`old fate = 0`);
 its post-fate is `0` (still alive) or `1` (banked this turn). -/
 theorem admitted_verb_alive {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     o.scalar "fate" = some 0
       ∧ (n.scalar "fate" = some 0 ∨ n.scalar "fate" = some 1) := by
@@ -645,7 +682,7 @@ theorem admitted_verb_alive {m : Nat}
 open Dregg2.Exec in
 /-- **The banked tomb is frozen — deployed**: from `old fate = 1` NO verb is admitted. -/
 theorem banked_tomb_refuses {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (hf : o.scalar "fate" = some 1) :
     RecordProgram.admits dungeonExec m o n = false := by
   cases hadm : RecordProgram.admits dungeonExec m o n with
@@ -659,7 +696,7 @@ open Dregg2.Exec in
 /-- **The dead light refuses — deployed**: at `old spent = BREATH` NO verb is admitted
 (strict spend + the cap are jointly unsatisfiable). -/
 theorem dead_light_refuses {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (hs : o.scalar "spent" = some (BREATH : Int)) :
     RecordProgram.admits dungeonExec m o n = false := by
   cases hadm : RecordProgram.admits dungeonExec m o n with
@@ -678,7 +715,7 @@ verb set — there is no verb from which a keyless way-flip is admissible. ⚑ T
 former way-2-only inversion: ways 3 and 4 (`way3_flip_exhibits_key`, `way4_flip_exhibits_key` below)
 are now proven, not Rust-driven — the audit's "ways 3/4 are Rust-driven" gap is closed. -/
 theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
-    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName w) == n.scalar (wayName w)) = false) :
     n.scalar (relicName (keyFor w)) = some (CARRIED : Int)
@@ -686,7 +723,7 @@ theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
   have hmem : (wayRider w).toExec ∈ programCases.map Case.toExec := by
     rcases hw with rfl | rfl | rfl <;> exact List.mem_map_of_mem (by simp [programCases])
   have hmatch : (wayRider w).toExec.guard.matches m o n = true := by
-    rcases hm with rfl | rfl | rfl | rfl | rfl | rfl <;>
+    rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
       simp [wayRider, Case.toExec, Guard.toExec, verbs, methodIdx,
             TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, hflip]
   have hall := admits_cases_mem (tcs := programCases.map Case.toExec) h
@@ -727,7 +764,7 @@ theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
 open Dregg2.Exec in
 /-- Way 2 (`keyFor 2 = 1`) — the original inversion, now a corollary of the general lemma. -/
 theorem way2_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 2) == n.scalar (wayName 2)) = false) :
     n.scalar (relicName 1) = some (CARRIED : Int)
@@ -737,7 +774,7 @@ theorem way2_flip_exhibits_key {m : Nat}
 open Dregg2.Exec in
 /-- Way 3 (`keyFor 3 = 2`) — proven, not Rust-driven. -/
 theorem way3_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 3) == n.scalar (wayName 3)) = false) :
     n.scalar (relicName 2) = some (CARRIED : Int)
@@ -747,7 +784,7 @@ theorem way3_flip_exhibits_key {m : Nat}
 open Dregg2.Exec in
 /-- Way 4 (`keyFor 4 = 3`) — proven, not Rust-driven. -/
 theorem way4_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6 ∨ m = 7)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 4) == n.scalar (wayName 4)) = false) :
     n.scalar (relicName 3) = some (CARRIED : Int)
@@ -757,7 +794,7 @@ theorem way4_flip_exhibits_key {m : Nat}
 open Dregg2.Exec in
 /-- **Method-default-deny survives the riders**: a method outside the seven verbs is
 refused outright — no case (method arm or rider) matches it. -/
-theorem unknown_method_refused {m : Nat} (hm : 7 ≤ m) (o n : Value) :
+theorem unknown_method_refused {m : Nat} (hm : 8 ≤ m) (o n : Value) :
     RecordProgram.admits dungeonExec m o n = false := by
   have h0 : ((0 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h1 : ((1 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
@@ -766,13 +803,15 @@ theorem unknown_method_refused {m : Nat} (hm : 7 ≤ m) (o n : Value) :
   have h4 : ((4 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h5 : ((5 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h6 : ((6 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
+  have h7 : ((7 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   simp [dungeonExec, dungeonProgram, programCases, CellProgram.toExec, Case.toExec,
         Guard.toExec, verbs, methodIdx, RecordProgram.admits,
         TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
         genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+        ascendCase,
         depthRider, wayRider, fateRider, bankRider, harmRider, spentRider,
         List.map_cons, List.map_nil, List.filter_nil,
-        h0, h1, h2, h3, h4, h5, h6]
+        h0, h1, h2, h3, h4, h5, h6, h7]
 
 /-! ## 5. The model↔program weld — encode the model state, DRIVE the runs. -/
 
@@ -808,6 +847,7 @@ def moveIdx : Move → Nat
   | .loot _   => 4
   | .flee     => 5
   | .lunge    => 6
+  | .ascend   => 7
 
 /-- Drive a model script through the DEPLOYED program: every step must be BOTH
 model-legal and program-admitted on the encoded transition. -/
@@ -847,6 +887,7 @@ private def spentRiderWithoutProjection : Case :=
 private def dungeonExecWithoutProjection : Dregg2.Exec.RecordProgram :=
   CellProgram.toExec (.cases
     [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+      ascendCase,
       depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
       spentRiderWithoutProjection ])
 
@@ -908,16 +949,55 @@ local instance : WorldParam := instAt 0
 
 -- Attack 4 — TOMB MOVE: after banking (fate = 1), a delve-shaped turn is refused.
 #guard
-  (let s := st [.delve, .flee]
+  (let s := st [.delve, .ascend, .flee]
    Dregg2.Exec.RecordProgram.admits dungeonExec 1 (encode s)
-     (setF (setF (encode s) "depth" 2) "spent" 4)) = false
+     (setF (setF (encode s) "depth" 2) "spent" 5)) = false
 
 -- Attack 5 — FAKE FLEE: banking with a non-empty pack (keep the relics AND the score)
 -- is refused (`pack' = 0` is the flee law; the fate rider re-demands it).
 #guard
-  (let s := st [.delve, .smite, .loot 1]
+  (let s := st [.delve, .smite, .loot 1, .ascend]
    Dregg2.Exec.RecordProgram.admits dungeonExec 5 (encode s)
-     (setF (setF (encode s) "fate" 1) "spent" 5)) = false
+     (setF (setF (encode s) "fate" 1) "spent" 6)) = false
+
+-- ⚑ Attack 5b — THE TELEPORT BANK: fleeing FROM BELOW, everything else lawful (pack
+-- emptied into the bank, fate 0→1, one breath paid). This is exactly the turn that was
+-- legal before the climb existed, and it is what made the descent deathless. REFUSED by
+-- `fleeCase`'s `depth = 0` and, method-independently, by the fate/bank riders.
+#guard
+  (let s := st [.delve, .smite, .loot 1]
+   let banked := setF (setF (setF (setF (setF (encode s)
+      (relicName 1) BANKED) "pack" 0) "bank" 1) "fate" 1) "spent" 5
+   Dregg2.Exec.RecordProgram.admits dungeonExec 5 (encode s) banked) = false
+-- …and the honest twin: CLIMB OUT FIRST and the identical banking IS admitted.
+#guard
+  (let s := st [.delve, .smite, .loot 1, .ascend]
+   let banked := setF (setF (setF (setF (setF (encode s)
+      (relicName 1) BANKED) "pack" 0) "bank" 1) "fate" 1) "spent" 6
+   Dregg2.Exec.RecordProgram.admits dungeonExec 5 (encode s) banked) = true
+
+-- ⚑ Attack 5c — THE STAPLED SURFACE: an `ascend`-shaped turn that ALSO banks (fate 0→1
+-- stapled onto the climb) is refused; the fate rider is method-independent and the
+-- ascend arm freezes `bank`.
+#guard
+  (let s := st [.delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 7 (encode s)
+     (setF (setF (setF (encode s) "depth" 0) "fate" 1) "spent" 3)) = false
+
+-- ⚑ Attack 5d — THE TWO-FLOOR CLIMB: an `ascend` that rises two floors at once is
+-- refused (`allowedTransitions` enumerates the staircase; there is no 2→0 rung).
+#guard
+  (let s := st [.delve, .smite, .loot 1, .unlock 2, .delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 7 (encode s)
+     (setF (setF (encode s) "depth" 0) "spent" 6)) = false
+
+-- ⚑ Attack 5e — THE LAUNDERED GRIP: an `ascend` that heals `harm` on the way up is
+-- refused. `ascend` freezes `harm`, and the `harmRider` demands an exact `+1` — a walk
+-- upstairs never washes off what the guardian took (`Dungeon.harm_ratchets`).
+#guard
+  (let s := st [.delve, .lunge, .loot 1, .unlock 2, .delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 7 (encode s)
+     (setF (setF (setF (encode s) "depth" 1) "harm" 0) "spent" 6)) = false
 
 -- Attack 6 — RELIC TELEPORT: moving a relic's custody floor→floor (code 1→2) under a
 -- smite is refused (relics frozen on smite; the spent-rider's memberOf refuses code 2
@@ -968,15 +1048,15 @@ local instance : WorldParam := instAt 0
    Dregg2.Exec.RecordProgram.admits dungeonExec 6 (encode s)
      (setF (setF (setF (encode s) "harm" 0) "spent" 6) "wounds" 1)) = false
 
--- The 27th breath: from a legally-exhausted clock nothing is admitted (driven twin of
--- `dead_light_refuses`; spent = 25 + smite(2) would break the cap).
+-- The 31st breath: from a legally-exhausted clock nothing is admitted (driven twin of
+-- `dead_light_refuses`).
 #guard
   (let s := st [.delve, .smite]
-   -- forge the clock to BREATH (the model cannot legally reach 26+2, so drive the
-   -- deployed tooth directly: old spent = 26 refuses any further exertion)
+   -- forge the clock to BREATH (the model cannot legally reach 30+2, so drive the
+   -- deployed tooth directly: old spent = 30 refuses any further exertion)
    Dregg2.Exec.RecordProgram.admits dungeonExec 3
-     (setF (encode s) "spent" 26)
-     (setF (setF (encode s) "spent" 28) "wounds" 1)) = false
+     (setF (encode s) "spent" 30)
+     (setF (setF (encode s) "spent" 32) "wounds" 1)) = false
 
 end CanonWeld
 
@@ -1087,12 +1167,12 @@ def emitFamilyJson : String :=
 section CanonEmit
 local instance : WorldParam := instAt 0
 
--- The emit runs and carries the scene header + all 15 cases, for every day.
+-- The emit runs and carries the scene header + all 16 cases, for every day.
 #guard (emitJson dungeonProgram).startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\""
-#guard (match dungeonProgram with | .cases cs => cs.length) = 15
+#guard (match dungeonProgram with | .cases cs => cs.length) = 16
 #guard emitFamilyJson.startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\",\n  \"days\": 16"
 #guard (List.range dayCount).all
-        (fun k => (match (@dungeonProgram (instAt k)) with | .cases cs => cs).length == 15)
+        (fun k => (match (@dungeonProgram (instAt k)) with | .cases cs => cs).length == 16)
 
 end CanonEmit
 

@@ -20,7 +20,7 @@ diverge. This module closes what is now closable, by PROOF:
 
 * **The Int→Nat bridge is a THEOREM** (`tooth_transport` + `descent_step_teeth_deployed`),
   not an assumption: the game's states are `Nat`-valued and reachable states are SMALL
-  (every register ≤ 26, every custody code ≤ 9 — `regs_small`/`heap_small`, from `Inv`
+  (every register ≤ 30 = BREATH, every custody code ≤ 9 — `regs_small`/`heap_small`, from `Inv`
   plus the new `Tight` reachability bound), so on the marshalled image the signed `Exec`
   verdict and the unsigned 256-bit deployed verdict AGREE, tooth by tooth. The audit's
   divergence on negative attacker scalars is real but out of scope BY SUBSTRATE here: the
@@ -248,6 +248,10 @@ private theorem tight_step {s s' : DState} {m : Move}
     simp only [step] at hstep; split at hstep
     · cases hstep; exact ⟨Nat.zero_le 2, hwys⟩
     · exact absurd hstep (by simp)
+  | ascend =>
+    simp only [step] at hstep; split at hstep
+    · cases hstep; exact ⟨Nat.zero_le 2, hwys⟩
+    · exact absurd hstep (by simp)
   | unlock w =>
     simp only [step] at hstep; split at hstep
     · cases hstep
@@ -327,13 +331,13 @@ private theorem getD_le_of_forall {l : List Nat} {b : Nat}
   | none => simp
   | some v => simpa using h v (List.mem_of_getElem? hv)
 
-/-- Every marshalled register of an `Inv`+`Tight` state is at most 26 (= `BREATH`,
+/-- Every marshalled register of an `Inv`+`Tight` state is at most 30 (= `BREATH`,
 the largest any projection can reach), hence far below both the `field_to_u64` lane
 and the `FIELD_DELTA_RESULT_BITS` range. -/
 private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : String}
-    (hr : r ∈ registerNames) : (dgSlots s).getD (dgRegIdx r) 0 ≤ 26 := by
-  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hd0, hprize,
-    hharm⟩ := hInv
+    (hr : r ∈ registerNames) : (dgSlots s).getD (dgRegIdx r) 0 ≤ 30 := by
+  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hcap1, hd0, hwb,
+    hprize, hharm⟩ := hInv
   obtain ⟨hw, hwys⟩ := ht
   have hpack : pack s ≤ 8 := le_trans List.countP_le_length (le_of_eq hlen)
   have hbank : bank s ≤ 8 := le_trans List.countP_le_length (le_of_eq hlen)
@@ -346,20 +350,20 @@ private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : Strin
   have hFl : s.depth ≤ 4 := hdepth
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
     rfl | rfl
-  · show s.depth ≤ 26; omega
-  · show s.spent ≤ 26; exact hspent
-  · show s.wounds ≤ 26; omega
-  · show s.fate ≤ 26; omega
-  · show pack s ≤ 26; omega
-  · show bank s ≤ 26; omega
-  · show s.ways.getD 0 0 ≤ 26; have := hwv 0; omega
-  · show s.ways.getD 1 0 ≤ 26; have := hwv 1; omega
-  · show s.ways.getD 2 0 ≤ 26; have := hwv 2; omega
-  · show hoardAt s 1 ≤ 26; have := hhoard 1; omega
-  · show hoardAt s 2 ≤ 26; have := hhoard 2; omega
-  · show hoardAt s 3 ≤ 26; have := hhoard 3; omega
-  · show hoardAt s 4 ≤ 26; have := hhoard 4; omega
-  · show s.harm ≤ 26; have h2 : s.harm ≤ 2 := hharm; omega
+  · show s.depth ≤ 30; omega
+  · show s.spent ≤ 30; exact hspent
+  · show s.wounds ≤ 30; omega
+  · show s.fate ≤ 30; omega
+  · show pack s ≤ 30; omega
+  · show bank s ≤ 30; omega
+  · show s.ways.getD 0 0 ≤ 30; have := hwv 0; omega
+  · show s.ways.getD 1 0 ≤ 30; have := hwv 1; omega
+  · show s.ways.getD 2 0 ≤ 30; have := hwv 2; omega
+  · show hoardAt s 1 ≤ 30; have := hhoard 1; omega
+  · show hoardAt s 2 ≤ 30; have := hhoard 2; omega
+  · show hoardAt s 3 ≤ 30; have := hhoard 3; omega
+  · show hoardAt s 4 ≤ 30; have := hhoard 4; omega
+  · show s.harm ≤ 30; have h2 : s.harm ≤ 2 := hharm; omega
 
 /-- Every marshalled heap value of an `Inv` state is at most `BANKED = 9`. -/
 private theorem heap_small {s : DState} (hInv : Inv s) {k : HeapKeyRef}
@@ -455,7 +459,7 @@ private theorem programOK :
 /-! ## 5. Per-shape transport: Exec truth ⇒ deployed `.ok` on the marshalled image. -/
 
 /-- `fieldAdd` is PLAIN addition below the lane (no wrap, high limbs zero). -/
-private theorem fieldAdd_small {a d : Nat} (ha : a ≤ 26) (hd : d ≤ 1000) :
+private theorem fieldAdd_small {a d : Nat} (ha : a ≤ 30) (hd : d ≤ 1000) :
     fieldAdd a d = a + d := by
   have h1 : a / 18446744073709551616 = 0 := Nat.div_eq_of_lt (by omega)
   have h2 : a % 18446744073709551616 = a := Nat.mod_eq_of_lt (by omega)
@@ -464,7 +468,7 @@ private theorem fieldAdd_small {a d : Nat} (ha : a ≤ 26) (hd : d ≤ 1000) :
   simp only [fieldAdd, low64, two64]
   rw [h1, h2, h3, h4, Nat.zero_mul, Nat.zero_add]
 
-private theorem low64_small {a : Nat} (ha : a ≤ 1026) : low64 a = a := by
+private theorem low64_small {a : Nat} (ha : a ≤ 1030) : low64 a = a := by
   unfold low64 two64
   exact Nat.mod_eq_of_lt (by omega)
 
@@ -521,7 +525,7 @@ private theorem tr_fieldLte {s s' : DState} {r : String} (hr : r ∈ registerNam
 
 private theorem tr_fieldDelta {s s' : DState} {r : String} (hr : r ∈ registerNames)
     {d : Nat} (hd : d ≤ 1000)
-    (hb : (dgSlots s).getD (dgRegIdx r) 0 ≤ 26)
+    (hb : (dgSlots s).getD (dgRegIdx r) 0 ≤ 30)
     (hexec : evalConstraint (Constraint.fieldDelta r d).toExec
       (encode s) (encode s') = true) :
     admits (.fieldDelta (dgRegIdx r) d) (baseInput s s') = .ok := by
@@ -621,7 +625,7 @@ private theorem sumGo_ok (v : DField) (regs : List DField) :
 
 private theorem tr_sumEquals {s s' : DState} {rs : List String}
     (hrs : ∀ r ∈ rs, r ∈ registerNames) {v : Nat} (hv : v ≤ 1000)
-    (hb : ∀ r ∈ rs, (dgSlots s').getD (dgRegIdx r) 0 ≤ 26)
+    (hb : ∀ r ∈ rs, (dgSlots s').getD (dgRegIdx r) 0 ≤ 30)
     (hexec : evalConstraint (Constraint.sumEquals rs v).toExec
       (encode s) (encode s') = true) :
     admits (.sumEquals (rs.map dgRegIdx) v) (baseInput s s') = .ok := by
@@ -654,7 +658,7 @@ private theorem tr_sumEquals {s s' : DState} {rs : List String}
 marshalled image (low-64 lanes are the identity below the bound). -/
 private theorem affine_corr (s' : DState) : ∀ (ts : List (Int × String)),
     (∀ t ∈ ts, t.2 ∈ registerNames) →
-    (∀ t ∈ ts, (dgSlots s').getD (dgRegIdx t.2) 0 ≤ 26) →
+    (∀ t ∈ ts, (dgSlots s').getD (dgRegIdx t.2) 0 ≤ 30) →
     ∃ S : Int,
       Dregg2.Exec.DeployedConstraint.affineSum
         (ts.map (fun t => (t.1, dgRegIdx t.2))) (dgSlots s') = .ok S ∧
@@ -680,7 +684,7 @@ private theorem affine_corr (s' : DState) : ∀ (ts : List (Int × String)),
 
 private theorem tr_affineLe {s s' : DState} {ts : List (Int × String)}
     (hts : ∀ t ∈ ts, t.2 ∈ registerNames) {c : Int}
-    (hb : ∀ t ∈ ts, (dgSlots s').getD (dgRegIdx t.2) 0 ≤ 26)
+    (hb : ∀ t ∈ ts, (dgSlots s').getD (dgRegIdx t.2) 0 ≤ 30)
     (hexec : evalConstraint (Constraint.affineLe ts c).toExec
       (encode s) (encode s') = true) :
     admits (.affineLe (ts.map (fun t => (t.1, dgRegIdx t.2))) c) (baseInput s s') = .ok := by
@@ -698,7 +702,7 @@ private theorem tr_affineLe {s s' : DState} {ts : List (Int × String)}
 
 private theorem tr_inRangeTwoSided {s s' : DState} {r : String}
     (hr : r ∈ registerNames) (lo hi : Nat)
-    (hb : (dgSlots s').getD (dgRegIdx r) 0 ≤ 26)
+    (hb : (dgSlots s').getD (dgRegIdx r) 0 ≤ 30)
     (hexec : evalConstraint (Constraint.inRangeTwoSided r lo hi).toExec
       (encode s) (encode s') = true) :
     admits (.inRangeTwoSided (dgRegIdx r) lo hi) (baseInput s s') = .ok := by
@@ -1070,6 +1074,7 @@ evaluator for EVERY verb (the cases each verb's method arm carries `coreTeeth`).
 private def verbCase : Move → Case
   | .delve => delveCase | .unlock _ => unlockCase | .smite => smiteCase
   | .lunge => lungeCase | .loot _ => lootCase | .flee => fleeCase
+  | .ascend => ascendCase
 
 private theorem verbCase_mem (m : Move) : verbCase m ∈ programCases := by
   cases m <;> simp [verbCase, programCases]
@@ -1082,7 +1087,7 @@ private theorem coreTeeth_mem_verbCase (m : Move) {c : Constraint}
     (hc : c ∈ coreTeeth) : c ∈ (verbCase m).constraints := by
   cases m <;>
     · simp only [verbCase, delveCase, unlockCase, smiteCase, lungeCase, lootCase,
-        fleeCase, List.mem_append]
+        fleeCase, ascendCase, List.mem_append]
       tauto
 
 /-- Conservation reaches the deployed referee: on every reachable legal step, the
@@ -1111,7 +1116,7 @@ theorem descent_pays_deployed {s s' : DState} {m : Move}
     (hreach : Reachable s) (hstep : step s m = some s') :
     admitsTop (.base (.strictMonotonic 1))
         (dgInput s s' (.strictMonotonic "spent")) = .ok ∧
-    admitsTop (.base (.fieldLte 1 26))
+    admitsTop (.base (.fieldLte 1 30))
         (dgInput s s' (.fieldLte "spent" BREATH)) = .ok :=
   ⟨descent_step_teeth_deployed hreach hstep (verbCase m) (verbCase_mem m)
       (verbCase_guard m _ _) _ (coreTeeth_mem_verbCase m (by simp [coreTeeth])) _ rfl,
@@ -1204,7 +1209,7 @@ cap teeth admit strictly increases the spent register and stays at most `BREATH`
 (full 256-bit compares — no lane truncation on this pair). -/
 theorem deployed_tooth_pays (i : DInput) (hold : i.oldPresent = true)
     (hs : admits (.strictMonotonic 1) i = .ok)
-    (hl : admits (.fieldLte 1 26) i = .ok) :
+    (hl : admits (.fieldLte 1 30) i = .ok) :
     i.oldRegs.getD 1 0 < i.newRegs.getD 1 0 ∧ i.newRegs.getD 1 0 ≤ BREATH := by
   constructor
   · simp only [admits] at hs
@@ -1215,7 +1220,7 @@ theorem deployed_tooth_pays (i : DInput) (hold : i.oldPresent = true)
   · simp only [admits, getReg] at hl
     rw [if_neg (by decide : ¬ (1 : Nat) ≥ stateSlots)] at hl
     simp only at hl
-    by_cases hle : i.newRegs.getD 1 0 ≤ 26
+    by_cases hle : i.newRegs.getD 1 0 ≤ 30
     · exact hle
     · rw [if_neg hle] at hl; cases hl
 
@@ -1273,8 +1278,8 @@ private def mkI (oldR newR : List DField) : DInput :=
 #guard admits (.strictMonotonic 1)
   (mkI [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
        [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
-#guard admits (.fieldLte 1 26)
-  (mkI regs0 [0, 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
+#guard admits (.fieldLte 1 30)
+  (mkI regs0 [0, 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
 
 -- Fate: moving from the banked tomb (old fate 1) is REFUSED; a forged fate 2 is REFUSED.
 #guard admits (.allowedTransitions 3 [(0, 0), (0, 1)])

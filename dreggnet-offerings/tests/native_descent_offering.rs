@@ -194,8 +194,8 @@ fn affordances_follow_the_native_mover_and_refusals_are_anti_ghost() {
     let actions = offering.actions(&session);
     assert_eq!(
         actions.len(),
-        14,
-        "five verbs expanded over ways and relics"
+        15,
+        "six verbs expanded over ways and relics (the climb joined them)"
     );
     assert!(offered(&offering, &session, DELVE, 0).enabled);
     assert!(offered(&offering, &session, FLEE, 0).enabled);
