@@ -209,6 +209,18 @@ routing it through the Lean descriptor changes the **proof bytes on the Turn wir
 (`turn/src/action.rs:995`, `turn-prover/src/shielded_transfer_verifier.rs`). Hiding is *not* lost —
 `Plonky3HidingFriReference` is an existing hiding IR-v2 backend. Asked; proceeding on everything else.
 
+## ⚑ DELETION IN FLIGHT — every blocker cleared
+
+`param-compose`'s 1028-line Rust AIR: **production path off it and type-verified (8/8 checks green)**,
+**all 16 corpus shapes byte-pinned** in Lean (181 `#guard`s), **resolver landed** reaching all 18. The
+lane now running migrates the corpus, deletes `air.rs` + `builder.rs`, and drops the two law-1 BASELINE
+rows in the same change.
+
+Three traps handed to it rather than left to be rediscovered — the sharpest being that **pinning a shape
+broke the test that used its unpinnedness as a witness** (`an_unpinned_shape_is_refused_rather_than_faked`
+had `n3p4l3k2` as its witness; now moved to `i27`). A negative test whose witness becomes positive under
+you is not a bug in either half.
+
 ## Boundary campaign — landed today
 
 - **CI ran ZERO tests for five days** and nobody noticed: red was the *steady state* (60 runs → **0
