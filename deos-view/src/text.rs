@@ -79,7 +79,8 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
             }
         }
         // A LITERAL-valued meter (a light clock, a carry capacity, a guardian's vitality) DOES have
-        // a plain-text form — `light ████████░░░░ 18/26` — because it carries its own numbers; it
+        // a plain-text form — `light ██████████████████░░░░░░░░ 18/26`, one cell PER STEP while the
+        // denominator is countable — because it carries its own numbers; it
         // needs no live ledger the way a `gauge` does. It used to fall into the silent set below,
         // so a game whose whole tension is a burning clock painted that clock on the web and NOTHING
         // on Telegram/WeChat. One shared projection ([`crate::tree::progress_text`]), so the bar is
@@ -152,10 +153,16 @@ mod tests {
                 },
             ],
         };
+        // Both meters are COUNTABLE (`max <= COUNTABLE_METER_MAX`), so each paints one cell per
+        // step and the two TRACKS are different lengths — 26 cells against 6. That is the
+        // information a shared fixed width destroyed: at 12 cells wide these read as
+        // "eight-ish twelfths" and "four twelfths", two rough fractions, when what a player needs
+        // is 18 breaths left and 2 things carried. The LABELS still align (their padding is
+        // emitted verbatim), which is what makes the stack scannable.
         assert_eq!(
             render_text(&tree),
-            "Vitals\nlight    ████████░░░░ 18/26\npack     ████░░░░░░░░ 2/6",
-            "both meters paint, aligned, and the menu stays out of the prose"
+            "Vitals\nlight    ██████████████████░░░░░░░░ 18/26\npack     ██░░░░ 2/6",
+            "both meters paint, labels aligned, and the menu stays out of the prose"
         );
     }
 

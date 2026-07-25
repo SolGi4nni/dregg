@@ -356,7 +356,26 @@ pub struct EmbeddedExecutor {
     /// Cached read-only handle on the cell id so `Debug` and
     /// `cell_id()` accessors do not have to take the mutex.
     cell_id: CellId,
+    /// The app's DECLARED per-turn computron fee, or `None` for
+    /// [`DEFAULT_TURN_FEE`]. See [`Self::with_turn_fee`].
+    turn_fee: Option<u64>,
+    /// Whether the declared fee is a CEILING to price under rather than a flat charge.
+    /// See [`Self::with_metered_turn_fee`]. Default `false` — every existing app keeps the
+    /// flat-stamp behaviour byte for byte.
+    metered_fee: bool,
 }
+
+/// The per-turn computron fee [`EmbeddedExecutor::submit_turn`] stamps on a turn that
+/// arrives with `fee == 0` and whose app declared nothing.
+///
+/// This is the historical hardcoded fallback, now named. It is a WHOLE-STATE budget, not a
+/// meter reading: `TurnExecutor` treats `turn.fee` as the turn's computron LIMIT *and*
+/// debits it in full from the agent (`execute`'s Phase 1, never rolled back — THE EPOCH §5
+/// "fees as moves"). So it is simultaneously "how big a turn may I write" and "what does
+/// every turn cost me", and raising it for one app would tax every other app's purse.
+/// Apps whose state does not fit inside it declare their own with
+/// [`EmbeddedExecutor::with_turn_fee`] instead.
+pub const DEFAULT_TURN_FEE: u64 = 10_000;
 
 impl EmbeddedExecutor {
     /// Construct an executor that shares the given [`AppCipherclerk`]'s
@@ -380,6 +399,8 @@ impl EmbeddedExecutor {
         Self {
             runtime: Arc::new(Mutex::new(runtime)),
             cell_id,
+            turn_fee: None,
+            metered_fee: false,
         }
     }
 
@@ -394,7 +415,75 @@ impl EmbeddedExecutor {
         Self {
             runtime: Arc::new(Mutex::new(runtime)),
             cell_id,
+            turn_fee: None,
+            metered_fee: false,
         }
+    }
+
+    /// **DECLARE this app's per-turn computron fee**, replacing [`DEFAULT_TURN_FEE`] for
+    /// turns this executor submits with `fee == 0`.
+    ///
+    /// An app declares a fee because `turn.fee` is the executor's computron LIMIT for the
+    /// turn: a world whose one seeding turn writes a 121-square board meters ~17k
+    /// computrons and is REFUSED by the 10 000 default
+    /// (`BudgetExceeded { limit: 10000, .. }`) before it can write its opening state. The
+    /// fee is not a cap the app can raise for free — `execute` debits it IN FULL from the
+    /// declaring agent's purse whether the turn lands or is refused — so the number is a
+    /// real budget the app owns: it must cover the app's largest turn, and its size
+    /// divided into the agent's endowment bounds how many turns that agent can ever take.
+    /// That trade is exactly why this is per-app and not a bigger shared default: raising
+    /// [`DEFAULT_TURN_FEE`] would charge every non-declaring app for a board it does not
+    /// have.
+    ///
+    /// Declaring changes NOTHING for a turn that already carries a nonzero `fee` (the
+    /// caller's explicit budget still wins) and nothing for any app that never calls this.
+    pub fn with_turn_fee(mut self, fee: u64) -> Self {
+        self.turn_fee = Some(fee);
+        self
+    }
+
+    /// **DECLARE `ceiling` as a per-turn computron CEILING and pay each turn's OWN price under
+    /// it** — the metered form of [`Self::with_turn_fee`].
+    ///
+    /// A flat fee is two numbers wearing one hat, and they want opposite things. As a LIMIT it
+    /// must cover the app's WIDEST turn (a world-cell's genesis seed writes its whole state); as
+    /// a CHARGE it is debited in full from the agent's fixed endowment on EVERY turn, so the
+    /// widest turn's price is what the narrowest turn pays. The endowment divided by that price
+    /// is a hard cap on how many turns the app can ever take — and it is a cap nobody chose:
+    /// automatafl, declaring a fee sized to its 137-write genesis, could open a match and then
+    /// play exactly 51 turns, seven of its rounds, before `InsufficientBalance` ended it mid-board
+    /// (`dregg-automatafl/tests/match_length_purse.rs`).
+    ///
+    /// Metered mode splits the two back apart. The stamped fee becomes
+    /// `min(estimate_turn_cost(turn), ceiling)`:
+    ///
+    /// * a turn that fits pays EXACTLY what the executor meters it at (the estimator and the
+    ///   running meter walk the same charge points off the same cost table — see
+    ///   [`AgentRuntime::estimate_turn_cost`]), so the endowment now bounds total WORK rather
+    ///   than turn COUNT, and
+    /// * a turn that does not fit is stamped at `ceiling` and refused by the executor with
+    ///   `BudgetExceeded { limit: ceiling, .. }` — the app's declared DoS bound still bites,
+    ///   unchanged, which is the half of the flat fee worth keeping.
+    ///
+    /// OPT-IN and additive: an app that never calls this keeps [`Self::with_turn_fee`]'s flat
+    /// stamp (or [`DEFAULT_TURN_FEE`]) exactly, and an explicit nonzero `turn.fee` from the
+    /// caller still wins over both.
+    pub fn with_metered_turn_fee(mut self, ceiling: u64) -> Self {
+        self.turn_fee = Some(ceiling);
+        self.metered_fee = true;
+        self
+    }
+
+    /// This app's declared per-turn fee (a flat charge, or the CEILING under
+    /// [`Self::with_metered_turn_fee`]), or `None` if it takes [`DEFAULT_TURN_FEE`].
+    pub fn declared_turn_fee(&self) -> Option<u64> {
+        self.turn_fee
+    }
+
+    /// Whether the declared fee is a metered CEILING ([`Self::with_metered_turn_fee`]) rather
+    /// than a flat per-turn charge.
+    pub fn meters_turn_fee(&self) -> bool {
+        self.metered_fee
     }
 
     /// Construct over a caller-authenticated durable ledger and receipt log.
@@ -595,8 +684,23 @@ impl EmbeddedExecutor {
     ) -> Result<(TurnReceipt, Turn), ExecutorSubmitError> {
         let mut turn = turn.clone();
         let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+        // A turn built by `AppCipherclerk::make_turn` carries `fee: 0` ("the framework
+        // decides"). Stamp the app's DECLARED budget if it has one, else the shared
+        // default. An explicit nonzero fee is the caller's own budget and is left alone.
         if turn.fee == 0 {
-            turn.fee = 10_000;
+            let declared = self.turn_fee.unwrap_or(DEFAULT_TURN_FEE);
+            turn.fee = if self.metered_fee {
+                // METERED (`with_metered_turn_fee`): the declared number is a CEILING, and this
+                // turn pays its OWN price under it. Pricing here, before the nonce stamp and the
+                // stale-nonce re-sign below, is safe: neither the nonce nor a re-signature
+                // changes an effect, an authorization VARIANT, or the cost table, so the estimate
+                // is the one the executor will meter. `max(1)` keeps a (degenerate) zero-cost
+                // turn from re-entering this `fee == 0` branch downstream in
+                // `AgentRuntime::execute_turn`, which has a default of its own.
+                rt.estimate_turn_cost(&turn).min(declared).max(1)
+            } else {
+                declared
+            };
         }
         turn.nonce = rt.nonce();
         // dregg-action-sig-v3 binds the SUBMITTING turn's nonce into every

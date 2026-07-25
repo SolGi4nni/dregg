@@ -219,6 +219,46 @@ impl WorldCell {
         Self::from_compiled(story, seed)
     }
 
+    /// **DECLARE this world's per-turn computron fee** — forwarded to the embedded
+    /// executor ([`EmbeddedExecutor::with_turn_fee`]), which stamps it on every turn this
+    /// world commits.
+    ///
+    /// A world whose state is BIG needs this: `turn.fee` is the executor's computron limit
+    /// for the turn, so a world-cell that writes a many-square board in one turn is
+    /// refused outright under the framework's
+    /// [`dregg_app_framework::DEFAULT_TURN_FEE`] — the refusal lands on the GENESIS turn,
+    /// before the world can seed its opening state. The fee is also debited in full from
+    /// the world agent's purse per turn, so it is a budget the world owns rather than a
+    /// cap it may raise for free; declare it from the state's actual size and expect the
+    /// purse to divide by it. Worlds that do not call this keep the framework default
+    /// exactly.
+    pub fn with_turn_fee(mut self, fee: u64) -> Self {
+        // `EmbeddedExecutor` is a cheap `Arc` handle; the clone rebinds the SAME runtime
+        // and ledger with the fee declared on it.
+        self.exec = self.exec.clone().with_turn_fee(fee);
+        self
+    }
+
+    /// **DECLARE `ceiling` as this world's per-turn computron CEILING and pay each turn's OWN
+    /// price under it** ([`EmbeddedExecutor::with_metered_turn_fee`]) — what a world with a big
+    /// state and a long session wants instead of [`Self::with_turn_fee`].
+    ///
+    /// A flat fee has to be sized to the GENESIS turn, because that is the turn that writes the
+    /// whole world; and because the executor debits the fee in full on every turn, the genesis
+    /// turn's price is then what a one-register `select` pays. The world agent's endowment
+    /// divided by that price is a hard ceiling on session LENGTH that nobody chose — automatafl
+    /// measured 51 play turns, about seven rounds, before `InsufficientBalance`
+    /// (`dregg-automatafl/tests/match_length_purse.rs`).
+    ///
+    /// Metered, the endowment bounds total WORK instead: the genesis seed pays for its own 137
+    /// writes once, a `select` pays for its two, and `ceiling` goes on doing the job worth
+    /// keeping — refusing a turn that would write more than this world ever legitimately writes.
+    /// Worlds that call neither method keep the framework default exactly.
+    pub fn with_metered_turn_fee(mut self, ceiling: u64) -> Self {
+        self.exec = self.exec.clone().with_metered_turn_fee(ceiling);
+        self
+    }
+
     fn from_compiled(story: Arc<CompiledStory>, seed: u8) -> Result<Self, WorldError> {
         // Deterministic identity: same scene id + seed ⇒ same owner key ⇒ same
         // world-cell id ⇒ reproducible state hashes on re-deploy (verify path).

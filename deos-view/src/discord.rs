@@ -271,7 +271,8 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
                 }
             }
         }
-        // A literal meter paints the SHARED bar (`light ████████░░░░ 18/26`) rather than a bare
+        // A literal meter paints the SHARED bar (`light ██████████████████░░░░░░░░ 18/26` — one
+        // cell PER STEP while the denominator is countable) rather than a bare
         // ratio — the same glyph bar telegram/wechat/the no-JS web fallback show, so a clock reads
         // as a clock in an embed description.
         ViewNode::Progress { value, max, label } => {

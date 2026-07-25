@@ -791,6 +791,24 @@ impl AgentRuntime {
         *self.nonce.lock().unwrap()
     }
 
+    /// **What this runtime's executor will charge for `turn`** — [`TurnExecutor::estimate_cost`]
+    /// over the turn's own call forest, at THIS runtime's installed
+    /// [`ComputronCosts`](dregg_turn::executor::ComputronCosts) table.
+    ///
+    /// Exposed so a caller can price a turn BEFORE submitting it, rather than guessing a `fee`
+    /// constant. The estimator and the executor's running meter walk the same four charge points
+    /// in the same order (`action_base`, the authorization, then every effect —
+    /// `executor/execute_tree.rs`), off the same cost table, so for a turn that runs to completion
+    /// the estimate is the metered total exactly, not an upper bound. A caller that stamps this as
+    /// the turn's `fee` therefore pays precisely what the turn costs; if the two ever diverge the
+    /// executor says so by name (`BudgetExceeded { limit: <estimate>, used: <actual> }`) instead of
+    /// failing quietly.
+    ///
+    /// Reads no ledger state and mutates nothing.
+    pub fn estimate_turn_cost(&self, turn: &Turn) -> u64 {
+        self.executor.estimate_cost(turn)
+    }
+
     /// Get a reference to the cipherclerk (behind RwLock).
     ///
     /// Callers should use `.read().unwrap_or_else(|e| e.into_inner())` for read

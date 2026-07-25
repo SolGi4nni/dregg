@@ -344,7 +344,7 @@ pub use webgen::render_surface_component;
 // Re-export the embedded executor at the framework root for the
 // common pattern: build a cipherclerk, build an executor, hand them
 // to a StarbridgeAppContext.
-pub use cipherclerk::{EmbeddedExecutor, ExecutorSubmitError};
+pub use cipherclerk::{DEFAULT_TURN_FEE, EmbeddedExecutor, ExecutorSubmitError};
 
 // Anti-drift JS-constants generation: render an app's slot layout +
 // event-topic vocabulary to a canonical `constants.generated.js` the web

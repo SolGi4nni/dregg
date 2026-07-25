@@ -826,10 +826,45 @@ pub fn coordgrid_text(cols: usize, cells: &[CoordCell]) -> String {
     lines.join("\n")
 }
 
-/// The default width, in glyph cells, of a plain-text meter bar ([`meter_text`]). Wide enough that
-/// a bar reads as a bar on a phone-width chat line, narrow enough that a 26-step clock still moves
-/// visibly on a single step.
+/// The FALLBACK width, in glyph cells, of a plain-text meter bar ([`meter_text`]) — used only when
+/// the denominator is too large to paint one cell per step (see [`meter_text_width`]). Wide enough
+/// that a bar reads as a bar on a phone-width chat line, narrow enough to fit a chat column.
 pub const METER_TEXT_WIDTH: usize = 12;
+
+/// The largest denominator a meter paints ONE GLYPH CELL PER STEP at (see [`meter_text_width`]).
+///
+/// A turn-based clock is COUNTED, not estimated: one breath buys exactly one verb, so a player
+/// reading `21/26` should be able to count 21 lit cells and 5 dark ones rather than infer a
+/// rounding. At the fixed [`METER_TEXT_WIDTH`] that same meter paints 10 filled cells — a number
+/// that appears nowhere in the state it claims to depict, and which makes 21/26 and 8/8 and 2/3
+/// all read as "roughly the same fraction of a bar" instead of as three different amounts of
+/// remaining play.
+///
+/// 32 is the ceiling because it is the widest run of full-block glyphs that still fits a
+/// phone-width chat line beside a label and a `value/max` tail; past it the bar would wrap, which
+/// is a worse lie than a rounding. Every Descent meter is under it (light 26, banked 8, pack ≤ 7,
+/// guardian ≤ 3), as is every board/act counter the game surfaces paint today.
+pub const COUNTABLE_METER_MAX: u64 = 32;
+
+/// **The bar width a literal meter with denominator `max` is painted at** — the one place the
+/// countable/estimated decision is made, so every bind-less renderer (discord / telegram / wechat /
+/// the no-JS web fallback) agrees.
+///
+/// `1..=`[`COUNTABLE_METER_MAX`] paints one cell PER STEP, so the shape is the number: a 21/26
+/// light is 21 filled cells of 26, and the two honesty rules in [`meter_bar`] become unreachable
+/// rather than load-bearing (at `width == max` the rounding is exact). Anything larger — an
+/// unbounded score, a byte count — falls back to [`METER_TEXT_WIDTH`], where the bar is honestly a
+/// proportion and the numbers beside it carry the precision.
+///
+/// `max == 0` (an undefined denominator) takes the fallback too: there is no ratio to count, and
+/// [`meter_bar`] paints the empty track.
+pub fn meter_text_width(max: u64) -> usize {
+    if max > 0 && max <= COUNTABLE_METER_MAX {
+        max as usize
+    } else {
+        METER_TEXT_WIDTH
+    }
+}
 
 /// **Render a literal-valued meter as a plain-text bar** — `████████░░░░ 18/26`.
 ///
@@ -880,13 +915,18 @@ pub fn meter_bar(value: u64, max: u64, width: usize) -> String {
 }
 
 /// The one-line plain-text form of a [`ViewNode::Progress`] — its label followed by
-/// [`meter_text`]'s bar at [`METER_TEXT_WIDTH`]. Every prose renderer calls this, so a static meter
+/// [`meter_text`]'s bar at [`meter_text_width`]. Every prose renderer calls this, so a static meter
 /// is one string across discord / telegram / wechat rather than three near-misses.
+///
+/// A small-denominator meter is COUNTABLE (one cell per step — `21/26` paints 21 filled cells), so
+/// the bar carries the same information its numbers do; a large one falls back to the fixed
+/// [`METER_TEXT_WIDTH`] proportion. See [`meter_text_width`].
+///
 /// The label is emitted VERBATIM (never trimmed): a surface that pads its labels to a common width
 /// gets its stacked meters column-aligned on every prose channel, which is most of what makes a
 /// stack of bars readable at a glance.
 pub fn progress_text(label: &str, value: u64, max: u64) -> String {
-    let bar = meter_text(value, max, METER_TEXT_WIDTH);
+    let bar = meter_text(value, max, meter_text_width(max));
     if label.trim().is_empty() {
         bar
     } else {
@@ -1814,12 +1854,94 @@ mod meter_tests {
     /// meters lines up in a chat message.
     #[test]
     fn the_text_form_carries_the_numbers_and_keeps_the_authors_padding() {
+        // An EXPLICIT width is still honoured verbatim — `meter_text`/`meter_bar` take the width
+        // they are given; only `progress_text` chooses one.
         assert_eq!(meter_text(18, 26, 12), "████████░░░░ 18/26");
-        assert_eq!(progress_text("", 1, 2), "██████░░░░░░ 1/2");
+        // `progress_text` on a 26-step clock is COUNTABLE: 18 lit, 8 dark.
         assert_eq!(
             progress_text("light   ", 18, 26),
-            "light    ████████░░░░ 18/26",
+            "light    ██████████████████░░░░░░░░ 18/26",
             "the padding an author used to align a column is NOT trimmed away"
+        );
+    }
+
+    /// **The countable clock.** A turn-based meter is COUNTED, not estimated: at `max` inside
+    /// [`COUNTABLE_METER_MAX`] the bar paints one cell PER STEP, so a player reading `21/26` can
+    /// count 21 lit cells and 5 dark ones. At the old fixed 12-cell width the same meter painted
+    /// TEN filled cells — a number that appears nowhere in the state it depicts.
+    #[test]
+    fn a_countable_meter_paints_exactly_one_cell_per_step() {
+        let bar = progress_text("light", 21, 26);
+        assert_eq!(
+            bar.chars().filter(|c| *c == '█').count(),
+            21,
+            "a 21/26 light paints exactly 21 FILLED cells"
+        );
+        assert_eq!(
+            bar.chars().filter(|c| *c == '░').count(),
+            5,
+            "…and exactly 5 empty ones — the track is the denominator"
+        );
+        assert_eq!(
+            bar, "light █████████████████████░░░░░ 21/26",
+            "the whole rendered line, so a regression to a 12-wide rounding is visible"
+        );
+        // The fixed width is what it USED to paint, and it is not 21.
+        assert_eq!(
+            meter_bar(21, 26, METER_TEXT_WIDTH)
+                .chars()
+                .filter(|c| *c == '█')
+                .count(),
+            10,
+            "non-vacuity: the fallback width really does round 21/26 to a different number"
+        );
+        // Every Descent meter is countable, and the widths differ meaningfully instead of all
+        // reading as rough thirds.
+        assert_eq!(meter_text_width(26), 26, "the light clock");
+        assert_eq!(meter_text_width(8), 8, "banked light");
+        assert_eq!(meter_text_width(7), 7, "the pack");
+        assert_eq!(meter_text_width(3), 3, "a guardian");
+        assert_eq!(progress_text("", 1, 2), "█░ 1/2");
+        assert_eq!(progress_text("pack", 7, 7), "pack ███████ 7/7");
+        assert_eq!(progress_text("guard", 0, 3), "guard ░░░ 0/3");
+    }
+
+    /// Past [`COUNTABLE_METER_MAX`] a bar would wrap a chat line, so the meter falls back to the
+    /// fixed [`METER_TEXT_WIDTH`] proportion — where the two honesty rules are still load-bearing.
+    #[test]
+    fn a_large_max_meter_falls_back_to_the_fixed_width() {
+        assert_eq!(
+            meter_text_width(COUNTABLE_METER_MAX),
+            COUNTABLE_METER_MAX as usize,
+            "the boundary itself is still counted"
+        );
+        assert_eq!(
+            meter_text_width(COUNTABLE_METER_MAX + 1),
+            METER_TEXT_WIDTH,
+            "one past the boundary falls back"
+        );
+        assert_eq!(meter_text_width(1_000), METER_TEXT_WIDTH);
+        // An undefined denominator has no ratio to count: fallback width, empty track.
+        assert_eq!(meter_text_width(0), METER_TEXT_WIDTH);
+        assert_eq!(progress_text("score", 0, 0), "score ░░░░░░░░░░░░ 0/0");
+
+        let wide = progress_text("score", 500, 1_000);
+        assert_eq!(
+            wide.chars().filter(|c| *c == '█' || *c == '░').count(),
+            METER_TEXT_WIDTH,
+            "a large-max meter is still exactly the fixed width"
+        );
+        assert_eq!(wide, "score ██████░░░░░░ 500/1000");
+        // The honesty rules survive at the fallback width.
+        assert_eq!(
+            progress_text("score", 1, 1_000),
+            "score █░░░░░░░░░░░ 1/1000",
+            "a non-zero value never paints an EMPTY bar"
+        );
+        assert_eq!(
+            progress_text("score", 999, 1_000),
+            "score ███████████░ 999/1000",
+            "a value short of max never paints a FULL bar"
         );
     }
 }

@@ -782,7 +782,7 @@ fn session_node(node: &ViewNode, sid: &str, out: &mut String) {
                 bar = esc_form(&crate::tree::meter_bar(
                     *value,
                     *max,
-                    crate::tree::METER_TEXT_WIDTH
+                    crate::tree::meter_text_width(*max)
                 )),
             ));
         }

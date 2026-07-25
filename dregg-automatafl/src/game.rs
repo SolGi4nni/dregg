@@ -73,6 +73,66 @@ pub const N: usize = N11;
 /// The number of board squares (one heap key each).
 pub const CELLS: usize = N * N;
 
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// THE DECLARED TURN FEE — this world's own computron budget, sized to its own state.
+// ────────────────────────────────────────────────────────────────────────────────────────────
+//
+// `turn.fee` is the executor's computron LIMIT for the turn, and this world writes its state
+// WHOLE on every turn (`AutomataflGame::effects_for` — 15 registers + every board square, so
+// the executor's relational teeth read a complete `old`/`new` pair). At 11×11 that is 137
+// `SetField`s on the seeding turn, and the framework's shared
+// [`dregg_app_framework::DEFAULT_TURN_FEE`] of 10 000 cannot pay for them: `Offering::open`
+// died on the GENESIS turn with `BudgetExceeded { limit: 10000, used: 10016 }`.
+//
+// ⚠ THE MEASURED 10016 IS NOT THE TURN'S COST. The executor meters fail-fast (each effect is
+// charged, then compared to the budget — `executor/execute_tree.rs`), so 10016 is merely
+// where the 78th effect crossed 10 000; 59 effects were never priced. The turn's real cost is
+// the sum below, ~1.7× the old limit. A fee of "10016 + a bit" would have re-walled at once.
+//
+// The sum, at `ComputronCosts::default_costs()` (the table `AgentRuntime` installs):
+
+/// One `SetField`: `effect_base` (50) + its `data_bytes` (32 cell + 8 index + 32 value = 72)
+/// × `per_byte` (1).
+const SET_FIELD_COMPUTRONS: u64 = 122;
+
+/// Charged once per action before any effect: `action_base` (100) + the `HybridSignature`
+/// authorization every native `AppCipherclerk::make_action` produces (2 × `signature_verify`,
+/// 2 × 200). One action per world turn.
+const TURN_BASE_COMPUTRONS: u64 = 100 + 400;
+
+/// The writes in the most expensive turn: the 15 registers + every board square + the ONE
+/// genesis-sentinel write `WorldCell::commit` injects on the seeding turn (the `0 → 1` on
+/// `GENESIS_DONE_EXT_KEY`). 137 at 11×11 — a select/commit/reveal/resolve turn is one write
+/// cheaper.
+const WIDEST_TURN_WRITES: u64 = REGISTERS.len() as u64 + CELLS as u64 + 1;
+
+/// Headroom, in WRITES rather than computrons, because writes are the thing that grows: 16
+/// spare `SetField`s ≈ one more register bank, or a rank of the board plus a few. Modest by
+/// choice even though the ceiling is no longer what a cheap turn PAYS ([`TURN_FEE`] is metered):
+/// a ceiling is a refusal threshold, and a generous one refuses nothing.
+const FEE_HEADROOM_WRITES: u64 = 16;
+
+/// **This world's per-turn computron CEILING** — installed on the world-cell by
+/// [`AutomataflGame::deploy`] via [`WorldCell::with_metered_turn_fee`], so it applies to the
+/// genesis seed and to every play, and to no other app.
+///
+/// `500 + 122 × (137 + 16) = 19_166` at 11×11 — 1.11× the widest turn's real cost of 17 214,
+/// and it tracks `N`: a board resize moves it automatically (the cost grows as `N²`, which is
+/// why 16-over was never going to be the whole story). If you add writes to a turn, add them
+/// to `WIDEST_TURN_WRITES`; do not raise the shared framework default, which every
+/// non-declaring app pays out of its own purse.
+///
+/// ⚠ CEILING, not charge. It was a flat charge for one commit, and that was measurably wrong:
+/// the executor debits `turn.fee` IN FULL from the world agent's fixed 1M endowment on every
+/// turn, so sizing it to the 137-write genesis seed made a two-write `select` pay 19 166 too —
+/// `1_000_000 / 19_166 = 52` turns, about SEVEN automatafl rounds, and then
+/// `InsufficientBalance` with the board still live. Metered, the seed pays for its own writes
+/// once and a `select` pays ~744, so the endowment bounds the WORK a match does rather than the
+/// number of turns it takes. `dregg-automatafl/tests/match_length_purse.rs` is the falsifier for
+/// both halves.
+pub const TURN_FEE: u64 =
+    TURN_BASE_COMPUTRONS + SET_FIELD_COMPUTRONS * (WIDEST_TURN_WRITES + FEE_HEADROOM_WRITES);
+
 /// The 15 register components, in allocation order (slots `0..15`).
 const REGISTERS: [&str; 15] = [
     "turn_no",  // the resolved-turn counter (strictly monotone on `resolve`)
@@ -372,7 +432,8 @@ impl AutomataflGame {
     pub fn deploy(seed: u8) -> Result<Self, WorldError> {
         let dep = Deployment::new();
         let story = dep.story();
-        let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
+        let world =
+            WorldCell::deploy_compiled(Arc::new(story), seed)?.with_metered_turn_fee(TURN_FEE);
         Ok(AutomataflGame { dep, world })
     }
 
@@ -384,7 +445,8 @@ impl AutomataflGame {
     pub fn deploy_hatch_reopened(seed: u8) -> Result<Self, WorldError> {
         let dep = Deployment::new();
         let story = dep.story_with(dep.program_hatch_reopened());
-        let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
+        let world =
+            WorldCell::deploy_compiled(Arc::new(story), seed)?.with_metered_turn_fee(TURN_FEE);
         Ok(AutomataflGame { dep, world })
     }
 
@@ -440,15 +502,84 @@ impl AutomataflGame {
         effects
     }
 
-    /// Seed the opening match state under the permissive genesis method.
+    /// **The `SetField`s that make the committed state `st`** — [`Self::effects_for`] with every
+    /// write that would land the value the cell ALREADY holds dropped.
+    ///
+    /// The post-state is identical either way: a `SetField` to a field's current value is a no-op
+    /// on the cell, so the executor's teeth read exactly the same `(old, new)` pair and every
+    /// `Immutable` / `MemberOf` / `StrictMonotonic` / `WriteOnce` atom decides exactly as before.
+    /// What changes is the PRICE. A `select` moves one register out of 136 fields; writing the
+    /// other 135 back onto themselves cost 16 470 computrons of the turn's metered budget and
+    /// bought nothing.
+    ///
+    /// ⚠ NOT for the GENESIS seed, which must write the board WHOLE. The 121 board squares live
+    /// on heap keys, and this world's [`CompiledStory`] declares no ext keys, so `WorldCell`
+    /// births none of them: a square is ABSENT until something writes it, and every
+    /// [`HeapAtom`] fails CLOSED on an absent key. The seed's full write is what makes the 97
+    /// empty opening squares exist at all; skip them there and the first `select` is refused by
+    /// the `Immutable` atom on a square that was never born.
+    fn effects_delta(&self, st: &MatchState) -> Vec<Effect> {
+        let committed = self.read_state();
+        let cell = self.cell();
+        let mut effects = Vec::new();
+        let mut set = |name: &str, new: u64, old: u64| {
+            if new != old {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.dep.reg(name) as u64,
+                    value: field_from_u64(new),
+                });
+            }
+        };
+        set("turn_no", st.turn_no, committed.turn_no);
+        set("phase", st.phase, committed.phase);
+        set("winner", st.winner, committed.winner);
+        set("commits", st.commits, committed.commits);
+        set("reveals", st.reveals, committed.reveals);
+        set("a_commit", st.commit[0], committed.commit[0]);
+        set("b_commit", st.commit[1], committed.commit[1]);
+        set("a_sel", st.sel[0], committed.sel[0]);
+        set("b_sel", st.sel[1], committed.sel[1]);
+        set("a_frm", st.frm[0], committed.frm[0]);
+        set("a_to", st.to[0], committed.to[0]);
+        set("b_frm", st.frm[1], committed.frm[1]);
+        set("b_to", st.to[1], committed.to[1]);
+        set(
+            "auto_x",
+            st.auto.0.max(0) as u64,
+            committed.auto.0.max(0) as u64,
+        );
+        set(
+            "auto_y",
+            st.auto.1.max(0) as u64,
+            committed.auto.1.max(0) as u64,
+        );
+        drop(set);
+        for idx in 0..CELLS {
+            if st.cells[idx] != committed.cells[idx] {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.dep.cell_key(idx) as u64,
+                    value: field_from_u64(st.cells[idx] as u64),
+                });
+            }
+        }
+        effects
+    }
+
+    /// Seed the opening match state under the permissive genesis method. The FULL write — this is
+    /// the turn that births the 121 board heap keys (see [`Self::effects_delta`]).
     pub fn seed(&self, st: &MatchState) -> Result<TurnReceipt, WorldError> {
         self.world.apply_raw(GENESIS, self.effects_for(st))
     }
 
     /// Commit a full match state under `method` — the primitive every play uses. The executor's
     /// teeth re-check the witnessed post-state; an illegal one is a real [`WorldError::Refused`].
+    ///
+    /// Carries the DELTA ([`Self::effects_delta`]): the same post-state, the same teeth, without
+    /// paying for 135 writes of a value onto itself.
     pub fn commit_state(&self, method: &str, st: &MatchState) -> Result<TurnReceipt, WorldError> {
-        self.world.apply_raw(method, self.effects_for(st))
+        self.world.apply_raw(method, self.effects_delta(st))
     }
 
     /// Drive a RAW turn (the forgery tests): whatever `effects`, under `method`.

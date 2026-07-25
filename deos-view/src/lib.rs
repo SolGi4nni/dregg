@@ -83,10 +83,10 @@ pub use grain_run_card::{
 };
 pub use source_health::{Banner, SourceHealth, SurfaceNote};
 pub use tree::{
-    coordgrid_text, disclose, meter_bar, meter_text, parse_view_tree, pill_display, progress_text,
-    resolve_mounts, CoordCell, Crumb, Disclosure, HaloHandle, MapMountSource, MenuItem,
-    MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps, ViewNode, MAX_MOUNT_DEPTH,
-    MAX_MOUNT_NODES, METER_TEXT_WIDTH,
+    coordgrid_text, disclose, meter_bar, meter_text, meter_text_width, parse_view_tree,
+    pill_display, progress_text, resolve_mounts, CoordCell, Crumb, Disclosure, HaloHandle,
+    MapMountSource, MenuItem, MountSource, PillCase, RawItem, RawNode, RawPillCase, RawProps,
+    ViewNode, COUNTABLE_METER_MAX, MAX_MOUNT_DEPTH, MAX_MOUNT_NODES, METER_TEXT_WIDTH,
 };
 
 // ── THE INTEGRATION SEAM (feature `integration`, folded into `native`): the ONE gate +
