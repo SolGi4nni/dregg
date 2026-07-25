@@ -125,8 +125,11 @@ fi
 # the same fingerprint and goes RED on a mismatch; run it in CI and in the deploy.
 # It is deliberately written BEFORE the copy into `site/pkg` so both copies carry it.
 echo "=== Recording wasm provenance ==="
-PROV_SRC="$("$ROOT/scripts/wasm-source-fingerprint.sh")"
-PROV_COUNT="$("$ROOT/scripts/wasm-source-fingerprint.sh" --verbose | head -1 | awk '{print $2}')"
+# ONE invocation (`--verbose` prints "files: N" then the digest); calling it twice would
+# re-run `cargo metadata` and re-hash 1,500+ files for a number we already have.
+PROV_OUT="$("$ROOT/scripts/wasm-source-fingerprint.sh" --verbose)"
+PROV_COUNT="$(printf '%s\n' "$PROV_OUT" | head -1 | awk '{print $2}')"
+PROV_SRC="$(printf '%s\n' "$PROV_OUT" | tail -1)"
 cat >"$ROOT/wasm/pkg/dregg-wasm-provenance.json" <<PROVJSON
 {
   "schema": "dregg-wasm-provenance-v1",
@@ -143,6 +146,9 @@ PROVJSON
 echo "    source fingerprint: $PROV_SRC (${PROV_COUNT:-?} files)"
 
 echo "=== Refreshing site/pkg from wasm/pkg ==="
+# `mkdir -p` first: `site/pkg` is gitignored, so on a fresh checkout it does not exist
+# and `cp -R src/. dest/` fails outright rather than creating it.
+mkdir -p "$ROOT/site/pkg"
 rm -rf "$ROOT/site/pkg/dregg_wasm"* "$ROOT/site/pkg/package.json" "$ROOT/site/pkg/.gitignore"
 cp -R "$ROOT/wasm/pkg/." "$ROOT/site/pkg/"
 

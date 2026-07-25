@@ -49,20 +49,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROOT
 
-sha256_stdin() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
-  else shasum -a 256 | awk '{print $1}'; fi
-}
+command -v python3 >/dev/null 2>&1 || {
+  echo "wasm-source-fingerprint: python3 is required" >&2; exit 1; }
 
-# Local (path-dependency) package roots in the wasm32 graph, as resolved by cargo itself.
-# `-C "$ROOT/wasm"` so this is the standalone wasm workspace's graph, not the root one.
+# Local (path-dependency) package roots in the wasm32 graph, as resolved by cargo itself —
+# `--manifest-path wasm/Cargo.toml` so this is the STANDALONE wasm workspace's graph
+# (dregg-wasm is `exclude`d from the root workspace), not the root one.
 package_roots() {
   cargo metadata \
     --manifest-path "$ROOT/wasm/Cargo.toml" \
     --format-version 1 \
     --filter-platform wasm32-unknown-unknown \
     2>/dev/null \
-  | "$(command -v python3)" -c '
+  | python3 -c '
 import json,os,sys
 md=json.load(sys.stdin)
 roots=set()
