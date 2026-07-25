@@ -64,6 +64,12 @@ plonky3 = []
 
 [dev-dependencies]
 criterion = { workspace = true }
+# TEST-LAYER ONLY, deliberately. `dregg-codec` is the canonical byte->felt codec and it is a
+# dependency LEAF: nothing in the workspace depends on it yet (Stage 0 is additive). This dev-dep
+# exists so `circuit/tests/byte_to_felt_codec_pins.rs` can PROVE the designation agrees with the
+# deployed map, without wiring any production path through it. Promoting it to a real dependency is
+# Stage 2/3, when the projectors move.
+dregg-codec = { path = "../dregg-codec" }
 dregg-bridge = { path = "../bridge", features = ["test-utils"] }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
