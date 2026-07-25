@@ -1,0 +1,26 @@
+[package]
+name = "dregg-codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "THE canonical byte->felt codec for dregg: Limbs16 (Layer L, injective) and Digest8 (Layer D, binding)."
+
+# THE LEAF RULE. This crate has NO workspace path dependencies, and it must never
+# acquire one. Every crate that needs to put bytes into a BabyBear trace depends on
+# THIS crate; if this crate depended on any of them the graph would cycle and the
+# next author would re-invent the encoder locally instead — which is precisely the
+# ~17-implementations disease documented in docs/DESIGN-canonical-byte-felt-codec.md.
+#
+# Consequence, deliberate: `Limbs16` speaks in `u16`/`u32`, not in `BabyBear`.
+# Every u16 limb is < 2^16 << p, so "the felt" is the limb widened with NO
+# reduction, and the field type is not needed to state the codec. `dregg-circuit`
+# supplies the thin `BabyBear` adapter and the `Squeeze8` implementation.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true
