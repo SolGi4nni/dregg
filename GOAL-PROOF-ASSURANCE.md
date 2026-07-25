@@ -8,7 +8,8 @@
 # GOAL — PROOF ASSURANCE: make the arguments SENSIBLE, not just green
 
 **Standing goal:** grind down proof engineering / assurance / argument-sensibility / refactor /
-replacement. Set 2026-07-25, run to 11am.
+replacement. Set 2026-07-25, ran to 11am — **horizon reached 2026-07-25 ~12:13**. The lane stays open as
+a record; the wound classes and instruments below are the durable output.
 
 ## The thesis
 A proof can be kernel-clean, `sorry`-free, non-vacuous *in its own terms*, and still say nothing —
@@ -94,10 +95,10 @@ Every migration is a **strengthening** (`V3 → Cons → Faithful`), and `retire
 proves migration costs a consumer nothing. What it buys, exactly: the premise no longer *forces*
 universal rejection. It does **not** prove satisfiability at the opaque `cfg*` args — nothing can.
 
-## In flight (background agents)
-- `carrier-content-fix` — R11's repair reported green on a file with 8 compile errors; fixing
-- `unknown-triage` — settle the sweep's ~28 `UNKNOWN` verdicts
-- `ext-form-cutover` — the extension-typed work is *additive*; rewire the deployed chains onto it
+## Still in flight at the horizon (harvest when convenient)
+- `felt-width-record-gap` — the statement types a 4-lane challenge; the serialized record still holds one felt
+- `r11-remainder` — the last 10 carrier-gated kernels, one counterexample or totality proof each
+- `positive-radius-schedule` — the single named blocker on the strategy-soundness composition
 
 ## Next moves (my pick)
 0. ~~Bare-premise cutover~~ · ~~`TranscriptWordCommitment`~~ · ~~duplication debt~~ · ~~base-field
