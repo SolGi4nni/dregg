@@ -1,5 +1,27 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑⚑ JULY 25 CURRENT AUTHORITY — the halls RUN house-blind (simulated); the game-engine build is underway
+
+Current authority is the 2026-07-24/25 cut. Read, in order: `docs/deos/DREX-TIER-STATUS-2026-07-24.md` (the
+truth-telling code audit), `docs/deos/THE-DARK-BAZAAR.md` §1 (re-grounded 07-25), `docs/deos/FHEGG-SAME-OPENING-APEX.md`
+(the 10-file proved apex), `docs/deos/FHEGG-SESSION-CAPSTONE-2026-07-24.md` §§6-7. The honest short version:
+
+- **All four Dark Bazaar halls RUN house-blind** under an n-of-n collective key (n−1 refused), oracle-validated
+  in `fhegg-fhe/tests/` + as `Offering`s (`DarkPoolOffering`, `OraclePitOffering`). Three security teeth run:
+  smudge floor, share binding, quorum necessity.
+- **But it is not on a live path yet:** every ceremony is SIMULATED in one process (not distributed);
+  Oracle Pit / Dark Pool are NOT in `CATALOG_KEYS` (surface only in tests); the one "LIVE" hall (Sealed
+  Exchange) clears by PLAINTEXT bid reveal; the same-opening apex is PROVED + EMITTED but has ZERO Rust
+  consumers (an unwired seam); decrypt/relin are honest-party only (active-malice open — §3.2 VSS same-opening
+  proved-but-unenforced); the MPC crossing is semi-honest.
+- **GPU wins MEASURED** (multiply 3.35×/5.13×, TFHE bootstrap 2.5–2.9× at deployed N=4096; fold loses). No GPU
+  BFV ct×ct built yet (`bfv_gpu_mul` spec'd).
+- **`fhe` compiles to wasm32 (confirmed 07-25)** → the extension can hold a real threshold share in-browser.
+- **The build is underway:** the `streamed-cooking-shannon` program (game-engine-complete suite: no fakes +
+  malicious-secure + GPU-fast, four halls, distributed ceremony, web/tg/discord). DrEX `/clear` is broken by a
+  named regression (`intent/verified_settle.rs:351`, gate never registered); `/prove-shielded` unreachable
+  (ring3/market4 allowlist + hardcoded epsilon — a Lean-emission fix).
+
 ## ⚑⚑⚑⚑ JULY 22 CURRENT AUTHORITY ALERT — repaired quarantines, live game rail, shielded apex open
 
 Current authority is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md` and the
