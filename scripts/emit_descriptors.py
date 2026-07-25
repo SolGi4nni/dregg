@@ -52,7 +52,11 @@ Modes:
                          checked-in by-name/ set and the stamp, BOTH directions.
                          Static parse of the .lean — no Lean run, no cargo, seconds
                          — so it still works while the emit is blocked (which is
-                         exactly when a routing gap can sit unnoticed).
+                         exactly when a routing gap can sit unnoticed). ALSO runs
+                         the second door: every literal `include_str!`/
+                         `include_bytes!` target in tracked Rust must EXIST and be
+                         TRACKED (an untracked one compiles only for the lane that
+                         emitted it — see verify_include_targets).
   --list-emitter-modules print the Lean modules the emitters import (one per line)
                          — the set that must be `lake build`-ed for the emit to run
                          on a cold checkout. Derived from the emitters' own imports;
@@ -948,7 +952,245 @@ def verify_by_name_routing() -> list[str]:
         + (f" · {len(inflight)} routed-but-untracked (in flight): {', '.join(inflight)}"
            if inflight else "")
     )
+
+    # THE SECOND DOOR — see verify_include_targets. The Lean table is one way an artifact gets
+    # claimed; a Rust `include_str!` is the other, and the four legs above cannot see it.
+    findings.extend(verify_include_targets())
+
     sys.stdout.flush()  # so the summary precedes the findings this returns (stderr)
+    return findings
+
+
+# ---- THE SECOND DOOR: `include_str!` / `include_bytes!` of an artifact -------------------
+#
+# `verify_by_name_routing` above reconciles the LEAN routing table against the checked-in
+# by-name set. It cannot see the other way an artifact gets claimed: a Rust
+# `include_str!("../descriptors/by-name/X.json")`. That macro is resolved by rustc at COMPILE
+# time, so an absent or untracked target is not a soft drift — the crate does not build, and
+# every crate downstream of it does not build. Both directions of that were live at once:
+#
+#   * INCLUDE-GHOST — the target exists NOWHERE. An unconditional compile break for everyone.
+#   * INCLUDE-UNTRACKED — the target exists on the author's disk but is not tracked by git.
+#     Green for the lane that emitted it, RED for every co-tenant and every fresh clone. This
+#     is the direction nothing else in the tree can see: the Lean door treats an on-disk
+#     untracked artifact as "in flight" and (correctly, for ITS question) stays quiet, the
+#     emit's coverage check walks files that exist, and `cargo check` on the author's box
+#     passes. It shipped exactly this way — `descriptor_by_name.rs` include_str'd
+#     `dfa-routing-table-exact-public-v1.json` while the artifact was uncommitted.
+#
+# Deliberately NOT scoped to descriptors. An absent `include_str!` target is a compile break
+# whatever the file is, and scoping the class to `circuit/descriptors/` would have made the
+# check a description of the one instance we happened to find rather than of the shape.
+#
+# Reads the WORKING TREE of tracked `*.rs` (not `HEAD:`) on purpose: the ~1s preflight in
+# `scripts/check-descriptor-drift.sh` is meant to catch this BEFORE the commit lands. In CI the
+# two are the same bytes.
+_INCLUDE_MACRO = re.compile(r'\binclude_(?:str|bytes)!\s*\(\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\)')
+# Non-literal forms (`concat!(env!("OUT_DIR"), ..)`, a macro-built path). Nothing here can
+# resolve those, so they are COUNTED and reported rather than silently dropped — a growing
+# count is the signal that this check's coverage is shrinking.
+_INCLUDE_MACRO_ANY = re.compile(r'\binclude_(?:str|bytes)!\s*\(')
+
+INCLUDE_SCAN_EXCLUDED_DIRS = (
+    # `scripts/mirror-gates/canary/` is the mirror gate's OWN falsification corpus: hand-written
+    # .rs fixtures that must EXHIBIT the flaw shapes `scripts/mirror-gates/mirror_gates.py`
+    # hunts for, so that a gate which stopped detecting them reds. No cargo target compiles
+    # them (they are not in any crate), and `A2__circuit-prove__tests__self_golden.rs`
+    # include_str's a `canary.json` that deliberately does not exist. Named here, with the
+    # reason, rather than skipped by some generic "looks like a fixture" rule — an exclusion
+    # from a build gate is a decision that belongs on the record.
+    "scripts/mirror-gates/canary/",
+)
+
+
+def _rust_comment_spans(text: str, path: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Lex `text` as Rust far enough to return (comment spans, string spans).
+
+    Needed because a regex alone cannot tell code from prose: `hints/benches/criterion.rs:11`
+    carries a COMMENTED-OUT `include_str!("big_committee.json")` whose target is genuinely
+    absent, and a check that reds on it is a check people learn to ignore. Handles line and
+    (nested) block comments, plain/byte/raw strings, and the char-literal-vs-lifetime
+    ambiguity (`'a'` vs `'static`).
+
+    FATAL on an unterminated comment or string: that is a real syntax error, and a lexer that
+    guessed past it would be reporting on a file it read wrong."""
+    comments: list[tuple[int, int]] = []
+    strings: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            comments.append((i, j))
+            i = j
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1; j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1; j += 2
+                else:
+                    j += 1
+            if depth:
+                sys.exit(
+                    f"emit_descriptors: {path} — unterminated /* block comment (depth "
+                    f"{depth} at EOF). This lexer will not report on a file it cannot read."
+                )
+            comments.append((i, j))
+            i = j
+        elif c == "r" or (c == "b" and text.startswith("br", i)):
+            # raw string: r"..", r#".."#, br"..", br#".."#  — else an ordinary identifier
+            k = i + (2 if c == "b" else 1)
+            h = 0
+            while k + h < n and text[k + h] == "#":
+                h += 1
+            if k + h < n and text[k + h] == '"':
+                close = '"' + "#" * h
+                j = text.find(close, k + h + 1)
+                if j < 0:
+                    sys.exit(f"emit_descriptors: {path} — unterminated raw string literal.")
+                strings.append((i, j + len(close)))
+                i = j + len(close)
+            else:
+                i += 1
+        elif c == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == '"':
+                    break
+                else:
+                    j += 1
+            if j >= n:
+                sys.exit(f"emit_descriptors: {path} — unterminated string literal.")
+            strings.append((i, j + 1))
+            i = j + 1
+        elif c == "'":
+            # char literal (`'a'`, `'\n'`, `'\u{1F600}'`) vs lifetime/label (`'a`, `'static:`).
+            if i + 1 < n and text[i + 1] == "\\":
+                j = i + 2
+                while j < n and text[j] != "'":
+                    j = j + 2 if text[j] == "\\" else j + 1
+                strings.append((i, min(j + 1, n)))
+                i = min(j + 1, n)
+            elif i + 2 < n and text[i + 2] == "'":
+                strings.append((i, i + 3))
+                i += 3
+            else:
+                i += 1  # a lifetime — consume only the tick
+        else:
+            i += 1
+    return comments, strings
+
+
+def _tracked_rust_files() -> tuple[list[str], bool]:
+    """Tracked `*.rs` paths (repo-relative), and whether a git index answered.
+
+    Without a git index (a vendored export, or the rsync'd remote build lane `scripts/pbuild`,
+    which excludes `.git/`) the UNTRACKED leg is not computable — the caller degrades that leg
+    and says so, same label discipline as `by_name_present`."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.rs"],
+            capture_output=True, text=True,
+        )
+        if out.returncode == 0:
+            files = [p for p in out.stdout.split("\0") if p]
+            if files:
+                return files, True
+    except OSError:
+        pass
+    return sorted(
+        p.relative_to(ROOT).as_posix()
+        for p in ROOT.rglob("*.rs")
+        if p.is_file() and ".git/" not in p.as_posix() and "/target/" not in p.as_posix()
+    ), False
+
+
+def verify_include_targets() -> list[str]:
+    """Every literal `include_str!`/`include_bytes!` target in tracked Rust must EXIST and be
+    TRACKED. Returns finding lines (empty == clean); prints a one-line summary."""
+    files, have_index = _tracked_rust_files()
+    tracked_paths: set[str] = set()
+    if have_index:
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True
+        )
+        tracked_paths = {p for p in out.stdout.split("\0") if p}
+
+    findings: list[str] = []
+    n_sites = n_nonliteral = 0
+    excluded = 0
+    for rel in files:
+        if rel.startswith(INCLUDE_SCAN_EXCLUDED_DIRS):
+            excluded += 1
+            continue
+        p = ROOT / rel
+        try:
+            text = p.read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            sys.exit(
+                f"emit_descriptors: cannot read tracked Rust source {rel} ({e}). Refusing to "
+                "report a pass over a file this check could not scan."
+            )
+        if "include_str!" not in text and "include_bytes!" not in text:
+            continue
+        comments, strings = _rust_comment_spans(text, rel)
+        blanked = list(text)
+        for a, b in comments:
+            for k in range(a, b):
+                if blanked[k] != "\n":
+                    blanked[k] = " "
+        blanked = "".join(blanked)
+        # A match must not itself sit inside a string literal (a test that embeds Rust source
+        # as a string is not a compile-time include).
+        in_string = [(a, b) for a, b in strings]
+
+        def quoted(off: int) -> bool:
+            return any(a < off < b for a, b in in_string)
+
+        literal_starts = set()
+        for m in _INCLUDE_MACRO.finditer(blanked):
+            if quoted(m.start()):
+                continue
+            literal_starts.add(m.start())
+            n_sites += 1
+            line = blanked.count("\n", 0, m.start()) + 1
+            target = (p.parent / m.group(1)).resolve()
+            try:
+                trel = target.relative_to(ROOT).as_posix()
+            except ValueError:
+                trel = target.as_posix()  # escapes the repo — reported as-is below
+            if not target.exists():
+                findings.append(
+                    f"INCLUDE-GHOST: {rel}:{line} `include_str!/include_bytes!` of "
+                    f"`{m.group(1)}` -> {trel}, which does not exist. `include_*!` is resolved "
+                    f"by rustc at COMPILE time, so this crate and everything downstream of it "
+                    f"CANNOT BUILD. Commit the artifact (re-run its emit ceremony) or drop the "
+                    f"include and its dispatch arm — do NOT `#[cfg]`-gate the include away."
+                )
+            elif have_index and trel not in tracked_paths:
+                findings.append(
+                    f"INCLUDE-UNTRACKED: {rel}:{line} `include_str!/include_bytes!` of "
+                    f"`{m.group(1)}` -> {trel}, which exists ON DISK but is NOT tracked by git. "
+                    f"It compiles for whoever emitted it and BREAKS THE BUILD for every "
+                    f"co-tenant and every fresh clone. Commit the artifact alongside the "
+                    f"include, in the same commit."
+                )
+        for m in _INCLUDE_MACRO_ANY.finditer(blanked):
+            if m.start() not in literal_starts and not quoted(m.start()):
+                n_nonliteral += 1
+
+    leg = "exists+tracked" if have_index else "exists ONLY (NO git index here — untracked leg unavailable)"
+    print(
+        f"verify-include-targets: {n_sites} literal include_str!/include_bytes! site(s) over "
+        f"{len(files)} tracked .rs · checked {leg}"
+        + (f" · {n_nonliteral} non-literal (macro-built path) site(s) NOT checkable" if n_nonliteral else "")
+        + (f" · {excluded} file(s) in named exclusions" if excluded else "")
+    )
     return findings
 
 
@@ -1423,7 +1665,8 @@ def main():
                 sys.stderr.write(f"  - {f}\n")
             sys.exit(1)
         print("verify-by-name-routing: PASS — the routing table and the checked-in "
-              "by-name set cover each other, and every routed artifact is stamped.")
+              "by-name set cover each other, every routed artifact is stamped, and every "
+              "literal include_str!/include_bytes! target exists and is tracked.")
         return
     if "--stamp-existing" in argv:
         stamp_existing()

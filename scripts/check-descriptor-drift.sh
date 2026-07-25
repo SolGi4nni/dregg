@@ -44,12 +44,19 @@ fi
 # coverage check (which walks files that EXIST, and needs the emit anyway), to
 # `--verify-provenance` (same), and to the derived-coverage test in effect_vm_descriptors.rs
 # (same). One such ghost lived a full day in HEAD before this preflight existed.
-echo "check-descriptor-drift: by-name routing round-trip (static preflight)..."
+# The SECOND DOOR rides along in the same invocation (emit_descriptors.verify_include_targets):
+# an artifact is also claimed by a Rust `include_str!`, which rustc resolves at COMPILE time, so
+# an absent or untracked target is not drift — the crate does not build. The Lean door cannot see
+# it, and an UNTRACKED target compiles for exactly one lane (the one that emitted it) and reds for
+# every co-tenant and every fresh clone. Both shipped at once: `descriptor_by_name.rs`
+# include_str'd `dfa-routing-table-exact-public-v1.json` while the artifact was uncommitted.
+echo "check-descriptor-drift: by-name routing round-trip + include_str! targets (static preflight)..."
 if ! python3 "$ROOT/scripts/emit_descriptors.py" --verify-by-name-routing; then
   echo "" >&2
-  echo "DESCRIPTOR ROUTING GAP: EmitByName.lean's table and the checked-in by-name/ set" >&2
-  echo "  do not cover each other (see the findings above). Fix the routing table or" >&2
-  echo "  commit/stamp the artifact — not this gate." >&2
+  echo "DESCRIPTOR ROUTING GAP: EmitByName.lean's table, the checked-in by-name/ set and the" >&2
+  echo "  Rust include_str!/include_bytes! targets do not cover each other (see the findings" >&2
+  echo "  above). Fix the routing table, or commit/stamp the artifact ALONGSIDE its include" >&2
+  echo "  — not this gate, and never by #[cfg]-gating the include away." >&2
   exit 1
 fi
 
