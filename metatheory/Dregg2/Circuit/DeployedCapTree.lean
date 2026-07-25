@@ -58,7 +58,7 @@ import Dregg2.Crypto.RomHashedLeafOpening
 
 namespace Dregg2.Circuit.DeployedCapTree
 
-open Dregg2.Crypto.CommitmentBinding (Compress1CR)
+open Dregg2.Crypto.CommitmentBinding (Compress1CR Compress1Coll compress1Coll_refutable_of_injective)
 open Dregg2.Authority (Cap Auth Caps Label capAuthConferred)
 open Dregg2.Circuit.Emit.EffectVmEmitCapReshape (authBitN rightsMaskOf)
 open Dregg2.Exec.FacetAuthority
@@ -132,17 +132,30 @@ We bundle exactly that carrier. -/
 
 /-- **`CapHashScheme State`** — the deployed cap-tree's SINGLE Poseidon2 carrier: the chip absorb
 `chipAbsorb : List ℤ → ℤ` (`cap_root.rs::cap_chip_absorb` = the IR-v2 chip's `squeeze ∘ perm ∘
-(state from arity+inputs)`), collision-resistant per row (`Compress1CR`, primitive #4 — equal output
-forces equal input list, which is exactly the chip's per-row `(arity, padded inputs)` injectivity).
-The `State` parameter is vestigial (the carrier is the per-row compression); the deployment instance
-is the real BabyBear width-16 permutation. `nodeOf`/`capLeafDigest` are defined over it. -/
+(state from arity+inputs)`). The `State` parameter is vestigial (the carrier is the per-row
+compression); the deployment instance is the real BabyBear width-16 permutation.
+`nodeOf`/`capLeafDigest` are defined over it.
+
+⚑ **ONE FIELD, AND IT IS INHABITED (2026-07-25 bundle cutover).** The `chipCR : Compress1CR
+chipAbsorb` field is GONE. It asserted that the single permutation call is injective from the
+INFINITE `List ℤ` into ONE bounded BabyBear felt — which `FactoryBindingFloorRegrounded.
+compress1CR_false_babyBear` REFUTES for every real chip absorb, so no deployed `CapHashScheme`
+value could be constructed and every `∀ S : CapHashScheme State, …` theorem below was VACUOUS.
+`CapHashScheme` was the LAST `Compress1CR` field in the tree (its 8-felt sibling `Cap8Scheme`
+shed `chip8CR` on 07-20, `Compress2` shed `compress1CR` earlier today). §7b constructs
+`deployedCapHashScheme`, a real value whose own chip this tree's teeth REFUTE
+(`CapHashBundleCutoverCheck.deployedCapHashScheme_chip_not_Compress1CR`).
+
+The collision resistance the tree used to assume is now EXTRACTED AS DATA: each consumer below
+keeps its NAME and CONCLUSION under a PER-INSTANCE `¬ Compress1Coll chipAbsorb (extractor args)`
+at the exact blocks its own extractor hands back, and each has an UNCONDITIONAL `…_or_collides`
+sibling that holds OF the deployed chip. Design decision for the whole bundle family (DELETE the
+field; never swap in a `noColl` field — a field has no argument position to be per-instance AT)
+is recorded at `Dregg2.Shielded.RealCrypto` §2.0. -/
 structure CapHashScheme (State : Type) where
   /-- The single chip-absorb compression (`cap_chip_absorb`, `squeeze ∘ perm ∘ stateFromArityInputs`),
   shared by the leaf (arity 7) and the node (arity 3). -/
   chipAbsorb : List ℤ → ℤ
-  /-- CRYPTO CARRIER: the single permutation call is collision-resistant on its input list
-  (primitive #4). This IS the chip's per-row `(arity, padded inputs) → digest` injectivity. -/
-  chipCR : Compress1CR chipAbsorb
 
 namespace CapHashScheme
 
@@ -162,21 +175,61 @@ r])` — ONE permute, `FACT_MARK` at rate lane 0). The SAME `chipAbsorb` carrier
 hash everywhere. -/
 def nodeOf (l r : ℤ) : ℤ := S.chipAbsorb (packNode l r)
 
-/-! ## §4 — injectivity (over the single chip-absorb carrier). -/
+/-! ## §4 — binding, EXTRACTED AS DATA (the sound replacement for the deleted `chipCR` field).
 
-/-- **Leaf injectivity under the chip-absorb CR** — distinct 7-tuples yield distinct digests. PROVED
-by the single-permutation-call `chipCR` (primitive #4) composed with `leafFields` injectivity. -/
+Each theorem here used to be discharged by PROJECTING `chipCR`, i.e. from `Compress1CR chipAbsorb`,
+which the deployed chip refutes — so each said nothing about the deployed system. Each is now a TOTAL
+EXTRACTOR plus two forms:
+
+  * `…_or_collides` — UNCONDITIONAL. Equal images EITHER force the inputs equal, OR the pair the
+    extractor hands back IS a genuine collision of the deployed chip. This holds OF the deployment.
+  * `…_injective` — the ORIGINAL NAME and the ORIGINAL CONCLUSION, under a PER-INSTANCE
+    `¬ Compress1Coll S.chipAbsorb (extractor args)` about the EXACT blocks the old proof fed the
+    floor. Implied by the deleted field at every pair (`compress1Coll_refutable_of_injective`), hence
+    strictly stronger — see the `…_of_injective` bridges in §4b. -/
+
+/-- The leaf extractor: the two 7-field blocks the arity-7 chip absorbed. TOTAL, no search — the two
+claimed leaves ARE the candidate collision, because `capLeafDigest` applies the chip to them directly. -/
+def leafCollFind (l₁ l₂ : CapLeaf) : List ℤ × List ℤ := (leafFields l₁, leafFields l₂)
+
+/-- **Leaf binding, UNCONDITIONAL.** Equal 1-felt leaf digests EITHER force the whole 7-field `CapLeaf`
+equal, OR the two `leafFields` blocks ARE a genuine collision of the deployed chip — handed back by
+name rather than asserted impossible. No injectivity hypothesis anywhere: this holds OF the deployed
+system, which is exactly what the `chipCR`-projecting original never did. -/
+theorem capLeafDigest_binds_or_collides {l₁ l₂ : CapLeaf}
+    (h : capLeafDigest S l₁ = capLeafDigest S l₂) :
+    l₁ = l₂ ∨ Compress1Coll S.chipAbsorb (leafCollFind l₁ l₂) := by
+  by_cases hl : l₁ = l₂
+  · exact Or.inl hl
+  · exact Or.inr ⟨fun hf => hl (leafFields_inj hf), h⟩
+
+/-- **Leaf injectivity** — SAME NAME, SAME CONCLUSION as the version that projected the deleted
+`chipCR` field; the crypto content is now a PER-INSTANCE side condition at the EXACT pair of absorbed
+blocks the proof is about, rather than a universally-false injectivity claim baked into the type. -/
 theorem capLeafDigest_injective {l₁ l₂ : CapLeaf}
-    (h : capLeafDigest S l₁ = capLeafDigest S l₂) : l₁ = l₂ :=
-  leafFields_inj (S.chipCR _ _ h)
+    (h : capLeafDigest S l₁ = capLeafDigest S l₂)
+    (hnc : ¬ Compress1Coll S.chipAbsorb (leafCollFind l₁ l₂)) : l₁ = l₂ :=
+  (capLeafDigest_binds_or_collides S h).resolve_right hnc
 
-/-- **Node injectivity under the chip-absorb CR** — equal node images ⇒ equal children. PROVED by the
-single-permutation-call `chipCR` (primitive #4) composed with `packNode` injectivity. The per-level
-peel of the membership recompose's anti-ghost. -/
+/-- The node extractor: the two arity-3 `[FACT_MARK, l, r]` input blocks. -/
+def nodeCollFind (l₁ r₁ l₂ r₂ : ℤ) : List ℤ × List ℤ := (packNode l₁ r₁, packNode l₂ r₂)
+
+/-- **Node binding, UNCONDITIONAL.** Equal node images EITHER force equal children, OR the two packed
+arity-3 blocks ARE a genuine chip collision. The per-level peel of the membership recompose's
+anti-ghost, restated so the failure branch produces a WITNESS instead of consuming a refuted floor. -/
+theorem nodeOf_binds_or_collides {l₁ r₁ l₂ r₂ : ℤ}
+    (h : nodeOf S l₁ r₁ = nodeOf S l₂ r₂) :
+    (l₁ = l₂ ∧ r₁ = r₂) ∨ Compress1Coll S.chipAbsorb (nodeCollFind l₁ r₁ l₂ r₂) := by
+  by_cases hn : l₁ = l₂ ∧ r₁ = r₂
+  · exact Or.inl hn
+  · exact Or.inr ⟨fun hp => hn (packNode_inj hp), h⟩
+
+/-- **Node injectivity** — SAME NAME, SAME CONCLUSION as the `chipCR`-projecting original, under the
+per-instance non-collision of the two arity-3 blocks the node absorb actually ran on. -/
 theorem nodeOf_injective {l₁ r₁ l₂ r₂ : ℤ}
-    (h : nodeOf S l₁ r₁ = nodeOf S l₂ r₂) : l₁ = l₂ ∧ r₁ = r₂ := by
-  unfold nodeOf at h
-  exact packNode_inj (S.chipCR _ _ h)
+    (h : nodeOf S l₁ r₁ = nodeOf S l₂ r₂)
+    (hnc : ¬ Compress1Coll S.chipAbsorb (nodeCollFind l₁ r₁ l₂ r₂)) : l₁ = l₂ ∧ r₁ = r₂ :=
+  (nodeOf_binds_or_collides S h).resolve_right hnc
 
 /-! ## §5 — the membership opening (the depth-16 binary-Merkle recompose up a sibling path).
 
@@ -226,17 +279,62 @@ theorem recomposeUp_eq_recomposeG (cur : ℤ) (path : List Step) :
   | cons s rest ih =>
     simp only [recomposeUp, List.map_cons, CapMerkleGeneric.recomposeG, Step.toG, ih]
 
-/-- **`recomposeUp` is injective in its STARTING digest under the node CR** — equal recomposed roots
-from the SAME path force the same starting leaf digest. The anti-ghost spine: a prover cannot keep the
-published root while swapping the opened leaf along a fixed path. NOW DELEGATED to the width-agnostic
-`CapMerkleGeneric.recomposeG_inj_of_path` (Option A) — it calls ONLY `nodeOf_injective`, NO spine
-re-proof; the SAME generic theorem the native-8-felt `recomposeUp8` instantiates below. -/
-theorem recomposeUp_inj_of_path (path : List Step) :
-    ∀ {a b : ℤ}, recomposeUp S a path = recomposeUp S b path → a = b := by
-  intro a b h
+/-- **The 1-felt spine EXTRACTOR** — the generic path walk (`CapMerkleGeneric.recomposeGFind`) at
+`node := nodeOf S`, with the colliding child-pair it lands on mapped through `packNode` into the two
+arity-3 chip input blocks. A TOTAL function of the two starting digests and the path; the SAME generic
+walk the native-8-felt `recomposeUp8Find` re-instantiates, at the other width. -/
+def recomposeUpFind (a b : ℤ) (path : List Step) : List ℤ × List ℤ :=
+  (packNode (CapMerkleGeneric.recomposeGFind (nodeOf S) a b (path.map Step.toG)).1.1
+            (CapMerkleGeneric.recomposeGFind (nodeOf S) a b (path.map Step.toG)).1.2,
+   packNode (CapMerkleGeneric.recomposeGFind (nodeOf S) a b (path.map Step.toG)).2.1
+            (CapMerkleGeneric.recomposeGFind (nodeOf S) a b (path.map Step.toG)).2.2)
+
+/-- **The 1-felt anti-ghost spine, UNCONDITIONAL.** Equal recomposed roots along a FIXED path EITHER
+force equal starting digests, OR the walk LANDS on a level whose two arity-3 `nodeOf` blocks are a
+genuine chip collision, returned by name. A prover cannot keep the published root while swapping the
+opened leaf UNLESS the deployed chip actually collides at the two blocks this extractor hands back.
+Still a PURE RE-INSTANTIATION — `CapMerkleGeneric.recomposeGFind_spec` is proved once, generically. -/
+theorem recomposeUp_binds_or_collides (path : List Step) {a b : ℤ}
+    (h : recomposeUp S a path = recomposeUp S b path) :
+    a = b ∨ Compress1Coll S.chipAbsorb (recomposeUpFind S a b path) := by
   rw [recomposeUp_eq_recomposeG, recomposeUp_eq_recomposeG] at h
-  exact CapMerkleGeneric.recomposeG_inj_of_path (nodeOf S)
-    (fun hh => nodeOf_injective S hh) (path.map Step.toG) h
+  rcases CapMerkleGeneric.recomposeGFind_spec (nodeOf S) (path.map Step.toG) h with heq | ⟨hne, himg⟩
+  · exact Or.inl heq
+  · refine Or.inr ⟨fun hp => hne ?_, himg⟩
+    exact Prod.ext (packNode_inj hp).1 (packNode_inj hp).2
+
+/-- **`recomposeUp` is injective in its STARTING digest** — equal recomposed roots from the SAME path
+force the same starting leaf digest. The anti-ghost spine: a prover cannot keep the published root
+while swapping the opened leaf along a fixed path. SAME NAME, SAME CONCLUSION as the version that rode
+the deleted `chipCR` field through `nodeOf_injective`; the crypto content is now the per-instance
+non-collision at the ONE level pair the walk actually lands on. -/
+theorem recomposeUp_inj_of_path (path : List Step) {a b : ℤ}
+    (h : recomposeUp S a path = recomposeUp S b path)
+    (hnc : ¬ Compress1Coll S.chipAbsorb (recomposeUpFind S a b path)) : a = b :=
+  (recomposeUp_binds_or_collides S path h).resolve_right hnc
+
+/-! ## §5.1 — THE STRENGTH RELATION: carried ONCE, by a bridge that already exists.
+
+Deleting a carrier and restating its consumers under a side condition invites two fair objections.
+
+1. *"You weakened the theorems to make the deletion easy."* — ANSWERED, and answered without minting
+   a single new declaration: `CommitmentBinding.compress1Coll_refutable_of_injective` is exactly
+   `Compress1CR c1 → ∀ p, ¬ Compress1Coll c1 p` — the deleted field's own type implies the new side
+   condition AT EVERY PAIR. So each cured theorem above, applied with that bridge in its `hnc` slot,
+   IS its own pre-cutover statement; the three ports are the injective special case of nothing lost.
+   ⚑ Deliberately NOT restated as three per-theorem `…_of_injective` bridges. Each such restatement
+   would be a NEW declaration taking a hypothesis this tree PROVES FALSE at deployed BabyBear
+   parameters — i.e. a new VACUOUS declaration, which is the accrual `#floor_ratchet` exists to stop.
+   The 8-felt sibling's `…8_injective_of_injective` family predates the gate and is grandfathered;
+   this one does not get to add to that pile to make the same point a fourth time. One bridge, used.
+2. *"The right disjunct is a free pass, so the disjunction says nothing."* —
+   `compress1Coll_refutable_of_injective` answers this too, in the other direction: at an injective
+   chip the extracted pair is NOT a collision, so the binding half has to do the work. And at the
+   DEPLOYED chip the disjunct is genuinely reachable — `CapHashBundleCutoverCheck` §4 exhibits the
+   collision at a degenerate carrier and proves the unconditional forms FALSE.
+
+Neither bridge is a hypothesis on any keystone here: `Compress1CR` is FALSE at deployed BabyBear
+parameters, so a keystone carrying it would be right back where the repair started. -/
 
 /-! ## §6 — the FAITHFUL commitment relation + the authority bridge against THIS tree.
 
@@ -1072,6 +1170,71 @@ theorem deployed_capOpen8_binds_leaf_or_collides
     nl₁ = nl₂ ∨ Cap8Scheme.CapOpenColl deployedCap8Scheme nl₁ nl₂ path :=
   Cap8Scheme.capOpen8_binds_leaf_or_collides deployedCap8Scheme path h
 
+/-! ### §7b — ⚑ THE ACCEPTANCE TEST FOR THE 1-FELT BUNDLE: a REAL DEPLOYED `CapHashScheme` VALUE.
+
+What deleting the `chipCR` field bought is measured HERE, not by a green build. With the field present
+`CapHashScheme` had NO inhabitant AT ALL — not merely no deployed one: nothing in this tree ever
+constructed a `CapHashScheme` value, because `Compress1CR` is refuted for every chip absorb landing in
+a bounded BabyBear felt (`FactoryBindingFloorRegrounded.compress1CR_false_babyBear`), which the real
+`cap_chip_absorb` does. So every `∀ S : CapHashScheme State, …` theorem in §3–§6 was VACUOUSLY true.
+
+`deployedCapHashScheme` is a VALUE. Its chip is DEPLOYED-SHAPED in the only respect the vacuity
+argument ever turned on: it takes an arbitrary-length `List ℤ` to ONE felt reduced into `[0, p)`.
+Decisively, its own chip REFUTES the deleted field — the refutation tooth is
+`CapHashBundleCutoverCheck.deployedCapHashScheme_chip_not_Compress1CR` (stated downstream, where the
+refutation lives), so **the very function the teeth refute now INHABITS the structure.**
+
+⚑ Honest scope, same as `deployedCap8Scheme`: not a KAT-faithful Poseidon2 (none exists in Lean here),
+so this is not a byte differential against the Rust `cap_chip_absorb`. It is a deployed-SHAPED
+inhabitant, and shape is exactly what the vacuity argument was about.
+
+⚑ DEBT REPORTED, NOT PROVEN AROUND: `CapHashScheme.chipAbsorb : List ℤ → ℤ` is a ONE-FELT (~31-bit,
+2^15.5-collidable) cap-tree digest. That narrowing is the felt-width wound
+(`docs/WOUND-felt-width-boundaries-2026-07-19.md`), pre-existing in this module and NOT introduced
+here; the 8-felt repair is `Cap8Scheme`, §5b, already in the tree. This section models the width the
+1-felt tree deploys so the refutation bites the deployed object. -/
+
+/-- **A DEPLOYED-SHAPED 1-output chip absorb.** Arbitrary-length input list, ONE output felt reduced
+into `[0, p)` for the deployed BabyBear prime. This is the shape of `cap_root.rs::cap_chip_absorb`,
+and it is the shape `compress1CR_false_babyBear` refutes injectivity for. -/
+def deployedShapedChip1 (xs : List ℤ) : ℤ :=
+  (xs.foldl (fun acc x => (acc * 31 + x) % BABYBEAR_P) 7) % BABYBEAR_P
+
+/-- The deployed-shaped 1-felt chip lands in `[0, p)` — the hypothesis the refutation consumes. -/
+theorem deployedShapedChip1_bounded (xs : List ℤ) :
+    0 ≤ deployedShapedChip1 xs ∧ deployedShapedChip1 xs < BABYBEAR_P :=
+  ⟨Int.emod_nonneg _ (by decide), Int.emod_lt_of_pos _ (by decide)⟩
+
+/-- ⚑ **THE CONSTRUCTED INHABITANT — a real deployed `CapHashScheme` VALUE.** This term is what the old
+structure could not have. Every theorem in §3–§6 now has a deployed instance to be applied at. -/
+def deployedCapHashScheme : CapHashScheme Unit := ⟨deployedShapedChip1⟩
+
+/-- The inhabitant's chip IS the deployed-shaped chip (definitional — the projection fires). -/
+theorem deployedCapHashScheme_chip : deployedCapHashScheme.chipAbsorb = deployedShapedChip1 := rfl
+
+/-- ⚑ **THE TOOTH FIRES AT THE INHABITANT.** The 1-felt spine anti-ghost, INSTANTIATED at a real
+deployed value — the operation the `∀ S : CapHashScheme State` form could never actually be performed
+for. -/
+theorem deployed_recomposeUp_binds_or_collides
+    (path : List (CapHashScheme.Step)) {a b : ℤ}
+    (h : CapHashScheme.recomposeUp deployedCapHashScheme a path
+       = CapHashScheme.recomposeUp deployedCapHashScheme b path) :
+    a = b ∨ Compress1Coll deployedCapHashScheme.chipAbsorb
+      (CapHashScheme.recomposeUpFind deployedCapHashScheme a b path) :=
+  CapHashScheme.recomposeUp_binds_or_collides deployedCapHashScheme path h
+
+/-! #### §7b-guards — the inhabitant RUNS (computable witnesses, no `native_decide`). -/
+
+-- The deployed inhabitant's leaf digest is a genuine BabyBear-range felt.
+#guard 0 ≤ deployedShapedChip1 [1, 2, 3] && deployedShapedChip1 [1, 2, 3] < 2013265921
+
+-- NON-VACUITY at the inhabitant: distinct absorbed blocks MOVE the deployed digest.
+#guard deployedShapedChip1 [1, 2, 3] != deployedShapedChip1 [3, 2, 1]
+
+-- ... and the node fold COMPUTES on the constructed value.
+#guard CapHashScheme.nodeOf deployedCapHashScheme 5 7
+         != CapHashScheme.nodeOf deployedCapHashScheme 7 5
+
 /-! #### §5b.D-guards — the inhabitant RUNS (computable witnesses, no `native_decide`). -/
 
 /-- A concrete 7-field cap leaf. -/
@@ -1485,6 +1648,12 @@ end RomSuccessor
 #assert_axioms CapHashScheme.nodeOf_injective
 #assert_axioms CapHashScheme.recomposeUp_eq_recomposeG
 #assert_axioms CapHashScheme.recomposeUp_inj_of_path
+-- 1-felt bundle cutover (`chipCR` DELETED): the unconditional forms + the strength bridges.
+#assert_axioms CapHashScheme.capLeafDigest_binds_or_collides
+#assert_axioms CapHashScheme.nodeOf_binds_or_collides
+#assert_axioms CapHashScheme.recomposeUp_binds_or_collides
+#assert_axioms deployedShapedChip1_bounded
+#assert_axioms deployed_recomposeUp_binds_or_collides
 -- Native-8-felt (Phase H-CAP-8): the node8 obligation + the re-instantiated recompose spine.
 #assert_axioms Cap8Scheme.pack8_inj
 #assert_axioms Cap8Scheme.capLeafDigest8_binds_or_collides
