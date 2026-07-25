@@ -171,12 +171,18 @@ pub fn wing_law() -> Ruleset {
     }
 }
 
-/// **THE WING SHAPE** — the VK class the wing's compositions ride: at most 3 subjects, 4 params
-/// each, 3 linear terms, 2 knots. The bounds are *fuel*, not content: the third subject slot is
+/// **THE WING SHAPE** — the VK class the wing's compositions ride: at most 4 subjects, 8 params
+/// each, 8 linear terms, 6 knots. The bounds are *fuel*, not content: the spare subject slots are
 /// deliberate headroom (a future third role — a roost, a rider — composes under the SAME
-/// verification key), and so is the unread `class` param.
+/// verification key), and so are the unread param slots past [`WING_PARAM_COUNT`] (which stays the
+/// wing's ACTIVE schema width; slots at or past it are canonically zero and bound as zero).
+///
+/// It is exactly Lean's `pcRealistic` — the ONE shape `paramComposeDesc` is byte-pinned at
+/// (`metatheory/Dregg2/Circuit/Emit/ParamComposeGolden.lean`). The composition AIR is Lean-authored
+/// and there is no Rust-AIR fallback, so a shape Lean has not emitted is BLOCKED, not faked; riding
+/// the pinned bound is what keeps the wing provable.
 pub fn wing_shape() -> ComposeShape {
-    ComposeShape::new(3, WING_PARAM_COUNT, 3, 2)
+    ComposeShape::new(4, 8, 8, 6)
 }
 
 /// The **Braid identity** of a companion: the low 28 bits of its content-addressed
