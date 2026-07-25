@@ -50,7 +50,7 @@ pub use attested_data::{
     attest_data, AttestedDataInput, AttestedError, AttestedFact, PayloadBinding, TrustGrade,
 };
 pub use oracle_mark::{Grade, GradedMark, MarkError, MarkPrice, MarkProvenance};
-pub use snp::SnpVerifier;
+pub use snp::{SnpVerifier, TcbVersion};
 pub use tdx::{
     apply_chutes_bindings, check_pck_chain_roots_at_pinned, chutes_report_data_binding,
     decode_quote_field, fold_tdx_measurement, parse_chutes_measurements, ChutesMeasurements,

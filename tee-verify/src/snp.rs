@@ -248,59 +248,88 @@ pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Resul
 
 /// Verifier for AMD SEV-SNP attestation reports. Fail-closed unless pinned AMD roots
 /// (ARK/ASK) are installed. The presented report bytes are `report(1184) ‖ vcek_der`.
+///
+/// **The TCB floor is required, never defaulted to all-zeros.** Every constructor that
+/// installs a trust anchor (and can therefore ACCEPT a report) takes an explicit
+/// `min_tcb` [`TcbVersion`]: a genuine report whose `REPORTED_TCB` is below it (a
+/// down-level / vulnerable-microcode chip) verifies its vendor chain but yields
+/// `tcb_ok = false`, which the [`crate::attested_data`] weld / `cell` `tee_attest.rs`
+/// gate turns into a refusal. There is no all-zeros default that would silently accept
+/// every TCB — the down-level protection is ON by default, mirroring TDX's strict
+/// `{"UpToDate"}` posture ([`crate::tdx::DEFAULT_ACCEPTED_STATUS`]). It is structurally
+/// impossible to build an *accepting* `SnpVerifier` that trusts every TCB: to accept you
+/// must pin roots, and pinning roots requires naming the floor at construction.
 pub struct SnpVerifier {
     /// Pinned AMD roots. `None` = fail-closed (reject every report).
     trust: Option<SnpTrust>,
-    /// Minimum acceptable `REPORTED_TCB`; a report below it yields `tcb_ok = false`.
+    /// Minimum acceptable `REPORTED_TCB`; a report below it yields `tcb_ok = false`. Set
+    /// once at construction by every root-pinning constructor — never defaulted to zeros
+    /// for a verifier that can accept a report (see the type-level note).
     min_tcb: TcbVersion,
 }
 
 impl SnpVerifier {
     /// A fail-closed verifier: parses + would body-verify, but with no pinned AMD roots
-    /// it rejects every report (no trust decision without ARK/ASK).
+    /// it rejects every report *before any TCB decision* (no trust anchor ⇒ no accept
+    /// path). It therefore takes no `min_tcb`: the TCB gate is unreachable without roots,
+    /// and every constructor that DOES install roots requires an explicit floor.
     pub fn new() -> SnpVerifier {
         SnpVerifier {
             trust: None,
+            // Unreachable: `trust == None` fail-closes at `verify_report` before the TCB
+            // gate. Held at the zero value only because this verifier can NEVER accept a
+            // report — it is not a floor that any accept path consults.
             min_tcb: TcbVersion::default(),
         }
     }
 
-    /// Install the pinned AMD roots (self-signed ARK DER + ASK DER) — the real chain.
-    pub fn with_pinned_roots(ark_der: Vec<u8>, ask_der: Vec<u8>) -> SnpVerifier {
+    /// Install the pinned AMD roots (self-signed ARK DER + ASK DER) — the real chain —
+    /// with the required minimum `REPORTED_TCB` floor. A genuine report below `min_tcb`
+    /// (a down-level / vulnerable-microcode chip) verifies its chain but yields
+    /// `tcb_ok = false`.
+    pub fn with_pinned_roots(
+        ark_der: Vec<u8>,
+        ask_der: Vec<u8>,
+        min_tcb: TcbVersion,
+    ) -> SnpVerifier {
         SnpVerifier {
             trust: Some(SnpTrust { ark_der, ask_der }),
-            min_tcb: TcbVersion::default(),
+            min_tcb,
         }
     }
 
     /// Install the pinned AMD roots from **PEM** (operator-friendly): the self-signed ARK
-    /// PEM + the ASK PEM. Convenience over [`SnpVerifier::with_pinned_roots`]; see
-    /// [`SnpTrust::from_pem`] and [`amd_kds_cert_chain_url`] for the real cert source.
-    /// Still fail-closed — a malformed PEM is an `Err`, never a silent accept.
-    pub fn with_pinned_roots_pem(ark_pem: &str, ask_pem: &str) -> Result<SnpVerifier, String> {
+    /// PEM + the ASK PEM, with the required minimum `REPORTED_TCB` floor. Convenience over
+    /// [`SnpVerifier::with_pinned_roots`]; see [`SnpTrust::from_pem`] and
+    /// [`amd_kds_cert_chain_url`] for the real cert source. Still fail-closed — a malformed
+    /// PEM is an `Err`, never a silent accept.
+    pub fn with_pinned_roots_pem(
+        ark_pem: &str,
+        ask_pem: &str,
+        min_tcb: TcbVersion,
+    ) -> Result<SnpVerifier, String> {
         Ok(SnpVerifier {
             trust: Some(SnpTrust::from_pem(ark_pem, ask_pem)?),
-            min_tcb: TcbVersion::default(),
+            min_tcb,
         })
     }
 
     /// Anchor to the **real AMD roots** for a SEV-SNP product line — the ARK/ASK embedded
-    /// from the AMD KDS (provenance in [`snp_chain`]). This is the production anchor: the
-    /// verifier now trusts the genuine AMD root chain, accepts a real `VCEK ← ASK ← ARK`,
-    /// and fail-closes on a forged / wrong-product / tampered chain. The remaining piece to
-    /// verify a *live* report is a real SEV-SNP `ATTESTATION_REPORT` + its VCEK from
-    /// EPYC-SNP hardware (the report-body path); the root trust here is real.
-    pub fn new_with_amd_roots(product: SnpProduct) -> Result<SnpVerifier, String> {
+    /// from the AMD KDS (provenance in [`snp_chain`]) — with the required minimum
+    /// `REPORTED_TCB` floor for that product. This is the production anchor: the verifier
+    /// trusts the genuine AMD root chain, accepts a real `VCEK ← ASK ← ARK` whose
+    /// `REPORTED_TCB` meets `min_tcb`, and fail-closes on a forged / wrong-product /
+    /// tampered chain or a down-level TCB. The remaining piece to verify a *live* report is
+    /// a real SEV-SNP `ATTESTATION_REPORT` + its VCEK from EPYC-SNP hardware (the
+    /// report-body path); the root trust here is real.
+    pub fn new_with_amd_roots(
+        product: SnpProduct,
+        min_tcb: TcbVersion,
+    ) -> Result<SnpVerifier, String> {
         Ok(SnpVerifier {
             trust: Some(SnpTrust::for_product(product)?),
-            min_tcb: TcbVersion::default(),
+            min_tcb,
         })
-    }
-
-    /// Pin a minimum `REPORTED_TCB`; reports below it get `tcb_ok = false`.
-    pub fn with_min_tcb(mut self, min_tcb: TcbVersion) -> SnpVerifier {
-        self.min_tcb = min_tcb;
-        self
     }
 }
 
@@ -477,7 +506,7 @@ mod tests {
     fn missing_vcek_fails_chain_seam() {
         // With pinned roots but no appended VCEK, the chain seam rejects (fail-closed).
         let bytes = synthetic_report();
-        let v = SnpVerifier::with_pinned_roots(vec![0u8; 4], vec![0u8; 4]);
+        let v = SnpVerifier::with_pinned_roots(vec![0u8; 4], vec![0u8; 4], TcbVersion::default());
         let err = v
             .verify_report(TeeQuoteKind::SevSnp, &bytes)
             .expect_err("no VCEK");
@@ -592,12 +621,22 @@ mod tests {
         let pki = build_pki();
         let mut proof = signed_report(&pki.vcek_signer);
         proof.extend_from_slice(&pki.vcek_der); // report(1184) || vcek_der
-        let v = SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone());
+        // Floor = the synthetic report's own REPORTED_TCB, so the genuine chain accepts
+        // AND reports tcb_ok (an at-floor chip is trusted).
+        let floor = TcbVersion {
+            bootloader: 3,
+            tee: 1,
+            snp: 8,
+            microcode: 72,
+        };
+        let v =
+            SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone(), floor);
         let claims = v
             .verify_report(TeeQuoteKind::SevSnp, &proof)
             .expect("full pipeline accepts");
         assert_eq!(claims.report_data[0], 0x00);
         assert_eq!(claims.report_data[31], 0x1F);
+        assert!(claims.tcb_ok, "at-floor TCB is trusted");
     }
 
     #[test]
@@ -605,8 +644,12 @@ mod tests {
         let pki = build_pki();
         let mut proof = signed_report(&pki.vcek_signer);
         proof.extend_from_slice(&pki.vcek_der);
-        let v =
-            SnpVerifier::with_pinned_roots_pem(&pki.ark_pem, &pki.ask_pem).expect("PEM roots load");
+        let v = SnpVerifier::with_pinned_roots_pem(
+            &pki.ark_pem,
+            &pki.ask_pem,
+            TcbVersion::default(),
+        )
+        .expect("PEM roots load");
         v.verify_report(TeeQuoteKind::SevSnp, &proof)
             .expect("pipeline via PEM roots accepts");
     }
@@ -661,7 +704,8 @@ mod tests {
     #[test]
     fn new_with_amd_roots_anchors_real_chain() {
         for product in [SnpProduct::Milan, SnpProduct::Genoa, SnpProduct::Turin] {
-            let v = SnpVerifier::new_with_amd_roots(product).expect("real AMD roots load");
+            let v = SnpVerifier::new_with_amd_roots(product, TcbVersion::default())
+                .expect("real AMD roots load");
             // A synthetic report with no appended VCEK fails the (now real-root-anchored)
             // chain seam — fail-closed, never a silent accept.
             let bytes = synthetic_report();
@@ -670,5 +714,97 @@ mod tests {
                 .expect_err("no VCEK under real roots");
             assert!(err.contains("VCEK"), "unexpected: {err}");
         }
+    }
+
+    /// Drive a GENUINE (pinned-PKI-signed) report carrying an operator-chosen
+    /// `REPORTED_TCB` through the full verify path under a verifier pinned to `floor`,
+    /// returning the extracted claims. `REPORTED_TCB` (offset 0x180) lies inside the
+    /// signed body (`< 0x2A0`), so it is written BEFORE signing — the chain + body
+    /// signature remain genuine; only the reported rung differs.
+    fn claims_for_reported_tcb(
+        pki: &TestPki,
+        reported: TcbVersion,
+        floor: TcbVersion,
+    ) -> TeeReportClaims {
+        let mut bytes = synthetic_report();
+        // Overwrite REPORTED_TCB with the chosen rung.
+        bytes[OFF_REPORTED_TCB] = reported.bootloader;
+        bytes[OFF_REPORTED_TCB + 1] = reported.tee;
+        bytes[OFF_REPORTED_TCB + 6] = reported.snp;
+        bytes[OFF_REPORTED_TCB + 7] = reported.microcode;
+        // Re-sign the (now edited) body with the VCEK private key so the report is a
+        // genuine vendor-signed quote, not a tampered one.
+        let rep = SnpReport::parse(&bytes).unwrap();
+        let sig: Signature = pki.vcek_signer.sign(rep.signed_body());
+        embed_signature(&mut bytes, &sig);
+        let mut proof = bytes;
+        proof.extend_from_slice(&pki.vcek_der); // report(1184) || vcek_der
+        let v = SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone(), floor);
+        v.verify_report(TeeQuoteKind::SevSnp, &proof)
+            .expect("a GENUINE chain+body-signed report verifies regardless of its TCB rung")
+    }
+
+    /// FALSIFIER for TEE-audit F1: the down-level-microcode gate is ON by default.
+    ///
+    /// A genuine SEV-SNP report — real VCEK ← ASK ← pinned-ARK chain, real body
+    /// signature — whose `REPORTED_TCB` is BELOW the pinned floor is a bona-fide quote
+    /// from a DOWN-LEVEL / vulnerable-microcode chip. Before the fix (`min_tcb` defaulting
+    /// to all-zeros) it passed with `tcb_ok = true`; now it MUST yield `tcb_ok = false`,
+    /// which the cell weld's `if !claims.tcb_ok` gate turns into a refusal. An at/above
+    /// floor report is accepted. There is no constructor that accepts a report without a
+    /// stated floor, so the all-zeros footgun cannot be reintroduced by forgetting a
+    /// builder call.
+    #[test]
+    fn down_level_reported_tcb_is_refused_at_or_above_is_trusted() {
+        let pki = build_pki();
+        // The pinned known-good floor: a chip must be at least this firmware/microcode rung.
+        let floor = TcbVersion {
+            bootloader: 3,
+            tee: 1,
+            snp: 8,
+            microcode: 72,
+        };
+
+        // (1) Down-level microcode (71 < 72): a GENUINE quote, but NOT trusted.
+        let down_microcode = TcbVersion {
+            bootloader: 3,
+            tee: 1,
+            snp: 8,
+            microcode: 71,
+        };
+        assert!(
+            !claims_for_reported_tcb(&pki, down_microcode, floor).tcb_ok,
+            "a genuine but down-level-microcode chip must yield tcb_ok=false (the cell weld refuses it)"
+        );
+
+        // A different component below the floor (bootloader 2 < 3) — also refused.
+        let down_bootloader = TcbVersion {
+            bootloader: 2,
+            tee: 1,
+            snp: 8,
+            microcode: 72,
+        };
+        assert!(
+            !claims_for_reported_tcb(&pki, down_bootloader, floor).tcb_ok,
+            "a down-level bootloader rung must also yield tcb_ok=false"
+        );
+
+        // (2) Exactly AT the floor — trusted.
+        assert!(
+            claims_for_reported_tcb(&pki, floor, floor).tcb_ok,
+            "a report AT the pinned floor must be tcb_ok"
+        );
+
+        // (3) ABOVE the floor on every component — trusted.
+        let above = TcbVersion {
+            bootloader: 4,
+            tee: 2,
+            snp: 9,
+            microcode: 80,
+        };
+        assert!(
+            claims_for_reported_tcb(&pki, above, floor).tcb_ok,
+            "a report above the pinned floor must be tcb_ok"
+        );
     }
 }

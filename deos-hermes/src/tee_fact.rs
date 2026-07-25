@@ -76,8 +76,9 @@ impl TeeFactVerifier {
     }
 
     /// Install a pinned-root SNP verifier (e.g.
-    /// `SnpVerifier::with_pinned_roots_pem(ark, ask)?.with_min_tcb(min)`) for the
-    /// SEV-SNP dispatch arm.
+    /// `SnpVerifier::with_pinned_roots_pem(ark, ask, min_tcb)?`) for the SEV-SNP
+    /// dispatch arm. The `min_tcb` floor is required at construction — the down-level /
+    /// vulnerable-microcode gate is ON by default, never an all-zeros accept-anything.
     pub fn with_snp(mut self, snp: SnpVerifier) -> TeeFactVerifier {
         self.snp = snp;
         self
