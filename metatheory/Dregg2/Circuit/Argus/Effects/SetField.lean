@@ -312,8 +312,13 @@ theorem setField_compile_sound
   -- circuit side: setFieldA's OWN audited FULL-STATE soundness forces the WHOLE `SetFieldSpec` on
   -- `(s, actor, cell, f, v, s')` — the reserved-slot leg carried by `hnr` (the developer-path precondition).
   have hspec : SetFieldSpec s actor cell f v s' :=
-    setfield_circuit_full_sound CH RH cmb compressN LH hCompressN hLeaf hRest hLog
-      s actor cell f v s' hnr hwf hwf' hcirc
+    -- ⚑ CUTOVER-ADAPTED: `setfield_circuit_full_sound` no longer takes the REFUTED
+    -- `logHashInjective LH`; it takes the per-instance `¬ LogColl LH …` at this call's exact
+    -- arguments. `noLogColl_of_inj` is the designed cutover bridge (the old carrier IMPLIES the
+    -- new side condition), so this site keeps its own `hLog` binder and its statement is unchanged.
+    setfield_circuit_full_sound CH RH cmb compressN LH hCompressN hLeaf hRest
+      s actor cell f v s' hnr hwf hwf'
+      (Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog) hcirc
   -- executor side: the §3 chained lift gives `execFullA s (.setFieldA …) = some ⟨k', receipt :: log⟩`, and
   -- the independent executor⟺spec corner turns THAT into `SetFieldSpec s actor cell f v ⟨k', receipt :: log⟩`.
   have hspec' : SetFieldSpec s actor cell f v
