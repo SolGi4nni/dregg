@@ -139,6 +139,146 @@ readiness claim. Captured here so they ride the same campaign.
     pin, explicitly out of the law's scope and correct by construction (it must recompute the same
     value from the authority or the pin is vacuous).
 
+- **#21 Whole-chain binding-descriptor endpoints — NEWLY LOGGED, and DOMINATED (not a wound).
+  Soundness NONE / availability NONE.** Two sites, one pair, both comparing chain anchors at lane 0:
+
+  - **Producer** `circuit-prove/src/accumulator.rs:968-978` (`finalize_binding_leaf`) —
+    `if first != summary.genesis_root[0] || last != summary.head_root[0]`, self-described as
+    "binding scalar endpoints", an HONEST narrow check rather than a misleading `X != X` message.
+  - **Verifier** `circuit-prove/src/ivc_turn_chain.rs:5485-5497` (tooth 2) — the *deployed*
+    half, on every light-client path:
+    `let expected_scalar = [genesis_root[0], final_root[0], BabyBear::new(num_turns as u32)];
+     if binding_pis[..3] != expected_scalar { … }`.
+
+  **The narrow value is all that exists on this path — verified, not assumed.** The wide anchors are
+  in hand on ONE side (`summary.genesis_root` / `head_root` are the genuine 8-felt
+  `turn_anchors8` octets since codex #4), but the other side is scalar BY CONSTRUCTION: the seam
+  witness is pushed as `self.seam_pairs.push((this_old8[0], this_new8[0]))` (`accumulator.rs:846`),
+  the K-fold path projects identically (`binding_roots`, `ivc_turn_chain.rs:750-753`), and the
+  Lean-emitted `dregg-turn-chain-binding-v2` descriptor is 7 SCALAR columns
+  `[old_root, new_root, acc_in, acc_out, idx, is_real, real_count]` with 4 SCALAR PIs
+  (`circuit/src/turn_chain_witness.rs:25-41`, mirroring
+  `Dregg2/Circuit/Emit/EffectVmEmitTurnChainBinding.lean`). So "compare all 8 felts" is **not** a
+  two-line fix here; it is a `MapOp`-class **VK-affecting Lean AIR change**, same epoch as #5/#11/#20.
+  Deliberately NOT made.
+
+  **Soundness: NONE, because the octet is bound by tooth 4 on the SAME code path.** Quoted, since
+  "something else is stronger" only excuses a narrow check if that something actually runs
+  (`ivc_turn_chain.rs:5561-5573`):
+
+  > ```rust
+  > let mut expected = Vec::with_capacity(SEG_WIDTH);
+  > expected.extend_from_slice(&genesis_root);
+  > expected.extend_from_slice(&final_root);
+  > expected.push(BabyBear::new(num_turns as u32));
+  > expected.extend_from_slice(&chain_digest);
+  > … if exposed != expected { return Err(ClaimedPublicsUnattested { … }) }
+  > ```
+
+  Tooth 4 is unconditional, in the same function body, AFTER tooth 2, and compares all 8 genesis
+  lanes + all 8 final lanes + count + all 8 digest lanes (+ the board window) against the root's
+  `expose_claim` exposure — which is derived in-circuit from the real descriptor leaves. **Every**
+  verify entry funnels through that one body: `verify_turn_chain_recursive`,
+  `…_from_parts`, `…_from_parts_with_board_window`, `verify_whole_chain_proof_bytes`,
+  `verify_turn_chain_recursive_from_blobs`, and `lightclient::verify_history` /
+  `verify_history_bytes`. So the verdict fields (`AttestedHistory`) are all tooth-4-pinned; tooth 2
+  contributes no field to any verdict, and the carried binding proof is explicitly "NO LONGER a
+  soundness dependency" since the ordered-segment close. A ~31-bit collision therefore buys only the
+  right to staple a DIFFERENT scalar seam sequence's descriptor proof onto an honest root — the
+  attested history stays the root's. **The #20 amplifier is present and still buys nothing:** the key
+  domain IS attacker-writable and grindable offline (own a cell, drive turns ⇒ ~2^31 cheap state-root
+  computations, per the #1 note below), but the grind is aimed at a comparison that decides nothing.
+
+  **Availability: NONE, and structurally so.** Both sides of both checks are the *same projection* of
+  the *same* octet, so an honest producer satisfies them by construction; a collision can only make a
+  check that should fail PASS, never make a passing check fail. (Contrast #20, where the narrow key
+  sat in a grow-only non-membership set and collisions therefore OVER-revoked ⇒ availability HIGH.
+  Same both-sides analysis, opposite conclusion, because there is no set here — just an equality.)
+
+  **The domination was already argued AND executably witnessed** at
+  `preflight/src/checks/proofs.rs` (`check_ivc_wrong_initial_root`): it flips `genesis_root[7]` —
+  a lane the scalar binding publics cannot see — and demands a refusal, so only the 8-felt segment
+  claim can be the one biting.
+
+  **What this lane found and CLOSED: the witness covered the wrong endpoint.** The wide-lane tooth
+  existed for `genesis_root` only. Across the WHOLE tree, no test or check ever flipped a non-zero
+  lane of `final_root` and asserted the RECURSIVE VERIFIER refuses — every one of the ~12 final-root
+  tampers that reach the verifier
+  (`lightclient/src/lib.rs:2215`, `dreggnet-prove-service/tests/match_fold.rs:225`,
+  `ugc-dregg/tests/proof_leaderboard.rs:138`, `pg-dregg/tests/tier_c_real_proof.rs:207`,
+  `dregg-multiway-tug`, `game-turn-slice`, `dregg-circuit-prove`'s own rotated teeth, …) flips lane 0,
+  which the NARROW tooth alone would catch, so not one of them could distinguish the two teeth. (The
+  single tree-wide exception, `circuit-prove/tests/gnark_witness_export_teeth.rs:193`, writes
+  `final_root[7]` but is a canonical-RANGE tooth on the exporter and never runs the verifier — so it
+  does not witness binding either.) The
+  final anchor is the more load-bearing endpoint — it is what the BFT quorum signs
+  (`finality_signing_message` v2) and what `verify_finalized_history`'s seam compares. Two legs added
+  to the same preflight check (scalar + wide lane 7 on `final_root`), reusing the one honest fold.
+
+  **FALSIFIED, not asserted — and the falsification is what makes the domination a fact rather than
+  a reading.** Against ONE real 2-turn `prove_turn_chain_recursive` fold (persvati, debug, 136s), each
+  endpoint was tampered at lane 0 and at lane 7 and the REFUSING TOOTH was read off the error reason
+  (teeth 2 and 4 return the same `ClaimedPublicsUnattested` variant, so only the reason text
+  distinguishes them):
+
+  > ```
+  > HONEST envelope verifies: true
+  > LEG genesis[0]: refused by TOOTH-2 (narrow, lane-0 binding publics)
+  > LEG genesis[7]: refused by TOOTH-4 (full-octet segment claim)
+  > LEG final[0]:   refused by TOOTH-2 (narrow, lane-0 binding publics)
+  > LEG final[7]:   refused by TOOTH-4 (full-octet segment claim)
+  > ```
+
+  The lane-7 rows are exactly the "lanes 1..7 disagree, lane 0 honest" perturbation: the ~31-bit
+  tooth-2 comparison PASSES them (it cannot see past lane 0) and tooth 4 is what REDs. So (i) the
+  octet genuinely is bound at BOTH endpoints, (ii) the two new legs are NOT redundant with the ~12
+  existing lane-0 tampers — those are all caught one tooth earlier, which is precisely why none of
+  them could ever have witnessed tooth 4 on the final anchor, and (iii) if tooth 4 stops covering the
+  final octet, `final[7]` flips to `ACCEPTED` while every lane-0 leg stays green — a failure mode the
+  tree previously had no tooth positioned to see.
+
+  **STANDING FALSIFIER (the liveness condition this entry exists to record).** #21 is NONE/NONE
+  *because* tooth 4 covers the octet on the same path. If any future path ever verifies the binding
+  descriptor WITHOUT the segment tooth — a "cheap" pre-check exported on its own, a bridge/settlement
+  consumer reading `binding_pis` directly, tooth 4 made conditional — then the ~31-bit endpoint
+  comparison becomes the deciding one and **#21 converts to a live soundness wound at ~2^31 offline
+  grinding**. The preflight wide legs are what go red. **Kind D**, disposition **DOMINATED**.
+
+- **#22 Grain R3 anti-ghost head binding — NEWLY LOGGED, GENUINE, and NOT dominated. Soundness HIGH
+  (rung-level) / availability NONE.** Surfaced while tracing #21's consumers.
+  `grain-verify/src/r3.rs:148` marshals `let aggregate_head = proof.final_root[0].as_u32();` and
+  `r3_verify(finalized, anchored_head: u32)` sends `"{verified} {aggregate_head} {anchored_head}"` to
+  the Lean-proven decision `r3VerifyCore (aggregateVerified) (aggregateHead anchoredHead : ℤ) :=
+  aggregateVerified && aggregateHead == anchoredHead` (`Dregg2/Grain/R3Verify.lean:69`). The
+  anti-ghost tooth — "a valid whole-history proof cannot be re-pointed at a foreign anchor" — is a
+  **~31-bit equality**.
+
+  **Why it is NOT dominated, unlike #21.** The other conjunct is self-anchored:
+  `let vk = proof.root_vk_fingerprint(); let verified = verify_whole_chain_proof_bytes(&bytes, &vk)`
+  (`r3.rs:143-145`) — the producer mints the anchor from its OWN fold, so `verified` says "this
+  supplied chain folds and self-verifies", NOT "this is the renter's chain". The head equality is
+  therefore the SOLE binding of the aggregate to the grain, and it is 31 bits wide. The width is
+  load-bearing precisely BECAUSE the VK is self-anchored; the module doc names the self-anchoring as
+  "orthogonal", which is true of the light-client path but is exactly what makes this projection
+  carry the whole weight.
+  - **Soundness.** A malicious executor host *is* the party that supplies `finalized`. It grinds its
+    own turn sequence offline (~2^31 cheap state-commit computations, no proving until the hit) for a
+    final wide anchor `W'` with `W'[0] == anchored_head`, then folds ONCE. R3 accepts a fabricated
+    history as the renter's — defeating the exact property R3 exists to establish. The wide value
+    exists on BOTH sides (the aggregate carries the 8-felt `final_root`; R1's countersigned
+    `RenterCheckpoint.head_root` is `[u8; 32]`, `grain-verify/src/lib.rs:226`) and is squeezed at the
+    seam.
+  - **Availability: NONE** (a collision only makes acceptance easier, never rejection).
+  - **Reachability, honestly.** `r3_verify` has no production caller at HEAD — only
+    `grain-verify/tests/r3_whole_history.rs` and `grain-turn/tests/r3_grain_adapter.rs`, both
+    `#[ignore]`d heavy folds. So this is a **rung-level design wound, not a live exploit**; it must be
+    closed before R3 carries any renting decision.
+  - **The fix needs LEAN, and is NOT VK-affecting.** `r3VerifyCore`'s head parameters are `ℤ`; the
+    close is to widen them (or take a wide digest) and re-point `r3_unfoolable`'s
+    `final_is_genuine_fold` rewrite at the full anchor, plus widen the `@[export] r3VerifyFFI` wire
+    and the `anchored_head: u32` API. No AIR, no descriptor, no VK — the turn-chain AIR is untouched
+    (contrast #21, whose close IS VK-affecting). Deliberately NOT made by this lane. **Kind E.**
+
 ## Update log — 2026-07-22
 
 - **#18 + #19 zkOracle / render attestation commitments — NEWLY LOGGED, code NOT touched.** Two
@@ -295,6 +435,7 @@ readiness claim. Captured here so they ride the same campaign.
 | 18 | zkOracle `content_commitment` — the **cross-leg weld** is ONE `BabyBear`, then zero-padded to 32 bytes and bound into a receipt | `zkoracle-prove/src/attestation.rs:47,89`; `dungeon-on-dregg/src/narrator.rs:417-418,1064` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `BabyBear(pub u32)`; `field_from_u64` puts it in the LAST 8 bytes of a `[u8;32]` ⇒ **looks** ~256-bit on the wire, carries ≤31 bits |
 | 19 | `RenderAttestation` — `output_commit` (the verify-gate weld) and `template_commit` (the "generated by THIS template" gate) are both single felts | `zkoracle-prove/src/render.rs:166,198,201` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `verify_render_attestation:295` gates on `output_commit`; `verify_render_reproducible:314` gates on `template_commit` |
 | 20 | Spend delegation-ancestor key — the public, fixed, system-wide "undelegated" sentinel is ONE felt in the grow-only revoked set's key domain | `circuit/src/effect_vm/trace_rotated.rs:1402,1415` | ~2^31 **offline** grind ⇒ permanent DoS on every undelegated `NoteSpend` | D | **[V]** availability HIGH / soundness NONE — same-fold-keyed `.absent` can only over-revoke; `MapOp.key : EmittedExpr` is one felt in the deployed IR ⇒ widening is VK-affecting. **The tree's one EARNED `check-no-degraded-felt` suppression** |
+| 22 | Grain R3 anti-ghost head binding — the whole-history aggregate is tied to the renter's grain by ONE felt, and the other conjunct is a SELF-anchored VK, so the 31 bits carry the entire binding | `grain-verify/src/r3.rs:148`; `Dregg2/Grain/R3Verify.lean:69` | ~2^31 **offline** grind ⇒ a lying host re-points a fabricated history at an honest anchor | E | **[V]** soundness HIGH (rung-level) / availability NONE; wide values exist on BOTH sides (8-felt `final_root`, `[u8;32]` R1 `head_root`) and are squeezed at the seam. No production caller at HEAD ⇒ design wound, not live exploit. Close needs LEAN (`r3VerifyCore : ℤ`), **not** VK |
 
 **Tier 2 (~62-bit, 4 felts):** `circuit-prove/src/dsl_leaf_adapter.rs:152` (`DFA_RC_LEN=4`, leaf exposes 8
 on the wire — cheapest real fix), `sovereign_leaf_adapter.rs:85` (`KEY_COMMIT_LEN=4`, authorizes a
@@ -303,8 +444,13 @@ sovereign turn, six lines from `COMMIT_LEN=8`), `verifier/src/lib.rs:466` (recei
 **Checked-benign (coverage, not omission):** `storage/src/bucket_commitment.rs:112`,
 `starbridge-apps/site-host/src/site.rs:174` (1-felt root is one input to a `wire_commit_8` fold that
 binds all limbs — no 31-bit intermediate); `circuit/src/effect_vm/trace.rs:673` anchor tags (all 8
-bound via `compute_effects_hash`); `commit/src/typed.rs:565` (30 bits/limb ⇒ 240-bit). Display
-strings / hash-map keys / `#[cfg(test)]` fixtures not itemized.
+bound via `compute_effects_hash`); `commit/src/typed.rs:565` (30 bits/limb ⇒ 240-bit); **#21** the
+whole-chain binding-descriptor endpoints (`circuit-prove/src/ivc_turn_chain.rs:5485` tooth 2 +
+`circuit-prove/src/accumulator.rs:970`) — DOMINATED by the segment tooth's full-octet compare on the
+same code path, argued and now witnessed at BOTH endpoints in
+`preflight/src/checks/proofs.rs::check_ivc_wrong_initial_root`; see the 07-24 entry for the standing
+liveness condition that would convert it. Display strings / hash-map keys / `#[cfg(test)]` fixtures
+not itemized.
 
 ---
 

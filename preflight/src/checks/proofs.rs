@@ -293,12 +293,35 @@ fn check_ivc_proof() -> Result<(), String> {
         .map_err(|e| format!("verifier rejected an HONEST whole-chain proof: {e}"))
 }
 
-/// ADVERSARIAL: a whole-chain proof claiming the WRONG initial (genesis) root
-/// must be REJECTED by the REAL recursive verifier. Both a scalar-lane and a
-/// wide-lane forgery are tried: lane 0 is pinned by the Lean-emitted binding
+/// ADVERSARIAL: a whole-chain proof claiming a WRONG chain ENDPOINT must be
+/// REJECTED by the REAL recursive verifier. Both endpoints are forged, each at
+/// a scalar lane and a wide lane: lane 0 is pinned by the Lean-emitted binding
 /// descriptor's scalar publics AND the root-exposed segment; lanes 1..8 are
-/// pinned ONLY by the root-exposed 8-felt segment claim, so the second leg
-/// proves the WIDE anchor binding bites on its own.
+/// pinned ONLY by the root-exposed 8-felt segment claim, so the wide legs prove
+/// the WIDE anchor binding bites on its own.
+///
+/// **Why the FINAL wide lane is here (felt-width catalogue #21).** The verifier's
+/// binding-descriptor tooth compares `binding_pis[..3]` against
+/// `[genesis_root[0], final_root[0], num_turns]` — a HEAD-LANE (~31-bit)
+/// comparison, honest about its own narrowness but narrow all the same, because
+/// the Lean-emitted `dregg-turn-chain-binding-v2` descriptor is scalar by
+/// construction (7 scalar columns, 4 scalar PIs). What makes that width harmless
+/// is the segment tooth, which compares the FULL octet against the root's
+/// exposure on the very same code path. That domination is a claim about running
+/// code, so it is witnessed here rather than asserted: the genesis wide leg has
+/// covered it since the FAITHFUL-FLOOR lift, but the FINAL anchor — the endpoint
+/// the BFT quorum signs (`finality_signing_message` v2) and the light client's
+/// seam compares — had NO wide-lane refusal tooth anywhere in the tree. Every
+/// other final-root tamper in the repo flips lane 0, which the narrow tooth
+/// alone would catch, so none of them could tell the two teeth apart. If the
+/// segment tooth ever stops covering the octet, THIS leg is what goes red.
+///
+/// Measured against one real 2-turn fold, reading the refusing tooth off the
+/// error reason (both teeth return `ClaimedPublicsUnattested`): `genesis[0]` and
+/// `final[0]` are refused by the NARROW binding publics, `genesis[7]` and
+/// `final[7]` by the FULL-OCTET segment claim. The lane-7 legs leave lane 0
+/// honest, so the narrow tooth passes them and only the octet tooth can bite —
+/// which is what makes them non-redundant with every lane-0 tamper in the tree.
 fn check_ivc_wrong_initial_root() -> Result<(), String> {
     use dregg_circuit_prove::ivc_turn_chain::{
         WholeChainProofBytes, verify_whole_chain_proof_bytes,
@@ -333,6 +356,37 @@ fn check_ivc_wrong_initial_root() -> Result<(), String> {
         return Err(
             "MOCK-GRADE verifier: a whole-chain proof claiming a WRONG genesis root \
              (wide lane 7) was ACCEPTED — the 8-felt genesis anchor is not bound"
+                .into(),
+        );
+    }
+
+    // WRONG FINAL root, scalar lane: refused. This is the lane the binding
+    // descriptor's scalar publics pin, so either tooth can refuse it — which is
+    // exactly why it cannot witness the wide leg below.
+    let mut wrong_final = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    wrong_final.final_root[0] ^= 1;
+    if verify_whole_chain_proof_bytes(&wrong_final.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain proof claiming a WRONG final root \
+             (scalar lane) was ACCEPTED — the final-state anchor is not bound"
+                .into(),
+        );
+    }
+
+    // WRONG FINAL root, wide lane — the tooth this check was extended for. The
+    // narrow binding-descriptor comparison CANNOT see lanes 1..8, so a refusal
+    // here is the root-exposed 8-felt segment claim biting alone on the endpoint
+    // the quorum signs. An accept here means the deployed final anchor is only as
+    // strong as its ~31-bit head lane.
+    let mut wide_final = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    wide_final.final_root[7] ^= 1;
+    if verify_whole_chain_proof_bytes(&wide_final.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain proof claiming a WRONG final root \
+             (wide lane 7) was ACCEPTED — the 8-felt final anchor is bound only at \
+             its head lane, so the whole-chain endpoint is a ~31-bit boundary"
                 .into(),
         );
     }
