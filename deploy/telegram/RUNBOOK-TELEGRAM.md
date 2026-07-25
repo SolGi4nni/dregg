@@ -20,13 +20,31 @@ recorded — the binary HAS been rebuilt since, and is STILL pre-fix):
 ⚑ So every behaviour report dated on or before 2026-07-25 — the invisible `/offerings`, the dead
 post-restart button, the thin `/help`, `/descent` answered with silence — is a report about the
 PRE-FIX bot. The repair is committed (`c5a3a963e0`) and tested in the repo; it is **not deployed**.
-Deploying it needs a `git pull` on the box first, then the rebuild-and-copy below.
+⚑⚑ **THE `git pull` ROUTE BELOW DOES NOT WORK ON hbox AS IT STANDS — MEASURED 2026-07-25 19:xx.**
+hbox's `~/dev/breadstuffs` is a **co-tenant working checkout**, not a deploy checkout:
+
+- it is on a **DETACHED HEAD** (`fdfef4613`, a commit that does not exist in the laptop's history),
+- its `origin` is a **LOCAL BARE REPO** — `/home/hbox/dev/breadstuffs.git`, *not* `github:emberian/dregg`,
+- that HEAD is **not an ancestor of even its own `origin/main`**, and
+- it holds **1732 uncommitted files**.
+
+So `git pull` there will not fast-forward to a laptop commit, and `git checkout` would trample a
+co-tenant's live work (hbox is shared — codex owns the datacake HOL build on it). **Do not check out
+or pull on hbox to deploy.** Two honest routes, both requiring a decision that is ember's:
+
+1. **Push to GitHub, then pull on the box** — but `emberian/dregg` is **PUBLIC**, and the laptop
+   typically carries a queue of *other lanes'* unreviewed commits, so a push publishes more than the
+   telegram fix. Ember's call, not a lane's.
+2. **Build in a FRESH directory on hbox** from a synced copy of the committed state, leaving
+   `~/dev/breadstuffs` untouched. Costs a cold release build; wrap it in `swarm-build` (never bare
+   cargo — concurrent codegen has physically OOM'd that box) and expect it to be slow.
 
 **A restart does NOT pick up new code** — `ExecStart` points at the copied binary, not at
-`target/`. Rebuilding and copying is a deliberate step:
+`target/`. Rebuilding and copying is a deliberate step. The command below is the SHAPE of the deploy;
+fix the source-delivery step per the note above before running it:
 
 ```
-ssh hbox 'cd ~/dev/breadstuffs && git pull \
+ssh hbox 'cd <A CHECKOUT YOU OWN, NOT ~/dev/breadstuffs> \
   && swarm-build cargo build --release -p dreggnet-telegram \
   && install -m 755 target/release/dreggnet-telegram-bot ~/dregg-telegram/dreggnet-telegram-bot \
   && systemctl --user restart dregg-telegram-bot'
