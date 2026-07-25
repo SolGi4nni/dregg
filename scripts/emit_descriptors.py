@@ -1717,6 +1717,28 @@ def verify_workflow_refs() -> list[str]:
         ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True
     ).stdout.split("\0") if p}
 
+    # THE SCOPE, made a TOOTH instead of a footnote. This leg reads `.github/workflows/*` and
+    # nothing else. A LOCAL COMPOSITE ACTION (`.github/**/action.yml`) also carries `run:` steps
+    # that invoke repo paths — the identical wound in the identical medium — but its relative-path
+    # resolution is NOT the same (a composite action's `uses:` is relative to the ACTION dir while
+    # its `run:` cwd is the workspace root), so scanning one with this file's resolution model
+    # would report on a semantics it does not implement. There are ZERO composite actions in the
+    # tree, which is what makes the scope claim above exhaustive TODAY. The moment that stops
+    # being true this must fail, because the alternative is a checker that silently stops covering
+    # a medium it never announced it had dropped — the exact way a gate becomes decoration.
+    composite = sorted(p for p in tracked
+                       if p.startswith(".github/") and not p.startswith(".github/workflows/")
+                       and p.rsplit("/", 1)[-1] in ("action.yml", "action.yaml"))
+    if composite:
+        sys.exit(
+            "emit_descriptors: a LOCAL COMPOSITE ACTION is now tracked (" + ", ".join(composite)
+            + ") and verify_workflow_refs does not scan it. Its `run:` steps invoke repo paths "
+            "exactly like a workflow's, so this leg's coverage claim is no longer exhaustive. "
+            "EXTEND the leg to composite actions (mind the resolution difference: `uses:` is "
+            "relative to the action directory, `run:` cwd is the workspace root) — do not silence "
+            "this by deleting the check."
+        )
+
     # (lineno, kind, token, resolved_rel) for the sites that survive to the exists+tracked test,
     # and a reason-tagged bucket for every site that does not.
     findings: list[str] = []
