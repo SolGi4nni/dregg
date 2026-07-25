@@ -51,15 +51,15 @@
 //
 // ## HONEST SCOPE / NAMED RESIDUALS (current-resolution)
 //
-//   - The current LC AIR slices expose the finalized root as a SINGLE BabyBear
-//     anchor felt (LightClientEthAir.lean §5: "the anchors are published but
-//     not yet arithmetically bound to the carrier bits"), i.e. a 31-bit
-//     stand-in, NOT the full 256-bit state root. BindPeerFinalityLanes packs
-//     the descriptor's root felt(s) radix-2^31 and 128-bit-splits the result
-//     into (rootHi, rootLo) — for the length-1 anchor that is rootHi=0,
-//     rootLo=anchor, which the on-chain splitRoot recomposes exactly. When the
-//     next LC-AIR iteration exposes the real root as N felts, the SAME gadget
-//     packs them with no wrap↔registry interface change (RootLanes grows).
+//   - ETH now exposes the FULL 256-bit finalized state root as 9 radix-2^31
+//     limbs (LightClientEthAir.lean, FIN_STATE_ROOT_LIMBS=9, MSB-first),
+//     bound one-limb-per-PI; BindPeerFinalityLanes packs them radix-2^31 and
+//     128-bit-splits into (rootHi, rootLo), which the on-chain splitRoot
+//     recomposes exactly — so the wrap binds all 256 bits (no 31-bit collision).
+//     tm/sol/mid still expose a SINGLE BabyBear anchor felt (a 31-bit stand-in,
+//     the published-not-yet-bound residual); for the length-1 anchor rootHi=0,
+//     rootLo=anchor. The SAME gadget serves both (RootLanes grows) — the next
+//     tm/sol/mid AIR iteration widens them to 9 limbs with no interface change.
 //   - eth/tm expose no HEIGHT felt yet; for those chains Height rides as a
 //     published peer lane not yet bound to a claim felt (HeightLane = -1). sol
 //     (slot) and mid (round) DO expose a height felt and bind it.
@@ -156,17 +156,18 @@ var (
 	PeerChainIdMidnight = big.NewInt(2718)
 )
 
-// EthLcPeerMap — ETH/Base LC (PIs committee_root[0], fin_state_root[1],
-// domain_gvr[2]). Records fin_state_root as the finality root; no height felt
-// yet (HeightLane = -1). Use PeerChainIdBase for the Base instance.
+// EthLcPeerMap — ETH/Base LC (PIs committee_root[0], fin_state_root as 9
+// radix-2^31 limbs[1..9] (full 256-bit, MSB-first), domain_gvr[10]). Records the
+// full fin_state_root as the finality root; no height felt yet (HeightLane = -1).
+// Use PeerChainIdBase for the Base instance.
 func EthLcPeerMap(chainID *big.Int) PeerLaneMap {
 	return PeerLaneMap{
 		Name:        "eth-lightclient",
-		PiCount:     3,
+		PiCount:     11,
 		ChainID:     chainID,
 		ChainIDLane: -1,
 		HeightLane:  -1,
-		RootLanes:   []int{1}, // fin_state_root
+		RootLanes:   []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, // fin_state_root, 9 limbs (full 256-bit)
 	}
 }
 
@@ -226,8 +227,8 @@ func BindPeerFinalityLanes(bb *BBApi, claim []frontend.Variable, m PeerLaneMap, 
 	if len(claim) != m.PiCount {
 		panic("BindPeerFinalityLanes: claim channel length != descriptor piCount")
 	}
-	if len(m.RootLanes) == 0 || len(m.RootLanes) > 8 {
-		panic("BindPeerFinalityLanes: RootLanes must carry 1..8 felts (radix-2^31 injective bound)")
+	if len(m.RootLanes) == 0 || len(m.RootLanes) > 9 {
+		panic("BindPeerFinalityLanes: RootLanes must carry 1..9 felts (radix-2^31; 9 limbs = full 256-bit root)")
 	}
 
 	// ---- chainId lane: the baked per-chain constant.

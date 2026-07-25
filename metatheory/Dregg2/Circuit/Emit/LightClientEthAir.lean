@@ -50,18 +50,28 @@ below are the hook it attaches to.
 
 ## Public inputs (the addressing layer — what the proof is ABOUT)
 
-`PI[0] = COMMITTEE_ROOT`   — the TRUSTED sync-committee root (the WS-checkpoint anchor the BLS carrier
-                             is a verify against). This is the trust root the proof is relative to.
-`PI[1] = FIN_STATE_ROOT`   — the claimed FINALIZED execution state root B (the EVM `state_root` a
-                             proof-of-holdings later opens against).
-`PI[2] = DOMAIN_GVR`       — the fork/domain (genesis-validators-root-derived signing domain).
+`PI[0]     = COMMITTEE_ROOT`       — the TRUSTED sync-committee root (the WS-checkpoint anchor the BLS
+                             carrier is a verify against). The trust root the proof is relative to.
+`PI[1..9]  = FIN_STATE_ROOT[0..8]` — the claimed FINALIZED execution state root B: the FULL 256-bit
+                             EVM `state_root` (`eth-lightclient`'s `FinalizedExecution.
+                             execution_state_root`, a `[u8;32]`) exposed as its NINE radix-`2^31`,
+                             MOST-SIGNIFICANT-limb-first limbs (`⌈256/31⌉ = 9`; the top limb carries
+                             the residual 8 bits). FELT-WIDTH CLOSE: the earlier single anchor felt
+                             bound only a 31-bit PROJECTION of the root, so two 256-bit roots
+                             agreeing in 31 bits both verified — a soundness gap at the peer-wrap
+                             boundary. Nine PI-bound limbs bind the WHOLE root; the peer-wrap's
+                             radix-`2^31` MSB-first pack over `PI[1..9]` recomposes it before its
+                             128-bit split.
+`PI[10]    = DOMAIN_GVR`           — the fork/domain (genesis-validators-root-derived signing domain).
 
 These ride as published witness columns pinned to the public inputs (`.piBinding`), so a verifier
-sees WHICH committee-root and WHICH state-root the proof speaks of. NOT-YET-CLOSED (named residual):
-in this carrier slice the anchors are published but not yet arithmetically bound to the carrier bits
-(that binding IS the in-AIR-crypto iteration — `BLS_OK` derived from `COMMITTEE_ROOT` + signing root,
-`FIN_OK`/`EXEC_OK` derived from the branch folds into `FIN_STATE_ROOT`). So `airAccepts` (the LOGIC
-refinement) is stated over the eight projections; the anchor pins are the addressing layer around it.
+sees WHICH committee-root and WHICH (full 256-bit) state-root the proof speaks of. NOT-YET-CLOSED
+(named residual, UNCHANGED by this widening): in this carrier slice the anchors are published but not
+yet arithmetically bound to the carrier bits (that binding IS the in-AIR-crypto iteration — `BLS_OK`
+derived from `COMMITTEE_ROOT` + signing root, `FIN_OK`/`EXEC_OK` derived from the branch folds into
+`FIN_STATE_ROOT`). So `airAccepts` (the LOGIC refinement) is stated over the eight projections; the
+anchor pins are the addressing layer around it — this change widens the ROOT anchor from 31 bits to
+the full 256, orthogonal to (and leaving untouched) the logic refinement.
 
 ## Witness (the update)
 
@@ -85,8 +95,8 @@ the SAME no-forgery theorem the gate carries (the carriers are `EthLeaf` fields 
 | execution branch depth 4                    | `decide (el=4)`                            | `.gate (EL − 4)`                          |
 | execution reconstruct ok (carrier)         | `execOk`                                   | `.gate (EXEC_OK − 1)`                     |
 | trusted committee root is public           | (addressing)                               | `.piBinding first COMMITTEE_ROOT 0`      |
-| claimed finalized state root is public     | (addressing)                               | `.piBinding first FIN_STATE_ROOT 1`      |
-| signing domain / gvr is public             | (addressing)                               | `.piBinding first DOMAIN_GVR 2`          |
+| finalized state root (full 256b) is public | (addressing; nine limbs)                   | `.piBinding first (FIN_STATE_ROOT i) (1+i)`, `i<9` |
+| signing domain / gvr is public             | (addressing)                               | `.piBinding first DOMAIN_GVR 10`         |
 
 The range lookup is the LOAD-BEARING quorum tooth: `QDIFF = 3·pc − 1024 ∈ [0, 2^11)` iff `1024 ≤ 3·pc`
 with no field-wrap escape (a sub-quorum `pc = 341` gives `QDIFF = −1`, far outside the interval —
@@ -126,7 +136,9 @@ open Dregg2.Bridge.LightClientEthGate
 /-! ## §1 — the trace column layout (one logical row).
 
 Columns 0..8 are the eight VERIFY-LOGIC projections `ethVerifyDecision` composes over (three of them
-crypto carriers), plus the quorum slack `QDIFF`. Columns 9..11 are the published PUBLIC anchors. -/
+crypto carriers), plus the quorum slack `QDIFF`. Columns 9..19 are the published PUBLIC anchors:
+`COMMITTEE_ROOT` (9), the NINE finalized-root limbs `FIN_STATE_ROOT 0..8` (cols 10..18 — the full
+256-bit root, radix-`2^31`, MSB-first), and `DOMAIN_GVR` (19). -/
 
 /-- Committee length (the sync-committee's key count); structural, forced `= 512`. Witness. -/
 def CL : Nat := 0
@@ -152,22 +164,35 @@ def EXEC_OK : Nat := 8
 
 /-- **PUBLIC ANCHOR** — the TRUSTED sync-committee root (the WS-checkpoint trust anchor). PI-bound. -/
 def COMMITTEE_ROOT : Nat := 9
-/-- **PUBLIC ANCHOR** — the claimed FINALIZED execution state root B. PI-bound. -/
-def FIN_STATE_ROOT : Nat := 10
-/-- **PUBLIC ANCHOR** — the fork/domain (genesis-validators-root-derived signing domain). PI-bound. -/
-def DOMAIN_GVR : Nat := 11
 
-/-- Total main-trace width: 9 logic columns + 3 published anchors. -/
-def ETH_LC_WIDTH : Nat := 12
+/-- The number of ~31-bit limbs the FULL 256-bit finalized execution state root is exposed as:
+`⌈256 / 31⌉ = 9`. Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the
+remaining 8 bits. This is the felt-width close — a SINGLE anchor felt bound only a 31-bit PROJECTION
+of the 256-bit root (two roots agreeing in 31 bits both verified); nine limbs bind the WHOLE root. -/
+def FIN_STATE_ROOT_LIMBS : Nat := 9
+
+/-- **PUBLIC ANCHOR (limb `i`)** — the claimed FINALIZED execution state root B as its radix-`2^31`,
+MOST-SIGNIFICANT-limb-first decomposition (the source `[u8;32]` from `eth-lightclient`'s
+`FinalizedExecution.execution_state_root`). Limb `i` is trace column `10 + i` (cols 10..18); limb `0`
+is the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
+MSB-first pack over `PI[1..9]` recomposes the 256-bit root exactly before its 128-bit split. -/
+def FIN_STATE_ROOT (i : Nat) : Nat := 10 + i
+
+/-- **PUBLIC ANCHOR** — the fork/domain (genesis-validators-root-derived signing domain). PI-bound. -/
+def DOMAIN_GVR : Nat := 10 + FIN_STATE_ROOT_LIMBS
+
+/-- Total main-trace width: 9 logic columns + 1 committee anchor + 9 finalized-root limbs +
+1 domain anchor. -/
+def ETH_LC_WIDTH : Nat := 20
 
 /-- PI slot 0: the trusted committee root. -/
 def PI_COMMITTEE_ROOT : Nat := 0
-/-- PI slot 1: the claimed finalized state root. -/
-def PI_FIN_STATE_ROOT : Nat := 1
-/-- PI slot 2: the signing domain / gvr. -/
-def PI_DOMAIN_GVR : Nat := 2
-/-- Number of public inputs. -/
-def PI_COUNT : Nat := 3
+/-- PI slot of finalized-root limb `i` (slots 1..9), MSB-first. -/
+def PI_FIN_STATE_ROOT (i : Nat) : Nat := 1 + i
+/-- PI slot of the signing domain / gvr (slot 10). -/
+def PI_DOMAIN_GVR : Nat := 1 + FIN_STATE_ROOT_LIMBS
+/-- Number of public inputs: committee root + 9 finalized-root limbs + domain. -/
+def PI_COUNT : Nat := 11
 
 /-- The quorum-slack range width. `3·pc − 1024 ≤ 3·512 − 1024 = 512 < 2^11` for any real committee,
 so completeness holds for `pc ≤ 512`; the interval's floor `≥ 0` is the load-bearing 2/3 tooth. -/
@@ -209,24 +234,36 @@ def execGate : VmConstraint2 := .base (.gate execBody)
 /-- Published-anchor pin: the trusted committee root is `PI[0]`. -/
 def committeeRootPin : VmConstraint2 :=
   .base (.piBinding VmRow.first COMMITTEE_ROOT PI_COMMITTEE_ROOT)
-/-- Published-anchor pin: the claimed finalized state root is `PI[1]`. -/
-def finStateRootPin : VmConstraint2 :=
-  .base (.piBinding VmRow.first FIN_STATE_ROOT PI_FIN_STATE_ROOT)
-/-- Published-anchor pin: the signing domain / gvr is `PI[2]`. -/
+/-- Published-anchor pins: the NINE finalized-root limbs are `PI[1..9]` (MSB-first). Each limb rides
+its own PI slot, so the peer-wrap's radix-`2^31` pack over `PI[1..9]` recovers the FULL 256-bit root
+— not a 31-bit projection. Written as an explicit literal (limb `i` → col `10+i` → PI `1+i`) so the
+byte-golden `#guard` reduces to the exact wire string with no fold. -/
+def finStateRootPins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (FIN_STATE_ROOT 0) (PI_FIN_STATE_ROOT 0))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 1) (PI_FIN_STATE_ROOT 1))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 2) (PI_FIN_STATE_ROOT 2))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 3) (PI_FIN_STATE_ROOT 3))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 4) (PI_FIN_STATE_ROOT 4))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 5) (PI_FIN_STATE_ROOT 5))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 6) (PI_FIN_STATE_ROOT 6))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 7) (PI_FIN_STATE_ROOT 7))
+  , .base (.piBinding VmRow.first (FIN_STATE_ROOT 8) (PI_FIN_STATE_ROOT 8)) ]
+/-- Published-anchor pin: the signing domain / gvr is `PI[10]`. -/
 def domainPin : VmConstraint2 :=
   .base (.piBinding VmRow.first DOMAIN_GVR PI_DOMAIN_GVR)
 
 /-- **`ethLcVerifyDesc`** — the ETH/Base light-client verify-decision as an emitted IR-v2 AIR.
-PIs `[committee_root, fin_state_root, domain_gvr]`; the eight verify-logic projections + quorum slack
-as hidden witnesses, the three crypto results as carrier bits. The range table (`TID_range`) carries
-the quorum tooth. -/
+PIs `[committee_root, fin_state_root[0..8], domain_gvr]` (11 total — the finalized root is the FULL
+256-bit value as nine radix-`2^31` MSB-first limbs, not a 31-bit projection); the eight verify-logic
+projections + quorum slack as hidden witnesses, the three crypto results as carrier bits. The range
+table (`TID_range`) carries the quorum tooth. -/
 def ethLcVerifyDesc : EffectVmDescriptor2 :=
   { name        := "dregg-eth-lightclient-verify::v1"
   , traceWidth  := ETH_LC_WIDTH
   , piCount     := PI_COUNT
   , tables      := [rangeTableDef Q_BITS]
   , constraints := [clGate, blGate, qDiffGate, qRangeLookup, blsGate, flGate, finGate, elGate,
-                    execGate, committeeRootPin, finStateRootPin, domainPin]
+                    execGate, committeeRootPin] ++ finStateRootPins ++ [domainPin]
   , hashSites   := []
   , ranges      := [] }
 
@@ -435,19 +472,29 @@ theorem ethLcAir_complete (a : Assignment)
 /-! ## §6 — the emitted wire JSON (captured for the byte-pinned golden on first build) + shape pins. -/
 
 -- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on
--- either side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission.
+-- either side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The
+-- finalized root is now NINE `pi_binding`s (cols 10..18 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 ethLcVerifyDesc ==
-  "{\"name\":\"dregg-eth-lightclient-verify::v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":3,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":11}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-512}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-512}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"const\",\"v\":1024}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-6}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-7}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-4}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":2}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-eth-lightclient-verify::v1\",\"ir\":2,\"trace_width\":20,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":11}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-512}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-512}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"const\",\"v\":1024}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-6}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-7}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-4}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard ethLcVerifyDesc.traceWidth == ETH_LC_WIDTH
 #guard ethLcVerifyDesc.piCount == PI_COUNT
-#guard ethLcVerifyDesc.constraints.length == 12
+#guard ethLcVerifyDesc.constraints.length == 20
 #guard ethLcVerifyDesc.tables.length == 1
 -- The three crypto carriers are real trace columns, and none is PI-bound (the results ride hidden).
 #guard BLS_OK < ETH_LC_WIDTH
 #guard FIN_OK < ETH_LC_WIDTH
 #guard EXEC_OK < ETH_LC_WIDTH
+-- The widened finalized-root anchor: nine limbs, contiguous cols 10..18 → PI 1..9, MSB-first, all
+-- within width and below the domain anchor; `⌈256/31⌉ = 9` covers the full 256 bits.
+#guard FIN_STATE_ROOT_LIMBS == 9
+#guard finStateRootPins.length == FIN_STATE_ROOT_LIMBS
+#guard DOMAIN_GVR == 19
+#guard PI_DOMAIN_GVR == 10
+#guard decide (FIN_STATE_ROOT 0 == 10 ∧ FIN_STATE_ROOT 8 == 18 ∧ FIN_STATE_ROOT 8 < DOMAIN_GVR)
+#guard decide (PI_FIN_STATE_ROOT 0 == 1 ∧ PI_FIN_STATE_ROOT 8 == 9 ∧ PI_FIN_STATE_ROOT 8 < PI_DOMAIN_GVR)
+#guard decide (31 * FIN_STATE_ROOT_LIMBS ≥ 256)
 
 /-! ## §7 — NON-VACUITY: the emitted teeth DISCRIMINATE (the Nomad boundary, in-AIR). -/
 

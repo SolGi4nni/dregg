@@ -74,10 +74,11 @@ func TestPeerLaneBindAccepts(t *testing.T) {
 		claim  []uint64 // the LC ExposeClaim channel felts
 		height uint64   // honest finalized height
 	}{
-		// eth: [committee_root, fin_state_root, domain_gvr]; no height felt.
-		{"eth", EthLcPeerMap(PeerChainIdEth), []uint64{0xC0FFEE, 123456789, 0x7ABCDEF}, 0},
-		// base: same map, chainId 8453.
-		{"base", EthLcPeerMap(PeerChainIdBase), []uint64{111, 222, 333}, 0},
+		// eth: [committee_root, fin_state_root×9 limbs (full 256-bit, MSB-first),
+		// domain_gvr]; no height felt. Root value 123456789 sits in the LSB limb.
+		{"eth", EthLcPeerMap(PeerChainIdEth), []uint64{0xC0FFEE, 0, 0, 0, 0, 0, 0, 0, 0, 123456789, 0x7ABCDEF}, 0},
+		// base: same map, chainId 8453; root value 222 in the LSB limb.
+		{"base", EthLcPeerMap(PeerChainIdBase), []uint64{111, 0, 0, 0, 0, 0, 0, 0, 0, 222, 333}, 0},
 		// tm: [next_vals_root, app_hash, chain_id=118]; app_hash is the root.
 		{"tm", TmLcPeerMap, []uint64{777, 987654321, 118}, 0},
 		// sol: [anchor_root, bank_root, slot]; height := slot.
