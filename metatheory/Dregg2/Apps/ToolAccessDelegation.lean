@@ -71,10 +71,14 @@ and a genuine, in-scope token COMMITS. The `#guard`s exercise the full lifecycle
 NEW file only — touches NO existing app, `VerificationToolkit.lean`, `GatedForestCfg.lean`, the
 executor, nor `Dregg2.lean`.
 -/
+import Dregg2.Apps.DelegAdmit
 import Dregg2.Apps.VerificationToolkit
 import Dregg2.Exec.GatedForestCfg
 
 namespace Dregg2.Apps.ToolAccessDelegation
+
+open Dregg2.Apps.DelegAdmit (Grant delegAdmit)
+export Dregg2.Apps.DelegAdmit (Grant delegAdmit)
 
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf stateStep stateStepGuarded)
@@ -89,18 +93,12 @@ open Dregg2.Spec (execGraph)
 A `Grant` is the immutable bundle the grantor pins at delegation time: the tool/MCP id the worker is
 scoped to, the rate ceiling N, and the expiry deadline. An invocation additionally PRESENTS `(now,
 tool)`: the current height/clock and which tool it is trying to invoke. The delegated policy admits an
-invocation iff scope ∧ deadline ∧ rate all hold. -/
+invocation iff scope ∧ deadline ∧ rate all hold.
 
-/-- The grantor's pinned delegation parameters. `toolId` is the single allowlisted tool/MCP id
-(the SCOPE); `rateLimit` is the granted invocation ceiling N; `deadline` is the expiry height. -/
-structure Grant where
-  /-- The single allowlisted tool / MCP id the worker is scoped to (the SCOPE). -/
-  toolId    : Int
-  /-- The granted invocation ceiling N: at most N tool calls under this mandate (the RATE). -/
-  rateLimit : Int
-  /-- The expiry height/clock: invocations presented at `now > deadline` are refused (the DEADLINE). -/
-  deadline  : Int
-  deriving Repr, DecidableEq
+`Grant` and the folded admission predicate `delegAdmit` LIVE IN `Dregg2.Apps.DelegAdmit`, the thin
+Init-only module that carries the `@[export dregg_deleg_admit]` C-ABI entry Rust calls. They are
+re-exported here, so every theorem below is a theorem about the EXPORTED object: there is ONE
+decision, it is in Lean, and the Rust gateways marshal to it rather than re-deciding the policy. -/
 
 /-- The slot names of the mandate cell. -/
 def callsMadeSlot : FieldName := "calls_made"
@@ -118,17 +116,12 @@ A tool invocation is the scalar write `calls_made : c → c+1`. The delegated po
 
 The grantor's `(toolId, rateLimit, deadline)` and the invocation's `(now, tool)` are CLOSED OVER; the
 dynamic `(old, new)` is the counter transition. This is exactly the toolkit's `admit : Int → Int →
-Bool` — all the rich policy folded into the scalar boundary BEFORE it reaches the executor. -/
+Bool` — all the rich policy folded into the scalar boundary BEFORE it reaches the executor.
 
-/-- **`delegAdmit g now tool old new`** — does the delegated policy admit the invocation that advances
-the rate counter `old → new`, presented at height `now` for tool `tool`, under grant `g`?
-Decidable, computable, FAIL-CLOSED on every conjunct. -/
-def delegAdmit (g : Grant) (now tool : Int) (old new : Int) : Bool :=
-  decide (tool = g.toolId)            -- SCOPE: the presented tool is the allowlisted one
-    && decide (now ≤ g.deadline)      -- DEADLINE: still within the granted window
-    && decide (new = old + 1)         -- single-step increment (a genuine one-call advance)
-    && decide (0 ≤ old)               -- sane prior count
-    && decide (new ≤ g.rateLimit)     -- RATE: the new count does not exceed the granted ceiling
+`delegAdmit g now tool old new` — decidable, computable, FAIL-CLOSED on every conjunct — is defined in
+`Dregg2.Apps.DelegAdmit` and `@[export dregg_deleg_admit]`-ed there. It is the SAME function the
+`dregg-lean-ffi` bridge runs, so a Rust caller that marshals to `dregg_deleg_admit` gets the decision
+the theorems below are about, not a re-implementation of it. -/
 
 /-! ## §3 — The mandate cell as a toolkit `AppSpec`.
 
@@ -346,8 +339,10 @@ We exhibit the full lifecycle on `execFullA` (the production caveat-gated execut
 The admit-table is non-vacuous (NON-EMPTY, and EXCLUDES the over-rate / out-of-scope / past-deadline
 transitions): exactly the 3 legal advances appear. -/
 
-/-- The demo grant: tool 77, rate 3, deadline 100. -/
-def demoGrant : Grant := { toolId := 77, rateLimit := 3, deadline := 100 }
+/-- The demo grant: tool 77, rate 3, deadline 100. Shared with `Dregg2.Apps.DelegAdmit` (whose wire
+`#guard`s run the SAME grant through the `@[export]`ed C-ABI entry) so the two witness sets cannot
+drift into describing different grants. -/
+abbrev demoGrant : Grant := Dregg2.Apps.DelegAdmit.demoGrant
 
 /-- The mandate cell (cell `5`) carrying the baked caveats, presented in-scope (tool 77) and in-time
 (now 50). The worker HOLDS the mandate cell — it self-authorizes the metered write (`actor == src` over
