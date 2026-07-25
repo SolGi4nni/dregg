@@ -87,32 +87,59 @@ printf 'floor-ratchet wiring OK: imported, invoked, baseline not silently raised
 
 cd "$META"
 
-# 4. THE CANARY — prove the gate can still fail before believing it when it passes.
-#    `scripts/floor_ratchet_canary.lean` takes a refuted floor as a hypothesis and invokes
-#    `#floor_ratchet`; a NON-zero exit carrying the gate's own banner is the PASS condition.
-CANARY="scripts/floor_ratchet_canary.lean"
-[ -f "$META/$CANARY" ] || fail "$CANARY is missing. The gate can no longer be shown to fail,
-  so a green '#floor_ratchet' means only that the check ran, not that it works. Restore it."
+# 4. THE CANARIES — prove the gate can still fail before believing it when it passes.
+#    Each `scripts/floor_ratchet_canary*.lean` declares a deliberate violation of ONE evasion
+#    class and invokes `#floor_ratchet`; a NON-zero exit carrying the gate's own banner AND the
+#    violating declaration's own name is the PASS condition.
+#
+#    ⚑ ONE CANARY PER CLASS, and the name check, are both load-bearing. Merging the violations
+#    into a single file would let a class go blind unnoticed: the gate would still error — on the
+#    OTHER violation — and a bare `grep FLOOR-RATCHET` would call that a pass. So each file is run
+#    separately, and its own theorem names must appear in the error. The classes are:
+#      floor_ratchet_canary.lean           plain floor BINDER (the original 46-accrual shape)
+#      floor_ratchet_canary_bundle.lean    B3 — the floor arrives through a grandfathered STRUCTURE
+#      floor_ratchet_canary_antifloor.lean B1/B2 — the anti-floor exemption used as a laundry
+CANARIES="$(cd "$META" && ls scripts/floor_ratchet_canary*.lean 2>/dev/null || true)"
+[ -n "$CANARIES" ] || fail "no scripts/floor_ratchet_canary*.lean exists. The gate can no longer
+  be shown to fail, so a green '#floor_ratchet' means only that the check ran, not that it works.
+  Restore them."
 
-CANARY_OUT="$(lake env lean "$CANARY" 2>&1)" && CANARY_RC=0 || CANARY_RC=$?
+for CANARY in $CANARIES; do
+  CANARY_OUT="$(lake env lean "$CANARY" 2>&1)" && CANARY_RC=0 || CANARY_RC=$?
 
-if [ "$CANARY_RC" -eq 0 ]; then
-  printf '%s\n' "$CANARY_OUT" >&2
-  fail "THE CANARY DID NOT DIE. $CANARY declares a theorem taking a hypothesis this tree
-  PROVES FALSE at deployed BabyBear parameters, and '#floor_ratchet' accepted it. The gate is
+  if [ "$CANARY_RC" -eq 0 ]; then
+    printf '%s\n' "$CANARY_OUT" >&2
+    fail "THE CANARY DID NOT DIE. $CANARY declares a theorem this tree's own refutations make
+  VACUOUS at deployed BabyBear parameters, and '#floor_ratchet' accepted it. That evasion class is
   BLIND: new vacuous theorems are landing unremarked and the passing builds mean nothing.
-  Debug with '#floor_ratchet_floors' (is the floor set still derived?) before trusting any
-  green build."
-fi
+  Debug with '#floor_ratchet_floors' (is the floor set still derived? are the bundles still
+  discovered?) before trusting any green build."
+  fi
 
-printf '%s' "$CANARY_OUT" | grep -q 'FLOOR-RATCHET' || {
-  printf '%s\n' "$CANARY_OUT" >&2
-  fail "the canary failed, but NOT with the gate's error. Something else in
-  $CANARY is broken (a stale floor name, a moved namespace, a red tree), so this run proves
-  nothing about whether the gate bites. Fix the canary itself."
-}
+  printf '%s' "$CANARY_OUT" | grep -q 'FLOOR-RATCHET' || {
+    printf '%s\n' "$CANARY_OUT" >&2
+    fail "$CANARY failed, but NOT with the gate's error. Something else in it is broken (a stale
+  floor name, a moved namespace, a red tree), so this run proves nothing about whether the gate
+  bites. Fix the canary itself."
+  }
 
-printf 'floor-ratchet canary OK: the gate ERRORED on a deliberate refuted-floor hypothesis.\n'
+  # Every theorem the canary declares must be NAMED in the gate's violation list. Without this a
+  # canary that has gone half-blind — one of its two violations no longer seen — still exits
+  # non-zero with the banner and reads as a pass.
+  # ⚑ NOT `… | while read`: `fail` runs `exit 1`, and in a pipeline the loop is a SUBSHELL, so
+  # the exit would leave the outer script running. Command substitution keeps `fail` in-process.
+  for THM in $(sed -n 's/^theorem \([A-Za-z0-9_]*\).*/\1/p' "$META/$CANARY"); do
+    printf '%s' "$CANARY_OUT" | grep -q "$THM" || {
+      printf '%s\n' "$CANARY_OUT" >&2
+      fail "$CANARY: the gate errored, but did NOT name '$THM'. That violation was NOT seen —
+  the error came from a sibling violation in the same file, so this evasion class is blind while
+  the canary still looks green. Debug that class specifically."
+    }
+  done
+
+  printf 'floor-ratchet canary OK (%s): the gate ERRORED, naming every deliberate violation.\n' \
+    "$CANARY"
+done
 
 [ "${1:-}" = "--canary" ] && exit 0
 
