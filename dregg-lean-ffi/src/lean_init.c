@@ -363,6 +363,54 @@ extern lean_object *dregg_holding_grant_weight(lean_object *input);
 extern lean_object *dregg_interchain_reached_consensus(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` AUTOMATAFL GAME ORACLE
+ * (`Dregg2.Games.AutomataflFFI.rulesFFI`): the verb-dispatched wire over the rules-faithful spec
+ * `Dregg2.Games.AutomataflRules` — `stock` / `goals` / `sense` / `step` / `mid` / `turn` / `legal` /
+ * `clash` / `round`. Every board transition, legality verdict, conflict set and win the deployed
+ * automatafl surface reports is computed HERE. It replaces `dregg-automatafl/src/reference.rs`, a
+ * hand transcription of `~/dev/automatafl/logic` (a non-canonical experiment) that the conformance
+ * audit found divergent from the ruleset on 2-cycles (it SWAPPED the pair; the ruleset keeps both
+ * pieces put) and on the path check (its occlusion scan skipped the DESTINATION, so a mover
+ * overwrote a stationary piece). GATED on DREGG_AUTOMATAFL_RULES (build.rs probes + defines it).
+ *
+ * UNLIKE R3's / holding's / interchain's / FRI's exports this one DOES need its module initializer:
+ * the `stock` verb reads `Dregg2.Games.AutomataflRules.stockTwoPlayer`, a nullary def the generated
+ * C compiles to a module-level global (`lp_Dregg2_Dregg2_Games_AutomataflRules_stockTwoPlayer`) that
+ * only `initialize_Dregg2_Dregg2_Games_AutomataflRules` fills — an un-initialized call would read
+ * NULL. It is therefore initialized explicitly in `dregg_ffi_init` below, exactly like
+ * `Dregg2.Deos.FlowRefine` / `Dregg2.Crypto.Fips203Kem` (whose closures also contain
+ * `Dregg2.Tactics`, so this drags in no init edge those do not already drag in). */
+#ifdef DREGG_AUTOMATAFL_RULES
+extern lean_object *initialize_Dregg2_Dregg2_Games_AutomataflFFI(uint8_t builtin);
+extern lean_object *dregg_automatafl_rules(lean_object *input);
+#endif
+
+/* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
+ * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
+ * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
+ * nats — one shipped FRI knob set, the extension degree that fixes |F|, and the two ε_C inputs that
+ * are NOT knobs) and returns
+ * `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits"` (the seven ledger
+ * columns; `""` fail-closed for a malformed wire, an out-of-window knob set, or ε_C inputs outside
+ * `epsCInWindow` — notably `bciksM < 3`, BCIKS20 Thm 8.3's own hypothesis). This is the per-config
+ * soundness ARITHMETIC as leanc-native code: `friLedger` is the very function
+ * `Dregg2.Circuit.FriLedgerSound` proves about (`ledger_perFold_soundness` — the parametric per-fold
+ * bound instantiating `FriArityTransfer.good_card_le_of_phase_injective` at each config's arity and
+ * folded-domain size), so the numbers Rust reports are the numbers Lean proved rather than a
+ * hand-written Rust twin of the same formulas. `circuit-prove/tests/fri_params_soundness_budget.rs`
+ * and `circuit-prove/tests/fri_regrid_post_s2_measure.rs` hand it each deployed knob set and
+ * gate/report what comes back. GATED on DREGG_FRI_LEDGER (build.rs probes + defines it). NOTE: like
+ * R3's / holding's / interchain's export it needs NO module initializer — its generated C hoists the
+ * string literals into STATIC CONST `lean_string_object`s and its closures into LAZY
+ * `lean_once_cell`s, so `dregg_fri_ledger` is self-contained. We therefore deliberately do NOT
+ * reference `initialize_Dregg2_Dregg2_Circuit_FriLedger`: that initializer chains into the
+ * `Dregg2.Tactics` (Mathlib-tactic) import closure's init symbols the leanc-native archive does not
+ * carry; leaving it unreferenced lets `-dead_strip` drop the proof closure — the pure ledger core
+ * links and runs on the always-initialized Init runtime. */
+#ifdef DREGG_FRI_LEDGER
+extern lean_object *dregg_fri_ledger(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` VERIFIED LIGHT-CLIENT verify-logic gates — the three
  * foreign-chain admission decisions the interchain bridge routes through
  * (`Dregg2.Bridge.LightClient{Eth,Mpt,Tendermint}Gate`):
@@ -618,6 +666,20 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(sdres);
 #endif
+#ifdef DREGG_AUTOMATAFL_RULES
+    /* The automatafl game-oracle module is OUTSIDE the FFI closure; initialize it explicitly so
+     * `dregg_automatafl_rules` is callable. Unlike the self-contained cores below it MUST be
+     * initialized: its `stock` verb reads the `stockTwoPlayer` module global (see the extern-decl
+     * note above). Its dependency closure (Games.AutomataflRules / Games.Automatafl / Tactics /
+     * Mathlib.Data.List.Dedup) is re-entrant-safe under Lean's init guards. */
+    lean_object *afres = initialize_Dregg2_Dregg2_Games_AutomataflFFI(1);
+    if (!lean_io_result_is_ok(afres)) {
+        lean_io_result_show_error(afres);
+        lean_dec_ref(afres);
+        return 1;
+    }
+    lean_dec_ref(afres);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -836,6 +898,53 @@ size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, si
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_interchain_reached_consensus(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_AUTOMATAFL_RULES
+/* dregg_automatafl_rules_str — the C string bridge over the Lean `String -> String` AUTOMATAFL GAME
+ * ORACLE export (`Dregg2.Games.AutomataflFFI.rulesFFI`). Input: a verb-first token wire (see the
+ * extern-decl note above and the module's header table). Output: `"1 …"` with the verb's payload, or
+ * `"0"` fail-closed for a malformed wire. Runs `Dregg2.Games.AutomataflRules` — the spec the emitted
+ * Leg-R / Leg-A descriptors are refined against — so the witness generator, the playable surface and
+ * the AIR all take their answer from one object. Same return contract as the bridges above. */
+size_t dregg_automatafl_rules_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_automatafl_rules(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_FRI_LEDGER
+/* dregg_fri_ledger_str — the C string bridge over the Lean `String -> String` FRI SOUNDNESS LEDGER
+ * export (`Dregg2.Circuit.FriLedger.friLedgerFFI`). Input:
+ * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
+ * nats). Output: `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits"`
+ * (`""` fail-closed). Runs `friLedger` — the function `FriLedgerSound.ledger_perFold_soundness`
+ * proves the per-fold bound of, per config — plus `friCommitLedger`'s ε_C column, so no Rust caller
+ * re-types the soundness arithmetic. Same return contract as the bridges above. */
+size_t dregg_fri_ledger_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_fri_ledger(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
