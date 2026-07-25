@@ -586,12 +586,18 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             .await
         }
         "descent" => {
+            // ⚑ TODAY'S DAY, NOT THIS CHANNEL. The native Descent opens on the committed day's own
+            // seed — the same number `/descent/play` hands the browser as `nativeSeed` — so every
+            // channel and the web tab descend the SAME drawn dungeon, and the run's record is one
+            // the board's native lane will admit (`commands::native_descent::open_config_on_todays_day`).
+            // With the channel id as the seed each channel got its own map and no run could ever
+            // be shared.
             open_and_post::<NativeDescentOffering>(
                 ctx,
                 command,
                 crate::commands::native_descent::live_offering,
                 &viewer,
-                cfg,
+                crate::commands::native_descent::open_config_on_todays_day(channel),
             )
             .await
         }

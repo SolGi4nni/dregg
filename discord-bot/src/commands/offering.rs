@@ -2376,6 +2376,19 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         crate::commands::rpg_world::handle_component(ctx, component, state).await;
         return;
     }
+    // ── The native Descent takes the ordinary adapter path, then publishes a run that just
+    //    ENDED. The generic adapter has no notion of "this run is over and belongs on the web as a
+    //    card", and the Descent is the one offering whose finished runs are the product's share
+    //    surface, so the extra step is named here rather than smuggled into `handle_component`.
+    //    Keyed off the offering's own `KEY` constant, so it cannot drift into a second key string.
+    if key == <dreggnet_offerings::native_descent::NativeDescentOffering as DiscordOffering>::KEY {
+        handle_component::<dreggnet_offerings::native_descent::NativeDescentOffering>(
+            ctx, component, state,
+        )
+        .await;
+        crate::commands::native_descent::share_finished_run(ctx, component).await;
+        return;
+    }
     // ── Everything else: the ONE mounting table, in order. ──
     macro_rules! try_component {
         ($ty:ty) => {

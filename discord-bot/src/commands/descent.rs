@@ -249,7 +249,12 @@ pub fn todays_beacon_status() -> BeaconStatus {
 ///
 /// [`resolve_todays_beacon`] remains the beacon-verifying anchor the tests + `open_core` drive;
 /// production play resolves the served day here.
-fn resolve_todays_day() -> (DescentDay, BeaconStatus) {
+///
+/// `pub(crate)` because the LEAN-NATIVE Descent
+/// ([`crate::commands::native_descent`]) must bind the same day: its run records are shared as
+/// `/descent/native/run/{id}` cards, and the web only admits a record whose normalized seed is the
+/// one THIS day commits to.
+pub(crate) fn resolve_todays_day() -> (DescentDay, BeaconStatus) {
     let today = procgen_dregg::beacon::current_utc_day();
     let cached = live_beacon_cell().lock().expect("live beacon lock").clone();
     if let Some((day, beacon)) = cached {
@@ -1838,17 +1843,33 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             board_note,
         } => {
             if view.ended {
-                let mut embed = result_embed(&view, rank, &board_note, Some(&player_name));
+                let embed = result_embed(&view, rank, &board_note, Some(&player_name));
                 // H2 viral loop: ingest this terminal run to the web board and hand back the
                 // shareable, independently-verifiable run-card link. Won runs go through the web's
                 // win-gated `/descent/submit`; a lost run has no ingest path today (a named seam),
                 // so `share_terminal_run` returns `None` rather than a link that would 404.
-                if let Some(si) = &share {
-                    if let Some(url) = share_terminal_run(si).await {
-                        embed = embed.field("🔗 Share this verified run", url, false);
-                    }
-                }
+                //
+                // ⚑ This is the PROCGEN card (`/descent/run/{id}`), which is the right card for a
+                // procgen run — this command's game is not the Lean-native Descent, whose runs get
+                // the shaft-painting card at `/descent/native/run/{id}`
+                // (`commands::native_descent::share_finished_run`).
+                let shared = if let Some(si) = &share {
+                    share_terminal_run(si).await
+                } else {
+                    None
+                };
                 update_message(ctx, component, embed, vec![]).await;
+                // The link rides a PUBLIC MESSAGE BODY, not an embed field. It used to be a field,
+                // where Discord never unfurls it: a link preview is built only from a URL in a
+                // message's `content`, so the shared run rendered as bare blue text.
+                if let Some(url) = shared {
+                    ack::followup_public(
+                        ctx,
+                        component,
+                        &format!("🔗 **{player_name}'s run, re-provable by anyone**\n{url}"),
+                    )
+                    .await;
+                }
             } else {
                 // Narrate the NEXT room OFF the store thread, then re-render.
                 let (narration, kind) = narrate_room_gated(
@@ -2372,7 +2393,10 @@ struct ShareInput {
 /// The web board's base URL (`DESCENT_WEB_BASE`, e.g. `https://dregg.net`) — the host whose
 /// `/descent/run/{id}` page re-proves a shared run. `None` (unset/empty) disables the share link
 /// entirely: a "Share" field never points at a host that is not there.
-fn descent_web_base() -> Option<String> {
+///
+/// Shared with [`crate::commands::native_descent`], whose native run-cards live on the same host
+/// under `/descent/native/run/{id}` — one base for both lanes, so a deployment configures one env.
+pub(crate) fn descent_web_base() -> Option<String> {
     std::env::var("DESCENT_WEB_BASE")
         .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())

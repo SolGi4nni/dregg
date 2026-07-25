@@ -157,6 +157,25 @@ pub async fn followup_ephemeral(ctx: &Context, component: &ComponentInteraction,
         .await;
 }
 
+/// A PUBLIC followup **message body** after [`ack_component`] — a new in-channel message whose
+/// text is plain content, never an embed. This is rule 2 above: the thing that HAPPENED, minted as
+/// its own message.
+///
+/// It exists as a distinct helper from [`followup_embed`] because of one hard Discord behaviour:
+/// **a link inside a bot embed is never unfurled.** Discord builds a link preview (the OpenGraph
+/// card) only from a URL in a message's `content`. A share link posted as an embed FIELD therefore
+/// renders as bare blue text — the run-card's `og:title` / `og:description` are fetched by nobody —
+/// which is the same as having no card at all. Anything whose whole job is to be previewed goes
+/// here.
+pub async fn followup_public(ctx: &Context, component: &ComponentInteraction, text: &str) {
+    let _ = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new().content(text),
+        )
+        .await;
+}
+
 /// A PUBLIC followup embed after [`ack_component`] — a new in-channel message (never ephemeral),
 /// leaving the pressed message untouched. The public counterpart of [`followup_ephemeral`], for a
 /// press whose slow deferred work posts a fresh public result into the channel (a re-verification
