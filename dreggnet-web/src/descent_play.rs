@@ -28,7 +28,23 @@
 //!
 //! The only generated browser artifact is `wasm/pkg`, rebuilt by the games deployment before the
 //! native server binary. The server first honors `DESCENT_PLAY_ASSET_DIR`, then a vendored asset
-//! directory, then the workspace `wasm/pkg`. Missing/stale wasm fails closed with a visible notice.
+//! directory, then the workspace `wasm/pkg`.
+//!
+//! ⚠ MISSING wasm fails closed with a visible notice (503, tested). **STALE wasm does not, and
+//! this line used to claim it did.** Nothing here checks an mtime, a hash, or a manifest — and
+//! the cost of that false claim is measured, not hypothetical: the served bundle sat at
+//! `PORTABLE_VERSION = 1` for five days while the server moved to 3 and hard-refuses it, and
+//! `NativeDescentWorld.fromBeacon` — which this file calls on every live-beacon day — was not in
+//! the binary at all. The hero "Play" CTA threw a TypeError before the game opened, silently,
+//! because a sentence in a doc-comment was standing in for a check nobody had written.
+//!
+//! The BUILD side is now covered: `scripts/build-web-artifacts.sh` stamps
+//! `dregg-wasm-provenance.json` (a sha256 over the wasm32 local-crate closure) and
+//! `scripts/check-wasm-freshness.sh` fails on a changed source, a swapped artifact, or missing
+//! provenance. The SERVE side is still open: this handler does not read that provenance. Wiring
+//! it — `build.rs` stamps `DREGG_GIT_HEAD`, this file compares against the JSON beside the bundle
+//! and fails closed on mismatch — is the remaining half, and it is the half that would have
+//! caught the five days.
 
 use std::path::{Component, Path as FsPath, PathBuf};
 
