@@ -21,7 +21,8 @@ use dregg_circuit::{
         DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
         verify_vm_descriptor2,
     },
-    dsl::note_spending::{create_test_witness, key_to_field_elements, note_spend_mint_hash_felt},
+    dsl::note_spending::{create_test_witness, note_spend_mint_hash_felt},
+    effect_vm::bytes32_to_8_limbs,
     note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_witness},
     note_spending_witness::NoteSpendingWitness,
 };
@@ -151,7 +152,7 @@ fn main() {
         BabyBear::new(u32::from_le_bytes(alice_owner[0..4].try_into().unwrap())),
         BabyBear::new(100),               // value
         BabyBear::new(ASSET_GOLD as u32), // asset type (truncated for BabyBear)
-        key_to_field_elements(&alice_sk), // spending key (8 limbs)
+        bytes32_to_8_limbs(&alice_sk),    // spending key (8 limbs)
         4,                                // Merkle depth
     );
     let alice_proof = prove_note_spend_leaf(&alice_witness);
@@ -251,7 +252,7 @@ fn main() {
         BabyBear::new(u32::from_le_bytes(bob_owner[0..4].try_into().unwrap())),
         BabyBear::new(100),
         BabyBear::new(ASSET_GOLD as u32),
-        key_to_field_elements(&bob_sk),
+        bytes32_to_8_limbs(&bob_sk),
         4,
     );
     let bob_proof = prove_note_spend_leaf(&bob_witness);

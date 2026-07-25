@@ -78,7 +78,7 @@ fn compute_attribute_commitment(attribute: &str, value: u32, state_root: BabyBea
 
 /// Convert a 32-byte value into a BabyBear field element via Poseidon2.
 fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
-    let limbs = BabyBear::encode_hash(bytes);
+    let limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes);
     poseidon2::hash_many(&limbs)
 }
 
