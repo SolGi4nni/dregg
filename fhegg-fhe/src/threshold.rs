@@ -60,6 +60,10 @@ use sha2::{Digest, Sha256};
 use crate::additive::pick_params;
 use crate::bfv_lean::{LeanCiphertext, RnsPoly};
 
+/// The same `t`-of-`n` custody, with the parties in SEPARATE PROCESSES: sealed
+/// dealer rows, recipient-side VSS verification, and a pairwise cross-evaluation
+/// round over the enrolled native-PQ transport.
+pub mod distributed;
 /// Crash-tolerant `t < n` Shamir custody and opening.  The original API in
 /// this module remains the smaller, independently tested n-of-n construction.
 pub mod quorum;

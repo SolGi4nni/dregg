@@ -21,6 +21,20 @@
 //! one process holding all `n` shares is one compromise away from all of them, whatever the
 //! combiner does.
 //!
+//! # Where the distributed one is
+//!
+//! `fhegg_fhe::threshold::distributed` is a `t`-of-`n` committee whose parties are SEPARATE
+//! PROCESSES: sealed dealer rows over the enrolled native-PQ transport, each recipient verifying
+//! the dealing addressed to it, a pairwise cross-evaluation round, and openings from `t` live
+//! processes to a relying party that holds no share. The `threshold-committee-party` binary is one
+//! such process and `fhegg-fhe/tests/distributed_threshold_committee.rs` stands three of them up
+//! with distinct pids.
+//!
+//! **The two market callers here still use THIS in-process committee**, and this line is the whole
+//! status: nothing below has been rewired, the distributed committee is `t`-of-`n` where this one
+//! is `n`-of-`n`, and it has no relinearization ceremony, so `mul_engine` has no distributed
+//! counterpart yet. Read that as work not done, not as an option the markets have.
+//!
 //! # The two refusals a caller must not conflate
 //!
 //! [`combine`] refuses a SHORT share set on a roster/arity check — that is *structural*, and it

@@ -324,6 +324,16 @@ impl DealerVssCommitment {
         self.dealer
     }
 
+    /// The exact DKG session this dealing belongs to.
+    ///
+    /// [`from_wire_bytes`](Self::from_wire_bytes) reconstructs the session from
+    /// the message, so a self-consistent commitment for a DIFFERENT `(n, t,
+    /// crp_seed)` parses fine. A recipient must therefore compare this against
+    /// the session it thinks it is in; the distributed acceptor does.
+    pub fn session(&self) -> &QuorumKeygenSession {
+        &self.session
+    }
+
     pub fn row_commitments(&self) -> &[[u8; 32]] {
         &self.row_commitments
     }
@@ -947,6 +957,466 @@ fn verify_dealer_bundle(bundle: DealerBundle, params: &BfvParams) -> Result<Veri
             })
             .collect(),
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE RECIPIENT-SCOPED HALF OF THE SAME VSS CHECK.
+//
+// [`verify_dealer_bundle`] above is the check a party can run when it holds ALL
+// `n` private rows of a dealing. Exactly one participant legitimately does: the
+// DEALER, over its own bundle, before it publishes anything. A RECIPIENT in a
+// process-separated deployment holds ONE row — its own — and giving it the other
+// `n-1` rows so it could call `DealerBundle::verify` would hand every party the
+// dealer's whole polynomial and delete the secret-sharing.
+//
+// So the recipient's checks are the per-recipient arms of the same function,
+// called on the one row it has, plus the pairwise cross-evaluation as a real
+// network round instead of a local nested loop. The algebra is not re-derived:
+// [`verify_received_dealer_row`] calls the same `vss_row_commitment_digest`,
+// `vss_row_matches_linear_commitments` and `dealer_vss_commitment_digest` the
+// all-rows path calls, and [`DealerRowCrossEvaluation`] is checked against the
+// exact `F(i+1, j+1) == F(j+1, i+1)` identity `vss_cross_evaluations_match`
+// tests. What the distributed recipient CANNOT do alone — and this is a real
+// difference, not a formality — is see rows it was not sent: it learns that its
+// own row opens the public commitment and satisfies the public BFV image, and it
+// learns from each peer that their two rows intersect. A dealer that is
+// inconsistent toward a pair of parties is caught by that pair, not by everyone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONFIDENTIAL_ROW_MAGIC: &[u8; 8] = b"FHQCv001";
+const CROSS_EVALUATION_MAGIC: &[u8; 8] = b"FHQXv001";
+
+impl PrivateDealerShare {
+    /// Encode this private row for a CONFIDENTIAL AUTHENTICATED channel.
+    ///
+    /// Deliberately `pub(crate)`: the module header says a public wire codec for
+    /// a private row would make accidental disclosure easy, and that is still
+    /// true. The only thing outside this crate that can move a row is
+    /// [`crate::threshold::distributed`], whose surface hands out the row already
+    /// sealed to exactly one named recipient. There is no public API anywhere
+    /// that returns these bytes in the clear.
+    pub(crate) fn to_confidential_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(CONFIDENTIAL_ROW_MAGIC);
+        out.extend_from_slice(&(self.session.n_parties() as u64).to_le_bytes());
+        out.extend_from_slice(&(self.session.threshold() as u64).to_le_bytes());
+        out.extend_from_slice(&self.session.base.crp_seed());
+        out.extend_from_slice(&(self.dealer as u64).to_le_bytes());
+        out.extend_from_slice(&(self.recipient as u64).to_le_bytes());
+        out.extend_from_slice(&self.vss_salt);
+        for coefficients in [&self.vss_row_coefficients, &self.vss_error_row_coefficients] {
+            out.extend_from_slice(&(coefficients.len() as u64).to_le_bytes());
+            for degree in coefficients {
+                for row in degree {
+                    for value in row {
+                        out.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub(crate) fn from_confidential_bytes(bytes: &[u8], params: &BfvParams) -> Result<Self> {
+        let mut cursor = WireCursor::new(bytes);
+        if cursor.take::<8>()? != *CONFIDENTIAL_ROW_MAGIC {
+            return Err(QuorumError::MalformedWire);
+        }
+        let n = cursor.usize()?;
+        let threshold = cursor.usize()?;
+        let seed = cursor.take::<32>()?;
+        let session = QuorumKeygenSession::from_seed(n, threshold, seed)?;
+        let dealer = cursor.usize()?;
+        let recipient = cursor.usize()?;
+        if dealer >= n || recipient >= n {
+            return Err(QuorumError::InvalidParty {
+                party: dealer.max(recipient),
+                n_parties: n,
+            });
+        }
+        let vss_salt = cursor.take::<32>()?;
+        let mut coefficient_sets = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let degrees = cursor.usize()?;
+            if degrees != threshold {
+                return Err(QuorumError::MalformedWire);
+            }
+            let mut set = Vec::with_capacity(degrees);
+            for _ in 0..degrees {
+                let mut rows = Vec::with_capacity(params.moduli().len());
+                for &q in params.moduli() {
+                    let mut row = Vec::with_capacity(params.degree());
+                    for _ in 0..params.degree() {
+                        let value = u64::from_le_bytes(cursor.take::<8>()?);
+                        if value >= q {
+                            return Err(QuorumError::MalformedWire);
+                        }
+                        row.push(value);
+                    }
+                    rows.push(row);
+                }
+                set.push(rows);
+            }
+            coefficient_sets.push(set);
+        }
+        if !cursor.finished() {
+            return Err(QuorumError::MalformedWire);
+        }
+        let vss_error_row_coefficients = coefficient_sets.pop().expect("two coefficient sets");
+        let vss_row_coefficients = coefficient_sets.pop().expect("two coefficient sets");
+        Ok(Self {
+            session,
+            dealer,
+            recipient,
+            rows: vss_row_coefficients[0].clone(),
+            vss_row_coefficients,
+            vss_error_row_coefficients,
+            vss_salt,
+        })
+    }
+}
+
+impl DealerBundle {
+    /// The public half a dealer broadcasts alongside its commitment.
+    pub fn public_contribution(&self) -> &PublicKeyContribution {
+        &self.public
+    }
+}
+
+impl VerifiedDealerBundle {
+    pub fn public_contribution(&self) -> &PublicKeyContribution {
+        &self.public
+    }
+
+    pub fn commitment(&self) -> &DealerVssCommitment {
+        &self.commitment
+    }
+
+    /// Take a self-verified dealing apart for distribution: the two public
+    /// messages, and the `n` private rows in recipient order.
+    pub(crate) fn into_distributed_parts(
+        self,
+    ) -> (
+        PublicKeyContribution,
+        DealerVssCommitment,
+        Vec<VerifiedPrivateDealerShare>,
+    ) {
+        (self.public, self.commitment, self.private)
+    }
+}
+
+impl VerifiedPrivateDealerShare {
+    pub(crate) fn confidential_bytes(&self) -> Vec<u8> {
+        self.inner.to_confidential_bytes()
+    }
+}
+
+/// Check one dealer's public commitment against the public key contribution it
+/// claims, with no private row involved.
+///
+/// This is exactly the public prefix of [`verify_dealer_bundle`]: arity, the
+/// recomputed dealer digest, and `C_00 == p0`. Every party — including a relying
+/// party that holds no share at all — can run it on broadcast data.
+pub fn verify_public_dealing(
+    commitment: &DealerVssCommitment,
+    public: &PublicKeyContribution,
+    params: &BfvParams,
+) -> Result<()> {
+    let session = &commitment.session;
+    let dealer = commitment.dealer;
+    if public.session() != &session.base
+        || public.party() != dealer
+        || dealer >= session.n_parties()
+        || commitment.row_commitments.len() != session.n_parties()
+        || commitment.linear_commitments.len() != session.threshold() * session.threshold()
+        || commitment
+            .linear_commitments
+            .iter()
+            .any(|commitment| !valid_rows(commitment, params))
+    {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    let public_key_ct = public_key_as_lean(public, params)?;
+    if commitment.linear_commitments[0] != public_key_ct.polys[0].rows {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    let public_key_digest: [u8; 32] = Sha256::digest(public.public_key_bytes()).into();
+    if public_key_digest != commitment.public_key_digest
+        || dealer_vss_commitment_digest(
+            session,
+            dealer,
+            &public_key_digest,
+            &commitment.row_commitments,
+            &commitment.linear_commitments,
+        ) != commitment.digest
+    {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    Ok(())
+}
+
+/// A recipient's verification of the ONE private row addressed to it.
+///
+/// Runs [`verify_public_dealing`], then this recipient's own commitment opening
+/// and its own public BFV image equation — the same two per-recipient checks the
+/// all-rows path runs in its loops. It does NOT establish bivariate consistency
+/// on its own: that needs the pairwise [`DealerRowCrossEvaluation`] exchange
+/// below, because a lone recipient has nothing to intersect its row with.
+pub fn verify_received_dealer_row(
+    commitment: &DealerVssCommitment,
+    public: &PublicKeyContribution,
+    share: PrivateDealerShare,
+    recipient: usize,
+    params: &BfvParams,
+) -> Result<VerifiedPrivateDealerShare> {
+    verify_public_dealing(commitment, public, params)?;
+    let session = &commitment.session;
+    if share.session != *session || share.dealer != commitment.dealer {
+        return Err(QuorumError::VssTranscriptMismatch);
+    }
+    if share.recipient != recipient {
+        return Err(QuorumError::RecipientMismatch {
+            expected: recipient,
+            actual: share.recipient,
+        });
+    }
+    if !valid_rows(&share.rows, params)
+        || share.vss_row_coefficients.len() != session.threshold()
+        || share.vss_error_row_coefficients.len() != session.threshold()
+        || share
+            .vss_row_coefficients
+            .iter()
+            .any(|coefficient| !valid_rows(coefficient, params))
+        || share
+            .vss_error_row_coefficients
+            .iter()
+            .any(|coefficient| !valid_rows(coefficient, params))
+        || share.vss_row_coefficients[0] != share.rows
+    {
+        return Err(QuorumError::ParamMismatch);
+    }
+    let opened = vss_row_commitment_digest(
+        session,
+        commitment.dealer,
+        recipient,
+        &commitment.public_key_digest,
+        &share.vss_salt,
+        &share.vss_row_coefficients,
+        &share.vss_error_row_coefficients,
+        params,
+    );
+    if opened != commitment.row_commitments[recipient] {
+        return Err(QuorumError::VssCommitmentMismatch {
+            dealer: commitment.dealer,
+            recipient,
+        });
+    }
+    let public_key_ct = public_key_as_lean(public, params)?;
+    if !vss_row_matches_linear_commitments(
+        &share,
+        &public_key_ct.polys[1].rows,
+        &commitment.linear_commitments,
+        params,
+    )? {
+        return Err(QuorumError::VssPublicImageMismatch {
+            dealer: commitment.dealer,
+            recipient,
+        });
+    }
+    Ok(VerifiedPrivateDealerShare {
+        inner: share,
+        dealer_commitment_digest: commitment.digest,
+    })
+}
+
+/// One party's evaluation of ITS OWN row of one dealer's bivariate polynomial at
+/// a named peer's x-point: `F_dealer(from + 1, to + 1)`.
+///
+/// By symmetry the peer holds the same value from the other side, so this reveals
+/// nothing the peer does not already have — and nothing at all to a third party,
+/// which is why it still travels sealed. It is the message the local nested loop
+/// in [`verify_dealer_bundle`] never had to send.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DealerRowCrossEvaluation {
+    dealer: usize,
+    from: usize,
+    to: usize,
+    secret: Vec<Vec<u64>>,
+    error: Vec<Vec<u64>>,
+}
+
+impl DealerRowCrossEvaluation {
+    pub fn dealer(&self) -> usize {
+        self.dealer
+    }
+
+    pub fn from(&self) -> usize {
+        self.from
+    }
+
+    pub fn to(&self) -> usize {
+        self.to
+    }
+
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(CROSS_EVALUATION_MAGIC);
+        out.extend_from_slice(&(self.dealer as u64).to_le_bytes());
+        out.extend_from_slice(&(self.from as u64).to_le_bytes());
+        out.extend_from_slice(&(self.to as u64).to_le_bytes());
+        for rows in [&self.secret, &self.error] {
+            for row in rows {
+                for value in row {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        out
+    }
+
+    pub fn from_wire_bytes(bytes: &[u8], params: &BfvParams) -> Result<Self> {
+        let mut cursor = WireCursor::new(bytes);
+        if cursor.take::<8>()? != *CROSS_EVALUATION_MAGIC {
+            return Err(QuorumError::MalformedWire);
+        }
+        let dealer = cursor.usize()?;
+        let from = cursor.usize()?;
+        let to = cursor.usize()?;
+        let mut sets = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let mut rows = Vec::with_capacity(params.moduli().len());
+            for &q in params.moduli() {
+                let mut row = Vec::with_capacity(params.degree());
+                for _ in 0..params.degree() {
+                    let value = u64::from_le_bytes(cursor.take::<8>()?);
+                    if value >= q {
+                        return Err(QuorumError::MalformedWire);
+                    }
+                    row.push(value);
+                }
+                rows.push(row);
+            }
+            sets.push(rows);
+        }
+        if !cursor.finished() {
+            return Err(QuorumError::MalformedWire);
+        }
+        let error = sets.pop().expect("two evaluation sets");
+        let secret = sets.pop().expect("two evaluation sets");
+        Ok(Self {
+            dealer,
+            from,
+            to,
+            secret,
+            error,
+        })
+    }
+}
+
+fn evaluate_row_at(coefficients: &[Vec<Vec<u64>>], x: u64, params: &BfvParams) -> Vec<Vec<u64>> {
+    params
+        .moduli()
+        .iter()
+        .enumerate()
+        .map(|(row_index, &q)| {
+            (0..params.degree())
+                .map(|coefficient_index| {
+                    let polynomial = coefficients
+                        .iter()
+                        .map(|degree| degree[row_index][coefficient_index])
+                        .collect::<Vec<_>>();
+                    evaluate_polynomial(&polynomial, x, q)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+impl VerifiedPrivateDealerShare {
+    /// This party's half of the pairwise bivariate check against `peer`.
+    pub fn cross_evaluation(
+        &self,
+        peer: usize,
+        params: &BfvParams,
+    ) -> Result<DealerRowCrossEvaluation> {
+        if peer >= self.inner.session.n_parties() || peer == self.inner.recipient {
+            return Err(QuorumError::InvalidParty {
+                party: peer,
+                n_parties: self.inner.session.n_parties(),
+            });
+        }
+        let x = peer as u64 + 1;
+        Ok(DealerRowCrossEvaluation {
+            dealer: self.inner.dealer,
+            from: self.inner.recipient,
+            to: peer,
+            secret: evaluate_row_at(&self.inner.vss_row_coefficients, x, params),
+            error: evaluate_row_at(&self.inner.vss_error_row_coefficients, x, params),
+        })
+    }
+
+    /// Accept a peer's cross-evaluation only if it equals this party's own
+    /// evaluation at the peer's point — the exact `F(i,j) == F(j,i)` identity that
+    /// pins all committed rows to ONE bivariate polynomial.
+    pub fn check_cross_evaluation(
+        &self,
+        received: &DealerRowCrossEvaluation,
+        params: &BfvParams,
+    ) -> Result<()> {
+        let me = self.inner.recipient;
+        let peer = received.from;
+        if received.dealer != self.inner.dealer || received.to != me || peer == me {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        let mine = self.cross_evaluation(peer, params)?;
+        if mine.secret != received.secret || mine.error != received.error {
+            return Err(QuorumError::VssInconsistentRows {
+                dealer: self.inner.dealer,
+                left: me.min(peer),
+                right: me.max(peer),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Assemble party-local custody from rows this party verified ITSELF.
+///
+/// The rows arrive as [`VerifiedPrivateDealerShare`], which only
+/// [`verify_received_dealer_row`] (or the all-rows path) can mint, so a raw
+/// dealing cannot reach custody through this door either. Every dealer must have
+/// contributed exactly once, as in [`QuorumParty::assemble`] — setup is not
+/// crash-tolerant, openings are.
+///
+/// ⚑ THE RESULTING PARTY HAS NO VSS SETUP DIGEST, so its openings carry no
+/// zero-knowledge decrypt-share certificate. That is not an oversight and it is
+/// not free to fix: the certificate is anchored to the Pedersen commitments in
+/// [`VerifiedDkgTranscript`], and today the ONLY constructor of that transcript
+/// is [`finish_verified_keygen`], which takes every dealer's private rows into
+/// one process — precisely the trusted viewer a distributed committee exists to
+/// delete. A distributed transcript needs each party to commit to its own
+/// aggregate row and publish that commitment; until that round exists, a
+/// distributed opening is transport-authenticated and NOT share-proved.
+pub fn assemble_distributed_party(
+    session: &QuorumKeygenSession,
+    party: usize,
+    rows: Vec<VerifiedPrivateDealerShare>,
+    params: &BfvParams,
+) -> Result<QuorumParty> {
+    for row in &rows {
+        if row.recipient() != party {
+            return Err(QuorumError::RecipientMismatch {
+                expected: party,
+                actual: row.recipient(),
+            });
+        }
+    }
+    QuorumParty::assemble(
+        session,
+        party,
+        rows.into_iter().map(|row| row.inner).collect(),
+        params,
+    )
 }
 
 /// Finish a DKG only from dealer bundles whose public row openings and

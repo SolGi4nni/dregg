@@ -163,6 +163,15 @@ path = "src/bin/boundary_bench.rs"
 name = "fhegg-equality-worker"
 path = "src/bin/equality_transport_worker.rs"
 
+# ONE PROCESS OF A DISTRIBUTED t-of-n CUSTODY COMMITTEE. Run n of them and no
+# process holds more than one share. It installs the Lean-verified ML-DSA cores
+# at startup rather than accepting the unaudited fallback, so it carries the same
+# archive-linked feature the other verified-PQ runtime targets do.
+[[bin]]
+name = "threshold-committee-party"
+path = "src/bin/threshold_committee_party.rs"
+required-features = ["verified-pq-runtime-tests"]
+
 [[test]]
 name = "private_book_relation"
 path = "tests/private_book_relation.rs"
@@ -201,6 +210,14 @@ required-features = ["verified-pq-runtime-tests"]
 [[test]]
 name = "party_mpc_preprocessing_use"
 path = "tests/party_mpc_preprocessing_use.rs"
+required-features = ["verified-pq-runtime-tests"]
+
+# The distributed committee's teeth: three party PROCESSES, a fourth relying
+# party, an opening at t, a refusal at t-1, and a dealer that lies to one
+# recipient being refused by that recipient.
+[[test]]
+name = "distributed_threshold_committee"
+path = "tests/distributed_threshold_committee.rs"
 required-features = ["verified-pq-runtime-tests"]
 
 [[test]]

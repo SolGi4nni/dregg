@@ -81,6 +81,11 @@ const V5_ENDPOINT_SEAL_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/endpoint-seal/v
 const PEER_KEY_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-key/classical-compat/v4";
 const PEER_HYBRID_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-hybrid-kem/v4";
 const PEER_AAD_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-aead/v4";
+const AUXILIARY_MAGIC: &[u8; 8] = b"FHAUv001";
+const AUXILIARY_SIGNATURE_DOMAIN: &[u8] = b"fhegg/roster-auxiliary-envelope-signature/v1";
+const AUXILIARY_ML_DSA_CONTEXT: &[u8] = b"fhegg/roster-auxiliary-envelope/v1";
+const AUXILIARY_HYBRID_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/roster-auxiliary-hybrid-kem/v1";
+const AUXILIARY_AAD_DOMAIN: &[u8] = b"fhegg/roster-auxiliary-aead/v1";
 const PREPROCESSING_SEED_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-fresh-preprocessing/v1";
 const CROSSING_PREPROCESSING_SEED_DOMAIN: &[u8] =
     b"fhegg/party-mpc-crossing-fresh-preprocessing/v1";
@@ -95,6 +100,13 @@ const SEALED_TRAILER_BYTES: usize = 64 + 32;
 const ML_KEM_768_EK_BYTES: usize = 1_184;
 const ML_KEM_768_DK_BYTES: usize = 2_400;
 const ML_KEM_768_CT_BYTES: usize = 1_088;
+
+/// Plaintext ceiling for one [`EqualityTransportRoster::seal_native_pq_auxiliary`]
+/// payload. Frames are capped at 16 KiB because the equality/crossing protocol has
+/// no larger message; a distributed BFV DKG row at degree 4096 is ~400 KiB and one
+/// dealer's complete addressed message is ~800 KiB, so this envelope is sized for
+/// that and refuses anything past it rather than fragmenting silently.
+pub const MAX_NATIVE_PQ_AUXILIARY_BYTES: usize = 8 * 1024 * 1024;
 
 type TransportSessionDigest = [u8; 64];
 
@@ -503,6 +515,285 @@ impl EqualityTransportRoster {
             }
         }
         hash.finalize().into()
+    }
+
+    /// Seal one AUXILIARY payload from `sender` to `recipient` under the exact
+    /// enrolled native-PQ roster identities.
+    ///
+    /// # What this is for, and why it is not a frame
+    ///
+    /// The frame envelope above carries one specific protocol: its payload kinds,
+    /// sequence discipline and session digest are the equality/crossing state
+    /// machine's. A second protocol between the SAME enrolled endpoints — the
+    /// distributed threshold-committee DKG in [`crate::threshold::distributed`] —
+    /// needs the same confidentiality and authentication for messages that are
+    /// several hundred kilobytes and are not equality frames. Reusing
+    /// [`AuthenticatedEqualityFrame`] for that would mean either widening the
+    /// equality machines' accepted payload kinds (a real attack surface on a
+    /// protocol that is done) or pretending a DKG row is a Beaver ingress.
+    ///
+    /// So this is a SEPARATE envelope over the SAME primitives and the SAME
+    /// roster: fresh ML-KEM-768 encapsulation to the recipient's enrolled key,
+    /// combined with the static converted-X25519 secret through dregg's canonical
+    /// hybrid combiner, XChaCha20-Poly1305 under an AAD that binds the complete
+    /// roster digest / caller domain / route / sequence / plaintext length, and an
+    /// outer Ed25519 + ML-DSA-65 pair over the whole sealed carrier. Its magic,
+    /// signature domain and ML-DSA context are all distinct from every frame
+    /// domain, so an auxiliary envelope can never be read as a frame and a frame
+    /// can never be read as an auxiliary envelope.
+    ///
+    /// `domain` is the caller's protocol/session binding (the DKG session digest,
+    /// for example). `sequence` is the caller's message number on the
+    /// `sender -> recipient` route; this envelope binds it but keeps NO state, so
+    /// replay refusal at the protocol layer is the caller's obligation and is
+    /// stated as such by every caller.
+    ///
+    /// Refused on any non-[`TransportSecurityProfile::NativePostQuantum`] roster:
+    /// there is deliberately no classical-compatibility spelling of this envelope.
+    pub fn seal_native_pq_auxiliary(
+        &self,
+        identity: &NativePqTransportIdentity,
+        sender: usize,
+        recipient: usize,
+        domain: &[u8; 32],
+        sequence: u64,
+        payload: &[u8],
+    ) -> Result<Vec<u8>> {
+        if self.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "the auxiliary envelope exists only on the native-PQ profile",
+            ));
+        }
+        if payload.len() > MAX_NATIVE_PQ_AUXILIARY_BYTES {
+            return Err(EqualityTransportError::MalformedFrame(
+                "auxiliary payload exceeds its allocation limit",
+            ));
+        }
+        if sender == recipient {
+            return Err(EqualityTransportError::RecipientMismatch);
+        }
+        self.validate_native_identity(sender, identity)?;
+        let sender_key = self
+            .native_key(sender)
+            .ok_or(EqualityTransportError::SenderMismatch)?;
+        let recipient_key = self
+            .native_key(recipient)
+            .ok_or(EqualityTransportError::RecipientMismatch)?;
+
+        let (kem_ciphertext, mut ml_kem_shared) = ml_kem768_encaps(&recipient_key.ml_kem_ek)
+            .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+        if kem_ciphertext.len() != ML_KEM_768_CT_BYTES {
+            ml_kem_shared.fill(0);
+            return Err(EqualityTransportError::ConfidentialityFailed);
+        }
+        let mut classical = peer_shared_secret(&identity.signing_key, recipient_key.ed25519)?;
+        let transcript = auxiliary_hybrid_transcript(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            sender_key,
+            recipient_key,
+            &kem_ciphertext,
+        )?;
+        let mut aead_key = combine_hybrid_kem(&classical, &ml_kem_shared, &transcript);
+        classical.fill(0);
+        ml_kem_shared.fill(0);
+
+        let mut nonce = [0u8; PEER_NONCE_BYTES];
+        OsRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|_| EqualityTransportError::EntropyUnavailable)?;
+        let aad = auxiliary_aead_aad(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            payload.len(),
+        )?;
+        let encryption = (|| {
+            let cipher = XChaCha20Poly1305::new_from_slice(&aead_key)
+                .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+            cipher
+                .encrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: payload,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| EqualityTransportError::ConfidentialityFailed)
+        })();
+        aead_key.fill(0);
+        let ciphertext = encryption?;
+
+        let mut wire = auxiliary_content_header(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            payload.len(),
+        )?;
+        wire.extend_from_slice(&kem_ciphertext);
+        wire.extend_from_slice(&nonce);
+        wire.extend_from_slice(&ciphertext);
+        nonce.fill(0);
+
+        let signing_message = auxiliary_signing_message(&wire);
+        wire.extend_from_slice(&identity.signing_key.sign(&signing_message).to_bytes());
+        let pq_signature = identity
+            .ml_dsa
+            .try_sign(AUXILIARY_ML_DSA_CONTEXT, &signing_message)
+            .ok_or(EqualityTransportError::EntropyUnavailable)?;
+        if pq_signature.len() != ML_DSA_SIG_LEN {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+        wire.extend_from_slice(&pq_signature);
+        Ok(wire)
+    }
+
+    /// Authenticate and open one auxiliary envelope addressed to `recipient`.
+    ///
+    /// Both signatures are checked against the enrolled roster slot BEFORE any
+    /// decapsulation, and the AEAD then key-confirms that this recipient derived
+    /// the same hybrid secret before a byte of plaintext is returned. Every field
+    /// the sealer bound — roster digest, caller domain, route, sequence, plaintext
+    /// length — is checked against what the caller expected, so a correctly signed
+    /// envelope for a different route, sequence, domain or roster fails closed
+    /// rather than being handed to the caller with a surprising header.
+    pub fn open_native_pq_auxiliary(
+        &self,
+        identity: &NativePqTransportIdentity,
+        sender: usize,
+        recipient: usize,
+        domain: &[u8; 32],
+        sequence: u64,
+        sealed: &[u8],
+    ) -> Result<Vec<u8>> {
+        if self.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "the auxiliary envelope exists only on the native-PQ profile",
+            ));
+        }
+        if sender == recipient {
+            return Err(EqualityTransportError::RecipientMismatch);
+        }
+        self.validate_native_identity(recipient, identity)?;
+        let sender_key = self
+            .native_key(sender)
+            .ok_or(EqualityTransportError::SenderMismatch)?;
+        let recipient_key = self
+            .native_key(recipient)
+            .ok_or(EqualityTransportError::RecipientMismatch)?;
+
+        let trailer = 64 + ML_DSA_SIG_LEN;
+        let header = auxiliary_content_header(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            0,
+        )?;
+        let header_len = header.len();
+        let floor = header_len + ML_KEM_768_CT_BYTES + PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES;
+        if sealed.len() < floor + trailer
+            || sealed.len() > floor + trailer + MAX_NATIVE_PQ_AUXILIARY_BYTES
+        {
+            return Err(EqualityTransportError::MalformedFrame(
+                "auxiliary envelope has an invalid length",
+            ));
+        }
+        let content_end = sealed.len() - trailer;
+        let content = &sealed[..content_end];
+        let plaintext_len = content.len() - floor;
+        // The header carries the plaintext length, so recompute it in full and
+        // compare bytes: a mismatch in ANY bound field is one refusal, not a
+        // field-by-field cascade a caller could mis-order.
+        let expected_header = auxiliary_content_header(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            plaintext_len,
+        )?;
+        if content[..header_len] != expected_header[..] {
+            return Err(EqualityTransportError::MalformedFrame(
+                "auxiliary envelope header does not match the expected route",
+            ));
+        }
+
+        let signing_message = auxiliary_signing_message(content);
+        let ed25519_signature: [u8; 64] = sealed[content_end..content_end + 64]
+            .try_into()
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+        VerifyingKey::from_bytes(&sender_key.ed25519)
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?
+            .verify_strict(&signing_message, &Signature::from_bytes(&ed25519_signature))
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+        if !ml_dsa_verify(
+            &sender_key.ml_dsa,
+            AUXILIARY_ML_DSA_CONTEXT,
+            &signing_message,
+            &sealed[content_end + 64..],
+        ) {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+
+        let kem_ciphertext = &content[header_len..header_len + ML_KEM_768_CT_BYTES];
+        let nonce_end = header_len + ML_KEM_768_CT_BYTES + PEER_NONCE_BYTES;
+        let nonce: [u8; PEER_NONCE_BYTES] = content[header_len + ML_KEM_768_CT_BYTES..nonce_end]
+            .try_into()
+            .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+        let ciphertext = &content[nonce_end..];
+
+        let mut ml_kem_shared = ml_kem768_decaps(&identity.ml_kem_dk, kem_ciphertext)
+            .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+        let mut classical = peer_shared_secret(&identity.signing_key, sender_key.ed25519)?;
+        let transcript = auxiliary_hybrid_transcript(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            sender_key,
+            recipient_key,
+            kem_ciphertext,
+        )?;
+        let mut aead_key = combine_hybrid_kem(&classical, &ml_kem_shared, &transcript);
+        classical.fill(0);
+        ml_kem_shared.fill(0);
+        let aad = auxiliary_aead_aad(
+            &self.preprocessing_roster_digest(),
+            domain,
+            sender,
+            recipient,
+            sequence,
+            plaintext_len,
+        )?;
+        let decryption = (|| {
+            let cipher = XChaCha20Poly1305::new_from_slice(&aead_key)
+                .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+            cipher
+                .decrypt(
+                    XNonce::from_slice(&nonce),
+                    Payload {
+                        msg: ciphertext,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| EqualityTransportError::ConfidentialityFailed)
+        })();
+        aead_key.fill(0);
+        let plaintext = decryption?;
+        if plaintext.len() != plaintext_len {
+            return Err(EqualityTransportError::ConfidentialityFailed);
+        }
+        Ok(plaintext)
     }
 
     fn key(&self, sender: usize) -> Option<[u8; 32]> {
@@ -3502,6 +3793,99 @@ fn decrypt_peer_payload(
     })();
     peer_key.fill(0);
     decrypt
+}
+
+fn auxiliary_signing_message(content: &[u8]) -> [u8; 64] {
+    let mut hash = Sha512::new();
+    hash.update((AUXILIARY_SIGNATURE_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(AUXILIARY_SIGNATURE_DOMAIN);
+    hash.update((content.len() as u64).to_be_bytes());
+    hash.update(content);
+    hash.finalize().into()
+}
+
+fn auxiliary_content_header(
+    roster_digest: &[u8; 64],
+    domain: &[u8; 32],
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    plaintext_len: usize,
+) -> Result<Vec<u8>> {
+    let sender = u32::try_from(sender)
+        .map_err(|_| EqualityTransportError::MalformedFrame("sender does not fit u32"))?;
+    let recipient = u32::try_from(recipient)
+        .map_err(|_| EqualityTransportError::MalformedFrame("recipient does not fit u32"))?;
+    let mut header = Vec::with_capacity(8 + 1 + 64 + 32 + 4 + 4 + 8 + 8);
+    header.extend_from_slice(AUXILIARY_MAGIC);
+    header.push(TransportSecurityProfile::NativePostQuantum.wire_tag());
+    header.extend_from_slice(roster_digest);
+    header.extend_from_slice(domain);
+    header.extend_from_slice(&sender.to_be_bytes());
+    header.extend_from_slice(&recipient.to_be_bytes());
+    header.extend_from_slice(&sequence.to_be_bytes());
+    header.extend_from_slice(&(plaintext_len as u64).to_be_bytes());
+    Ok(header)
+}
+
+fn auxiliary_aead_aad(
+    roster_digest: &[u8; 64],
+    domain: &[u8; 32],
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    plaintext_len: usize,
+) -> Result<Vec<u8>> {
+    let mut aad = Vec::with_capacity(AUXILIARY_AAD_DOMAIN.len() + 8 + 64 + 32 + 4 + 4 + 8 + 8);
+    aad.extend_from_slice(&(AUXILIARY_AAD_DOMAIN.len() as u64).to_be_bytes());
+    aad.extend_from_slice(AUXILIARY_AAD_DOMAIN);
+    aad.extend_from_slice(&auxiliary_content_header(
+        roster_digest,
+        domain,
+        sender,
+        recipient,
+        sequence,
+        plaintext_len,
+    )?);
+    Ok(aad)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn auxiliary_hybrid_transcript(
+    roster_digest: &[u8; 64],
+    domain: &[u8; 32],
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    sender_key: &NativePqTransportPublicIdentity,
+    recipient_key: &NativePqTransportPublicIdentity,
+    kem_ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    let mut transcript = Vec::with_capacity(
+        AUXILIARY_HYBRID_TRANSCRIPT_DOMAIN.len()
+            + 128
+            + sender_key.ml_dsa.len()
+            + recipient_key.ml_dsa.len()
+            + recipient_key.ml_kem_ek.len()
+            + kem_ciphertext.len(),
+    );
+    transcript.extend_from_slice(&(AUXILIARY_HYBRID_TRANSCRIPT_DOMAIN.len() as u64).to_be_bytes());
+    transcript.extend_from_slice(AUXILIARY_HYBRID_TRANSCRIPT_DOMAIN);
+    transcript.extend_from_slice(&auxiliary_content_header(
+        roster_digest,
+        domain,
+        sender,
+        recipient,
+        sequence,
+        0,
+    )?);
+    transcript.extend_from_slice(&sender_key.ed25519);
+    transcript.extend_from_slice(&recipient_key.ed25519);
+    transcript.extend_from_slice(&sender_key.ml_dsa);
+    transcript.extend_from_slice(&recipient_key.ml_dsa);
+    transcript.extend_from_slice(&recipient_key.ml_kem_ek);
+    transcript.extend_from_slice(kem_ciphertext);
+    Ok(transcript)
 }
 
 fn peer_hybrid_transcript(
