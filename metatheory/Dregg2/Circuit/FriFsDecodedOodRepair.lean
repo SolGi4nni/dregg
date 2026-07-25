@@ -111,6 +111,8 @@ import Dregg2.Circuit.FriVerifierFS
 import Dregg2.Circuit.FriDecodedTraceWitness
 import Dregg2.Circuit.FriLdtExtractDeployed
 import Dregg2.Circuit.ApexOodLaneRepair
+import Dregg2.Circuit.OodSingletonRepair
+import Dregg2.Circuit.ExtChallengeLogUpSite
 import Dregg2.Tactics
 
 namespace Dregg2.Circuit.FriFsDecodedOodRepair
@@ -156,6 +158,17 @@ open Dregg2.Circuit.FriLdtExtractDeployed
    faithfulExt_forces_oodPoint_ne_singleton deployed_accepting_pole_nonempty)
 open Dregg2.Circuit.ApexOodLaneRepair
   (acceptsFull_forces_oodPoint_ne_nil acceptsFull_gives_cons_shape hood_of_oodColumnLayout_cons)
+open Dregg2.Circuit.OodInterpFieldExt
+  (BB4 liftPoly liftPoly_sub liftPoly_mul liftPoly_eval_base notMem_exceptionalSet_lift
+   exists_nonbase_bb4 ood_forces_mainAirAccept_field_of_residuals_ext)
+open Dregg2.Circuit.OodExtChallengeLayout
+  (oodBatchResidualExt oodBatchResidualExt_lift oodBatchResidualExt_eval_lift
+   notMem_exceptionalSet_constraint_lift)
+open Dregg2.Circuit.OodSingletonRepair
+  (DecodedLdtLinkExtCons hood_of_oodColumnLayoutExtCons)
+open Dregg2.Circuit.ExtChallengeLogUpSite
+  (BusModelOkAt logupChallengeExt logupChallengeExt_lift powerLanes embedVal
+   busModelAt_forces_lookup_holds fire_busModelExt_nonbase)
 
 set_option autoImplicit false
 
@@ -516,12 +529,63 @@ theorem decodedLdtLinkCons_of_friLdtExtractCons {numCols : ℕ}
   exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
     hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
 
-/-- **⚑ L5·R4b RE-DERIVED FROM THE CORRECTED RESIDUAL.** `positiveRadiusTraceDecode_decoded` with
-`DecodedLdtLink` replaced by `DecodedLdtLinkCons`: the same `TraceWitnessed` conclusion at the same
-realistic deployed instance (`friSetupDeployed`, UD radius `7340032`), from the same three residuals.
-The proof is the landed one with `hood_of_oodColumnLayout` swapped for its cons-shaped form — the
-singleton was load-bearing NOWHERE. -/
-theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableEq F]
+/-! ## §6.5 — ⚑ THE CHALLENGE-TYPING CUTOVER: the L5·R4b assembly ON THE EXTENSION-TYPED LINK.
+
+§6 repaired the LANE COUNT of the OOD conjunct. This section repairs the FIELD the challenges live
+in, which is the deeper of the two wounds: the deployed `ζ`/`Λ` are QUARTIC-EXTENSION elements
+(`ExtFieldChallenge.lean:8-15`), and a base-typed layout equation is not a restriction of the
+deployed one but a DIFFERENT equation over a strictly smaller value space —
+`OodExtChallengeLayout.extLayout_value_beyond_base` exhibits a deployed-shape layout value outside
+`Set.range (algebraMap BabyBear BB4)` while `base_layout_value_mem_range` confines every base-typed
+one to it, both fired at the real deployed descriptor `transferV3`
+(`fire_extLayout_value_beyond_base`, `fire_extLayout_separation`); and the lane-0 rescue is refuted
+for EVERY basis and EVERY lane (`coordFunctional_not_multiplicative`, fired at the deployed quartic
+basis by `bb4_lane_not_multiplicative`).
+
+So the assembly is re-derived from `OodSingletonRepair.DecodedLdtLinkExtCons` — the same conclusion,
+at the same deployed instance, from a hypothesis the deployed verifier can actually supply — and the
+base-typed `_cons` assembly is then routed THROUGH it (`decodedLdtLinkExtCons_of_decodedLdtLinkCons`)
+so there is ONE chain and no silent twin. -/
+
+/-- **The cons-shaped link LIFTS into the extension typing.** Every base-typed `DecodedLdtLinkCons`
+witness embeds along `algebraMap BabyBear BB4`: the layout equation by `oodBatchResidualExt_eval_lift`,
+the RLC non-exceptionality of `Λ` by `notMem_exceptionalSet_lift` after `oodBatchResidualExt_lift`,
+and the per-constraint non-exceptionality of `ζ` by `notMem_exceptionalSet_constraint_lift`. So the
+extension-typed link is a strictly WEAKER demand — nothing the base link supplied is lost. -/
+theorem decodedLdtLinkExtCons_of_decodedLdtLinkCons {numCols : ℕ}
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (d : EffectVmDescriptor2)
+    (h : DecodedLdtLinkCons sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d) :
+    DecodedLdtLinkExtCons BB4 sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d := by
+  intro pi π hacc hcols
+  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+  refine ⟨algebraMap BabyBear BB4 ζ, algebraMap BabyBear BB4 Λ,
+    fun c => liftPoly BB4 (qp c), topen, ood, vCommitted, root, oodRest, idx, siblings,
+    hoodPt, hmem, hCommitted, hOpened, ?_, ?_, ?_, hPub⟩
+  · rw [oodBatchResidualExt_eval_lift, hlayout]
+  · rw [oodBatchResidualExt_lift]
+    exact notMem_exceptionalSet_lift hLam
+  · intro c hc ha
+    exact notMem_exceptionalSet_constraint_lift d _ ζ qp c (hnonexc c hc ha)
+
+/-- **⚑ L5·R4b AT THE DEPLOYED CHALLENGE TYPING.** `positiveRadiusTraceDecode_decoded` with the
+DEEP-ALI residual replaced by `DecodedLdtLinkExtCons BB4` — the OOD point, the RLC challenge and the
+quotient family all drawn from the deployed quartic extension, the lane count corrected. The
+conclusion is the IDENTICAL base-field `PositiveRadiusTraceDecode` at the identical deployed instance
+(`friSetupDeployed`, UD radius `7340032`) from the identical three residuals: the ζ-Schwartz–Zippel
+step now runs over `BB4` and lands the base-field per-row AIR acceptance through
+`OodInterpFieldExt.ood_forces_mainAirAccept_field_of_residuals_ext`. Weaker hypothesis, same
+conclusion. -/
+theorem positiveRadiusTraceDecode_decoded_extCons {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
     (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
@@ -534,7 +598,7 @@ theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableE
     (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l)
     (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hlink : DecodedLdtLinkCons sponge perm RATE toNat params vk core A initState logN view
+    (hlink : DecodedLdtLinkExtCons BB4 sponge perm RATE toNat params vk core A initState logN view
       oracle pubA tfam d)
     (hbusF : DecodedBusLink fp embed perm RATE toNat params vk core A initState logN view
       oracle pubA tfam d) :
@@ -545,9 +609,9 @@ theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableE
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
     hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
   have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
-    ood_forces_mainAirAccept_field_of_residuals d (decodedTr oracle pubA tfam pi π)
+    ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
       (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      (hood_of_oodColumnLayout_cons d sponge hCR perm RATE toNat params vk core A initState
+      (hood_of_oodColumnLayoutExtCons BB4 d sponge hCR perm RATE toNat params vk core A initState
         logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
         ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
       hnonexc
@@ -571,6 +635,243 @@ theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableE
   · intro i _ r hr
     rw [hranges] at hr
     simp at hr
+
+/-- The deployed `transferV3` slice at the deployed challenge typing. Residual =
+{`Poseidon2SpongeCR`, `DecodedLdtLinkExtCons BB4 @ transferV3`, `DecodedBusLink @ transferV3`}. -/
+theorem positiveRadiusTraceDecode_transferV3_extCons {F : Type*} [Field F] [DecidableEq F]
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
+    (hlink : DecodedLdtLinkExtCons BB4 sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam transferV3)
+    (hbusF : DecodedBusLink fp embed perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam transferV3) :
+    PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view
+      friSetupDeployed oracle 7340032 :=
+  positiveRadiusTraceDecode_decoded_extCons transferV3 sponge hCR hash fp embed perm RATE toNat
+    params vk core A initState logN view oracle pubA tfam htfMem htfMap
+    Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
+    Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
+    Dregg2.Circuit.AirLegsDischarged.transferV3_ranges
+    hlink hbusF
+
+#assert_axioms decodedLdtLinkExtCons_of_decodedLdtLinkCons
+#assert_axioms positiveRadiusTraceDecode_decoded_extCons
+#assert_axioms positiveRadiusTraceDecode_transferV3_extCons
+
+/-! ### §6.6 — ⚑ THE SECOND CHALLENGE FAMILY: the LogUp BUS challenge, at the deployed typing.
+
+`DecodedBusLink` computes its bus challenge as `LogUpColumnLayout.logupChallenge embed d t`, which is
+`embed (t.pub (challengeCol d))` — ONE public-column slot.  The deployed LogUp challenge is a
+`Challenge`: four ordered `Val` lanes.  `BusModelOk.nonexceptional` is a Fiat–Shamir Schwartz–Zippel
+event ABOUT that value, so this is load-bearing, not decorative.
+
+⚑ Say the relation precisely, because it is NOT the same as the OOD one.  The OOD retyping was a
+strict WEAKENING (base witnesses lift unconditionally).  Here the two are different READS of the same
+public block: `ExtChallengeLogUpSite.logupChallengeExt_lift` shows the single-slot read is exactly the
+four-lane read at `lanes 0 = 1` WITH THE THREE HIGHER SLOTS ZERO — so a base-typed bus witness lifts
+only under that public-column condition, which is stated as a hypothesis and not smuggled.  What is
+unconditional is the SEPARATION: `logupChallenge_deployed_mem_range` confines every single-slot read
+to `Set.range (algebraMap BabyBear BB4)` while `logupChallengeExt_beyond_base` reaches outside it, and
+`atMostOne_basis_mem_range` / `bb4Basis_lane_beyond_base` prove at most one of the four deployed lanes
+can be a base value for ANY basis.  So a single-slot read cannot express the deployed challenge. -/
+
+/-- **`DecodedBusLink` AT THE DEPLOYED FOUR-LANE BUS CHALLENGE.** Identical to `DecodedBusLink` except
+that the bus challenge is the deployed four-lane read `logupChallengeExt BB4 lanes d t` rather than a
+single public-column slot, carried as a `BusModelOkAt` (the challenge as a parameter, which is
+`BusModelOk` at the constant embedding — every field says exactly what it said before). -/
+def DecodedBusLinkExt {numCols : ℕ}
+    (fp : List ℤ → BB4) (lanes : Fin 4 → BB4)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (d : EffectVmDescriptor2) : Prop :=
+  ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    AcceptsFull perm RATE toNat params vk core A initState logN view pi π →
+    MatrixOracle.ColsClose friSetupDeployed.C 7340032 (oracle pi π) →
+    ∀ l : Lookup, VmConstraint2.lookup l ∈ d.constraints →
+      ∃ mult : List ℕ,
+        BusModelOkAt fp (logupChallengeExt BB4 lanes d (decodedTr oracle pubA tfam pi π))
+          d (decodedTr oracle pubA tfam pi π) l.table mult
+
+/-- **⚑ L5·R4b WITH BOTH CHALLENGE FAMILIES AT THE DEPLOYED TYPING.** The OOD point, the
+constraint-RLC challenge and the quotient family are drawn from `BB4` (via `DecodedLdtLinkExtCons`),
+AND the LogUp bus challenge is the deployed four-lane read (via `DecodedBusLinkExt`). The conclusion
+is the IDENTICAL base-field `PositiveRadiusTraceDecode` at the identical deployed instance — no field
+element survives into it at all: `TraceWitnessed`'s legs are statements about ℤ tuples, the committed
+trace and the memory log. This is the L5 assembly with NO base-typed challenge object left in its
+hypotheses. -/
+theorem positiveRadiusTraceDecode_decoded_extChallenges
+    (d : EffectVmDescriptor2)
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (fp : List ℤ → BB4) (lanes : Fin 4 → BB4)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
+    (hshape : ∀ c ∈ d.constraints, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l)
+    (hsites : d.hashSites = []) (hranges : d.ranges = [])
+    (hlink : DecodedLdtLinkExtCons BB4 sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d)
+    (hbusExt : DecodedBusLinkExt fp lanes perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d) :
+    PositiveRadiusTraceDecode hash (fun _ => d) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view
+      friSetupDeployed oracle 7340032 := by
+  intro pi π hacc hcols
+  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
+    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
+  have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
+    ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
+      (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
+      (hood_of_oodColumnLayoutExtCons BB4 d sponge hCR perm RATE toNat params vk core A initState
+        logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
+        ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+      hnonexc
+  obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
+    memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view
+      (decodedTr oracle pubA tfam) d hshape
+      (decodedTr_memMapFree oracle pubA tfam htfMem htfMap perm RATE toNat params vk core A
+        initState logN view)
+      pi π hacc
+  have harm : ∀ i < (decodedTr oracle pubA tfam pi π).rows.length, ∀ c ∈ d.constraints,
+      ¬ isArith c → c.holdsAt hash (decodedTr oracle pubA tfam pi π).tf
+        (envAt (decodedTr oracle pubA tfam pi π) i) (i == 0)
+        (i + 1 == (decodedTr oracle pubA tfam pi π).rows.length) :=
+    nonArithArm_of_busModels hash fp
+      (fun _ => logupChallengeExt BB4 lanes d (decodedTr oracle pubA tfam pi π)) d
+      (decodedTr oracle pubA tfam pi π) (hbusExt pi π hacc hcols) hrest
+  refine ⟨minit, mfin, maddrs, decodedTr oracle pubA tfam pi π, hAir, harm, ?_, ?_,
+    hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩
+  · intro i _
+    rw [hsites]
+    trivial
+  · intro i _ r hr
+    rw [hranges] at hr
+    simp at hr
+
+/-- **The deployed `transferV3` slice with BOTH challenge families at the deployed typing.** -/
+theorem positiveRadiusTraceDecode_transferV3_extChallenges
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (fp : List ℤ → BB4) (lanes : Fin 4 → BB4)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
+    (hlink : DecodedLdtLinkExtCons BB4 sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam transferV3)
+    (hbusExt : DecodedBusLinkExt fp lanes perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam transferV3) :
+    PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view
+      friSetupDeployed oracle 7340032 :=
+  positiveRadiusTraceDecode_decoded_extChallenges transferV3 sponge hCR hash fp lanes perm RATE
+    toNat params vk core A initState logN view oracle pubA tfam htfMem htfMap
+    Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
+    Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
+    Dregg2.Circuit.AirLegsDischarged.transferV3_ranges
+    hlink hbusExt
+
+/-- **⚑ THE BUS RETYPING IS CONDITIONAL, AND THE CONDITION IS NAMED.** Unlike the OOD retyping —
+which is an unconditional weakening — the four-lane bus read is a genuinely DIFFERENT read of the
+public block. A bus sound at the SINGLE-SLOT challenge discharges the four-lane obligation exactly
+when the lane family's constant term is `1` and the three higher challenge slots of the decoded
+trace's public block read `0` (`ExtChallengeLogUpSite.logupChallengeExt_lift`). Both conditions are
+hypotheses here; neither is smuggled. -/
+theorem decodedBusLinkExt_of_singleSlot {numCols : ℕ}
+    (fp : List ℤ → BB4) (lanes : Fin 4 → BB4) (hl0 : lanes 0 = 1)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (d : EffectVmDescriptor2)
+    (hzero : ∀ pi π, ∀ i : Fin 4, i ≠ 0 →
+      (decodedTr oracle pubA tfam pi π).pub
+        (Dregg2.Circuit.LogUpColumnLayout.challengeCol d + (i : ℕ)) = 0)
+    (hbus : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      AcceptsFull perm RATE toNat params vk core A initState logN view pi π →
+      MatrixOracle.ColsClose friSetupDeployed.C 7340032 (oracle pi π) →
+      ∀ l : Lookup, VmConstraint2.lookup l ∈ d.constraints →
+        ∃ mult : List ℕ,
+          BusModelOkAt fp
+            (algebraMap BabyBear BB4
+              (Dregg2.Circuit.LogUpColumnLayout.logupChallenge embedVal d
+                (decodedTr oracle pubA tfam pi π)))
+            d (decodedTr oracle pubA tfam pi π) l.table mult) :
+    DecodedBusLinkExt fp lanes perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d := by
+  intro pi π hacc hcols l hl
+  rw [logupChallengeExt_lift lanes hl0 d (decodedTr oracle pubA tfam pi π) (hzero pi π)]
+  exact hbus pi π hacc hcols l hl
+
+/-- **⚑ THE FOUR-LANE BUS OBLIGATION IS NOT NEWLY EMPTY.** `ExtChallengeLogUpSite`'s
+`fire_busModelExt_nonbase` exhibits a CONCRETE sound `BusModelOkAt` — the whole bundle, not just its
+conclusion — at a challenge drawn from `BB4 ∖ image(BabyBear)`, i.e. exactly the regime no
+single-slot read can reach, and the discharge runs to a real membership. So `DecodedBusLinkExt`'s
+per-lookup obligation is satisfiable in the retyped regime. -/
+theorem decodedBusLinkExt_obligation_inhabited_offbase :
+    ∃ α : BB4, α ∉ Set.range (algebraMap BabyBear BB4) ∧
+      BusModelOkAt Dregg2.Circuit.ExtChallengeLogUpSite.fpExt α
+        Dregg2.Circuit.LogUpColumnLayout.toyD Dregg2.Circuit.LogUpColumnLayout.toyT
+        .range Dregg2.Circuit.LogUpColumnLayout.toyMult := by
+  obtain ⟨α, hα, hok, -⟩ := fire_busModelExt_nonbase
+  exact ⟨α, hα, hok⟩
+
+#assert_axioms positiveRadiusTraceDecode_decoded_extChallenges
+#assert_axioms positiveRadiusTraceDecode_transferV3_extChallenges
+#assert_axioms decodedBusLinkExt_of_singleSlot
+#assert_axioms decodedBusLinkExt_obligation_inhabited_offbase
+
+/-- **⚑ L5·R4b FROM THE CORRECTED BASE-TYPED RESIDUAL — now a COROLLARY of the extension-typed
+assembly, not a second chain.** Same `TraceWitnessed` conclusion at the same realistic deployed
+instance (`friSetupDeployed`, UD radius `7340032`) from the same three residuals; the base-typed link
+reaches it by LIFTING into `DecodedLdtLinkExtCons BB4`
+(`decodedLdtLinkExtCons_of_decodedLdtLinkCons`) and then running §6.5. Retained because the base
+statement is still a real (stronger) hypothesis someone may hold — but it no longer carries its own
+derivation, so the deployed-typed assembly is the single source and the two cannot drift. -/
+theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableEq F]
+    (d : EffectVmDescriptor2)
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
+    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
+    (pubA : BatchPublicInputs → BatchProof → Assignment)
+    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
+    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
+    (hshape : ∀ c ∈ d.constraints, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l)
+    (hsites : d.hashSites = []) (hranges : d.ranges = [])
+    (hlink : DecodedLdtLinkCons sponge perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d)
+    (hbusF : DecodedBusLink fp embed perm RATE toNat params vk core A initState logN view
+      oracle pubA tfam d) :
+    PositiveRadiusTraceDecode hash (fun _ => d) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view
+      friSetupDeployed oracle 7340032 :=
+  positiveRadiusTraceDecode_decoded_extCons d sponge hCR hash fp embed perm RATE toNat params vk
+    core A initState logN view oracle pubA tfam htfMem htfMap hshape hsites hranges
+    (decodedLdtLinkExtCons_of_decodedLdtLinkCons sponge perm RATE toNat params vk core A initState
+      logN view oracle pubA tfam d hlink)
+    hbusF
 
 /-- The deployed `transferV3` slice of the re-derived assembly. Residual =
 {`Poseidon2SpongeCR`, `DecodedLdtLinkCons @ transferV3`, `DecodedBusLink @ transferV3`}. -/

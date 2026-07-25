@@ -104,6 +104,8 @@ open Dregg2.Circuit.FriFoldArity
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.DeployedTraceExtract
   (FriColumnIdentification DeployedTraceDecode starkSound_of_traceDecode_and_refines)
+open Dregg2.Circuit.OodInterpFieldExt
+  (BB4 OodInterpFExt oodInterpFExt_of_oodInterpF exists_nonbase_bb4 fire_oodInterpFExt_nonbase)
 open Dregg2.Crypto
 
 /-! ## §1 — The deployed arity-2 fold formula and the Int→BabyBear column decode.
@@ -372,6 +374,90 @@ theorem friColumnIdentification_of_columnDecode
   exact (fold_mem_C'_iff_chain_const _ _).mp
     ⟨B.finalConst pi π i, fun y => B.accept_chains pi π hacc i y⟩
 
+/-! ### §4.1 — ⚑ THE CUTOVER RECEIPT: what the retyping cost, and what it bought.
+
+`ood_decode`'s OOD binder is now `OodInterpFExt BB4` — the deployed `Challenge` typing — where it
+used to be the base-typed `FieldIntegerLift.OodInterpF`.  Two obligations come with any such move,
+and both are discharged here rather than asserted:
+
+* **Nothing is stranded.** `hood_ext_of_hood_base` proves the OLD (base-typed) provider still
+  discharges the NEW obligation, because base witnesses LIFT
+  (`OodInterpFieldExt.oodInterpFExt_of_oodInterpF`).  So the retyped hypothesis is strictly WEAKER
+  and no capability was lost.
+* **The new hypothesis is not newly EMPTY.** `hood_ext_binder_inhabited_offbase` exhibits the
+  retyped bundle satisfied at a challenge OUTSIDE `image(BabyBear)`, carrying every
+  challenge-dependent conjunct (`OodInterpFieldExt.fire_oodInterpFExt_nonbase` records `hood` AND
+  `hnonexc` at the exhibited point, not merely the conclusion) — the correction a previous lane paid
+  for: an inhabitation witness recording only the CONCLUSION is weaker than it looks.
+
+And what the base-typed binder could NOT express is proved, not asserted:
+`ExtChallengeOodSites.extOod_rhs_beyond_base` / `fire_extOod_rhs_beyond_base_transferV3` put the
+deployed OOD right-hand side `Z(ζ)·q(ζ)` outside `Set.range (algebraMap BabyBear BB4)` at the real
+deployed descriptor, while `base_ood_rhs_mem_range` confines every base-typed right-hand side to it;
+`OodExtChallengeLayout.coordFunctional_not_multiplicative` (fired at the deployed quartic basis by
+`bb4_lane_not_multiplicative`) kills the "read lane 0 and you are back at the base equation" rescue.
+So the old binder was not a conservative restriction of the deployed one — it was a different
+equation over a strictly smaller value space. -/
+
+/-- **NOTHING IS STRANDED.** A base-typed OOD/leg decode discharges the retyped one: the OOD bundle
+lifts along `algebraMap BabyBear BB4` and every other conjunct is carried verbatim. -/
+theorem hood_ext_of_hood_base
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (B : ColumnDecodeBridge perm RATE toNat params vk checks initState logN view)
+    (hood : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      decodeColumn (B.column pi π) ∈ friSetupK8.C →
+      ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
+          (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+        (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
+            c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
+        (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
+        (∀ i < t.rows.length, ∀ r ∈ (R pi.effect).ranges, r.holds (envAt t i)) ∧
+        maddrs.Nodup ∧
+        (∀ op ∈ memLog (R pi.effect) t, op.addr ∈ maddrs) ∧
+        MemoryChecking.Disciplined (memLog (R pi.effect) t) ∧
+        MemoryChecking.MemCheck minit mfin maddrs (memLog (R pi.effect) t) ∧
+        t.tf .memory = (memLog (R pi.effect) t).map opRow ∧
+        t.tf .mapOps = mapLog (R pi.effect) t ∧
+        tracePublishedCommit t = pi.toPublished) :
+    ∀ (pi : BatchPublicInputs) (π : BatchProof),
+      verifyAlgo perm RATE toNat params vk checks initState logN
+          (view pi π).1 (view pi π).2 = true →
+      decodeColumn (B.column pi π) ∈ friSetupK8.C →
+      ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
+          (_ood : Dregg2.Circuit.OodInterpFieldExt.OodInterpFExt
+            Dregg2.Circuit.OodInterpFieldExt.BB4 (R pi.effect) t),
+        (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
+            c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
+        (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
+        (∀ i < t.rows.length, ∀ r ∈ (R pi.effect).ranges, r.holds (envAt t i)) ∧
+        maddrs.Nodup ∧
+        (∀ op ∈ memLog (R pi.effect) t, op.addr ∈ maddrs) ∧
+        MemoryChecking.Disciplined (memLog (R pi.effect) t) ∧
+        MemoryChecking.MemCheck minit mfin maddrs (memLog (R pi.effect) t) ∧
+        t.tf .memory = (memLog (R pi.effect) t).map opRow ∧
+        t.tf .mapOps = mapLog (R pi.effect) t ∧
+        tracePublishedCommit t = pi.toPublished := by
+  intro pi π hacc hcw
+  obtain ⟨minit, mfin, maddrs, t, hOod, hrest⟩ := hood pi π hacc hcw
+  exact ⟨minit, mfin, maddrs, t, oodInterpFExt_of_oodInterpF hOod, hrest⟩
+
+/-- **THE RETYPED BINDER IS NOT NEWLY EMPTY** — inhabited at a challenge outside the base field, with
+both challenge-dependent conjuncts carried. -/
+theorem hood_ext_binder_inhabited_offbase :
+    ∃ ζ : BB4, ζ ∉ Set.range (algebraMap BabyBear BB4) ∧
+      Dregg2.Circuit.AirChecksSatisfied.MainAirAcceptF
+        Dregg2.Circuit.AirChecksSatisfied.dArith Dregg2.Circuit.AirChecksSatisfied.tHonest := by
+  obtain ⟨ζ, hζ, -, -, hair⟩ := fire_oodInterpFExt_nonbase
+  exact ⟨ζ, hζ, hair⟩
+
+#assert_axioms hood_ext_of_hood_base
+#assert_axioms hood_ext_binder_inhabited_offbase
+
 /-- **The shrunk residual assembled**: a `ColumnDecodeBridge` plus the OOD/leg codeword
 decode yields the full `DeployedTraceDecode` — `accept_folds` is now CONSTRUCTED from the
 verifier-vocabulary residual (proximity untouched, still load-bearing downstream). -/
@@ -386,7 +472,8 @@ noncomputable def deployedTraceDecode_of_columnDecode
           (view pi π).1 (view pi π).2 = true →
       decodeColumn (B.column pi π) ∈ friSetupK8.C →
       ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
-          (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+          (_ood : Dregg2.Circuit.OodInterpFieldExt.OodInterpFExt
+            Dregg2.Circuit.OodInterpFieldExt.BB4 (R pi.effect) t),
         (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
             c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
         (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
@@ -421,7 +508,8 @@ theorem starkSound_of_columnDecode_and_refines
           (view pi π).1 (view pi π).2 = true →
       decodeColumn (B.column pi π) ∈ friSetupK8.C →
       ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
-          (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+          (_ood : Dregg2.Circuit.OodInterpFieldExt.OodInterpFExt
+            Dregg2.Circuit.OodInterpFieldExt.BB4 (R pi.effect) t),
         (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
             c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
         (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧

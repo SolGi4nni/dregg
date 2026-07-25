@@ -4,7 +4,19 @@ OOD/RLC sites, and the EXACT relation to the base-typed forms.
 
 ## STATUS OF THIS FILE (read this before trusting any header claim below)
 
-Sites healed here, all ADDITIVELY (no landed definition is edited):
+⚑ **UPDATED 2026-07-25 — the CUTOVER moved two of these bodies, and the header would otherwise lie.**
+This file was originally additive-only.  It no longer is: the §1 OOD bridge (`OodInterpFExt` and its
+landing/lift) now lives in `Dregg2.Circuit.OodInterpFieldExt` — upstream of `DeployedTraceExtract`,
+which is the module that DEFINES the deployed extraction bundle whose OOD binder had to be retyped
+and therefore could never have named a correction living down here — and the §2 K′ bodies
+(`constraintResidualAtZetaExt`, `kprime_composeExt`, `kprime_compose_of_tableIdentityExt`,
+`constraintResidualAtZetaExt_lift`) now live in `Dregg2.Circuit.KprimeCompose`, BESIDE the base-typed
+declarations they correct, where the base-typed `kprime_compose` is now DERIVED from the ext one.
+Both are `export`ed back here, so every `ExtChallengeOodSites.<name>` reference resolves unchanged to
+the SAME constant.  There is no duplicate: what moved, moved.  What remains stated here is the
+NO-DESCENT half (§1.3, §2.1) and §3–§6, which are genuinely this file's.
+
+Sites healed here (the §1/§2 bodies as noted above; the rest in place), originally ADDITIVELY:
 
   * §1 `FieldIntegerLift.OodInterpF` (`:70-79`) / `ood_forces_mainAirAccept_field_of_residuals`
         (`:139`) — `ζ : BabyBear`, `Zp qp : Polynomial BabyBear`. LOAD-BEARING (it is the OOD
@@ -67,6 +79,7 @@ Identical in shape to `OodExtChallengeLayout`'s finding, now at these five sites
 `fire_declaredAlphaExceptional_nonbase` exhibits a CONCRETE `BatchProofData BB4` declaring a
 genuinely non-base challenge that IS exceptional, so §5's bounded event is not empty.
 -/
+import Dregg2.Circuit.OodInterpFieldExt
 import Dregg2.Circuit.OodExtChallengeLayout
 import Dregg2.Circuit.KprimeCompose
 import Dregg2.Circuit.RlcRomBound
@@ -142,99 +155,23 @@ section OodInterpExt
 
 variable {E : Type*} [Field E] [Algebra BabyBear E] [DecidableEq E]
 
-/-- **`OodInterpF` AT THE DEPLOYED CHALLENGE TYPING.** `ζ : E`, and the vanishing/quotient
-polynomials are genuinely extension-coefficiented (the deployed `vanishingAtZeta`/`quotientAtZeta`
-openings are `Challenge`). `hZrow` is the domain-geometry axis, now read at the EMBEDDED row points
-— the trace rows are base-field points, and they must remain roots of the extension-typed vanisher. -/
-structure OodInterpFExt (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E]
-    (d : EffectVmDescriptor2) (t : VmTrace) where
-  hcap : t.rows.length ≤ domainSize
-  ζ : E
-  Zp : Polynomial E
-  qp : VmConstraint2 → Polynomial E
-  hZrow : ∀ i < t.rows.length, Zp.eval (algebraMap BabyBear E (rowPt i)) = 0
-  hood : ∀ c ∈ d.constraints, isArith c →
-    (liftPoly E (constraintPoly d t c)).eval ζ = Zp.eval ζ * (qp c).eval ζ
-  hnonexc : ∀ c ∈ d.constraints, isArith c →
-    ζ ∉ exceptionalSet (liftPoly E (constraintPoly d t c) - Zp * qp c)
+/-! **⚑ RELOCATED, NOT DUPLICATED.** `OodInterpFExt`, `ood_forces_mainAirAccept_field_ext`,
+`ood_forces_mainAirAccept_field_of_residuals_ext`, `oodInterpFExt_of_oodInterpF` and
+`mainAirAcceptF_of_oodInterpF_via_ext` now live in `Dregg2.Circuit.OodInterpFieldExt`, immediately
+above `FieldIntegerLift`.  Reason (the ordering problem, stated): this module sits BELOW
+`DeployedTraceExtract` in the import DAG, and `DeployedTraceExtract` is the module that DEFINES the
+deployed extraction bundle `DeployedTraceDecode` whose OOD binder had to be retyped — a module can
+never name its own correction if the correction lives downstream of it.  Moving the bridge upstream
+is what made the deployed cutover possible at all.  Re-exported here so every
+`ExtChallengeOodSites.OodInterpFExt` reference resolves unchanged, to the SAME constant.  The §1.2
+LIFT and the §1.3 NO-DESCENT separation below are unchanged and still stated here. -/
+export Dregg2.Circuit.OodInterpFieldExt
+  (OodInterpFExt ood_forces_mainAirAccept_field_ext ood_forces_mainAirAccept_field_of_residuals_ext
+   oodInterpFExt_of_oodInterpF mainAirAcceptF_of_oodInterpF_via_ext)
 
-/-- **⚑ THE PAYOFF AT SITE 1 — the extension-typed OOD bridge still forces the BASE-field AIR
-conclusion.** The Schwartz–Zippel step runs over `E`, yielding the polynomial identity
-`C.map φ = Zp · qp` in `Polynomial E`; evaluating at the EMBEDDED row points (where `Zp` vanishes by
-`hZrow`) and using injectivity of `φ` lands the base-field row vanishing that `MainAirAcceptF` is
-stated with. Conclusion IDENTICAL to `ood_forces_mainAirAccept_field`; hypothesis strictly weaker
-(§1.2). -/
-theorem ood_forces_mainAirAccept_field_ext {d : EffectVmDescriptor2} {t : VmTrace}
-    (I : OodInterpFExt E d t) : MainAirAcceptF d t := by
-  intro i hi c hc
-  rw [← babyBear_cast_eq_zero_iff]
-  by_cases ha : isArith c
-  · have hCq : liftPoly E (constraintPoly d t c) = I.Zp * I.qp c :=
-      ood_consistency _ I.Zp (I.qp c) I.ζ (I.hood c hc ha) (I.hnonexc c hc ha)
-    have hev := congrArg (Polynomial.eval (algebraMap BabyBear E (rowPt i))) hCq
-    rw [liftPoly_eval_base, eval_mul, I.hZrow i hi, zero_mul] at hev
-    have hz : (constraintPoly d t c).eval (rowPt i) = 0 :=
-      (algebraMap BabyBear E).injective (by rw [hev, map_zero])
-    rw [← constraintPoly_eval_eq_arithResidual d t I.hcap i hi c ha]
-    exact hz
-  · cases c <;> simp_all [isArith, arithResidual]
-
-/-- **The residual form at the extension typing** — the exact analogue of
-`FieldIntegerLift.ood_forces_mainAirAccept_field_of_residuals` with the committed domain vanisher
-supplied (embedded coefficientwise) and the challenge drawn from `E`. This is the shape §2 and the
-deployed chains consume. -/
-theorem ood_forces_mainAirAccept_field_of_residuals_ext (E : Type*) [Field E] [Algebra BabyBear E]
-    [DecidableEq E] (d : EffectVmDescriptor2) (t : VmTrace)
-    (hcap : t.rows.length ≤ domainSize) (ζ : E) (qp : VmConstraint2 → Polynomial E)
-    (hood : ∀ c ∈ d.constraints, isArith c →
-        (liftPoly E (constraintPoly d t c)).eval ζ
-          = (liftPoly E (vanishingPoly t)).eval ζ * (qp c).eval ζ)
-    (hnonexc : ∀ c ∈ d.constraints, isArith c →
-        ζ ∉ exceptionalSet
-          (liftPoly E (constraintPoly d t c) - liftPoly E (vanishingPoly t) * qp c)) :
-    MainAirAcceptF d t :=
-  ood_forces_mainAirAccept_field_ext
-    { hcap := hcap, ζ := ζ, Zp := liftPoly E (vanishingPoly t), qp := qp
-    , hZrow := fun i hi => by
-        rw [liftPoly_eval_base, vanishingPoly_eval_rowPt t i hi, map_zero]
-    , hood := hood, hnonexc := hnonexc }
-
-/-! ### §1.2 — THE TRUE RELATION at site 1: base witnesses LIFT. -/
-
-/-- **The base-typed OOD bridge LIFTS.** Every `OodInterpF` witness embeds into an `OodInterpFExt`
-witness along `algebraMap BabyBear E`: the domain axis, the OOD identity, and the
-non-exceptionality side condition all transport. So `OodInterpFExt` is a strictly WEAKER demand —
-which is the point, because the deployed verifier supplies extension witnesses and base ones it
-does not supply at all. -/
-noncomputable def oodInterpFExt_of_oodInterpF {d : EffectVmDescriptor2} {t : VmTrace}
-    (I : OodInterpF d t) : OodInterpFExt E d t where
-  hcap := I.hcap
-  ζ := algebraMap BabyBear E I.ζ
-  Zp := liftPoly E I.Zp
-  qp := fun c => liftPoly E (I.qp c)
-  hZrow := fun i hi => by rw [liftPoly_eval_base, I.hZrow i hi, map_zero]
-  hood := by
-    intro c hc ha
-    show (liftPoly E (constraintPoly d t c)).eval (algebraMap BabyBear E I.ζ)
-      = (liftPoly E I.Zp).eval (algebraMap BabyBear E I.ζ)
-        * (liftPoly E (I.qp c)).eval (algebraMap BabyBear E I.ζ)
-    rw [liftPoly_eval_base, liftPoly_eval_base, liftPoly_eval_base, ← map_mul, I.hood c hc ha]
-  hnonexc := by
-    intro c hc ha
-    show algebraMap BabyBear E I.ζ ∉ exceptionalSet
-      (liftPoly E (constraintPoly d t c) - liftPoly E I.Zp * liftPoly E (I.qp c))
-    have hrw : liftPoly E (constraintPoly d t c) - liftPoly E I.Zp * liftPoly E (I.qp c)
-        = liftPoly E (constraintPoly d t c - I.Zp * I.qp c) := by
-      rw [liftPoly_sub, liftPoly_mul]
-    rw [hrw]
-    exact notMem_exceptionalSet_lift (I.hnonexc c hc ha)
-
-/-- **The extension route SUBSUMES the base route.** Every base-typed `OodInterpF` witness yields
-`MainAirAcceptF` *through* the extension-typed landing at the DEPLOYED quartic extension `BB4` — so
-nothing that the base-typed bridge delivered is lost by moving to the extension typing. -/
-theorem mainAirAcceptF_of_oodInterpF_via_ext {d : EffectVmDescriptor2} {t : VmTrace}
-    (I : OodInterpF d t) : MainAirAcceptF d t :=
-  ood_forces_mainAirAccept_field_ext (E := BB4) (oodInterpFExt_of_oodInterpF I)
+/-! ### §1.2 — THE TRUE RELATION at site 1: base witnesses LIFT
+(`OodInterpFieldExt.oodInterpFExt_of_oodInterpF`), so the extension-typed hypothesis is strictly
+WEAKER and the retyping loses nothing. -/
 
 /-! ### §1.3 — THE TRUE RELATION at site 1: extension witnesses do NOT descend, and the base
 equation cannot even EXPRESS the deployed right-hand side. -/
@@ -286,68 +223,19 @@ typing.
 are `Challenge` in the deployed verifier. LOAD-BEARING: `kprime_compose_of_tableIdentity` is the
 verifier-facing composition. -/
 
-section KprimeExt
+/-! **⚑ RELOCATED, NOT DUPLICATED.** `constraintResidualAtZetaExt`, `kprime_composeExt`,
+`kprime_compose_of_tableIdentityExt` and `constraintResidualAtZetaExt_lift` now live in
+`Dregg2.Circuit.KprimeCompose` — BESIDE the base-typed `constraintResidualAtZeta`/`kprime_compose`
+they correct, which is where a correction belongs.  The base-typed `kprime_compose` is now DERIVED
+from `kprime_composeExt` by the lift, so there is one chain and the two cannot drift.  Re-exported
+here so every `ExtChallengeOodSites.constraintResidualAtZetaExt` reference resolves unchanged. -/
+export Dregg2.Circuit.KprimeCompose
+  (constraintResidualAtZetaExt kprime_composeExt kprime_compose_of_tableIdentityExt
+   constraintResidualAtZetaExt_lift rlcResidualPoly_lift)
+
+section KprimeExtSeparation
 
 variable {E : Type*} [Field E] [Algebra BabyBear E] [DecidableEq E]
-
-/-- **`constraintResidualAtZeta` AT THE DEPLOYED CHALLENGE TYPING** — `Rᵢ(ζ) = Cᵢ(ζ) − Z(ζ)·qᵢ(ζ)`
-with `ζ` an extension element, the committed `Cᵢ`/`Z` embedded coefficientwise, and `qᵢ` a genuinely
-extension-coefficiented quotient. -/
-noncomputable def constraintResidualAtZetaExt (E : Type*) [Field E] [Algebra BabyBear E]
-    (d : EffectVmDescriptor2) (t : VmTrace) (ζ : E) (qp : VmConstraint2 → Polynomial E)
-    (i : ℕ) : E :=
-  if h : i < d.constraints.length then
-    (liftPoly E (constraintPoly d t (d.constraints[i]'h))).eval ζ
-      - (liftPoly E (vanishingPoly t)).eval ζ * (qp (d.constraints[i]'h)).eval ζ
-  else 0
-
-/-- **⚑ THE PAYOFF AT SITE 2 — K′ COMPOSED at the extension typing.** From the SINGLE combined RLC
-identity `∑ᵢ Rᵢ(ζ)·αⁱ = 0` over the EXTENSION, a non-exceptional extension batching challenge `α`,
-a non-exceptional extension OOD point `ζ`, and the deployed domain cap, conclude the very same
-BASE-field `MainAirAcceptF d t`. The RLC split (`rlc_batch_split_of_combined`) was already
-field-generic; §1's landing does the rest. -/
-theorem kprime_composeExt (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E]
-    (d : EffectVmDescriptor2) (t : VmTrace) (hcap : t.rows.length ≤ domainSize)
-    (ζ α : E) (qp : VmConstraint2 → Polynomial E)
-    (hCombined : ∑ i ∈ Finset.range d.constraints.length,
-        constraintResidualAtZetaExt E d t ζ qp i * α ^ i = 0)
-    (hαnonexc : α ∉ exceptionalSet
-        (rlcResidualPoly d.constraints.length (constraintResidualAtZetaExt E d t ζ qp)))
-    (hζnonexc : ∀ c ∈ d.constraints, isArith c →
-        ζ ∉ exceptionalSet
-          (liftPoly E (constraintPoly d t c) - liftPoly E (vanishingPoly t) * qp c)) :
-    MainAirAcceptF d t := by
-  have hsplit := rlc_batch_split_of_combined d.constraints.length
-    (constraintResidualAtZetaExt E d t ζ qp) α hCombined hαnonexc
-  refine ood_forces_mainAirAccept_field_of_residuals_ext E d t hcap ζ qp ?_ hζnonexc
-  intro c hc _
-  obtain ⟨i, hi, hci⟩ := List.getElem_of_mem hc
-  have h0 := hsplit i hi
-  unfold constraintResidualAtZetaExt at h0
-  rw [dif_pos hi, hci] at h0
-  exact sub_eq_zero.mp h0
-
-/-- **K′ COMPOSED (outer, verifier-facing) at the extension typing.** The opened
-`constraintEval`/`vanishingAtZeta`/`quotientAtZeta` are extension elements — the deployed
-`Challenge` values — and the one honest identification `hCombinedIsRlc` is carried as the same
-named Prop hypothesis the base-typed form carries (never an axiom). -/
-theorem kprime_compose_of_tableIdentityExt (E : Type*) [Field E] [Algebra BabyBear E]
-    [DecidableEq E] (d : EffectVmDescriptor2) (t : VmTrace)
-    (hcap : t.rows.length ≤ domainSize)
-    (ζ α : E) (qp : VmConstraint2 → Polynomial E)
-    (constraintEval vanishingAtZeta quotientAtZeta : E)
-    (hTable : constraintEval = vanishingAtZeta * quotientAtZeta)
-    (hCombinedIsRlc : constraintEval - vanishingAtZeta * quotientAtZeta
-        = ∑ i ∈ Finset.range d.constraints.length,
-            constraintResidualAtZetaExt E d t ζ qp i * α ^ i)
-    (hαnonexc : α ∉ exceptionalSet
-        (rlcResidualPoly d.constraints.length (constraintResidualAtZetaExt E d t ζ qp)))
-    (hζnonexc : ∀ c ∈ d.constraints, isArith c →
-        ζ ∉ exceptionalSet
-          (liftPoly E (constraintPoly d t c) - liftPoly E (vanishingPoly t) * qp c)) :
-    MainAirAcceptF d t :=
-  kprime_composeExt E d t hcap ζ α qp
-    (by rw [← hCombinedIsRlc, hTable, sub_self]) hαnonexc hζnonexc
 
 /-! ### §2.1 — THE TRUE RELATION at site 2. -/
 
@@ -385,7 +273,7 @@ theorem extResidual_beyond_base {ζ₀ : BabyBear} {ξ : E}
   rw [map_sub, hs]
   ring
 
-end KprimeExt
+end KprimeExtSeparation
 
 /-! ## §3 — SITE `OodColumnLayout.lean:96-283` — the DEPLOYED `transferV3` half.
 
@@ -721,18 +609,12 @@ end Fire
 
 #assert_all_clean [
   mul_algebraMap_notMem_range,
-  ood_forces_mainAirAccept_field_ext,
-  ood_forces_mainAirAccept_field_of_residuals_ext,
   base_ood_rhs_mem_range,
   extOod_rhs_beyond_base,
-  extOod_rhs_not_lifted,
-  mainAirAcceptF_of_oodInterpF_via_ext
+  extOod_rhs_not_lifted
 ]
 
 #assert_all_clean [
-  kprime_composeExt,
-  kprime_compose_of_tableIdentityExt,
-  constraintResidualAtZetaExt_lift,
   extResidual_beyond_base
 ]
 

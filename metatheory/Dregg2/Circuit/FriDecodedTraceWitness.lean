@@ -522,99 +522,31 @@ HONEST caveat: this is the single-fold-resolution instance — the multi-LAYER f
 deployed FRI (and the intermediate layers' membership moving into the probabilistic assembly)
 remains L5/L6 engineering beyond this rung, as `DeployedTraceExtract` §3′ already names. -/
 
-/-- **⚑ L5·R4b — `PositiveRadiusTraceDecode` ASSEMBLED at `friSetupDeployed`/UD-radius, the
-trace pinned to R4a's decode.** For any graduated mem/map-free descriptor `d` (all non-arith
-constraints lookups, empty legacy site/range lists), from
-  * `Poseidon2SpongeCR` (the commitment-binding floor, genuinely used inside `hood`),
-  * `DecodedLdtLink` (the DEEP-ALI residual at the decoded trace — the named gap),
-  * `DecodedBusLink` (the bus models at the decoded trace),
-every accepting run whose committed matrix is `ColsClose`-close yields the FULL `TraceWitnessed`
-at the DECODED trace: `MainAirAcceptF` is DERIVED (landed ALI chain: table identity + CR binding
-+ RLC de-batch + OOD⟹AIR), the non-arith arm is DERIVED from the bus models, the sites/ranges/
-memory legs are DISCHARGED structurally, and the published-commit link rides the bundle. NO leg
-is assumed in `TraceWitnessed` form. -/
-theorem positiveRadiusTraceDecode_decoded {F : Type*} [Field F] [DecidableEq F]
-    (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
-    (hshape : ∀ c ∈ d.constraints, ¬ isArith c → ∃ l : Lookup, c = VmConstraint2.lookup l)
-    (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hlink : DecodedLdtLink sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d)
-    (hbusF : DecodedBusLink fp embed perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d) :
-    PositiveRadiusTraceDecode hash (fun _ => d) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view
-      friSetupDeployed oracle 7340032 := by
-  intro pi π hacc hcols
-  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
-  -- leg 1 — `MainAirAcceptF` at the DECODED trace, DERIVED by the landed ALI/quotient chain;
-  -- the row cap is the identification's theorem, not a bundle conjunct:
-  have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
-    ood_forces_mainAirAccept_field_of_residuals d (decodedTr oracle pubA tfam pi π)
-      (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      (hood_of_oodColumnLayout d sponge hCR perm RATE toNat params vk core A initState
-        logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
-        ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
-      hnonexc
-  -- legs 5–10 — the mem/map-free structural legs, via the landed assembler at `decodedTr`:
-  obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
-    memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view
-      (decodedTr oracle pubA tfam) d hshape
-      (decodedTr_memMapFree oracle pubA tfam htfMem htfMap perm RATE toNat params vk core A
-        initState logN view)
-      pi π hacc
-  -- leg 2 — the whole non-arith arm from the bus models (lookups) + the vacuous non-lookup arm:
-  have harm : ∀ i < (decodedTr oracle pubA tfam pi π).rows.length, ∀ c ∈ d.constraints,
-      ¬ isArith c → c.holdsAt hash (decodedTr oracle pubA tfam pi π).tf
-        (envAt (decodedTr oracle pubA tfam pi π) i) (i == 0)
-        (i + 1 == (decodedTr oracle pubA tfam pi π).rows.length) :=
-    nonArithArm_of_busModels hash fp embed d (decodedTr oracle pubA tfam pi π)
-      (hbusF pi π hacc hcols) hrest
-  -- legs 3–4 — the graduated column shape:
-  refine ⟨minit, mfin, maddrs, decodedTr oracle pubA tfam pi π, hAir, harm, ?_, ?_,
-    hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩
-  · intro i _
-    rw [hsites]
-    trivial
-  · intro i _ r hr
-    rw [hranges] at hr
-    simp at hr
+/-! ## §4.1 — ⚑ DELETED 2026-07-25: `positiveRadiusTraceDecode_decoded` / `…_transferV3`.
 
-/-- **The deployed `transferV3` slice** — the per-effect side conditions discharge by the
-committed shape bricks (`AirLegsDischarged`), exactly as in the landed general assembler.
-Residual = {`Poseidon2SpongeCR`, `DecodedLdtLink @ transferV3`, `DecodedBusLink @ transferV3`}. -/
-theorem positiveRadiusTraceDecode_transferV3 {F : Type*} [Field F] [DecidableEq F]
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView) {numCols : ℕ}
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (htfMem : ∀ pi π, tfam pi π .memory = []) (htfMap : ∀ pi π, tfam pi π .mapOps = [])
-    (hlink : DecodedLdtLink sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam transferV3)
-    (hbusF : DecodedBusLink fp embed perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam transferV3) :
-    PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
-      (fullChecks core A toNat params.powBits) initState logN view
-      friSetupDeployed oracle 7340032 :=
-  positiveRadiusTraceDecode_decoded transferV3 sponge hCR hash fp embed perm RATE toNat
-    params vk core A initState logN view oracle pubA tfam htfMem htfMap
-    Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
-    Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
-    Dregg2.Circuit.AirLegsDischarged.transferV3_ranges
-    hlink hbusF
+They assembled `PositiveRadiusTraceDecode` from the LANDED `DecodedLdtLink` — the residual whose
+singleton OOD conclusion is PROVED to force `CircuitSoundness.verifyBatch` to reject EVERY
+`ColsClose`-close run at the deployed `cfg*` arguments
+(`FriFsDecodedOodRepair.decodedLdtLink_makes_verifyBatch_reject_every_close_run`), i.e. they
+delivered `TraceWitnessed` only on runs the deployed verifier rejects — and, independently, from a
+BASE-typed challenge (`ζ Λ : BabyBear`) where the deployed `ζ`/`Λ` are quartic-extension elements
+(`ExtFieldChallenge.lean:8-15`), which is not a restriction of the deployed equation but a different
+equation over a strictly smaller value space (`OodExtChallengeLayout.extLayout_value_beyond_base`,
+fired at `transferV3`).
+
+They are SUPERSEDED, exactly and without loss, by the single chain in `FriFsDecodedOodRepair`:
+
+* `positiveRadiusTraceDecode_decoded_extChallenges` / `…_transferV3_extChallenges` — the assembly
+  with BOTH challenge families at the deployed typing (`DecodedLdtLinkExtCons BB4` +
+  `DecodedBusLinkExt`), same conclusion at the same `friSetupDeployed`/UD-radius-`7340032` instance;
+* `positiveRadiusTraceDecode_decoded_extCons` — the OOD half alone;
+* `positiveRadiusTraceDecode_decoded_cons` — the base-typed link, now a COROLLARY of the above via
+  `decodedLdtLinkExtCons_of_decodedLdtLinkCons`.
+
+Anyone holding the landed `DecodedLdtLink` recovers the deleted statements verbatim as
+`positiveRadiusTraceDecode_decoded_cons … (decodedLdtLink_imp_cons … h)`. They are deleted rather
+than kept because a twin of a statement that is provably about nothing at deployment is exactly what
+this campaign is removing. -/
 
 /-! ## §5 — TEETH on the assembly (the derived AIR leg is genuine, both polarities). -/
 
@@ -655,8 +587,6 @@ theorem decoded_air_leg_fires :
 #assert_axioms decodedTr_readout
 #assert_axioms decodedTr_rows_le
 #assert_axioms decodedTr_memMapFree
-#assert_axioms positiveRadiusTraceDecode_decoded
-#assert_axioms positiveRadiusTraceDecode_transferV3
 #assert_axioms decoded_air_leg_bites
 #assert_axioms decoded_air_leg_fires
 

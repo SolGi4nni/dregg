@@ -108,6 +108,7 @@ Sorry-free; no `axiom`; no carrier; additive new file; all imports read-only.
 import Mathlib.FieldTheory.Finite.GaloisField
 import Dregg2.Circuit.FriDeepQuotientRlc
 import Dregg2.Circuit.FriExtChallengeCollapse
+import Dregg2.Circuit.OodInterpFieldExt
 import Dregg2.Tactics
 
 set_option autoImplicit false
@@ -523,35 +524,17 @@ open Dregg2.Circuit.FriDeployedRateInstance
    pR_deployed_inj)
 open Dregg2.Circuit.FriFoldArity (FriSetupK)
 
-/-- **The deployed quartic extension**, as a Lean field. -/
-abbrev BB4 : Type := GaloisField babyBearP 4
-
-noncomputable instance instDecidableEqBB4 : DecidableEq BB4 := Classical.decEq _
-noncomputable instance instFintypeBB4 : Fintype BB4 := Fintype.ofFinite _
-
-/-! ### §3.1 — It is a genuine degree-4 extension, and it is THE deployed one. -/
-
-/-- `[BB4 : BabyBear] = 4` — the deployed `extDeg`. -/
-theorem bb4_finrank : Module.finrank BabyBear BB4 = 4 :=
-  GaloisField.finrank babyBearP (by norm_num)
-
-/-- `|BB4| = p^4 ≈ 2^124` — the deployed challenge space (`CorrelatedAgreement/Interface`'s
-`|R| ≈ 2^123.6`). -/
-theorem bb4_card : Fintype.card BB4 = babyBearP ^ 4 := by
-  rw [← Nat.card_eq_fintype_card]
-  exact GaloisField.card babyBearP 4 (by norm_num)
-
-/-- **⚑ CANONICITY — this IS the deployed extension.** Any field that is a BabyBear-algebra of
-cardinality `p^4` — in particular the deployed `BabyBear[X]/(X^4 − 11)`, whatever presentation is
-used — is BabyBear-algebra isomorphic to `BB4`. So nothing below depends on the binomial
-presentation (whose irreducibility is not proved in this tree). -/
-theorem deployed_quartic_ext_canonical (L : Type) [Field L] [Fintype L] [Algebra BabyBear L]
-    (hcard : Fintype.card L = babyBearP ^ 4) : Nonempty (L ≃ₐ[BabyBear] BB4) :=
-  ⟨FiniteField.algEquivOfCardEq babyBearP (by rw [hcard, bb4_card])⟩
-
-/-- A basis of the deployed extension over BabyBear — the four `Val` lanes of a `Challenge`. -/
-noncomputable def bb4Basis : Module.Basis (Fin 4) BabyBear BB4 :=
-  Module.finBasisOfFinrankEq BabyBear BB4 bb4_finrank
+/-! **⚑ RELOCATED, NOT DUPLICATED.** `BB4` and its four facts (degree, cardinality, canonicity,
+basis) now live in `Dregg2.Circuit.OodInterpFieldExt`, which sits ABOVE `DeployedTraceExtract` in the
+import DAG so that the deployed extraction chain can name the deployed challenge field at all.  This
+module is BELOW `DeployedTraceExtract` (via `FriDeepQuotientRlc → … → FriDecodedTraceWitness`), so
+the definitions could not stay here and be usable by the chain they are about.  Re-exported so every
+downstream `FriDeployedExtCode.BB4` / `bb4_finrank` / `bb4_card` /
+`deployed_quartic_ext_canonical` / `bb4Basis` reference resolves unchanged, to the SAME constant —
+there is exactly one `BB4` in the tree. -/
+export Dregg2.Circuit.OodInterpFieldExt
+  (BB4 instDecidableEqBB4 instFintypeBB4 bb4_finrank bb4_card deployed_quartic_ext_canonical
+   bb4Basis)
 
 /-! ### §3.2 — The deployed FRI setup, retyped. `friSetupR` is field-generic, so the FOLDING
 CLOSURE (`unfold_closed`/`foldC_mem`) is inherited PROVED — not re-assumed. -/
@@ -814,22 +797,10 @@ open Dregg2.Circuit.FriDeployedRateInstance (pR omega24)
 
 /-! ### §6.1 — A nontrivial extension is not reached by the embedding. -/
 
-/-- If `[E:F] > 1` then `algebraMap` is not surjective: were it, it would be an `F`-linear
-equivalence and force `[E:F] = 1`. -/
-theorem exists_not_mem_range_algebraMap {F E : Type*} [Field F] [Field E] [Algebra F E]
-    (h : 1 < Module.finrank F E) : ∃ x : E, x ∉ Set.range (algebraMap F E) := by
-  by_contra hcon
-  push_neg at hcon
-  have hinj : Function.Injective (Algebra.linearMap F E) := fun a b hab =>
-    (algebraMap F E).injective hab
-  have hsurj : Function.Surjective (Algebra.linearMap F E) := by
-    intro x
-    obtain ⟨y, hy⟩ := hcon x
-    exact ⟨y, hy⟩
-  have hrank : Module.finrank F F = Module.finrank F E :=
-    (LinearEquiv.ofBijective (Algebra.linearMap F E) ⟨hinj, hsurj⟩).finrank_eq
-  rw [Module.finrank_self] at hrank
-  omega
+/-! If `[E:F] > 1` then `algebraMap` is not surjective. **RELOCATED** (with `BB4`) to
+`Dregg2.Circuit.OodInterpFieldExt`, upstream of the deployed extraction chain; re-exported so the
+name resolves unchanged here and downstream. -/
+export Dregg2.Circuit.OodInterpFieldExt (exists_not_mem_range_algebraMap)
 
 /-- **The extension-typed code contains words that are the retyping of NO base word.** (Take a
 constant at a scalar outside the image; constants are codewords at any positive degree.) -/

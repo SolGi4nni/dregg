@@ -91,8 +91,16 @@ and `decodedTr_colPoly_rebase_ext` composes it with `decodedTr_colPoly_rebase` a
   `rlc_debatch_error_babybear`) price at `|BabyBear| = 2013265921` rather than `|Challenge|`
   (conservative, but not faithful). Nothing above is fixed here.
 
-Sorry-free; no `axiom`; no carrier; additive new file; all imports read-only.
+Sorry-free; no `axiom`; no carrier; all imports read-only.
+
+⚑ **UPDATED 2026-07-25 (cutover).** §1's `liftPoly` (and `notMem_exceptionalSet_lift`, and the toy
+`colPoly_tHonest_zero`/`constraintPoly_dArith_tHonest_zero` — which were proved in THREE places) now
+live in `Dregg2.Circuit.OodInterpFieldExt`, upstream of `DeployedTraceExtract`, and are `export`ed
+back here.  Reason: this module sits BELOW `DeployedTraceExtract` in the import DAG, so a `liftPoly`
+defined here could never be named by the deployed extraction chain it is about.  One definition, one
+source; every `OodExtChallengeLayout.liftPoly` reference resolves unchanged.
 -/
+import Dregg2.Circuit.OodInterpFieldExt
 import Dregg2.Circuit.FriDeployedExtCode
 import Dregg2.Circuit.FriDecodedDomainRebase
 import Dregg2.Tactics
@@ -127,37 +135,16 @@ The committed trace is BASE-field data, so `constraintPoly` and `vanishingPoly` 
 read at and the quotient/challenge algebra around them. So the honest retyping embeds their
 COEFFICIENTS and keeps the objects themselves. -/
 
-section Lift
-
-variable {E : Type*} [Field E] [Algebra BabyBear E]
-
-/-- The coefficient lift of a trace-derived polynomial into the challenge extension — the deployed
-`Val → Challenge` embedding applied to a committed polynomial. -/
-noncomputable def liftPoly (E : Type*) [Field E] [Algebra BabyBear E]
-    (p : Polynomial BabyBear) : Polynomial E :=
-  p.map (algebraMap BabyBear E)
-
-/-- Reading a lifted polynomial at an EMBEDDED base point is the embedding of the base reading —
-the sense in which the lift is faithful on the base points. -/
-theorem liftPoly_eval_base (p : Polynomial BabyBear) (x : BabyBear) :
-    (liftPoly E p).eval (algebraMap BabyBear E x) = algebraMap BabyBear E (p.eval x) := by
-  rw [liftPoly, eval_map, eval₂_at_apply]
-
-@[simp] theorem liftPoly_zero : liftPoly E (0 : Polynomial BabyBear) = 0 := by
-  simp [liftPoly]
-
-theorem liftPoly_eq_zero_iff {p : Polynomial BabyBear} : liftPoly E p = 0 ↔ p = 0 := by
-  rw [liftPoly, Polynomial.map_eq_zero_iff (algebraMap BabyBear E).injective]
-
-@[simp] theorem liftPoly_sub (p q : Polynomial BabyBear) :
-    liftPoly E (p - q) = liftPoly E p - liftPoly E q := by
-  simp [liftPoly, Polynomial.map_sub]
-
-@[simp] theorem liftPoly_mul (p q : Polynomial BabyBear) :
-    liftPoly E (p * q) = liftPoly E p * liftPoly E q := by
-  simp [liftPoly, Polynomial.map_mul]
-
-end Lift
+/-! **⚑ RELOCATED, NOT DUPLICATED.** `liftPoly` and its five lemmas now live in
+`Dregg2.Circuit.OodInterpFieldExt`, which sits ABOVE `DeployedTraceExtract` in the import DAG.  This
+module is BELOW it (via `FriDecodedDomainRebase → FriDecodedTraceWitness → DeployedTraceExtract`), so
+the deployed extraction chain could never have named a `liftPoly` defined here — the ordering problem
+the cutover discipline calls out.  Re-exported, so every downstream
+`OodExtChallengeLayout.liftPoly` reference resolves unchanged to the SAME constant; there is exactly
+one `liftPoly` in the tree. -/
+export Dregg2.Circuit.OodInterpFieldExt
+  (liftPoly liftPoly_eval_base liftPoly_zero liftPoly_eq_zero_iff liftPoly_sub liftPoly_mul
+   notMem_exceptionalSet_lift colPoly_tHonest_zero constraintPoly_dArith_tHonest_zero)
 
 /-! ## §2 — THE EXTENSION-TYPED OOD/COLUMN-LAYOUT LAYER.
 
@@ -341,24 +328,6 @@ theorem oodBatchResidualExt_eval_lift (d : EffectVmDescriptor2) (t : VmTrace) (�
         (fun c => liftPoly E (qp c))).eval (algebraMap BabyBear E Λ)
       = algebraMap BabyBear E ((oodBatchResidual d t ζ qp).eval Λ) := by
   rw [oodBatchResidualExt_lift, liftPoly_eval_base]
-
-/-- **Non-exceptionality lifts** — the side-condition is not lost by the retyping. (Both poles are
-handled: the zero polynomial has an EMPTY exceptional set on both sides, and a nonzero base residual
-with a nonzero value at `x` lifts to a nonzero extension residual with a nonzero value at `φ x`.) -/
-theorem notMem_exceptionalSet_lift [DecidableEq E] {p : Polynomial BabyBear} {x : BabyBear}
-    (h : x ∉ exceptionalSet p) :
-    algebraMap BabyBear E x ∉ exceptionalSet (liftPoly E p) := by
-  classical
-  intro hmem
-  rcases eq_or_ne p 0 with rfl | hp0
-  · rw [liftPoly_zero, exceptionalSet] at hmem
-    simp at hmem
-  · have hne : liftPoly E p ≠ 0 := fun h0 => hp0 (liftPoly_eq_zero_iff.mp h0)
-    rw [exceptionalSet, Multiset.mem_toFinset, mem_roots hne] at hmem
-    have hroot : (liftPoly E p).eval (algebraMap BabyBear E x) = 0 := hmem
-    rw [liftPoly_eval_base] at hroot
-    have hx : p.eval x = 0 := (algebraMap BabyBear E).injective (by rw [hroot, map_zero])
-    exact h (by rw [exceptionalSet, Multiset.mem_toFinset, mem_roots hp0]; exact hx)
 
 /-- The per-constraint ζ side-condition lifts too (its residual is built with `sub`/`mul`, both of
 which commute with the coefficient lift). -/
@@ -759,27 +728,6 @@ open Dregg2.Circuit.FriDecodedTraceWitness (defaultTrace)
 
 /-! ### §6.1 — INHABITED at non-base challenges, on the honest 2-row trace. -/
 
-/-- The honest toy trace's column-0 interpolant is the ZERO polynomial (its two rows are zero, and
-`Lagrange.interpolate` of the zero value family is `0`). -/
-theorem colPoly_tHonest_zero : Dregg2.Circuit.TraceColumnInterp.colPoly tHonest 0 = 0 := by
-  show Lagrange.interpolate (Finset.range tHonest.rows.length) rowPt
-      (fun i => (((tHonest.rows.getD i zeroAsg 0 : ℤ) : BabyBear))) = 0
-  rw [Lagrange.interpolate_apply]
-  refine Finset.sum_eq_zero (fun i _ => ?_)
-  have hv : (((tHonest.rows.getD i zeroAsg 0 : ℤ) : BabyBear)) = 0 := by
-    rcases i with _ | _ | i <;> simp [tHonest, zRow, zeroAsg, List.getD]
-  rw [hv, map_zero, zero_mul]
-
-/-- Hence the honest toy descriptor's single arithmetic constraint has the ZERO constraint
-polynomial on that trace. -/
-theorem constraintPoly_dArith_tHonest_zero :
-    constraintPoly dArith tHonest (.base (.gate (.var 0))) = 0 := by
-  show (1 - Dregg2.Circuit.TraceColumnInterp.lastSelector tHonest)
-      * Dregg2.Circuit.TraceColumnInterp.exprPoly tHonest (.var 0) = 0
-  show (1 - Dregg2.Circuit.TraceColumnInterp.lastSelector tHonest)
-      * Dregg2.Circuit.TraceColumnInterp.colPoly tHonest 0 = 0
-  rw [colPoly_tHonest_zero, mul_zero]
-
 /-- The extension-typed residual family VANISHES on the honest instance with the zero quotient. -/
 theorem oodRfamExt_dArith_tHonest (ζ : BB4) :
     oodRfamExt BB4 dArith tHonest ζ (fun _ => 0) = fun _ => 0 := by
@@ -920,10 +868,6 @@ end ExtAntecedent
 /-! ## §7 — Axiom hygiene. Every keystone kernel-clean (Lean's own three axioms only). -/
 
 #assert_all_clean [
-  liftPoly_eval_base,
-  liftPoly_eq_zero_iff,
-  liftPoly_sub,
-  liftPoly_mul,
   oodBatchResidualExt_eval_eq,
   oodColumnLayoutExt_law,
   oodBatchResidualExt_natDegree_lt,
@@ -938,7 +882,6 @@ end ExtAntecedent
   oodRfamExt_lift,
   oodBatchResidualExt_lift,
   oodBatchResidualExt_eval_lift,
-  notMem_exceptionalSet_lift,
   notMem_exceptionalSet_constraint_lift,
   base_layout_value_mem_range,
   extLayout_value_beyond_base,
@@ -957,8 +900,6 @@ end ExtAntecedent
 ]
 
 #assert_all_clean [
-  colPoly_tHonest_zero,
-  constraintPoly_dArith_tHonest_zero,
   oodRfamExt_dArith_tHonest,
   oodBatchResidualExt_dArith_tHonest,
   fire_ext_hypotheses_inhabited,

@@ -135,6 +135,7 @@ import Dregg2.Circuit.FriBridgeDeployedArity
 import Dregg2.Circuit.FriQuerySoundness
 import Dregg2.Circuit.FriBatchedOracle
 import Dregg2.Circuit.FieldIntegerLift
+import Dregg2.Circuit.OodInterpFieldExt
 
 namespace Dregg2.Circuit.DeployedTraceExtract
 
@@ -158,6 +159,11 @@ open Dregg2.Circuit.FriFoldArity
 open Dregg2.Circuit.FriQuerySoundness
   (Accepts accept_prob_le_of_farN gZero gZero_mem far_accepted_by_missing_query)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
+open Dregg2.Circuit.OodInterpFieldExt
+  (BB4 OodInterpFExt liftPoly liftPoly_sub liftPoly_mul liftPoly_eval_base
+   notMem_exceptionalSet_lift exists_nonbase_bb4 fire_oodInterpFExt_nonbase
+   ood_forces_mainAirAccept_field_ext ood_forces_mainAirAccept_field_of_residuals_ext
+   oodInterpFExt_of_oodInterpF mainAirAcceptF_of_oodInterpF_via_ext)
 open Dregg2.Circuit.FriBridgeDeployedArity (FriProximityK friProximityK8_discharge0)
 open Dregg2.Circuit.FriBatchedOracle (MatrixOracle)
 open Dregg2.Crypto
@@ -868,18 +874,55 @@ Before Phase-0 this conjunct was the ℤ `MainAirAccept`, which `FieldIntegerLif
 imply_MainAirAcceptZ` shows is UNREACHABLE for `transferV3`'s multiplicative gates — the field-OOD
 lemma could not feed it. That gap is now dissolved. -/
 
-/-- **PAYOFF (bundle form)** — the field OOD bundle for `transferV3` produces the extraction's AIR
-conjunct `MainAirAcceptF transferV3 t` directly. -/
+/-- **PAYOFF (bundle form), AT THE DEPLOYED CHALLENGE TYPING** — the `Challenge`-valued OOD bundle for
+`transferV3` produces the extraction's AIR conjunct `MainAirAcceptF transferV3 t` directly.  This is
+the shape `DeployedTraceDecode.ood_decode` now carries: `ζ`, the vanisher and the quotient family are
+drawn from `BB4`, exactly as the deployed verifier draws them. -/
+theorem extractionAirConjunct_of_oodInterpFExt
+    (t : VmTrace)
+    (I : OodInterpFExt BB4 Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
+  ood_forces_mainAirAccept_field_ext I
+
+/-- **THE BASE ROUTE IS SUBSUMED, NOT ORPHANED.** A base-typed `OodInterpF` still delivers the same
+conjunct — but now THROUGH the extension landing (`oodInterpFExt_of_oodInterpF` then
+`ood_forces_mainAirAccept_field_ext`), so there is ONE chain, not two.  This is the receipt that the
+retyping cost the consumer nothing: the base bundle LIFTS, and what it could never express is
+`OodExtChallengeLayout.extLayout_value_beyond_base` / `ExtChallengeOodSites.extOod_rhs_beyond_base`
+(both fired at `transferV3`). -/
 theorem extractionAirConjunct_of_oodInterpF
     (t : VmTrace)
     (I : Dregg2.Circuit.FieldIntegerLift.OodInterpF
           Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
     MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
-  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field _ t I
+  mainAirAcceptF_of_oodInterpF_via_ext I
 
-/-- **PAYOFF (two-crypto-residual form)** — with the domain vanisher discharged, the extraction's AIR
-conjunct `MainAirAcceptF transferV3 t` follows from EXACTLY the two crypto residuals `hood` + `hnonexc`.
-This is the exact term the ℤ target could not supply. -/
+/-- **PAYOFF (two-crypto-residual form) AT THE DEPLOYED CHALLENGE TYPING** — with the domain vanisher
+discharged, the extraction's AIR conjunct follows from EXACTLY the two crypto residuals `hood` +
+`hnonexc`, both stated over the deployed challenge extension `BB4` (the OOD point is a `Challenge`,
+the quotient family is `Challenge`-coefficiented — the deployed `quotient : Challenge` opening).  The
+base-typed instance of this statement is the `algebraMap`-image slice of it and cannot name the
+deployed right-hand side at all. -/
+theorem extractionAirConjunct_of_residuals_ext
+    (t : VmTrace)
+    (hcap : t.rows.length ≤ Dregg2.Circuit.TraceColumnInterp.domainSize)
+    (ζ : BB4) (qp : VmConstraint2 → Polynomial BB4)
+    (hood : ∀ c ∈ Dregg2.Circuit.RotatedKernelRefinement.transferV3.constraints, isArith c →
+        (liftPoly BB4 (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+            Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c)).eval ζ =
+          (liftPoly BB4 (Dregg2.Circuit.FieldIntegerLift.vanishingPoly t)).eval ζ * (qp c).eval ζ)
+    (hnonexc : ∀ c ∈ Dregg2.Circuit.RotatedKernelRefinement.transferV3.constraints, isArith c →
+        ζ ∉ Dregg2.Circuit.OodQuotientConsistency.exceptionalSet
+          (liftPoly BB4 (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+              Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c)
+            - liftPoly BB4 (Dregg2.Circuit.FieldIntegerLift.vanishingPoly t) * qp c)) :
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
+  ood_forces_mainAirAccept_field_of_residuals_ext BB4 _ t hcap ζ qp hood hnonexc
+
+/-- **The base-typed residual form, ROUTED THROUGH the extension.** Every base-typed `{hood, hnonexc}`
+pair transports along `algebraMap BabyBear BB4` (the identity by `liftPoly_sub`/`liftPoly_mul`, the
+side condition by `notMem_exceptionalSet_lift`) and lands the identical conclusion.  So the base
+residual frontier is retained as a corollary of the deployed-typed one — no duplicate chain. -/
 theorem extractionAirConjunct_of_residuals
     (t : VmTrace)
     (hcap : t.rows.length ≤ Dregg2.Circuit.TraceColumnInterp.domainSize)
@@ -894,11 +937,25 @@ theorem extractionAirConjunct_of_residuals
           (Dregg2.Circuit.TraceColumnInterp.constraintPoly
               Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c
             - Dregg2.Circuit.FieldIntegerLift.vanishingPoly t * qp c)) :
-    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
-  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field_of_residuals
-    _ t hcap ζ qp hood hnonexc
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t := by
+  refine extractionAirConjunct_of_residuals_ext t hcap (algebraMap _ BB4 ζ)
+    (fun c => liftPoly BB4 (qp c)) ?_ ?_
+  · intro c hc ha
+    rw [liftPoly_eval_base, liftPoly_eval_base, liftPoly_eval_base, ← map_mul, hood c hc ha]
+  · intro c hc ha
+    have hrw : liftPoly BB4 (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+          Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c)
+        - liftPoly BB4 (Dregg2.Circuit.FieldIntegerLift.vanishingPoly t) * liftPoly BB4 (qp c)
+        = liftPoly BB4 (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+            Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c
+          - Dregg2.Circuit.FieldIntegerLift.vanishingPoly t * qp c) := by
+      rw [liftPoly_sub, liftPoly_mul]
+    rw [hrw]
+    exact notMem_exceptionalSet_lift (hnonexc c hc ha)
 
+#assert_axioms extractionAirConjunct_of_oodInterpFExt
 #assert_axioms extractionAirConjunct_of_oodInterpF
+#assert_axioms extractionAirConjunct_of_residuals_ext
 #assert_axioms extractionAirConjunct_of_residuals
 
 /-! ## §7 — DISCHARGING the two fields: proven math transported ONTO each, remaining maps named.
@@ -972,7 +1029,7 @@ structure DeployedTraceDecode
         (view pi π).1 (view pi π).2 = true →
     oracle pi π ∈ friSetupK8.C →
     ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
-        (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+        (_ood : OodInterpFExt BB4 (R pi.effect) t),
       (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
           c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
       (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
@@ -1009,7 +1066,7 @@ def deployedFriEmbedding_of_traceDecode
     obtain ⟨minit, mfin, maddrs, t, hOod, hbus, hHashes, hRanges,
       hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩ := dec.ood_decode pi π hacc hcw
     exact ⟨minit, mfin, maddrs, t,
-      Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field (R pi.effect) t hOod,
+      ood_forces_mainAirAccept_field_ext hOod,
       hbus, hHashes, hRanges, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩
 
 /-- **`deployedTraceExtract_of_traceDecode`** — the opaque `DeployedTraceExtract` from the shrunk
@@ -1052,14 +1109,26 @@ The shrunk `ood_decode`'s AIR-acceptance conjunct is produced by proven math and
 the OOD bundle FIRES to `MainAirAcceptF` on honest data and the target conjunct BITES on a tampered
 gate. Reuses the committed `FieldIntegerLift` / `AirChecksSatisfied` witnesses. -/
 
-/-- **OOD→AIR FIRES** — a field-OOD bundle for `transferV3` yields the `MainAirAcceptF` conjunct that
-`deployedFriEmbedding_of_traceDecode` needs, so the OOD-decode transport is non-vacuous. -/
+/-- **OOD→AIR FIRES, at the retyped binder** — a `Challenge`-valued OOD bundle for `transferV3`
+yields the `MainAirAcceptF` conjunct that `deployedFriEmbedding_of_traceDecode` needs, so the
+retyped OOD-decode transport is non-vacuous. -/
 theorem oodDecode_air_fires
     (t : VmTrace)
-    (I : Dregg2.Circuit.FieldIntegerLift.OodInterpF
-          Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
+    (I : OodInterpFExt BB4 Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
     MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
-  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field _ t I
+  ood_forces_mainAirAccept_field_ext I
+
+/-- **⚑ THE RETYPED BINDER IS NOT NEWLY EMPTY.** The obligation any retyping must discharge: the
+new hypothesis is inhabited AT A CHALLENGE OUTSIDE THE BASE FIELD, with every challenge-dependent
+conjunct carried (`OodInterpFieldExt.fire_oodInterpFExt_nonbase` records `hood` and `hnonexc` at the
+exhibited point, not merely the conclusion).  So `ood_decode`'s retyped `_ood` binder can be met in
+exactly the regime the retyping is about. -/
+theorem oodDecode_ext_binder_inhabited_offbase :
+    ∃ ζ : BB4, ζ ∉ Set.range (algebraMap BabyBear BB4) ∧
+      MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
+        Dregg2.Circuit.AirChecksSatisfied.tHonest := by
+  obtain ⟨ζ, hζ, -, -, hair⟩ := fire_oodInterpFExt_nonbase
+  exact ⟨ζ, hζ, hair⟩
 
 /-- **OOD→AIR BITES** — the `MainAirAcceptF` the transport must produce is FALSIFIABLE: a tampered-gate
 trace cannot meet it, so `ood_decode` cannot be satisfied by a lying trace even with the OOD softening. -/
@@ -1069,6 +1138,7 @@ theorem oodDecode_air_bites :
   Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unacceptedF
 
 #assert_axioms oodDecode_air_fires
+#assert_axioms oodDecode_ext_binder_inhabited_offbase
 #assert_axioms oodDecode_air_bites
 
 end Dregg2.Circuit.DeployedTraceExtract

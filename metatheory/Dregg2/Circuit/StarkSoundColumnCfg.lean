@@ -39,7 +39,8 @@ theorem starkSound_of_columnDecode_cfg (hash : List Int → Int) (R : Registry)
           (cfgView pi π).1 (cfgView pi π).2 = true →
       decodeColumn (B.column pi π) ∈ friSetupK8.C →
       ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
-          (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+          (_ood : Dregg2.Circuit.OodInterpFieldExt.OodInterpFExt
+            Dregg2.Circuit.OodInterpFieldExt.BB4 (R pi.effect) t),
         (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
             c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
         (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
