@@ -24,12 +24,21 @@
 //!   certified decision into the world cell and fires ONE real `TurnReceipt`. A sub-quorum window
 //!   or a quorum-certified-but-illegal command is refused exactly as the collective's own tests
 //!   prove. This driver only *sources the ballots*; it cannot vote past the executor's teeth.
-//! * **Named residual — per-voter custody.** The design's electorate-scaling gap: the demo derives
-//!   a seat's `ed25519` secret from its `author_id` string ([`seat_custodian`], via
-//!   `Custodian::demo`), so the **platform (us) mints and holds every viewer's key** — it is NOT
+//! * **Named residual — per-voter custody is CUSTODIAL (but no longer public).** The design's
+//!   electorate-scaling gap: the **platform (us) mints and holds every viewer's key** — it is NOT
 //!   real per-viewer custody (the viewer never signs on their own device). Real custody needs a
 //!   viewer-held key enrolled out-of-band; until then a Super Chat is authenticated as *coming
 //!   through YouTube*, not as *signed by that human*.
+//!
+//!   What is NOT residual any more: the seat secret used to be
+//!   `blake3::derive_key(ctx, "crowd-stream/youtube/{author_id}#k")` over the viewer's **public**
+//!   YouTube author id, so anyone watching the stream held every voter's ballot key and could mint
+//!   their vote. A [`CrowdRound`] now draws one 32-byte **custody root** from OS entropy at
+//!   [`open`](CrowdRound::open) and derives each seat as
+//!   `Custodian::under_root(SEAT_DOMAIN/voter#k, root)` — the author id is the DOMAIN SEPARATOR,
+//!   the root is the SECRET (the same shape `dreggnet-discord-identity`'s
+//!   `seed_for(bot_secret, uid)` uses). Nothing public reconstructs a seat key, and the same
+//!   author id in two rounds is two different keys.
 //! * **Named residual — one weighted ballot (O(N) crypto).** To land a voter's weight `W`
 //!   we materialize `W` (capped, shaped) replicated seats and cast `W` real signed ballots,
 //!   so a window costs O(Σ shaped-weight) sign+verify operations under the overlay mutex. The
@@ -61,9 +70,11 @@ use dungeon_on_dregg::collective::{
 };
 use spween_dregg::{Scene, WorldCell};
 
-/// The `blake3::derive_key`-style seat-id domain: a voter's derived custody seats are keyed by
-/// this string so a crowd-stream seat can never collide with the collective's own demo roster.
-const SEAT_DOMAIN: &str = "crowd-stream/youtube";
+/// The seat-NAME domain: a voter's derived custody seats are labelled with this string so a
+/// crowd-stream seat can never collide with the collective's own roster. It is a LABEL and a
+/// domain separator — the seat's secret comes from the round's private custody root
+/// ([`CrowdRound::custody_root`]), never from this name.
+pub const SEAT_DOMAIN: &str = "crowd-stream/youtube";
 
 /// **A live crowd-stream round.** Holds the poll question + proposals, the matchable option
 /// keywords (index-aligned with the proposals), the quorum threshold, and the buffer of events
@@ -92,6 +103,12 @@ pub struct CrowdRound {
     /// DISTINCT voters (humans, not replicated seats) cast a ballot — so paid weight alone (one
     /// Super Chat) can never carry a window. See [`CrowdRound::with_min_distinct_voters`].
     min_distinct_voters: u64,
+    /// **The round's private custody root** — the SECRET every derived seat key hangs off.
+    /// [`open_with`](CrowdRound::open_with) draws it from OS entropy; the seat name (a PUBLIC
+    /// YouTube author id) only separates domains under it. Whoever holds this holds every viewer's
+    /// ballot key, so a host that persists it (to rebuild a window's seats for a replay) persists
+    /// it PRIVATELY, never inside anything it publishes. See [`CrowdRound::with_custody_root`].
+    custody_root: [u8; 32],
 }
 
 /// The default per-voter RAW weight cap: a single voter's weight tops out here BEFORE shaping.
@@ -242,6 +259,10 @@ impl CrowdRound {
     /// keyword matches proposal `i`'s command); `quorum` is the weight threshold `M`. Uses the
     /// collective's demo [`FEDERATION`] and the default per-voter seat cap.
     ///
+    /// **The round draws a fresh 32-byte custody root from OS entropy** — a viewer's seat key is
+    /// derived under that secret, never from their public author id. See
+    /// [`with_custody_root`](Self::with_custody_root) for the reproducible path.
+    ///
     /// Panics if `proposals` and `options` differ in length (a programming error — they are two
     /// views of the same option list).
     pub fn open(
@@ -260,7 +281,8 @@ impl CrowdRound {
         )
     }
 
-    /// [`open`](Self::open) with an explicit federation id + per-voter weight cap.
+    /// [`open`](Self::open) with an explicit federation id + per-voter weight cap. Also draws a
+    /// fresh OS-entropy custody root (see [`with_custody_root`](Self::with_custody_root)).
     pub fn open_with(
         question: impl Into<String>,
         proposals: Vec<Proposal>,
@@ -274,6 +296,12 @@ impl CrowdRound {
             options.len(),
             "proposals and option keywords must be index-aligned (one keyword per proposal)"
         );
+        // THE CUSTODY ROOT. Every seat this round ever mints is `derive_key(ctx, root ‖ name)`, so
+        // this value — not the viewer's public author id — is what makes a ballot unforgeable. It
+        // comes from the OS, per round.
+        let mut custody_root = [0u8; 32];
+        getrandom::fill(&mut custody_root)
+            .expect("operating-system RNG must mint the crowd-round custody root");
         CrowdRound {
             question: question.into(),
             proposals,
@@ -285,7 +313,31 @@ impl CrowdRound {
             max_weight_per_voter: max_weight_per_voter.max(1),
             shaping: WeightShaping::Linear,
             min_distinct_voters: DEFAULT_MIN_DISTINCT_VOTERS,
+            custody_root,
         }
+    }
+
+    /// **Pin the round's custody root** instead of the OS-entropy one [`open`](Self::open) drew —
+    /// the REPRODUCIBLE path, for a host that must rebuild the SAME seats later (a replayed
+    /// window, a crash-safe candidate image, a differential test).
+    ///
+    /// `root` is a SECRET and MUST carry real entropy: every seat key is
+    /// `blake3::derive_key(ctx, root ‖ "crowd-stream/youtube/{author_id}#k")`, so a guessable root
+    /// is a guessable ballot key for every viewer in the window — exactly the wound the OS-entropy
+    /// default closes. Pass a root only to REBUILD a round whose root you already hold privately;
+    /// to make a new one, call [`open`](Self::open) and let it draw its own. Builder-style.
+    pub fn with_custody_root(mut self, root: [u8; 32]) -> CrowdRound {
+        self.custody_root = root;
+        self
+    }
+
+    /// The round's private custody root — every seat key derives under it.
+    ///
+    /// ⚠ This is the SECRET that makes a viewer's ballot unforgeable. A host that persists it (to
+    /// rebuild a window's seats) stores it privately; it must never reach a published round, an
+    /// overlay payload, or a log line.
+    pub fn custody_root(&self) -> [u8; 32] {
+        self.custody_root
     }
 
     /// **Set the weight shaping** (default [`WeightShaping::Linear`]). Builder-style so a
@@ -485,12 +537,16 @@ impl CrowdRound {
     /// `ed25519`-signed ballot, and [`resolve_into_world`](CollectiveRound::resolve_into_world) →
     /// ONE certified [`CertifiedTurn`] on the game executor.
     ///
-    /// Two gates fire BEFORE the weight quorum:
+    /// Three gates fire before any seat is signed:
     /// * **distinct-voter floor** — fewer than [`min_distinct_voters`](Self::min_distinct_voters)
     ///   distinct voters ⇒ [`CrowdCloseError::DistinctFloor`], refused before ANY crypto is spent
     ///   (a single Super Chat's weight cannot carry the window);
     /// * **empty window** — no option-naming votes ⇒
-    ///   [`CrowdCloseError::Collective`]`(`[`CollectiveError::BelowQuorum`]`)`.
+    ///   [`CrowdCloseError::Collective`]`(`[`CollectiveError::BelowQuorum`]`)`;
+    /// * **weight quorum** — fewer materialized seats than [`quorum`](Self::quorum) ⇒ the same
+    ///   `BelowQuorum`. A seat casts one ballot worth 1, so the seat count IS the largest tally
+    ///   the window can reach; refusing here (rather than letting the engine refuse the poll spec
+    ///   at open) is what keeps a merely-too-small window RETAINED for retry instead of dropped.
     ///
     /// On success the certified turn is recorded and the window is reset (advanced). On refusal the
     /// window is **left intact** so the caller can decide (retry after more votes, or drop). The
@@ -518,18 +574,25 @@ impl CrowdRound {
 
         // Materialize the electorate: each voter's SHAPED (capped, then Linear/Concave) weight
         // expands to that many custody seats, all voting the voter's aggregated option.
-        // Weight-as-replicated-seats is how a paid vote earns more influence on the
-        // one-ballot-per-seat engine; the shaping bounds how many seats a whale can mint (≤ ⌊√cap⌋
-        // under Concave), keeping the per-window sign+verify cost small.
-        let mut seated: Vec<(Custodian, usize)> = Vec::new();
-        for b in &ballots {
-            let n = self.shaped_weight(b.weight);
-            for k in 0..n {
-                seated.push((seat_custodian(&b.voter, k), b.option_idx));
-            }
-        }
+        let seated = self.seated_from(&ballots);
         // No votes ⇒ below quorum, without troubling the engine with an empty electorate.
         if seated.is_empty() {
+            return Err(CollectiveError::BelowQuorum.into());
+        }
+
+        // Gate 2 — the WEIGHT QUORUM, enforced HERE rather than left to the engine. Every seat
+        // casts exactly one ballot worth 1, so `seated.len()` is BOTH the electorate size and the
+        // largest tally this window can possibly reach: below `quorum` seats, the window can never
+        // certify. `CollectiveRound::open_with` refuses that case as an OPEN-TIME
+        // `BadPollSpec("quorum … exceeds the … distinct seated voter(s)")` — which is not
+        // `BelowQuorum`, so the overlay close-loop classified it as `CloseTick::Skipped` and
+        // ADVANCED the round, throwing away every buffered vote in a merely-too-small window (and
+        // doing it again every window until the crowd got big enough). Refusing it here as the
+        // `BelowQuorum` it actually is — before any seat is signed — keeps the window intact for
+        // retry, which is what `TallyPreview::weight_quorum_met` has always reported.
+        let reachable_total =
+            u64::try_from(seated.len()).expect("the bounded crowd seat set fits the stable wire");
+        if reachable_total < self.quorum {
             return Err(CollectiveError::BelowQuorum.into());
         }
 
@@ -552,6 +615,40 @@ impl CrowdRound {
         Ok(cert)
     }
 
+    /// Materialize the (custodian, option) seats for `ballots`: each voter's SHAPED (capped, then
+    /// Linear/Concave) weight expands to that many custody seats, all voting that voter's
+    /// aggregated option. Weight-as-replicated-seats is how a paid vote earns more influence on
+    /// the one-ballot-per-seat engine; the shaping bounds how many seats a whale can mint
+    /// (≤ ⌊√cap⌋ under Concave), keeping the per-window sign+verify cost small.
+    ///
+    /// The single place a seat key is minted, so [`electorate`](Self::electorate) and
+    /// [`close_into_world`](Self::close_into_world) can never disagree about WHO is seated.
+    fn seated_from(&self, ballots: &[WeightedBallot]) -> Vec<(Custodian, usize)> {
+        let mut seated: Vec<(Custodian, usize)> = Vec::new();
+        for b in ballots {
+            let n = self.shaped_weight(b.weight);
+            for k in 0..n {
+                seated.push((
+                    seat_custodian(&self.custody_root, &b.voter, k),
+                    b.option_idx,
+                ));
+            }
+        }
+        seated
+    }
+
+    /// **The electorate the current window would seat** — the PUBLIC keys
+    /// [`close_into_world`](Self::close_into_world) would open the round over, in the same order.
+    /// Carries no secret (a [`Seat`] is a name + a public key), so an operator can inspect who is
+    /// seated, and a test can hand the electorate to a real [`CollectiveRound`] and try to forge a
+    /// ballot into it.
+    pub fn electorate(&self) -> Vec<Seat> {
+        self.seated_from(&self.aggregate())
+            .iter()
+            .map(|(c, _)| c.seat())
+            .collect()
+    }
+
     /// Reset the window for the next round (drop the buffered events). Called automatically after a
     /// successful [`close_into_world`](Self::close_into_world); call it directly to abandon a window
     /// (e.g. after a persistent illegal-command refusal).
@@ -560,16 +657,21 @@ impl CrowdRound {
     }
 }
 
-/// The per-voter, per-seat **demo** custody keypair — `Custodian::demo(SEAT_DOMAIN ‖ voter ‖ #k)`.
-/// Deterministic so a window's tally is reproducible, and domain-separated so it can never collide
-/// with the collective's own roster.
+/// The per-voter, per-seat custody keypair — `Custodian::under_root(SEAT_DOMAIN ‖ voter ‖ #k,
+/// custody_root)`, i.e. `blake3::derive_key(ctx, custody_root ‖ name)`.
 ///
-/// NAMED RESIDUAL: this derives the seat's `ed25519` secret from the `author_id` string — the
-/// platform holds the key, the viewer does not. It authenticates a ballot as *coming through the
+/// **`custody_root` is the secret; `voter` is only the domain separator.** `voter` is a PUBLIC
+/// YouTube `author_id` — anyone watching the stream can read it — so it is used exactly the way
+/// `dreggnet-discord-identity::seed_for(bot_secret, uid)` uses a uid: to make one host secret yield
+/// a distinct, non-colliding key per viewer per seat. Deriving the key from the name ALONE (the
+/// old `Custodian::demo` path) handed every viewer's ballot to every viewer.
+///
+/// NAMED RESIDUAL (unchanged): the key is still CUSTODIAL — the platform mints and holds it, the
+/// viewer never signs on their own device. It authenticates a ballot as *coming through the
 /// platform*, not as *signed by that human*. Real per-viewer custody (a viewer-held key enrolled
 /// out-of-band) is the electorate-scaling follow-up.
-pub fn seat_custodian(voter: &str, k: u64) -> Custodian {
-    Custodian::demo(format!("{SEAT_DOMAIN}/{voter}#{k}"))
+pub fn seat_custodian(custody_root: &[u8; 32], voter: &str, k: u64) -> Custodian {
+    Custodian::under_root(format!("{SEAT_DOMAIN}/{voter}#{k}"), custody_root)
 }
 
 #[cfg(test)]
@@ -751,6 +853,14 @@ mod tests {
         );
     }
 
+    /// **A sub-quorum window is RETAINED, not dropped.** The refusal must be `BelowQuorum`
+    /// specifically: `OverlayState::drive_close` classifies `BelowQuorum` as
+    /// `CloseTick::Retained` (keep the votes, retry next window) and EVERYTHING ELSE as
+    /// `CloseTick::Skipped`, which calls `advance()` and discards the buffer. Before
+    /// `close_into_world`'s own weight-quorum gate, this window reached
+    /// `CollectiveRound::open_with`, which refused it as `Vote(BadPollSpec("quorum 5 exceeds the
+    /// 2 distinct seated voter(s)"))` — a *Skipped*, so the live close-loop threw away both votes
+    /// every window until the crowd happened to be big enough. This test fails on that behaviour.
     #[test]
     fn sub_quorum_window_does_not_move_the_world() {
         let scene = keep_scene();
@@ -856,6 +966,176 @@ mod tests {
             .expect("with the floor at 1, weight alone certifies");
         assert_eq!(cert.command, Command::trade_blows());
         assert_eq!(world.read_var("hp"), 30, "the world resolved trade-blows");
+    }
+
+    /// **FALSIFIER — a public YouTube author id is NOT a ballot key.**
+    ///
+    /// The old [`seat_custodian`] was `Custodian::demo("crowd-stream/youtube/{author_id}#k")`: the
+    /// seat's ed25519 SECRET was a pure function of a value printed next to every message in the
+    /// live chat. Anyone watching the stream could mint any viewer's ballot.
+    ///
+    /// This exhibits the forgery **twice** — landing on the old derivation, refused on the new one:
+    ///
+    /// * (a) the public-data key is not in the round's electorate at all;
+    /// * (b) cast at a real [`CollectiveRound`] over the round's REAL electorate, the engine
+    ///   refuses it and the tally does not move;
+    /// * (c) cast at a [`CollectiveRound`] over the OLD, name-derived electorate — reconstructed
+    ///   here from public data only — the SAME forged ballot is ADMITTED and the tally moves to 1.
+    ///
+    /// (c) is what makes (b) a refusal rather than a dead path, and it is exactly what the old
+    /// `close_into_world` seated.
+    #[test]
+    fn a_public_author_id_is_not_a_ballot_key_in_the_crowd_electorate() {
+        // The attacker's entire input: two author ids, read off the live chat.
+        const VICTIM: &str = "UCvictim_public_author_id";
+        const OTHER: &str = "UCother_public_author_id";
+
+        let mut round = keep_round(2);
+        round.ingest(chat(VICTIM, "trade blows")); // option 0, weight 1 ⇒ one seat.
+        round.ingest(chat(OTHER, "trade blows"));
+
+        let electorate = round.electorate();
+        assert_eq!(electorate.len(), 2, "one seat per unpaid voter");
+
+        // The OLD derivation, reproduced verbatim from public data.
+        let forger = Custodian::demo(format!("{SEAT_DOMAIN}/{VICTIM}#0"));
+
+        // (a) — the derived-from-public-data key is not seated.
+        assert!(
+            !electorate.iter().any(|s| s.pk == forger.public_key()),
+            "a viewer's seat key is reconstructible from their public author id"
+        );
+
+        // (b) — the forged ballot at the REAL electorate: refused, tally unmoved.
+        let mut real = CollectiveRound::open_with(
+            round.question().to_string(),
+            round.proposals().to_vec(),
+            &electorate,
+            round.quorum(),
+            FEDERATION,
+        )
+        .expect("the crowd electorate opens a real round");
+        let real_poll = real.poll();
+        let refused = real.cast(&forger.sign_ballot(real_poll, 1));
+        assert!(
+            refused.is_err(),
+            "the engine ADMITTED a ballot whose key came from a public author id: {refused:?}"
+        );
+        assert_eq!(
+            real.tally().expect("tally").total,
+            0,
+            "a refused forgery moved the real round's tally"
+        );
+
+        // (c) — the SAME forgery at the OLD, name-derived electorate: admitted, tally moves.
+        let weak: Vec<Seat> = [VICTIM, OTHER]
+            .into_iter()
+            .map(|v| Custodian::demo(format!("{SEAT_DOMAIN}/{v}#0")).seat())
+            .collect();
+        assert!(
+            weak.iter().any(|s| s.pk == forger.public_key()),
+            "the old derivation seats exactly the key an author id reconstructs"
+        );
+        let mut old = CollectiveRound::open_with(
+            round.question().to_string(),
+            round.proposals().to_vec(),
+            &weak,
+            round.quorum(),
+            FEDERATION,
+        )
+        .expect("the old electorate opens a round too");
+        let old_poll = old.poll();
+        old.cast(&forger.sign_ballot(old_poll, 1)).expect(
+            "the OLD name-derived electorate ADMITS the forged ballot — that was the wound",
+        );
+        assert_eq!(
+            old.tally().expect("tally").total,
+            1,
+            "the forgery landed on the old derivation"
+        );
+    }
+
+    /// **FALSIFIER — the same viewer is a different seat in a different round.** Under the old
+    /// derivation a seat's public key was a pure function of its author id, so every round the
+    /// platform ever ran (and every other deployment) agreed on it — one leaked derivation
+    /// compromised every window forever. Each round now draws its own OS-entropy custody root, so
+    /// the same author id yields unrelated keys. Fails on the old behaviour: the two pks are equal.
+    #[test]
+    fn the_same_author_id_gets_unrelated_seats_in_two_rounds() {
+        const VOTER: &str = "UCsteady_viewer";
+        let mut a = keep_round(2);
+        let mut b = keep_round(2);
+        for round in [&mut a, &mut b] {
+            round.ingest(chat(VOTER, "trade blows"));
+            round.ingest(chat("UCsecond", "trade blows"));
+        }
+        assert_ne!(
+            a.custody_root(),
+            b.custody_root(),
+            "two rounds drew the same custody root from the OS"
+        );
+        let (ea, eb) = (a.electorate(), b.electorate());
+        assert_eq!(ea.len(), 2);
+        assert_eq!(ea.len(), eb.len());
+        for (sa, sb) in ea.iter().zip(eb.iter()) {
+            assert_eq!(
+                sa.name, sb.name,
+                "the seat LABELS are the same in both rounds"
+            );
+            assert_ne!(
+                sa.pk, sb.pk,
+                "seat {} carries the same key in two rounds — its secret is a function of its \
+                 public name",
+                sa.name
+            );
+        }
+    }
+
+    /// The REPRODUCIBLE path still works, and it is the only way to get the same seats twice: two
+    /// rounds under the SAME pinned custody root seat byte-identical public keys, and a certified
+    /// turn still lands through them. This is what a replay / crash-safe rebuild uses — with a
+    /// root the host drew from the OS once and keeps private.
+    #[test]
+    fn a_pinned_custody_root_rebuilds_the_same_seats() {
+        let root = [7u8; 32];
+        let build = || {
+            let mut r = keep_round(2).with_custody_root(root);
+            r.ingest(chat("UCreplay_a", "trade blows"));
+            r.ingest(chat("UCreplay_b", "trade blows"));
+            r
+        };
+        let (a, b) = (build(), build());
+        assert_eq!(a.custody_root(), root);
+        let (ea, eb) = (a.electorate(), b.electorate());
+        assert_eq!(ea.len(), 2);
+        for (sa, sb) in ea.iter().zip(eb.iter()) {
+            assert_eq!(sa.name, sb.name);
+            assert_eq!(sa.pk, sb.pk, "a pinned root must rebuild the same seat key");
+        }
+        // …and a pinned-root seat is still derivable ONLY with the root: the public name alone
+        // reconstructs nothing.
+        assert!(
+            !ea.iter().any(
+                |s| s.pk == Custodian::demo(format!("{SEAT_DOMAIN}/UCreplay_a#0")).public_key()
+            ),
+            "a pinned root still must not reduce to the seat's public name"
+        );
+        assert_eq!(
+            seat_custodian(&root, "UCreplay_a", 0).public_key(),
+            ea[0].pk,
+            "seat_custodian under the round's root is what the round seats"
+        );
+
+        // The round still certifies a real world turn through those seats.
+        let scene = keep_scene();
+        let mut world = deploy_keep(37);
+        world.seed_var("hp", Value::Int(50));
+        let mut live = build();
+        let cert = live
+            .close_into_world(&world, &scene)
+            .expect("a pinned-root round still lands a certified turn");
+        assert_eq!(cert.command, Command::trade_blows());
+        assert_eq!(world.read_var("hp"), 30);
     }
 
     #[test]

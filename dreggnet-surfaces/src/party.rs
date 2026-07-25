@@ -931,9 +931,22 @@ impl Offering for PartyOffering {
                 }
             }
             let record = encounter.export_record();
-            if let Err(error) =
-                PartyArenaEncounter::resume_at(&record, encounter.revision(), encounter.root())
-            {
+            // The record carries no secret, so replaying it needs the encounter's own private
+            // custody root (the seats are re-derived under it and the ballots re-signed). A
+            // remote-custody party holds none and cannot be replayed this way — say so rather
+            // than silently skipping the check.
+            let Some(custody_root) = encounter.custody_root() else {
+                return VerifyReport::broken(
+                    session.turns,
+                    "party-Arena encounter holds no custody root, so its record cannot be replayed",
+                );
+            };
+            if let Err(error) = PartyArenaEncounter::resume_at(
+                &record,
+                custody_root,
+                encounter.revision(),
+                encounter.root(),
+            ) {
                 return VerifyReport::broken(
                     session.turns,
                     format!("party-Arena encounter record did not replay: {error}"),
