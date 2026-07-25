@@ -9,8 +9,10 @@ use axum::http::{Request, StatusCode, header};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt as _;
 
+mod common;
+
 fn app() -> axum::Router {
-    catalog_router(Arc::new(CatalogState::new()))
+    common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
 async fn send(
@@ -58,13 +60,17 @@ fn get(uri: &str, cookie: Option<&str>) -> Request<Body> {
     request.body(Body::empty()).expect("GET request")
 }
 
-fn act(uri: &str, cookie: &str, turn: &str, arg: i64) -> Request<Body> {
+/// A `{turn, arg}` POST carrying the route authority the play surface stamped into its own form.
+/// `tug` is a SPINED game key, so a bare `turn=&arg=` is `409 invalid game reference` and the
+/// "two visitors claim the two seats" property below would never have been exercised.
+async fn act(app: &axum::Router, uri: &str, cookie: &str, turn: &str, arg: i64) -> Request<Body> {
+    let body = common::act_body(app, uri, turn, arg, Some(cookie)).await;
     Request::builder()
         .method("POST")
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(header::COOKIE, cookie)
-        .body(Body::from(format!("turn={turn}&arg={arg}")))
+        .body(Body::from(body))
         .expect("POST request")
 }
 
@@ -143,12 +149,20 @@ async fn two_cookie_less_browsers_get_distinct_durable_actors_and_can_take_both_
     // Multiway-Tug assigns the first two distinct actors seats A and B. The old
     // literal `anon` fallback made the second browser the same actor and this
     // second scheduled play was refused.
-    let (_, _, _, first) = send(&app, act(&format!("{base}/act"), cookie_a, "comp", 3)).await;
+    let (_, _, _, first) = send(
+        &app,
+        act(&app, &format!("{base}/act"), cookie_a, "comp", 3).await,
+    )
+    .await;
     assert!(
         first.contains("Turn committed"),
         "first visitor claims seat A: {first}"
     );
-    let (_, _, _, second) = send(&app, act(&format!("{base}/act"), cookie_b, "comp", 3)).await;
+    let (_, _, _, second) = send(
+        &app,
+        act(&app, &format!("{base}/act"), cookie_b, "comp", 3).await,
+    )
+    .await;
     assert!(
         second.contains("Turn committed"),
         "second visitor claims seat B: {second}"
@@ -177,11 +191,13 @@ async fn explicit_query_and_cookie_identities_are_not_replaced() {
     let (_, _, _, first) = send(
         &app,
         act(
+            &app,
             &format!("{base}/act?user=query-player"),
             "dregg_user=cookie-player",
             "comp",
             3,
-        ),
+        )
+        .await,
     )
     .await;
     assert!(
@@ -191,11 +207,13 @@ async fn explicit_query_and_cookie_identities_are_not_replaced() {
     let (_, _, _, second) = send(
         &app,
         act(
+            &app,
             &format!("{base}/act"),
             "dregg_user=cookie-player",
             "comp",
             3,
-        ),
+        )
+        .await,
     )
     .await;
     assert!(

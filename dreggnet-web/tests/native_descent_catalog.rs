@@ -13,6 +13,8 @@ use dreggnet_offerings::{FileResumeStore, OfferingHost};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt;
 
+mod common;
+
 const KEY: &str = "descent";
 const SESSION: &str = "native-web-run";
 
@@ -42,7 +44,7 @@ fn native_host_over(dir: PathBuf) -> OfferingHost {
 
 fn app_over(dir: PathBuf) -> (Router, Arc<CatalogState>) {
     let catalog = Arc::new(CatalogState::with_host(move || native_host_over(dir)));
-    (catalog_router(Arc::clone(&catalog)), catalog)
+    (common::guard(catalog_router(Arc::clone(&catalog))), catalog)
 }
 
 async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) {
@@ -83,15 +85,21 @@ async fn get(app: &Router, suffix: &str, cookie: &str) -> (StatusCode, String) {
     .await
 }
 
+/// One native Descent move, carrying the route authority the surface stamped into its own form.
+/// `descent` is a SPINED game key: a bare `turn=&arg=` is `409 invalid game reference`, so the
+/// journal would stay empty and the restart legs below would be proving that nothing resumes to
+/// nothing.
 async fn act(app: &Router, turn: &str, arg: i64, cookie: &str) -> (StatusCode, String) {
+    let uri = format!("/offerings/{KEY}/session/{SESSION}/act");
+    let body = common::act_body(app, &uri, turn, arg, Some(cookie)).await;
     response(
         app,
         Request::builder()
             .method("POST")
-            .uri(format!("/offerings/{KEY}/session/{SESSION}/act"))
+            .uri(&uri)
             .header("content-type", "application/x-www-form-urlencoded")
             .header(header::COOKIE, cookie)
-            .body(Body::from(format!("turn={turn}&arg={arg}")))
+            .body(Body::from(body))
             .unwrap(),
     )
     .await

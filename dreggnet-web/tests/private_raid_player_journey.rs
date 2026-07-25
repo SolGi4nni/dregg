@@ -24,6 +24,8 @@ use dungeon_on_dregg::combat::{Arena, is_hero};
 use dungeon_on_dregg::private_raid::prove_private_assignment;
 use tower::ServiceExt;
 
+mod common;
+
 const USERS: [&str; 4] = ["alice", "bob", "cara", "devi"];
 
 fn scores() -> [[u8; 4]; 4] {
@@ -68,7 +70,7 @@ fn state(dir: &Path) -> Arc<CatalogState> {
 }
 
 fn app(state: Arc<CatalogState>) -> Router {
-    catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state))
+    common::guard(catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state)))
 }
 
 async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) {
@@ -83,13 +85,19 @@ async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) 
     )
 }
 
-fn act(base: &str, user: &str, turn: &str, arg: i64) -> Request<Body> {
+/// One raid move, carrying the route authority the play surface stamped into its own form.
+/// `private-raid` is a SPINED game key, so a bare `turn=&arg=` is `409 invalid game reference` —
+/// nobody joins, nothing is journalled, and the restart legs prove nothing.
+async fn act(app: &Router, base: &str, user: &str, turn: &str, arg: i64) -> Request<Body> {
+    let act_uri = format!("{base}/act");
+    let cookie = format!("dregg_user={user}");
+    let body = common::act_body(app, &act_uri, turn, arg, Some(&cookie)).await;
     Request::builder()
         .method("POST")
-        .uri(format!("{base}/act"))
+        .uri(&act_uri)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("dregg_user={user}"))
-        .body(Body::from(format!("turn={turn}&arg={arg}")))
+        .header("cookie", &cookie)
+        .body(Body::from(body))
         .expect("valid action request")
 }
 
@@ -137,7 +145,7 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
         for user in USERS {
             lands(
                 &app,
-                act(&base, user, TURN_JOIN_RAID, 0),
+                act(&app, &base, user, TURN_JOIN_RAID, 0).await,
                 &format!("{user} joins with the asserted browser actor"),
             )
             .await;
@@ -156,7 +164,7 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
         for (user, role) in [("alice", 2), ("bob", 0), ("cara", 3), ("devi", 1)] {
             lands(
                 &app,
-                act(&base, user, TURN_CLAIM, role),
+                act(&app, &base, user, TURN_CLAIM, role).await,
                 &format!("{user} claims only the proof-selected capability"),
             )
             .await;
@@ -164,23 +172,28 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
         for user in USERS {
             lands(
                 &app,
-                act(&base, user, TURN_READY, 0),
+                act(&app, &base, user, TURN_READY, 0).await,
                 &format!("{user} readies"),
             )
             .await;
         }
-        lands(&app, act(&base, "alice", TURN_LAUNCH, 0), "leader launches").await;
+        lands(
+            &app,
+            act(&app, &base, "alice", TURN_LAUNCH, 0).await,
+            "leader launches",
+        )
+        .await;
         for user in ["alice", "bob", "cara"] {
             lands(
                 &app,
-                act(&base, user, TURN_FORK, 0),
+                act(&app, &base, user, TURN_FORK, 0).await,
                 &format!("{user} votes for the Warden"),
             )
             .await;
         }
         lands(
             &app,
-            act(&base, "alice", TURN_RESOLVE_FORK, 0),
+            act(&app, &base, "alice", TURN_RESOLVE_FORK, 0).await,
             "leader resolves the real target ballot",
         )
         .await;
@@ -201,7 +214,7 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
             "an unprimed Arena action must not be painted into the browser: {unprimed}"
         );
 
-        let (status, crafted) = response(&app, act(&base, "alice", TURN_ACT, 0)).await;
+        let (status, crafted) = response(&app, act(&app, &base, "alice", TURN_ACT, 0).await).await;
         assert_eq!(status, StatusCode::OK);
         assert!(
             crafted.contains("not on the current surface"),
@@ -210,13 +223,13 @@ async fn shared_catalog_browser_raid_spends_the_proof_in_arena_and_restarts() {
 
         lands(
             &app,
-            act(&base, "alice", TURN_PRIME_TACTIC, 2),
+            act(&app, &base, "alice", TURN_PRIME_TACTIC, 2).await,
             "Alice burns her proof-minted Mage sigil",
         )
         .await;
         let acted = lands(
             &app,
-            act(&base, "alice", TURN_ACT, 0),
+            act(&app, &base, "alice", TURN_ACT, 0).await,
             "the primed Mage contributes a real Arena turn",
         )
         .await;

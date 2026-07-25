@@ -15,6 +15,13 @@ use dreggnet_web::{demo_win, make_app};
 use dungeon_on_dregg::KP_PRESS_ON;
 use tower::ServiceExt; // oneshot
 
+mod common;
+
+/// The deployed app, wrapped in the shared silent-409 tripwire.
+fn app() -> axum::Router {
+    common::guard(make_app())
+}
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -28,6 +35,9 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+/// POST a `{turn, arg}` affordance form as `user`, carrying the route authority the play surface
+/// stamped into its own form (`dungeon` and `automatafl` are SPINED keys — a bare `turn=&arg=` is
+/// `409 invalid game reference` and never reaches the executor).
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -35,24 +45,7 @@ async fn post(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 /// POST a JSON body (the `POST /descent/submit` run-ingest shape).
@@ -84,7 +77,7 @@ fn idx(x: i64, y: i64) -> i64 {
 /// `GET /health` answers 200 with an ok status — the liveness probe the fronting proxy checks.
 #[tokio::test]
 async fn health_is_200() {
-    let app = make_app();
+    let app = app();
     let (status, body) = get(&app, "/health").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("ok"), "health reports ok: {body}");
@@ -93,7 +86,7 @@ async fn health_is_200() {
 /// `GET /` renders the landing page linking the catalog + the no-cheat board.
 #[tokio::test]
 async fn the_landing_page_renders() {
-    let app = make_app();
+    let app = app();
     let (status, body) = get(&app, "/").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
@@ -110,11 +103,14 @@ async fn the_landing_page_renders() {
 /// demo host wires `register_surfaces` beside the games.
 #[tokio::test]
 async fn offerings_lists_the_games_and_the_do_once_surfaces() {
-    let app = make_app();
+    let app = app();
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
 
-    // The eight games.
+    // The eight games. `tug` and `automatafl` are SEAT-LOCKED: their card advertises the
+    // table-minting front door instead of a shared `/offerings/{key}/session/{key}-web` id (a
+    // printed shared id was a seat race, and an asserted label could render the opponent's private
+    // projection on it). Every other game still drops you into its shared demo session.
     for key in [
         "descent",
         "descent-campaign",
@@ -125,10 +121,23 @@ async fn offerings_lists_the_games_and_the_do_once_surfaces() {
         "tug",
         "automatafl",
     ] {
-        assert!(
-            body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists the {key} game: {body}"
-        );
+        match dreggnet_web::table_seats::lock_for_key(key) {
+            Some(door) => {
+                assert!(
+                    body.contains(&format!("href=\"{}\"", door.route)),
+                    "the seat-locked {key} card opens its own table at {}: {body}",
+                    door.route
+                );
+                assert!(
+                    !body.contains(&format!("/offerings/{key}/session/")),
+                    "and never re-advertises a shared, guessable {key} table id: {body}"
+                );
+            }
+            None => assert!(
+                body.contains(&format!("/offerings/{key}/session/")),
+                "the catalog lists the {key} game: {body}"
+            ),
+        }
     }
     // The nine do-once feature surfaces (register_surfaces).
     for key in [
@@ -153,7 +162,7 @@ async fn offerings_lists_the_games_and_the_do_once_surfaces() {
 /// committed verified receipt lands.
 #[tokio::test]
 async fn a_game_plays_a_turn_through_the_merged_router() {
-    let app = make_app();
+    let app = app();
     let base = "/offerings/dungeon/session/smoke1";
     let act = format!("{base}/act");
 
@@ -170,7 +179,7 @@ async fn a_game_plays_a_turn_through_the_merged_router() {
 /// app (offering #0), and re-verifies over HTTP.
 #[tokio::test]
 async fn the_single_offering_session_surface_is_mounted() {
-    let app = make_app();
+    let app = app();
     let (status, body) = get(&app, "/session/s0").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.is_empty(), "the session #0 surface renders");
@@ -187,7 +196,7 @@ async fn the_single_offering_session_surface_is_mounted() {
 /// re-verification is on render, by replay.
 #[tokio::test]
 async fn the_no_cheat_leaderboard_renders_the_verified_winner() {
-    let app = make_app();
+    let app = app();
     let (status, body) = get(&app, "/descent/leaderboard").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("ember"), "the verified winner ranks: {body}");
@@ -205,7 +214,7 @@ async fn the_no_cheat_leaderboard_renders_the_verified_winner() {
 /// The run-cards prove by re-execution: the honest run PASSes, the seeded forgery FAILs.
 #[tokio::test]
 async fn a_run_card_proves_honest_and_fails_the_forgery() {
-    let app = make_app();
+    let app = app();
 
     let (status, won) = get(&app, "/descent/run/demo-ember").await;
     assert_eq!(status, StatusCode::OK);
@@ -232,7 +241,7 @@ async fn a_run_card_proves_honest_and_fails_the_forgery() {
 /// `/descent/`, and `/descent/leaderboard` all render the same re-verified board.
 #[tokio::test]
 async fn the_short_descent_url_renders_the_board() {
-    let app = make_app();
+    let app = app();
 
     // The exact break the deploy hit: GET /descent must NOT 404.
     let (status, body) = get(&app, "/descent").await;
@@ -279,7 +288,7 @@ async fn the_short_descent_url_renders_the_board() {
 /// resolves and the board re-paints with the advanced turn counter, and the chain re-verifies.
 #[tokio::test]
 async fn a_full_automatafl_turn_plays_through_the_merged_app() {
-    let app = make_app();
+    let app = app();
     let base = "/offerings/automatafl/session/merged-auto-1";
     let act = format!("{base}/act");
 
@@ -377,7 +386,7 @@ async fn a_full_automatafl_turn_plays_through_the_merged_app() {
 /// settles `Local` (no `DREGG_NODE_URL`), so submit + rank + board are entirely in-process replay.
 #[tokio::test]
 async fn a_live_run_submits_and_reaches_the_leaderboard() {
-    let app = make_app();
+    let app = app();
 
     // The honest winning line for the demo day (the same source the seeded winner uses).
     let (win_moves, level, class) = demo_win();

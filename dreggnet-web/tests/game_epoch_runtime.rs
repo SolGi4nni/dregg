@@ -15,6 +15,8 @@ use dreggnet_offerings::{DreggIdentity, SessionId};
 use dreggnet_web::{CatalogState, catalog_router, demo_host_resumed_from};
 use tower::ServiceExt;
 
+mod common;
+
 fn scratch_dir(tag: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -98,7 +100,7 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
     let viewer = DreggIdentity("epoch-player".to_string());
 
     let state = state_over(&root);
-    let app = catalog_router(Arc::clone(&state));
+    let app = common::guard(catalog_router(Arc::clone(&state)));
     let (status, generation_one_surface) = response(&app, get(path)).await;
     assert_eq!(status, StatusCode::OK);
     let generation_one = state
@@ -142,7 +144,7 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
     drop(state);
 
     let restarted = state_over(&root);
-    let restarted_app = catalog_router(Arc::clone(&restarted));
+    let restarted_app = common::guard(catalog_router(Arc::clone(&restarted)));
     assert_eq!(response(&restarted_app, get(path)).await.0, StatusCode::OK);
     assert_eq!(
         restarted

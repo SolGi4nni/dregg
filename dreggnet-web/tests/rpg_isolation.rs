@@ -29,6 +29,8 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 /// GET `uri` as ESTABLISHED web user `user` — via the durable `dregg_user` cookie, the identity a
 /// per-identity RPG world is keyed on. (A raw `?user=` no longer earns a private world; see the
 /// `unestablished_query_identities_collapse_to_one_shared_world` guard.)
@@ -82,14 +84,16 @@ async fn post_query(
     user: &str,
 ) -> (StatusCode, String) {
     let sep = if uri.contains('?') { '&' } else { '?' };
+    let uri = format!("{uri}{sep}user={user}");
+    let body = common::act_body(app, &uri, turn, arg, None).await;
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("{uri}{sep}user={user}"))
+                .uri(&uri)
                 .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
+                .body(Body::from(body))
                 .unwrap(),
         )
         .await
@@ -101,7 +105,10 @@ async fn post_query(
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// POST a `{turn, arg}` affordance form as web user `user` (a `dregg_user` cookie).
+/// POST a `{turn, arg}` affordance form as web user `user` (a `dregg_user` cookie), carrying the
+/// route authority the surface stamped into its own form. `craft`/`inventory`/`party` are not
+/// spined and carry none; `council` IS a spined game key, so without this the shared-table
+/// regression guard below posted into a `409` and proved nothing about quorum at all.
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -109,28 +116,11 @@ async fn post(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 fn app() -> axum::Router {
-    catalog_router(Arc::new(CatalogState::new()))
+    common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
 /// **(a) Two viewers' RPG worlds are ISOLATED.** Alice forges a Greatblade on `craft`; it is on

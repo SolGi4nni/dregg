@@ -18,6 +18,8 @@ use dungeon_on_dregg::private_preference::{PrivateBallot, prove_private_preferen
 use dungeon_on_dregg::{KP_PRESS_ON, KP_PRIVATE_COUNSEL_DESCEND};
 use tower::ServiceExt;
 
+mod common;
+
 const OFFERING: &str = "dungeon";
 const SESSION: &str = "private-party-counsel";
 const SEED: u64 = 0xC011EC7;
@@ -65,13 +67,18 @@ fn upload(path: &str, body: impl Into<Body>) -> Request<Body> {
         .unwrap()
 }
 
-fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+/// One dungeon move, carrying the route authority the play surface stamped into its own form.
+/// `dungeon` is a SPINED game key: a bare `turn=&arg=` is `409 invalid game reference`, the world
+/// never advances, and the private-operation legs below run against a session still at genesis.
+async fn act(app: &Router, path: &str, arg: usize, user: &str) -> Request<Body> {
+    let cookie = format!("dregg_user={user}");
+    let body = common::act_body(app, path, "choose", arg as i64, Some(&cookie)).await;
     Request::builder()
         .method("POST")
         .uri(path)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("dregg_user={user}"))
-        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .header("cookie", &cookie)
+        .body(Body::from(body))
         .unwrap()
 }
 
@@ -91,15 +98,21 @@ async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
         [0x62; 32],
         86_400,
     )));
-    let app = Router::new()
-        .merge(catalog_router(Arc::clone(&catalog)))
-        .merge(fhegg_operation::router(Arc::clone(&catalog)))
-        .merge(tg)
-        .merge(da);
+    let app = common::guard(
+        Router::new()
+            .merge(catalog_router(Arc::clone(&catalog)))
+            .merge(fhegg_operation::router(Arc::clone(&catalog)))
+            .merge(tg)
+            .merge(da),
+    );
 
     let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
     let act_path = format!("{game_path}/act");
-    let (status, entered) = response(&app, act(&act_path, KP_PRESS_ON, "guild-counsel")).await;
+    let (status, entered) = response(
+        &app,
+        act(&app, &act_path, KP_PRESS_ON, "guild-counsel").await,
+    )
+    .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&entered));
 
     let operations = format!("/offerings/{OFFERING}/session/{SESSION}/operations");
@@ -151,7 +164,7 @@ async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
 
     let (status, enacted) = response(
         &app,
-        act(&act_path, KP_PRIVATE_COUNSEL_DESCEND, "guild-counsel"),
+        act(&app, &act_path, KP_PRIVATE_COUNSEL_DESCEND, "guild-counsel").await,
     )
     .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&enacted));

@@ -25,6 +25,21 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{demo_win, make_app};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
+/// The deployed app, wrapped in the shared silent-409 tripwire.
+fn app() -> axum::Router {
+    common::guard(make_app())
+}
+
+/// A GET as web user `user` (a `dregg_user` cookie) — the identity a per-viewer RPG world is keyed
+/// on, and therefore the only viewer whose `/verify` sees that viewer's own chain.
+async fn get_as(app: &axum::Router, uri: &str, user: &str) -> (StatusCode, String) {
+    let (status, body) =
+        common::get_with_cookie(app, uri, Some(&format!("dregg_user={user}"))).await;
+    (status, body)
+}
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -38,7 +53,9 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// POST a `{turn, arg}` affordance form as web user `user`.
+/// POST a `{turn, arg}` affordance form as web user `user`, carrying the route authority the play
+/// surface stamped into its own form (`automatafl` and `tug` are SPINED keys; `trade` is not, and
+/// the helper simply finds no authority to carry there).
 async fn post_act(
     app: &axum::Router,
     uri: &str,
@@ -46,24 +63,7 @@ async fn post_act(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 /// POST a JSON body (the Descent submit seam).
@@ -102,7 +102,7 @@ fn sample(name: &str, html: &str) {
 /// **The landing + grouped catalog render** — the two pages a stranger opens first.
 #[tokio::test]
 async fn the_landing_and_grouped_catalog_render() {
-    let app = make_app();
+    let app = app();
 
     let (status, body) = get(&app, "/").await;
     assert_eq!(status, StatusCode::OK);
@@ -126,11 +126,28 @@ async fn the_landing_and_grouped_catalog_render() {
         body.contains("group-h"),
         "the shelves use the grouped-heading style"
     );
-    // A play link from each category is present.
-    for key in ["automatafl", "tug", "trade", "doc"] {
+    // A play link from each category is present — and it is the RIGHT link. A SEAT-LOCKED game
+    // (`tug`, `automatafl`) deliberately advertises its table-minting FRONT DOOR *instead of* a
+    // shared `/offerings/{key}/session/{key}-web` id: a printed shared id was a seat race and let
+    // anyone render an opponent's private projection by asserting their label. Asserting the old
+    // shared link here would demand the repaired hole back.
+    for key in ["automatafl", "tug"] {
+        let door = dreggnet_web::table_seats::lock_for_key(key)
+            .unwrap_or_else(|| panic!("{key} is a seat-locked table game"));
+        assert!(
+            body.contains(&format!("href=\"{}\"", door.route)),
+            "the {key} card opens its own table at {}: {body}",
+            door.route
+        );
+        assert!(
+            !body.contains(&format!("/offerings/{key}/session/")),
+            "and never re-advertises a shared, guessable {key} table id: {body}"
+        );
+    }
+    for key in ["trade", "doc"] {
         assert!(
             body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists a play link for {key}"
+            "the catalog lists a play link for {key}: {body}"
         );
     }
     sample("catalog.html", &body);
@@ -139,7 +156,7 @@ async fn the_landing_and_grouped_catalog_render() {
 /// **Automatafl plays a full turn through the deployed app; the goal squares paint distinctly.**
 #[tokio::test]
 async fn automatafl_full_playthrough_with_goal_squares() {
-    let app = make_app();
+    let app = app();
     let base = "/offerings/automatafl/session/pt-auto";
 
     // Open: the board paints, and the four GOAL CORNERS carry the distinct `goal` class — never
@@ -210,7 +227,7 @@ async fn automatafl_full_playthrough_with_goal_squares() {
 /// **Multiway-tug opens with a real guild TABLE and a play lands.**
 #[tokio::test]
 async fn tug_guild_table_renders_and_a_play_lands() {
-    let app = make_app();
+    let app = app();
     let base = "/offerings/tug/session/pt-tug";
 
     let (status, body) = get(&app, base).await;
@@ -246,7 +263,7 @@ async fn tug_guild_table_renders_and_a_play_lands() {
 /// **The Descent ingests the honest winning run and it ranks.**
 #[tokio::test]
 async fn descent_submit_ranks_the_honest_run() {
-    let app = make_app();
+    let app = app();
 
     // The leaderboard opens (the short URL a stranger types).
     let (status, board) = get(&app, "/descent").await;
@@ -302,7 +319,7 @@ async fn descent_submit_ranks_the_honest_run() {
 /// are legible + coherent, not a raw ViewNode dump.
 #[tokio::test]
 async fn a_feature_surface_renders_and_a_play_lands() {
-    let app = make_app();
+    let app = app();
     let base = "/offerings/trade/session/pt-trade";
 
     let (status, body) = get(&app, base).await;
@@ -327,10 +344,13 @@ async fn a_feature_surface_renders_and_a_play_lands() {
     );
     sample("trade-after-list.html", &body);
 
-    let (status, body) = get(&app, &format!("{base}/verify")).await;
+    // ⚑ AS THE SAME VIEWER. `trade` is an RPG key, so the chain the `seller` POST landed on is
+    // SELLER's own per-identity world; a cookie-less `/verify` asks the shared anonymous world and
+    // is honestly told "no such offering session". Re-verify the world the turn actually landed in.
+    let (status, body) = get_as(&app, &format!("{base}/verify"), "seller").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         body.contains("\"verified\":true"),
-        "the trade provenance verifies: {body}"
+        "the trade provenance verifies for its own player: {body}"
     );
 }

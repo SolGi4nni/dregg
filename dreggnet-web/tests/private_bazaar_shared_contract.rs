@@ -19,6 +19,8 @@ use dungeon_on_dregg::progression::{
     PRIVATE_BAZAAR_XP_METHOD, deploy_hero, private_bazaar_xp_event_topic,
 };
 use tower::ServiceExt;
+
+mod common;
 use zeroize::Zeroizing;
 
 use spween_dregg::{
@@ -90,7 +92,7 @@ async fn web_catalog_opens_and_drives_the_real_private_bazaar_host() {
         deployment.clone(),
         target_registry.character_store(),
     ));
-    let app = catalog_router(state);
+    let app = common::guard(catalog_router(state));
 
     let session = "web-private-bazaar";
     let base = format!("/offerings/{PRIVATE_BAZAAR_RAID_KEY}/session/{session}");
@@ -187,7 +189,7 @@ async fn durable_web_boot_replay_reconstructs_worker_registry() {
             Some(session_dir.clone()),
             SessionPolicy::default(),
         ));
-        let app = catalog_router(state);
+        let app = common::guard(catalog_router(state));
         let base = format!("/offerings/{PRIVATE_BAZAAR_RAID_KEY}/session/{session}");
         let (status, _) = body(
             app.clone()

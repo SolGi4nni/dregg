@@ -14,7 +14,7 @@ use dregg_node_target::{NodeTarget, StubNode};
 use dreggnet_offerings::native_descent::{
     MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
 };
-use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
+use dreggnet_offerings::{Offering, SessionConfig};
 use dreggnet_web::descent_store::{
     DescentRunStore, InMemoryDescentRunStore, SqliteDescentRunStore, StoredDay,
 };
@@ -22,6 +22,9 @@ use dreggnet_web::{DescentState, descent_router};
 use dungeon_on_dregg::descent::Sim;
 use procgen_dregg::{CommittedSeed, daily_seed};
 use tower::ServiceExt;
+
+#[path = "common/descent_line.rs"]
+mod descent_line;
 
 async fn post(
     app: &axum::Router,
@@ -62,70 +65,10 @@ async fn get(app: &axum::Router, path: &str) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
-fn native_seed_input(seed: &CommittedSeed) -> u32 {
-    let bytes = seed.as_bytes();
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
+use descent_line::{crowned_record, land, native_seed_input};
 
 fn normalized_native_seed(seed: &CommittedSeed) -> u8 {
     ((u64::from(native_seed_input(seed)) % 251) + 1) as u8
-}
-
-fn land(
-    offering: &NativeDescentOffering,
-    session: &mut dreggnet_offerings::native_descent::NativeDescentSession,
-    actor: &str,
-    turn: &str,
-    arg: i64,
-) {
-    match offering.advance(
-        session,
-        Action::new(turn, turn, arg, true),
-        DreggIdentity(actor.to_string()),
-    ) {
-        Outcome::Landed { .. } => {}
-        Outcome::Refused(reason) => panic!("native test move {turn}({arg}) refused: {reason}"),
-    }
-}
-
-fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
-    let offering = NativeDescentOffering::new();
-    let mut session = offering
-        .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
-        .expect("native day opens");
-    for (turn, arg) in [
-        ("delve", 0),
-        ("smite", 0),
-        ("loot", 1),
-        ("unlock", 2),
-        ("delve", 0),
-        ("smite", 0),
-        ("loot", 2),
-        ("unlock", 3),
-        ("delve", 0),
-        ("smite", 0),
-        ("smite", 0),
-        ("loot", 3),
-        ("unlock", 4),
-        ("delve", 0),
-        ("smite", 0),
-        ("smite", 0),
-        ("loot", 0),
-        // ⚑ THE CLIMB HOME: `flee` is illegal below the surface, one light per floor.
-        ("ascend", 0),
-        ("ascend", 0),
-        ("ascend", 0),
-        ("ascend", 0),
-        ("flee", 0),
-    ] {
-        land(&offering, &mut session, actor, turn, arg);
-    }
-    assert!(
-        session
-            .completion()
-            .is_some_and(|completion| completion.crowned)
-    );
-    session.export_record()
 }
 
 fn settled_without_crown(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {

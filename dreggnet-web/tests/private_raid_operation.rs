@@ -17,6 +17,8 @@ use dungeon_on_dregg::private_raid::{RaidRole, prove_private_assignment};
 use dungeon_on_dregg::{KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES, KP_TRADE_BLOWS};
 use tower::ServiceExt;
 
+mod common;
+
 const OFFERING: &str = "dungeon";
 const SESSION: &str = "private-raid-one";
 const SEED: u64 = 31_337;
@@ -59,13 +61,18 @@ fn upload(path: &str, body: impl Into<Body>) -> Request<Body> {
         .unwrap()
 }
 
-fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+/// One dungeon move, carrying the route authority the play surface stamped into its own form.
+/// `dungeon` is a SPINED game key: a bare `turn=&arg=` is `409 invalid game reference`, the world
+/// never advances, and the private-operation legs below run against a session still at genesis.
+async fn act(app: &Router, path: &str, arg: usize, user: &str) -> Request<Body> {
+    let cookie = format!("dregg_user={user}");
+    let body = common::act_body(app, path, "choose", arg as i64, Some(&cookie)).await;
     Request::builder()
         .method("POST")
         .uri(path)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("dregg_user={user}"))
-        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .header("cookie", &cookie)
+        .body(Body::from(body))
         .unwrap()
 }
 
@@ -85,11 +92,13 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
         [0x72; 32],
         86_400,
     )));
-    let app = Router::new()
-        .merge(catalog_router(Arc::clone(&catalog)))
-        .merge(fhegg_operation::router(Arc::clone(&catalog)))
-        .merge(tg)
-        .merge(da);
+    let app = common::guard(
+        Router::new()
+            .merge(catalog_router(Arc::clone(&catalog)))
+            .merge(fhegg_operation::router(Arc::clone(&catalog)))
+            .merge(tg)
+            .merge(da),
+    );
 
     let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
     let act_path = format!("{game_path}/act");
@@ -159,7 +168,8 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
     // Reach the sanctum with exactly 30 HP through ordinary HTTP turns.  The
     // later proof acceptance is bound to this live timeline cursor.
     for choice in [KP_TRADE_BLOWS, KP_PRESS_ON, KP_DESCEND] {
-        let (status, moved) = response(&app, act(&act_path, choice, "raid-captain")).await;
+        let (status, moved) =
+            response(&app, act(&app, &act_path, choice, "raid-captain").await).await;
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&moved));
         assert!(String::from_utf8(moved).unwrap().contains("Turn committed"));
     }
@@ -179,13 +189,21 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
     // capability. The cookie is not authentication; the operation binds the
     // verified proof result to the exact actor label that submitted it. The
     // refusal does not consume the Mender recovery.
-    let (status, refused) = response(&app, act(&act_path, mender_choice, "raid-thief")).await;
+    let (status, refused) = response(
+        &app,
+        act(&app, &act_path, mender_choice, "raid-thief").await,
+    )
+    .await;
     assert_eq!(status, 200);
     assert!(String::from_utf8(refused).unwrap().contains("Refused"));
 
     // The exact role-indexed choice then crosses the ordinary action route and
     // spends the verified assignment once: HP 30 -> 50 in a committed turn.
-    let (status, healed) = response(&app, act(&act_path, mender_choice, "raid-captain")).await;
+    let (status, healed) = response(
+        &app,
+        act(&app, &act_path, mender_choice, "raid-captain").await,
+    )
+    .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&healed));
     assert!(
         String::from_utf8(healed)
@@ -193,7 +211,11 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
             .contains("Turn committed")
     );
 
-    let (status, reused) = response(&app, act(&act_path, mender_choice, "raid-captain")).await;
+    let (status, reused) = response(
+        &app,
+        act(&app, &act_path, mender_choice, "raid-captain").await,
+    )
+    .await;
     assert_eq!(status, 200);
     assert!(String::from_utf8(reused).unwrap().contains("Refused"));
 

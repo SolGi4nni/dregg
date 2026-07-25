@@ -21,6 +21,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 use dreggnet_offerings::{Action, DreggIdentity, Offering, OfferingHost, SessionConfig, SessionId};
 use dreggnet_web::seated::SeatedTug;
 use dreggnet_web::{CatalogState, catalog_router, web_identity};
@@ -176,7 +178,7 @@ async fn post_as(
 /// web surface.
 #[tokio::test]
 async fn the_web_session_page_shows_the_seated_user_their_own_hand() {
-    let app = catalog_router(Arc::new(CatalogState::new()));
+    let app = common::guard(catalog_router(Arc::new(CatalogState::new())));
     let base = "/offerings/tug/session/tug-web-hidden";
 
     // Alice claims seat A by playing — the POST re-renders AS alice, so her hand is on the page.

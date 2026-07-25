@@ -16,6 +16,8 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{WebState, router};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_SEIZE, KP_TRADE_BLOWS};
 
 const CHOOSE: &str = "choose";
@@ -72,7 +74,7 @@ fn control_count(html: &str) -> usize {
 /// affordance control per cap-gated [`Action`] — the affordance Surface, as HTML.
 #[tokio::test]
 async fn get_renders_the_room_and_one_control_per_affordance() {
-    let app = router(Arc::new(WebState::new()));
+    let app = common::guard(router(Arc::new(WebState::new())));
 
     let (status, body) = get(&app, "/session/keep-a").await;
     assert_eq!(status, StatusCode::OK);
@@ -108,7 +110,7 @@ async fn get_renders_the_room_and_one_control_per_affordance() {
 #[tokio::test]
 async fn a_winning_line_plays_through_the_web_surface() {
     let state = Arc::new(WebState::new());
-    let app = router(state.clone());
+    let app = common::guard(router(state.clone()));
     let id = "win";
     let sid = dreggnet_offerings::SessionId::new(id);
 
@@ -216,7 +218,7 @@ async fn a_winning_line_plays_through_the_web_surface() {
 #[tokio::test]
 async fn an_illegal_move_is_refused_honestly_no_receipt() {
     let state = Arc::new(WebState::new());
-    let app = router(state.clone());
+    let app = common::guard(router(state.clone()));
     let id = "danger";
     let sid = dreggnet_offerings::SessionId::new(id);
 
@@ -275,7 +277,7 @@ async fn an_illegal_move_is_refused_honestly_no_receipt() {
 #[tokio::test]
 async fn a_post_for_an_unpresented_affordance_is_refused_before_the_substrate() {
     let state = Arc::new(WebState::new());
-    let app = router(state.clone());
+    let app = common::guard(router(state.clone()));
     let id = "nope";
     let sid = dreggnet_offerings::SessionId::new(id);
 

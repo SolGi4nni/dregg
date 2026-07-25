@@ -18,6 +18,8 @@ use dreggnet_web::{CatalogState, catalog_router, fhegg_operation, web_identity};
 use serde_json::Value;
 use tower::ServiceExt;
 
+mod common;
+
 const HOSTILE_OPERATION: &str = "test.private-result-boundary.v1";
 const HOSTILE_MEDIA_TYPE: &str = "application/vnd.dregg.test-private-result.v1";
 
@@ -113,7 +115,8 @@ async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) 
 #[tokio::test]
 async fn private_descriptor_context_is_not_a_public_viewer_payload() {
     let state = Arc::new(CatalogState::new());
-    let app = catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state));
+    let app =
+        common::guard(catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state)));
     let base = "/offerings/descent/session/no-viewer-private-operation";
     let alice = "private-alice";
     let actor = web_identity(alice).0;
@@ -128,14 +131,21 @@ async fn private_descriptor_context_is_not_a_public_viewer_payload() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // `descent` is a SPINED game key: the POST must carry the route authority the surface stamped
+    // into its own form, or it is `409 invalid game reference` and no run is ever bound to an
+    // actor — which is the whole premise of the leak assertions below.
+    let act_uri = format!("{base}/act");
+    let cookie = format!("dregg_user={alice}");
     let (status, _) = response(
         &app,
         Request::builder()
             .method("POST")
-            .uri(format!("{base}/act"))
+            .uri(&act_uri)
             .header("content-type", "application/x-www-form-urlencoded")
-            .header("cookie", format!("dregg_user={alice}"))
-            .body(Body::from("turn=delve&arg=0"))
+            .header("cookie", &cookie)
+            .body(Body::from(
+                common::act_body(&app, &act_uri, "delve", 0, Some(&cookie)).await,
+            ))
             .unwrap(),
     )
     .await;
@@ -204,7 +214,8 @@ async fn operation_response_omits_actor_and_every_unreviewed_field_by_default() 
             .expect("fixture session opens");
         host
     }));
-    let app = catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state));
+    let app =
+        common::guard(catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state)));
     let actor = web_identity("private-response-player").0;
     let session_path = format!("/offerings/dungeon/session/{SESSION}");
     let (status, page) = response(

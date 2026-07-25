@@ -50,6 +50,8 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use tower::ServiceExt;
 
+mod common;
+
 const KEY: &str = "party";
 const SESSION: &str = "three-surface-raid";
 const TG_TOKEN: &str = "123456789:test-only-party-token";
@@ -170,7 +172,7 @@ fn app_over(dir: PathBuf) -> (Router, Arc<CatalogState>) {
         .merge(catalog_router(Arc::clone(&catalog)))
         .merge(tg)
         .merge(da);
-    (app, catalog)
+    (common::guard(app), catalog)
 }
 
 async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) {

@@ -22,6 +22,8 @@ use dreggnet_web::{CatalogState, catalog_router, demo_host_resumed_from};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 /// A unique scratch directory for one test (process id + a monotone counter), created by the
 /// store itself on first open.
 fn scratch_dir(tag: &str) -> PathBuf {
@@ -42,9 +44,9 @@ fn scratch_dir(tag: &str) -> PathBuf {
 /// a second one over the SAME dir is the simulated restart (the boot resume runs on the host
 /// thread inside `demo_host_resumed_from`).
 fn app_over(dir: PathBuf) -> axum::Router {
-    catalog_router(Arc::new(CatalogState::with_host(move || {
-        demo_host_resumed_from(dir)
-    })))
+    common::guard(catalog_router(Arc::new(CatalogState::with_host(
+        move || demo_host_resumed_from(dir),
+    ))))
 }
 
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
@@ -60,7 +62,9 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// POST a `{turn, arg}` affordance form to `uri` as web user `user` (a `dregg_user` cookie).
+/// POST a `{turn, arg}` affordance form to `uri` as web user `user` (a `dregg_user` cookie),
+/// carrying the route authority the surface stamped into its own form. `dungeon` is a SPINED key,
+/// so a bare `turn=&arg=` never lands and there would be nothing durable to resume.
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -68,24 +72,7 @@ async fn post(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 /// A played dungeon session SURVIVES a restart: three landed moves through the real router, then

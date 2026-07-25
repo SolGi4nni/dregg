@@ -20,6 +20,8 @@ use dungeon_on_dregg::{
 };
 use tower::ServiceExt;
 
+mod common;
+
 const OFFERING: &str = "dungeon";
 const SESSION: &str = "private-fair-deal";
 const SEED: u64 = 0xFA17;
@@ -58,25 +60,32 @@ fn upload(path: &str, media_type: &str, user: &str, body: impl Into<Body>) -> Re
         .unwrap()
 }
 
-fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+/// One dungeon move, carrying the route authority the play surface stamped into its own form.
+/// `dungeon` is a SPINED game key: a bare `turn=&arg=` is `409 invalid game reference`, the world
+/// never advances, and the private-operation legs below run against a session still at genesis.
+async fn act(app: &Router, path: &str, arg: usize, user: &str) -> Request<Body> {
+    let cookie = format!("dregg_user={user}");
+    let body = common::act_body(app, path, "choose", arg as i64, Some(&cookie)).await;
     Request::builder()
         .method("POST")
         .uri(path)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("dregg_user={user}"))
-        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .header("cookie", &cookie)
+        .body(Body::from(body))
         .unwrap()
 }
 
 #[tokio::test]
 async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     let catalog = catalog();
-    let app = Router::new()
-        .merge(catalog_router(Arc::clone(&catalog)))
-        .merge(fhegg_operation::router(Arc::clone(&catalog)));
+    let app = common::guard(
+        Router::new()
+            .merge(catalog_router(Arc::clone(&catalog)))
+            .merge(fhegg_operation::router(Arc::clone(&catalog))),
+    );
     let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
     let act_path = format!("{game_path}/act");
-    let (status, entered) = response(&app, act(&act_path, KP_PRESS_ON, "seat-6")).await;
+    let (status, entered) = response(&app, act(&app, &act_path, KP_PRESS_ON, "seat-6").await).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&entered));
     let operations = format!("/offerings/{OFFERING}/session/{SESSION}/operations");
 
@@ -196,7 +205,7 @@ async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     } else {
         KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
     };
-    let (status, enacted) = response(&app, act(&act_path, initiative, "seat-6")).await;
+    let (status, enacted) = response(&app, act(&app, &act_path, initiative, "seat-6").await).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&enacted));
     assert!(
         String::from_utf8(enacted)

@@ -11,6 +11,8 @@ use dreggnet_surfaces::private_raid::{ASSIGN_OPERATION, KEY, TURN_JOIN_RAID};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt;
 
+mod common;
+
 async fn response(
     app: &axum::Router,
     request: Request<Body>,
@@ -34,7 +36,7 @@ async fn response(
 
 #[tokio::test]
 async fn four_pseudonymous_browsers_muster_then_the_proof_upload_becomes_discoverable() {
-    let app = catalog_router(Arc::new(CatalogState::new()));
+    let app = common::guard(catalog_router(Arc::new(CatalogState::new())));
     let base = format!("/offerings/{KEY}/session/web-raid");
     let (status, first_cookie, opening) = response(
         &app,
@@ -78,12 +80,17 @@ async fn four_pseudonymous_browsers_muster_then_the_proof_upload_becomes_discove
 
     let mut last = String::new();
     for (index, cookie) in cookies.iter().enumerate() {
+        // `private-raid` is a SPINED game key: without the route authority the surface stamped
+        // into its own form the join is `409 invalid game reference` and no visitor ever joins.
+        let act_uri = format!("{base}/act");
         let request = Request::builder()
             .method("POST")
-            .uri(format!("{base}/act"))
+            .uri(&act_uri)
             .header("content-type", "application/x-www-form-urlencoded")
             .header(header::COOKIE, cookie.as_str())
-            .body(Body::from(format!("turn={TURN_JOIN_RAID}&arg=0")))
+            .body(Body::from(
+                common::act_body(&app, &act_uri, TURN_JOIN_RAID, 0, Some(cookie.as_str())).await,
+            ))
             .unwrap();
         let (status, rotated, body) = response(&app, request).await;
         assert_eq!(status, StatusCode::OK);

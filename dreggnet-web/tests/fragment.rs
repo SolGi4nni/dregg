@@ -22,6 +22,8 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 /// A GET, optionally asking for JUST the fragment (`X-Fragment: 1`).
 async fn get(app: &axum::Router, uri: &str, fragment: bool) -> (StatusCode, String) {
     let mut b = Request::builder().uri(uri);
@@ -42,6 +44,11 @@ async fn get(app: &axum::Router, uri: &str, fragment: bool) -> (StatusCode, Stri
 
 /// POST a `{turn, arg}` affordance as web user `user`, optionally as a progressive-enhancement
 /// `fetch` (`X-Fragment: 1`) rather than a classic form navigation.
+///
+/// The body carries the route authority the surface stamped into its own form — `automatafl` is a
+/// SPINED key, and the enhancement path posts the same fields the no-JS form does. Without them
+/// every POST below is `409 invalid game reference` and the "fragment carries the outcome notice"
+/// assertions are about a turn that never landed.
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -50,20 +57,19 @@ async fn post(
     user: &str,
     fragment: bool,
 ) -> (StatusCode, String) {
+    let cookie = format!("dregg_user={user}");
+    let body = common::act_body(app, uri, turn, arg, Some(&cookie)).await;
     let mut b = Request::builder()
         .method("POST")
         .uri(uri)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("cookie", format!("dregg_user={user}"));
+        .header("cookie", &cookie);
     if fragment {
         b = b.header("x-fragment", "1");
     }
     let resp = app
         .clone()
-        .oneshot(
-            b.body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
+        .oneshot(b.body(Body::from(body)).unwrap())
         .await
         .unwrap();
     let status = resp.status();
@@ -74,7 +80,7 @@ async fn post(
 }
 
 fn app() -> axum::Router {
-    catalog_router(Arc::new(CatalogState::new()))
+    common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
 /// The automatafl board index of `(x, y)` — the board's OWN width, never a literal.

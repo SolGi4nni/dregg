@@ -25,22 +25,20 @@
 //! play controller's own `const GLYPH_* = "…"` declarations and requires the card's legend to carry
 //! every one of them.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap};
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use dreggnet_offerings::native_descent::{
-    NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
-};
+use dreggnet_offerings::native_descent::NativeDescentRecord;
 use dreggnet_offerings::native_descent_wire::PortableRecord;
-use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dreggnet_web::descent_play::descent_play_router;
 use dreggnet_web::{DescentState, descent_router};
-use dungeon_on_dregg::descent::{BANKED, BREATH, FLOORS, RELICS, Sim};
+use dungeon_on_dregg::descent::{BREATH, FLOORS};
 use procgen_dregg::{CommittedSeed, daily_seed};
 use tower::ServiceExt;
+
+#[path = "common/descent_line.rs"]
+mod descent_line;
 
 const DAY: &str = "card-day";
 
@@ -83,191 +81,9 @@ async fn get(app: &axum::Router, path: &str) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
-fn native_seed_input(seed: &CommittedSeed) -> u32 {
-    let bytes = seed.as_bytes();
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
-
-fn land(
-    offering: &NativeDescentOffering,
-    session: &mut NativeDescentSession,
-    actor: &str,
-    turn: &str,
-    arg: i64,
-) {
-    match offering.advance(
-        session,
-        Action::new(turn, turn, arg, true),
-        DreggIdentity(actor.to_string()),
-    ) {
-        Outcome::Landed { .. } => {}
-        Outcome::Refused(reason) => panic!("card fixture move {turn}({arg}) refused: {reason}"),
-    }
-}
-
-/// **Ask the GAME for a legal crown line, then drive it through the real executor.**
-///
-/// This fixture has now been broken twice in one night by rule changes it had no business
-/// knowing about — first a literal tape died when `harm`/`lunge` re-emitted the day family and a
-/// floor needed a second blow, then a hand-written greedy line died on
-/// `flee refused: the light dies` once `ascend` made you pay for the climb home. Both were
-/// fixture failures wearing a product failure's clothes.
-///
-/// So the line is no longer authored at all. This is a shortest-`spent` search over the MOVER's
-/// own transitions ([`Sim::delve`], [`smite`](Sim::smite), [`lunge`](Sim::lunge),
-/// [`loot`](Sim::loot), [`unlock`](Sim::unlock), [`ascend`](Sim::ascend), [`flee`](Sim::flee)) —
-/// every edge is a verb the game itself said was legal, so the plan cannot contain an illegal
-/// move, and the search finds a crown line whenever one exists at all. The margin is genuinely
-/// thin (a crown-and-bank costs 24–30 of the 30 breath depending on the drawn map), which is
-/// exactly why guessing one by hand does not work.
-///
-/// It is still not self-fulfilling: the planned verbs are then driven through the REAL
-/// executor-backed Offering, and the caller asserts the outcome it wanted actually happened.
-fn plan_line(start: &Sim, goal: impl Fn(&Sim) -> bool) -> Vec<(&'static str, i64)> {
-    fn successors(sim: &Sim) -> Vec<((&'static str, i64), Sim)> {
-        let mut out: Vec<((&'static str, i64), Sim)> = Vec::new();
-        // Cheap moves first so the search reaches a settlement quickly; correctness does not
-        // depend on the order, only the speed does.
-        for relic in 0..RELICS {
-            if let Ok(next) = sim.loot(relic) {
-                out.push((("loot", relic as i64), next));
-            }
-        }
-        for way in 2..=FLOORS {
-            if let Ok(next) = sim.unlock(way) {
-                out.push((("unlock", way as i64), next));
-            }
-        }
-        if let Ok(next) = sim.lunge() {
-            out.push((("lunge", 0), next));
-        }
-        if let Ok(next) = sim.smite() {
-            out.push((("smite", 0), next));
-        }
-        if let Ok(next) = sim.delve() {
-            out.push((("delve", 0), next));
-        }
-        if let Ok(next) = sim.ascend() {
-            out.push((("ascend", 0), next));
-        }
-        if let Ok(next) = sim.flee() {
-            out.push((("flee", 0), next));
-        }
-        out
-    }
-    type Key = (u64, u64, u64, u64, u64, [u64; 3], [u64; RELICS]);
-    fn key(sim: &Sim) -> Key {
-        (
-            sim.depth,
-            sim.spent,
-            sim.wounds,
-            sim.harm,
-            sim.fate,
-            sim.ways,
-            sim.custody,
-        )
-    }
-    // Dijkstra on `spent`. `spent` is in the key, so a plain visited-set is sound.
-    let mut seen: BTreeSet<Key> = BTreeSet::new();
-    let mut frontier: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
-    // (sim, the move that reached it, the index of its parent)
-    let mut nodes: Vec<(Sim, Option<(&'static str, i64)>, usize)> = vec![(start.clone(), None, 0)];
-    seen.insert(key(start));
-    frontier.push(Reverse((start.spent, 0)));
-
-    while let Some(Reverse((_, index))) = frontier.pop() {
-        if goal(&nodes[index].0) {
-            // Walk the parent chain back to the root.
-            let mut line = Vec::new();
-            let mut at = index;
-            while let Some(step) = nodes[at].1 {
-                line.push(step);
-                at = nodes[at].2;
-            }
-            line.reverse();
-            return line;
-        }
-        for (step, next) in successors(&nodes[index].0) {
-            if seen.insert(key(&next)) {
-                let spent = next.spent;
-                nodes.push((next, Some(step), index));
-                frontier.push(Reverse((spent, nodes.len() - 1)));
-            }
-        }
-    }
-    panic!(
-        "no line reaching the goal exists on this day within {BREATH} breath — that is a GAME \
-         balance claim failing, not a fixture one"
-    );
-}
-
-/// A crown-and-bank line: the flagship's promise, and it is TIGHT — 24–30 of the 30 breath
-/// depending on the drawn map, which is why it cannot be written by hand.
-fn plan_crown_line(start: &Sim) -> Vec<(&'static str, i64)> {
-    plan_line(start, |sim| sim.fate != 0 && sim.custody[0] == BANKED)
-}
-
-/// **A line that spends the last of the light with the pack still full.** Every verb costs at
-/// least one breath, so a run at `spent == BREATH` can never move again: those relics are frozen
-/// where they are and will never be anyone's. This is the game's strongest beat, and the card
-/// exists to make it legible — so the fixture has to be able to produce one.
-fn plan_doomed_line(start: &Sim) -> Vec<(&'static str, i64)> {
-    plan_line(start, |sim| {
-        sim.fate == 0 && sim.spent == BREATH && sim.pack() > 0
-    })
-}
-
-/// The dungeon the run is actually being played in, taken from the executor's own post-state
-/// rather than re-derived from the seed. The plan is therefore searched over the SAME drawn map
-/// the run is in; a mis-derived world could otherwise yield a plan the executor refuses.
-fn current_sim(session: &NativeDescentSession) -> Sim {
-    session
-        .export_record()
-        .events
-        .last()
-        .map(|event| event.post.clone())
-        .expect("a move has landed, so the record carries a post-state")
-}
-
-/// Drive a planned line through the REAL offering.
-fn drive(
-    offering: &NativeDescentOffering,
-    session: &mut NativeDescentSession,
-    actor: &str,
-    line: &[(&'static str, i64)],
-) {
-    for (turn, arg) in line {
-        land(offering, session, actor, turn, *arg);
-    }
-}
-
-/// Open a session and take the one move that is forced at the mouth (`delve` — at depth 0 only
-/// `delve` and a nothing-banked `flee` are legal), which also reveals the day's drawn dungeon.
-fn opened(seed: &CommittedSeed, actor: &str) -> (NativeDescentOffering, NativeDescentSession) {
-    let offering = NativeDescentOffering::new();
-    let mut session = offering
-        .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
-        .expect("the native day opens");
-    land(&offering, &mut session, actor, "delve", 0);
-    (offering, session)
-}
-
-/// A settled crown run: the searched line, ending in the proved exit that banks the pack.
-fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
-    let (offering, mut session) = opened(seed, actor);
-    let line = plan_crown_line(&current_sim(&session));
-    drive(&offering, &mut session, actor, &line);
-    let record = session.export_record();
-    assert!(
-        record
-            .completion
-            .as_ref()
-            .is_some_and(|completion| completion.crowned),
-        "the searched line must actually crown, or every assertion below is about a run that did \
-         not happen"
-    );
-    record
-}
+// The seed/lander/planner/drivers live in ONE shared place — a native Descent move tape is never
+// authored by hand here or in `descent_native_leaderboard`; both ask the game for a legal line.
+use descent_line::{crowned_record, current_sim, drive, opened, plan_doomed_line};
 
 /// **A run whose light died with relics still on it.** Not a settlement — it never reached one —
 /// but terminal in fact, and the loss the whole card is built around.

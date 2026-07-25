@@ -14,6 +14,8 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{CatalogState, catalog_router, demo_host_resumed_from};
 use tower::ServiceExt;
 
+mod common;
+
 fn scratch_dir() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
@@ -27,9 +29,9 @@ fn scratch_dir() -> PathBuf {
 }
 
 fn app_over(dir: PathBuf) -> axum::Router {
-    catalog_router(Arc::new(CatalogState::with_host(move || {
-        demo_host_resumed_from(dir)
-    })))
+    common::guard(catalog_router(Arc::new(CatalogState::with_host(
+        move || demo_host_resumed_from(dir),
+    ))))
 }
 
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
@@ -45,29 +47,25 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+/// POST a campaign move, carrying the route authority the surface stamped into its own form.
+/// `descent-campaign` is a SPINED key: a bare `turn=&arg=` is `409 invalid game reference`, so
+/// nothing would land, nothing would persist, and every resume assertion below would be about a
+/// campaign that never moved.
 async fn post(app: &axum::Router, uri: &str, turn: &str, arg: i64) -> (StatusCode, String) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", "dregg_user=alice")
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, "alice").await
 }
 
 #[tokio::test]
 async fn campaign_drives_and_resumes_through_the_generic_web_host() {
+    // ⚑ THE DAY MUST BE ARMED FIRST. The web catalog registers the Descent (and the campaign over
+    // it) against the LIVE verified drand day and REFUSES to open on no day at all, rather than
+    // serving the pre-computable deploy-seed-derived relic provenance. This suite predates that
+    // rule and had been asking a day-less host to open a campaign — answered `409`, so its very
+    // first assertion failed and nothing below it ever ran. Publish the pinned PUBLISHED round
+    // (a genuine BLS-verifiable reveal, and exactly what the surface serves when the transport is
+    // down), the same arming `game_session_coherence` does.
+    dreggnet_catalog::publish_pinned_descent_day().expect("the pinned published round verifies");
+
     let dir = scratch_dir();
     let base = "/offerings/descent-campaign/session/web-campaign-restart";
     let act = format!("{base}/act");
@@ -76,7 +74,11 @@ async fn campaign_drives_and_resumes_through_the_generic_web_host() {
     {
         let app = app_over(dir.clone());
         let (status, genesis) = get(&app, base).await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the campaign session must OPEN before anything else is meaningful: {genesis}"
+        );
         assert!(genesis.contains("Deepening Ways"), "{genesis}");
         assert!(
             genesis.contains("no scripted completion"),
@@ -95,7 +97,11 @@ async fn campaign_drives_and_resumes_through_the_generic_web_host() {
 
     let app = app_over(dir.clone());
     let (status, resumed) = get(&app, base).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the campaign session reopens: {resumed}"
+    );
     assert!(
         resumed.contains("depth 1"),
         "a fresh web host replays the landed native state: {resumed}"

@@ -20,6 +20,8 @@ use tower::ServiceExt; // oneshot
 
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_SEIZE};
 
+mod common;
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -33,7 +35,10 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// POST a `{turn, arg}` affordance form to `uri` as web user `user` (a `dregg_user` cookie).
+/// POST a `{turn, arg}` affordance form to `uri` as web user `user` (a `dregg_user` cookie),
+/// carrying the route authority the surface stamped into its own form. `dungeon`, `council` and
+/// `market` are all SPINED game keys, so a bare `turn=&arg=` here is `409 invalid game reference`
+/// and none of this file's play lines would ever reach the executor.
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -41,28 +46,11 @@ async fn post(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 fn app() -> axum::Router {
-    catalog_router(Arc::new(CatalogState::new()))
+    common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
 /// `GET /offerings` lists the three registered offerings, each with a play link.

@@ -19,6 +19,8 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -32,7 +34,10 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// POST a `{turn, arg}` affordance form as web user `user` (a `dregg_user` cookie).
+/// POST a `{turn, arg}` affordance form as web user `user` (a `dregg_user` cookie), carrying the
+/// route authority the play surface stamped into its own form. Both games here (`automatafl`,
+/// `tug`) are SPINED keys: a bare `turn=&arg=` is `409 invalid game reference`, and every play
+/// line in this file would stop before the executor.
 async fn post(
     app: &axum::Router,
     uri: &str,
@@ -40,28 +45,11 @@ async fn post(
     arg: i64,
     user: &str,
 ) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header("content-type", "application/x-www-form-urlencoded")
-                .header("cookie", format!("dregg_user={user}"))
-                .body(Body::from(format!("turn={turn}&arg={arg}")))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    (status, String::from_utf8(bytes.to_vec()).unwrap())
+    common::post_act(app, uri, turn, arg, user).await
 }
 
 fn app() -> axum::Router {
-    catalog_router(Arc::new(CatalogState::new()))
+    common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
 /// The automatafl board index of `(x, y)` — derived from the board's OWN width
@@ -77,10 +65,21 @@ async fn the_catalog_lists_both_portfolio_games() {
     let app = app();
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
+    // ⚑ THE LINK IS THE TABLE DOOR, not a shared session id. Both of these are SEAT-LOCKED
+    // two-player hidden-move games, so the catalog advertises their table-minting front door
+    // *instead of* `/offerings/{key}/session/{key}-web`: the printed shared id was a seat race,
+    // and an asserted-label identity could render the opponent's private projection on it.
     for key in ["tug", "automatafl"] {
+        let door = dreggnet_web::table_seats::lock_for_key(key)
+            .unwrap_or_else(|| panic!("{key} is a seat-locked table game"));
         assert!(
-            body.contains(&format!("/offerings/{key}/session/")),
-            "the catalog lists a play link for {key}"
+            body.contains(&format!("href=\"{}\"", door.route)),
+            "the catalog opens a {key} table at {}: {body}",
+            door.route
+        );
+        assert!(
+            !body.contains(&format!("/offerings/{key}/session/")),
+            "and never re-advertises a shared, guessable {key} table id: {body}"
         );
     }
     assert!(

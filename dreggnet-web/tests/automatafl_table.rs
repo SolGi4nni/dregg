@@ -27,11 +27,15 @@ use dreggnet_web::{CatalogState, catalog_router};
 use tokio_stream::StreamExt;
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 /// The merged surface under test: the catalog rails (the play + the events stream) plus the
 /// automatafl front door, over ONE shared state.
 fn app() -> axum::Router {
     let state = Arc::new(CatalogState::new());
-    catalog_router(Arc::clone(&state)).merge(automatafl_web::automatafl_router(state))
+    common::guard(
+        catalog_router(Arc::clone(&state)).merge(automatafl_web::automatafl_router(state)),
+    )
 }
 
 /// The board index of `(x, y)` — derived from the crate's own board width, not a literal.
