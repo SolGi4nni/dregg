@@ -24,6 +24,11 @@ Layers (each `lake build`-verified, kernel-clean; `#assert_axioms` on stated the
                     Pratt/Lucas certificate (kernel-checked, NO `sorry`/`axiom`/`native_decide`),
                     the `Fact` instance, and the ripple — `Field Fq`, `Field Fp2`, and the `G1`/`G2`
                     point `AddCommGroup`s all now unconditional; `Fp2FieldGoal` discharged.
+* `BN254.TowerField`— DISCHARGES `Fp6FieldGoal` (`ξ` a non-cube) and `Fp12FieldGoal` (`v` a
+                    non-square), both reduced to kernel-checked `Fp2` modexp non-residue certs
+                    (fuel-structural `powMonFuel`, no `native_decide`); BUILDS `Field Fp6` and
+                    `Field Fp12` (norm + explicit inverse), so the pairing target `Fp12` supports
+                    INVERSION.  The whole tower is now genuine fields.
 -/
 import Dregg2.Crypto.BN254.Fq
 import Dregg2.Crypto.BN254.Fp2
@@ -33,3 +38,4 @@ import Dregg2.Crypto.BN254.Curves
 import Dregg2.Crypto.BN254.Pairing
 import Dregg2.Crypto.BN254.Groth16
 import Dregg2.Crypto.BN254.Primality
+import Dregg2.Crypto.BN254.TowerField
