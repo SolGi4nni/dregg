@@ -429,6 +429,10 @@ fn mixed_turn_public_commits_and_private_admits() {
         participant_keys,
     );
     let prop = coord.propose(public_forest.clone()).unwrap();
+    // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE body for
+    // every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that asserts the native
+    // tally verdict through `receive_vote` says so explicitly.
+    let _native = crate::atomic::NativeDifferentialArmed::new();
     let vote = Vote::yes(Vote::sign_yes(&prop.proposal_id, &public_forest.hash, &sk));
     let decision = coord.receive_vote(node_id(1), vote).unwrap();
     assert_eq!(decision, Some(Decision::Commit), "public 2PC must commit");

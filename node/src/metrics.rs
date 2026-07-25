@@ -160,6 +160,19 @@ pub fn inc_finality_gate_unavailable_refusals() {
     counter!("dregg_finality_gate_unavailable_refusals_total").increment(1);
 }
 
+/// Increment the 2PC-COORDINATOR-DECISION-GATE-UNAVAILABLE REFUSAL counter: a vote's authoritative
+/// verdict was forced to `Decision::Abort` because the verified `dregg_coord_2pc_decide` gate
+/// (`TwoPhaseCommit.evaluate`) was ARMED — the export is linked and the tally could reach a terminal
+/// verdict — and could not answer, with no declared bypass. This is the fail-CLOSED disposition that
+/// replaced this site's transitive fall-through to the un-verified Rust `Coordinator` sibling, and it
+/// is deliberately a SEPARATE series from every "the verified rule said Abort" outcome: no vote was
+/// rejected here — the gate could not answer. A non-zero rate means atomic proposals are being torn
+/// down pending a verified archive (or a deliberate `DREGG_COORD_DECISION_GATE=0`), which is a
+/// liveness alarm, not a safety one. See `crate::coord_gate::coord_decision_disposition`.
+pub fn inc_coord_decision_gate_unavailable_refusals() {
+    counter!("dregg_coord_decision_gate_unavailable_refusals_total").increment(1);
+}
+
 // ─── Histograms ──────────────────────────────────────────────────────────────
 
 /// Record turn execution duration.

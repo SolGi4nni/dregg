@@ -40,6 +40,15 @@ route	cell/src/program/eval.rs	no_oracle_subset_disposition	twin#2 a subset cons
 route	coord/src/atomic.rs	verified_decision	twin#3 the 2PC live path routes through the verified Lean gate
 cfgtest	coord/src/atomic.rs	evaluate_votes_native	twin#3 the native 2PC sibling is test-only (never a live decider)
 
+# ── twin#3b the NODE-LEVEL 2PC decision gate's FAIL-CLOSED disposition ───────────────
+# Invariant 6 slices `coord_decision_disposition` itself; these rows are the companion name-grep, so
+# a refactor that stops CALLING it — or restores the transitive fall-through this site shipped with —
+# is caught even though the sliced fn would still look fine on its own.
+route	node/src/coord_gate.rs	coord_decision_disposition	twin#3b the node 2PC gate's fail-closed disposition is still CONSULTED by authoritative_decision (invariant 6 only proves the fn itself refuses)
+route	node/src/coord_gate.rs	CoordDecisionRefusal::CoordDecisionGateUnavailable	twin#3b the gate-UNAVAILABLE refusal variant is still the disposition; a VERIFIER's missing archive must never be laundered into a verdict about a vote
+forbid	node/src/coord_gate.rs	fell back to the Rust decision	twin#3b the exact debug!-level fall-through text this site shipped with must not come back (prose ABOUT the defect deliberately avoids the string, so a match means the behaviour is back, not that someone documented it)
+route	coord/src/atomic.rs	native_2pc_differential_armed	twin#3 the native 2PC sibling is reachable in a test build ONLY through the DECLARED thread-local differential arming — `evaluate_votes_no_gate` must keep ONE body, not a cfg(test) one that can Commit
+
 # ── twin#4 coord causal happened-before ──────────────────────────────────────────────
 route	coord/src/causal.rs	verified_happened_before	twin#4 causal order routes through the verified export
 

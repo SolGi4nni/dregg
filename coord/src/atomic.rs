@@ -306,6 +306,54 @@ fn verified_decision(yes: usize, no: usize, n: usize, threshold: usize) -> Optio
     }
 }
 
+// TEST-ONLY fault injection that lets the NATIVE 2PC sibling decide on the gate-absent path.
+//
+// ⚑ WHY IT EXISTS: `evaluate_votes_no_gate` used to be TWO functions — fail-closed `Abort` under
+// `cfg(not(test))`, `evaluate_votes_native()` (which can return `Commit`) under `cfg(test)`. A test
+// build whose gate-absent path can COMMIT where production ABORTS means the crate's own tests never
+// exercised the production disposition at all. It now has ONE body, and the differentials that need
+// native tally semantics through the REAL `receive_vote` path ARM THIS FLAG BY NAME. The divergence
+// is therefore declared and per-test instead of being a silently different code path for the whole
+// test binary.
+//
+// THREAD-LOCAL, not a static: cargo runs this crate's tests concurrently in one process, and a
+// process-wide flag would let one test's arming change another's disposition.
+//
+// (Plain `//` comments, not `///`: a doc comment on a macro invocation is an `unused_doc_comments`
+// warning — the macro would have to emit the docs itself.)
+#[cfg(test)]
+thread_local! {
+    static FORCE_NATIVE_2PC_DIFFERENTIAL: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn native_2pc_differential_armed() -> bool {
+    FORCE_NATIVE_2PC_DIFFERENTIAL.with(|c| c.get())
+}
+
+/// TEST-ONLY RAII arming of the native 2PC differential sibling for THIS thread. Held by the tests
+/// that drive `receive_vote` and need the native tally verdict (the `coord_diff` / `entangled_diff`
+/// differentials and the coordinator lifecycle tests); dropping it restores the PRODUCTION
+/// fail-closed disposition. See [`FORCE_NATIVE_2PC_DIFFERENTIAL`].
+#[cfg(test)]
+pub(crate) struct NativeDifferentialArmed;
+
+#[cfg(test)]
+impl NativeDifferentialArmed {
+    pub(crate) fn new() -> Self {
+        FORCE_NATIVE_2PC_DIFFERENTIAL.with(|c| c.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for NativeDifferentialArmed {
+    fn drop(&mut self) {
+        FORCE_NATIVE_2PC_DIFFERENTIAL.with(|c| c.set(false));
+    }
+}
+
 // ─── Messages ──────────────────────────────────────────────────────────────────
 
 /// Message sent by the coordinator to propose an atomic turn.
@@ -815,9 +863,8 @@ impl Coordinator {
     /// `dregg-exec-lean` gate, or an archive lacking the export) the live path FAILS CLOSED — it
     /// returns [`Decision::Abort`] rather than silently running an unverified Rust decider. A
     /// production node MUST install the gate; refusing to commit is the safe verdict when it is
-    /// absent. (Only in-crate `cfg(test)` builds fall back to the native differential sibling
-    /// [`Self::evaluate_votes_native`], which is cross-checked against the Lean model in
-    /// `coord_diff.rs`; that sibling does not exist in a release/consumer build.)
+    /// absent. That disposition is [`Self::evaluate_votes_no_gate`], and it is now IDENTICAL under
+    /// `cfg(test)` and in a release/consumer build.
     fn evaluate_votes(&self) -> Decision {
         if let Some((yes, no, n, thr)) = self.current_tally()
             && let Some(d) = verified_decision(yes, no, n, thr)
@@ -830,19 +877,29 @@ impl Coordinator {
     /// The live-path disposition when the verified 2PC gate is unavailable: FAIL CLOSED. A
     /// terminal/idle state has no tally to decide (Pending, as before); a `Proposing` state with no
     /// linked verified gate refuses to commit ([`Decision::Abort`]) — never a silent native decision.
-    #[cfg(not(test))]
+    ///
+    /// ⚑ ONE BODY FOR EVERY CFG. This function used to have TWO definitions: the fail-closed one
+    /// above under `cfg(not(test))`, and `self.evaluate_votes_native()` under `cfg(test)` — which CAN
+    /// RETURN `Decision::Commit`. So `cargo test -p dregg-coord` exercised a gate-absent disposition
+    /// that a deployed node does not have: the crate's own tests could not have caught a regression
+    /// in the production refusal, because they never ran it. (Only `coord/tests/twin_fail_closed.rs`
+    /// did, by linking the crate WITHOUT `cfg(test)`.) The divergence is now a DECLARED, narrowly
+    /// scoped, test-only FAULT INJECTOR that the DIFFERENTIALS ARM EXPLICITLY
+    /// ([`native_2pc_differential_armed`]) — the default disposition in a test build is the
+    /// production one.
     fn evaluate_votes_no_gate(&self) -> Decision {
+        #[cfg(test)]
+        {
+            // The native sibling is the DIFFERENTIAL against `TwoPhaseCommit.evaluate`
+            // (`coord_diff.rs`). It decides only for a test that armed it by name.
+            if native_2pc_differential_armed() {
+                return self.evaluate_votes_native();
+            }
+        }
         match self.state {
             CoordinatorState::Proposing { .. } => Decision::Abort,
             _ => Decision::Pending,
         }
-    }
-
-    /// `cfg(test)` differential builds keep the native sibling reachable so `coord_diff.rs` can
-    /// cross-check it against the Lean model. It is NOT on any live (release/consumer) path.
-    #[cfg(test)]
-    fn evaluate_votes_no_gate(&self) -> Decision {
-        self.evaluate_votes_native()
     }
 
     /// The NATIVE Rust 2PC decision — the DIFFERENTIAL sibling of the verified Lean gate, retained

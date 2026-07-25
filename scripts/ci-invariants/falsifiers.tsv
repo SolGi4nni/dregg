@@ -39,6 +39,9 @@ dregg-intent	lib	test_verify_fulfillment_rejects_cross_state_predicate_forgery	i
 
 # ── the coord/captp/federation twin fail-closed integration teeth ──────────────
 dregg-coord	test:twin_fail_closed	twoc_pc_fails_closed_without_gate	twin#3 coord 2PC fails closed (Abort) when the verified Lean gate is absent
+dregg-coord	lib	gate_absent_disposition_is_identical_under_cfg_test_and_in_production	twin#3 the gate-absent disposition is the SAME fail-closed Abort under cfg(test) as in production (the cfg-divergent evaluate_votes_no_gate that could Commit is gone); its second half proves the binary CAN still commit via the DECLARED native-differential arming, so the assertion is not vacuous
+dregg-node	lib	coord_decision_fails_closed_when_the_verified_gate_is_unavailable	twin#3b POLE A with the verified 2PC gate ARMED and UNANSWERABLE the node REFUSES (CoordDecisionGateUnavailable => Decision::Abort) instead of acting on the un-verified Rust Coordinator verdict; also pins the vacuity short-circuit, both DECLARED bypasses, and coord_gate_bypass_allowed's own quadrants (the mutation invariant 6 cannot see)
+dregg-node	lib	authoritative_decision_refuses_when_the_verified_2pc_gate_cannot_answer	twin#3b BOTH POLES at the site: an honest unanimous tally still Commits when the gate answers or is bypassed, Decision::Abort (never Commit) when it is armed and cannot answer, and no refusal on a tally with no terminal verdict in it
 dregg-coord	test:twin_fail_closed	causal_happened_before_fails_closed_without_gate	twin#4 coord causal happened-before fails closed without the gate
 dregg-coord	test:twin_fail_closed	shared_budget_resolve_fails_closed_without_gate	twin#5 coord shared-budget resolve fails closed without the gate
 dregg-federation	test:twin_fail_closed	strand_admission_fails_closed_to_seeds_without_gate	twin#7 strand admission fails closed to seeds-only without the gate

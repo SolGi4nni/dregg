@@ -428,6 +428,12 @@ mod two_phase_commit_diff {
         );
         let prop = coord.propose(af.clone()).unwrap();
 
+        // ARM the NATIVE 2PC differential sibling BY NAME. `evaluate_votes_no_gate` has ONE body for
+        // every cfg and it is the PRODUCTION fail-closed `Abort`; this differential is precisely the
+        // test that wants the native tally verdict through the REAL `receive_vote` path, so it says
+        // so instead of relying on a cfg-divergent callee.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
+
         let mut last = Decision::Pending;
         for i in 0..3 {
             let nid = node_id((i + 1) as u8);

@@ -89,3 +89,27 @@ node/src/finalization_votes.rs	verified_quorum_reached	verified_finalization_quo
 # closed — the export IS linked and this poll still got no answer out of it (wire `ERR` / panicked
 # blocking FFI thread).
 node/src/blocklace_sync.rs	finality_belt_disposition	belt_gate\b	belt_gate_bypass_allowed	twin#8b no verified finality projection => FinalityAdvanceRefusal::FinalityGateUnavailable, the poll finalizes NOTHING; the un-gated Rust ordering::tau never reaches the executor
+
+# ── twin#3b the NODE-LEVEL 2PC DECISION gate — THE THIRD CONFIRMED MEMBER OF THE CLASS ────────
+# Twin#3's row above covers `coord/src/atomic.rs::evaluate_votes`. This is the OTHER 2PC decision
+# site: `node/src/coord_gate.rs::authoritative_decision`, which api.rs::atomic_vote and
+# blocklace_sync's co-turn tally both feed. It was UNREGISTERED and its gate-absent arm was a bare
+# `Err(_) => rust_decision` logged at `debug!` — fail-closed only TRANSITIVELY, because
+# `receive_vote -> evaluate_votes -> evaluate_votes_no_gate` happens to return Abort. Registering it
+# BEFORE the fix printed exactly "could not find ANY terminal verdict on the gate-absent path": the
+# disposition lived in a callee in another crate and was not stated here at all. It is now the named
+# `coord_decision_disposition`, which REFUSES (Decision::Abort, no commit).
+#
+# TWO DECLARED BYPASSES, named here so they print in every CI log instead of hiding in a match arm:
+# no `dregg_coord_2pc_decide` export linked at all (an archive-less build / the guest / every test
+# binary), and the operator's `DREGG_COORD_DECISION_GATE=0`. `DREGG_REQUIRE_LEAN=1` revokes BOTH.
+# Deliberately NOT a bypass — the hole that was closed — the export IS linked and this vote still got
+# no answer out of it (`ensure_lean_init` failed / an unusable FFI buffer). A MALFORMED WIRE is not
+# that state: `verified_2pc_decide` decodes garbage to `Ok(Pending)`, a fail-safe sentinel.
+#
+# ⚑ `coord_gate_bypass_allowed` is ONE BOOLEAN EXPRESSION on purpose. Its siblings open with
+# `if require_lean { return false; }`, and that `return false` is a REFUSAL token this checker finds
+# while resolving helper bodies into the region's `deep` text — which makes the caller's real refusal
+# arm unread. MEASURED at this site: with the early return, a mutant reverting the refusal arm to
+# `Ok(())` stays GREEN here; as one expression it goes RED. Keep it an expression.
+node/src/coord_gate.rs	coord_decision_disposition	verified_verdict\b	coord_gate_bypass_allowed	twin#3b no verified 2PC verdict => CoordDecisionRefusal::CoordDecisionGateUnavailable, the site returns Decision::Abort; the un-verified Rust Coordinator verdict never reaches the ledger

@@ -677,8 +677,91 @@ mod coordinator_tests {
         ));
     }
 
+    /// ⚑ THE cfg(test) DIVERGENCE, CLOSED — twin#3's gate-absent disposition is now IDENTICAL in a
+    /// test build and in production.
+    ///
+    /// `Coordinator::evaluate_votes_no_gate` used to be TWO functions: fail-closed `Decision::Abort`
+    /// under `cfg(not(test))`, and `evaluate_votes_native()` (which CAN RETURN `Commit`) under
+    /// `cfg(test)`. So `cargo test -p dregg-coord` — the suite that would catch a regression in the
+    /// production refusal — never ran the production refusal at all. Only
+    /// `coord/tests/twin_fail_closed.rs`, which links this crate WITHOUT `cfg(test)`, ever did.
+    ///
+    /// This test is that integration test's IN-CRATE twin: same scenario, same crate, `cfg(test)` ON,
+    /// no verified gate registered, no differential armed ⇒ the SAME `Abort`. The second half is its
+    /// non-vacuity: with `NativeDifferentialArmed` held, the identical sequence reaches `Commit`, so
+    /// the assertion above is a real property of the disposition and not a coordinator that cannot
+    /// commit in this binary at all.
+    #[test]
+    fn gate_absent_disposition_is_identical_under_cfg_test_and_in_production() {
+        let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
+        let mut coord = Coordinator::new(
+            node_id(1),
+            coord_signing_key(),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
+        let prop_msg = coord.propose(af.clone()).unwrap();
+        let sig_a = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[0]);
+        coord.receive_vote(node_id(1), Vote::yes(sig_a)).unwrap();
+        let sig_b = Vote::sign_yes(&prop_msg.proposal_id, &af.hash, &signing_keys[1]);
+        let decided = coord.receive_vote(node_id(2), Vote::yes(sig_b)).unwrap();
+
+        if decided == Some(Decision::Commit) {
+            panic!(
+                "cfg(test) DIVERGENCE: a full 2-of-2 Yes quorum COMMITTED with no verified 2PC gate \
+                 registered. A deployed node returns Abort here (`evaluate_votes_no_gate`), so this \
+                 test binary is exercising a DIFFERENT gate-absent disposition than production and \
+                 cannot catch a regression in the real refusal."
+            );
+        }
+        assert_eq!(
+            decided,
+            Some(Decision::Abort),
+            "with no verified 2PC gate the live path must FAIL CLOSED to Abort under cfg(test) \
+             exactly as it does in a release build"
+        );
+
+        // NON-VACUITY: the same sequence CAN reach Commit in this binary — via the DECLARED,
+        // per-test native differential arming, and only via it.
+        let (_, _, _, af2, sks2, pks2) = setup_two_party();
+        let mut coord2 = Coordinator::new(
+            node_id(1),
+            coord_signing_key(),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            pks2,
+        );
+        let prop2 = coord2.propose(af2.clone()).unwrap();
+        let _native = crate::atomic::NativeDifferentialArmed::new();
+        coord2
+            .receive_vote(
+                node_id(1),
+                Vote::yes(Vote::sign_yes(&prop2.proposal_id, &af2.hash, &sks2[0])),
+            )
+            .unwrap();
+        assert_eq!(
+            coord2
+                .receive_vote(
+                    node_id(2),
+                    Vote::yes(Vote::sign_yes(&prop2.proposal_id, &af2.hash, &sks2[1])),
+                )
+                .unwrap(),
+            Some(Decision::Commit),
+            "with the native differential ARMED the same quorum must commit — otherwise the \
+             fail-closed assertion above is vacuous (a coordinator that can never commit trivially \
+             satisfies it)"
+        );
+    }
+
     #[test]
     fn full_commit_path() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let (mut ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
@@ -716,6 +799,10 @@ mod coordinator_tests {
 
     #[test]
     fn abort_on_no_vote() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
         let mut coord = Coordinator::new(
             node_id(1),
@@ -829,6 +916,10 @@ mod coordinator_tests {
 
     #[test]
     fn threshold_one_of_two() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let (mut ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_two_party();
         // Only need 1 of 2 to commit.
         let mut coord = Coordinator::new(
@@ -1145,6 +1236,10 @@ mod integration {
     /// Test that sequential turns and atomic turns can coexist on the same ledger.
     #[test]
     fn causal_then_atomic_on_same_ledger() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let mut ledger = Ledger::new();
         let mut cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
@@ -1242,6 +1337,10 @@ mod integration {
     /// Test three-party atomic turn with majority threshold.
     #[test]
     fn three_party_majority_threshold() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let mut ledger = Ledger::new();
         let cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
@@ -1333,6 +1432,10 @@ mod integration {
     /// Test early abort: if enough No votes come in that threshold can never be met.
     #[test]
     fn early_abort_on_enough_no_votes() {
+        // ARM the NATIVE 2PC differential sibling BY NAME: `evaluate_votes_no_gate` has ONE
+        // body for every cfg and it is the PRODUCTION fail-closed `Abort`, so a test that
+        // asserts the native tally verdict through `receive_vote` says so explicitly.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
         let mut ledger = Ledger::new();
         let cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);

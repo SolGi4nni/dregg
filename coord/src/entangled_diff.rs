@@ -309,6 +309,11 @@ mod atomicity_diff {
         );
         let prop = coord.propose(af.clone()).unwrap();
 
+        // ARM the NATIVE 2PC differential sibling BY NAME (see `atomic::NativeDifferentialArmed`):
+        // the gate-absent disposition is the production `Abort` in a test build too, and this
+        // differential is the caller that deliberately wants the native tally verdict.
+        let _native = crate::atomic::NativeDifferentialArmed::new();
+
         let mut last = Decision::Pending;
         for i in 0..3 {
             let nid = node_id((i + 1) as u8);

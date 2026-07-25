@@ -262,6 +262,28 @@ warning, and the poll went on to slice turns to the executor off the **un-gated*
 `ordering::tau`. The disposition is now the registered `finality_belt_disposition`, which refuses
 (finalize nothing this poll). A `propagates` PASS is a POINTER, not a clean bill of health — chase it.
 
+**Twin#3b — the third member, and a MEASURED WIDENING of what invariant 6 can catch.**
+`node/src/coord_gate.rs::authoritative_decision` (the node-level 2PC commit/abort decision, fed by
+`api.rs::atomic_vote` and by `blocklace_sync`'s co-turn tally) was unregistered and ended its
+gate-absent arm with a bare `Err(_) => rust_decision`, logged at `debug!`. It was fail-closed only
+**transitively** — `receive_vote -> evaluate_votes -> evaluate_votes_no_gate` happens to return
+`Abort` — so the safety lived in a callee in another crate, undeclared at the site. Registering the
+site *as shipped* printed exactly *"could not find ANY terminal verdict on the gate-absent path"*,
+which is this guard telling the truth: there was no disposition here to check. It is now the
+registered `coord_decision_disposition` (refuse ⇒ `Decision::Abort`).
+
+That site also produced a **second blind spot, measured and then closed at the source**. The checker
+short-circuits on the first region line naming a declared discriminator and then looks for a refusal
+in the region *plus the inlined bodies of the helpers it calls*. Every sibling bypass predicate opens
+`if require_lean { return false; }` — and that `return false` is a REFUSAL token the checker finds,
+so the caller's real refusal arm is never read. Measured on twin#3b: with the early return, a mutant
+that reverts the refusal arm to `Ok(())` stays **GREEN**; written as one boolean expression
+(`!require_lean && (!export_linked || gate_disabled_by_operator)`) the same mutant goes **RED** —
+*"the row DECLARES the carve-out but the gate-absent path has NO refusal on the non-exempt arm — the
+declaration is decoration."* Prefer the expression form in new bypass predicates. The *other* blind
+spot (a bypass predicate widened to bare `true`) is structural and stays green either way; that one
+is invariant 2's job.
+
 ---
 
 ## Wiring
@@ -303,4 +325,22 @@ pre-fix source, is **FATAL (exit 2)** — "no non-`cfg(test)` `fn finality_belt_
 deleted disposition is never a silent green; (c) the mutation canary — the post-fix tree with only the
 refusal arm reverted to `return Ok(())` — is **FAIL: "gate-absent path reaches an ACCEPTING verdict
 (`return Ok(`) … A MISSING VERIFIED GATE CAN ADMIT."** (c) is the one that matters: it is the defect's
-semantics at the registered site. 11 of 11 sites pass post-fix.
+semantics at the registered site. 11 of 11 sites passed post-fix *at that time* (the registry has since
+grown; see twin#3b below for the current count).
+
+Twin#3b (the node-level 2PC decision gate) was demonstrated red the same way on 2026-07-25, same
+scratch-tree method: (a) the pre-fix site as shipped, registered as `authoritative_decision` /
+`verified_2pc_decide`, is **FAIL `[match-none-arm]` "could not find ANY terminal verdict on the
+gate-absent path"** — the `Err(_) => rust_decision` arm states no disposition at all, and the guard
+fails CLOSED rather than crediting the callee it happens to inherit safety from; (b) the row as
+landed, against the pre-fix source, is **FATAL (exit 2)** — "no non-`cfg(test)` `fn
+coord_decision_disposition`"; (c) the mutation canary (refusal arm ⇒ `return Ok(())`) is **FAIL "the
+declaration is decoration"**, but only because the bypass predicate is one expression — see the
+measured widening in invariant 6's section above. 12 of 12 sites pass post-fix and
+`ci-invariants.sh structural` reports ALL ENFORCED INVARIANTS PASS.
+
+The 2-and-6 complementarity was demonstrated at twin#3b, not asserted: the pure decision logic was
+extracted into a standalone `rustc --test` harness carrying the falsifier's own body verbatim, and
+run against both mutants. Mutant A (refusal arm ⇒ `Ok(())`): invariant 6 RED, falsifier RED. Mutant B
+(`coord_gate_bypass_allowed` ⇒ bare `true`): invariant 6 **GREEN**, falsifier RED with its FAIL-OPEN
+message. Invariant 2 is therefore load-bearing at that site and not a duplicate of invariant 6.
