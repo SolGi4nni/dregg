@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::object::{content_addr, Attestation, Envelope};
+use crate::object::{Attestation, Envelope, content_addr};
 use crate::uri::Kind;
 
 /// What a short prefix resolved to.
@@ -219,9 +219,7 @@ impl ObjectStore for DirStore {
         let addr = addr_hex.to_ascii_lowercase();
         // Path-traversal floor: only a full lowercase hex address ever becomes a path
         // component, so a crafted addr can never escape the kind directory.
-        if addr.len() != crate::uri::FULL_ADDR_HEX
-            || !addr.chars().all(|c| c.is_ascii_hexdigit())
-        {
+        if addr.len() != crate::uri::FULL_ADDR_HEX || !addr.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
         self.read(&self.kind_dir(kind), &addr)

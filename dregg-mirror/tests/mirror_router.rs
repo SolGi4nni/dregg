@@ -5,10 +5,10 @@
 //! that is the requirement most likely to rot, because a page keeps working perfectly
 //! while its honesty quietly drains out of it.
 
-use dregg_mirror::object::{content_addr, Attestation, GateOutcome};
+use dregg_mirror::object::{Attestation, GateOutcome, content_addr};
 use dregg_mirror::store::{MemoryStore, ObjectStore};
 use dregg_mirror::uri::Kind;
-use dregg_mirror::{fixtures, Mirror, MirrorConfig, PageConfig};
+use dregg_mirror::{Mirror, MirrorConfig, PageConfig, fixtures};
 use http_serve::WebRequest;
 
 const ORIGIN: &str = "dregg.gg";
@@ -478,10 +478,7 @@ fn the_gate_report_is_a_disclosure_not_a_verdict() {
         &Default::default(),
     );
     assert!(!report.refused());
-    assert!(matches!(
-        report.gates[0].1,
-        GateOutcome::Passed(_)
-    ));
+    assert!(matches!(report.gates[0].1, GateOutcome::Passed(_)));
     assert!(body.contains(r#"data-trust="server""#));
     assert!(!body.contains(r#"data-trust="extension""#));
 }

@@ -14,8 +14,8 @@ use std::net::{TcpListener, TcpStream};
 
 use dregg_mirror::store::MemoryStore;
 use dregg_mirror::uri::Kind;
-use dregg_mirror::{fixtures, Mirror, MirrorConfig, PageConfig};
-use http_serve::{limits::Limits, ServeRequest, WebRequest, WebResponse};
+use dregg_mirror::{Mirror, MirrorConfig, PageConfig, fixtures};
+use http_serve::{ServeRequest, WebRequest, WebResponse, limits::Limits};
 
 /// Bind an ephemeral port, serve the mirror on it, and return `(port, full_addr)`.
 fn serve_one() -> (u16, String) {
@@ -67,7 +67,11 @@ fn a_click_from_a_post_gets_a_real_page_over_a_real_socket() {
     // The link as it survives a truncated post: the short prefix.
     let res = request(port, &format!("/poll/{}", &addr[..8]));
 
-    assert!(res.starts_with("HTTP/1.1 200"), "status line: {:?}", &res[..40.min(res.len())]);
+    assert!(
+        res.starts_with("HTTP/1.1 200"),
+        "status line: {:?}",
+        &res[..40.min(res.len())]
+    );
     assert!(res.to_ascii_lowercase().contains("content-type: text/html"));
     // The object rendered, by deos-view.
     assert!(res.contains("Should the mirror ship?"));
@@ -85,7 +89,11 @@ fn a_click_from_a_post_gets_a_real_page_over_a_real_socket() {
 fn a_dead_reference_refuses_over_the_wire_and_renders_no_card() {
     let (port, _) = serve_one();
     let res = request(port, &format!("/poll/{}", "0".repeat(64)));
-    assert!(res.starts_with("HTTP/1.1 404"), "status line: {:?}", &res[..40.min(res.len())]);
+    assert!(
+        res.starts_with("HTTP/1.1 404"),
+        "status line: {:?}",
+        &res[..40.min(res.len())]
+    );
     assert!(res.contains("No object at that reference"));
     assert!(res.contains("⚠ unverified — original link shown"));
     assert!(!res.contains(r#"<div class="deos-card">"#));

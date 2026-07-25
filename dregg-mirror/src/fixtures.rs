@@ -13,7 +13,7 @@
 //! Used by the tests, and by the binary's `--seed-demo` so a fresh deployment has
 //! something to look at before any real object is published.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ── the raw `deos.ui.*` node builders ────────────────────────────────────────
 
@@ -147,11 +147,7 @@ pub fn doc(title: &str, paragraphs: &[&str], conflict: Option<(&str, &str)>) -> 
 
 /// A collaboratively edited text.
 pub fn doctext(title: &str, body: &str, revision: u64) -> Vec<u8> {
-    let view = section(
-        "text",
-        "",
-        vec![text(body), divider(), bind(0, "revision")],
-    );
+    let view = section("text", "", vec![text(body), divider(), bind(0, "revision")]);
     object("doctext", title, view, &[revision], None)
 }
 
@@ -162,21 +158,13 @@ pub fn story(title: &str, scene: &str, choices: &[&str]) -> Vec<u8> {
         .enumerate()
         .map(|(i, c)| button(c, "choose", i as i64))
         .collect();
-    let view = section(
-        "scene",
-        "",
-        vec![text(scene), divider(), list(rows)],
-    );
+    let view = section("scene", "", vec![text(scene), divider(), list(rows)]);
     object("story", title, view, &[], None)
 }
 
 /// A descent run, pinned to a committed epoch, with its leaderboard.
 pub fn descent(title: &str, epoch_hex: &str, board: &[(&str, u64, u64)]) -> Vec<u8> {
-    let mut rows = vec![row(vec![
-        text("runner"),
-        text("depth"),
-        text("score"),
-    ])];
+    let mut rows = vec![row(vec![text("runner"), text("depth"), text("score")])];
     for (who, depth, score) in board {
         rows.push(row(vec![
             text(who),

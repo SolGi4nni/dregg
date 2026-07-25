@@ -225,7 +225,11 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
             )),
         ));
         // Every later gate is meaningless once the bytes are not the object.
-        for g in [Gate::ReceiptMembership, Gate::ReceiptStreamRoot, Gate::Quorum] {
+        for g in [
+            Gate::ReceiptMembership,
+            Gate::ReceiptStreamRoot,
+            Gate::Quorum,
+        ] {
             gates.push((
                 g,
                 GateOutcome::Skipped("not reached — the content-address gate refused".into()),
@@ -239,7 +243,11 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
     ));
 
     let Some(att) = env.attestation.as_ref() else {
-        for g in [Gate::ReceiptMembership, Gate::ReceiptStreamRoot, Gate::Quorum] {
+        for g in [
+            Gate::ReceiptMembership,
+            Gate::ReceiptStreamRoot,
+            Gate::Quorum,
+        ] {
             gates.push((
                 g,
                 GateOutcome::Skipped(
@@ -271,7 +279,10 @@ pub fn verify(env: &Envelope, want_addr_hex: &str, committee: &Committee) -> Ver
     }
     gates.push((
         Gate::ReceiptMembership,
-        GateOutcome::Passed(format!("{} receipt(s) in the stream", att.receipt_set.len())),
+        GateOutcome::Passed(format!(
+            "{} receipt(s) in the stream",
+            att.receipt_set.len()
+        )),
     ));
 
     // ── (3) the signed root binds exactly this receipt set ───────────────────
@@ -344,9 +355,7 @@ fn check_quorum(att: &Attestation, committee: &Committee) -> GateOutcome {
         ));
     }
 
-    if att.threshold_qc.is_none()
-        && (att.threshold == 0 || att.quorum_signatures.is_empty())
-    {
+    if att.threshold_qc.is_none() && (att.threshold == 0 || att.quorum_signatures.is_empty()) {
         return GateOutcome::Failed("degenerate / empty quorum".into());
     }
     if att.threshold_qc.is_none() && att.quorum_signatures.len() < att.threshold {
@@ -401,10 +410,7 @@ pub fn receipt_stream_root(receipt_set: &[String]) -> String {
     if receipt_set.is_empty() {
         return content_addr(b"");
     }
-    let mut level: Vec<String> = receipt_set
-        .iter()
-        .map(|h| h.to_ascii_lowercase())
-        .collect();
+    let mut level: Vec<String> = receipt_set.iter().map(|h| h.to_ascii_lowercase()).collect();
     while level.len() > 1 {
         let mut next = Vec::with_capacity(level.len().div_ceil(2));
         let mut i = 0;
@@ -448,7 +454,10 @@ mod tests {
         let env = Envelope::unattested(obj_bytes());
         let r = verify(&env, &env.addr_hex(), &Committee::default());
         assert!(!r.refused());
-        assert!(!r.attested(), "an absent attestation must NOT read as attested");
+        assert!(
+            !r.attested(),
+            "an absent attestation must NOT read as attested"
+        );
         let (_, quorum) = r.gates.iter().find(|(g, _)| *g == Gate::Quorum).unwrap();
         assert!(matches!(quorum, GateOutcome::Skipped(_)));
     }
