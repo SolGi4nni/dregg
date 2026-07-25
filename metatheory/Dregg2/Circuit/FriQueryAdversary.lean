@@ -92,18 +92,30 @@ PROVEN:
   * `miss_density_of_far` — ⚑ CLOSES a gap the lane was asked to close-or-name: codex's `hmiss`
     hypothesis (`(E.card)/m ≤ 1 − δ`) is DERIVED from `δ`-farness by counting, not assumed.
   * §5's arithmetic: the vacuity of the composed bound at deployed parameters.
+  * §6.2's `transcriptWordCommitment_exists_iff_binding` — ⚑ the transcript→committed-word residual
+    is EXACTLY transcript-binding (an iff, both directions content), and
+    `transcriptBinding_of_absorbInjective_and_merkleBinding` factors that into the FS-absorb
+    (sponge-collision) and Merkle-binding legs, which are the ones already priced in `εMerkle`.
 
 NAMED, not discharged (each is a REAL obligation, and none is faked here):
-  * `TranscriptWordCommitment` — the map from a transcript point to the word committed there. `Bad d`
-    is not well-defined without it; it is a PARAMETER here, never an instance. ⚑ Classified, not
-    assumed-open: blocker (a) is PARTIALLY closed in-tree — `WordProofBridgeDeployed`
-    (`wordProofBridge_of_embedding`) connects the predicate to `DeployedFriEmbedding`,
-    `FriFarnessReconcile` reconciles the bridge's 0-farness with `εQuery`'s `(4·d)`-farness, and
-    `FriPositiveRadiusPayment` wires the `(1−δ)^k` payment at positive radius. What those leave —
-    and what this file therefore still leaves — is (i) the radii coincide only by DETERMINISTIC
-    COLLAPSE (both events empty under `accept ⟹ ∈ C`), not by paying at a positive radius, and
-    (ii) the positive-radius payment is VACUOUS at the deployed `friSetupK8` model (`|L| = 16`), a
-    MODEL-RESOLUTION gap. None of that is a per-transcript extraction map, which is what §3 needs.
+  * The DEPLOYED instance of §6.2's `TranscriptWordCommitment` — the map from a transcript point to
+    the word committed there. `Bad d` is not well-defined without it; it is a PARAMETER in §3, never
+    an instance. ⚑ Classified, not assumed-open: blocker (a) is PARTIALLY closed in-tree —
+    `WordProofBridgeDeployed` (`wordProofBridge_of_embedding`) connects the predicate to
+    `DeployedFriEmbedding`, `FriFarnessReconcile` reconciles the bridge's 0-farness with `εQuery`'s
+    `(4·d)`-farness, and `FriPositiveRadiusPayment` wires the `(1−δ)^k` payment at positive radius.
+    What those leave — and what this file therefore still leaves — is (i) the radii coincide only by
+    DETERMINISTIC COLLAPSE (both events empty under `accept ⟹ ∈ C`), not by paying at a positive
+    radius, (ii) the positive-radius payment is VACUOUS at the deployed `friSetupK8` model
+    (`|L| = 16`), a MODEL-RESOLUTION gap, and (iii) the two legs §6.2 reduces the residual to are
+    themselves only except-with-`εMerkle` facts, and NEITHER is instantiated at the deployed FS
+    absorb / `merkleRecomputeZ` here. What §6 now delivers is the residual's exact shape and its
+    decomposition — not the deployed extractor.
+  * ⚠ §6.1 records that this residual was previously named by a TAUTOLOGY
+    (`TranscriptWordCommitmentTrivial`, `∀ d, isFar (commit d) ∨ ¬ isFar (commit d)` =
+    `Classical.em` pointwise). It is retained, proved universally true, and shown blind to the
+    distinction the real obligation makes (`trivial_holds_where_contentful_fails`), so the empty
+    shape cannot be reintroduced. Nothing ever consumed it.
   * `FibreBalanced` at the deployed sampler. §2's clean density transfer assumes the derivation map
     has equinumerous fibres. Codex PROVED that is FALSE for `Challenger.sampleBits`
     (`babybear_sampleBits_not_balanced`). §4 therefore routes the deployed case through
@@ -248,9 +260,11 @@ antecedent: the antecedent is a counting statement about a fixed finite set, the
 probability over an adaptive `Q`-query run, and the bridge is `hit_cond`'s tree induction.
 
 ⚑ WHAT IS STILL CARRIED. `Bad : D → Finset Ω` is a PARAMETER. Instantiating it — "the exceptional
-challenges for the word committed at transcript point `d`" — requires `TranscriptWordCommitment`
-(§6), i.e. Merkle extraction. That is blocker (a), unchanged and undischarged. This theorem does not
-touch it and does not pretend to. -/
+challenges for the word committed at transcript point `d`" — requires §6.2's
+`TranscriptWordCommitment`, which §6.2 proves is EXACTLY transcript-binding of the deployed
+`(accepts, pt, committed)` triple, and §6.4 shows is precisely what turns `Bad` into a point-indexed
+set (`badSet_pointIndexed`). The deployed instance is undischarged. This theorem does not touch it
+and does not pretend to. -/
 theorem epsQuery_adversary {Q w nBad : ℕ}
     (A : OracleComp D R AnsT) (hA : QueryBounded Q A)
     (chal : D → R → Ω) (Bad : D → Finset Ω)
@@ -492,24 +506,216 @@ theorem miss_density_of_far {κ F : Type} [Fintype κ] [DecidableEq κ] [Decidab
   rw [div_le_iff₀ hκR]
   linarith
 
-/-- **NAMED, NOT DISCHARGED — the transcript→committed-word map.**
+/-! ### §6.1 — the transcript→committed-word map: the CONTENT-FREE shape, RETAINED as a record.
 
 `Bad d` in §3 is "the challenges exceptional for the word committed at transcript point `d`". That
 phrase presupposes a map from a transcript POINT to a word — Merkle extraction/binding.
 
 ⚑ CLASSIFIED HONESTLY (verify before pessimism as well as optimism). This is NOT simply blocker (a)
-restated: `WordProofBridgeDeployed.wordProofBridge_of_embedding` already derives
-`WordProofBridge` from `DeployedFriEmbedding`, over the real `decodeColumn` encoding. But that
-bridge is PER-PROOF (`committed : Proof → Word`), whereas `hit_cond` needs the commitment indexed by
-the ORACLE QUERY POINT `d`, because the exceptional set must be fixed BEFORE the answer at `d` is
-drawn. Converting proof-indexed to point-indexed is exactly where FS transcript-binding lives, and
-no in-tree theorem does it. That is the residual named here — narrower than blocker (a), and not
-implied by it.
+restated: `WordProofBridgeDeployed.wordProofBridge_of_embedding` already derives `WordProofBridge`
+from `DeployedFriEmbedding`, over the real `decodeColumn` encoding. But that bridge is PER-PROOF
+(`committed : Proof → Word`), whereas `hit_cond` needs the commitment indexed by the ORACLE QUERY
+POINT `d`, because the exceptional set must be fixed BEFORE the answer at `d` is drawn.
 
-Recorded as a DEFINITION so supplying it is visibly supplying the extractor. §3 takes `Bad` as a
-parameter and never instantiates it. -/
-def TranscriptWordCommitment {D Word : Type} (commit : D → Word) (isFar : Word → Prop) : Prop :=
+⚠ THIS RESIDUAL WAS ONCE NAMED BY A TAUTOLOGY. The predicate below — `∀ d, isFar (commit d) ∨
+¬ isFar (commit d)` — is `Classical.em` pointwise: TRUE of every `commit` and every `isFar`,
+demanding nothing of either. It is kept here, under a name that says what it is, so that the
+emptiness is a RECORDED fact and the shape cannot be silently reintroduced as though it were an
+obligation. §6.2 states the obligation WITH CONTENT and proves exactly what it demands. -/
+
+/-- **⚠ CONTENT-FREE — the shape this residual USED to carry, retained under an honest name.**
+
+`∀ d, isFar (commit d) ∨ ¬ isFar (commit d)` is excluded middle at each point. It constrains neither
+`commit` nor `isFar`, mentions no verifier, and supplying it supplies nothing
+(`transcriptWordCommitmentTrivial_always`). It is not a weak form of the extraction obligation — it
+is not a form of it at all: `trivial_holds_where_contentful_fails` exhibits one `commit` that
+satisfies THIS and refutes §6.2's `TranscriptWordCommitment` on the same data. -/
+def TranscriptWordCommitmentTrivial {D Word : Type} (commit : D → Word) (isFar : Word → Prop) :
+    Prop :=
   ∀ d : D, isFar (commit d) ∨ ¬ isFar (commit d)
+
+/-- **THE RECORD — the content-free shape is TRUE OF EVERYTHING.** No hypothesis on `commit`, none
+on `isFar`, none on the deployed verifier, no reference to acceptance: it is `Classical.em`
+pointwise. Anything that consumed it would consume nothing. -/
+theorem transcriptWordCommitmentTrivial_always {D Word : Type} (commit : D → Word)
+    (isFar : Word → Prop) : TranscriptWordCommitmentTrivial commit isFar :=
+  fun d => Classical.em (isFar (commit d))
+
+/-! ### §6.2 — ⚑ THE OBLIGATION, WITH CONTENT: proof-indexed commitment made POINT-indexed.
+
+What §3 actually needs is not "the committed word is far or it is not". It is a map
+`commit : D → Word` that
+
+  * is a function of the TRANSCRIPT POINT ALONE — so that `Bad := fun d => badOf (commit d)` is
+    fixed BEFORE the answer at `d` is drawn, which is exactly what `hit_cond` demands of its `E`
+    (`badSet_pointIndexed`); and
+  * AGREES, on ACCEPTING proofs, with the proof-indexed commitment `WordProofBridge` already carries
+    (`committed : Proof → Word`, `FriVerifierCompose:435`, instantiated over the deployed column
+    encoding by `WordProofBridgeDeployed.wordProofBridge_decodedColumn`).
+
+`pt : Proof → D` is the transcript point at which that layer's folding challenge is squeezed — in
+the deployed FS transform, the post-commitment sponge state; the point whose ORACLE ANSWER the run
+reads its challenge off (`hit_at_transcript_point_iff_of_log`, via `RomQueryLog`'s read-back
+`mem_evalLog_answer`). -/
+
+/-- **⚑⚑ THE RESIDUAL, WITH CONTENT.** A point-indexed extraction `commit` is CORRECT for the
+deployed pair `(accepts, committed)` when every ACCEPTING proof's own committed word is what
+`commit` reads off that proof's transcript point.
+
+This is a real demand on `commit`: it is refutable (`trivial_holds_where_contentful_fails`), it is
+satisfiable (`transcriptWordCommitment_satisfiable_when_bound`), and for some deployed pairs it is
+UNSATISFIABLE by any `commit` whatsoever (`transcriptWordCommitment_unsatisfiable_when_equivocating`)
+— none of which can be said of §6.1's shape. -/
+def TranscriptWordCommitment {D Proof Word : Type} (accepts : Proof → Bool) (pt : Proof → D)
+    (committed : Proof → Word) (commit : D → Word) : Prop :=
+  ∀ p : Proof, accepts p = true → commit (pt p) = committed p
+
+/-- **TRANSCRIPT-BINDING** — two ACCEPTING proofs that squeeze their folding challenge at the SAME
+transcript point commit the SAME word. This is the property of the deployed `(accepts, pt,
+committed)` triple; it mentions no extractor. -/
+def TranscriptBinding {D Proof Word : Type} (accepts : Proof → Bool) (pt : Proof → D)
+    (committed : Proof → Word) : Prop :=
+  ∀ p p' : Proof, accepts p = true → accepts p' = true → pt p = pt p' → committed p = committed p'
+
+open Classical in
+/-- **⚑⚑ THE RESIDUAL IS *EXACTLY* TRANSCRIPT-BINDING — an IFF, not a hedge.**
+
+A point-indexed extraction exists **iff** the deployed triple is transcript-binding. So the residual
+§3 carries is not "some unspecified Merkle work": it is precisely the statement that an accepting
+transcript point determines the committed word, no weaker and no stronger.
+
+⚑ Both directions are content. `→` says any extractor forces binding — an equivocating pair refutes
+every candidate at once (`no_commitment_of_equivocation`). `←` says binding is ENOUGH: the extractor
+is then definable outright (choice over the accepting fibre of `pt`), so nothing beyond binding is
+owed. That is what converts "supply an extractor" into "prove binding", which is the shape the
+Merkle/sponge legs are already priced in. -/
+theorem transcriptWordCommitment_exists_iff_binding {D Proof Word : Type} [Nonempty Word]
+    (accepts : Proof → Bool) (pt : Proof → D) (committed : Proof → Word) :
+    (∃ commit : D → Word, TranscriptWordCommitment accepts pt committed commit)
+      ↔ TranscriptBinding accepts pt committed := by
+  constructor
+  · rintro ⟨commit, hc⟩ p p' hp hp' hpt
+    rw [← hc p hp, ← hc p' hp', hpt]
+  · intro hbind
+    refine ⟨fun d => if h : ∃ q, accepts q = true ∧ pt q = d then committed h.choose
+      else Classical.arbitrary Word, ?_⟩
+    intro p hp
+    have hex : ∃ q, accepts q = true ∧ pt q = pt p := ⟨p, hp, rfl⟩
+    show (if h : ∃ q, accepts q = true ∧ pt q = pt p then committed h.choose
+      else Classical.arbitrary Word) = committed p
+    rw [dif_pos hex]
+    exact hbind hex.choose p hex.choose_spec.1 hp hex.choose_spec.2
+
+/-- **⚑ ONE EQUIVOCATING PAIR KILLS EVERY CANDIDATE EXTRACTOR.** If two accepting proofs share a
+transcript point but commit DIFFERENT words, no `commit : D → Word` satisfies the obligation — the
+residual is not merely undischarged there, it is UNSATISFIABLE. This is why the deployed instance is
+an except-with-ε statement (see `transcriptBinding_of_absorbInjective_and_merkleBinding`): on the
+oracles where a sponge collision or a Merkle equivocation occurs, there is no extractor at all. -/
+theorem no_commitment_of_equivocation {D Proof Word : Type}
+    (accepts : Proof → Bool) (pt : Proof → D) (committed : Proof → Word)
+    {p p' : Proof} (hp : accepts p = true) (hp' : accepts p' = true)
+    (hpt : pt p = pt p') (hne : committed p ≠ committed p') :
+    ¬ ∃ commit : D → Word, TranscriptWordCommitment accepts pt committed commit := by
+  rintro ⟨commit, hc⟩
+  exact hne (by rw [← hc p hp, ← hc p' hp', hpt])
+
+/-- **⚑ WHAT THE DEPLOYED INSTANCE OWES, FACTORED INTO ITS TWO PRICED LEGS.**
+
+Transcript-binding follows from two facts about accepting runs, and from nothing else:
+
+  * `habsorb` — the FS ABSORB leg: equal challenge-squeeze points force equal Merkle roots. In the
+    deployed transform `pt` is the post-commitment sponge state, so this is injectivity of the
+    absorb on accepting transcripts — a SPONGE-COLLISION statement, priced by
+    `RomQueryFloor.birthday_cond` / `FriVerifierMerkle.merkle_path_collision_prob_le`, i.e. the
+    `epsMerkle` leg;
+  * `hmerkle` — the MERKLE BINDING leg: equal roots force equal committed words. This is
+    `FriVerifierMerkle.findCollisionZ_none_binds` (binding from path-collision-freeness, with NO
+    `Poseidon2SpongeCR` hypothesis), again on the no-collision event.
+
+⚠ NEITHER LEG IS DISCHARGED HERE, and neither is unconditional: both hold only OFF the collision
+event, so the extractor this yields is well-defined except-with-`εMerkle`. What this theorem
+delivers is that the residual decomposes into exactly those two already-named, already-priced facts
+— no third obligation, and in particular nothing about farness, radii, or the sampler. -/
+theorem transcriptBinding_of_absorbInjective_and_merkleBinding
+    {D Proof Word Digest : Type} (accepts : Proof → Bool) (pt : Proof → D)
+    (root : Proof → Digest) (committed : Proof → Word)
+    (habsorb : ∀ p p', accepts p = true → accepts p' = true → pt p = pt p' → root p = root p')
+    (hmerkle : ∀ p p', accepts p = true → accepts p' = true → root p = root p' →
+      committed p = committed p') :
+    TranscriptBinding accepts pt committed :=
+  fun p p' hp hp' hpt => hmerkle p p' hp hp' (habsorb p p' hp hp' hpt)
+
+/-! ### §6.3 — TEETH: the contentful residual is neither excluded middle nor always-false.
+
+Three witnesses over the SAME `accepts` and the SAME `pt`, differing only in `committed` / `commit`
+— so the content is isolated exactly where it belongs. -/
+
+/-- **THE OBLIGATION FIRES (satisfiable).** Two accepting proofs at ONE transcript point committing
+the SAME word: the constant extractor is correct. So `TranscriptWordCommitment` is not the
+always-false predicate. -/
+theorem transcriptWordCommitment_satisfiable_when_bound :
+    TranscriptWordCommitment (fun _ : Bool => true) (fun _ : Bool => ())
+      (fun _ : Bool => true) (fun _ : Unit => true) :=
+  fun _ _ => rfl
+
+/-- **⚑ THE OBLIGATION IS UNSATISFIABLE ON AN EQUIVOCATING PAIR.** Same `accepts`, same `pt` as
+above; only `committed` changes — the two accepting proofs now commit DIFFERENT words at the one
+transcript point. NO extractor exists. This is the sharpest evidence that the predicate is not
+excluded middle in disguise: excluded middle is never unsatisfiable. -/
+theorem transcriptWordCommitment_unsatisfiable_when_equivocating :
+    ¬ ∃ commit : Unit → Bool,
+        TranscriptWordCommitment (fun _ : Bool => true) (fun _ : Bool => ())
+          (fun b : Bool => b) commit :=
+  no_commitment_of_equivocation _ _ _ (p := true) (p' := false) rfl rfl rfl (by decide)
+
+/-- **⚑ THE RENAME IS NOT COSMETIC — the old shape cannot tell a CORRECT extractor from a WRONG
+one.** For the extractor `fun _ => false` the retained content-free predicate HOLDS, while the
+contentful obligation on the corresponding deployed data FAILS. The two predicates are therefore not
+variants of one obligation; §6.1's carried no obligation at all. -/
+theorem trivial_holds_where_contentful_fails :
+    TranscriptWordCommitmentTrivial (fun _ : Unit => false) (fun b : Bool => b = true)
+      ∧ ¬ TranscriptWordCommitment (fun _ : Bool => true) (fun _ : Bool => ())
+            (fun b : Bool => b) (fun _ : Unit => false) := by
+  refine ⟨transcriptWordCommitmentTrivial_always _ _, ?_⟩
+  intro h
+  exact Bool.noConfusion (h true rfl)
+
+/-! ### §6.4 — what the commitment BUYS §3: `Bad` becomes point-indexed, read back off the LOG. -/
+
+/-- **⚑ `Bad` BECOMES POINT-INDEXED.** With a correct extractor in hand, `fun d => badOf (commit d)`
+is manifestly a function of the query point ALONE — the shape `hit_cond`/`epsQuery_adversary` take
+for `E`/`Bad` — and at every accepting proof it computes that proof's OWN exceptional set. This is
+the one line §3's `Bad` parameter was waiting for; all the content sits in the hypothesis, which is
+the point (cf. `bundleFail_imp_far_of_bridge`). -/
+theorem badSet_pointIndexed {D Proof Word Ω : Type}
+    {accepts : Proof → Bool} {pt : Proof → D} {committed : Proof → Word} {commit : D → Word}
+    (hcommit : TranscriptWordCommitment accepts pt committed commit) (badOf : Word → Finset Ω)
+    (p : Proof) (hacc : accepts p = true) :
+    (fun d => badOf (commit d)) (pt p) = badOf (committed p) := by
+  show badOf (commit (pt p)) = badOf (committed p)
+  rw [hcommit p hacc]
+
+/-- **⚑ THE READ-BACK IS THE QUERY LOG'S.** On an accepting proof, the answer the run actually
+received at that proof's transcript point is recovered from the ORACLE QUERY LOG
+(`RomQueryLog.mem_evalLog_answer`: a logged pair `(d, r)` has `H d = r`), and §2's point-indexed
+`badAnswers` at that point is EXACTLY the proof's own exceptional-challenge test. So the object
+`hit_cond` prices on the adversary's run and the object `εQuery` bounds on the committed word are
+the same object, once the extractor exists.
+
+⚑ This is the wiring, not a discharge: it consumes `TranscriptWordCommitment` and gives back the
+`E`-shaped set. The extractor's existence is still §6.2's obligation. -/
+theorem hit_at_transcript_point_iff_of_log {D R Ω AnsT Proof Word : Type}
+    [Fintype R] [DecidableEq R] [Fintype Ω] [DecidableEq Ω]
+    {accepts : Proof → Bool} {pt : Proof → D} {committed : Proof → Word} {commit : D → Word}
+    (hcommit : TranscriptWordCommitment accepts pt committed commit)
+    (chal : D → R → Ω) (badOf : Word → Finset Ω)
+    (A : OracleComp D R AnsT) (H : D → R) (p : Proof) (hacc : accepts p = true)
+    {r : R} (hlog : (pt p, r) ∈ (A.evalLog H).2) :
+    r ∈ badAnswers chal (fun d => badOf (commit d)) (pt p)
+      ↔ chal (pt p) (H (pt p)) ∈ badOf (committed p) := by
+  have hr : H (pt p) = r := A.mem_evalLog_answer H hlog
+  rw [hr, ← hcommit p hacc]
+  simp [badAnswers]
 
 /-- **NAMED, NOT DISCHARGED — the `n % m` ↔ `Challenger.sampleBits` grounding.**
 
@@ -545,6 +751,15 @@ theorem sampleBitsGrounding_of_eq (D : Type) {R : Type} (toNat : R → ℕ) (m :
   deployed_query_term_below_fold_term,
   epsQueryAdv_le_epsQueryBiasAdv,
   miss_density_of_far,
+  transcriptWordCommitmentTrivial_always,
+  transcriptWordCommitment_exists_iff_binding,
+  no_commitment_of_equivocation,
+  transcriptBinding_of_absorbInjective_and_merkleBinding,
+  transcriptWordCommitment_satisfiable_when_bound,
+  transcriptWordCommitment_unsatisfiable_when_equivocating,
+  trivial_holds_where_contentful_fails,
+  badSet_pointIndexed,
+  hit_at_transcript_point_iff_of_log,
   sampleBitsGrounding_of_eq
 ]
 
