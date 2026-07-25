@@ -1442,16 +1442,32 @@ impl AppRegistry {
                     "A public-tally poll — an administrator records one vote onto the poll's running tally \
                          (the executor re-enforces the poll invariants; the poll stays open until closed).",
                     starbridge_privacy_voting::voting_app,
-                    |exec, _cclerk| {
-                        starbridge_privacy_voting::seed_poll(exec, "ship it?");
+                    |exec, cclerk| {
+                        use starbridge_privacy_voting as v;
+                        v::seed_poll(exec, "ship it?");
+                        // BIRTH THE COMPANION BALLOT. `aac5dd6f44` bound the tally to an exhibited
+                        // ballot set (`CountGe` over the turn's `Cleartext` witness); a poll with no
+                        // ballot cell cannot record one. Seeding it here is what makes the exhibit
+                        // below a REAL factory-born ballot rather than a fabricated id — the
+                        // `CountGe` gate does not check element provenance, so an invented id would
+                        // re-launder exactly the forgery that commit closed.
+                        let _ = v::seed_ballot(exec, cclerk, cclerk.cell_id());
                     },
                     |app, sub| {
                         use starbridge_privacy_voting as v;
-                        // An ADMINISTRATOR records a YES vote onto the poll tally.
+                        // An ADMINISTRATOR records a YES vote onto the poll tally, EXHIBITING the
+                        // ballot counted into it. The seed closure birthed exactly this cell.
+                        let counted: std::collections::BTreeSet<[u8; 32]> = [*v::ballot_cell_id(
+                            &sub.cipherclerk().public_key().0,
+                        )
+                        .as_bytes()]
+                        .into_iter()
+                        .collect();
                         v::fire_record_tally(
                             app,
                             &v::ADMINISTRATOR_RIGHTS,
                             v::VOTE_YES,
+                            &counted,
                             sub.cipherclerk(),
                             sub.executor(),
                         )

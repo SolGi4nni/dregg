@@ -49,6 +49,21 @@ fn expected_commitment(value: u32, blinding: BabyBear) -> BabyBear {
     fact().commitment_of(BabyBear::from_u64(value as u64), Blinding(blinding))
 }
 
+/// The disclosed opening, or a LOUD failure.
+///
+/// `BridgePredicateProof::blinding` became `Option<BabyBear>` in 6a852f2766: `Some(b)` is the
+/// trusted-state shape (the presentation discloses its decommitment), `None` is the third-party
+/// ATTESTED shape, which deliberately carries none. Every pole here drives
+/// `prove_predicate_for_fact`, whose contract is the `Some` shape, so `None` is not a case to
+/// tolerate — it would mean the opening stopped being emitted, and a test that quietly substituted
+/// [`test_blinding`] there would keep verifying while the disclosure it is checking had vanished.
+/// This is unwrapped, not defaulted, for that reason.
+fn opening(proof: &dregg_bridge::present::BridgePredicateProof) -> BabyBear {
+    proof
+        .blinding
+        .expect("the trusted-state predicate shape MUST disclose its opening")
+}
+
 #[test]
 fn honest_statements_prove_and_verify() {
     let cases: &[(u32, Predicate)] = &[
@@ -60,7 +75,7 @@ fn honest_statements_prove_and_verify() {
         let proof = prove_predicate_for_fact(*value, fact(), test_blinding(), predicate)
             .unwrap_or_else(|| panic!("true statement {value} {predicate:?} must PROVE"));
         assert!(
-            verify_predicate_proof(&proof, expected_commitment(*value, proof.blinding)),
+            verify_predicate_proof(&proof, expected_commitment(*value, opening(&proof))),
             "true statement {value} {predicate:?} must VERIFY"
         );
     }
@@ -81,7 +96,7 @@ fn refuses(value: u32, predicate: &Predicate) -> bool {
         match prove_predicate_for_fact(value, fact(), test_blinding(), predicate) {
             None => Err("the prover refused the false statement".to_string()),
             Some(p) => {
-                if verify_predicate_proof(&p, expected_commitment(value, p.blinding)) {
+                if verify_predicate_proof(&p, expected_commitment(value, opening(&p))) {
                     Ok(())
                 } else {
                     Err("the proof failed to verify".to_string())
@@ -113,7 +128,7 @@ fn forged_fact_commitment_is_rejected() {
         .expect("100 >= 40 must prove");
     // Non-vacuity: against the commitment a trusted-state verifier derives, the proof verifies.
     assert!(
-        verify_predicate_proof(&proof, expected_commitment(100, proof.blinding)),
+        verify_predicate_proof(&proof, expected_commitment(100, opening(&proof))),
         "honest proof must verify"
     );
     assert!(

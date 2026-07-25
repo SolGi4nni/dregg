@@ -45,11 +45,18 @@ fn sovereign_transfer_cells(balance: i64, amount: i64) -> (Cell, Cell) {
     (before, after)
 }
 
-/// Where the 16 wide PIs start (the wide descriptor's host piCount — 46 for the transfer-shape
-/// cohort, the rotated `ROT_PI_COUNT`; PIs 46..53 = BEFORE 8-felt commit, 54..61 = AFTER 8-felt
-/// commit). Post-Phase-C the v1 prefix grew 34→42, so the rotated prefix is 46 (= 42 + 4 commit
-/// pins).
-const WIDE_PI_BASE: usize = 46;
+/// The number of wide commit PIs — 8 BEFORE-felts then 8 AFTER-felts — at the TAIL of every wide
+/// descriptor. The base is therefore `desc.public_input_count - WIDE_COMMIT_PI_COUNT`, DERIVED at
+/// each use, never hand-pinned.
+///
+/// ⚑ Both hand-pinned bases this file used to carry were STALE and could not say so, because the
+/// target stopped compiling in the same commit that moved them (`3db1a25da3`, which re-generated the
+/// staged wide registry). Measured off `circuit/descriptors/rotation-wide-registry-staged.tsv` at
+/// HEAD: `transferVmDescriptor2R24` = 68 PIs (base 52, the file said 46) and
+/// `refusalVmDescriptor2R24` = 90 (base 74, the file said 54). A forgery tooth writing at a base
+/// six lanes early perturbs a PI that is not a commit felt at all — it would have gone on "biting"
+/// the wrong thing. This is why the base is derived and only the ARITY is pinned.
+const WIDE_COMMIT_PI_COUNT: usize = 16;
 
 /// The chip-faithful 8-felt commit of a cell + turn-context (the executor's anchoring primitive).
 fn cell_chip_commit8(cell: &Cell, ctx: &V9RotationContext) -> [BabyBear; 8] {
@@ -134,8 +141,16 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     assert_eq!(
         producer_dpis.len(),
         desc.public_input_count,
-        "wide PI count"
+        "the producer's published PI vector must have exactly the descriptor's arity"
     );
+    // DRIFT CANARY, re-measured 2026-07-25 off the staged wide registry at HEAD. Re-derive, never
+    // re-type, if this reds.
+    assert_eq!(
+        desc.public_input_count, 68,
+        "transfer wide descriptor carries 68 PIs (staged registry at HEAD)"
+    );
+    // Derived, never hand-pinned: the 16 wide commit PIs are the descriptor's TAIL.
+    let wide_pi_base = desc.public_input_count - WIDE_COMMIT_PI_COUNT;
 
     // -- EXECUTOR LEG: anchor the 16 wide PIs to the TRUSTED before/after cell chip-commits (the wide
     //    analog of the live `dpis[42]/[43]` override — the 1-felt-retire the flip performs). --
@@ -162,8 +177,8 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // producer's claim) — a forged producer commit cannot survive this override.
     let mut anchored = producer_dpis.clone();
     for j in 0..8 {
-        anchored[WIDE_PI_BASE + j] = trusted_before8[j];
-        anchored[WIDE_PI_BASE + 8 + j] = trusted_after8[j];
+        anchored[wide_pi_base + j] = trusted_before8[j];
+        anchored[wide_pi_base + 8 + j] = trusted_after8[j];
     }
 
     // The trusted commits MUST equal the producer's published ones (the honest pipeline coheres):
@@ -246,10 +261,11 @@ fn wide_sovereign_forged_anchor_is_rejected() {
         })
         .expect("wide transfer member");
     let desc = parse_vm_descriptor2(json).expect("wide transfer descriptor parses");
+    let wide_pi_base = desc.public_input_count - WIDE_COMMIT_PI_COUNT;
 
     // FORGE: bump one felt of the BEFORE commit (a state the proof's carrier does not carry).
     let mut forged = producer_dpis.clone();
-    forged[WIDE_PI_BASE] = forged[WIDE_PI_BASE] + BabyBear::new(0x9999);
+    forged[wide_pi_base] = forged[wide_pi_base] + BabyBear::new(0x9999);
     assert!(
         verify_vm_descriptor2(&desc, &proof, &forged).is_err(),
         "a forged BEFORE 8-felt commit PI MUST be REJECTED — the wide commit binds the full state \
@@ -272,14 +288,14 @@ fn wide_sovereign_forged_anchor_is_rejected() {
 // VERIFIES against the executor-anchored wide refusal descriptor. A prover refusal or a verifier
 // rejection FAILS the test (no catch_unwind — unambiguous).
 //
-// H1: the refusal wide geometry is the record-pin8 geometry: the rotated prefix is 54 (= 42 v1 + 4
-// commit pins + the 8 authority record-pins, `withRecordPin8Headroom2`) and the wide descriptor carries
-// 54 + 16 = 70. So the 16 wide commit PIs start at `REFUSAL_WIDE_PI_BASE = 54`.
-
-/// Where the 16 wide commit PIs start for the REFUSAL cohort (a record-digest mover: the 8 authority
-/// record-pins occupy PI 46..53, so the wide commit PIs sit at 54..70 —
-/// `refusalVmDescriptor2R24` wide = 70 PIs = 54 base + 16 wide).
-const REFUSAL_WIDE_PI_BASE: usize = 54;
+// H1: the 16 wide commit PIs are the TAIL of the wide descriptor — they start at
+// `desc.public_input_count - 16`, which is how the sibling wide tests locate them
+// (`wide_completeness_ledger.rs`, `factory_binding_deployed_tooth.rs`). This file used to hand-pin
+// that base at 54 and the count at 74, and BOTH rotted: `3db1a25da3` regenerated the staged wide
+// registry and `refusalVmDescriptor2R24` now carries 90 PIs (base 74). Because the target had not
+// compiled since that same commit, neither literal was ever contradicted. A base derived from the
+// descriptor cannot rot; the count pin below stays, as a drift canary that must be RE-MEASURED, not
+// massaged, when the geometry moves.
 
 /// A sovereign refusal before/after cell pair: the after-cell carries the refusal audit slot written
 /// into `fields_map[REFUSAL_AUDIT_EXT_KEY]` (via the shared `apply_effect_to_cell` weld — the SAME
@@ -371,8 +387,11 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     // THE DEPLOYED PROVER WIRE: the BEFORE fields-tree leaf set + the audit felt the refusal writes.
     // These are what the live cipherclerk builds from the before/after cells; without them the wide
     // prover REFUSES (the `.write` gate has no witness).
-    let before_leaves = dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
-    let audit_value = dregg_circuit::cap_root::fold_bytes32(&audit_bytes);
+    // EXACT leaves + the RAW 32-byte audit value. `3db1a25da3` flipped this route off the lossy
+    // one-felt pair (`fields_root_leaves` + `fold_bytes32`, which folds 32 bytes into a `+p`-aliasable
+    // felt) onto the exact leaf, which keeps all 32 raw bytes in the leaf preimage. This call site was
+    // the one the flip missed.
+    let before_leaves = dregg_cell::state::exact_fields_root_leaves(&before_cell.state.fields_map);
 
     // -- PRODUCER LEG (the deployed wide path): mint a real wide refusal proof + the 63 published PIs.
     // BEFORE this wire, `refusal_fields = None` would FAIL CLOSED here (the record-pin route with empty
@@ -384,7 +403,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         &after_w,
         &caveat,
         None,
-        Some((&before_leaves, audit_value)),
+        Some((&before_leaves, audit_bytes)),
     )
     .expect(
         "DEPLOYED REFUSAL PROVE-THROUGH (liveness pole): the honest refusal MUST prove on the wide path \
@@ -408,12 +427,20 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     assert_eq!(
         producer_dpis.len(),
         desc.public_input_count,
-        "wide refusal PI count (58 narrow base = 50 + 8 authority + 16 wide = 74 — the H1 8-felt record-pin8)"
+        "the producer's published PI vector must have exactly the descriptor's arity"
     );
+    // DRIFT CANARY, re-measured 2026-07-25 off `circuit/descriptors/rotation-wide-registry-staged.tsv`
+    // at HEAD. The old literal here was 74, written when the staged registry carried 74; `3db1a25da3`
+    // regenerated it to 90 and this assertion could not object, because the target had stopped
+    // compiling in that same commit. If this reds, RE-READ the registry and re-derive the geometry —
+    // never edit the number to match.
     assert_eq!(
-        desc.public_input_count, 74,
-        "refusal wide descriptor carries 74 PIs (all 8 authority record-pins + 4 dsl rc + 16 wide commit PIs)"
+        desc.public_input_count, 90,
+        "refusal wide descriptor carries 90 PIs (staged registry at HEAD); a move here is a real \
+         geometry change and must be re-derived, not re-typed"
     );
+    // Derived, never hand-pinned: the 16 wide commit PIs are the descriptor's TAIL.
+    let refusal_wide_pi_base = desc.public_input_count - WIDE_COMMIT_PI_COUNT;
 
     // -- EXECUTOR LEG: anchor the 16 wide commit PIs to the TRUSTED before/after cell chip-commits
     //    (the wide analog of the live executor's 1-felt-retire override). --
@@ -438,8 +465,8 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
 
     let mut anchored = producer_dpis.clone();
     for j in 0..8 {
-        anchored[REFUSAL_WIDE_PI_BASE + j] = trusted_before8[j];
-        anchored[REFUSAL_WIDE_PI_BASE + 8 + j] = trusted_after8[j];
+        anchored[refusal_wide_pi_base + j] = trusted_before8[j];
+        anchored[refusal_wide_pi_base + 8 + j] = trusted_after8[j];
     }
     // The honest pipeline coheres: the trusted commits equal the producer's published 16 wide PIs.
     assert_eq!(
@@ -457,7 +484,13 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
     // recomputing the proof against a DIFFERENT audit value (a producer trying to publish an after-root
     // that is NOT write(before_root, AUDIT_KEY, genuine_audit)). The `.write` gate has no satisfying
     // assignment for the forged after-root vs the genuine before-tree, so the wide prover REFUSES.
-    let forged_audit = audit_value + BabyBear::new(0x5151);
+    let forged_audit = {
+        // A DIFFERENT 32-byte audit value. (Was `audit_value + BabyBear::new(0x5151)` when this
+        // route carried a folded felt; the exact route carries the raw bytes.)
+        let mut b = audit_bytes;
+        b[0] ^= 0x51;
+        b
+    };
     let forged = prove_effect_vm_rotated_wide(
         &initial_vm_state,
         &effects,
@@ -478,8 +511,8 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
         // (the trusted after-cell carries the GENUINE audit) ⇒ the executor's anchored verify REJECTS it.
         let mut forged_anchored = forged_dpis.clone();
         for j in 0..8 {
-            forged_anchored[REFUSAL_WIDE_PI_BASE + j] = trusted_before8[j];
-            forged_anchored[REFUSAL_WIDE_PI_BASE + 8 + j] = trusted_after8[j];
+            forged_anchored[refusal_wide_pi_base + j] = trusted_before8[j];
+            forged_anchored[refusal_wide_pi_base + 8 + j] = trusted_after8[j];
         }
         assert!(
             verify_vm_descriptor2(&desc, &forged_proof, &forged_anchored).is_err(),

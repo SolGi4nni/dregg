@@ -1613,7 +1613,7 @@ mod tests {
             intent.effect_summary(),
             EffectSummary::SetField {
                 cell: doc,
-                index: TALLY_SLOT
+                index: TALLY_SLOT as u64
             }
         );
         assert!(matches!(intent.effect, Effect::SetField { .. }));

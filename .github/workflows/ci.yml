@@ -583,10 +583,51 @@ jobs:
             exit 1
           fi
           echo "correctness: clean."
-          if grep -q '^error: could not compile' clippy-correctness.log; then
-            echo "::warning::targets that do NOT compile at this commit (dark — they run nothing):"
-            grep '^error: could not compile' clippy-correctness.log | sort -u
+      # ── THE DARK-TARGET RATCHET ────────────────────────────────────────────
+      # A target that does not compile is a guard that CANNOT FIRE, and it is
+      # indistinguishable from a guard that always passes. On 2026-07-25 there
+      # were TWELVE of them; six had never compiled once since the commit that
+      # introduced them, and two of those commits' subjects asserted exactly the
+      # property the dark test checked. None announced itself — a `::warning::`
+      # annotation (what this step used to emit) is a DOCUMENTED wound, not a
+      # DETECTED one.
+      #
+      # So: the known-dark set is enumerated, with a reason per row, in
+      # `.github/dark-targets.txt`. A target that goes dark and is NOT on that
+      # list FAILS THIS JOB. Fix it, or add the row and say why.
+      - name: dark-target ratchet
+        run: |
+          set -uo pipefail
+          LIST=.github/dark-targets.txt
+          # Normalize `error: could not compile `pkg` (kind "name") due to N previous errors`
+          # to `pkg (kind "name")` — the trailing count is noise that moves on its own.
+          grep '^error: could not compile' clippy-correctness.log \
+            | sed -E 's/^error: could not compile `([^`]+)` \((.*)\) due to.*/\1 (\2)/' \
+            | sort -u > dark-now.txt || true
+          grep -vE '^\s*(#|$)' "$LIST" | sort -u > dark-known.txt
+          NEW=$(comm -23 dark-now.txt dark-known.txt)
+          FIXED=$(comm -13 dark-now.txt dark-known.txt)
+          if [ -n "$NEW" ]; then
+            echo "::error::a target went DARK and is not on the known list. A test target that does"
+            echo "::error::not compile is a falsifier that cannot fire — it is not a warning."
+            echo "$NEW" | sed 's/^/  NEW DARK: /'
+            echo
+            echo "Repair it, or add the row to $LIST with a one-line reason and an owner."
+            echo "Reproduce locally with:"
+            echo "  cargo clippy --workspace --all-targets --keep-going --message-format=short"
+            echo "(--keep-going is REQUIRED: a plain --all-targets run ABORTS at the first"
+            echo " broken target and shows you nothing past it.)"
+            exit 1
           fi
+          # No new darkness ⇒ no cascade is in flight (a red LIB is itself a NEW row and
+          # would have failed above), so an absent row means that target COMPILES again.
+          if [ -n "$FIXED" ]; then
+            echo "::error::these rows in $LIST now COMPILE. Delete them — a stale allowlist is how"
+            echo "::error::the next dark target gets waved through."
+            echo "$FIXED" | sed 's/^/  NO LONGER DARK: /'
+            exit 1
+          fi
+          echo "dark-target ratchet: $(wc -l < dark-known.txt) known, 0 new, 0 stale."
 
   fmt:
     name: Format

@@ -48,7 +48,10 @@ fn document_commits_to_committed_cell_umem_heap_and_reopens_from_ledger() {
         read_doc(&w, &cell).is_none(),
         "a fresh cell has no committed document"
     );
-    let empty_boundary = w.ledger().get(&cell).unwrap().state.heap_root;
+    // `state.heap_root` is a wide `Faithful8`; `to_bytes32` is its canonical, exactly-invertible
+    // 32-byte packing — the SAME projection `DocHeapCell::commitment()` publishes, so every
+    // boundary == commitment assertion below still relates the full wide root.
+    let empty_boundary = w.ledger().get(&cell).unwrap().state.heap_root.to_bytes32();
 
     // ── Edit #1: a doc longer than one 32-byte umem chunk ─────────────────────────
     let prose = "The document IS the cell. Its prose lives in the committed umem-heap, \
@@ -65,7 +68,7 @@ fn document_commits_to_committed_cell_umem_heap_and_reopens_from_ledger() {
         w.set_cell_heap(&cell, heap),
         "the document projects into the cell's umem-heap and reseals"
     );
-    let boundary = w.ledger().get(&cell).unwrap().state.heap_root;
+    let boundary = w.ledger().get(&cell).unwrap().state.heap_root.to_bytes32();
     assert_ne!(
         boundary, empty_boundary,
         "the edit MOVED the committed umem boundary"
@@ -110,12 +113,12 @@ fn document_commits_to_committed_cell_umem_heap_and_reopens_from_ledger() {
         "the shrunk prose reads back exactly (no trailing garbage)"
     );
     assert_eq!(
-        w.ledger().get(&cell).unwrap().state.heap_root,
+        w.ledger().get(&cell).unwrap().state.heap_root.to_bytes32(),
         shrunk.commitment(),
         "the shrunk document's boundary IS its commitment (rebuilt wholesale, no stale leaf)"
     );
     assert_ne!(
-        w.ledger().get(&cell).unwrap().state.heap_root,
+        w.ledger().get(&cell).unwrap().state.heap_root.to_bytes32(),
         boundary,
         "the shrink moved the boundary"
     );

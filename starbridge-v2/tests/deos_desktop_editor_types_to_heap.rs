@@ -48,8 +48,13 @@ fn read_doc(w: &starbridge_v2::world::World, cell: &dregg_types::CellId) -> Opti
 
 /// The cell's committed umem boundary — its resealed `heap_root`, which IS the
 /// document's commitment after a `commit_doc_to_umem_heap`.
+///
+/// `state.heap_root` is a wide [`Faithful8`] (8 felts, the ~124-bit binding — the type wall that
+/// makes a lane-0 scalar root untypeable). `to_bytes32` is its canonical, exactly-invertible
+/// 32-byte packing, and it is the SAME projection `DocHeapCell::commitment()` publishes, so the
+/// comparisons below still relate the full wide root and not a narrowed one.
 fn heap_root(w: &starbridge_v2::world::World, cell: &dregg_types::CellId) -> Option<[u8; 32]> {
-    Some(w.ledger().get(cell)?.state.heap_root)
+    Some(w.ledger().get(cell)?.state.heap_root.to_bytes32())
 }
 
 #[test]

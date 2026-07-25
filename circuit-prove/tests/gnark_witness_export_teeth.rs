@@ -61,6 +61,14 @@ fn minimal_envelope() -> WholeChainProofBytes {
         final_root,
         chain_digest,
         num_turns: 4242,
+        // The gnark wrap targets a plain 25-lane root: this fixture declares NO board window, so
+        // the envelope carries none. Deliberately `None` and not a `Some(..)` fixture: the exporter
+        // never READS this field (`gnark_public_input_vector` emits `GNARK_PUBLIC_INPUT_LEN = 25`
+        // lanes from the roots/digest/num_turns alone), so a `Some(..)` fixture would pass every
+        // assertion below and thereby certify that a board-window envelope exports cleanly at 25
+        // lanes — which is exactly the claim that is FALSE. See the exporter gap noted at
+        // `gnark_public_input_vector`: a windowed envelope is silently under-exported today.
+        board_window: None,
     }
 }
 

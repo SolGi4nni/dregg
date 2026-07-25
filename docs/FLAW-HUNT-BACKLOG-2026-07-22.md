@@ -44,6 +44,23 @@ red umbrella": the ML-KEM commit didn't rebuild the FRI-test crate. FIX: restore
 wrapper + FriKnobs/FriLedger + the dregg_fri_ledger_str C bridge + the build.rs probe/cfg from
 0f2802a0ca^ (the Lean export is still live). TERRITORY: co-tenant FRI/felt-width -> FLAG.
 
+CORRECTED + STILL OPEN 2026-07-25 (lane AC). Two corrections and one measurement.
+(1) It was TWO commits, 17 hours apart, neither of which mentions FRI — so "restore from
+0f2802a0ca^" recovers only half of it. 7ebe7b7d4b (07-20 05:08, "no-silent-fallback: two gates
+make unaudited PQ substitution IMPOSSIBLE") rewrote dregg-lean-ffi/build.rs (476 lines) and
+dropped the `dregg_fri_ledger` archive probe, its `cargo::rustc-check-cfg` declaration AND its
+`cargo:rustc-cfg` emission; 0f2802a0ca (07-20 21:53) then deleted the Rust API and lean_init.c's
+`dregg_fri_ledger_str` shim. Stage 1 alone had already stopped the gate working; stage 2 turned a
+loud failure into an unresolved import that only a `--all-targets` build can see.
+(2) The Lean side is confirmed live AND inside the FFI boundary closure: `@[export]
+dregg_fri_ledger` (metatheory/Dregg2/Circuit/FriLedger.lean:380), imported by
+metatheory/Dregg2/FFI.lean:31 — so the symbol IS in today's archive. Only the Rust half is gone.
+(3) MEASURED, not assumed: no knob drifted while the gate was dark. All 7 shipped configs' deployed
+consts still equal the Lean literals the test transcribes (IR2 6/19/16/3/0/4, PROD + ZK 3/38/16/3/0/4,
+OUTER + GPU 3/38/16/1/0/4, RECURSION 3/38/14/1/0/4, INNER 19 queries / arity 1). That is a hand
+reading with a shelf life, not a gate. The two targets are now enumerated in
+`.github/dark-targets.txt`, so any THIRD target going dark is a CI failure rather than an annotation.
+
 ## 🟠 RESUME FORGES SIGNED PROVENANCE — a signed turn is NOT re-verifiable after restart  [FIXING]
 LoggedMove persists (action, actor, 1-byte trust tag) but NO signature; decode_log maps "s" ->
 Signed{pubkey=actor} straight from the store string; resume re-drives (action,actor) and adopts the

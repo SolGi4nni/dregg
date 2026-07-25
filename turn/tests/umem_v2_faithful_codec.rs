@@ -356,7 +356,10 @@ fn umem_v2_address_is_big_endian_the_one_divergence_from_the_canonical_le_codec(
     }
 
     let canonical_le = dregg_circuit::exact_nullifier_aafi::raw_to_u16_le(raw);
-    let v2 = UAddrV2::from_key(&UKey::Cell(CellId(raw)));
+    // `Exist` carries the cell's 32 bytes as the whole source and leaves `arguments` zero, so
+    // `limbs[2..18]` is exactly `bytes32_to_u16_be(raw)` and nothing else (`turn/src/umem.rs`
+    // `from_key`). Any argument-free cell-keyed variant reads identically.
+    let v2 = UAddrV2::from_key(&UKey::Exist(CellId(raw)));
     let limbs = v2.limbs();
     // `UAddrV2::limbs` lays out [domain, variant, source32(16), arguments(4)].
     let source_limbs: [u16; 16] = limbs[2..18].try_into().expect("16 source limbs");

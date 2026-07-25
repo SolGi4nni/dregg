@@ -217,12 +217,12 @@ impl Reactor for RevealReactor {
             effects: vec![
                 Effect::SetField {
                     cell: self.descent_cell,
-                    index: self.day_slot,
+                    index: self.day_slot as u64,
                     value: round,
                 },
                 Effect::SetField {
                     cell: self.descent_cell,
-                    index: self.seed_slot,
+                    index: self.seed_slot as u64,
                     value: seed,
                 },
             ],
@@ -924,7 +924,7 @@ impl Reactor for AttestedGameReactor {
                 //     idiom one level up.
                 Effect::SetField {
                     cell: self.board_cell,
-                    index: self.attest_slot,
+                    index: self.attest_slot as u64,
                     value: self.commitment,
                 },
             ],
@@ -1142,7 +1142,7 @@ fn the_ai_dm_reacts_with_an_attested_narration_bound_to_its_turn() {
                 "the move is one of the NPC's OWN units (its cap set), got slot {move_slot}"
             );
             assert_eq!(
-                *att_i, attest_slot,
+                *att_i, attest_slot as u64,
                 "the attestation binds at the attest slot"
             );
             assert_eq!(

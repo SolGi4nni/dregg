@@ -1,0 +1,53 @@
+# DARK TARGETS — the compile-fail allowlist, and it is a RATCHET, not a parking lot.
+#
+# A target listed here does not compile at HEAD. That means every #[test] in it is a
+# falsifier that CANNOT FIRE, which is indistinguishable from a falsifier that always
+# passes. `.github/workflows/ci.yml`'s `clippy-correctness` job FAILS if a target goes
+# dark and is not on this list, and FAILS if a row here compiles again (delete it).
+#
+# Format: one row per target, exactly as `cargo clippy --workspace --all-targets
+# --keep-going --message-format=short` names it, minus the trailing error count:
+#
+#     <package> (<kind>[ "<name>"])
+#
+# ⚠ REPRODUCING LOCALLY REQUIRES `--keep-going`. A plain `cargo clippy --all-targets`
+# ABORTS at the first non-compiling target and shows you nothing past it — which is the
+# whole reason twelve of these accumulated unseen through 2026-07-25.
+#
+# Adding a row is a real cost. Say WHY, and name what the dark test was guarding.
+
+# ── THE FRI SOUNDNESS LEDGER GATE (2 targets) ────────────────────────────────────────
+# Both import `dregg_lean_ffi::{FriKnobs, FriLedger, fri_ledger, fri_ledger_available}`,
+# which has ZERO definition sites tree-wide. The Rust binding was removed in TWO stages
+# by TWO commits, neither of which mentions FRI:
+#   * 7ebe7b7d4b (2026-07-20 05:08, "no-silent-fallback: two gates make unaudited PQ
+#     substitution IMPOSSIBLE") rewrote `dregg-lean-ffi/build.rs` and dropped the
+#     `dregg_fri_ledger` archive probe, its `rustc-check-cfg` declaration and its
+#     `rustc-cfg` emission — so `dregg_fri_ledger_present` stopped being set.
+#   * 0f2802a0ca (2026-07-20 21:53, "ML-KEM keygen now dispatches the VERIFIED core")
+#     deleted the public API (`FriKnobs`/`FriLedger`/`fri_ledger`/`fri_ledger_available`
+#     and the `mod ffi` bridge) plus `lean_init.c`'s `dregg_fri_ledger_str` C shim.
+# The LEAN side is alive and orphaned: `@[export] dregg_fri_ledger`
+# (metatheory/Dregg2/Circuit/FriLedger.lean:380) is inside the FFI boundary closure
+# (metatheory/Dregg2/FFI.lean:31), so the symbol IS in today's archive.
+#
+# WHAT IS DARK: the knob-drift PIN — the sole guard that the deployed FRI knobs still
+# equal the Lean literals every per-fold soundness theorem is stated about — plus the
+# per-config ledger floors and six mutation canaries. Cited as load-bearing in 16 files
+# under docs/ and GOAL-*.md. Verified by hand 2026-07-25: no knob has drifted while the
+# gate was dark (all 7 shipped configs still match their Lean literals) — but that is a
+# manual reading with a shelf life, not a gate.
+#
+# REPAIR (restores both rows at once) is confined to `dregg-lean-ffi/`, which was a live
+# lane's territory on 2026-07-25; restore from 0f2802a0ca^ / 7ebe7b7d4b^:
+#   1. src/lib.rs           — FriKnobs, FriLedger, fri_ledger_available, fri_ledger, and
+#                             mod ffi's extern decl + lean_fri_ledger + fri_ledger_present
+#                             (both cfg arms, and the not(lean) stub).
+#   2. src/lean_init.c      — `extern lean_object *dregg_fri_ledger(lean_object*);` and the
+#                             `dregg_fri_ledger_str` string bridge.
+#   3. build.rs             — `archive_exports(&build_archive, "dregg_fri_ledger")`, the
+#                             `cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)` and the
+#                             `cargo:rustc-cfg=dregg_fri_ledger_present` emission.
+# OWNER: the dregg-lean-ffi / FRI lane.
+dregg-circuit-prove (test "fri_params_soundness_budget")
+dregg-circuit-prove (test "fri_regrid_post_s2_measure")

@@ -48,7 +48,12 @@ const STAGE_NAMES: [&str; BFV_Q0_N8_EXACT_PUBLIC_STAGE_COUNT] = [
 /// Three fixed-relation IR2 proofs.  Descriptors are intentionally absent from
 /// the wire object: a verifier resolves the three checked-in Lean artifacts by
 /// stage index and refuses any other relation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+// `Ir2BatchProof` = `p3_batch_stark::BatchProof`, which derives only `Serialize`/`Deserialize` at
+// the pinned plonky3 rev — no `Clone`, no `Debug`, and no manual impls. So this wire object cannot
+// carry them either. `#[serde(bound = "")]` because the generic `SC` is only a phantom of the
+// serde bounds, matching `circuit-prove`'s `TurnChainBindingProof`.
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct BfvQ0N8ExactPublicProof {
     stages: Vec<Ir2BatchProof<DreggStarkConfig>>,
 }
@@ -106,6 +111,7 @@ pub fn bfv_q0_n8_exact_public_stage_descriptor(
 /// provenance only and never protocol identity.
 pub fn bfv_q0_n8_exact_public_stage_fingerprint(stage: usize) -> Result<[u8; 32], String> {
     effect_vm_descriptor2_semantic_fingerprint(&bfv_q0_n8_exact_public_stage_descriptor(stage)?)
+        .map_err(|error| format!("q0/N8 exact-public stage {stage} fingerprint: {error}"))
 }
 
 fn stage_rows(stage: usize) -> Result<Vec<Vec<BabyBear>>, String> {
@@ -236,7 +242,9 @@ mod tests {
             "one-cell manifest substitution must move the verified relation"
         );
 
-        let mut swapped = proof.clone();
+        // MOVE, not clone: `Ir2BatchProof` is not `Clone`. `proof`'s last read is `&proof.stages[0]`
+        // above, so the move is semantics-preserving and the substitution tooth still bites.
+        let mut swapped = proof;
         swapped.stages.swap(0, 1);
         assert!(
             verify_bfv_q0_n8_exact_public(&swapped).is_err(),

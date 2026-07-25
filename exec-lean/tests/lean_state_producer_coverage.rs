@@ -281,7 +281,7 @@ fn emit_event_root_agrees() {
     // EmitEvent journals an event but mutates NO cell commitment field (apply.rs:703 records the
     // event in the receipt journal only). The wire `emit` arm likewise leaves cell state untouched.
     // So both producers commit and the reconstituted ledger agrees on state + cap_root + root.
-    let (_, a_id) = one_open_cell();
+    let (pre, a_id) = one_open_cell();
     let turn = single_effect_turn(
         a_id,
         a_id,
