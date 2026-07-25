@@ -1218,22 +1218,28 @@ impl OraclePitBook {
         // would strand a second, legitimately-taken position whenever a caller reuses a nonce for
         // the same (side, stake, holder): both stakes are folded into the aggregate and both
         // occupy their own board slot, so both must be claimable exactly once.
-        let matched = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.commitment == commitment)
-            .collect::<Vec<_>>();
-        if matched.is_empty() {
+        // Scanned rather than collected on purpose: a `Vec` of borrows into `self.entries` has a
+        // `Drop` impl, so its borrow would stay live to end of scope and collide with the
+        // `claimed` write below.
+        let mut unclaimed: Option<usize> = None;
+        let mut any_match = false;
+        for (index, entry) in self.entries.iter().enumerate() {
+            if entry.commitment != commitment {
+                continue;
+            }
+            any_match = true;
+            if !entry.claimed {
+                unclaimed = Some(index);
+                break;
+            }
+        }
+        if !any_match {
             return Err(PitRefusal::Pricing(
                 "no such position on the frozen board — an untaken position cannot claim"
                     .to_string(),
             ));
         }
-        let index = matched
-            .iter()
-            .find(|(_, entry)| !entry.claimed)
-            .map(|(index, _)| *index)
+        let index = unclaimed
             .ok_or_else(|| PitRefusal::Pricing("this position was already claimed".to_string()))?;
         let slot = self.entries[index].slot;
         if state.fields[slot] != commitment {
