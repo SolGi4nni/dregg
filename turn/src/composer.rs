@@ -53,6 +53,13 @@ pub enum ComposeError {
     /// The composed turn has non-zero excess (balance_change deltas don't sum to zero).
     ExcessImbalance { total_excess: i64 },
 
+    /// The balance_change deltas overflow i64 when summed — the conservation
+    /// gate cannot be evaluated. Treated as a HARD conservation failure (never
+    /// wrapped-to-zero), so a relay/matcher can never be tricked into accepting
+    /// e.g. two `i64::MIN` deltas that wrap the running sum back to a "balanced"
+    /// zero in a release build.
+    ConservationOverflow,
+
     /// No fragments were added to compose.
     EmptyComposition,
 
@@ -99,6 +106,13 @@ impl core::fmt::Display for ComposeError {
             }
             ComposeError::ExcessImbalance { total_excess } => {
                 write!(f, "balance_change excess is non-zero: {total_excess}")
+            }
+            ComposeError::ConservationOverflow => {
+                write!(
+                    f,
+                    "balance_change deltas overflow i64 when summed: \
+                     conservation cannot be established (rejected)"
+                )
             }
             ComposeError::EmptyComposition => {
                 write!(f, "no fragments to compose")
@@ -319,7 +333,15 @@ impl TurnComposer {
         }
 
         // Phase 4: Check balance_change conservation (excess must sum to zero).
-        let total_excess: i64 = all_actions.iter().filter_map(|a| a.balance_change).sum();
+        // Fold with `checked_add` so an overflowing sum is a HARD conservation
+        // FAILURE, not a silent wrap: in a release build a plain `.sum()` of two
+        // `i64::MIN` deltas wraps to 0 and would pass the `!= 0` gate below,
+        // laundering a grossly imbalanced turn as "balanced".
+        let total_excess: i64 = all_actions
+            .iter()
+            .filter_map(|a| a.balance_change)
+            .try_fold(0i64, |acc, delta| acc.checked_add(delta))
+            .ok_or(ComposeError::ConservationOverflow)?;
 
         if total_excess != 0 {
             return Err(ComposeError::ExcessImbalance { total_excess });

@@ -3467,6 +3467,50 @@ fn test_compose_two_party_swap() {
 }
 
 // =============================================================================
+// FALSIFIER: the conservation gate REFUSES an overflowing balance_change sum
+// (does NOT wrap two i64::MIN deltas to a "balanced" zero in release).
+// =============================================================================
+
+#[test]
+fn test_compose_conservation_gate_refuses_overflow() {
+    let matcher_kp = TestKeypair::from_seed(42);
+    let a_cell = CellId::from_bytes([7u8; 32]);
+    let b_cell = CellId::from_bytes([9u8; 32]);
+    let matcher_cell = CellId::from_bytes(matcher_kp.public_key);
+
+    // Two settlement actions (no signatures required) each carrying i64::MIN.
+    // A plain `.sum()` wraps `i64::MIN + i64::MIN` to 0 in a release build,
+    // which would sail through the `total_excess != 0` conservation gate and
+    // launder a grossly imbalanced turn as "balanced". The checked fold must
+    // instead reject it outright.
+    let overflow_action = |target: CellId| Action {
+        target,
+        method: symbol("withdraw"),
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: CellPreconditions::default(),
+        effects: vec![],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: Some(i64::MIN),
+        witness_blobs: vec![],
+    };
+
+    let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
+    composer.add_settlement_action(overflow_action(a_cell));
+    composer.add_settlement_action(overflow_action(b_cell));
+
+    match composer.compose() {
+        Err(ComposeError::ConservationOverflow) => {}
+        Err(other) => panic!("expected ConservationOverflow, got {other:?}"),
+        Ok(_) => panic!(
+            "conservation gate ACCEPTED an overflowing (i64::MIN + i64::MIN) turn \
+             — release-wrap-to-zero was not refused"
+        ),
+    }
+}
+
+// =============================================================================
 // Test: Compose rejects invalid signature
 // =============================================================================
 
@@ -7012,6 +7056,79 @@ fn test_fee_distribution() {
             }
         }
     }
+}
+
+// =============================================================================
+// FALSIFIER: a near-ceiling fee splits WITHOUT the `fee * 3` u64 overflow.
+// For fee > u64::MAX/3 (~6.15e18) the naive `fee * 3 / 10` panics in debug and
+// WRAPS in release, mis-crediting the treasury / fee-well (mis-distributed
+// protocol revenue). The u128 computation must credit the exact 3/10 share.
+// =============================================================================
+
+#[test]
+fn test_fee_distribution_near_ceiling_no_overflow() {
+    // fee is in (u64::MAX/3, i64::MAX]: `fee * 3` overflows u64 (the bug) while
+    // fee itself stays payable/representable as an i64 balance.
+    let fee: u64 = 9_000_000_000_000_000_000; // 9e18
+    assert!(
+        fee > u64::MAX / 3,
+        "fee must be in the u64-overflow regime for `fee * 3`"
+    );
+
+    // Correct shares, computed in u128 so the EXPECTATION itself never wraps.
+    let expect_proposer = fee / 2; // /2 never overflows
+    let expect_treasury = ((fee as u128) * 3 / 10) as u64;
+    // Sanity: the wrong (wrapping) u64 result differs — this is what we falsify.
+    let wrapped_treasury = fee.wrapping_mul(3) / 10;
+    assert_ne!(
+        expect_treasury, wrapped_treasury,
+        "test premise: the wrapped share must differ from the correct one"
+    );
+
+    let mut ledger = Ledger::new();
+    // Seed the agent below i64::MAX but above `fee` so it can pay.
+    let (agent, _) = make_open_cell(1, 9_200_000_000_000_000_000);
+    let agent_id = agent.id();
+    ledger.insert_cell(agent).unwrap();
+
+    let (proposer, _) = make_open_cell(2, 0);
+    let pid = proposer.id();
+    ledger.insert_cell(proposer).unwrap();
+
+    let (treasury, _) = make_open_cell(3, 0);
+    let tid = treasury.id();
+    ledger.insert_cell(treasury).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proposer_cell(pid);
+    executor.set_treasury_cell(tid);
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = ActionBuilder::new_unchecked_for_tests(agent_id, "noop", agent_id)
+            .effect_set_field(agent_id, 0, [1u8; 32])
+            .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(fee).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "near-ceiling-fee turn should commit");
+
+    let proposer_bal = u64::try_from(ledger.get(&pid).unwrap().state.balance()).unwrap();
+    let treasury_bal = u64::try_from(ledger.get(&tid).unwrap().state.balance()).unwrap();
+    assert_eq!(
+        proposer_bal, expect_proposer,
+        "proposer must receive the exact 1/2 share"
+    );
+    assert_eq!(
+        treasury_bal, expect_treasury,
+        "treasury must receive the exact (u128) 3/10 share, not the wrapped u64 value"
+    );
+    assert_ne!(
+        treasury_bal, wrapped_treasury,
+        "treasury must NOT be credited the release-wrapped `fee * 3` share"
+    );
 }
 
 // =============================================================================

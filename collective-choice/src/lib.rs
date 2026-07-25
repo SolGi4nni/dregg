@@ -202,6 +202,11 @@ pub enum VoteError {
     Executor(String),
     /// A ledger invariant was violated (birth/seed failure).
     Ledger(String),
+    /// A tally accumulation overflowed u64 — a per-option bump or the total sum
+    /// exceeded `u64::MAX`. An overflowing tally is not a valid quorum result:
+    /// we REFUSE it rather than let a release build wrap the total below `quorum`
+    /// (quorum bypass) or flip the max-weight winner.
+    TallyOverflow,
 }
 
 impl std::fmt::Display for VoteError {
@@ -216,6 +221,12 @@ impl std::fmt::Display for VoteError {
             VoteError::ZeroWeight => write!(f, "a zero-weight cast is refused (ballot not burned)"),
             VoteError::Executor(m) => write!(f, "executor refused: {m}"),
             VoteError::Ledger(m) => write!(f, "ledger error: {m}"),
+            VoteError::TallyOverflow => {
+                write!(
+                    f,
+                    "tally accumulation overflowed u64 (refused, not wrapped)"
+                )
+            }
         }
     }
 }
@@ -453,9 +464,17 @@ impl CollectiveChoice {
         let record = self.polls.get(&poll.0).ok_or(VoteError::NoSuchPoll)?;
         let mut per_option = vec![0u64; record.option_count];
         for &(opt, weight) in &record.receipts {
-            per_option[opt] += weight;
+            // checked_add: an overflowing per-option tally is refused, never
+            // wrapped — a wrap could drop an option below quorum or flip the
+            // max-weight winner in a release build.
+            per_option[opt] = per_option[opt]
+                .checked_add(weight)
+                .ok_or(VoteError::TallyOverflow)?;
         }
-        let total = per_option.iter().sum();
+        let total = per_option
+            .iter()
+            .try_fold(0u64, |acc, &w| acc.checked_add(w))
+            .ok_or(VoteError::TallyOverflow)?;
         Ok(Tally { per_option, total })
     }
 
@@ -863,7 +882,13 @@ impl VoteEngine for CollectiveChoice {
         let per_option: Vec<u64> = (0..record.option_count)
             .map(|i| field_to_u64(&state.fields[TALLY_BASE as usize + i]))
             .collect();
-        let total = per_option.iter().sum();
+        // checked fold: refuse an overflowing total rather than wrap it below
+        // `quorum` (the per-option slots are executor-Monotonic, but their sum
+        // here is a plain-Rust u64 that would wrap in release).
+        let total = per_option
+            .iter()
+            .try_fold(0u64, |acc, &w| acc.checked_add(w))
+            .ok_or(VoteError::TallyOverflow)?;
         Ok(Tally { per_option, total })
     }
 

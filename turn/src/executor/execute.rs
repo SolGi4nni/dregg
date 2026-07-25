@@ -26,7 +26,10 @@ fn distribute_fee_shares(
     fee: u64,
 ) {
     let proposer_share = fee / 2;
-    let treasury_share = fee * 3 / 10;
+    // u128: `fee * 3` overflows u64 when fee > u64::MAX/3 (~6.15e18); in RELEASE
+    // that wraps and mis-splits the fee. The 3/10 share is <= fee, so the cast
+    // back to u64 is lossless.
+    let treasury_share = ((fee as u128) * 3 / 10) as u64;
     let mut delivered: u64 = 0;
     if let Some(pid) = proposer {
         if let Some(p) = ledger.get_mut(pid) {
@@ -793,8 +796,10 @@ impl TurnExecutor {
                     }
                     if let Some(treasury_id) = &self.treasury_cell {
                         let mut d = dregg_cell::CellStateDelta::empty();
-                        d.balance_change = (turn.fee * 3 / 10) as i64;
-                        fee_delivered += turn.fee * 3 / 10;
+                        // u128 to avoid the `turn.fee * 3` u64 wrap near the ceiling.
+                        let treasury_share = ((turn.fee as u128) * 3 / 10) as u64;
+                        d.balance_change = treasury_share as i64;
+                        fee_delivered += treasury_share;
                         delta.updated.push((*treasury_id, d));
                     }
                     // THE EPOCH §5 ("fees as moves"): the remainder moves to

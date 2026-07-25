@@ -455,7 +455,12 @@ impl HostBallotBox {
             if !seen.insert(b.voter) {
                 continue; // one vote per voter — first ballot wins
             }
-            *per_option.entry(b.choice).or_insert(0) += b.weight;
+            // saturating_add, never wrapping: a per-option tally that would
+            // overflow u64 caps at the ceiling instead of wrapping to a small
+            // value in release (a wrap could make the true-largest option LOSE
+            // the `max_by` winner election below in `resolve`).
+            let slot = per_option.entry(b.choice).or_insert(0);
+            *slot = slot.saturating_add(b.weight);
         }
         Tally {
             poll,
@@ -554,7 +559,17 @@ impl HostVoteEngine for HostBallotBox {
                 }
             }
             DecisionRule::Plurality { quorum } => {
-                let total: u64 = tally.per_option.values().sum();
+                // checked fold: an overflowing total is not a valid quorum result.
+                // Refuse (stay Pending) rather than let a release build wrap the
+                // total below `quorum` and either bypass or spuriously arm the gate.
+                let total = match tally
+                    .per_option
+                    .values()
+                    .try_fold(0u64, |acc, &w| acc.checked_add(w))
+                {
+                    Some(t) => t,
+                    None => return Resolution::Pending,
+                };
                 if total < quorum {
                     return Resolution::Pending;
                 }
@@ -631,6 +646,37 @@ mod tests {
                 winner: OptionId(1),
                 enact: false
             }
+        );
+    }
+
+    // FALSIFIER: a Plurality quorum whose TOTAL weight would overflow u64 is
+    // REFUSED (stays Pending), never wrapped. Two options each carry a
+    // near-ceiling weight: each per-option tally is a valid u64, but their sum
+    // overflows. A plain `.values().sum()` wraps in release to a small value
+    // (here ~9.2e18) that still clears `quorum`, so the old code would spuriously
+    // DECIDE a winner off a wrapped total. The checked fold must instead refuse.
+    #[test]
+    fn plurality_quorum_total_overflow_is_refused_not_wrapped() {
+        const BIG: u64 = 0xC000_0000_0000_0000; // ~1.38e19; BIG + BIG overflows u64
+        assert!(
+            BIG.checked_add(BIG).is_none(),
+            "test premise: BIG + BIG must overflow u64"
+        );
+
+        let mut e = HostBallotBox::new();
+        let poll = open_community(&mut e, &["ramen", "tacos"], 3);
+
+        let b0 = e.next_block(poll, voter(1), OptionId(0), BIG).unwrap();
+        assert_eq!(e.cast(poll, b0), CastOutcome::Accepted);
+        let b1 = e.next_block(poll, voter(2), OptionId(1), BIG).unwrap();
+        assert_eq!(e.cast(poll, b1), CastOutcome::Accepted);
+
+        // The summed total overflows u64 -> the quorum gate cannot be trusted, so
+        // resolution REFUSES (Pending) rather than deciding off a wrapped total.
+        assert_eq!(
+            e.resolve(poll),
+            Resolution::Pending,
+            "an overflowing plurality total must refuse resolution, not wrap below/above quorum"
         );
     }
 

@@ -759,7 +759,11 @@ impl TurnExecutor {
         // actually delivered so the fee-well move below closes the books
         // exactly (mirrors `distribute_fee_shares`).
         let proposer_share = fee / 2;
-        let treasury_share = fee * 3 / 10;
+        // Compute the 3/10 treasury share in u128: `fee * 3` overflows u64 once
+        // fee > u64::MAX/3 (~6.15e18, reachable for a near-ceiling cell), which in
+        // RELEASE wraps and mis-distributes protocol revenue. The result is <= fee,
+        // so the narrowing cast back to u64 is always lossless.
+        let treasury_share = ((fee as u128) * 3 / 10) as u64;
         let mut delivered: u64 = 0;
 
         if let Some(proposer_id) = proposer_cell {
@@ -1179,8 +1183,10 @@ impl TurnExecutor {
         }
         if let Some(treasury_id) = &self.treasury_cell {
             let mut d = dregg_cell::CellStateDelta::empty();
-            d.balance_change = (turn.fee * 3 / 10) as i64;
-            fee_delivered += turn.fee * 3 / 10;
+            // u128 to avoid the `turn.fee * 3` u64 wrap near the fee ceiling.
+            let treasury_share = ((turn.fee as u128) * 3 / 10) as u64;
+            d.balance_change = treasury_share as i64;
+            fee_delivered += treasury_share;
             delta.updated.push((*treasury_id, d));
         }
         if let Some(well_id) = &self.fee_well_cell {

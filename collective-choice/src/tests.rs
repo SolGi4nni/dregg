@@ -449,6 +449,48 @@ fn zero_weight_cast_is_refused_and_does_not_burn_the_ballot() {
     assert_eq!(e.tally(poll).unwrap().per_option, vec![50, 0]);
 }
 
+// FALSIFIER: a tally whose TOTAL would overflow u64 is REFUSED, never wrapped.
+// Two options each carry a weight near the u64 ceiling — each per-option slot is
+// a valid u64 (and round-trips the executor Monotonic slot), but their sum
+// overflows u64. A plain `.sum()` wraps the total to a small value in a release
+// build, which could silently drop a live tally below `quorum` (quorum bypass).
+// The checked fold in both the stored read and the light-client replay must
+// instead reject the read outright.
+#[test]
+fn a_tally_total_that_would_overflow_u64_is_refused_not_wrapped() {
+    const BIG: u64 = 0xC000_0000_0000_0000; // ~1.38e19; BIG + BIG overflows u64
+    assert!(
+        BIG.checked_add(BIG).is_none(),
+        "test premise: BIG + BIG must overflow u64"
+    );
+
+    let mut e = engine();
+    let poll = e
+        .open_poll_weighted(spec("overflow?", 2, vec![], 100))
+        .unwrap();
+
+    let alice = e.issue_ballot(poll, ALICE).unwrap();
+    e.cast_weighted(poll, &alice, 0, BIG)
+        .expect("alice's near-ceiling cast commits (a single-option slot fits u64)");
+
+    let bob = e.issue_ballot(poll, BOB).unwrap();
+    e.cast_weighted(poll, &bob, 1, BIG)
+        .expect("bob's near-ceiling cast commits");
+
+    // Stored-slot read: summing [BIG, BIG] overflows -> refuse (never wrap).
+    match e.tally(poll) {
+        Err(VoteError::TallyOverflow) => {}
+        other => panic!("stored tally with an overflowing total must be refused, got {other:?}"),
+    }
+    // Light-client replay of the cast log: same overflowing total -> refuse.
+    match e.light_client_tally(poll) {
+        Err(VoteError::TallyOverflow) => {}
+        other => {
+            panic!("light-client tally with an overflowing total must be refused, got {other:?}")
+        }
+    }
+}
+
 #[test]
 fn weight_conservation_board_equals_the_sum_of_granted_weights() {
     let mut e = engine();
