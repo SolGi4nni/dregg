@@ -564,9 +564,8 @@ fn commit_engine_hands(engine: &Engine, seed: u64) -> [HandTree; 2] {
 /// draw slots 0, 2, 4, 6 and seat B slots 1, 3, 5, 7 whatever either seat decides.
 fn fold_inventory(seed: u64) -> [Vec<(u64, u64)>; 2] {
     let engine = Engine::new(seed);
-    [Player::A, Player::B].map(|seat| {
-        openings_for(seed, engine.round_inventory(seat).iter().copied())
-    })
+    [Player::A, Player::B]
+        .map(|seat| openings_for(seed, engine.round_inventory(seat).iter().copied()))
 }
 
 impl Offering for TugOffering {
@@ -782,8 +781,7 @@ impl Offering for TugOffering {
                         .position(|d| *d == decision)
                         .map(|i| i as i64)
                         .unwrap_or(-1);
-                    let method =
-                        decision_method(&decision, replay.engine.pending_offer().as_ref());
+                    let method = decision_method(&decision, replay.engine.pending_offer().as_ref());
                     (seat, Action::new("", method, arg, true))
                 }
                 LandedInput::Score { seat } => (
