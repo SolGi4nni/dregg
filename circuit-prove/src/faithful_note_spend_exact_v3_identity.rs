@@ -465,8 +465,16 @@ const LEAN_DESCRIPTOR_VERIFIER_SOURCE: &[u8] =
     include_bytes!("../../circuit/src/lean_descriptor_air.rs");
 const TURN_STATEMENT_ADAPTER_SOURCE: &[u8] =
     include_bytes!("../../turn/src/faithful_note_spend_exact_v3.rs");
+// The exact-v3 verifier wrapper now lives in `dregg-turn-prover` (the crate that
+// IS the prover), not behind `dregg-turn`'s `prover` feature. `include_bytes!` is a
+// source read, not a cargo dependency, so this does not create a
+// circuit-prove -> turn-prover crate edge; it just keeps the fingerprint pointed at
+// where the verifier actually is. Moving the file DID change this fingerprint (the
+// closure is a hash of the exact bytes) — legitimate, because the verifier source
+// genuinely changed, and this recipe is explicitly non-live with no compiled VK or
+// wasm artifact claimed.
 const TURN_VERIFIER_WRAPPER_SOURCE: &[u8] =
-    include_bytes!("../../turn/src/faithful_note_spend_exact_v3_verifier.rs");
+    include_bytes!("../../turn-prover/src/faithful_note_spend_exact_v3_verifier.rs");
 
 const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
     (
@@ -495,7 +503,7 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
         TURN_STATEMENT_ADAPTER_SOURCE,
     ),
     (
-        "turn/src/faithful_note_spend_exact_v3_verifier.rs",
+        "turn-prover/src/faithful_note_spend_exact_v3_verifier.rs",
         TURN_VERIFIER_WRAPPER_SOURCE,
     ),
 ];
