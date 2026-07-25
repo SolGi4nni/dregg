@@ -91,6 +91,115 @@ mod tests {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
     }
 
+    /// **THE BOARD ACTUALLY REACHES DISCORD.** The sibling lane authored the shaft as a
+    /// `ViewNode::CoordGrid` and the vitals as literal `ViewNode::Progress` meters; this drives
+    /// the Discord render path a live `/play open offering:descent` takes and asserts the board
+    /// SURVIVES it — code-fenced (Discord's embed description is a proportional font, so an
+    /// unfenced 11-column shaft shears into noise), meters painted as bars, and every verb
+    /// carrying its price.
+    ///
+    /// It also pins the affordance budget the whole design rests on: the shaft is 66 cells and
+    /// Discord allows 25 components per message, so the cells are INERT and the `Menu` is the
+    /// single affordance carrier. If a later change makes cells pressable, or grows the verb list
+    /// past the cap, `action_rows_at`'s `chunks(5).take(5)` silently DROPS the overflow — a verb
+    /// the player can never see or press. This asserts we are under the cap, with room.
+    #[test]
+    fn the_shaft_map_and_its_meters_reach_the_discord_board() {
+        let channel = 0xB0A2D;
+        close_in::<NativeDescentOffering>(channel);
+        open_in(
+            channel,
+            NativeDescentOffering::new,
+            SessionConfig::with_seed(channel),
+        )
+        .expect("the Descent opens");
+
+        // Take a few real turns so the board shows a run in motion, not the mouth.
+        let me = actor("board-render");
+        for _ in 0..3 {
+            let next = with_live::<NativeDescentOffering, _>(channel, |live| {
+                live.offering
+                    .actions(&live.session)
+                    .into_iter()
+                    .find(|action| action.enabled)
+            })
+            .flatten();
+            let Some(action) = next else { break };
+            let Some(id) = fire_id_in::<NativeDescentOffering>(channel, &action.turn, action.arg)
+            else {
+                break;
+            };
+            if !matches!(
+                drive::<NativeDescentOffering>(channel, &id, me.clone()),
+                Driven::Fired(Outcome::Landed { .. })
+            ) {
+                break;
+            }
+        }
+
+        let (embed, rows) = with_live::<NativeDescentOffering, _>(channel, |live| {
+            surface_of::<NativeDescentOffering>(live)
+        })
+        .expect("the live session renders");
+        let json = serde_json::to_value(&embed).expect("the board embed serializes");
+        let description = json["description"]
+            .as_str()
+            .expect("the board paints a description")
+            .to_string();
+
+        // Printed so a human can read the exact thing a channel receives (`--nocapture`).
+        println!("\n===== THE DESCENT, AS A DISCORD CHANNEL RECEIVES IT =====\n{description}\n");
+
+        assert!(
+            description.contains("```"),
+            "the shaft must be CODE-FENCED or a proportional font shears the grid: {description}"
+        );
+        for meter in ["light", "pack", "banked"] {
+            assert!(
+                description.contains(meter),
+                "the `{meter}` meter must paint on the Discord board: {description}"
+            );
+        }
+        assert!(
+            description.contains('\u{2588}') || description.contains('\u{2591}'),
+            "a Progress node must render as a literal BAR, not a bare ratio: {description}"
+        );
+        assert!(
+            description.chars().count() <= 4000,
+            "the board must fit Discord's embed-description cap or the edit 400s and the \
+             surface freezes: {} chars",
+            description.chars().count()
+        );
+
+        // The affordance budget: ≤5 rows, ≤25 buttons, and nothing silently dropped.
+        let rows_json = serde_json::to_value(&rows).expect("the rows serialize");
+        let rows_array = rows_json.as_array().expect("rows are an array");
+        assert!(
+            rows_array.len() <= 5,
+            "Discord allows 5 action rows; the board minted {}",
+            rows_array.len()
+        );
+        let buttons: usize = rows_array
+            .iter()
+            .filter_map(|row| row["components"].as_array().map(|c| c.len()))
+            .sum();
+        assert!(
+            buttons <= 25,
+            "Discord allows 25 components per message; the board minted {buttons}"
+        );
+        let verbs = with_live::<NativeDescentOffering, _>(channel, |live| {
+            live.offering.actions(&live.session).len()
+        })
+        .expect("live");
+        assert!(
+            verbs <= 24,
+            "{verbs} verbs + the standing re-verify row would overflow Discord's component cap \
+             and `action_rows_at` would DROP the overflow silently"
+        );
+
+        close_in::<NativeDescentOffering>(channel);
+    }
+
     #[test]
     fn generic_discord_path_drives_the_native_executor_and_replays() {
         let channel = 0xDE5CE7;

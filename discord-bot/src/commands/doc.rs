@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 
 use serenity::all::{
     CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
-    CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
 use dreggnet_doc::{
@@ -176,7 +176,29 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, state: &BotSta
     let rendered = offering::with_live::<DocOffering, _>(channel, |live| {
         offering::surface_of::<DocOffering>(live)
     });
+    // NEVER A SILENT DROP. The session ALREADY OPENED above; if the render then found nothing
+    // (a concurrent close, or the offering store thread refusing the read) this used to `return`
+    // without ever answering the interaction — so the player saw "This interaction failed" on a
+    // document that was, in fact, live in their channel. Say what happened instead.
     let Some((embed, rows)) = rendered else {
+        let _ = command
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .embed(
+                            CreateEmbed::new()
+                                .title("The session opened but did not render")
+                                .description(
+                                    "The session was not there to render (it may have been \
+                                     closed the same instant). Run the command again.",
+                                )
+                                .color(0xE63946),
+                        )
+                        .ephemeral(true),
+                ),
+            )
+            .await;
         return;
     };
     let _ = command

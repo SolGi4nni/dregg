@@ -71,6 +71,7 @@ use dreggnet_prove_service::{
 };
 
 use crate::BotState;
+use crate::commands::ack;
 use crate::commands::offering::{self, identity_of, truncate};
 use webauth_core::identity_resolve::RootResolver;
 
@@ -897,11 +898,26 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         }
         [PREFIX, "status", tok] => {
             let Ok(token) = tok.parse::<u64>() else {
+                component_ephemeral(
+                    ctx,
+                    component,
+                    "That fold button is from a surface this bot build no longer decodes — \
+                     nothing was checked. Run `/crown status`.",
+                )
+                .await;
                 return;
             };
+            // ACK FIRST — AND THE CROWN IS WHY. `poll_fold` does not merely READ: on a finished
+            // fold it runs the board's proof-accept path and MUTATES the record to ranked. That
+            // whole verification ran before the first response, so a check that outran Discord's
+            // 3s window ranked the fold and then died as "This interaction failed" — and the
+            // public crown post, with its `.dreggproof` attachment, was LOST. Not delayed: lost.
+            // A second press now takes the `AlreadyRanked` path and only whispers an ephemeral
+            // line. Somebody won a match, the proof landed, and the channel never heard about it.
+            ack::ack_component(ctx, component).await;
             match poll_fold(token) {
                 Poll::NoSuchFold => {
-                    component_ephemeral(
+                    ack::followup_ephemeral(
                         ctx,
                         component,
                         "No such fold (the bot may have restarted — pending folds are \
@@ -919,7 +935,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     } else {
                         "queued for a worker"
                     };
-                    component_ephemeral(
+                    ack::followup_ephemeral(
                         ctx,
                         component,
                         &format!(
@@ -932,7 +948,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     .await;
                 }
                 Poll::Failed(e) => {
-                    component_ephemeral(
+                    ack::followup_ephemeral(
                         ctx,
                         component,
                         &format!(
@@ -943,7 +959,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     .await;
                 }
                 Poll::BoardRefused(e) => {
-                    component_ephemeral(
+                    ack::followup_ephemeral(
                         ctx,
                         component,
                         &format!(
@@ -963,21 +979,22 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                         proof_bytes,
                         format!("{}-match-fold-{token}.dreggproof", game.slug()),
                     );
-                    // PUBLIC — the crown moment belongs to the channel.
+                    // PUBLIC — the crown moment belongs to the channel. A followup now (the
+                    // press was deferred above), which also leaves the pressed message intact:
+                    // the crown post is a NEW message on purpose. A win is the one thing in this
+                    // game that should still be in the channel tomorrow.
                     let _ = component
-                        .create_response(
+                        .create_followup(
                             &ctx.http,
-                            CreateInteractionResponse::Message(
-                                CreateInteractionResponseMessage::new()
-                                    .embed(embed)
-                                    .components(rows)
-                                    .add_file(file),
-                            ),
+                            serenity::all::CreateInteractionResponseFollowup::new()
+                                .embed(embed)
+                                .components(rows)
+                                .add_file(file),
                         )
                         .await;
                 }
                 Poll::AlreadyRanked { game, facts } => {
-                    component_ephemeral(
+                    ack::followup_ephemeral(
                         ctx,
                         component,
                         &format!(

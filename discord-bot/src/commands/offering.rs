@@ -1074,7 +1074,7 @@ fn embed_projection<O: DiscordOffering>(
     projection: &AudienceProjection,
 ) -> CreateEmbed {
     let card = deos_view::discord::render_card(O::TITLE, projection.surface.view(), &[]);
-    card.embed
+    clamp_description(card.embed)
         .color(O::COLOR)
         .footer(CreateEmbedFooter::new(truncate(
             &format!(
@@ -1084,6 +1084,34 @@ fn embed_projection<O: DiscordOffering>(
             ),
             2040,
         )))
+}
+
+/// Discord's hard cap on an embed description. Exceed it and the WHOLE message is refused with a
+/// 400 — so a board that grew one line too long does not render "mostly"; it does not render AT
+/// ALL, and the player is left holding the previous turn's board with its previous turn's buttons.
+const DESCRIPTION_CAP: usize = 4000;
+
+/// **Clamp a rendered card's description to what Discord will actually accept.**
+///
+/// `deos_view::discord::render_card` composes the description by appending a line per view node
+/// and never bounds it — correct for that crate (its other backends have no such cap), and a live
+/// hazard here. A Descent board sits comfortably under the cap today, but nothing HOLDS it there:
+/// the pressure lines, one banked-relic note per relic, and a `Host` sub-view all grow it, and the
+/// generic adapter renders offerings whose content is typed by users (a document, a market listing).
+/// The failure mode is the worst kind — the turn commits, the edit 400s, and the surface freezes
+/// silently — so the frontend truncates rather than hands Discord something it will reject.
+fn clamp_description(embed: CreateEmbed) -> CreateEmbed {
+    let Ok(value) = serde_json::to_value(&embed) else {
+        return embed;
+    };
+    let Some(description) = value.get("description").and_then(|d| d.as_str()) else {
+        return embed;
+    };
+    if description.chars().count() <= DESCRIPTION_CAP {
+        return embed;
+    }
+    let clamped = truncate(description, DESCRIPTION_CAP);
+    embed.description(clamped)
 }
 
 pub fn embed_of<O: DiscordOffering>(live: &Live<O>) -> CreateEmbed {
@@ -1911,27 +1939,65 @@ async fn finish_modal<O: DiscordOffering>(
                 .with_outcome(crate::audit::outcome_of(&outcome)),
             );
             let note = outcome_note(&outcome);
-            let viewer = viewer.clone();
-            let rendered = with_live::<O, _>(channel, move |live| {
-                (
-                    surface_for::<O>(live, &viewer),
-                    live.offering.hidden_information(),
-                )
-            });
-            let msg = match rendered {
-                Some(((embed, rows), hidden_information)) => {
-                    let rows = if hidden_information { Vec::new() } else { rows };
-                    CreateInteractionResponseMessage::new()
-                        .content(note)
-                        .embed(embed)
-                        .components(rows)
-                        .ephemeral(hidden_information)
+            let viewer_id = viewer.clone();
+            let rendered =
+                with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer_id));
+            match rendered {
+                // ── THE BOARD IS ONE MESSAGE. A typed move (a reserve price, a sealed bid, a
+                //    document paragraph) is an ORDINARY TURN, and an ordinary turn MUTATES the
+                //    board it was played on — it does not append a second board beneath it.
+                //
+                //    A modal opened from a component press carries that component's message
+                //    (`modal.message`), so `UpdateMessage` is legal here and edits the very board
+                //    the player pressed. Before this, every modal turn answered with a NEW
+                //    message: the channel filled with one full board per bid, and the board
+                //    ABOVE kept its buttons — buttons the head-stamp would then refuse, so the
+                //    surface a player was looking at was dead and said nothing about it.
+                Some(((embed, rows), private_surface)) if modal.message.is_some() => {
+                    let _ = modal
+                        .create_response(
+                            &ctx.http,
+                            CreateInteractionResponse::UpdateMessage(
+                                CreateInteractionResponseMessage::new()
+                                    .content(truncate(&note, 1900))
+                                    .embed(embed)
+                                    .components(rows),
+                            ),
+                        )
+                        .await;
+                    // A hidden-information game's shared board carries only the fog; the presser's
+                    // own projection rides a single-reader followup, exactly as the button path
+                    // does. It must never be what `UpdateMessage` puts on the channel surface.
+                    if let Some((private_embed, _private_rows)) = private_surface {
+                        let _ = modal
+                            .create_followup(
+                                &ctx.http,
+                                serenity::all::CreateInteractionResponseFollowup::new()
+                                    .content(
+                                        "**Your private view** — only you can read this hand / \
+                                         sealed move. Use the shared board's controls to act.",
+                                    )
+                                    .embed(private_embed)
+                                    .ephemeral(true),
+                            )
+                            .await;
+                    }
                 }
-                None => CreateInteractionResponseMessage::new().content(note),
-            };
-            let _ = modal
-                .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-                .await;
+                // No board to mutate (a modal reached us without its origin message, or the
+                // session closed underneath): answer honestly rather than dropping the submit.
+                other => {
+                    let msg = match other {
+                        Some(((embed, rows), _)) => CreateInteractionResponseMessage::new()
+                            .content(truncate(&note, 1900))
+                            .embed(embed)
+                            .components(rows),
+                        None => CreateInteractionResponseMessage::new().content(note),
+                    };
+                    let _ = modal
+                        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+                        .await;
+                }
+            }
             // 👑 THE CROWN (modal path): a crowned game's match ending on a modal-landed
             // turn gets the same fold offer as the component path above.
             if matches!(&outcome, Outcome::Landed { ended: true, .. })
@@ -2111,7 +2177,7 @@ async fn update_surface<O: DiscordOffering>(
         // The press was deferred inside the 3s window ([`ack_component`]); EDIT
         // the pressed message into the post-turn render. For a hidden game this
         // is the viewer-blind public fog, never the presser's private projection.
-        let _ = component
+        let result = component
             .edit_response(
                 &ctx.http,
                 EditInteractionResponse::new()
@@ -2120,6 +2186,8 @@ async fn update_surface<O: DiscordOffering>(
                     .components(rows),
             )
             .await;
+        // A refused edit here means the turn LANDED and the board never showed it. Never silent.
+        ack::warn_dropped_edit(&result, "offering", &component.data.custom_id);
         if let Some((private_embed, _private_rows)) = private_surface {
             ack::followup_ephemeral_surface(
                 ctx,
@@ -2267,6 +2335,12 @@ macro_rules! for_each_generic_offering {
         $per!(crate::commands::overworld::OverworldPlay);
     };
 }
+
+// The table is the crate's, not this module's. `commands::verify_chain` mounts the standing
+// "⛓ re-verify chain" press for EVERY key this table serves, and it used to do so from a
+// second hand-kept list — which drifted, leaving eight shipped buttons that answered a press
+// with nothing at all. One table, every router.
+pub(crate) use for_each_generic_offering;
 
 /// The keys the generic adapter's routers dispatch — expanded from the ONE mounting table
 /// ([`for_each_generic_offering`]), never a second hand-kept list. The catalog parity test

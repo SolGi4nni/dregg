@@ -39,46 +39,57 @@ pub fn row(key: &str) -> CreateActionRow {
     ])
 }
 
+/// Whether this build routes a `verifychain:<key>` press to a real verifier. Derived from the
+/// SAME table [`handle_component`] dispatches on, so it cannot claim a route that does not exist.
+pub fn routes(key: &str) -> bool {
+    let mut routed = false;
+    macro_rules! probe {
+        ($ty:ty) => {
+            routed |= key == <$ty as DiscordOffering>::KEY;
+        };
+    }
+    crate::commands::offering::for_each_generic_offering!(probe);
+    probe!(dreggnet_offerings::dungeon::DungeonOffering);
+    routed
+}
+
 /// Route a `verifychain:<key>` press: re-verify the pressed channel's live session for the
 /// offering that owns the key, and post the honest recomputation report (publicly — the point
 /// is verification anyone can watch, not a private reassurance).
+///
+/// **The arms come from the generic adapter's ONE mounting table**
+/// (`offering::for_each_generic_offering`), plus the bespoke `/dungeon` crowd surface which is
+/// not in it. They used to be a second, hand-typed list — and it had drifted eight entries
+/// behind the table, so the Dark Bazaar, the Descent CAMPAIGN, the Ash Gate raid, the quest
+/// board, the loadout, the talent tree, and the overworld each shipped a `⛓ re-verify chain`
+/// button whose press fell into `_ => {}`, returned without ever answering the interaction, and
+/// showed the player **"This interaction failed"** on a surface that was working perfectly.
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, _state: &BotState) {
     let Some(key) = component.data.custom_id.strip_prefix(&format!("{PREFIX}:")) else {
         return;
     };
 
-    macro_rules! dispatch {
-        ($($ty:ty),+ $(,)?) => {
-            match key {
-                $(k if k == <$ty as DiscordOffering>::KEY => {
-                    respond::<$ty>(ctx, component).await;
-                })+
-                _ => {}
+    macro_rules! arm {
+        ($ty:ty) => {
+            if key == <$ty as DiscordOffering>::KEY {
+                respond::<$ty>(ctx, component).await;
+                return;
             }
         };
     }
+    crate::commands::offering::for_each_generic_offering!(arm);
+    // `/dungeon` keeps its bespoke crowd surface, so it is not in the generic table.
+    arm!(dreggnet_offerings::dungeon::DungeonOffering);
 
-    dispatch!(
-        dreggnet_council::CouncilOffering,
-        dreggnet_market::MarketOffering,
-        dreggnet_hermes::HermesOffering,
-        dreggnet_grain::GrainOffering,
-        dreggnet_doc::DocOffering,
-        dreggnet_offerings::dungeon::DungeonOffering,
-        dreggnet_offerings::native_descent::NativeDescentOffering,
-        crate::commands::portfolio::SeatedTug,
-        dregg_automatafl::AutomataflOffering,
-        dreggnet_names::NamesOffering,
-        dreggnet_compute::ComputeOffering,
-        dreggnet_surfaces::TradeOffering,
-        dreggnet_surfaces::InventoryOffering,
-        dreggnet_surfaces::CheevoShowcase,
-        dreggnet_surfaces::GuildPage,
-        dreggnet_surfaces::CraftOffering,
-        dreggnet_surfaces::CompanionOffering,
-        dreggnet_surfaces::TavernOffering,
-        dreggnet_surfaces::PartyOffering,
-    );
+    // NEVER a silent drop. An unrecognised key is a button from a surface this build no longer
+    // serves; say so rather than leaving the press to time out as "This interaction failed".
+    crate::commands::offering::component_ephemeral(
+        ctx,
+        component,
+        "That re-verify button belongs to a surface this bot build no longer serves — nothing \
+         was checked. Re-open the offering and press the button on the fresh board.",
+    )
+    .await;
 }
 
 /// The press resolved for one concrete offering: run the REAL verifier against the channel's
@@ -151,6 +162,52 @@ mod tests {
         let text = json.to_string();
         assert!(text.contains("verifychain:council"), "{text}");
         assert!(text.contains("re-verify chain"), "{text}");
+    }
+
+    /// **EVERY key that can MINT this button must ROUTE it.** `offering::action_rows_at` appends
+    /// `row(O::KEY)` to every offering surface unconditionally, so any key the generic adapter
+    /// serves ships a pressable `⛓ re-verify chain`. If the router does not know that key the
+    /// press falls through, the interaction is never answered, and the player is shown "This
+    /// interaction failed" on a live, healthy board.
+    #[test]
+    fn every_mintable_key_is_routed() {
+        let unrouted: Vec<&str> = crate::commands::offering::generic_offering_keys()
+            .into_iter()
+            .filter(|key| !routes(key))
+            .collect();
+        assert!(
+            unrouted.is_empty(),
+            "these offerings mint a re-verify button that answers no press: {unrouted:?}"
+        );
+        assert!(routes("dungeon"), "the bespoke crowd surface routes too");
+    }
+
+    /// The eight keys that WERE dead — named, so a future hand-edit of the dispatch cannot
+    /// quietly re-strand them. (`gear`/`talents` are the loadout and talent-tree surfaces.)
+    #[test]
+    fn the_previously_stranded_buttons_route() {
+        for key in [
+            "bazaar",
+            "descent-campaign",
+            "private-raid",
+            "quest",
+            "gear",
+            "talents",
+            "overworld",
+            "descent",
+        ] {
+            assert!(
+                routes(key),
+                "`{key}` ships a re-verify button that must fire"
+            );
+        }
+    }
+
+    /// A key from no surface at all is REFUSED, not dropped: the router falls through to an
+    /// honest ephemeral rather than returning without answering the interaction.
+    #[test]
+    fn an_unknown_key_is_not_claimed_as_routed() {
+        assert!(!routes("not-an-offering"));
     }
 
     /// The press report says WHAT was recomputed and WHY the surfaced turn_hash matters — the

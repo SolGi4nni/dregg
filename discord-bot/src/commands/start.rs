@@ -494,7 +494,26 @@ pub(crate) fn key_modal() -> CreateModal {
 }
 
 /// Route a `start:` modal submission.
+///
+/// **ACK FIRST — this form MOVES MONEY.** `submit_send` reads two rows from the database, asks
+/// the live devnet node for a balance over the network, and SUBMITS a signed conserving turn.
+/// All of that ran before the first response, so a node having a slow minute blew Discord's 3s
+/// window on a transfer that had already LANDED ON-CHAIN: the sender saw "This interaction
+/// failed", got no receipt, and had no safe way to tell whether to retry. That is the exact
+/// failure `commands::ack` was written to end (a committed turn presented as a failure) — the
+/// button paths were converted and this modal path was not. `submit_key` shares the shape.
+///
+/// The response stays ephemeral, which is fixed at DEFER time, not at edit time — so the defer
+/// carries `ephemeral: true` and the receipt lands privately exactly as before.
 pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotState) {
+    let _ = modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
     let embed = match modal.data.custom_id.as_str() {
         ID_MODAL_SEND => submit_send(state, modal).await,
         ID_MODAL_KEY => submit_key(state, modal).await,
@@ -503,12 +522,13 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSt
             "This form isn't recognised by this bot build.",
         ),
     };
-    let msg = CreateInteractionResponseMessage::new()
-        .embed(embed)
-        .ephemeral(true);
-    let _ = modal
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+    let result = modal
+        .edit_response(
+            &ctx.http,
+            serenity::all::EditInteractionResponse::new().embed(embed),
+        )
         .await;
+    crate::commands::ack::warn_dropped_edit(&result, "modal", &modal.data.custom_id);
 }
 
 async fn submit_send(state: &BotState, modal: &ModalInteraction) -> CreateEmbed {

@@ -348,7 +348,29 @@ async fn handle_open(
     let rendered = offering::with_live::<CouncilOffering, _>(channel, |live| {
         offering::surface_of::<CouncilOffering>(live)
     });
+    // NEVER A SILENT DROP. The session ALREADY OPENED above; if the render then found nothing
+    // (a concurrent close, or the offering store thread refusing the read) this used to `return`
+    // without ever answering the interaction — so the player saw "This interaction failed" on a
+    // council that was, in fact, live in their channel. Say what happened instead.
     let Some((embed, rows)) = rendered else {
+        let _ = command
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .embed(
+                            CreateEmbed::new()
+                                .title("The session opened but did not render")
+                                .description(
+                                    "The session was not there to render (it may have been \
+                                     closed the same instant). Run the command again.",
+                                )
+                                .color(0xE63946),
+                        )
+                        .ephemeral(true),
+                ),
+            )
+            .await;
         return;
     };
     let embed = embed.field("The electorate", offering::truncate(&roster, 1000), false);

@@ -1319,23 +1319,9 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     }
 }
 
-async fn respond(
-    ctx: &Context,
-    command: &CommandInteraction,
-    embed: CreateEmbed,
-    rows: Vec<CreateActionRow>,
-    ephemeral: bool,
-) {
-    let mut msg = CreateInteractionResponseMessage::new()
-        .embed(embed)
-        .components(rows);
-    if ephemeral {
-        msg = msg.ephemeral(true);
-    }
-    let _ = command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-        .await;
-}
+// (`respond` — the immediate create-a-message helper — is gone. Every `/descent` slash path now
+// ACKs inside the 3s window and lands its render as an edit, because every one of them first
+// blocks on the shared descent store thread, and that thread is busy with other players' turns.)
 
 fn class_id_of(label: &str) -> Option<u64> {
     match label {
@@ -1457,6 +1443,15 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
 /// room message was lost (a narration hiccup, a deleted message, a scrolled-away channel).
 /// Read-only: no turn is committed, the run is untouched, the last narration is reused.
 async fn handle_room(ctx: &Context, command: &CommandInteraction) {
+    // ACK FIRST. This is the RECOVERY affordance — the one command a player reaches for when
+    // their room message is gone, frozen, or holding buttons that no longer fire. It read the
+    // run by BLOCKING on the descent store thread before responding, and that thread is shared
+    // by every player: one `Re-verify #N` press (a whole-run re-execution) or another player's
+    // move commit ahead of us in the queue pushes this past Discord's 3s window, and the last
+    // door out of a stuck run answers "This interaction failed". A recovery path that can itself
+    // fail under load is not a recovery path.
+    ack::defer_slash(ctx, command, false).await;
+
     let user_id = command.user.id.get();
     let view: Option<RunView> = store()
         .run(move |w| w.slots.get(&user_id).map(|s| RunView::of(&s.run)))
@@ -1467,7 +1462,7 @@ async fn handle_room(ctx: &Context, command: &CommandInteraction) {
                 "No descent open",
                 "You have no run open. Begin one with `/descent play`.",
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
         }
         Some(view) if view.ended => {
             let embed = result_embed(
@@ -1476,13 +1471,13 @@ async fn handle_room(ctx: &Context, command: &CommandInteraction) {
                 "This descent has already ended.",
                 Some(&display_name_of(&command.user)),
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
         }
         Some(view) => {
             let (narration, kind) = current_narration(user_id, &view);
             let embed = room_embed(&view, &narration, kind);
             let rows = move_rows(user_id, view_turn(&view), &view.options);
-            respond(ctx, command, embed, rows, false).await;
+            ack::edit_slash(ctx, command, embed, rows).await;
         }
     }
 }
@@ -1592,25 +1587,34 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         .await;
         return;
     }
-    if parts.len() != 5 || parts[1] != "move" {
+    // NEVER A SILENT DROP. Every shape below used to `return` without answering the interaction,
+    // so an id this build cannot decode left the player's press spinning until Discord gave up
+    // and printed "This interaction failed" — the same thing a CRASHED bot looks like. A button
+    // we do not understand is still a button someone pressed; say what happened to it.
+    let decoded = if parts.len() == 5 && parts[1] == "move" {
+        match (
+            parts[2].parse::<u64>(),
+            parts[3].parse::<u64>(),
+            parts[4]
+                .parse::<u64>()
+                .ok()
+                .and_then(|c| usize::try_from(c).ok()),
+        ) {
+            (Ok(owner), Ok(turn), Some(choice)) => Some((owner, turn, choice)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let Some((owner, pressed_turn, choice)) = decoded else {
+        respond_ephemeral(
+            ctx,
+            component,
+            "That button is from a Descent surface this bot build no longer decodes — nothing \
+             was committed. Run `/descent room` for your current room and its live buttons.",
+        )
+        .await;
         return;
-    }
-    let owner: u64 = match parts[2].parse() {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    // The turn this button authorizes — the attenuation it carries.
-    let pressed_turn: u64 = match parts[3].parse() {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    let choice: usize = match parts[4]
-        .parse::<u64>()
-        .ok()
-        .and_then(|choice| usize::try_from(choice).ok())
-    {
-        Some(n) => n,
-        None => return,
     };
     let presser = component.user.id.get();
 
@@ -2038,6 +2042,11 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
 // ─── /descent board ───────────────────────────────────────────────────────────
 
 async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    // ACK FIRST: below this line are a BLS pairing check, a full procgen world build, and a
+    // blocking hop onto the shared descent store thread — any one of which can outrun Discord's
+    // 3s window on a busy day, and all three ran before the first response.
+    ack::defer_slash(ctx, command, false).await;
+
     // Today's board id is derived from the day's world (published on any `/descent play`). Resolve
     // the SAME seed the play surface serves (the live beacon, or the offline date-seeded fallback)
     // so the board renders even before this process's first run — and matches the played world.
@@ -2046,7 +2055,7 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
         Ok(v) => v,
         Err(why) => {
             let embed = error_embed("Today's board is unavailable", &why);
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
         }
     };
@@ -2070,12 +2079,12 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 "Today's board is unavailable",
                 "the descent store is temporarily unavailable — try again in a moment",
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
         }
     };
     let rows = reverify_rows(&view.reverify);
-    respond(
+    ack::edit_slash(
         ctx,
         command,
         board_embed(
@@ -2085,7 +2094,6 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
             Some((&me_short, &me_name)),
         ),
         rows,
-        false,
     )
     .await;
 }
@@ -2093,6 +2101,10 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
 // ─── /descent today ─────────────────────────────────────────────────────────────
 
 async fn handle_today(ctx: &Context, command: &CommandInteraction) {
+    // ACK FIRST: `resolve_todays_seed` runs a BLS pairing check and `today_universe_from_seed`
+    // builds the whole day-world before anything is sent.
+    ack::defer_slash(ctx, command, true).await;
+
     let (seed, status) = resolve_todays_seed();
     let title = today_universe_from_seed(&seed)
         .map(|(t, _)| t)
@@ -2129,7 +2141,7 @@ async fn handle_today(ctx: &Context, command: &CommandInteraction) {
         status = status.label(),
     );
     let embed = base_embed(&format!("{title} — the day's reveal")).description(desc);
-    respond(ctx, command, embed, vec![], true).await;
+    ack::edit_slash(ctx, command, embed, vec![]).await;
 }
 
 /// Today's world title + its content-addressed board id, from an ALREADY-RESOLVED daily seed (the
@@ -2652,6 +2664,11 @@ fn footer_text(kind: NarratorKind, beacon: BeaconStatus) -> String {
 /// when the player has one, else the FREE tier (ollama gemma / scripted). Chutes is deliberately
 /// excluded here: its typed game seam requires `/dungeon chutes-turn confirm:true`, so merely
 /// entering a Descent room can never opt a player into or charge them for Chutes.
+/// **How long a committed turn will wait on prose before repainting without it.** Sized just past
+/// the free tier's own 20s ollama timeout, so the two tiers fail over on the same clock and a
+/// player never watches a landed move sit unpainted for longer than this.
+const NARRATOR_DEADLINE: std::time::Duration = std::time::Duration::from_secs(25);
+
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
@@ -2672,12 +2689,27 @@ async fn narrate_room_gated(
             let system = narrator_system_prompt();
             let prompt = format!("Room: {room_name}. {room_desc}");
             // Hosted narrator clients are blocking (including Chutes' OpenAI-compatible client),
-            // so run this off-worker.
-            let narration = tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .filter(|n| !n.text.trim().is_empty());
+            // so run this off-worker — UNDER A DEADLINE.
+            //
+            // The deadline is what keeps the board alive. This await sits BETWEEN a committed
+            // permadeath turn and the edit that paints it, and the player is looking at the
+            // in-flight board with every button dead. A hosted provider that hangs (no timeout of
+            // its own on this path) used to hold that board frozen at "⏳ Your turn is being
+            // taken" indefinitely — past Discord's 15-minute interaction token, after which even a
+            // late narration could no longer repair it. The turn had landed; the game just never
+            // said so. Now a slow narrator costs PROSE, never the surface: we stop waiting and
+            // fall through to the free tier, which is exactly the path an empty or failed paid
+            // narration already took. The uncommitted `hold` releases on drop, so a narration we
+            // stopped waiting for is never charged.
+            let narration = tokio::time::timeout(
+                NARRATOR_DEADLINE,
+                tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt)),
+            )
+            .await
+            .ok()
+            .and_then(|joined| joined.ok())
+            .and_then(|r| r.ok())
+            .filter(|n| !n.text.trim().is_empty());
             if let Some(n) = narration {
                 if state.pay.commit_paid_credit(hold).is_ok() {
                     return (sanitize(&n.text), NarratorKind::from_paid(n.provider()));

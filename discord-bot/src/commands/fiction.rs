@@ -1821,6 +1821,13 @@ struct ResolvedRound {
 // ─── /dungeon verify ─────────────────────────────────────────────────────────
 
 async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
+    // ACK FIRST. Below is a FULL RECEIPT-CHAIN REPLAY on the offering store thread — it grows
+    // with the run, and it ran before any response, so a long crawl answered its own
+    // verify-don't-trust button with "This interaction failed" and the verdict was never
+    // delivered. The generic twin (`offering::handle_verify`) already defers and moves the wait
+    // off the worker; this is the one that was missed.
+    ack::defer_slash(ctx, command, false).await;
+
     let channel = command.channel_id.get();
     enum VerifyOutcome {
         NoSession,
@@ -1860,7 +1867,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
                 "No session",
                 "This channel has no dungeon open. Start one with `/dungeon start`.",
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
         }
         VerifyOutcome::Result {
@@ -1885,7 +1892,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
             ),
         )
     };
-    respond(ctx, command, embed, vec![], false).await;
+    ack::edit_slash(ctx, command, embed, vec![]).await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2488,6 +2495,10 @@ fn attestation_note(attestation: &AttestationSummary) -> String {
 /// narration debits exactly one credit AFTER a successful hosted call. The narrator kind — and the
 /// attestation the backend verified, when it verified one — is reported honestly. Chutes is
 /// excluded because it requires the explicit confirmed turn above.
+/// **How long a resolved round will wait on prose before repainting without it.** Sized just past
+/// the free tier's own ollama timeout so both tiers fail over on the same clock.
+const NARRATOR_DEADLINE: std::time::Duration = std::time::Duration::from_secs(25);
+
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
@@ -2522,12 +2533,21 @@ async fn narrate_room_gated(
     let prompt = format!("Room: {room_name}. {room_desc}");
 
     // Hosted narrator clients are blocking (Bedrock drives its own runtime; Chutes/OpenAI uses a
-    // blocking HTTP client), so do the paid narration on a blocking thread.
-    let narration = tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt))
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .filter(|n| !n.text.trim().is_empty());
+    // blocking HTTP client), so do the paid narration on a blocking thread — UNDER A DEADLINE.
+    // Same reason the Descent bounds this await: the party is looking at a ballot the round has
+    // already moved past, and a provider that hangs holds that stale board past Discord's
+    // 15-minute interaction token, after which nothing can repair it. A slow narrator costs
+    // PROSE, never the surface. The uncommitted `hold` releases on drop, so a narration we
+    // stopped waiting for is never charged.
+    let narration = tokio::time::timeout(
+        NARRATOR_DEADLINE,
+        tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt)),
+    )
+    .await
+    .ok()
+    .and_then(|joined| joined.ok())
+    .and_then(|r| r.ok())
+    .filter(|n| !n.text.trim().is_empty());
 
     match narration {
         Some(n) => {
