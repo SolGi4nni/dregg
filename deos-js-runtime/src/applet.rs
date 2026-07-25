@@ -313,7 +313,7 @@ impl CellApplet {
         //     world; the agent is the applet cell).
         let nonce = self.nonce();
         let action = ActionBuilder::new_unchecked_for_tests(self.cell, affordance, self.cell)
-            .effect_set_field(self.cell, slot, value)
+            .effect_set_field(self.cell, slot as u64, value)
             .effect_increment_nonce(self.cell)
             .build();
 

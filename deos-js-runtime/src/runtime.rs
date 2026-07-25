@@ -480,17 +480,32 @@ fn hex_encode(bytes: &[u8; 32]) -> String {
     s
 }
 
-/// Parse exactly 32 bytes of lower/upper hex back into a digest; `None` on a bad length/char.
+/// Parse exactly 32 bytes of lower/upper hex back into a digest; `None` on a bad
+/// length/char. Char-safe via the shared [`dregg_types::parse_hex32`]: a 64-BYTE
+/// string carrying a multibyte char returns `None` rather than panicking on a
+/// mid-codepoint `&s[i*2..]` slice.
 fn hex_decode_32(s: &str) -> Option<[u8; 32]> {
-    let s = s.trim();
-    if s.len() != 64 {
-        return None;
+    dregg_types::parse_hex32(s.trim())
+}
+
+#[cfg(test)]
+mod hex_decode_32_tests {
+    use super::hex_decode_32;
+
+    #[test]
+    fn valid_hex_decodes() {
+        assert_eq!(hex_decode_32(&"cc".repeat(32)), Some([0xCCu8; 32]));
     }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+
+    #[test]
+    fn multibyte_64_byte_string_returns_none_not_panic() {
+        // 61 ASCII + a 2-byte char + 1 ASCII = 64 BYTES; the old
+        // `&s[i*2..i*2+2]` slice PANICKED mid-codepoint (aborting through the boa
+        // native callback). It must return None.
+        let s = format!("{}\u{00e9}b", "a".repeat(61));
+        assert_eq!(s.len(), 64);
+        assert!(hex_decode_32(&s).is_none(), "malformed → None, no panic");
     }
-    Some(out)
 }
 
 fn arg_string(

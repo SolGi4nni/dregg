@@ -455,7 +455,7 @@ impl CellWorld {
 
         // (6) build + execute the verified turn AS the target cell.
         let action = ActionBuilder::new_unchecked_for_tests(id, affordance, id)
-            .effect_set_field(id, slot, value)
+            .effect_set_field(id, slot as u64, value)
             .effect_increment_nonce(id)
             .build();
         let receipt = self.commit(id, action)?;
@@ -544,7 +544,7 @@ impl CellWorld {
                     builder.effect_transfer(actor_id, to_id, *amount)
                 }
                 BatchOp::SetSlot { slot, value } => {
-                    builder.effect_set_field(actor_id, *slot, pack_u64(*value))
+                    builder.effect_set_field(actor_id, *slot as u64, pack_u64(*value))
                 }
             };
         }
@@ -602,7 +602,7 @@ impl CellWorld {
             builder = builder.require_field_equals(g.slot, pack_u64(g.value));
         }
         let action = builder
-            .effect_set_field(id, slot, seal)
+            .effect_set_field(id, slot as u64, seal)
             .effect_increment_nonce(id)
             .build();
         let receipt = self.commit(id, action)?;
@@ -666,7 +666,7 @@ impl CellWorld {
             builder = builder.require_field_equals(g.slot, pack_u64(g.value));
         }
         let action = builder
-            .effect_set_field(id, reveal_slot, pack_u64(value))
+            .effect_set_field(id, reveal_slot as u64, pack_u64(value))
             .effect_increment_nonce(id)
             .build();
         let receipt = self.commit(id, action)?;
@@ -704,7 +704,7 @@ impl CellWorld {
         // the self-edit (mirroring `card_editor`'s provenance turn).
         let next = self.get_slot(&home, VIEW_VERSION_SLOT)? + 1;
         let action = ActionBuilder::new_unchecked_for_tests(id, "__view_patch__", id)
-            .effect_set_field(id, VIEW_VERSION_SLOT, pack_u64(next))
+            .effect_set_field(id, VIEW_VERSION_SLOT as u64, pack_u64(next))
             .effect_increment_nonce(id)
             .build();
         self.commit(id, action)?;
