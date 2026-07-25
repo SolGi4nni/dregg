@@ -199,6 +199,38 @@ no positive-radius instance. Note `FriPositiveRadiusPayment` already found posit
 commitment is not tied to a Merkle root, so nothing stops a prover answering different queries from
 different words. It discharges **no** part of the FRI/STARK floor.
 
+
+## ⚑ BLOCKED ON EMBER — one deploy decision
+
+Deleting `wide_value_binding.rs`'s AIR half is **not** blocked by any proof gap: the whole AIR is
+authored in Lean, byte-pinned, and **every emitted constraint carries a proven theorem**. What blocks it
+is that the deployed sidecar rides `prove_dsl_zk` on a **v1 `DslCircuit`** with no IR-2 → v1 lowering, so
+routing it through the Lean descriptor changes the **proof bytes on the Turn wire**
+(`turn/src/action.rs:995`, `turn-prover/src/shielded_transfer_verifier.rs`). Hiding is *not* lost —
+`Plonky3HidingFriReference` is an existing hiding IR-v2 backend. Asked; proceeding on everything else.
+
+## Boundary campaign — landed today
+
+- **CI ran ZERO tests for five days** and nobody noticed: red was the *steady state* (60 runs → **0
+  success**, 16 failure, 43 cancelled). Route restored, ratchet widened to the whole workspace, and
+  `scripts/check-gates-executed.py` now **parses libtest output** so "did not run" (exit 1) is distinct
+  from "ran and failed" (exit 3). Demonstrated red on 8 poles including *the incident verbatim*.
+- **`param-compose`**: whole AIR authored in Lean; production path rewired off it and **type-verified**.
+  1028 lines dead to production. Delete waits on Lean shape pins (lane running).
+- **`wide_value_binding`**: whole AIR in Lean. `legacy_join_cannot_separate_aliases` proves the one-felt
+  join is blind to a `v` / `v+p` alias pair **with no crypto and no hypotheses** — the felt-width wound,
+  proved not argued. Floor scoped by checking pigeonhole *first* (whole-opening injectivity would be
+  ~345 bits into ~248, i.e. false).
+- **`delegAdmit`**: one Lean `def`, `@[export]`ed, three Rust copies deleted, wasm handled as a
+  **fail-closed refusal** rather than a fallback that would re-grow the twin. Lean half committed and
+  verified to `nm -g`; Rust half held pending type-check.
+- **135 lines of Rust deleted**, including a **second un-gated copy of the conservation decision** in the
+  proof-bundle leg — the twin whose own doc records it once drifted into the asset-blind inflation bug.
+- **Zero live soundness holes** in the four red forgery teeth: all three bit; the harness couldn't
+  *observe* the refusal because p3 panics before `Err` is reachable.
+- **I retracted a wrong correction**: I compared a *past CI run* to a *present tree*. Recorded in the
+  wound doc, since that doc exists to stop exactly that reasoning.
+
 ## Done log
 - **`∀ S` — the fold chain is de-honested** (`7f655b5c55`). Every survival theorem instantiated
   `Strategy := honestStrategy`; now generalized under a path-local fold-consistency gate, with
