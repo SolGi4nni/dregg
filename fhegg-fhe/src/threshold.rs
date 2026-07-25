@@ -72,13 +72,26 @@ pub type Result<T> = std::result::Result<T, ThresholdError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThresholdError {
-    QuorumTooSmall { have: usize, need: usize },
+    QuorumTooSmall {
+        have: usize,
+        need: usize,
+    },
     ParamMismatch,
     SmudgeTooSmall,
     SmudgeTooLarge,
-    InvalidParty { party: usize, n_parties: usize },
+    InvalidParty {
+        party: usize,
+        n_parties: usize,
+    },
     InvalidCustodySeed,
     MalformedWire,
+    /// The collective public key failed its acceptance gate: a fresh trial value encrypted to it did not
+    /// decrypt back to itself under the full quorum. Fail closed — a corrupt collective key (a malformed
+    /// party contribution slips past aggregation, which checks c1==CRP + level but NO c0 well-formedness) is
+    /// refused, never used. Detection under an honest coordinator, not attribution.
+    AcceptanceFailed {
+        trial: usize,
+    },
 }
 
 /// SMUDGE-BOUND-PIN: minimum admissible smudging bit-width `b` (noise uniform on `[-2^b, 2^b]`),
@@ -586,6 +599,56 @@ impl KeygenCoordinator {
     pub fn finish(self) -> Result<CollectivePublicKey> {
         aggregate_public_contributions(&self.session, &self.contributions, &self.params)
     }
+}
+
+/// **The collective-key acceptance gate (roadmap Build 5, Tier-0 — the keygen analog of the relin gate).**
+///
+/// [`KeygenCoordinator::finish`] aggregates the party contributions but verifies only `c1 == CRP` +
+/// `level == 0` — NOT the well-formedness of each `c0_i`. A malformed/biased contribution (a large-norm `c0`)
+/// therefore silently corrupts the collective key: `finish()` returns `Ok`, and the fault surfaces only as
+/// garbage at every encrypt/decrypt under the key, unattributably. This gate catches that fail-closed:
+/// `trials` (at least 4) fresh random values are encrypted to the collective key and must decrypt — via the
+/// full quorum — back to themselves; a corrupt key yields a mismatch and is refused with
+/// [`ThresholdError::AcceptanceFailed`].
+///
+/// DETECTION under an honest coordinator, NOT attribution — a real Tier-0 stopgap for the keygen
+/// malformed-share gap, subsumed once the per-contribution ZK well-formedness proof (roadmap Build 5)
+/// attributes a bad share to its party. Adds no new crypto: reuses the collective encrypt + the threshold
+/// `partial_decrypt`/`combine`. Fresh per-call randomness so a corrupt key cannot be tuned to pass a fixed
+/// vector.
+pub fn collective_key_acceptance_gate(
+    cpk: &CollectivePublicKey,
+    params: &BfvParams,
+    parties: &[ThresholdParty],
+    trials: usize,
+) -> Result<()> {
+    use fhe::bfv::Plaintext;
+    use fhe_traits::{FheEncoder, FheEncrypter};
+    use rand_09::Rng;
+
+    let t = params.plaintext_modulus();
+    let mut rng = rand_09::rng();
+    for trial in 0..trials.max(4) {
+        let m = rng.random_range(0..t.min(1_000_000));
+        let pt = Plaintext::try_encode(&[m], Encoding::simd(), params.arc())
+            .map_err(|_| ThresholdError::ParamMismatch)?;
+        let ct = cpk
+            .pk
+            .try_encrypt(&pt, &mut rand_09::rng())
+            .map_err(|_| ThresholdError::ParamMismatch)?;
+        let lean =
+            LeanCiphertext::from_fhe_bytes(&ct.to_bytes(), params.moduli(), params.degree(), m)
+                .map_err(|_| ThresholdError::MalformedWire)?;
+        let shares = parties
+            .iter()
+            .map(|p| p.partial_decrypt(&lean, MIN_SMUDGE_BITS))
+            .collect::<Result<Vec<_>>>()?;
+        let opened = combine(&shares, params)?;
+        if opened.first().copied() != Some(m) {
+            return Err(ThresholdError::AcceptanceFailed { trial });
+        }
+    }
+    Ok(())
 }
 
 impl BfvParams {
