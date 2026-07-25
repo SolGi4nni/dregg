@@ -35,7 +35,8 @@ dregg-intent = { path = "../intent" }
 dregg-circuit = { path = "../circuit" }
 blake3 = "1"
 postcard = { version = "1", features = ["alloc"] }
-serde = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }  # the `drex_clear` bin's JSON wire (orders in, cleared batch out)
 tracing = { workspace = true }
 # The shadow marshaller recomputes + verifies the executor's ed25519 signing message (the WHO leg).
 ed25519-dalek = { version = "2", features = ["hazmat"] }

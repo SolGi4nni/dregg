@@ -4,7 +4,20 @@
 //! echo '<orders-json>' | drex_clear
 //! ```
 //!
-//! This is the SAME real pipeline as `intent/examples/drex_clear_book.rs` — orders →
+//! ## Why this binary lives in `dregg-exec-lean` (and not `dregg-intent`)
+//!
+//! Settling a cleared ring routes through the verified per-leg gate (`settle_ring_verified`), and
+//! since the twin-deletion sweep INVERTED that fold, an app with NO [`dregg_intent::IntentVerifiedGate`]
+//! installed FAILS CLOSED — the unverified in-process Rust fold is no longer allowed to decide a
+//! settlement. `dregg-intent` is FFI-free BY CONSTRUCTION and cannot register the Lean gate (a
+//! dependency on `dregg-exec-lean` would be a cycle). So this CLI lives here — the single FFI boundary
+//! that links `libdregg_lean.a` — and installs the REAL gate exactly the way a native node does
+//! (`dregg_exec_lean::register_distributed_gates()`, `node/src/lib.rs`), routing every ring leg
+//! through the PROVED `@[export] dregg_record_kernel_step`. (Previously it lived in
+//! `intent/src/bin/`, where it could not register the gate, so every clearing book — including the
+//! demo — was refused fail-closed.)
+//!
+//! This is the SAME real pipeline as `dregg-exec-lean/examples/drex_clear_book.rs` — orders →
 //! aggregated book (rung-2) → **real ring matcher** (`solver.rs`, Johnson elementary circuits +
 //! Shapley–Scarf TTC) → **verified conserving settlement** (`verified_settle.rs`, each leg folded
 //! through the proved per-asset kernel `recKExecAsset` / `settle_ring_verified`) → allocations +
@@ -183,6 +196,14 @@ fn fail(msg: &str) -> ! {
 }
 
 fn main() {
+    // ── install the VERIFIED Lean executor gate (the fix for the twin-deletion regression) ──
+    // `settle_ring_verified` fails closed when no `IntentVerifiedGate` is registered — an unverified
+    // in-process Rust fold must NOT decide a settlement. Install the REAL Lean-backed gate the same
+    // way a native node does, so each ring leg is decided by the PROVED `dregg_record_kernel_step`
+    // export (accept a legit clearing, refuse an over-debit). Idempotent (the seam's OnceLock keeps
+    // the first registration).
+    dregg_exec_lean::register_distributed_gates();
+
     // Orders JSON comes from argv[1] if given (enables a remote/offloaded invocation that cannot
     // pipe local stdin), else from stdin (the local serve.mjs `/clear` wire).
     let mut buf = String::new();

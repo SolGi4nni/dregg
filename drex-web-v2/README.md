@@ -64,7 +64,7 @@ node serve.mjs --check   # no-listen self-check: statics, engine binaries, node 
 
 Engine binaries (all located local-first, honest fallback otherwise):
 
-- `/clear` → `drex_clear` (`cargo build -p dregg-intent --bin drex_clear`), else
+- `/clear` → `drex_clear` (`cargo build -p dregg-exec-lean --bin drex_clear`), else
   the prebuilt matcher on the build host over ssh (`DREX_REMOTE`, default
   `persvati`).
 - `/clear-shielded` → `fhegg_clear` (`cargo build --release --bin fhegg_clear`

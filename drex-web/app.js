@@ -5,7 +5,7 @@
 //
 // BOTH sides are real: the wallet proving is the extension wasm (unchanged), and
 // the matcher/settlement is the actual Rust pipeline — serve.mjs shells to the
-// `drex_clear` binary (intent/src/bin/drex_clear.rs), the same solver.rs ring
+// `drex_clear` binary (exec-lean/src/bin/drex_clear.rs), the same solver.rs ring
 // match + verified_settle.rs kernel fold as `cargo run --example drex_clear_book`.
 import {
   initWallet, traderKey, signOrderTurn, proveSolvency, tamperCheck,

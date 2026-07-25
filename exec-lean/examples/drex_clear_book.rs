@@ -1,8 +1,12 @@
 //! # DrEX (Dragon's EXchange) — the clear-book demo: run it, it drives the REAL matcher + executor
 //!
 //! ```text
-//! cargo run -p dregg-intent --example drex_clear_book
+//! cargo run -p dregg-exec-lean --example drex_clear_book
 //! ```
+//!
+//! (Lives in `dregg-exec-lean`, the single FFI boundary that links `libdregg_lean.a`, so it can
+//! install the REAL verified-Lean settlement gate — `dregg-intent` is FFI-free and cannot. Each ring
+//! leg is decided by the PROVED `@[export] dregg_record_kernel_step`, not an unverified Rust mirror.)
 //!
 //! A runnable Dragon's EXchange, end-to-end, from its **proved rungs** — the same way
 //! `dregg-interchain-gov/examples/cross_chain_vote.rs` runs governance from proved verifiers.
@@ -38,10 +42,9 @@
 //!     (`verified_settle.rs`) folded through the Lean per-asset kernel gate.
 //!   * FIXTURE/SIMPLIFIED (said so, inline, when it prints): the orders here are a hand-built book;
 //!     the solver models compatibility off single-asset per-leg equality (the Lean rung-1 book is
-//!     richer — bundles + exact predicates); the verified-executor gate runs the IN-PROCESS proved
-//!     transition here (an FFI-free target registers no gate) — on a native node with the
-//!     `dregg-exec-lean` gate installed, each leg is ADDITIONALLY cross-checked against the real
-//!     `dregg_record_kernel_step` export and any drift fails closed.
+//!     richer — bundles + exact predicates); the verified-executor gate is the REAL Lean-backed one
+//!     (`register_distributed_gates()` below), so each leg is decided by the `dregg_record_kernel_step`
+//!     export and the in-process transition is cross-checked against it, failing closed on any drift.
 //!   * NEXT RUNGS (a separate track, not in this demo): rung-3 = ring-over-shielded-notes (private
 //!     matching); rung-5 = uniform prices + partial fills (lifting the discrete substrate).
 
@@ -122,6 +125,11 @@ fn make_order(
 }
 
 fn main() {
+    // Install the REAL verified-Lean settlement gate (the same one a native node installs). Without
+    // it, `settle_ring_verified` fails closed and the ring below would be refused — an unverified
+    // in-process Rust fold is not allowed to decide a settlement.
+    dregg_exec_lean::register_distributed_gates();
+
     println!("── DrEX · Dragon's EXchange — the clear-book demo ─────────────────────────");
     println!("   the proved matching engine, running: orders → aggregated book →");
     println!("   multilateral match → verified conserving settlement → allocations");
@@ -264,16 +272,13 @@ fn main() {
         Authorization::Signature([0u8; 32], [0u8; 32]),
     );
 
-    // This example is an FFI-free target: it registers no `IntentVerifiedGate`, so each leg runs
-    // the IN-PROCESS proved transition (`recKExecAsset`, the SAME gate the Lean
-    // `RingFFI.ffi_export_realises_settleRing_leg` proves the export realises). On a native node the
-    // installed `dregg-exec-lean` gate ADDITIONALLY cross-checks each leg against the real
-    // `dregg_record_kernel_step` export and fails closed on any drift.
-    println!("verified executor: FFI-free target — no Lean gate registered here, so each leg runs");
-    println!("  the IN-PROCESS proved transition (`recKExecAsset`); a native node additionally");
-    println!(
-        "  cross-checks the REAL `dregg_record_kernel_step` export and fails closed on drift."
-    );
+    // The REAL verified-Lean gate is installed (top of `main`), so each leg is DECIDED by the Lean
+    // `@[export] dregg_record_kernel_step` over the PROVED `Exec.recKExec` (the keystone
+    // `RingFFI.ffi_export_realises_settleRing_leg`); the in-process transition is cross-checked
+    // against it and any drift fails closed.
+    println!("verified executor: the REAL Lean gate is installed, so each leg is decided by the");
+    println!("  `dregg_record_kernel_step` export; the in-process transition is cross-checked and");
+    println!("  any drift fails closed.");
 
     let (pre, post) =
         settle_fulfillment_verified(&sealed, &ring.settlements).expect("the ring settles");

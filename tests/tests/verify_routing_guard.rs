@@ -95,10 +95,14 @@ const DELEGATES_VERIFY: &[(&str, &str)] = &[
          entry when the ~8MB Lean archive lands.",
     ),
     (
-        "dregg-intent",
-        "DEFERRED WIRING (not a no-verify claim): links the full verify stack incl. dregg-lightclient — \
-         fips204 is in this binary's verify TCB. Deferred only on the 101MB link cost; WIRE + delete this \
-         entry when the ~8MB Lean archive lands.",
+        "dregg-exec-lean",
+        "The `drex_clear` clear-book matcher/settlement demo CLI (moved here from `dregg-intent` so it \
+         could install the verified SETTLEMENT gate — FFI-free `dregg-intent` cannot). It DOES link \
+         libdregg_lean.a and installs the Lean settlement gate (`register_distributed_gates()`), but does \
+         NOT install the ML-DSA verify core: the clear-book pipeline verifies NO ML-DSA signatures (dummy \
+         `Authorization::Signature`), so no real PQ signature-verify rides this binary's path. Reaches the \
+         verify stack only through the executor deps. TODO: install the verify core too now that the \
+         archive is already linked (the old 101MB link-cost deferral no longer applies).",
     ),
     (
         "dungeon-service",

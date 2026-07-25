@@ -10,7 +10,7 @@
 //     solvency proof, verified green, and a tamper attempt shown flipping to false
 //   • prove_anonymous_membership    — a real blinded eligibility tag
 //   • the MATCHER + SETTLEMENT — the REAL Rust pipeline: this gate shells to the
-//     `drex_clear` binary (intent/src/bin/drex_clear.rs), the same solver.rs ring
+//     `drex_clear` binary (exec-lean/src/bin/drex_clear.rs), the same solver.rs ring
 //     match + verified_settle.rs kernel fold as `cargo run --example drex_clear_book`.
 //     No mirror: the clearing, conservation, and over-debit reject are the real
 //     engine's output over the revealed orders.

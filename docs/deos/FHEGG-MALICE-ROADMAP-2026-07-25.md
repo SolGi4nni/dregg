@@ -69,6 +69,14 @@ detection) → Build 3 (wire the dead apex gadget — closes equivocation) → B
    of scalar witnesses per share at N=4096 × n parties. Known technique, unbuilt — and until a compressed
    proving path exists the ceremony stays SIMULATED-in-process at demo scale. **Honestly this gates the
    "running" claim for the whole malicious-secure stack even though the algorithm is sound.**
+   **VERIFIED EMPIRICALLY 2026-07-25:** the running `quorum.rs` malicious-detection test
+   (`vss_tests::authenticated_encrypted_orders_gate_real_game_asset_settlement_crypto_tooth`, which tampers
+   `share.proof.relation_response[0]` and asserts `Err(InvalidDecryptShareProof{party})`) **exists and the
+   detection logic is real**, but did NOT complete in ~10 min of release-mode execution — so the certificate's
+   malicious-secure DECRYPTION is algorithmically DONE + in-tree, but is throughput-blocked at correctness
+   grade. Conclusion for the build: migrating the halls onto `quorum.rs` (Build 6/10) buys real active-malice
+   detection+attribution NOW, but "playable-fast" needs the batched-proving work — do the migration for
+   correctness, schedule batched proving before claiming a running distributed ceremony.
 
 ## The one-line honest verdict
 Active-malice robustness for the **decrypt + binding + keygen + relin + MPC-online** stack is **buildable now**

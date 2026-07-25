@@ -390,7 +390,7 @@ PORT=8781 node serve.mjs        # serves /  + /wasm/  + POST /clear
   `target/{release,debug}/drex_clear`; absent that it `ssh`es to
   `persvati:dregg-build/drex-matcher` (the prebuilt binary). **For hosting, build
   the matcher once on the box** (`scripts/hbuild drex-matcher 'cargo build -p
-  dregg-intent --bin drex_clear'` then place it at `target/debug/drex_clear`), OR
+  dregg-exec-lean --bin drex_clear'` then place it at `target/debug/drex_clear`), OR
   keep the persvati hop — but that couples the demo to persvati SSH (an ops
   dependency to close before go-live; see checklist).
 

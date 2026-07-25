@@ -17,8 +17,8 @@ matcher are real; there is no mirror. Every trust claim graded PROVED / ATTESTED
 / REPLAYABLE.
 
 The web app POSTs the batch's revealed orders to serve.mjs `/clear`, which shells
-to the `drex_clear` binary (`intent/src/bin/drex_clear.rs`) — the same pipeline as
-`cargo run -p dregg-intent --example drex_clear_book`. The shown clearing is the
+to the `drex_clear` binary (`exec-lean/src/bin/drex_clear.rs`) — the same pipeline as
+`cargo run -p dregg-exec-lean --example drex_clear_book`. The shown clearing is the
 real solver's, settled through the verified kernel.
 
 See `DESIGN.md` for the full UX + wire. This file is how to run it.
@@ -60,11 +60,14 @@ returns `nodeUp:false` and the UI keeps the labeled local matcher (`drex_clear`)
 ## Prerequisite: build the real matcher once
 
 ```
-cargo build -p dregg-intent --bin drex_clear
+cargo build -p dregg-exec-lean --bin drex_clear
 ```
 
-serve.mjs prefers the prebuilt `target/debug/drex_clear`; without it the first
-`/clear` request falls back to `cargo run` (and blocks while it builds).
+The binary links the verified Lean archive so it can install the settlement gate
+(`register_distributed_gates()`) and route each ring leg through the PROVED
+`dregg_record_kernel_step` export — `dregg-intent` is FFI-free and cannot, which is
+why the bin moved out of it. serve.mjs prefers the prebuilt `target/debug/drex_clear`;
+without it the first `/clear` request falls back to `cargo run` (and blocks while it builds).
 
 ## Open the clickable app
 

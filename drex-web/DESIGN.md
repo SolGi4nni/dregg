@@ -142,11 +142,11 @@ audit trail.
        ▼
  ┌────────────────────────────────────────────────────────────────────┐
  │  MATCHER + SETTLEMENT   [REAL: the actual Rust, via POST /clear]     │
- │   serve.mjs shells to intent/src/bin/drex_clear.rs, which runs:      │
+ │   serve.mjs shells to exec-lean/src/bin/drex_clear.rs, which runs:   │
  │     intent/src/solver.rs  (Johnson circuits + Shapley–Scarf TTC ring)│
  │   + intent/src/verified_settle.rs (fold each leg through the         │
  │     Lean-proved Exec.recKExecAsset per-asset kernel)                 │
- │   — the SAME pipeline as intent/examples/drex_clear_book.rs.         │
+ │   — the SAME pipeline as exec-lean/examples/drex_clear_book.rs.      │
  └─────┬──────────────────────────────────────────────────────────────┘
        │ cleared allocations (off the verified post-ledger) + reject-polarity
        ▼   DrEX web app renders the fill + graded "why it's fair" panel

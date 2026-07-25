@@ -8,8 +8,8 @@
 //
 // It ALSO exposes POST /clear — the REAL matcher. The web app posts the batch's
 // revealed orders as JSON; the server shells to the `drex_clear` binary
-// (intent/src/bin/drex_clear.rs), which runs the SAME pipeline as
-// `cargo run -p dregg-intent --example drex_clear_book`: rung-2 aggregate →
+// (exec-lean/src/bin/drex_clear.rs), which runs the SAME pipeline as
+// `cargo run -p dregg-exec-lean --example drex_clear_book`: rung-2 aggregate →
 // solver.rs multilateral ring match → verified_settle.rs (each leg folded through
 // the proved recKExecAsset kernel) → allocations + conservation + reject-polarity.
 // The clearing the UI renders is the REAL solver's, not a JS mirror.

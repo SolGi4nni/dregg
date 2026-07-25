@@ -6,8 +6,8 @@
 // │   intent/src/solver.rs           — Johnson elementary circuits + TTC ring │
 // │   intent/src/verified_settle.rs  — folds each leg through the Lean-proved │
 // │                                    per-asset kernel (Exec.recKExecAsset)   │
-// │   intent/src/bin/drex_clear.rs   — the thin JSON CLI the web wire calls    │
-// │   intent/examples/drex_clear_book.rs — the same pipeline, runnable        │
+// │   exec-lean/src/bin/drex_clear.rs — the thin JSON CLI the web wire calls   │
+// │   exec-lean/examples/drex_clear_book.rs — the same pipeline, runnable      │
 // │ The browser POSTs the revealed orders to serve.mjs `/clear`, which shells  │
 // │ to `drex_clear`; the gate (gate/run-gate.mjs) shells to it directly. This  │
 // │ file now holds ONLY the demo book fixture + the fairness ledger (Lean      │
