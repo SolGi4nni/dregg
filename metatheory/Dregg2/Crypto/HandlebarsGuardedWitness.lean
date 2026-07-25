@@ -87,7 +87,17 @@ form "for an ARBITRARY prover-supplied witness, accept ⇒ ∃ d, guardedSafe T 
 An adversarial witness listing convenient (guard, data) pairs — for a DIFFERENT template, or with no
 relation to any rendered output — passes this check trivially. Closing that needs the witness to be
 bound to `T`'s hole/guard list AND to the output; the membership correspondence in §2 is the start of
-that binding, not its completion. -/
+that binding, not its completion.
+
+⚑ NOW CLOSED, in `Crypto/HandlebarsGuardedBound.lean`: `guardedVerifyBound T output witness` adds the
+two missing teeth (hole-coverage against `holeIds T.segments`, and `render T (witnessAssign witness) =
+output`) and re-runs **`T`'s own** guards rather than the witness's declared ones, discharging
+`guardedVerifyBound_sound : guardedVerifyBound T output witness = true → ∃ d, guardedSafe T d ∧
+render T d = output` for an ARBITRARY witness. Both attacks named above are exhibited there as
+theorems (`Canary.scope_hole_was_real`, `Canary.scope_hole_forged_guard`): witnesses THIS function
+accepts and the bound one rejects. Completeness (`guardedVerifyBound_complete`) holds with no side
+conditions, so `guardedVerify` below is superseded for verifier use — cite it only as the honest-`d`
+decision of `guardedSafe`, never as verifier soundness. -/
 def guardedVerify (_T : GuardedTemplate) (witness : List HoleEntry) : Bool :=
   witness.all (fun e => derives e.data e.guard)
 

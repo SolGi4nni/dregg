@@ -1,31 +1,46 @@
 /-
 
-⚠⚠ ADVERSARIAL VERIFY: **HOLES — THE TWO RESOLUTIONS NEVER MEET.** Read this before citing anything
-below as "the frame theorem for the deployed commitment", because it is not that yet.
+⚠ ADVERSARIAL VERIFY: **THE JOIN IS NOW SUPPLIED (§2b); READ WHAT IT DOES AND DOES NOT BUY.**
+
+The previous state of this file was two halves that never met:
 
 * §1 (`frame_of_absorbInjective`, `afterGraph_eq_replaceSlot`) IS over the real `AncestorUpdate.check`
   and the real `semanticRoot` — but it is conditional on `TreeAbsorbInjective`, and THIS FILE ITSELF
   REFUTES that hypothesis for every bounded-lane digest (`not_treeAbsorbInjective_of_boundedLanes`,
-  :329, a pinned keystone). So §1 carries a hypothesis no deployed digest satisfies: its price is ZERO.
+  a pinned keystone). §1's price is ZERO and §1 is UNCHANGED: it stays a statement about the LAYOUT.
 * §2 (`frame_binds_rom`) has no such assumption — but its objects (`romRootFromPath`, `hgcRomRoot`,
-  `GraphSlots`, `romPathFor`) are hand-written ROM ANALOGUES. There is NO lemma anywhere in `Dregg2/`
-  relating them to `rootFromPath` / `pathFor` / `semanticRoot` / `AncestorUpdate`. `frame_violation_wins`
-  reads like an object-level tooth but takes only a `FrameAns` plus ROM-level hypotheses — no
-  `AncestorUpdate`, no `BoundedGraph`.
-* CONSEQUENCE: **no theorem here (or anywhere in the tree) says anything UNCONDITIONAL about the
-  deployed `AncestorUpdate.check`.** The frame converse is NOT closed at the deployed resolution.
+  `GraphSlots`, `romPathFor`) were hand-written ROM ANALOGUES with no lemma anywhere in `Dregg2/`
+  relating them to `rootFromPath` / `pathFor` / `semanticRoot` / `AncestorUpdate`.
 
-THE FIX IS NAMED AND THE TEMPLATE EXISTS: the sibling `HierarchicalGraphCommitment.lean` ships exactly
-the bridge this file omits — `hgcRom_graph_forgery_is_break` (:423) — connecting its ROM game to its
-object-level statement. Supplying the analogous ROM↔object bridge here (romRootFromPath ↔ rootFromPath,
-romPathFor ↔ pathFor, hgcRomRoot ↔ semanticRoot) is what would make §2's price land on §1's objects and
-actually close the converse. Until then this file is: a correct conditional (§1, vacuous premise) plus a
-correct ROM game about analogue objects (§2), and the join is missing.
+**§2b closes that gap**, in the shape the sibling `HierarchicalGraphCommitment.lean` uses for its own
+game (`hgcRom_graph_forgery_is_break`). `romHash l H : Hash` instantiates the DEPLOYED `Hash` interface
+with the sampled role-keyed oracle (tag dispatch + round-tripping decoders), and the three named-missing
+bridges are proved — `romHash_semanticRoot` (hgcRomRoot ↔ semanticRoot), `romHash_pathFor` (romPathFor ↔
+pathFor), `romHash_rootFromPath` (romRootFromPath ↔ rootFromPath, for an ARBITRARY adversarial path).
+`frame_object_break_is_win` then turns an accepted-but-non-framing deployed `AncestorUpdate` into a
+CONCRETE `frameForgery` win, and `objFrame_binds_rom` prices it: every query-bounded adversary producing
+an accepted `AncestorUpdate` whose committed graphs violate the frame conclusion has NEGLIGIBLE
+advantage — NO `TreeAbsorbInjective`, NO floor hypothesis, NO `∨ ∃ collision`.
+`objFrame_constAnswer_defanged` exhibits an oracle where the deployed check ACCEPTS while the frame
+fails, so the priced event is nonempty and the statement is not satisfied by "the check never accepts".
 
-(What IS real and worth keeping: §1's conclusion is a genuine frame statement — `g₁.slots upd.index =
-upd.before ∧ g₂ = replaceSlot …`, i.e. AGREES OFF THE INDEX, not a "roots differ" triviality; the escape
-branch is a first-class `RomForgery` rather than a free `∨ ∃ collision`; and the whole file is
-#guard-free — 25 keystones, every claim a Prop, axiom-clean.)
+⚠ WHAT REMAINS OPEN, PRECISELY. (a) `romHash l H` is the SAMPLED oracle wearing the deployed `Hash`
+type, not Poseidon2 — the `RomCarrierSites` modelling step is inherited verbatim and is now visible at
+the `Hash` interface itself; nothing is claimed about the fixed public digest. (b) the eight-lane digest
+is collapsed to ONE `λ`-growing lane on BOTH sides — `embedDig` writes lane 0 and `toRomDig` reads lane
+0 — so the deployed ~31-bit felt width is NOT modelled, and the modelled hash is strictly WEAKER than
+the deployed one on lanes 1-7 (a forger may vary them freely). The converse is proved against that
+weaker object, which is the conservative direction, but it is not the deployed eight-lane digest.
+(c) §1's hypothesis is still refuted and §1
+is still priced at zero — §2b does not rescue it, it replaces its role. (d) `GRAPH_SLOTS = 4` throughout;
+§3's counts are instances, not a theorem over `n`. (e) Nothing here touches the deployed AIR, which
+still absorbs the whole graph core every step.
+
+⚑ WHAT THE BRIDGE NEEDED FROM THE TREE, AND FOUND: (i) the three absorb shapes distinguishable from the
+limb list — the distinct `LEAF_TAG`/`PAIR_TAG`/`ROOT_TAG` heads give this; (ii) the leaf message to
+carry its POSITION and the node message its CHILD ORDER — `leafInputs`/`nodeInputs` already do. NO
+missing structural property: no per-position tag and no extra domain separation had to be added, which
+matches §1's own finding that the obstruction was entirely the hash, never the layout.
 # Dregg2.Crypto.HierarchicalGraphFrame — ⚑ THE FRAME CONVERSE of the hierarchical graph commitment.
 
 `Crypto.HierarchicalGraphCommitment` builds the depth-two domain-separated tree over the four
@@ -100,6 +115,23 @@ payload is a root equivocation between two DISTINCT graphs, killed by the tree-w
 ⚑ THE MODELLING STEP IS INHERITED, NOT NEW: the sampled `H : Role × Msg → Fin (2 ^ l)` idealises the
 fixed deployed eight-lane digest at an asymptotic width (`RomCarrierSites` header).  Nothing is
 claimed about the fixed public hash.
+
+## §2b — the ROM↔OBJECT BRIDGE: §2's price, landed on §1's objects
+
+`romHash l H : Hash` answers a deployed limb list by dispatching on its absorbed tag onto the matching
+role of `hgcRomFamily` and returning the oracle's `Fin (2 ^ l)` in lane 0.  It IS a `Hash`, so every
+deployed definition applies to it unchanged, and the decoders round-trip the tree's own encodings.
+Three bridges follow (`romHash_leafDigest` / `romHash_pairDigest` / `romHash_rootDigest`), then the
+three the converse needs: `romHash_semanticRoot`, `romHash_pathFor`, `romHash_rootFromPath` (the last
+for an ARBITRARY offered path — the forger's path is never assumed honest).
+
+`frame_object_break_is_win` is the join, mirroring `hgcRom_graph_forgery_is_break`: an accepted
+`AncestorUpdate` at the modelled hash whose authenticated before-slot is not the committed one, OR whose
+after-graph is not the before-graph with that one slot replaced, IS a win of `frameForgery`.  Both
+failure modes are covered by ONE game — a wrong before-slot is caught by re-presenting the before-graph
+against itself, which is already an exactness break.  `objFrameGame` states the break entirely in
+deployed objects (two `BoundedGraph`s and an `AncestorUpdate`), `objFrameToRom` extracts at ZERO extra
+queries (pure post-processing), and `objFrame_binds_rom` closes on the same proved keyed-ROM floor.
 
 ## §3 — what the converse BUYS: Θ(|G|) absorbs → depth+1 absorbs, as a proposition
 
@@ -830,6 +862,443 @@ theorem frame_nonNegl_forger_excluded (Q : ℕ → ℕ)
     ¬ RomForgeryEff hgcRomFamily frameForgery Q A :=
   fun hA => hnn (frame_binds_rom Q hQ A hA)
 
+/-! ### §2b — ⚑⚑ THE ROM↔OBJECT BRIDGE: §2's price lands on §1's DEPLOYED objects.
+
+Everything above §2b has the defect the header records: §1 is over the real `AncestorUpdate.check` but
+under a hypothesis this file itself refutes, and §2 is unconditional but over hand-written ROM
+ANALOGUES.  This section supplies the join, in the shape `HierarchicalGraphCommitment` uses for its own
+game (`hgcRom_graph_forgery_is_break`): an INSTANTIATION of the deployed `Hash` interface by the sampled
+role-keyed oracle, four correspondence lemmas, and then the object-level statement.
+
+* `romHash l H : Hash` answers a deployed limb list by DISPATCHING on the absorbed tag —
+  `LEAF_TAG` → the leaf role at `(index, slot)`, `PAIR_TAG`/`ROOT_TAG` → the pair/root role at the two
+  child digests — and returns the oracle's `Fin (2 ^ l)` answer in lane 0.  The dispatch is total and the
+  decoders (`decIndex`, `decSlot`, `decLeft`, `decRight`) round-trip the tree's OWN encodings, because
+  `leafInputs` carries the index and `nodeInputs` carries its children in order.  ⚑ NOTHING STRUCTURAL IS
+  MISSING: the bridge needs exactly (i) the three absorb shapes distinguishable from the limb list — the
+  three distinct head tags give this — and (ii) the leaf message to carry its position and the node
+  message its child order — `leafInputs`/`nodeInputs` already do.  No per-position tag, no extra domain
+  separation had to be added.
+* `romHash_leafDigest` / `romHash_pairDigest` / `romHash_rootDigest` are the three layer bridges, and
+  `romHash_semanticRoot` (⟷ `hgcRomRoot`), `romHash_pathFor` (⟷ `romPathFor`) and
+  `romHash_rootFromPath` (⟷ `romRootFromPath`) are the three the header named as missing.  The path
+  bridge holds for an ARBITRARY adversarial `Path4`, not just honest ones.
+* `frame_object_break_is_win` is the join: an ACCEPTED `AncestorUpdate` at the modelled hash whose
+  before-slot is wrong, OR whose after-graph is not the before-graph with that one slot replaced, IS a
+  concrete win of `frameForgery` — so `frame_binds_rom` prices it.  `objFrame_binds_rom` states that
+  with no `TreeAbsorbInjective`, no escape branch, and no `∃ collision`: the escape is a GAME WIN whose
+  probability the birthday floor bounds, and `objFrame_constAnswer_defanged` exhibits an instance where
+  that win actually happens, so the price is nonzero.
+
+⚠ WHAT IS STILL NOT CLOSED.  `romHash l H` is the sampled oracle wearing the deployed `Hash` interface,
+not Poseidon2: the modelling step of `RomCarrierSites` is INHERITED here verbatim and is now visible at
+the `Hash` type itself.  Two consequences worth saying out loud: (a) nothing is claimed about the fixed
+public digest — CR of a fixed function is a conjecture, not a theorem; (b) `embedDig` puts the whole
+`λ`-bit answer in ONE lane, so the eight-lane deployed digest is idealised as a single `λ`-growing value
+and the ~31-bit felt width of the real lanes is NOT modelled.  §1's `TreeAbsorbInjective` remains
+refuted and §1 remains a layout statement; the deployed AIR still absorbs the whole graph core. -/
+
+/-- The ROM digest, as a deployed `Digest8`: lane 0 carries the value, lanes 1-7 are zero. -/
+def embedDig (l : ℕ) (r : RomDig l) : Digest8 := fun i => if i.val = 0 then (r.val : Int) else 0
+
+/-- The retraction, TOTAL — an ADVERSARIAL `Digest8` is NOT assumed to be in `embedDig`'s image. -/
+def toRomDig (l : ℕ) (d : Digest8) : RomDig l :=
+  ⟨(d 0).toNat % 2 ^ l, Nat.mod_lt _ (by positivity)⟩
+
+theorem toRomDig_embedDig (l : ℕ) (r : RomDig l) : toRomDig l (embedDig l r) = r := by
+  apply Fin.ext
+  show (embedDig l r 0).toNat % 2 ^ l = r.val
+  have h0 : embedDig l r 0 = (r.val : Int) := rfl
+  rw [h0]
+  simp [Nat.mod_eq_of_lt r.isLt]
+
+theorem embedDig_injective (l : ℕ) : Function.Injective (embedDig l) := by
+  intro a b h
+  rw [← toRomDig_embedDig l a, h, toRomDig_embedDig]
+
+/-- The deployed `Hash` output carrying one ROM digest: lane 0, then seven zeros. -/
+def romOut (l : ℕ) (r : RomDig l) : List Int := [(r.val : Int), 0, 0, 0, 0, 0, 0, 0]
+
+theorem digest8_eq_embed_of_out {K : Hash} {xs : List Int} {l : ℕ} {r : RomDig l}
+    (h : K xs = romOut l r) : digest8 K xs = embedDig l r := by
+  funext i
+  show (K xs).getD i.val 0 = embedDig l r i
+  rw [h]
+  fin_cases i <;> simp [romOut, embedDig]
+
+/-! #### The decoders — they round-trip the tree's OWN encodings. -/
+
+/-- Decode a `Fin 16` field (a `Label` or a `Node`) from its absorbed limb. -/
+def decFin16 (x : Int) : Node := ⟨x.toNat % 16, Nat.mod_lt _ (by norm_num)⟩
+
+theorem decFin16_val (n : Fin 16) : decFin16 ((n.val : ℕ) : Int) = n :=
+  Fin.ext (by simp [decFin16, Nat.mod_eq_of_lt n.isLt])
+
+/-- Decode an activity bit from its absorbed limb. -/
+def decBool (x : Int) : Bool := decide (x ≠ 0)
+
+theorem decBool_boolInt (b : Bool) : decBool (boolInt b) = b := by
+  cases b <;> simp [decBool, boolInt]
+
+/-- Decode a leaf absorb's slot INDEX — `leafInputs` carries it at position 1. -/
+def decIndex (xs : List Int) : Fin 4 := ⟨(xs.getD 1 0).toNat % 4, Nat.mod_lt _ (by norm_num)⟩
+
+/-- Decode a leaf absorb's slot payload — positions 2-5 of `leafInputs`. -/
+def decSlot (xs : List Int) : SlotEnc :=
+  (decBool (xs.getD 2 0), decFin16 (xs.getD 3 0), decFin16 (xs.getD 4 0), decFin16 (xs.getD 5 0))
+
+/-- Decode a node absorb's LEFT child — `nodeInputs` puts it at positions 1-8, in order. -/
+def decLeft (xs : List Int) : Digest8 := fun i => xs.getD (1 + i.val) 0
+
+/-- Decode a node absorb's RIGHT child — positions 9-16. -/
+def decRight (xs : List Int) : Digest8 := fun i => xs.getD (9 + i.val) 0
+
+theorem decIndex_leafInputs (i : Fin 4) (s : HostEdgeSlot) : decIndex (leafInputs i s) = i := by
+  apply Fin.ext
+  show ((leafInputs i s).getD 1 0).toNat % 4 = i.val
+  have h : (leafInputs i s).getD 1 0 = ((i.val : ℕ) : Int) := rfl
+  rw [h]
+  simp [Nat.mod_eq_of_lt i.isLt]
+
+theorem decSlot_leafInputs (i : Fin 4) (s : HostEdgeSlot) : decSlot (leafInputs i s) = slotEnc s := by
+  show (decBool (boolInt s.active), decFin16 ((s.label.val : ℕ) : Int),
+      decFin16 ((s.src.val : ℕ) : Int), decFin16 ((s.dst.val : ℕ) : Int)) = slotEnc s
+  rw [decBool_boolInt, decFin16_val, decFin16_val, decFin16_val]
+  rfl
+
+theorem decLeft_nodeInputs (tag : Int) (x y : Digest8) : decLeft (nodeInputs tag x y) = x := by
+  funext i
+  fin_cases i <;> rfl
+
+theorem decRight_nodeInputs (tag : Int) (x y : Digest8) : decRight (nodeInputs tag x y) = y := by
+  funext i
+  fin_cases i <;> rfl
+
+/-! #### The instantiation, and the three layer bridges. -/
+
+/-- **⚑ THE DEPLOYED `Hash` INTERFACE, ANSWERED BY THE SAMPLED ORACLE.** A limb list is dispatched on
+its absorbed tag onto the matching role of `hgcRomFamily`, and the oracle's answer is returned in lane
+0.  This is where the `RomCarrierSites` modelling step becomes visible at the deployed type: the object
+below IS a `Hash`, and every deployed definition (`leafDigest`, `semanticRoot`, `rootFromPath`,
+`pathFor`, `AncestorUpdate.check`) applies to it unchanged. -/
+def romHash (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) : Hash := fun xs =>
+  if xs.getD 0 0 = LEAF_TAG then
+    romOut l (H (hgcLeafRole, Sum.inl (decIndex xs, decSlot xs)))
+  else if xs.getD 0 0 = PAIR_TAG then
+    romOut l (H (hgcPairRole, Sum.inr (toRomDig l (decLeft xs), toRomDig l (decRight xs))))
+  else if xs.getD 0 0 = ROOT_TAG then
+    romOut l (H (hgcRootRole, Sum.inr (toRomDig l (decLeft xs), toRomDig l (decRight xs))))
+  else romOut l (H (hgcLeafRole, Sum.inl (0, (false, 0, 0, 0))))
+
+theorem romHash_leafInputs (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (i : Fin 4)
+    (s : HostEdgeSlot) :
+    romHash l H (leafInputs i s) = romOut l (romLeaf l H i (slotEnc s)) := by
+  have hhead : (leafInputs i s).getD 0 0 = LEAF_TAG := rfl
+  unfold romHash
+  rw [if_pos hhead, decIndex_leafInputs, decSlot_leafInputs]
+  rfl
+
+theorem romHash_pairInputs (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (x y : Digest8) :
+    romHash l H (nodeInputs PAIR_TAG x y)
+      = romOut l (romPairOf l H (toRomDig l x, toRomDig l y)) := by
+  have hhead : (nodeInputs PAIR_TAG x y).getD 0 0 = PAIR_TAG := rfl
+  unfold romHash
+  rw [if_neg (by rw [hhead]; norm_num [PAIR_TAG, LEAF_TAG]), if_pos hhead,
+    decLeft_nodeInputs, decRight_nodeInputs]
+  rfl
+
+theorem romHash_rootInputs (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (x y : Digest8) :
+    romHash l H (nodeInputs ROOT_TAG x y)
+      = romOut l (romRootOf l H (toRomDig l x, toRomDig l y)) := by
+  have hhead : (nodeInputs ROOT_TAG x y).getD 0 0 = ROOT_TAG := rfl
+  unfold romHash
+  rw [if_neg (by rw [hhead]; norm_num [ROOT_TAG, LEAF_TAG]),
+    if_neg (by rw [hhead]; norm_num [ROOT_TAG, PAIR_TAG]), if_pos hhead,
+    decLeft_nodeInputs, decRight_nodeInputs]
+  rfl
+
+/-- **BRIDGE 1 — the LEAF layer.** The deployed `leafDigest` at the modelled hash IS the ROM leaf
+absorb of the same index and the same (losslessly encoded) slot. -/
+theorem romHash_leafDigest (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (i : Fin 4)
+    (s : HostEdgeSlot) :
+    leafDigest (romHash l H) i s = embedDig l (romLeaf l H i (slotEnc s)) :=
+  digest8_eq_embed_of_out (romHash_leafInputs l H i s)
+
+/-- **BRIDGE 2 — the PAIR layer**, for ARBITRARY (adversarial) children. -/
+theorem romHash_pairDigest (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (x y : Digest8) :
+    nodeDigest (romHash l H) PAIR_TAG x y
+      = embedDig l (romPairOf l H (toRomDig l x, toRomDig l y)) :=
+  digest8_eq_embed_of_out (romHash_pairInputs l H x y)
+
+/-- **BRIDGE 3 — the ROOT layer**, for ARBITRARY (adversarial) children. -/
+theorem romHash_rootDigest (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (x y : Digest8) :
+    nodeDigest (romHash l H) ROOT_TAG x y
+      = embedDig l (romRootOf l H (toRomDig l x, toRomDig l y)) :=
+  digest8_eq_embed_of_out (romHash_rootInputs l H x y)
+
+theorem romHash_leftPair (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (g : BoundedGraph) :
+    leftPair (romHash l H) g = embedDig l (romLeftPair l H (graphEnc g)) := by
+  rw [leftPair, romHash_pairDigest, romHash_leafDigest, romHash_leafDigest, toRomDig_embedDig,
+    toRomDig_embedDig]
+  rfl
+
+theorem romHash_rightPair (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (g : BoundedGraph) :
+    rightPair (romHash l H) g = embedDig l (romRightPair l H (graphEnc g)) := by
+  rw [rightPair, romHash_pairDigest, romHash_leafDigest, romHash_leafDigest, toRomDig_embedDig,
+    toRomDig_embedDig]
+  rfl
+
+/-- **⚑ BRIDGE — `hgcRomRoot` ↔ `semanticRoot`.** The header's first named missing lemma. -/
+theorem romHash_semanticRoot (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (g : BoundedGraph) :
+    semanticRoot (romHash l H) g = embedDig l (hgcRomRoot l H (graphEnc g)) := by
+  rw [semanticRoot, romHash_rootDigest, romHash_leftPair, romHash_rightPair, toRomDig_embedDig,
+    toRomDig_embedDig]
+  rfl
+
+/-- The ROM face of a deployed `Path4`, applied to an ARBITRARY (adversarial) path. -/
+def toRomPath (l : ℕ) (p : Path4) : RomPath l :=
+  (toRomDig l p.siblingLeaf, toRomDig l p.siblingPair)
+
+/-- **⚑ BRIDGE — `romPathFor` ↔ `pathFor`.** The header's second named missing lemma. -/
+theorem romHash_pathFor (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (g : BoundedGraph)
+    (u : Fin 4) :
+    toRomPath l (pathFor (romHash l H) g u) = romPathFor l H (graphEnc g) u := by
+  rcases fin4_cases u with rfl | rfl | rfl | rfl <;>
+    simp [toRomPath, pathFor, romPathFor, romHash_leafDigest, romHash_leftPair, romHash_rightPair,
+      toRomDig_embedDig, graphEnc]
+
+/-- **⚑ BRIDGE — `romRootFromPath` ↔ `rootFromPath`.** The header's third named missing lemma, and the
+one that has to hold for an ARBITRARY offered path: the forger's path is not assumed honest. -/
+theorem romHash_rootFromPath (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (u : Fin 4)
+    (leaf : Digest8) (p : Path4) :
+    rootFromPath (romHash l H) u leaf p
+      = embedDig l (romRootFromPath l H u (toRomDig l leaf) (toRomPath l p)) := by
+  rcases fin4_cases u with rfl | rfl | rfl | rfl <;>
+    simp [rootFromPath, romRootFromPath, framePairBlock, frameRootBlock, romHash_rootDigest,
+      romHash_pairDigest, toRomDig_embedDig, toRomPath]
+
+/-- The bridge as the forger consumes it: the deployed reconstruction from the AUTHENTICATED leaf. -/
+theorem romHash_rootFromPath_leaf (l : ℕ) (H : HgcRole × HgcRomMsg l → RomDig l) (u : Fin 4)
+    (s : HostEdgeSlot) (p : Path4) :
+    rootFromPath (romHash l H) u (leafDigest (romHash l H) u s) p
+      = embedDig l (romRootFromPath l H u (romLeaf l H u (slotEnc s)) (toRomPath l p)) := by
+  rw [romHash_rootFromPath, romHash_leafDigest, toRomDig_embedDig]
+
+/-! #### The join: the DEPLOYED `AncestorUpdate.check`, with NO `TreeAbsorbInjective`. -/
+
+/-- **THE ANSWER AN OBJECT-LEVEL FRAME BREAK HANDS THE ROM FORGER.** Two shapes, because the deployed
+frame conclusion has two conjuncts and the game's win relation is the exactness break: if the
+authenticated `before` really is the committed slot, the break is the after-graph (first branch); if it
+is not, re-presenting the before-graph against itself is already an exactness break (second branch). -/
+def objFrameAns (l : ℕ) (g₁ g₂ : BoundedGraph) (upd : AncestorUpdate) : FrameAns l :=
+  if g₁.slots upd.index = upd.before then
+    ⟨upd.index, slotEnc upd.before, slotEnc upd.after, toRomPath l upd.path,
+      graphEnc g₁, graphEnc g₂⟩
+  else
+    ⟨upd.index, slotEnc upd.before, slotEnc upd.before, toRomPath l upd.path,
+      graphEnc g₁, graphEnc g₁⟩
+
+/-- **⚑⚑ THE JOIN — the mirror of `hgcRom_graph_forgery_is_break`, at the FRAME game.** An accepted
+`AncestorUpdate` at the modelled hash that does NOT frame — the authenticated before-slot is not the
+committed one, or the after-graph is not the before-graph with that ONE slot replaced — is a CONCRETE
+win of `frameForgery`.  No `TreeAbsorbInjective`, no collision disjunction: the object-level break
+becomes a game the birthday floor prices. -/
+theorem frame_object_break_is_win (l : ℕ) (H : frameBreakGame.Inst l)
+    (g₁ g₂ : BoundedGraph) (upd : AncestorUpdate)
+    (hcheck : upd.check (romHash l H) (semanticRoot (romHash l H) g₁)
+      (semanticRoot (romHash l H) g₂) = true)
+    (hbreak : ¬ (g₁.slots upd.index = upd.before
+      ∧ g₂.slots = Function.update g₁.slots upd.index upd.after)) :
+    frameBreakGame.wins l H (objFrameAns l g₁ g₂ upd) := by
+  rw [AncestorUpdate.check, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at hcheck
+  obtain ⟨⟨⟨_, _⟩, hbd⟩, had⟩ := hcheck
+  have h1 : rootFromPath (romHash l H) upd.index
+      (leafDigest (romHash l H) upd.index upd.before) upd.path
+      = semanticRoot (romHash l H) g₁ := digestFields_injective (of_decide_eq_true hbd)
+  have h2 : rootFromPath (romHash l H) upd.index
+      (leafDigest (romHash l H) upd.index upd.after) upd.path
+      = semanticRoot (romHash l H) g₂ := digestFields_injective (of_decide_eq_true had)
+  have hb : romRootFromPath l H upd.index (romLeaf l H upd.index (slotEnc upd.before))
+      (toRomPath l upd.path) = hgcRomRoot l H (graphEnc g₁) := by
+    apply embedDig_injective l
+    rw [← romHash_rootFromPath_leaf, ← romHash_semanticRoot]
+    exact h1
+  have ha : romRootFromPath l H upd.index (romLeaf l H upd.index (slotEnc upd.after))
+      (toRomPath l upd.path) = hgcRomRoot l H (graphEnc g₂) := by
+    apply embedDig_injective l
+    rw [← romHash_rootFromPath_leaf, ← romHash_semanticRoot]
+    exact h2
+  unfold objFrameAns
+  split_ifs with hidx
+  · refine ⟨hb, ha, fun hEq => hbreak ⟨hidx, ?_⟩⟩
+    funext i
+    have h := congrFun hEq i
+    rw [romReplace, Function.update_apply] at h
+    rw [Function.update_apply]
+    by_cases hi : i = upd.index
+    · rw [if_pos hi] at h ⊢
+      exact slotEnc_injective h
+    · rw [if_neg hi] at h ⊢
+      exact slotEnc_injective h
+  · refine ⟨hb, hb, fun hEq => hidx ?_⟩
+    have h := congrFun hEq upd.index
+    rw [romReplace, Function.update_apply, if_pos rfl] at h
+    exact slotEnc_injective h
+
+/-- **⚑ THE DEPLOYED-OBJECT FRAME CONVERSE, PRICED.** At the modelled hash, an accepted
+`AncestorUpdate` between two committed graphs EITHER frames exactly — the authenticated before-slot is
+the committed one and the after-graph is the before-graph with only that slot replaced — OR the update
+IS a genuine `frameForgery` win, whose probability `frame_binds_rom` bounds by the birthday floor.
+
+⚠ This is NOT a `∨ ∃ collision`: the right disjunct is a WIN OF A GAME at the SAMPLED instance, so it
+is an event with a proved negligible measure (`objFrame_binds_rom`), not a proposition that is
+unconditionally true at any compressing hash. -/
+theorem frame_of_check_at_modelled_hash (l : ℕ) (H : frameBreakGame.Inst l)
+    (g₁ g₂ : BoundedGraph) (upd : AncestorUpdate)
+    (hcheck : upd.check (romHash l H) (semanticRoot (romHash l H) g₁)
+      (semanticRoot (romHash l H) g₂) = true) :
+    (g₁.slots upd.index = upd.before
+        ∧ g₂.slots = Function.update g₁.slots upd.index upd.after)
+      ∨ frameBreakGame.wins l H (objFrameAns l g₁ g₂ upd) := by
+  by_cases h : g₁.slots upd.index = upd.before
+      ∧ g₂.slots = Function.update g₁.slots upd.index upd.after
+  · exact Or.inl h
+  · exact Or.inr (frame_object_break_is_win l H g₁ g₂ upd hcheck h)
+
+/-! #### The deployed-object break, as a GAME on the same sampled oracle — and its price. -/
+
+/-- **THE OBJECT-LEVEL FRAME BREAK, AS A `Game`.** Instance: the SAME sampled role-keyed oracle.
+Answer: two `BoundedGraph`s and a deployed `AncestorUpdate`.  Win: the deployed
+`AncestorUpdate.check` ACCEPTS at the modelled hash and the frame conclusion FAILS.  Nothing in this
+game mentions the ROM analogues — it is stated entirely in the objects §1 is about. -/
+def objFrameGame : Game where
+  Inst := fun l => HgcRole × HgcRomMsg l → RomDig l
+  Ans := fun _ => BoundedGraph × BoundedGraph × AncestorUpdate
+  instFin := fun l => frameBreakGame.instFin l
+  instNe := fun l => frameBreakGame.instNe l
+  wins := fun l H a =>
+    a.2.2.check (romHash l H) (semanticRoot (romHash l H) a.1)
+        (semanticRoot (romHash l H) a.2.1) = true
+      ∧ ¬ (a.1.slots a.2.2.index = a.2.2.before
+        ∧ a.2.1.slots = Function.update a.1.slots a.2.2.index a.2.2.after)
+  winsDec := fun _ _ _ => by infer_instance
+
+/-- The ROM forger an object-level frame breaker induces — a PURE post-processing of its output. -/
+def objFrameToRom (B : Adversary objFrameGame) : Adversary frameBreakGame where
+  run := fun l H => objFrameAns l (B.run l H).1 (B.run l H).2.1 (B.run l H).2.2
+
+/-- **WIN PRESERVATION, OBJECT → ROM.** Every oracle at which the object-level breaker wins is one at
+which the extracted ROM forger wins, so its advantage is dominated. -/
+theorem objFrame_adv_le (B : Adversary objFrameGame) (l : ℕ) :
+    gameAdv objFrameGame B l ≤ gameAdv frameBreakGame (objFrameToRom B) l := by
+  refine @winProb_le_of_imp _ (objFrameGame.instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hcheck, hbreak⟩ := hH
+  exact frame_object_break_is_win l H _ _ _ hcheck hbreak
+
+/-- **THE QUERY-BOUNDED OBJECT-LEVEL BREAKER CLASS** — the same `Eff` as everywhere else: the breaker
+factors through a `Q`-query tree fixed before the oracle is sampled. -/
+def ObjFrameEff (Q : ℕ → ℕ) (B : Adversary objFrameGame) : Prop :=
+  ∃ M : ∀ l, OracleComp (hgcRomFamily.toRomFamily.D l) (hgcRomFamily.toRomFamily.R l)
+      (BoundedGraph × BoundedGraph × AncestorUpdate),
+    (∀ l, QueryBounded (Q l) (M l)) ∧
+      ∀ l (H : objFrameGame.Inst l), B.run l H = (M l).eval H
+
+/-- The extraction costs NOTHING: `objFrameAns` is pure post-processing, so the budget is unchanged. -/
+theorem objFrameToRom_eff (Q : ℕ → ℕ) (B : Adversary objFrameGame) (hB : ObjFrameEff Q B) :
+    RomForgeryEff hgcRomFamily frameForgery Q (objFrameToRom B) := by
+  obtain ⟨M, hM, hrun⟩ := hB
+  refine ⟨fun l => OracleComp.bindComp (M l)
+      (fun a => OracleComp.pure (objFrameAns l a.1 a.2.1 a.2.2)),
+    fun l => (OracleComp.bindComp_queryBounded (hM l)
+      (fun a => QueryBounded.pure 0 _)).mono (by omega),
+    fun l H => ?_⟩
+  show objFrameAns l (B.run l H).1 (B.run l H).2.1 (B.run l H).2.2 = _
+  rw [OracleComp.bindComp_eval, hrun l H]
+  rfl
+
+/-- **⚑⚑ THE FRAME CONVERSE ON THE DEPLOYED OBJECTS, DISCHARGED ON THE PROVED KEYED-ROM FLOOR.**
+
+Every query-bounded adversary that produces an ACCEPTED deployed `AncestorUpdate` at the modelled hash
+whose committed graphs do NOT satisfy the frame conclusion has NEGLIGIBLE advantage.  Equivalently:
+except with negligible probability, an accepted `AncestorUpdate` at index `u` authenticates the graph's
+OWN slot at `u` and changes the committed graph ONLY there.
+
+This is the statement §1 could only make under `TreeAbsorbInjective` — which this file REFUTES for
+every bounded-lane digest — now carrying §2's unconditional price.  NO layout hypothesis, NO floor
+hypothesis, NO escape branch, NO `∃ collision`. -/
+theorem objFrame_binds_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (B : Adversary objFrameGame) (hB : ObjFrameEff Q B) :
+    Negl (gameAdv objFrameGame B) :=
+  negl_of_le (fun l => (gameAdv_mem_unit objFrameGame B l).1) (objFrame_adv_le B)
+    (frame_binds_rom Q hQ (objFrameToRom B) (objFrameToRom_eff Q B hB))
+
+/-! #### §2b teeth — the OBJECT-LEVEL game is genuinely winnable, so the price is nonzero. -/
+
+/-- The all-padding bounded graph. -/
+def padGraph : BoundedGraph where
+  slots := fun _ => ⟨false, 0, 0, 0⟩
+  canonicalPadding := fun _ _ => ⟨rfl, rfl, rfl⟩
+
+/-- The bounded graph that differs from `padGraph` at slot `0` only. -/
+def liveGraph : BoundedGraph where
+  slots := fun i => if i = 0 then ⟨true, 0, 0, 0⟩ else ⟨false, 0, 0, 0⟩
+  canonicalPadding := by
+    intro i
+    by_cases hi : i = 0 <;> simp [hi, HostEdgeSlot.canonicalPadding]
+
+/-- A deployed break witness: an update that re-authenticates the PADDING slot at index `0` (so it
+claims nothing changed) while the after-graph has slot `0` LIVE. -/
+def objBreakWitness : BoundedGraph × BoundedGraph × AncestorUpdate :=
+  (padGraph, liveGraph, ⟨0, ⟨false, 0, 0, 0⟩, ⟨false, 0, 0, 0⟩, ⟨fun _ => 0, fun _ => 0⟩⟩)
+
+theorem romHash_const (l : ℕ) (r : RomDig l) (xs : List Int) :
+    romHash l (fun _ => r) xs = romOut l r := by
+  unfold romHash
+  split_ifs <;> rfl
+
+/-- **(TOOTH — the OBJECT-LEVEL frame game is WINNABLE.)** At the constant oracle every absorb
+collapses to one digest, so the deployed `AncestorUpdate.check` ACCEPTS while the after-graph is not
+the before-graph with slot `0` replaced.  The deployed statement therefore prices something genuinely
+nonzero — it is not satisfied by "the check never accepts". -/
+theorem objBreakWitness_wins (l : ℕ) (r : RomDig l) :
+    objFrameGame.wins l (fun _ => r) objBreakWitness := by
+  have hd : ∀ xs, digest8 (romHash l (fun _ => r)) xs = embedDig l r := fun xs =>
+    digest8_eq_embed_of_out (romHash_const l r xs)
+  have hroot : ∀ (u : Fin 4) (leaf : Digest8) (p : Path4),
+      rootFromPath (romHash l (fun _ => r)) u leaf p = embedDig l r := by
+    intro u leaf p
+    rcases fin4_cases u with rfl | rfl | rfl | rfl <;> exact hd _
+  have hsem : ∀ g, semanticRoot (romHash l (fun _ => r)) g = embedDig l r := fun _ => hd _
+  refine ⟨?_, ?_⟩
+  · simp only [objBreakWitness, AncestorUpdate.check, Bool.and_eq_true, decide_eq_true_eq,
+      hroot, hsem]
+    refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩ <;> trivial
+  · rintro ⟨-, h⟩
+    have h0 := congrFun h 0
+    simp only [objBreakWitness, liveGraph, padGraph, Function.update_self] at h0
+    exact absurd (congrArg HostEdgeSlot.active h0) (by simp)
+
+/-- The `0`-query object-level breaker that always outputs `objBreakWitness`. -/
+def constObjAdv : Adversary objFrameGame where
+  run := fun _ _ => objBreakWitness
+
+/-- **(TOOTH — the deployed-object price is REAL and the constant breaker is DEFANGED.)** The `0`-query
+constant breaker is IN the class, WINS at the constant oracle, and its advantage is NEGLIGIBLE by
+`objFrame_binds_rom`.  Both poles, on the DEPLOYED objects. -/
+theorem objFrame_constAnswer_defanged (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    ObjFrameEff Q constObjAdv
+      ∧ (∀ l, 0 < gameAdv objFrameGame constObjAdv l)
+      ∧ Negl (gameAdv objFrameGame constObjAdv) := by
+  have hmem : ObjFrameEff Q constObjAdv :=
+    ⟨fun _ => OracleComp.pure objBreakWitness, fun l => QueryBounded.pure (Q l) _, fun _ _ => rfl⟩
+  refine ⟨hmem, fun l => ?_, objFrame_binds_rom Q hQ _ hmem⟩
+  obtain ⟨r₀⟩ : Nonempty (Fin (2 ^ l)) := ⟨⟨0, by positivity⟩⟩
+  refine @winProb_pos_of_witness _ (objFrameGame.instFin l) _ (fun _ => r₀) ?_
+  exact (Adversary.hit_eq_true _ l _).mpr (objBreakWitness_wins l r₀)
+
 end RomFrame
 
 /-! ## §3 — WHAT THE CONVERSE BUYS: the update's absorb schedule is the ancestor path.
@@ -956,6 +1425,36 @@ theorem single_slot_step_logarithmic_update (H : Hash) (rules : List BoundedRule
   update_rehashes_only_ancestor_path,
   afterRoot_depends_only_on_path,
   frame_cost_at_deployed_slots,
-  single_slot_step_logarithmic_update]
+  single_slot_step_logarithmic_update,
+  -- §2b — the ROM↔object bridge and the deployed-object converse.
+  toRomDig_embedDig,
+  embedDig_injective,
+  digest8_eq_embed_of_out,
+  decFin16_val,
+  decBool_boolInt,
+  decIndex_leafInputs,
+  decSlot_leafInputs,
+  decLeft_nodeInputs,
+  decRight_nodeInputs,
+  romHash_leafInputs,
+  romHash_pairInputs,
+  romHash_rootInputs,
+  romHash_leafDigest,
+  romHash_pairDigest,
+  romHash_rootDigest,
+  romHash_leftPair,
+  romHash_rightPair,
+  romHash_semanticRoot,
+  romHash_pathFor,
+  romHash_rootFromPath,
+  romHash_rootFromPath_leaf,
+  frame_object_break_is_win,
+  frame_of_check_at_modelled_hash,
+  objFrame_adv_le,
+  objFrameToRom_eff,
+  objFrame_binds_rom,
+  romHash_const,
+  objBreakWitness_wins,
+  objFrame_constAnswer_defanged]
 
 end Dregg2.Crypto.HierarchicalGraphFrame
