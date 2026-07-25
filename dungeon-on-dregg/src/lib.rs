@@ -112,6 +112,13 @@ pub mod dsl;
 /// capabilities, banking is terminal — each a theorem, each an executor tooth.
 pub mod descent;
 
+/// A Descent whose every committed turn CARRIES the authorization that fired it — a
+/// 32-byte warrant emitted into the same executor turn as the move's projection, absorbed
+/// into `receipt_hash` and covered by the executor's signature. Authors NO rules: the
+/// Lean-emitted teeth remain the only referee. It exists so a CREW's run leaves evidence
+/// of *who was entitled to each move*, which a single-writer world otherwise cannot record.
+pub mod authorized_descent;
+
 /// The coherent, persistent game core joining Lean-native Descent expeditions,
 /// character progression, overworld travel, receipt-bound narration, and relic
 /// rewards behind one typed/replayable operation journal.

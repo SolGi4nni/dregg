@@ -57,9 +57,9 @@
 //!    prior-phase completion) is the raid frontier `combat.rs` / `mud.rs` name — staged
 //!    after parties.
 
-use dregg_app_framework::field_from_u64;
+use dregg_app_framework::{field_from_u64, symbol};
 use dregg_cell::{AuthRequired, CellId, CellProgram, FieldElement, StateConstraint};
-use dregg_turn::action::Effect;
+use dregg_turn::action::{Effect, Event};
 use starbridge_v2::world::{CommitOutcome, World, make_open_cell, set_field};
 
 use dregg_types::PublicKey;
@@ -74,6 +74,13 @@ use dungeon_on_dregg::narrator::Command;
 /// identity, and binds an otherwise-anonymous `roles[4]` to THIS crew inside the proof's
 /// public statement.
 pub mod crew;
+/// **THE AWAY MISSION** — a crew runs the real Lean-refereed Descent together. The crew
+/// quorum-decides the two irreversible verbs (one more floor; climbing out) and each seat
+/// owns the verb its job owns (open a way / strike / bear the pack), authenticated by the
+/// seat's own custody signature and warranted into the descent turn itself. The haul divides
+/// by a certified vote onto the `WriteOnce` ledger. Authors NO rules: every move is one of
+/// the Lean-emitted admitted verbs.
+pub mod crew_descent;
 /// A replayable tactical encounter that braids this crate's role-capability
 /// receipts and signed fork certificate into real `combat::Arena` turns.
 pub mod encounter;
@@ -105,6 +112,23 @@ pub const ROLE_SLOT: usize = 0;
 const ROLE_MARK: u64 = 1;
 /// The `gate` cell slot the certified fork move writes the chosen path into.
 pub const GATE_SLOT: usize = 0;
+
+/// The event topic a certified loot split emits the authorizing decision under
+/// ([`Party::split_loot_certified`]).
+pub const LOOT_SPLIT_TOPIC: &str = "dreggnet-party/loot-split/certificate/v1";
+
+/// **The split-certificate tooth** — did this committed party turn carry `certificate`?
+/// Recomputable from the public decision, so a split can be checked against the authority
+/// that produced it rather than taken on the host's word.
+pub fn receipt_carries_split_certificate(
+    receipt: &dregg_app_framework::TurnReceipt,
+    certificate: &[u8; 32],
+) -> bool {
+    receipt.emitted_events.iter().any(|event| {
+        event.topic == symbol(LOOT_SPLIT_TOPIC)
+            && event.data.first().is_some_and(|d| d == certificate)
+    })
+}
 
 /// The federation the fork's backing [`collective_choice`] ballots commit under.
 const FEDERATION: [u8; 32] = [0xB1; 32];
@@ -776,17 +800,42 @@ impl Party {
     ///
     /// `shares` must have one entry per seat.
     pub fn split_loot(&mut self, shares: &[u64]) -> ActOutcome {
+        self.commit_split(shares, None)
+    }
+
+    /// [`Party::split_loot`], BINDING the `certificate` that authorized this division into
+    /// the SAME turn as the shares.
+    ///
+    /// A split is the one party decision where "who said so" is the whole argument, and a
+    /// bare `split_loot` records only the numbers. This emits the authorizing certificate as
+    /// an [`Event`] under [`LOOT_SPLIT_TOPIC`] on the loot cell in the same turn: emitted
+    /// events are absorbed prefix-free into `receipt_hash` and the receipt carries the
+    /// executor's signature, so the committed split names the decision that produced it and
+    /// cannot be re-attributed to another one afterwards. A caller that recomputes the
+    /// certificate from public data checks it with
+    /// [`receipt_carries_split_certificate`](crate::receipt_carries_split_certificate).
+    pub fn split_loot_certified(&mut self, shares: &[u64], certificate: [u8; 32]) -> ActOutcome {
+        self.commit_split(shares, Some(certificate))
+    }
+
+    fn commit_split(&mut self, shares: &[u64], certificate: Option<[u8; 32]>) -> ActOutcome {
         assert_eq!(
             shares.len(),
             self.seats.len(),
             "the loot split names one share per seat"
         );
         let loot = self.layout.loot;
-        let effects: Vec<Effect> = shares
+        let mut effects: Vec<Effect> = shares
             .iter()
             .enumerate()
             .map(|(i, &s)| set_field(loot, i, field_from_u64(s)))
             .collect();
+        if let Some(certificate) = certificate {
+            effects.push(Effect::EmitEvent {
+                cell: loot,
+                event: Event::new(symbol(LOOT_SPLIT_TOPIC), vec![certificate]),
+            });
+        }
         let turn = self.world.turn(self.layout.party, effects);
         commit_to_outcome(self.world.commit_turn(turn))
     }
