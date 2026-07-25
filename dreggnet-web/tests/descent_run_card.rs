@@ -25,6 +25,8 @@
 //! play controller's own `const GLYPH_* = "…"` declarations and requires the card's legend to carry
 //! every one of them.
 
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -36,7 +38,7 @@ use dreggnet_offerings::native_descent_wire::PortableRecord;
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dreggnet_web::descent_play::descent_play_router;
 use dreggnet_web::{DescentState, descent_router};
-use dungeon_on_dregg::descent::{BREATH, FLOORS};
+use dungeon_on_dregg::descent::{BANKED, BREATH, FLOORS, RELICS, Sim};
 use procgen_dregg::{CommittedSeed, daily_seed};
 use tower::ServiceExt;
 
@@ -103,113 +105,193 @@ fn land(
     }
 }
 
-/// **Drive a real crown-seeking run, planned against the executor's OWN legality list.**
+/// **Ask the GAME for a legal crown line, then drive it through the real executor.**
 ///
-/// The fixture used to be a literal tape (`delve, smite, loot 1, unlock 2, …`). That was a
-/// hostage to the rules: the night `harm`/`lunge` landed and re-emitted the day family, a floor
-/// needed a second blow, and every assertion in this file died on `loot(1) refused: the guardian
-/// still stands` — a fixture failure wearing a product failure's clothes.
+/// This fixture has now been broken twice in one night by rule changes it had no business
+/// knowing about — first a literal tape died when `harm`/`lunge` re-emitted the day family and a
+/// floor needed a second blow, then a hand-written greedy line died on
+/// `flee refused: the light dies` once `ascend` made you pay for the climb home. Both were
+/// fixture failures wearing a product failure's clothes.
 ///
-/// So the line is PLANNED, never spelled: each step reads `Offering::actions` (the
-/// executor-backed `enabled` verdict, the same list the browser's board lights up from) and takes
-/// the highest-priority move that is actually legal right now. The strategy is the crown line —
-/// take the prize, take the way-keys, put the guardian down, open the way, go deeper — and
-/// deliberately never loots a treasure, because carrying rights attenuate with depth and a greedy
-/// pack cannot reach floor 4.
+/// So the line is no longer authored at all. This is a shortest-`spent` search over the MOVER's
+/// own transitions ([`Sim::delve`], [`smite`](Sim::smite), [`lunge`](Sim::lunge),
+/// [`loot`](Sim::loot), [`unlock`](Sim::unlock), [`ascend`](Sim::ascend), [`flee`](Sim::flee)) —
+/// every edge is a verb the game itself said was legal, so the plan cannot contain an illegal
+/// move, and the search finds a crown line whenever one exists at all. The margin is genuinely
+/// thin (a crown-and-bank costs 24–30 of the 30 breath depending on the drawn map), which is
+/// exactly why guessing one by hand does not work.
 ///
-/// It therefore survives a re-drawn map, a changed guardian vitality, and a new verb. What it
-/// cannot do is manufacture an illegal run: every move goes through the real executor, and the
-/// caller asserts the outcome it wanted actually happened.
-fn drive_crown_line(
+/// It is still not self-fulfilling: the planned verbs are then driven through the REAL
+/// executor-backed Offering, and the caller asserts the outcome it wanted actually happened.
+fn plan_line(start: &Sim, goal: impl Fn(&Sim) -> bool) -> Vec<(&'static str, i64)> {
+    fn successors(sim: &Sim) -> Vec<((&'static str, i64), Sim)> {
+        let mut out: Vec<((&'static str, i64), Sim)> = Vec::new();
+        // Cheap moves first so the search reaches a settlement quickly; correctness does not
+        // depend on the order, only the speed does.
+        for relic in 0..RELICS {
+            if let Ok(next) = sim.loot(relic) {
+                out.push((("loot", relic as i64), next));
+            }
+        }
+        for way in 2..=FLOORS {
+            if let Ok(next) = sim.unlock(way) {
+                out.push((("unlock", way as i64), next));
+            }
+        }
+        if let Ok(next) = sim.lunge() {
+            out.push((("lunge", 0), next));
+        }
+        if let Ok(next) = sim.smite() {
+            out.push((("smite", 0), next));
+        }
+        if let Ok(next) = sim.delve() {
+            out.push((("delve", 0), next));
+        }
+        if let Ok(next) = sim.ascend() {
+            out.push((("ascend", 0), next));
+        }
+        if let Ok(next) = sim.flee() {
+            out.push((("flee", 0), next));
+        }
+        out
+    }
+    type Key = (u64, u64, u64, u64, u64, [u64; 3], [u64; RELICS]);
+    fn key(sim: &Sim) -> Key {
+        (
+            sim.depth,
+            sim.spent,
+            sim.wounds,
+            sim.harm,
+            sim.fate,
+            sim.ways,
+            sim.custody,
+        )
+    }
+    // Dijkstra on `spent`. `spent` is in the key, so a plain visited-set is sound.
+    let mut seen: BTreeSet<Key> = BTreeSet::new();
+    let mut frontier: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
+    // (sim, the move that reached it, the index of its parent)
+    let mut nodes: Vec<(Sim, Option<(&'static str, i64)>, usize)> = vec![(start.clone(), None, 0)];
+    seen.insert(key(start));
+    frontier.push(Reverse((start.spent, 0)));
+
+    while let Some(Reverse((_, index))) = frontier.pop() {
+        if goal(&nodes[index].0) {
+            // Walk the parent chain back to the root.
+            let mut line = Vec::new();
+            let mut at = index;
+            while let Some(step) = nodes[at].1 {
+                line.push(step);
+                at = nodes[at].2;
+            }
+            line.reverse();
+            return line;
+        }
+        for (step, next) in successors(&nodes[index].0) {
+            if seen.insert(key(&next)) {
+                let spent = next.spent;
+                nodes.push((next, Some(step), index));
+                frontier.push(Reverse((spent, nodes.len() - 1)));
+            }
+        }
+    }
+    panic!(
+        "no line reaching the goal exists on this day within {BREATH} breath — that is a GAME \
+         balance claim failing, not a fixture one"
+    );
+}
+
+/// A crown-and-bank line: the flagship's promise, and it is TIGHT — 24–30 of the 30 breath
+/// depending on the drawn map, which is why it cannot be written by hand.
+fn plan_crown_line(start: &Sim) -> Vec<(&'static str, i64)> {
+    plan_line(start, |sim| sim.fate != 0 && sim.custody[0] == BANKED)
+}
+
+/// **A line that spends the last of the light with the pack still full.** Every verb costs at
+/// least one breath, so a run at `spent == BREATH` can never move again: those relics are frozen
+/// where they are and will never be anyone's. This is the game's strongest beat, and the card
+/// exists to make it legible — so the fixture has to be able to produce one.
+fn plan_doomed_line(start: &Sim) -> Vec<(&'static str, i64)> {
+    plan_line(start, |sim| {
+        sim.fate == 0 && sim.spent == BREATH && sim.pack() > 0
+    })
+}
+
+/// The dungeon the run is actually being played in, taken from the executor's own post-state
+/// rather than re-derived from the seed. The plan is therefore searched over the SAME drawn map
+/// the run is in; a mis-derived world could otherwise yield a plan the executor refuses.
+fn current_sim(session: &NativeDescentSession) -> Sim {
+    session
+        .export_record()
+        .events
+        .last()
+        .map(|event| event.post.clone())
+        .expect("a move has landed, so the record carries a post-state")
+}
+
+/// Drive a planned line through the REAL offering.
+fn drive(
     offering: &NativeDescentOffering,
     session: &mut NativeDescentSession,
     actor: &str,
+    line: &[(&'static str, i64)],
 ) {
-    // The crown, then the three way-keys. Never relics 4–7: a pack of treasure cannot descend.
-    let wanted: [i64; 4] = [0, 1, 2, 3];
-    for _ in 0..64 {
-        let actions = offering.actions(session);
-        let can = |turn: &str, arg: i64| {
-            actions
-                .iter()
-                .any(|a| a.turn == turn && a.arg == arg && a.enabled)
-        };
-
-        // 1. The prize and the keys, the moment the floor's hoard opens.
-        if let Some(&relic) = wanted.iter().find(|&&relic| can("loot", relic)) {
-            land(offering, session, actor, "loot", relic);
-            continue;
-        }
-        // 2. The guardian stands between us and the hoard. `smite` only — `lunge` is the cheap
-        //    blow that costs a carry slot, and this line needs all four.
-        if can("smite", 0) {
-            land(offering, session, actor, "smite", 0);
-            continue;
-        }
-        // 3. Exercise a carried key, then step through.
-        if let Some(way) = (2..=FLOORS as i64).find(|&way| can("unlock", way)) {
-            land(offering, session, actor, "unlock", way);
-            continue;
-        }
-        if can("delve", 0) {
-            land(offering, session, actor, "delve", 0);
-            continue;
-        }
-        // 4. ⚑ THE CLIMB HOME. `flee` is illegal below the surface, so once the bottom is
-        //    cleared the line pays one light per floor to get back out.
-        if can("ascend", 0) {
-            land(offering, session, actor, "ascend", 0);
-            continue;
-        }
-        break;
+    for (turn, arg) in line {
+        land(offering, session, actor, turn, *arg);
     }
 }
 
-/// A settled crown run: the planned line, then the proved exit that banks the pack.
-fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
+/// Open a session and take the one move that is forced at the mouth (`delve` — at depth 0 only
+/// `delve` and a nothing-banked `flee` are legal), which also reveals the day's drawn dungeon.
+fn opened(seed: &CommittedSeed, actor: &str) -> (NativeDescentOffering, NativeDescentSession) {
     let offering = NativeDescentOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
         .expect("the native day opens");
-    // `drive_crown_line` already pays the climb home — `flee` is illegal below the surface.
-    drive_crown_line(&offering, &mut session, actor);
-    land(&offering, &mut session, actor, "flee", 0);
+    land(&offering, &mut session, actor, "delve", 0);
+    (offering, session)
+}
+
+/// A settled crown run: the searched line, ending in the proved exit that banks the pack.
+fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
+    let (offering, mut session) = opened(seed, actor);
+    let line = plan_crown_line(&current_sim(&session));
+    drive(&offering, &mut session, actor, &line);
     let record = session.export_record();
     assert!(
         record
             .completion
             .as_ref()
             .is_some_and(|completion| completion.crowned),
-        "the planned line must actually crown, or every assertion below is about a run that did \
+        "the searched line must actually crown, or every assertion below is about a run that did \
          not happen"
     );
     record
 }
 
-/// The SAME line, abandoned one move from the exit: the pack is full and NOTHING is banked. This
-/// is the common loss — far more reachable than a dead light — and the card must not dress it as
-/// a haul.
-fn abandoned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
-    let offering = NativeDescentOffering::new();
-    let mut session = offering
-        .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
-        .expect("the native day opens");
-    drive_crown_line(&offering, &mut session, actor);
+/// **A run whose light died with relics still on it.** Not a settlement — it never reached one —
+/// but terminal in fact, and the loss the whole card is built around.
+fn doomed_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
+    let (offering, mut session) = opened(seed, actor);
+    let line = plan_doomed_line(&current_sim(&session));
+    drive(&offering, &mut session, actor, &line);
     let record = session.export_record();
     assert!(
         record.completion.is_none(),
-        "an abandoned run has not settled"
+        "a doomed run never reached a proved exit"
     );
-    let carrying = record
+    let post = record
         .events
         .last()
-        .map(|event| event.post.pack())
-        .unwrap_or(0);
+        .map(|event| event.post.clone())
+        .expect("the doomed line landed moves");
+    assert_eq!(post.spent, BREATH, "the light is spent to the last breath");
     assert!(
-        carrying > 0,
-        "the abandoned fixture must actually be CARRYING something, or the loss it is meant to \
-         show is not on the card"
+        post.pack() > 0,
+        "the doomed fixture must actually be CARRYING something when the light dies, or the loss \
+         it is meant to show is not on the card"
     );
+    assert_eq!(post.bank(), 0, "nothing was ever banked");
     record
 }
 
@@ -286,7 +368,7 @@ async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
         "the depth is shown against the game's FLOORS ({FLOORS}): {card}"
     );
     assert!(
-        card.contains("light left") && card.contains("depth reached"),
+        card.contains("light left") && card.contains("deepest floor"),
         "the stats are labelled in the player's language: {card}"
     );
 
@@ -305,43 +387,100 @@ async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
     );
 }
 
-/// **The loss is legible.** A run abandoned one move from the exit banked NOTHING; its relics are
-/// still in the pack. The card must not dress that as a haul: the cells paint `at-risk`, the words
-/// say nothing is theirs, and no cell paints `banked`.
+/// **THE LOSS IS LEGIBLE — and it is the reason the card exists.**
 ///
-/// NON-VACUOUS: the crowned run above, with the SAME relics in the SAME columns, paints `banked`
-/// and never paints `at-risk` — the difference is one `flee`.
+/// A run whose light died with relics still in the pack banked NOTHING. Those relics were held,
+/// carried down four floors, and never became anyone's. The card must not report that as
+/// `Banked relics: 0`: the pack row paints in rust with a diagonal strike through every relic, the
+/// vault row is visibly empty beside it, and the words name what was lost.
+///
+/// NON-VACUOUS on both sides: the crowned run, with the SAME relics in the SAME columns, paints
+/// them solid violet and never paints a lost cell — the difference between the two cards is one
+/// proved exit.
 #[tokio::test]
-async fn an_unbanked_pack_never_looks_like_a_haul() {
+async fn a_run_whose_light_died_paints_its_loss_and_never_a_haul() {
     let (app, seed) = board();
-    let abandoned = card_for(&app, &abandoned_record(&seed, "web:abandoned")).await;
+    let doomed = card_for(&app, &doomed_record(&seed, "web:doomed")).await;
     let crowned = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
 
     assert!(
-        abandoned.contains("rc-cell tag-relic at-risk"),
-        "the carried relics are outlined, not filled: {abandoned}"
+        doomed.contains("rc-cell tag-peril lost"),
+        "the relics in the pack are struck through in rust: {doomed}"
     );
     assert!(
-        !abandoned.contains("rc-cell tag-vault banked"),
-        "an unfinished run has banked NOTHING and no cell may say otherwise: {abandoned}"
+        !doomed.contains("rc-cell tag-vault banked"),
+        "a run that never made a proved exit banked NOTHING and no cell may say otherwise: {doomed}"
     );
     assert!(
-        abandoned.contains("still riding in the pack")
-            && abandoned.contains("none of it is theirs"),
-        "the risk is said in words, for the thumbnail and the screen reader: {abandoned}"
+        doomed.contains("died in the dark") && doomed.contains("no light left to buy one"),
+        "the loss is said in words too, for the thumbnail and the screen reader: {doomed}"
     );
     assert!(
-        abandoned.contains("DELVING"),
-        "the unfinished run is stamped unfinished: {abandoned}"
+        doomed.contains("THE LIGHT IS DEAD"),
+        "the verdict is stamped in the game's own words: {doomed}"
     );
     assert!(
-        !abandoned.contains("CROWNED"),
-        "an abandoned run is not dressed as a crowned one: {abandoned}"
+        doomed.contains("relics LOST"),
+        "the stat the card leads with is a body count, not a haul: {doomed}"
+    );
+    assert!(
+        !doomed.contains("CROWNED"),
+        "a dead run is not dressed as a crowned one: {doomed}"
     );
 
-    // The differential: same columns, one `flee` apart.
+    // THE DIFFERENTIAL: same game, same columns, one proved exit apart.
     assert!(crowned.contains("rc-cell tag-vault banked"));
-    assert!(!crowned.contains("rc-cell tag-relic at-risk"));
+    assert!(!crowned.contains("rc-cell tag-peril lost"));
+    assert!(!crowned.contains("died in the dark"));
+}
+
+/// **A run that is merely UNFINISHED is not a shareable artifact.** The endpoint keeps terminal
+/// runs — a proved exit, or a light that has run out — and refuses a prefix, so nobody can post a
+/// card about a run that has not happened yet. (This is the boundary that makes the dead-light
+/// card above possible at all: it used to demand a `flee`, which the strongest story in the game
+/// never gets to make.)
+#[tokio::test]
+async fn an_unfinished_prefix_is_refused_while_a_dead_light_is_kept() {
+    let (app, seed) = board();
+
+    // One legal move in: light left, nothing settled. Not a story.
+    let (offering, mut session) = opened(&seed, "web:midrun");
+    let prefix = session.export_record();
+    let wire = serde_json::to_value(PortableRecord::from_record(&prefix)).expect("encodes");
+    let (status, refused) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": DAY, "record": wire }),
+    )
+    .await;
+    assert_eq!(refused["verified"], false, "{refused}");
+    assert!(
+        refused["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("exact prefix")),
+        "a prefix is refused BY NAME: {refused} (status {status})"
+    );
+
+    // Drive that same session until the light is gone: now it is terminal, and it is kept.
+    let line = plan_doomed_line(&current_sim(&session));
+    drive(&offering, &mut session, "web:midrun", &line);
+    let doomed = session.export_record();
+    assert!(doomed.completion.is_none(), "still no settlement");
+    let wire = serde_json::to_value(PortableRecord::from_record(&doomed)).expect("encodes");
+    let (_, accepted) = post(
+        &app,
+        "/descent/native/submit",
+        serde_json::json!({ "day": DAY, "record": wire }),
+    )
+    .await;
+    assert_eq!(
+        accepted["verified"], true,
+        "a run whose light died is FINISHED, and finished runs are shareable: {accepted}"
+    );
+    assert_eq!(
+        accepted["ranked"], false,
+        "it is shareable, not rankable — only a crowned settlement ranks: {accepted}"
+    );
 }
 
 /// **The link unfurls.** A page whose whole job is to be posted is judged by its preview, and meta
@@ -370,12 +509,32 @@ async fn the_share_link_carries_the_runs_story_into_a_social_preview() {
         "the preview TITLE leads with what happened: {head}"
     );
     assert!(
-        head.contains("The Crown of the Deep came out of floor"),
+        head.contains("Carried the Crown of the Deep up from floor"),
         "the preview DESCRIPTION tells the story, not the schema: {head}"
     );
     assert!(
         head.contains("Re-verified by re-execution"),
         "the preview says the thing that makes the story worth believing: {head}"
+    );
+}
+
+/// **The loss unfurls too.** The card a stranger is most likely to be moved by is the one where it
+/// went wrong, so its preview must carry the loss rather than a neutral schema line.
+#[tokio::test]
+async fn a_lost_runs_preview_leads_with_the_loss() {
+    let (app, seed) = board();
+    let card = card_for(&app, &doomed_record(&seed, "web:doomed")).await;
+    let head = card
+        .split("</head>")
+        .next()
+        .expect("the document has a head");
+    assert!(
+        head.contains("THE LIGHT IS DEAD"),
+        "the preview title is the verdict: {head}"
+    );
+    assert!(
+        head.contains("The light burned out on floor") && head.contains("never banked"),
+        "the preview description is the loss, in the game's words: {head}"
     );
 }
 
@@ -396,8 +555,8 @@ async fn the_card_can_be_pasted_into_a_chat_as_the_same_board() {
     // something without a manual.
     assert!(pre.contains("floor 1"), "{pre}");
     assert!(
-        pre.contains("the run ended here"),
-        "the text board says where it ended: {pre}"
+        pre.contains("deepest reached"),
+        "the text board says how far down it got: {pre}"
     );
     assert!(
         pre.contains("banked —"),

@@ -70,7 +70,7 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 use webauth_core::identity_resolve::RootResolver;
 
-use crate::descent_card::{CARD_STYLE, RunStory};
+use crate::descent_card::{CARD_STYLE, Ending, RunStory};
 use crate::descent_store::{DescentRunStore, StoredDay, StoredNativeRun, StoredRun};
 use crate::{document, document_with_head, esc};
 
@@ -246,6 +246,22 @@ impl VerifiedNativeRun {
         self.completion
             .as_ref()
             .map_or(0, |c| c.banked_relics.len())
+    }
+
+    /// **Is this run OVER?** A share link is an artifact of a FINISHED run, and there are exactly
+    /// two ways for a descent to finish: a proved exit (`flee`, which banks the pack), or the light
+    /// running out — every verb costs at least one light, so a run that cannot pay one can never
+    /// move again. The second is terminal in fact even though it carries no settlement, and it is
+    /// the game's strongest story: the relics frozen in that pack never became anyone's.
+    ///
+    /// Requiring a `completion` alone made that story UNSHAREABLE — the one card a stranger would
+    /// most want to see could not be posted, because the run it describes never got to `flee`.
+    /// A mere prefix (light left, no settlement) is still refused: nothing has happened yet.
+    fn is_terminal(&self) -> bool {
+        self.completion.is_some()
+            || self
+                .story()
+                .is_some_and(|story| story.ending() == Ending::LightDied)
     }
 
     /// The run's whole story, ready to paint. `None` when the tape is empty.
@@ -463,9 +479,11 @@ impl DescentState {
             )
         };
         let verified = verify_native_record(expected_seed, &record)?;
-        if verified.completion.is_none() {
+        if !verified.is_terminal() {
             return Err(
-                "native record is an exact prefix but has no terminal flee settlement".to_string(),
+                "native record is an exact prefix: it neither settled on a proved exit nor ran \
+                 out of light, so there is no finished run to share yet"
+                    .to_string(),
             );
         }
         let run_id = derive_native_run_id(day_key, &record);
