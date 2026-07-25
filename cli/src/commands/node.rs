@@ -127,7 +127,7 @@ async fn status(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error::E
     let mode = data["federation_mode"].as_str().unwrap_or("unknown");
     let state_producer = data["state_producer"].as_str().unwrap_or("rust");
     let full_proving = data["full_turn_proving"].as_bool().unwrap_or(false);
-    let covered = data["producer_covered_effects"].as_u64().unwrap_or(0);
+    let covered = data["producer_root_agreeing_effects"].as_u64().unwrap_or(0);
 
     let health_indicator = if healthy {
         console::style("HEALTHY").green().bold().to_string()
@@ -185,11 +185,11 @@ async fn producer(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error:
     let lean = data["lean_producer_enabled"].as_bool().unwrap_or(false);
     let proving = data["full_turn_proving"].as_bool().unwrap_or(false);
     let total = data["total_effect_kinds"].as_u64().unwrap_or(0);
-    let covered = data["covered_effects"]
+    let covered = data["mappable_effects"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let uncovered = data["uncovered_effects"]
+    let uncovered = data["unmappable_effects"]
         .as_array()
         .cloned()
         .unwrap_or_default();

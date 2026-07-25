@@ -310,14 +310,14 @@ fn seed_one_cell(
     let owner_cclerk = AgentCipherclerk::from_key_bytes(Zeroizing::new(owner_key));
     let app_cclerk = AppCipherclerk::new(owner_cclerk, federation_id);
 
-    // The issuer is the owner agent's genesis-materialized cell. `materialize_
-    // genesis_cells` inserts `Cell::with_balance(pubkey, [0u8;32], _)` (the
-    // default `[0u8;32]` token domain), NOT the `blake3("default")` token the
-    // `AppCipherclerk::cell_id()` accessor derives. Issuing from the wrong id
-    // is why every starbridge cell historically seeded as "owner cell not
-    // present" — derive the issuer the same way genesis does so the seed turn
-    // actually finds (and is authorized by) the funded owner cell.
-    let issuer_cell = CellId::derive_raw(&owner_pubkey, &[0u8; 32]);
+    // The issuer is the owner agent's genesis-materialized cell, derived in the
+    // canonical default asset — the SAME id `AppCipherclerk::cell_id()` derives
+    // and the same one `materialize_genesis_cells` now inserts. (Genesis used to
+    // mint in the all-zero domain while the clerk accessor derived
+    // `blake3("default")`; that split is why every starbridge cell historically
+    // seeded as "owner cell not present", and it is also what made every genesis
+    // cell unable to sign a turn. One asset now.)
+    let issuer_cell = CellId::derive_raw(&owner_pubkey, &crate::executor_setup::default_token_id());
 
     if ledger.get(&issuer_cell).is_none() {
         if devnet_fallback {
@@ -330,7 +330,11 @@ fn seed_one_cell(
             // value stays conserved). Only a pre-epoch data dir without the
             // well falls back to the legacy ex-nihilo credit.
             const BACKFILL_FUNDING: u64 = 50_000;
-            let issuer = dregg_cell::Cell::with_balance(owner_pubkey, [0u8; 32], 0);
+            let issuer = dregg_cell::Cell::with_balance(
+                owner_pubkey,
+                crate::executor_setup::default_token_id(),
+                0,
+            );
             let _ = ledger.insert_cell(issuer);
             let well_id = crate::genesis::devnet_issuer_well_id();
             let well_debited = ledger

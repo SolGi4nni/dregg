@@ -4379,12 +4379,23 @@ pub(crate) fn cadence_decision(
     ack_pending: bool,
     idle_for: Duration,
     idle_heartbeat_ms: u64,
+    lace_is_empty: bool,
 ) -> CadenceAction {
     if queued_turns > 0 {
         CadenceAction::DrainTurns
     } else if ack_pending {
         CadenceAction::ReactiveAck
-    } else if idle_heartbeat_ms > 0 && idle_for >= Duration::from_millis(idle_heartbeat_ms) {
+    } else if idle_heartbeat_ms > 0
+        && (lace_is_empty || idle_for >= Duration::from_millis(idle_heartbeat_ms))
+    {
+        // BOOT ANCHOR (`lace_is_empty`): a node that has never produced a block
+        // has an EMPTY DAG — nothing for a peer to sync to, no finality anchor,
+        // and `/status.healthy` (which requires `block_count > 0`) false. The
+        // idle timer starts at boot, so with the default 120s window a correct,
+        // freshly started node reported UNHEALTHY for two minutes and served an
+        // empty `/api/blocks` the whole time. "No block yet" is precisely the
+        // condition the idle heartbeat exists for, so do not wait out a window
+        // to establish the first one.
         CadenceAction::IdleHeartbeat
     } else {
         CadenceAction::Nothing
@@ -4821,8 +4832,15 @@ async fn cadence_tick_solo(state: &NodeState, handle: &BlocklaceHandle, idle_hea
         .ack_pending
         .load(std::sync::atomic::Ordering::Relaxed);
     let idle_for = handle.last_produced.read().await.elapsed();
+    let lace_is_empty = handle.block_count().await == 0;
 
-    match cadence_decision(queued.len(), ack_pending, idle_for, idle_heartbeat_ms) {
+    match cadence_decision(
+        queued.len(),
+        ack_pending,
+        idle_for,
+        idle_heartbeat_ms,
+        lace_is_empty,
+    ) {
         CadenceAction::DrainTurns => {
             let n = queued.len();
             for signed in queued {
@@ -7871,7 +7889,8 @@ async fn execute_finalized_turn(
                         },
                     ) => {
                         // KNOWN LIMITATION (not a soundness failure): the canonical
-                        // nullifier set outgrew the openable heap tree (65534 entries).
+                        // nullifier set outgrew the openable heap tree
+                        // (`MAX_REVOCATION_TREE_ENTRIES`, 65535 entries).
                         // We do not silently truncate the set (that could hide a
                         // double-spend), so the spend turn carries no freshness-bound
                         // proof.
@@ -9289,6 +9308,7 @@ mod tests {
                 false,
                 Duration::from_millis(idle_for_ms),
                 idle_heartbeat_ms,
+                false,
             ) {
                 CadenceAction::IdleHeartbeat => {
                     blocks_produced += 1;
@@ -9316,17 +9336,17 @@ mod tests {
     fn queued_turns_drain_on_next_tick() {
         // Fresh mutation, nothing else pending.
         assert_eq!(
-            cadence_decision(3, false, Duration::from_millis(0), 120_000),
+            cadence_decision(3, false, Duration::from_millis(0), 120_000, false),
             CadenceAction::DrainTurns
         );
         // Turns win even when an ack is owed and the idle window expired.
         assert_eq!(
-            cadence_decision(1, true, Duration::from_secs(3_600), 120_000),
+            cadence_decision(1, true, Duration::from_secs(3_600), 120_000, false),
             CadenceAction::DrainTurns
         );
         // Turns drain even when the idle heartbeat is disabled.
         assert_eq!(
-            cadence_decision(1, false, Duration::from_millis(0), 0),
+            cadence_decision(1, false, Duration::from_millis(0), 0, false),
             CadenceAction::DrainTurns
         );
     }
@@ -9336,14 +9356,46 @@ mod tests {
     #[test]
     fn received_peer_blocks_get_prompt_reactive_ack() {
         assert_eq!(
-            cadence_decision(0, true, Duration::from_millis(0), 120_000),
+            cadence_decision(0, true, Duration::from_millis(0), 120_000, false),
             CadenceAction::ReactiveAck
         );
         // Reactive ack also fires when idle heartbeats are disabled —
         // attestation is mutation-driven, not heartbeat-driven.
         assert_eq!(
-            cadence_decision(0, true, Duration::from_millis(0), 0),
+            cadence_decision(0, true, Duration::from_millis(0), 0, false),
             CadenceAction::ReactiveAck
+        );
+    }
+
+    /// A node whose lace is EMPTY anchors it on the first tick instead of
+    /// waiting out a full idle window.
+    ///
+    /// The idle timer starts at boot, so with the default 120s heartbeat a
+    /// freshly started, perfectly correct node spent two minutes with an empty
+    /// DAG: `/status.healthy` false (it requires `block_count > 0`),
+    /// `/api/blocks` empty, and nothing for a peer to sync to. "Never produced a
+    /// block" is exactly the condition the heartbeat exists for.
+    #[test]
+    fn an_empty_lace_is_anchored_on_the_first_tick() {
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(0), 120_000, true),
+            CadenceAction::IdleHeartbeat,
+            "a node with no blocks must produce its anchor block immediately"
+        );
+        // Once anchored, the ordinary idle discipline applies again.
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(0), 120_000, false),
+            CadenceAction::Nothing
+        );
+        // A real mutation still wins over the anchor.
+        assert_eq!(
+            cadence_decision(2, false, Duration::from_millis(0), 120_000, true),
+            CadenceAction::DrainTurns
+        );
+        // And an operator who disabled heartbeats entirely still gets none.
+        assert_eq!(
+            cadence_decision(0, false, Duration::from_millis(0), 0, true),
+            CadenceAction::Nothing
         );
     }
 
@@ -9352,16 +9404,16 @@ mod tests {
     #[test]
     fn quiet_tick_produces_no_block() {
         assert_eq!(
-            cadence_decision(0, false, Duration::from_millis(2_000), 120_000),
+            cadence_decision(0, false, Duration::from_millis(2_000), 120_000, false),
             CadenceAction::Nothing
         );
         assert_eq!(
-            cadence_decision(0, false, Duration::from_millis(119_999), 120_000),
+            cadence_decision(0, false, Duration::from_millis(119_999), 120_000, false),
             CadenceAction::Nothing
         );
         // idle_heartbeat_ms == 0 disables the idle heartbeat entirely.
         assert_eq!(
-            cadence_decision(0, false, Duration::from_secs(86_400), 0),
+            cadence_decision(0, false, Duration::from_secs(86_400), 0, false),
             CadenceAction::Nothing
         );
     }
@@ -9372,11 +9424,11 @@ mod tests {
     #[test]
     fn idle_heartbeat_fires_at_window_expiry() {
         assert_eq!(
-            cadence_decision(0, false, Duration::from_millis(120_000), 120_000),
+            cadence_decision(0, false, Duration::from_millis(120_000), 120_000, false),
             CadenceAction::IdleHeartbeat
         );
         assert_eq!(
-            cadence_decision(0, false, Duration::from_millis(500_000), 120_000),
+            cadence_decision(0, false, Duration::from_millis(500_000), 120_000, false),
             CadenceAction::IdleHeartbeat
         );
     }
@@ -12035,10 +12087,15 @@ mod tests {
 
     /// `provision_transfer_destinations` is deterministic and idempotent: the
     /// stub it inserts is byte-identical regardless of node, and a second call
-    /// (or a destination that already exists) leaves the cell untouched.
+    /// (or a destination that already exists) leaves the cell untouched. The
+    /// stub is minted in the SOURCE's asset — a Transfer is a single-asset move,
+    /// so a landing site in any other asset refuses the very transfer it was
+    /// created for — and a transfer whose SOURCE is absent provisions nothing.
     #[test]
     fn provision_transfer_destinations_is_deterministic_and_idempotent() {
-        let sender = dregg_cell::CellId([1u8; 32]);
+        let sender_token = *blake3::hash(b"provisioning-asset").as_bytes();
+        let sender_cell = dregg_cell::Cell::with_balance([1u8; 32], sender_token, 1_000);
+        let sender = sender_cell.id();
         let dest = dregg_cell::CellId([0xEEu8; 32]);
         let mut forest = dregg_turn::CallForest::new();
         forest.add_root(
@@ -12047,13 +12104,30 @@ mod tests {
                 .build(),
         );
 
+        // A transfer whose SOURCE this node has never seen provisions NOTHING:
+        // the asset to land in is unknown and the transfer cannot execute anyway.
+        let mut absent_source = dregg_cell::Ledger::new();
+        provision_transfer_destinations(&mut absent_source, &forest);
+        assert!(
+            absent_source.get(&dest).is_none(),
+            "no source cell ⇒ no landing site invented"
+        );
+
         // Two independent nodes provision from the same forest → identical cell.
         let mut a = dregg_cell::Ledger::new();
         let mut b = dregg_cell::Ledger::new();
+        a.insert_cell(sender_cell.clone()).expect("seed source (a)");
+        b.insert_cell(sender_cell.clone()).expect("seed source (b)");
         provision_transfer_destinations(&mut a, &forest);
         provision_transfer_destinations(&mut b, &forest);
         let ca = a.get(&dest).expect("a provisioned").clone();
         let cb = b.get(&dest).expect("b provisioned").clone();
+        assert_eq!(
+            *ca.token_id(),
+            sender_token,
+            "the landing site must hold the asset being moved, or the executor refuses the \
+             transfer as cross-asset"
+        );
         assert_eq!(
             postcard::to_stdvec(&ca).unwrap(),
             postcard::to_stdvec(&cb).unwrap(),
@@ -12070,6 +12144,7 @@ mod tests {
         // A destination that already exists (e.g. a real canonical cell) is left
         // untouched — provisioning only fills genuine absences.
         let mut c = dregg_cell::Ledger::new();
+        c.insert_cell(sender_cell).expect("seed source (c)");
         let real = dregg_cell::Cell::with_balance([9u8; 32], [0u8; 32], 500);
         let real_id = real.id();
         c.insert_cell(real).expect("insert real");
@@ -14049,10 +14124,26 @@ pub(crate) fn provision_transfer_destinations(
     call_forest: &dregg_turn::CallForest,
 ) {
     for effect in call_forest.total_effects() {
-        if let dregg_turn::Effect::Transfer { to, .. } = effect
+        if let dregg_turn::Effect::Transfer { from, to, .. } = effect
             && ledger.get(to).is_none()
         {
-            let stub = dregg_cell::Cell::remote_stub_with_id_and_balance(*to, 0);
+            // THE STUB'S ASSET IS THE MOVED ASSET. A Transfer is a single-asset
+            // move: the executor refuses `from.token_id() != to.token_id()` as a
+            // cross-asset teleport. A landing site minted in the all-zero asset
+            // therefore REFUSED every transfer out of a cell in any other asset —
+            // which, once genesis and the faucet moved to the canonical
+            // `blake3("default")` domain, is every real grant. The source cell is
+            // part of the finalized ledger every node holds, so reading its asset
+            // here is as byte-deterministic as the constructor it feeds.
+            //
+            // No source cell → no provisioning: the transfer is going to fail with
+            // `cell not found` anyway, and inventing a landing site in a guessed
+            // asset would only change which error it fails with.
+            let Some(token_id) = ledger.get(from).map(|cell| *cell.token_id()) else {
+                continue;
+            };
+            let stub =
+                dregg_cell::Cell::remote_stub_with_id_pk_token_balance(*to, [0u8; 32], token_id, 0);
             let _ = ledger.insert_cell(stub);
         }
     }

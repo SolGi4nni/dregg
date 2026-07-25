@@ -79,9 +79,10 @@ curl -s http://localhost:8421/status
 ```
 
 ```json
-{"healthy":false,"peer_count":0,"latest_height":0,"dag_height":0,"block_count":0,
- "consensus_live":false,"federation_mode":"solo","state_producer":"lean",
- "lean_producer":true,"full_turn_proving":false,"producer_covered_effects":21}
+{"healthy":true,"peer_count":0,"latest_height":0,"dag_height":1,"block_count":1,
+ "consensus_live":true,"federation_mode":"solo","state_producer":"lean",
+ "lean_producer":true,"full_turn_proving":false,
+ "producer_root_agreeing_effects":18,"producer_covered_effects":18}
 ```
 
 `state_producer:"lean"` / `lean_producer:true` is the point: the node executes
@@ -92,12 +93,18 @@ is off
 by default — the per-turn STARK is on the hot path; pass `--prove-turns` to turn
 it on, which is what an audit-grade node runs.)
 
-`healthy:false` / `consensus_live:false` is **expected on a solo node** —
-`healthy` requires a finalized blocklace block (`consensus_live && block_count >
-0`), and a single node has no committee to finalize one. Turns still commit and
-witness on the verified path (you are about to watch one land); block finality
-and the federation-attested read surface arrive with the multi-node federation in
-§9.
+`healthy` is exactly three things: the store is readable, the consensus task is
+attached (`consensus_live`), and the local DAG holds at least one block. A solo
+node satisfies all three — it anchors its lace on the first cadence tick, so
+`healthy:true` within a second of boot. What stays `0` on a quiet solo node is
+`latest_height` (the ATTESTED-ROOT height), which advances on turn-bearing
+finality, not on heartbeats; `dag_height` is the honest "how tall is the chain".
+
+`producer_root_agreeing_effects` is the SWAP-SAFE count (the verified producer
+runs AND its root provably equals Rust's). `GET /api/node/producer` breaks out
+the wider MAPPABLE set (`mappable_effects`) — a bigger number about a weaker
+property. `producer_covered_effects` is a deprecated alias of the swap-safe
+count, kept while a shipped client still reads it.
 
 Faucet a cell. NOTE: a cell id is a commitment to a public key
 (`id == derive_raw(pubkey, token)`), so a bare *random* id is **unspendable** —
@@ -116,7 +123,10 @@ curl -s -X POST http://localhost:8421/api/faucet \
 {"success":true,"tx_hash":"5573392f…","amount":1000,"turn_hash":"64c6392a…"}
 ```
 
-Read the cell back:
+`success:true` means the grant was ADMITTED and handed to consensus, not that
+the balance has moved: the faucet turn is applied by FINALIZATION (the same
+`execute_finalized_turn` every node runs), which lands a moment later. Read the
+cell back — poll if you are quick:
 
 ```sh
 curl -s http://localhost:8421/api/cell/$CID
@@ -125,6 +135,11 @@ curl -s http://localhost:8421/api/cell/$CID
 ```json
 {"id":"…","found":true,"balance":1000,"nonce":0,…}
 ```
+
+`found` is the field that says whether the rest mean anything: `GET
+/api/cell/{id}` answers `200` with a zero-valued cell for an id the ledger does
+not hold, and `found:false` is the only thing distinguishing that from a real
+empty cell.
 
 ## 2. Get the CLI
 

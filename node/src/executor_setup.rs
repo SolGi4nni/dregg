@@ -398,13 +398,30 @@ pub fn configure_turn_executor(
     executor.set_block_height(height);
 }
 
+/// THE default asset (token domain) of this node's chain: `blake3("default")`.
+///
+/// This is the ONE domain that has to hold for a cell to be able to ACT: the
+/// single application-admission predicate
+/// (`signed_turn_validation::validate_signed_turn`) requires
+/// `turn.agent == CellId::derive_raw(signer, blake3("default"))`, and it runs at
+/// HTTP ingress, at finalized-block execution, and in the PostgreSQL drainer. A
+/// cell minted in any other domain is unspendable-by-its-owner: its owner's
+/// signature can never authorize a turn whose agent is that cell.
+///
+/// It is therefore also the asset genesis mints into (`genesis.rs`) and the one
+/// the faucet transfers (`api.rs`). Before 2026-07-25 those two used `[0u8; 32]`
+/// while the predicate used `blake3("default")` — a split asset namespace whose
+/// visible symptom was a faucet that answered `success: true` and moved nothing.
+pub fn default_token_id() -> [u8; 32] {
+    *blake3::hash(b"default").as_bytes()
+}
+
 /// The node's OWN agent cell — `derive_raw(cipherclerk pubkey, blake3("default"))`. This is the
 /// agent whose receipt chain the cipherclerk maintains authoritatively (the source of the
 /// host-fed `stored_head` for the boundary-P1 admission shadow). Mirrors the derivation in
 /// `api.rs` (the submit path), centralised so the blocklace-finalized path agrees.
 pub fn local_agent_cell(s: &NodeStateInner) -> dregg_cell::CellId {
-    let default_token_id = *blake3::hash(b"default").as_bytes();
-    dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &default_token_id)
+    dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &default_token_id())
 }
 
 /// THE one executor gate (#171): execute `turn` through the producer-aware path

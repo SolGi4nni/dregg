@@ -32,7 +32,7 @@ pub struct NodeStatus {
     pub state_producer: String,
     pub lean_producer: bool,
     pub full_turn_proving: bool,
-    pub producer_covered_effects: usize,
+    pub producer_root_agreeing_effects: usize,
 }
 
 /// `GET /api/cells` entry. Mirrors `api::CellListEntry`.

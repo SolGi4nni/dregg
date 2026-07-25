@@ -186,9 +186,9 @@ function renderPosture(status, producer) {
     ),
   );
 
-  const covered = Number(s.producer_covered_effects || 0);
-  const total = producer && Array.isArray(producer.covered_effects) && Array.isArray(producer.uncovered_effects)
-    ? producer.covered_effects.length + producer.uncovered_effects.length
+  const covered = Number(s.producer_root_agreeing_effects || 0);
+  const total = producer && Array.isArray(producer.mappable_effects) && Array.isArray(producer.unmappable_effects)
+    ? producer.mappable_effects.length + producer.unmappable_effects.length
     : null;
   out.push(
     factCard(

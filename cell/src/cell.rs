@@ -568,6 +568,31 @@ impl Cell {
     /// cap by pk: a zero-pk stub wouldn't match, so the bearer-cap proof
     /// would be rejected as if the delegator weren't present.
     pub fn remote_stub_with_id_pk_balance(id: CellId, public_key: [u8; 32], balance: i64) -> Self {
+        Self::remote_stub_with_id_pk_token_balance(id, public_key, [0u8; 32], balance)
+    }
+
+    /// Like [`Cell::remote_stub_with_id_pk_balance`] but also lets the caller
+    /// state the ASSET (`token_id`) the stub holds.
+    ///
+    /// # Why the asset matters on a stub
+    ///
+    /// A `Transfer` is a SINGLE-asset move: the executor refuses one whose
+    /// source and destination hold different `token_id`s (the kernel's
+    /// `recTransferBal` rewrites one asset column). A stub materialized as a
+    /// landing site for an incoming transfer therefore has to be minted in the
+    /// asset being moved, or the very transfer it exists for is refused as
+    /// cross-asset. The default `[0u8; 32]` is right only for a stub that is
+    /// standing in for a cell in the all-zero asset.
+    ///
+    /// Same soundness note as [`Cell::remote_stub_with_id`]: the stub breaks
+    /// `id == derive_raw(public_key, token_id)` (its pk is zeros), so it cannot
+    /// sign and `verify_id_integrity()` fails on it by design.
+    pub fn remote_stub_with_id_pk_token_balance(
+        id: CellId,
+        public_key: [u8; 32],
+        token_id: [u8; 32],
+        balance: i64,
+    ) -> Self {
         Cell {
             id,
             public_key,
@@ -577,7 +602,7 @@ impl Cell {
             verification_key: None,
             delegate: None,
             delegation: None,
-            token_id: [0u8; 32],
+            token_id,
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,
             mode: CellMode::Hosted,

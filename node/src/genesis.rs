@@ -66,6 +66,18 @@ struct GenesisCell {
     public_key: String,
     token_id: String,
     balance: i64,
+    /// Hex ML-DSA-65 public key of the cell's owner, when genesis holds the
+    /// owner's seed (it derives deterministically from it, exactly as
+    /// `AgentCipherclerk` derives the key it signs with).
+    ///
+    /// LOAD-BEARING, not decoration: `signed_turn_validation::validate_signed_turn`
+    /// runs with required-PQ ON at every admission boundary, and it anchors the
+    /// ML-DSA key a turn carries in the AGENT CELL's committed `pq_identity`. A
+    /// genesis cell materialized without one refuses every hybrid-signed turn it
+    /// is the agent of (`pq-identity-not-enrolled`) — so a genesis cell with no
+    /// ML-DSA commitment is a cell that cannot act, faucet included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ml_dsa_public_key: Option<String>,
 }
 
 /// A genesis ISSUER-MOVE (THE EPOCH §5, "genesis as issuer-moves"): value
@@ -285,7 +297,19 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // whole column sums to ZERO, so the deployed chain starts inside
     // guarantee B's hypotheses (`reachable_total_zero`). The FEE WELL starts
     // at zero and accumulates fee moves.
-    let default_token_id = [0u8; 32];
+    //
+    // THE ASSET: `blake3("default")`, the canonical default token domain (see
+    // `executor_setup::default_token_id`). This is NOT cosmetic — a cell's id
+    // commits to its asset, and the one application-admission predicate
+    // (`signed_turn_validation::validate_signed_turn`, run at HTTP ingress, at
+    // finalized-block execution, and in the PG drainer) requires a turn's agent
+    // to be `derive_raw(signer, blake3("default"))`. Genesis minted into the
+    // all-zero domain until 2026-07-25, which made EVERY genesis cell — the
+    // faucet included — unable to act: its owner's signature could not
+    // authorize a turn whose agent was that cell. The visible symptom was the
+    // faucet answering `success: true` while finalization threw the turn away
+    // as `agent-signer-mismatch`, so no recipient was ever credited.
+    let default_token_id = *blake3::hash(b"default").as_bytes();
 
     // The ISSUER WELL cell. Deterministic key so the runtime can locate it
     // (`register_issuer_well` for the default asset).
@@ -311,9 +335,17 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     let faucet_id = derive_cell_id(&faucet_pubkey, &default_token_id);
 
     // Recipients: faucet supply + demo agents. Every entry becomes one
-    // issuer-move well → recipient.
-    let mut recipients: Vec<(String, [u8; 32], u64)> =
-        vec![(faucet_id.clone(), faucet_pubkey, 1_000_000u64)];
+    // issuer-move well → recipient. Each carries the ML-DSA-65 public key
+    // derived from its own seed — the SAME derivation `AgentCipherclerk` uses to
+    // sign — so the materialized cell COMMITS the PQ identity its owner will
+    // authorize turns with. Without that commitment the hybrid admission
+    // predicate refuses every turn the cell is the agent of.
+    let mut recipients: Vec<(String, [u8; 32], Vec<u8>, u64)> = vec![(
+        faucet_id.clone(),
+        faucet_pubkey,
+        ml_dsa_public_key_for_seed(&faucet_secret),
+        1_000_000u64,
+    )];
     for (name, amount) in [
         ("alice", 50_000u64),
         ("bob", 25_000u64),
@@ -324,13 +356,18 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         let signing = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
         let pubkey = signing.verifying_key().to_bytes();
         write_key_file(output, &format!("agent-{name}.key"), &key_bytes);
-        recipients.push((derive_cell_id(&pubkey, &default_token_id), pubkey, amount));
+        recipients.push((
+            derive_cell_id(&pubkey, &default_token_id),
+            pubkey,
+            ml_dsa_public_key_for_seed(&key_bytes),
+            amount,
+        ));
     }
 
-    let total_issued: u64 = recipients.iter().map(|(_, _, amt)| amt).sum();
+    let total_issued: u64 = recipients.iter().map(|(_, _, _, amt)| amt).sum();
     let genesis_moves: Vec<GenesisMove> = recipients
         .iter()
-        .map(|(id, _, amount)| GenesisMove {
+        .map(|(id, _, _, amount)| GenesisMove {
             from: issuer_well_id.clone(),
             to: id.clone(),
             amount: *amount,
@@ -345,20 +382,23 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
             public_key: hex_encode(&issuer_well_pubkey),
             token_id: hex_encode(&default_token_id),
             balance: -(total_issued as i64),
+            ml_dsa_public_key: Some(hex_encode(&ml_dsa_public_key_for_seed(&issuer_well_secret))),
         },
         GenesisCell {
             id: fee_well_id.clone(),
             public_key: hex_encode(&fee_well_pubkey),
             token_id: hex_encode(&default_token_id),
             balance: 0,
+            ml_dsa_public_key: Some(hex_encode(&ml_dsa_public_key_for_seed(&fee_well_secret))),
         },
     ];
-    for (id, pubkey, amount) in &recipients {
+    for (id, pubkey, ml_dsa_pubkey, amount) in &recipients {
         initial_cells.push(GenesisCell {
             id: id.clone(),
             public_key: hex_encode(pubkey),
             token_id: hex_encode(&default_token_id),
             balance: *amount as i64,
+            ml_dsa_public_key: Some(hex_encode(ml_dsa_pubkey)),
         });
     }
     debug_assert_eq!(
@@ -529,15 +569,35 @@ fn node_env_content(
 }
 
 /// The deterministic devnet ISSUER WELL cell id — the same derivation
-/// [`run_genesis`] uses (key context `dregg-devnet-issuer-well-key-v1`,
-/// default `[0u8; 32]` token domain). Lets the runtime (faucet backfill,
+/// [`run_genesis`] uses (key context `dregg-devnet-issuer-well-key-v1`, the
+/// canonical default asset). Lets the runtime (faucet backfill,
 /// `starbridge_seed`) locate the well without re-reading genesis.json.
 pub fn devnet_issuer_well_id() -> dregg_cell::CellId {
     let secret = blake3::derive_key("dregg-devnet-issuer-well-key-v1", b"genesis");
     let pubkey = ed25519_dalek::SigningKey::from_bytes(&secret)
         .verifying_key()
         .to_bytes();
-    dregg_cell::Cell::with_balance(pubkey, [0u8; 32], 0).id()
+    dregg_cell::Cell::with_balance(pubkey, crate::executor_setup::default_token_id(), 0).id()
+}
+
+/// The deterministic devnet FAUCET cell id — the cell [`run_genesis`] mints the
+/// faucet supply into, and the cell `POST /api/faucet` spends from. Both sides
+/// derive it from the same key context in the same asset; `api.rs` pins them
+/// together in `genesis_faucet_cell_matches_the_endpoint_faucet_cell`.
+pub fn devnet_faucet_cell_id() -> dregg_cell::CellId {
+    let secret = blake3::derive_key("dregg-devnet-faucet-key-v1", b"genesis");
+    let pubkey = ed25519_dalek::SigningKey::from_bytes(&secret)
+        .verifying_key()
+        .to_bytes();
+    dregg_cell::Cell::with_balance(pubkey, crate::executor_setup::default_token_id(), 0).id()
+}
+
+/// The ML-DSA-65 public key an `AgentCipherclerk` built from `seed` signs with
+/// (`MlDsaTurnKey::from_ed25519_seed`, the same derivation
+/// `AgentCipherclerk::ml_dsa_key` uses). Genesis publishes it so the
+/// materialized cell commits the identity that will authorize its turns.
+fn ml_dsa_public_key_for_seed(seed: &[u8; 32]) -> Vec<u8> {
+    dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(seed).public_bytes()
 }
 
 /// Derive the canonical content-addressed `CellId` for a hosted cell, using the
@@ -649,6 +709,70 @@ mod tests {
         assert_eq!(starbridge[0]["label"], "nameservice-registry");
         assert_eq!(starbridge[0]["owner_agent"], "alice");
         assert_eq!(starbridge[0]["uri_hint"], "registry-default");
+    }
+
+    /// THE GENESIS→BOOT SEAM: what `dregg-node genesis` writes is what the
+    /// running node materializes, and the result is a faucet cell that can
+    /// actually ACT.
+    ///
+    /// Both halves failed silently before 2026-07-25: genesis minted every cell
+    /// in the all-zero asset (so `validate_signed_turn` — which requires
+    /// `agent == derive_raw(signer, blake3("default"))` — refused every turn
+    /// those cells were the agent of), and no cell committed a PQ identity (so
+    /// required-PQ admission refused them a second time). Neither refusal was
+    /// visible at the faucet's HTTP boundary; both landed at FINALIZATION, after
+    /// `success: true`.
+    #[test]
+    fn generated_genesis_materializes_a_faucet_cell_that_can_act() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        run_genesis(1, 1000, 100, tmp.path());
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(tmp.path().join("genesis.json")).expect("read"))
+                .expect("genesis.json parses");
+
+        let mut ledger = dregg_cell::Ledger::new();
+        let stats = crate::materialize_genesis_cells_for_test(&genesis, &mut ledger);
+        assert_eq!(stats, (6, 0), "6 genesis cells inserted, none invalid");
+
+        // Replay the issuer-moves the way boot does, then check the faucet.
+        let faucet_id = devnet_faucet_cell_id();
+        let faucet = ledger
+            .get(&faucet_id)
+            .expect("the faucet cell genesis mints must be the one `POST /api/faucet` spends from");
+        assert_eq!(
+            *faucet.token_id(),
+            crate::executor_setup::default_token_id(),
+            "the faucet must hold the canonical default asset"
+        );
+        assert_eq!(
+            faucet.id(),
+            dregg_cell::CellId::derive_raw(
+                faucet.public_key(),
+                &crate::executor_setup::default_token_id()
+            ),
+            "and its id must be the signer's default cell — the only shape a turn agent may take"
+        );
+        let identity = faucet
+            .pq_identity()
+            .expect("the faucet cell must COMMIT its ML-DSA identity or hybrid admission refuses");
+        let expected = dregg_cell::ml_dsa_public_key_commitment(&ml_dsa_public_key_for_seed(
+            &blake3::derive_key("dregg-devnet-faucet-key-v1", b"genesis"),
+        ))
+        .expect("canonical ML-DSA-65 key");
+        assert_eq!(
+            identity.ml_dsa_key_commitment, expected,
+            "the committed identity must be the key the faucet cipherclerk signs with"
+        );
+
+        // The issuer well is in the same asset, so its moves are single-column.
+        let well = ledger
+            .get(&devnet_issuer_well_id())
+            .expect("issuer well materializes");
+        assert_eq!(
+            well.token_id(),
+            faucet.token_id(),
+            "well and holders must share one asset column (guarantee B's genesis hypothesis)"
+        );
     }
 
     #[test]

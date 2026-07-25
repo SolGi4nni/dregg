@@ -753,7 +753,7 @@ impl UnifiedBootView {
                         .child(pill(&format!("h{}", st.latest_height), theme::accent()))
                         .child(pill(&format!("dag {}", st.dag_height), theme::muted()))
                         .child(pill(
-                            &format!("{} effects", st.producer_covered_effects),
+                            &format!("{} effects", st.producer_root_agreeing_effects),
                             theme::muted(),
                         )),
                 );

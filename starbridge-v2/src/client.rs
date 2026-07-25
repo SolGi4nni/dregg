@@ -469,7 +469,7 @@ pub mod mock {
             state_producer: "lean".into(),
             lean_producer: true,
             full_turn_proving: true,
-            producer_covered_effects: 51,
+            producer_root_agreeing_effects: 51,
         }
     }
 

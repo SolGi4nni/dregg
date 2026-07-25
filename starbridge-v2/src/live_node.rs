@@ -348,7 +348,10 @@ impl LiveReflection {
                 Field::text("state_producer", s.state_producer.clone()),
                 Field::boolean("lean_producer", s.lean_producer),
                 Field::boolean("full_turn_proving", s.full_turn_proving),
-                Field::count("covered_effects", s.producer_covered_effects as u64),
+                Field::count(
+                    "root_agreeing_effects",
+                    s.producer_root_agreeing_effects as u64,
+                ),
             ],
         }
     }

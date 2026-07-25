@@ -46,7 +46,9 @@ pub async fn run(
     })?;
     let producer = status["state_producer"].as_str().unwrap_or("rust");
     let proving = status["full_turn_proving"].as_bool().unwrap_or(false);
-    let covered = status["producer_covered_effects"].as_u64().unwrap_or(0);
+    let covered = status["producer_root_agreeing_effects"]
+        .as_u64()
+        .unwrap_or(0);
     ctx.kv(
         "Health",
         if status["healthy"].as_bool().unwrap_or(false) {

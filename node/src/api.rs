@@ -47,12 +47,19 @@ use crate::ws::handle_ws;
 
 #[derive(Serialize)]
 pub struct StatusResponse {
-    /// True when the node is up AND consensus is live (a blocklace handle is
-    /// present and the DAG has a tip / is producing blocks). This reflects
-    /// real liveness, NOT the attested-root height — so a healthy devnet that
-    /// is producing heartbeat blocks reports `healthy: true` even before the
-    /// first turn advances the attested root. See `dag_height` vs
+    /// True when EXACTLY these three hold: the store is readable, a blocklace
+    /// consensus handle is attached, and the local DAG holds at least one block
+    /// (`block_count > 0`). It reflects real liveness, NOT the attested-root
+    /// height — a devnet producing heartbeat blocks reports `healthy: true` well
+    /// before the first turn advances `latest_height`. See `dag_height` vs
     /// `latest_height` below.
+    ///
+    /// The one-block floor is why a node reports `false` for the first moments
+    /// after boot: until 2026-07-25 the idle-heartbeat timer started at boot, so
+    /// that window was a FULL heartbeat interval (default 120s) of `healthy:
+    /// false` on a correct node. The cadence now anchors an empty lace on its
+    /// first tick (`blocklace_sync::cadence_decision`), so the window is a tick,
+    /// not a window.
     pub healthy: bool,
     pub peer_count: usize,
     /// Attested-root / turn height: the height of the latest finalized
@@ -100,11 +107,25 @@ pub struct StatusResponse {
     /// committed turn on the commit path (the "every transition is proven"
     /// claim). When `false`, only activity proofs are produced on submission.
     pub full_turn_proving: bool,
-    /// Number of SWAP-SAFE (root-agreeing) effect KINDS for which the verified
-    /// producer INSTALLS its post-state. A turn touching only these effects is
-    /// produced by the verified Lean executor; a turn touching any root-gap or
-    /// unmappable effect falls back to Rust for that turn. See
-    /// `GET /api/node/producer` for the full per-effect breakdown.
+    /// Number of SWAP-SAFE (ROOT-AGREEING) effect KINDS: the verified producer
+    /// runs AND its reconstituted root provably equals the Rust executor's. A
+    /// turn touching only these is produced by the verified Lean executor; a turn
+    /// touching any root-gap or unmappable effect falls back to Rust for that
+    /// turn.
+    ///
+    /// NOT the same number as `GET /api/node/producer`'s MAPPABLE set (the
+    /// producer runs; root agreement not claimed). Both used to be spelled
+    /// "covered", which is how `/api/node/health` said 18 and
+    /// `/api/node/producer` said 21 about the same producer; the producer
+    /// endpoint's fields are now `mappable_effects` / `unmappable_effects` and
+    /// this one says root-agreeing. See `GET /api/node/producer` for the full
+    /// per-effect breakdown of both sets.
+    pub producer_root_agreeing_effects: usize,
+    /// DEPRECATED SPELLING of `producer_root_agreeing_effects` — the identical
+    /// number, kept on the wire because a shipped client still decodes this key
+    /// (`discord-bot`'s status/dashboard structs). New clients read
+    /// `producer_root_agreeing_effects`; this alias goes away once the last
+    /// reader moves.
     pub producer_covered_effects: usize,
 }
 
@@ -122,16 +143,20 @@ pub struct ProducerStatusResponse {
     pub lean_producer_enabled: bool,
     /// Whether a full-turn STARK proof is generated + verified per committed turn.
     pub full_turn_proving: bool,
-    /// Effect kinds the producer covers (a turn touching ONLY these runs on the
-    /// verified producer when enabled). Mirrors the marshaller's wire-projected set.
-    pub covered_effects: Vec<String>,
+    /// Effect kinds the producer can MAP (a turn touching ONLY these runs on the
+    /// verified producer when enabled). Mirrors the marshaller's wire-projected
+    /// set. Running is not root agreement — `root_agreeing_effects` below is the
+    /// swap-safe subset, and it is the number `/status` reports. This field was
+    /// called `covered_effects` while `/status` called the SWAP-SAFE count
+    /// "covered" too: one word, two numbers.
+    pub mappable_effects: Vec<String>,
     /// Total number of distinct on-chain effect kinds.
     pub total_effect_kinds: usize,
-    /// Effect kinds NOT yet covered — a turn touching any of these falls back to
-    /// the Rust producer for that turn. This is the honest "blocks the full
-    /// default" list.
-    pub uncovered_effects: Vec<String>,
-    /// The SWAP-SAFE subset of `covered_effects`: the producer runs AND its
+    /// Effect kinds the producer canNOT map — a turn touching any of these falls
+    /// back to the Rust producer for that turn. This is the honest "blocks the
+    /// full default" list. (Was `uncovered_effects`.)
+    pub unmappable_effects: Vec<String>,
+    /// The SWAP-SAFE subset of `mappable_effects`: the producer runs AND its
     /// reconstituted `.root()` provably EQUALS the Rust executor's (pinned by the
     /// `lean_state_producer_*` differentials). A turn touching ONLY these has ZERO
     /// post-state divergence when the verified producer runs.
@@ -1910,7 +1935,13 @@ pub fn router_with_cors(
         .route("/api/node/producer", get(get_producer_status))
         .route("/api/node/identity", get(get_node_identity))
         .route("/federation/roots", get(get_federation_roots))
-        .route("/api/blocks", get(get_federation_roots))
+        // The ATTESTED-ROOTS surface under its own honest name. `/api/blocks`
+        // used to point here too, so a client asking a node for its blocks got
+        // attested roots — and on a solo node whose `latest_height` never leaves
+        // 0, that is a permanent `[]` from an endpoint named "blocks" while
+        // `/api/blocklace/blocks` was full of them. A route name is a claim;
+        // `/api/blocks` now serves blocks (below) and this serves roots.
+        .route("/api/federation/roots", get(get_federation_roots))
         .route("/api/federations", get(get_federations))
         .route("/api/membership", get(get_membership))
         .route("/api/cells", {
@@ -2017,6 +2048,15 @@ pub fn router_with_cors(
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
         .route("/api/blocklace/checkpoint", get(get_blocklace_checkpoint))
         .route("/api/blocklace/blocks", {
+            let limiter = blocklace_blocks_limiter.clone();
+            get(move |connect_info, headers, page, state| {
+                get_blocklace_blocks(connect_info, headers, page, state, limiter.clone())
+            })
+        })
+        // `/api/blocks` — the same real blocks, under the name every client
+        // reads as "this node's blocks" (it served attested federation roots
+        // until 2026-07-25). Same handler, same per-IP cap, same paging.
+        .route("/api/blocks", {
             let limiter = blocklace_blocks_limiter.clone();
             get(move |connect_info, headers, page, state| {
                 get_blocklace_blocks(connect_info, headers, page, state, limiter.clone())
@@ -2377,7 +2417,7 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // The DEFAULT-ON producer INSTALLS verified state only for the swap-safe (root-agreeing) set;
     // report that, not the wider "merely mappable" surface, so the status is honest about what the
     // verified executor actually commits.
-    let producer_covered_effects =
+    let producer_root_agreeing_effects =
         dregg_exec_lean::lean_shadow::producer_root_agreeing_effects().len();
 
     Json(StatusResponse {
@@ -2394,7 +2434,8 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         state_producer,
         lean_producer,
         full_turn_proving,
-        producer_covered_effects,
+        producer_root_agreeing_effects,
+        producer_covered_effects: producer_root_agreeing_effects,
     })
 }
 
@@ -2462,9 +2503,9 @@ async fn get_producer_status(State(state): State<NodeState>) -> Json<ProducerSta
         state_producer,
         lean_producer_enabled,
         full_turn_proving,
-        covered_effects: covered,
+        mappable_effects: covered,
         total_effect_kinds,
-        uncovered_effects: uncovered,
+        unmappable_effects: uncovered,
         root_agreeing_effects: root_agreeing,
         root_gap_effects: root_gaps,
         summary,
@@ -7362,10 +7403,24 @@ async fn get_blocklace_checkpoint(
 // Faucet
 // =============================================================================
 
-/// Faucet cell token ID (all zeros — the genesis default token domain; see
-/// `node/src/genesis.rs::write_genesis` which mints the faucet supply under
-/// `default_token_id = [0u8; 32]`).
-const FAUCET_TOKEN_ID: [u8; 32] = [0x00; 32];
+/// The asset (token domain) the faucet cell holds: the CANONICAL default asset
+/// `blake3("default")`, the SAME domain `crate::signed_turn_validation` binds a
+/// turn's agent to (`agent == derive_raw(signer, blake3("default"))`), the SDK's
+/// `AgentCipherclerk::cell_id("default")` derives, and
+/// `blocklace_sync::provision_signer_actor_cell` materialises.
+///
+/// It was `[0u8; 32]` (matching the old `genesis.rs` "default token domain")
+/// until 2026-07-25, and that single mismatch is why the faucet reported
+/// success and moved nothing: the faucet turn's agent — derived under the
+/// all-zero domain — could NEVER equal `derive_raw(faucet_pk, blake3("default"))`,
+/// so the ONE application-admission predicate refused the turn at FINALIZATION
+/// (`agent-signer-mismatch`), which is the only durable application. Submission
+/// (which is staging only, rolled back) had already answered `success: true`.
+/// A cell minted in the all-zero domain can never act; the faucet must live in
+/// the domain a turn agent is required to live in.
+pub(crate) fn faucet_token_id() -> [u8; 32] {
+    crate::executor_setup::default_token_id()
+}
 
 /// The faucet's deterministic Ed25519 signing key.
 ///
@@ -7375,13 +7430,13 @@ const FAUCET_TOKEN_ID: [u8; 32] = [0x00; 32];
 /// REAL signed Transfer turn from it — rather than the previous disconnected
 /// `[0x01; 32]` placeholder whose `apply_delta` mutated only this node's local
 /// ledger and never replicated.
-fn faucet_signing_key() -> ed25519_dalek::SigningKey {
+pub(crate) fn faucet_signing_key() -> ed25519_dalek::SigningKey {
     let secret = blake3::derive_key("dregg-devnet-faucet-key-v1", b"genesis");
     ed25519_dalek::SigningKey::from_bytes(&secret)
 }
 
 /// The faucet cell's public key (matches the genesis-minted faucet cell).
-fn faucet_public_key() -> [u8; 32] {
+pub(crate) fn faucet_public_key() -> [u8; 32] {
     faucet_signing_key().verifying_key().to_bytes()
 }
 
@@ -7566,13 +7621,13 @@ async fn post_faucet(
     // finalization pass, so it provisions + commits authoritatively here.
     let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
 
-    // Ensure the faucet cell exists (create on first use). Uses the genesis-
-    // derived faucet key so this is the SAME cell genesis mints the supply into;
-    // on a genesis node it already exists on every node. In multi-party mode this
-    // touches only the scratch clone (the genesis faucet cell is already present
-    // authoritatively cross-node).
+    // The faucet cell. Derived from the genesis faucet key in the canonical
+    // default asset, so this is the SAME cell `genesis.rs` mints the supply
+    // into. This endpoint NEVER creates it: value enters only by genesis
+    // issuer-moves (THE EPOCH §5), so a data dir without a genesis faucet cell
+    // has no faucet — say so, rather than reporting a grant nobody funded.
     let faucet_pubkey = faucet_public_key();
-    let faucet_cell_id = dregg_cell::CellId::derive_raw(&faucet_pubkey, &FAUCET_TOKEN_ID);
+    let faucet_cell_id = dregg_cell::CellId::derive_raw(&faucet_pubkey, &faucet_token_id());
 
     // Recipient provisioning. CROSS-NODE UNIFORMITY: in multi-party mode the
     // recipient is provisioned by the finalized executor on every node from the
@@ -7589,12 +7644,20 @@ async fn post_faucet(
         }
         let recipient_cell = match (is_solo, recipient_public_key) {
             (true, Some(pk)) => {
-                let default_token_id = *blake3::hash(b"default").as_bytes();
-                dregg_cell::Cell::with_balance(pk, default_token_id, 0)
+                dregg_cell::Cell::with_balance(pk, crate::executor_setup::default_token_id(), 0)
             }
             // Multi-party (or no known pk): the uniform stub provisioning every
-            // node applies in `execute_finalized_turn`.
-            _ => dregg_cell::Cell::remote_stub_with_id_and_balance(recipient_cell_id, 0),
+            // node applies in `execute_finalized_turn` — minted in the DEFAULT
+            // ASSET, because the next thing that happens to this cell is a faucet
+            // Transfer out of the default-asset faucet cell, and a Transfer across
+            // assets is refused. A zero-asset stub here meant "materialize me
+            // first, then fund me" deterministically failed cross-asset.
+            _ => dregg_cell::Cell::remote_stub_with_id_pk_token_balance(
+                recipient_cell_id,
+                [0u8; 32],
+                crate::executor_setup::default_token_id(),
+                0,
+            ),
         };
         let _ = ledger.insert_cell(recipient_cell);
     };
@@ -7630,6 +7693,23 @@ async fn post_faucet(
         }));
     }
 
+    // The faucet cell must already hold genesis supply. It is never created
+    // here: this endpoint moves value, it does not issue it.
+    if s.ledger.get(&faucet_cell_id).is_none() {
+        return Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            turn_hash: None,
+            amount: 0,
+            error: Some(format!(
+                "faucet cell {} is not in this node's ledger — this data dir has no genesis \
+                 faucet supply in the default asset (run `dregg-node genesis` and boot against \
+                 its genesis.json)",
+                hex_encode(&faucet_cell_id.0)
+            )),
+        }));
+    }
+
     // Build a REAL faucet-signed Transfer turn and run it through the
     // executor, then gossip + submit to the blocklace — the same consensus
     // path committed operator turns use. This replaces the old direct
@@ -7648,23 +7728,10 @@ async fn post_faucet(
     // `blake3(pubkey)`). Using the raw `s.federation_id` on an unconfigured solo
     // node mismatched the executor's domain and failed Ed25519 verification.
     let exec_federation_id = crate::executor_setup::federation_id_for_executor(&s);
-    let action = faucet_cclerk.make_action(
-        faucet_cell_id,
-        "faucet_transfer",
-        vec![transfer],
-        &exec_federation_id,
-    );
-    let mut call_forest = CallForest::new();
-    call_forest.add_root(action);
-    // The executor's budget gate caps computrons at `turn.fee` (`estimated >
-    // fee` → BudgetExceeded). A fee of 0 made every amount>0 faucet transfer
-    // reject ("budget exceeded: limit=0, used=100"); the faucet cell holds the
-    // genesis supply, so it covers a real fee. Size the fee to the estimated
-    // cost so the gate passes deterministically.
     // PIPELINED nonce: the faucet's AUTHORITATIVE nonce only advances when a
-    // faucet turn FINALIZES through consensus (the scratch-clone execution below
-    // deliberately does NOT mutate the authoritative ledger in full mode). Reading
-    // it directly meant a second faucet request submitted before the first
+    // faucet turn FINALIZES through consensus (the submission-time execution
+    // below deliberately does NOT mutate the authoritative ledger). Reading it
+    // directly meant a second faucet request submitted before the first
     // finalized re-used the same nonce and replayed. Reserve the next nonce as
     // `max(authoritative, reserved)` and bump the reservation, so back-to-back
     // submissions get fresh consecutive nonces that finalize in order. `max`
@@ -7677,6 +7744,28 @@ async fn post_faucet(
         .unwrap_or(0);
     let faucet_nonce = authoritative_nonce.max(s.faucet_reserved_nonce.unwrap_or(0));
     s.faucet_reserved_nonce = Some(faucet_nonce + 1);
+    // THE ACTION SIGNATURE IS BOUND TO THE TURN NONCE (`dregg-action-sig-v3`):
+    // `compute_signing_message(action, federation_id, turn.nonce)`. So the action
+    // MUST be signed over the nonce the turn will actually carry — computed just
+    // above. The convenience `make_action` signs over the clerk's OWN
+    // `next_turn_nonce()`, and this clerk is constructed fresh per request from
+    // the raw key, so its receipt chain is empty and that nonce is ALWAYS 0: the
+    // first faucet call per boot matched by luck and every later one failed the
+    // Ed25519 half of the hybrid authorization ("Ed25519 (classical) signature
+    // half failed"), because `faucet_reserved_nonce` had advanced past 0 while
+    // the signature stayed pinned to it.
+    let action = faucet_cclerk.sign_action_hybrid(
+        dregg_sdk::raw::unsigned_action_named(faucet_cell_id, "faucet_transfer", vec![transfer]),
+        &exec_federation_id,
+        faucet_nonce,
+    );
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(action);
+    // The executor's budget gate caps computrons at `turn.fee` (`estimated >
+    // fee` → BudgetExceeded). A fee of 0 made every amount>0 faucet transfer
+    // reject ("budget exceeded: limit=0, used=100"); the faucet cell holds the
+    // genesis supply, so it covers a real fee. Size the fee to the estimated
+    // cost so the gate passes deterministically.
     // Receipt-chain head for the turn's verified ChainHead leg.
     //
     // SOLO (n=1): submission is authoritative, so bind to the local chain head
@@ -7727,26 +7816,52 @@ async fn post_faucet(
     let turn_hash_bytes = faucet_turn.hash();
     let turn_hash_hex = hex_encode(&turn_hash_bytes);
 
+    // THE SAME application-admission predicate every other SignedTurn ingress
+    // runs (`/turns/submit`, the finalized-block executor, the PostgreSQL
+    // drainer). The faucet builds its own envelope, so without this it was the
+    // ONE ingress that could hand consensus a payload finalization would refuse
+    // — and it did, for four days: the faucet agent was derived in the all-zero
+    // asset, `validate_signed_turn` requires `derive_raw(signer, "default")`,
+    // and the mismatch only surfaced as a `agent-signer-mismatch` deterministic
+    // rejection at finalization, long after this handler had answered
+    // `success: true`. Refusing HERE makes that class un-shippable: a faucet
+    // envelope that consensus will not apply never reaches consensus.
+    if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
+        &signed,
+        &executor,
+        s.ledger.get(&signed.turn.agent),
+    ) {
+        if s.faucet_reserved_nonce == Some(faucet_nonce + 1) {
+            s.faucet_reserved_nonce = Some(faucet_nonce);
+        }
+        return Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            turn_hash: Some(turn_hash_hex),
+            amount: 0,
+            error: Some(format!("faucet turn fails signed-turn admission: {error}")),
+        }));
+    }
+
     // O(touched) atomic rollback: arm an undo journal rather than cloning the
     // whole O(cells) ledger. Both regimes execute IN PLACE under this exclusive
     // write lock; the fate of the mutation is resolved right after execution.
     s.ledger.begin_restore_point();
     let lean_producer_enabled = s.lean_producer_enabled;
 
-    // MULTI-PARTY: consensus FINALIZATION is the authoritative application of the
-    // faucet turn (the SAME `execute_finalized_turn` runs on every node and emits
-    // the attested root). Committing here would mutate ONLY this node's ledger —
-    // advancing the faucet cell's nonce so the finalized re-execution is rejected
-    // as a "nonce replay", and creating the recipient cell only locally so PEERS
-    // reject the finalized Transfer as "destination not found" — both of which
-    // block cross-node commit (`latest_height` stuck at 0). So in full mode the
-    // in-place run is purely to build the receipt/proof for the HTTP response, and
-    // the journal rolls it back below, leaving the authoritative ledger untouched;
-    // the finalized executor then applies the turn uniformly on all nodes (it
-    // auto-materializes the Transfer destination identically on every node, see
-    // `provision_transfer_destinations` / `execute_finalized_turn`). Solo (n=1)
-    // keeps the direct authoritative commit — it has no separate finalization pass
-    // and already provisioned the faucet + recipient cells above.
+    // Consensus FINALIZATION is the authoritative application of the faucet turn
+    // at EVERY committee size, n=1 included (the SAME `execute_finalized_turn`
+    // runs on every node and emits the attested root). Committing here would
+    // mutate ONLY this node's ledger — advancing the faucet cell's nonce so the
+    // finalized re-execution is rejected as a "nonce replay", and creating the
+    // recipient cell only locally so PEERS reject the finalized Transfer as
+    // "destination not found" — both of which block cross-node commit
+    // (`latest_height` stuck at 0). So the in-place run below is purely to build
+    // the receipt/proof for the HTTP response, and the journal rolls it back,
+    // leaving the authoritative ledger untouched; the finalized executor then
+    // applies the turn uniformly on all nodes (it auto-materializes the Transfer
+    // destination identically on every node, see
+    // `provision_transfer_destinations` / `execute_finalized_turn`).
     // Admission staging is identical at every committee size.  Provision the
     // same deterministic destination the finalized path will see, reflect a
     // reserved pipelined nonce only inside the undo journal, execute, and roll
@@ -9388,23 +9503,93 @@ mod tests {
         );
     }
 
+    /// THE PUBLIC READ CONTRACT. Every path here must be reachable WITHOUT auth
+    /// and must answer in the SHAPE its clients decode.
+    ///
+    /// "Status 200 and it parses as JSON" is not a contract: `[]` and `{}` pass
+    /// it forever, which is how `/api/blocks` served attested federation roots
+    /// (permanently empty on a solo node) under a name that promises blocks
+    /// without a single test noticing. So each path declares the JSON KIND it
+    /// must return, and object endpoints declare the KEYS their clients read;
+    /// `/api/cells` is checked against a ledger that actually has a cell, so an
+    /// endpoint that answers `[]` regardless of state cannot pass. The
+    /// "populated on a live node" half for `/api/blocks` lives in
+    /// `faucet_grant_e2e` (a node with real finalized blocks), which is where a
+    /// blocklace exists at all.
     #[tokio::test]
     async fn explorer_public_contract_endpoints_are_available() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        // A real cell so the list endpoints have something to be wrong about.
+        let seeded_cell = {
+            let mut s = state.write().await;
+            let cell = dregg_cell::Cell::with_balance(
+                [0x33u8; 32],
+                crate::executor_setup::default_token_id(),
+                4_242,
+            );
+            let id = cell.id();
+            s.ledger.insert_cell(cell).expect("insert cell");
+            id
+        };
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         let app = router(state, false, recorder.handle());
 
-        for path in [
-            "/status",
-            "/api/cells",
-            "/api/tokens",
-            "/api/receipts",
-            "/api/blocks",
-            "/federation/roots",
-            "/api/federations",
-            "/api/intents",
-        ] {
+        /// What the caller is entitled to decode.
+        enum Shape {
+            /// A JSON array (possibly empty on a fresh node).
+            Array,
+            /// A JSON array that must be NON-empty in this fixture.
+            NonEmptyArray,
+            /// A JSON object carrying at least these keys.
+            Object(&'static [&'static str]),
+        }
+
+        let cell_path = format!("/api/cell/{}", hex_encode(&seeded_cell.0));
+        let absent_path = format!("/api/cell/{}", "ab".repeat(32));
+        let cases: Vec<(&str, Shape)> = vec![
+            (
+                "/status",
+                Shape::Object(&[
+                    "healthy",
+                    "dag_height",
+                    "block_count",
+                    "consensus_live",
+                    "federation_mode",
+                    "public_key",
+                    "state_producer",
+                    "producer_root_agreeing_effects",
+                ]),
+            ),
+            ("/api/cells", Shape::NonEmptyArray),
+            (
+                cell_path.as_str(),
+                // `found` is the field that says whether the rest MEAN anything:
+                // an absent id answers 200 with a fully-populated zero cell, so a
+                // contract that omits `found` locks in a lie-shaped response.
+                Shape::Object(&[
+                    "id",
+                    "found",
+                    "balance",
+                    "nonce",
+                    "capability_count",
+                    "has_program",
+                ]),
+            ),
+            (
+                absent_path.as_str(),
+                Shape::Object(&["id", "found", "balance"]),
+            ),
+            ("/api/tokens", Shape::Array),
+            ("/api/receipts", Shape::Array),
+            ("/api/blocks", Shape::Array),
+            ("/federation/roots", Shape::Array),
+            ("/api/federation/roots", Shape::Array),
+            ("/api/federations", Shape::Array),
+            ("/api/intents", Shape::Array),
+        ];
+
+        for (path, shape) in cases {
             let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
             let response = app
                 .clone()
@@ -9428,9 +9613,69 @@ mod tests {
                 .await
                 .expect("body")
                 .to_bytes();
-            serde_json::from_slice::<serde_json::Value>(&body)
+            let json: serde_json::Value = serde_json::from_slice(&body)
                 .unwrap_or_else(|err| panic!("{path} should return JSON: {err}"));
+
+            match shape {
+                Shape::Array => assert!(
+                    json.is_array(),
+                    "{path} must answer a JSON array; got {json}"
+                ),
+                Shape::NonEmptyArray => {
+                    let items = json
+                        .as_array()
+                        .unwrap_or_else(|| panic!("{path} must answer a JSON array; got {json}"));
+                    assert!(
+                        !items.is_empty(),
+                        "{path} must list the ledger's cells, not an empty array — this node has \
+                         one seeded cell"
+                    );
+                }
+                Shape::Object(keys) => {
+                    for key in keys {
+                        assert!(
+                            json.get(key).is_some(),
+                            "{path} must carry `{key}` (its clients decode it); got {json}"
+                        );
+                    }
+                }
+            }
         }
+
+        // The absent-cell response is 200 with a zero-valued cell, so `found` is
+        // the ONLY thing distinguishing it — pin both directions.
+        let read = |path: String| {
+            let app = app.clone();
+            async move {
+                let addr: std::net::SocketAddr = "127.0.0.1:4444".parse().unwrap();
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .extension(ConnectInfo(addr))
+                            .body(Body::empty())
+                            .expect("request"),
+                    )
+                    .await
+                    .expect("response");
+                let body = response
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("body")
+                    .to_bytes();
+                serde_json::from_slice::<serde_json::Value>(&body).expect("json")
+            }
+        };
+        let present = read(cell_path.clone()).await;
+        let absent = read(absent_path.clone()).await;
+        assert_eq!(present["found"], true, "a real cell must report found:true");
+        assert_eq!(present["balance"], 4_242, "and its real balance");
+        assert_eq!(
+            absent["found"], false,
+            "an absent id must report found:false — every other field on that response is a \
+             zero-valued placeholder"
+        );
     }
 
     /// THE PORTAL-DECOUPLING CONTRACT (read path). The public `portal.dregg.studio`
@@ -9450,7 +9695,19 @@ mod tests {
             found: true,
         })
         .expect("serialize CellListEntry");
-        for field in ["id", "balance", "nonce", "capability_count", "has_program"] {
+        // `found` belongs in this list: `/api/cell/{id}` answers 200 with a
+        // fully-populated ZERO-valued cell for an id the ledger does not have,
+        // so `found` is the only field that says whether the other five mean
+        // anything. Pinning the five without it locked in exactly the shape a
+        // viewer misreads as "this cell exists with balance 0".
+        for field in [
+            "id",
+            "found",
+            "balance",
+            "nonce",
+            "capability_count",
+            "has_program",
+        ] {
             assert!(
                 entry.get(field).is_some(),
                 "/api/cells entry missing portal field `{field}`: {entry}"
@@ -10268,6 +10525,46 @@ mod tests {
         assert!(tx.chars().all(|ch| ch.is_ascii_hexdigit()));
     }
 
+    /// THE FAUCET CELL MUST BE ABLE TO ACT. `validate_signed_turn` — the ONE
+    /// application-admission predicate, run at HTTP ingress, at finalized-block
+    /// execution, and in the PG drainer — requires `turn.agent ==
+    /// derive_raw(signer, blake3("default"))`. The faucet signs its own turns
+    /// with the genesis faucet key and puts the faucet cell in `agent`, so if the
+    /// faucet cell is derived in ANY other asset that predicate can never hold and
+    /// every faucet turn is deterministically rejected at finalization — after the
+    /// endpoint has already answered `success: true`. This is the unit-level
+    /// falsifier for that class: point `faucet_token_id()` at `[0u8; 32]` (its
+    /// value until 2026-07-25) and it goes red here, in milliseconds, instead of
+    /// silently in a devnet.
+    #[test]
+    fn faucet_cell_is_the_agent_cell_the_admission_predicate_demands() {
+        let faucet_pk = faucet_public_key();
+        let faucet_cell = dregg_cell::CellId::derive_raw(&faucet_pk, &faucet_token_id());
+        let admissible_agent =
+            dregg_cell::CellId::derive_raw(&faucet_pk, &crate::executor_setup::default_token_id());
+        assert_eq!(
+            faucet_cell, admissible_agent,
+            "the faucet cell must BE the signer's default cell, or `validate_signed_turn` \
+             refuses every faucet turn as agent-signer-mismatch at finalization"
+        );
+    }
+
+    /// The genesis faucet supply lands in exactly the cell the endpoint spends
+    /// from. `genesis.rs` derives it independently (its own `default_token_id`
+    /// local), so this pins the two derivations together: a genesis that mints
+    /// into a different asset leaves the endpoint with `faucet cell … is not in
+    /// this node's ledger`.
+    #[test]
+    fn genesis_faucet_cell_matches_the_endpoint_faucet_cell() {
+        let genesis_faucet = crate::genesis::devnet_faucet_cell_id();
+        let endpoint_faucet =
+            dregg_cell::CellId::derive_raw(&faucet_public_key(), &faucet_token_id());
+        assert_eq!(
+            genesis_faucet, endpoint_faucet,
+            "genesis must mint the faucet supply into the cell POST /api/faucet spends from"
+        );
+    }
+
     /// #171 remote `.turn()` e2e through the HTTP router: a keypair the node
     /// has NEVER seen locally builds + signs a canonical turn, submits the
     /// postcard `SignedTurn` envelope to `POST /turns/submit`, it executes
@@ -10277,21 +10574,39 @@ mod tests {
     /// refuse. Mirrors the exact `dregg_sdk_net::remote::RemoteRuntime` flow
     /// (federation-bound action signature, `valid_until` stamp, receipt-chain
     /// binding).
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn remote_signed_envelope_e2e_accepts_then_refuses_tamper_and_replay() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(tmp.path(), vec![]).expect("node state");
         state.write().await.unlocked = true;
         // Single in-process node = a committee of one (solo). Production sets this in
-        // main.rs under `is_solo_mode`; the hardened faucet keys its authoritative
-        // recipient provisioning off it (a real multi-party committee provisions via
-        // `execute_finalized_turn` instead). Without the flag the faucet treats this
-        // node as multi-party and skips eager provisioning -> "cell not found".
+        // main.rs under `is_solo_mode`.
         {
             let mut s = state.write().await;
             let sk = s.cclerk.gossip_signing_key().to_bytes();
             s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(sk));
         }
+        // REAL consensus + finality. Submission is admission staging: the
+        // receipt is welded into the durable log by `execute_finalized_turn`,
+        // so a fixture with no blocklace can accept a turn and never produce a
+        // retrievable receipt. This test asserts on the receipt, so it needs the
+        // machinery that writes one.
+        let handle = crate::blocklace_sync::run_blocklace_sync_with_policy(
+            state.clone(),
+            0,
+            true,
+            100,
+            10_000,
+            50,
+            2_000,
+            0,
+            None,
+            dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
+        )
+        .await
+        .expect("solo blocklace handle");
+        state.set_blocklace(handle).await;
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         // enable_faucet: the devnet onboarding surface the remote SDK uses.
         let app = router(state.clone(), true, recorder.handle());
@@ -10308,50 +10623,47 @@ mod tests {
         let agent = dregg_cell::CellId::derive_raw(&clerk.public_key().0, &default_token_id);
         let recipient = dregg_cell::CellId::derive_raw(&clerk2.public_key().0, &default_token_id);
 
-        // Devnet onboarding over HTTP: materialize both hosted cells with
-        // their REAL owner keys (the same `POST /api/faucet` call
-        // `RemoteRuntime::faucet` makes).
-        for (cell, owner) in [(agent, &clerk), (recipient, &clerk2)] {
-            let body = serde_json::json!({
-                "recipient": hex_encode(&cell.0),
-                "amount": 5_000u64,
-                "public_key": hex_encode(&owner.public_key().0),
-            });
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/faucet")
-                        .header("content-type", "application/json")
-                        .extension(ConnectInfo(addr))
-                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                        .expect("faucet request"),
+        // Funded, pk-bound, PQ-committed cells for both identities.
+        //
+        // These used to be materialized by two `POST /api/faucet` calls, which
+        // made an envelope-admission test depend on the faucet's whole consensus
+        // pipeline: since the faucet became admission-staging-only (its grant is
+        // applied by FINALIZATION, and this fixture has no blocklace at all) that
+        // onboarding could not fund anything here. Seed the ledger directly — the
+        // REMOTENESS under test is the keypair, not how the balance arrived. The
+        // faucet's own path is covered end-to-end in `faucet_grant_e2e`.
+        {
+            let mut s = state.write().await;
+            for (cell, owner) in [(agent, &clerk), (recipient, &clerk2)] {
+                let ml_dsa_public_key = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(
+                    &owner.gossip_signing_key().to_bytes(),
                 )
-                .await
-                .expect("faucet response");
-            assert_eq!(response.status(), StatusCode::OK);
-            let bytes = response
-                .into_body()
-                .collect()
-                .await
-                .expect("body")
-                .to_bytes();
-            let json: serde_json::Value = serde_json::from_slice(&bytes).expect("faucet json");
-            assert_eq!(json["success"], true, "faucet must succeed: {json}");
+                .public_bytes();
+                let funded = dregg_cell::Cell::with_hybrid_balance(
+                    owner.public_key().0,
+                    &ml_dsa_public_key,
+                    default_token_id,
+                    5_000,
+                )
+                .expect("canonical ML-DSA-65 identity");
+                assert_eq!(funded.id(), cell, "seeded cell must be the derived id");
+                s.ledger.insert_cell(funded).expect("seed cell");
+            }
         }
 
-        // The two node bindings the remote SDK discovers before signing.
+        // The node binding the remote SDK discovers before signing. The fresh
+        // agent has no receipts yet, so its chain head is `None` — exactly what
+        // the submit path compares `previous_receipt_hash` against.
         let (fed_id, expected_prev) = {
             let s = state.read().await;
             (
                 crate::executor_setup::federation_id_for_executor(&s),
-                s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
+                s.cclerk.agent_receipt_head_hash(&agent),
             )
         };
         assert!(
-            expected_prev.is_some(),
-            "faucet turns must have committed receipts to bind against"
+            expected_prev.is_none(),
+            "a never-acted agent binds to a genesis (None) receipt head"
         );
 
         // Sign the action over the canonical federation-bound message — the
@@ -10373,15 +10685,12 @@ mod tests {
             balance_change: None,
             witness_blobs: vec![],
         };
-        // Bound to the turn nonce below (`nonce: 0` — the faucet-born agent
-        // cell's first turn): dregg-action-sig-v3 binds the submitting turn's
-        // nonce into the signature.
-        let message = dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &fed_id, 0);
-        let sig = clerk.sign_bytes(&message);
-        let action = Action {
-            authorization: Authorization::from_sig_bytes(sig.0),
-            ..unsigned
-        };
+        // Bound to the turn nonce below (`nonce: 0` — the agent cell's first
+        // turn): dregg-action-sig-v3 binds the submitting turn's nonce into the
+        // signature. HYBRID, because the deployed admission posture requires the
+        // post-quantum half ("classical-only signature rejected") — this is the
+        // exact call the remote SDK makes (`sign_action` → `sign_action_hybrid`).
+        let action = clerk.sign_action_hybrid(unsigned, &fed_id, 0);
         let mut forest = CallForest::new();
         forest.add_root(action);
 
@@ -10442,35 +10751,47 @@ mod tests {
         let turn_hash_hex = hex_encode(&turn.hash());
         assert_eq!(json["turn_hash"], serde_json::json!(turn_hash_hex));
 
-        // ── RECEIPT RETRIEVABLE: the committed receipt appears on the public
-        // receipts surface under the canonical turn hash. ──
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/receipts")
-                    .extension(ConnectInfo(addr))
-                    .body(Body::empty())
-                    .expect("receipts request"),
-            )
-            .await
-            .expect("receipts response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let receipts: serde_json::Value = serde_json::from_slice(&bytes).expect("receipts json");
-        assert!(
-            receipts
+        // ── RECEIPT RETRIEVABLE: once the turn FINALIZES, its receipt appears
+        // on the public receipts surface under the canonical turn hash. (The
+        // durable receipt is written by the finalized executor, not by the
+        // submission that answered `accepted: true`.) ──
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut receipts = serde_json::Value::Null;
+        loop {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/receipts")
+                        .extension(ConnectInfo(addr))
+                        .body(Body::empty())
+                        .expect("receipts request"),
+                )
+                .await
+                .expect("receipts response");
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            receipts = serde_json::from_slice(&bytes).expect("receipts json");
+            let landed = receipts
                 .as_array()
                 .expect("receipts array")
                 .iter()
-                .any(|r| r["turn_hash"] == serde_json::json!(turn_hash_hex)),
-            "committed remote turn's receipt must be retrievable: {receipts}"
-        );
+                .any(|r| r["turn_hash"] == serde_json::json!(turn_hash_hex));
+            if landed || std::time::Instant::now() >= deadline {
+                assert!(
+                    landed,
+                    "committed remote turn's receipt must be retrievable after finalization: \
+                     {receipts}"
+                );
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
 
         // ── TAMPER REFUSES: any post-signing mutation breaks the envelope. ──
         let mut tampered = signed.clone();

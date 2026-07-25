@@ -2269,6 +2269,18 @@ impl GenesisCellLoadStats {
 /// The deployed chain therefore starts inside guarantee B's hypotheses
 /// (`reachable_total_zero`). A genesis without `genesis_moves` (legacy)
 /// materializes declared balances directly.
+/// Test seam over [`materialize_genesis_cells`] — the REAL boot-time
+/// materializer, so `genesis.rs`'s seam test checks what a node actually loads
+/// rather than a re-implementation of it. Returns `(inserted, invalid)`.
+#[cfg(test)]
+pub(crate) fn materialize_genesis_cells_for_test(
+    genesis: &serde_json::Value,
+    ledger: &mut dregg_cell::Ledger,
+) -> (usize, usize) {
+    let stats = materialize_genesis_cells(genesis, ledger);
+    (stats.inserted, stats.invalid)
+}
+
 fn materialize_genesis_cells(
     genesis: &serde_json::Value,
     ledger: &mut dregg_cell::Ledger,

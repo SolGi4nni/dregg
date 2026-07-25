@@ -424,8 +424,8 @@ impl Presentable for NodeConsensusView {
                 Field::boolean("lean_producer", s.lean_producer),
                 Field::boolean("full_turn_proving", s.full_turn_proving),
                 Field::count(
-                    "producer_covered_effects",
-                    s.producer_covered_effects as u64,
+                    "producer_root_agreeing_effects",
+                    s.producer_root_agreeing_effects as u64,
                 ),
             ],
         };
@@ -454,8 +454,8 @@ impl Presentable for NodeConsensusView {
                 Field::boolean("lean_producer", s.lean_producer),
                 Field::boolean("full_turn_proving", s.full_turn_proving),
                 Field::count(
-                    "producer_covered_effects",
-                    s.producer_covered_effects as u64,
+                    "producer_root_agreeing_effects",
+                    s.producer_root_agreeing_effects as u64,
                 ),
             ],
         };
@@ -718,7 +718,7 @@ mod tests {
             state_producer: "lean".into(),
             lean_producer: true,
             full_turn_proving: true,
-            producer_covered_effects: 28,
+            producer_root_agreeing_effects: 28,
         }
     }
 
