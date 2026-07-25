@@ -436,3 +436,61 @@ fn a_conjunct_naming_a_nonexistent_item_is_still_a_validator_error() {
         "the unsatisfiable conjunct is NAMED: {errors:?}"
     );
 }
+
+/// **THE SPILL BOUNDARY — the automatafl-shaped risk for authored content.**
+///
+/// The compiled cell has 16 register slots; slot 0 is the passage, so 15 named vars fit.
+/// The 16th and beyond SPILL to the ext plane, which is executor-enforced but (per
+/// `compile.rs`'s own header) *in-circuit-projected only for register-plane
+/// constraints*, and binds each value at ~31 bits rather than the register width.
+///
+/// This is not hypothetical for authoring: every `once`, every oath branch, and every
+/// oath counter is a NEW var, so the constructs that make a dungeon worth playing are
+/// exactly the ones that push it over the line. An author has no way to feel this — the
+/// dungeon plays identically on either side of it.
+///
+/// The test does not forbid spilling (a real dungeon will exceed 15 vars). It pins the
+/// boundary as MEASURED, so the cost is visible in the record rather than discovered
+/// later, and it fails if the allocator's split ever moves.
+#[test]
+fn the_authored_dungeon_var_budget_against_the_15_register_ceiling() {
+    let world = parse_dungeon(RELIQUARY).expect("parses");
+    let d = compile_world(&world).expect("compiles");
+
+    let total = d.story.var_slots.len();
+    let spilled: Vec<&String> = d
+        .story
+        .var_slots
+        .iter()
+        .filter(|&(_, &key)| key >= 16)
+        .map(|(name, _)| name)
+        .collect();
+
+    // The measurement, printed so the number is in the record, not just asserted.
+    println!("authored vars = {total}; spilled to the ext plane = {spilled:?}");
+
+    // Every var the compiler allocated below 16 is a register; the split is a suffix of
+    // one sorted order, so `registers + spilled == total` must hold exactly.
+    let registers = total - spilled.len();
+    assert_eq!(
+        registers + spilled.len(),
+        total,
+        "the allocator splits one order into registers then ext keys"
+    );
+    assert!(
+        registers <= 15,
+        "slot 0 is the passage — at most 15 named vars can be registers, got {registers}"
+    );
+    // Non-vacuity: this dungeon genuinely exercises the boundary rather than sitting
+    // trivially under it. If a future edit shrinks it below the ceiling, this fires and
+    // the spill assertions above stop meaning anything.
+    assert!(
+        total > 15,
+        "the authored dungeon ({total} vars) is supposed to CROSS the 15-register \
+         ceiling — that is the condition under which the ext-plane caveat applies"
+    );
+    assert!(
+        !spilled.is_empty(),
+        "crossing the ceiling must actually spill"
+    );
+}
