@@ -77,8 +77,9 @@ def guardedRenderWithProof (T : GuardedTemplate) (d : Nat → List Value) :
 /-- **`guardedVerify T witness`** — the verifier's REPLAY of the certificate: re-run the executable
 matcher `derives` on every hole entry. No trust in the prover's claim — the guard-acceptance is
 recomputed per slot. (`T` is threaded for signature symmetry with the prover side; the recheck is
-entirely determined by the self-describing witness — each entry names its own guard and data.) -/
-/-- ⚠⚠ SCOPE — READ BEFORE CITING `guardedVerify_iff` AS A VERIFIER SOUNDNESS RESULT (adversarial
+entirely determined by the self-describing witness — each entry names its own guard and data.)
+
+⚠⚠ SCOPE — READ BEFORE CITING `guardedVerify_iff` AS A VERIFIER SOUNDNESS RESULT (adversarial
 review finding). This function DISCARDS the template (`_T`) entirely and never checks the witness
 against the presented OUTPUT — it only asks that each entry's data derives its own guard. So
 `guardedVerify_iff` is an iff whose BOTH sides quantify over an honest `d`; there is NO theorem of the
