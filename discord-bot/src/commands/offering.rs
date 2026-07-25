@@ -53,6 +53,8 @@
 //! only the HTTP round-trip to Discord is absent.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -66,9 +68,9 @@ use serenity::all::{
 
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
-    Action, Audience, AudienceProjection, CollectiveDecision, DreggIdentity, Offering, Outcome,
-    SessionConfig, SessionId, SessionMoveLog, SessionResumeStore, Tally, VerifyReport, VoteCount,
-    project_for_audience,
+    Action, Attribution, Audience, AudienceProjection, CollectiveDecision, DreggIdentity,
+    FileResumeStore, Offering, Outcome, SessionConfig, SessionId, SessionMoveLog,
+    SessionResumeStore, Tally, VerifyReport, VoteCount, project_for_audience,
 };
 
 use crate::BotState;
@@ -167,16 +169,129 @@ impl<O: Offering> Live<O> {
 
     /// Record one ordinary or crowd turn iff the executor actually landed it.
     /// This is the typed-store twin of `OfferingHost::record_landed`.
-    pub fn record_landed(&mut self, action: Action, actor: DreggIdentity, outcome: &Outcome)
+    ///
+    /// Returns whether the record is **durable**. `true` when nothing needed persisting (a
+    /// refused move commits nothing; a session with no attached store never claimed durability)
+    /// or when the attached store confirmed the line reached stable storage. `false` is the one
+    /// dangerous case the [`SessionResumeStore::record_landed`] contract names: the turn LANDED
+    /// on the substrate but its line did not reach the log, so a later replay would silently omit
+    /// a committed turn — or brick on the next one. The caller QUARANTINES the session on
+    /// `false`; before this the boolean was discarded and that divergence was invisible.
+    #[must_use]
+    pub fn record_landed(&mut self, action: Action, actor: DreggIdentity, outcome: &Outcome) -> bool
     where
         O: DiscordOffering,
     {
         if !outcome.landed() {
-            return;
+            return true;
         }
         self.journal.record(action.clone(), actor.clone());
-        if let Some(store) = self.resume_store.as_deref() {
-            store.record_landed(O::KEY, &self.journal.id, &action, &actor);
+        match self.resume_store.as_deref() {
+            None => true,
+            Some(store) => store.record_landed(O::KEY, &self.journal.id, &action, &actor),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE DURABLE SESSION STORE — what survives a restart, and what deliberately does not.
+//
+// A live offering session is a real confined world plus a hash-linked receipt chain, and it
+// lived ONLY in `Store<O>`'s thread-owned `HashMap`. Every game in flight died with the process.
+//
+// What is persisted is NOT the session: it is the session's REPRODUCIBLE PUBLIC INPUT — the
+// `SessionConfig` seed plus the ordered landed `(action, actor)` pairs ([`SessionMoveLog`]).
+// A resume RE-DRIVES those through the real executor from a fresh `open(cfg)`, so the receipt
+// chain is REBUILT rather than restored: the resumed session can take the next turn because the
+// turns behind it genuinely re-landed. A serialized state blob would have produced the exact
+// fake this avoids — a board that renders and refuses every move.
+//
+// The store is the offering core's own [`FileResumeStore`] (append-only text, one file per
+// session, `sync_data` per line). It is not a second implementation: the bot supplies the root
+// and the core does the persisting.
+//
+// DELIBERATELY EPHEMERAL, per store:
+//   * an in-flight COLLECTIVE ROUND (the ballots cast but not yet closed) — a ballot commits
+//     nothing to the substrate, so there is nothing to reproduce; the round re-opens over the
+//     resumed state.
+//   * `crate::throttle` token buckets — a restart forgiving a rate limit is correct. The
+//     limiter is explicitly not a security boundary (the executor is the referee), and its
+//     buckets are pure recovery state: a persisted one only ever punishes.
+//   * `crate::viewnode_applet` tally cards — a per-user toy counter with no external claim.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where the durable session logs live, or `None` when session persistence is OFF. Installed
+/// once at boot by [`install_resume_store`]; unset in unit tests that never install one.
+static RESUME_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// **Main-loop entry point.** Point every offering session store at `root` (or `None` to run
+/// sessions purely in RAM, the pre-existing behaviour). First install wins; call once at boot,
+/// BEFORE any offering command is served.
+pub fn install_resume_store(root: Option<PathBuf>) {
+    let _ = RESUME_ROOT.set(root);
+}
+
+/// The installed durable root, if session persistence is on.
+fn resume_root() -> Option<&'static PathBuf> {
+    RESUME_ROOT.get().and_then(|r| r.as_ref())
+}
+
+/// Build a durable store handle on the CALLING thread (which, for every use below, is the
+/// session store's own thread — `SessionResumeStore` is deliberately not `Send`-bound).
+/// `None` when persistence is off, or when the directory cannot be opened — in which case the
+/// session still runs, in RAM, exactly as it did before, and says so in the log.
+fn durable_store() -> Option<Box<dyn SessionResumeStore>> {
+    let root = resume_root()?;
+    match FileResumeStore::open(root) {
+        Ok(store) => Some(Box::new(store)),
+        Err(e) => {
+            tracing::warn!(
+                "offering session persistence is UNAVAILABLE ({}): {e} — sessions in this \
+                 process will not survive a restart",
+                root.display(),
+            );
+            None
+        }
+    }
+}
+
+/// The durable log id of `channel`'s session of this offering at `generation`. The generation
+/// rides the id so a resume can restore the EXACT incarnation a Discord button was minted
+/// against (see [`resume_in`]); the `(key, channel)` prefix is what a cold lookup scans for.
+fn journal_id(key: &str, channel: u64, generation: u64) -> SessionId {
+    SessionId::new(format!("discord:{key}:{channel}:{generation:016x}"))
+}
+
+/// The `(key, channel)` prefix every durable log id for this channel starts with.
+fn journal_prefix(key: &str, channel: u64) -> String {
+    format!("discord:{key}:{channel}:")
+}
+
+/// The generation stamped into a durable log id, or `None` for an id this build does not mint.
+fn generation_of(id: &SessionId) -> Option<u64> {
+    u64::from_str_radix(id.0.rsplit(':').next()?, 16).ok()
+}
+
+/// The channel's persisted log, if one is on disk. There is **at most one per `(key, channel)`**:
+/// an open forgets the channel's previous logs before recording its own ([`open_core`]), so a
+/// replaced session leaves nothing behind to alias. If more than one is somehow present the
+/// lookup refuses rather than guessing which incarnation a stranger's button belonged to.
+fn stored_log(store: &dyn SessionResumeStore, key: &str, channel: u64) -> Option<SessionMoveLog> {
+    let prefix = journal_prefix(key, channel);
+    let mut found: Vec<SessionMoveLog> = store
+        .all()
+        .into_iter()
+        .filter(|log| log.key == key && log.id.0.starts_with(&prefix))
+        .collect();
+    match found.len() {
+        1 => found.pop(),
+        0 => None,
+        n => {
+            tracing::warn!(
+                "{n} durable {key} logs for channel {channel} — refusing to guess which \
+                 incarnation to resume",
+            );
+            None
         }
     }
 }
@@ -315,6 +430,21 @@ where
     /// its own thread. Implementors hand back a `OnceLock`-initialised [`Store::spawn`].
     fn store() -> &'static Store<Self>;
 
+    /// **How this offering's VALUE is rebuilt when a persisted session is resumed** — called on
+    /// the store's own thread, so a `!Send` world-backed offering is born where it lives.
+    ///
+    /// A [`SessionMoveLog`] describes the session's inputs (the seed + the landed turns); it does
+    /// NOT describe the offering value those turns were played against. An offering whose
+    /// constructor is deterministic and argument-free can hand one back here and its channels
+    /// survive a restart. An offering whose value carries runtime configuration the log cannot
+    /// reproduce — a council's electorate, a market's pricing table, a Hermes brain, a shared
+    /// world handle — MUST leave this `None`: replaying its moves into a differently-configured
+    /// world would rebuild a state that never existed. Default: `None` (not resumable), so an
+    /// offering opts IN to resume rather than inheriting a wrong one.
+    fn rebuild() -> Option<Self> {
+        None
+    }
+
     /// Which turns take a user-supplied numeric arg (a modal), rather than a fixed one.
     fn value_prompt(_turn: &str) -> Option<ValuePrompt> {
         None
@@ -368,39 +498,13 @@ pub fn open_in<O: DiscordOffering>(
     make: impl FnOnce() -> O + Send + 'static,
     cfg: SessionConfig,
 ) -> Result<(), dreggnet_offerings::OfferingError> {
-    O::store()
-        .run(move |sessions| {
-            let offering = make();
-            let session = offering.open(cfg.clone())?;
-            // A collective offering opens with a live round over the session's first actions (an open
-            // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
-            let round = if O::collective() {
-                Some(CollectiveRound::new(0, offering.actions(&session), None))
-            } else {
-                None
-            };
-            let generation = fresh_generation(channel);
-            let journal_id =
-                SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
-            sessions.insert(
-                channel,
-                Live {
-                    offering,
-                    session,
-                    round,
-                    generation,
-                    control_head: 0,
-                    journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
-                    resume_store: None,
-                },
-            );
-            Ok(())
-        })
-        .unwrap_or_else(|_| {
-            Err(dreggnet_offerings::OfferingError::Deploy(
-                "the offering session thread is unavailable".to_string(),
-            ))
-        })
+    // The PRODUCTION open. It attaches the installed durable store (`None` when persistence is
+    // off), so every offering command in the bot writes its move-log through without a single
+    // call site changing. This used to hardcode `resume_store: None` while the store-attaching
+    // constructor beside it had only `#[cfg(test)]` callers: persistence was built, tested, and
+    // never reached a running bot.
+    open_core::<O>(channel, make, cfg, || Ok(durable_store()))
+        .map_err(dreggnet_offerings::OfferingError::Deploy)
 }
 
 /// Open a fresh live session with an OfferingHost-compatible durable replay
@@ -412,22 +516,47 @@ pub fn open_in_with_resume_store<O: DiscordOffering>(
     cfg: SessionConfig,
     make_store: impl FnOnce() -> Result<Box<dyn SessionResumeStore>, String> + Send + 'static,
 ) -> Result<(), String> {
+    open_core::<O>(channel, make, cfg, move || make_store().map(Some))
+}
+
+/// The ONE open path: build the offering and its optional durable store on the store's owning
+/// thread, forget any earlier durable log for this channel (an open REPLACES the channel's
+/// session, so the record it would resume from must go with it), record the new open, and insert
+/// the live session. Both public constructors are thin wrappers.
+fn open_core<O: DiscordOffering>(
+    channel: u64,
+    make: impl FnOnce() -> O + Send + 'static,
+    cfg: SessionConfig,
+    make_store: impl FnOnce() -> Result<Option<Box<dyn SessionResumeStore>>, String> + Send + 'static,
+) -> Result<(), String> {
     O::store()
         .run(move |sessions| {
             let offering = make();
             let session = offering
                 .open(cfg.clone())
                 .map_err(|error| error.to_string())?;
+            // A collective offering opens with a live round over the session's first actions (an open
+            // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
             let round = if O::collective() {
                 Some(CollectiveRound::new(0, offering.actions(&session), None))
             } else {
                 None
             };
             let generation = fresh_generation(channel);
-            let journal_id =
-                SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
+            let id = journal_id(O::KEY, channel, generation);
             let store = make_store()?;
-            store.record_open(O::KEY, &journal_id, &cfg);
+            if let Some(store) = store.as_deref() {
+                // AT MOST ONE durable log per (key, channel). A replacement open (or a fresh open
+                // after a restart that never resumed) drops the channel's earlier record here, so
+                // a cold lookup can never find two incarnations and have to guess.
+                let prefix = journal_prefix(O::KEY, channel);
+                for old in store.all() {
+                    if old.key == O::KEY && old.id.0.starts_with(&prefix) {
+                        store.forget(O::KEY, &old.id);
+                    }
+                }
+                store.record_open(O::KEY, &id, &cfg);
+            }
             sessions.insert(
                 channel,
                 Live {
@@ -436,8 +565,8 @@ pub fn open_in_with_resume_store<O: DiscordOffering>(
                     round,
                     generation,
                     control_head: 0,
-                    journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
-                    resume_store: Some(store),
+                    journal: SessionMoveLog::new(O::KEY, id, cfg),
+                    resume_store: store,
                 },
             );
             Ok(())
@@ -445,11 +574,195 @@ pub fn open_in_with_resume_store<O: DiscordOffering>(
         .unwrap_or_else(|_| Err("the offering session thread is unavailable".to_string()))
 }
 
-/// Whether `channel` has a live session of this offering.
-pub fn is_open<O: DiscordOffering>(channel: u64) -> bool {
+/// Why a channel's persisted session could not be brought back. Every arm is fail-closed:
+/// nothing is inserted, and the channel keeps behaving exactly as it did with no session — the
+/// one thing that must never happen is a surface that renders and then refuses every move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeRefusal {
+    /// Session persistence is off, or this channel has no durable log.
+    NoRecord,
+    /// This offering cannot be rebuilt from a log alone — its VALUE carries runtime
+    /// configuration the log does not describe (a council's electorate, a market's pricing, a
+    /// Hermes brain). Named rather than guessed: reopening it under a DIFFERENT configuration
+    /// would replay the moves into a world that is not the one they landed in.
+    NotRebuildable,
+    /// A fresh `open(cfg)` under the recorded seed refused.
+    Deploy(String),
+    /// A recorded move did not re-land. The log is not trusted — the executor re-checks every
+    /// turn on the way back in — so a tampered or foreign line fails HERE and the session simply
+    /// does not come back.
+    Refused { index: usize, reason: String },
+    /// The log carries a durable opaque operation (an uploaded proof bundle). Replaying one
+    /// needs the offering's own decoder + receipt comparison, which lives in
+    /// `OfferingHost::resume` and is not reimplemented here. Refused rather than replayed
+    /// without it — dropping a committed operation would resume a state that never existed.
+    HasOperations(usize),
+    /// A line claims a verified signer. This adapter records only `Asserted` attributions, so a
+    /// `Signed` line in one of ITS logs is a foreign or forged line, not a stronger claim.
+    ForeignAttribution(usize),
+}
+
+impl std::fmt::Display for ResumeRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResumeRefusal::NoRecord => write!(f, "no durable session record for this channel"),
+            ResumeRefusal::NotRebuildable => write!(
+                f,
+                "this offering's value is not reconstructible from its move log"
+            ),
+            ResumeRefusal::Deploy(why) => write!(f, "the session did not redeploy: {why}"),
+            ResumeRefusal::Refused { index, reason } => {
+                write!(f, "recorded move #{index} did not re-land: {reason}")
+            }
+            ResumeRefusal::HasOperations(n) => write!(
+                f,
+                "{n} journaled opaque operation(s) need the host's replay path"
+            ),
+            ResumeRefusal::ForeignAttribution(index) => write!(
+                f,
+                "recorded move #{index} claims a signature this surface never records"
+            ),
+        }
+    }
+}
+
+/// **Bring `channel`'s persisted session back — by REPLAY, never by deserializing a state blob.**
+///
+/// Opens a fresh session under the log's recorded seed and re-drives every landed
+/// `(action, actor)` through the real [`Offering::advance`]. Each one must LAND: the executor is
+/// the referee on the way back in exactly as it was on the way out, so a spliced or tampered log
+/// fails here and nothing is inserted. What comes back is therefore a session that can take the
+/// next turn, with a receipt chain it genuinely re-built — not a rendering of one.
+///
+/// The **generation is restored from the log id**, so the buttons a player left in Discord before
+/// the restart still address this session and still fire. That is deliberate: the generation
+/// exists to stop a control from crossing into a *different* session, and this is the same one.
+///
+/// The in-flight collective round is NOT restored (a ballot commits nothing); a collective
+/// offering re-opens its round over the resumed state.
+pub fn resume_in<O: DiscordOffering>(channel: u64) -> Result<usize, ResumeRefusal> {
     O::store()
+        .run(move |sessions| {
+            // A live session won the race (a concurrent open, or another cold press that got
+            // here first). Never overwrite it: the replayed one would discard turns the live
+            // one has already landed.
+            if let Some(live) = sessions.get(&channel) {
+                return Ok(live.journal.moves.len());
+            }
+            let Some(store) = durable_store() else {
+                return Err(ResumeRefusal::NoRecord);
+            };
+            let Some(log) = stored_log(store.as_ref(), O::KEY, channel) else {
+                return Err(ResumeRefusal::NoRecord);
+            };
+            if !log.operations.is_empty() {
+                return Err(ResumeRefusal::HasOperations(log.operations.len()));
+            }
+            let Some(offering) = O::rebuild() else {
+                return Err(ResumeRefusal::NotRebuildable);
+            };
+            let mut session = offering
+                .open(log.cfg.clone())
+                .map_err(|e| ResumeRefusal::Deploy(e.to_string()))?;
+            for (index, m) in log.moves.iter().enumerate() {
+                if matches!(m.attribution, Attribution::Signed { .. }) {
+                    return Err(ResumeRefusal::ForeignAttribution(index));
+                }
+                let outcome = offering.advance(&mut session, m.action.clone(), m.actor.clone());
+                if !outcome.landed() {
+                    let reason = match outcome {
+                        Outcome::Refused(why) => why,
+                        Outcome::Landed { .. } => unreachable!("landed() is false"),
+                    };
+                    return Err(ResumeRefusal::Refused { index, reason });
+                }
+            }
+            let landed = log.moves.len();
+            // The direct-surface head is exactly the count of landed turns (`open` starts it at
+            // 0 and `note_direct_landing` bumps it once per landed direct turn), so restoring it
+            // this way reproduces the stamp the pre-restart buttons carry, byte for byte.
+            //
+            // That identity holds ONLY because a log carrying opaque operations was refused
+            // above: `commands::binary_operation` bumps `control_head` for a successful
+            // operation WITHOUT recording an ordinary move, so a move count would under-count
+            // the head for such a session. If operation replay is ever wired here, the head must
+            // become `moves + operations`, not `moves` — the refusal above is what makes this
+            // line correct today, not an accident that happens to line up.
+            //
+            // A collective surface's head is its ROUND number, which a move count cannot
+            // reproduce — its stale ballot buttons are refused, which is right: the round they
+            // belonged to is gone.
+            let control_head = landed as u64;
+            let round = if O::collective() {
+                Some(CollectiveRound::new(
+                    control_head,
+                    offering.actions(&session),
+                    None,
+                ))
+            } else {
+                None
+            };
+            let generation = generation_of(&log.id).unwrap_or_else(|| fresh_generation(channel));
+            sessions.insert(
+                channel,
+                Live {
+                    offering,
+                    session,
+                    round,
+                    generation,
+                    control_head,
+                    journal: log,
+                    resume_store: Some(store),
+                },
+            );
+            Ok(landed)
+        })
+        .unwrap_or(Err(ResumeRefusal::Deploy(
+            "the offering session thread is unavailable".to_string(),
+        )))
+}
+
+/// **The cold-press path**: if `channel` has no live session, try to bring its persisted one
+/// back before answering "no session open". Returns whether a session is live afterwards.
+///
+/// This is what makes the persistence reachable without a boot-time registry of every offering
+/// type: the router already resolves a press to its concrete `O`, so the resume happens exactly
+/// when somebody touches the channel, and never for a channel nobody returns to.
+pub fn ensure_live<O: DiscordOffering>(channel: u64) -> bool {
+    if O::store()
         .run(move |sessions| sessions.contains_key(&channel))
         .unwrap_or(false)
+    {
+        return true;
+    }
+    match resume_in::<O>(channel) {
+        Ok(turns) => {
+            tracing::info!(
+                "resumed the {} session in channel {channel} by replaying {turns} landed turn(s)",
+                O::KEY,
+            );
+            true
+        }
+        Err(ResumeRefusal::NoRecord) => false,
+        Err(why) => {
+            tracing::warn!(
+                "the persisted {} session in channel {channel} did NOT resume: {why}",
+                O::KEY,
+            );
+            false
+        }
+    }
+}
+
+/// Whether `channel` has a session of this offering — **resuming a persisted one if it has not
+/// been touched since the restart**.
+///
+/// The resume is deliberate here and not a surprising side effect of a query: this is what the
+/// re-open guard (`commands::open_guard`) asks before it lets `/play` replace a channel's
+/// session. Answering "no session" for a game that is merely cold would silently wipe a match
+/// that was one press from being resumable — exactly the loss this whole path exists to stop.
+pub fn is_open<O: DiscordOffering>(channel: u64) -> bool {
+    ensure_live::<O>(channel)
 }
 
 /// Run `f` against the channel's live session (`None` when no session is open). `f` runs on the
@@ -477,6 +790,9 @@ pub(crate) fn with_live_transaction<O: DiscordOffering, R: Send + 'static>(
                 f(live)
             };
             if quarantine {
+                // A quarantined session must not be resurrectable from disk either — see
+                // `mutate_live`.
+                forget_channel_log::<O>(sessions.get(&channel), channel);
                 sessions.remove(&channel);
             }
             Some(result)
@@ -502,13 +818,37 @@ pub fn ask_id_in<O: DiscordOffering>(channel: u64, turn: &str) -> Option<String>
     control_stamp_in::<O>(channel).map(|stamp| ask_id_at(O::KEY, stamp, &turn))
 }
 
-/// Drop the channel's session. Part of the adapter's session API (a `/<offering> close`
-/// subcommand is the obvious next consumer); today the driven tests are what exercise it.
+/// Drop the channel's session **and its durable record**. A close is a decision that the session
+/// is OVER, so leaving the log behind would let the very next press resurrect what was just
+/// closed. Part of the adapter's session API (a `/<offering> close` subcommand is the obvious
+/// next consumer); today the driven tests are what exercise it.
 #[allow(dead_code)]
 pub fn close_in<O: DiscordOffering>(channel: u64) {
     let _ = O::store().run(move |sessions| {
+        forget_channel_log::<O>(sessions.get(&channel), channel);
         sessions.remove(&channel);
     });
+}
+
+/// Drop `channel`'s durable log — on the store's own thread, so the `!Send` store handle never
+/// travels. Uses the live session's own attached store when there is one (the exact handle that
+/// wrote the log), and otherwise opens one to clear a record left by an earlier process.
+fn forget_channel_log<O: DiscordOffering>(live: Option<&Live<O>>, channel: u64) {
+    if let Some(live) = live {
+        if let Some(store) = live.resume_store.as_deref() {
+            store.forget(O::KEY, &live.journal.id);
+            return;
+        }
+    }
+    let Some(store) = durable_store() else {
+        return;
+    };
+    let prefix = journal_prefix(O::KEY, channel);
+    for log in store.all() {
+        if log.key == O::KEY && log.id.0.starts_with(&prefix) {
+            store.forget(O::KEY, &log.id);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -728,6 +1068,9 @@ pub struct CollectiveResolved {
     /// The real substrate outcome of the resolved crowd turn — a landed [`Outcome::Landed`]
     /// (a genuine `TurnReceipt`) or the executor's own [`Outcome::Refused`] (anti-ghost).
     pub outcome: Outcome,
+    /// Whether the landed crowd turn reached the durable session log. `false` means the round
+    /// resolved for real but this session can no longer be resumed truthfully.
+    pub durable: bool,
 }
 
 /// The result of [`close_round`].
@@ -810,6 +1153,7 @@ pub fn cast_vote_at<O: DiscordOffering>(
 /// the collective analogue of a single-press resolution — many pressers, one refereed turn.
 pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
     let carrier = O::collective_carrier();
+    ensure_live::<O>(channel);
     O::store()
         .run(move |sessions| {
             let Some(live) = sessions.get_mut(&channel) else {
@@ -836,7 +1180,10 @@ pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
             let outcome =
                 live.offering
                     .advance_collective(&mut live.session, winner.clone(), decision);
-            live.record_landed(winner.clone(), carrier, &outcome);
+            // A crowd turn is journaled like any other; a non-durable one is reported to the
+            // caller so the surface can say the round landed but is no longer resumable. (The
+            // session is not dropped mid-round here — the next direct mutation quarantines it.)
+            let durable = live.record_landed(winner.clone(), carrier, &outcome);
 
             // Open the next round over the new state, keeping any electorate restriction.
             let next_options = live.offering.actions(&live.session);
@@ -853,6 +1200,7 @@ pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
                 tally,
                 electorate,
                 outcome,
+                durable,
             })
         })
         .unwrap_or(CollectiveClose::NoSession)
@@ -1211,6 +1559,10 @@ pub fn surface_for<O: DiscordOffering>(
     )
 }
 
+/// The field name on a private view's **where-to-act plaque** ([`private_act_plaque`]). A stable
+/// marker so a test can pin "the private view explains itself" without matching on prose.
+pub const PRIVATE_ACT_FIELD: &str = "🔒 Yours alone — act on the board above";
+
 /// The pair a Discord **channel** is allowed to receive for one viewer.
 ///
 /// The first surface is always safe to publish into the shared channel. For a
@@ -1361,6 +1713,9 @@ pub enum Driven {
     StaleSurface,
     /// The custom-id is not this offering's.
     NotOurs,
+    /// The turn LANDED but its durable log line did not, so the session was quarantined. The
+    /// receipt is real; the resumability is not, and the surface says both.
+    LandedNotDurable(Outcome),
 }
 
 /// **Drive one component press.** Decodes the custom-id and, for a fixed-arg affordance, runs
@@ -1371,6 +1726,12 @@ pub fn drive<O: DiscordOffering>(channel: u64, custom_id: &str, actor: DreggIden
         Some(p) => p,
         None => return Driven::NotOurs,
     };
+    // THE COLD PRESS. A button that outlived the process finds its channel empty; bring the
+    // persisted session back by replay before deciding this press has nowhere to land. The
+    // restored session carries the SAME generation the button was minted against, so the stamp
+    // check below passes and the press fires — which is the whole point: a restart must not turn
+    // a live board into a wall of dead buttons.
+    ensure_live::<O>(channel);
     match press {
         Press::Ask { key, stamp, turn } if key == O::KEY => match O::value_prompt(&turn) {
             Some(prompt) if stamp_is_current::<O>(channel, stamp) => Driven::NeedsValue {
@@ -1422,6 +1783,67 @@ enum MutationAttempt {
     Fired(Outcome),
     NoSession,
     StaleSurface,
+    /// The turn LANDED on the substrate but its line did not reach the durable log. The session
+    /// was quarantined (dropped from the live table) rather than left to resume as a
+    /// silently-omitted or bricking replay — the fail-closed half of the
+    /// [`SessionResumeStore::record_landed`] contract.
+    LandedNotDurable(Outcome),
+}
+
+/// Run one mutation against the channel's live session and quarantine it if a landed turn did
+/// not reach the durable log. The mutation, the durability verdict and the removal all happen in
+/// ONE store-thread job, so no caller can observe (or press against) a session whose log has
+/// already diverged from its state.
+fn mutate_live<O: DiscordOffering>(
+    channel: u64,
+    stamp: Option<ControlStamp>,
+    f: impl FnOnce(&mut Live<O>) -> (Outcome, bool) + Send + 'static,
+) -> MutationAttempt {
+    // THE COLD PRESS, for every mutation entry point — including a modal submit, which reaches
+    // `drive_text_at` / `drive_value_at` without passing through `drive`. A form a player opened
+    // before the restart must still commit.
+    ensure_live::<O>(channel);
+    O::store()
+        .run(move |sessions| {
+            let (attempt, quarantine) = {
+                let Some(live) = sessions.get_mut(&channel) else {
+                    return MutationAttempt::NoSession;
+                };
+                if stamp.is_some_and(|s| live.control_stamp() != s) {
+                    return MutationAttempt::StaleSurface;
+                }
+                let (outcome, durable) = f(live);
+                if durable {
+                    (MutationAttempt::Fired(outcome), false)
+                } else {
+                    (MutationAttempt::LandedNotDurable(outcome), true)
+                }
+            };
+            if quarantine {
+                // FORGET the log too. A log that is missing a turn its session DID land is the
+                // one thing more dangerous than no log at all: resuming from it would rebuild a
+                // plausible board that diverged from the committed history — a session that
+                // renders and lies. Better no record than a wrong one.
+                forget_channel_log::<O>(sessions.get(&channel), channel);
+                sessions.remove(&channel);
+            }
+            attempt
+        })
+        .unwrap_or(MutationAttempt::NoSession)
+}
+
+/// The honest note a quarantined session gets. The turn is REAL — it landed on the executor —
+/// but this process can no longer offer to resume it, and saying so beats a surface that quietly
+/// diverges from its own log.
+fn not_durable_note<O: DiscordOffering>(outcome: &Outcome) -> String {
+    format!(
+        "{}\n\n⚠ **This turn did not reach durable storage, so the session was closed.** The \
+         move landed on the executor and its receipt above is real; what failed is the write \
+         that would let it be resumed after a restart. Rather than keep a session whose record \
+         no longer matches its state, it is dropped here. Open a fresh one with `{}`.",
+        outcome_note(outcome),
+        O::open_hint(),
+    )
 }
 
 fn note_direct_landing<O: DiscordOffering>(live: &mut Live<O>, outcome: &Outcome) {
@@ -1438,27 +1860,23 @@ fn drive_value_at<O: DiscordOffering>(
     actor: DreggIdentity,
 ) -> Driven {
     let turn = turn.to_string();
-    let attempt = O::store()
-        .run(move |sessions| {
-            let Some(live) = sessions.get_mut(&channel) else {
-                return MutationAttempt::NoSession;
-            };
-            if live.control_stamp() != stamp {
-                return MutationAttempt::StaleSurface;
-            }
-            let action = Action::new(turn.clone(), turn, arg, true);
-            let outcome = live
-                .offering
-                .advance(&mut live.session, action.clone(), actor.clone());
-            live.record_landed(action, actor, &outcome);
-            note_direct_landing::<O>(live, &outcome);
-            MutationAttempt::Fired(outcome)
-        })
-        .unwrap_or(MutationAttempt::NoSession);
+    driven_of(mutate_live::<O>(channel, Some(stamp), move |live| {
+        let action = Action::new(turn.clone(), turn, arg, true);
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        let durable = live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        (outcome, durable)
+    }))
+}
+
+fn driven_of(attempt: MutationAttempt) -> Driven {
     match attempt {
         MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
         MutationAttempt::NoSession => Driven::NoSession,
         MutationAttempt::StaleSurface => Driven::StaleSurface,
+        MutationAttempt::LandedNotDurable(outcome) => Driven::LandedNotDurable(outcome),
     }
 }
 
@@ -1473,7 +1891,7 @@ pub fn drive_value<O: DiscordOffering>(
     // The action is resolved on the store's own thread (where the session lives), so it owns
     // its strings.
     let turn = turn.to_string();
-    let outcome = with_live::<O, _>(channel, move |live| {
+    driven_of(mutate_live::<O>(channel, None, move |live| {
         // The label is decoration; the executor resolves the TYPED (turn, arg) — and `enabled`
         // is a decoration too (we pass `true`), because the substrate is the sole referee: a
         // move it does not admit comes back as a real `Refused`, not a frontend veto.
@@ -1481,14 +1899,10 @@ pub fn drive_value<O: DiscordOffering>(
         let outcome = live
             .offering
             .advance(&mut live.session, action.clone(), actor.clone());
-        live.record_landed(action, actor, &outcome);
+        let durable = live.record_landed(action, actor, &outcome);
         note_direct_landing::<O>(live, &outcome);
-        outcome
-    });
-    match outcome {
-        Some(o) => Driven::Fired(o),
-        None => Driven::NoSession,
-    }
+        (outcome, durable)
+    }))
 }
 
 fn drive_text_at<O: DiscordOffering>(
@@ -1501,28 +1915,15 @@ fn drive_text_at<O: DiscordOffering>(
 ) -> Driven {
     let turn = turn.to_string();
     let text = text.to_string();
-    let attempt = O::store()
-        .run(move |sessions| {
-            let Some(live) = sessions.get_mut(&channel) else {
-                return MutationAttempt::NoSession;
-            };
-            if live.control_stamp() != stamp {
-                return MutationAttempt::StaleSurface;
-            }
-            let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
-            let outcome = live
-                .offering
-                .advance(&mut live.session, action.clone(), actor.clone());
-            live.record_landed(action, actor, &outcome);
-            note_direct_landing::<O>(live, &outcome);
-            MutationAttempt::Fired(outcome)
-        })
-        .unwrap_or(MutationAttempt::NoSession);
-    match attempt {
-        MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
-        MutationAttempt::NoSession => Driven::NoSession,
-        MutationAttempt::StaleSurface => Driven::StaleSurface,
-    }
+    driven_of(mutate_live::<O>(channel, Some(stamp), move |live| {
+        let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        let durable = live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        (outcome, durable)
+    }))
 }
 
 /// **Drive a text-taking affordance** — the free-text modal-submit path. The typed string rides
@@ -1537,7 +1938,7 @@ pub fn drive_text<O: DiscordOffering>(
 ) -> Driven {
     let turn = turn.to_string();
     let text = text.to_string();
-    let outcome = with_live::<O, _>(channel, move |live| {
+    driven_of(mutate_live::<O>(channel, None, move |live| {
         // The typed text rides `Action::text` and ONLY that. The label is the affordance VERB —
         // the same display-only string every other frontend path sends. We deliberately do NOT
         // duplicate the user's text into the label: a label is decoration, and an offering that
@@ -1549,18 +1950,16 @@ pub fn drive_text<O: DiscordOffering>(
         let outcome = live
             .offering
             .advance(&mut live.session, action.clone(), actor.clone());
-        live.record_landed(action, actor, &outcome);
+        let durable = live.record_landed(action, actor, &outcome);
         note_direct_landing::<O>(live, &outcome);
-        outcome
-    });
-    match outcome {
-        Some(o) => Driven::Fired(o),
-        None => Driven::NoSession,
-    }
+        (outcome, durable)
+    }))
 }
 
-/// Re-verify the channel's committed chain through [`Offering::verify`].
+/// Re-verify the channel's committed chain through [`Offering::verify`] — resuming the
+/// channel's persisted session first if this process has not seen it yet.
 pub fn verify_live<O: DiscordOffering>(channel: u64) -> Option<VerifyReport> {
+    ensure_live::<O>(channel);
     with_live::<O, _>(channel, |live| live.offering.verify(&live.session))
 }
 
@@ -1579,6 +1978,9 @@ pub async fn handle_status<O: DiscordOffering>(
 ) {
     let channel = command.channel_id.get();
     let viewer = identity_of(state, command.user.id.get());
+    // Bring the channel's persisted session back if this process has not touched it yet, so
+    // `/… status` after a restart shows the board it left rather than "nothing open here".
+    ensure_live::<O>(channel);
     let rendered = with_live::<O, _>(channel, move |live| {
         (
             surface_for::<O>(live, &viewer),
@@ -1672,8 +2074,16 @@ pub async fn handle_component<O: DiscordOffering>(
     if O::collective() {
         match parse_press(&component.data.custom_id) {
             Some(Press::Fire { stamp, arg, .. }) => {
-                ack::ack_component(ctx, component).await;
-                let cast = cast_vote_at::<O>(channel, stamp, actor.clone(), arg);
+                // ACK, then cast — and the cast goes to the blocking pool, because it is a
+                // write-once ballot resolved on the offering's store thread.
+                let ballot_actor = actor.clone();
+                let cast = ack::ack_component_then(ctx, component, move || {
+                    cast_vote_at::<O>(channel, stamp, ballot_actor, arg)
+                })
+                .await
+                // A dropped job is NOT a recorded ballot. `NoSession` is the honest floor here:
+                // it tells the presser nothing was cast, which is the only safe reading.
+                .unwrap_or(Cast::NoSession);
                 // AUDIT: a collective ballot is a decision too — record the cast verdict
                 // (the resolved crowd turn is enveloped by `handle_close`).
                 crate::audit::log().emit(
@@ -1739,7 +2149,29 @@ pub async fn handle_component<O: DiscordOffering>(
         ack::ack_component(ctx, component).await;
     }
 
-    match drive::<O>(channel, &component.data.custom_id, actor.clone()) {
+    // THE HOT PATH LEAVES THE ASYNC WORKER. `drive` is a real executor turn behind a blocking
+    // `sync_channel` `recv()` on the offering's store thread — the one thread every player in
+    // every channel of this offering queues on. Awaiting it inline parked a Tokio worker for the
+    // whole turn, so under load the store's latency landed on EVERY in-flight interaction's
+    // 3-second clock at once (`verify_chain.rs` and `handle_verify` already knew this; the
+    // 1-press-1-turn path, which is the one under load, did not).
+    let id = component.data.custom_id.clone();
+    let driving = {
+        let actor = actor.clone();
+        tokio::task::spawn_blocking(move || drive::<O>(channel, &id, actor)).await
+    };
+    let Ok(driven) = driving else {
+        // The blocking pool dropped the job. This is NOT a refusal and NOT a receipt.
+        let text = "The offering service did not run your press, so nothing here says whether \
+             it landed. Re-open the board before playing on.";
+        if will_commit {
+            ack::followup_ephemeral(ctx, component, text).await;
+        } else {
+            component_ephemeral(ctx, component, text).await;
+        }
+        return;
+    };
+    match driven {
         Driven::NeedsValue {
             stamp,
             turn,
@@ -1797,6 +2229,31 @@ pub async fn handle_component<O: DiscordOffering>(
                 && crate::commands::crown::foldable_key(O::KEY)
             {
                 crate::commands::crown::offer_fold(ctx, component.channel_id, O::KEY).await;
+            }
+        }
+        Driven::LandedNotDurable(outcome) => {
+            crate::audit::log().emit(
+                crate::audit::AuditEvent::new(
+                    "discord",
+                    crate::audit::actor_of(component.user.id.get(), &actor),
+                    crate::audit::Surface::Component,
+                    crate::audit::Input {
+                        kind: format!("offering:advance:{}", O::KEY),
+                        detail: serde_json::json!({
+                            "custom_id": component.data.custom_id,
+                            "durable": false,
+                        }),
+                    },
+                )
+                .with_session(channel.to_string())
+                .with_offering(O::KEY)
+                .with_outcome(crate::audit::outcome_of(&outcome)),
+            );
+            let note = not_durable_note::<O>(&outcome);
+            if will_commit {
+                ack::followup_ephemeral(ctx, component, &note).await;
+            } else {
+                component_ephemeral(ctx, component, &note).await;
             }
         }
         Driven::NoSession => {
@@ -1892,20 +2349,35 @@ pub async fn handle_modal<O: DiscordOffering>(
     // A TEXT submit: (key, turn, arg) on the id, the free text on the label.
     if let Some((key, stamp, turn, arg)) = parse_text_submit(&modal.data.custom_id) {
         if key != O::KEY {
-            return;
+            return modal_unrouted(ctx, modal).await;
         }
-        let driven = drive_text_at::<O>(channel, stamp, &turn, arg, raw.trim(), actor.clone());
+        // ACK FIRST. A MODAL SUBMIT IS AN INTERACTION, ON THE SAME 3-SECOND CLOCK — and this one
+        // was answering LAST. `drive_text_at` is a real executor turn on the offering's store
+        // thread (a sealed bid, a reserve price, a document paragraph), and it ran, then
+        // `channel_surfaces` blocked on the same thread AGAIN to re-render, and only then did
+        // `finish_modal` send the first response. A typed move that outran the window therefore
+        // COMMITTED, and the player was shown "This interaction failed" over a board still
+        // painted with the pre-move state.
+        let text = raw.trim().to_string();
+        let (actor_job, turn_job) = (actor.clone(), turn.clone());
+        let driven = ack::defer_modal_then(ctx, modal, move || {
+            drive_text_at::<O>(channel, stamp, &turn_job, arg, &text, actor_job)
+        })
+        .await;
         finish_modal::<O>(ctx, modal, channel, &actor, driven).await;
         return;
     }
 
     // A NUMERIC submit: the typed value IS the arg.
     let Some((key, stamp, turn)) = parse_submit(&modal.data.custom_id) else {
-        return;
+        // NEVER a silent drop: a submit id this build cannot decode says so.
+        return modal_unrouted(ctx, modal).await;
     };
     if key != O::KEY {
-        return;
+        return modal_unrouted(ctx, modal).await;
     }
+    // A non-number is decided BEFORE anything is ACKed and before any work — nothing fired, so
+    // the honest answer is a plain ephemeral on an unanswered interaction.
     let Ok(value) = raw.trim().parse::<i64>() else {
         let _ = modal
             .create_response(
@@ -1919,19 +2391,55 @@ pub async fn handle_modal<O: DiscordOffering>(
             .await;
         return;
     };
-    let driven = drive_value_at::<O>(channel, stamp, &turn, value, actor.clone());
+    let (actor_job, turn_job) = (actor.clone(), turn.clone());
+    let driven = ack::defer_modal_then(ctx, modal, move || {
+        drive_value_at::<O>(channel, stamp, &turn_job, value, actor_job)
+    })
+    .await;
     finish_modal::<O>(ctx, modal, channel, &actor, driven).await;
+}
+
+/// A submit this build cannot route — answered, never dropped.
+async fn modal_unrouted(ctx: &Context, modal: &ModalInteraction) {
+    let _ = modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(
+                        "That form is from a surface this bot build no longer decodes — nothing \
+                         was fired.",
+                    )
+                    .ephemeral(true),
+            ),
+        )
+        .await;
 }
 
 /// The shared tail of a modal submit: post the move's honest outcome + the re-rendered surface (a
 /// landed receipt / a real refusal), or the no-session note.
+///
+/// Every answer here is an EDIT of the [`ack::defer_modal`] the caller already sent (rule 1: the
+/// typed move mutates the board it was typed on). `driven: None` is the blocking pool dropping
+/// the job — reported as the unknown it is, never as a refusal.
 async fn finish_modal<O: DiscordOffering>(
     ctx: &Context,
     modal: &ModalInteraction,
     channel: u64,
     viewer: &DreggIdentity,
-    driven: Driven,
+    driven: Option<Driven>,
 ) {
+    let Some(driven) = driven else {
+        ack::note_modal(
+            ctx,
+            modal,
+            "The offering service did not run your move, so this is NOT a refusal and NOT a \
+             receipt — nothing here says whether it landed. Re-open the board (its controls carry \
+             the state that minted them) before playing on.",
+        )
+        .await;
+        return;
+    };
     match driven {
         Driven::Fired(outcome) => {
             // AUDIT the modal-driven advance (the typed value already rode the modal
@@ -1952,8 +2460,12 @@ async fn finish_modal<O: DiscordOffering>(
             );
             let note = outcome_note(&outcome);
             let viewer_id = viewer.clone();
-            let rendered =
-                with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer_id));
+            let rendered = tokio::task::spawn_blocking(move || {
+                with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer_id))
+            })
+            .await
+            .ok()
+            .flatten();
             match rendered {
                 // ── THE BOARD IS ONE MESSAGE. A typed move (a reserve price, a sealed bid, a
                 //    document paragraph) is an ORDINARY TURN, and an ordinary turn MUTATES the
@@ -1966,20 +2478,10 @@ async fn finish_modal<O: DiscordOffering>(
                 //    ABOVE kept its buttons — buttons the head-stamp would then refuse, so the
                 //    surface a player was looking at was dead and said nothing about it.
                 Some(((embed, rows), private_surface)) if modal.message.is_some() => {
-                    let _ = modal
-                        .create_response(
-                            &ctx.http,
-                            CreateInteractionResponse::UpdateMessage(
-                                CreateInteractionResponseMessage::new()
-                                    .content(truncate(&note, 1900))
-                                    .embed(embed)
-                                    .components(rows),
-                            ),
-                        )
-                        .await;
+                    ack::edit_modal(ctx, modal, &truncate(&note, 1900), Some(embed), rows).await;
                     // A hidden-information game's shared board carries only the fog; the presser's
                     // own projection rides a single-reader followup, exactly as the button path
-                    // does. It must never be what `UpdateMessage` puts on the channel surface.
+                    // does. It must never be what the board edit puts on the channel surface.
                     if let Some((private_embed, _private_rows)) = private_surface {
                         let _ = modal
                             .create_followup(
@@ -1997,18 +2499,15 @@ async fn finish_modal<O: DiscordOffering>(
                 }
                 // No board to mutate (a modal reached us without its origin message, or the
                 // session closed underneath): answer honestly rather than dropping the submit.
-                other => {
-                    let msg = match other {
-                        Some(((embed, rows), _)) => CreateInteractionResponseMessage::new()
-                            .content(truncate(&note, 1900))
-                            .embed(embed)
-                            .components(rows),
-                        None => CreateInteractionResponseMessage::new().content(note),
-                    };
-                    let _ = modal
-                        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-                        .await;
-                }
+                other => match other {
+                    Some(((embed, rows), _)) => {
+                        ack::edit_modal(ctx, modal, &truncate(&note, 1900), Some(embed), rows)
+                            .await;
+                    }
+                    // No surface to paint (the session closed underneath). Never wipe the board
+                    // a player may still be looking at — the outcome goes to them privately.
+                    None => ack::note_modal(ctx, modal, &note).await,
+                },
             }
             // 👑 THE CROWN (modal path): a crowned game's match ending on a modal-landed
             // turn gets the same fold offer as the component path above.
@@ -2018,6 +2517,31 @@ async fn finish_modal<O: DiscordOffering>(
                 crate::commands::crown::offer_fold(ctx, modal.channel_id, O::KEY).await;
             }
         }
+        Driven::LandedNotDurable(outcome) => {
+            crate::audit::log().emit(
+                crate::audit::AuditEvent::new(
+                    "discord",
+                    crate::audit::actor_of(modal.user.id.get(), viewer),
+                    crate::audit::Surface::Modal,
+                    crate::audit::Input {
+                        kind: format!("offering:advance:{}", O::KEY),
+                        detail: serde_json::json!({
+                            "custom_id": modal.data.custom_id,
+                            "durable": false,
+                        }),
+                    },
+                )
+                .with_session(channel.to_string())
+                .with_offering(O::KEY)
+                .with_outcome(crate::audit::outcome_of(&outcome)),
+            );
+            ack::note_modal(
+                ctx,
+                modal,
+                &truncate(&not_durable_note::<O>(&outcome), 1900),
+            )
+            .await;
+        }
         Driven::StaleSurface => {
             crate::audit::log().emit(
                 crate::audit::AuditEvent::new(
@@ -2026,51 +2550,32 @@ async fn finish_modal<O: DiscordOffering>(
                     crate::audit::Surface::Modal,
                     crate::audit::Input {
                         kind: format!("offering:advance:{}", O::KEY),
-                        detail: serde_json::json!({ "custom_id": modal.data.custom_id }),
+                        detail: serde_json::json!({
+                            "custom_id": modal.data.custom_id,
+                        }),
                     },
                 )
                 .decided("refused", "stale_surface")
                 .with_session(channel.to_string())
                 .with_offering(O::KEY),
             );
-            let _ = modal
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(
-                                "That form belongs to a replaced session or earlier state — nothing was fired.",
-                            )
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
+            ack::note_modal(
+                ctx,
+                modal,
+                "That form belongs to a replaced session or earlier state — nothing was fired.",
+            )
+            .await;
         }
         Driven::NoSession | Driven::NotOurs => {
-            let _ = modal
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(no_session_text::<O>())
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
+            ack::note_modal(ctx, modal, &no_session_text::<O>()).await;
         }
         Driven::NeedsValue { .. } | Driven::NeedsText { .. } => {
-            let _ = modal
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(
-                                "That form did not resolve to a typed move — nothing was fired.",
-                            )
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
+            ack::note_modal(
+                ctx,
+                modal,
+                "That form did not resolve to a typed move — nothing was fired.",
+            )
+            .await;
         }
     }
 }
@@ -2080,13 +2585,21 @@ async fn finish_modal<O: DiscordOffering>(
 /// driven tests read exactly what [`handle_close`] posts.
 pub fn close_note(resolved: &CollectiveResolved) -> String {
     format!(
-        "**Round {} closed.** The party chose **{}** ({}/{} ballot(s) · {} voter(s) of record).\n{}",
+        "**Round {} closed.** The party chose **{}** ({}/{} ballot(s) · {} voter(s) of record).\n{}{}",
         resolved.round,
         truncate(&resolved.winner.label, 120),
         resolved.tally.winning_votes(),
         resolved.tally.total_votes(),
         resolved.electorate.len(),
         outcome_note(&resolved.outcome),
+        // The crowd turn is real either way; what a non-durable write costs is the ABILITY TO
+        // RESUME this session after a restart, and that is said out loud rather than swallowed.
+        if resolved.durable {
+            ""
+        } else {
+            "\n\n⚠ **This round did not reach durable storage** — the turn landed, but this \
+             session can no longer be resumed after a restart."
+        },
     )
 }
 
@@ -2176,7 +2689,14 @@ async fn update_surface<O: DiscordOffering>(
     acked: bool,
 ) {
     let viewer = viewer.clone();
-    let rendered = with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer));
+    // The re-render is a SECOND blocking store round-trip; it runs after the ACK, but it is the
+    // same worker-parking cost, so it goes to the blocking pool too.
+    let rendered = tokio::task::spawn_blocking(move || {
+        with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer))
+    })
+    .await
+    .ok()
+    .flatten();
     let Some(((embed, rows), private_surface)) = rendered else {
         if acked {
             ack::followup_ephemeral(ctx, component, &no_session_text::<O>()).await;
@@ -2470,6 +2990,70 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
 mod tests {
     use super::*;
 
+    /// **A MODAL SUBMIT IS AN INTERACTION, ON THE SAME 3-SECOND CLOCK — and it was answering
+    /// LAST.** `handle_modal` ran `drive_text_at` / `drive_value_at` — a real executor turn on the
+    /// offering store thread: a sealed bid, a reserve price, a document paragraph — then blocked
+    /// on that same thread AGAIN to re-render, and only then sent its FIRST response. A typed move
+    /// that outran the window had COMMITTED, and the player was shown "This interaction failed"
+    /// over a board still painted with the pre-move state.
+    ///
+    /// This drives the REAL `drive_value_at` against a REAL live council through the REAL
+    /// ordering helper `handle_modal` now uses. The trace is the assertion, and the turn is
+    /// checked to have genuinely landed — so this cannot pass by not doing the work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_typed_move_is_answered_before_the_turn_commits() {
+        use dreggnet_council::{CouncilOffering, TURN_PROPOSE};
+        use std::sync::{Arc, Mutex};
+
+        let channel = 90_941;
+        close_in::<CouncilOffering>(channel);
+        let members: Vec<[u8; 32]> = vec![[11u8; 32], [22u8; 32], [33u8; 32]];
+        let voter = CouncilOffering::member_identity(&members[0]);
+        open_in::<CouncilOffering>(
+            channel,
+            move || {
+                CouncilOffering::new(
+                    members,
+                    vec![dreggnet_council::CandidateProposal::new(
+                        "Fund the commons",
+                        1,
+                    )],
+                    2,
+                )
+            },
+            SessionConfig::with_seed(channel),
+        )
+        .expect("the council cell comes alive");
+        let stamp = control_stamp_in::<CouncilOffering>(channel).expect("a live stamp");
+
+        let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+        let ack_trace = Arc::clone(&trace);
+        let work_trace = Arc::clone(&trace);
+        let driven = crate::commands::ack::testing::ack_then_blocking_for_test(
+            async move {
+                tokio::task::yield_now().await;
+                ack_trace.lock().unwrap().push("acked");
+            },
+            move || {
+                let out = drive_value_at::<CouncilOffering>(channel, stamp, TURN_PROPOSE, 0, voter);
+                work_trace.lock().unwrap().push("committed");
+                out
+            },
+        )
+        .await;
+
+        assert!(
+            matches!(driven, Some(Driven::Fired(ref o)) if o.landed()),
+            "the typed move must genuinely land, or this test proves nothing: {driven:?}"
+        );
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["acked", "committed"],
+            "the turn committed before the modal submit was answered"
+        );
+        close_in::<CouncilOffering>(channel);
+    }
+
     #[test]
     fn the_custom_id_wire_round_trips() {
         let stamp = ControlStamp {
@@ -2514,6 +3098,231 @@ mod tests {
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PERSISTENCE — the restart gate.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Point this test process's session store at a scratch directory. The install is a
+    /// `OnceLock`, so calling it from several tests is fine — the first one wins and the rest
+    /// see the same root.
+    fn install_test_resume_store() -> PathBuf {
+        static ROOT: OnceLock<PathBuf> = OnceLock::new();
+        let root = ROOT
+            .get_or_init(|| {
+                let dir = std::env::temp_dir()
+                    .join(format!("dregg-bot-test-sessions-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).expect("the scratch session directory");
+                dir
+            })
+            .clone();
+        install_resume_store(Some(root.clone()));
+        root
+    }
+
+    /// **THE RESTART GATE: the bot forgets, comes back, and LANDS THE NEXT TURN.**
+    ///
+    /// The failure this is written against is the plausible one, not the obvious one. Persisting
+    /// a *rendering* would produce a board that looks resumable and refuses every move — a new
+    /// fake, worse than the honest amnesia. So this test does not check that a board comes back;
+    /// it checks that the thing that comes back **can still be played**:
+    ///
+    ///   1. open a real offering and land two real turns through the SAME `drive` path a live
+    ///      button press takes (with their real receipts);
+    ///   2. DROP the whole in-RAM session — the offering value, the session, the receipt chain —
+    ///      exactly as a process restart does (`quench`, which removes the live entry and leaves
+    ///      the durable log alone);
+    ///   3. press a button minted BEFORE the drop, and require it to LAND a third turn.
+    ///
+    /// The third turn landing is the whole assertion. It can only happen if the resumed session
+    /// re-drove turns 1 and 2 through the real executor: an offering advances against committed
+    /// state, so a fake would refuse here. The pre-drop button firing is the second half — the
+    /// resumed session carries the same generation and head stamp, so controls a player left in
+    /// the channel are still live rather than a wall of "that control belongs to a replaced
+    /// session".
+    #[test]
+    fn a_session_survives_a_restart_and_lands_the_next_turn() {
+        use dreggnet_names::NamesOffering;
+
+        install_test_resume_store();
+        let channel = 99_501;
+        close_in::<NamesOffering>(channel);
+
+        open_in(channel, NamesOffering::new, SessionConfig::with_seed(11))
+            .expect("the offering opens");
+
+        // The registration affordance — a text-taking turn, so the log's `Action::text` payload
+        // is on the replay path too (a name that did not survive persistence would resume into a
+        // world with different names in it, and the executor would notice).
+        let register = with_live::<NamesOffering, _>(channel, |live| {
+            live.offering
+                .actions(&live.session)
+                .into_iter()
+                .find(|a| a.enabled)
+                .expect("the names surface offers a registration")
+        })
+        .expect("the session is live");
+
+        // Two real turns, through the SAME sync core a live modal submit takes.
+        for name in ["alpha-before", "beta-before"] {
+            let stamp = control_stamp_in::<NamesOffering>(channel).expect("a live stamp");
+            let driven = drive_text_at::<NamesOffering>(
+                channel,
+                stamp,
+                &register.turn,
+                register.arg,
+                name,
+                actor("a1"),
+            );
+            assert!(
+                matches!(driven, Driven::Fired(Outcome::Landed { .. })),
+                "the pre-restart turn `{name}` must land: {driven:?}",
+            );
+        }
+
+        // The stamp a control left in the channel carries, minted BEFORE the crash.
+        let pre_restart_stamp = control_stamp_in::<NamesOffering>(channel).expect("a live stamp");
+
+        // ── THE RESTART. Everything in RAM goes; only the durable log survives. ──
+        quench::<NamesOffering>(channel);
+        assert!(
+            !live_entry_exists::<NamesOffering>(channel),
+            "the in-RAM session is genuinely gone"
+        );
+
+        // ── THE PRESS. A form carrying the PRE-RESTART stamp must commit a third turn. ──
+        let driven = drive_text_at::<NamesOffering>(
+            channel,
+            pre_restart_stamp,
+            &register.turn,
+            register.arg,
+            "gamma-after",
+            actor("a1"),
+        );
+        assert!(
+            matches!(driven, Driven::Fired(Outcome::Landed { .. })),
+            "a control minted before the restart must land a REAL turn on the resumed \
+             session — got {driven:?}",
+        );
+
+        // The resumed session CONTINUED the committed chain rather than starting a new one …
+        let journal_len =
+            with_live::<NamesOffering, _>(channel, |live| live.journal.moves.len()).unwrap();
+        assert_eq!(
+            journal_len, 3,
+            "two pre-restart turns plus the one that landed after it"
+        );
+        // … and it is the SAME state, not a same-shaped one: the names registered before the
+        // crash are still registered, which is only true if their turns genuinely re-landed.
+        let names = with_live::<NamesOffering, _>(channel, |live| {
+            let mut n: Vec<String> = live
+                .session
+                .registered()
+                .into_iter()
+                .map(|(name, _owner)| name)
+                .collect();
+            n.sort();
+            n
+        })
+        .expect("the session is live");
+        assert_eq!(
+            names,
+            vec![
+                "alpha-before".to_string(),
+                "beta-before".to_string(),
+                "gamma-after".to_string()
+            ],
+            "the pre-restart registrations came back through the executor, and the post-restart \
+             one joined them",
+        );
+        // The offering's own verifier re-derives the whole chain over the resumed session.
+        let report = verify_live::<NamesOffering>(channel).expect("the resumed session verifies");
+        assert!(
+            report.verified,
+            "the resumed chain must re-verify: {}",
+            report.detail
+        );
+
+        close_in::<NamesOffering>(channel);
+    }
+
+    /// A tampered durable log does NOT resume. The executor re-checks every recorded move on the
+    /// way back in, so a line nobody could have played fails there — and the channel is left with
+    /// no session rather than a forged one.
+    #[test]
+    fn a_tampered_log_refuses_to_resume() {
+        use dreggnet_names::NamesOffering;
+        use dreggnet_offerings::FileResumeStore;
+
+        let root = install_test_resume_store();
+        let channel = 99_502;
+        close_in::<NamesOffering>(channel);
+        open_in(channel, NamesOffering::new, SessionConfig::with_seed(12))
+            .expect("the offering opens");
+        let id = with_live::<NamesOffering, _>(channel, |live| live.journal.id.clone())
+            .expect("a live journal id");
+
+        // Splice a move no player made and no executor would admit.
+        let store = FileResumeStore::open(&root).expect("the scratch store");
+        assert!(store.record_landed(
+            <NamesOffering as DiscordOffering>::KEY,
+            &id,
+            &Action::new("forged", "no-such-turn", 4_242, true),
+            &actor("ff"),
+        ));
+
+        quench::<NamesOffering>(channel);
+        let refused = resume_in::<NamesOffering>(channel);
+        assert!(
+            matches!(refused, Err(ResumeRefusal::Refused { .. })),
+            "a spliced move must fail on re-drive, not reopen a forged state — got {refused:?}",
+        );
+        assert!(
+            !live_entry_exists::<NamesOffering>(channel),
+            "nothing is left live after a refused resume"
+        );
+        close_in::<NamesOffering>(channel);
+    }
+
+    /// An offering that declines [`DiscordOffering::rebuild`] is honestly NOT resumable, rather
+    /// than being reopened under a guessed configuration.
+    #[test]
+    fn an_unrebuildable_offering_refuses_to_resume() {
+        use dreggnet_offerings::native_descent::NativeDescentOffering;
+
+        install_test_resume_store();
+        let channel = 99_503;
+        close_in::<NativeDescentOffering>(channel);
+        open_in(
+            channel,
+            NativeDescentOffering::new,
+            SessionConfig::with_seed(3),
+        )
+        .expect("the offering opens");
+        quench::<NativeDescentOffering>(channel);
+        assert_eq!(
+            resume_in::<NativeDescentOffering>(channel),
+            Err(ResumeRefusal::NotRebuildable),
+            "a day-bound offering names its own irreproducibility instead of guessing",
+        );
+        close_in::<NativeDescentOffering>(channel);
+    }
+
+    /// Drop the channel's LIVE session while leaving its durable record intact — a faithful
+    /// in-process stand-in for the process dying. Deliberately not `close_in`, which forgets the
+    /// record too (a close is a decision; a crash is not).
+    fn quench<O: DiscordOffering>(channel: u64) {
+        let _ = O::store().run(move |sessions| {
+            sessions.remove(&channel);
+        });
+    }
+
+    fn live_entry_exists<O: DiscordOffering>(channel: u64) -> bool {
+        O::store()
+            .run(move |sessions| sessions.contains_key(&channel))
+            .unwrap_or(false)
     }
 
     /// **Panic isolation**: a job that panics on the store thread does NOT brick the subsystem.

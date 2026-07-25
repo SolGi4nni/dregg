@@ -64,6 +64,9 @@ use serenity::all::{
     CreateInteractionResponseMessage, CreateMessage,
 };
 
+use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, SEG_ANCHOR_WIDTH};
+
 use dregg_automatafl::AutomataflOffering;
 use dreggnet_game_board::{Game, GameBoard, MatchProof, ProofAnchor, UniverseId, match_anchor};
 use dreggnet_prove_service::{
@@ -148,10 +151,201 @@ struct FoldRecord {
     channel: u64,
     /// The submitting player — their derived dregg identity hex (never a nickname).
     player: String,
-    /// The background proving job.
-    job: JobId,
+    /// The background proving job — `None` for a fold RESTORED from durable storage at boot,
+    /// which is already ranked and has no in-flight prover work. A pending fold is genuinely
+    /// process-local (the prover pool is), so a restored record is never pending.
+    job: Option<JobId>,
     /// `Some` once the proof was submitted to (and accepted by) the board.
     ranked: Option<Ranked>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 👑 DURABILITY — why the crown, of everything in this bot, MUST survive a restart.
+//
+// A crown post is not a session. It is a PUBLIC message in a channel, carrying a
+// `.dreggproof` attachment and a button labelled "Re-verify (anyone, O(1))" whose whole
+// pitch is *you do not have to trust the winner, and you do not have to trust this bot*.
+// The board that button re-verifies against was an in-memory `GameBoard`, so after any
+// restart `reverify_fold` answered `Err("no such fold")` and the post rendered
+// "✗ Re-verify refused." A public artifact whose verification affordance stops working is
+// worse than one that never offered it: it reads as the claim having been withdrawn.
+//
+// What is persisted is the proof ENVELOPE plus the board CONFIG it was accepted under (the
+// pinned VK + genesis + WIN anchor). NOT the board state, and emphatically not the moves.
+// On boot each row is RE-SUBMITTED through `GameBoard::submit_bytes` — the identical O(1)
+// light-client accept path a live submission takes — so a restored entry is one this
+// process verified itself, this run. A tampered proof, a lied turn count or a swapped
+// anchor is REFUSED at exactly the same tooth and simply does not come back.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One RANKED fold as it is persisted — everything needed to put the entry back on the board
+/// and nothing else. `commands::crown` owns this shape; `crate::crown_store` supplies the
+/// sqlite impl (the same split `descent`/`DescentBoardStore` uses).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredCrownFold {
+    /// The fold token — the id every `crown:status:` / `crown:reverify:` button carries. It is
+    /// restored EXACTLY, so a button minted before the restart still addresses this fold.
+    pub token: u64,
+    /// The game's slug (`tug` / `automatafl`).
+    pub game: String,
+    /// The Discord channel the match was played in.
+    pub channel: u64,
+    /// The submitting player's derived dregg identity hex.
+    pub player: String,
+    /// The attested turn count claimed at submit (re-checked against the proof on restore).
+    pub turns: usize,
+    /// The pinned anchor's root-circuit VK fingerprint.
+    pub vk: [u8; 32],
+    /// The pinned anchor's genesis state anchor, as canonical BabyBear limbs.
+    pub genesis_root: [u32; SEG_ANCHOR_WIDTH],
+    /// The pinned anchor's WIN state anchor, as canonical BabyBear limbs.
+    pub win_root: [u32; SEG_ANCHOR_WIDTH],
+    /// The succinct whole-history proof envelope — the same bytes the crown post attached.
+    pub proof: Vec<u8>,
+}
+
+impl StoredCrownFold {
+    /// Rebuild the pinned [`ProofAnchor`] this fold was accepted against.
+    fn anchor(&self) -> ProofAnchor {
+        // `BabyBear::new` reduces, so a hand-edited row cannot smuggle a non-canonical limb
+        // past the anchor comparison. (It would still fail the light client; this just keeps
+        // the stored representation from being the place a malleability question arises.)
+        ProofAnchor::new(
+            RecursionVk(self.vk),
+            self.genesis_root.map(BabyBear::new),
+            self.win_root.map(BabyBear::new),
+        )
+    }
+}
+
+/// **The crown's durable seam.** Sync over `&self` (interior mutability), matching
+/// `DescentBoardStore` / `GalleryStore`: the crown board lives on a dedicated non-tokio
+/// `std::thread`, so an async DB is bridged inside the impl, not here.
+pub trait CrownStore {
+    /// Persist a ranked fold. Idempotent by `token`.
+    fn persist_fold(&self, fold: &StoredCrownFold) -> Result<(), String>;
+    /// Every persisted fold, oldest token first (the anchor-pinning order).
+    fn list_folds(&self) -> Result<Vec<StoredCrownFold>, String>;
+}
+
+/// The durable crown store, installed once by the main loop at boot ([`install_store`]).
+static CROWN_STORE: OnceLock<Box<dyn CrownStore + Send + Sync>> = OnceLock::new();
+
+/// **Main-loop entry point.** Install the durable crown store and force the board thread to
+/// spawn NOW, which re-submits every persisted fold through the O(1) accept path. First install
+/// wins; call once at boot BEFORE any `/crown` press is served.
+pub fn install_store(store: Box<dyn CrownStore + Send + Sync>) {
+    let _ = CROWN_STORE.set(store);
+    let _ = crown();
+}
+
+/// The slug→[`Game`] map used when reloading a persisted row.
+fn game_of_slug(slug: &str) -> Option<Game> {
+    [Game::MultiwayTug, Game::Automatafl]
+        .into_iter()
+        .find(|g| g.slug() == slug)
+}
+
+/// **Boot restore** — put every persisted fold back on a fresh board by RE-SUBMITTING its proof.
+///
+/// Each row re-opens its game's board against the anchor it was ranked under (the first row of a
+/// game pins it, exactly as the first live fold does) and then goes through
+/// `GameBoard::submit_bytes`, which runs the whole-history light client, binds the genesis and
+/// WIN roots, and binds the claimed turn count. So this is a re-VERIFICATION, not a restoration
+/// of trust: a row that does not survive that gate is dropped with a warning and its button
+/// keeps saying refused — which is the honest answer for a proof that no longer verifies.
+fn restore_folds(core: &mut CrownCore) {
+    let Some(store) = CROWN_STORE.get() else {
+        return;
+    };
+    let rows = match store.list_folds() {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("the crown store could not be read ({e}) — no folds restored");
+            return;
+        }
+    };
+    let (mut restored, mut refused) = (0usize, 0usize);
+    for row in rows {
+        let Some(game) = game_of_slug(&row.game) else {
+            tracing::warn!("persisted crown fold #{} names no known game", row.token);
+            refused += 1;
+            continue;
+        };
+        let anchor = core
+            .anchors
+            .entry(game)
+            .or_insert_with(|| row.anchor())
+            .clone();
+        let universe = core.board.ensure_open(game, anchor);
+        // Bound so the board's mutable borrow ends before the fold table is written.
+        let submitted = core
+            .board
+            .submit_bytes(game, &row.player, row.proof.clone(), row.turns);
+        match submitted {
+            Ok(accepted) => {
+                core.next_token = core.next_token.max(row.token + 1);
+                core.folds.insert(
+                    row.token,
+                    FoldRecord {
+                        game,
+                        channel: row.channel,
+                        player: row.player,
+                        job: None,
+                        ranked: Some(Ranked {
+                            universe,
+                            completion_id: accepted.completion_id,
+                            turns: accepted.turns,
+                            rank: accepted.rank,
+                            proof_len: row.proof.len(),
+                            vk8: hex::encode(&row.vk[..4]),
+                        }),
+                    },
+                );
+                restored += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "persisted crown fold #{} did NOT re-verify and was not restored: {e}",
+                    row.token,
+                );
+                refused += 1;
+            }
+        }
+    }
+    if restored > 0 || refused > 0 {
+        tracing::info!(
+            "crown board restored {restored} ranked fold(s) by re-running the O(1) light \
+             client; {refused} refused",
+        );
+    }
+}
+
+/// Persist a freshly ranked fold, if a durable store is installed. Called on the board thread
+/// immediately after the board accepted the proof.
+fn persist_fold(token: u64, rec: &FoldRecord, proof: &MatchProof) {
+    let Some(store) = CROWN_STORE.get() else {
+        return;
+    };
+    let fold = StoredCrownFold {
+        token,
+        game: rec.game.slug().to_string(),
+        channel: rec.channel,
+        player: rec.player.clone(),
+        turns: proof.turns(),
+        vk: proof.vk.0,
+        genesis_root: proof.attested.genesis_root.map(|f| f.0),
+        win_root: proof.attested.final_root.map(|f| f.0),
+        proof: proof.proof_bytes.clone(),
+    };
+    if let Err(e) = store.persist_fold(&fold) {
+        // A crown that ranked but did not persist is a crown whose public Re-verify button dies
+        // at the next restart. Say so loudly; the fold itself is unaffected and still ranked.
+        tracing::warn!(
+            "crown fold #{token} RANKED but did not persist ({e}) — its public Re-verify \
+             button will not survive a restart",
+        );
+    }
 }
 
 /// The owner thread's state: the REAL background prover, the proof-carrying board, the folds.
@@ -190,6 +384,10 @@ fn crown() -> &'static Crown {
                     folds: HashMap::new(),
                     next_token: 1,
                 };
+                // Put every persisted crown back on the board FIRST, by re-running the O(1)
+                // light client over its stored envelope — so a public crown post's Re-verify
+                // button answers before this thread serves its first press.
+                restore_folds(&mut core);
                 while let Ok(job) = rx.recv() {
                     // Structural net: a panicking job is contained per-job by `run`, and this
                     // guard guarantees no job can unwind out of the loop and kill the thread
@@ -273,7 +471,7 @@ fn enqueue_fold(game: Game, channel: u64, player: String, m: PlayedMatch) -> Enq
                         game,
                         channel,
                         player,
-                        job,
+                        job: Some(job),
                         ranked: None,
                     },
                 );
@@ -327,6 +525,15 @@ fn poll_fold(token: u64) -> Poll {
             };
         }
         let (game, player, job) = (rec.game, rec.player.clone(), rec.job);
+        // A record with no job is a RESTORED fold that somehow lost its ranked facts — it
+        // cannot be polled (the prover pool is process-local and never saw it). Say so rather
+        // than asking the pool about a job id that does not exist.
+        let Some(job) = job else {
+            return Poll::Failed(
+                "this fold was restored from durable storage and carries no live proving job"
+                    .to_string(),
+            );
+        };
         match core.service.status(job) {
             s @ (JobStatus::Queued | JobStatus::Proving) => {
                 let m = core.service.metrics();
@@ -373,6 +580,12 @@ fn poll_fold(token: u64) -> Poll {
                         };
                         if let Some(rec) = core.folds.get_mut(&token) {
                             rec.ranked = Some(facts.clone());
+                        }
+                        // DURABLE BEFORE PUBLIC. The very next thing that happens is a public
+                        // crown post carrying a Re-verify button; persist the envelope + anchor
+                        // here so that button is answerable tomorrow, not just this afternoon.
+                        if let Some(rec) = core.folds.get(&token) {
+                            persist_fold(token, rec, &proof);
                         }
                         Poll::JustRanked {
                             game,
@@ -486,10 +699,12 @@ fn folds_in(channel: u64) -> Vec<(u64, Game, String)> {
             .iter()
             .filter(|(_, r)| r.channel == channel)
             .map(|(&t, r)| {
-                let status = if r.ranked.is_some() {
-                    "RANKED — the board holds the proof (and no moves)".to_string()
-                } else {
-                    match core.service.status(r.job) {
+                let status = match (r.ranked.is_some(), r.job) {
+                    (true, _) => "RANKED — the board holds the proof (and no moves)".to_string(),
+                    // Unranked with no job: a restored row that failed to re-verify would not be
+                    // here at all, so this is unreachable in practice — reported, not guessed.
+                    (false, None) => "restored, with no live proving job".to_string(),
+                    (false, Some(job)) => match core.service.status(job) {
                         JobStatus::Queued => "queued".to_string(),
                         JobStatus::Proving => "proving (the real fold — minutes)".to_string(),
                         JobStatus::Done(_) => {
@@ -497,7 +712,7 @@ fn folds_in(channel: u64) -> Vec<(u64, Game, String)> {
                         }
                         JobStatus::Failed(e) => format!("failed: {}", truncate(&e, 120)),
                         JobStatus::Unknown => "unknown".to_string(),
-                    }
+                    },
                 };
                 (t, r.game, status)
             })
@@ -773,6 +988,22 @@ fn enqueue_response(
     }
 }
 
+/// The honest card for a fold job the blocking pool dropped — never rendered as an enqueue that
+/// worked, because the match is either folding or it is not, and this side does not know which.
+fn dropped_job_card() -> (CreateEmbed, Vec<CreateActionRow>) {
+    (
+        CreateEmbed::new()
+            .title("The fold could not be started")
+            .description(
+                "The crown service did not run the enqueue, so nothing here can honestly be \
+                 called \"proving\". The match itself is untouched — every move of it is still a \
+                 committed, verified turn. Check `/crown status` and try again.",
+            )
+            .color(COLOR_REFUSED),
+        Vec::new(),
+    )
+}
+
 /// The ranked crown post: embed + re-verify button + (on first rank) the proof envelope file.
 fn ranked_post(game: Game, token: u64, facts: &Ranked) -> (CreateEmbed, Vec<CreateActionRow>) {
     let scope_line = match game {
@@ -831,26 +1062,48 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 
     match action.as_str() {
         "fold" => {
-            // Whichever crowned game has a finished, won match live in this channel.
-            let game = [Game::MultiwayTug, Game::Automatafl]
-                .into_iter()
-                .find(|g| played_match_of(*g, channel).is_some());
-            let Some(game) = game else {
-                respond_ephemeral(
-                    ctx,
-                    command,
-                    "No finished, WON match is live in this channel. Win a `/play tug` or \
-                     `/play automatafl` match first — then fold it to one proof.",
-                )
-                .await;
-                return;
-            };
             let player = identity_of(state, command.user.id.get()).0;
-            let (embed, rows) = enqueue_response(game, channel, player);
-            respond_embed(ctx, command, embed, rows, false).await;
+            // ACK FIRST — the fold is the other half of the `crown:status` lesson below. Picking
+            // the game is itself two blocking store reads (`played_match_of` per crowned game),
+            // and then `enqueue_response` REPLAYS the whole match through the proven Lean rules
+            // oracle (`round_is_clean` + `apply_turn`, once per round) and hands `enqueue_fold` a
+            // job on the background proving pool — minutes of real recursive STARK work, holding
+            // one of a bounded number of slots. Every bit of it ran before the first response, so
+            // losing the 3s race left the fold RUNNING and the folder told "This interaction
+            // failed": no token, no status button, no reason to believe anything was happening.
+            //
+            // Selection and enqueue are ONE blocking job, so the match cannot end (or be replaced)
+            // between choosing it and folding it.
+            let done = ack::defer_slash_then(ctx, command, false, move || {
+                // Whichever crowned game has a finished, won match live in this channel.
+                let game = [Game::MultiwayTug, Game::Automatafl]
+                    .into_iter()
+                    .find(|g| played_match_of(*g, channel).is_some())?;
+                Some(enqueue_response(game, channel, player))
+            })
+            .await;
+            let (embed, rows) = match done {
+                Some(Some(card)) => card,
+                Some(None) => (
+                    CreateEmbed::new()
+                        .title("Nothing crowned to fold here")
+                        .description(
+                            "No finished, WON match is live in this channel. Win a `/play tug` \
+                             or `/play automatafl` match first — then fold it to one proof.",
+                        )
+                        .color(COLOR_REFUSED),
+                    Vec::new(),
+                ),
+                None => dropped_job_card(),
+            };
+            ack::edit_slash(ctx, command, embed, rows).await;
         }
         "status" => {
-            let rows = folds_in(channel);
+            // A read, but a read that QUEUES behind whatever the crown board thread is doing —
+            // including a fold enqueue. ACK first and take the blocking wait off the worker.
+            let rows = ack::defer_slash_then(ctx, command, true, move || folds_in(channel))
+                .await
+                .unwrap_or_default();
             let body = if rows.is_empty() {
                 "No folds in this channel yet. Win a match, then `/crown fold`.".to_string()
             } else {
@@ -864,19 +1117,21 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 .take(5)
                 .map(|(t, _, _)| status_button(*t))
                 .collect();
-            respond_embed(
+            ack::edit_slash(
                 ctx,
                 command,
                 crown_embed("👑 This channel's match folds", &body),
                 buttons,
-                true,
             )
             .await;
         }
         "board" => {
+            let read = ack::defer_slash_then(ctx, command, false, || {
+                [Game::MultiwayTug, Game::Automatafl].map(|g| (g, board_lines(g)))
+            })
+            .await;
             let mut body = String::new();
-            for game in [Game::MultiwayTug, Game::Automatafl] {
-                let (lines, no_moves) = board_lines(game);
+            for (game, (lines, no_moves)) in read.into_iter().flatten() {
                 body.push_str(&format!("**{}**\n", game.title()));
                 if lines.is_empty() {
                     body.push_str("_no ranked proofs yet_\n");
@@ -889,12 +1144,17 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 }
                 body.push('\n');
             }
-            respond_embed(
+            if body.is_empty() {
+                body.push_str(
+                    "_the board service did not answer — nothing here is a claim about what is \
+                     ranked. Try again in a moment._",
+                );
+            }
+            ack::edit_slash(
                 ctx,
                 command,
                 crown_embed("👑 The proof-carrying game board", body.trim_end()),
                 Vec::new(),
-                false,
             )
             .await;
         }
@@ -912,22 +1172,30 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 
     match parts.as_slice() {
         [PREFIX, "fold", key] => {
+            // NEVER a silent drop: a fold button naming a game this build no longer serves used
+            // to `return` without answering, and Discord printed "This interaction failed".
             let Some(game) = game_of_key(key) else {
+                component_ephemeral(
+                    ctx,
+                    component,
+                    "That fold button names a game this bot build no longer crowns — nothing \
+                     was enqueued. Run `/crown status`.",
+                )
+                .await;
                 return;
             };
             let player = identity_of(state, component.user.id.get()).0;
-            let (embed, rows) = enqueue_response(game, channel, player);
+            // ACK FIRST, then replay + enqueue on the blocking pool (see the slash arm above:
+            // this is a Lean match replay followed by a real proving-pool enqueue, and it also
+            // bottoms out in a `sync_channel` `recv()` against the crown board thread AND the
+            // offering store thread that every other player's move queues on).
+            let done = ack::ack_component_then(ctx, component, move || {
+                enqueue_response(game, channel, player)
+            })
+            .await;
+            let (embed, rows) = done.unwrap_or_else(dropped_job_card);
             // Replace the offer message (its button has done its job; no double-enqueue bait).
-            let _ = component
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::UpdateMessage(
-                        CreateInteractionResponseMessage::new()
-                            .embed(embed)
-                            .components(rows),
-                    ),
-                )
-                .await;
+            ack::edit_component(ctx, component, embed, rows).await;
         }
         [PREFIX, "status", tok] => {
             let Ok(token) = tok.parse::<u64>() else {
@@ -947,8 +1215,24 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             // public crown post, with its `.dreggproof` attachment, was LOST. Not delayed: lost.
             // A second press now takes the `AlreadyRanked` path and only whispers an ephemeral
             // line. Somebody won a match, the proof landed, and the channel never heard about it.
-            ack::ack_component(ctx, component).await;
-            match poll_fold(token) {
+            //
+            // The poll also runs OFF the async worker now: it is a `sync_channel` `recv()` on the
+            // crown board thread, and on a finished fold the job it waits for is a whole
+            // light-client proof verification. Blocking a Tokio worker on that put its latency on
+            // every other in-flight interaction's 3-second clock at once.
+            let polled = ack::ack_component_then(ctx, component, move || poll_fold(token)).await;
+            let Some(polled) = polled else {
+                ack::followup_ephemeral(
+                    ctx,
+                    component,
+                    "The crown service did not answer the poll, so nothing here is a claim about \
+                     this fold's state — it was NOT reported as failed and NOT reported as \
+                     ranked. Press again in a moment.",
+                )
+                .await;
+                return;
+            };
+            match polled {
                 Poll::NoSuchFold => {
                     ack::followup_ephemeral(
                         ctx,
@@ -1091,25 +1375,6 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 // Small response helpers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn respond_embed(
-    ctx: &Context,
-    command: &CommandInteraction,
-    embed: CreateEmbed,
-    rows: Vec<CreateActionRow>,
-    ephemeral: bool,
-) {
-    let mut msg = CreateInteractionResponseMessage::new().embed(embed);
-    if !rows.is_empty() {
-        msg = msg.components(rows);
-    }
-    if ephemeral {
-        msg = msg.ephemeral(true);
-    }
-    let _ = command
-        .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
-        .await;
-}
-
 async fn respond_ephemeral(ctx: &Context, command: &CommandInteraction, text: &str) {
     let _ = command
         .create_response(
@@ -1157,6 +1422,62 @@ mod tests {
         assert_eq!(game_of_key("dungeon"), None);
     }
 
+    /// **THE FOLD IS ENQUEUED AFTER THE ANSWER.**
+    ///
+    /// `enqueue_response` is not a render — it REPLAYS the whole match through the proven Lean
+    /// rules oracle (`round_is_clean` + `apply_turn`, once per round) and then `enqueue_fold`
+    /// blocks on the crown board thread to put a job on the background proving pool: minutes of
+    /// real recursive STARK work, holding one of a bounded number of slots. Both the slash `fold`
+    /// and the win-moment button ran all of that before their first Discord response, so a fold
+    /// that outran the 3-second window was RUNNING while the folder was told "This interaction
+    /// failed" — with no token, no status button, and no reason to think anything was happening.
+    ///
+    /// This drives the REAL `enqueue_response` through the REAL ordering helper the two handlers
+    /// use. The trace is the assertion; restore the work-first ordering and it inverts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_fold_is_answered_before_it_reaches_the_proving_pool() {
+        use std::sync::{Arc, Mutex};
+        boot_the_test_board();
+        let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let ack_trace = Arc::clone(&trace);
+        let work_trace = Arc::clone(&trace);
+        let card = crate::commands::ack::testing::ack_then_blocking_for_test(
+            async move {
+                tokio::task::yield_now().await;
+                ack_trace.lock().unwrap().push("acked");
+            },
+            move || {
+                let out = enqueue_response(Game::Automatafl, 0xC0_0001, "aa".repeat(32));
+                work_trace.lock().unwrap().push("enqueued");
+                out
+            },
+        )
+        .await;
+
+        assert!(card.is_some(), "the enqueue job must run to completion");
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["acked", "enqueued"],
+            "the match was replayed and handed to the proving pool before Discord was told \
+             anything — lose that race and the fold runs orphaned"
+        );
+    }
+
+    /// A fold job the blocking pool drops is NEVER painted as an enqueue that worked: the match
+    /// is either folding or it is not, and this side does not know which.
+    #[test]
+    fn a_dropped_fold_job_does_not_claim_to_be_proving() {
+        let (embed, rows) = dropped_job_card();
+        assert!(rows.is_empty(), "a dropped job offers no status button");
+        let rendered = format!("{:?}", embed);
+        assert!(
+            !rendered.contains("proving in the background"),
+            "a dropped job must not be dressed as a live fold: {rendered}"
+        );
+        assert!(rendered.contains("could not be started"), "{rendered}");
+    }
+
     #[test]
     fn the_crown_custom_ids_are_namespaced_and_parse_back() {
         // The ids the buttons mint are exactly what `handle_component` splits on.
@@ -1184,17 +1505,180 @@ mod tests {
     /// "panicked at 'crown-panic-isolation-canary'" line on stderr is the point, not a failure.)
     #[test]
     fn a_panicking_job_does_not_brick_the_board() {
+        // Share the one process-global boot with the restart test — whichever runs first
+        // installs the fixture store, so neither can spawn the board thread behind the other's
+        // back and skip the restore.
+        boot_the_test_board();
         let panicked: Result<(), StoreError> = run(|_core| panic!("crown-panic-isolation-canary"));
         assert!(
             panicked.is_err(),
             "a panicking job must return an Err, not abort the caller"
         );
-        // The board thread SURVIVED: the next job still answers.
+        // The board thread SURVIVED: the next job still answers. (The fold COUNT is now
+        // boot-dependent — the board restores persisted crowns on spawn — so the assertion is
+        // "it still serves", which is what this test was ever about.)
         let folds = run(|core| core.folds.len());
-        assert_eq!(
-            folds.ok(),
-            Some(0),
+        assert!(
+            folds.is_ok(),
             "the board thread must survive a panicking job and keep serving"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 👑 THE RESTART GATE — a public crown post's Re-verify button, after a reboot.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// A [`CrownStore`] backed by a fixed set of rows, standing in for "what sqlite held when
+    /// the process came up". (The sqlite impl's own round-trip is tested in `crown_store`; what
+    /// is under test HERE is the board's re-verify-and-restore, which is the part that decides
+    /// whether a stranger's button works tomorrow.)
+    struct FixtureCrownStore {
+        rows: Vec<StoredCrownFold>,
+    }
+
+    impl CrownStore for FixtureCrownStore {
+        fn persist_fold(&self, _fold: &StoredCrownFold) -> Result<(), String> {
+            Ok(())
+        }
+        fn list_folds(&self) -> Result<Vec<StoredCrownFold>, String> {
+            Ok(self.rows.clone())
+        }
+    }
+
+    /// The REAL folded whole-history proof this tree ships (`ugc-dregg`'s in-tree 3-turn
+    /// recursive fold) plus the VK it verifies under. A genuine artifact of the deployed prover
+    /// — never a stub. It is not a *game match* (folding one is minutes-to-hours; that is the
+    /// game-board crate's own `--ignored` lane), and the same substitution is what
+    /// `dreggnet-game-board`'s fast board tests make for the same reason. What it exercises here
+    /// is exactly what a restored crown needs to be true: the board re-opens against a persisted
+    /// anchor and the light client accepts the persisted envelope against it.
+    fn real_proof() -> (Vec<u8>, [u8; 32]) {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ugc-dregg/tests/fixtures");
+        let bytes = std::fs::read(dir.join("whole_history_proof.bin"))
+            .expect("the in-tree real whole-history proof fixture");
+        let anchor = std::fs::read_to_string(dir.join("whole_history_anchor.hex"))
+            .expect("the fixture's anchor VK");
+        let vk: [u8; 32] = hex::decode(anchor.trim())
+            .expect("the anchor is hex")
+            .try_into()
+            .expect("the anchor is 32 bytes");
+        (bytes, vk)
+    }
+
+    /// The ONE persisted crown this test process boots with — built from the real proof, with
+    /// the anchor read off the light client's own attestation of it (exactly what
+    /// `persist_fold` writes at rank time).
+    fn fixture_fold() -> StoredCrownFold {
+        let (proof, vk) = real_proof();
+        let attested = dregg_lightclient::verify_history_bytes(&proof, &RecursionVk(vk))
+            .expect("the shipped fixture proof verifies");
+        StoredCrownFold {
+            token: 41,
+            game: Game::Automatafl.slug().to_string(),
+            channel: 777,
+            player: "cc".repeat(32),
+            turns: attested.num_turns,
+            vk,
+            genesis_root: attested.genesis_root.map(|f| f.0),
+            win_root: attested.final_root.map(|f| f.0),
+            proof,
+        }
+    }
+
+    /// Install the fixture store and force the board thread to spawn + restore. Process-global
+    /// and idempotent (`install_store` is a `OnceLock`), so every crown test funnels through it.
+    fn boot_the_test_board() {
+        static BOOTED: OnceLock<()> = OnceLock::new();
+        BOOTED.get_or_init(|| {
+            install_store(Box::new(FixtureCrownStore {
+                rows: vec![fixture_fold()],
+            }));
+        });
+    }
+
+    /// **THE CROWN SURVIVES A RESTART.**
+    ///
+    /// The concrete bug: a crown post is PUBLIC, carries a `.dreggproof` file and a "Re-verify
+    /// (anyone, O(1))" button, and the board that button re-verifies against lived only in RAM.
+    /// After any restart `reverify_fold` hit `None` in `core.folds` and returned
+    /// `Err("no such fold")`, so the post rendered "✗ Re-verify refused." — a public artifact
+    /// silently withdrawing its own verification affordance.
+    ///
+    /// This drives the exact button. A FRESH process (this test binary) has never ranked
+    /// anything; the only thing it has is what the durable store held. It must:
+    ///
+    ///   * find fold #41 at all (the token a pre-restart button carries is restored EXACTLY);
+    ///   * and answer `Ok` — meaning `reverify_entry` re-ran the whole-history light client over
+    ///     the STORED envelope against the pinned anchor and it verified.
+    ///
+    /// Note what is NOT being asserted: nothing here trusts the stored row. The restore path
+    /// re-submits through `GameBoard::submit_bytes`, which is the same O(1) accept path a live
+    /// submission takes (light client + genesis binding + WIN binding + claimed-turns binding).
+    /// A row that failed any of those would not be on the board and this would fail.
+    #[test]
+    fn a_ranked_crown_reverifies_after_a_restart() {
+        boot_the_test_board();
+
+        let (game, turns, facts) = reverify_fold(41).unwrap_or_else(|e| {
+            panic!(
+                "the Re-verify button on a crown posted before the restart must still work — \
+                 got: {e}"
+            )
+        });
+        assert_eq!(game, Game::Automatafl);
+        let expected = fixture_fold();
+        assert_eq!(
+            turns, expected.turns,
+            "the re-verification re-attests the SAME turn count the crown post claimed",
+        );
+        assert_eq!(facts.turns, expected.turns);
+        assert_eq!(facts.proof_len, expected.proof.len());
+
+        // And the restored entry is on the board with the property the crown exists to show:
+        // proof-backed, and storing NO moves.
+        let (lines, no_moves) = board_lines(Game::Automatafl);
+        assert!(
+            !lines.is_empty(),
+            "the restored crown is ranked on the board"
+        );
+        assert!(
+            no_moves,
+            "a restored entry is the proof envelope and nothing else — no moves came back \
+             because none were ever stored",
+        );
+    }
+
+    /// A TAMPERED persisted crown does not come back. The restore path is a re-verification, not
+    /// a restoration of trust: flipping bytes in the stored envelope makes the light client
+    /// refuse, and the fold is simply absent — its button keeps saying refused, which is the
+    /// honest answer for a proof that no longer verifies.
+    #[test]
+    fn a_tampered_persisted_crown_is_refused_on_restore() {
+        let mut fold = fixture_fold();
+        // Flip a byte deep inside the proof envelope (past the header, so the failure is the
+        // light client's verdict, not a decode error).
+        let mid = fold.proof.len() / 2;
+        fold.proof[mid] ^= 0xFF;
+
+        // Drive the accept path directly against a PRIVATE board, so the process-global one this
+        // test binary boots with is untouched. This is the exact call `restore_folds` makes.
+        let mut board = GameBoard::new();
+        board.ensure_open(Game::Automatafl, fold.anchor());
+        let refused = board.submit_bytes(
+            Game::Automatafl,
+            &fold.player,
+            fold.proof.clone(),
+            fold.turns,
+        );
+        assert!(
+            refused.is_err(),
+            "a tampered envelope must be REFUSED by the same O(1) gate a live submission \
+             faces — never restored on the strength of having been stored",
+        );
+        assert!(
+            board.leaderboard(Game::Automatafl).is_empty(),
+            "nothing was ranked",
         );
     }
 }

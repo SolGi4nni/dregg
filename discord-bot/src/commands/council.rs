@@ -30,13 +30,14 @@ use std::sync::OnceLock;
 
 use serenity::all::{
     CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
-    CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, ResolvedValue,
+    CreateEmbed, ResolvedValue,
 };
 
 use dreggnet_council::{CandidateProposal, CouncilOffering, CouncilSession, MAX_CATALOG};
 use dreggnet_offerings::SessionConfig;
 
 use crate::BotState;
+use crate::commands::ack;
 use crate::commands::council_weighted;
 use crate::commands::offering::{
     self, DiscordOffering, Store, ValuePrompt, identity_of, public_key_of,
@@ -84,6 +85,13 @@ impl DiscordOffering for CouncilOffering {
     const COLOR: u32 = COUNCIL_COLOR;
     const TAGLINE: &'static str =
         "the members decide · the quorum gate disposes · the chain remembers";
+
+    /// **Deliberately not resumable.** A council's VALUE carries its electorate, catalog and
+    /// quorum — chosen at open from live Discord state, and nowhere in the move log. Replaying
+    /// the votes into a differently-constituted council would rebuild a chamber that never sat.
+    fn rebuild() -> Option<Self> {
+        None
+    }
 
     fn store() -> &'static Store<Self> {
         static SESSIONS: OnceLock<Store<CouncilOffering>> = OnceLock::new();
@@ -201,12 +209,24 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 /// `/council open` — build the electorate from the invoker + any named members (each a DERIVED
 /// dregg key, not a nickname), deploy a real council (its own quorum engine + council cell), and
 /// post the surface with its cap-gated affordances.
+///
+/// **ACK FIRST — this command DEPLOYS A CELL.** Every step below used to run before the first
+/// Discord response: a per-member standing read over the database, two blocking round-trips to
+/// the offering store thread (`is_open` + `with_live`), and then `open_in`, which builds the
+/// council's quorum engine and brings a real council cell alive. A `/council open` that outran
+/// the 3-second window therefore deployed the council — replacing whatever session was in the
+/// channel — and then told the opener **"This interaction failed"**, with no surface, no buttons
+/// and no roster to show for it. The council was live and unreachable.
+///
+/// Now the interaction is answered first, and every blocking store job runs on the blocking pool
+/// ([`ack::work_after`]) rather than parking a Tokio worker for the length of a cell deploy.
 async fn handle_open(
     ctx: &Context,
     command: &CommandInteraction,
     state: &BotState,
     opts: &[serenity::all::ResolvedOption<'_>],
 ) {
+    let acked = ack::defer_slash(ctx, command, false).await;
     let channel = command.channel_id.get();
 
     // The electorate: the invoker plus every named member, de-duplicated by derived key.
@@ -292,18 +312,24 @@ async fn handle_open(
 
     // REFUSE-WITH-CONFIRM (backlog #32): a live council must not be silently wiped by a
     // re-open — its chain (proposals, ballots, enactments) is process-local and unrecoverable.
-    // The replacement open is stashed behind an explicit Confirm press.
-    if offering::is_open::<CouncilOffering>(channel) {
-        let status = offering::with_live::<CouncilOffering, _>(channel, |live| {
+    // The replacement open is stashed behind an explicit Confirm press. One store round-trip
+    // answers both questions the two blocking calls here used to ask separately (`is_open`, then
+    // the status read): a live session is exactly a `Some`.
+    let live_status = ack::work_after(&acked, move || {
+        offering::with_live::<CouncilOffering, _>(channel, |live| {
             live.offering.status_line(&live.session)
-        });
+        })
+    })
+    .await
+    .flatten();
+    if live_status.is_some() {
         let cfg = SessionConfig::with_seed(channel);
         let roster_field = offering::truncate(&roster, 1000);
         crate::commands::open_guard::refuse_with_confirm(
             ctx,
             command,
             CouncilOffering::KEY,
-            status,
+            live_status,
             Box::new(move || {
                 offering::open_in(
                     channel,
@@ -322,68 +348,55 @@ async fn handle_open(
         return;
     }
 
-    if let Err(e) = offering::open_in(
-        channel,
-        move || council_weighted::make_council(members, weights, catalog, quorum),
-        SessionConfig::with_seed(channel),
-    ) {
-        let _ = command
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The council did not deploy")
-                                .description(format!("The council cell failed to come alive: {e}"))
-                                .color(0xE63946),
-                        )
-                        .ephemeral(true),
-                ),
-            )
-            .await;
-        return;
-    }
-
-    let rendered = offering::with_live::<CouncilOffering, _>(channel, |live| {
-        offering::surface_of::<CouncilOffering>(live)
-    });
-    // NEVER A SILENT DROP. The session ALREADY OPENED above; if the render then found nothing
-    // (a concurrent close, or the offering store thread refusing the read) this used to `return`
-    // without ever answering the interaction — so the player saw "This interaction failed" on a
-    // council that was, in fact, live in their channel. Say what happened instead.
-    let Some((embed, rows)) = rendered else {
-        let _ = command
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The session opened but did not render")
-                                .description(
-                                    "The session was not there to render (it may have been \
-                                     closed the same instant). Run the command again.",
-                                )
-                                .color(0xE63946),
-                        )
-                        .ephemeral(true),
-                ),
-            )
-            .await;
-        return;
-    };
-    let embed = embed.field("The electorate", offering::truncate(&roster, 1000), false);
-    let _ = command
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .components(rows),
-            ),
+    // The deploy AND its render are ONE blocking job: the cell comes alive and the surface is
+    // read on the store's own thread, so a half-deployed council is never what the async side
+    // has to describe.
+    let deployed = ack::work_after(&acked, move || {
+        offering::open_in(
+            channel,
+            move || council_weighted::make_council(members, weights, catalog, quorum),
+            SessionConfig::with_seed(channel),
         )
-        .await;
+        .map_err(|e| format!("The council cell failed to come alive: {e}"))?;
+        // NEVER A SILENT DROP. The session ALREADY OPENED; if the render then finds nothing (a
+        // concurrent close, or the store thread refusing the read) this used to `return` without
+        // ever answering the interaction — so the opener saw "This interaction failed" on a
+        // council that was, in fact, live in their channel. Say what happened instead.
+        offering::with_live::<CouncilOffering, _>(channel, |live| {
+            offering::surface_of::<CouncilOffering>(live)
+        })
+        .ok_or_else(|| {
+            "The session opened but was not there to render (it may have been closed the same \
+             instant). Run `/council status`."
+                .to_string()
+        })
+    })
+    .await;
+
+    let (embed, rows) = match deployed {
+        Some(Ok((embed, rows))) => (
+            embed.field("The electorate", offering::truncate(&roster, 1000), false),
+            rows,
+        ),
+        Some(Err(why)) => (
+            CreateEmbed::new()
+                .title("The council did not deploy")
+                .description(why)
+                .color(0xE63946),
+            Vec::new(),
+        ),
+        None => (
+            CreateEmbed::new()
+                .title("The council service dropped the deploy")
+                .description(
+                    "The offering service did not run the open, so nothing can be honestly \
+                     reported as deployed. Check `/council status` before playing on.",
+                )
+                .color(0xE63946),
+            Vec::new(),
+        ),
+    };
+    ack::edit_slash(ctx, command, embed, rows).await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,6 +452,56 @@ mod tests {
 
     fn turns(channel: u64) -> usize {
         with_live::<CouncilOffering, _>(channel, |l| l.session.committed_turns()).unwrap()
+    }
+
+    /// **THE CELL DEPLOYS AFTER THE ANSWER, NOT BEFORE IT.**
+    ///
+    /// `/council open` used to run the whole thing — two blocking round-trips to the store thread
+    /// and then `open_in`, which brings a real council cell alive and REPLACES whatever session
+    /// was in the channel — before its first Discord response. A deploy that outran the 3-second
+    /// window therefore left a live, working council in the channel and told the opener "This
+    /// interaction failed": no surface, no buttons, no roster.
+    ///
+    /// This drives the REAL deploy (`offering::open_in` against the REAL `CouncilOffering`, the
+    /// exact call the handler makes) through the REAL ordering helper the handler uses. The
+    /// assertion is the trace: the ACK completes first, and the council is live afterwards.
+    /// Restore the work-first ordering and the trace inverts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_council_deploy_is_answered_before_the_cell_comes_alive() {
+        use std::sync::{Arc, Mutex};
+        let channel = 90_931;
+        close_in::<CouncilOffering>(channel);
+        let trace: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let ack_trace = Arc::clone(&trace);
+        let deploy_trace = Arc::clone(&trace);
+        let deployed = crate::commands::ack::testing::ack_then_blocking_for_test(
+            async move {
+                tokio::task::yield_now().await;
+                ack_trace.lock().unwrap().push("acked");
+            },
+            move || {
+                let (pks, _) = electorate();
+                let out = offering::open_in(
+                    channel,
+                    move || CouncilOffering::new(pks, default_catalog(), 2),
+                    SessionConfig::with_seed(channel),
+                )
+                .map_err(|e| e.to_string());
+                deploy_trace.lock().unwrap().push("deployed");
+                out
+            },
+        )
+        .await;
+
+        assert!(matches!(deployed, Some(Ok(()))), "{deployed:?}");
+        assert_eq!(
+            trace.lock().unwrap().as_slice(),
+            ["acked", "deployed"],
+            "the council cell was deployed before Discord was told anything"
+        );
+        assert_eq!(turns(channel), 0, "the fresh council is live and readable");
+        close_in::<CouncilOffering>(channel);
     }
 
     /// The offering's cap-gated actions render as the right Discord components: a PROPOSE per
