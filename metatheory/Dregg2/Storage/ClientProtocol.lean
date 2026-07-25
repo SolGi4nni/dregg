@@ -7,9 +7,11 @@ store an erasure-coded blob across `n` providers, and
 1. **the data survives** as long as `k` providers pass their audit (they hold genuine shards, so RS
    reconstruction recovers the original — `Availability.verifiable_erasure_recovers`);
 2. **honest providers keep their bond** (a passing PoR audit ⟹ `auditedPass`, from which slash is
-   impossible — `MarketAudit.honest_provider_not_slashed`, made meaningful by `Retrievability.por_sound`);
+   impossible — `MarketAudit.honest_provider_not_slashed`, made meaningful by
+   `Retrievability.por_sound_or_collides`);
 3. **withholding providers are slashed** (a failing audit ⟹ `auditedFail`, from which slash succeeds —
-   `MarketAudit.withholding_is_slashable`; and `por_refuses_substitution` means they cannot fake a pass).
+   `MarketAudit.withholding_is_slashable`; and `por_substitution_forces_collision` means faking a pass
+   would FORCE a genuine sponge collision).
 
 The proof is one term: the three guarantees are exactly the composition of the pieces. That is the
 whole point of building the protocol in Lean — the end-to-end promise is *derived*, not asserted.

@@ -1,15 +1,15 @@
 /-
 # `Dregg2.Storage.MarketAudit` — the audit drives the lifecycle: honest ⇒ safe, withholding ⇒ slashed.
 
-The end-to-end market-integrity composition. `Retrievability.por_sound` proves a provider that PASSES
-the proof-of-retrievability audit genuinely holds the committed data (and `por_refuses_substitution`
+The end-to-end market-integrity composition. `Retrievability.por_sound_or_collides` proves a provider that PASSES
+the proof-of-retrievability audit genuinely holds the committed data (and `por_substitution_forces_collision`
 that a forgery cannot pass). `DealLifecycle` proves the deal's transitions are sound. THIS ties them:
 the PoR verdict drives the audit transition, so —
 * an HONEST provider (audit passes) can NEVER be slashed, and
 * a WITHHOLDING provider (audit fails) IS slashable.
 
 The `porPassed` bit is exactly the `Retrievability.passes` verdict the executor computes from the real
-openings; `por_sound` is what makes "passed" mean "genuinely holds the data". So the honest provider
+openings; `por_sound_or_collides` is what makes "passed" mean "genuinely holds the data". So the honest provider
 keeps its bond *because the audit it passed was sound*, and the tooth only bites real withholding.
 -/
 import Dregg2.Storage.DealLifecycle
@@ -28,7 +28,7 @@ def runAudit (d : Deal) (porPassed : Bool) : Option Deal :=
 
 /-- **An HONEST provider is never slashed.** If the PoR audit PASSED on an active deal, the deal
 reaches `auditedPass`, from which `slash` is IMPOSSIBLE (its guard demands `auditedFail`). Composed
-with `Retrievability.por_sound` — "passed" means the provider genuinely holds the data — this says: a
+with `Retrievability.por_sound_or_collides` — "passed" means the provider genuinely holds the data — this says: a
 provider that actually holds what it committed keeps its bond, always. -/
 theorem honest_provider_not_slashed (d d' : Deal) (hactive : d.state = .active)
     (h : runAudit d true = some d') (p : Nat) : slash d' p = none := by
@@ -38,7 +38,8 @@ theorem honest_provider_not_slashed (d d' : Deal) (hactive : d.state = .active)
 
 /-- **Withholding IS slashable.** If the PoR audit FAILED on an active deal, the deal reaches
 `auditedFail`, from which a slash succeeds — the economic tooth bites a provider that could not answer
-the challenge (by `por_refuses_substitution`, it could not have faked a pass). -/
+the challenge (by `por_substitution_forces_collision`, faking a pass would FORCE a genuine sponge
+collision). -/
 theorem withholding_is_slashable (d d' : Deal) (hactive : d.state = .active)
     (h : runAudit d false = some d') (p : Nat) :
     slash d' p = some { state := .slashed, bond := d'.bond - p } := by
