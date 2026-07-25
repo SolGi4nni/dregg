@@ -47,6 +47,22 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Sound-path verifier expectations for these tests' request (`read` on
+/// `test-app`) against the fixture issuer's trusted federation root. Since
+/// 2026-07-26 `verify()` runs the bridge STARK verifier, which requires an
+/// external trusted root and binds the action/resource; without these, `verify`
+/// fail-closes with `MissingTrustedFederationRoot` BEFORE reaching the
+/// app-level checks (disclosure / predicate / revocation) these tests target,
+/// which would let them pass for the wrong reason.
+fn roundtrip_verify_opts() -> VerificationOptions {
+    VerificationOptions {
+        expected_federation_root: Some(fixture_issuer().federation_root),
+        expected_action: "read".into(),
+        expected_resource: "test-app".into(),
+        ..Default::default()
+    }
+}
+
 fn credential_request(holder: [u8; 32]) -> AuthRequest {
     AuthRequest {
         user_id: Some(hex_encode(&holder)),
@@ -98,11 +114,12 @@ fn issue_present_verify_roundtrip() {
     };
     let presentation = present(&cred, &request, &options).expect("presentation must succeed");
 
-    // Verify.
+    // Verify through the SOUND path (bridge STARK verifier + trusted root +
+    // action binding, via `roundtrip_verify_opts`).
     let verify_options = VerificationOptions {
         expected_schema: Some(schema.clone()),
         expected_disclosure: vec!["country".into()],
-        ..Default::default()
+        ..roundtrip_verify_opts()
     };
     let verified = verify(&presentation, &verify_options).expect("verification must succeed");
     assert_eq!(verified.disclosed.len(), 1);
@@ -163,7 +180,7 @@ fn verify_rejects_revoked_presentation() {
 
     let verify_options = VerificationOptions {
         revocation: Some(revocation_proof),
-        ..Default::default()
+        ..roundtrip_verify_opts()
     };
     let result = verify(&presentation, &verify_options);
     assert!(
@@ -198,7 +215,7 @@ fn predicate_request_attaches_predicate_proof() {
     // Verifier asks for an `age >= 18` predicate proof.
     let verify_options = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..roundtrip_verify_opts()
     };
     // FAIL-CLOSED (2026-07-24): predicate accept is REFUSED until the facts_root AIR binding lands
     // (credentials/src/verification.rs — the only facts_root today is prover-supplied, so accept is
@@ -230,7 +247,7 @@ fn missing_expected_disclosure_rejected() {
 
     let verify_options = VerificationOptions {
         expected_disclosure: vec!["country".into()],
-        ..Default::default()
+        ..roundtrip_verify_opts()
     };
     let result = verify(&presentation, &verify_options);
     assert!(result.is_err(), "missing disclosure must be rejected");
@@ -255,7 +272,7 @@ fn missing_predicate_rejected() {
 
     let verify_options = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..roundtrip_verify_opts()
     };
     let result = verify(&presentation, &verify_options);
     assert!(result.is_err(), "missing predicate must be rejected");

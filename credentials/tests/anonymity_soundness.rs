@@ -15,6 +15,7 @@ use dregg_credentials::{
     AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, Predicate, PredicateRequest,
     PresentationOptions, RevocationRegistry, UnsafeLocalOnlyMarker, VerificationOptions, issue,
     present, present_anonymous, present_local_only_unsafe, revoke, verify, verify_anonymous,
+    verify_wire,
 };
 use dregg_token::AuthRequest;
 
@@ -63,6 +64,25 @@ fn fixture_request() -> AuthRequest {
 
 fn holder() -> [u8; 32] {
     [77u8; 32]
+}
+
+/// The verifier's expectations for the fixture issuer + request, sound-path ready.
+///
+/// Since 2026-07-26 `verify()` routes through the bridge STARK verifier
+/// (`verify_proof_complete`), which REQUIRES an external trusted federation root
+/// and binds the committed action/resource. This helper supplies the fixture
+/// issuer's root (held out-of-band), the fixture request's action/resource
+/// binding (`api:read` on `employee-portal`), and leaves freshness off
+/// (`now = None`). A `VerificationOptions::default()` (no trusted root) now
+/// fail-closes with `MissingTrustedFederationRoot`, so every positive control
+/// extends this base.
+fn base_verify_opts() -> VerificationOptions {
+    VerificationOptions {
+        expected_federation_root: Some(fixture_issuer().federation_root),
+        expected_action: "api:read".into(),
+        expected_resource: "employee-portal".into(),
+        ..Default::default()
+    }
 }
 
 /// Extract the issuer-membership `blinded_leaf` public input from the blinded
@@ -203,7 +223,11 @@ fn present_produces_a_real_stark_proof() {
         p.proof.is_valid(),
         "present()'s proof must be cryptographically valid, not LocalOnly"
     );
-    verify(&p, &VerificationOptions::new()).expect("a real present() proof must verify by default");
+    // Verify through the SOUND path: a trusted federation root + the request's
+    // action/resource binding. (Pre-2026-07-26 this passed `VerificationOptions::new()`
+    // and "verified" without running any STARK — the F1 hole.)
+    verify(&p, &base_verify_opts())
+        .expect("a real present() proof must verify through the bridge STARK verifier");
 }
 
 #[test]
@@ -220,7 +244,7 @@ fn real_anonymous_proof_accepted_by_verify_anonymous() {
 
     let verify_opts = VerificationOptions {
         require_anonymous: true,
-        ..Default::default()
+        ..base_verify_opts()
     };
     verify_anonymous(&p, &verify_opts).expect("real anonymous proof must verify");
 }
@@ -246,7 +270,7 @@ fn name_only_predicate_spoof_rejected() {
 
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&presentation, &verify_opts);
     assert!(
@@ -283,7 +307,7 @@ fn relabelled_predicate_proof_rejected() {
 
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&presentation, &verify_opts);
     assert!(
@@ -399,7 +423,7 @@ fn cross_credential_predicate_forgery_rejected() {
     // answer is NO.
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&a_pres, &verify_opts);
     // ⚠ READ THIS GREEN AT ITS ACTUAL RESOLUTION. The message here used to say "Today
@@ -438,7 +462,7 @@ fn matching_predicate_proof_accepted() {
 
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..base_verify_opts()
     };
     // FAIL-CLOSED (2026-07-24): even a GENUINE matching predicate proof is refused today — predicate
     // accept is fail-closed until the facts_root AIR binding lands (credentials/src/verification.rs;
@@ -475,7 +499,7 @@ fn two_anonymous_presentations_are_unlinkable() {
     // Both must still verify as anonymous.
     let verify_opts = VerificationOptions {
         require_anonymous: true,
-        ..Default::default()
+        ..base_verify_opts()
     };
     verify_anonymous(&p1, &verify_opts).expect("first anonymous show must verify");
     verify_anonymous(&p2, &verify_opts).expect("second anonymous show must verify");
@@ -499,7 +523,7 @@ fn revoked_credential_rejected_by_real_non_membership() {
     let pre_opts = VerificationOptions {
         revocation: Some(pre_proof),
         expected_revocation_root: Some(registry.root()),
-        ..Default::default()
+        ..base_verify_opts()
     };
     verify(&presentation, &pre_opts).expect("pre-revocation verification must succeed");
 
@@ -509,7 +533,7 @@ fn revoked_credential_rejected_by_real_non_membership() {
     let post_opts = VerificationOptions {
         revocation: Some(post_proof),
         expected_revocation_root: Some(registry.root()),
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&presentation, &post_opts);
     assert!(result.is_err(), "revoked credential must be rejected");
@@ -545,11 +569,253 @@ fn revocation_witness_tamper_rejected() {
     let opts = VerificationOptions {
         revocation: Some(tampered),
         expected_revocation_root: Some(trusted_root),
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&presentation, &opts);
     assert!(
         result.is_err(),
         "a tampered non-revocation witness must be rejected (root no longer binds)"
+    );
+}
+
+// ── (F1/F5) verify() ACTUALLY runs the STARK — the canonical forgery hole ─────
+//
+// Until 2026-07-26 `dregg_credentials::verify()` ran NO STARK verifier: it accepted
+// on the prover-controlled `proof.verification == Valid` field plus `is_valid()`
+// (which only checks `real_stark_proof.is_some()` — presence, not validity), and
+// compared federation membership to the prover-supplied `proof.federation_root`
+// pub field. A zero-secret forgery followed: mint your own IssuerKeys, issue
+// yourself a credential, present it, set the pub fields to whatever the verifier
+// expects → `verify()` returned `Ok`. The fix routes `verify()` through the SOUND
+// bridge verifier `dregg_bridge::present::verify_proof_complete`, which runs the
+// STARK, binds the federation root to the STARK public inputs (not a pub field),
+// and binds the action + freshness. These tests are its adversarial gate.
+
+/// POSITIVE CONTROL: a genuine presentation verifies through the sound path. The
+/// falsifiers below are only meaningful if this passes — a verifier that refuses
+/// everything is not a verifier.
+#[test]
+fn genuine_presentation_verifies_through_sound_path() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let p = present(&cred, &fixture_request(), &opts).unwrap();
+
+    let verified = verify(&p, &base_verify_opts())
+        .expect("a genuine presentation must verify through the bridge STARK verifier");
+    assert_eq!(
+        verified.federation_root, issuer.federation_root,
+        "the verified root is the trusted anchor bound to the STARK PI, not a prover field"
+    );
+    assert_eq!(verified.disclosed.len(), 1);
+    assert_eq!(verified.disclosed[0].0, "active");
+}
+
+/// FALSIFIER: keep the EXACT shape the old hole accepted on — `verification == Valid`
+/// and `real_stark_proof.is_some()` — but CORRUPT the STARK bytes. The old no-op
+/// verify() returned Ok on this; a verifier that actually runs the STARK REFUSES it.
+#[test]
+fn forged_garbage_stark_proof_refused() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let mut forged = present(&cred, &fixture_request(), &opts).unwrap();
+
+    // Precondition: the presentation is in the exact shape the OLD verify() accepted
+    // on — a real STARK object present and `verification == Valid`.
+    assert!(forged.proof.real_stark_proof.is_some());
+    assert!(
+        forged.proof.is_valid(),
+        "precondition: verification field is Valid + a STARK object is present"
+    );
+
+    // Inject garbage into the committed STARK blob. Its bytes no longer decode/verify
+    // as a valid `Ir2BatchProof`, so `verify_wire_typed` fails closed (StarkInvalid).
+    {
+        let real = forged
+            .proof
+            .real_stark_proof
+            .as_mut()
+            .expect("real STARK present");
+        let blob = &mut real.blinded_membership.blob;
+        assert!(blob.len() > 32, "STARK blob must be non-trivial to corrupt");
+        let start = blob.len() / 2;
+        for b in &mut blob[start..start + 16] {
+            *b ^= 0xff;
+        }
+    }
+
+    let result = verify(&forged, &base_verify_opts());
+    assert!(
+        result.is_err(),
+        "a presentation carrying a CORRUPTED STARK must be REFUSED — the STARK is verified \
+         now, not trusted on the `verification` field. Got {result:?}"
+    );
+}
+
+/// FALSIFIER (F1 + F2): a GENUINE proof, but bound to the issuer's real federation
+/// root while the verifier trusts a DIFFERENT root. The attacker spoofs the
+/// (now-ignored) `proof.federation_root` pub field to the verifier's value — the
+/// exact pre-2026-07-26 attack, where verify() compared `expected == proof.federation_root`
+/// and accepted. The root now lives in the STARK public inputs, so the spoof is inert.
+#[test]
+fn spoofed_federation_root_field_refused() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let mut forged = present(&cred, &fixture_request(), &opts).unwrap();
+
+    // The federation root the verifier actually trusts — NOT the issuer's real root.
+    let verifier_trusted_root = [0x99u8; 32];
+    assert_ne!(verifier_trusted_root, issuer.federation_root);
+
+    // The attacker spoofs the pub wire field to match the verifier's expectation.
+    forged.proof.federation_root = verifier_trusted_root;
+
+    let verify_opts = VerificationOptions {
+        expected_federation_root: Some(verifier_trusted_root),
+        expected_action: "api:read".into(),
+        expected_resource: "employee-portal".into(),
+        ..Default::default()
+    };
+    let result = verify(&forged, &verify_opts);
+    assert!(
+        result.is_err(),
+        "a proof bound (in the STARK) to the issuer's real root must NOT verify against a \
+         different trusted root, even with the pub `federation_root` field spoofed. Got {result:?}"
+    );
+}
+
+/// FALSIFIER (F1 structural + action binding): the sound path works on a REMOTE
+/// holder's WIRE presentation, not only a locally-constructed one. A wire proof
+/// bound to `api:read` must not verify against `api:write` (the STARK's committed
+/// action is checked).
+#[test]
+fn wire_presentation_verifies_and_wrong_action_refused() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let p = present(&cred, &fixture_request(), &opts).unwrap();
+
+    // The wire form (trace stripped) is the shape a verifier receives from a remote
+    // holder; it carries no `AuthorizationTrace` and no `federation_root` field.
+    let wire = p.to_wire();
+
+    verify_wire(&wire, &base_verify_opts())
+        .expect("a remote holder's wire proof must verify through verify_wire");
+
+    let mut wrong = base_verify_opts();
+    wrong.expected_action = "api:write".into();
+    assert!(
+        verify_wire(&wire, &wrong).is_err(),
+        "a wire proof bound to `api:read` must not verify against `api:write` (action binding)"
+    );
+}
+
+/// FALSIFIER (F7): the sound path enforces freshness. A proof stamped at T verified
+/// a day later with a 60s window is REFUSED; disabling freshness (or a wide window)
+/// accepts it.
+#[test]
+fn stale_presentation_refused_by_freshness() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    // The fixture request stamps the proof at now = 1_700_000_000.
+    let p = present(&cred, &fixture_request(), &opts).unwrap();
+
+    // Within the window: verifies.
+    let mut fresh = base_verify_opts();
+    fresh.now = Some(1_700_000_000);
+    fresh.max_age_secs = 300;
+    verify(&p, &fresh).expect("a proof inside the freshness window must verify");
+
+    // A day later with a 60s window: refused (Expired).
+    let mut stale = base_verify_opts();
+    stale.now = Some(1_700_000_000 + 86_400);
+    stale.max_age_secs = 60;
+    assert!(
+        verify(&p, &stale).is_err(),
+        "a proof older than max_age_secs must be refused (freshness / replay window)"
+    );
+}
+
+/// FAIL-CLOSED: with no trusted federation root, `verify()` refuses — there is no
+/// sound verification without a trust anchor (the old code trusted the proof's own
+/// claimed root, which was the hole).
+#[test]
+fn missing_trusted_root_fails_closed() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let p = present(&cred, &fixture_request(), &opts).unwrap();
+
+    // Default options carry no `expected_federation_root`.
+    let result = verify(&p, &VerificationOptions::new());
+    assert!(
+        matches!(
+            result,
+            Err(dregg_credentials::VerificationError::MissingTrustedFederationRoot)
+        ),
+        "verify() with no trusted root must fail closed, got {result:?}"
     );
 }

@@ -67,6 +67,24 @@ fn holder() -> [u8; 32] {
     [77u8; 32]
 }
 
+/// The verifier's expectations for the fixture issuer + request, sound-path ready.
+///
+/// Since 2026-07-26 `verify()` routes through the bridge STARK verifier
+/// (`verify_proof_complete`), which REQUIRES an external trusted federation root
+/// and binds the committed action/resource (the fixture request binds `api:read`
+/// on `employee-portal`). Freshness is disabled (`now = None`). A bare
+/// `VerificationOptions::default()` now fail-closes with
+/// `MissingTrustedFederationRoot`, so every check that must REACH an app-level
+/// verdict (disclosure, revealed-facts, revocation) extends this base.
+fn base_verify_opts() -> VerificationOptions {
+    VerificationOptions {
+        expected_federation_root: Some(fixture_issuer().federation_root),
+        expected_action: "api:read".into(),
+        expected_resource: "employee-portal".into(),
+        ..Default::default()
+    }
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -99,7 +117,7 @@ fn selective_disclosure_one_attribute() {
     let verify_opts = VerificationOptions {
         expected_schema: Some(schema.clone()),
         expected_disclosure: vec!["department".into()],
-        ..Default::default()
+        ..base_verify_opts()
     };
     let verified = verify(&presentation, &verify_opts).expect("verification must succeed");
     assert_eq!(verified.disclosed.len(), 1);
@@ -141,7 +159,7 @@ fn tampered_disclosed_value_is_caught_by_verifier() {
     // Verifier expects clearance_level to be disclosed.
     let verify_opts = VerificationOptions {
         expected_disclosure: vec!["clearance_level".into()],
-        ..Default::default()
+        ..base_verify_opts()
     };
 
     // The tamper must be REJECTED. No "either outcome is documented".
@@ -176,7 +194,7 @@ fn stripped_disclosure_is_caught_by_verifier() {
 
     // A verifier that asks for nothing in particular must still refuse: the proof
     // it was handed does not match the cleartext it was handed.
-    match verify(&presentation, &VerificationOptions::new()) {
+    match verify(&presentation, &base_verify_opts()) {
         Err(dregg_credentials::VerificationError::RevealedFactsMismatch) => {}
         Err(other) => panic!("expected RevealedFactsMismatch, got {other:?}"),
         Ok(_) => panic!(
@@ -200,7 +218,7 @@ fn missing_expected_disclosure_rejected() {
 
     let verify_opts = VerificationOptions {
         expected_disclosure: vec!["department".into()],
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&presentation, &verify_opts);
     assert!(
@@ -239,7 +257,7 @@ fn predicate_age_gte_18_without_cleartext_disclosure() {
 
     let verify_opts = VerificationOptions {
         expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
-        ..Default::default()
+        ..base_verify_opts()
     };
     // FAIL-CLOSED (2026-07-24): predicate accept is REFUSED until the facts_root AIR binding lands
     // (credentials/src/verification.rs). Assert the honest refusal; restore success when the
@@ -295,7 +313,7 @@ fn anonymous_presentation_accepted_by_verify_anonymous() {
     let verify_opts = VerificationOptions {
         expected_disclosure: vec!["active".into()],
         require_anonymous: true,
-        ..Default::default()
+        ..base_verify_opts()
     };
     let verified =
         verify_anonymous(&presentation, &verify_opts).expect("anonymous verification must succeed");
@@ -348,7 +366,7 @@ fn revoked_credential_presentation_rejected() {
     // Issue + present before revocation — must succeed.
     let pre_opts = PresentationOptions::new();
     let pre_presentation = present(&cred, &fixture_request(), &pre_opts).unwrap();
-    let pre_verify = VerificationOptions::default();
+    let pre_verify = base_verify_opts();
     verify(&pre_presentation, &pre_verify).expect("pre-revocation verification must succeed");
 
     // Revoke.
@@ -359,7 +377,7 @@ fn revoked_credential_presentation_rejected() {
     // Same presentation — now fails with revocation proof attached.
     let post_verify = VerificationOptions {
         revocation: Some(proof),
-        ..Default::default()
+        ..base_verify_opts()
     };
     let result = verify(&pre_presentation, &post_verify);
     assert!(result.is_err(), "post-revocation verification must fail");

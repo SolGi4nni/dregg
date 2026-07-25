@@ -63,28 +63,16 @@ mod revocation;
 mod schema;
 mod verification;
 
-/// Canonical lowercase hex used in verification diagnostics. Kept at the
-/// crate root because verification compares public commitments without taking
-/// a dependency on either issuance or presentation's private formatting helper.
-pub(crate) fn hex_encode(bytes: &[u8]) -> String {
-    const LUT: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        out.push(LUT[(byte >> 4) as usize] as char);
-        out.push(LUT[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 pub use issuance::{Credential, IssuanceError, IssuerKeys, issue};
 pub use presentation::{
-    Presentation, PresentationError, PresentationOptions, present, present_anonymous,
-    present_local_only_unsafe,
+    Presentation, PresentationError, PresentationOptions, WirePresentation, present,
+    present_anonymous, present_local_only_unsafe,
 };
 pub use revocation::{RevocationProof, RevocationRegistry, revoke};
 pub use schema::{AttrValue, AttributeAttenuation, CredentialAttributes, CredentialSchema};
 pub use verification::{
     VerificationError, VerificationOptions, VerifiedPresentation, verify, verify_anonymous,
+    verify_wire,
 };
 
 // Re-export underlying types so callers don't need to depend on

@@ -57,10 +57,40 @@ pub struct VerificationOptions {
     /// originates from a registry the caller already trusts).
     pub expected_revocation_root: Option<[u8; 32]>,
 
-    /// Federation root the verifier expects the credential to be
-    /// anchored against. When `Some`, this is compared against the
-    /// proof's recovered federation root.
+    /// Externally-trusted federation root the presentation must be anchored
+    /// against. This is the trust anchor the verifier holds out-of-band (its
+    /// own configuration, a pinned anchor, a federation registry it operates).
+    ///
+    /// It is **required** for sound verification: the bridge STARK verifier
+    /// binds this root to the proof's `PI_ROOT_4ARY` / bound-presentation
+    /// public inputs, so an attacker cannot pass off a proof anchored against a
+    /// federation the verifier does not trust. When `None`, [`verify`] refuses
+    /// with [`VerificationError::MissingTrustedFederationRoot`] — there is no
+    /// sound verification without a trust anchor (the pre-2026-07-26 code
+    /// trusted the prover-supplied `proof.federation_root` field, which was the
+    /// F1/F2 forgery hole).
     pub expected_federation_root: Option<[u8; 32]>,
+
+    /// The action the presentation must be bound to — the `action` of the
+    /// `AuthRequest` the holder proved against (e.g. `"api:read"`). The bridge
+    /// verifier binds this to the STARK's committed `request_predicate`; a
+    /// mismatch is refused. Defaults to `""`, which matches only
+    /// membership-only proofs (credential presentations always bind the
+    /// request's app/action, so a real verifier must set this).
+    pub expected_action: String,
+
+    /// The resource the presentation must be bound to — the `app_id` (falling
+    /// back to `service`) of the `AuthRequest` (e.g. `"employee-portal"`).
+    /// Bound to the STARK alongside [`Self::expected_action`].
+    pub expected_resource: String,
+
+    /// The verifier's current Unix time (seconds), for the freshness check.
+    /// `None` disables freshness entirely (a proof of any age is accepted).
+    pub now: Option<i64>,
+
+    /// Maximum accepted proof age in seconds, relative to [`Self::now`]. `0`
+    /// disables the freshness check. Ignored when [`Self::now`] is `None`.
+    pub max_age_secs: i64,
 }
 
 impl VerificationOptions {
@@ -85,6 +115,12 @@ pub struct VerifiedPresentation {
 pub enum VerificationError {
     #[error("bridge proof verification failed: {0:?}")]
     Bridge(PresentationVerification),
+    #[error("bridge STARK verification failed: {0}")]
+    BridgeVerify(dregg_bridge::present::VerifyError),
+    #[error(
+        "no externally-trusted federation root was supplied; sound verification requires one (set VerificationOptions::expected_federation_root to your pinned trust anchor)"
+    )]
+    MissingTrustedFederationRoot,
     #[error("required schema `{expected}` but presentation does not match")]
     SchemaMismatch { expected: String },
     #[error("expected disclosure of `{0}` but it was not revealed")]
@@ -116,8 +152,38 @@ pub enum VerificationError {
 }
 
 /// Verify a presentation against the verifier's expectations.
+///
+/// This runs the SOUND bridge verifier (`dregg_bridge::present::verify_proof_complete`),
+/// which cryptographically checks the STARK, binds the federation root to the
+/// proof's public inputs (not a prover-supplied field), and enforces the
+/// action binding and freshness. Prior to 2026-07-26 this function ran NO
+/// STARK verifier and accepted on the prover-controlled `verification` field —
+/// the F1 forgery hole this closes.
 pub fn verify(
     presentation: &Presentation,
+    options: &VerificationOptions,
+) -> Result<VerifiedPresentation, VerificationError> {
+    // The bridge verifier consumes the wire form. Converting here also means
+    // `verify` and `verify_wire` route through the exact same soundness path.
+    let wire = presentation.proof.clone().into_wire_proof();
+    verify_inner(
+        &presentation.disclosed,
+        &presentation.predicate_proofs,
+        presentation.anonymous,
+        &wire,
+        options,
+    )
+}
+
+/// Verify a REMOTE holder's wire-form presentation ([`crate::WirePresentation`]).
+///
+/// This is the cross-trust-boundary path: [`crate::WirePresentation`] is
+/// `Deserialize`, so a verifier reconstructs it from bytes received over the
+/// network and checks it here — the prover need NOT be in-process. (Verifying
+/// only a locally-constructed [`Presentation`] was the F1 *structural* hole:
+/// prover == verifier, so nothing was ever checked across a trust boundary.)
+pub fn verify_wire(
+    presentation: &crate::presentation::WirePresentation,
     options: &VerificationOptions,
 ) -> Result<VerifiedPresentation, VerificationError> {
     verify_inner(
@@ -129,8 +195,8 @@ pub fn verify(
     )
 }
 
-/// Verify a wire-form presentation. Equivalent to [`verify`] modulo the
-/// stripped trace.
+/// Verify a presentation, additionally requiring the anonymous (blinded
+/// membership) path. Equivalent to [`verify`] with `require_anonymous = true`.
 pub fn verify_anonymous(
     presentation: &Presentation,
     options: &VerificationOptions,
@@ -144,7 +210,7 @@ fn verify_inner(
     disclosed: &[(String, AttrValue)],
     predicate_proofs: &[crate::presentation::NamedPredicateProof],
     anonymous: bool,
-    proof: &dregg_bridge::present::BridgePresentationProof,
+    proof: &dregg_bridge::present::WirePresentationProof,
     options: &VerificationOptions,
 ) -> Result<VerifiedPresentation, VerificationError> {
     // 1. Anonymity check.
@@ -152,36 +218,54 @@ fn verify_inner(
         return Err(VerificationError::AnonymityMismatch);
     }
 
-    // 2. Bridge proof check — FAIL CLOSED, unconditionally.
+    // 2. No real STARK ⇒ nothing to verify ⇒ refuse.
     //
-    // A `LocalOnly` proof is a constraint check the PROVER ran on its own
-    // machine. It carries no STARK, so a verifier cannot re-check any of it;
-    // accepting one means believing the presenter's own report about its own
-    // credential. That is exactly the `verified: bool` this crate exists to
-    // replace (see the module doc on `apps/identity`), so there is no option
-    // — `require_anonymous` or otherwise — that makes it acceptable.
-    //
-    // 2026-07-16: this check used to fire only when `options.require_anonymous`
-    // was set, which is FALSE by default. Since `present()` also only ever
-    // produced LocalOnly proofs, the crate's default present→verify round trip
-    // performed zero cryptographic verification while returning a
-    // `VerifiedPresentation`. Both halves are now fixed; this is the half that
-    // must stay fixed even if a prover elsewhere regresses.
-    match &proof.verification {
-        PresentationVerification::Valid => {}
-        PresentationVerification::LocalOnly => return Err(VerificationError::LocalOnlyRejected),
-        other => return Err(VerificationError::Bridge(other.clone())),
-    }
-
-    // Require a real STARK proof object. `is_valid()` returns true only when a
-    // real STARK proof is present AND verification is `Valid`, so this rejects
-    // a hand-crafted `verification = Valid` carrying no proof — the mint-a-
-    // consistent-fake attack that a field-tamper test never reaches.
-    if !proof.is_valid() {
+    // A `LocalOnly` (or otherwise STARK-less) proof is a constraint check the
+    // PROVER ran on its own machine. It carries no STARK, so a verifier cannot
+    // re-check any of it; accepting one means believing the presenter's own
+    // report about its own credential — exactly the `verified: bool` this crate
+    // exists to replace. We detect this on the presence of the real STARK, NOT
+    // on the prover-controlled `verification` field (which is untrusted).
+    if proof.real_stark_proof.is_none() {
         return Err(VerificationError::LocalOnlyRejected);
     }
 
-    // 3. Schema match. Each disclosed attribute must belong to the
+    // 3. THE SOUND VERIFIER — this is the F1/F2 fix.
+    //
+    // `verify_proof_complete` is the crate-documented canonical STARK verifier
+    // (bridge/src/present.rs). It runs `verify_wire_typed` on BOTH committed
+    // descriptors (a real cryptographic STARK verification), binds the
+    // federation root to the STARK public inputs `PI_ROOT_4ARY` /
+    // `bound_presentation.federation_root` (F2 — NOT the prover-supplied
+    // `proof.federation_root`, which the wire form does not even carry), binds
+    // the action to the committed `request_predicate` (F7 action binding),
+    // checks proof freshness (F7 replay window), and recomputes the composition
+    // commitment that binds sub-proofs together.
+    //
+    // The federation root MUST come from an external trust anchor. Without one,
+    // there is no sound verification — refuse rather than trust the proof's own
+    // claimed root (the pre-2026-07-26 hole).
+    let trusted_root = options
+        .expected_federation_root
+        .ok_or(VerificationError::MissingTrustedFederationRoot)?;
+    // Freshness: only checked when the verifier supplies its clock. `now = None`
+    // (or `max_age_secs = 0`) disables it via the bridge's `max_age_secs == 0`
+    // convention.
+    let (now, max_age) = match options.now {
+        Some(t) => (t, options.max_age_secs),
+        None => (0, 0),
+    };
+    let verified = dregg_bridge::present::verify_proof_complete(
+        proof,
+        &options.expected_action,
+        &options.expected_resource,
+        &trusted_root,
+        now,
+        max_age,
+    )
+    .map_err(VerificationError::BridgeVerify)?;
+
+    // 4. Schema match. Each disclosed attribute must belong to the
     //    expected schema.
     if let Some(schema) = &options.expected_schema {
         for (name, _) in disclosed {
@@ -324,14 +408,12 @@ fn verify_inner(
         });
     }
 
-    // 6. Federation root check.
-    if let Some(expected) = options.expected_federation_root
-        && expected != proof.federation_root
-    {
-        return Err(VerificationError::FederationRootMismatch {
-            expected_hex: hex_encode(&expected),
-        });
-    }
+    // (Federation-root binding is done in step 3 by `verify_proof_complete`,
+    // which binds the EXTERNAL trusted root to the STARK public inputs
+    // `PI_ROOT_4ARY` / bound-presentation `federation_root`. The old check here
+    // — `expected != proof.federation_root` against the prover-supplied wire
+    // field — was F2 and is gone; the wire form no longer even carries a
+    // `federation_root` field to trust.)
 
     // 7. Revocation check — a real non-membership check, not a trusted bool.
     //
@@ -360,9 +442,9 @@ fn verify_inner(
 
     Ok(VerifiedPresentation {
         disclosed: disclosed.to_vec(),
-        federation_root: proof.federation_root,
+        // The trusted root the bridge verifier bound the STARK to (step 3), not
+        // a prover-supplied value.
+        federation_root: verified.federation_root,
         anonymous,
     })
 }
-
-use crate::hex_encode;
