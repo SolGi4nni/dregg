@@ -202,8 +202,59 @@ def commonTeeth : List Constraint :=
         ++ scoreNames.map (fun n => Constraint.heapField (.named n) .monotonic)
         ++ [Constraint.heapField .sentinel .immutable])
 
-/-- The per-action extra tooth: strict round sequencing on `round_actions`. -/
+/-- The per-turn extra tooth: strict round sequencing on `round_actions`. Every committed turn
+— action AND response — advances it. -/
 def actionExtra : List Constraint := [Constraint.strictMonotonic "round_actions"]
+
+/-! ### ⚑ The PENDING-OFFER interlock (the deployed half of I-cut-you-choose).
+
+The game's engine is I-cut-you-choose: a Gift/Competition action only PRESENTS favors, and the
+OTHER seat decides the split. That needs a deployed state bit saying "an offer is on the table",
+or a prover could simply skip the response and hand the actor both halves.
+
+`pending_kind` is that bit: `0` = nothing outstanding, `1` = a Gift awaiting an answer, `2` = a
+Competition awaiting an answer. It is a heap key (all 16 registers are already spoken for), and
+the interlock is expressed ENTIRELY in the existing constraint vocabulary — an
+`equals v` + `deltaEquals d` PAIR pins BOTH endpoints of the transition, because `new = v` and
+`new - old = d` together force `old = v - d`. So no new constraint variant, no evaluator change,
+and no loader change: the Rust side only has to declare the collection. -/
+
+/-- The pending-offer heap key. -/
+def pendingKindName : String := "pending_kind"
+
+/-- Pin the pending-offer key: `new = v` AND `new - old = d`, hence `old = v - d`. -/
+def pendingTooth (v : Nat) (d : Int) : List Constraint :=
+  [ Constraint.heapField (.named pendingKindName) (.equals v),
+    Constraint.heapField (.named pendingKindName) (.deltaEquals d) ]
+
+/-- **No offer outstanding, and none opened** (`0 → 0`). Carried by `secret`, `discard` and
+`score`: you cannot take a private action, nor score the round, while the table waits on you. -/
+def pendingHeld : List Constraint := pendingTooth 0 0
+
+/-- **An offer OPENS** (`0 → k`). The `deltaEquals k` forces `old = 0`, so a second offer on top
+of a live one is refused. -/
+def pendingOpen (k : Nat) : List Constraint := pendingTooth k (k : Int)
+
+/-- **An offer CLOSES** (`k → 0`). The `deltaEquals (-k)` forces `old = k`, so `respond_gift`
+requires a pending GIFT specifically — you cannot answer a Competition with a gift-shaped
+response, and you cannot answer an offer that was never made. -/
+def pendingClose (k : Nat) : List Constraint := pendingTooth 0 (-(k : Int))
+
+/-- The pending-kind code for each offering action (`1` Gift, `2` Competition). -/
+def giftCode : Nat := 1
+def compCode : Nat := 2
+
+/-- The action kinds that OPEN an offer (the two whose split the other seat decides). -/
+def offerKinds : List ActionKind := [.giftK, .competitionK]
+
+/-- **`roundTurns` — the committed turns in a full round, DERIVED from the game, not a literal.**
+Each player takes one turn per action kind (`4`), and each OFFER they make is answered by a turn
+from the other seat (`2` more). So `2 * (4 + 2) = 12`. The old game had no response step and
+gated scoring at `8`. -/
+def roundTurns : Nat := allPlayers.length * (allActionKinds.length + offerKinds.length)
+
+/-- The derived round length is 12 (the `FieldGte` literal, sourced from the game). -/
+theorem roundTurns_eq : roundTurns = 12 := by decide
 
 /-- The win threshold constants — the SAME shared `charmWinThreshold` / `guildWinThreshold` the
 model win predicate `Won` reads (`MultiwayTug.lean`). Single source: editing the threshold in the
@@ -218,10 +269,11 @@ def winTooth (who : Nat) (charmReg guildsReg : String) : Constraint :=
       SimpleConstraint.fieldGte charmReg winCharmThreshold,
       SimpleConstraint.fieldGte guildsReg winGuildThreshold ]
 
-/-- The score method's extra teeth: round complete (`round_actions >= 8`), `winner` write-once,
-and the two per-player win-gates. Order matches Rust `score_extra`. -/
+/-- The score method's extra teeth: round complete (`round_actions >= roundTurns = 12` — the
+response turns are real committed turns and scoring waits for them), `winner` write-once, and
+the two per-player win-gates. -/
 def scoreExtra : List Constraint :=
-  [ Constraint.fieldGte "round_actions" 8,
+  [ Constraint.fieldGte "round_actions" roundTurns,
     Constraint.writeOnce "winner",
     winTooth 1 "a_charm" "a_guilds",
     winTooth 2 "b_charm" "b_guilds" ]
@@ -231,17 +283,28 @@ def genesisTeeth : List Constraint :=
   [ Constraint.heapField .sentinel (.equals 1),
     Constraint.heapField .sentinel (.deltaEquals 1) ]
 
-/-- **`multiwayTugProgram` — the DEPLOYED tug play-teeth, authored in Lean.** The exact `Cases`
-`state.rs::program()` hand-rolled: genesis (one-shot) + the four action methods (common + strict
-round sequencing) + score (common + the win-gates). -/
+/-- The teeth of one action method: the shared teeth, strict sequencing, and the pending-offer
+transition that action performs. -/
+def actionCase (pendingPart : List Constraint) : List Constraint :=
+  commonTeeth ++ actionExtra ++ pendingPart
+
+/-- **`multiwayTugProgram` — the DEPLOYED tug play-teeth, authored in Lean.**
+
+EIGHT cases: genesis (one-shot); the two private actions (`secret`/`discard`, which must leave
+the table clear); the two OFFERING actions (`gift`/`comp`, which open the pending offer); the two
+RESPONSE methods (`respond_gift`/`respond_comp`, which close it — and which only exist because
+the split is the other seat's to make); and `score` (which refuses to run with an offer
+outstanding, or before all `roundTurns` turns are in). -/
 def multiwayTugProgram : CellProgram :=
   .cases
-    [ ⟨"genesis", genesisTeeth⟩,
-      ⟨"secret",  commonTeeth ++ actionExtra⟩,
-      ⟨"discard", commonTeeth ++ actionExtra⟩,
-      ⟨"gift",    commonTeeth ++ actionExtra⟩,
-      ⟨"comp",    commonTeeth ++ actionExtra⟩,
-      ⟨"score",   commonTeeth ++ scoreExtra⟩ ]
+    [ ⟨"genesis",      genesisTeeth⟩,
+      ⟨"secret",       actionCase pendingHeld⟩,
+      ⟨"discard",      actionCase pendingHeld⟩,
+      ⟨"gift",         actionCase (pendingOpen giftCode)⟩,
+      ⟨"comp",         actionCase (pendingOpen compCode)⟩,
+      ⟨"respond_gift", actionCase (pendingClose giftCode)⟩,
+      ⟨"respond_comp", actionCase (pendingClose compCode)⟩,
+      ⟨"score",        commonTeeth ++ scoreExtra ++ pendingHeld⟩ ]
 
 /-! ## 3. The JSON emit (the `EmitAllJsonV2`-style artifact renderer). -/
 
@@ -344,22 +407,52 @@ theorem conservation_tooth_covers_totalCards :
       ["deck", "oop", "a_hand", "b_hand", "a_secret", "b_secret", "a_board", "b_board"] :=
   ⟨rfl, rfl⟩
 
-/-- **`program_has_one_case_per_method`.** The deployed program has exactly the six method cases —
-genesis + the four action methods + score — one per game verb, in dispatch order. -/
+/-- **`program_has_one_case_per_method`.** The deployed program has exactly the eight method
+cases — genesis + the four action methods + **the two response methods** + score — one per game
+verb, in dispatch order. The two `respond_*` cases are the deployed footprint of the restored
+I-cut-you-choose step; before this change the referee had no case for the other seat's answer
+because there was no such turn. -/
 theorem program_has_one_case_per_method :
     (match multiwayTugProgram with | .cases cs => cs.map (·.method)) =
-      ["genesis", "secret", "discard", "gift", "comp", "score"] := rfl
+      ["genesis", "secret", "discard", "gift", "comp",
+       "respond_gift", "respond_comp", "score"] := rfl
 
 /-- **`score_case_carries_both_win_gates` (win-safety reaches the deployed score method).** The
-score method's teeth include both per-player win-gates AND the round-complete gate — a false win
-claim (winner set without meeting `Won`'s threshold) is refused by exactly this case. -/
+score method's teeth include both per-player win-gates AND the round-complete gate at the DERIVED
+`roundTurns` — a false win claim, or a score taken before the round's twelve turns are in, is
+refused by exactly this case. -/
 theorem score_case_carries_both_win_gates :
     (match multiwayTugProgram with
      | .cases cs => (cs.filter (·.method == "score")).any
          (fun c => c.constraints.contains (winTooth 1 "a_charm" "a_guilds")
                  && c.constraints.contains (winTooth 2 "b_charm" "b_guilds")
-                 && c.constraints.contains (Constraint.fieldGte "round_actions" 8))) = true := by
+                 && c.constraints.contains (Constraint.fieldGte "round_actions" 12))) = true := by
   decide
+
+/-- **`score_case_refuses_an_open_offer` (you cannot score out from under a live cut).** The score
+case carries `pendingHeld`, so a prover cannot present three favors, skip the opponent's answer,
+and jump straight to scoring — the escrowed cards would never reach anyone's board. -/
+theorem score_case_refuses_an_open_offer :
+    (match multiwayTugProgram with
+     | .cases cs => (cs.filter (·.method == "score")).any
+         (fun c => c.constraints.contains
+             (Constraint.heapField (.named pendingKindName) (.equals 0))
+           && c.constraints.contains
+             (Constraint.heapField (.named pendingKindName) (.deltaEquals 0)))) = true := by
+  decide
+
+/-- **`respond_cases_require_their_own_offer` (the interlock is EXACT, not merely present).**
+`respond_gift` carries `equals 0 ∧ deltaEquals (-1)`, which together force `old = 1`; `respond_comp`
+forces `old = 2`. So each response method admits ONLY when the matching offer is actually
+outstanding — a Competition cannot be answered gift-shaped, and neither can be answered twice. -/
+theorem respond_cases_require_their_own_offer :
+    pendingClose giftCode
+        = [Constraint.heapField (.named pendingKindName) (.equals 0),
+           Constraint.heapField (.named pendingKindName) (.deltaEquals (-1))]
+      ∧ pendingClose compCode
+        = [Constraint.heapField (.named pendingKindName) (.equals 0),
+           Constraint.heapField (.named pendingKindName) (.deltaEquals (-2))] :=
+  ⟨rfl, rfl⟩
 
 /-! ## 4B. The DEPLOYED counter substrate + a NATIVE admission semantics.
 
@@ -444,26 +537,55 @@ quantity (`round_actions` = the SIZE of the used-set; `sentinel = 1` post-genesi
 the per-`(player,action)` used-bit and the per-`(guild,player)` placement tally. This α is the
 counter↔multiset bridge the boundary doc named as the missing piece. -/
 
-open MultiwayTug (GState Player ActionKind Action geishaCount charmScore geishaScore totalCards
-  applyLegal applyAction legalB Won)
+open MultiwayTug (GState Player ActionKind Action Offer Response Move geishaCount charmScore
+  geishaScore totalCards pendingCards applyLegal applyAction legalB applyRespLegal applyResponse
+  legalRespB Won)
 
 /-- The used-bit of `(p,k)` as a counter (`1` if the flag is set, else `0`). -/
 def usedBit (s : GState) (p : Player) (k : ActionKind) : Nat := if s.used p k then 1 else 0
 
-/-- `round_actions` = the SIZE of the used-set (each legal action sets exactly one new flag, so
-this is the strictly-increasing action stamp the deployed `StrictMonotonic` reads). -/
-def usedCount (s : GState) : Nat :=
-  (allPlayers.flatMap (fun p => allActionKinds.map (fun k => usedBit s p k))).sum
+/-! ### ⚑ The ESCROW, and why the conservation tooth did not have to change.
+
+A revealed-but-unanswered offer holds real cards. The deployed conservation tooth sums EIGHT
+register counters and pins them to 21, and all 16 registers were already allocated — so there was
+no slot for a ninth "escrow" counter, and widening the sum would have changed the emitted bytes
+and every conservation proof with it.
+
+Instead α charges the escrow to the **proposer's hand counter**: `a_hand` reads
+`hand p1 + escrowOf p1`. The cards are still exactly once in the sum, `SumEquals == 21` is
+untouched, and the emitted conservation tooth is byte-identical to the one that shipped. What the
+opponent may SEE of those cards is a fog question for the surface, not a counter question. -/
+
+/-- The cards `p` currently has on the table (nonzero only for the proposer of a live offer). -/
+def escrowOf (s : GState) (p : Player) : Multiset MultiwayTug.Geisha :=
+  match s.pending with
+  | none => 0
+  | some o => if o.proposer = p then o.cards else 0
+
+/-- The escrow belongs to exactly one player, so the two shares reassemble it. -/
+theorem escrow_split (s : GState) : escrowOf s .p1 + escrowOf s .p2 = pendingCards s := by
+  unfold escrowOf pendingCards
+  cases hp : s.pending with
+  | none => simp
+  | some o => cases ho : o.proposer <;> simp [ho]
+
+/-- The pending-offer code the deployed heap key carries: `0` none, `1` Gift, `2` Competition. -/
+def pendingKindOf (s : GState) : Nat :=
+  match s.pending with
+  | none => 0
+  | some (.gift _ _ _ _) => giftCode
+  | some (.comp _ _ _ _ _) => compCode
 
 /-- The register-counter view of a game state: each named register is the cardinality of its card
-zone / the controlled score / the derived counter. `winner`/`current`/`scored` are not card zones
-in the pure model (set by the finalization method), so they read `0` here; the score-method
-win-gate is bridged separately (`winTooth_admits_iff_Won`). -/
+zone (the proposer's hand counter INCLUDING their escrow) / the controlled score / the turn stamp.
+`winner`/`current`/`scored` are not card zones in the pure model (set by the finalization method),
+so they read `0` here; the score-method win-gate is bridged separately
+(`winTooth_admits_iff_Won`). -/
 def absReg (s : GState) (name : String) : Nat :=
   if name = "deck" then (s.deck).card
   else if name = "oop" then (s.removed).card + (s.discardPile .p1).card + (s.discardPile .p2).card
-  else if name = "a_hand" then (s.hand .p1).card
-  else if name = "b_hand" then (s.hand .p2).card
+  else if name = "a_hand" then (s.hand .p1 + escrowOf s .p1).card
+  else if name = "b_hand" then (s.hand .p2 + escrowOf s .p2).card
   else if name = "a_secret" then (s.secret .p1).card
   else if name = "b_secret" then (s.secret .p2).card
   else if name = "a_board" then (s.placed .p1).card
@@ -472,7 +594,7 @@ def absReg (s : GState) (name : String) : Nat :=
   else if name = "b_charm" then charmScore s .p2
   else if name = "a_guilds" then geishaScore s .p1
   else if name = "b_guilds" then geishaScore s .p2
-  else if name = "round_actions" then usedCount s
+  else if name = "round_actions" then s.turns
   else 0
 
 /-- The used-flag heap association (`(name, used-bit)`), generated like the schema's flag loop. -/
@@ -484,10 +606,13 @@ The tally is `geishaCount` (placed + secret — the SCORED count, the fixed refe
 def absScores (s : GState) : List (String × Nat) :=
   (List.finRange 7).flatMap (fun g => allPlayers.map (fun p => (scoreName g p, geishaCount s p g)))
 
-/-- The heap view: the genesis sentinel is set (`some 1`, post-genesis), flags/scores by lookup. -/
+/-- The heap view: the genesis sentinel is set (`some 1`, post-genesis), the pending-offer code,
+then flags/scores by lookup. -/
 def absHeap (s : GState) : HeapKeyRef → Option Nat
   | .sentinel => some 1
-  | .named n => List.lookup n (absFlags s ++ absScores s)
+  | .named n =>
+      if n = pendingKindName then some (pendingKindOf s)
+      else List.lookup n (absFlags s ++ absScores s)
 
 /-- **`α` — the abstraction of a game state to the deployed counter substrate.** -/
 def abstract (s : GState) : Counters := { reg := absReg s, heap := absHeap s }
@@ -497,14 +622,18 @@ def abstract (s : GState) : Counters := { reg := absReg s, heap := absHeap s }
 @[simp] theorem absReg_deck (s : GState) : (abstract s).reg "deck" = (s.deck).card := rfl
 @[simp] theorem absReg_oop (s : GState) :
     (abstract s).reg "oop" = (s.removed).card + (s.discardPile .p1).card + (s.discardPile .p2).card := rfl
-@[simp] theorem absReg_a_hand (s : GState) : (abstract s).reg "a_hand" = (s.hand .p1).card := rfl
-@[simp] theorem absReg_b_hand (s : GState) : (abstract s).reg "b_hand" = (s.hand .p2).card := rfl
+@[simp] theorem absReg_a_hand (s : GState) :
+    (abstract s).reg "a_hand" = (s.hand .p1 + escrowOf s .p1).card := rfl
+@[simp] theorem absReg_b_hand (s : GState) :
+    (abstract s).reg "b_hand" = (s.hand .p2 + escrowOf s .p2).card := rfl
 @[simp] theorem absReg_a_secret (s : GState) : (abstract s).reg "a_secret" = (s.secret .p1).card := rfl
 @[simp] theorem absReg_b_secret (s : GState) : (abstract s).reg "b_secret" = (s.secret .p2).card := rfl
 @[simp] theorem absReg_a_board (s : GState) : (abstract s).reg "a_board" = (s.placed .p1).card := rfl
 @[simp] theorem absReg_b_board (s : GState) : (abstract s).reg "b_board" = (s.placed .p2).card := rfl
-@[simp] theorem absReg_round (s : GState) : (abstract s).reg "round_actions" = usedCount s := rfl
+@[simp] theorem absReg_round (s : GState) : (abstract s).reg "round_actions" = s.turns := rfl
 @[simp] theorem absHeap_sentinel (s : GState) : (abstract s).heap .sentinel = some 1 := rfl
+@[simp] theorem absHeap_pending (s : GState) :
+    (abstract s).heap (.named pendingKindName) = some (pendingKindOf s) := rfl
 
 /-- α reads the flag heap key correctly (finite check over players × action-kinds). -/
 theorem absHeap_flag (s : GState) (p : Player) (k : ActionKind) :
@@ -519,10 +648,14 @@ theorem absHeap_score (s : GState) (g : Fin 7) (p : Player) :
 /-! ## 4D. The bridge lemmas (the deployed teeth ARE the model's proven facts). -/
 
 /-- **The conservation tooth reads `totalCards`.** The `SumEquals` sum over the 8 conservation
-registers at `α s` is EXACTLY `(totalCards s).card` — the deployed referee's conservation check is
-the multiset conservation the model proves invariant, no re-derivation. -/
+registers at `α s` is EXACTLY `(totalCards s).card`. The escrow is charged to the proposer's hand
+counter (`escrow_split`), so the deployed referee's conservation check is still the multiset
+conservation the model proves invariant — with the revealed-but-unanswered favors counted once,
+not zero times. -/
 theorem conservationSum_eq (s : GState) :
     ((conservationRegs.map (abstract s).reg).sum) = (totalCards s).card := by
+  have hesc : (pendingCards s).card = (escrowOf s .p1).card + (escrowOf s .p2).card := by
+    rw [← escrow_split s, Multiset.card_add]
   simp only [conservationRegs, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
     absReg_deck, absReg_oop, absReg_a_hand, absReg_b_hand, absReg_a_secret, absReg_b_secret,
     absReg_a_board, absReg_b_board, totalCards, MultiwayTug.sum2, Multiset.card_add,
@@ -543,142 +676,229 @@ theorem used_applyLegal (o : GState) (p : Player) (a : Action) (p' : Player) (k'
     · rw [Function.update_of_ne hkk]; simp [hkk]
   · rw [Function.update_of_ne hpp]; simp [hpp]
 
-/-- **Every flag write-once tooth admits a legal step.** The played flag goes `0 → 1` (admitted by
-old-zero — `legal_needs_unused`); every other flag is unchanged. -/
+/-- **Every flag write-once tooth admits a legal ACTION.** The played flag goes `0 → 1` (admitted
+by old-zero — `legal_needs_unused`); every other flag is unchanged. -/
 theorem flag_writeOnce_admits (o : GState) (p : Player) (a : Action) (hleg : legalB o p a = true)
     (p' : Player) (k' : ActionKind) :
     HeapAtom.writeOnce.admits (some (usedBit o p' k')) (some (usedBit (applyLegal o p a) p' k'))
       = true := by
   simp only [HeapAtom.admits]
   by_cases hcase : p' = p ∧ k' = a.kind
-  · -- played flag: old-zero (legal_needs_unused)
-    obtain ⟨hp, hk⟩ := hcase
+  · obtain ⟨hp, hk⟩ := hcase
     subst hp; subst hk
     have hfalse : o.used p' a.kind = false := MultiwayTug.legal_needs_unused o p' a hleg
     simp [usedBit, hfalse]
-  · -- untouched flag: unchanged
-    have : (applyLegal o p a).used p' k' = o.used p' k' := by
+  · have : (applyLegal o p a).used p' k' = o.used p' k' := by
       rw [used_applyLegal]; simp [hcase]
     simp [usedBit, this]
 
-/-- **Every placement-score monotone tooth admits a legal step.** Scores only accrue
-(`geishaCount_mono`). -/
+/-- **Every placement-score monotone tooth admits a legal ACTION.** -/
 theorem score_monotonic_admits (o : GState) (p : Player) (a : Action) (hleg : legalB o p a = true)
     (g : Fin 7) (p' : Player) :
     HeapAtom.monotonic.admits (some (geishaCount o p' g))
       (some (geishaCount (applyLegal o p a) p' g)) = true := by
   simp only [HeapAtom.admits, decide_eq_true_eq]
-  have hmono := MultiwayTug.geishaCount_mono o p a p' g
+  have hmono := MultiwayTug.geishaCount_mono_act o p a p' g
   rwa [MultiwayTug.applyAction_of_legal o p a hleg] at hmono
 
-/-- **`round_actions` strictly increases.** A legal action sets exactly one previously-unset flag,
-so the used-set grows by one — the deployed `StrictMonotonic` on `round_actions`. -/
-theorem usedCount_applyLegal (o : GState) (p : Player) (a : Action) (hleg : legalB o p a = true) :
-    usedCount (applyLegal o p a) = usedCount o + 1 := by
-  have hfalse : o.used p a.kind = false := MultiwayTug.legal_needs_unused o p a hleg
-  have key : ∀ p' k', (applyLegal o p a).used p' k'
-      = (if p' = p ∧ k' = a.kind then true else o.used p' k') := used_applyLegal o p a
-  simp only [usedCount, allPlayers, allActionKinds, List.flatMap_cons, List.flatMap_nil,
-    List.map_cons, List.map_nil, List.append_nil, List.cons_append, List.nil_append,
-    List.sum_cons, List.sum_nil, usedBit, key]
-  -- exactly one summand flips 0→1 (the played (p,a.kind)); the rest are held
-  cases p <;> cases hk : a.kind <;>
-    simp_all <;> omega
+/-! ### The RESPONSE-side twins (a response touches no flag, and only grows scores). -/
+
+/-- A legal response leaves EVERY used-flag alone, so every write-once tooth admits it. -/
+theorem flag_writeOnce_admits_resp (o : GState) (p : Player) (r : Response)
+    (p' : Player) (k' : ActionKind) :
+    HeapAtom.writeOnce.admits (some (usedBit o p' k'))
+      (some (usedBit (applyRespLegal o p r) p' k')) = true := by
+  have h : (applyRespLegal o p r).used = o.used := by
+    unfold applyRespLegal; cases o.pending <;> rfl
+  simp only [HeapAtom.admits, usedBit, h]
+  simp
+
+/-- A legal response only ADDS to the boards, so every monotone score tooth admits it. -/
+theorem score_monotonic_admits_resp (o : GState) (p : Player) (r : Response)
+    (hleg : legalRespB o p r = true) (g : Fin 7) (p' : Player) :
+    HeapAtom.monotonic.admits (some (geishaCount o p' g))
+      (some (geishaCount (applyRespLegal o p r) p' g)) = true := by
+  simp only [HeapAtom.admits, decide_eq_true_eq]
+  have hmono := MultiwayTug.geishaCount_mono_resp o p r p' g
+  rwa [MultiwayTug.applyResponse_of_legal o p r hleg] at hmono
+
+/-! ### The pending-key transitions each method performs. -/
+
+/-- The pending code an action LEAVES BEHIND (`0` for the two private actions). -/
+def pendingPartCode : Action → Nat
+  | .secret _ => 0
+  | .discard _ _ => 0
+  | .offerGift _ _ _ => giftCode
+  | .offerComp _ _ _ _ => compCode
+
+/-- The pending code a response REQUIRES to be outstanding. -/
+def pendingRespCode : Response → Nat
+  | .gift _ => giftCode
+  | .comp _ => compCode
+
+/-- A legal action starts from a clear table (`legalB` requires `pending = none`). -/
+theorem pendingKind_before (o : GState) (p : Player) (a : Action) (hleg : legalB o p a = true) :
+    pendingKindOf o = 0 := by
+  have hnone : o.pending = none := by
+    simp only [legalB, Bool.and_eq_true] at hleg
+    exact Option.isNone_iff_eq_none.mp (by simpa using hleg.1.1.2)
+  simp [pendingKindOf, hnone]
+
+/-- The pending code after an action is the code of the offer it opened. -/
+theorem pendingKind_after (o : GState) (p : Player) (a : Action) :
+    pendingKindOf (applyLegal o p a) = pendingPartCode a := by
+  cases a <;> rfl
+
+/-- A legal response clears the table. -/
+theorem pendingKind_after_resp (o : GState) (p : Player) (r : Response) :
+    pendingKindOf (applyRespLegal o p r) = 0 := by
+  unfold applyRespLegal pendingKindOf
+  cases hp : o.pending <;> simp [hp]
 
 /-! ## 4E. THE FORWARD REFINEMENT — the deployed program admits every legal game move. -/
 
-/-- The action's dispatch method name (`state.rs` method tags). -/
-def methodOf : Action → String
+/-- The action''s dispatch method name (`state.rs` method tags). -/
+def methodOf : Action -> String
   | .secret _ => "secret"
   | .discard _ _ => "discard"
-  | .gift _ _ _ => "gift"
-  | .competition _ _ _ _ => "comp"
+  | .offerGift _ _ _ => "gift"
+  | .offerComp _ _ _ _ => "comp"
 
-/-- For an action method, the program's admission is exactly the shared action case's teeth. The
-teeth are generalized to opaque atoms so the case filter reduces without unfolding the 23-tooth
-lists (which would blow the whnf budget). -/
+/-- The response''s dispatch method name — the two methods the shipped referee did not have. -/
+def methodOfResp : Response -> String
+  | .gift _ => "respond_gift"
+  | .comp _ => "respond_comp"
+
+/-- The pending-offer teeth each action carries. -/
+def pendingPartOf : Action -> List Constraint
+  | .secret _ => pendingHeld
+  | .discard _ _ => pendingHeld
+  | .offerGift _ _ _ => pendingOpen giftCode
+  | .offerComp _ _ _ _ => pendingOpen compCode
+
+/-- The pending-offer teeth each response carries. -/
+def pendingPartOfResp : Response -> List Constraint
+  | .gift _ => pendingClose giftCode
+  | .comp _ => pendingClose compCode
+
+/-- For an action method, the program''s admission is exactly that action''s case. -/
 theorem admitsMethod_action (a : Action) (old new : Counters) :
     CellProgram.admitsMethod multiwayTugProgram (methodOf a) old new
-      = (commonTeeth ++ actionExtra).all (fun k => k.admits old new) := by
-  have h : multiwayTugProgram = CellProgram.cases
-      [⟨"genesis", genesisTeeth⟩, ⟨"secret", commonTeeth ++ actionExtra⟩,
-       ⟨"discard", commonTeeth ++ actionExtra⟩, ⟨"gift", commonTeeth ++ actionExtra⟩,
-       ⟨"comp", commonTeeth ++ actionExtra⟩, ⟨"score", commonTeeth ++ scoreExtra⟩] := rfl
-  rw [h]
-  generalize genesisTeeth = g0
-  generalize commonTeeth ++ scoreExtra = t2
-  generalize commonTeeth ++ actionExtra = t
+      = (actionCase (pendingPartOf a)).all (fun k => k.admits old new) := by
   cases a <;>
-    simp [methodOf, CellProgram.admitsMethod, List.filter_cons, TransitionCase.admits, reduceBEq]
+    simp [multiwayTugProgram, methodOf, pendingPartOf, CellProgram.admitsMethod,
+      List.filter_cons, TransitionCase.admits, reduceBEq]
 
-/-- **`commonAndAction_admits` — every tooth of an action case admits a legal step.** Conservation
-(reads `totalCards`, held by `conservation`), the write-once flags (`flag_writeOnce_admits`), the
-monotone scores (`score_monotonic_admits`), the frozen sentinel, and the strict round-sequencing
-(`usedCount_applyLegal`) — each discharged against the PROVEN model invariants. -/
-theorem commonAndAction_admits (o : GState) (p : Player) (a : Action)
-    (hleg : legalB o p a = true) (hcons : (totalCards o).card = 21) :
-    (commonTeeth ++ actionExtra).all
-      (fun k => k.admits (abstract o) (abstract (applyLegal o p a))) = true := by
-  have hcard : (totalCards (applyLegal o p a)).card = 21 := by
-    have : totalCards (applyLegal o p a) = totalCards o := by
-      rw [← MultiwayTug.applyAction_of_legal o p a hleg]; exact MultiwayTug.conservation o p a
-    rw [this]; exact hcons
-  rw [List.all_append]
+/-- For a response method, likewise. -/
+theorem admitsMethod_resp (r : Response) (old new : Counters) :
+    CellProgram.admitsMethod multiwayTugProgram (methodOfResp r) old new
+      = (actionCase (pendingPartOfResp r)).all (fun k => k.admits old new) := by
+  cases r <;>
+    simp [multiwayTugProgram, methodOfResp, pendingPartOfResp, CellProgram.admitsMethod,
+      List.filter_cons, TransitionCase.admits, reduceBEq]
+
+/-- **The shared teeth admit any transition that conserves 21, never clears a flag, never lowers
+a score, and leaves the sentinel alone.** Factored so the ACT and RESPOND legs share one proof. -/
+theorem commonTeeth_admits (o n : GState)
+    (hcard : (totalCards n).card = 21)
+    (hflag : forall p' k', HeapAtom.writeOnce.admits (some (usedBit o p' k'))
+      (some (usedBit n p' k')) = true)
+    (hscore : forall (g : Fin 7) p', HeapAtom.monotonic.admits (some (geishaCount o p' g))
+      (some (geishaCount n p' g)) = true) :
+    commonTeeth.all (fun k => k.admits (abstract o) (abstract n)) = true := by
+  rw [commonTeeth, List.all_cons]
   refine Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩
-  · -- commonTeeth
-    rw [commonTeeth, List.all_cons]
-    refine Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩
-    · -- conservation head
-      simp only [Constraint.admits, decide_eq_true_eq, conservationSum_eq, hcard,
-        conservationValue_eq]
-    · -- flags ++ scores ++ [sentinel]
-      rw [List.all_append, List.all_append]
-      refine Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩, ?_⟩
-      · -- flag write-once teeth
-        rw [List.all_eq_true]
-        intro c hc
-        rw [List.mem_map] at hc
-        obtain ⟨nm, hnm, rfl⟩ := hc
-        rw [flagNames, List.mem_flatMap] at hnm
-        obtain ⟨p', -, hnm⟩ := hnm
-        rw [List.mem_map] at hnm
-        obtain ⟨k', -, rfl⟩ := hnm
-        simp only [Constraint.admits, absHeap_flag]
-        exact flag_writeOnce_admits o p a hleg p' k'
-      · -- score monotone teeth
-        rw [List.all_eq_true]
-        intro c hc
-        rw [List.mem_map] at hc
-        obtain ⟨nm, hnm, rfl⟩ := hc
-        rw [scoreNames, List.mem_flatMap] at hnm
-        obtain ⟨g, -, hnm⟩ := hnm
-        rw [List.mem_map] at hnm
-        obtain ⟨p', -, rfl⟩ := hnm
-        simp only [Constraint.admits, absHeap_score]
-        exact score_monotonic_admits o p a hleg g p'
-      · -- sentinel frozen
-        simp only [List.all_cons, List.all_nil, Constraint.admits, HeapAtom.admits,
-          absHeap_sentinel, Bool.and_true, decide_eq_true_eq]
-  · -- actionExtra: strict round sequencing
-    simp only [actionExtra, List.all_cons, List.all_nil, Constraint.admits, absReg_round,
-      Bool.and_true, decide_eq_true_eq, usedCount_applyLegal o p a hleg]
-    omega
+  · simp only [Constraint.admits, decide_eq_true_eq, conservationSum_eq, hcard,
+      conservationValue_eq]
+  · rw [List.all_append, List.all_append]
+    refine Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩, ?_⟩
+    · rw [List.all_eq_true]
+      intro c hc
+      rw [List.mem_map] at hc
+      obtain ⟨nm, hnm, rfl⟩ := hc
+      rw [flagNames, List.mem_flatMap] at hnm
+      obtain ⟨p', -, hnm⟩ := hnm
+      rw [List.mem_map] at hnm
+      obtain ⟨k', -, rfl⟩ := hnm
+      simp only [Constraint.admits, absHeap_flag]
+      exact hflag p' k'
+    · rw [List.all_eq_true]
+      intro c hc
+      rw [List.mem_map] at hc
+      obtain ⟨nm, hnm, rfl⟩ := hc
+      rw [scoreNames, List.mem_flatMap] at hnm
+      obtain ⟨g, -, hnm⟩ := hnm
+      rw [List.mem_map] at hnm
+      obtain ⟨p', -, rfl⟩ := hnm
+      simp only [Constraint.admits, absHeap_score]
+      exact hscore g p'
+    · simp only [List.all_cons, List.all_nil, Constraint.admits, HeapAtom.admits,
+        absHeap_sentinel, Bool.and_true, decide_eq_true_eq]
 
-/-- **`program_admits_legal_play` (THE FORWARD REFINEMENT — legal ⇒ admitted).** The DEPLOYED
-`multiwayTugProgram` ADMITS the abstraction of every legal `applyAction` play: for a legal action
-`a` and a state whose card total is the deck's 21, the referee's accept predicate on
-`(α o, methodOf a, α (applyLegal o p a))` is `true`. Each admitted counter effect — conservation,
-one-action-per-round, monotone scores, strict sequencing — is pinned to the PROVEN model invariant,
-not re-asserted. ⚑ This is FORWARD ONLY (legal ⇒ admitted); it does NOT claim the converse
-(`admitted ⇒ legal`), which is impossible for the cardinality-blind counter program alone and is
-`airPlay`'s membership job (`§4H`, NAMED, gated on `MerkleSound`). `§4I` re-states this conclusion
-against the DEPLOYED evaluator (`program_admits_legal_play_deployed`). -/
+/-- **`program_admits_legal_play` (THE FORWARD REFINEMENT, ACT — legal ⇒ admitted).** Each
+admitted counter effect — conservation, one-action-per-round, monotone scores, strict sequencing,
+and the PENDING-OFFER transition this action performs — is pinned to a PROVEN model invariant.
+⚑ FORWARD ONLY; the converse is `airPlay`''s membership job. -/
 theorem program_admits_legal_play (o : GState) (p : Player) (a : Action)
     (hleg : legalB o p a = true) (hcons : (totalCards o).card = 21) :
     CellProgram.admitsMethod multiwayTugProgram (methodOf a) (abstract o)
       (abstract (applyLegal o p a)) = true := by
-  rw [admitsMethod_action]
-  exact commonAndAction_admits o p a hleg hcons
+  have hcard : (totalCards (applyLegal o p a)).card = 21 := by
+    have : totalCards (applyLegal o p a) = totalCards o := by
+      rw [← MultiwayTug.applyAction_of_legal o p a hleg]; exact MultiwayTug.conservation o p a
+    rw [this]; exact hcons
+  rw [admitsMethod_action, actionCase, List.all_append, List.all_append]
+  refine Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩, ?_⟩
+  · exact commonTeeth_admits o _ hcard (flag_writeOnce_admits o p a hleg)
+      (score_monotonic_admits o p a hleg)
+  · simp only [actionExtra, List.all_cons, List.all_nil, Constraint.admits, absReg_round,
+      Bool.and_true, decide_eq_true_eq]
+    show o.turns < (applyLegal o p a).turns
+    simp [applyLegal]
+  · have hb := pendingKind_before o p a hleg
+    have hafter := pendingKind_after o p a
+    cases a <;>
+      simp only [pendingPartOf, pendingPartCode, pendingHeld, pendingOpen, pendingTooth,
+        List.all_cons, List.all_nil, Constraint.admits, HeapAtom.admits, absHeap_pending,
+        Bool.and_true] <;>
+      simp_all [pendingPartCode]
+
+/-- **`program_admits_legal_response` (THE FORWARD REFINEMENT, RESPOND).** The step the shipped
+referee had NO CASE FOR is now admitted by a case of its own: the escrow moves onto the two
+boards (conservation), no flag is touched (a response is not one of your four actions), scores
+only grow, the turn stamp advances, and `pending_kind` goes `k → 0`, which the
+`equals 0 ∧ deltaEquals (-k)` pair only admits when offer `k` was genuinely outstanding. -/
+theorem program_admits_legal_response (o : GState) (p : Player) (r : Response)
+    (hleg : legalRespB o p r = true) (hcons : (totalCards o).card = 21) :
+    CellProgram.admitsMethod multiwayTugProgram (methodOfResp r) (abstract o)
+      (abstract (applyRespLegal o p r)) = true := by
+  have hcard : (totalCards (applyRespLegal o p r)).card = 21 := by
+    have : totalCards (applyRespLegal o p r) = totalCards o := by
+      rw [← MultiwayTug.applyResponse_of_legal o p r hleg]
+      exact MultiwayTug.conservation_response o p r
+    rw [this]; exact hcons
+  rw [admitsMethod_resp, actionCase, List.all_append, List.all_append]
+  refine Bool.and_eq_true_iff.mpr ⟨Bool.and_eq_true_iff.mpr ⟨?_, ?_⟩, ?_⟩
+  · exact commonTeeth_admits o _ hcard (fun p' k' => flag_writeOnce_admits_resp o p r p' k')
+      (fun g p' => score_monotonic_admits_resp o p r hleg g p')
+  · simp only [actionExtra, List.all_cons, List.all_nil, Constraint.admits, absReg_round,
+      Bool.and_true, decide_eq_true_eq]
+    show o.turns < (applyRespLegal o p r).turns
+    have ht := MultiwayTug.turns_applyResponse o p r hleg
+    rw [MultiwayTug.applyResponse_of_legal o p r hleg] at ht
+    omega
+  · have hafter := pendingKind_after_resp o p r
+    have hbefore : pendingKindOf o = pendingRespCode r := by
+      cases hp : o.pending with
+      | none => simp [legalRespB, hp] at hleg
+      | some f =>
+        simp only [legalRespB, hp, Bool.and_eq_true] at hleg
+        cases f <;> cases r <;> simp_all [pendingKindOf, pendingRespCode, Offer.accepts]
+    cases r <;>
+      simp only [pendingPartOfResp, pendingRespCode, pendingClose, pendingTooth,
+        List.all_cons, List.all_nil, Constraint.admits, HeapAtom.admits, absHeap_pending,
+        Bool.and_true] <;>
+      simp_all [pendingRespCode]
 
 /-! ## 4F. The score method's win-gate IS the model win predicate `Won` (counter-level iff). -/
 
@@ -882,13 +1102,19 @@ theorem sumGo_ok (v : DField) (regs : List DField) :
 /-- The marshalled deployed input for one tug tooth on a `(old,new)` counter transition (registers
 via `tugSlots`, the resolved heap value for a `heapField` tooth's key; `oldPresent` — tug states
 are present). -/
+def tugNoCtx : DCtx :=
+  { present := false, height := 0, senderPresent := false, sender := 0,
+    epochPresent := false, epoch := 0, epochCount := 0 }
+
 def mkDInput (old new : Counters) : Constraint → DInput
   | .heapField k _ =>
       { oldPresent := true, newNonce := 0, oldRegs := tugSlots old, newRegs := tugSlots new,
-        heapOld := old.heap k, heapNew := new.heap k }
+        heapOld := old.heap k, heapNew := new.heap k, heapOther := none,
+        oldBalance := 0, newBalance := 0, ctx := tugNoCtx, cells := [] }
   | _ =>
       { oldPresent := true, newNonce := 0, oldRegs := tugSlots old, newRegs := tugSlots new,
-        heapOld := none, heapNew := none }
+        heapOld := none, heapNew := none, heapOther := none,
+        oldBalance := 0, newBalance := 0, ctx := tugNoCtx, cells := [] }
 
 /-- The deployed constraint for one tug tooth (the PURE subset; `anyOf` — the named non-pure
 boundary — maps to an unused placeholder, never hit by the pure-subset teeth this section proves). -/
@@ -907,7 +1133,8 @@ theorem sumEquals_conservation_deployed (new : Counters)
     (hsum : (conservationRegs.map new.reg).sum = 21) :
     admits (.sumEquals (conservationRegs.map tugRegIdx) 21)
         { oldPresent := true, newNonce := 0, oldRegs := tugSlots new, newRegs := tugSlots new,
-          heapOld := none, heapNew := none } = DAdmit.ok := by
+          heapOld := none, heapNew := none, heapOther := none,
+          oldBalance := 0, newBalance := 0, ctx := tugNoCtx, cells := [] } = DAdmit.ok := by
   have hidxs : conservationRegs.map tugRegIdx = [0,1,2,3,4,5,6,7] := by decide
   simp only [conservationRegs, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
     add_zero] at hsum
@@ -981,17 +1208,72 @@ theorem program_admits_legal_play_deployed (o : GState) (p : Player) (a : Action
   · -- round_actions strict sequencing
     have hlt : (abstract o).reg "round_actions"
         < (abstract (applyLegal o p a)).reg "round_actions" := by
-      rw [absReg_round, absReg_round, usedCount_applyLegal o p a hleg]; omega
+      rw [absReg_round, absReg_round]
+      show o.turns < (applyLegal o p a).turns
+      simp [applyLegal]
     show (if (abstract o).reg "round_actions" < (abstract (applyLegal o p a)).reg "round_actions"
       then DAdmit.ok else DAdmit.violated) = DAdmit.ok
     rw [if_pos hlt]
+
+/-! ### The PENDING-OFFER teeth on the deployed evaluator.
+
+Both atoms the interlock uses (`equals`, `deltaEquals`) are in the EXPORTED PURE SUBSET, so the
+I-cut-you-choose interlock is checked by the same Lean evaluator the deployed node routes
+through — it is not a Rust-only tooth. The codes are `0/1/2`, orders of magnitude below the u64
+lane, so `low64` is the identity here and no truncation is in play. -/
+
+/-- The pending code is tiny (`0`, `1` or `2`). -/
+theorem pendingKindOf_le (s : GState) : pendingKindOf s ≤ 2 := by
+  rcases hp : s.pending with _ | o
+  · simp [pendingKindOf, hp]
+  · cases o <;> simp [pendingKindOf, hp, giftCode, compCode]
+
+/-- ...hence it is the identity under the deployed u64 lane. -/
+theorem low64_pendingKindOf (s : GState) : low64 (pendingKindOf s) = pendingKindOf s := by
+  have h := pendingKindOf_le s
+  have h2 : (2 : Nat) < two64 := by decide
+  exact Nat.mod_eq_of_lt (by omega)
+
+/-- **`pending_tooth_deployed`.** Both teeth of a `pendingTooth v d` pin evaluate to `.ok` on the
+deployed evaluator exactly when the transition really moves the pending code from `v - d` to `v`.
+-/
+theorem pending_tooth_deployed (o n : GState) (v : Nat) (d : Int)
+    (hv : pendingKindOf n = v)
+    (hd : (pendingKindOf n : Int) - (pendingKindOf o : Int) = d) :
+    ∀ c ∈ pendingTooth v d,
+      admits (Constraint.toDC c) (mkDInput (abstract o) (abstract n) c) = DAdmit.ok := by
+  intro c hc
+  simp only [pendingTooth, List.mem_cons, List.not_mem_nil, or_false] at hc
+  rcases hc with rfl | rfl
+  · simp [Constraint.toDC, HeapAtom.toDHeap, mkDInput, admits, absHeap_pending, heapAdmits, hv]
+  · simp [Constraint.toDC, HeapAtom.toDHeap, mkDInput, admits, absHeap_pending, heapAdmits,
+      low64_pendingKindOf, hd]
+
+/-- **`action_case_deployed` — EVERY tooth of the deployed action case, including the
+pending-offer interlock, lands on the deployed evaluator.** This is the §4I conclusion for the
+whole case rather than its pre-I-cut-you-choose prefix. -/
+theorem action_case_deployed (o : GState) (p : Player) (a : Action)
+    (hleg : legalB o p a = true) (hcons : (totalCards o).card = 21) :
+    ∀ c ∈ actionCase (pendingPartOf a),
+      admits (Constraint.toDC c)
+        (mkDInput (abstract o) (abstract (applyLegal o p a)) c) = DAdmit.ok := by
+  intro c hc
+  rw [actionCase, List.mem_append] at hc
+  rcases hc with hc | hpend
+  · exact program_admits_legal_play_deployed o p a hleg hcons c hc
+  · have hb : pendingKindOf o = 0 := pendingKind_before o p a hleg
+    have hn : pendingKindOf (applyLegal o p a) = pendingPartCode a := pendingKind_after o p a
+    cases a <;>
+      · refine pending_tooth_deployed o _ _ _ ?_ ?_ c (by simpa [pendingPartOf] using hpend)
+        · simpa [pendingPartCode] using hn
+        · rw [hb, hn]; simp [pendingPartCode, giftCode, compCode]
 
 end DeployedRefinement
 
 /-! ## 5. `#guard` smoke — the emit runs and is well-formed. -/
 
 -- The program is the 6-case shape.
-#guard (match multiwayTugProgram with | .cases cs => cs.length) = 6
+#guard (match multiwayTugProgram with | .cases cs => cs.length) = 8
 -- The genesis case carries exactly the two one-shot sentinel teeth.
 #guard (match multiwayTugProgram with
         | .cases (c :: _) => c.constraints.length
@@ -1015,12 +1297,22 @@ end DeployedRefinement
 #assert_axioms used_applyLegal
 #assert_axioms flag_writeOnce_admits
 #assert_axioms score_monotonic_admits
-#assert_axioms usedCount_applyLegal
 #assert_axioms absHeap_flag
 #assert_axioms absHeap_score
 #assert_axioms admitsMethod_action
-#assert_axioms commonAndAction_admits
+#assert_axioms commonTeeth_admits
 #assert_axioms program_admits_legal_play
+#assert_axioms program_admits_legal_response
+#assert_axioms admitsMethod_resp
+#assert_axioms escrow_split
+#assert_axioms roundTurns_eq
+#assert_axioms score_case_refuses_an_open_offer
+#assert_axioms respond_cases_require_their_own_offer
+#assert_axioms pendingKind_before
+#assert_axioms pendingKind_after
+#assert_axioms pendingKind_after_resp
+#assert_axioms flag_writeOnce_admits_resp
+#assert_axioms score_monotonic_admits_resp
 #assert_axioms winTooth_admits_iff_Won_p1
 #assert_axioms winTooth_admits_iff_Won_p2
 #assert_axioms genesis_admits_first
@@ -1033,5 +1325,9 @@ end DeployedRefinement
 #assert_axioms sumGo_ok
 #assert_axioms sumEquals_conservation_deployed
 #assert_axioms program_admits_legal_play_deployed
+#assert_axioms pendingKindOf_le
+#assert_axioms low64_pendingKindOf
+#assert_axioms pending_tooth_deployed
+#assert_axioms action_case_deployed
 
 end Dregg2.Games.MultiwayTug.Prog

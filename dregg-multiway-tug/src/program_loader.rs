@@ -12,7 +12,7 @@
 //!
 //! **What is Lean-sourced vs Rust-resolved.** The teeth STRUCTURE — which methods, which
 //! constraints, the conservation sum, the `WriteOnce`/`Monotonic`/`StrictMonotonic` atoms, and
-//! the win-gate thresholds (`charm >= 11`, `guilds >= 4`, `round_actions >= 8`) — is entirely
+//! the win-gate thresholds (`charm >= 11`, `guilds >= 4`, `round_actions >= 12`) — is entirely
 //! the artifact's content. Rust only maps a symbolic NAME to its allocator-assigned index
 //! (`reg`/`key`) and a method NAME to its `symbol()` hash. The allocator is itself
 //! translation-validated (the RotatedLayout Legal discipline), so the name→index binding is not

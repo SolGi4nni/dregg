@@ -1112,6 +1112,12 @@ impl HiddenHandLedger {
                 });
             }
         }
+        // The offer on the table (0 none, 1 gift, 2 competition).
+        effects.push(Effect::SetField {
+            cell,
+            index: self.game_dep.pending_kind_key(),
+            value: field_from_u64(proj.pending_kind),
+        });
         effects
     }
 
@@ -1249,6 +1255,25 @@ impl HiddenHandLedger {
         let receipt = self.commit_actions(vec![game, hidden])?;
         self.finish_play(player, proofs, prepared.state);
         Ok(receipt)
+    }
+
+    /// **A RESPONSE turn** — the other seat's answer to a pending offer. It consumes NO card
+    /// from any hand (the escrow was funded when the offer was cut), so there is no
+    /// membership witness to carry and no hidden-cell action: the whole move is the rules
+    /// cell's projection under `method` (`respond_gift` / `respond_comp`), whose Lean-emitted
+    /// case is also the only one permitted to lower the `pending_kind` escrow marker.
+    pub(crate) fn respond_projection(
+        &mut self,
+        method: &str,
+        projection: &Projection,
+    ) -> Result<TurnReceipt, WorldError> {
+        let game = self.action(
+            self.game_cell,
+            method,
+            self.game_effects(projection),
+            Vec::new(),
+        );
+        self.commit_actions(vec![game])
     }
 
     fn prepare_play(
@@ -1449,6 +1474,7 @@ impl HiddenHandLedger {
             current: self.read_game_reg("current"),
             round_actions: self.read_game_reg("round_actions"),
             scored: self.read_game_reg("scored"),
+            pending_kind: self.read_game_heap(self.game_dep.pending_kind_key()),
             score,
             flag,
         }

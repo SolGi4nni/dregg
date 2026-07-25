@@ -464,18 +464,25 @@ fn match_win_output_is_attested() {
 /// cell snapshot — a real WorldCell cell (real pk / balance / heap), not the `pk[0]=7` fixture.
 fn a_real_world_cell() -> dregg_cell::Cell {
     use crate::game::MultiwayTug;
-    use crate::reference::Engine;
+    use crate::reference::{ActionKind, Engine};
     let seed = 0u64;
     let mut eng = Engine::new(seed);
     let game = MultiwayTug::deploy(seed as u8).expect("deploy");
     game.seed(&eng.projection()).expect("genesis seeds");
-    for _ in 0..3 {
-        if eng.round_complete() {
-            break;
-        }
-        let mv = eng.play_next();
+    // Three PRIVATE turns (Secret, Secret, Discard). These open no offer, so no response is
+    // needed — and a response would be refused today, since `respond_gift`/`respond_comp` are
+    // not yet in the Lean-emitted program. This helper only needs a cell with real committed
+    // state, so the private opening line is exactly as good as any other.
+    for kind in [ActionKind::Secret, ActionKind::Secret, ActionKind::Discard] {
+        let p = eng.current_player();
+        let d = eng
+            .legal_decisions()
+            .into_iter()
+            .find(|d| d.kind() == Some(kind))
+            .expect("an unused kind is always affordable");
+        let mv = eng.apply(p, d).expect("a legal decision applies");
         let proj = eng.projection();
-        game.commit_projection(mv.action().method(), &proj)
+        game.commit_projection(mv.method(), &proj)
             .expect("a legal play commits");
     }
     game.world().cell_snapshot().expect("the world-cell exists")

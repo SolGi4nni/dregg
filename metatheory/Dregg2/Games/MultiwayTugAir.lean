@@ -101,18 +101,17 @@ re-proven in this pure model; it is carried like `AirSpec air` is carried upstre
 def MerkleSound (M : MerkleScheme) : Prop :=
   ∀ (h sub : Multiset Geisha), M.Member (M.commit h) sub → sub ≤ h
 
-/-! ## 2. `legalB` as a proposition, and the legal ⇒ `applyLegal` collapse -/
+/-! ## 2. `legalB` as a proposition (`applyAction_of_legal` lives in `MultiwayTug.lean`) -/
 
-/-- `legalB` unpacked: a legal action is the acting player's, kind unused, cards in hand. -/
+/-- `legalB` unpacked: a legal action is the acting player's, taken with **no offer pending**,
+its kind unused, and its cards in hand. The `pending = none` conjunct is the I-cut-you-choose
+interlock — while the table waits on a response, no leaf admits an action at all. -/
 theorem legalB_iff (s : GState) (p : Player) (a : Action) :
     legalB s p a = true ↔
-      (s.current = p ∧ s.used p a.kind = false ∧ actionCards a ≤ s.hand p) := by
-  simp only [legalB, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true', and_assoc]
-
-/-- On a legal action, `applyAction` IS `applyLegal` (the `bif` selects the update branch). -/
-theorem applyAction_of_legal (s : GState) (p : Player) (a : Action) (h : legalB s p a = true) :
-    applyAction s p a = applyLegal s p a := by
-  simp only [applyAction, h, cond_true]
+      (s.current = p ∧ s.pending = none ∧ s.used p a.kind = false
+        ∧ actionCards a ≤ s.hand p) := by
+  simp only [legalB, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true',
+    Option.isNone_iff_eq_none, and_assoc]
 
 /-! ## 3. The concrete fold-leaf AIR predicate (the membership play-leaf) -/
 
@@ -124,6 +123,7 @@ Lean shadow of `fold.rs::membership_leaf_for_play` + `mint_turn` (a `Custom` lea
 `[leaf, root]`, the next state computed off-circuit and re-checked). -/
 def airPlay (M : MerkleScheme) (o : GState) (p : Player) (a : Action) (n : GState) : Prop :=
   o.current = p ∧
+  o.pending = none ∧
   M.Member (M.commit (o.hand p)) (actionCards a) ∧
   o.used p a.kind = false ∧
   n = applyLegal o p a
@@ -141,15 +141,15 @@ theorem airPlay_iff_applyAction (M : MerkleScheme) (hsound : MerkleSound M)
       (legalB o p a = true ∧ M.Member (M.commit (o.hand p)) (actionCards a)
         ∧ n = applyAction o p a) := by
   constructor
-  · rintro ⟨hcur, hmem, hused, hn⟩
+  · rintro ⟨hcur, hpend, hmem, hused, hn⟩
     have hle : actionCards a ≤ o.hand p := hsound _ _ hmem
-    have hleg : legalB o p a = true := (legalB_iff o p a).mpr ⟨hcur, hused, hle⟩
+    have hleg : legalB o p a = true := (legalB_iff o p a).mpr ⟨hcur, hpend, hused, hle⟩
     refine ⟨hleg, hmem, ?_⟩
     rw [applyAction_of_legal o p a hleg]; exact hn
   · rintro ⟨hleg, hmem, hn⟩
-    obtain ⟨hcur, hused, _hle⟩ := (legalB_iff o p a).mp hleg
+    obtain ⟨hcur, hpend, hused, _hle⟩ := (legalB_iff o p a).mp hleg
     rw [applyAction_of_legal o p a hleg] at hn
-    exact ⟨hcur, hmem, hused, hn⟩
+    exact ⟨hcur, hpend, hmem, hused, hn⟩
 
 /-- **`airPlay_refines_airSpec` (concrete leaf ⇒ abstract obligation).** Given ANY AIR meeting
 the abstract `AirSpec` obligation, the concrete fold-leaf's admission relation coincides with
@@ -177,9 +177,61 @@ new root (it is no longer in `n.hand p`), the crypto no-double-play tooth. -/
 theorem remaining_root_updates (M : MerkleScheme) (o : GState) (p : Player) (a : Action)
     (n : GState) (h : airPlay M o p a n) :
     M.commit (n.hand p) = M.commit (o.hand p - actionCards a) := by
-  rcases h with ⟨_, _, _, hn⟩
+  rcases h with ⟨_, _, _, _, hn⟩
   rw [hn]
   simp only [applyLegal, Function.update_self]
+
+/-! ## 3B. ⚑ THE RESPONSE LEAF — the other seat's choice, on the proof path.
+
+The response is a real committed turn and therefore needs a leaf, or the I-cut-you-choose step
+would sit OUTSIDE the folded proof (a step the light client never sees is a step an adversary
+can rewrite). `airRespond` is that leaf.
+
+⚑ It carries **no membership witness, and that is not an omission** — it is the structural
+consequence of a public cut. The escrowed favors were REVEALED when the offer was made; they
+are `o.pending`'s payload, not a secret drawn from a committed hand root. So there is nothing
+to prove membership OF: the responder is choosing among cards both seats can already see.
+Compare `airPlay`, whose whole job is to pin which hidden card left the hand. -/
+
+/-- **`airRespond M o p r n` — the response fold-leaf.** It admits when an offer is pending, `p`
+is to move, `p` is NOT the proposer (the anti-self-deal tooth, in the leaf), the response fits
+the offer's shape, and `n` is the model update. -/
+def airRespond (o : GState) (p : Player) (r : Response) (n : GState) : Prop :=
+  (∃ f : Offer, o.pending = some f ∧ f.proposer = p.other ∧ f.accepts r = true) ∧
+  o.current = p ∧
+  n = applyRespLegal o p r
+
+/-- **`airRespond_iff_applyResponse` (THE RESPONSE-LEAF REFINEMENT).** The response leaf's
+admission relation IS the graph of `applyResponse` restricted to a legal response. No
+`MerkleSound` is needed — the escrow is public — so this leg of the refinement is
+hypothesis-free, unlike `airPlay`. -/
+theorem airRespond_iff_applyResponse (o : GState) (p : Player) (r : Response) (n : GState) :
+    airRespond o p r n ↔ (legalRespB o p r = true ∧ n = applyResponse o p r) := by
+  constructor
+  · rintro ⟨⟨f, hf, hprop, hacc⟩, hcur, hn⟩
+    have hleg : legalRespB o p r = true := by
+      simp only [legalRespB, hf, Bool.and_eq_true, decide_eq_true_eq]
+      exact ⟨⟨hcur, hprop⟩, hacc⟩
+    exact ⟨hleg, by rw [applyResponse_of_legal o p r hleg]; exact hn⟩
+  · rintro ⟨hleg, hn⟩
+    rw [applyResponse_of_legal o p r hleg] at hn
+    cases hf : o.pending with
+    | none => simp [legalRespB, hf] at hleg
+    | some f =>
+      simp only [legalRespB, hf, Bool.and_eq_true, decide_eq_true_eq] at hleg
+      exact ⟨⟨f, hf, hleg.1.2, hleg.2⟩, hleg.1.1, hn⟩
+
+/-- **`airRespond_refuses_self_deal` (the leaf itself refuses the cutter).** The proposer cannot
+satisfy the response leaf for their own offer — so a prover cannot fold a match in which the
+player who cut also chose. This is the crypto-side twin of `respond_not_by_proposer`. -/
+theorem airRespond_refuses_self_deal (o : GState) (p : Player) (r : Response) (n : GState)
+    (f : Offer) (hf : o.pending = some f) (hself : f.proposer = p) : ¬ airRespond o p r n := by
+  rintro ⟨⟨f', hf', hprop, -⟩, -, -⟩
+  rw [hf] at hf'
+  rw [Option.some.injEq] at hf'
+  subst hf'
+  rw [hself] at hprop
+  exact Player.other_ne p hprop.symm
 
 /-- **`airPlay_chain_are_applySteps` (the two-turn compositional step).** Two consecutive fold
 leaves compose as two consecutive `applyAction` steps — the inductive step of the whole
@@ -224,17 +276,32 @@ def idealScheme : MerkleScheme where
 /-- The ideal scheme is sound by construction (containment ⇒ containment). -/
 theorem idealScheme_sound : MerkleSound idealScheme := fun _ _ hmem => hmem
 
-/-- **`demo_play_is_applyStep` (THE CORRESPONDENCE WITNESS).** A membership-proven play IS an
-`applyAction` step: P1's legal Gift `3 3 5` out of `demo`'s hand is admitted by the concrete
-fold-leaf `airPlay` and its next state is exactly `applyAction demo .p1 (gift 3 3 5)`. -/
+/-- **`demo_play_is_applyStep` (THE CORRESPONDENCE WITNESS).** A membership-proven CUT is an
+`applyAction` step: P1 presenting `3 3 5` out of `demo`'s hand is admitted by the concrete
+fold-leaf `airPlay` and its next state is exactly `applyAction demo .p1 (offerGift 3 3 5)`. -/
 theorem demo_play_is_applyStep :
-    airPlay idealScheme demo .p1 (Action.gift 3 3 5)
-      (applyAction demo .p1 (Action.gift 3 3 5)) := by
-  refine (airPlay_iff_applyAction idealScheme idealScheme_sound demo .p1 (Action.gift 3 3 5)
-    (applyAction demo .p1 (Action.gift 3 3 5))).mpr ⟨?_, ?_, rfl⟩
+    airPlay idealScheme demo .p1 (Action.offerGift 3 3 5)
+      (applyAction demo .p1 (Action.offerGift 3 3 5)) := by
+  refine (airPlay_iff_applyAction idealScheme idealScheme_sound demo .p1
+    (Action.offerGift 3 3 5) (applyAction demo .p1 (Action.offerGift 3 3 5))).mpr ⟨?_, ?_, rfl⟩
   · decide
-  · show actionCards (Action.gift 3 3 5) ≤ demo.hand .p1
+  · show actionCards (Action.offerGift 3 3 5) ≤ demo.hand .p1
     decide
+
+/-- **`demo_respond_is_applyStep` (THE RESPONSE CORRESPONDENCE WITNESS).** After P1's cut, P2's
+answer is admitted by the response leaf and its next state is the model `applyResponse` step —
+so the choice that decides the split is ON the proof path, not beside it. -/
+theorem demo_respond_is_applyStep :
+    airRespond (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Response.gift 0)
+      (applyResponse (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Response.gift 0)) :=
+  (airRespond_iff_applyResponse _ .p2 (Response.gift 0) _).mpr ⟨by decide, rfl⟩
+
+/-- **`demo_self_deal_leaf_refused` (teeth — the cutter cannot fold their own choice).** P1 made
+the cut, so no response leaf admits P1 answering it. Without this the fold would happily prove a
+match in which one player both cut and chose — the pre-folded gift, laundered through a STARK. -/
+theorem demo_self_deal_leaf_refused (n : GState) :
+    ¬ airRespond (applyAction demo .p1 (Action.offerGift 3 3 5)) .p1 (Response.gift 0) n :=
+  airRespond_refuses_self_deal _ .p1 (Response.gift 0) n (.gift .p1 3 3 5) (by decide) rfl
 
 /-- **`demo_fabricated_refused` (teeth — a fabricated play is NOT admitted).** A play of a card
 NOT in the hand (`secret 4`, no 4 in `demo`'s hand) has no membership proof under the committed
@@ -242,14 +309,14 @@ root, so the fold-leaf refuses it. -/
 theorem demo_fabricated_refused :
     ¬ airPlay idealScheme demo .p1 (Action.secret 4)
         (applyAction demo .p1 (Action.secret 4)) := by
-  rintro ⟨_, hmem, _, _⟩
+  rintro ⟨_, _, hmem, _, _⟩
   have hmem' : actionCards (Action.secret 4) ≤ demo.hand .p1 := hmem
   revert hmem'; decide
 
 /-! ### `#guard` smoke — the decidable core of the correspondence -/
 
--- The Gift's cards ARE members of P1's committed hand (membership under the ideal root holds).
-#guard actionCards (Action.gift 3 3 5) ≤ demo.hand .p1
+-- The cut's cards ARE members of P1's committed hand (membership under the ideal root holds).
+#guard actionCards (Action.offerGift 3 3 5) ≤ demo.hand .p1
 -- A fabricated card is NOT a member (the refusal is real, not vacuous).
 #guard ¬ (actionCards (Action.secret 4) ≤ demo.hand .p1)
 
@@ -262,6 +329,8 @@ Quot.sound}`. -/
 #assert_axioms legalB_iff
 #assert_axioms applyAction_of_legal
 #assert_axioms airPlay_iff_applyAction
+#assert_axioms airRespond_iff_applyResponse
+#assert_axioms airRespond_refuses_self_deal
 #assert_axioms airPlay_refines_airSpec
 #assert_axioms airPlay_functional
 #assert_axioms remaining_root_updates
@@ -271,6 +340,8 @@ Quot.sound}`. -/
 #assert_axioms winBound_blank
 #assert_axioms idealScheme_sound
 #assert_axioms demo_play_is_applyStep
+#assert_axioms demo_respond_is_applyStep
+#assert_axioms demo_self_deal_leaf_refused
 #assert_axioms demo_fabricated_refused
 
 end Dregg2.Games.MultiwayTug

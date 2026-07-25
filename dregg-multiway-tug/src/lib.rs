@@ -13,8 +13,9 @@
 //!
 //! ## The pieces
 //!
-//! * [`reference`] — the deterministic oracle engine (a faithful model of the round with
-//!   the two rule gaps FIXED and the per-turn draw added). It is the mover.
+//! * [`reference`] — the deterministic rules engine. It does not move by itself: a caller
+//!   supplies a [`reference::Decision`] to [`reference::Engine::apply`], chosen from
+//!   [`reference::Engine::legal_decisions`].
 //! * [`state`] — the STATE as a [`dregg_schema`]-allocated Legal layout (16 register
 //!   counters/win-registers + 8 used-flags + 14 per-guild scores on the heap) and PLAY TEETH
 //!   authored in Lean, emitted as a pinned program artifact, and loaded by Rust.
@@ -34,16 +35,24 @@
 //! | one action per player per round | `HeapAtom::WriteOnce` on each used-flag |
 //! | placements never un-placed | `HeapAtom::Monotonic` on each per-guild score |
 //! | strict round sequencing | `StrictMonotonic(round_actions)` |
+//! | a standing offer must be answered | `pending_kind` `Equals`/`DeltaEquals` per method |
 //! | win only at a real threshold | `winner==p ⇒ FieldGte(charm_p,11) ∨ FieldGte(guilds_p,4)` |
+//! | scoring only after the round | `FieldGte(round_actions, 12)` |
 //! | forged / unknown method | `Cases` method-default-deny (`NoTransitionCaseMatched`) |
 //!
-//! ## The two fixed rule gaps
+//! ## ⚑ I-CUT-YOU-CHOOSE — the seats DECIDE
 //!
 //! 1. **The Secret is scored** — revealed onto its owner's side before control is computed
 //!    ([`reference::Engine::score`]).
-//! 2. **The opponent's blind pick is a real choice** — the actor only PRESENTS the
-//!    Gift/Competition cards; the opponent decides who keeps what
-//!    ([`reference::opponent_gift_pick`] / [`reference::opponent_comp_pick`]).
+//! 2. **The split is the OTHER seat's.** A Gift/Competition only PRESENTS favors into escrow
+//!    ([`reference::Decision::Gift`] / [`reference::Decision::Competition`]); the opponent's
+//!    [`reference::Decision::Respond`] decides who gets what, and the proposer can never
+//!    answer their own cut. The action ORDER is a free choice too — there is no schedule.
+//!    A round is 8 actions + 4 responses = 12 committed turns.
+//!
+//! A response commits under the Lean-emitted `respond_gift` / `respond_comp` case, which is
+//! also what may lower the `pending_kind` escrow marker — so the interlock is DEPLOYED teeth,
+//! not host bookkeeping.
 //!
 //! ## Honest scope (per `docs/VERIFIED-GAME-PORTFOLIO.md`)
 //!
@@ -73,6 +82,9 @@ pub use hidden_hand::{
 pub use packs::{
     CardDraw, CardItem, CardRarity, CardVault, Pack, PackError, reverify_pack, roll_pack,
 };
-pub use reference::{ActionKind, Engine, Player, Projection, ResolvedMove};
+pub use reference::{
+    ActionKind, Decision, Engine, MoveError, OfferShape, PendingOffer, Player, Projection,
+    ResolvedMove,
+};
 pub use state::Deployment;
 pub use surface::{TugOffering, TugPrivateMatchRecord, TugSession};

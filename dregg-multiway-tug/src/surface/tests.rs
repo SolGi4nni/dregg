@@ -63,6 +63,46 @@ fn seat_card_ids(session: &TugSession, seat: Player) -> Vec<u64> {
         .collect()
 }
 
+/// The `{turn, arg}` affordance naming the FIRST legal decision of `kind` for the seat to
+/// move. `arg` is an index into `TugSession::legal_decisions` — the documented encoding.
+fn fire(session: &TugSession, kind: ActionKind) -> Action {
+    let decisions = session.legal_decisions();
+    let index = decisions
+        .iter()
+        .position(|d| d.kind() == Some(kind))
+        .unwrap_or_else(|| panic!("{kind:?} has no legal decision right now"));
+    Action::new(format!("{kind:?}"), kind.method(), index as i64, true)
+}
+
+/// The affordance naming the response that takes side `pick` of the pending offer.
+fn fire_respond(session: &TugSession, pick: u8) -> Action {
+    let offer = session.pending_offer().expect("an offer is on the table");
+    let decisions = session.legal_decisions();
+    let index = decisions
+        .iter()
+        .position(|d| *d == Decision::Respond { pick })
+        .expect("the pick is on the menu");
+    Action::new("respond", offer.respond_method(), index as i64, true)
+}
+
+/// Drive `kinds` in order for whichever seat is to move, asserting each lands.
+fn drive_kinds(off: &TugOffering, session: &mut TugSession, kinds: &[ActionKind]) {
+    for &kind in kinds {
+        let seat = session.to_move();
+        let input = fire(session, kind);
+        let outcome = off.advance(session, input, TugOffering::seat_identity(seat));
+        assert!(
+            outcome.landed(),
+            "{seat:?}'s {kind:?} should land, got {outcome:?}"
+        );
+    }
+}
+
+/// The `MENU <label> enabled=<bool>` lines of a rendered surface.
+fn menu_lines(text: &str) -> Vec<&str> {
+    text.lines().filter(|l| l.starts_with("MENU ")).collect()
+}
+
 #[test]
 fn committed_hand_is_the_engine_deal_across_seeds() {
     let off = TugOffering;
@@ -75,9 +115,17 @@ fn committed_hand_is_the_engine_deal_across_seeds() {
                 committed, dealt,
                 "seed {seed} seat {seat:?}: committed UI hand must be the mover's deal"
             );
-            assert_eq!(committed.len(), HAND_SIZE);
+            // The draw precedes the action, so the seat to move already holds its first
+            // drawn favor — seven cards, six for the seat waiting.
+            let expected = if seat == session.to_move() {
+                HAND_SIZE + 1
+            } else {
+                HAND_SIZE
+            };
+            assert_eq!(committed.len(), expected);
             assert!(committed.iter().all(|&card| card < 21));
         }
+        assert_eq!(session.to_move(), Player::A, "seat A opens");
     }
 }
 
@@ -117,8 +165,10 @@ fn exact_multi_card_move_updates_the_committed_hand_and_match_record() {
     let seat = session.to_move();
     let before: std::collections::BTreeSet<u64> =
         seat_card_ids(&session, seat).into_iter().collect();
+    let input = fire(&session, ActionKind::Competition);
     let mut oracle = session.engine.clone();
-    let expected_move = oracle.play_next();
+    let chosen = session.legal_decisions()[input.arg as usize];
+    let expected_move = oracle.apply(seat, chosen).expect("the chosen cut is legal");
     let played: Vec<u64> = expected_move
         .played_cards()
         .into_iter()
@@ -127,17 +177,12 @@ fn exact_multi_card_move_updates_the_committed_hand_and_match_record() {
     assert_eq!(
         played.len(),
         4,
-        "the opening Competition consumes four cards"
+        "a Competition PRESENTS four cards, all of which leave the hand at offer time"
     );
 
-    let action = session.scheduled_action().expect("scheduled");
     assert!(
-        off.advance(
-            &mut session,
-            Action::new("", action.method(), action.idx() as i64, true),
-            TugOffering::seat_identity(seat),
-        )
-        .landed()
+        off.advance(&mut session, input, TugOffering::seat_identity(seat))
+            .landed()
     );
 
     assert_eq!(
@@ -224,7 +269,7 @@ fn public_render_is_fog_for_both() {
 }
 
 /// **The guild-lane table + the action menu render**: seven lanes (one per guild) and a
-/// four-action menu, the used action greyed after a play.
+/// four-action menu, the used action greyed once its owner is back on move.
 #[test]
 fn guild_lanes_and_action_menu_render() {
     let off = TugOffering;
@@ -249,29 +294,34 @@ fn guild_lanes_and_action_menu_render() {
         txt.contains("Guild 0") && txt.contains("Guild 6"),
         "lanes render"
     );
-    // Four action rows, all enabled at the start.
-    assert_eq!(
-        txt.matches("MENU ").count(),
-        4,
-        "four once-per-round actions"
-    );
+    // Four action rows, ALL live for the seat to move (the order is a free choice — there is
+    // no schedule that greys three of them).
+    let rows = menu_lines(&txt);
+    assert_eq!(rows.len(), 4, "four once-per-round actions: {rows:?}");
     assert!(
-        txt.contains("enabled=true"),
-        "an unused action is offered live"
+        rows.iter().all(|r| r.ends_with("enabled=true")),
+        "every unused action is offered live at the start: {rows:?}"
     );
 
-    // After a real play the acting seat's used action is greyed.
-    let scheduled = session.scheduled_action().expect("an action is scheduled");
-    let out = off.advance(
+    // Both seats play a PRIVATE action, so `seat` is on move again with Secret spent.
+    drive_kinds(
+        &off,
         &mut session,
-        Action::new("", scheduled.method(), scheduled.idx() as i64, true),
-        TugOffering::seat_identity(seat),
+        &[ActionKind::Secret, ActionKind::Secret],
     );
-    assert!(out.landed(), "the scheduled play lands");
+    assert_eq!(session.to_move(), seat, "the seat is back on move");
     let after = rendered_text(&off.render_for(&session, &TugOffering::seat_identity(seat)));
+    let rows = menu_lines(&after);
+    assert_eq!(rows.len(), 4);
     assert!(
-        after.contains(&format!("MENU {scheduled:?} enabled=false")),
-        "the played action is greyed by its used-flag\n{after}"
+        rows.iter()
+            .any(|r| r.starts_with("MENU Secret") && r.ends_with("enabled=false")),
+        "the spent Secret is greyed by its used-flag\n{after}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("MENU Gift") && r.ends_with("enabled=true")),
+        "an unspent action is still live\n{after}"
     );
 }
 
@@ -286,12 +336,8 @@ fn play_fires_a_real_turn() {
 
     // A non-seat identity is refused.
     let stranger = DreggIdentity("someone-else".into());
-    let scheduled = session.scheduled_action().unwrap();
-    let refused = off.advance(
-        &mut session,
-        Action::new("", scheduled.method(), scheduled.idx() as i64, true),
-        stranger,
-    );
+    let input = fire(&session, ActionKind::Secret);
+    let refused = off.advance(&mut session, input.clone(), stranger);
     assert!(
         matches!(refused, Outcome::Refused(_)),
         "a non-seat is refused"
@@ -302,17 +348,17 @@ fn play_fires_a_real_turn() {
         "the refused move committed nothing"
     );
 
-    // The seat's scheduled action lands a real receipt and advances the committed round.
+    // The seat's chosen action lands a real receipt and advances the committed round.
     let landed = off.advance(
         &mut session,
-        Action::new("", scheduled.method(), scheduled.idx() as i64, true),
+        input.clone(),
         TugOffering::seat_identity(seat),
     );
     match landed {
         Outcome::Landed { ended, .. } => {
             assert!(!ended, "one action does not end the round");
         }
-        Outcome::Refused(r) => panic!("the scheduled play should land, got refusal: {r}"),
+        Outcome::Refused(r) => panic!("the chosen play should land, got refusal: {r}"),
     }
     assert_eq!(
         session.runtime.read_projection().round_actions,
@@ -325,12 +371,10 @@ fn play_fires_a_real_turn() {
         "conservation holds on the committed post-state"
     );
 
-    // An out-of-order fire (the same seat replaying its now-spent action) is refused.
-    let dup = off.advance(
-        &mut session,
-        Action::new("", scheduled.method(), scheduled.idx() as i64, true),
-        TugOffering::seat_identity(seat),
-    );
+    // An out-of-turn fire (the same seat pressing again while the OTHER seat is on move) is
+    // refused.
+    assert_eq!(session.to_move(), seat.other());
+    let dup = off.advance(&mut session, input, TugOffering::seat_identity(seat));
     assert!(matches!(dup, Outcome::Refused(_)), "out-of-turn is refused");
 
     // The offering re-verifies the committed chain.
@@ -349,8 +393,10 @@ fn forged_membership_rolls_back_rules_and_hidden_cells_atomically() {
     let before_ledger = session.runtime.state();
     let before_remaining = session.proof_hands[seat.idx()].root_bytes();
 
+    let input = fire(&session, ActionKind::Competition);
+    let chosen = session.legal_decisions()[input.arg as usize];
     let mut next_engine = session.engine.clone();
-    let mv = next_engine.play_next();
+    let mv = next_engine.apply(seat, chosen).expect("legal");
     let full = HandTree::commit(session.fold_inventory[seat.idx()].clone());
     let mut remaining = session.proof_hands[seat.idx()].clone();
     let mut proofs = Vec::new();
@@ -394,14 +440,9 @@ fn forged_membership_rolls_back_rules_and_hidden_cells_atomically() {
     );
     assert!(session.history.is_empty());
 
-    let scheduled = session.scheduled_action().expect("scheduled");
     assert!(
-        off.advance(
-            &mut session,
-            Action::new("", scheduled.method(), scheduled.idx() as i64, true),
-            TugOffering::seat_identity(seat),
-        )
-        .landed(),
+        off.advance(&mut session, input, TugOffering::seat_identity(seat))
+            .landed(),
         "an honest retry lands after the atomic refusal"
     );
     assert!(off.verify(&session).verified);
@@ -415,8 +456,10 @@ fn valid_but_wrong_card_opening_cannot_ride_beside_the_rules_action() {
     let before_projection = session.projection();
     let before_ledger = session.runtime.state();
 
+    let input = fire(&session, ActionKind::Competition);
+    let chosen = session.legal_decisions()[input.arg as usize];
     let mut next_engine = session.engine.clone();
-    let mv = next_engine.play_next();
+    let mv = next_engine.apply(seat, chosen).expect("legal");
     let expected_cards: Vec<u64> = mv.played_cards().into_iter().map(u64::from).collect();
     let full = HandTree::commit(session.fold_inventory[seat.idx()].clone());
     let wrong_card = full
@@ -459,8 +502,10 @@ fn refused_rules_action_rolls_back_the_valid_hidden_action_atomically() {
     let before_projection = session.projection();
     let before_ledger = session.runtime.state();
 
+    let input = fire(&session, ActionKind::Competition);
+    let chosen = session.legal_decisions()[input.arg as usize];
     let mut next_engine = session.engine.clone();
-    let mv = next_engine.play_next();
+    let mv = next_engine.apply(seat, chosen).expect("legal");
     let expected_cards: Vec<u64> = mv.played_cards().into_iter().map(u64::from).collect();
     let full = HandTree::commit(session.fold_inventory[seat.idx()].clone());
     let mut remaining = session.proof_hands[seat.idx()].clone();
@@ -497,14 +542,9 @@ fn refused_rules_action_rolls_back_the_valid_hidden_action_atomically() {
     );
     assert!(session.history.is_empty());
 
-    let scheduled = session.scheduled_action().expect("scheduled");
     assert!(
-        off.advance(
-            &mut session,
-            Action::new("", scheduled.method(), scheduled.idx() as i64, true),
-            TugOffering::seat_identity(seat),
-        )
-        .landed(),
+        off.advance(&mut session, input, TugOffering::seat_identity(seat))
+            .landed(),
         "an honest retry lands after the atomic rules refusal"
     );
     assert!(off.verify(&session).verified);
@@ -518,16 +558,18 @@ fn a_full_round_drives_through_the_offering() {
     let mut landed = 0;
     while !session.engine.round_complete() {
         let seat = session.to_move();
-        let a = session.scheduled_action().expect("scheduled");
-        let out = off.advance(
-            &mut session,
-            Action::new("", a.method(), a.idx() as i64, true),
-            TugOffering::seat_identity(seat),
-        );
-        assert!(out.landed(), "each scheduled play lands a real turn");
+        // Take the first affordance the Offering itself presents — a real choice, whatever
+        // it is.
+        let a = off
+            .actions(&session)
+            .into_iter()
+            .find(|a| a.enabled)
+            .expect("a live round always offers something");
+        let out = off.advance(&mut session, a, TugOffering::seat_identity(seat));
+        assert!(out.landed(), "each chosen play lands a real turn: {out:?}");
         landed += 1;
     }
-    assert_eq!(landed, 8, "eight action-turns played");
+    assert_eq!(landed, 12, "eight action-turns plus four responses");
     assert_eq!(session.projection().scored, 0);
     let scoring = off.actions(&session);
     assert_eq!(scoring.len(), 1, "SCORE is the one remaining turn");
@@ -540,20 +582,20 @@ fn a_full_round_drives_through_the_offering() {
         }
         Outcome::Refused(reason) => panic!("the SCORE turn was refused: {reason}"),
     }
-    assert_eq!(landed, 9, "eight actions plus one SCORE turn");
+    assert_eq!(landed, 13, "twelve turns plus one SCORE turn");
     let projection = session.projection();
     assert_eq!(projection.scored, 1, "the SCORE turn really committed");
     assert_eq!(projection.secret_count, [0, 0], "secrets were revealed");
     assert_eq!(
-        projection.round_actions, 8,
-        "scoring does not forge a ninth player action"
+        projection.round_actions, 12,
+        "scoring does not forge a thirteenth player turn"
     );
     assert!(session.ended());
     assert!(off.actions(&session).is_empty());
 
     let report = off.verify(&session);
     assert!(report.verified, "{}", report.detail);
-    assert_eq!(report.turns, 10, "genesis + eight plays + SCORE");
+    assert_eq!(report.turns, 14, "genesis + twelve turns + SCORE");
 
     let terminal = rendered_text(&off.render(&session));
     assert!(terminal.contains("ROUND COMPLETE"), "{terminal}");
@@ -567,29 +609,45 @@ fn a_full_round_drives_through_the_offering() {
     );
 }
 
-/// Method and argument are one canonical action identity. A transport cannot
-/// splice a valid method onto a different menu argument and still claim a
-/// landed receipt; the refusal leaves the engine, hand root, and replay log
-/// untouched.
+/// Method and argument are one canonical decision identity. `arg` names the decision (an
+/// index into `legal_decisions`) and `turn` must be the method THAT decision dispatches
+/// under; a transport cannot splice one onto the other and still claim a landed receipt. The
+/// refusal leaves the engine, hand root, and replay log untouched.
 #[test]
 fn method_argument_splice_is_refused_without_a_ghost_step() {
     let off = TugOffering;
     let mut session = off.open(SessionConfig::with_seed(13)).expect("open");
     let seat = session.to_move();
-    let action = session.scheduled_action().expect("scheduled");
+    let honest = fire(&session, ActionKind::Secret);
     let before_projection = session.projection();
     let before_root = session.hands[seat.idx()].root_bytes();
 
-    let refused = off.advance(
-        &mut session,
-        Action::new("spliced", action.method(), (action.idx() + 1) as i64, true),
-        TugOffering::seat_identity(seat),
+    // Same (valid) index, a DIFFERENT method: the decision at that index is a Secret, so
+    // `gift` does not name it.
+    let spliced = Action::new("spliced", "gift", honest.arg, true);
+    let refused = off.advance(&mut session, spliced, TugOffering::seat_identity(seat));
+    assert!(matches!(refused, Outcome::Refused(_)), "{refused:?}");
+
+    // And an index off the end of the legal set is refused too.
+    let past_end = Action::new(
+        "spliced",
+        "secret",
+        session.legal_decisions().len() as i64,
+        true,
     );
-    assert!(matches!(refused, Outcome::Refused(_)));
+    let refused = off.advance(&mut session, past_end, TugOffering::seat_identity(seat));
+    assert!(matches!(refused, Outcome::Refused(_)), "{refused:?}");
+
     assert_eq!(session.projection(), before_projection);
     assert_eq!(session.hands[seat.idx()].root_bytes(), before_root);
     assert!(session.history.is_empty());
     assert!(off.verify(&session).verified);
+
+    // NON-VACUOUS: the honest pairing lands.
+    assert!(
+        off.advance(&mut session, honest, TugOffering::seat_identity(seat))
+            .landed()
+    );
 }
 
 /// `/verify` is a fresh confined replay, not a conservation-only spot check.
@@ -599,25 +657,20 @@ fn method_argument_splice_is_refused_without_a_ghost_step() {
 fn verification_replays_accepted_inputs_and_rejects_history_tamper() {
     let off = TugOffering;
     let mut session = off.open(SessionConfig::with_seed(17)).expect("open");
-    for _ in 0..3 {
-        let seat = session.to_move();
-        let action = session.scheduled_action().expect("scheduled");
-        assert!(
-            off.advance(
-                &mut session,
-                Action::new("", action.method(), action.idx() as i64, true),
-                TugOffering::seat_identity(seat),
-            )
-            .landed()
-        );
-    }
+    // Three PRIVATE turns: these open no offer, so nothing here needs a `respond_*` method.
+    drive_kinds(
+        &off,
+        &mut session,
+        &[ActionKind::Secret, ActionKind::Secret, ActionKind::Discard],
+    );
     let honest = off.verify(&session);
     assert!(honest.verified, "{}", honest.detail);
 
     let original = session.history[0];
+    // A decision the replay's engine never offers (card 200 is not in any hand).
     session.history[0] = LandedInput::Play {
         seat: Player::A,
-        action: ActionKind::Gift,
+        decision: Decision::Secret { card: 200 },
     };
     let forged = off.verify(&session);
     assert!(!forged.verified, "forged history must not replay");
@@ -640,14 +693,14 @@ fn terminal_private_record_contains_every_actual_card_exactly_once() {
     let mut session = off.open(SessionConfig::with_seed(31)).expect("open");
     while !session.engine.round_complete() {
         let seat = session.to_move();
-        let action = session.scheduled_action().expect("scheduled");
+        let a = off
+            .actions(&session)
+            .into_iter()
+            .find(|a| a.enabled)
+            .expect("a live round always offers something");
         assert!(
-            off.advance(
-                &mut session,
-                Action::new("", action.method(), action.idx() as i64, true),
-                TugOffering::seat_identity(seat),
-            )
-            .landed()
+            off.advance(&mut session, a, TugOffering::seat_identity(seat))
+                .landed()
         );
     }
 
@@ -698,6 +751,152 @@ fn terminal_private_record_contains_every_actual_card_exactly_once() {
         assert!(tree.card_ids().is_empty());
     }
     assert!(off.verify(&session).verified);
+}
+
+/// ⚑ **I-CUT-YOU-CHOOSE, THROUGH THE OFFERING.** After a Gift the Offering offers exactly the
+/// three response sides and nothing else; the CUTTER pressing one is refused (the anti-self-deal
+/// tooth, at the surface) and the CHOOSER's press lands a real executor turn that places the
+/// escrow on the two boards.
+#[test]
+fn the_chooser_answers_the_cut_and_the_cutter_cannot() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(29)).expect("open");
+    let cutter = session.to_move();
+
+    // The CUT lands as a real turn.
+    let input = fire(&session, ActionKind::Gift);
+    assert!(
+        off.advance(&mut session, input, TugOffering::seat_identity(cutter))
+            .landed(),
+        "presenting three favors is a legal, deployed action"
+    );
+    let offer = session.pending_offer().expect("the cut opened an offer");
+    assert_eq!(offer.proposer, cutter);
+    assert_eq!(session.to_move(), cutter.other(), "the chooser is on move");
+    assert_eq!(
+        session.projection().pending_kind,
+        1,
+        "the executor committed the pending-gift marker"
+    );
+
+    // The Offering now offers ONLY the three response sides.
+    let rows = off.actions(&session);
+    assert_eq!(rows.len(), 3, "three favors presented, three sides to take");
+    assert!(
+        rows.iter().all(|a| a.turn == "respond_gift" && a.enabled),
+        "{rows:?}"
+    );
+    // The public surface names the cut and who must choose.
+    let public = rendered_text(&off.render(&session));
+    assert!(public.contains("ON THE TABLE"), "{public}");
+
+    let answer = fire_respond(&session, 1);
+    let before = session.projection();
+
+    // The CUTTER is refused — the anti-self-deal tooth, at the surface.
+    let refused = off.advance(
+        &mut session,
+        answer.clone(),
+        TugOffering::seat_identity(cutter),
+    );
+    assert!(matches!(refused, Outcome::Refused(_)), "{refused:?}");
+
+    assert_eq!(
+        session.projection(),
+        before,
+        "the refused self-deal wrote nothing"
+    );
+    assert!(session.pending_offer().is_some(), "the table still waits");
+
+    // The CHOOSER's press lands a real turn and places the escrow.
+    let landed = off.advance(
+        &mut session,
+        answer,
+        TugOffering::seat_identity(cutter.other()),
+    );
+    assert!(landed.landed(), "the chooser's answer lands: {landed:?}");
+    let after = session.projection();
+    assert_eq!(after.pending_kind, 0, "the table is clear again");
+    assert_eq!(
+        after.board[0] + after.board[1],
+        3,
+        "all three presented favors reached the boards"
+    );
+    assert_eq!(after.round_actions, before.round_actions + 1);
+    assert_eq!(after.conservation_sum(), 21);
+    assert_eq!(
+        session.to_move(),
+        cutter.other(),
+        "the responder now takes their OWN action turn"
+    );
+    // The whole chain re-verifies through a fresh confined replay.
+    let report = off.verify(&session);
+    assert!(report.verified, "{}", report.detail);
+}
+
+/// The DEAL-pinned fold inventory is exactly the ten cards a seat spends — and it is the same
+/// ten however that seat plays. This is what lets [`fold_inventory`] read the deal instead of
+/// scripting a round: action-turns alternate A, B, A, B and only they draw, so the draw
+/// assignment is choice-independent. Driven on the PURE engine (no executor, so no
+/// `respond_*` method is needed).
+#[test]
+fn fold_inventory_is_the_deal_and_the_deal_is_what_gets_played() {
+    use crate::reference::{Engine as Eng, greedy_policy, play_round_with};
+
+    /// A policy that always takes the first legal decision of the earliest kind in `order`.
+    fn ordered(order: [ActionKind; 4]) -> impl FnMut(&Eng) -> Decision {
+        move |e: &Eng| {
+            let options = e.legal_decisions();
+            if let Some(d) = options
+                .iter()
+                .find(|d| matches!(d, Decision::Respond { .. }))
+            {
+                return *d;
+            }
+            for kind in order {
+                if let Some(d) = options.iter().find(|d| d.kind() == Some(kind)) {
+                    return *d;
+                }
+            }
+            unreachable!("some unused kind is always affordable")
+        }
+    }
+
+    for seed in [0u64, 3, 9, 23, 31, DEFAULT_SEED] {
+        let inv = fold_inventory(seed);
+        let lines = [
+            play_round_with(seed, greedy_policy).1,
+            play_round_with(
+                seed,
+                ordered([
+                    ActionKind::Secret,
+                    ActionKind::Discard,
+                    ActionKind::Gift,
+                    ActionKind::Competition,
+                ]),
+            )
+            .1,
+        ];
+        for seat in [Player::A, Player::B] {
+            let mut declared: Vec<u64> = inv[seat.idx()].iter().map(|&(c, _)| c).collect();
+            assert_eq!(declared.len(), 10, "six opening favors + four draws");
+            declared.sort_unstable();
+            for moves in &lines {
+                let mut played: Vec<u64> = moves
+                    .iter()
+                    .filter(|m| m.player() == seat)
+                    .flat_map(|m| m.played_cards().into_iter().map(u64::from))
+                    .collect();
+                assert_eq!(played.len(), 10, "1 + 2 + 3 + 4 cards leave the hand");
+                played.sort_unstable();
+                assert_eq!(
+                    declared, played,
+                    "seed {seed} seat {seat:?}: the DEAL-pinned inventory must be exactly \
+                     what that seat spends, under EVERY line of play"
+                );
+            }
+        }
+    }
 }
 
 #[test]

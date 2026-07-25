@@ -16,13 +16,17 @@
 //! `false_win_claim_is_refused` shows a false winner (meeting neither threshold) is refused at
 //! the `score` admission by the installed `winner==p ⇒ charm_p>=11 OR guilds_p>=4` implication
 //! — so a fold never receives a cell whose committed winner did not win.
+//!
+//! `winning_game` now drives 12 committed turns, not 8: the round is 8 actions plus the 4
+//! RESPONSES that place the escrow, each under the Lean-emitted `respond_gift`/`respond_comp`
+//! case. Nothing about the fold itself changed.
 
 use dregg_cell::program::field_from_u64;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_multiway_tug::fold::{cell_wire_commit8, fixture_wire_commit8, win_leaf_bound};
 use dregg_multiway_tug::game::MultiwayTug;
-use dregg_multiway_tug::reference::Engine;
+use dregg_multiway_tug::reference::{Engine, greedy_policy, play_round};
 
 /// Play a full round on the real executor to a winner whose CHARM crossed the threshold
 /// (`>= 11`), returning the deployed game + `(charm, winner)`. The win was committed via the
@@ -30,10 +34,7 @@ use dregg_multiway_tug::reference::Engine;
 fn winning_game() -> (MultiwayTug, u64, u64) {
     let seed = (0u8..=255)
         .find(|&s| {
-            let mut e = Engine::new(s as u64);
-            while !e.round_complete() {
-                e.play_next();
-            }
+            let (mut e, _) = play_round(s as u64);
             if e.score().is_some() {
                 let p = e.projection();
                 p.winner != 0 && p.charm[(p.winner - 1) as usize] >= 11
@@ -47,9 +48,11 @@ fn winning_game() -> (MultiwayTug, u64, u64) {
     let game = MultiwayTug::deploy(seed).expect("deploy");
     game.seed(&eng.projection()).expect("genesis seeds");
     while !eng.round_complete() {
-        let mv = eng.play_next();
+        let p = eng.current_player();
+        let d = greedy_policy(&eng);
+        let mv = eng.apply(p, d).expect("the policy plays legally");
         let proj = eng.projection();
-        game.commit_projection(mv.action().method(), &proj)
+        game.commit_projection(mv.method(), &proj)
             .expect("legal play commits");
     }
     let _ = eng.score();

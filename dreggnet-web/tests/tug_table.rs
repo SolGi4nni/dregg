@@ -24,6 +24,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // oneshot
 
+mod common;
+
 use dreggnet_web::table_seats::{self, SeatSlot};
 use dreggnet_web::{CatalogState, catalog_router, tug_web};
 
@@ -31,7 +33,9 @@ use dreggnet_web::{CatalogState, catalog_router, tug_web};
 /// over ONE shared state — the same composition `make_app` builds.
 fn app() -> (axum::Router, Arc<CatalogState>) {
     let state = Arc::new(CatalogState::new());
-    let router = catalog_router(Arc::clone(&state)).merge(tug_web::tug_router(Arc::clone(&state)));
+    let router = common::guard(
+        catalog_router(Arc::clone(&state)).merge(tug_web::tug_router(Arc::clone(&state))),
+    );
     (router, state)
 }
 
@@ -126,11 +130,19 @@ async fn post_act(
     (status, body)
 }
 
-/// The tug round's action schedule is fixed by `Engine::order`, so the k-th press of a round is a
-/// known `{turn, arg}`. Read it off the crate rather than hardcoding it here.
+/// A `{turn, arg}` the seat to move may actually press.
+///
+/// There is no action SCHEDULE any more — the seat chooses, including how to cut a Gift or
+/// Competition and (as the other seat) which half to take. So `arg` indexes the seat's
+/// `legal_decisions()` and `turn` names that decision's dispatch method; the two must agree or
+/// the surface refuses the press. Still read off the crate, never hardcoded — with the order
+/// free, no fixed literal pair is guaranteed to be legal.
 fn scheduled(session: &dregg_multiway_tug::TugSession) -> (String, i64) {
-    let action = session.scheduled_action().expect("the round is live");
-    (action.method().to_string(), action.idx() as i64)
+    let decisions = session.legal_decisions();
+    let first = decisions.first().expect("the round is live");
+    let method =
+        dregg_multiway_tug::reference::decision_method(first, session.pending_offer().as_ref());
+    (method.to_string(), 0)
 }
 
 /// The `{turn, arg}` a FRESH tug round opens with — derived, never a literal.

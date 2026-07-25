@@ -98,6 +98,12 @@ impl MultiwayTug {
                 });
             }
         }
+        // The offer on the table (0 none, 1 gift, 2 competition).
+        effects.push(Effect::SetField {
+            cell,
+            index: self.dep.pending_kind_key(),
+            value: field_from_u64(proj.pending_kind),
+        });
         effects
     }
 
@@ -187,6 +193,7 @@ impl MultiwayTug {
             current: self.read_reg("current"),
             round_actions: self.read_reg("round_actions"),
             scored: self.read_reg("scored"),
+            pending_kind: self.read_heap_key(self.dep.pending_kind_key()),
             score,
             flag,
         }

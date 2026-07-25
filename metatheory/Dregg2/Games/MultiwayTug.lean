@@ -3,49 +3,56 @@
 
 Design lineage: the mechanics are derived from **Hanamikoji** (Kota Nakayama). The *shipped*
 dregg game is the original re-theming "multiway-tug"; only the name/theme differ — the rules
-modelled here are the Hanamikoji rules (2 players, 7 "geisha" rows with charm values
+modelled here are the Hanamikoji rules (2 players, 7 "guild" rows with charm values
 `[2,2,2,3,3,4,5]` = 21, a 21-card deck holding `charm g` copies of each row `g`, a hidden
 6-card hand, four once-per-round actions Secret / Discard / Gift / Competition, control of a
-row goes to whoever placed MORE on it, win at ≥ 11 charm OR ≥ 4 rows). The reference
-implementation is `~/dev/multiway-tug/src/mechanics.rs`.
+row goes to whoever placed MORE on it, win at ≥ 11 charm OR ≥ 4 rows).
+
+## ⚑ THE ENGINE IS `I-CUT-YOU-CHOOSE` — restored (2026-07-25)
+
+Hanamikoji's whole engine is a cake-cutting dilemma: on Gift you REVEAL three favors and the
+**opponent takes one**; on Competition you reveal four as **two pairs you chose** and the
+opponent **takes a pair**. The actor cuts; the other seat chooses.
+
+This model USED TO PRE-FOLD that choice — `gift (self₁ self₂ other)` let the acting player
+declare who got what, and there was no opponent step anywhere in the transition system. With
+the split pre-folded there is no dilemma and (given a scripted mover) no decision at all: a
+whole match was a pure function of the deal seed. That is fixed here. A `Gift`/`Competition`
+action now only PRESENTS cards; they land in escrow as a `pending : Option Offer`; and the
+OTHER seat's `Response` decides the split. The transition alphabet is `Move := act | respond`.
+
+The three decisions a player now owns, each with a theorem below saying it is real:
+
+  1. **WHICH action, WHEN** — `legalB` only requires the kind unused, and
+     `every_action_order_is_feasible` proves ALL 24 orderings are card-feasible, so the order
+     is a free choice over a fully-available space (the Rust engine used to hardcode ONE).
+  2. **THE CUT** — which cards to present, and (Competition) how to PAIR them.
+     `comp_balanced_cut_dominates` / `gift_modest_cut_dominates` prove the guaranteed swing
+     depends on the cut, so the cut is a decision with a wrong answer.
+  3. **THE CHOICE** — `respond_decides_the_round` exhibits one pending offer whose two
+     responses hand the round to DIFFERENT players. That is the falsifier for "a player
+     decides nothing", discharged as a theorem.
 
 ## What is PROVEN here (the pure model — real, non-vacuous, `#assert_axioms`-clean)
 
-  1. **CONSERVATION** (`conservation`) — the total card multiset (`removed + deck + hands +
-     secrets + discard-piles + placed`) is INVARIANT under `applyAction`. This is the Rust
-     `Drop`-bomb (`Card`'s `drop` is `unreachable!()`) discharged as a Lean theorem: cards only
-     move between locations, never created or destroyed. Genuine multiset arithmetic
-     (`Multiset.sub_add_cancel`), NOT `by decide` on a toy. Lifted to whole executions along the
-     `Boundary` keystone (`conservation_along_run`).
-  2. **ONE-ACTION-PER-ROUND** (`used_monotone`, `legal_needs_unused`) — a monotone used-set:
-     `applyAction` only ever *sets* an action's used-flag, and a legal action REQUIRES its flag
-     unset — so each of the 4 actions fires at most once per player per round.
-  3. **SCORING** — control goes to whoever placed more (`control_correct`); raw placement counts
-     only accrue (`geishaCount_mono`); and — fixing the reference gap — the **Secret card IS
-     scored** (`geishaCount` counts `placed + secret`, `secret_is_scored`).
-  4. **WIN-SAFETY** — the win predicate `Won` (≥ 11 charm OR ≥ 4 rows) as a `Good`-style
-     predicate: winning REQUIRES meeting the threshold (`won_iff_threshold`), you cannot win out
-     of nothing (`won_needs_control`), a below-threshold state is not a win (`not_won_blank`),
-     and a real winning state exists (`winState_wins`).
-
-## The reference gaps FIXED in this model
-
-  * **The Secret is scored.** In `mechanics.rs`, `update_control_and_score` never adds the
-    secreted card to its row — the Secret is placed but never counted. Here `geishaCount` counts
-    `placed + secret`, so the Secret contributes to control (`secret_is_scored`), matching the
-    physical Hanamikoji rule (the face-down card is revealed and tallied at round end).
-  * **The blind pick is pre-folded (modelled explicitly).** Physical Gift/Competition have the
-    OPPONENT choose which cards they keep. The Rust pre-folds that choice into the acting
-    player's `Action` (the split is declared, not adjudicated). We model exactly that fold: a
-    `Gift`/`Competition` action carries the self-share and other-share directly.
-
-## The OBLIGATION stated (NOT yet discharged — Lane-D-gated)
-
-`multiwayTug_air_refines_applyAction` — the game's transition AIR admits `(old, p, action, new)`
-IFF `new = applyAction old p action` (the game-level analogue of `Exec.Program`'s
-`evalSimpleCtx_*_iff` admit-characterizations). The AIR predicate is HYPOTHESIZED here
-(`AirSpec`): the verified circuit lands later and discharges exactly this contract. This Lean
-spec is the reference the AIR is emitted against.
+  1. **CONSERVATION** (`conservation`, `conservation_response`, `conservation_move`) — the total
+     card multiset (`removed + deck + hands + secrets + discard-piles + placed + escrow`) is
+     INVARIANT under every move. Genuine multiset arithmetic (`Multiset.sub_add_cancel`), NOT
+     `by decide` on a toy. Lifted to whole executions along the `Boundary` keystone
+     (`conservation_along_run`). The escrow is DERIVED from `pending` (`pendingCards`), so
+     "an offer's cards are somewhere" is definitional, not an invariant to maintain.
+  2. **ONE-ACTION-PER-ROUND** (`used_monotone`, `legal_needs_unused`) — a monotone used-set.
+     A `Response` consumes NO flag (responding is not one of your four actions), which is why
+     `Move` splits into `act`/`respond` rather than adding a fifth `ActionKind`.
+  3. **THE OFFER INTERLOCK** (`pending_blocks_actions`, `respond_needs_pending`,
+     `respond_not_by_proposer`) — while an offer is pending NOTHING but a response is legal; a
+     response with no pending offer is refused; and **the proposer cannot answer their own
+     offer**. That last one is the anti-self-deal tooth: without it I-cut-you-choose silently
+     collapses back into the pre-folded gift this file just deleted.
+  4. **SCORING** — control goes to whoever placed more (`control_correct`); raw placement counts
+     only accrue (`geishaCount_mono`); and the Secret card IS scored (`secret_is_scored`).
+  5. **WIN-SAFETY** — `Won` (≥ 11 charm OR ≥ 4 rows) as a `Good`-style predicate, plus the
+     adjudicated `roundWinner` (§7B) that took draws from 66.1% to 5.1%.
 -/
 import Dregg2.Boundary
 import Mathlib.Data.Multiset.Basic
@@ -54,6 +61,7 @@ import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fin.VecNotation
 import Mathlib.Tactic.Abel
+import Mathlib.Tactic.FinCases
 
 namespace Dregg2.Games.MultiwayTug
 
@@ -61,7 +69,7 @@ open scoped BigOperators
 
 /-! ## 1. Rows, charm, players, actions -/
 
-/-- A **geisha row**, indexed `0..6`. A card is just the row it scores for. -/
+/-- A **guild row**, indexed `0..6`. A card is just the row it scores for. -/
 abbrev Geisha := Fin 7
 
 /-- The **charm value** of each row `[2,2,2,3,3,4,5]` (Σ = 21). This is ALSO the number of
@@ -83,45 +91,98 @@ def Player.other : Player → Player
 @[simp] theorem Player.other_other (p : Player) : p.other.other = p := by cases p <;> rfl
 theorem Player.other_ne (p : Player) : p.other ≠ p := by cases p <;> decide
 
-/-- The four once-per-round **action kinds** (the used-flag domain). -/
+/-- The four once-per-round **action kinds** (the used-flag domain). A response is NOT one of
+these — responding to the opponent's offer is forced, not one of your four actions. -/
 inductive ActionKind where
   | secretK | discardK | giftK | competitionK
 deriving DecidableEq, Repr
 
-/-- A concrete **action** (a move), carrying the actual cards. The Gift/Competition splits are
-the pre-folded opponent choices (see header): `gift self₁ self₂ other`, `competition self₁ self₂
-other₁ other₂`. -/
+/-- A concrete **action** (the flag-consuming half of a move).
+
+⚑ `offerGift`/`offerComp` carry ONLY the presented cards — no self/other split. Who gets what
+is the OTHER seat's `Response`. (The deleted pre-folded forms were `gift self₁ self₂ other` and
+`competition self₁ self₂ other₁ other₂`.) `offerComp` carries the cards ALREADY PAIRED
+(`a₀ a₁ | b₀ b₁`): the pairing IS the cut, so it is part of the action, not a derived detail. -/
 inductive Action where
-  /-- Secret one card (set aside face-down; scored at round end in THIS model). -/
+  /-- Secret one card (set aside face-down; scored at round end). -/
   | secret (c : Geisha)
   /-- Discard two cards (removed from the round; never scored). -/
   | discard (c₁ c₂ : Geisha)
-  /-- Gift: place two cards on your own rows, one on the opponent's. -/
-  | gift (self₁ self₂ other : Geisha)
-  /-- Competition: two cards to your rows, two to the opponent's. -/
-  | competition (self₁ self₂ other₁ other₂ : Geisha)
+  /-- Gift: PRESENT three favors. The opponent takes one; you keep the other two. -/
+  | offerGift (c₀ c₁ c₂ : Geisha)
+  /-- Competition: PRESENT two pairs. The opponent takes a pair; you keep the other. -/
+  | offerComp (a₀ a₁ b₀ b₁ : Geisha)
 deriving DecidableEq, Repr
 
 /-- The action-kind of an action (for the used-flag). -/
 def Action.kind : Action → ActionKind
   | .secret _ => .secretK
   | .discard _ _ => .discardK
-  | .gift _ _ _ => .giftK
-  | .competition _ _ _ _ => .competitionK
+  | .offerGift _ _ _ => .giftK
+  | .offerComp _ _ _ _ => .competitionK
+
+/-- A **pending offer** — cards revealed on the table, awaiting the other seat's choice. It
+records WHO cut, so `respond_not_by_proposer` can refuse a self-deal. -/
+inductive Offer where
+  /-- Three favors presented by `proposer`; the responder takes exactly one. -/
+  | gift (proposer : Player) (c₀ c₁ c₂ : Geisha)
+  /-- Two pairs presented by `proposer`; the responder takes exactly one pair. -/
+  | comp (proposer : Player) (a₀ a₁ b₀ b₁ : Geisha)
+deriving DecidableEq, Repr
+
+/-- Who cut. -/
+def Offer.proposer : Offer → Player
+  | .gift p _ _ _ => p
+  | .comp p _ _ _ _ => p
+
+/-- The cards held in escrow by a pending offer. -/
+def Offer.cards : Offer → Multiset Geisha
+  | .gift _ c₀ c₁ c₂ => {c₀} + {c₁} + {c₂}
+  | .comp _ a₀ a₁ b₀ b₁ => {a₀} + {a₁} + {b₀} + {b₁}
+
+/-- **The other seat's answer** — the choice this whole file exists to restore. -/
+inductive Response where
+  /-- Take presented favor `pick` of the three. -/
+  | gift (pick : Fin 3)
+  /-- Take presented pair `pick` of the two. -/
+  | comp (pick : Fin 2)
+deriving DecidableEq, Repr
+
+/-- A response ANSWERS an offer only if it is of the matching shape (fail-closed). -/
+def Offer.accepts : Offer → Response → Bool
+  | .gift _ _ _ _, .gift _ => true
+  | .comp _ _ _ _ _, .comp _ => true
+  | _, _ => false
+
+/-- The cards the RESPONDER takes for their own rows. A shape-mismatched response takes
+nothing (fail-closed; `legalRespB` refuses it anyway). -/
+def takerShare : Offer → Response → Multiset Geisha
+  | .gift _ c₀ _ _, .gift 0 => {c₀}
+  | .gift _ _ c₁ _, .gift 1 => {c₁}
+  | .gift _ _ _ c₂, .gift 2 => {c₂}
+  | .comp _ a₀ a₁ _ _, .comp 0 => {a₀} + {a₁}
+  | .comp _ _ _ b₀ b₁, .comp 1 => {b₀} + {b₁}
+  | _, _ => 0
+
+/-- The cards left to the PROPOSER (the cutter keeps the side the taker declined). -/
+def cutterShare : Offer → Response → Multiset Geisha
+  | .gift _ _ c₁ c₂, .gift 0 => {c₁} + {c₂}
+  | .gift _ c₀ _ c₂, .gift 1 => {c₀} + {c₂}
+  | .gift _ c₀ c₁ _, .gift 2 => {c₀} + {c₁}
+  | .comp _ _ _ b₀ b₁, .comp 0 => {b₀} + {b₁}
+  | .comp _ a₀ a₁ _ _, .comp 1 => {a₀} + {a₁}
+  | o, _ => o.cards
+
+/-- **`share_split` — the escrow empties EXACTLY.** Whatever the response, the taker's share
+plus the cutter's share is the whole offer: no favor is duplicated or stranded on the table.
+Holds UNCONDITIONALLY (a shape-mismatched response gives the cutter everything), which is what
+makes response-conservation a one-liner rather than an invariant to carry. -/
+theorem share_split (o : Offer) (r : Response) :
+    takerShare o r + cutterShare o r = o.cards := by
+  cases o <;> cases r <;> rename_i k <;> fin_cases k <;>
+    simp only [takerShare, cutterShare, Offer.cards, zero_add, add_zero] <;> ac_rfl
 
 /-! ### The card-movement decomposition (destinations of an action's cards) -/
-
-/-- Cards added to the acting player's **placed** rows. -/
-def toSelf : Action → Multiset Geisha
-  | .gift s₁ s₂ _ => {s₁} + {s₂}
-  | .competition s₁ s₂ _ _ => {s₁} + {s₂}
-  | _ => 0
-
-/-- Cards added to the **opponent's** placed rows. -/
-def toOther : Action → Multiset Geisha
-  | .gift _ _ o => {o}
-  | .competition _ _ o₁ o₂ => {o₁} + {o₂}
-  | _ => 0
 
 /-- Cards added to the acting player's **secret** pile. -/
 def toSecret : Action → Multiset Geisha
@@ -133,112 +194,242 @@ def toDiscardPile : Action → Multiset Geisha
   | .discard c₁ c₂ => {c₁} + {c₂}
   | _ => 0
 
+/-- Cards moved to the **escrow** (revealed on the table, awaiting the other seat's choice). -/
+def toOffer : Action → Multiset Geisha
+  | .offerGift c₀ c₁ c₂ => {c₀} + {c₁} + {c₂}
+  | .offerComp a₀ a₁ b₀ b₁ => {a₀} + {a₁} + {b₀} + {b₁}
+  | _ => 0
+
 /-- The FULL multiset of cards the action removes from the acting player's hand. -/
 def actionCards : Action → Multiset Geisha
   | .secret c => {c}
   | .discard c₁ c₂ => {c₁} + {c₂}
-  | .gift s₁ s₂ o => {s₁} + {s₂} + {o}
-  | .competition s₁ s₂ o₁ o₂ => {s₁} + {s₂} + {o₁} + {o₂}
+  | .offerGift c₀ c₁ c₂ => {c₀} + {c₁} + {c₂}
+  | .offerComp a₀ a₁ b₀ b₁ => {a₀} + {a₁} + {b₀} + {b₁}
 
-/-- **The cards leaving the hand equal the cards arriving everywhere else.** The bookkeeping
-identity that makes conservation hold: `toSelf + toOther + toSecret + toDiscardPile = actionCards`.
--/
+/-- The offer an action opens (`none` for the two private actions). -/
+def offerOf (p : Player) : Action → Option Offer
+  | .offerGift c₀ c₁ c₂ => some (.gift p c₀ c₁ c₂)
+  | .offerComp a₀ a₁ b₀ b₁ => some (.comp p a₀ a₁ b₀ b₁)
+  | _ => none
+
+/-- The opened offer holds exactly the escrowed cards. -/
+theorem offerOf_cards (p : Player) (a : Action) :
+    (match offerOf p a with | none => 0 | some o => o.cards) = toOffer a := by
+  cases a <;> rfl
+
+/-- **The cards leaving the hand equal the cards arriving everywhere else.** -/
 theorem actionCards_split (a : Action) :
-    toSelf a + toOther a + toSecret a + toDiscardPile a = actionCards a := by
+    toSecret a + toDiscardPile a + toOffer a = actionCards a := by
   cases a <;>
-    simp only [toSelf, toOther, toSecret, toDiscardPile, actionCards, add_zero, zero_add,
-      add_assoc]
+    simp only [toSecret, toDiscardPile, toOffer, actionCards, add_zero, zero_add, add_assoc]
 
 /-! ## 2. The game state -/
 
-/-- The **multiway-tug state**. Every card lives in exactly one location; `placed`/`secret` are
-per-player multisets, so scoring is a pure multiset read and conservation is a pure multiset
-equation. `used` is the per-player per-action once-per-round flag. -/
+/-- The **multiway-tug state**. Every card lives in exactly one location; the ESCROW is derived
+from `pending` (`pendingCards`), so a revealed-but-unresolved offer is not a zone that can drift
+out of sync. `used` is the per-player per-action once-per-round flag; `turns` is the committed
+turn stamp (8 actions + 4 responses in a full round). -/
 structure GState where
-  /-- The single face-down card removed at deal (Rust `discarded`). -/
+  /-- The single face-down card removed at deal. -/
   removed : Multiset Geisha
   /-- The draw pile. -/
   deck : Multiset Geisha
   /-- Each player's hidden hand. -/
   hand : Player → Multiset Geisha
-  /-- Each player's secret pile (scored at round end — the fixed gap). -/
+  /-- Each player's secret pile (scored at round end). -/
   secret : Player → Multiset Geisha
   /-- Each player's discard pile (out of the round). -/
   discardPile : Player → Multiset Geisha
-  /-- Each player's placed cards (on the geisha rows). -/
+  /-- Each player's placed cards (on the guild rows). -/
   placed : Player → Multiset Geisha
   /-- Once-per-round action flags. -/
   used : Player → ActionKind → Bool
-  /-- Whose turn it is. -/
+  /-- ⚑ The pending offer: revealed favors awaiting the OTHER seat's choice. -/
+  pending : Option Offer
+  /-- Whose turn it is (to act, or — while `pending` — to respond). -/
   current : Player
+  /-- The committed turn stamp (actions AND responses). -/
+  turns : ℕ
 
 /-- Sum of a per-player multiset over both players. -/
 def sum2 (f : Player → Multiset Geisha) : Multiset Geisha := f .p1 + f .p2
 
-/-- The **total card multiset** (the conserved quantity). -/
+/-- **The escrow** — the cards a pending offer holds on the table. Derived, so
+"empty iff no offer is pending" is DEFINITIONAL rather than an invariant to prove. -/
+def pendingCards (s : GState) : Multiset Geisha :=
+  match s.pending with
+  | none => 0
+  | some o => o.cards
+
+@[simp] theorem pendingCards_none {s : GState} (h : s.pending = none) : pendingCards s = 0 := by
+  simp [pendingCards, h]
+
+/-- The **total card multiset** (the conserved quantity), now including the escrow. -/
 def totalCards (s : GState) : Multiset Geisha :=
   s.removed + s.deck + sum2 s.hand + sum2 s.secret + sum2 s.discardPile + sum2 s.placed
+    + pendingCards s
 
-/-! ## 3. The pure transition -/
+/-! ## 3. The pure transitions — ACT and RESPOND -/
 
-/-- Is the action **legal**: the acting player is to move, its action-kind is unused this round,
-and its cards are actually in the acting player's hand. -/
+/-- Is the ACTION **legal**: the acting player is to move, **no offer is pending**, its kind is
+unused this round, and its cards are in the acting player's hand.
+
+⚑ The `pending.isNone` conjunct is the interlock: you cannot start a second offer, nor duck a
+response by taking an unrelated action, while the table is waiting on you. -/
 def legalB (s : GState) (p : Player) (a : Action) : Bool :=
-  decide (s.current = p) && (! s.used p a.kind) && decide (actionCards a ≤ s.hand p)
+  decide (s.current = p) && s.pending.isNone && (! s.used p a.kind)
+    && decide (actionCards a ≤ s.hand p)
 
-/-- The state update for a LEGAL action: move `actionCards a` out of the hand into the four
-destinations, set the used-flag, pass the turn. -/
+/-- The state update for a LEGAL action: move `actionCards a` out of the hand into secret /
+discard / ESCROW, set the used-flag, stamp the turn, and pass the seat — to the responder if
+this action opened an offer, to the next actor otherwise. Both are `p.other`. -/
 def applyLegal (s : GState) (p : Player) (a : Action) : GState :=
   { s with
     hand := Function.update s.hand p (s.hand p - actionCards a)
-    placed := Function.update
-      (Function.update s.placed p (s.placed p + toSelf a))
-      p.other (s.placed p.other + toOther a)
     secret := Function.update s.secret p (s.secret p + toSecret a)
     discardPile := Function.update s.discardPile p (s.discardPile p + toDiscardPile a)
     used := Function.update s.used p (Function.update (s.used p) a.kind true)
-    current := p.other }
+    pending := offerOf p a
+    current := p.other
+    turns := s.turns + 1 }
 
-/-- **`applyAction` — the pure transition.** A legal action moves cards; an illegal action is a
-no-op (fail-closed). Total and deterministic (it is a function). -/
+/-- **`applyAction` — the ACT transition.** A legal action moves cards; an illegal action is a
+no-op (fail-closed). Total and deterministic. -/
 def applyAction (s : GState) (p : Player) (a : Action) : GState :=
   bif legalB s p a then applyLegal s p a else s
 
-/-- Determinism: `applyAction` is a function, so the successor is unique. -/
+/-- Is the RESPONSE **legal**: an offer is pending, `p` is to move, **`p` is NOT the proposer**,
+and the response matches the offer's shape.
+
+⚑ `o.proposer = p.other` is the ANTI-SELF-DEAL tooth. Drop it and the cutter answers their own
+cut — which is exactly the pre-folded `gift self₁ self₂ other` this file deleted. -/
+def legalRespB (s : GState) (p : Player) (r : Response) : Bool :=
+  match s.pending with
+  | none => false
+  | some o => decide (s.current = p) && decide (o.proposer = p.other) && o.accepts r
+
+/-- The state update for a LEGAL response: the escrow empties onto the two boards — the
+responder takes their share, the proposer keeps the rest — the offer closes, and the seat stays
+with the responder (who now takes their OWN action; actions still alternate A,B,A,B). -/
+def applyRespLegal (s : GState) (p : Player) (r : Response) : GState :=
+  match s.pending with
+  | none => s
+  | some o =>
+    { s with
+      placed := Function.update
+        (Function.update s.placed p (s.placed p + takerShare o r))
+        p.other (s.placed p.other + cutterShare o r)
+      pending := none
+      current := p
+      turns := s.turns + 1 }
+
+/-- **`applyResponse` — the RESPOND transition.** The other seat's choice, as a real step of the
+transition system. This is the step the shipped game did not have. -/
+def applyResponse (s : GState) (p : Player) (r : Response) : GState :=
+  bif legalRespB s p r then applyRespLegal s p r else s
+
+/-- The transition alphabet: a flag-consuming ACTION, or a RESPONSE to a pending offer. -/
+inductive Move where
+  | act (a : Action)
+  | respond (r : Response)
+deriving DecidableEq, Repr
+
+/-- **`applyMove` — the whole transition.** -/
+def applyMove (s : GState) (p : Player) : Move → GState
+  | .act a => applyAction s p a
+  | .respond r => applyResponse s p r
+
+/-- Determinism: `applyMove` is a function, so the successor is unique. -/
+theorem applyMove_deterministic (s : GState) (p : Player) (m : Move) {n₁ n₂ : GState}
+    (h₁ : n₁ = applyMove s p m) (h₂ : n₂ = applyMove s p m) : n₁ = n₂ :=
+  h₁.trans h₂.symm
+
+/-- Determinism of the act transition (kept for the AIR/leaf layer). -/
 theorem applyAction_deterministic (s : GState) (p : Player) (a : Action) {n₁ n₂ : GState}
     (h₁ : n₁ = applyAction s p a) (h₂ : n₂ = applyAction s p a) : n₁ = n₂ :=
   h₁.trans h₂.symm
 
-/-! ## 4. INVARIANT 1 — CONSERVATION (the Drop-bomb, in Lean) -/
+/-! ## 3B. THE OFFER INTERLOCK — the teeth that keep I-cut-you-choose from collapsing -/
+
+/-- **`pending_blocks_actions`.** While an offer is pending NO action is legal, for EITHER
+player. The table must be answered before play continues — the proposer cannot walk away from
+their own cut, and the responder cannot duck it. -/
+theorem pending_blocks_actions (s : GState) (p : Player) (a : Action) (o : Offer)
+    (h : s.pending = some o) : legalB s p a = false := by
+  simp [legalB, h]
+
+/-- **`respond_needs_pending`.** A response with nothing on the table is refused — you cannot
+conjure a share out of an offer that was never made. -/
+theorem respond_needs_pending (s : GState) (p : Player) (r : Response) (h : s.pending = none) :
+    legalRespB s p r = false := by
+  simp [legalRespB, h]
+
+/-- **`respond_not_by_proposer` (THE ANTI-SELF-DEAL TOOTH).** The player who CUT can never be
+the player who CHOOSES. This is the theorem that makes the mechanic I-cut-YOU-choose rather
+than the pre-folded self-dealt split the shipped game had. -/
+theorem respond_not_by_proposer (s : GState) (p : Player) (r : Response) (o : Offer)
+    (hp : s.pending = some o) (hself : o.proposer = p) : legalRespB s p r = false := by
+  simp only [legalRespB, hp]
+  have : ¬ (o.proposer = p.other) := by rw [hself]; exact fun h => Player.other_ne p h.symm
+  simp [this]
+
+/-- After an offer action, an offer IS pending — the escrow is really opened (non-vacuity of the
+interlock: `pending_blocks_actions` is not guarding an always-`none` field). -/
+theorem offer_opens_pending (s : GState) (p : Player) (c₀ c₁ c₂ : Geisha)
+    (h : legalB s p (.offerGift c₀ c₁ c₂) = true) :
+    (applyAction s p (.offerGift c₀ c₁ c₂)).pending = some (.gift p c₀ c₁ c₂) := by
+  simp [applyAction, h, applyLegal, offerOf]
+
+/-- After a legal response, the table is clear again. -/
+theorem respond_closes_pending (s : GState) (p : Player) (r : Response)
+    (h : legalRespB s p r = true) : (applyResponse s p r).pending = none := by
+  simp only [applyResponse, h, cond_true, applyRespLegal]
+  cases hp : s.pending with
+  | none => simp [legalRespB, hp] at h
+  | some o => simp
+
+/-- On a legal action, `applyAction` IS `applyLegal`. -/
+theorem applyAction_of_legal (s : GState) (p : Player) (a : Action) (h : legalB s p a = true) :
+    applyAction s p a = applyLegal s p a := by
+  simp only [applyAction, h, cond_true]
+
+/-- On a legal response, `applyResponse` IS `applyRespLegal`. -/
+theorem applyResponse_of_legal (s : GState) (p : Player) (r : Response)
+    (h : legalRespB s p r = true) : applyResponse s p r = applyRespLegal s p r := by
+  simp only [applyResponse, h, cond_true]
+
+/-! ## 4. INVARIANT 1 — CONSERVATION -/
 
 /-- The hand-move identity: removing `actionCards a` from a hand `m` (`actionCards a ≤ m`) and
-re-adding the four destination shares recovers `m` exactly. -/
+re-adding the three destination shares recovers `m` exactly. -/
 theorem hand_move {m : Multiset Geisha} (a : Action) (hle : actionCards a ≤ m) :
-    m - actionCards a + toSelf a + toOther a + toSecret a + toDiscardPile a = m := by
-  -- reduce to per-row Nat counts; the four destination shares sum to `actionCards a`, which
-  -- (being ≤ the hand) cancels the subtraction. Robust against the truncated-`-` (no `abel`).
-  have hsplit : ∀ g, Multiset.count g (toSelf a) + Multiset.count g (toOther a)
-      + Multiset.count g (toSecret a) + Multiset.count g (toDiscardPile a)
-      = Multiset.count g (actionCards a) := by
+    m - actionCards a + toSecret a + toDiscardPile a + toOffer a = m := by
+  have hsplit : ∀ g, Multiset.count g (toSecret a) + Multiset.count g (toDiscardPile a)
+      + Multiset.count g (toOffer a) = Multiset.count g (actionCards a) := by
     intro g
-    rw [← Multiset.count_add, ← Multiset.count_add, ← Multiset.count_add, actionCards_split]
+    rw [← Multiset.count_add, ← Multiset.count_add, actionCards_split]
   ext g
   have hc : Multiset.count g (actionCards a) ≤ Multiset.count g m := Multiset.count_le_of_le g hle
   have hg := hsplit g
   simp only [Multiset.count_add, Multiset.count_sub]
   omega
 
-/-- **`conservation` (INVARIANT 1 — the Drop-bomb).** The total card multiset is INVARIANT under
-`applyAction`: cards only move between locations, none is created or destroyed. Proven by real
-multiset arithmetic (`hand_move`), for EVERY input (legal ⇒ genuine relocation; illegal ⇒ no-op).
--/
+/-- **`conservation` (INVARIANT 1, the ACT step).** The total card multiset is INVARIANT under
+`applyAction`: cards only move between hand, secret, discard and ESCROW. Real multiset
+arithmetic, for EVERY input (legal ⇒ genuine relocation; illegal ⇒ no-op). -/
 theorem conservation (s : GState) (p : Player) (a : Action) :
     totalCards (applyAction s p a) = totalCards s := by
   by_cases hleg : legalB s p a = true
   · have hle : actionCards a ≤ s.hand p := by
       simp only [legalB, Bool.and_eq_true, decide_eq_true_eq] at hleg
       exact hleg.2
-    simp only [applyAction, hleg, cond_true, totalCards, applyLegal, sum2]
+    have hnone : s.pending = none := by
+      simp only [legalB, Bool.and_eq_true] at hleg
+      exact Option.isNone_iff_eq_none.mp (by simpa using hleg.1.1.2)
+    simp only [applyAction, hleg, cond_true, totalCards, applyLegal, sum2, pendingCards, hnone]
+    rw [show (match offerOf p a with | none => (0 : Multiset Geisha) | some o => o.cards)
+          = toOffer a from offerOf_cards p a]
     cases p <;>
       simp only [Function.update_apply, Player.other_p1, Player.other_p2, reduceCtorEq,
         reduceIte] <;>
@@ -247,94 +438,170 @@ theorem conservation (s : GState) (p : Player) (a : Action) :
   · simp only [Bool.not_eq_true] at hleg
     simp [applyAction, hleg]
 
+/-- **`conservation_response` (INVARIANT 1, the RESPOND step).** Emptying the escrow onto the
+two boards conserves the total: `share_split` says the two shares reassemble the offer exactly.
+-/
+theorem conservation_response (s : GState) (p : Player) (r : Response) :
+    totalCards (applyResponse s p r) = totalCards s := by
+  by_cases hleg : legalRespB s p r = true
+  · cases hp : s.pending with
+    | none => simp [legalRespB, hp] at hleg
+    | some o =>
+      simp only [applyResponse, hleg, cond_true, applyRespLegal, hp, totalCards, sum2,
+        pendingCards]
+      cases p <;>
+        simp only [Function.update_apply, Player.other_p1, Player.other_p2, reduceCtorEq,
+          reduceIte] <;>
+        · conv_lhs => rw [add_zero]
+          conv_rhs => rw [← share_split o r]
+          ac_rfl
+  · simp only [Bool.not_eq_true] at hleg
+    simp [applyResponse, hleg]
+
+/-- **`conservation_move` (INVARIANT 1, every move).** -/
+theorem conservation_move (s : GState) (p : Player) (m : Move) :
+    totalCards (applyMove s p m) = totalCards s := by
+  cases m with
+  | act a => exact conservation s p a
+  | respond r => exact conservation_response s p r
+
 /-! ## 5. INVARIANT 2 — ONE ACTION PER ROUND (a monotone used-set) -/
 
-/-- **`used_monotone` (INVARIANT 2a).** `applyAction` only ever SETS a used-flag: any flag true
-before the step is still true after. The used-set is monotone. -/
-theorem used_monotone (s : GState) (p : Player) (a : Action) (q : Player) (k : ActionKind)
-    (h : s.used q k = true) : (applyAction s p a).used q k = true := by
-  by_cases hleg : legalB s p a = true
-  · simp only [applyAction, hleg, cond_true, applyLegal, Function.update_apply]
-    by_cases hq : q = p
-    · subst hq
-      by_cases hk : k = a.kind
-      · subst hk; simp
-      · simp [hk, h]
-    · simp [hq, h]
+/-- A response never touches the used-flags (responding is not one of your four actions). -/
+@[simp] theorem used_applyResponse (s : GState) (p : Player) (r : Response) :
+    (applyResponse s p r).used = s.used := by
+  by_cases hleg : legalRespB s p r = true
+  · simp only [applyResponse, hleg, cond_true, applyRespLegal]
+    cases s.pending <;> rfl
   · simp only [Bool.not_eq_true] at hleg
-    simp only [applyAction, hleg, cond_false]; exact h
+    simp [applyResponse, hleg]
+
+/-- **`used_monotone` (INVARIANT 2a).** Any move only ever SETS a used-flag. -/
+theorem used_monotone (s : GState) (p : Player) (m : Move) (q : Player) (k : ActionKind)
+    (h : s.used q k = true) : (applyMove s p m).used q k = true := by
+  cases m with
+  | respond r => simpa [applyMove] using h
+  | act a =>
+    show (applyAction s p a).used q k = true
+    by_cases hleg : legalB s p a = true
+    · simp only [applyAction, hleg, cond_true, applyLegal, Function.update_apply]
+      by_cases hq : q = p
+      · subst hq
+        by_cases hk : k = a.kind
+        · subst hk; simp
+        · simp [hk, h]
+      · simp [hq, h]
+    · simp only [Bool.not_eq_true] at hleg
+      simp only [applyAction, hleg, cond_false]; exact h
 
 /-- **`legal_needs_unused` (INVARIANT 2b).** A legal action REQUIRES its kind unused this round.
-Together with `used_monotone`, each of the 4 actions fires at most once per player per round. -/
+-/
 theorem legal_needs_unused (s : GState) (p : Player) (a : Action) (h : legalB s p a = true) :
     s.used p a.kind = false := by
   simp only [legalB, Bool.and_eq_true, Bool.not_eq_true'] at h
   exact h.1.2
 
-/-- **`used_after_legal` (the flag IS set — non-vacuity of the used-set).** After a legal action,
-its own kind is marked used, so it cannot legally repeat. -/
+/-- **`used_after_legal` (the flag IS set — non-vacuity of the used-set).** -/
 theorem used_after_legal (s : GState) (p : Player) (a : Action) (h : legalB s p a = true) :
     (applyAction s p a).used p a.kind = true := by
   simp only [applyAction, h, cond_true, applyLegal, Function.update_self]
 
+/-! ## 5B. THE TURN STAMP — every move advances it by exactly one -/
+
+/-- A legal action stamps one turn. -/
+theorem turns_applyLegal (s : GState) (p : Player) (a : Action) (h : legalB s p a = true) :
+    (applyAction s p a).turns = s.turns + 1 := by
+  simp [applyAction, h, applyLegal]
+
+/-- A legal response stamps one turn (a response is a real committed turn, not a free rider). -/
+theorem turns_applyResponse (s : GState) (p : Player) (r : Response)
+    (h : legalRespB s p r = true) : (applyResponse s p r).turns = s.turns + 1 := by
+  simp only [applyResponse, h, cond_true, applyRespLegal]
+  cases hp : s.pending with
+  | none => simp [legalRespB, hp] at h
+  | some o => simp
+
 /-! ## 6. INVARIANT 3 — SCORING (control, monotonicity, the Secret scored) -/
 
-/-- **`geishaCount s p g`** — how many cards player `p` has tallied on row `g`: the placed cards
-PLUS the secret (the fixed reference gap — the Secret is scored). -/
+/-- **`geishaCount s p g`** — the placed cards PLUS the secret (the Secret IS scored). -/
 def geishaCount (s : GState) (p : Player) (g : Geisha) : ℕ :=
   (s.placed p).count g + (s.secret p).count g
 
-/-- **`secret_is_scored` (the fixed gap, witnessed).** The secret pile contributes to the tally:
-adding a card to `secret` raises that row's `geishaCount`. In the reference `mechanics.rs` the
-secret is never added at scoring; here it is. -/
+/-- **`secret_is_scored`.** The secret pile contributes to the tally. -/
 theorem secret_is_scored (s : GState) (p : Player) (g : Geisha) :
     (s.placed p).count g ≤ geishaCount s p g := by
   simp only [geishaCount]; exact Nat.le_add_right _ _
 
-/-- Placed cards only accrue under a transition. -/
-theorem placed_le (s : GState) (p : Player) (a : Action) (q : Player) :
-    s.placed q ≤ (applyAction s p a).placed q := by
-  by_cases hleg : legalB s p a = true
-  · simp only [applyAction, hleg, cond_true, applyLegal, Function.update_apply]
-    cases p <;> cases q <;>
-      simp only [Player.other_p1, Player.other_p2, reduceCtorEq, if_true, if_false] <;>
-      first
-        | exact le_rfl
-        | exact Multiset.le_add_right _ _
-  · simp only [Bool.not_eq_true] at hleg
-    simp [applyAction, hleg]
+/-- Placed cards only accrue under a move (an action escrows, a response places). -/
+theorem placed_le (s : GState) (p : Player) (m : Move) (q : Player) :
+    s.placed q ≤ (applyMove s p m).placed q := by
+  cases m with
+  | act a =>
+    show s.placed q ≤ (applyAction s p a).placed q
+    by_cases hleg : legalB s p a = true
+    · simp [applyAction, hleg, applyLegal]
+    · simp only [Bool.not_eq_true] at hleg; simp [applyAction, hleg]
+  | respond r =>
+    show s.placed q ≤ (applyResponse s p r).placed q
+    by_cases hleg : legalRespB s p r = true
+    · simp only [applyResponse, hleg, cond_true, applyRespLegal]
+      cases hp : s.pending with
+      | none => simp [legalRespB, hp] at hleg
+      | some o =>
+        simp only [Function.update_apply]
+        cases p <;> cases q <;>
+          simp only [Player.other_p1, Player.other_p2, reduceCtorEq, if_true, if_false] <;>
+          first
+            | exact le_rfl
+            | exact Multiset.le_add_right _ _
+    · simp only [Bool.not_eq_true] at hleg; simp [applyResponse, hleg]
 
-/-- Secret cards only accrue under a transition. -/
-theorem secret_le (s : GState) (p : Player) (a : Action) (q : Player) :
-    s.secret q ≤ (applyAction s p a).secret q := by
-  by_cases hleg : legalB s p a = true
-  · simp only [applyAction, hleg, cond_true, applyLegal, Function.update_apply]
-    cases p <;> cases q <;>
-      simp only [reduceCtorEq, if_true, if_false] <;>
-      first
-        | exact le_rfl
-        | exact Multiset.le_add_right _ _
-  · simp only [Bool.not_eq_true] at hleg
-    simp [applyAction, hleg]
+/-- Secret cards only accrue under a move. -/
+theorem secret_le (s : GState) (p : Player) (m : Move) (q : Player) :
+    s.secret q ≤ (applyMove s p m).secret q := by
+  cases m with
+  | act a =>
+    show s.secret q ≤ (applyAction s p a).secret q
+    by_cases hleg : legalB s p a = true
+    · simp only [applyAction, hleg, cond_true, applyLegal, Function.update_apply]
+      cases p <;> cases q <;>
+        simp only [reduceCtorEq, if_true, if_false] <;>
+        first
+          | exact le_rfl
+          | exact Multiset.le_add_right _ _
+    · simp only [Bool.not_eq_true] at hleg; simp [applyAction, hleg]
+  | respond r =>
+    show s.secret q ≤ (applyResponse s p r).secret q
+    by_cases hleg : legalRespB s p r = true
+    · simp only [applyResponse, hleg, cond_true, applyRespLegal]
+      cases s.pending <;> exact le_rfl
+    · simp only [Bool.not_eq_true] at hleg; simp [applyResponse, hleg]
 
-/-- **`geishaCount_mono` (INVARIANT 3 — scores only accrue).** A player's raw tally on any row
-never decreases under a legal transition. (The DERIVED charm total may still shift when the
-opponent overtakes a row — that flip is the game; the RAW counts are monotone.) -/
-theorem geishaCount_mono (s : GState) (p : Player) (a : Action) (q : Player) (g : Geisha) :
-    geishaCount s q g ≤ geishaCount (applyAction s p a) q g :=
+/-- **`geishaCount_mono` (INVARIANT 3 — scores only accrue).** -/
+theorem geishaCount_mono (s : GState) (p : Player) (m : Move) (q : Player) (g : Geisha) :
+    geishaCount s q g ≤ geishaCount (applyMove s p m) q g :=
   Nat.add_le_add
-    (Multiset.count_le_of_le g (placed_le s p a q))
-    (Multiset.count_le_of_le g (secret_le s p a q))
+    (Multiset.count_le_of_le g (placed_le s p m q))
+    (Multiset.count_le_of_le g (secret_le s p m q))
 
-/-- **`control s g`** — who controls row `g`: whoever has the strictly higher tally, else nobody
-(a tie leaves the row uncontrolled), exactly as `update_control_and_score`. -/
+/-- The ACT-step specialisation the deployed program bridge reads. -/
+theorem geishaCount_mono_act (s : GState) (p : Player) (a : Action) (q : Player) (g : Geisha) :
+    geishaCount s q g ≤ geishaCount (applyAction s p a) q g :=
+  geishaCount_mono s p (.act a) q g
+
+/-- The RESPOND-step specialisation. -/
+theorem geishaCount_mono_resp (s : GState) (p : Player) (r : Response) (q : Player) (g : Geisha) :
+    geishaCount s q g ≤ geishaCount (applyResponse s p r) q g :=
+  geishaCount_mono s p (.respond r) q g
+
+/-- **`control s g`** — whoever has the strictly higher tally; a tie leaves the row uncontrolled.
+-/
 def control (s : GState) (g : Geisha) : Option Player :=
   if geishaCount s .p2 g < geishaCount s .p1 g then some .p1
   else if geishaCount s .p1 g < geishaCount s .p2 g then some .p2
   else none
 
-/-- **`control_correct` (INVARIANT 3 — control goes to whoever placed MORE).** If `control s g =
-some p` then `p` strictly out-tallies the opponent on row `g`. -/
+/-- **`control_correct`.** If `control s g = some p` then `p` strictly out-tallies the opponent. -/
 theorem control_correct (s : GState) (g : Geisha) (p : Player)
     (h : control s g = some p) : geishaCount s p.other g < geishaCount s p g := by
   simp only [control] at h
@@ -346,41 +613,34 @@ theorem control_correct (s : GState) (g : Geisha) (p : Player)
       rw [Option.some.injEq] at h; subst h; simpa using h2
     · exact absurd h (by simp)
 
-/-! ## 7. INVARIANT 4 — WIN-SAFETY (a `Good`-style predicate) -/
+/-! ## 7. INVARIANT 4 — WIN-SAFETY -/
 
 /-- Rows controlled by player `p`. -/
 def controlledBy (s : GState) (p : Player) : Finset Geisha :=
   Finset.univ.filter (fun g => control s g = some p)
 
-/-- Total charm a player controls (Σ of `charm` over their rows). -/
+/-- Total charm a player controls. -/
 def charmScore (s : GState) (p : Player) : ℕ := ∑ g ∈ controlledBy s p, charm g
 
 /-- Number of rows a player controls. -/
 def geishaScore (s : GState) (p : Player) : ℕ := (controlledBy s p).card
 
-/-- The charm win threshold (`≥ 11 charm`). A single source of truth: the model win predicate
-`Won` AND the deployed program's win-gate (`MultiwayTugProgram.lean`) both read THIS constant, so
-a threshold edit here moves the proven game and the emitted referee together (`abbrev` keeps it
-definitionally transparent, so every `decide`/`Iff.rfl`/`omega` proof below still discharges). -/
+/-- The charm win threshold (`≥ 11 charm`) — the single source the model AND the emitted
+win-gate both read. -/
 abbrev charmWinThreshold : ℕ := 11
 
-/-- The guild-count win threshold (`≥ 4 rows`); the single-source twin of `charmWinThreshold`. -/
+/-- The guild-count win threshold (`≥ 4 rows`). -/
 abbrev guildWinThreshold : ℕ := 4
 
-/-- **`Won`** — the win predicate: ≥ 11 charm OR ≥ 4 rows (`update_control_and_score`'s two
-victory tests), stated as a `Good`-style state predicate. Reads the shared `charmWinThreshold` /
-`guildWinThreshold` constants the deployed win-gate reads (single source). -/
+/-- **`Won`** — ≥ 11 charm OR ≥ 4 rows. -/
 def Won (s : GState) (p : Player) : Prop :=
   charmWinThreshold ≤ charmScore s p ∨ guildWinThreshold ≤ geishaScore s p
 
-/-- **`won_iff_threshold` (WIN-SAFETY — cannot win illegally).** Winning is EXACTLY meeting the
-threshold: there is no way to be a winner without ≥ 11 charm or ≥ 4 rows. -/
+/-- **`won_iff_threshold` (WIN-SAFETY — cannot win illegally).** -/
 theorem won_iff_threshold (s : GState) (p : Player) :
     Won s p ↔ (11 ≤ charmScore s p ∨ 4 ≤ geishaScore s p) := Iff.rfl
 
-/-- **`won_needs_control` (WIN-SAFETY — cannot win out of nothing).** A winner controls at least
-one row: a win with zero controlled rows is impossible (both thresholds need a positive score,
-and both scores are `0` on an empty control set). -/
+/-- **`won_needs_control` (WIN-SAFETY — cannot win out of nothing).** -/
 theorem won_needs_control (s : GState) (p : Player) (h : Won s p) :
     (controlledBy s p).Nonempty := by
   rcases h with hc | hg
@@ -393,7 +653,7 @@ theorem won_needs_control (s : GState) (p : Player) (h : Won s p) :
 
 /-! ### The blank state and the winning witnesses (non-vacuity + teeth) -/
 
-/-- A blank state: empty everywhere, nobody has acted. -/
+/-- A blank state: empty everywhere, nobody has acted, no offer on the table. -/
 def blankState : GState where
   removed := 0
   deck := 0
@@ -402,10 +662,11 @@ def blankState : GState where
   discardPile := fun _ => 0
   placed := fun _ => 0
   used := fun _ _ => false
+  pending := none
   current := .p1
+  turns := 0
 
-/-- **`not_won_blank` (WIN-SAFETY teeth — a below-threshold state is NOT a win).** With no cards
-placed, nobody controls any row, so neither victory test is met. -/
+/-- **`not_won_blank` (WIN-SAFETY teeth).** -/
 theorem not_won_blank (p : Player) : ¬ Won blankState p := by
   have hempty : controlledBy blankState p = ∅ := by
     apply Finset.filter_eq_empty_iff.mpr
@@ -415,13 +676,11 @@ theorem not_won_blank (p : Player) : ¬ Won blankState p := by
     Finset.sum_empty, Finset.card_empty]
   omega
 
-/-- A concrete **winning state**: player 1 has placed on rows `3` (charm 3), `5` (charm 4) and `6`
-(charm 5) with player 2 empty — so P1 controls all three, for `3 + 4 + 5 = 12 ≥ 11` charm. -/
+/-- A concrete **winning state**: P1 controls rows `3`, `5`, `6` for `3 + 4 + 5 = 12` charm. -/
 def winState : GState :=
   { blankState with placed := fun p => if p = .p1 then ({3, 5, 6} : Multiset Geisha) else 0 }
 
-/-- **`winState_wins` (WIN-SAFETY non-vacuity — a real win exists).** `winState` is an honest win
-for player 1 (12 charm ≥ 11), so `Won` is inhabited and the win-safety theorems are not vacuous. -/
+/-- **`winState_wins` (WIN-SAFETY non-vacuity — a real win exists).** -/
 theorem winState_wins : Won winState .p1 := by
   have hctl : controlledBy winState .p1 = {3, 5, 6} := by decide
   left
@@ -430,38 +689,22 @@ theorem winState_wins : Won winState .p1 := by
 
 /-! ## 7B. ⚑ THE ADJUDICATED ROUND WINNER — the fix for the 66% draw rate
 
-**The design wound.** `Won` is an ABSOLUTE threshold (≥ 11 charm or ≥ 4 guilds) and the shipped
-game is ONE round. In Hanamikoji the round is a *hand*, not a *match*: rounds repeat, and the
-absolute threshold is a "you have won the whole match" test. Shipping a single round against an
-absolute threshold means a round in which neither player clears the bar has NO WINNER, and
-`reference.rs::winner_of` duly returns `None`.
+**The design wound.** `Won` is an ABSOLUTE threshold and the shipped game is ONE round, so a
+round in which neither player clears the bar had NO WINNER. **Measured: 66.1% of rounds ended
+with no winner at all.**
 
-**Measured** (1500 rounds, symmetric greedy agents, this model's rules): **66.1% of rounds end
-with no winner at all.** That is not a close game; it is two thirds of matches ending in a shrug.
+**Why, exactly.** `∑ g, charm g = 21` and `control` awards a row to at most one player, so
+`charmScore p1 + charmScore p2 ≤ 21` (`charmScore_add_le`) — if every row were controlled the sum
+would be 21, forcing one player to ≥ 11. So EVERY undecided round is caused by TIED rows going
+uncontrolled and their charm evaporating.
 
-**Why it happens is exact, not incidental.** `∑ g, charm g = 21` and `control` awards a row to
-at most one player, so `charmScore p1 + charmScore p2 ≤ 21` (`charmScore_add_le`) — and if every
-row were controlled the sum would be exactly 21, forcing one player to ≥ 11. So *every* undecided
-round is caused by TIED rows going uncontrolled, and the charm they carry evaporating. Empty rows
-are not the cause (0.09 per round measured); contested ties are.
-
-**The fix, and why this one.** Three tie rules were measured. Awarding tied rows to a fixed player
-decides every round but at **81.7% / 18.3%** — a landslide, because ties are frequent. Awarding
-them to whoever secreted onto the row leaves 41.8% draws. Adjudicating an *undecided round* on
-total charm, then on rows held, leaves **5.1%** draws at **41.2% / 53.7%** — decisive, and it does
-not touch `control`, so the emitted win-gate teeth (`MultiwayTugProgram.winTooth_shape`, which
-gate `winner = p ⇒ charm ≥ 11 ∨ guilds ≥ 4`) keep meaning exactly what they meant. `Won` is
-UNCHANGED and still the first thing `roundWinner` asks.
-
-⚠ The residual, measured and NOT fixed here: the player who takes the round's LAST action wins
-~57% of decided rounds (alternating order 40.6/54.5; the mirrored "snake" order 55.5/39.6 — the
-edge follows the last action, so no re-ordering of a single round is fair). That is the second
-thing Hanamikoji's repeated rounds buy, and it needs an even number of rounds with the opening
-player alternating — a state change, not a tweak. -/
+**The fix.** Adjudicating an undecided round on total charm, then rows held, leaves **5.1%**
+draws at 41.2% / 53.7%. It does not touch `control`, so the emitted win-gate teeth keep meaning
+exactly what they meant, and `Won` is UNCHANGED and still the first thing `roundWinner` asks. -/
 
 instance (s : GState) (p : Player) : Decidable (Won s p) := by unfold Won; exact inferInstance
 
-/-- The two players' controlled-row sets are DISJOINT: `control` returns at most one owner. -/
+/-- The two players' controlled-row sets are DISJOINT. -/
 theorem controlledBy_disjoint (s : GState) :
     Disjoint (controlledBy s .p1) (controlledBy s .p2) := by
   rw [Finset.disjoint_left]
@@ -470,10 +713,7 @@ theorem controlledBy_disjoint (s : GState) :
   rw [h1.2] at h2
   exact absurd h2.2 (by simp)
 
-/-- **`charmScore_add_le` — the conservation of charm.** The two charm totals together never
-exceed the whole board's `∑ charm = 21`, because the controlled-row sets are disjoint subsets of
-`univ`. This is the fact that makes the adjudication well-behaved (and that makes a double win
-impossible). -/
+/-- **`charmScore_add_le` — the conservation of charm.** -/
 theorem charmScore_add_le (s : GState) :
     charmScore s .p1 + charmScore s .p2 ≤ ∑ g : Geisha, charm g := by
   rw [charmScore, charmScore, ← Finset.sum_union (controlledBy_disjoint s)]
@@ -483,13 +723,13 @@ theorem charmScore_add_le (s : GState) :
 /-- The board's whole charm is `21`. -/
 theorem total_charm : (∑ g : Geisha, charm g) = 21 := by decide
 
-/-- Likewise for rows held: at most the seven rows exist. -/
+/-- Likewise for rows held. -/
 theorem geishaScore_add_le (s : GState) : geishaScore s .p1 + geishaScore s .p2 ≤ 7 := by
   rw [geishaScore, geishaScore, ← Finset.card_union_of_disjoint (controlledBy_disjoint s)]
   simpa using Finset.card_le_card (Finset.subset_univ
     (controlledBy s .p1 ∪ controlledBy s .p2))
 
-/-- **`not_both_charm_won`** — `11 + 11 > 21`, so the charm bar cannot be cleared by both. -/
+/-- **`not_both_charm_won`** — `11 + 11 > 21`. -/
 theorem not_both_charm_won (s : GState) :
     ¬ (charmWinThreshold ≤ charmScore s .p1 ∧ charmWinThreshold ≤ charmScore s .p2) := by
   rintro ⟨h1, h2⟩
@@ -498,7 +738,7 @@ theorem not_both_charm_won (s : GState) :
   simp only [charmWinThreshold] at h1 h2
   omega
 
-/-- **`not_both_guild_won`** — `4 + 4 > 7`, so the row bar cannot be cleared by both. -/
+/-- **`not_both_guild_won`** — `4 + 4 > 7`. -/
 theorem not_both_guild_won (s : GState) :
     ¬ (guildWinThreshold ≤ geishaScore s .p1 ∧ guildWinThreshold ≤ geishaScore s .p2) := by
   rintro ⟨h1, h2⟩
@@ -506,13 +746,9 @@ theorem not_both_guild_won (s : GState) :
   simp only [guildWinThreshold] at h1 h2
   omega
 
-/-- ⚠ **`won_can_be_mutual` — `Won` is NOT exclusive, and the shipped rule already knew it.**
-`Won` is a DISJUNCTION, and its two disjuncts can straddle: P1 can hold rows `4,5,6` for
-`3 + 4 + 5 = 12` charm on only THREE rows while P2 holds the other FOUR rows for `2+2+2+3 = 9`
-charm. Both are `Won`. So the round's terminal rule needs a PRECEDENCE, not just an exclusivity
-argument — and `reference.rs::winner_of` fixes it as *charm bar, then row bar*. `roundWinner`
-below reproduces exactly that order, so the adjudication is bolted onto the shipped precedence
-rather than quietly re-ranking it. -/
+/-- ⚠ **`won_can_be_mutual` — `Won` is NOT exclusive.** P1 can hold rows `4,5,6` for `12` charm
+on THREE rows while P2 holds the other FOUR for `9`. Both are `Won`. So the round's terminal rule
+needs a PRECEDENCE, not an exclusivity argument. -/
 def straddleState : GState :=
   { blankState with
     placed := fun p => if p = .p1 then ({4, 5, 6} : Multiset Geisha)
@@ -525,13 +761,8 @@ theorem won_can_be_mutual : Won straddleState .p1 ∧ Won straddleState .p2 := b
   · simp only [charmScore, h1]; decide
   · simp only [geishaScore, h2]; decide
 
-/-- **`roundWinner` — the terminal rule the shipped game was missing.**
-
-A round is decided by, in order: the absolute threshold (`Won`, UNCHANGED — this is still the
-"you cleared the bar" win the emitted teeth gate); then, if neither player cleared it, the higher
-TOTAL CHARM; then the higher ROW COUNT; and only on exact parity of both is the round a genuine
-draw. Total, deterministic, and — by `roundWinner_draw_iff` — the draw it does return is an
-honest dead heat rather than the shipped "nobody reached the bar". -/
+/-- **`roundWinner` — the terminal rule.** Absolute threshold (`Won`, UNCHANGED); then higher
+TOTAL CHARM; then higher ROW COUNT; only on exact parity of both is it a genuine draw. -/
 def roundWinner (s : GState) : Option Player :=
   if charmWinThreshold ≤ charmScore s .p1 then some .p1
   else if charmWinThreshold ≤ charmScore s .p2 then some .p2
@@ -543,11 +774,7 @@ def roundWinner (s : GState) : Option Player :=
   else if geishaScore s .p1 < geishaScore s .p2 then some .p2
   else none
 
-/-- **`roundWinner_extends_Won` (the fix is CONSERVATIVE).** Whenever the shipped threshold rule
-named a winner *outright* — that player cleared a bar and the opponent cleared neither —
-`roundWinner` names the SAME winner. Adjudication only ever fills in rounds the old rule left
-blank; it never overturns an uncontested threshold win. (The straddle case, where both are `Won`,
-is settled by the same charm-then-rows precedence `reference.rs::winner_of` already used.) -/
+/-- **`roundWinner_extends_Won` (the fix is CONSERVATIVE).** -/
 theorem roundWinner_extends_Won (s : GState) (p : Player) (h : Won s p) (h' : ¬ Won s p.other) :
     roundWinner s = some p := by
   simp only [Won, charmWinThreshold, guildWinThreshold, not_or, not_le] at h h'
@@ -561,9 +788,7 @@ theorem roundWinner_extends_Won (s : GState) (p : Player) (h : Won s p) (h' : ¬
             (rw [roundWinner]; simp only [charmWinThreshold, guildWinThreshold]
              split_ifs <;> first | rfl | omega)
 
-/-- **`roundWinner_sound` (the adjudicated winner EARNED it).** A named winner either cleared one
-of the absolute bars, or strictly out-charmed the opponent, or matched on charm and strictly
-out-held them on rows. There is no arm that hands the round to a player who is behind on both. -/
+/-- **`roundWinner_sound` (the adjudicated winner EARNED it).** -/
 theorem roundWinner_sound (s : GState) (p : Player) (h : roundWinner s = some p) :
     Won s p
       ∨ charmScore s p.other < charmScore s p
@@ -591,10 +816,7 @@ theorem roundWinner_sound (s : GState) (p : Player) (h : roundWinner s = some p)
                   exact Or.inr (Or.inr ⟨by simp only [Player.other_p2]; omega, hlt⟩)
                 · exact absurd h (by simp)
 
-/-- **`roundWinner_draw_iff` (the draw is an EXACT DEAD HEAT).** `roundWinner` returns `none` iff
-the two players are level on charm AND level on rows held. Contrast the shipped rule, whose `none`
-meant only "neither reached the bar" — the state `9 charm vs 6` was a non-result there and is a
-win here. This is the theorem that says the 66% is gone for a reason and not by fiat. -/
+/-- **`roundWinner_draw_iff` (the draw is an EXACT DEAD HEAT).** -/
 theorem roundWinner_draw_iff (s : GState) :
     roundWinner s = none ↔
       (charmScore s .p1 = charmScore s .p2 ∧ geishaScore s .p1 = geishaScore s .p2) := by
@@ -605,7 +827,6 @@ theorem roundWinner_draw_iff (s : GState) :
     rename_i h1 h2 h3 h4 h5 h6 h7 h8
     exact ⟨by omega, by omega⟩
   · rintro ⟨hc, hg⟩
-    -- level on both scales ⇒ neither bar can have been cleared (11+11 > 21, 4+4 > 7)
     have hcs := charmScore_add_le s
     rw [total_charm] at hcs
     have hgs := geishaScore_add_le s
@@ -615,9 +836,8 @@ theorem roundWinner_draw_iff (s : GState) :
       if_neg (by simp only [guildWinThreshold]; omega),
       if_neg (by omega), if_neg (by omega), if_neg (by omega), if_neg (by omega)]
 
-/-- A concrete round the SHIPPED rule threw away: P1 holds rows `5` and `6` (charm `4 + 4 = 9`),
-P2 holds row `3` (charm `3`). Nobody reached 11 charm or 4 rows, so `winner_of` returned `None`
-and the match was a non-event — with P1 three rows and six charm ahead. -/
+/-- A concrete round the SHIPPED rule threw away: P1 holds rows `5`,`6` (charm `9`), P2 holds
+row `3` (charm `3`). Nobody reached the bar, so the match was a non-event. -/
 def undecidedState : GState :=
   { blankState with
     placed := fun p => if p = .p1 then ({5, 6} : Multiset Geisha) else ({3} : Multiset Geisha) }
@@ -630,13 +850,8 @@ theorem undecidedState_not_Won (p : Player) : ¬ Won undecidedState p := by
     simp only [Won, charmScore, geishaScore, charmWinThreshold, guildWinThreshold, h1, h2] <;>
     decide
 
-/-- **`undecidedState_adjudicates` (THE FIX, WITNESSED).** The same round is a clean P1 win under
-`roundWinner` — 9 charm to 3. Together with `undecidedState_not_Won` this is the non-vacuity of
-the whole section: the adjudication is not decoration, it decides a round the shipped rule
-dropped. -/
+/-- **`undecidedState_adjudicates` (THE FIX, WITNESSED).** -/
 theorem undecidedState_adjudicates : roundWinner undecidedState = some .p1 := by
-  have h1 : ¬ Won undecidedState .p1 := undecidedState_not_Won .p1
-  have h2 : ¬ Won undecidedState .p2 := undecidedState_not_Won .p2
   have hc1 : controlledBy undecidedState .p1 = {5, 6} := by decide
   have hc2 : controlledBy undecidedState .p2 = {3} := by decide
   have e1 : charmScore undecidedState .p1 = 9 := by simp only [charmScore, hc1]; decide
@@ -654,8 +869,7 @@ theorem winState_roundWinner : roundWinner winState = some .p1 := by
     simp only [charmScore, charmWinThreshold, hctl]; decide
   simp only [roundWinner, if_pos hc]
 
-/-- A genuine dead heat — both players hold row `0` counts of zero and nothing else, so both
-scores are `0` and the round honestly draws. -/
+/-- A genuine dead heat. -/
 theorem blankState_draws : roundWinner blankState = none := by
   rw [roundWinner_draw_iff]
   have h : ∀ p, controlledBy blankState p = ∅ := by
@@ -665,20 +879,174 @@ theorem blankState_draws : roundWinner blankState = none := by
     simp [control, blankState, geishaCount]
   simp [charmScore, geishaScore, h]
 
+/-! ## 7C. ⚑⚑ THE THREE DECISIONS, AS THEOREMS
+
+This is the section that answers "a player currently decides nothing". Each of the three
+restored decisions gets a theorem saying it is a REAL choice: different inputs, different
+outcomes, over the SAME position. -/
+
+/-! ### Decision 1 — WHICH action, WHEN. -/
+
+/-- The cards an action-kind consumes after that turn's draw (`4,3,2,1`). -/
+def kindCost : ActionKind → ℕ
+  | .competitionK => 4
+  | .giftK => 3
+  | .discardK => 2
+  | .secretK => 1
+
+/-- Is a proposed ORDER of the four action-kinds card-feasible from a 6-card opening with one
+draw per action-turn? After `k` turns you have drawn `k` cards, so the cumulative spend of the
+first `k` actions must never exceed `6 + k`. -/
+def orderFeasible (o : List ActionKind) : Bool :=
+  (List.range (o.length + 1)).all
+    (fun k => decide (((o.take k).map kindCost).sum ≤ 6 + k))
+
+/-- The 24 orderings of the four once-per-round actions. -/
+def allOrders : List (List ActionKind) :=
+  let ks := [ActionKind.secretK, .discardK, .giftK, .competitionK]
+  (ks.flatMap fun a => (ks.filter (· != a)).flatMap fun b =>
+    ((ks.filter (· != a)).filter (· != b)).flatMap fun c =>
+      (((ks.filter (· != a)).filter (· != b)).filter (· != c)).map fun d => [a, b, c, d])
+
+/-- **`every_action_order_is_feasible` (DECISION 1 IS REAL).** ALL 24 orderings of the four
+once-per-round actions are card-feasible — the descending `[Competition, Gift, Discard, Secret]`
+the Rust engine hardcoded for BOTH seats was one arbitrary point in a space that was always
+fully available. `legalB` requires only that the kind be unused, so the whole space is legal;
+this theorem says none of it is a card-starvation trap. -/
+theorem every_action_order_is_feasible : allOrders.all orderFeasible = true := by decide
+
+/-- Non-vacuity of the sweep: there really are 24 orders (not an empty `all`). -/
+theorem allOrders_card : allOrders.length = 24 := by decide
+
+/-- The falsifier for `orderFeasible`: a 5-cost action would NOT be feasible first, so the
+predicate can go false and `every_action_order_is_feasible` is a real check. -/
+theorem orderFeasible_can_fail :
+    orderFeasible [ActionKind.competitionK, .competitionK, .competitionK] = false := by decide
+
+/-! ### Decision 2 — THE CUT (the cake-cutting dilemma, quantified). -/
+
+/-- The raw influence of a multiset of favors. -/
+def weight (m : Multiset Geisha) : ℕ := (m.map charm).sum
+
+/-- The **swing** a response produces for the CUTTER: their share minus the taker's. -/
+def swing (o : Offer) (r : Response) : Int :=
+  (weight (cutterShare o r) : Int) - (weight (takerShare o r) : Int)
+
+/-- The cutter's **guaranteed swing**: the worst the taker can do to them. This is the value a
+proposer is actually choosing when they choose a cut — the taker will pick the response that
+minimises it. -/
+def guarantee : Offer → Int
+  | o@(.gift _ _ _ _) => min (min (swing o (.gift 0)) (swing o (.gift 1))) (swing o (.gift 2))
+  | o@(.comp _ _ _ _ _) => min (swing o (.comp 0)) (swing o (.comp 1))
+
+/-- **`comp_balanced_cut_dominates` (DECISION 2 IS REAL — the cake-cutting dilemma).**
+
+The SAME four favors (rows `6,5,0,1`, charm `5,4,2,2`), paired two ways:
+
+  * lopsided `{5,4} | {2,2}` guarantees the cutter **−5** (the taker simply takes the big pair);
+  * balanced  `{5,2} | {4,2}` guarantees the cutter **−1**.
+
+So the PAIRING — a thing the shipped game never let a player express, because the split was
+pre-folded into the actor's own action — strictly changes what the cutter can guarantee. This
+is the agonising bit of Hanamikoji restored as a checked inequality: you must cut so that you
+are content with EITHER half, because you do not get to choose which one you keep. -/
+theorem comp_balanced_cut_dominates :
+    guarantee (.comp .p1 6 5 0 1) = -5
+      ∧ guarantee (.comp .p1 6 0 5 1) = -1
+      ∧ guarantee (.comp .p1 6 5 0 1) < guarantee (.comp .p1 6 0 5 1) := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- **`gift_modest_cut_dominates` (DECISION 2, the Gift face).**
+
+Presenting your three STRONGEST favors (rows `6,5,0` = charm `5,4,2`) guarantees a swing of only
+**+1** — the opponent just takes the `5`. Presenting three modest ones (`0,1,2` = charm `2,2,2`)
+guarantees **+2**. The strong presentation has the higher raw total and the WORSE guarantee:
+what you present is a decision with a wrong answer, and the wrong answer is the greedy one the
+`pick_highest` mover always played. -/
+theorem gift_modest_cut_dominates :
+    guarantee (.gift .p1 6 5 0) = 1
+      ∧ guarantee (.gift .p1 0 1 2) = 2
+      ∧ guarantee (.gift .p1 6 5 0) < guarantee (.gift .p1 0 1 2) := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-! ### Decision 3 — THE CHOICE (the theorem this whole lane exists for). -/
+
+/-- A live position with a pending Gift: P1 has cut three favors (rows `6`, `0`, `2` — charm
+`5, 2, 2`) and P2 is to answer. The board already standing: P2 holds rows `3` and `4` (charm
+`3 + 3`), P1 holds row `1` (charm `2`). -/
+def cutState : GState :=
+  { blankState with
+    placed := fun p => if p = .p1 then ({1} : Multiset Geisha) else ({3, 4} : Multiset Geisha)
+    pending := some (.gift .p1 6 0 2)
+    current := .p2
+    used := fun p k => p = .p1 ∧ k = .giftK }
+
+/-- The position is REAL: P2's response is legal (so `applyResponse` is not a silent no-op and
+the theorem below is not about two copies of the same state). -/
+theorem cutState_response_legal (k : Fin 3) : legalRespB cutState .p2 (.gift k) = true := by
+  fin_cases k <;> rfl
+
+/-- ⚑ **`respond_decides_the_round` — THE FALSIFIER, DISCHARGED.**
+
+From ONE pending offer, in ONE position, the responder's two answers hand the round to DIFFERENT
+players:
+
+  * take the `5`-charm favor → P2 reaches `3 + 3 + 5 = 11` charm and **P2 wins outright**;
+  * take a `2`-charm favor instead → P2 has `8`, P1 has `2 + 5 + 2 = 9`, and **P1 wins**.
+
+The shipped game had no step at which anyone could make this choice: `advance` took no card
+argument, the split was pre-folded into the actor's own action, and the "opponent's genuine
+choice" was a `max_by_key`. This theorem is the machine-checked statement that a player now
+decides the outcome. -/
+theorem respond_decides_the_round :
+    roundWinner (applyResponse cutState .p2 (.gift 0)) = some .p2
+      ∧ roundWinner (applyResponse cutState .p2 (.gift 1)) = some .p1 := by
+  constructor
+  · have hc1 : controlledBy (applyResponse cutState .p2 (.gift 0)) .p1 = {0, 1, 2} := by decide
+    have hc2 : controlledBy (applyResponse cutState .p2 (.gift 0)) .p2 = {3, 4, 6} := by decide
+    have e1 : charmScore (applyResponse cutState .p2 (.gift 0)) .p1 = 6 := by
+      simp only [charmScore, hc1]; decide
+    have e2 : charmScore (applyResponse cutState .p2 (.gift 0)) .p2 = 11 := by
+      simp only [charmScore, hc2]; decide
+    rw [roundWinner]
+    simp only [charmWinThreshold, guildWinThreshold, e1, e2]
+    decide
+  · have hc1 : controlledBy (applyResponse cutState .p2 (.gift 1)) .p1 = {1, 2, 6} := by decide
+    have hc2 : controlledBy (applyResponse cutState .p2 (.gift 1)) .p2 = {0, 3, 4} := by decide
+    have e1 : charmScore (applyResponse cutState .p2 (.gift 1)) .p1 = 9 := by
+      simp only [charmScore, hc1]; decide
+    have e2 : charmScore (applyResponse cutState .p2 (.gift 1)) .p2 = 8 := by
+      simp only [charmScore, hc2]; decide
+    have g1 : geishaScore (applyResponse cutState .p2 (.gift 1)) .p1 = 3 := by
+      simp only [geishaScore, hc1]; decide
+    have g2 : geishaScore (applyResponse cutState .p2 (.gift 1)) .p2 = 3 := by
+      simp only [geishaScore, hc2]; decide
+    rw [roundWinner]
+    simp only [charmWinThreshold, guildWinThreshold, e1, e2, g1, g2]
+    decide
+
+/-- The two answers really do land in different states (the sharper, control-free form). -/
+theorem respond_changes_the_board :
+    (applyResponse cutState .p2 (.gift 0)).placed .p2
+      ≠ (applyResponse cutState .p2 (.gift 1)).placed .p2 := by decide
+
+/-- And the proposer cannot help themselves to the good half: P1 answering P1's own cut is
+REFUSED, so `respond_decides_the_round`'s choice genuinely belongs to the other seat. -/
+theorem cutState_self_deal_refused (k : Fin 3) : legalRespB cutState .p1 (.gift k) = false :=
+  respond_not_by_proposer cutState .p1 (.gift k) (.gift .p1 6 0 2) rfl rfl
+
 /-! ## 8. The `Boundary` tie-in — conservation as a `Good`-invariant along whole executions -/
 
 open Dregg2.Boundary
 
-/-- The game as a `TurnCoalg`: the input alphabet is `Player × Action`; the successor is
-`applyAction`. -/
-def gameCoalg : TurnCoalg Unit (Player × Action) where
+/-- The game as a `TurnCoalg`: the input alphabet is `Player × Move`. -/
+def gameCoalg : TurnCoalg Unit (Player × Move) where
   Carrier := GState
-  step := fun s => ((), fun pa => applyAction s pa.1 pa.2)
+  step := fun s => ((), fun pm => applyMove s pm.1 pm.2)
 
-/-- **`conservation_along_run` (INVARIANT 1, lifted to all time).** Conservation is not just a
-one-step fact: instantiating the `Boundary` keystone `stepComplete_preserves` with the
-conservation `StepInv`, the total card multiset is preserved at EVERY configuration reachable
-along a whole execution `Run`. The game-level use of the coinductive safety keystone. -/
+/-- **`conservation_along_run` (INVARIANT 1, lifted to all time).** Conservation holds at EVERY
+configuration reachable along a whole execution `Run` — now over the alphabet that INCLUDES the
+response step. -/
 theorem conservation_along_run {x y : GState} (C : Multiset Geisha)
     (hrun : Execution.Run (inducedSystem gameCoalg) x y)
     (hx : totalCards x = C) : totalCards y = C := by
@@ -688,37 +1056,25 @@ theorem conservation_along_run {x y : GState} (C : Multiset Geisha)
     (fun s => totalCards s = C) ?_ ?_ hrun hx
   · intro x t
     refine ⟨?_, trivial, trivial, trivial⟩
-    obtain ⟨p, a⟩ := t
-    exact conservation x p a
+    obtain ⟨p, m⟩ := t
+    exact conservation_move x p m
   · intro x t hgood hinv
     exact hinv.1.trans hgood
 
-/-! ## 9. THE AIR-REFINEMENT OBLIGATION (Lane-D-gated — the AIR side lands later)
+/-! ## 9. THE AIR-REFINEMENT OBLIGATION (the AIR side lands in `MultiwayTugAir.lean`) -/
 
-The verified circuit for the game mechanics will emit a transition AIR. The CONTRACT it must
-satisfy — the game-level analogue of `Exec.Program`'s `evalSimpleCtx_*_iff` admit-characterizations
-— is that the AIR admits `(old, p, action, new)` EXACTLY when `new = applyAction old p action`.
-Here `air` is HYPOTHESIZED (`AirSpec`); the Lean model above IS the specification the AIR is
-emitted against. Discharging `AirSpec` for the real emitted AIR is the deferred (Lane-D) work. -/
-
-/-- **`AirSpec air`** — the contract the verified circuit's transition AIR must meet: it admits a
-`(old, player, action, new)` tuple iff `new` is the model successor. -/
+/-- **`AirSpec air`** — the contract the verified circuit's transition AIR must meet. -/
 def AirSpec (air : GState → Player → Action → GState → Prop) : Prop :=
   ∀ o p a n, air o p a n ↔ n = applyAction o p a
 
-/-- **`multiwayTug_air_refines_applyAction` (THE OBLIGATION, stated).** Given an AIR satisfying
-`AirSpec`, its admission relation IS the graph of `applyAction`. This is the game-level refinement
-the verified circuit discharges; the AIR side (`air` + a proof of `AirSpec air` for the emitted
-constraint system) is the Lane-D deliverable. -/
+/-- **`multiwayTug_air_refines_applyAction` (THE OBLIGATION, stated).** -/
 theorem multiwayTug_air_refines_applyAction
     (air : GState → Player → Action → GState → Prop) (h : AirSpec air)
     (o : GState) (p : Player) (a : Action) (n : GState) :
     air o p a n ↔ n = applyAction o p a :=
   h o p a n
 
-/-- **`air_functional` (a consequence of the contract).** Any AIR meeting `AirSpec` is
-functional: it admits at most one successor for a given `(old, player, action)` — the emitted
-circuit inherits `applyAction`'s determinism. -/
+/-- **`air_functional` (a consequence of the contract).** -/
 theorem air_functional
     (air : GState → Player → Action → GState → Prop) (h : AirSpec air)
     {o : GState} {p : Player} {a : Action} {n₁ n₂ : GState}
@@ -727,36 +1083,55 @@ theorem air_functional
 
 /-! ## 10. A real play witness (`#guard` smoke — the model runs, cards are conserved) -/
 
-/-- A concrete mid-game state: P1 to move, both hands dealt. -/
+/-- A concrete mid-game state: P1 to move, both hands dealt, nothing on the table. -/
 def demo : GState :=
   { blankState with
     hand := fun p => if p = .p1 then ({3, 3, 5, 6, 6, 0} : Multiset Geisha)
                                  else ({1, 2, 4, 5, 6, 0} : Multiset Geisha)
     current := .p1 }
 
--- P1 plays a legal Gift (keep 3,3; give 5 to the opponent).
-#guard legalB demo .p1 (Action.gift 3 3 5)
--- Conservation holds on the real play: the total card multiset is unchanged.
-#guard totalCards (applyAction demo .p1 (Action.gift 3 3 5)) = totalCards demo
--- After the Gift, P1 controls row 3 (placed two, P2 none).
-#guard control (applyAction demo .p1 (Action.gift 3 3 5)) 3 = some Player.p1
+-- P1 CUTS a legal Gift (presents 3, 3 and 5 — the split is NOT theirs to make).
+#guard legalB demo .p1 (Action.offerGift 3 3 5)
+-- Conservation holds on the cut: the three favors are in escrow, none created or destroyed.
+#guard totalCards (applyAction demo .p1 (Action.offerGift 3 3 5)) = totalCards demo
+-- The offer is now PENDING and the seat has passed to P2.
+#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).pending = some (Offer.gift .p1 3 3 5)
+#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).current = Player.p2
+-- P1 cannot answer their own cut; P2 can.
+#guard legalRespB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p1 (Response.gift 0) = false
+#guard legalRespB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Response.gift 0) = true
+-- While the offer stands, NOTHING else is legal (the interlock).
+#guard legalB (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2 (Action.secret 1) = false
+-- The whole cut-then-choose sequence conserves the deck.
+#guard totalCards (applyResponse (applyAction demo .p1 (Action.offerGift 3 3 5)) .p2
+        (Response.gift 0)) = totalCards demo
 -- The Gift's kind is now marked used (cannot repeat this round).
-#guard (applyAction demo .p1 (Action.gift 3 3 5)).used .p1 ActionKind.giftK
+#guard (applyAction demo .p1 (Action.offerGift 3 3 5)).used .p1 ActionKind.giftK
 -- An illegal action (card not in hand) is a no-op.
 #guard totalCards (applyAction demo .p1 (Action.secret 4)) = totalCards demo
 -- The full deck holds 21 cards (Σ charm).
 #guard (∑ g : Geisha, Multiset.replicate (charm g) g).card = 21
+-- A full round is 12 committed turns: 8 actions + 4 responses (two offers per player).
+#guard (8 + 4 : ℕ) = 12
 
-/-! ## 11. Axiom hygiene — the PROVEN invariants pinned to the standard kernel triple.
+/-! ## 11. Axiom hygiene — the PROVEN invariants pinned to the standard kernel triple. -/
 
-`#assert_axioms` errors if any keystone escapes `{propext, Classical.choice, Quot.sound}`. The
-AIR-refinement obligation is a CARRIED hypothesis (`AirSpec`), not an axiom. -/
-
+#assert_axioms share_split
 #assert_axioms conservation
+#assert_axioms conservation_response
+#assert_axioms conservation_move
+#assert_axioms applyMove_deterministic
 #assert_axioms applyAction_deterministic
+#assert_axioms pending_blocks_actions
+#assert_axioms respond_needs_pending
+#assert_axioms respond_not_by_proposer
+#assert_axioms offer_opens_pending
+#assert_axioms respond_closes_pending
 #assert_axioms used_monotone
 #assert_axioms legal_needs_unused
 #assert_axioms used_after_legal
+#assert_axioms turns_applyLegal
+#assert_axioms turns_applyResponse
 #assert_axioms secret_is_scored
 #assert_axioms geishaCount_mono
 #assert_axioms control_correct
@@ -777,6 +1152,16 @@ AIR-refinement obligation is a CARRIED hypothesis (`AirSpec`), not an axiom. -/
 #assert_axioms undecidedState_adjudicates
 #assert_axioms winState_roundWinner
 #assert_axioms blankState_draws
+-- ⚑ The three decisions.
+#assert_axioms every_action_order_is_feasible
+#assert_axioms allOrders_card
+#assert_axioms orderFeasible_can_fail
+#assert_axioms comp_balanced_cut_dominates
+#assert_axioms gift_modest_cut_dominates
+#assert_axioms cutState_response_legal
+#assert_axioms respond_decides_the_round
+#assert_axioms respond_changes_the_board
+#assert_axioms cutState_self_deal_refused
 #assert_axioms conservation_along_run
 #assert_axioms multiwayTug_air_refines_applyAction
 #assert_axioms air_functional

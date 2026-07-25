@@ -21,8 +21,14 @@
 //!   frozen flag and is refused).
 //! * **monotone scores** — `HeapAtom::Monotonic` on each per-guild placement counter (a
 //!   placed favor cannot be un-placed within the round).
-//! * **strict round sequencing** — `StrictMonotonic` on `round_actions` (each action turn
-//!   advances the counter).
+//! * **strict round sequencing** — `StrictMonotonic` on `round_actions` (each committed turn
+//!   advances the counter; a full round is 8 actions + 4 responses = 12).
+//!
+//! * **the escrow interlock** — the `pending_kind` heap key. `gift`/`comp` bind it
+//!   `Equals{1}/{2} ∧ DeltaEquals{+1}/{+2}`; the two PRIVATE actions and `score` bind it
+//!   `Equals{0} ∧ DeltaEquals{0}`; and only `respond_gift`/`respond_comp` may take it back
+//!   down (`DeltaEquals{-1}/{-2}`). So a seat cannot walk away from a standing offer, and the
+//!   marker cannot be cleared except by answering the offer that raised it.
 //! * **the win** — the `score` method binds `winner == p ⇒ (charm_p >= 11 OR guilds_p >=
 //!   4)` via `AnyOf[Not(FieldEquals(winner,p)), FieldGte(charm_p,11), FieldGte(guilds_p,4)]`,
 //!   plus `WriteOnce(winner)` and `FieldGte(round_actions, 8)` (scoring only after the
@@ -122,7 +128,9 @@ pub fn schema() -> Schema {
         .stat("b_guilds", 0, 7)
         .stat("b_board", 0, 21)
         .stat("current", 0, 1)
-        .stat("round_actions", 0, 8)
+        // The turn stamp counts ACTIONS AND RESPONSES: a full round is 8 actions + 4
+        // responses = 12 (the Lean `#guard (8 + 4 : ℕ) = 12`).
+        .stat("round_actions", 0, 12)
         .stat("scored", 0, 1);
     // Heap: used-flags then per-guild scores (heap keys 16.. in declaration order).
     for p in [Player::A, Player::B] {
@@ -140,8 +148,14 @@ pub fn schema() -> Schema {
             s = s.collection(score_name(g, p));
         }
     }
+    // ⚑ THE OFFER ON THE TABLE (0 none, 1 gift, 2 competition). Declared LAST, after the 8
+    // flag and 14 score collections, so every existing heap key assignment stays put.
+    s = s.collection(PENDING_KIND);
     s
 }
+
+/// The heap component naming the offer currently on the table.
+pub const PENDING_KIND: &str = "pending_kind";
 
 /// The consumed, Legal-checked layout + the play-teeth program.
 pub struct Deployment {
@@ -178,6 +192,11 @@ impl Deployment {
 
     pub fn score_key(&self, guild: usize, p: Player) -> u64 {
         self.key(&score_name(guild, p))
+    }
+
+    /// The heap key carrying the pending-offer marker (0 none, 1 gift, 2 competition).
+    pub fn pending_kind_key(&self) -> u64 {
+        self.key(PENDING_KIND)
     }
 
     /// The play-teeth program, **LOADED from the Lean source of truth**.

@@ -4,10 +4,22 @@
 //! deployed `EmbeddedExecutor`). A legal play commits; an illegal play is a real
 //! `WorldError::Refused` — and each refusal is paired with a committing legal play so the
 //! bite is non-vacuous.
+//!
+//! ⚑ **THE ROUND IS 12 TURNS NOW.** The engine is I-cut-you-choose: a Gift or a Competition
+//! only PRESENTS favors into escrow, and the OTHER seat's RESPONSE places them. A response is
+//! a real committed turn dispatched under the Lean-emitted `respond_gift` / `respond_comp`
+//! case, which also carries the `pending_kind` `DeltaEquals{-1}` / `DeltaEquals{-2}` teeth —
+//! so the escrow marker cannot be cleared except by answering the offer that opened it.
+//!
+//! The single-action tests below deliberately drive the two PRIVATE actions (Secret /
+//! Discard), which open no offer, so their refusal/commit pair is one turn deep. That is a
+//! legal opening line: Lean `every_action_order_is_feasible` proves all 24 orders are
+//! card-feasible, and this engine has no schedule to obey.
 
 use dregg_multiway_tug::game::MultiwayTug;
 use dregg_multiway_tug::reference::{
-    ActionKind, Engine, INFLUENCE, Player, ResolvedMove, winner_of,
+    ActionKind, Decision, Engine, INFLUENCE, OfferShape, PendingOffer, Player, ResolvedMove,
+    greedy_policy, winner_of,
 };
 use dregg_multiway_tug::state::SCORE;
 
@@ -26,47 +38,34 @@ fn fresh(seed: u8) -> (MultiwayTug, Engine) {
     (game, eng)
 }
 
-/// Play the full round on the executor, asserting the executor reproduces the reference
-/// at every committed turn. Returns the (game, scored-engine, moves).
+/// The first legal decision of `kind` for the seat to move.
+fn first_of(eng: &Engine, kind: ActionKind) -> Decision {
+    eng.legal_decisions()
+        .into_iter()
+        .find(|d| d.kind() == Some(kind))
+        .unwrap_or_else(|| panic!("{kind:?} has no legal decision right now"))
+}
+
+/// Apply `d` on the reference and commit the resulting projection as one real executor turn.
+fn commit(game: &MultiwayTug, eng: &mut Engine, d: Decision) -> ResolvedMove {
+    let p = eng.current_player();
+    let mv = eng.apply(p, d).expect("the decision is legal");
+    let proj = eng.projection();
+    game.commit_projection(mv.method(), &proj)
+        .expect("a legal play commits");
+    assert_eq!(game.read_projection(), proj, "executor matches reference");
+    assert_eq!(game.read_projection().conservation_sum(), 21);
+    mv
+}
+
+/// Play a whole round under the greedy example agent, committing all 12 turns (8 actions +
+/// 4 responses) on the executor, then score.
 fn drive_full_round(seed: u8) -> (MultiwayTug, Engine, Vec<ResolvedMove>) {
     let (game, mut eng) = fresh(seed);
     let mut moves = Vec::new();
     while !eng.round_complete() {
-        let mv = eng.play_next();
-        let proj = eng.projection();
-        game.commit_projection(mv.action().method(), &proj)
-            .expect("legal play commits");
-        // The executor reproduces the reference exactly.
-        assert_eq!(game.read_projection(), proj, "executor matches reference");
-        // Conservation holds on every committed post-state.
-        assert_eq!(game.read_projection().conservation_sum(), 21);
-        // Gap #2 witnessed on-cell: the opponent (not the actor) kept the strongest
-        // favor(s) presented — an adversarial pick, not a pre-folded split.
-        match &mv {
-            ResolvedMove::Gift {
-                self_guilds,
-                opp_guild,
-                ..
-            } => {
-                let strongest = [self_guilds[0], self_guilds[1], *opp_guild]
-                    .into_iter()
-                    .max_by_key(|&g| (INFLUENCE[g as usize], std::cmp::Reverse(g)))
-                    .unwrap();
-                assert_eq!(*opp_guild, strongest, "opponent kept the strongest of 3");
-            }
-            ResolvedMove::Competition {
-                self_guilds,
-                opp_guilds,
-                ..
-            } => {
-                let opp_w = INFLUENCE[opp_guilds[0] as usize] + INFLUENCE[opp_guilds[1] as usize];
-                let self_w =
-                    INFLUENCE[self_guilds[0] as usize] + INFLUENCE[self_guilds[1] as usize];
-                assert!(opp_w >= self_w, "opponent kept the heavier pair");
-            }
-            _ => {}
-        }
-        moves.push(mv);
+        let d = greedy_policy(&eng);
+        moves.push(commit(&game, &mut eng, d));
     }
     let _ = eng.score();
     let scored = eng.projection();
@@ -86,10 +85,21 @@ fn drive_full_round(seed: u8) -> (MultiwayTug, Engine, Vec<ResolvedMove>) {
 
 #[test]
 fn full_round_plays_and_matches_reference() {
-    // Each of the four actions for each player is a real committed turn (8 action turns
-    // + genesis + score), and the executor reproduces the reference throughout.
     let (game, eng, moves) = drive_full_round(7);
-    assert_eq!(moves.len(), 8, "two players * four actions");
+    assert_eq!(moves.len(), 12, "8 action turns + 4 responses");
+    assert_eq!(
+        moves.iter().filter(|m| m.action_kind().is_some()).count(),
+        8,
+        "two players * four actions"
+    );
+    assert_eq!(
+        moves
+            .iter()
+            .filter(|m| matches!(m, ResolvedMove::Respond { .. }))
+            .count(),
+        4,
+        "each player answers the opponent's two offers"
+    );
     // Every action was used exactly once per player (the used-flags carry the stamp).
     for p in [Player::A, Player::B] {
         for a in [
@@ -104,12 +114,9 @@ fn full_round_plays_and_matches_reference() {
             );
         }
     }
-    // The Secret was scored (gap #1): the round placed 10 favors per player onto guilds +
-    // out of play + secret-reveal; the scored winner is the reference winner.
     let proj = eng.projection();
     assert_eq!(proj.scored, 1);
     assert_eq!(game.read_reg("scored"), 1);
-    // Scores are monotone and the win registers agree with the reference scoring fn.
     let expected = winner_of(proj.charm, proj.guilds_controlled)
         .map(|p| p as u64 + 1)
         .unwrap_or(0);
@@ -128,8 +135,6 @@ fn full_round_plays_and_matches_reference() {
 #[test]
 fn genesis_restaple_is_refused_one_shot() {
     let (game, eng) = fresh(9);
-    // The first genesis already committed inside `fresh`. A post-deploy genesis re-staple —
-    // the universal write-hatch — is now refused at the executor.
     let restage = eng.projection();
     let err = game
         .seed(&restage)
@@ -146,11 +151,8 @@ fn genesis_restaple_is_refused_one_shot() {
         "the refused re-staple left the board untouched"
     );
     let mut eng2 = eng;
-    let mv = eng2.play_next();
-    let proj = eng2.projection();
-    game.commit_projection(mv.action().method(), &proj)
-        .expect("a legal play still commits after the refused re-staple");
-    assert_eq!(game.read_projection(), proj);
+    let d = first_of(&eng2, ActionKind::Secret);
+    commit(&game, &mut eng2, d);
 }
 
 #[test]
@@ -171,23 +173,19 @@ fn conservation_break_is_refused_non_vacuously() {
         "refusal cites the conservation sum: {err}"
     );
     // The parallel LEGAL play commits (non-vacuous).
-    let mv = eng.play_next();
-    let proj = eng.projection();
-    game.commit_projection(mv.action().method(), &proj)
-        .expect("the legal play commits");
-    assert_eq!(game.read_projection(), proj);
+    let d = first_of(&eng, ActionKind::Secret);
+    commit(&game, &mut eng, d);
 }
 
 #[test]
 fn reused_action_is_refused_via_write_once() {
     let (game, mut eng) = fresh(5);
-    // A plays one legal action (its first scheduled action).
-    let mv = eng.play_next();
-    let used = mv.action();
+    // A plays one legal PRIVATE action (Secret opens no offer, so play can continue without
+    // a response turn).
+    let d = first_of(&eng, ActionKind::Secret);
+    let mv = commit(&game, &mut eng, d);
     let player = mv.player();
-    let proj = eng.projection();
-    game.commit_projection(used.method(), &proj)
-        .expect("first use commits");
+    let used = mv.action();
     let stamp = game.read_heap_key(game.dep().flag_key(player, used));
     assert!(stamp > 0, "flag stamped on first use");
 
@@ -205,24 +203,20 @@ fn reused_action_is_refused_via_write_once() {
             || format!("{err}").to_lowercase().contains("refus"),
         "refusal cites write-once: {err}"
     );
-    // A DIFFERENT legal action for the next player still commits (non-vacuous).
-    let mv2 = eng.play_next();
-    let proj2 = eng.projection();
-    game.commit_projection(mv2.action().method(), &proj2)
-        .expect("a fresh legal action commits");
-    assert_eq!(game.read_projection(), proj2);
+    // The OTHER seat's Secret still commits (non-vacuous — a different heap flag).
+    assert_eq!(eng.current_player(), player.other());
+    let d2 = first_of(&eng, ActionKind::Secret);
+    commit(&game, &mut eng, d2);
 }
 
 #[test]
 fn un_placing_a_favor_is_refused_via_monotonic() {
     let (game, mut eng) = fresh(9);
-    // Play until a favor has been placed on a guild.
     let mut placed_guild = None;
     while placed_guild.is_none() {
-        let mv = eng.play_next();
+        let d = greedy_policy(&eng);
+        commit(&game, &mut eng, d);
         let proj = eng.projection();
-        game.commit_projection(mv.action().method(), &proj)
-            .expect("commit");
         for g in 0..7 {
             if proj.score[g][0] > 0 {
                 placed_guild = Some(g);
@@ -233,11 +227,18 @@ fn un_placing_a_favor_is_refused_via_monotonic() {
     let g = placed_guild.unwrap();
     // Craft a turn that UN-PLACES A's favor at guild g (score decreases) while leaving the
     // conservation counters untouched (so only Monotonic fails).
+    // (`secret` is the carrier method: its `pending_kind` teeth are `Equals{0} ∧
+    // DeltaEquals{0}`, satisfied on a cleared table, so MONOTONIC is the only tooth left to
+    // bite.)
     let mut bad = game.read_projection();
+    assert_eq!(
+        bad.pending_kind, 0,
+        "a placement means the table was answered"
+    );
     bad.score[g][0] -= 1;
     bad.round_actions += 1;
     let err = game
-        .commit_projection(ActionKind::Gift.method(), &bad)
+        .commit_projection(ActionKind::Secret.method(), &bad)
         .expect_err("un-placing a favor is refused");
     assert!(
         format!("{err}").to_lowercase().contains("monotonic")
@@ -245,11 +246,8 @@ fn un_placing_a_favor_is_refused_via_monotonic() {
         "refusal cites monotonic: {err}"
     );
     // A legal play still commits.
-    let mv = eng.play_next();
-    let proj = eng.projection();
-    game.commit_projection(mv.action().method(), &proj)
-        .expect("legal commits");
-    assert_eq!(game.read_projection(), proj);
+    let d = greedy_policy(&eng);
+    commit(&game, &mut eng, d);
 }
 
 #[test]
@@ -268,21 +266,78 @@ fn forged_method_is_refused_by_default_deny() {
     );
     // Nothing committed; a legal play still works.
     assert_eq!(game.read_projection(), proj0);
-    let mv = eng.play_next();
+    let d = first_of(&eng, ActionKind::Secret);
+    commit(&game, &mut eng, d);
+}
+
+/// ⚑ **THE ESCROW MARKER IS DEPLOYED TEETH, NOT BOOKKEEPING.** A `gift` commits
+/// `pending_kind` `0 → 1` (`Equals{1} ∧ DeltaEquals{1}`), and only a `respond_gift` may take
+/// it back down (`DeltaEquals{-1}`). So: the cut commits; a `secret` that tries to walk away
+/// from the table is REFUSED (it carries `Equals{0} ∧ DeltaEquals{0}`, jointly unsatisfiable
+/// against a standing offer); and the honest `respond_gift` commits, placing the escrow.
+#[test]
+fn a_standing_offer_must_be_answered_before_play_continues() {
+    let (game, mut eng) = fresh(13);
+    // The cut commits: three favors leave the hand into escrow.
+    let gift = first_of(&eng, ActionKind::Gift);
+    let mv = commit(&game, &mut eng, gift);
+    assert_eq!(mv.method(), "gift");
+    assert_eq!(eng.projection().pending_kind, 1, "a gift is on the table");
+    assert_eq!(
+        game.read_heap_key(game.dep().pending_kind_key()),
+        1,
+        "the executor committed the escrow marker"
+    );
+
+    // DUCKING THE TABLE IS REFUSED. Forge the post-state of the responder taking their own
+    // Secret instead of answering: counts conserve and the flag is fresh, but `secret`'s
+    // pending_kind teeth demand the marker be 0 and unchanged, and it is 1.
+    let responder = eng.current_player();
+    let mut duck = game.read_projection();
+    duck.round_actions += 1;
+    duck.flag[responder.idx()][ActionKind::Secret.idx()] = duck.round_actions;
+    duck.hand[responder.idx()] -= 1;
+    duck.secret_count[responder.idx()] = 1;
+    assert_eq!(duck.conservation_sum(), 21, "the forgery conserves");
+    let err = game
+        .commit_projection("secret", &duck)
+        .expect_err("no action may be taken while an offer stands");
+    assert!(
+        format!("{err}").to_lowercase().contains("refus")
+            || format!("{err}").to_lowercase().contains("heap"),
+        "the refusal cites the escrow marker: {err}"
+    );
+
+    // THE ANSWER COMMITS (non-vacuous), and clears the marker.
+    let resp = commit(&game, &mut eng, Decision::Respond { pick: 0 });
+    assert_eq!(resp.method(), "respond_gift");
+    assert!(
+        matches!(&resp, ResolvedMove::Respond { taker_cards, cutter_cards, .. }
+                 if taker_cards.len() == 1 && cutter_cards.len() == 2),
+        "the responder takes one favor and leaves two: {resp:?}"
+    );
+    assert_eq!(
+        resp.played_cards(),
+        Vec::<u8>::new(),
+        "a response spends no card"
+    );
+    assert_eq!(
+        game.read_heap_key(game.dep().pending_kind_key()),
+        0,
+        "the answered offer clears the marker"
+    );
+    // The escrow really landed on the two boards.
     let proj = eng.projection();
-    game.commit_projection(mv.action().method(), &proj)
-        .expect("legal commits");
+    assert_eq!(proj.board[0] + proj.board[1], 3, "all three favors placed");
+    assert_eq!(proj.conservation_sum(), 21);
 }
 
 #[test]
 fn win_fires_at_threshold_and_matches_reference() {
-    // Find a seed the reference resolves to a real winner (>= 11 influence OR >= 4 guilds).
+    // Find a seed the greedy agent resolves to a real winner (>= 11 influence OR >= 4 guilds).
     let seed = (0u8..=255)
         .find(|&s| {
-            let mut e = Engine::new(s as u64);
-            while !e.round_complete() {
-                e.play_next();
-            }
+            let (mut e, _) = dregg_multiway_tug::reference::play_round(s as u64);
             e.score().is_some()
         })
         .expect("some seed yields a winner");
@@ -306,10 +361,7 @@ fn false_win_claim_is_refused() {
     // Find a seed + a player who meets NEITHER win threshold, and forge them as winner.
     let mut chosen: Option<(u8, u64)> = None;
     for s in 0u8..=255 {
-        let mut e = Engine::new(s as u64);
-        while !e.round_complete() {
-            e.play_next();
-        }
+        let (mut e, _) = dregg_multiway_tug::reference::play_round(s as u64);
         let _ = e.score();
         let p = e.projection();
         for who in 0..2usize {
@@ -327,10 +379,8 @@ fn false_win_claim_is_refused() {
     // Drive the round to completion WITHOUT the score turn.
     let (game, mut eng) = fresh(seed);
     while !eng.round_complete() {
-        let mv = eng.play_next();
-        let proj = eng.projection();
-        game.commit_projection(mv.action().method(), &proj)
-            .expect("commit");
+        let d = greedy_policy(&eng);
+        commit(&game, &mut eng, d);
     }
     let honest = {
         let _ = eng.score();
@@ -352,29 +402,42 @@ fn false_win_claim_is_refused() {
     assert_eq!(game.read_reg("winner"), honest.winner);
 }
 
+/// The SPLIT is the other seat's, not the cutter's: over ONE pending offer the two answers
+/// place different favors on the responder's side, and the cutter cannot answer at all. This
+/// is the rule-level content the deleted `opponent_gift_pick` / `opponent_comp_pick`
+/// `max_by_key`s only pretended to have — they were the ACTOR computing the opponent's move.
 #[test]
-fn opponent_pick_is_a_real_choice_not_pre_folded() {
-    // Gap #2 at the reference level: the placement depends on the OPPONENT's decision, not
-    // an actor pre-fold. Same three presented favors, the opponent keeps the strongest —
-    // a different (weaker) pick would place differently.
-    use dregg_multiway_tug::reference::{opponent_comp_pick, opponent_gift_pick};
-    let present = [6u8, 5, 0]; // influence 5, 4, 2
-    let opp = opponent_gift_pick(&present);
-    assert_eq!(opp, 6, "opponent keeps the strongest presented favor");
-    let weak = *present
-        .iter()
-        .min_by_key(|&&g| INFLUENCE[g as usize])
-        .unwrap();
+fn the_split_belongs_to_the_other_seat() {
+    // A cut of the three strongest favors: the responder's two answers are not equivalent.
+    let offer = PendingOffer {
+        proposer: Player::A,
+        shape: OfferShape::Gift([20, 16, 0]), // guilds 6, 5, 0 -> influence 5, 4, 2
+    };
+    let weight = |cards: &[u8]| -> u8 {
+        cards
+            .iter()
+            .map(|&c| INFLUENCE[dregg_multiway_tug::reference::deck_guild(u64::from(c)) as usize])
+            .sum()
+    };
+    let (t0, c0) = offer.split(0).unwrap();
+    let (t2, c2) = offer.split(2).unwrap();
+    assert_eq!(weight(&t0), 5, "taking side 0 takes the 5-influence favor");
+    assert_eq!(weight(&t2), 2, "taking side 2 takes a 2-influence favor");
     assert_ne!(
-        opp, weak,
-        "the choice is not fixed to the actor's preference"
+        (weight(&t0), weight(&c0)),
+        (weight(&t2), weight(&c2)),
+        "the responder's choice changes who gets what"
     );
 
-    let pair0 = [6u8, 6]; // 10
-    let pair1 = [0u8, 1]; // 4
-    assert_eq!(
-        opponent_comp_pick(pair0, pair1),
-        pair0,
-        "opponent keeps heavier pair"
+    // And on the live engine the cutter is refused while the other seat lands.
+    let mut eng = Engine::new(21);
+    let gift = first_of(&eng, ActionKind::Gift);
+    let cutter = eng.current_player();
+    eng.apply(cutter, gift).expect("the cut is legal");
+    assert!(
+        eng.apply(cutter, Decision::Respond { pick: 0 }).is_err(),
+        "the cutter may never answer their own cut"
     );
+    eng.apply(cutter.other(), Decision::Respond { pick: 0 })
+        .expect("the OTHER seat answers");
 }

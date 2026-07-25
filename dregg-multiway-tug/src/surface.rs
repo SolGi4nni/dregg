@@ -16,12 +16,27 @@
 //! the opponent stays fog. So player A's card ids appear in A's view and NOT in B's view of
 //! the same table — the hidden-hand fog, in the UI.
 //!
-//! The guild-lane table + coordinate-grid hand + action menu are the deos affordance surface.
-//! On advance, every exact 4/3/2/1-card consumption carries its private inventory membership
-//! witness into the executor. The Lean-authored rules action and the witnessed hidden action share
-//! one atomic turn, so either both cells land or neither does. HONEST RESIDUAL: duplicate-card
-//! consumption is an exact host ratchet checked again by fresh-seed replay; a protocol-native
-//! dynamic-root/nullifier tooth is not yet installed.
+//! The guild-lane table + coordinate-grid hand + affordance menu are the deos affordance
+//! surface. On advance, every exact 4/3/2/1-card consumption carries its private inventory
+//! membership witness into the executor. The Lean-authored rules action and the witnessed
+//! hidden action share one atomic turn, so either both cells land or neither does.
+//!
+//! ## ⚑ THE SEAT DECIDES — the `{turn, arg}` encoding
+//!
+//! There is no schedule to fire: [`TugSession::legal_decisions`] is the seat's full choice
+//! space (which action-kind, which favors, which PAIRING, and — answering — which side), and
+//! an [`Offering::advance`] input names one of them by INDEX (`arg`) plus that decision's
+//! dispatch method (`turn`). [`Offering::actions`] presents a manageable slice of it: while an
+//! offer stands, the response sides and nothing else; otherwise one row per unused
+//! action-kind aimed at one concrete cut. A frontend that wants to choose the cut reads
+//! `legal_decisions()` and posts that index.
+//!
+//! A RESPONSE carries no membership witness (its cards left the hand when the offer was cut),
+//! so it is the rules projection alone, dispatched under the Lean-emitted `respond_gift` /
+//! `respond_comp` case.
+//!
+//! HONEST RESIDUAL: duplicate-card consumption is an exact host ratchet checked again by
+//! fresh-seed replay, not a protocol-native dynamic-root/nullifier tooth.
 
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{
@@ -30,7 +45,10 @@ use dreggnet_offerings::{
 };
 
 use crate::hidden_hand::{HandTree, HiddenHandLedger, deck_guild};
-use crate::reference::{ActionKind, Engine, INFLUENCE, N_GUILDS, Player, Projection};
+use crate::reference::{
+    ActionKind, Decision, Engine, INFLUENCE, N_GUILDS, PendingOffer, Player, Projection,
+    ROUND_TURNS, decision_method,
+};
 
 /// The default round seed when a [`SessionConfig`] pins none.
 const DEFAULT_SEED: u64 = 0xD2E9;
@@ -108,23 +126,33 @@ pub struct TugPrivateMatchRecord {
     pub plays: Vec<u64>,
 }
 
+/// An accepted player input, recorded in FULL so [`Offering::verify`]'s fresh-seat replay is
+/// faithful: the seat plus the exact [`Decision`] it made (which cards, which cut, which pick),
+/// not merely which action-kind it spent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LandedInput {
-    Play { seat: Player, action: ActionKind },
+    Play { seat: Player, decision: Decision },
     Score { seat: Player },
 }
 
 impl TugSession {
-    /// The seat to move next (whose turn it is).
+    /// The seat to move next — to ACT, or (while an offer stands) to ANSWER.
     pub fn to_move(&self) -> Player {
         self.engine.current_player()
     }
 
-    /// The action the seat-to-move would play next (their scheduled once-per-round action), or
-    /// `None` if the round is complete. A frontend fires exactly this method through
-    /// [`Offering::advance`]; anything else is refused as out-of-order.
-    pub fn scheduled_action(&self) -> Option<ActionKind> {
-        self.engine.peek_next_action()
+    /// **Every legal decision for the seat to move.** THE `arg` ENCODING: an
+    /// [`Offering::advance`] input names its decision by INDEX into exactly this vector,
+    /// with `turn` set to that decision's dispatch method
+    /// ([`crate::reference::decision_method`]). The vector is a deterministic function of the
+    /// committed state, so the same index means the same decision on a fresh replay.
+    pub fn legal_decisions(&self) -> Vec<Decision> {
+        self.engine.legal_decisions()
+    }
+
+    /// The offer on the table, if any — who cut, and what they presented.
+    pub fn pending_offer(&self) -> Option<PendingOffer> {
+        self.engine.pending_offer()
     }
 
     /// Whether the round has ended.
@@ -200,25 +228,91 @@ impl TugSession {
         ViewNode::Table(rows)
     }
 
-    /// The action MENU for `seat` — the four once-per-round actions, each a `{turn=method, arg}`
-    /// row GREYED (`enabled=false`) once its used-flag is set. A [`ViewNode::Menu`] so the cap
-    /// tooth is SHOWN dimmed, never hidden (the executor is still the referee on `advance`).
-    fn action_menu(&self, seat: Player) -> ViewNode {
-        let items = [
+    /// **The affordance rows for `seat`** — the real choices, in the `{turn, arg}` wire shape.
+    ///
+    /// * While an OFFER stands, the only affordances are the RESPONSES, one per side, each
+    ///   labelled with the favors that side contains. They are live only for the seat that
+    ///   did NOT cut (the anti-self-deal tooth, shown dimmed rather than hidden).
+    /// * Otherwise there is one row per once-per-round action-kind, dimmed by its used-flag.
+    ///   A kind row is aimed at the FIRST legal decision of that kind — one concrete cut. A
+    ///   frontend that wants to choose the cut itself reads [`TugSession::legal_decisions`]
+    ///   and posts that index directly; `advance` accepts any index in range.
+    ///
+    /// Every row is dimmed when it is not `seat`'s turn. Dimming is decoration: the executor
+    /// is still the referee on [`Offering::advance`].
+    fn affordances(&self, seat: Player) -> Vec<Action> {
+        if self.ended() {
+            return Vec::new();
+        }
+        if self.engine.round_complete() {
+            return vec![Action::new("Reveal secrets & score", "score", 4, true)];
+        }
+        let to_move = self.engine.current_player() == seat;
+        if let Some(offer) = self.engine.pending_offer() {
+            let live = to_move && offer.responder() == seat;
+            return (0..offer.picks())
+                .map(|pick| {
+                    let decision = Decision::Respond { pick };
+                    let arg = if live {
+                        self.engine
+                            .legal_decisions()
+                            .iter()
+                            .position(|d| *d == decision)
+                            .map(|i| i as i64)
+                            .unwrap_or(-1)
+                    } else {
+                        -1
+                    };
+                    Action::new(
+                        respond_label(&offer, pick),
+                        offer.respond_method(),
+                        arg,
+                        live && arg >= 0,
+                    )
+                })
+                .collect();
+        }
+        let decisions = self.engine.legal_decisions();
+        [
             ActionKind::Secret,
             ActionKind::Discard,
             ActionKind::Gift,
             ActionKind::Competition,
         ]
         .into_iter()
-        .map(|a| MenuItem {
-            label: format!("{a:?}"),
-            turn: a.method().to_string(),
-            arg: a.idx() as i64,
-            // Greyed by the used-flag (the once-per-round tooth, shown).
-            enabled: !self.engine.used_flag(seat, a),
+        .map(|kind| {
+            let spent = self.engine.used_flag(seat, kind);
+            let aimed = if to_move && !spent {
+                decisions.iter().position(|d| d.kind() == Some(kind))
+            } else {
+                None
+            };
+            let label = match aimed {
+                Some(i) => format!("{kind:?} · {}", cut_label(&decisions[i])),
+                None => format!("{kind:?}"),
+            };
+            Action::new(
+                label,
+                kind.method(),
+                aimed.map(|i| i as i64).unwrap_or(-1),
+                aimed.is_some(),
+            )
         })
-        .collect();
+        .collect()
+    }
+
+    /// The affordance rows as a deos [`ViewNode::Menu`].
+    fn action_menu(&self, seat: Player) -> ViewNode {
+        let items = self
+            .affordances(seat)
+            .into_iter()
+            .map(|a| MenuItem {
+                label: a.label,
+                turn: a.turn,
+                arg: a.arg,
+                enabled: a.enabled,
+            })
+            .collect();
         ViewNode::Menu { items }
     }
 
@@ -300,7 +394,10 @@ impl TugSession {
             (_, _) if self.engine.round_complete() => {
                 "All favors placed · awaiting reveal and score".to_string()
             }
-            _ => format!("action {}/8 · to move: {to_move}", proj.round_actions),
+            _ => format!(
+                "turn {}/{ROUND_TURNS} · to move: {to_move}",
+                proj.round_actions
+            ),
         };
         let mut kids = vec![
             ViewNode::Text(format!("Multiway-Tug — {status}")),
@@ -308,29 +405,42 @@ impl TugSession {
                 "Influence A:{} / B:{} · guilds A:{} / B:{}",
                 proj.charm[0], proj.charm[1], proj.guilds_controlled[0], proj.guilds_controlled[1]
             )),
-            ViewNode::Section {
-                title: "Guilds".to_string(),
-                tag: String::new(),
-                children: vec![self.guild_lanes(&proj)],
-            },
         ];
+        // The cut on the table is PUBLIC — the presented favors are face-up, and everyone can
+        // see which seat must now choose.
+        if let Some(offer) = self.engine.pending_offer() {
+            kids.push(ViewNode::Text(format!(
+                "ON THE TABLE — seat {:?} cut a {:?}: {} · seat {:?} chooses",
+                offer.proposer,
+                offer.kind(),
+                cut_label_for_offer(&offer),
+                offer.responder(),
+            )));
+        }
+        kids.push(ViewNode::Section {
+            title: "Guilds".to_string(),
+            tag: String::new(),
+            children: vec![self.guild_lanes(&proj)],
+        });
 
         match viewer {
             Some(seat) => {
                 // The viewer's own hand revealed; the opponent stays fog.
                 kids.push(self.own_hand(seat));
                 kids.push(self.hand_fog(seat.other(), "Opponent (hidden hand)"));
-                // The viewer's action menu (greyed by used-flags).
-                if !self.engine.round_complete() {
-                    kids.push(self.action_menu(seat));
-                } else if proj.scored == 0 {
+                // The viewer's affordances (dimmed off-turn and by the used-flags).
+                let rows = self.affordances(seat);
+                if !rows.is_empty() {
                     kids.push(ViewNode::Menu {
-                        items: vec![MenuItem {
-                            label: "Reveal secrets & score".to_string(),
-                            turn: "score".to_string(),
-                            arg: 4,
-                            enabled: true,
-                        }],
+                        items: rows
+                            .into_iter()
+                            .map(|a| MenuItem {
+                                label: a.label,
+                                turn: a.turn,
+                                arg: a.arg,
+                                enabled: a.enabled,
+                            })
+                            .collect(),
                     });
                 }
             }
@@ -355,20 +465,64 @@ impl TugSession {
             return self.surface_for(None);
         };
         if !self.ended() {
-            if self.engine.round_complete() {
-                kids.push(ViewNode::Menu {
-                    items: vec![MenuItem {
-                        label: "Reveal secrets & score".to_string(),
-                        turn: "score".to_string(),
-                        arg: 4,
-                        enabled: true,
-                    }],
-                });
-            } else {
-                kids.push(self.action_menu(claimant));
-            }
+            kids.push(self.action_menu(claimant));
         }
         Surface(ViewNode::VStack(kids))
+    }
+}
+
+/// A compact rendering of a set of favors: `#id(wN)` each.
+fn favor_list(cards: &[u8]) -> String {
+    cards
+        .iter()
+        .map(|&c| {
+            let g = deck_guild(u64::from(c));
+            let w = if (g as usize) < N_GUILDS {
+                INFLUENCE[g as usize]
+            } else {
+                0
+            };
+            format!("#{c}(w{w})")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// What a decision PRESENTS or SPENDS, for an affordance label.
+fn cut_label(d: &Decision) -> String {
+    match d {
+        Decision::Competition { pairs } => format!(
+            "{} | {}",
+            favor_list(&pairs[0][..]),
+            favor_list(&pairs[1][..])
+        ),
+        Decision::Respond { pick } => format!("take side {pick}"),
+        other => favor_list(&other.cards()),
+    }
+}
+
+/// What is on the table, for the public status line.
+fn cut_label_for_offer(offer: &PendingOffer) -> String {
+    match offer.shape {
+        crate::reference::OfferShape::Gift(present) => favor_list(&present[..]),
+        crate::reference::OfferShape::Competition(pairs) => format!(
+            "{} | {}",
+            favor_list(&pairs[0][..]),
+            favor_list(&pairs[1][..])
+        ),
+    }
+}
+
+/// A response affordance's label — what the responder TAKES and what that leaves the cutter.
+fn respond_label(offer: &PendingOffer, pick: u8) -> String {
+    match offer.split(pick) {
+        Some((taker, cutter)) => format!(
+            "Take {} · leaves {} to seat {:?}",
+            favor_list(&taker),
+            favor_list(&cutter),
+            offer.proposer
+        ),
+        None => format!("(no side {pick})"),
     }
 }
 
@@ -399,17 +553,20 @@ fn commit_engine_hands(engine: &Engine, seed: u64) -> [HandTree; 2] {
         .map(|seat| HandTree::commit(openings_for(seed, engine.hand(seat).iter().copied())))
 }
 
-/// Precompute each seat's private full-round inventory for the whole-match fold. The deterministic
-/// engine assigns every distinct card exactly once; this record contains all ten cards each seat
-/// consumes, while the live `hands` roots expose only current-hand commitments.
+/// Each seat's private full-round inventory for the whole-match fold: the ten distinct cards
+/// that seat is entrusted with — its opening six plus its four draws.
+///
+/// This comes straight off the DEAL ([`Engine::round_inventory`]), not off a scripted
+/// playthrough. It has to: with the seats now DECIDING, there is no canonical round to script,
+/// and the old "play a round and collect what it happened to play" would have pinned the fold
+/// to one agent's choices. The deal suffices because the draw assignment is choice-independent
+/// — action-turns strictly alternate A, B, A, B and only they draw — so seat A always takes
+/// draw slots 0, 2, 4, 6 and seat B slots 1, 3, 5, 7 whatever either seat decides.
 fn fold_inventory(seed: u64) -> [Vec<(u64, u64)>; 2] {
-    let mut engine = Engine::new(seed);
-    let mut cards = [Vec::new(), Vec::new()];
-    while !engine.round_complete() {
-        let mv = engine.play_next();
-        cards[mv.player().idx()].extend(mv.played_cards());
-    }
-    cards.map(|cards| openings_for(seed, cards))
+    let engine = Engine::new(seed);
+    [Player::A, Player::B].map(|seat| {
+        openings_for(seed, engine.round_inventory(seat).iter().copied())
+    })
 }
 
 impl Offering for TugOffering {
@@ -444,30 +601,12 @@ impl Offering for TugOffering {
         })
     }
 
+    /// The affordances for the seat TO MOVE. While an offer stands these are the response
+    /// sides and nothing else; otherwise one row per once-per-round action-kind. See
+    /// [`TugSession::affordances`] for the `{turn, arg}` encoding and
+    /// [`TugSession::legal_decisions`] for the full choice space.
     fn actions(&self, session: &Self::Session) -> Vec<Action> {
-        if session.ended() {
-            return Vec::new();
-        }
-        if session.engine.round_complete() {
-            return vec![Action::new("Reveal secrets & score", "score", 4, true)];
-        }
-        let seat = session.engine.current_player();
-        [
-            ActionKind::Secret,
-            ActionKind::Discard,
-            ActionKind::Gift,
-            ActionKind::Competition,
-        ]
-        .into_iter()
-        .map(|a| {
-            Action::new(
-                format!("{a:?}"),
-                a.method(),
-                a.idx() as i64,
-                !session.engine.used_flag(seat, a),
-            )
-        })
-        .collect()
+        session.affordances(session.engine.current_player())
     }
 
     fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome {
@@ -499,38 +638,62 @@ impl Offering for TugOffering {
                 Err(error) => Outcome::Refused(error.to_string()),
             };
         }
-        // The fired action.
-        let action = match input.turn.as_str() {
-            "secret" => ActionKind::Secret,
-            "discard" => ActionKind::Discard,
-            "gift" => ActionKind::Gift,
-            "comp" => ActionKind::Competition,
-            other => return Outcome::Refused(format!("unknown action method `{other}`")),
-        };
-        if input.arg != action.idx() as i64 {
-            return Outcome::Refused(format!(
-                "action method `{}` requires argument {}, got {}",
-                action.method(),
-                action.idx(),
-                input.arg
-            ));
-        }
-        // The executor is the referee, but the offering first checks the turn order + the
-        // once-per-round schedule (an out-of-turn / out-of-order fire commits nothing — anti-ghost).
+        // THE DECISION. `arg` indexes the seat's `legal_decisions()`; `turn` names that
+        // decision's dispatch method, and both must agree (a transport cannot splice a method
+        // onto someone else's decision). The executor is still the referee — this only keeps
+        // an out-of-turn / out-of-range fire from committing anything at all (anti-ghost).
         if seat != session.engine.current_player() {
             return Outcome::Refused("not your turn".to_string());
         }
-        if session.engine.peek_next_action() != Some(action) {
+        let decisions = session.engine.legal_decisions();
+        if input.arg < 0 || input.arg as usize >= decisions.len() {
             return Outcome::Refused(format!(
-                "action `{}` is out of order this turn",
-                action.method()
+                "decision index {} is out of range (this seat has {} legal decisions)",
+                input.arg,
+                decisions.len()
             ));
         }
-        // Play the scheduled move on the mover, then commit its projection as ONE real executor
+        let decision = decisions[input.arg as usize];
+        let pending = session.engine.pending_offer();
+        let expected = decision_method(&decision, pending.as_ref());
+        if input.turn != expected {
+            return Outcome::Refused(format!(
+                "method `{}` does not name decision {} ({decision:?}, which dispatches under `{expected}`)",
+                input.turn, input.arg
+            ));
+        }
+
+        // A RESPONSE places the escrow onto the two boards and consumes nothing from any hand,
+        // so it carries no membership witness — the whole move is the rules projection.
+        if matches!(decision, Decision::Respond { .. }) {
+            let mut next_engine = session.engine.clone();
+            let mv = match next_engine.apply(seat, decision) {
+                Ok(mv) => mv,
+                Err(err) => return Outcome::Refused(err.to_string()),
+            };
+            let proj = next_engine.projection();
+            return match session.runtime.respond_projection(mv.method(), &proj) {
+                Ok(receipt) => {
+                    session.engine = next_engine;
+                    session.hands = commit_engine_hands(&session.engine, session.seed);
+                    session.history.push(LandedInput::Play { seat, decision });
+                    Outcome::Landed {
+                        receipt,
+                        ended: false,
+                    }
+                }
+                Err(error) => Outcome::Refused(error.to_string()),
+            };
+        }
+
+        // An ACTION: apply it on the mover, then commit its projection as ONE real executor
         // turn under the action method. A legal projection lands a receipt; the teeth would refuse
         // an illegal one.
         let mut next_engine = session.engine.clone();
-        let mv = next_engine.play_next();
+        let mv = match next_engine.apply(seat, decision) {
+            Ok(mv) => mv,
+            Err(err) => return Outcome::Refused(err.to_string()),
+        };
         let proj = next_engine.projection();
         let played_cards: Vec<u64> = mv.played_cards().into_iter().map(u64::from).collect();
         // Every action card is opened against the DEAL-pinned full inventory root. A separate
@@ -569,12 +732,12 @@ impl Offering for TugOffering {
                 session.proof_hands[seat.idx()] = next_proof_hand;
                 session.engine = next_engine;
                 session.hands = commit_engine_hands(&session.engine, session.seed);
-                session.history.push(LandedInput::Play { seat, action });
+                session.history.push(LandedInput::Play { seat, decision });
 
                 // SCORE is deliberately a separate affordance/advance. The
                 // Offering contract says one accepted action yields one real
                 // executor turn and one receipt; silently committing SCORE here
-                // would make the eighth press perform two turns while exposing
+                // would make the last press perform two turns while exposing
                 // only the second receipt. The terminal surface now presents
                 // the exact `score(4)` turn explicitly.
                 Outcome::Landed {
@@ -608,10 +771,21 @@ impl Offering for TugOffering {
         };
         for (index, input) in session.history.iter().copied().enumerate() {
             let (seat, action) = match input {
-                LandedInput::Play { seat, action } => (
-                    seat,
-                    Action::new("", action.method(), action.idx() as i64, true),
-                ),
+                LandedInput::Play { seat, decision } => {
+                    // Re-derive the index the recorded DECISION sits at in the replay's own
+                    // legal set. A recorded decision the replay does not offer gets `-1`,
+                    // which `advance` refuses — so a tampered log cannot replay.
+                    let arg = replay
+                        .engine
+                        .legal_decisions()
+                        .iter()
+                        .position(|d| *d == decision)
+                        .map(|i| i as i64)
+                        .unwrap_or(-1);
+                    let method =
+                        decision_method(&decision, replay.engine.pending_offer().as_ref());
+                    (seat, Action::new("", method, arg, true))
+                }
                 LandedInput::Score { seat } => (
                     seat,
                     Action::new("Reveal secrets & score", "score", 4, true),

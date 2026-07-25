@@ -170,9 +170,14 @@ impl Offering for SeatedTug {
         // `advance` applies, so a first-time visitor is offered what their first press would use.
         let seat = session.seat_of(viewer).or_else(|| session.claimable_seat());
         let owes = match seat {
-            // All eight action turns are spent and the round is waiting to be revealed and
-            // scored. Either seat may fire that, so both owe it.
-            Some(_) if session.inner.scheduled_action().is_none() => !session.inner.ended(),
+            // Every turn of the round is spent (8 actions + 4 responses) and it is waiting to be
+            // revealed and scored. Either seat may fire that, so both owe it.
+            //
+            // Was `scheduled_action().is_none()`, which asked "is there a NEXT SCHEDULED action"
+            // — a question that only had an answer while the engine ran a fixed per-seat order.
+            // The seat now CHOOSES its action, so the honest form of the same question is
+            // "are there any decisions left to make".
+            Some(_) if session.inner.legal_decisions().is_empty() => !session.inner.ended(),
             Some(seat) => seat == session.inner.to_move(),
             // Both seats are held by other identities: a spectator.
             None => false,
@@ -211,19 +216,27 @@ mod tests {
         let alice = actor("alice");
         let bob = actor("bob");
 
+        // A press whose METHOD and INDEX disagree is refused, and claims nothing. (`arg` now
+        // indexes the seat's `legal_decisions()`; index 0 is a Secret, so naming it "gift" is a
+        // spliced press. This used to be an out-of-SCHEDULE press — there is no schedule now,
+        // so the mismatch a transport could actually produce is the one worth testing.)
         let refused = offering.advance(
             &mut session,
-            Action::new("wrong", "gift", 2, true),
+            Action::new("wrong", "gift", 0, true),
             alice.clone(),
         );
         assert!(matches!(refused, Outcome::Refused(_)));
         assert_eq!(session.seat_of(&alice), None, "a refusal owns no seat");
 
-        let landed = offering.advance(
-            &mut session,
-            Action::new("Competition", "comp", 3, true),
-            bob.clone(),
-        );
+        // A press taken from the surface's OWN affordance list lands and claims the seat.
+        // Derived rather than hardcoded: with the action order free, no fixed `(method, arg)`
+        // pair is guaranteed to be the legal one.
+        let offered = offering.actions_for(&session, &bob);
+        let press = offered
+            .into_iter()
+            .find(|a| a.enabled)
+            .expect("the claimable seat is offered a real decision");
+        let landed = offering.advance(&mut session, press, bob.clone());
         assert!(landed.landed());
         assert_eq!(session.seat_of(&bob), Some(Player::A));
         assert_eq!(session.seat_of(&alice), None);
