@@ -285,8 +285,12 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
                 length_in_felts: 1,
             },
             // D5c: Burn target cross-binding (approach A). Single felt carrying
-            // fold_bytes32_to_bb(target); pinned to every sel::BURN row's
-            // param0 (BURN_TARGET) by the per-row gated constraint.
+            // the burn target's limb[0]; it was "pinned to every sel::BURN row's
+            // param0 by the per-row gated constraint" — of THIS descriptor's AIR,
+            // which is RETIRED (see the module header). No deployed circuit
+            // enforces that equality, and the rotated leg does not publish offset
+            // 200 at all; this slot survives only as a shape entry in the VK-v2
+            // fingerprint. felt-width #25.
             crate::air_descriptor::PiSlot {
                 name: "burn_target",
                 offset: pi::BURN_TARGET_PI,

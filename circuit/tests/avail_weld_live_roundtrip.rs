@@ -189,7 +189,7 @@ fn burn_member_roundtrips_live() {
     roundtrip(
         "burnVmDescriptor2R24",
         &[Effect::Burn {
-            target_hash: BabyBear::new(1234),
+            target_hash: [BabyBear::new(1234); 8],
             amount_lo: BabyBear::new(50),
             amount_full: 50,
         }],

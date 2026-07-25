@@ -487,7 +487,7 @@ fn burn_forced_on_wire_rejects_forged_balance_anchor_disabled() {
     let h = build_honest(
         before,
         Effect::Burn {
-            target_hash: BabyBear::new(0),
+            target_hash: [BabyBear::ZERO; 8],
             amount_lo: BabyBear::new(amount as u32),
             amount_full: amount,
         },

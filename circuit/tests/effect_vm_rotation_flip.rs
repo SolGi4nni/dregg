@@ -504,7 +504,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
 fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     // The cohort-general resolver picks the burn descriptor for a Burn effect.
     let burn_effect = Effect::Burn {
-        target_hash: BabyBear::new(0),
+        target_hash: [BabyBear::ZERO; 8],
         amount_lo: BabyBear::new(30),
         amount_full: 30,
     };

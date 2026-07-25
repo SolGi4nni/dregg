@@ -308,7 +308,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     let amount: u64 = 30;
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![Effect::Burn {
-        target_hash: BabyBear::new(0),
+        target_hash: [BabyBear::ZERO; 8],
         amount_lo: BabyBear::new(amount as u32),
         amount_full: amount,
     }];

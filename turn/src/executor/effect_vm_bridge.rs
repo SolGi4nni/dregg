@@ -493,7 +493,12 @@ fn convert_turn_effects_to_vm_unchecked(
                     amount,
                 } if target == cell_id => {
                     use dregg_circuit::field::BabyBear;
-                    let target_hash = hash_to_bb(target.as_bytes());
+                    // felt-width #25: the burn target rides the 8-limb projection
+                    // every other `target_hash` in this enum already uses. The old
+                    // `hash_to_bb` Horner fold bound ~31 bits of the target cell
+                    // (and, being LINEAR in the limb vector, collides in O(1) for a
+                    // directly-chosen 32-byte preimage).
+                    let target_hash = hash_to_8(target.as_bytes());
                     // Low 30 bits drive the AIR balance debit; the full
                     // u64 is bound through `compute_effects_hash`.
                     let amount_lo = BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);

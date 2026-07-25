@@ -342,10 +342,21 @@ pub enum Effect {
     /// binding via 4×16-bit limbs (matches the BridgeMint/BridgeLock
     /// shape).
     Burn {
-        /// Hash of the target cell whose balance is reduced. Pinned to
-        /// params[0] and folded into effects_hash so the proof binds to
-        /// the specific cell.
-        target_hash: BabyBear,
+        /// Hash of the target cell whose balance is reduced. Full 32-byte hash
+        /// projected into 8 BabyBear limbs (the same shape `CellDestroy` /
+        /// `CellSeal` / `Refusal` already carry); the trace anchors limb[0] into
+        /// params[0] and all 8 limbs bind via `compute_effects_hash`.
+        ///
+        /// Was ONE felt (`fold_bytes32_to_bb`) until the felt-width #25 repair.
+        /// The narrow form was the LAST 1-felt `target_hash` in this enum, and
+        /// its fold is `𝔽_p`-LINEAR in the limb vector — a directly-chosen
+        /// 32-byte preimage collides in O(1) (one linear solve), and a
+        /// `CellId::derive_raw` preimage in ~2^31. Nothing in the DEPLOYED
+        /// circuit reads params[0] on a burn row (`burnVmDescriptor2R24`
+        /// references col 68 zero times), so this widening changes no in-circuit
+        /// binding — it removes a pre-priced liability from the one carrier the
+        /// target does reach: `effects_hash`.
+        target_hash: [BabyBear; 8],
         /// Burn amount, low 30 bits (for the balance-debit constraint).
         amount_lo: BabyBear,
         /// Full u64 amount (binds via the 4×16-bit-limb path in

@@ -815,7 +815,12 @@ pub fn generate_effect_vm_trace_ext(
                 //     Burn from Transfer-dir-1 at the algebraic level), and
                 // (b) pins `was_burn_flag == 1` into params[2] so a forged
                 //     trace that drops the disclosure flag fails the AIR.
-                row[PARAM_BASE + param::BURN_TARGET] = *target_hash;
+                // 32-byte widening (felt-width #25): anchor limb[0] into params[0]
+                // (the CellDestroy shape below); all 8 limbs bind via
+                // compute_effects_hash. No deployed constraint reads this column —
+                // `burnVmDescriptor2R24` references col 68 zero times — so the
+                // anchor is a trace-shape convention, not a binding.
+                row[PARAM_BASE + param::BURN_TARGET] = target_hash[0];
                 row[PARAM_BASE + param::BURN_AMOUNT_LO] = *amount_lo;
                 row[PARAM_BASE + param::BURN_WAS_BURN_FLAG] = BabyBear::ONE;
 
@@ -1400,7 +1405,7 @@ pub fn generate_effect_vm_trace_ext(
     // Burn row is present.
     let first_burn_target: Option<BabyBear> = effects.iter().find_map(|eff| {
         if let Effect::Burn { target_hash, .. } = eff {
-            Some(*target_hash)
+            Some(target_hash[0])
         } else {
             None
         }

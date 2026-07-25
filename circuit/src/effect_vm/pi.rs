@@ -810,14 +810,29 @@ pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
 // welded the EffectVM's burn target to the cell whose balance arithmetic the
 // binding proof actually validated.
 //
-// Three teeth, all referencing the SAME folded target:
-//   (1) this PI slot — `fold_bytes32_to_bb(target.as_bytes())`.
-//   (2) AIR per-row constraint (air.rs), gated by `sel::BURN`: every Burn
-//       row's `param0` (BURN_TARGET) MUST equal `PI[BURN_TARGET_PI]`.
-//   (3) off-AIR equality (turn::executor::proof_verify): the verifier
-//       reconstructs `PI[BURN_TARGET_PI]` from the SCHEMA_BURN binding proof's
-//       `fields[0]` (the ledger-validated target) and the PI-match loop
-//       rejects any proof whose PI disagrees.
+// ⚠ **NONE OF D5c's THREE TEETH EXIST AT HEAD** (felt-width #25, verified by
+// direct read + the committed descriptor bytes — do not re-derive the closure
+// from this block's history):
+//   (1) this PI slot — WRITTEN by the v1 trace generator, but the deployed
+//       rotated PI vector is `pis[..V1_PI_COUNT]` + 4 pins, so offset 200 is
+//       NOT PUBLISHED on the leg any verifier sees.
+//   (2) the AIR per-row constraint `s_burn·(param0 − PI[BURN_TARGET_PI])` —
+//       RETIRED with the v1 hand-AIR (`air.rs` header: "`EffectVmAir` + its
+//       `StarkAir` impl is RETIRED"). The Lean-authored deployed descriptor
+//       (`EffectVmEmitBurn.burnVmDescriptor`, piCount 42) has no gate, hash
+//       site or PI binding over param0, and the live registry member
+//       `burnVmDescriptor2R24` references trace col 68 (`PARAM_BASE + 0`)
+//       ZERO times. The burn target is an UNCONSTRAINED witness column.
+//   (3) the off-AIR equality — `TurnExecutor::expected_burn_target_limbs` has
+//       ZERO call sites and is `#[allow(dead_code)]`.
+// The only carrier the target actually reaches is `compute_effects_hash` (all
+// 8 limbs since the #25 widening), and the deployed descriptor binds none of
+// `PI[EFFECTS_HASH_BASE..+4]` either. Whoever ANCHORS this — that is the real
+// work — must anchor the 8 limbs, not this slot.
+//
+// The same "three teeth" wording above `NOTESPEND_NULLIFIER` /
+// `NOTECREATE_COMMITMENT` describes the same retired machinery; those two
+// siblings are felt-width #4 and are still 1-felt carriers.
 //
 // Sentinel: ZERO when the proof carries no Burn row.
 pub const BURN_TARGET_PI: usize = NOTECREATE_COMMITMENT + 1; // 200

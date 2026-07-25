@@ -867,7 +867,36 @@ fn membership_circuit_descriptor() -> CircuitDescriptor {
 /// is position 0 of the Effect-VM 4-felt effects hash — i.e.
 /// `compute_effects_hash(effects).0`.
 ///
-/// # Why this is a real binding (not a loose check)
+/// # ⚠ THIS BINDING IS ~31 BITS WIDE AND IS NOT WIRED (felt-width #31)
+///
+/// Two corrections to the paragraph below, both verified at HEAD:
+///
+/// * **The in-circuit pin it cites does not exist.** The v1 hand-AIR whose row-0
+///   "Effects hash binding" constraint pinned `PI[EFFECTS_HASH_BASE]` is RETIRED
+///   (`circuit/src/effect_vm/air.rs` header). The deployed rotated descriptors
+///   bind NO PI in `EFFECTS_HASH_BASE..+4` — machine-checked on the committed
+///   registry bytes: `burnVmDescriptor2R24`'s 15 `pi_binding`s are
+///   `{0,8,20,21,22,23,41,42..49}`, and it references the effects-hash witness
+///   columns (aux 4/5, trace cols 94/95) zero times. So a forged effects
+///   commitment does NOT make the deployed verifier reject; the light-client
+///   residual is already asserted in
+///   `circuit/tests/vk_epoch_misc_light_client_binding.rs`.
+/// * **The bound value is one felt.** `compute_effects_hash(effects).0` is a
+///   single `hash_many` squeeze, ~31 bits. As an AUTHORIZING equality that is a
+///   ~2^31 offline grind (fully attacker-chosen effect params) to make ONE
+///   authorization derivation authorize a DIFFERENT effect list — the capability
+///   weld this function names. Since the #30 repair, `compute_effects_hash_4`
+///   gives four GENUINE sponge squeezes (~124-bit); binding all four here is the
+///   close, and it is blocked only by the derivation rule's single-variable head
+///   (`derivation_authorizing_effects` substitutes ONE variable), which is a
+///   Lean-authored derivation-circuit change.
+///
+/// It is priced as a **library surface with no in-tree consumer**:
+/// `effect_action_binding` has zero non-doc callers and `AuthEffectMismatch` is
+/// declared but never CONSTRUCTED — the tooth is not wired. Cheap to close now,
+/// and it MUST be closed before any consumer wires it.
+///
+/// # The original rationale (kept as the record of how the claim was framed)
 ///
 /// `effects_commit` is `PI[EFFECTS_HASH_BASE]` of the Effect-VM proof, which the
 /// Effect-VM AIR pins **in-circuit** to the Poseidon2-chained effects column via

@@ -4,7 +4,7 @@
 //! produces the per-cell effects digest pinned into PI[EFFECTS_HASH_BASE].
 
 use crate::field::BabyBear;
-use crate::poseidon2::{hash_2_to_1, hash_4_to_1, hash_many};
+use crate::poseidon2::{hash_2_to_1, hash_many, hash_many_8};
 
 use super::{AUX_BASE, Effect, aux_off};
 
@@ -272,9 +272,15 @@ pub(crate) fn fill_balance_limb_bits(row: &mut [BabyBear], new_balance: u64) {
     }
 }
 
-/// Compute the effects hash for a sequence of effects.
-/// Returns (lo, hi) BabyBear elements.
-pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
+/// The ordered felt preimage of the effects hash — one domain tag per effect
+/// followed by that effect's bound parameters.
+///
+/// Split out of `compute_effects_hash` so the NARROW legacy squeeze and the wide
+/// [`compute_effects_hash_4`] squeeze absorb the **same** preimage through the
+/// same sponge, rather than the wide form re-hashing the narrow form's output
+/// (`finalSqueezeOnly_still_conflates` — the laundering shape this repair
+/// removed; see `docs/WOUND-felt-width-boundaries-2026-07-19.md` #30).
+fn effects_hash_inputs(effects: &[Effect]) -> Vec<BabyBear> {
     let mut hasher_inputs = Vec::new();
     for effect in effects {
         match effect {
@@ -444,7 +450,10 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 amount_full,
             } => {
                 hasher_inputs.push(BabyBear::new(46));
-                hasher_inputs.push(*target_hash);
+                // 32-byte widening (felt-width #25): absorb all 8 limbs of the
+                // burn target, the shape `CellDestroy` twenty lines below already
+                // used. The prior single `push` bound ~31 bits of the target cell.
+                hasher_inputs.extend_from_slice(target_hash);
                 hasher_inputs.push(*amount_lo);
                 // Bind the full u64 via 4×16-bit limbs (mirrors
                 // BridgeMint / BridgeLock / CreateEscrow) so the proof
@@ -506,27 +515,61 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
             }
         }
     }
-    let h = hash_many(&hasher_inputs);
+    hasher_inputs
+}
+
+/// Compute the NARROW legacy effects hash for a sequence of effects.
+/// Returns (lo, hi) BabyBear elements.
+///
+/// ⚠ **This is a ~31-bit digest** — `hash_many` squeezes ONE rate felt, and the
+/// "hi" element is `hash_2_to_1(h, 0xEFFEC7)`, a function of that same felt, so
+/// the pair's image has at most `p ≈ 2^31` points. Its collision resistance is
+/// ~2^15.5 (birthday), NOT the width the two felts suggest. Use
+/// [`compute_effects_hash_4`] at any boundary that binds; this form is kept for
+/// the legacy `PI[EFFECTS_HASH_LO]` alias and for callers that only need the
+/// historical felt. `sdk::full_turn_proof::effect_action_binding` still binds
+/// position 0 alone — the residual named in
+/// `docs/WOUND-felt-width-boundaries-2026-07-19.md` #31.
+pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
+    let h = hash_many(&effects_hash_inputs(effects));
     // Split into two elements for wider coverage (legacy 2-felt form).
     let h2 = hash_2_to_1(h, BabyBear::new(0xEFFEC7));
     (h, h2)
 }
 
-/// Stage 1: 4-felt effects hash for the widened PI layout.
+/// The 4-felt effects hash carried at `PI[EFFECTS_HASH_BASE..+4]` — FOUR GENUINE
+/// SPONGE SQUEEZES over the effect preimage.
 ///
-/// Position 0 matches [`compute_effects_hash`] (the legacy `EFFECTS_HASH_LO`);
-/// positions 1..3 are 3 additional independent Poseidon2 compressions.
-/// Drops the synthetic `EFFECTS_HASH_HI = hash_2_to_1(h, 0xEFFEC7)` binding
-/// in favor of 4 independent squeezes, giving ~124-bit collision resistance.
+/// Each lane is a rate-position squeeze of the Poseidon2 sponge that absorbed
+/// [`effects_hash_inputs`], so every lane depends on the ENTIRE effect list and
+/// the four together give ~124-bit collision resistance — matching the FRI floor
+/// and the `Faithful8` state commitment beside them in the same PI vector.
+///
+/// # What this replaced, and why the old form's claimed width was FALSE
+///
+/// Until the felt-width #30 repair this was
+/// `[h, hash_4_to_1([h,1,0,0]), hash_4_to_1([h,2,0,0]), hash_4_to_1([h,3,0,0])]`
+/// with `h = compute_effects_hash(effects).0` — a single ~31-bit felt. All four
+/// lanes were FUNCTIONS OF THAT ONE FELT, so the tuple's image had at most
+/// `p ≈ 2^31` points and two effect lists agreeing on `h` produced a BYTE-IDENTICAL
+/// 4-felt PI. The doc-comment claimed "~124-bit collision resistance"; the true
+/// figure was ~2^15.5 birthday. That is exactly `finalSqueezeOnly_still_conflates`
+/// (`metatheory/Dregg2/Cell/InterfaceIdWidth.lean`) with the sign flipped —
+/// widening the FINAL SQUEEZE of a one-felt chain launders nothing, and here the
+/// chain's own output *was* the one felt. Every "32-byte widening: absorb all 8
+/// limbs (~256-bit binding)" arm inside `effects_hash_inputs` was therefore
+/// cosmetic AT THIS BOUNDARY until this repair; they are load-bearing now.
+///
+/// `hash_many_8`'s own contract states the law this obeys: it "must not be bolted
+/// only onto the final squeeze of a one-felt chain" — so it absorbs the REAL
+/// preimage, not `h`.
+///
+/// Position 0 is NO LONGER guaranteed to equal `compute_effects_hash(effects).0`
+/// (`hash_many_8` squeezes the same absorb state, but the equality is explicitly
+/// not part of that primitive's contract — do not rely on it).
 pub fn compute_effects_hash_4(effects: &[Effect]) -> [BabyBear; 4] {
-    let (h, _h_legacy_hi) = compute_effects_hash(effects);
-    // Independent squeezes via hash_4_to_1 with distinct salts.
-    [
-        h,
-        hash_4_to_1(&[h, BabyBear::ONE, BabyBear::ZERO, BabyBear::ZERO]),
-        hash_4_to_1(&[h, BabyBear::new(2), BabyBear::ZERO, BabyBear::ZERO]),
-        hash_4_to_1(&[h, BabyBear::new(3), BabyBear::ZERO, BabyBear::ZERO]),
-    ]
+    let wide = hash_many_8(&effects_hash_inputs(effects));
+    [wide[0], wide[1], wide[2], wide[3]]
 }
 
 #[cfg(test)]

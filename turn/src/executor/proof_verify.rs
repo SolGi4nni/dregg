@@ -2729,45 +2729,56 @@ impl TurnExecutor {
         Some(runtime_fold)
     }
 
-    /// D5c (Burn target cross-binding, approach A): compute the expected
-    /// `PI[BURN_TARGET_PI]` felt, or `None` when this cell's proof carries no
-    /// Burn row. The returned felt is `fold_bytes32_to_bb(target.as_bytes())`,
-    /// matching the trace's Burn `param0`. Sourced from the TRUSTED side:
+    /// D5c (Burn target cross-binding, approach A): compute the expected burn
+    /// target **as 8 limbs**, or `None` when this cell's proof carries no Burn
+    /// row. Sourced from the TRUSTED side:
     ///   1. the turn's `SCHEMA_BURN` binding proof, if present (its `fields[0]`
     ///      is the certified target — the cell whose `old - new == amount`
     ///      balance arithmetic `verify_effect_binding_proofs_with_ledger`
     ///      validates against the ledger snapshot); failing that
     ///   2. the runtime Burn effect's own target (backwards compat).
+    ///
+    /// ⚠ **NOT WIRED, and the thing it would compare against no longer exists.**
+    /// This has ZERO call sites. The AIR half of D5c's three claimed teeth is
+    /// GONE — the v1 hand-AIR that enforced `s_burn·(param0 − PI[BURN_TARGET_PI])`
+    /// is RETIRED (`circuit/src/effect_vm/air.rs` header), the deployed
+    /// `burnVmDescriptor2R24` references param col 68 zero times, and the rotated
+    /// PI vector is `pis[..V1_PI_COUNT]` + 4 pins so `BURN_TARGET_PI = 200` is not
+    /// published at all. See `docs/WOUND-felt-width-boundaries-2026-07-19.md` #25.
+    ///
+    /// It returns the 8-limb projection rather than the old
+    /// `fold_bytes32_to_bb` felt so that WIRING it can only ever produce a
+    /// ~256-bit attributing equality — the narrow twin is retired, not left
+    /// lying next to a live socket.
     #[allow(dead_code)]
-    fn expected_burn_target_bb(
+    fn expected_burn_target_limbs(
         &self,
         turn: &Turn,
         vm_effects: &[dregg_circuit::effect_vm::Effect],
-    ) -> Option<dregg_circuit::field::BabyBear> {
-        use dregg_circuit::effect_vm::{Effect as VmEffect, fold_bytes32_to_bb};
+    ) -> Option<[dregg_circuit::field::BabyBear; 8]> {
+        use dregg_circuit::effect_vm::{Effect as VmEffect, bytes32_to_8_limbs};
 
         // No Burn row in this cell's proof → sentinel ZERO (None).
-        let runtime_fold = vm_effects.iter().find_map(|e| match e {
+        let runtime_limbs = vm_effects.iter().find_map(|e| match e {
             VmEffect::Burn { target_hash, .. } => Some(*target_hash),
             _ => None,
         })?;
 
         // Prefer the binding-proof-certified target. SCHEMA_BURN fields[0] ==
-        // `*target.as_bytes()` per `extract_burn_binding_params`; fold it with
-        // the SAME `fold_bytes32_to_bb` the bridge uses
-        // (`hash_to_bb(target.as_bytes())`), so the value is byte-identical to
-        // the trace's Burn param0.
+        // `*target.as_bytes()` per `extract_burn_binding_params`; project it with
+        // the SAME `bytes32_to_8_limbs` the bridge uses (`hash_to_8`), so the
+        // value is byte-identical to the trace's Burn target limbs.
         let effects = Self::dfs_collect_effects(turn);
         for bp in &turn.effect_binding_proofs {
             if bp.schema_id != "dregg-effect-burn-v1" {
                 continue;
             }
             if let Some(Effect::Burn { target, .. }) = effects.get(bp.effect_index as usize) {
-                return Some(fold_bytes32_to_bb(target.as_bytes()));
+                return Some(bytes32_to_8_limbs(target.as_bytes()));
             }
         }
 
-        Some(runtime_fold)
+        Some(runtime_limbs)
     }
 
     /// Stage 7-γ.2 Phase 1: bilateral cross-cell PI consistency check.

@@ -159,7 +159,7 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
     let amount: u64 = 30;
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![Effect::Burn {
-        target_hash: BabyBear::new(0),
+        target_hash: [BabyBear::ZERO; 8],
         amount_lo: BabyBear::new(amount as u32),
         amount_full: amount,
     }];
@@ -349,7 +349,7 @@ fn gate_b_discriminator_alone_rejects_declared_bare_route() {
     let amount: u64 = 30;
     let st = CellState::new(before_balance as u64, 0);
     let effects = vec![Effect::Burn {
-        target_hash: BabyBear::new(0),
+        target_hash: [BabyBear::ZERO; 8],
         amount_lo: BabyBear::new(amount as u32),
         amount_full: amount,
     }];

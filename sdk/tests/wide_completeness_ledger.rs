@@ -669,7 +669,7 @@ fn all_wide_cases() -> Vec<(&'static str, Vec<VmEffect>, WideNeed)> {
         (
             "burn",
             vec![VmEffect::Burn {
-                target_hash: BabyBear::new(0xB0F0),
+                target_hash: [BabyBear::new(0xB0F0); 8],
                 amount_lo: BabyBear::new(500),
                 amount_full: 500,
             }],

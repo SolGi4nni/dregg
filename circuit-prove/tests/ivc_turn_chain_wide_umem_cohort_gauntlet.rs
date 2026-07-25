@@ -108,7 +108,7 @@ fn value_cohort_families_mint_wide_welded_legs() {
         99_500,
         0,
         Effect::Burn {
-            target_hash: BabyBear::new(0xB0F0),
+            target_hash: [BabyBear::new(0xB0F0); 8],
             amount_lo: BabyBear::new(500),
             amount_full: 500,
         },
@@ -134,7 +134,7 @@ fn value_cohort_families_mint_wide_welded_legs() {
 #[test]
 fn value_cohort_burn_history_folds() {
     let burn = |amt: i64| Effect::Burn {
-        target_hash: BabyBear::new(0xB0F0),
+        target_hash: [BabyBear::new(0xB0F0); 8],
         amount_lo: BabyBear::new(amt as u32),
         amount_full: amt as u64,
     };
@@ -160,7 +160,7 @@ fn value_cohort_burn_history_folds() {
 #[test]
 fn value_cohort_forged_post_commit_refused_per_family() {
     let burn = Effect::Burn {
-        target_hash: BabyBear::new(0xB0F0),
+        target_hash: [BabyBear::new(0xB0F0); 8],
         amount_lo: BabyBear::new(100),
         amount_full: 100,
     };

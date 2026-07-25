@@ -190,28 +190,77 @@ the leaf digest's proven injectivity does not reach it.
   (arity 7 → 21 leaf), re-point `targetBindGate` at the octet, widen PIs 46/47/48. VK-affecting AND
   committed-state-affecting ⇒ one epoch with #3/#5.
 
-### #25 — `Effect::Burn.target_hash` is 1 felt in the AIR PI **and** in `effects_hash`. GENUINE, deployed carrier, Kind C. Soundness MODERATE-if-wired / NONE today / availability NONE.
+### #25 — `Effect::Burn.target_hash`. ✅ **CARRIER WIDENED (byte-safe, no VK change)**; the "AIR PI" half was a WRONG PREMISE — there is no AIR. Re-verdict: DOMINATED-BY-ABSENCE, Kind C **retargeted at the ANCHOR, not the width**.
 
-- `circuit/src/effect_vm/effect.rs:348` `Burn { target_hash: BabyBear, … }`, produced as
-  `hash_to_bb(target.as_bytes())` (`turn/src/executor/effect_vm_bridge.rs:496`), pinned per-row to a
-  **1-felt PI slot** (`air.rs:287-293`, `PiSlot { name: "burn_target", length_in_felts: 1 }`, offset
-  `pi::BURN_TARGET_PI = 200`), and absorbed into `compute_effects_hash` as a **single** `push`
-  (`helpers.rs:447`) — twenty lines above `Effect::CellDestroy`, which `extend_from_slice`s all 8
-  lanes of its `target_hash: [BabyBear; 8]` (`effect.rs:367`, `helpers.rs:459`). The wide shape is in
-  the same match arm list.
-- **No verifier compares it today, and the would-be comparer is DEAD CODE.**
-  `TurnExecutor::expected_burn_target_bb` (`turn/src/executor/proof_verify.rs:2742`) recomputes
-  `fold_bytes32_to_bb(target.as_bytes())` from the trusted `SCHEMA_BURN` binding proof — and is
-  `#[allow(dead_code)]` with **zero call sites** (tree-wide grep for `expected_burn_target_bb`).
-- **Full nodes are safe wide:** burn carries no action-level permission, so `apply.rs:3477` gates
-  `if actor != target { check_cross_cell_permission(… Action::Send, EFFECT_BURN …) }` over full
-  `CellId`s.
-- **STANDING FALSIFIER:** wiring `expected_burn_target_bb` (or any light-client recomputation of
-  `effects_hash` from a *claimed* effect list) makes the burn target a ~31-bit **attributing**
-  equality — ~2^31 offline (same `derive_raw` amplifier) to make a burn proof ambiguous about which
-  cell's supply was destroyed. Blast is mis-attribution / supply-accounting ambiguity, not privilege
-  escalation. Same 1-felt PI family as `notespend_nullifier` / `notecreate_commitment` (#4); Burn was
-  uncatalogued.
+**The entry as written (07-24 sweep) was half right. Four premises corrected at HEAD by direct read
+plus the COMMITTED DESCRIPTOR BYTES; read the corrections before re-deriving anything from it.**
+
+- ✅ **CONFIRMED** — the carrier was 1 felt: `effect.rs:348` `Burn { target_hash: BabyBear }`, produced
+  `hash_to_bb(target.as_bytes())` at `effect_vm_bridge.rs:496`, absorbed as a **single** `push` at
+  `helpers.rs:447`, twenty lines above `CellDestroy`'s 8-lane `extend_from_slice`. It was the **LAST**
+  1-felt `target_hash` in that enum (CellDestroy / CellSeal / CellUnseal / ReceiptArchive / Refusal
+  are all `[BabyBear; 8]`).
+- ✅ **CONFIRMED** — `expected_burn_target_bb` is dead: `#[allow(dead_code)]`, zero call sites.
+- ✅ **CONFIRMED** — full nodes are safe wide: `apply.rs:3482` gates `if actor != target {
+  check_cross_cell_permission(… Action::Send, EFFECT_BURN …) }` over full `CellId`s.
+- ❌ **CORRECTED — "pinned per-row to a 1-felt PI slot" describes a RETIRED AIR.** `air.rs`'s own
+  header at HEAD: "The v1 hand-AIR (`EffectVmAir` + its `StarkAir` impl) is **RETIRED**; the rotated
+  IR-v2 multi-table descriptor is the **sole** effect-VM circuit." The `PiSlot { "burn_target" }` at
+  `air.rs:290-294` is a *shape* entry feeding the VK-v2 fingerprint; the constraint
+  `s_burn·(param0 − PI[BURN_TARGET_PI])` it documents **no longer exists in any circuit**. The
+  Lean-authored deployed descriptor `EffectVmEmitBurn.burnVmDescriptor` (`piCount := 42`;
+  `burnRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins ++ selectorGates`) has **no
+  gate, hash site or PI binding over `param0`** — its 7 pins are ACTOR_NONCE / INIT_BAL_LO,HI /
+  OLD_COMMIT / NEW_COMMIT / FINAL_BAL_LO,HI, and its 4 hash sites are the GROUP-4 state commitment.
+  **Machine-checked on the committed registry bytes** (`circuit/descriptors/rotation-v3-staged-registry.tsv`):
+  the live member `burnVmDescriptor2R24` (piCount 50, width 1700) references trace col **68**
+  (`PARAM_BASE + param::BURN_TARGET`) **ZERO times** across constraints, hash sites and ranges. The
+  burn target is an **UNCONSTRAINED WITNESS COLUMN**, not a narrow binding.
+- ❌ **CORRECTED — offset 200 is not published.** The rotated leg's PI vector is
+  `pis[..V1_PI_COUNT]` (42) + 4 pins (`trace_rotated.rs:650-651`), so `BURN_TARGET_PI = 200` is
+  absent from every leg a verifier sees. The sdk's own note says it: "offsets >= 34 [stale; now 42]
+  … are absent from the rotated leg."
+- ❌ **CORRECTED — "1 felt in the AIR PI *and* in `effects_hash`" is ONE narrowing, not two.**
+  `VmEffect::Burn.target_hash` is a single field written once by the bridge; the PI writer and the
+  `compute_effects_hash` absorb are two *readers* of it. Widening the field fixes both by
+  construction.
+- ❌ **CORRECTED — the cost is not "~2^31" for a directly-chosen preimage.** `fold_bytes32_to_bb` is
+  the LINEAR form `Σ_i limbs[i]·MIX^i` over `𝔽_p^8`, so a colliding pair is obtained by **one linear
+  solve, O(1)** — bump limb 0 by δ and limb 1 by `−δ·MIX⁻¹` (exhibited and asserted in
+  `circuit/tests/effects_hash_fold_and_burn_target_width.rs::fold_bytes32_to_bb_collides_in_o1_because_it_is_linear`).
+  The ~2^31 figure survives ONLY where the 32 bytes are pinned to a hash image (a `CellId::derive_raw`
+  burn target ⇒ second-preimage ~2^31, birthday ~2^15.5). **Every other `fold_bytes32_to_bb` site in
+  this catalogue whose preimage a prover picks directly is priced too high by ~31 bits of work.**
+
+**WHAT LANDED (this commit).** `Burn.target_hash: BabyBear → [BabyBear; 8]` (`bytes32_to_8_limbs`
+via the bridge's existing `hash_to_8`), the trace anchoring limb[0] into `params[0]` exactly as
+`CellDestroy` does, and all 8 limbs absorbed into `compute_effects_hash`. `expected_burn_target_bb`
+→ `expected_burn_target_limbs` returning the octet, so **wiring the dead comparer can now only
+produce a ~256-bit attributing equality — the narrow twin is retired, not left beside a live
+socket** (Kind B discipline applied inside a Kind C site). **No VK / descriptor / registry change**:
+`piCount` and every constraint are untouched, and the anchored column keeps its position.
+
+**ANTI-LAUNDER — the widening was COSMETIC until #30 was fixed in the same commit.** The only carrier
+the burn target reaches is `compute_effects_hash`, whose published 4-felt output was itself a
+function of ONE ~31-bit felt. See **#30**. Widening the component alone would have been the
+`finalSqueezeOnly_still_conflates` move; both halves rode one commit.
+
+**RE-VERDICT — DOMINATED-BY-ABSENCE (twice), soundness NONE today, availability NONE.** At HEAD the
+target is bound by *nothing*: the AIR does not read it, the PI carrying it is not published, and the
+one carrier that does hold it (`PI[EFFECTS_HASH_BASE..+4]`) is bound by no deployed descriptor
+either. At the full node the executor recomputes `effects_hash` from `turn.effects` through the SAME
+projection it compares against ⇒ #21 geometry, a collision buys nothing. The width was the *third*-order
+problem behind two absences.
+
+**STANDING FALSIFIER (re-pointed).** The work is **ANCHORING**, not widening — and the anchor must be
+laid against the octet: bind the burn target (or `effects_hash`) into a PI the rotated descriptor
+actually pins. Whoever does it inherits ~2^31 mis-attribution the moment they anchor a *fold* rather
+than the *limbs*. The pre-fix behaviour is executed, not remembered, by
+`burn_target_collision_was_byte_identical_before_the_repair`: a fold-colliding target pair produced a
+BYTE-IDENTICAL published 4-felt PI. Blast if anchored narrow: mis-attribution / supply-accounting
+ambiguity ("which cell's supply was destroyed"), never privilege escalation. Siblings
+`notespend_nullifier` / `notecreate_commitment` (#4) carry the SAME retired three-teeth doc-comment
+and are STILL 1-felt carriers — their entry inherits every correction above.
 
 ### #26 — The cell-program `HashKind::Poseidon2` hash-lock arm: `PreimageGate` + `KeyRotationGate` bind ~31 bits. GENUINE, LATENT, Kind B. Soundness HIGH-if-selected / availability NONE.
 
@@ -335,6 +384,80 @@ executor mirror binds the octet unconditionally (`turn/src/executor/proof_verify
   its own head) ⇒ ~2^31 offline grind of a fake pre-state colliding at lane 0 (balance/nonce/fields/
   record_digest all vary; `cap_root` stays pinned wide by step 9). The two live narrow-leg producers to
   watch are the cap-open residual and the `not(recursion)` v1 fallback. **Kind D.**
+
+### #30 — `PI[EFFECTS_HASH_BASE..+4]`'s four "independent squeezes" were FOUR FUNCTIONS OF ONE ~31-bit FELT. GENUINE, ✅ **FIXED** (byte-safe, no VK change). Found while tracing #25.
+
+**This is the anti-launder answer for the whole `compute_effects_hash` family — and it says ~15
+already-landed widenings inside that function bought NOTHING at the PI boundary until now.**
+
+- **The find.** `compute_effects_hash_4` (`circuit/src/effect_vm/helpers.rs`) was
+  `[h, hash_4_to_1([h,1,0,0]), hash_4_to_1([h,2,0,0]), hash_4_to_1([h,3,0,0])]` with
+  `h = compute_effects_hash(effects).0`, a **single `hash_many` squeeze**. Every published lane was a
+  function of that one felt, so the 4-tuple's image had at most `p ≈ 2^31` points and any two effect
+  lists agreeing on `h` produced a **byte-identical `PI[EFFECTS_HASH_BASE..+4]`**. Its doc-comment
+  claimed "4 independent squeezes, giving ~124-bit collision resistance." The true figure was
+  ~2^15.5 birthday — the campaign's #1 recurring tell (a doc-comment asserting collision resistance
+  over a value squeezed to one felt) sitting on the effects binding itself.
+- **Why it retro-prices the other work.** `effects_hash_inputs` deliberately absorbs 8 lanes for
+  `CellDestroy` / `CellSeal` / `CellUnseal` / `ReceiptArchive` / `Refusal` / `GrantCapability`, 16 for
+  `AttenuateCapability`, each carrying a "32-byte widening: absorb all 8 limbs (~256-bit binding)"
+  comment. All of it collapsed through the one-felt output. **This is
+  `finalSqueezeOnly_still_conflates` with the sign flipped:** the preimage was wide and the SQUEEZE
+  was narrow, which is the same laundering. `hash_many_8`'s own contract states the law
+  ("must not be bolted only onto the final squeeze of a one-felt chain") — the deployed effects hash
+  was violating it.
+- **THE FIX.** `effects_hash_inputs` split out; `compute_effects_hash_4 = hash_many_8(&inputs)[0..4]`
+  — four genuine rate-position sponge squeezes over the REAL preimage, ~124-bit, matching the
+  `Faithful8` state commitment beside it in the same PI vector. The narrow legacy
+  `compute_effects_hash` is kept (the `EFFECTS_HASH_LO` alias) with its width stated honestly.
+  **Byte-safe:** `piCount` unchanged, no hash site or `pi_binding` touches these PIs, the
+  effects-hash witness columns (aux 4/5 = trace cols 94/95) are referenced ZERO times by the live
+  registry members, so no descriptor byte, fingerprint or VK moves.
+- **Reachability (why this is LATENT, not a live close).** The deployed rotated descriptors bind
+  **none** of `PI[16..20]` — `burnVmDescriptor2R24`'s 15 `pi_binding`s are `{0,8,20,21,22,23,41,42..49}`
+  — which `circuit/tests/vk_epoch_misc_light_client_binding.rs` already asserts as a named residual
+  ("a forged declared-hash param is ACCEPTED through the rotated path"). At the full node both sides
+  are recomputed from `turn.effects` by the same code ⇒ #21 geometry. So the ~31 bits were dominated
+  by a strictly larger absence; the repair makes the *anchoring* work land on a sound base instead of
+  on a laundered one.
+- **FALSIFIER (both runs executed, `circuit/tests/effects_hash_fold_and_burn_target_width.rs`, 6/6
+  green):** `effects_hash_4_no_longer_factors_through_one_felt` (no lane equals the retired
+  derivation; every lane moves when the list moves) and
+  `effects_hash_4_is_the_wide_sponge_over_the_real_preimage` (the published felts ARE
+  `hash_many_8`'s first four squeezes over an independently reconstructed preimage).
+- **Kind C→F crossover.** The repair itself is Kind B (swap to the existing wide twin `hash_many_8`,
+  retire the derived-lane form). The LESSON is Kind F: **read the SQUEEZE, not only the absorb.** The
+  07-24 sweep's sharpening #1 said "a FAITHFUL 8-felt chain can absorb a ~31-bit COMPONENT"; #30 is
+  its converse and the sweep did not look for it — **a faithful 8-felt PREIMAGE can be published
+  through a ~31-bit SQUEEZE.** Both directions belong in the next detector.
+
+### #31 — `effect_action_binding` — the capability-security weld — is a ~31-bit AUTHORIZING equality, and its "real binding" rationale cites a RETIRED AIR. GENUINE, library surface with NO in-tree consumer. Kind C/E.
+
+- `sdk/src/full_turn_proof.rs::effect_action_binding` is
+  `hash_fact(ALLOW_PREDICATE, [compute_effects_hash(effects).0, 0, 0, 0])` — the fact a verifying
+  authorization sub-proof must conclude for its derivation to authorize the turn. The bound value is
+  **one felt**. As an authorizing equality that is a ~2^31 offline grind over fully attacker-chosen
+  effect parameters to make ONE authorization derivation authorize a **DIFFERENT effect list** — the
+  exact "a commitment, a signed payload, a membership key, an **authorizing equality**" boundary this
+  wound is about.
+- **Its stated justification is false at HEAD, twice.** The doc claimed `PI[EFFECTS_HASH_BASE]` is
+  "pinned **in-circuit** … via a row-0 boundary constraint (`effect_vm/air.rs` 'Effects hash
+  binding')" — that AIR is RETIRED and no deployed descriptor binds those PIs (see #30's registry
+  read). And "we bind position 0 … because only position 0 is enforced in-circuit" rested on the same
+  retired pin. Corrected in place at the site.
+- **Reachability: NOT WIRED.** `effect_action_binding` has zero non-doc callers, and the error
+  variant `FullTurnVerifyError::AuthEffectMismatch` is declared with a `Display` arm but is **never
+  CONSTRUCTED**. Price as **soundness HIGH / availability NONE on a library surface with no in-tree
+  consumer** — the #2 verdict shape. Cheap to close now; it MUST be closed before any consumer wires
+  it.
+- **The close, and its one blocker.** Since #30, `compute_effects_hash_4` gives four genuine squeezes,
+  so `hash_fact(ALLOW, [h0,h1,h2,h3])` is a ~124-bit authorizing equality — the `hash_fact` arity is
+  already 4. **Blocked on the derivation rule's single-variable head:**
+  `derivation_authorizing_effects` builds `Allow(?0) :- capability(?0)` with `num_variables: 1` and
+  one variable head term, so binding four felts needs a 4-variable head whose extra variables are
+  range-restricted by the body — a **Lean-authored derivation-circuit** change, not a Rust edit.
+  Do not close it by binding four felts of the OLD derived-lane form: before #30 that was exactly the
+  laundering.
 
 ### Catalogue corrections (three stale rows)
 
@@ -468,6 +591,26 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
   cheaply; it does not retire kind F.
 
 ## Update log — 2026-07-24
+
+- **#25 CLOSED-as-widened + RE-VERDICTED, and #30/#31 OPENED while tracing it.** The sweep entry's
+  soundness half ("1 felt in the AIR PI") did not survive contact with the deployed bytes: the AIR
+  that would enforce it is RETIRED, the live `burnVmDescriptor2R24` references the burn-target param
+  column **zero** times, and offset 200 is not in the rotated PI vector at all — the burn target was
+  UNBOUND, not narrowly bound. Two things landed anyway, together, because either alone is cosmetic:
+  the carrier widened to 8 limbs (#25) **and** the fold it rides stopped being four functions of one
+  ~31-bit felt (#30). Falsifiers execute the *before* as well as the *after*
+  (`circuit/tests/effects_hash_fold_and_burn_target_width.rs`, 6/6). Three doc-comments asserting
+  security that HEAD does not provide were corrected at their sites (`pi.rs`'s D5c "three teeth",
+  `air.rs`'s burn-target slot, `full_turn_proof.rs`'s "why this is a real binding"). Gate:
+  `DREGG_REQUIRE_LEAN=0 cargo test -p dregg-circuit --lib` = **721 passed / 0 failed / 2 ignored**,
+  the stated baseline, unmoved.
+- **A pricing correction that reaches beyond #25: `fold_bytes32_to_bb` is LINEAR.** It is
+  `Σ_i limbs[i]·MIX^i` over `𝔽_p^8`, so where a prover chooses the 32 bytes DIRECTLY, a collision is
+  **one linear solve, O(1)** — not a 2^31 grind and not a 2^15.5 birthday. The ~2^31 pricing holds
+  only where the preimage is pinned to a hash image (`CellId::derive_raw`). Every catalogue row whose
+  narrow value is a prover-supplied 32-byte blob folded by this function is priced ~31 bits too
+  expensive. Exhibited (not argued) by
+  `fold_bytes32_to_bb_collides_in_o1_because_it_is_linear`.
 
 - **#20 Spend delegation-ancestor key — NEWLY LOGGED, and the first EARNED
   `check-no-degraded-felt.sh` suppression in the tree.** `63a5bdd362` (the repair that restored the
