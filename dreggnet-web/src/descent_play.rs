@@ -8,8 +8,14 @@
 //! and persistence glue only: it does not reproduce a move rule.
 //!
 //! The browser retains a versioned public-input record in `localStorage`. Reopening imports that
-//! record only by fresh native replay and exact receipt/state/root comparison. Publication is a
-//! separate opt-in operation: ordinary play never uploads the move tape.
+//! record only by fresh native replay and exact receipt/state/root comparison. Ordinary in-progress
+//! play never uploads the move tape; but a run played to its **terminal settlement** (`flee`)
+//! AUTO-ANCHORS — the completed record is submitted once to `/descent/native/submit`, so the run
+//! reaches the day's no-cheat leaderboard (a crowned exit ranks; every exact settlement gets its
+//! share card) without a separate manual publish. The manual "Publish verified run" button stays
+//! as an explicit re-submit. A `localStorage` mark keeps a reload from re-submitting; the server
+//! replay-gate is unchanged, so a forged/invalid record is refused exactly as before and never
+//! ranks.
 //!
 //! ## Security posture — the `/tg/link` review's discipline (`docs/TG-LINK-SECURITY-REVIEW-2026-07-18.md`)
 //!
@@ -270,7 +276,17 @@ fn read_play_snippet(path: &str) -> Option<Vec<u8>> {
 }
 
 const PLAY_STYLE: &str = r#"<style>
-.nd-page{max-width:980px}.nd-intro{max-width:720px;margin:2rem 0 1.5rem}.nd-intro h1{font-size:clamp(2.6rem,9vw,6.5rem);line-height:.84;margin:.2rem 0 1rem;letter-spacing:-.045em}.nd-intro p{max-width:62ch}.nd-kicker{text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;color:#c9a767}.nd-shell{border:1px solid rgba(201,167,103,.42);background:linear-gradient(145deg,rgba(17,20,32,.96),rgba(7,9,16,.98));box-shadow:0 30px 90px rgba(0,0,0,.42);padding:clamp(1rem,3vw,2rem)}.nd-meta{display:flex;flex-wrap:wrap;gap:.65rem 1.3rem;align-items:center;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.1);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#a8aec4}.nd-proof{margin-left:auto;color:#76d3a2}.nd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgba(255,255,255,.11);margin:1.4rem 0}.nd-stat{background:#0c101c;padding:1rem}.nd-stat b{display:block;font:600 clamp(1.2rem,4vw,2rem)/1.1 ui-monospace,SFMono-Regular,monospace;color:#f0e6cf}.nd-stat span{display:block;margin-top:.35rem;color:#8e95aa;font-size:.68rem;letter-spacing:.13em;text-transform:uppercase}.nd-custody{padding:1rem;border:1px solid rgba(255,255,255,.1);margin-bottom:1.2rem}.nd-custody strong{color:#d4ba82}.nd-action-menu{min-width:0}.nd-action-header{display:flex;gap:.6rem 1rem;align-items:baseline;justify-content:space-between;margin:1.25rem 0 .75rem}.nd-action-heading{margin:0;font-size:1rem}.nd-action-summary{margin:0;color:#8e95aa;font-size:.78rem}.nd-action-assurance{margin:0 0 .75rem;color:#777f96;font-size:.72rem;line-height:1.45}.nd-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.nd-actions button,.nd-tools button{appearance:none;border:1px solid rgba(201,167,103,.5);background:#151a29;color:#f4eddf;padding:.85rem 1rem;text-align:left;font:inherit;cursor:pointer}.nd-actions button{min-height:48px;overflow-wrap:anywhere;touch-action:manipulation}.nd-actions button:hover:not(:disabled),.nd-tools button:hover{background:#222a3e;border-color:#d7b978}.nd-actions button:disabled{opacity:.32;cursor:not-allowed}.nd-actions button:focus-visible,.nd-tools button:focus-visible,.nd-unavailable summary:focus-visible{outline:3px solid #76d3a2;outline-offset:3px}.nd-unavailable{margin-top:.85rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.7rem;color:#8e95aa}.nd-unavailable summary{cursor:pointer;font-size:.78rem;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.nd-unavailable ul{list-style:none;margin:.7rem 0 0;padding:0;display:grid;gap:.35rem}.nd-unavailable li{display:flex;justify-content:space-between;gap:1rem;font-size:.75rem}.nd-unavailable-label{color:#b7bdce;overflow-wrap:anywhere}.nd-unavailable-reason{color:#666e84;text-align:right;overflow-wrap:anywhere}.nd-message{min-height:3.5rem;padding:1rem;margin:1rem 0;background:rgba(255,255,255,.045);border-left:3px solid #6b7288}.nd-message.good{border-color:#68c394}.nd-message.bad{border-color:#c76f69}.nd-tools{display:flex;flex-wrap:wrap;gap:.6rem}.nd-tools button{font-size:.78rem;padding:.6rem .8rem;min-height:44px}.nd-share{display:inline-block;margin:.2rem 0 1rem;color:#76d3a2}.nd-root{margin-top:1rem;color:#777f96;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.nd-terminal{color:#e1bf75}.nd-fatal{padding:1rem;border:1px solid #9f514d;background:#261416;color:#f2c9c5}@media(max-width:620px){.nd-page{padding-left:14px!important;padding-right:14px!important}.nd-intro{margin-top:1.2rem}.nd-shell{padding:13px}.nd-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nd-actions{grid-template-columns:1fr}.nd-action-header{align-items:flex-start;flex-direction:column}.nd-action-summary{line-height:1.5}.nd-unavailable li{flex-direction:column;gap:.15rem;padding:.25rem 0}.nd-unavailable-reason{text-align:left}.nd-meta{font-size:.68rem}.nd-proof{margin-left:0;width:100%}.nd-tools button{flex:1 1 auto}.nd-intro h1{font-size:3.8rem}}
+.nd-page{max-width:980px}.nd-intro{max-width:720px;margin:2rem 0 1.5rem}.nd-intro h1{font-size:clamp(2.6rem,9vw,6.5rem);line-height:.84;margin:.2rem 0 1rem;letter-spacing:-.045em}.nd-intro p{max-width:62ch}.nd-kicker{text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;color:#c9a767}.nd-shell{border:1px solid rgba(201,167,103,.42);background:linear-gradient(145deg,rgba(17,20,32,.96),rgba(7,9,16,.98));box-shadow:0 30px 90px rgba(0,0,0,.42);padding:clamp(1rem,3vw,2rem)}.nd-meta{display:flex;flex-wrap:wrap;gap:.65rem 1.3rem;align-items:center;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.1);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#a8aec4}.nd-proof{margin-left:auto;color:#76d3a2}.nd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgba(255,255,255,.11);margin:1.4rem 0}.nd-stat{background:#0c101c;padding:1rem}.nd-stat b{display:block;font:600 clamp(1.2rem,4vw,2rem)/1.1 ui-monospace,SFMono-Regular,monospace;color:#f0e6cf}.nd-stat span{display:block;margin-top:.35rem;color:#8e95aa;font-size:.68rem;letter-spacing:.13em;text-transform:uppercase}.nd-custody{padding:1rem;border:1px solid rgba(255,255,255,.1);margin-bottom:1.2rem}.nd-custody strong{color:#d4ba82}.nd-action-menu{min-width:0}.nd-action-header{display:flex;gap:.6rem 1rem;align-items:baseline;justify-content:space-between;margin:1.25rem 0 .75rem}.nd-action-heading{margin:0;font-size:1rem}.nd-action-summary{margin:0;color:#8e95aa;font-size:.78rem}.nd-action-assurance{margin:0 0 .75rem;color:#777f96;font-size:.72rem;line-height:1.45}.nd-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.nd-actions button,.nd-tools button{appearance:none;border:1px solid rgba(201,167,103,.5);background:#151a29;color:#f4eddf;padding:.85rem 1rem;text-align:left;font:inherit;cursor:pointer}.nd-actions button{min-height:48px;overflow-wrap:anywhere;touch-action:manipulation}.nd-actions button:hover:not(:disabled),.nd-tools button:hover{background:#222a3e;border-color:#d7b978}.nd-actions button:disabled{opacity:.32;cursor:not-allowed}.nd-actions button:focus-visible,.nd-tools button:focus-visible,.nd-unavailable summary:focus-visible{outline:3px solid #76d3a2;outline-offset:3px}.nd-unavailable{margin-top:.85rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.7rem;color:#8e95aa}.nd-unavailable summary{cursor:pointer;font-size:.78rem;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.nd-unavailable ul{list-style:none;margin:.7rem 0 0;padding:0;display:grid;gap:.35rem}.nd-unavailable li{display:flex;justify-content:space-between;gap:1rem;font-size:.75rem}.nd-unavailable-label{color:#b7bdce;overflow-wrap:anywhere}.nd-unavailable-reason{color:#666e84;text-align:right;overflow-wrap:anywhere}.nd-message{min-height:3.5rem;padding:1rem;margin:1rem 0;background:rgba(255,255,255,.045);border-left:3px solid #6b7288}.nd-message.good{border-color:#68c394}.nd-message.bad{border-color:#c76f69}.nd-tools{display:flex;flex-wrap:wrap;gap:.6rem}.nd-tools button{font-size:.78rem;padding:.6rem .8rem;min-height:44px}.nd-share{display:inline-block;margin:.2rem 0 1rem;color:#76d3a2}.nd-root{margin-top:1rem;color:#777f96;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.nd-terminal{color:#e1bf75}.nd-fatal{padding:1rem;border:1px solid #9f514d;background:#261416;color:#f2c9c5}
+/* ═══ THE VITALS — a badge and the meters that ARE the game ═══════════════ */
+.nd-vitals{margin:1.4rem 0}.nd-status{display:flex;flex-wrap:wrap;gap:.55rem .9rem;align-items:center;margin-bottom:.95rem}.nd-pill{display:inline-flex;align-items:center;padding:.3rem .75rem;border-radius:999px;border:1px solid currentColor;font:700 .68rem/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.13em;text-transform:uppercase}.nd-pill.good{color:#76d3a2;background:rgba(118,211,162,.1)}.nd-pill.warn{color:#e1bf75;background:rgba(225,191,117,.1)}.nd-pill.bad{color:#e08c86;background:rgba(224,140,134,.13)}.nd-standing{color:#a8aec4;font-size:.86rem}
+.nd-meters{display:grid;gap:.42rem}.nd-meter{display:grid;grid-template-columns:5.2rem 1fr 3.7rem;align-items:center;gap:.7rem}.nd-meter-label{color:#8e95aa;font:.7rem/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.11em;text-transform:uppercase}.nd-meter-track{position:relative;height:.72rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);overflow:hidden}.nd-meter-fill{display:block;height:100%;background:linear-gradient(90deg,#c9a767,#f0e6cf);transition:width .25s ease}.nd-meter.low .nd-meter-fill{background:linear-gradient(90deg,#8c3b36,#e08c86)}.nd-meter.done .nd-meter-fill{background:linear-gradient(90deg,#2f7a58,#76d3a2)}.nd-meter-value{color:#f0e6cf;font:.77rem/1 ui-monospace,SFMono-Regular,monospace;text-align:right}
+.nd-pressure{margin:.55rem 0 0;color:#d9b48a;font-size:.8rem;line-height:1.5}
+/* ═══ THE SHAFT — a relic keeps its COLUMN, so you watch it travel ════════ */
+.nd-shaft{margin:1.5rem 0}.nd-shaft-heading{margin:0 0 .6rem;font-size:1rem}.nd-map{display:grid;gap:.22rem;padding:.5rem;border:1px solid rgba(255,255,255,.1);background:#080b13;max-width:34rem}.nd-cell{display:grid;place-items:center;aspect-ratio:1/1;min-width:1.1rem;border:1px solid transparent;border-radius:3px;background:rgba(255,255,255,.02);color:#5c6478;font:600 clamp(.68rem,2.3vw,1rem)/1 ui-monospace,SFMono-Regular,monospace}.nd-cell.tag-muted{color:#3f465a}.nd-cell.tag-accent{color:#f4ecd9;background:rgba(201,167,103,.15);border-color:rgba(201,167,103,.52)}.nd-cell.tag-good{color:#76d3a2}.nd-cell.tag-warn{color:#e1bf75}.nd-cell.tag-bad{color:#e08c86}.nd-cell.actionable{border-color:#76d3a2;box-shadow:0 0 12px -3px #76d3a2,inset 0 0 0 1px rgba(118,211,162,.34)}.nd-legend{margin:.5rem 0 0;color:#777f96;font:.7rem/1.75 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
+@media(max-width:620px){.nd-page{padding-left:14px!important;padding-right:14px!important}.nd-intro{margin-top:1.2rem}.nd-shell{padding:13px}.nd-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nd-actions{grid-template-columns:1fr}.nd-action-header{align-items:flex-start;flex-direction:column}.nd-action-summary{line-height:1.5}.nd-unavailable li{flex-direction:column;gap:.15rem;padding:.25rem 0}.nd-unavailable-reason{text-align:left}.nd-meta{font-size:.68rem}.nd-proof{margin-left:0;width:100%}.nd-tools button{flex:1 1 auto}.nd-intro h1{font-size:3.8rem}}
+/* The shaft on a phone: 11 columns of a ~360px viewport, so the cell floor is sized to keep the
+   WHOLE map visible without horizontal scroll, and the meter gutters narrow to match. */
+@media(max-width:620px){.nd-meter{grid-template-columns:4rem 1fr 3.1rem;gap:.5rem}.nd-map{gap:.16rem;padding:.35rem;max-width:100%}.nd-cell{min-width:0;border-radius:2px}.nd-status{gap:.4rem .6rem}.nd-legend{font-size:.64rem}}
 </style>"#;
 
 /// Static, strict-CSP chrome around the same-origin native wasm bootstrap.
@@ -331,6 +347,9 @@ let lastShareRanked = false;
 // the offline day, where a fresh open falls back to the seed-derived practice world.
 let dayBeaconRound = null;
 let dayBeaconSig = null;
+// Guards the single in-flight submit so the on-completion auto-anchor and the manual publish
+// button never race one another into a double POST.
+let anchorInFlight = false;
 
 // Open a FRESH world for `seed` — beacon-bound when today is a live beacon (verified in-tab), else
 // the seed-derived practice world. Restore-from-record is a separate path: a portable record
@@ -392,10 +411,249 @@ function save() {
   if (recordKey && world) storedSet(recordKey, world.recordJson());
 }
 
-function stat(label, value) {
-  const box = node("div", "nd-stat");
-  box.append(node("b", "", String(value)), node("span", "", label));
+// The day-scoped mark that a completed run has already been anchored to the board. It keeps a
+// page reload of a finished run from re-POSTing (the submit is idempotent server-side, but a
+// silent mark avoids the redundant round-trip). Cleared whenever a fresh run opens.
+function anchorMarkKey() {
+  return recordKey ? "dregg.native-descent.anchored.v1:" + recordKey : null;
+}
+function anchoredAlready() {
+  const key = anchorMarkKey();
+  return key ? storedGet(key) !== null : false;
+}
+function markAnchored(runId) {
+  const key = anchorMarkKey();
+  if (key) storedSet(key, runId || "yes");
+}
+function clearAnchored() {
+  const key = anchorMarkKey();
+  if (key) storedRemove(key);
+}
+
+// Submit the full native record to the board's native lane — SHARED by the automatic
+// on-completion anchor (`auto = true`) and the manual "Publish verified run" button
+// (`auto = false`). The server runs the same exact-replay no-cheat gate either way, so a
+// forged/invalid record is refused identically and never ranks; `auto` only shapes the copy.
+async function submitVerifiedRun(auto) {
+  if (anchorInFlight || !world) return;
+  let snapshot;
+  try { snapshot = JSON.parse(world.stateJson()); } catch (_) { return; }
+  if (!snapshot.ended || !world.verify()) return;
+  anchorInFlight = true;
+  if (!auto) {
+    lastKind = "";
+    lastMessage = "Submitting the full native record for fresh server replay…";
+    render();
+  }
+  try {
+    const response = await fetch("/descent/native/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        day: root.dataset.dayKey,
+        record: JSON.parse(world.recordJson()),
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.verified) {
+      throw new Error(result.error || result.detail || "native replay was refused");
+    }
+    lastShare = result.share;
+    lastShareRanked = result.ranked === true;
+    markAnchored(result.run_id);
+    lastKind = "good";
+    const durability = result.durable === true
+      ? " The artifact is in the durable Descent store."
+      : " The server did not persist this artifact; keep your local replay record.";
+    const anchored = result.settled === true
+      ? " Anchored on the devnet node's ledger."
+      : "";
+    const outcome = lastShareRanked
+      ? "Exact server replay passed. This crowned run now ranks in the native lane."
+      : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.";
+    lastMessage = (auto ? "Run settled — auto-anchored to the board. " : "") + outcome + durability + anchored;
+  } catch (e) {
+    lastShare = null;
+    lastKind = "bad";
+    lastMessage = (auto
+      ? "Auto-anchor did not complete; your local record is intact and the Publish button remains: "
+      : "Publication refused; the local record remains intact: ") + errorText(e);
+  } finally {
+    anchorInFlight = false;
+  }
+  render();
+}
+
+// Fire the on-completion anchor exactly once per finished run: when the run has reached its
+// terminal settlement and still verifies, and it has not already been anchored. This is what
+// closes play -> rank end-to-end without a manual publish click.
+function maybeAutoAnchor() {
+  if (!world || anchorInFlight || anchoredAlready()) return;
+  let snapshot;
+  try { snapshot = JSON.parse(world.stateJson()); } catch (_) { return; }
+  if (!snapshot.ended || !world.verify()) return;
+  submitVerifiedRun(true);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THE DUNGEON, PAINTED — the shaft map, the light clock, the carry ceiling.
+//
+// PRESENTATION ONLY. Nothing here decides a move: every "you may act on this" mark is read off
+// the OFFERING'S OWN action list (`actionsJson` -> `enabled`), which is the executor-backed
+// verdict, never a rule re-derived in the browser.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// The world's Lean-sourced constants, mirrored here to SIZE bars and LABEL rows. They decide
+// nothing. `dreggnet-web/tests/descent_play_map.rs` pins every one of them against the Rust
+// constant it mirrors, so this block cannot drift away from the game in silence.
+const FLOORS = 4;
+const RELICS = 8;
+const BREATH = 26;
+const CAP = 8;
+const CARRIED = 8;
+const BANKED = 9;
+// guard_hp(depth), indexed by depth 0..FLOORS.
+const GUARD_HP = [0, 1, 1, 2, 2];
+
+// One character per cell, so the map is the same map the Discord/Telegram/WeChat text grid paints.
+const GLYPH_EMPTY = "·";
+// The floor you stand on. A GLYPH, not a highlight: the highlight means "you may act on this now",
+// and standing somewhere is not a move.
+const GLYPH_YOU = ">";
+const GLYPH_WAY_OPEN = "/";
+const GLYPH_WAY_SHUT = "#";
+const GLYPH_GUARDIAN = "G";
+const GLYPH_GUARDIAN_SLAIN = "x";
+const GLYPH_CROWN = "C";
+const GLYPH_KEY = "k";
+const GLYPH_TREASURE = "*";
+const GLYPH_PACK = "@";
+const GLYPH_VAULT = "$";
+// marker + way + guardian, then ONE COLUMN PER RELIC.
+const MAP_COLS = 3 + RELICS;
+
+function relicGlyph(relic) {
+  if (relic === 0) return GLYPH_CROWN;
+  return relic <= 3 ? GLYPH_KEY : GLYPH_TREASURE;
+}
+
+function relicTag(relic) {
+  if (relic === 0) return "accent";
+  return relic <= 3 ? "warn" : "good";
+}
+
+function countCustody(sim, code) {
+  return sim.custody.filter(c => c === code).length;
+}
+
+// A labelled meter: the bar is the argument, the numbers are the proof.
+function meter(label, value, max, tone) {
+  const box = node("div", "nd-meter" + (tone ? " " + tone : ""));
+  box.append(node("span", "nd-meter-label", label));
+  const track = node("span", "nd-meter-track");
+  const fill = node("span", "nd-meter-fill");
+  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  fill.style.width = (ratio * 100).toFixed(1) + "%";
+  track.append(fill);
+  box.append(track, node("span", "nd-meter-value", value + "/" + max));
+  box.setAttribute("role", "img");
+  box.setAttribute("aria-label", label + " " + value + " of " + max);
   return box;
+}
+
+function mapCell(glyph, tag, actionable, title) {
+  const cell = node("span", "nd-cell" + (tag ? " tag-" + tag : "") + (actionable ? " actionable" : ""), glyph);
+  if (title) cell.title = title;
+  return cell;
+}
+
+// The shaft: four floor rows, then the pack row, then the vault row. A relic keeps its COLUMN for
+// the whole run, so you watch it travel out of the dark, into your pack, and into the vault.
+function buildMap(sim, actions) {
+  const can = (turn, arg) => actions.some(a => a.turn === turn && a.arg === arg && a.enabled === true);
+  const grid = node("div", "nd-map");
+  grid.style.gridTemplateColumns = "repeat(" + MAP_COLS + ", 1fr)";
+  grid.setAttribute("role", "img");
+  grid.setAttribute(
+    "aria-label",
+    "The shaft. You stand on floor " + sim.depth + " of " + FLOORS + ". " +
+    countCustody(sim, CARRIED) + " relics in your pack, " + countCustody(sim, BANKED) + " banked."
+  );
+
+  for (let floor = 1; floor <= FLOORS; floor += 1) {
+    const here = sim.depth === floor;
+    grid.append(mapCell(here ? GLYPH_YOU : String(floor), here ? "accent" : "muted", false,
+      here ? "You stand on floor " + floor : "Floor " + floor));
+
+    const open = floor === 1 || sim.ways[floor - 2] === 1;
+    const passable = floor === sim.depth + 1 && can("delve", 0);
+    const openable = floor >= 2 && can("unlock", floor);
+    grid.append(mapCell(open ? GLYPH_WAY_OPEN : GLYPH_WAY_SHUT, open ? "good" : "bad",
+      passable || openable,
+      open ? "The way into floor " + floor + " is open" : "The way into floor " + floor + " is shut"));
+
+    const slain = here && sim.wounds >= GUARD_HP[floor];
+    grid.append(mapCell(slain ? GLYPH_GUARDIAN_SLAIN : GLYPH_GUARDIAN,
+      here ? (slain ? "good" : "bad") : "muted", here && can("smite", 0),
+      slain ? "The floor " + floor + " guardian has fallen" : "The floor " + floor + " guardian stands"));
+
+    for (let relic = 0; relic < RELICS; relic += 1) {
+      if (sim.custody[relic] === floor) {
+        grid.append(mapCell(relicGlyph(relic), relicTag(relic), can("loot", relic),
+          "Relic " + relic + " lies on floor " + floor));
+      } else {
+        grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+      }
+    }
+  }
+
+  const row = (marker, markerTag, code, cellTag, what) => {
+    grid.append(mapCell(marker, markerTag, false, what));
+    grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+    grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+    for (let relic = 0; relic < RELICS; relic += 1) {
+      if (sim.custody[relic] === code) {
+        grid.append(mapCell(relicGlyph(relic), cellTag || relicTag(relic), false, what));
+      } else {
+        grid.append(mapCell(GLYPH_EMPTY, "muted", false));
+      }
+    }
+  };
+  row(GLYPH_PACK, "accent", CARRIED, null, "In your pack — still losable");
+  row(GLYPH_VAULT, "good", BANKED, "good", "Banked — a proved exit made it yours");
+  return grid;
+}
+
+// The run's one-word state. `ended` is the record's own settled bit; a run that cannot pay the one
+// light every verb costs can never move again.
+function standing(sim, ended) {
+  if (ended) return { word: "BANKED", tone: "good" };
+  if (sim.spent + 1 > BREATH) return { word: "THE LIGHT IS DEAD", tone: "bad" };
+  return { word: "DELVING", tone: "warn" };
+}
+
+// The things a player is about to lose to, said out loud.
+function pressures(sim, ended) {
+  const lines = [];
+  if (ended) return lines;
+  const light = Math.max(0, BREATH - sim.spent);
+  if (light <= 4) {
+    lines.push("⚠ the light is guttering — " + light + " left, and climbing out costs 1");
+  }
+  if (sim.depth >= 1 && sim.wounds < GUARD_HP[sim.depth]) {
+    const left = GUARD_HP[sim.depth] - sim.wounds;
+    lines.push("⚠ the guardian stands — the hoard here stays shut until it falls (" +
+      left + " more strike" + (left === 1 ? "" : "s") + ", " + left * 2 + " light)");
+  }
+  const pack = countCustody(sim, CARRIED);
+  if (pack + 1 + sim.depth > CAP) {
+    lines.push("⚠ carrying rights are spent at this depth — the next relic would not fit");
+  }
+  if (pack > 0) {
+    lines.push("⚠ " + pack + " relic" + (pack === 1 ? "" : "s") +
+      " ride" + (pack === 1 ? "s" : "") + " in the pack — nothing is yours until a proved exit banks it");
+  }
+  return lines;
 }
 
 function render() {
@@ -412,24 +670,56 @@ function render() {
   );
   shell.append(meta);
 
-  const grid = node("div", "nd-grid");
-  grid.append(
-    stat("depth", sim.depth),
-    stat("light spent", sim.spent),
-    stat("wounds", sim.wounds),
-    stat("banked", sim.banked)
-  );
-  shell.append(grid);
-
-  const custody = node("div", "nd-custody");
-  custody.append(node("strong", "", "Custody · "));
-  custody.append(document.createTextNode(
-    sim.custody.length ? sim.custody.join(" · ") : "no relics carried"
-  ));
+  // ── THE VITALS: one badge, then the meters that ARE the game. ──
+  const carried = countCustody(sim, CARRIED);
+  const banked = countCustody(sim, BANKED);
+  const hoardHere = countCustody(sim, sim.depth);
+  const state = standing(sim, snapshot.ended);
+  const vitals = node("div", "nd-vitals");
+  const badge = node("div", "nd-status");
+  badge.append(node("span", "nd-pill " + state.tone, state.word));
+  badge.append(node("span", "nd-standing", snapshot.ended
+    ? "the tomb is frozen — " + banked + " relic" + (banked === 1 ? "" : "s") + " came out with you"
+    : sim.depth === 0
+      ? "you stand at the mouth of the shaft"
+      : "floor " + sim.depth + " of " + FLOORS + " — " + hoardHere +
+        " relic" + (hoardHere === 1 ? "" : "s") + " lying here"));
   if (snapshot.ended) {
-    custody.append(node("span", "nd-terminal", snapshot.crowned ? " · CROWNED EXIT" : " · EXIT SETTLED"));
+    badge.append(node("span", "nd-terminal", snapshot.crowned ? "CROWNED EXIT" : "EXIT SETTLED"));
   }
-  shell.append(custody);
+  vitals.append(badge);
+
+  const meters = node("div", "nd-meters");
+  meters.append(meter("light", Math.max(0, BREATH - sim.spent), BREATH,
+    BREATH - sim.spent <= 4 ? "low" : ""));
+  meters.append(meter("pack", carried, Math.max(0, CAP - sim.depth),
+    carried + 1 + sim.depth > CAP ? "low" : ""));
+  if (sim.depth >= 1) {
+    meters.append(meter("guardian", sim.wounds, GUARD_HP[sim.depth],
+      sim.wounds >= GUARD_HP[sim.depth] ? "done" : ""));
+  }
+  meters.append(meter("banked", banked, RELICS, banked > 0 ? "done" : ""));
+  vitals.append(meters);
+
+  for (const line of pressures(sim, snapshot.ended)) {
+    vitals.append(node("p", "nd-pressure", line));
+  }
+  shell.append(vitals);
+
+  // ── THE MAP: the shaft itself, with what you may act on marked. ──
+  const shaft = node("section", "nd-shaft");
+  shaft.append(node("h2", "nd-shaft-heading", "The shaft"));
+  shaft.append(buildMap(sim, actions));
+  shaft.append(node("p", "nd-legend",
+    "rows: floors 1–" + FLOORS + " · " + GLYPH_PACK + " your pack (still losable) · " +
+    GLYPH_VAULT + " banked (yours). columns: floor · way · guardian · then one per relic " +
+    "(1 crown, 2–4 way-keys, 5–8 treasures)"));
+  shaft.append(node("p", "nd-legend",
+    GLYPH_YOU + " you are here · " + GLYPH_WAY_OPEN + " open way · " + GLYPH_WAY_SHUT +
+    " shut way · " + GLYPH_GUARDIAN + " guardian · " + GLYPH_GUARDIAN_SLAIN + " slain · " +
+    GLYPH_CROWN + " crown · " + GLYPH_KEY + " way-key · " + GLYPH_TREASURE +
+    " treasure · a lit cell is one you may act on now"));
+  shell.append(shaft);
 
   const actionMenu = node("section", "nd-action-menu");
   mountDescentActionMenu(actionMenu, actions, {
@@ -448,6 +738,9 @@ function render() {
         lastMessage = "Refused without advancing: " + (result.error || "the native executor declined the move");
       }
       render();
+      // If that landed move settled the run, auto-anchor it to the board (once) — no manual
+      // publish needed to rank.
+      maybeAutoAnchor();
     },
   });
   shell.append(actionMenu);
@@ -480,43 +773,12 @@ function render() {
     }
     render();
   });
+  // A terminal run auto-anchors on completion, so this button is an explicit RE-submit (the same
+  // idempotent POST). It stays enabled after an auto-anchor so a player can re-publish on demand.
   const publish = node("button", "", snapshot.ended ? "Publish verified run" : "Settle before publishing");
   publish.type = "button";
   publish.disabled = !snapshot.ended || !world.verify();
-  publish.addEventListener("click", async () => {
-    publish.disabled = true;
-    lastKind = "";
-    lastMessage = "Submitting the full native record for fresh server replay…";
-    render();
-    try {
-      const response = await fetch("/descent/native/submit", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          day: root.dataset.dayKey,
-          record: JSON.parse(world.recordJson()),
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok || !result.verified) {
-        throw new Error(result.error || result.detail || "native replay was refused");
-      }
-      lastShare = result.share;
-      lastShareRanked = result.ranked === true;
-      lastKind = "good";
-      const durability = result.durable === true
-        ? " The artifact is in the durable Descent store."
-        : " The server did not persist this artifact; keep your local replay record.";
-      lastMessage = (lastShareRanked
-        ? "Exact server replay passed. This crowned run now ranks in the native lane."
-        : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.") + durability;
-    } catch (e) {
-      lastShare = null;
-      lastKind = "bad";
-      lastMessage = "Publication refused; the local record remains intact: " + errorText(e);
-    }
-    render();
-  });
+  publish.addEventListener("click", () => { submitVerifiedRun(false); });
   const restart = node("button", "", "Abandon this run");
   restart.type = "button";
   restart.addEventListener("click", () => {
@@ -530,6 +792,7 @@ function render() {
       return;
     }
     storedRemove(recordKey);
+    clearAnchored();
     try { world.free(); } catch (_) {}
     world = openFreshWorld(Number(root.dataset.nativeSeed));
     lastShare = null;
@@ -610,12 +873,17 @@ async function boot() {
     if (retained) lastMessage = "Local record restored only after exact native replay.";
   } catch (e) {
     storedRemove(recordKey);
+    clearAnchored();
     try { world = openFreshWorld(nativeSeed); }
     catch (openError) { notice("Native world deployment refused: " + errorText(openError)); return; }
     lastKind = "bad";
     lastMessage = "A retained record was refused and discarded: " + errorText(e);
   }
   render();
+  // A restored run that already reached its terminal settlement but was never anchored (e.g. the
+  // tab closed the moment it settled) auto-anchors now. A run anchored in a prior visit carries
+  // its mark and is skipped.
+  maybeAutoAnchor();
 }
 
 boot().catch(e => notice("Could not start The Descent: " + errorText(e)));
@@ -716,6 +984,43 @@ mod tests {
             !js.contains("DescentEngine"),
             "old game engine is not mounted"
         );
+    }
+
+    /// The controller AUTO-ANCHORS a completed run to the board — the on-completion submit that
+    /// closes play -> rank without a manual publish — while keeping the explicit Publish button and
+    /// the same-origin submit endpoint. String-level (the wasm-driven runtime path is exercised
+    /// server-side by `tests/descent_native_leaderboard.rs`).
+    #[tokio::test]
+    async fn the_controller_auto_anchors_a_completed_run() {
+        use axum::body::to_bytes;
+        let resp = super::get_play_app_js().await.into_response();
+        let body = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let js = std::str::from_utf8(&body).unwrap();
+        // The shared submit + the on-completion trigger, fired from a landed move and from boot.
+        for needle in [
+            "submitVerifiedRun",
+            "maybeAutoAnchor",
+            "snapshot.ended",
+            "/descent/native/submit",
+            // The idempotence mark that keeps a reload from re-POSTing.
+            "dregg.native-descent.anchored.v1:",
+            // The explicit re-submit stays.
+            "Publish verified run",
+        ] {
+            assert!(
+                js.contains(needle),
+                "auto-anchor controller references {needle}"
+            );
+        }
+        // The auto-anchor is triggered right after a landed move renders, and once on boot.
+        assert_eq!(
+            js.matches("maybeAutoAnchor();").count(),
+            2,
+            "auto-anchor fires on the terminal move and on a restored-completed boot"
+        );
+        // A run still in progress must never be uploaded: the trigger is gated on the terminal
+        // settlement + a passing verify.
+        assert!(js.contains("!snapshot.ended || !world.verify()"));
     }
 
     #[tokio::test]

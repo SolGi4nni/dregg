@@ -6,7 +6,7 @@
 
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE};
+use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, RELICS, SMITE};
 
 fn land(
     offering: &NativeDescentOffering,
@@ -46,31 +46,62 @@ fn enabled_moves_lead_locked_catalogue_and_exit_follows_nonterminal_play() {
     assert_eq!(fresh[1].turn, FLEE);
     assert!(fresh[..2].iter().all(|action| action.enabled));
     assert!(fresh[2..].iter().all(|action| !action.enabled));
-    assert_eq!(fresh[1].label, "End the run with no relics banked");
+    // The exit names WHAT IT BANKS and WHAT IT COSTS — an irreversible move a newcomer can weigh.
+    assert_eq!(fresh[1].label, "↑ Climb out with nothing · 1 light");
 
-    // Kill floor one's guardian. Three relics become legal; all three must be shown before the
-    // irreversible but still legal exit, while locked actions remain visible after it.
+    // Kill floor one's guardian. Every relic MINTED ON THIS FLOOR becomes legal, and all of them
+    // must be shown before the irreversible-but-legal exit, with locked actions still visible
+    // after it.
+    //
+    // Both the blow count and the expected spoils are DERIVED FROM THE DAY'S MAP, not written
+    // down. They used to be the literals `1` smite and `vec![1, 4, 5]`, which were facts about the
+    // one hard-coded dungeon that existed before the map became a function of the committed
+    // day-seed. This session opens on seed 99, which draws a different day — so the literals began
+    // asserting the layout of a dungeon nobody is playing. Deriving them pins the INVARIANT that
+    // actually matters ("felling the guardian unlocks exactly this floor's mints, in order") and
+    // keeps the test honest on all sixteen days instead of one.
     land(&offering, &mut session, &actor, DELVE, 0);
-    land(&offering, &mut session, &actor, SMITE, 0);
+    let world = session.game().day_world();
+    let floor = 1_u64;
+    for blow in 0..world.guard_hp(floor) {
+        assert!(
+            blow < 8,
+            "a guardian that cannot be felled is a map bug, not a test bug"
+        );
+        land(&offering, &mut session, &actor, SMITE, 0);
+    }
+    let mut expected_loot: Vec<i64> = (0..RELICS)
+        .filter(|&relic| world.homes[relic] == floor)
+        .map(|relic| relic as i64)
+        .collect();
+    expected_loot.sort_unstable();
+    assert!(
+        !expected_loot.is_empty(),
+        "day {:?} mints nothing on floor {floor}; the draw is supposed to keep every floor live",
+        world.homes
+    );
+
     let spoils = offering.actions(&session);
     let exit = spoils
         .iter()
         .position(|action| action.turn == FLEE)
         .expect("exit remains offered");
-    let playable_loot: Vec<_> = spoils[..exit]
+    let mut playable_loot: Vec<_> = spoils[..exit]
         .iter()
         .filter(|action| action.turn == LOOT)
         .map(|action| action.arg)
         .collect();
-    assert_eq!(playable_loot, vec![1, 4, 5]);
+    playable_loot.sort_unstable();
+    assert_eq!(playable_loot, expected_loot);
     assert!(spoils[..exit].iter().all(|action| action.enabled));
     assert!(spoils[exit + 1..].iter().all(|action| !action.enabled));
 
-    land(&offering, &mut session, &actor, LOOT, 1);
+    let first_relic = expected_loot[0];
+    land(&offering, &mut session, &actor, LOOT, first_relic);
     let exit = offering
         .actions(&session)
         .into_iter()
         .find(|action| action.turn == FLEE)
         .expect("exit remains offered");
-    assert_eq!(exit.label, "End the run and bank 1 carried relic");
+    assert_eq!(exit.label, "↑ Climb out and bank 1 carried relic · 1 light");
 }

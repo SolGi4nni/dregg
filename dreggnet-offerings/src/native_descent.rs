@@ -38,7 +38,7 @@
 //! [`resume_record`](NativeDescentOffering::resume_record) needs no pinning — it reads
 //! [`NativeDescentRecord::day_seed`] itself, so every resume path is day-agnostic already.
 
-use deos_view::{MenuItem, ViewNode};
+use deos_view::{CoordCell, MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
 /// A minted note's content-addressed id, re-exported so a surface or leaderboard can name a
 /// settled run's owned notes without its own dependency on the asset layer.
@@ -46,6 +46,14 @@ pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
     BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT,
     PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_seed_from_deploy_seed, guard_hp,
+};
+/// **The world's presentation constants**, re-exported so a FRONTEND can size a light bar or a
+/// carry meter against the same Lean-sourced numbers this surface does, without its own dependency
+/// on the game crate — and so a browser-side mirror of them can be PINNED by a test against these
+/// rather than drifting silently. They decide nothing; the executor is still the only referee.
+pub use dungeon_on_dregg::descent::{
+    BANKED as CUSTODY_BANKED, BREATH as LIGHT_BREATH, CAP as CARRY_CAP, CARRIED as CUSTODY_CARRIED,
+    FLOORS as DUNGEON_FLOORS, RELICS as DUNGEON_RELICS, guard_hp as guardian_hp,
 };
 use dungeon_on_dregg::loot::LootError;
 /// The settled run's owned-note world and the shape of what it recorded — re-exported so a
@@ -796,22 +804,35 @@ impl NativeDescentOffering {
             return Vec::new();
         }
         let pack = sim.pack();
+        // Every label carries WHAT IT COSTS. The light is the whole clock, so a move whose price is
+        // invisible is a move a newcomer cannot weigh; naming it turns each button into a verb with
+        // a consequence. Presentation only — the mover prices the turn and the executor admits it.
         let mut actions = vec![
             Action::new(
-                format!("Descend to floor {}", sim.depth + 1),
+                format!(
+                    "↓ Descend to floor {}{}",
+                    sim.depth + 1,
+                    light_cost(LIGHT_DELVE)
+                ),
                 DELVE,
                 0,
                 sim.delve().is_ok(),
             ),
-            Action::new("Strike the guardian", SMITE, 0, sim.smite().is_ok()),
+            Action::new(
+                format!("⚔ Strike the guardian{}", light_cost(LIGHT_SMITE)),
+                SMITE,
+                0,
+                sim.smite().is_ok(),
+            ),
             Action::new(
                 if pack == 0 {
-                    "End the run with no relics banked".to_string()
+                    format!("↑ Climb out with nothing{}", light_cost(LIGHT_FLEE))
                 } else {
                     format!(
-                        "End the run and bank {} carried relic{}",
+                        "↑ Climb out and bank {} carried relic{}{}",
                         pack,
-                        if pack == 1 { "" } else { "s" }
+                        if pack == 1 { "" } else { "s" },
+                        light_cost(LIGHT_FLEE)
                     )
                 },
                 FLEE,
@@ -821,7 +842,10 @@ impl NativeDescentOffering {
         ];
         actions.extend((2..=FLOORS).map(|way| {
             Action::new(
-                format!("Exercise the key to way {way}"),
+                format!(
+                    "{GLYPH_KEY} Exercise the key to way {way}{}",
+                    light_cost(LIGHT_UNLOCK)
+                ),
                 UNLOCK,
                 i64::try_from(way).expect("the fixed native way set fits the action wire"),
                 sim.unlock(way).is_ok(),
@@ -829,7 +853,12 @@ impl NativeDescentOffering {
         }));
         actions.extend((0..RELICS).map(|relic| {
             Action::new(
-                relic_label(relic),
+                format!(
+                    "{} {}{}",
+                    relic_glyph(relic),
+                    relic_label(relic),
+                    light_cost(LIGHT_LOOT)
+                ),
                 LOOT,
                 i64::try_from(relic).expect("the fixed native relic set fits the action wire"),
                 sim.loot(relic).is_ok(),
@@ -1030,46 +1059,69 @@ impl Offering for NativeDescentOffering {
             .as_ref()
             .map(|actor| actor.as_str())
             .unwrap_or("unclaimed — the first landed move binds the player");
-        let guardian = if sim.depth == 0 {
-            "surface — no guardian".to_string()
-        } else {
-            format!(
-                "floor {} guardian: {}/{} wounds",
-                sim.depth,
-                sim.wounds,
-                guard_hp(sim.depth)
-            )
-        };
-        let carried = relics_with_custody(sim, CARRIED);
-        let banked = relics_with_custody(sim, BANKED);
-        let state = vec![
-            ViewNode::Text(format!("player: {actor}")),
-            ViewNode::Text(format!(
-                "depth {} · light {} / {} · carrying {} / {}",
-                sim.depth,
-                BREATH.saturating_sub(sim.spent),
-                BREATH,
-                sim.pack(),
-                CAP.saturating_sub(sim.depth)
-            )),
-            ViewNode::Text(guardian),
-            ViewNode::Text(format!("carried: {carried}")),
-            ViewNode::Text(format!("banked: {banked}")),
-            ViewNode::Text(format!(
-                "revision {} · root {}",
-                session.revision(),
-                short_digest(session.root)
-            )),
-        ];
-        let mut children = vec![ViewNode::Section {
-            title: if sim.fate == 0 {
-                "The living descent".to_string()
-            } else {
-                "The banked tomb".to_string()
+        let (status, status_tag) = descent_status(sim);
+        let light = BREATH.saturating_sub(sim.spent);
+        // Carrying rights ATTENUATE with depth: the deeper you stand, the less you may hold
+        // (`pack + depth ≤ CAP`), so the pack meter's ceiling MOVES as you descend. That is the
+        // other half of the game's tension and it has to be visible, not inferred.
+        let carry_rights = CAP.saturating_sub(sim.depth);
+
+        // ── THE VITALS: one badge, three meters. The light is the clock; the pack is the ceiling;
+        //    the guardian is the toll. Labels are padded to a common width so the bars stack into
+        //    an aligned column on the prose channels too. ──
+        let mut vitals = vec![
+            ViewNode::Pill {
+                text: status.to_string(),
+                tag: status_tag.to_string(),
+                slot: None,
+                cases: Vec::new(),
             },
-            tag: if sim.fate == 0 { "accent" } else { "genuine" }.to_string(),
-            children: state,
-        }];
+            ViewNode::Text(descent_standing(sim)),
+            ViewNode::Progress {
+                value: light,
+                max: BREATH,
+                label: "light   ".to_string(),
+            },
+            ViewNode::Progress {
+                value: sim.pack(),
+                max: carry_rights,
+                label: "pack    ".to_string(),
+            },
+        ];
+        if sim.depth >= 1 {
+            vitals.push(ViewNode::Progress {
+                value: sim.wounds,
+                max: guard_hp(sim.depth),
+                label: "guardian".to_string(),
+            });
+        }
+        vitals.push(ViewNode::Progress {
+            value: sim.bank(),
+            max: RELICS as u64,
+            label: "banked  ".to_string(),
+        });
+        vitals.extend(descent_pressures(sim));
+
+        // ── THE MAP: the shaft itself. ──
+        let mut shaft = vec![descent_map(sim)];
+        shaft.extend(map_legend());
+
+        let mut children = vec![
+            ViewNode::Section {
+                title: match (sim.fate, sim.depth) {
+                    (0, 0) => "The living descent — at the mouth".to_string(),
+                    (0, depth) => format!("The living descent — floor {depth} of {FLOORS}"),
+                    _ => "The banked tomb".to_string(),
+                },
+                tag: if sim.fate == 0 { "accent" } else { "genuine" }.to_string(),
+                children: vitals,
+            },
+            ViewNode::Section {
+                title: "The shaft".to_string(),
+                tag: "accent".to_string(),
+                children: shaft,
+            },
+        ];
         let actions = self.actions(session);
         if !actions.is_empty() {
             children.push(ViewNode::Menu {
@@ -1084,6 +1136,22 @@ impl Offering for NativeDescentOffering {
                     .collect(),
             });
         }
+        // The bookkeeping a player does not need to read to PLAY — carried/banked by name, who
+        // holds the run, the journal head. Below the moves, on purpose.
+        children.push(ViewNode::Section {
+            title: "The record".to_string(),
+            tag: "muted".to_string(),
+            children: vec![
+                ViewNode::Text(format!("player: {actor}")),
+                ViewNode::Text(format!("carried: {}", relics_with_custody(sim, CARRIED))),
+                ViewNode::Text(format!("banked: {}", relics_with_custody(sim, BANKED))),
+                ViewNode::Text(format!(
+                    "revision {} · root {}",
+                    session.revision(),
+                    short_digest(session.root)
+                )),
+            ],
+        });
         if let Some(completion) = &session.completion {
             children.push(ViewNode::Section {
                 title: if completion.crowned {
@@ -2464,6 +2532,281 @@ fn relic_label(relic: usize) -> String {
         1..=3 => format!("Take the key-relic for way {}", relic + 1),
         _ => format!("Take treasure relic {relic}"),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE DUNGEON, PAINTED — the map, the light, the pack, the guardian.
+//
+// PRESENTATION ONLY. Everything below reads the mover's own public projections (`Sim::pack`,
+// `hoard_at`, `way_open`, the `delve/smite/loot/unlock/flee` legality probes) and the Lean-sourced
+// constants; it derives no rule of its own, and the executor stays the referee for every move.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// The map's glyph vocabulary — ONE character per cell, so the shared
+/// [`coordgrid_text`](deos_view::coordgrid_text) projection stays column-aligned on every text
+/// channel (a Discord embed, a Telegram message, a WeChat reply block) as well as in pixels.
+const GLYPH_EMPTY: &str = "·";
+/// The floor you stand on. It is a GLYPH, not a highlight: `highlight` means "you may act on this
+/// NOW" (the text projection brackets it `[x]`), and standing somewhere is not an action.
+const GLYPH_YOU: &str = ">";
+const GLYPH_WAY_OPEN: &str = "/";
+const GLYPH_WAY_SHUT: &str = "#";
+const GLYPH_GUARDIAN: &str = "G";
+const GLYPH_GUARDIAN_SLAIN: &str = "x";
+const GLYPH_CROWN: &str = "C";
+const GLYPH_KEY: &str = "k";
+const GLYPH_TREASURE: &str = "*";
+/// The pack row's marker — what is ON YOU right now, and still losable.
+const GLYPH_PACK: &str = "@";
+/// The vault row's marker — what a proved exit already made yours.
+const GLYPH_VAULT: &str = "$";
+
+/// The map is `marker + way + guardian + one column PER RELIC` wide. A relic's column is FIXED, so
+/// you watch it travel: from the row of the floor it lies on, up into the pack row when you take
+/// it, and into the vault row when a proved exit banks it. Relic 0 is the crown, 1–3 the keys to
+/// ways 2–4, 4–7 the treasures — the column order is the relic index, so the legend needs one line.
+const MAP_COLS: usize = 3 + RELICS;
+
+/// The light each verb spends. These label the affordances so a move reads as a verb WITH A
+/// CONSEQUENCE ("Descend to floor 2 · 1 light") instead of a bare noun — the single most useful
+/// thing a stranger can be told, because the light IS the game. The mover still prices every turn;
+/// a label can only describe.
+const LIGHT_DELVE: u64 = 1;
+const LIGHT_UNLOCK: u64 = 1;
+const LIGHT_SMITE: u64 = 2;
+const LIGHT_LOOT: u64 = 1;
+const LIGHT_FLEE: u64 = 1;
+
+/// `"… · 2 light"` — the cost tail every affordance label carries.
+fn light_cost(cost: u64) -> String {
+    format!(" · {cost} light")
+}
+
+/// The glyph a relic paints in its map column (its KIND: the crown, a way key, a treasure).
+fn relic_glyph(relic: usize) -> &'static str {
+    match relic {
+        0 => GLYPH_CROWN,
+        1..=3 => GLYPH_KEY,
+        _ => GLYPH_TREASURE,
+    }
+}
+
+/// The semantic palette tag a relic's cell paints in (the renderer's `tag-*` class / icon tint).
+fn relic_tag(relic: usize) -> &'static str {
+    match relic {
+        0 => "accent",
+        1..=3 => "warn",
+        _ => "good",
+    }
+}
+
+fn map_cell(glyph: &str, tag: &str, highlight: bool) -> CoordCell {
+    CoordCell {
+        glyph: glyph.to_string(),
+        tag: tag.to_string(),
+        // INERT BY CONSTRUCTION. The `Menu` below is the surface's SINGLE affordance carrier, so a
+        // 66-square board never doubles every move: Discord's component budget is 25 buttons and
+        // WeChat's numbered reply list would otherwise offer each move twice. The board's job is to
+        // SHOW what is actionable (`highlight`); pressing it is the menu's job.
+        turn: String::new(),
+        arg: 0,
+        highlight,
+    }
+}
+
+/// **The shaft, as a coordinate board.** Four floor rows, then the pack row, then the vault row.
+///
+/// A cell is HIGHLIGHTED exactly when it is actionable *right now* — the way you may descend or
+/// unlock, the guardian you may strike, the relic you may take — so the board answers "what can I
+/// do?" before you read a single button. Legality comes from the mover's own probes, never from a
+/// re-derived rule here.
+fn descent_map(sim: &Sim) -> ViewNode {
+    let mut cells: Vec<CoordCell> = Vec::with_capacity(MAP_COLS * (FLOORS as usize + 2));
+
+    for floor in 1..=FLOORS {
+        let standing_here = sim.depth == floor;
+        // The row marker — the floor's depth, or `>` on the floor you stand on. NOT highlighted:
+        // the highlight means "actionable now", and where you are standing is not a move.
+        let marker = if standing_here {
+            GLYPH_YOU.to_string()
+        } else {
+            floor.to_string()
+        };
+        cells.push(map_cell(
+            &marker,
+            if standing_here { "accent" } else { "muted" },
+            false,
+        ));
+
+        // The way INTO this floor. Floor 1 is the mouth (always open); a deeper way opens only once
+        // its key-relic has been EXERCISED. Highlighted when you may step through it now, or when
+        // you carry the key that opens it.
+        let open = sim.way_open(floor);
+        let passable_now = floor == sim.depth + 1 && sim.delve().is_ok();
+        let openable_now = floor >= 2 && sim.unlock(floor).is_ok();
+        cells.push(map_cell(
+            if open { GLYPH_WAY_OPEN } else { GLYPH_WAY_SHUT },
+            if open { "good" } else { "bad" },
+            passable_now || openable_now,
+        ));
+
+        // The floor's guardian. Wounds are per-standing-floor, so only the guardian you face can
+        // read as slain; the rest stand.
+        let slain_here = standing_here && sim.wounds >= guard_hp(floor);
+        cells.push(map_cell(
+            if slain_here {
+                GLYPH_GUARDIAN_SLAIN
+            } else {
+                GLYPH_GUARDIAN
+            },
+            match (standing_here, slain_here) {
+                (true, true) => "good",
+                (true, false) => "bad",
+                _ => "muted",
+            },
+            standing_here && sim.smite().is_ok(),
+        ));
+
+        // One column per relic: the relics LYING on this floor.
+        for relic in 0..RELICS {
+            if sim.custody[relic] == floor {
+                cells.push(map_cell(
+                    relic_glyph(relic),
+                    relic_tag(relic),
+                    sim.loot(relic).is_ok(),
+                ));
+            } else {
+                cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+            }
+        }
+    }
+
+    // The pack row — carried, and still losable: the light dying with these on you banks nothing.
+    cells.push(map_cell(GLYPH_PACK, "accent", false));
+    cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+    cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+    for relic in 0..RELICS {
+        if sim.custody[relic] == CARRIED {
+            cells.push(map_cell(relic_glyph(relic), relic_tag(relic), true));
+        } else {
+            cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+        }
+    }
+
+    // The vault row — what a proved exit already made yours.
+    cells.push(map_cell(GLYPH_VAULT, "good", false));
+    cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+    cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+    for relic in 0..RELICS {
+        if sim.custody[relic] == BANKED {
+            cells.push(map_cell(relic_glyph(relic), "good", false));
+        } else {
+            cells.push(map_cell(GLYPH_EMPTY, "muted", false));
+        }
+    }
+
+    ViewNode::CoordGrid {
+        cols: MAP_COLS,
+        cells,
+    }
+}
+
+/// The two lines that make the board readable without a manual.
+fn map_legend() -> Vec<ViewNode> {
+    vec![
+        ViewNode::Text(format!(
+            "rows: floors 1–{FLOORS} · {GLYPH_PACK} your pack (still losable) · {GLYPH_VAULT} banked (yours). \
+             columns: floor · way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures)"
+        )),
+        ViewNode::Text(format!(
+            "{GLYPH_YOU} you are here · {GLYPH_WAY_OPEN} open way · {GLYPH_WAY_SHUT} shut way · \
+             {GLYPH_GUARDIAN} guardian · {GLYPH_GUARDIAN_SLAIN} slain · {GLYPH_CROWN} crown · \
+             {GLYPH_KEY} way-key · {GLYPH_TREASURE} treasure · [ ] you may act on it now"
+        )),
+    ]
+}
+
+/// The run's ONE-WORD state, with its semantic palette tag: still delving, settled and banked, or
+/// stranded with the light out.
+fn descent_status(sim: &Sim) -> (&'static str, &'static str) {
+    if sim.fate != 0 {
+        ("BANKED", "good")
+    } else if sim.spent + 1 > BREATH {
+        // Every verb costs at least one light, so a run that cannot pay one can never move again.
+        ("THE LIGHT IS DEAD", "bad")
+    } else {
+        ("DELVING", "warn")
+    }
+}
+
+/// The prose mirror of the status pill. A pill is a badge layer with no plain-text form, so a chat
+/// channel would otherwise learn the run's fate from nothing at all.
+fn descent_standing(sim: &Sim) -> String {
+    let (word, _) = descent_status(sim);
+    match word {
+        "BANKED" => format!(
+            "{word} — the tomb is frozen. {} relic{} came out with you.",
+            sim.bank(),
+            if sim.bank() == 1 { "" } else { "s" }
+        ),
+        "THE LIGHT IS DEAD" => format!(
+            "{word} — {} relic{} still in the pack never became yours.",
+            sim.pack(),
+            if sim.pack() == 1 { "" } else { "s" }
+        ),
+        _ if sim.depth == 0 => {
+            format!("{word} — you stand at the mouth; {FLOORS} floors lie below.")
+        }
+        _ => format!(
+            "{word} — {} relic{} lying on this floor.",
+            sim.hoard_at(sim.depth),
+            if sim.hoard_at(sim.depth) == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ),
+    }
+}
+
+/// The pressure lines — the things a player is about to lose to, said out loud. Each is derived
+/// from a projection the mover already exposes, so none of them can disagree with the referee.
+fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
+    let mut out = Vec::new();
+    if sim.fate != 0 {
+        return out;
+    }
+    let light = BREATH.saturating_sub(sim.spent);
+    if light <= 4 {
+        out.push(ViewNode::Text(format!(
+            "⚠ the light is guttering — {light} left, and climbing out costs {LIGHT_FLEE}"
+        )));
+    }
+    if sim.depth >= 1 && sim.wounds < guard_hp(sim.depth) {
+        out.push(ViewNode::Text(format!(
+            "⚠ the guardian stands — the floor's hoard stays shut until it falls ({} more strike{}, {} light)",
+            guard_hp(sim.depth) - sim.wounds,
+            if guard_hp(sim.depth) - sim.wounds == 1 { "" } else { "s" },
+            (guard_hp(sim.depth) - sim.wounds) * LIGHT_SMITE
+        )));
+    }
+    if sim.pack() + 1 + sim.depth > CAP {
+        out.push(ViewNode::Text(format!(
+            "⚠ carrying rights are spent at this depth — the next relic would not fit ({} carried, {} + depth {} = the cap {CAP})",
+            sim.pack(),
+            sim.pack(),
+            sim.depth
+        )));
+    }
+    if sim.pack() > 0 {
+        out.push(ViewNode::Text(format!(
+            "⚠ {} relic{} ride{} in the pack — nothing is yours until a proved exit banks it",
+            sim.pack(),
+            if sim.pack() == 1 { "" } else { "s" },
+            if sim.pack() == 1 { "s" } else { "" }
+        )));
+    }
+    out
 }
 
 fn relics_with_custody(sim: &Sim, wanted: u64) -> String {
