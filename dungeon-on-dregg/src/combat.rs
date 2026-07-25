@@ -37,9 +37,11 @@
 //!   receipt via `EmitEvent` and REPRODUCED on replay ([`reverify_draw`]). Teeth:
 //!   `AllowedTransitions(active)` (act only on your turn), `UntilEvent(st{a})` (a
 //!   stunned actor cannot strike), `UntilEvent(dn{a})` / `UntilEvent(dn{t})` (a downed
-//!   combatant cannot act, a downed target cannot be attacked), and the HP FLOOR
+//!   combatant cannot act, a downed target cannot be attacked), the HP FLOOR
 //!   `HeapField(hp[t], Gte 1)` — a blow that would drop the target below 1 is REFUSED
-//!   (an overkill cannot underflow the ledger).
+//!   (an overkill cannot underflow the ledger) — and the DAMAGE tooth
+//!   `HeapField(hp[t], DeltaEquals{−dmg})`, which holds the committed ledger to the
+//!   magnitude the turn declares (see [`hp_delta`]).
 //! - **guard** — sets `gd{a}`, a real status the teeth respect: incoming damage is
 //!   reduced, and a guarding target cannot be executed (see finish).
 //! - **heavy** (the special/heavy strike — heroes only) — a higher-variance `d12`
@@ -52,7 +54,26 @@
 //!   executed), NOT already downed (`UntilEvent(dn{t})`), NOT guarding
 //!   (`UntilEvent(gd{t})`), and the down is WRITE-ONCE (`WriteOnce(dn{t})`).
 //! - **pass** — a stunned/held combatant yields its turn (clearing its own stun).
-//! - **tick** — a round-start poison tick, floored by the same `HeapField(hp, Gte 1)`.
+//! - **tick** — a round-start poison tick, floored by the same `HeapField(hp, Gte 1)` and
+//!   pinned to its declared magnitude by the same `DeltaEquals` tooth (a "tick" cannot be
+//!   a heal).
+//! - **setup** — the permissive seeding turn. It is the only turn that may declare
+//!   starting HP, and `HeapField(hp[c], WriteOnce)` lets it do so exactly once: after the
+//!   arming turn every hp key is nonzero and therefore frozen against `setup`.
+//!
+//! ## What the executor guarantees vs. what the replay pass adds
+//!
+//! These are two different strengths and the file keeps them distinct. The EXECUTOR
+//! decides at commit time, so what it refuses is *unconstructible*: acting out of turn,
+//! striking while stunned, hitting the dead, underflowing HP, overspending focus, a second
+//! heavy in a round, executing a healthy or guarding target, a second arming turn, and —
+//! since the damage tooth — an HP write that disagrees with the damage its own turn claims.
+//! The REPLAY pass ([`reverify_draw`]) is an O(N) offline check that upgrades the *claim*
+//! to a *roll*: it re-derives the die from the recorded evidence and catches a forged
+//! roll, damage or guard context. Neither alone is enough — a client may declare whatever
+//! damage it likes, and a receipt may bind whatever draw it likes — but the executor pins
+//! `ledger == declared` and the replay pins `declared == rolled`, so the composition is
+//! that the HP ledger is a function of a re-derivable die.
 //!
 //! ## Initiative, rounds, resolution
 //!
@@ -153,6 +174,15 @@ pub const HERO_HP: u64 = 26;
 /// Default starting HP for an enemy.
 pub const ENEMY_HP: u64 = 16;
 
+/// **The most poison one combatant can ever be carrying** — DERIVED from the teeth, not
+/// declared. Poison arrives only on a heavy strike ([`HEAVY_POISON`] stacks), and the
+/// number of heavies the whole party can ever land is itself an executor tooth
+/// (`FieldLteField(focus_spent, focus_budget)` ⇒ at most `FOCUS_BUDGET / HEAVY_FOCUS_COST`
+/// of them). So the poison ceiling is a consequence of the resource gate rather than a
+/// hopeful constant, and [`build_program`] can enumerate an exact tick tooth for every
+/// reachable tick magnitude.
+pub const MAX_POISON: u64 = (FOCUS_BUDGET / HEAVY_FOCUS_COST) * HEAVY_POISON;
+
 // ── Heap key scheme (keys ≥ 16 route into the committed `fields_map`) ────────────
 
 const HP_BASE: u64 = 100;
@@ -191,11 +221,15 @@ fn st_name(c: u8) -> String {
 // ── Method names (each an installed `CellProgram` case — default-deny) ───────────
 
 const M_SETUP: &str = "setup";
-fn m_attack(a: u8, t: u8) -> String {
-    format!("atk/{a}/{t}")
+/// A basic attack DECLARING its damage. The damage rides the method name because the
+/// executor's damage tooth is a `HeapField(hp[t], DeltaEquals{-dmg})` — a constant in the
+/// installed program — so the only way to pin "the ledger moved by exactly the damage this
+/// turn claims" is to dispatch a case per claimed magnitude. See [`build_program`].
+fn m_attack(a: u8, t: u8, dmg: u64) -> String {
+    format!("atk/{a}/{t}/{dmg}")
 }
-fn m_heavy(a: u8, t: u8) -> String {
-    format!("hvy/{a}/{t}")
+fn m_heavy(a: u8, t: u8, dmg: u64) -> String {
+    format!("hvy/{a}/{t}/{dmg}")
 }
 fn m_finish(a: u8, t: u8) -> String {
     format!("fin/{a}/{t}")
@@ -206,8 +240,8 @@ fn m_guard(c: u8) -> String {
 fn m_pass(c: u8) -> String {
     format!("pas/{c}")
 }
-fn m_tick(c: u8) -> String {
-    format!("tick/{c}")
+fn m_tick(c: u8, dmg: u64) -> String {
+    format!("tick/{c}/{dmg}")
 }
 
 // ── Dice binding (mirrors `dice_combat`, generalized to attacker/target/ability) ─
@@ -568,6 +602,27 @@ fn hp_floor(t: u8) -> StateConstraint {
     }
 }
 
+/// **THE DAMAGE TOOTH** — `hp[t]` must fall by EXACTLY `dmg`, the magnitude the dispatched
+/// method declares. This is what makes a blow cost what it says it costs.
+///
+/// Without it the HP floor is the only thing standing between the roll and the ledger, and
+/// `Gte 1` says nothing about the SIZE of the write: a client could bind a perfectly honest
+/// `d8 = 7` draw into the receipt and still write `hp -= 1`, and every check passed —
+/// [`reverify_draw`] only ever compared the event's fields against each other, never against
+/// the state the turn actually committed. The dice were decorative.
+///
+/// With the tooth the two halves compose into one property. The EXECUTOR pins
+/// *ledger == declared damage* (refused at commit, so a gentle write is not merely
+/// detectable, it is unconstructible). The REPLAY pass pins *declared damage == the damage
+/// the verified die fixes* ([`reverify_draw`]'s `DamageMismatch`/`RollMismatch`). Together:
+/// **the HP ledger is a function of the re-derivable roll.**
+fn hp_delta(t: u8, dmg: u64) -> StateConstraint {
+    StateConstraint::HeapField {
+        key: hp_key(t),
+        atom: HeapAtom::DeltaEquals { d: -(dmg as i64) },
+    }
+}
+
 /// Build the full combat [`CellProgram`] — one method-guarded case per ability per
 /// (attacker, target), each carrying the executor-enforced teeth.
 fn build_program(story: &CompiledStory) -> CellProgram {
@@ -585,45 +640,100 @@ fn build_program(story: &CompiledStory) -> CellProgram {
         constraints,
     };
 
-    let mut cases = vec![case(M_SETUP, vec![])];
+    // THE SEEDING GATE. `setup` is the permissive turn that writes every combatant's
+    // starting HP before the fight begins, so it cannot carry the ordinary combat teeth.
+    // That made it a UNIVERSAL BYPASS, and the widest hole in this program: every
+    // "weakened target only" guarantee here is stated against `hp[t]`, and `setup` stayed
+    // callable forever. An attacker never had to defeat the execute gate — they walked
+    // around it, setting a healthy foe to 1 HP under `setup` and then executing it
+    // perfectly lawfully. The two-phase weaken-then-kill design was decorative.
+    //
+    // `WriteOnce` on the seeded heap keys spends the seeding turn where it matters: HP is
+    // seeded NONZERO, so after the arming turn every hp key is frozen against `setup` and
+    // starting vitality can never be re-declared. (Poison and the cooldown marker seed to
+    // zero, which `WriteOnce` deliberately still admits — hence the explicit poison RANGE
+    // tooth beside it, so a seeded poison cannot exceed what the focus budget could ever
+    // inflict and the tick enumeration below stays total.)
+    let mut cases = vec![case(
+        M_SETUP,
+        (0..N)
+            .flat_map(|c| {
+                [
+                    StateConstraint::HeapField {
+                        key: hp_key(c),
+                        atom: HeapAtom::WriteOnce,
+                    },
+                    StateConstraint::HeapField {
+                        key: poison_key(c),
+                        atom: HeapAtom::InRangeTwoSided {
+                            lo: 0,
+                            hi: MAX_POISON,
+                        },
+                    },
+                ]
+            })
+            .collect(),
+    )];
 
     for a in 0..N {
         cases.push(case(&m_guard(a), vec![handoff(a, active)]));
         cases.push(case(&m_pass(a), vec![handoff(a, active)]));
-        cases.push(case(&m_tick(a), vec![hp_floor(a)]));
+        // A poison tick is a DECLARED-magnitude write like a blow: `hp_floor` alone let a
+        // "tick" write HP anywhere at or above 1 — including UPWARD, a free heal on a turn
+        // that is supposed to be attrition. The reachable magnitudes are bounded by the
+        // focus tooth (see `MAX_POISON`), so each one gets its exact tooth.
+        for dmg in 0..=MAX_POISON {
+            cases.push(case(&m_tick(a, dmg), vec![hp_floor(a), hp_delta(a, dmg)]));
+        }
 
         for &t in &opponents(a) {
-            // basic attack
-            cases.push(case(
-                &m_attack(a, t),
-                vec![
-                    handoff(a, active),
-                    StateConstraint::UntilEvent { flag_index: st(a) },
-                    StateConstraint::UntilEvent { flag_index: dn(a) },
-                    StateConstraint::UntilEvent { flag_index: dn(t) },
-                    hp_floor(t),
-                ],
-            ));
-            // heavy/special (heroes only)
-            if is_hero(a) {
+            // basic attack — one case per declared damage, each pinning the ledger.
+            for dmg in 1..=ATTACK_DIE {
                 cases.push(case(
-                    &m_heavy(a, t),
+                    &m_attack(a, t, dmg),
                     vec![
                         handoff(a, active),
                         StateConstraint::UntilEvent { flag_index: st(a) },
                         StateConstraint::UntilEvent { flag_index: dn(a) },
                         StateConstraint::UntilEvent { flag_index: dn(t) },
                         hp_floor(t),
-                        StateConstraint::FieldLteField {
-                            left_index: fspent,
-                            right_index: fbudget,
-                        },
-                        StateConstraint::HeapField {
-                            key: heavy_round_key(a),
-                            atom: HeapAtom::StrictMonotonic,
-                        },
+                        hp_delta(t, dmg),
                     ],
                 ));
+            }
+            // heavy/special (heroes only)
+            if is_hero(a) {
+                for dmg in 1..=HEAVY_DIE {
+                    cases.push(case(
+                        &m_heavy(a, t, dmg),
+                        vec![
+                            handoff(a, active),
+                            StateConstraint::UntilEvent { flag_index: st(a) },
+                            StateConstraint::UntilEvent { flag_index: dn(a) },
+                            StateConstraint::UntilEvent { flag_index: dn(t) },
+                            hp_floor(t),
+                            hp_delta(t, dmg),
+                            // The poison ceiling is a TOOTH, not just an arithmetic
+                            // consequence of the focus budget — so the enumerated tick
+                            // cases below cover every magnitude a tick can ever carry.
+                            StateConstraint::HeapField {
+                                key: poison_key(t),
+                                atom: HeapAtom::InRangeTwoSided {
+                                    lo: 0,
+                                    hi: MAX_POISON,
+                                },
+                            },
+                            StateConstraint::FieldLteField {
+                                left_index: fspent,
+                                right_index: fbudget,
+                            },
+                            StateConstraint::HeapField {
+                                key: heavy_round_key(a),
+                                atom: HeapAtom::StrictMonotonic,
+                            },
+                        ],
+                    ));
+                }
             }
             // finish / execute
             cases.push(case(
@@ -694,6 +804,11 @@ fn combat_dsl() -> String {
     let mut s = String::from(
         "---\nid: tactical-arena\ntitle: The Tactical Arena\nweight: 1\n---\n\n=== arena\n\n",
     );
+    // NOTE: the register file is 16 slots wide and this scene fills it exactly — three
+    // control vars + 3 flags × 4 combatants, plus spween's reserved passage slot. A
+    // sixteenth named var silently spills past the register budget into heap-key space
+    // and the flag teeth start reading the wrong plane, so per-combatant state that is
+    // not a hot flag belongs on the heap (`hp`/`poison`/`heavy_round` already do).
     s.push_str(&format!(
         "~ {V_ACTIVE} = 0\n~ {V_FSPENT} = 0\n~ {V_FBUDGET} = 0\n"
     ));
@@ -990,9 +1105,12 @@ impl Arena {
             effects.push(set_reg(cell, self.st[t as usize], 1)); // the heavy strike STUNS
         }
 
+        // The method DECLARES the damage, and the executor's `hp_delta` tooth holds the
+        // committed ledger to it (a client that writes a gentler HP than it claims is
+        // refused at commit, not merely caught on replay).
         let method = match ability {
-            Ability::Attack => m_attack(a, t),
-            Ability::Heavy => m_heavy(a, t),
+            Ability::Attack => m_attack(a, t, damage),
+            Ability::Heavy => m_heavy(a, t, damage),
         };
         let receipt = self.world.apply_raw(&method, effects)?;
         Ok(Hit {
@@ -1043,10 +1161,12 @@ impl Arena {
     /// **Poison tick** — a round-start system turn: `c` loses HP equal to its poison
     /// stacks, floored at 1 (poison grinds but does not itself kill). No turn order.
     pub fn poison_tick(&mut self, c: u8) -> Result<TurnReceipt, WorldError> {
-        let hp_after = self.hp(c).saturating_sub(self.poison(c)).max(1);
+        let hp_before = self.hp(c);
+        let hp_after = hp_before.saturating_sub(self.poison(c)).max(1);
+        let dealt = hp_before - hp_after;
         let cell = self.world.cell_id();
         self.world
-            .apply_raw(&m_tick(c), vec![set_heap(cell, hp_key(c), hp_after)])
+            .apply_raw(&m_tick(c, dealt), vec![set_heap(cell, hp_key(c), hp_after)])
     }
 
     /// **Directly set the `active` pointer** (test scaffolding for staging an
@@ -1261,7 +1381,7 @@ mod tests {
         };
 
         // attack carries the HP floor + turn-order + attack-dead teeth.
-        let atk = find(&m_attack(RANGER, WARDEN));
+        let atk = find(&m_attack(RANGER, WARDEN, 5));
         assert!(
             atk.iter()
                 .any(|c| matches!(c, StateConstraint::AllowedTransitions { .. })),
@@ -1274,9 +1394,18 @@ mod tests {
             )),
             "attack has the HP-floor tooth on the target"
         );
+        // …and the DAMAGE tooth, pinning the ledger to the declared magnitude.
+        assert!(
+            atk.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapField { key, atom: HeapAtom::DeltaEquals { d } }
+                    if *key == hp_key(WARDEN) && *d == -5
+            )),
+            "attack declaring 5 damage pins hp[t] to a −5 delta"
+        );
 
         // heavy carries the resource + cooldown teeth.
-        let hvy = find(&m_heavy(RANGER, WARDEN));
+        let hvy = find(&m_heavy(RANGER, WARDEN, 5));
         assert!(
             hvy.iter()
                 .any(|c| matches!(c, StateConstraint::FieldLteField { .. })),
@@ -1306,7 +1435,7 @@ mod tests {
         );
 
         // enemies have no heavy (heroes-only special).
-        let m = symbol(&m_heavy(WARDEN, RANGER));
+        let m = symbol(&m_heavy(WARDEN, RANGER, 5));
         assert!(
             !cases
                 .iter()
@@ -1703,30 +1832,35 @@ mod tests {
     }
 
     /// THE SLOT-BOUND EXECUTE TOOTH (the falsifier for a real hole): a `dn(t)` (defeated) flag
-    /// STAPLED onto a permissive `setup` turn cannot down a FULL-HP enemy.
+    /// STAPLED onto an unrelated turn cannot down a FULL-HP enemy.
     ///
     /// The finish gate `HeapField(hp[t] <= FINISH_THRESHOLD)` lived ONLY on the `finish(a, t)`
-    /// cases; with no `Always` case and `M_SETUP` carrying empty constraints, a client could staple
-    /// `SetField(dn(t), 1)` onto a setup turn and flag a healthy WARDEN defeated for free — a
-    /// weaken-then-execute bypass. `SlotChanged{dn(t)}` binds the weaken-check to the write.
+    /// cases; with no `Always` case, a client could staple `SetField(dn(t), 1)` onto some other
+    /// method's turn and flag a healthy WARDEN defeated for free — a weaken-then-execute bypass.
+    /// `SlotChanged{dn(t)}` binds the weaken-check to the WRITE, whoever authored it.
+    ///
+    /// The staple rides a `pass` here rather than `setup`. `pass` is a live, ordinary,
+    /// always-available verb — the harder case, and one that stays a real falsifier no
+    /// matter what the seeding turn is allowed to do.
     #[test]
-    fn a_stapled_down_flag_cannot_ride_a_setup_turn() {
+    fn a_stapled_down_flag_cannot_ride_another_verbs_turn() {
         // WARDEN at full enemy HP (16) — far above the finish threshold (8).
-        let arena = Arena::deploy(31);
+        let mut arena = Arena::deploy(31);
         assert!(
             arena.hp(WARDEN) > FINISH_THRESHOLD,
             "the WARDEN is healthy: {} > {FINISH_THRESHOLD}",
             arena.hp(WARDEN)
         );
+        arena.force_active(RANGER);
         let cell = arena.world.cell_id();
         let dn_warden = slot(arena.story(), &dn_name(WARDEN));
 
         let staple = arena
             .world
-            .apply_raw(M_SETUP, vec![set_reg(cell, dn_warden, 1)]);
+            .apply_raw(&m_pass(RANGER), vec![set_reg(cell, dn_warden, 1)]);
         assert!(
             matches!(staple, Err(WorldError::Refused(_))),
-            "downing a FULL-HP enemy via a setup staple must be REFUSED (hp {} > {FINISH_THRESHOLD}); got {staple:?}",
+            "downing a FULL-HP enemy via a stapled pass must be REFUSED (hp {} > {FINISH_THRESHOLD}); got {staple:?}",
             arena.hp(WARDEN)
         );
         assert!(
@@ -1736,15 +1870,16 @@ mod tests {
 
         // THE GATE IS A WEAKEN-CHECK, NOT A BAN: once the target is genuinely at/below the finish
         // threshold, the down-flag is admissible (a real finish rides the same target-side tooth).
-        let weak = Arena::deploy_with_hp(32, HERO_HP, FINISH_THRESHOLD);
+        let mut weak = Arena::deploy_with_hp(32, HERO_HP, FINISH_THRESHOLD);
         assert_eq!(
             weak.hp(WARDEN),
             FINISH_THRESHOLD,
             "WARDEN staged at the threshold"
         );
+        weak.force_active(RANGER);
         let wcell = weak.world.cell_id();
         let ok = weak.world.apply_raw(
-            M_SETUP,
+            &m_pass(RANGER),
             vec![set_reg(wcell, slot(weak.story(), &dn_name(WARDEN)), 1)],
         );
         assert!(
@@ -1752,5 +1887,141 @@ mod tests {
             "a WEAKENED target at the finish threshold satisfies the weaken-check, got {ok:?}"
         );
         assert!(weak.is_down(WARDEN), "the weakened WARDEN is downed");
+    }
+
+    /// **THE DAMAGE TOOTH (the falsifier for a real hole).** A blow that binds an HONEST
+    /// draw into the receipt but writes a GENTLER HP than it rolled is REFUSED at commit.
+    ///
+    /// Before [`hp_delta`], `HeapField(hp[t], Gte 1)` was the only thing between the roll
+    /// and the ledger, and it says nothing about the SIZE of the write. A client could roll
+    /// an honest `d8 = 7`, bind that honest draw into the receipt (so [`reverify_draw`]
+    /// passed — it only ever compared the event's fields against each other), and still
+    /// commit `hp -= 1`. The dice were decorative. Now the ledger is held to the damage the
+    /// turn declares, so the gentle write is not merely detectable, it is unconstructible.
+    #[test]
+    fn an_hp_write_that_disagrees_with_the_declared_damage_is_refused() {
+        let mut arena = Arena::deploy(17);
+        arena.force_active(RANGER);
+
+        // Learn what this turn honestly rolls, without committing it.
+        let req = combat_request(&arena.world, arena.seq + 1, RANGER, WARDEN, Ability::Attack);
+        let (roll, evidence) = roll_request(&req, ATTACK_DIE);
+        let damage = damage_of_roll(roll, arena.is_guarding(WARDEN));
+        assert!(damage > 1, "seed 17 rolls above the forge floor: {damage}");
+
+        // FORGE: declare the honest damage, bind the honest draw — and write `hp -= 1`.
+        let hp_before = arena.hp(WARDEN);
+        let cell = arena.world.cell_id();
+        let draw = CombatDraw {
+            request: req,
+            evidence,
+            roll,
+            damage,
+            guarded: false,
+            sides: ATTACK_DIE,
+            attacker: RANGER,
+            target: WARDEN,
+            ability: Ability::Attack,
+        };
+        let forged = arena.world.apply_raw(
+            &m_attack(RANGER, WARDEN, damage),
+            vec![
+                set_heap(cell, hp_key(WARDEN), hp_before - 1),
+                set_reg(cell, arena.active, HOUND as u64),
+                dice_event_effect(cell, &draw),
+            ],
+        );
+        assert!(
+            matches!(forged, Err(WorldError::Refused(_))),
+            "an hp write of −1 under a turn declaring −{damage} must be REFUSED, got {forged:?}"
+        );
+        assert_eq!(
+            arena.hp(WARDEN),
+            hp_before,
+            "anti-ghost: HP unchanged after the refusal"
+        );
+
+        // NON-VACUOUS: the honest write of exactly the declared damage commits.
+        let hit = arena
+            .attack(RANGER, WARDEN)
+            .expect("the honest blow commits");
+        assert_eq!(
+            arena.hp(WARDEN),
+            hp_before - hit.draw.damage,
+            "the committed ledger fell by exactly the rolled damage"
+        );
+    }
+
+    /// **A "poison tick" cannot HEAL.** `hp_floor` alone admitted any HP at or above 1 on a
+    /// tick turn — including a write UPWARD, a free heal on the one turn that is supposed to
+    /// be pure attrition. The declared-magnitude tooth refuses it.
+    #[test]
+    fn a_tick_that_heals_is_refused() {
+        let mut arena = Arena::deploy_with_hp(19, HERO_HP, 10);
+        let cell = arena.world.cell_id();
+        let before = arena.hp(WARDEN);
+
+        let heal = arena.world.apply_raw(
+            &m_tick(WARDEN, 0),
+            vec![set_heap(cell, hp_key(WARDEN), before + 5)],
+        );
+        assert!(
+            matches!(heal, Err(WorldError::Refused(_))),
+            "a tick that raises HP must be REFUSED, got {heal:?}"
+        );
+        assert_eq!(arena.hp(WARDEN), before, "anti-ghost: HP unchanged");
+
+        // NON-VACUOUS: a real tick of the declared magnitude commits.
+        arena.force_active(RANGER);
+        arena
+            .heavy(RANGER, WARDEN)
+            .expect("the heavy strike poisons the WARDEN");
+        assert!(arena.poison(WARDEN) > 0);
+        let poisoned = arena.hp(WARDEN);
+        arena.poison_tick(WARDEN).expect("a real tick commits");
+        assert!(
+            arena.hp(WARDEN) < poisoned,
+            "the tick ground the WARDEN down"
+        );
+    }
+
+    /// **THE SEEDING GATE (the falsifier for the widest hole).** `setup` is the permissive
+    /// seeding turn — it declares starting HP and therefore cannot carry the ordinary teeth.
+    /// While it stayed re-callable, every "weakened target only" guarantee in this program
+    /// was void: an attacker never had to defeat the execute gate, they walked around it by
+    /// rewriting `hp[t]` to 1 under `setup` first and then executing lawfully. Starting
+    /// vitality is now declared exactly once.
+    ///
+    /// The test drives the WHOLE bypass, not just its first step: the rewrite is refused,
+    /// and the execute it was meant to unlock is still refused afterwards.
+    #[test]
+    fn starting_hp_cannot_be_re_declared_to_unlock_an_execute() {
+        let mut arena = Arena::deploy(23);
+        let cell = arena.world.cell_id();
+        let healthy = arena.hp(WARDEN);
+        assert!(healthy > FINISH_THRESHOLD, "the WARDEN starts healthy");
+
+        // Step 1 of the bypass: set a healthy foe to 1 HP under the permissive seeding turn.
+        let rewrite = arena
+            .world
+            .apply_raw(M_SETUP, vec![set_heap(cell, hp_key(WARDEN), 1)]);
+        assert!(
+            matches!(rewrite, Err(WorldError::Refused(_))),
+            "re-declaring a nonzero hp under setup must be REFUSED, got {rewrite:?}"
+        );
+        assert_eq!(
+            arena.hp(WARDEN),
+            healthy,
+            "anti-ghost: the WARDEN's HP was not rewritten"
+        );
+
+        // Step 2: the execute the bypass was for is still refused — the foe is still healthy.
+        arena.force_active(RANGER);
+        let exec = arena.finish(RANGER, WARDEN);
+        assert!(
+            matches!(exec, Err(WorldError::Refused(_))),
+            "the execute the bypass was meant to unlock is still refused, got {exec:?}"
+        );
+        assert!(!arena.is_down(WARDEN), "the healthy WARDEN still stands");
     }
 }
