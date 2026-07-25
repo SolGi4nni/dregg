@@ -81,6 +81,7 @@ premises are `ℤ`-typed: what is refuted is the **schema**, not the deployed in
 import Dregg2.Circuit.PremiseInhabitability
 import Dregg2.Circuit.PremiseInhabitabilitySweep
 import Dregg2.Circuit.PremiseInhabitabilitySweepSettled
+import Dregg2.Circuit.PremiseInhabitabilityConclusionAxis
 import Dregg2.Circuit.FriLdtExtractDeployed
 import Dregg2.Circuit.ApexOodLaneRepair
 import Dregg2.Circuit.OodSingletonRepair
