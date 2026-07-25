@@ -36,7 +36,14 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
 
   ALLOWED FLOOR (the crypto modulus — do NOT discharge):
     * `Poseidon2SpongeCR hash` + `Poseidon2SpongeCR sponge` — the commitment-binding hash floor.
-    * `hfri : ∀ e, FriLdtExtract … (Rfix e)` — the `{FRI-LDT @ deployed}` extraction, per effect tag.
+    * `hfri : ∀ e, FriLdtExtractCons … (Rfix e)` — the `{FRI-LDT @ deployed}` extraction, per effect tag
+      at the CORRECTED cons-shaped OOD point (`ApexOodLaneRepair`). ⚑ MIGRATED 2026-07-25: this was
+      `AlgoStarkSoundGeneral.FriLdtExtract`, whose singleton OOD conjunct is REFUTED on accepting
+      runs and PROVED to force `verifyBatch` to reject EVERY input
+      (`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`) — so this theorem was
+      vacuously true. The replacement premise is WEAKER (`friLdtExtract_imp_cons`) and adds zero
+      strength (`AlgoStarkSoundKernel.kernelPremise_adds_no_strength` — equivalent to itself with
+      the OOD conjunct deleted). The FRI floor beneath is unchanged and remains undischarged.
 
   THE ONE GENUINE ASSUMPTION beyond the allowed modulus (the residual the SCOPE doc names,
   `docs/reference/CONFIG-EVOLUTION-SOUNDNESS-SCOPE.md` §Layer-1.3):
@@ -50,7 +57,7 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
     * `hbusF : ∀ e, BusModelFamily … (Rfix e)` — the LogUp bus models (SCOPE §Layer-1.2: reduces
       into `{Poseidon2SpongeCR, FRI-LDT}` by a wiring lemma that is NOT yet proven).
     * `hasm : ∀ e, MapTableAssembly … (Rfix e)` — the table-assembly faithfulness (SCOPE §Layer-1.4:
-      near-floor, bundle-able with `FriLdtExtract`; wiring lemma NOT yet proven).
+      near-floor, bundle-able with `FriLdtExtractCons`; wiring lemma NOT yet proven).
     * `rds : ClosureReadouts …` — the per-effect `<e>TraceReadout` (`Satisfied2 ⟹ <e>Encodes`
       limb-decode; SCOPE §Layer-2: the `WitnessDecodes`-class extraction floor).
     * `hwitdec : WitnessDecodes hash Rfix S pi` — the witness→kernel-state existence rung.
@@ -88,7 +95,9 @@ open Dregg2.Circuit.DescriptorIR2 (VmTrace)
 open Dregg2.Circuit.FriVerifierBridge
   (AlgoStarkSound ProofView DeployedRefines starkSound_of_verifyAlgo)
 open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullChecks)
-open Dregg2.Circuit.AlgoStarkSoundGeneral (FriLdtExtract BusModelFamily)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly)
 open Dregg2.Circuit.AlgoStarkSoundKernel (algoStarkSound_kernel)
 open Dregg2.Circuit.ActionDispatch (actionTag fullActionStep)
@@ -109,7 +118,7 @@ local notation "Slive" =>
 
 /-- **`kernelConfigSound` — verifyBatch-accept over `Rfix` ⟹ a REAL kernel-config transition.**
 
-From the STARK-side floor (Poseidon2 CR ×2, `FriLdtExtract`, `BusModelFamily`, `MapReconcileFamily`,
+From the STARK-side floor (Poseidon2 CR ×2, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
 `MapTableAssembly`, `DeployedRefines`) composed through `algoStarkSound_kernel` +
 `starkSound_of_verifyAlgo`, and the config-side genuine readout bundle (`ClosureReadouts`, `mkLog`,
 `WitnessDecodes`) composed through `closedLogExtract_all_genuine`, a `verifyBatch`-accepted batch at
@@ -138,7 +147,7 @@ theorem kernelConfigSound
     (initState : List ℤ) (logN : Nat) (view : ProofView)
     (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace)
     -- ★ ALLOWED FLOOR: FRI-LDT @ the deployed descriptor, per effect tag.
-    (hfri : ∀ e : EffectIdx, FriLdtExtract sponge perm RATE toNat params vk core A initState
+    (hfri : ∀ e : EffectIdx, FriLdtExtractCons sponge perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     -- ★ NEEDS-A-LEMMA (carried, NOT discharged): the LogUp bus models.
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
@@ -184,8 +193,43 @@ theorem kernelConfigSound
 
 end
 
+/-! ## §M — ⚑ THE MIGRATION RECEIPT (2026-07-25): the corrected premise adds ZERO strength. -/
+
+/-- **The migrated FRI premise cannot be the reason `kernelConfigSound` is empty.** At every LIVE
+registry tag, `FriLdtExtractCons … (Rfix e)` is EQUIVALENT to itself with the OOD-shape conjunct
+DELETED: that conjunct is supplied by the bundle's OWN `AcceptsFull` antecedent
+(`ApexOodLaneRepair.acceptsFull_gives_cons_shape` — `FriVerifier.batchTablesCheck` returns `false`
+on an empty `oodPoint`), so it cannot shrink the set of accepting runs the premise ranges over.
+
+Contrast the premise this capstone was migrated OFF — `AlgoStarkSoundGeneral.FriLdtExtract`,
+asserting the singleton `oodPoint = [ood]`: that conjunct is CONTRADICTED on accepting runs and
+forces `CircuitSoundness.verifyBatch` to reject EVERY input at the deployed `cfg*` arguments
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`), which is exactly why every
+statement conditioned on it was vacuously true.
+
+⚠ NOT CLAIMED: satisfiability of the corrected bundle at the deployed arguments. Its remaining
+conjuncts ARE the undischarged FRI-LDT / Merkle / Fiat–Shamir floor and `cfg*` are `opaque`. What is
+proved here is narrower and is the whole point: whatever emptiness the premise may still carry is
+inherited from that floor and NONE of it from the OOD repair. In particular the retained conjunct
+`topen ∈ (view pi π).1.tableOpenings` is refutable at the toy accepting pole (whose `tableOpenings`
+is `[]`) — that residual is inherited unchanged from the corrected bundle, not introduced here. -/
+theorem kernelConfigPremise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace) :
+    ∀ e : EffectIdx,
+      (FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view (tr e)
+          (Rfix e)
+        ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+          view (tr e) (Rfix e)) :=
+  fun e => friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState
+    logN view (tr e) (Rfix e)
+
 /-! ## Kernel-clean keystone (0 sorries; axiom floor is Lean's own). -/
 
 #assert_axioms kernelConfigSound
+#assert_axioms kernelConfigPremise_adds_no_strength
 
 end Dregg2.Circuit.KernelConfigSoundness

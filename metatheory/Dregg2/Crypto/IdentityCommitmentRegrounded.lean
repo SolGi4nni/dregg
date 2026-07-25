@@ -45,6 +45,7 @@ This is the id-re-basing commit-reveal leg. The generic template + the concurren
 `IdentityCommitment` subtree — no consumer moved here lives elsewhere.
 -/
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Crypto.IdentityCommitment
 
 namespace Dregg2.Crypto.IdentityCommitmentRegrounded
@@ -56,8 +57,13 @@ open Dregg2.Circuit.HashFloorHonesty
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
-   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
-   hashAnsSizeOf openAnsSizeOf crEquivocator)
+   hermine_commitment_binding_advantage_bound crEquivocator)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily taggedCarrier romOpenGame RomOpenEff rom_open_binds romOpen_forger_excluded
+   romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame finderToAdv HashCRHardQuant
    collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
@@ -166,8 +172,9 @@ EXCEPT with negligible probability, so a self-carried PQ key cannot impersonate 
 with that advantage. The Boolean "one id ⟹ one key pair", which needed the FALSE injective `HashCR`,
 becomes an honest advantage bound.
 
-`Eff` is a parameter here because this is the statement at an ARBITRARY class; `_from_polyTime`
-discharges it. -/
+`Eff` is a parameter here because this is the statement at an ARBITRARY class; the DISCHARGED
+instantiation is §2R's keyed-ROM binding (the `IsPolyTime` discharge that stood here is DELETED —
+its floor is refuted at deployed parameters, see §2R's header). -/
 theorem id_commitment_binds_advantage_bound {Ed MlDsa Pre Id : Type} [DecidableEq Pre] [DecidableEq Id]
     (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → Pre)
     (hframe : Function.Injective2 frame)
@@ -179,43 +186,123 @@ theorem id_commitment_binds_advantage_bound {Ed MlDsa Pre Id : Type} [DecidableE
   negl_of_le (fun n => (gameAdv_mem_unit (enrollGame cr frame) A n).1)
     (enroll_adv_le cr frame hframe A) (hD _ hEff)
 
-/-- **THE ENROLLMENT GAME'S ANSWER ENCODING** — the published id plus the two key pairs, at the
-deployment's own encodings. -/
-def enrollAnsSize {Ed MlDsa Pre Id : Type} [DecidableEq Pre] [DecidableEq Id]
-    (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → Pre)
-    (szEd : Ed → ℕ) (szMl : MlDsa → ℕ) (szId : Id → ℕ) : AnsSize (enrollGame cr frame) :=
-  fun _ (p : Id × (Ed × MlDsa) × (Ed × MlDsa)) =>
-    szId p.1 + (szEd p.2.1.1 + szMl p.2.1.2) + (szEd p.2.2.1 + szMl p.2.2.2)
+/-! ## §2R — ⚑⚑ THE DISCHARGED SUCCESSOR: the enrollment binding on the PROVED keyed-ROM floor.
 
-/-- **⚑ THE EFFICIENCY OBLIGATION DISCHARGED.** An enrollment equivocator that is EFFICIENT at the game's
-own answer encoding, put through the length framing, yields a collision finder that is STILL efficient —
-so the collision floor at `Eff := IsPolyTime` applies to IT, and the id binds its key pair with no
-floating efficiency parameter.
+⚑ **WHAT WAS DELETED HERE, AND WHY.** `id_commitment_binds_from_polyTime` discharged `Eff` at
+`CostAdversary.IsPolyTime`, whose floor `HashCRHardQuant … (IsPolyTime …)` is REFUTED at deployed
+parameters (`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`: `IsPolyTime`
+prices answer SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins
+with probability `1`). DELETED, and replaced by the keyed-ROM successor below.
 
-The per-site inputs are the reshaper's declared work `(cw, bw)` and the FRAMING'S OWN GROWTH `hout`: the
-framing WRITES a new pre-image (`ed ‖ len(ml) ‖ ml`), so its size is a property of the deployed encoding,
-not derivable from abstract carriers. That is the one honest modelling input; no `PolyBoundedNat`
-overhead hypothesis is taken. -/
-theorem id_commitment_binds_from_polyTime {Ed MlDsa Pre Id : Type} [DecidableEq Pre] [DecidableEq Id]
-    (cr : CommitReveal Unit Pre Id) (frame : Ed → MlDsa → Pre)
-    (hframe : Function.Injective2 frame)
-    (szEd : Ed → ℕ) (szMl : MlDsa → ℕ) (szId : Id → ℕ) (szIn : ℕ → Pre → ℕ)
-    (A : Adversary (enrollGame cr frame))
-    (hA : IsPolyTime (enrollAnsSize cr frame szEd szMl szId) A) (cw bw co bo : ℕ)
-    (hout : ∀ n (k : Unit) (p : Id × (Ed × MlDsa) × (Ed × MlDsa)),
-      szIn n (frame p.2.1.1 p.2.1.2) + szIn n (frame p.2.2.1 p.2.2.2)
-        ≤ co * enrollAnsSize cr frame szEd szMl szId n p + bo)
-    (hD : HashCRHardQuant (idCommitFamily cr)
-      (IsPolyTime (hashAnsSizeOf (idCommitFamily cr) szIn))) :
-    Negl (gameAdv (enrollGame cr frame) A) := by
-  have hEff : IsPolyTime (hashAnsSizeOf (idCommitFamily cr) szIn) (enrollToFinder cr frame A) := by
-    poly_time (enrollAnsSize cr frame szEd szMl szId) (hashAnsSizeOf (idCommitFamily cr) szIn)
-      (fun _ _ (p : Id × (Ed × MlDsa) × (Ed × MlDsa)) =>
-        (frame p.2.1.1 p.2.1.2, frame p.2.2.1 p.2.2.2))
-      cw bw co bo hA
-    exact hout
-  exact id_commitment_binds_advantage_bound cr frame hframe
-    (IsPolyTime (hashAnsSizeOf (idCommitFamily cr) szIn)) A hEff hD
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The deployed id-commit hash
+`BLAKE3_derive_key(tag, ed ‖ len(ml) ‖ ml)` is idealised as ONE SAMPLED oracle
+`H : Unit × Pre → Fin (2 ^ l)` over the (finite, truncated-deployed-shape) framed pre-image space —
+the standard ROM idealisation at an ASYMPTOTIC id width, a deliberate labelled modelling step, NOT a
+derivation about the fixed public function. What it buys: the floor under the binding is
+`KeyedRomFloor.keyedRom_hard` (the birthday bound, PROVED). The break keeps §2's shape: the PUBLISHED
+id is in the win relation, the LENGTH FRAMING is the carrier's encoding, and `hframe` — the structural
+injectivity the deployed framing genuinely satisfies — is the ONLY per-site obligation. -/
+
+section RomSuccessor
+
+variable {Ed MlDsa : Type} (Pre : Type) [Fintype Pre] [DecidableEq Pre] [Nonempty Pre]
+
+/-- **THE ID-COMMITMENT KEYED-ROM FAMILY** — the deployed id-commit hash as a sampled oracle over the
+framed pre-image space, ideal `λ`-bit ids. -/
+def idCommitRomFamily : KeyedRomFamily :=
+  flatFamily Unit inferInstance inferInstance inferInstance (fun _ => Pre)
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The family's width obligation, closed by construction. -/
+theorem idCommitRomFamily_card_R (l : ℕ) :
+    letI := (idCommitRomFamily Pre).rFin l
+    Fintype.card ((idCommitRomFamily Pre).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE ENROLLMENT CARRIER** — payloads are `(ed25519, ml_dsa)` key pairs, the encoding is the
+deployed LENGTH FRAMING, and `encode_inj` is exactly the `hframe : Function.Injective2 frame` the old
+proof carried BESIDE the refuted `HashCR` — the structural fact survives, the false floor does not. -/
+def enrollRomCarrier [DecidableEq Ed] [DecidableEq MlDsa]
+    (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame) :
+    RomCarrier (idCommitRomFamily Pre) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => Ed × MlDsa) (fun _ => inferInstance)
+    (fun _ _ p => frame p.1 p.2)
+    (fun _ _ a b h => by
+      obtain ⟨he, hm⟩ := hframe h
+      exact Prod.ext he hm)
+
+/-- **THE ENROLLMENT BREAK AT THE SAMPLED ORACLE** — §2's shape verbatim: the adversary PUBLISHES an
+id and exhibits two DISTINCT key pairs whose framed pre-images BOTH commit to it. -/
+abbrev enrollRomGame [DecidableEq Ed] [DecidableEq MlDsa]
+    (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame) : Game :=
+  romOpenGame (idCommitRomFamily Pre) (enrollRomCarrier Pre frame hframe)
+
+/-- **THE DEPLOYED IMPERSONATION IS A WIN** — two distinct `(ed, ml)` pairs whose framed pre-images the
+sampled oracle maps to ONE published id are a win of the game (`enroll_wins_imp`'s content, restated at
+the sampled oracle). -/
+theorem enrollRom_forgery_is_break [DecidableEq Ed] [DecidableEq MlDsa]
+    (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame)
+    (l : ℕ) (H : (enrollRomGame Pre frame hframe).Inst l) (idv : Fin (2 ^ l))
+    {p p' : Ed × MlDsa} (hne : p ≠ p')
+    (h1 : H ((), frame p.1 p.2) = idv) (h2 : H ((), frame p'.1 p'.2) = idv) :
+    (enrollRomGame Pre frame hframe).wins l H (idv, ((), ()), p, p') :=
+  ⟨hne, h1, h2⟩
+
+/-- **⚑⚑ THE RE-GROUNDED ID-COMMITMENT BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded enrollment equivocator has NEGLIGIBLE advantage: an id determines its
+`(ed25519, ml_dsa)` pair except with negligible probability, in the keyed ROM model of the header —
+so a self-carried PQ key cannot impersonate the enrolled one except with that advantage. This is what
+`id_commitment_binds_from_polyTime` (DELETED — floor refuted) claimed and could not have. -/
+theorem id_commitment_binds_rom [DecidableEq Ed] [DecidableEq MlDsa]
+    (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (enrollRomGame Pre frame hframe))
+    (hA : RomOpenEff (idCommitRomFamily Pre) (enrollRomCarrier Pre frame hframe) Q A) :
+    Negl (gameAdv (enrollRomGame Pre frame hframe) A) :=
+  rom_open_binds _ _ Q hQ (idCommitRomFamily_card_R Pre) A hA
+
+/-- **(TOOTH — the counterexample DIES.)** An enrollment equivocator with non-negligible advantage is
+OUTSIDE the query class. -/
+theorem enrollRom_nonNegl_forger_excluded [DecidableEq Ed] [DecidableEq MlDsa]
+    (frame : Ed → MlDsa → Pre) (hframe : Function.Injective2 frame) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (enrollRomGame Pre frame hframe))
+    (hnn : ¬ Negl (gameAdv (enrollRomGame Pre frame hframe) A)) :
+    ¬ RomOpenEff (idCommitRomFamily Pre) (enrollRomCarrier Pre frame hframe) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (idCommitRomFamily_card_R Pre) A hnn
+
+/-- **(TOOTH — admitted, winnable, DEFANGED, at a CLOSED instance.)** At `Ed = MlDsa = Fin 2`,
+`Pre = Fin 2 × Fin 2`, `frame = Prod.mk`, `Q = 2`: the `0`-query hardcoded opener — the exact shape
+that refutes the `IsPolyTime` floor with probability `1` — is IN the class, wins with POSITIVE
+probability at every parameter, and its advantage is NEGLIGIBLE. The successor spine elaborates
+end-to-end at a closed instance. -/
+theorem prodMk_inj2 {α β : Type} : Function.Injective2 (Prod.mk : α → β → α × β) :=
+  fun _ _ _ _ h => ⟨congrArg Prod.fst h, congrArg Prod.snd h⟩
+
+theorem enrollRom_fires :
+    (RomOpenEff (idCommitRomFamily (Fin 2 × Fin 2))
+        (enrollRomCarrier (Fin 2 × Fin 2) Prod.mk prodMk_inj2) (fun _ => 2)
+        (romOpenAdv _ _ (constOpenComp _ _ (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ()))
+          (fun _ => ((0 : Fin 2), (0 : Fin 2))) (fun _ => ((1 : Fin 2), (0 : Fin 2))))))
+    ∧ (∀ l, 0 < gameAdv (enrollRomGame (Fin 2 × Fin 2) Prod.mk prodMk_inj2)
+        (romOpenAdv _ _ (constOpenComp _ _ (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ()))
+          (fun _ => ((0 : Fin 2), (0 : Fin 2))) (fun _ => ((1 : Fin 2), (0 : Fin 2))))) l)
+    ∧ Negl (gameAdv (enrollRomGame (Fin 2 × Fin 2) Prod.mk prodMk_inj2)
+        (romOpenAdv _ _ (constOpenComp _ _ (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ()))
+          (fun _ => ((0 : Fin 2), (0 : Fin 2))) (fun _ => ((1 : Fin 2), (0 : Fin 2)))))) := by
+  refine ⟨constOpen_in_eff _ _ _ _ _ _ _,
+    fun l => constOpen_gameAdv_pos _ _ _ _ _ _ l
+      (by show ((0 : Fin 2), (0 : Fin 2)) ≠ ((1 : Fin 2), (0 : Fin 2)); decide),
+    constOpen_binds _ _ _ _ _ _ (fun _ => 2) ⟨1, 5, ?_⟩
+      (idCommitRomFamily_card_R (Fin 2 × Fin 2))⟩
+  filter_upwards [Filter.eventually_ge_atTop 5] with n hn
+  have hn' : (5 : ℝ) ≤ (n : ℝ) := by exact_mod_cast hn
+  rw [abs_of_nonneg (by positivity)]
+  push_cast
+  nlinarith
+
+end RomSuccessor
 
 /-! ## §3 — non-vacuity: the floor is satisfiable AND load-bearing on the id-commitment. -/
 
@@ -309,7 +396,11 @@ theorem id_commitment_binds_eff_fires
   enroll_wins_imp,
   enroll_adv_le,
   id_commitment_binds_advantage_bound,
-  id_commitment_binds_from_polyTime,
+  idCommitRomFamily_card_R,
+  enrollRom_forgery_is_break,
+  id_commitment_binds_rom,
+  enrollRom_nonNegl_forger_excluded,
+  enrollRom_fires,
   idCommit_exCR_CR,
   idCommit_badCR_not_CR,
   id_commitment_binds_fires,

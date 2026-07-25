@@ -4,6 +4,20 @@ deployed registry, assembled from the per-effect fan-out machinery. "The kernel 
 modulo the named floor", as ONE object: `verifyAlgo`-accept at ANY published effect tag ⟹ a genuine
 `Satisfied2` witness of THAT tag's DEPLOYED descriptor committing to the published `(pre, post)`.
 
+## ⚑ MIGRATED OFF THE EMPTY PREMISE (2026-07-25)
+
+`hfri` was `AlgoStarkSoundGeneral.FriLdtExtract`, whose OOD conjunct `oodPoint = [ood]` is REFUTED
+on accepting runs: `ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything` PROVES
+that premise forces `CircuitSoundness.verifyBatch` to reject EVERY input, so this capstone — and
+`KernelConfigSoundness.kernelConfigSound` above it — quantified over an EMPTY accepting set and was
+vacuously true. It now takes `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest`,
+the shape `FriVerifier.batchTablesCheck` matches at `FriVerifier.lean:805`), routed through
+`algoStarkSound_of_memoryLegs_cons`. Nothing is lost — `friLdtExtract_imp_cons` sends the old
+premise into the new one, so the statement is strictly STRONGER. Nothing is silently re-emptied —
+§5b proves the new premise is EQUIVALENT to itself with the OOD conjunct deleted. The FRI floor
+under it is unchanged, and no accepting model of the corrected bundle is exhibited at the deployed
+`opaque` arguments (`docs/WOUND-apex-premise-vacuity-2026-07-24.md`).
+
 ## The one-line honest claim
 
 `algoStarkSound_kernel` is a REAL `AlgoStarkSound hash Rfix …` term (no `sorry`, no carrier, no
@@ -15,8 +29,9 @@ re-assumed `StarkSound`/`AlgoStarkSound`), where `Rfix` is the LIVE registry
   1. `Poseidon2SpongeCR sponge` + `Poseidon2SpongeCR hash` — the ONE shared commitment-binding
      hash floor (FRI-commitment sponge / constraint-semantics hash; in deployment the same
      Poseidon2 sponge);
-  2. `FriLdtExtract … (tr e) (Rfix e)`   — the ∀-d FRI-LDT-@-deployed extraction bundle at the
-     DEPLOYED descriptor of tag `e` (`AlgoStarkSoundGeneral`);
+  2. `FriLdtExtractCons … (tr e) (Rfix e)` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
+     DEPLOYED descriptor of tag `e`, at the CORRECTED cons-shaped OOD point
+     (`ApexOodLaneRepair`; see the migration note below);
   3. `BusModelFamily … (tr e) (Rfix e)`  — the per-used-table LogUp bus models at `Rfix e`;
   4. `MapReconcileFamily … (tr e) (Rfix e)` — the MapOps-AIR reconcile modeler data
      (`AlgoStarkSoundFanoutMemory`); NON-vacuous exactly at the mapOp-carrying deployed members
@@ -96,7 +111,9 @@ open Dregg2.Circuit.CircuitSoundness (Registry BatchPublicInputs BatchProof Effe
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmConstraint2 Lookup MapOp VmTrace)
 open Dregg2.Circuit.AirChecksSatisfied (isArith)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.AlgoStarkSoundGeneral (FriLdtExtract BusModelFamily)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemFree
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemory
   (MapReconcileFamily MapTableAssembly algoStarkSound_of_mapShape noteSpendV3_shape
@@ -548,7 +565,7 @@ theorem rfix_sideConditions : ∀ e : EffectIdx, KernelSideConditions (Rfix e)
 named floor. -/
 
 /-- **`algoStarkSound_kernel` — kernel STARK-soundness over the REAL registry.** From EXACTLY the
-named floor — {`Poseidon2SpongeCR` ×2} + per tag {`FriLdtExtract (Rfix e)`, `BusModelFamily
+named floor — {`Poseidon2SpongeCR` ×2} + per tag {`FriLdtExtractCons (Rfix e)`, `BusModelFamily
 (Rfix e)`, `MapReconcileFamily (Rfix e)`, `MapTableAssembly (Rfix e)`} — the FULL
 `AlgoStarkSound hash Rfix …`: every `verifyAlgo`-accepted batch at ANY published effect tag yields
 a genuine `Satisfied2 hash (Rfix pi.effect) …` witness whose published commitments are
@@ -565,7 +582,7 @@ theorem algoStarkSound_kernel {F : Type*} [Field F] [DecidableEq F]
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat) (view : ProofView)
     (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace)
-    (hfri : ∀ e : EffectIdx, FriLdtExtract sponge perm RATE toNat params vk core A initState
+    (hfri : ∀ e : EffectIdx, FriLdtExtractCons sponge perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
@@ -583,6 +600,62 @@ theorem algoStarkSound_kernel {F : Type*} [Field F] [DecidableEq F]
         (rfix_sideConditions e).2
         (rfix_sideConditions e).1.1 (rfix_sideConditions e).1.2
         (hfri e) (hbusF e) (hrec e) (hasm e))
+
+/-! ## §5b — ⚑ THE MIGRATION RECEIPT (2026-07-25): the capstone's FRI premise is no longer the
+one PROVED empty, and its replacement adds zero strength. -/
+
+/-- **The migrated premise cannot be the reason the capstone is empty.** At every deployed tag,
+`FriLdtExtractCons … (Rfix e)` is EQUIVALENT to itself with the OOD-shape conjunct DELETED — the
+conjunct is supplied by the bundle's own antecedent (`AcceptsFull` forces `oodPoint = ood ::
+oodRest`, since `batchTablesCheck` returns `false` on an empty OOD point). The premise this
+capstone was migrated OFF (`AlgoStarkSoundGeneral.FriLdtExtract`) asserts the CONTRADICTORY
+singleton, which is why `ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`
+proved it forces `verifyBatch` to reject every input, emptying this capstone entirely. -/
+theorem kernelPremise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace) :
+    ∀ e : EffectIdx,
+      (FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view (tr e)
+          (Rfix e)
+        ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+          view (tr e) (Rfix e)) :=
+  fun e => friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState
+    logN view (tr e) (Rfix e)
+
+/-- **The kernel capstone from an OOD-SILENT FRI premise.** The strongest statement that this
+migration introduced no second vacuity: `AlgoStarkSound hash Rfix` is available under a per-tag FRI
+bundle carrying NO OOD conjunct at all. Whatever emptiness the premise may still carry is inherited
+entirely from the FRI-LDT / Merkle-opening / Fiat–Shamir conjuncts — the undischarged floor — and
+none of it from the OOD lane. NOT claimed: that the remaining conjuncts are satisfiable at the
+deployed arguments (see `docs/WOUND-apex-premise-vacuity-2026-07-24.md` §2 — the retained
+`topen ∈ tableOpenings` conjunct is refutable at the toy accepting pole, so no accepting model of
+this bundle is exhibited anywhere). -/
+theorem algoStarkSound_kernel_noOodShape {F : Type*} [Field F] [DecidableEq F]
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (fp : List ℤ → F) (embed : ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace)
+    (hfri : ∀ e : EffectIdx, FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A
+        initState logN view (tr e) (Rfix e))
+    (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
+        logN view (tr e) (Rfix e))
+    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+        logN view (tr e) (Rfix e))
+    (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState
+        logN view (tr e) (Rfix e)) :
+    AlgoStarkSound hash Rfix perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_kernel sponge hCR hash hCRh fp embed perm RATE toNat params vk core A initState
+    logN view tr
+    (fun e => (kernelPremise_adds_no_strength sponge perm RATE toNat params vk core A initState
+      logN view tr e).mpr (hfri e))
+    hbusF hrec hasm
 
 /-! ## §6 — TEETH: the classification and the load-bearing premises are genuine.
 
@@ -615,6 +688,8 @@ theorem setFieldDynV3_not_mapShape : ¬ MapShape setFieldDynV3.constraints := by
 #assert_axioms algoStarkSound_of_pointwise
 #assert_axioms rfix_sideConditions
 #assert_axioms algoStarkSound_kernel
+#assert_axioms kernelPremise_adds_no_strength
+#assert_axioms algoStarkSound_kernel_noOodShape
 #assert_axioms setFieldDynV3_not_mapShape
 
 end Dregg2.Circuit.AlgoStarkSoundKernel

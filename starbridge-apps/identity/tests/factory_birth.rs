@@ -146,7 +146,7 @@ fn factory_born_issuer_refuses_schema_rebind() {
         "setup",
         vec![Effect::SetField {
             cell: issuer,
-            index: SCHEMA_COMMITMENT_SLOT,
+            index: SCHEMA_COMMITMENT_SLOT as u64,
             value: field_from_bytes(b"mallory-schema-v2"),
         }],
     );
@@ -182,12 +182,12 @@ fn factory_born_issuer_refuses_unwitnessed_issuance() {
         vec![
             Effect::SetField {
                 cell: issuer,
-                index: ISSUANCE_COUNTER_SLOT,
+                index: ISSUANCE_COUNTER_SLOT as u64,
                 value: field_from_u64(1),
             },
             Effect::SetField {
                 cell: issuer,
-                index: REVOCATION_ROOT_SLOT,
+                index: REVOCATION_ROOT_SLOT as u64,
                 value: field_from_bytes(b"revocation-root-v1"),
             },
         ],

@@ -511,18 +511,35 @@ fn folds_in(channel: u64) -> Vec<(u64, Game, String)> {
 // Extracting the played match from the live `/play` session.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The channel's finished automatafl match as a fold job. Honest scope (the game-board crate's
-/// own named residual): the folded chain is the committed **D1 automaton-step** chain — as many
-/// turns as the match resolved, stepping from the final committed position — not the D2/D3
-/// player-move stages (which lower identically but are not the chain driven here).
+/// The channel's finished automatafl match as a fold job — **the PLAYED two-leg chain**: the
+/// genesis position plus every resolved round's two revealed moves
+/// ([`AutomataflMatch::played`]), which folds as `Leg R` (the players' adjudicated moves) then
+/// `Leg A` (the automaton's step) per round, board-window chained, with the root exposing the
+/// decodable genesis and final positions.
+///
+/// This replaced `AutomataflMatch::automaton_only`, which the game-board crate's own doc says
+/// "attests K INDEPENDENT automaton steps and no move at all" — a crown over that proved nothing
+/// about how the match was played (and, at the old 5×5 board, could not be minted at all: there
+/// is no emitted Lean descriptor at n=5).
+///
+/// HONEST SCOPE: the fold attests CLEAN rounds. A round the players CLASHED on (a fork on a
+/// shared source, a clash on a shared destination) is REFUSED by name
+/// (`MatchError::ConflictingRound`) rather than folded, because the surface resolves a clash by
+/// dropping moves while the ruleset marks the square and re-enters the round. A match containing
+/// one is not crownable until the marks/re-entry braid is wired to the surface.
 fn played_automatafl(channel: u64) -> Option<PlayedMatch> {
     offering::with_live::<AutomataflOffering, _>(channel, |live| {
         if !live.session.ended() {
             return None;
         }
-        Some(PlayedMatch::Automatafl(AutomataflMatch::automaton_only(
-            live.session.board().clone(),
-            live.session.turn_no().max(1) as usize,
+        // No resolved round ⇒ no played transition to attest. Nothing is minted (the old path
+        // would have folded an automaton-only chain that says nothing about the players).
+        if live.session.rounds().is_empty() {
+            return None;
+        }
+        Some(PlayedMatch::Automatafl(AutomataflMatch::played(
+            live.session.start_board().clone(),
+            live.session.rounds().to_vec(),
         )))
     })
     .flatten()
@@ -656,6 +673,35 @@ fn enqueue_response(
                 .color(COLOR_REFUSED),
             Vec::new(),
         );
+    }
+    // An automatafl round the seats CLASHED on is refused HERE, by name, rather than shipped to
+    // the prover to fail opaquely minutes later. The two-leg fold attests a CLEAN resolution; the
+    // surface resolves a clash by DROPPING both moves, while the ruleset marks the contested
+    // square and re-enters the round (the Leg C braid, not yet wired to the surface). Attesting
+    // the drop would be a succinct proof of a transition the rules never licensed.
+    if let PlayedMatch::Automatafl(a) = &m {
+        let mut board = a.start.clone();
+        for (i, (ma, mb)) in a.rounds.iter().enumerate() {
+            if !dregg_automatafl::reference::round_is_clean(&board, &[*ma, *mb]) {
+                return (
+                    CreateEmbed::new()
+                        .title("This match folds no crown (yet)")
+                        .description(format!(
+                            "Round **{}** of this match was a **clash** — both seats contested \
+                             the same square. The surface resolved it by dropping the moves; the \
+                             ruleset says a clash *marks* the square and *re-enters* the round, \
+                             and that braid (Leg C) is not yet wired to the played surface.\n\n\
+                             So this match is REFUSED rather than mis-attested: folding the drop \
+                             would mint a succinct proof of a transition the rules never \
+                             licensed. A clash-free match folds today.",
+                            i + 1,
+                        ))
+                        .color(COLOR_REFUSED),
+                    Vec::new(),
+                );
+            }
+            board = dregg_automatafl::reference::apply_turn(&board, &[*ma, *mb]);
+        }
     }
     match enqueue_fold(game, channel, player_hex, m) {
         Enqueued::Token(token) => (

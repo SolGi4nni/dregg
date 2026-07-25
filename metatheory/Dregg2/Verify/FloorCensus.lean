@@ -19,6 +19,17 @@ Passes (all READ-ONLY over the imported environment):
   type `F …`. The `_false_babyBear` naming convention is never consulted — the TYPE is.
   A refutation whose refuted instance is CLOSED (no telescope fvars in `F`'s arguments) is
   flagged `instance`; an open one is `parametric`.
+* **Pass 1b — floor in a Prop-def BODY (census v2).** `def … : Prop := Floor … → …` carries a
+  floor with NO floor binder in its type — invisible to every binder test (the
+  `descriptorRefines`/`descriptorComplete`/`ClosedLogExtract` keystone shape). Pass 1b
+  δ-inspects the VALUE of every Prop-valued def and reports floor-mentioning ones as class
+  `prop-body` (flag `direct`, or `via-propdef` when the mention is through another such def —
+  computed to fixpoint). Sites that MENTION a `prop-body` def in their own type without any
+  direct floor binder are class `propdef-user` (their statements rewrite when the def is
+  regrounded); sites whose type names a floor OUTSIDE any binder head (inside a binder's own
+  pi, or in the conclusion) are class `embedded` (flags `emb-binder`/`emb-conc`/`neg-conc`;
+  a recorded refutation witness is flagged `refut-witness` and is anti-floor content, not
+  port surface). v1 silently DROPPED all of these.
 * **Pass 1 — CARRIER census.** For every constant in our modules: the refuted floors bound in
   HYPOTHESIS position of its elaborated type (section `variable`s are already `forallE`s here
   — no scope emulation), classified against the proof term:
@@ -43,9 +54,26 @@ Passes (all READ-ONLY over the imported environment):
   content invisibly to every name-keyed ruler. Sites whose binder δ-matches the injectivity
   shape under the `Function.Injective` spelling (and bind no named floor) are reported as
   `SHAPE` lines — the leak surface, kept distinct from the named census.
-* **Floor-flow DAG.** `T → c` iff `T`'s proof passes its floor hypothesis fvar as an argument
-  to `c` (the floor's flow, not the proof's general dependency cone). Longest-path levels by
-  fixpoint drive the port wave plan.
+* **Floor-flow DAG, HIGHER-ORDER-aware (census v2).** `T → c` iff `T`'s proof passes its floor
+  hypothesis fvar as an argument to `c` (the floor's flow, not the proof's general dependency
+  cone). v1 recorded only `.const`-headed applications, so a proof passing its floor into
+  ANOTHER HYPOTHESIS (`hrefines pi.effect hCR …` — the `lightclient_unfoolable` keystone
+  shape) showed NO edge and sat at L0. v2 also records floor fvars passed to fvar-headed
+  applications (flag `ho-thread`): when the receiving hypothesis's statement head is a
+  carrier constant (typically a `prop-body` def) that becomes a DAG edge; otherwise the site
+  is flagged `ho-opaque` (level not trustworthy as work order). Floor flow into a
+  proof-LOCAL function (bvar/lambda head) is flagged `ho-local`. Statement-level coupling to
+  `prop-body` defs is also an edge (the statement rewrites after the def regrounds). Both
+  levelings are reported: the CARRIER column and `level-*` histogram use the v2 edges;
+  `RELEVEL name old new` lines show every site the correction moved (old = v1 edge
+  semantics), so DAG level can be read as work order again.
+* **DEAD split (census v2).** `dead` undifferentiated oversold the deletion wave: most dead
+  defs are structure projections/`ctorIdx` boilerplate (flag `struct-boiler`) that die only
+  when their BUNDLE is ported. The summary splits dead by kind × blocking-flags:
+  `dead-thm-clean` is the genuine day-one deletion wave.
+* **Multi-floor combinations (census v2).** `COMBO floors n n-threader` lines histogram the
+  exact floor COMBINATIONS carried by multi-floor sites, so an AppRule table is designed
+  against real combinations rather than one floor at a time.
 
 ## FAIL-CLOSED, by construction
 A census over a half-imported environment reports fewer carriers and looks exactly like
@@ -60,6 +88,8 @@ port, never from an instrument that quietly measured less.
   `CARRIER name module file startLine endLine kind class conc level floors flags`
   `BUNDLE  struct` / `PROJ proj struct floor`
   `SHAPE   name module file line injective-head`
+  `RELEVEL name v1-level v2-level` (sites the higher-order edge correction moved)
+  `COMBO   floors carriers threaders` (multi-floor combination histogram)
   `SUMMARY key value`
 Usage: `#floor_census` (stdout) or `#floor_census "/abs/path/out.tsv"` (file + summary).
 
@@ -103,6 +133,20 @@ def sentinelFloors : List (Name × Bool) :=
   , (`Dregg2.Authority.MacaroonDischarge.BindingHashCR, false)
   ]
 
+/-- Pass 1b SENTINELS: known load-bearing `Prop`-def-BODY floor carriers the v2 census must
+rediscover (each is `def … : Prop := Poseidon2SpongeCR hash → …` — no floor binder in the
+type, so a binder-only census reports them as NOT CARRIERS at all). Fail closed if any is
+missed: these gate the L0 keystones. -/
+def sentinelPropBody : List Name :=
+  [ `Dregg2.Circuit.CircuitSoundness.descriptorRefines
+  , `Dregg2.Circuit.CircuitCompleteness.descriptorComplete
+  , `Dregg2.Circuit.ClosureAll.ClosedLogExtract ]
+
+/-- The higher-order-flow SENTINEL: the top keystone that v1 mis-leveled to L0 because its
+floor hypothesis flows into ANOTHER hypothesis (`hrefines`), not a constant. v2 must see the
+`ho-thread` and level it strictly above 0, or the DAG is not a work order — fail closed. -/
+def sentinelHoThread : Name := `Dregg2.Circuit.CircuitSoundness.lightclient_unfoolable
+
 /-- Defining module of a constant (core-API only; `getModuleFor?` is a Mathlib add-on). -/
 def moduleOf (env : Environment) (n : Name) : Name :=
   match env.getModuleIdxFor? n with
@@ -143,6 +187,18 @@ def isAutoCompanion (n : Name) : Bool :=
       || s == "noConfusionType" || s.startsWith "match_" || s.startsWith "proof_"
       || (s.startsWith "eq_" && (s.drop 3).all Char.isDigit)
   | _ => false
+
+/-- Auto-generated STRUCTURE boilerplate: projections and the compiler's per-inductive
+companions. A DEAD floor binder here is not a free deletion — it dies only when its whole
+bundle is ported (flag `struct-boiler`; the day-one deletion wave must not count these). -/
+def isStructBoilerplate (env : Environment) (n : Name) : Bool :=
+  (env.getProjectionFnInfo? n).isSome ||
+    match n with
+    | .str _ s =>
+      s == "ctorIdx" || s == "noConfusion" || s == "noConfusionType" || s == "casesOn"
+        || s == "recOn" || s == "below" || s == "brecOn" || s == "ibelow"
+        || s == "binductionOn" || s == "mk"
+    | _ => false
 
 /-- Transport/elimination sinks: a floor fvar passed here is being USED via a motive,
 not threaded to a lemma. Flagged (`transport`) and routed to a human, never silently
@@ -194,11 +250,21 @@ structure VisitOut where
   used : Bool := false
   /-- `(c, i)`: a floor fvar passed as argument `i` of an application headed by `c`. -/
   edges : Array (Name × Nat) := #[]
+  /-- HYPOTHESIS fvars (not themselves floor binders) RECEIVING a floor fvar as an
+  argument — the higher-order flow v1 was blind to (`hrefines pi.effect hCR …`). -/
+  hoSinks : Array FVarId := #[]
+  /-- A floor fvar flowed into a proof-LOCAL head (bvar/lambda/projection): higher-order
+  flow the site-level binder map cannot resolve. -/
+  hoLocal : Bool := false
 
 def visitValue (fvs : Array FVarId) (v : Expr) : MetaM VisitOut := do
   let stA ← IO.mkRef false
   let stU ← IO.mkRef false
   let stE ← IO.mkRef (#[] : Array (Name × Nat))
+  let stH ← IO.mkRef (#[] : Array FVarId)
+  let stL ← IO.mkRef false
+  let isFloorFvar : Expr → Bool := fun e =>
+    match e with | .fvar fv => fvs.contains fv | _ => false
   let _ ← Meta.transform v (pre := fun s => do
     match s with
     | .fvar fv =>
@@ -207,16 +273,22 @@ def visitValue (fvs : Array FVarId) (v : Expr) : MetaM VisitOut := do
     | .app .. =>
       let args := s.getAppArgs
       match s.getAppFn with
-      | .fvar fv => if fvs.contains fv && args.size > 0 then stA.set true
+      | .fvar fv =>
+        if fvs.contains fv then
+          if args.size > 0 then stA.set true else pure ()
+        else if args.any isFloorFvar then
+          stH.modify (fun a => if a.contains fv then a else a.push fv)
       | .const c _ =>
         for i in [0:args.size] do
           if let .fvar fv := args[i]! then
             if fvs.contains fv then
               stE.modify (fun a => if a.contains (c, i) then a else a.push (c, i))
-      | _ => pure ()
+      | _ =>
+        if args.any isFloorFvar then stL.set true
       return .continue
     | _ => return .continue)
-  return { applied := ← stA.get, used := ← stU.get, edges := ← stE.get }
+  return { applied := ← stA.get, used := ← stU.get, edges := ← stE.get,
+           hoSinks := ← stH.get, hoLocal := ← stL.get }
 
 /-- Chase a floor argument INTO a compiler-lifted auxiliary: is it APPLIED in there
 (transitively), and which NON-internal constants does it flow to from inside? This is what
@@ -261,6 +333,10 @@ structure Site where
   conc : String
   floors : Array Name
   edges : Array Name
+  /-- v2 edges: higher-order flow targets (the receiving hypothesis's statement-head
+  carrier) + statement-level coupling to `prop-body` defs. Kept separate from proof-term
+  `edges` so both levelings stay computable. -/
+  hoEdges : Array Name := #[]
   flags : Array String
   startLine : Nat
   endLine : Nat
@@ -371,6 +447,52 @@ def run (outPath : Option String) : MetaM Unit := do
         lines := lines.push
           s!"FLOOR\t{f}\tUNREFUTED\t-\t-\t{if named then "named" else "discovered"}"
 
+  -- ===== Pass 1b: floor-in-Prop-def-BODY carriers (census v2) =====
+  -- `def … : Prop := Floor … → …` has NO floor binder in its type; the floor lives in the
+  -- VALUE. δ-inspect every Prop-valued def's value; close under mention-of-another-such-def.
+  let refutWitness : NameSet :=
+    falseForm.fold (fun a _ w => a.insert w)
+      (refutedBy.fold (fun a _ (w, _) => a.insert w) {})
+  let mut propDefs : Array (Name × Array Name) := #[]
+  for nm in ours do
+    let some ci := env.find? nm | continue
+    let .defnInfo di := ci | continue
+    if floors.contains nm then continue
+    let isProp ← forallTelescope di.type fun _ b => pure (b == .sort .zero)
+    unless isProp do continue
+    propDefs := propDefs.push (nm, di.value.getUsedConstants)
+  let mut propBody : Std.HashMap Name (Array Name) := {}  -- def ↦ floors carried via body
+  let mut pbDirect : NameSet := {}
+  let mut pbIters := 0
+  let mut pbChanged := true
+  while pbChanged && pbIters < 100 do
+    pbChanged := false
+    pbIters := pbIters + 1
+    for (nm, used) in propDefs do
+      let mut fl : Array Name := propBody.getD nm #[]
+      let before := fl.size
+      let hadDirect := pbDirect.contains nm
+      let mut dir := hadDirect
+      for c in used do
+        if floors.contains c then
+          dir := true
+          if !fl.contains c then fl := fl.push c
+        else if let some fs := propBody.get? c then
+          if c != nm then
+            for f in fs do if !fl.contains f then fl := fl.push f
+      if fl.size > before || (dir && !hadDirect) then
+        propBody := propBody.insert nm fl
+        if dir then pbDirect := pbDirect.insert nm
+        pbChanged := true
+  if pbIters >= 100 then
+    throwError "FLOOR-CENSUS FAIL-CLOSED: Pass 1b prop-def-body fixpoint did not converge."
+  -- ⚑ FAIL-CLOSED gate (d): the known load-bearing Prop-def-body keystone gates must be seen.
+  for f in sentinelPropBody do
+    unless propBody.contains f do
+      throwError "FLOOR-CENSUS FAIL-CLOSED: Pass 1b sentinel {f} was not discovered as a \
+        prop-body floor carrier. Partial import or a regression in the δ-unfolding — a v2 \
+        census that misses the keystone gates must not report."
+
   -- ===== Pass 1: carriers =====
   let memo ← IO.mkRef ({} : Std.HashMap (Name × Nat) (Bool × Array Name))
   let mut sites : Array Site := #[]
@@ -388,8 +510,12 @@ def run (outPath : Option String) : MetaM Unit := do
     let tyC := info.type.getUsedConstants
     let hasNamed := tyC.any (fun c => floors.contains c)
     let maybeShape := tyC.contains ``Function.Injective
-    unless hasNamed || maybeShape do continue
-    let res ← forallTelescope info.type fun xs body => do
+    -- v2: statement-level mentions of prop-body defs, and prop-body defs themselves
+    let tyPds := tyC.filter (fun c => propBody.contains c)
+    let isPB := propBody.contains nm
+    unless hasNamed || maybeShape || isPB || !tyPds.isEmpty do continue
+    let boiler := isStructBoilerplate env nm
+    let (shapeHits, site?) ← forallTelescope info.type fun xs body => do
       let mut fvs : Array FVarId := #[]
       let mut fls : Array Name := #[]
       let mut flags : Array String := #[]
@@ -415,8 +541,46 @@ def run (outPath : Option String) : MetaM Unit := do
               | none => `«other»
             shapeHits := shapeHits.push fh
         | none => pure ()
+      if boiler then flags := flags.push "struct-boiler"
       if fvs.isEmpty then
-        return some (Sum.inl shapeHits)
+        -- ===== v2: sites with NO direct floor binder (all silently dropped by v1) =====
+        if isPB then
+          -- Pass 1b carrier: floor named in the Prop def's BODY (δ-level).
+          let mut hoEdges : Array Name := tyPds
+          if let some v := info.value? (allowOpaque := true) then
+            for c in v.getUsedConstants do
+              if c != nm && propBody.contains c && !hoEdges.contains c then
+                hoEdges := hoEdges.push c
+          flags := flags.push (if pbDirect.contains nm then "direct" else "via-propdef")
+          if refutWitness.contains nm then flags := flags.push "refut-witness"
+          return (shapeHits, some (Site.mk nm mod (declKind info) "prop-body"
+            (concShape body) (propBody.getD nm #[]) #[] hoEdges flags 0 0))
+        if hasNamed then
+          -- floor named in the TYPE outside any binder head: conclusion or a binder's pi.
+          let mut fls2 : Array Name := tyC.filter (fun c => floors.contains c)
+          if (notArg? body).any (fun a => (headConst? a).any floors.contains) then
+            flags := flags.push "neg-conc"
+          else if body.getUsedConstants.any floors.contains then
+            flags := flags.push "emb-conc"
+          let mut embBinder := false
+          for x in xs do
+            let ld ← x.fvarId!.getDecl
+            if ld.type.getUsedConstants.any floors.contains then embBinder := true
+          if embBinder then flags := flags.push "emb-binder"
+          if refutWitness.contains nm then flags := flags.push "refut-witness"
+          if !tyPds.isEmpty then flags := flags.push "uses-propdef"
+          return (shapeHits, some (Site.mk nm mod (declKind info) "embedded"
+            (concShape body) fls2 #[] tyPds flags 0 0))
+        if !tyPds.isEmpty then
+          -- statement mentions a prop-body carrier: rewrites when the def is regrounded.
+          let mut fls2 : Array Name := #[]
+          for c in tyPds do
+            for f in propBody.getD c #[] do
+              if !fls2.contains f then fls2 := fls2.push f
+          flags := flags.push "uses-propdef"
+          return (shapeHits, some (Site.mk nm mod (declKind info) "propdef-user"
+            (concShape body) fls2 #[] tyPds flags 0 0))
+        return (shapeHits, none)
       if !shapeHits.isEmpty then flags := flags.push "inj-spelled"
       -- body `False` = the TOOTH class: refutation teeth AND reduction-to-floor theorems
       -- stated contradiction-style (`Floor → forgery → False`). NOT dropped — a distinct
@@ -426,6 +590,13 @@ def run (outPath : Option String) : MetaM Unit := do
       if (headConst? body).any floors.contains then flags := flags.push "bridge"
       if fvs.any body.containsFVar then flags := flags.push "conc-floor"
       if isAutoCompanion nm then flags := flags.push "auto-name"
+      if isPB then
+        flags := flags.push "body-floor"
+      if !tyPds.isEmpty then flags := flags.push "uses-propdef"
+      let mut hoEdges : Array Name := tyPds
+      if isPB then
+        for f in propBody.getD nm #[] do
+          if !fls.contains f then fls := fls.push f
       let mut cls := "no-value"
       let mut edges : Array Name := #[]
       if let some v := info.value? (allowOpaque := true) then
@@ -452,25 +623,74 @@ def run (outPath : Option String) : MetaM Unit := do
                 if !edges.contains x then edges := edges.push x
           if vo.edges.any (fun (c, _) => transportSinks.contains c) then
             flags := flags.push "transport"
+        -- ===== v2: HIGHER-ORDER floor flow (the `lightclient_unfoolable` blind spot) =====
+        -- the floor hypothesis passed into ANOTHER hypothesis: resolve the receiving
+        -- hypothesis's statement head to a carrier constant when possible (a DAG edge);
+        -- an unresolvable receiver makes the site's level untrustworthy (`ho-opaque`).
+        unless vo.hoSinks.isEmpty do
+          flags := flags.push "ho-thread"
+          for g in vo.hoSinks do
+            let ty? ← try pure (some (← g.getDecl).type) catch _ => pure none
+            let head? := match ty? with
+              | some gt => headConst? gt.getForallBody
+              | none => none
+            match head? with
+            | some h =>
+              let carrierHead := propBody.contains h || floors.contains h
+              if carrierHead && !hoEdges.contains h then
+                hoEdges := hoEdges.push h
+              if !carrierHead && !flags.contains "ho-opaque" then
+                flags := flags.push "ho-opaque"
+            | none =>
+              if !flags.contains "ho-opaque" then flags := flags.push "ho-opaque"
+        if vo.hoLocal && !flags.contains "ho-local" then flags := flags.push "ho-local"
       if isTooth then
         flags := flags.push s!"was-{cls}"
         cls := "tooth"
-      return some (Sum.inr (Site.mk nm mod (declKind info) cls conc fls edges flags 0 0))
-    match res with
-    | none => pure ()
-    | some (Sum.inl shapeHits) =>
+      return (shapeHits, some (Site.mk nm mod (declKind info) cls conc fls edges hoEdges
+        flags 0 0))
+    match site? with
+    | none =>
       for fh in shapeHits do shapes := shapes.push (nm, mod, fh)
-    | some (Sum.inr s) =>
+    | some s =>
+      -- SHAPE lines stay confined to sites with no direct floor binder (v1 semantics kept:
+      -- binder-carrying sites carry `inj-spelled` instead)
+      if s.cls == "prop-body" || s.cls == "embedded" || s.cls == "propdef-user" then
+        for fh in shapeHits do shapes := shapes.push (nm, mod, fh)
       let (l0, l1) ← match ← findDeclarationRanges? nm with
         | some rg => pure (rg.range.pos.line, rg.range.endPos.line)
         | none => pure (0, 0)
       sites := sites.push { s with startLine := l0, endLine := l1 }
 
-  -- ===== floor-flow DAG levels =====
+  -- ===== floor-flow DAG levels: v1 edge semantics AND v2 (higher-order-aware) =====
+  -- v1: nodes are the proof-term-classified sites only, edges are proof-term floor flow.
+  -- v2: all sites (incl. `prop-body`/`propdef-user`/`embedded`), edges also carry the
+  -- higher-order flow and statement-level prop-def coupling. Both are computed so every
+  -- level the correction MOVED is reported (`RELEVEL`), not silently rewritten.
+  let oldClasses : List String := ["endpoint", "threader", "dead", "no-value", "tooth"]
+  let v1Set : NameSet := sites.foldl
+    (fun a s => if oldClasses.contains s.cls then a.insert s.name else a) {}
   let carrierSet : NameSet := sites.foldl (fun a s => a.insert s.name) {}
-  let mut level : Std.HashMap Name Nat := {}
+  let mut levelV1 : Std.HashMap Name Nat := {}
   let mut changed := true
   let mut iters := 0
+  while changed && iters < 300 do
+    changed := false
+    iters := iters + 1
+    for s in sites do
+      unless oldClasses.contains s.cls do continue
+      let mut lv := 0
+      for e in s.edges do
+        if v1Set.contains e then lv := max lv ((levelV1.getD e 0) + 1)
+      if lv != levelV1.getD s.name 0 then
+        levelV1 := levelV1.insert s.name lv
+        changed := true
+  if iters >= 300 then
+    throwError "FLOOR-CENSUS FAIL-CLOSED: v1 floor-flow level fixpoint did not converge \
+      (cycle in the flow graph?) — refusing to emit a wave plan from a broken DAG."
+  let mut level : Std.HashMap Name Nat := {}
+  changed := true
+  iters := 0
   while changed && iters < 300 do
     changed := false
     iters := iters + 1
@@ -478,12 +698,25 @@ def run (outPath : Option String) : MetaM Unit := do
       let mut lv := 0
       for e in s.edges do
         if carrierSet.contains e then lv := max lv ((level.getD e 0) + 1)
+      for e in s.hoEdges do
+        if carrierSet.contains e then lv := max lv ((level.getD e 0) + 1)
       if lv != level.getD s.name 0 then
         level := level.insert s.name lv
         changed := true
   if iters >= 300 then
-    throwError "FLOOR-CENSUS FAIL-CLOSED: floor-flow level fixpoint did not converge \
+    throwError "FLOOR-CENSUS FAIL-CLOSED: v2 floor-flow level fixpoint did not converge \
       (cycle in the flow graph?) — refusing to emit a wave plan from a broken DAG."
+  -- ⚑ FAIL-CLOSED gate (e): the higher-order keystone must be SEEN threading and re-leveled.
+  match sites.find? (·.name == sentinelHoThread) with
+  | some s =>
+    unless s.flags.contains "ho-thread" && level.getD s.name 0 ≥ 1 do
+      throwError "FLOOR-CENSUS FAIL-CLOSED: {sentinelHoThread} is not seen as a \
+        higher-order threader above L0 (flags {fmtFlags s.flags}, level \
+        {level.getD s.name 0}). The DAG would repeat v1's keystone mis-leveling — \
+        refusing to report."
+  | none =>
+    throwError "FLOOR-CENSUS FAIL-CLOSED: keystone {sentinelHoThread} is not in the \
+      carrier surface at all. Partial import — refusing to report."
 
   let sorted := sites.qsort (fun a b =>
     a.mod.toString < b.mod.toString
@@ -492,6 +725,27 @@ def run (outPath : Option String) : MetaM Unit := do
     lines := lines.push
       (s!"CARRIER\t{s.name}\t{s.mod}\t{modFile s.mod}\t{s.startLine}\t{s.endLine}\t" ++
        s!"{s.kind}\t{s.cls}\t{s.conc}\t{level.getD s.name 0}\t{fmtNames s.floors}\t{fmtFlags s.flags}")
+  -- every proof-term-classified site the higher-order correction MOVED
+  let mut relevels := 0
+  for s in sorted do
+    unless oldClasses.contains s.cls do continue
+    let l1 := levelV1.getD s.name 0
+    let l2 := level.getD s.name 0
+    if l1 != l2 then
+      relevels := relevels + 1
+      lines := lines.push s!"RELEVEL\t{s.name}\t{l1}\t{l2}"
+  -- multi-floor COMBINATION histogram (the AppRule table is designed against these)
+  let mut combos : Std.HashMap String (Nat × Nat) := {}
+  for s in sites do
+    if s.floors.size ≥ 2 then
+      let key := "+".intercalate
+        (((s.floors.qsort (fun a b => a.toString < b.toString)).toList).map (·.toString))
+      let (a, t) := combos.getD key (0, 0)
+      combos := combos.insert key (a + 1, if s.cls == "threader" then t + 1 else t)
+  let comboArr := combos.toList.toArray.qsort (fun a b =>
+    a.2.1 > b.2.1 || (a.2.1 == b.2.1 && a.1 < b.1))
+  for (k, a, t) in comboArr do
+    lines := lines.push s!"COMBO\t{k}\t{a}\t{t}"
   let mut structSeen : Array Name := #[]
   for (p, sn, fl) in bundles do
     if !structSeen.contains sn then structSeen := structSeen.push sn
@@ -514,8 +768,57 @@ def run (outPath : Option String) : MetaM Unit := do
   summary := summary.push s!"SUMMARY\tcandidate-floors\t{cand.size}"
   summary := summary.push s!"SUMMARY\trefuted-floors\t{floors.size}"
   summary := summary.push s!"SUMMARY\tcarriers\t{sites.size}"
-  for cl in ["endpoint", "threader", "dead", "no-value", "tooth"] do
+  for cl in ["endpoint", "threader", "dead", "no-value", "tooth",
+             "prop-body", "propdef-user", "embedded"] do
     summary := summary.push s!"SUMMARY\tclass-{cl}\t{(sites.filter (·.cls == cl)).size}"
+  -- the pre-v2 surface (proof-term-classified sites only), for continuity with old reports
+  summary := summary.push
+    s!"SUMMARY\tcarriers-v1-classes\t{(sites.filter (fun s => oldClasses.contains s.cls)).size}"
+  -- refutation WITNESSES surfaced by the embedded class are anti-floor content, not port
+  -- surface; the port surface excludes exactly those
+  let witnessSites := (sites.filter (·.flags.contains "refut-witness")).size
+  summary := summary.push s!"SUMMARY\tembedded-refut-witness\t{witnessSites}"
+  summary := summary.push s!"SUMMARY\tsurface-port\t{sites.size - witnessSites}"
+  -- ===== v2 gap 3: DEAD split by kind × flags (the honest day-one deletion wave) =====
+  let blocking : List String :=
+    ["bridge", "conc-floor", "auto-name", "simp", "transport", "instImp", "inj-spelled",
+     "absurd-use", "struct-boiler", "body-floor", "uses-propdef"]
+  let deadS := sites.filter (·.cls == "dead")
+  let deadThm := deadS.filter (·.kind == "thm")
+  let deadDef := deadS.filter (·.kind == "def")
+  summary := summary.push
+    s!"SUMMARY\tdead-thm-clean\t{(deadThm.filter (fun s => !s.flags.any (blocking.contains ·))).size}"
+  summary := summary.push
+    s!"SUMMARY\tdead-thm-flagged\t{(deadThm.filter (fun s => s.flags.any (blocking.contains ·))).size}"
+  summary := summary.push
+    s!"SUMMARY\tdead-def-boiler\t{(deadDef.filter (·.flags.contains "struct-boiler")).size}"
+  summary := summary.push
+    s!"SUMMARY\tdead-def-other\t{(deadDef.filter (fun s => !s.flags.contains "struct-boiler")).size}"
+  let deadOtherKind := (deadS.filter (fun s => s.kind != "thm" && s.kind != "def")).size
+  summary := summary.push s!"SUMMARY\tdead-other-kind\t{deadOtherKind}"
+  -- ===== v2 gap 2: higher-order flow accounting =====
+  summary := summary.push
+    s!"SUMMARY\tho-thread-sites\t{(sites.filter (·.flags.contains "ho-thread")).size}"
+  summary := summary.push
+    s!"SUMMARY\tho-opaque-sites\t{(sites.filter (·.flags.contains "ho-opaque")).size}"
+  summary := summary.push
+    s!"SUMMARY\tho-local-sites\t{(sites.filter (·.flags.contains "ho-local")).size}"
+  summary := summary.push s!"SUMMARY\trelevel-changed\t{relevels}"
+  -- ===== v2 gap 1: prop-body accounting =====
+  summary := summary.push
+    s!"SUMMARY\tpropbody-direct\t{(sites.filter (fun s => s.cls == "prop-body" && s.flags.contains "direct")).size}"
+  summary := summary.push
+    s!"SUMMARY\tpropbody-via\t{(sites.filter (fun s => s.cls == "prop-body" && s.flags.contains "via-propdef")).size}"
+  summary := summary.push
+    s!"SUMMARY\tbody-floor-binder-sites\t{(sites.filter (·.flags.contains "body-floor")).size}"
+  summary := summary.push
+    s!"SUMMARY\tuses-propdef-sites\t{(sites.filter (·.flags.contains "uses-propdef")).size}"
+  -- ===== v2 gap 4: multi-floor accounting =====
+  summary := summary.push
+    s!"SUMMARY\tmulti-floor-carriers\t{(sites.filter (·.floors.size ≥ 2)).size}"
+  summary := summary.push
+    s!"SUMMARY\tmulti-floor-threaders\t{(sites.filter (fun s => s.cls == "threader" && s.floors.size ≥ 2)).size}"
+  summary := summary.push s!"SUMMARY\tmulti-floor-combos\t{comboArr.size}"
   summary := summary.push s!"SUMMARY\tbridges\t{(sites.filter (·.flags.contains "bridge")).size}"
   summary := summary.push s!"SUMMARY\tconc-floor\t{(sites.filter (·.flags.contains "conc-floor")).size}"
   summary := summary.push s!"SUMMARY\taux-endpoints\t{(sites.filter (·.flags.contains "aux-endpoint")).size}"
@@ -533,6 +836,14 @@ def run (outPath : Option String) : MetaM Unit := do
     lvHist := lvHist.insert lv ((lvHist.getD lv 0) + 1)
   for (lv, c) in lvHist.toList.toArray.qsort (fun a b => a.1 < b.1) do
     summary := summary.push s!"SUMMARY\tlevel-{lv}\t{c}"
+  -- the v1 (proof-term-edges-only) histogram, so the correction's movement is visible
+  let mut lvHist1 : Std.HashMap Nat Nat := {}
+  for s in sites do
+    unless oldClasses.contains s.cls do continue
+    let lv := levelV1.getD s.name 0
+    lvHist1 := lvHist1.insert lv ((lvHist1.getD lv 0) + 1)
+  for (lv, c) in lvHist1.toList.toArray.qsort (fun a b => a.1 < b.1) do
+    summary := summary.push s!"SUMMARY\tlevel-v1edges-{lv}\t{c}"
 
   match outPath with
   | some p =>

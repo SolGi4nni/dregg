@@ -167,6 +167,20 @@ pub enum MatchError {
     /// naming an accumulated mark (the `marksIn`-legality pin), or a mis-fill — refused before any
     /// proving (the fail-closed witness-gen canary).
     ConflictRefused(usize),
+    /// **A PLAYED ROUND IS NOT CLEAN** — one of its two moves is illegal, or conflict resolution
+    /// drops a move (a fork on a shared source, a clash on a shared destination). The two-leg
+    /// (Leg R + Leg A) fold attests a CLEAN resolution; the marks/re-entry braid (Leg C) that the
+    /// ruleset actually prescribes for a clash is not wired to the played surface, and the surface
+    /// resolves a clash by DROPPING the moves — the audited-WRONG rule. Folding that would mint a
+    /// succinct proof of a transition the rules do not license, so it is REFUSED here:
+    /// blocked-not-faked, naming the round.
+    ConflictingRound(usize),
+    /// **THE DESCRIPTOR'S ADJUDICATED MID ≠ THE REFERENCE `resolve_mid`.** The Lean Leg-R
+    /// descriptor deliberately diverges from the naive oracle on at least one shape (its
+    /// occupancy-blind 2-cycle detector BLOCKS a swap the oracle performs). The played surface
+    /// runs the oracle, so folding such a round would attest a board the players never saw. The
+    /// leaf is refused rather than minted.
+    MidDiverges(usize),
     /// The board size has no emitted Lean descriptor for one of the two legs (the n = 5 case).
     /// BLOCKED, not faked: a two-leg round cannot be attested at a size the Lean AIR is not
     /// emitted for.
@@ -189,6 +203,19 @@ impl fmt::Display for MatchError {
                 f,
                 "automatafl conflict round {i}: Leg C did not satisfy the Lean automataflLegCDescN \
                  (non-clash, a submission on an accumulated mark, or a mis-fill)"
+            ),
+            MatchError::ConflictingRound(i) => write!(
+                f,
+                "automatafl round {i}: the submitted pair CONFLICTS (a fork on a shared source or \
+                 a clash on a shared destination, or an illegal move). The clean two-leg fold \
+                 attests a clean resolution only; the marks/re-entry braid the ruleset prescribes \
+                 for a clash is not wired to the played surface. BLOCKED, not faked"
+            ),
+            MatchError::MidDiverges(i) => write!(
+                f,
+                "automatafl round {i}: the Lean resolve descriptor's adjudicated mid board differs \
+                 from the reference `resolve_mid` the surface played (the occupancy-blind 2-cycle \
+                 detector). Folding would attest a board the players never saw — BLOCKED, not faked"
             ),
             MatchError::NoDescriptor(n, which) => write!(
                 f,
@@ -352,6 +379,17 @@ impl AutomataflMatch {
     /// `automataflResolveDescN n`) then the STEP leaf (Leg A, `mid → new`, the automaton through
     /// `automataflStepDescN n`), both carrying a BOARD WINDOW so the fold chains them.
     ///
+    /// ## CLEAN ROUNDS ONLY — and a conflicting one is REFUSED, not faked
+    ///
+    /// Every round is gated before lowering: [`round_is_clean`](dregg_automatafl::reference::round_is_clean)
+    /// (both moves legal, conflict resolution drops neither) → [`MatchError::ConflictingRound`],
+    /// and the descriptor's adjudicated mid must equal the reference `resolve_mid` the played
+    /// surface ran → [`MatchError::MidDiverges`]. Neither refusal is cosmetic: the surface resolves
+    /// a clash by DROPPING moves while the ruleset marks the square and re-enters the round (Leg C,
+    /// which exists and is exercised by `MultiRoundTurn` but is NOT wired to the played surface),
+    /// and the descriptor's occupancy-blind 2-cycle detector blocks a swap the oracle performs.
+    /// Either way, minting the leaf would attest a transition nobody licensed.
+    ///
     /// ## What the window makes true (and what it does not)
     ///
     /// Every leaf declares `IN = pack(board it consumed) ‖ automaton` and
@@ -376,6 +414,7 @@ impl AutomataflMatch {
     /// will mint for that chain position ([`dregg_multiway_tug::fold::fixture_rotated_roots`]), so
     /// the deployed state tooth holds; a placeholder door would be UNSAT.
     pub fn round_leaves(&self) -> Result<Vec<LeafBundle>, MatchError> {
+        use dregg_automatafl::reference::round_is_clean;
         use dregg_automatafl::resolve_witness::{
             automatafl_resolve_trace, resolve_board_window, resolve_descriptor_ident,
             resolve_trace_accepts,
@@ -406,6 +445,15 @@ impl AutomataflMatch {
         let mut board = self.start.clone();
 
         for (i, (ma, mb)) in self.rounds.iter().enumerate() {
+            // ---- THE CLEAN-ROUND GATE (blocked-not-faked). ----
+            // The two-leg chain attests a CLEAN resolution. A conflicting round (fork / clash) is
+            // adjudicated on the played surface by DROPPING the moves — the audited-WRONG rule,
+            // where the ruleset marks the square and re-enters the round (Leg C, not wired to the
+            // surface). Refuse it by name rather than mint a proof of an unlicensed transition.
+            if !round_is_clean(&board, &[*ma, *mb]) {
+                return Err(MatchError::ConflictingRound(i));
+            }
+
             // ---- Leg R: adjudicate the two moves, old -> mid. ----
             let mut rt = automatafl_resolve_trace(&board, &[*ma, *mb], &rdesc)
                 .map_err(|e| MatchError::Lowering(format!("round {i} resolve witness-gen: {e}")))?;
@@ -415,6 +463,15 @@ impl AutomataflMatch {
                 return Err(MatchError::ResolveRefused(i));
             }
             let mid = rt.mid_board(&layout);
+            // ---- THE ORACLE-AGREEMENT GATE. ----
+            // The descriptor is the authority in-circuit, the reference oracle is what the played
+            // surface ran. Where they disagree (the descriptor's occupancy-blind 2-cycle detector
+            // blocks a swap `resolve_mid` performs) the fold would attest a board nobody played.
+            // Compare directly rather than re-derive the divergent shapes by predicate.
+            let oracle_mid = dregg_automatafl::reference::resolve_mid(&board, &[*ma, *mb]);
+            if mid.cells != oracle_mid.cells || mid.auto != oracle_mid.auto {
+                return Err(MatchError::MidDiverges(i));
+            }
             out.push(LeafBundle::descriptor_backed(
                 rt.public_inputs.clone(),
                 rows,

@@ -21,7 +21,7 @@
 //!
 //! The proof artifact is the **rotated multi-table `Ir2BatchProof`** (the leaf the
 //! whole-chain IVC fold builds on) minted by
-//! [`dregg_turn::rotation_witness::mint_rotated_participant_leg`] over the *executor's
+//! [`dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`] over the *executor's
 //! genuine before/after cells*. Its public inputs carry the rotated Poseidon2
 //! state-commitments at PI 34/35 ([`RotatedParticipantLeg::old_root`] /
 //! [`RotatedParticipantLeg::new_root`]); the descriptor's in-circuit hash sites force
@@ -319,7 +319,7 @@ pub fn mint_transfer_leg(
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
-    dregg_turn::rotation_witness::mint_rotated_participant_leg(
+    dregg_turn_prover::rotation_witness::mint_rotated_participant_leg(
         &state,
         &effects,
         before_cell,

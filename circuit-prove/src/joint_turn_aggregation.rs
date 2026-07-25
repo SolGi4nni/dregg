@@ -776,7 +776,7 @@ impl CustomWitnessBundle {
 // leaf-wrap (`ivc_turn_chain::prove_descriptor_leaf_rotated_with_config`); the
 // `Cell`→witness→leg minting is downstream in `dregg-turn`. The recursion consumers
 // (lightclient / wasm / `circuit/tests/proof_economics.rs`) import the mint from
-// `dregg_turn::rotation_witness::mint_rotated_participant_leg`.
+// `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`.
 
 impl RotatedParticipantLeg {
     /// **THE ROTATED+UMEM WELDED LEG MINT (STAGED, VK-RISK-FREE) — the IVC half of the flag-day
@@ -1221,7 +1221,7 @@ impl RotatedParticipantLeg {
     /// commitment rides the `effects` (the `Effect::Custom.proof_commitment`, set at turn-build to
     /// `BoundCustomProof::proof_commitment()`), and `bundle` is the retained re-provable witness
     /// (build it via [`CustomWitnessBundle::from_bound_custom_proof`] over the SAME bound proof). The
-    /// downstream `dregg_turn::rotation_witness::mint_custom_wide_rotated_participant_leg` wrapper
+    /// downstream `dregg_turn_prover::rotation_witness::mint_custom_wide_rotated_participant_leg` wrapper
     /// feeds this the `Cell`-derived block witnesses.
     ///
     /// Fails closed if the lead effect is not [`Effect::Custom`] (the wide producer rejects a
@@ -1370,7 +1370,7 @@ pub fn verify_descriptor_participant(p: &DescriptorParticipant) -> Result<usize,
     // (1) The rotated proof must verify against its carried descriptor over the carried PI
     //     vector (full standalone re-verify of the IR-v2 multi-table batch). The leg's proof is
     //     minted under the leaf-wrap config (recursion-config TYPE, `ir2_config`'s FRI knobs —
-    //     `dregg_turn::rotation_witness::mint_rotated_participant_leg`), so it must be verified under THAT
+    //     `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`), so it must be verified under THAT
     //     config, not the default `ir2_config()` (which is the `DreggStarkConfig` type).
     verify_vm_descriptor2_with_config(
         &leg.descriptor,
@@ -1406,7 +1406,7 @@ pub fn verify_descriptor_participant(p: &DescriptorParticipant) -> Result<usize,
 /// therefore rejected every valid rotated leg.)
 ///
 /// **The map reads the WIDE registry** — the registry participant legs are actually minted from
-/// (`dregg_turn::rotation_witness::mint_rotated_participant_leg` dispatches the WIDE producer, and
+/// (`dregg_turn_prover::rotation_witness::mint_rotated_participant_leg` dispatches the WIDE producer, and
 /// the node retention path encodes/decodes wide). It previously read the bare 1-felt
 /// `V3_STAGED_REGISTRY_TSV`, which happened to work only because 52 of the 57 shared members carry
 /// byte-identical DISPLAY names in both registries — the 5 heap-open/fields-open flip members

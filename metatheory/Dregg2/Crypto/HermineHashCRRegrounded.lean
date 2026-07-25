@@ -32,9 +32,18 @@ COMMIT-REVEAL side.
   OPENING never appeared in a `Prop`. The replacement makes the opening a `Game` (an adversary that
   publishes a commitment and two reveals that both open it), extracts a collision finder by DISCARDING the
   commitment, and proves the advantage inequality unconditionally.
-* **`hermine_commitment_binding_from_polyTime`** — `hEff` DISCHARGED at `Eff := IsPolyTime`
-  (`Dregg2.Crypto.CostAdversary`), so the class the floor quantifies over is concrete, proved non-empty
-  and proved not to be `⊤`.
+* ⚑ **The `IsPolyTime` discharges are DELETED (07-24).** `hermine_commitment_binding_from_polyTime`
+  and `hermine_concurrent_forgery_from_polyTime` discharged `hEff` at `Eff := IsPolyTime`, whose floor
+  `HashCRHardQuant … (IsPolyTime …)` is REFUTED at deployed parameters
+  (`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`: `IsPolyTime` prices
+  answer SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins with
+  probability `1`). Their DISCHARGED successors live on the PROVED keyed-ROM floor: the generic
+  opening binding is `Crypto.RomCarrierSites.rom_open_binds` (the `commitOpenGame` shape at the
+  sampled oracle, floor = `KeyedRomFloor.keyedRom_hard`), instantiated per site by
+  `IdentityCommitmentRegrounded` / `WireAkeRegrounded` / `RandomnessBeaconRegrounded` /
+  `XmVrfRefinementRegrounded`; the concurrent-forgery composition's equivocation horn is discharged
+  there by `Crypto.HermineRomBinding.hermine_concurrent_forgery_rom` (`cfEquivRom_hard`). The
+  `_advantage_bound` forms below stay the honest fixed-hash statements with `hEff` in the open.
 
 ## ⚑ The concurrent-forgery keystone, ROUTED THROUGH THE REAL DICHOTOMY (the 2026-07-17 repair)
 
@@ -162,7 +171,9 @@ theorem commitRevealFamily_CR_of_hashcr {Idx W C : Type} [DecidableEq W] [Decida
 Both are DELETED. What stands here instead is the shape the rest of the sweep uses: the break is a
 first-class `Game` whose win relation mentions the PUBLISHED commitment, the reduction is a map of
 adversaries, the advantage inequality is unconditional (no adversary class appears in it), and the
-security conclusion is taken under a NAMED floor whose class is then discharged at `IsPolyTime` (§2b).
+security conclusion is taken under a NAMED floor at an arbitrary class — the DISCHARGED instantiation
+lives on the keyed-ROM floor (`RomCarrierSites.rom_open_binds` and the per-site `*_rom` successors;
+the `IsPolyTime` discharge that stood in §2b is DELETED, its floor refuted).
 
 The four downstream instantiations (`IdentityCommitmentRegrounded`, `WireAkeRegrounded`,
 `XmVrfRefinementRegrounded`, `RandomnessBeaconRegrounded`) are rewired onto this object. -/
@@ -221,64 +232,15 @@ finder is in that class has NEGLIGIBLE advantage: a published commitment opens t
 negligible probability. The Boolean "two openings ⟹ equal", which needed the FALSE injective `HashCR`,
 becomes an honest advantage bound on a hypothesis a real commit hash can satisfy.
 
-`hEff` is a parameter here because this is the statement at an ARBITRARY class; §2b discharges it. -/
+`hEff` is a parameter here because this is the statement at an ARBITRARY class; the DISCHARGED
+instantiation is the keyed-ROM successor (`RomCarrierSites.rom_open_binds`; the `IsPolyTime` discharge
+that stood here is deleted — its floor is refuted). -/
 theorem hermine_commitment_binding_advantage_bound (F : KeyedHashFamily)
     (Eff : Adversary (hashGame F) → Prop) (A : Adversary (commitOpenGame F))
     (hEff : Eff (openToFinder F A)) (hD : HashCRHardQuant F Eff) :
     Negl (gameAdv (commitOpenGame F) A) :=
   negl_of_le (fun l => (gameAdv_mem_unit (commitOpenGame F) A l).1)
     (open_adv_le F A) (hD _ hEff)
-
-/-! ### §2b — `hEff` DISCHARGED at `Eff := IsPolyTime`.
-
-The extractor is a pure output reshaping with the sampled key passed through — an `Adversary.postMap` —
-so `isPolyTime_postMap` turns `hEff` into a consequence of "the opener is efficient". Because `F.Input`
-and `F.Out` are ABSTRACT here, the encoding is supplied as the family's own size measure `szIn`/`szOut`
-(a `KeyedHashFamily` carries no canonical one, and inventing a degenerate `sz := 0` would make the
-reduction's output free — `CostAdversary` design commitment 4). Everything else is derived: the extractor
-DISCARDS a field, so its growth constants are `(1, 0)` and no output-size hypothesis is needed at all. -/
-
-/-- **THE COLLISION GAME'S ANSWER ENCODING**, from the family's own input measure. -/
-def hashAnsSizeOf (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ) : AnsSize (hashGame F) :=
-  fun l (p : F.Input × F.Input) => szIn l p.1 + szIn l p.2
-
-/-- **THE OPENING GAME'S ANSWER ENCODING** — the published commitment plus the two reveals. -/
-def openAnsSizeOf (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ) (szOut : ℕ → F.Out → ℕ) :
-    AnsSize (commitOpenGame F) :=
-  fun l (p : F.Out × F.Input × F.Input) => szOut l p.1 + szIn l p.2.1 + szIn l p.2.2
-
-/-- **⚑ `hEff` DISCHARGED — the commit-opening binding with NO floating efficiency parameter.** An
-equivocating opener that is EFFICIENT at the game's own answer encoding, put through the extractor,
-yields a collision finder that is STILL efficient — so the collision floor at `Eff := IsPolyTime`
-applies to IT, and the published commitment binds except with negligible probability.
-
-What remains supplied is the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime, so that
-number is CHARGED in the program's syntax rather than derived — and the family's encoding `szIn`/`szOut`.
-No output-size hypothesis and no `PolyBoundedNat` overhead hypothesis are taken. -/
-theorem hermine_commitment_binding_from_polyTime (F : KeyedHashFamily)
-    (szIn : ℕ → F.Input → ℕ) (szOut : ℕ → F.Out → ℕ)
-    (A : Adversary (commitOpenGame F)) (hA : IsPolyTime (openAnsSizeOf F szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant F (IsPolyTime (hashAnsSizeOf F szIn))) :
-    Negl (gameAdv (commitOpenGame F) A) := by
-  have hEff : IsPolyTime (hashAnsSizeOf F szIn) (openToFinder F A) := by
-    poly_time (openAnsSizeOf F szIn szOut) (hashAnsSizeOf F szIn)
-      (fun _ _ (p : F.Out × F.Input × F.Input) => (p.2.1, p.2.2))
-      cw bw 1 0 hA
-    intro l k p
-    show szIn l p.2.1 + szIn l p.2.2 ≤ 1 * (szOut l p.1 + szIn l p.2.1 + szIn l p.2.2) + 0
-    omega
-  exact hermine_commitment_binding_advantage_bound F (IsPolyTime (hashAnsSizeOf F szIn)) A hEff hD
-
-/-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** The constant finder that returns
-one fixed pair is in `IsPolyTime` whenever that pair's encoding is poly-size, which any family's own
-measure makes true of a FIXED answer. Together with `CostAdversary.bruteForce_not_polyTime` (the
-⊤-collapse witness is excluded) this pins the instantiated floor strictly between the two poles below. -/
-theorem hashFloorOf_isPolyTime_inhabited (F : KeyedHashFamily) (szIn : ℕ → F.Input → ℕ)
-    (a₀ : ∀ l, F.Key l → F.Input × F.Input) (C k : ℕ)
-    (hsz : ∀ l (key : F.Key l), szIn l (a₀ l key).1 + szIn l (a₀ l key).2 ≤ C * l ^ k + C) :
-    IsPolyTime (hashAnsSizeOf F szIn)
-      (idAdv (O := Unit) (Q := fun _ => Unit) (R := fun _ => Unit) a₀).toAdversary :=
-  isPolyTime_inhabited _ _ ⟨C, k, hsz⟩
 
 /-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing family.)** At the unrestricted class the honest floor
 IS `CollisionResistant F` (`collisionResistant_iff_hashCRHardQuant_top`), which is FALSE for any
@@ -649,79 +611,6 @@ theorem cf_msis_floor_top_false_of_compressing (F : ConcurrentForgeryFamily)
     ¬ MSISHardQuant (cfMsisFamily F) (fun _ => True) :=
   msisHardQuant_top_false_of_compressing (cfMsisFamily F) hsolv
 
-/-! ## §6b — the concurrent forger's `hEff`/`hEffH` DISCHARGED at `Eff := IsPolyTime`.
-
-§4's keystone carries TWO bare efficiency parameters, one per horn. Both horns are pure output
-reshapings of the forger's claim with the sampled instance passed through (`Adversary.postMap`), so
-`isPolyTime_postMap` turns both into consequences of ONE hypothesis: the forger itself is efficient.
-
-⚑ **WHAT IS GENUINELY PER-SITE HERE, and why.** `ConcurrentForgeryFamily` is ALGEBRAIC — `M l`, `N l`,
-`Rq l` are abstract modules — so it carries no canonical encoding, and inventing a degenerate `sz := 0`
-would make both reductions' output free (`CostAdversary` design commitment 4). The encoding is therefore
-supplied as `szN`/`szRq`/`szM`, and the MSIS horn's growth is supplied as `houtM`: it SUBTRACTS, so its
-output is a DIFFERENCE, and "the encoding of a difference is no larger than the two encodings" is a
-property of the encoding, not something derivable from an abstract module. That is the one honest
-modelling input; the EQUIVOCATION horn needs none (it discards fields, growth `(1, 0)`, PROVED). -/
-
-/-- **THE FORGERY CLAIM'S ANSWER ENCODING**, from the family's own component measures: two reveals, two
-challenges, two responses. -/
-def cfClaimAnsSize (F : ConcurrentForgeryFamily) (szN : ∀ l, F.N l → ℕ) (szRq : ∀ l, F.Rq l → ℕ)
-    (szM : ∀ l, F.M l → ℕ) : AnsSize (concurrentForgeryGame F) :=
-  fun l (c : (F.N l × F.N l) × (F.Rq l × F.Rq l) × (F.M l × F.M l)) =>
-    (szN l c.1.1 + szN l c.1.2) + (szRq l c.2.1.1 + szRq l c.2.1.2) +
-      (szM l c.2.2.1 + szM l c.2.2.2)
-
-/-- **THE AUGMENTED MSIS GAME'S ANSWER ENCODING** — the augmented solution `(z, c)`. -/
-def cfMsisAnsSize (F : ConcurrentForgeryFamily) (szRq : ∀ l, F.Rq l → ℕ) (szM : ∀ l, F.M l → ℕ) :
-    AnsSize (msisGame (cfMsisFamily F)) :=
-  fun l (z : F.M l × F.Rq l) => szM l z.1 + szRq l z.2
-
-/-- **THE COMMIT-COLLISION GAME'S ANSWER ENCODING** — the two claimed reveals. -/
-def cfEquivAnsSize (F : ConcurrentForgeryFamily) (szN : ∀ l, F.N l → ℕ) :
-    AnsSize (cfEquivGame F) :=
-  fun l (p : F.N l × F.N l) => szN l p.1 + szN l p.2
-
-/-- **⚑ BOTH EFFICIENCY OBLIGATIONS DISCHARGED — the concurrent-forgery keystone at a class with
-content.** A rushing forger that is EFFICIENT at the game's own answer encoding, put through the
-subtraction extractor and the reveal extractor, yields an MSIS solver and a commit-collision finder that
-are STILL efficient — so the MSIS floor and the collision floor at `Eff := IsPolyTime` apply to THEM, and
-a concurrent double-claim has negligible advantage with no floating efficiency parameter.
-
-Per-site inputs: the two reshapers' declared work (a Lean `fun` has no runtime), the family's encoding
-`szN`/`szRq`/`szM`, and `houtM` (the difference-encoding growth). No `PolyBoundedNat` overhead hypothesis
-is taken: the composed overhead's poly-ness follows from the forger's own bound. -/
-theorem hermine_concurrent_forgery_from_polyTime (F : ConcurrentForgeryFamily)
-    (szN : ∀ l, F.N l → ℕ) (szRq : ∀ l, F.Rq l → ℕ) (szM : ∀ l, F.M l → ℕ)
-    (A : Adversary (concurrentForgeryGame F))
-    (hA : IsPolyTime (cfClaimAnsSize F szN szRq szM) A)
-    (cwM bwM coM boM cwE bwE : ℕ)
-    (houtM : ∀ l (i : F.Inst l) (c : (concurrentForgeryGame F).Ans l),
-      cfMsisAnsSize F szRq szM l
-          (letI := F.rqRing l; letI := F.mGrp l
-           ((c.2.2.1 - c.2.2.2, -(c.2.1.1 - c.2.1.2)) : (cfMsisFamily F).M l))
-        ≤ coM * cfClaimAnsSize F szN szRq szM l c + boM)
-    (hmsis : MSISHardQuant (cfMsisFamily F) (IsPolyTime (cfMsisAnsSize F szRq szM)))
-    (hcol : Hard (cfEquivGame F) (IsPolyTime (cfEquivAnsSize F szN))) :
-    Negl (gameAdv (concurrentForgeryGame F) A) := by
-  have hM : IsPolyTime (cfMsisAnsSize F szRq szM) (forgeryToMsisSolver F A) := by
-    poly_time (cfClaimAnsSize F szN szRq szM) (cfMsisAnsSize F szRq szM)
-      (fun l _ (c : (concurrentForgeryGame F).Ans l) =>
-        letI := F.rqRing l; letI := F.mGrp l
-        ((c.2.2.1 - c.2.2.2, -(c.2.1.1 - c.2.1.2)) : (cfMsisFamily F).M l))
-      cwM bwM coM boM hA
-    exact houtM
-  have hE : IsPolyTime (cfEquivAnsSize F szN) (forgeryToEquivFinder F A) := by
-    poly_time (cfClaimAnsSize F szN szRq szM) (cfEquivAnsSize F szN)
-      (fun l _ (c : (concurrentForgeryGame F).Ans l) => ((c.1.1, c.1.2) : (cfEquivGame F).Ans l))
-      cwE bwE 1 0 hA
-    intro l i c
-    show szN l c.1.1 + szN l c.1.2
-      ≤ 1 * ((szN l c.1.1 + szN l c.1.2) + (szRq l c.2.1.1 + szRq l c.2.1.2) +
-          (szM l c.2.2.1 + szM l c.2.2.2)) + 0
-    omega
-  exact hermine_concurrent_forgery_advantage_bound F
-    (IsPolyTime (cfMsisAnsSize F szRq szM)) (IsPolyTime (cfEquivAnsSize F szN)) A hM hE hmsis hcol
-
 /-! ## §7 — non-vacuity: the keyed collision floor is satisfiable AND load-bearing on Hermine
 commit-reveals (the HashCR-leg siblings, untouched by the repair). -/
 
@@ -765,9 +654,6 @@ theorem badCR_family_not_CR : ¬ CollisionResistant (commitRevealFamily badCR 5)
   open_wins_imp,
   open_adv_le,
   hermine_commitment_binding_advantage_bound,
-  hermine_commitment_binding_from_polyTime,
-  hashFloorOf_isPolyTime_inhabited,
-  hermine_concurrent_forgery_from_polyTime,
   hermine_binding_eff_top_false_of_compressing,
   hermine_binding_eff_bot_vacuous,
   hermine_binding_eff_fires,

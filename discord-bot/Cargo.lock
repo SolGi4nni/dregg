@@ -2189,6 +2189,7 @@ dependencies = [
  "dregg-sdk",
  "dregg-storage",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "ed25519-dalek",
  "http 1.4.2",
@@ -2818,6 +2819,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-pq",
  "dregg-turn",
+ "dregg-turn-prover",
  "ed25519-dalek",
 ]
 
@@ -3129,7 +3131,6 @@ dependencies = [
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
- "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-hints",
@@ -3145,6 +3146,22 @@ dependencies = [
  "tracing",
  "web-time",
  "x25519-dalek",
+]
+
+[[package]]
+name = "dregg-turn-prover"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-cell-crypto",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-commit",
+ "dregg-turn",
+ "dregg-types",
+ "postcard",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3550,6 +3567,7 @@ dependencies = [
  "dregg-dice",
  "dregg-schema",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-zkoracle-prove",
  "dreggnet-asset",
@@ -4241,6 +4259,7 @@ dependencies = [
  "dregg-query",
  "dregg-sdk",
  "dregg-turn",
+ "dregg-turn-prover",
 ]
 
 [[package]]

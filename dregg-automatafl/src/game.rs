@@ -10,7 +10,14 @@
 //! The STATE is declared as a [`dregg_schema::Schema`] and lowered by the CONSUMED allocator
 //! ([`allocate_checked`]) to a Legal slot/heap layout: 15 scalar registers (the turn counter, the
 //! phase, the two sealed commitments, the two selections, the two revealed moves, the automaton
-//! coordinates, the winner) and the 25 board squares on heap keys `16..41`.
+//! coordinates, the winner) and the 121 board squares on heap keys `16..137`.
+//!
+//! **THE BOARD IS THE STOCK 11×11 TWO-PLAYER GAME** ([`crate::reference::stock_two_player`], the
+//! byte-for-byte transcription of the automatafl reference opening) with the real four-corner goal
+//! set ([`crate::reference::GOAL_CORNERS_2P`]). That is the size the Lean descriptors are EMITTED
+//! at (`dregg-automatafl-{step,resolve}-d1-n11`), so a played match LOWERS: the former 5×5
+//! mini-variant had no emitted descriptor at all, so every fold of a played match was
+//! `MatchError::NoDescriptor`-blocked (blocked-not-faked) and no automatafl match could rank.
 //!
 //! The PLAY TEETH are a hand-rolled [`CellProgram::Cases`] over those allocator-resolved slots —
 //! the SIMULTANEOUS-move (commit → reveal → resolve) discipline, enforced by the executor:
@@ -44,7 +51,7 @@ use dregg_schema::schema::Schema;
 use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
-use crate::reference::{AUTO, Board, Coord, VAC};
+use crate::reference::{Board, Coord, GOAL_CORNERS_2P, N11, stock_two_player};
 
 /// The scene id that fixes the deterministic world-cell identity.
 pub const SCENE_ID: &str = "dregg-automatafl/n2";
@@ -59,8 +66,10 @@ pub const REVEAL: &str = "reveal";
 /// Resolve the simultaneous turn (conflicts dropped, moves applied, the automaton steps).
 pub const RESOLVE: &str = "resolve";
 
-/// The board edge (the n=2 match is played on 5×5 — the size the Lean `#guard` battery pins).
-pub const N: usize = 5;
+/// The board edge — the REAL stock two-player game, 11×11, and the size the Lean descriptors are
+/// emitted at. The played surface and the proven descriptors are the SAME `n`: this is what makes
+/// a played match foldable at all.
+pub const N: usize = N11;
 /// The number of board squares (one heap key each).
 pub const CELLS: usize = N * N;
 
@@ -88,7 +97,7 @@ pub fn cell_name(idx: usize) -> String {
     format!("cell_{idx}")
 }
 
-/// The declared schema: 15 register components + the 25 board squares as heap collections.
+/// The declared schema: 15 register components + the [`CELLS`] board squares as heap collections.
 pub fn schema() -> Schema {
     let mut s = Schema::new(SCENE_ID)
         .stat("turn_no", 0, 1024)
@@ -312,7 +321,7 @@ impl Default for Deployment {
     }
 }
 
-/// The full committed match state — the 15 registers + the 25 board squares. Every turn writes it
+/// The full committed match state — the 15 registers + the [`CELLS`] board squares. Every turn writes it
 /// in full (the witnessed post-state the teeth re-check).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MatchState {
@@ -336,7 +345,7 @@ pub struct MatchState {
     pub to: [u64; 2],
     /// The automaton's coordinates.
     pub auto: Coord,
-    /// The 25 board squares (`cells[y*N + x]` ∈ `{0,1,2,3}`).
+    /// The [`CELLS`] board squares (`cells[y*N + x]` ∈ `{0,1,2,3}`).
     pub cells: Vec<u8>,
 }
 
@@ -394,7 +403,7 @@ impl AutomataflGame {
         self.world.cell_id()
     }
 
-    /// Every `SetField` effect writing `st` in full (15 registers + 25 board keys).
+    /// Every `SetField` effect writing `st` in full (15 registers + [`CELLS`] board keys).
     fn effects_for(&self, st: &MatchState) -> Vec<Effect> {
         let cell = self.cell();
         let mut effects = Vec::with_capacity(REGISTERS.len() + CELLS);
@@ -515,32 +524,77 @@ pub fn index_of(c: Coord) -> Option<usize> {
     }
 }
 
-/// **The opening board.** The automaton sits at the centre `(2,2)`; the goal squares (`(2,0)` for
-/// seat A, `(2,4)` for seat B) and the whole centre column are clear, so the automaton runs when a
-/// player pulls it. Four attractors ring the centre and two repulsors hold the flanks — the opening
-/// is BALANCED (both axes read a symmetric pair, so the automaton does NOT drift before a move).
+/// **The opening board — the STOCK two-player position** ([`stock_two_player`]): the automaton
+/// dead centre at `(5,5)`, the repulsor/attractor ring around the flanks, the four attractor pairs
+/// on the `y ∈ {4,6}` files. This is the reference game's own opening, not an invented mini-board,
+/// and it is the position the emitted `n=11` Lean descriptors adjudicate.
 pub fn opening_board() -> Board {
-    use crate::reference::{ATT, REP};
-    let mut cells = vec![VAC; CELLS];
-    let mut put = |c: Coord, p: u8| {
-        cells[index_of(c).expect("in bounds")] = p;
-    };
-    put((1, 1), ATT);
-    put((3, 1), ATT);
-    put((1, 3), ATT);
-    put((3, 3), ATT);
-    put((0, 2), REP);
-    put((4, 2), REP);
-    put((2, 2), AUTO);
-    Board {
-        n: N,
-        cells,
-        auto: (2, 2),
-        col_rule: true,
-    }
+    let b = stock_two_player();
+    debug_assert_eq!(b.n, N, "the played opening is the emitted-descriptor size");
+    b
 }
 
-/// Seat A's goal square (the automaton arriving here wins for A).
-pub const GOAL_A: Coord = (2, 0);
-/// Seat B's goal square.
-pub const GOAL_B: Coord = (2, 4);
+/// **The four goal corners of the stock two-player game**, each tagged with its owning seat
+/// (`0` = seat A, `1` = seat B) — [`crate::reference::GOAL_CORNERS_2P`]. Per the two-player rule
+/// each player owns the two corners in one row: seat A the `y = 0` pair, seat B the `y = 10` pair.
+/// The automaton stepping onto a corner wins for that corner's owner.
+pub const GOALS: [(Coord, u32); 4] = GOAL_CORNERS_2P;
+
+/// The two goal corners seat `who` (`0`/`1`) owns.
+pub fn goals_of(who: u32) -> Vec<Coord> {
+    GOALS
+        .iter()
+        .filter(|(_, w)| *w == who)
+        .map(|(c, _)| *c)
+        .collect()
+}
+
+/// The seat whose goal corner the automaton currently occupies, or `None` — the deployed win check
+/// ([`crate::reference::win_owner`] over [`GOALS`], the reference `try_complete_round` goal scan).
+pub fn winner_of(b: &Board) -> Option<u32> {
+    crate::reference::win_owner(b, &GOALS)
+}
+
+#[cfg(test)]
+mod played_size_is_the_proven_size {
+    use super::*;
+
+    /// **THE STANDING GATE.** The board the surface PLAYS must be the board the Lean descriptors
+    /// are EMITTED at. When they diverged (the surface on an invented 5×5, every descriptor at
+    /// n=11) `descriptor_by_name` returned `None` for the played size, so every fold of a played
+    /// match was `NoDescriptor`-blocked and no automatafl match could ever rank — a failure that
+    /// was invisible from inside the surface, because the surface itself was perfectly green.
+    /// This test fails the moment that divergence reappears.
+    #[test]
+    fn the_played_board_size_has_both_emitted_lean_descriptors() {
+        use crate::resolve_witness::resolve_descriptor_ident;
+        use crate::witness::step_descriptor_name;
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+
+        let b = opening_board();
+        assert_eq!(b.n, N, "the opening board IS the declared board size");
+        assert_eq!(b.cells.len(), CELLS);
+        assert!(
+            descriptor_by_name(&step_descriptor_name(N)).is_some(),
+            "the played size {N} has NO emitted Lean STEP descriptor — every fold of a played \
+             match would be NoDescriptor-blocked"
+        );
+        assert!(
+            descriptor_by_name(resolve_descriptor_ident(N)).is_some(),
+            "the played size {N} has NO emitted Lean RESOLVE descriptor — the two-leg fold that \
+             attests the players' MOVES cannot be minted"
+        );
+    }
+
+    /// Every goal corner is on the board, and the two seats own two corners each.
+    #[test]
+    fn the_goal_corners_are_the_stock_four() {
+        assert_eq!(goals_of(0).len(), 2, "seat A owns two corners");
+        assert_eq!(goals_of(1).len(), 2, "seat B owns two corners");
+        for (c, _) in GOALS {
+            assert!(index_of(c).is_some(), "goal {c:?} is on the played board");
+        }
+        // The opening is not already won.
+        assert_eq!(winner_of(&opening_board()), None);
+    }
+}

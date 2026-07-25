@@ -12,6 +12,13 @@ description = "Production application framework for dregg apps — server infra,
 [dependencies]
 dregg-sdk = { path = "../sdk" }
 dregg-turn = { path = "../turn" }
+# SURFACED BY THE DEFAULT-DROP: `stark_rehydrate.rs` calls
+# `rotation_witness::mint_rotated_participant_leg` in LIBRARY code, and until PR3 it
+# reached that only because `dregg-turn`'s `default = ["prover"]` pulled
+# `dregg-circuit-prove` in transitively — the dep was never declared. It is now
+# explicit. (`service_promise.rs`'s `mint_transfer_proven_receipt` use is test-only
+# and rides the same crate.)
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-intent = { path = "../intent" }
 dregg-circuit = { path = "../circuit" }
 # `stark_rehydrate` verifies the recursive IVC aggregate (the recursion tower),

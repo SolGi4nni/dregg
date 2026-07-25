@@ -621,16 +621,15 @@ mod tests {
         let pki = build_pki();
         let mut proof = signed_report(&pki.vcek_signer);
         proof.extend_from_slice(&pki.vcek_der); // report(1184) || vcek_der
-        // Floor = the synthetic report's own REPORTED_TCB, so the genuine chain accepts
-        // AND reports tcb_ok (an at-floor chip is trusted).
+                                                // Floor = the synthetic report's own REPORTED_TCB, so the genuine chain accepts
+                                                // AND reports tcb_ok (an at-floor chip is trusted).
         let floor = TcbVersion {
             bootloader: 3,
             tee: 1,
             snp: 8,
             microcode: 72,
         };
-        let v =
-            SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone(), floor);
+        let v = SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone(), floor);
         let claims = v
             .verify_report(TeeQuoteKind::SevSnp, &proof)
             .expect("full pipeline accepts");
@@ -644,12 +643,9 @@ mod tests {
         let pki = build_pki();
         let mut proof = signed_report(&pki.vcek_signer);
         proof.extend_from_slice(&pki.vcek_der);
-        let v = SnpVerifier::with_pinned_roots_pem(
-            &pki.ark_pem,
-            &pki.ask_pem,
-            TcbVersion::default(),
-        )
-        .expect("PEM roots load");
+        let v =
+            SnpVerifier::with_pinned_roots_pem(&pki.ark_pem, &pki.ask_pem, TcbVersion::default())
+                .expect("PEM roots load");
         v.verify_report(TeeQuoteKind::SevSnp, &proof)
             .expect("pipeline via PEM roots accepts");
     }

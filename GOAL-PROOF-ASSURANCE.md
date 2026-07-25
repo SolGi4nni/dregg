@@ -47,12 +47,12 @@ none, because it looks fixed.
 
 ## Next moves (my pick)
 0. ~~Cut over the bare-premise consumers~~ **DONE** — zero soundness consumers remain on it.
-1. **De-honest the fold chain** — every survival theorem instantiates `Strategy := honestStrategy`,
-   so the tree's deepest probabilistic object bounds the *honest* prover. Generalize to `∀ S` under
-   a path-local fold-consistency predicate. Highest value on the adversary axis.
-2. **Give `TranscriptWordCommitment` content.**
-3. **Kill the duplication debt** — `hitWin`/`hit_cond`/`hit_bound` exist twice.
-4. Then: the ~11 remaining base-field-challenge typing sites.
+1. ~~Give `TranscriptWordCommitment` content~~ **DONE** — and *characterized*.
+2. **Kill the duplication debt** — verdict in (SAME, not drifted; keep `FriChainStepIdx`'s copy, have
+   `FriVerifierCompose` import + re-export so its four consumers need no edit). **Blocked** until the
+   `∀ S` lane lands, since it is writing those exact files.
+3. Then: the ~11 remaining base-field-challenge typing sites.
+4. Then: the ~28 declarations the sweep left `UNKNOWN` at deployment.
 
 ## Done log
 - L0–L6 correlated-agreement ladder landed; crux `polishchuk_spielman` PROVEN (Cramér–Nardi-fixed).
@@ -76,3 +76,18 @@ none, because it looks fixed.
   emptiness is *conditional and undecided* at the opaque `cfg*` args — an improvement, **not a closure**.
   And the exhibited pole is `Nat`-typed while the premises are `ℤ`-typed: what is refuted is the
   **schema**, not the deployed instance.
+- **The instrument SWEPT the tree** (`PremiseInhabitabilitySweep`, 37 theorems, green): enumeration
+  *mechanical* (39 structural candidates + 13 the filter missed), every candidate with a recorded
+  verdict. Settled `StarkComplete` (collapses), `GroundedApex.BindingExtract` (**free** — zero
+  information), `AccumulatorSound` (**negative at deployment**, correcting the earlier pass: *a verdict
+  about an abstract class is not a verdict about its instantiation*).
+- **⚑ R11 — a new wound class nobody was looking for**: 13 classes gate extraction on a self-chosen
+  `extractable : Prop` and **all eight** reference instances set it to `True`. Two *independent* vacuity
+  modes proved — one of which the instrument **structurally cannot see**, since it isn't about
+  acceptance at all. `PortalFloor` is the same tree doing it right, so this is a **default**, not an
+  accident.
+- **`TranscriptWordCommitment` given content** — and *characterized*: supplying an extractor ⟺ proving
+  transcript-binding. Non-triviality by **unsatisfiability** (excluded middle is never unsatisfiable),
+  with the empty shape retained under an honest name and its emptiness proved.
+- **Rooted the subtree via one aggregator** (`ProofAssurance.lean`) after individual import lines were
+  dropped by contending commits *again* — second time that lesson was paid for.

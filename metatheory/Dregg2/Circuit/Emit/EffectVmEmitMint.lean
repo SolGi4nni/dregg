@@ -21,8 +21,10 @@ param1 = 0`, the nonce-tick gate, the frame frozen).
   * `mintVm_faithful` — emitted per-row gates ⟺ `MintRowIntent` (credit + frame freeze).
   * `mintDescriptor_full_sound` — satisfying the descriptor under `RowEncodes` forces `CellMintSpec`
     AND publishes `post.commit = PI[NEW_COMMIT]`.
-  * `mintDescriptor_commit_binds_state_or_collides` — anti-ghost, UNCONDITIONAL (reuses the cured
-    transfer core `absorbed_determined_by_commit_or_collides`; same hash chain).
+  * `mintVm_commit_binds_keyed` / `mintDescriptor_binds_state_advantage_bound` — anti-ghost, as
+    SECURITY REDUCTIONS (the keyed-ROM birthday floor + the `Eff`-parametric deployed-hash bound;
+    the extraction spine `absorbed_determined_by_commit_or_collides` is the reduction-internal
+    witness).
   * `unify_mint` / `unify_mint_exec` — a committed `MintASpec` (= `recCMintAsset`), projected per
     `(cell, asset)`, satisfies `CellMintSpec` EXACTLY (the conserved `bal cell a` rises by `amt`; frame
     `0 = 0`). The runnable column transition IS universe-A's `bal`-ledger transition.
@@ -49,6 +51,8 @@ Imports read-only.
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.supplycreation
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitMint
 
@@ -362,22 +366,58 @@ theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hr
 
 theorem mint_sites_eq : mintVmDescriptor.hashSites = transferHashSites := rfl
 
-/-- **`mintDescriptor_commit_binds_state_or_collides` — the anti-ghost tooth for mint, UNCONDITIONAL.**
-Two rows satisfying the mint descriptor's hash-sites and publishing the SAME `NEW_COMMIT` EITHER have
-IDENTICAL absorbed after-state OR exhibit a genuine deployed-sponge collision. The old form concluded a
-bare equality from the injective sponge floor (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
-REFUTES it at deployed BabyBear params); this disjunction HOLDS of the deployed sponge. Injective
-special case at the transfer spine home (`absorbed_determined_by_commit_of_injective`). -/
-theorem mintDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ transferHashSites)
-    (hs₂ : siteHoldsAll hash e₂ transferHashSites)
-    (hpubLo₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpubLo₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides
-    hash e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
+/-! ⚑ **WHAT CHANGED AND WHY.** This section used to export
+`mintDescriptor_commit_binds_state_or_collides`, concluding
+`absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. That form is TRUE of the deployed
+sponge, but UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. It quantified over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED; its successors are the keyed-ROM
+closure below (the PROVED birthday floor, at mint's own sites) and the `Eff`-parametric
+deployed-hash reduction at mint's own descriptor. The extraction spine
+(`absorbed_determined_by_commit_or_collides`) REMAINS in the transfer keystone as the
+reduction-internal witness, its correct role. -/
+
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ `mintVm_commit_binds_keyed` — THE KEYED-FLOOR CLOSURE at mint's own sites.** In the
+LABELLED random-oracle idealization of the GROUP-4 surface (`EffectVmKeyedStateCommit`, a MODELLING
+step — see that module's header), every QUERY-BOUNDED forger producing two rows that satisfy mint's
+hash sites with a shared commit column but different absorbed 13-column state wins with NEGLIGIBLE
+probability — from the PROVED birthday floor (`keyedRom_hard`); no `IsPolyTime`, no
+`Poseidon2SpongeCR`, no named-carrier hypothesis. The deployed-hash leg is the `Eff`-parametric
+`_advantage_bound` reduction below (its `boundaryLastPins` mod-`p` step is deployed-side content
+and deliberately does NOT transport to the λ-wide model). -/
+theorem mintVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame mintVmDescriptor.hashSites))
+    (hA : NarrowBreakEff mintVmDescriptor.hashSites Q A) :
+    Negl (gameAdv (narrowBreakGame mintVmDescriptor.hashSites) A) :=
+  narrowStateCommit_binds mintVmDescriptor.hashSites rfl Q hQ A hA
+
+/-- **`mintNarrowRowSpec`** — mint's narrow descriptor as the reduction's per-effect datum: its
+hash sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def mintNarrowRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.NarrowRowSpec where
+  descriptor := mintVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `mintDescriptor_binds_state_advantage_bound` — the DEPLOYED-hash reduction at mint's own
+descriptor (successor of the deleted `mintDescriptor_commit_binds_state_or_collides`).** Under the
+deployed sponge's collision floor at the class `Eff`, an adversary producing two rows BOTH ACCEPTED
+by `mintVmDescriptor` (which includes the `boundaryLastPins` mod-`p` `NEW_COMMIT` pin) that publish
+one `state_commit` while disagreeing on the absorbed state block has NEGLIGIBLE advantage. -/
+theorem mintDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D mintNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D mintNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D mintNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D mintNarrowRowSpec Eff A hEff hCR
 
 /-! ## §7 — THE CONNECTOR — `cellProjA` to universe-A's `MintASpec` / `recCMintAsset`. -/
 
@@ -590,8 +630,8 @@ turn property (cited, not papered), not a per-cell gap. -/
 per-cell `CellMintSpec` (bal_lo credited by `amt`, nonce TICKED, the frame frozen); (b) the post-state
 published as `PI[NEW_COMMIT]`; and (c) AGREEMENT with the executor's per-cell post-state on every
 conserved/frame clause (the ONE nonce-tick divergence is `exec_nonce_is_frozen_not_ticked`, named).
-The anti-ghost (`mintDescriptor_commit_binds_state_or_collides`) covers all 13 absorbed columns. This is the
-transfer/burn class-A bar, per cell. -/
+The anti-ghost (`mintVm_commit_binds_keyed` / `mintDescriptor_binds_state_advantage_bound`) covers all
+13 absorbed columns. This is the transfer/burn class-A bar, per cell. -/
 theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
     (henc : RowEncodes env (cellProjA s.kernel cell a) amt post)
@@ -630,7 +670,8 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow :
 #assert_axioms intent_to_cellSpec
 #assert_axioms mintRowGates_flag_indep
 #assert_axioms mintDescriptor_full_sound
-#assert_axioms mintDescriptor_commit_binds_state_or_collides
+#assert_axioms mintVm_commit_binds_keyed
+#assert_axioms mintDescriptor_binds_state_advantage_bound
 #assert_axioms unify_mint
 #assert_axioms unify_mint_well
 #assert_axioms unify_mint_exec

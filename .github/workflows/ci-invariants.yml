@@ -1,0 +1,96 @@
+# ci-invariants.yml — THE ENFORCING GATE for the twin-deletion + megaswarm-fix campaign.
+#
+# Recommendation ① of the twin-deletion campaign: make the campaign's gains un-regressable.
+# It runs scripts/ci-invariants.sh, which enforces FOUR invariants (see docs/CI-INVARIANTS.md):
+#
+#   1  THE TREE BUILDS         — cargo check --workspace --all-targets --keep-going, zero
+#                                non-compiling members (the dregg-analyzer / PlayerWorlds class).
+#   2  EVERY FALSIFIER RUNS    — every row of scripts/ci-invariants/falsifiers.tsv EXECUTES and
+#      AND PASSES                passes (missing / #[ignore]'d / setup-panic all count as FAILED).
+#   3  NO SILENCED FALSIFIER   — no falsifier-class test carries #[ignore].
+#   4  NO RUST TWIN OF A LEAN  — every live decider still routes through its proven @[export]; the
+#      @[export]                 native/rust/mirror siblings stay #[cfg(test)]-only.
+#
+# The `structural` job (invariants 3+4, NO build) is the fast always-on required check. `tree-builds`
+# (invariant 1) and `falsifiers` (invariant 2) are the heavy jobs — they mirror ci.yml's toolchain /
+# system-deps / disk-reclaim / LFS setup. `tree-builds` overlaps ci.yml's `check` job but adds
+# --keep-going (enumerate EVERY failing crate, not just the first) and is the campaign's named gate.
+name: CI invariants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-invariants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ── the fast, always-on required check: invariants 3 + 4, pure bash/grep/awk, no build ──
+  structural:
+    name: Structural invariants (no build — #[ignore] + Rust-twin guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: ci-invariants.sh structural
+        run: bash scripts/ci-invariants.sh structural
+
+  # ── invariant 1: the whole tree compiles (every member) ─────────────────────────────────
+  tree-builds:
+    name: Invariant 1 — THE TREE BUILDS (cargo check --keep-going)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      # Same disk reclaim as ci.yml / armed-teeth: the hosted runner ships ~14 GB free on /,
+      # which this workspace's target/ overruns.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      - uses: Swatinem/rust-cache@v2
+      - name: ci-invariants.sh build
+        run: bash scripts/ci-invariants.sh build
+
+  # ── invariant 2: every registered falsifier runs green ──────────────────────────────────
+  falsifiers:
+    name: Invariant 2 — EVERY FALSIFIER RUNS AND PASSES
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      - uses: Swatinem/rust-cache@v2
+      - name: ci-invariants.sh falsifiers
+        run: bash scripts/ci-invariants.sh falsifiers

@@ -60,7 +60,7 @@ fn empty_state() -> dregg_cell::state::CellState {
 fn project_setfield(action: &dregg_app_framework::Action, slot: usize) -> Option<FieldElement> {
     for effect in &action.effects {
         if let Effect::SetField { index, value, .. } = effect {
-            if *index == slot {
+            if *index == slot as u64 {
                 return Some(*value);
             }
         }

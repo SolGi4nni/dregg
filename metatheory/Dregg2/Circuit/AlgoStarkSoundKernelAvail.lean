@@ -39,7 +39,12 @@ parallel of `KernelConfigSoundness` at the hardened registry.
 
 ## The honest residual
 
-Same named floor as `algoStarkSound_kernel` per tag {`Poseidon2SpongeCR` ×2, `FriLdtExtract`,
+⚑ MIGRATED 2026-07-25 off `AlgoStarkSoundGeneral.FriLdtExtract` / `algoStarkSound_of_memoryLegs`
+(the singleton-OOD premise PROVED to force `verifyBatch` to reject every input, emptying this
+capstone) onto `ApexOodLaneRepair.FriLdtExtractCons` / `algoStarkSound_of_memoryLegs_cons`; §3b is
+the zero-added-strength receipt for the replacement.
+
+Same named floor as `algoStarkSound_kernel` per tag {`Poseidon2SpongeCR` ×2, `FriLdtExtractCons`,
 `BusModelFamily`}, PLUS: at tags 0/4 the umem `MemoryLegs`, at every other tag the `MapReconcileFamily` +
 `MapTableAssembly` pair `algoStarkSound_kernel` already carries. Nothing faked; `.umemOp` handled by the
 umem leg; the two graduated-shape legs discharge `rfl`.
@@ -59,8 +64,10 @@ open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriChecks FriCore FieldAr
 open Dregg2.Circuit.CircuitSoundness (Registry BatchPublicInputs BatchProof EffectIdx)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmConstraint2 VmTrace)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.AlgoStarkSoundGeneral (FriLdtExtract BusModelFamily MemoryLegs
-  algoStarkSound_of_memoryLegs)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily MemoryLegs)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape
+   algoStarkSound_of_memoryLegs_cons)
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly
   algoStarkSound_of_mapShape)
 open Dregg2.Circuit.AlgoStarkSoundKernel (algoStarkSound_of_pointwise rfix_sideConditions)
@@ -88,7 +95,7 @@ the carried umem `MemoryLegs`; every other tag is the `algoStarkSound_of_mapShap
 `algoStarkSound_kernel`, transported across `RfixAvail_off`. -/
 
 /-- **`algoStarkSound_kernelAvail` — kernel STARK-soundness over the DEPLOYED HARDENED registry.** From
-EXACTLY the named floor of `algoStarkSound_kernel` per tag — {`Poseidon2SpongeCR` ×2, `FriLdtExtract`,
+EXACTLY the named floor of `algoStarkSound_kernel` per tag — {`Poseidon2SpongeCR` ×2, `FriLdtExtractCons`,
 `BusModelFamily`} + per off-debit tag {`MapReconcileFamily`, `MapTableAssembly`} — PLUS, at the two
 BALANCE-DEBITING tags (0 transfer, 4 burn), the umem `MemoryLegs` (`hlegs0`/`hlegs4`) at the welded avail
 members (the `.umemOp` memory-checking leg replacing the map-shape route), the full
@@ -104,7 +111,7 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
     (initState : List ℤ) (logN : Nat) (view : ProofView)
     (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace)
     -- the FRI/bus floor at the DEPLOYED descriptor of each tag (welded avail at 0/4, `Rfix e` elsewhere).
-    (hfri : ∀ e : EffectIdx, FriLdtExtract sponge perm RATE toNat params vk core A initState
+    (hfri : ∀ e : EffectIdx, FriLdtExtractCons sponge perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
@@ -129,7 +136,7 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
         rw [RfixAvail_transfer]
         have hfri0 := hfri 0; have hbusF0 := hbusF 0
         rw [RfixAvail_transfer] at hfri0 hbusF0
-        exact algoStarkSound_of_memoryLegs weldedTransferAvailWide sponge hCR hash fp embed perm RATE
+        exact algoStarkSound_of_memoryLegs_cons weldedTransferAvailWide sponge hCR hash fp embed perm RATE
           toNat params vk core A initState logN view (tr 0)
           transferAvailWide_hashSites transferAvailWide_ranges hfri0 hbusF0 hlegs0
       · by_cases h4 : e = 4
@@ -138,7 +145,7 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
           rw [RfixAvail_burn]
           have hfri4 := hfri 4; have hbusF4 := hbusF 4
           rw [RfixAvail_burn] at hfri4 hbusF4
-          exact algoStarkSound_of_memoryLegs weldedBurnAvailWide sponge hCR hash fp embed perm RATE
+          exact algoStarkSound_of_memoryLegs_cons weldedBurnAvailWide sponge hCR hash fp embed perm RATE
             toNat params vk core A initState logN view (tr 4)
             burnAvailWide_hashSites burnAvailWide_ranges hfri4 hbusF4 hlegs4
         · -- every other tag: the `algoStarkSound_kernel` map-shape route, transported.
@@ -149,6 +156,28 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
             params vk core A initState logN view (tr e)
             (rfix_sideConditions e).2 (rfix_sideConditions e).1.1 (rfix_sideConditions e).1.2
             hfrie hbusFe (hrec e) (hasm e))
+
+/-! ## §3b — ⚑ THE MIGRATION RECEIPT (2026-07-25). -/
+
+/-- **The migrated premise cannot be the reason this capstone is empty.** At every deployed
+hardened tag, `FriLdtExtractCons … (RfixAvail e)` is EQUIVALENT to itself with the OOD-shape
+conjunct DELETED (the conjunct is supplied by the bundle's own `AcceptsFull` antecedent). The
+premise this capstone was migrated OFF — `AlgoStarkSoundGeneral.FriLdtExtract`, asserting the
+singleton `oodPoint = [ood]` — is REFUTED on accepting runs and forces `verifyBatch` to reject
+everything (`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`). -/
+theorem kernelAvailPremise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace) :
+    ∀ e : EffectIdx,
+      (FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view (tr e)
+          (RfixAvail e)
+        ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+          view (tr e) (RfixAvail e)) :=
+  fun e => friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState
+    logN view (tr e) (RfixAvail e)
 
 /-! ## §4 — TEETH: the umem route is genuine (the falsifier that FORBIDS the map-shape route at 0/4).
 
@@ -171,6 +200,7 @@ theorem transferAvailWide_has_umemOp :
 
 #assert_axioms transferAvailWide_hashSites
 #assert_axioms algoStarkSound_kernelAvail
+#assert_axioms kernelAvailPremise_adds_no_strength
 #assert_axioms transferAvailWide_has_umemOp
 
 end Dregg2.Circuit.AlgoStarkSoundKernelAvail

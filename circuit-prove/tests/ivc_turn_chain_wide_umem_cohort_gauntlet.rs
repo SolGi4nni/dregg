@@ -24,7 +24,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, TurnChainError, fold_wide_welded_umem_turn_chain_staged,
 };
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
-use dregg_turn::rotation_witness::mint_welded_wide_umem_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_welded_wide_umem_rotated_participant_leg;
 
 fn open_permissions() -> dregg_cell::Permissions {
     use dregg_cell::AuthRequired;

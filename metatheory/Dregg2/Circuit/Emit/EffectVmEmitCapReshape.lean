@@ -659,6 +659,71 @@ theorem capReshape_rejects_no_control (hash : List ℤ → ℤ) (env : VmRowEnv)
   rw [hh] at this
   exact absurd this (by norm_num)
 
+/-! ### §4.2′ — THE INTERLOCK, AS A THEOREM (the statement whose absence let the defect live).
+
+`capReshape_nonAmp_in_circuit` and `capReshape_production_in_circuit` quantify over the BIT CARRIERS
+and were true BEFORE the 2026-07-24 `prmCol` fix as well — that is precisely why no proof and no
+`#assert_axioms` flagged the vacuity. What was missing was a theorem naming the COLUMN the bits must
+decode. The two below say it over the EMITTED object, for ALL witnesses, so a regression to a raw
+param index cannot be green again: the Rust differential
+(`cap_reshape_descriptor.rs::held_bits_bind_the_hashed_held_mask_felt`) exhibits ONE forgery; these
+close the ∀. -/
+
+/-- **`capReshape_heldBits_decode_hashed_mask` — THE INTERLOCK.** A satisfying witness FORCES the
+held-mask param column — `prmCol col.HELD_MASK` = **col 72**, the very felt `siteHeldLeaf` hashes into
+the opened held leaf — to equal the bit carriers' weighted reconstruction. So the held BITS (what the
+submask gates and the production control-bit gate read) decode the mask the recomputed leaf COMMITS.
+Congruence mod the BabyBear prime is the exact AIR semantics (`assert_zero` over felts). -/
+theorem capReshape_heldBits_decode_hashed_mask (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (isFirst isLast : Bool) (hlast : isLast = false)
+    (hsat : satisfiedVm hash capReshapeVmDescriptor env isFirst isLast) :
+    env.loc (prmCol col.HELD_MASK)
+      ≡ (reconstruct col.heldBit MASK_BITS).eval env.loc [ZMOD 2013265921] := by
+  obtain ⟨hcon, _, _⟩ := hsat
+  have hmem : VmConstraint.gate (gMaskRecon (prmCol col.HELD_MASK) col.heldBit) ∈
+      capReshapeVmDescriptor.constraints := by
+    show _ ∈ (nonAmpGates ++ productionGates)
+    refine List.mem_append_left _ ?_
+    unfold nonAmpGates
+    exact List.mem_append_right _ List.mem_cons_self
+  have hg := hcon _ hmem
+  subst hlast
+  simp only [VmConstraint.holdsVm, gMaskRecon, eSub, eCol, EmittedExpr.eval] at hg
+  rw [Int.modEq_zero_iff_dvd] at hg
+  obtain ⟨k, hk⟩ := hg
+  exact Int.modEq_iff_dvd.mpr ⟨-k, by linarith⟩
+
+/-- **`capReshape_inflated_heldBits_force_the_full_mask` — the CANARY, universally quantified.** The
+forgery the deployed pre-fix bytes accepted (every held bit set, so every submask gate `gᵢ·(1−hᵢ)`
+vanishes and the production control gate `h₆ = 1` is free) now FORCES the committed mask felt itself
+to be `255`. A prover riding an honest small mask (col 72 = `1`, a read-only cap) therefore CANNOT
+satisfy the descriptor — `capReshape_rejects_inflated_heldBits_over_small_mask` below. -/
+theorem capReshape_inflated_heldBits_force_the_full_mask (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (isFirst isLast : Bool) (hlast : isLast = false)
+    (hsat : satisfiedVm hash capReshapeVmDescriptor env isFirst isLast)
+    (hbits : ∀ i, i < MASK_BITS → env.loc (col.heldBit i) = 1) :
+    env.loc (prmCol col.HELD_MASK) ≡ 255 [ZMOD 2013265921] := by
+  have h := capReshape_heldBits_decode_hashed_mask hash env isFirst isLast hlast hsat
+  have e0 := hbits 0 (by decide); have e1 := hbits 1 (by decide)
+  have e2 := hbits 2 (by decide); have e3 := hbits 3 (by decide)
+  have e4 := hbits 4 (by decide); have e5 := hbits 5 (by decide)
+  have e6 := hbits 6 (by decide); have e7 := hbits 7 (by decide)
+  simpa [MASK_BITS, reconstruct, EmittedExpr.eval, eCol, e0, e1, e2, e3, e4, e5, e6, e7] using h
+
+/-- **`capReshape_rejects_inflated_heldBits_over_small_mask` — THE VACUITY, REFUTED FOR ALL WITNESSES.**
+The exact shape the pre-fix descriptor ACCEPTED: every held bit set (all 8 rights, mint included)
+while the committed held-mask felt is an honest read-only `1`. No witness of that shape satisfies the
+emitted descriptor. This is the ∀-quantified form of the both-ways Rust canary. -/
+theorem capReshape_rejects_inflated_heldBits_over_small_mask (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (isFirst isLast : Bool) (hlast : isLast = false)
+    (hbits : ∀ i, i < MASK_BITS → env.loc (col.heldBit i) = 1)
+    (hmask : env.loc (prmCol col.HELD_MASK) = 1) :
+    ¬ satisfiedVm hash capReshapeVmDescriptor env isFirst isLast := by
+  intro hsat
+  have h := capReshape_inflated_heldBits_force_the_full_mask hash env isFirst isLast hlast hsat hbits
+  rw [hmask] at h
+  exact absurd h (by decide)
+
 /-! ### §4.3 — descriptor well-formedness + the byte-pinned wire string.
 
 The carriers are distinct and in-range (`< EFFECT_VM_WIDTH`), so the Rust `parse_vm_descriptor`'s
@@ -697,6 +762,9 @@ def capReshapeJson : String := emitVmJson capReshapeVmDescriptor
 
 #assert_axioms capReshape_nonAmp_in_circuit
 #assert_axioms capReshape_production_in_circuit
+#assert_axioms capReshape_heldBits_decode_hashed_mask
+#assert_axioms capReshape_inflated_heldBits_force_the_full_mask
+#assert_axioms capReshape_rejects_inflated_heldBits_over_small_mask
 #assert_axioms capReshape_rejects_amplify
 #assert_axioms capReshape_rejects_no_control
 #assert_axioms capReshape_carriers_in_range

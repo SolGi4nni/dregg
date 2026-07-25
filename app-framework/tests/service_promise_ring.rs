@@ -77,7 +77,7 @@ fn setup_proven() -> (
     ServiceRequest,
     ProvenReceipt,
 ) {
-    let proven = dregg_turn::mint_transfer_proven_receipt(SERVICE_TURN_HASH, 7);
+    let proven = dregg_turn_prover::mint_transfer_proven_receipt(SERVICE_TURN_HASH, 7);
     let exchange = ServicePromiseExchange::new(4, 0, cid(ESCROW), vec![]);
     let service = ServiceId::of(CellId::from_bytes([0x5e; 32]), "render-report");
     let promise = ServicePromise {
@@ -211,7 +211,7 @@ fn forged_fulfillment_never_half_pays() {
 
     // A GENUINE proof of a DIFFERENT turn (its PI[TURN_HASH] / endpoints do not match
     // the promised transition) also fails to fill the hole.
-    let other = dregg_turn::mint_transfer_proven_receipt([0x00; 32], 7);
+    let other = dregg_turn_prover::mint_transfer_proven_receipt([0x00; 32], 7);
     let wrong_turn = fulfillment_proof(&other);
     assert!(matches!(
         exchange.fulfill(&mut escrow, &k1, &wrong_turn, 10),

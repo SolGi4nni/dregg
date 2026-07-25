@@ -27,7 +27,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit_prove::merge_pool::{aggregate_tree_scan_state, aggregation_dag};
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 // ============================================================================
 // FIXTURE (the audited Bucket-F rotated mint, mirrored from ivc_turn_chain_rotated.rs)

@@ -23,7 +23,7 @@ use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{FinalizedTurn, SEG_ANCHOR_WIDTH};
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 use dregg_lightclient::{
     FinalityCert, SignedVote, finality_signing_message, fold_and_attest, verify_finalized_history,

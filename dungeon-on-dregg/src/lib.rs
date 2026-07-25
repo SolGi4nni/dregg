@@ -173,8 +173,18 @@ pub mod progression;
 /// [`meta`] for the cell model + the driven death-grants / deeper-more / won-grants-none /
 /// forged-refused teeth.
 pub mod meta;
+
 pub mod skills;
 pub mod spells;
+/// WHAT A DEAD RUN LEAVES BEHIND. The Descent's loss is unusually legible — the committed cell
+/// records which day's map you were on, how far from the surface you were, and what was in your
+/// hands — so a death seals a [`tomb::Tomb`] certificate read off those registers, and interring it
+/// is the only way the meta-currency and the RETURN RIGHT (the right to go back to a map that
+/// killed you) are earned. A tomb returns no relic and no breath: dying pays the currency that
+/// cannot buy a relic and costs the one that is a relic. ⚠ The module also carries the census
+/// showing that on **14 of the 16 daily maps the deployed rules make permadeath unreachable**, and
+/// the checked Lean design (the one-way door) that fixes it.
+pub mod tomb;
 
 /// THE OVERWORLD — the connective layer above the universes. A [`overworld::RegionMap`] of named
 /// locations (each a universe) joined by travel edges, played on a real dregg

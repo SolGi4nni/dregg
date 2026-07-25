@@ -31,7 +31,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, prove_turn_chain_recursive, verify_turn_chain_recursive,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_batch_stark::{ProverData, StarkInstance, prove_batch, verify_batch};
 

@@ -213,7 +213,10 @@ fn n11_stock_match_lowers_through_the_lean_descriptor() {
     }
 }
 
-/// The n=5 TEST board size has NO emitted Lean descriptor (only n=2, n=11 are pinned). With the
+/// The n=5 board size has NO emitted Lean descriptor (only n=2, n=11 are pinned). It used to be
+/// the size the PLAYED surface ran on, which is exactly why no automatafl match could ever rank;
+/// the surface now plays the stock 11x11 board, and this pins the blocked-not-faked floor for any
+/// caller that still hands in an unemitted size. With the
 /// hand-authored Rust AIR DELETED there is no fallback: `leaves()` is BLOCKED-not-faked — a size the
 /// Lean AIR is not emitted for cannot be attested.
 #[test]

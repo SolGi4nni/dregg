@@ -19,7 +19,7 @@ use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
 use grain_verify::{R3Error, r3_setup_anchor, r3_verify};

@@ -1,0 +1,50 @@
+# Editing
+#
+# Subroot-oriented editing heuristics for the breadstuffs mirror.
+
+#>spw_editing
+#:editor #!heuristics
+#:layer #!pragmatics
+
+^"intent"{
+ ~#goal: "Orient editing behavior by register — card surfaces read as structured traits, form surfaces as operator flow."
+ ~#source: @spw/shelves.spw
+}
+
+^category[card]{
+ subroots: [@concepts, @regions]
+ heuristics: {
+ prefer_structured_fields: true
+ enforce_measure_keys: false
+ auto_quote: true
+ prefer_symbol_refs: false
+ }
+}
+
+^category[form]{
+ subroots: [@system]
+ heuristics: {
+ prefer_symbol_refs: true
+ auto_quote: false
+ preserve_container_adjacency: true
+ prioritize_macro_folding: true
+ }
+}
+
+^category[projection]{
+ subroots: [@topo]
+ heuristics: {
+ prefer_structured_fields: true
+ suggest_aggregation_axes: true
+ auto_quote: true
+ }
+}
+
+^category[lens]{
+ subroots: [@lenses]
+ heuristics: {
+ prefer_symbol_refs: true
+ auto_quote: false
+ preserve_container_adjacency: true
+ }
+}

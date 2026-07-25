@@ -69,8 +69,8 @@ use dreggnet_catalog::{
 };
 use dreggnet_offerings::{
     Action, Audience, BinaryOperationDescriptor, BinaryOperationReceipt, ChatBinaryOperationPolicy,
-    DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId, Surface,
-    VerifyReport, preflight_chat_binary_operation,
+    DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId,
+    SessionPolicy, Surface, SystemClock, VerifyReport, preflight_chat_binary_operation,
 };
 
 use crate::cipherclerk::TelegramCipherclerk;
@@ -328,6 +328,35 @@ impl std::error::Error for TelegramOperationError {}
 /// The sentinel "active key" a chat carries while it is showing the offerings menu (not yet
 /// playing an offering). Not a registered offering key, so it never collides.
 const MENU_KEY: &str = "@menu";
+
+/// **How long an ARMED free-text slot stays armed.** Pressing a `wants_text` affordance arms the
+/// chat's text slot and the NEXT plain message fills it. Without an expiry that arm is immortal:
+/// a chat that armed a slot and then walked away has every later message swallowed into an
+/// offering forever, with no input able to clear it (a re-present clears the arm, but a chat
+/// whose surface never moves never re-presents). A bounded arm cannot wedge a chat; /cancel
+/// clears it immediately.
+pub const TEXT_ARM_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// A free-text affordance a surface has ARMED, with the moment it was armed (see
+/// [`TEXT_ARM_TTL`]).
+#[derive(Debug, Clone)]
+struct ArmedText {
+    action: Action,
+    at: std::time::Instant,
+}
+
+impl ArmedText {
+    fn now(action: Action) -> ArmedText {
+        ArmedText {
+            action,
+            at: std::time::Instant::now(),
+        }
+    }
+
+    fn expired(&self) -> bool {
+        self.at.elapsed() > TEXT_ARM_TTL
+    }
+}
 
 /// A unit of work run ON the host's owning thread, against the live [`OfferingHost`].
 type HostJob = Box<dyn FnOnce(&mut OfferingHost) + Send + 'static>;
@@ -601,8 +630,16 @@ pub struct TelegramHost<T: Transport> {
     /// plain messages are ordinary chatter (never swallowed into an offering). Cleared on any
     /// advance / re-present (the surface moved on). Keyed by SURFACE
     /// ([`TelegramFrontend::surface_id`]), so arming a document's text slot does not disarm the
-    /// tug board open beside it in the same chat.
-    armed: HashMap<SessionId, Action>,
+    /// tug board open beside it in the same chat. Each arm carries the moment it was made and
+    /// expires after [`TEXT_ARM_TTL`], so a forgotten arm cannot swallow a chat's messages
+    /// forever.
+    armed: HashMap<SessionId, ArmedText>,
+    /// **Why the last present painted nothing** (`None` = it really was sent). A surface that
+    /// cannot be projected or cannot be sent used to vanish silently: `open` answered `Ok`, the
+    /// ack said "Opened …", and the chat got no message at all — the single most convincing way
+    /// for a working bot to look dead. Recorded here and taken by the command surface
+    /// ([`Self::take_paint_failure`]), which answers with it.
+    last_paint_failure: Option<String>,
     /// The Mini App base URL (the public funnel), when the deploy arms the `web_app` launch
     /// tier ([`Self::with_webapp_base`]). `None` = launch buttons off; the inline-button tier
     /// is unaffected either way.
@@ -639,6 +676,7 @@ impl<T: Transport> TelegramHost<T> {
             active: HashMap::new(),
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
+            last_paint_failure: None,
             webapp_base: None,
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
@@ -667,6 +705,8 @@ impl<T: Transport> TelegramHost<T> {
                 &CatalogConfig::live(members),
                 &mounted,
             )
+            // Bounded session lifecycle, as `telegram_default_host` — never born unbounded.
+            .with_policy(resolve_telegram_policy(), SystemClock)
         });
         TelegramHost {
             bot_secret,
@@ -678,6 +718,7 @@ impl<T: Transport> TelegramHost<T> {
             active: HashMap::new(),
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
+            last_paint_failure: None,
             webapp_base: None,
             private_bazaar_deployment: Some(deployment),
         }
@@ -737,6 +778,7 @@ impl<T: Transport> TelegramHost<T> {
             active: HashMap::new(),
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
+            last_paint_failure: None,
             webapp_base: None,
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
@@ -765,6 +807,7 @@ impl<T: Transport> TelegramHost<T> {
             active: HashMap::new(),
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
+            last_paint_failure: None,
             webapp_base: None,
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
@@ -793,6 +836,7 @@ impl<T: Transport> TelegramHost<T> {
             active: HashMap::new(),
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
+            last_paint_failure: None,
             webapp_base: None,
             private_bazaar_deployment: Some(deployment),
         })
@@ -856,6 +900,17 @@ impl<T: Transport> TelegramHost<T> {
     /// [`TelegramFrontend::transport`], or the last-presented surface of a chat).
     pub fn frontend(&self) -> &TelegramFrontend<T> {
         &self.frontend
+    }
+
+    /// **Does `(chat, key)` already have a live surface MESSAGE in this process?** — what the
+    /// command surface needs to know to answer honestly when a re-open will be an in-place edit
+    /// of a message the user may have scrolled far past (a collective chat, where the ONE shared
+    /// message is deliberate). In a DM an open reposts, so this is only advisory there.
+    pub fn has_live_surface(&self, chat_id: ChatId, topic: Option<i64>, key: &str) -> bool {
+        let surface = TelegramFrontend::<T>::surface_id(chat_id, topic, key);
+        self.frontend
+            .surface_slot(&surface)
+            .is_some_and(|slot| slot.message_id.is_some())
     }
 
     /// The offering currently active in the chat session `sid` (`None` if nothing is open, or the
@@ -965,8 +1020,14 @@ impl<T: Transport> TelegramHost<T> {
 
     /// **Present the `/offerings` control message** in `chat_id` — a message whose inline keyboard
     /// is one button per registered offering (a press opens that offering in the chat). Records the
-    /// chat as "browsing the menu". Returns the chat-scoped [`SessionId`].
-    pub fn present_offerings_menu(&mut self, chat_id: ChatId, topic: Option<i64>) -> SessionId {
+    /// chat as "browsing the menu". Returns the chat-scoped [`SessionId`] and, if the send
+    /// FAILED, the transport's own reason — so the command surface can say so instead of
+    /// answering nothing at all.
+    pub fn present_offerings_menu_result(
+        &mut self,
+        chat_id: ChatId,
+        topic: Option<i64>,
+    ) -> (SessionId, Option<String>) {
         let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
         let offerings = self.list_offerings();
         let actions: Vec<Action> = offerings
@@ -1008,9 +1069,29 @@ impl<T: Transport> TelegramHost<T> {
         // read as a stale move on whatever was opened last.
         let menu_surface = TelegramFrontend::<T>::surface_id(chat_id, topic, MENU_KEY);
         self.frontend.spin_session(menu_surface.clone());
-        self.frontend.present(&menu_surface, &surface, &actions);
+        // `/offerings` is an EXPLICIT request for the menu right now, so it must post a fresh
+        // message at the bottom of the chat. Editing the previous menu message in place — which
+        // is what a re-present does, and what this used to do — leaves a long chat with NO
+        // visible response at all: the edit lands wherever the old menu scrolled to, and the
+        // command itself sends no reply. That is the whole "menus completely break" experience.
+        self.frontend.repost_next(&menu_surface);
+        // The FALLIBLE present, so a send that fails is REPORTED. `Frontend::present` is
+        // infallible by signature and swallows the error into `last_send_error`, which no
+        // command surface ever read — so an over-long surface, a refused callback payload or a
+        // Bot API error made `/offerings` reply absolutely nothing and look like a dead bot,
+        // while the audit still recorded the command as "routed". Silence is the one answer a
+        // command must never give.
+        let sent = self
+            .frontend
+            .present_result(&menu_surface, &surface, &actions);
         self.active.insert(sid.clone(), MENU_KEY.to_string());
-        sid
+        (sid, sent.err().map(|e| e.to_string()))
+    }
+
+    /// [`present_offerings_menu_result`](Self::present_offerings_menu_result) discarding the
+    /// send outcome — for callers that only want the chat's session id.
+    pub fn present_offerings_menu(&mut self, chat_id: ChatId, topic: Option<i64>) -> SessionId {
+        self.present_offerings_menu_result(chat_id, topic).0
     }
 
     /// **Present the `/play` Mini App launch menu** in `chat_id` — one `web_app` button per
@@ -1181,10 +1262,28 @@ impl<T: Transport> TelegramHost<T> {
         // Spin THIS offering's surface slot, not a bare chat-level one — a stray chat-keyed slot
         // would shadow the offering's own surface for every caller that looks a chat up.
         if let Some((chat_id, topic)) = TelegramFrontend::<T>::chat_of(sid) {
-            self.frontend
-                .spin_session(TelegramFrontend::<T>::surface_id(chat_id, topic, key));
+            let surface = TelegramFrontend::<T>::surface_id(chat_id, topic, key);
+            self.frontend.spin_session(surface.clone());
+            // OPENING reposts; PLAYING edits in place. An open is an explicit "show me this
+            // now" (a `/open`, a menu press, a post-restart rebind), and the offering's previous
+            // message may be far up the scrollback — editing it there is invisible. A turn
+            // landing still edits the live surface in place, which is what keeps one live
+            // message per offering.
+            //
+            // DMs ONLY. A group / forum topic's session is deliberately ONE message that every
+            // member reads and every re-present edits in place — that invariant is what the
+            // audience rule rests on (see `present_offering`), so a repost there would be a
+            // privacy-adjacent design change, not a UX fix. A collective chat keeps the edit;
+            // the command surface answers in words instead
+            // ([`has_live_surface`](Self::has_live_surface)).
+            if !ChatKind::classify(chat_id, topic).is_collective() {
+                self.frontend.repost_next(&surface);
+            }
         }
-        self.present_offering(key, sid, viewer);
+        // A present that paints NOTHING is the one failure the command surface used to answer with
+        // silence: `open` returned `Ok`, the ack said "Opened …", and no message ever appeared.
+        // Record why, so the caller can say it ([`take_paint_failure`](Self::take_paint_failure)).
+        self.last_paint_failure = self.present_offering(key, sid, viewer);
         Ok(())
     }
 
@@ -1208,9 +1307,20 @@ impl<T: Transport> TelegramHost<T> {
     /// projection is not a playable hand.) It also fixes an incoherence: a group keyboard used to
     /// be whichever member pressed last: now the shared message shows one shared board with one
     /// shared keyboard, and the executor stays the sole referee of what any presser may land.
-    fn present_offering(&mut self, key: &str, sid: &SessionId, viewer: &DreggIdentity) {
+    ///
+    /// **Returns why NOTHING was painted**, or `None` when a message really went out. Every exit
+    /// from this function used to be a bare `return`, so a surface that could not be projected (a
+    /// game whose epoch generation is unrecoverable) or could not be sent (over Telegram's 4096
+    /// characters, a callback over its 64-byte ceiling, a Bot API error) left the chat with no
+    /// message and the caller with no idea — `open` still answered `Ok` and the user saw silence.
+    fn present_offering(
+        &mut self,
+        key: &str,
+        sid: &SessionId,
+        viewer: &DreggIdentity,
+    ) -> Option<String> {
         let Some((chat_id, topic)) = TelegramFrontend::<T>::chat_of(sid) else {
-            return;
+            return Some(format!("{} is not a telegram chat session", sid.0));
         };
         let shared = ChatKind::classify(chat_id, topic).is_collective();
         // `run_offering` already selects an RPG player's own host. That does NOT make a group
@@ -1225,11 +1335,15 @@ impl<T: Transport> TelegramHost<T> {
         self.armed.remove(&surface_sid);
         let projection = if game_kind(key).is_some() {
             let Ok(reference) = self.game_epochs.bound_session(key, sid) else {
-                return;
+                return Some(format!(
+                    "{key}'s durable routing epoch could not be bound for this chat"
+                ));
             };
             let incarnation = self.game_epochs.host_incarnation();
             let Ok(generation) = self.game_epochs.current_generation(key, sid) else {
-                return;
+                return Some(format!(
+                    "{key}'s current game generation could not be recovered for this chat"
+                ));
             };
             let game_audience = if shared {
                 GameAudience::Shared
@@ -1295,24 +1409,41 @@ impl<T: Transport> TelegramHost<T> {
             // surplus guide messages instead of leaving stale upload instructions behind.
             self.frontend
                 .present_companion_pages(&surface_sid, OPERATION_GUIDE_SLOT, &guide_pages);
-            if let Some(callbacks) = callbacks {
-                self.frontend.present_with_callback_data(
+            // The FALLIBLE present, so a message that never went out is REPORTED rather than
+            // swallowed into `last_send_error` (which no caller read).
+            let sent = if let Some(callbacks) = callbacks {
+                self.frontend.present_result_with_callback_data(
                     &surface_sid,
                     &projection.surface,
                     &projection.actions,
                     &callbacks,
                     &controls,
-                );
+                )
             } else {
-                self.frontend.present_with(
+                self.frontend.present_result_with(
                     &surface_sid,
                     &projection.surface,
                     &projection.actions,
                     &controls,
-                );
-            }
+                )
+            };
+            // The session IS open either way, so the chat stays bound to it — a retry (`/open`,
+            // a press) then re-paints instead of reporting "no session".
             self.active.insert(sid.clone(), key.to_string());
+            sent.err().map(|e| e.to_string())
+        } else {
+            Some(format!(
+                "{key} produced no surface to paint here (no live session for this chat, or its \
+                 view could not be projected)"
+            ))
         }
+    }
+
+    /// **Why the last open/advance painted NOTHING**, taken (cleared) by the caller. `None` means
+    /// the surface really was sent. The command surface answers with this instead of silence —
+    /// see [`present_offering`](Self::present_offering).
+    pub fn take_paint_failure(&mut self) -> Option<String> {
+        self.last_paint_failure.take()
     }
 
     /// Resolve and cheaply preflight an ordinary Telegram document operation.
@@ -1525,7 +1656,7 @@ impl<T: Transport> TelegramHost<T> {
                 } else {
                     None
                 };
-                self.present_offering(&key, &session, &actor);
+                self.last_paint_failure = self.present_offering(&key, &session, &actor);
                 if shared {
                     Ok(match public_receipt {
                         Some(receipt) => TelegramAppliedOperation::SharedGame(receipt),
@@ -1641,9 +1772,28 @@ impl<T: Transport> TelegramHost<T> {
                 MessageId(message_id),
             ) {
                 Some(surface) => surface.clone(),
-                // A real callback names the message it came from. Unknown messages (including a
-                // companion proof guide) must never fall through to the latest game keyboard.
-                None => return HostPress::NotOffered,
+                // A press on a KNOWN companion page (a proof-operation guide) is refused
+                // outright: a guide is never an action surface, and must never fall through to
+                // the chat's latest game keyboard.
+                None if self.frontend.is_companion_message(
+                    ev.chat_id,
+                    ev.message_thread_id,
+                    MessageId(message_id),
+                ) =>
+                {
+                    return HostPress::NotOffered;
+                }
+                // A message this PROCESS has never presented. After a restart that is EVERY
+                // button in the chat — the message index is in-memory and the surfaces were
+                // never repainted. Refusing here made every pre-restart button permanently dead
+                // and made the documented restart-resume path (which only fires on `NoSession`)
+                // unreachable for real presses, since a real press always names its message.
+                // Fall back to the chat's live surface if this process has one, else report
+                // `NoSession` so the caller can resume the durable session and re-present.
+                None => match self.frontend.latest_surface(&sid) {
+                    Some(surface) => surface.clone(),
+                    None => return HostPress::NoSession,
+                },
             },
             None => match self.frontend.latest_surface(&sid) {
                 Some(surface) => surface.clone(),
@@ -1790,7 +1940,8 @@ impl<T: Transport> TelegramHost<T> {
                 return HostPress::NotOffered;
             };
             if action.wants_text && action.text.is_none() {
-                self.armed.insert(surface_sid, action.clone());
+                self.armed
+                    .insert(surface_sid, ArmedText::now(action.clone()));
                 return HostPress::TextArmed { key, action };
             }
             let incarnation = self.game_epochs.host_incarnation();
@@ -1813,7 +1964,7 @@ impl<T: Transport> TelegramHost<T> {
             return match execution {
                 Ok(execution) => {
                     let _ = self.remember_public_game_result(&key, &sid, &execution.result);
-                    self.present_offering(&key, &sid, &viewer);
+                    self.last_paint_failure = self.present_offering(&key, &sid, &viewer);
                     HostPress::Advanced {
                         key,
                         outcome: execution.outcome,
@@ -1851,7 +2002,7 @@ impl<T: Transport> TelegramHost<T> {
         });
         if let Some(text_affordance) = text_affordance {
             self.armed
-                .insert(surface_sid.clone(), text_affordance.clone());
+                .insert(surface_sid.clone(), ArmedText::now(text_affordance.clone()));
             return HostPress::TextArmed {
                 key,
                 action: text_affordance,
@@ -1872,7 +2023,7 @@ impl<T: Transport> TelegramHost<T> {
             Some(outcome) => {
                 // Re-present the (possibly-advanced) committed state so the next press resolves
                 // against the current surface, projected for the pressing user.
-                self.present_offering(&key, &sid, &viewer);
+                self.last_paint_failure = self.present_offering(&key, &sid, &viewer);
                 HostPress::Advanced { key, outcome }
             }
             // The host had no such session (should not happen: `active` implies a live session).
@@ -1903,8 +2054,14 @@ impl<T: Transport> TelegramHost<T> {
         };
         let (chat_id, topic) = TelegramFrontend::<T>::chat_of(sid)?;
         let surface_sid = TelegramFrontend::<T>::surface_id(chat_id, topic, &key);
-        // The chat must have ARMED a text affordance on THAT surface (a deliberate press).
+        // The chat must have ARMED a text affordance on THAT surface (a deliberate press) …
         let armed = self.armed.get(&surface_sid)?;
+        // … recently enough. An arm older than [`TEXT_ARM_TTL`] has been forgotten by whoever
+        // made it; honouring it would swallow an unrelated message hours later into an offering.
+        if armed.expired() {
+            return None;
+        }
+        let armed = &armed.action;
         // Belt-and-suspenders: the armed affordance must still be the presented surface's own
         // (a stale arm — after a re-present that changed the affordances — is not honoured).
         let slot = self.frontend.session(&surface_sid)?;
@@ -1912,6 +2069,15 @@ impl<T: Transport> TelegramHost<T> {
             .iter()
             .any(|a| a.turn == armed.turn && a.arg == armed.arg && a.wants_text)
             .then(|| armed.clone())
+    }
+
+    /// Backdate every armed free-text slot by `by` — the seam a test uses to drive the
+    /// [`TEXT_ARM_TTL`] expiry without sleeping for fifteen minutes.
+    #[doc(hidden)]
+    pub fn backdate_arms(&mut self, by: std::time::Duration) {
+        for armed in self.armed.values_mut() {
+            armed.at = armed.at.checked_sub(by).unwrap_or(armed.at);
+        }
     }
 
     /// **Route free text into the chat's pending text affordance** — the in-chat driver for a
@@ -2003,7 +2169,7 @@ impl<T: Transport> TelegramHost<T> {
         }
         match outcome {
             Some(outcome) => {
-                self.present_offering(&key, &sid, &viewer);
+                self.last_paint_failure = self.present_offering(&key, &sid, &viewer);
                 HostPress::Advanced { key, outcome }
             }
             None => HostPress::NoSession,
@@ -2021,21 +2187,167 @@ impl<T: Transport> TelegramHost<T> {
     /// exists for the chat. If a chat had MULTIPLE offerings' sessions persisted (it re-opened
     /// across offerings), the first in registry order is chosen — `/open <key>` overrides.
     pub fn resume_chat(&mut self, sid: &SessionId) -> Option<String> {
-        if let Some(k) = self.active.get(sid) {
-            if k != MENU_KEY {
-                return Some(k.clone());
+        self.resume_chat_all(sid, None).into_iter().next()
+    }
+
+    /// **Every durably-resumed offering this chat owns**, rebound to it — the honest form of
+    /// [`resume_chat`](Self::resume_chat).
+    ///
+    /// `resume_chat` used to pick the FIRST open key in the registry's `BTreeMap` order, i.e. the
+    /// alphabetically-first offering the chat ever opened. With `craft` and `doc` both persisted
+    /// for one chat, EVERY post-restart press was rebound to `craft` regardless of which
+    /// message it was pressed on — so a `doc` button routed into `craft`'s keyboard, matched
+    /// nothing, and read as dead. Worse, if that arbitrary winner is a session no affordance can
+    /// advance, the chat is pinned to it across every restart. Resuming ALL of them and letting
+    /// the pressed message pick removes the arbitrary choice entirely.
+    ///
+    /// `viewer` is the acting user's derived identity. It is REQUIRED to find an
+    /// [`is_rpg_key`] session: those live in the presser's own per-identity world
+    /// ([`durable_player_worlds`](crate::runtime::durable_player_worlds) writes them under
+    /// `<dir>/players/<hash>`), which the shared catalog host cannot see at all. Without it, a
+    /// chat whose only durable sessions are RPG surfaces — a `craft`, an `inventory` — resumes
+    /// as EMPTY after a restart and every button in it answers "no session in this chat yet",
+    /// which is strictly worse than the arbitrary rebind it replaced.
+    ///
+    /// The returned keys are in catalog order (shared first, then the viewer's own); the first
+    /// is recorded as the chat's `active` fallback for command-minted presses that name no
+    /// message.
+    pub fn resume_chat_all(
+        &mut self,
+        sid: &SessionId,
+        viewer: Option<&DreggIdentity>,
+    ) -> Vec<String> {
+        let mut keys: Vec<String> = {
+            let s = sid.clone();
+            self.host.run(move |h| {
+                let mut open = Vec::new();
+                for key in h.keys() {
+                    if h.is_open(&key, &s) {
+                        open.push(key);
+                    }
+                }
+                open
+            })
+        };
+        if let Some(viewer) = viewer {
+            let id = viewer.0.clone();
+            let s = sid.clone();
+            let mut mine: Vec<String> = self.players.run(move |worlds| {
+                let world = worlds.host_mut(&id);
+                let mut open = Vec::new();
+                for key in world.keys() {
+                    if world.is_open(&key, &s) {
+                        open.push(key);
+                    }
+                }
+                open
+            });
+            mine.retain(|key| !keys.contains(key));
+            keys.append(&mut mine);
+        }
+        // A game whose durable routing epoch cannot be recovered is not a routable session.
+        keys.retain(|key| {
+            game_kind(key).is_none() || self.game_epochs.current_generation(key, sid).is_ok()
+        });
+        // An already-bound offering stays the chat's fallback (the caller's own `active` choice
+        // wins over catalog order).
+        if let Some(bound) = self
+            .active
+            .get(sid)
+            .filter(|k| k.as_str() != MENU_KEY)
+            .cloned()
+        {
+            if let Some(at) = keys.iter().position(|k| *k == bound) {
+                keys.swap(0, at);
             }
         }
-        let key = {
-            let s = sid.clone();
-            self.host
-                .run(move |h| h.keys().into_iter().find(|k| h.is_open(k, &s)))?
-        };
-        if game_kind(&key).is_some() && self.game_epochs.current_generation(&key, sid).is_err() {
-            return None;
+        if let Some(first) = keys.first() {
+            self.active.insert(sid.clone(), first.clone());
         }
-        self.active.insert(sid.clone(), key.clone());
-        Some(key)
+        keys
+    }
+
+    /// **The always-available escape** (`/cancel`) — unstick a chat WITHOUT discarding anything
+    /// committed.
+    ///
+    /// Drops the chat's presentation state: every live surface, the message-routing index for
+    /// this chat, its companion guide pages, its "latest surface" pointer, its armed free-text
+    /// slot, and its `active` offering. Host sessions and their durable move-logs are untouched —
+    /// `/open <key>` brings any of them straight back, receipts intact. Returns the surface ids
+    /// that were live, so the caller can say what it cleared.
+    ///
+    /// This exists because every previous way out of a wedged chat was implicit: a stale arm was
+    /// cleared only by a re-present, a mis-bound `active` only by a successful open, and a chat
+    /// whose surfaces were all unroutable had no input at all that could fix it.
+    pub fn cancel_chat(&mut self, chat_id: ChatId, topic: Option<i64>) -> Vec<String> {
+        let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let cleared = self.frontend.teardown_chat(&sid);
+        let mut keys: Vec<String> = cleared
+            .iter()
+            .filter_map(|surface| TelegramFrontend::<T>::offering_of(surface))
+            .filter(|key| *key != MENU_KEY)
+            .map(str::to_string)
+            .collect();
+        keys.sort();
+        keys.dedup();
+        for surface in &cleared {
+            self.armed.remove(surface);
+        }
+        // Any arm keyed to this chat's surfaces, including one whose slot was already replaced.
+        self.armed.retain(|surface, _| {
+            TelegramFrontend::<T>::chat_session_of(surface).as_ref() != Some(&sid)
+        });
+        self.active.remove(&sid);
+        keys
+    }
+
+    /// **End `key`'s session in this chat and DISCARD its durable move-log** (`/close <key>`) —
+    /// the destructive escape, for a session that can no longer advance. `Ok(false)` = nothing was
+    /// open under that key; `Err` = the close was attempted and something refused, which the
+    /// command surface must say rather than reporting "nothing was open".
+    /// [`cancel_chat`](Self::cancel_chat) is the non-destructive one; this is the only path that
+    /// forgets committed history, and the command surface requires the key explicitly so it
+    /// cannot be fired by reflex.
+    ///
+    /// A CATALOG GAME routes through [`close_game`](Self::close_game), which additionally RETIRES
+    /// the session's epoch generation. Closing a game without that leaves the epoch ledger holding
+    /// an `active` generation for an address with no session behind it — an escape hatch has no
+    /// business leaving new inconsistency behind it.
+    pub fn close_offering(
+        &mut self,
+        key: &str,
+        chat_id: ChatId,
+        topic: Option<i64>,
+        uid: TelegramUserId,
+    ) -> Result<bool, String> {
+        if game_kind(key).is_some() {
+            let closed = self.close_game(key, chat_id, topic, uid)?;
+            if closed {
+                // `close_game` drops the epoch + attribution state; the SURFACE is this escape's
+                // own concern (a dead keyboard left in the chat is half the wedge).
+                self.frontend
+                    .teardown(&TelegramFrontend::<T>::surface_id(chat_id, topic, key));
+            }
+            return Ok(closed);
+        }
+        let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let viewer = self.frontend.identity(uid);
+        let closed = {
+            let k = key.to_string();
+            let s = sid.clone();
+            self.run_offering(key, &viewer, move |h| h.close(&k, &s))
+        };
+        if closed {
+            let surface = TelegramFrontend::<T>::surface_id(chat_id, topic, key);
+            self.frontend.teardown(&surface);
+            self.armed.remove(&surface);
+            self.public_game_receipts
+                .remove(&(key.to_string(), sid.clone()));
+            if self.active.get(&sid).map(String::as_str) == Some(key) {
+                self.active.remove(&sid);
+            }
+        }
+        Ok(closed)
     }
 
     /// Close one addressed game and retire its current generation.
@@ -2265,6 +2577,82 @@ fn operation_guide_pages(
 /// Descent REFUSES to open rather than serving the pre-computable seed-derived provenance root.
 pub fn telegram_default_host(council_members: Vec<[u8; 32]>) -> OfferingHost {
     dreggnet_catalog::full_catalog_host(&CatalogConfig::live(council_members))
+        .with_policy(resolve_telegram_policy(), SystemClock)
+}
+
+/// Env knob: the cap on LIVE game sessions per offering the Telegram host holds. Overrides
+/// [`DEFAULT_TELEGRAM_MAX_SESSIONS`]. See [`resolve_telegram_policy`].
+pub const TELEGRAM_MAX_SESSIONS_ENV: &str = "DREGGNET_TELEGRAM_MAX_SESSIONS";
+/// Env knob: idle seconds before the TTL sweep evicts a Telegram game session. Overrides
+/// [`DEFAULT_TELEGRAM_SESSION_TTL_SECS`].
+pub const TELEGRAM_SESSION_TTL_ENV: &str = "DREGGNET_TELEGRAM_SESSION_TTL_SECS";
+/// Env knob: live sessions ONE attributed Telegram opener may hold fresh-minted. Overrides
+/// [`DEFAULT_TELEGRAM_OPENS_PER_USER`].
+pub const TELEGRAM_OPENS_PER_USER_ENV: &str = "DREGGNET_TELEGRAM_OPENS_PER_USER";
+
+/// Default cap on live sessions per offering (per `(offering, chat)` mint). Bounds the durable
+/// session count — and thus memory + disk — under a flood of chats opening games.
+pub const DEFAULT_TELEGRAM_MAX_SESSIONS: usize = 256;
+/// Default idle TTL: a session untouched this long is swept (and, with the bot's durable store
+/// attached, resumes losslessly from its move-log on the next touch).
+pub const DEFAULT_TELEGRAM_SESSION_TTL_SECS: u64 = 3_600;
+/// Default per-opener fresh-mint quota (bites only on the attributed-open path).
+pub const DEFAULT_TELEGRAM_OPENS_PER_USER: usize = 32;
+
+/// **Build the Telegram [`SessionPolicy`] from an env-shaped getter** — the pure seam
+/// [`resolve_telegram_policy`] feeds real env vars through; tests feed fixed pairs through (process
+/// env is global — tests must not mutate it). Mirrors `dreggnet_web::web_policy_from`, with ONE
+/// deliberate difference: the web knobs fall back to `None` (unbounded), but every Telegram knob
+/// falls back to a SANE BOUNDED DEFAULT. The Telegram host must never be born unbounded — an
+/// anonymous user opening games across chats would otherwise mint durable sessions (memory AND
+/// disk) without limit ([`admit_fresh_open`](dreggnet_offerings::OfferingHost) skips every gate on
+/// an unbounded policy). An env var only overrides its default; an unparseable value warns and
+/// keeps the default (never silently unbounds a gate).
+pub fn telegram_policy_from(get: impl Fn(&str) -> Option<String>) -> SessionPolicy {
+    fn parse_or<T: std::str::FromStr>(name: &str, v: Option<String>, default: T) -> T {
+        match v {
+            None => default,
+            Some(v) => match v.parse::<T>() {
+                Ok(n) => n,
+                Err(_) => {
+                    eprintln!(
+                        "WARN: unparseable session-policy env {name}={v:?} — keeping the bounded default"
+                    );
+                    default
+                }
+            },
+        }
+    }
+    SessionPolicy {
+        max_sessions_per_offering: Some(parse_or(
+            TELEGRAM_MAX_SESSIONS_ENV,
+            get(TELEGRAM_MAX_SESSIONS_ENV),
+            DEFAULT_TELEGRAM_MAX_SESSIONS,
+        )),
+        max_opens_per_actor: Some(parse_or(
+            TELEGRAM_OPENS_PER_USER_ENV,
+            get(TELEGRAM_OPENS_PER_USER_ENV),
+            DEFAULT_TELEGRAM_OPENS_PER_USER,
+        )),
+        idle_ttl_secs: Some(parse_or(
+            TELEGRAM_SESSION_TTL_ENV,
+            get(TELEGRAM_SESSION_TTL_ENV),
+            DEFAULT_TELEGRAM_SESSION_TTL_SECS,
+        )),
+        min_open_interval_secs: None,
+        // Telegram sessions are ephemeral WITHOUT a durable store (a restart re-derives the
+        // deterministic genesis anyway), so under the cap/TTL shedding the coldest beats unbounded
+        // growth. WITH the bot's `FileResumeStore` attached, eviction stays LOSSLESS regardless
+        // (the move-log resumes on next touch) and this flag is moot — the `evict`/sweep paths
+        // take the store branch. Mirrors `dreggnet_web`'s store-less lossy-eviction reasoning.
+        evict_unpersisted: true,
+    }
+}
+
+/// [`telegram_policy_from`] over the real process environment — the deployed Telegram host's
+/// bounded session-lifecycle policy.
+pub fn resolve_telegram_policy() -> SessionPolicy {
+    telegram_policy_from(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
 }
 
 /// **Arm (and re-arm) the day this bot's Descent mints relics under** — fetch today's drand

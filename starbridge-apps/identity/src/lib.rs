@@ -1430,13 +1430,13 @@ mod tests {
         assert_eq!(action.effects.len(), 3);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, ISSUANCE_COUNTER_SLOT);
+                assert_eq!(*index, ISSUANCE_COUNTER_SLOT as u64);
                 assert_eq!(*value, field_from_u64(1));
             }
             other => panic!("expected SetField on counter slot, got {other:?}"),
         }
         match &action.effects[1] {
-            Effect::SetField { index, .. } => assert_eq!(*index, REVOCATION_ROOT_SLOT),
+            Effect::SetField { index, .. } => assert_eq!(*index, REVOCATION_ROOT_SLOT as u64),
             other => panic!("expected SetField on revocation slot, got {other:?}"),
         }
         assert!(matches!(&action.effects[2], Effect::EmitEvent { .. }));
@@ -1452,7 +1452,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { value, index, .. } => {
-                assert_eq!(*index, REVOCATION_ROOT_SLOT);
+                assert_eq!(*index, REVOCATION_ROOT_SLOT as u64);
                 assert_eq!(*value, new_root);
             }
             other => panic!("expected SetField, got {other:?}"),

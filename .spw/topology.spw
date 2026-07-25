@@ -1,0 +1,51 @@
+# Topology
+#
+# Subroot topology for the breadstuffs hypersemantic tree.
+
+#>spw_topology
+#:topology #!routing
+#:layer #!pragmatics
+
+^"intent"{
+ ~#goal: "Make subroot routing deterministic for agents, caches, and references over the mirror."
+}
+
+^subroot[topo]{
+ path: @topo
+ subtree: [@topo/polymap.spw, @topo/strata.spw, @topo/lanes.spw, @topo/trust.spw, @topo/valence.spw, @topo/laws.spw, @topo/horizon.spw, @topo/praxis.spw, @topo/chronicle.spw, @topo/shadow.spw, @topo/gauge.spw]
+ subagent: explorer
+ cache_key_prefix: topo
+ topology_refs: [@topo/polymap.spw]
+}
+
+^subroot[regions]{
+ path: @regions
+ subtree: [@regions/kernel.spw, @regions/metatheory.spw, @regions/guardians.spw, @regions/settlement.spw, @regions/deos.spw, @regions/mesh.spw, @regions/dreggnet.spw, @regions/intellect.spw, @regions/fhegg.spw, @regions/polis.spw]
+ subagent: explorer
+ cache_key_prefix: regions
+ topology_refs: [@spw/index.spw]
+}
+
+^subroot[concepts]{
+ path: @concepts
+ subtree: [@concepts/index.spw]
+ subagent: worker
+ cache_key_prefix: concepts
+ topology_refs: [@concepts/index.spw]
+}
+
+^subroot[system]{
+ path: @system
+ subtree: [@system/notation.spw, @system/calculus.spw, @system/turn.spw, @system/production.spw]
+ subagent: worker
+ cache_key_prefix: system
+ topology_refs: [@system/notation.spw]
+}
+
+^subroot[lenses]{
+ path: @lenses
+ subtree: [@lenses/summon.spw, @lenses/hoardlight.spw]
+ subagent: awaiter
+ cache_key_prefix: lenses
+ topology_refs: [@spw/index.spw]
+}

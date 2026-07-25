@@ -40,6 +40,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.introduceA
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitIntroduce
 
@@ -682,29 +683,58 @@ theorem introduce_runnable_full_sound (preRoots : SysRoots)
   runnable_full_sound (introduceRunnableSpec preRoots) hash env pre post postRoots
     hrow ⟨henc, hroots⟩ hgatesat
 
-/-- **`introduce_runnable_rejects_root_tamper_or_collides` — the side-table anti-ghost for `introduce`.**
-Two wide introduce rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose
-side-table sub-blocks DIFFER at some index exhibit a genuine collision of the deployed sponge — on the
-state block (`WideColl`) or on the ordered root list (`RootsColl`). So such a pair is UNSAT unless the
-prover holds a sponge collision: the 8 side-table roots are bound by the runnable introduce commitment.
+/-- ⚑ **WHAT CHANGED AND WHY (the reduction that replaces the deleted disjunction).** This section
+used to export `introduce_runnable_rejects_root_tamper_or_collides`, concluding
+`WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. That form is TRUE of the deployed sponge — but
+UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the disjunction is satisfiable through
+its collision branch WITHOUT the binding ever holding. It quantified over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the tamper is a
+first-class `Game` at `introduce`'s OWN wide descriptor, the extractor is a MAP OF ADVERSARIES (the
+reduction-internal witness), and the conclusions are (a) negligibility under the DEPLOYED sponge's
+collision floor `HashCRHardQuant (spongeFamily D) Eff`, `hEff` in the open, both poles priced
+(`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`), and (b) the DISCHARGED keyed-ROM form on
+the PROVED birthday floor (`keyedRom_hard`) — NO floor hypothesis — in the LABELLED random-oracle
+model of `EffectVmRowCommitReduction` §5's header (the sampled `Fin (2 ^ l)` digest is the
+modelling step; no `l` is the deployed ~31-bit felt). The ROM commitment layer carries no
+descriptor; `introduce`'s per-effect circuit content (`satisfiedVm` at
+`introduceVmDescriptorWide`) lives in the `_advantage_bound` form. -/
+def introduceWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := introduceVmDescriptorWide
+  usesWideSites := rfl
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
-so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
-sponge. -/
-theorem introduce_runnable_rejects_root_tamper_or_collides (preRoots : SysRoots)
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash introduceVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash introduceVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (introduceRunnableSpec preRoots) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `introduce_rejects_root_tamper_advantage_bound` — the side-table anti-ghost for
+`introduce`, REDUCED.** An efficient adversary cannot keep the published `NEW_COMMIT` while
+tampering a side-table root of a satisfying wide introduce row, except with negligible
+probability. Replaces the deleted `introduce_runnable_rejects_root_tamper_or_collides`. -/
+theorem introduce_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D introduceWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D introduceWideRowSpec (rootTamperToWide D introduceWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D introduceWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D introduceWideRowSpec Eff A hEff hCR
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑ `introduce_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor: a
+query-bounded adversary cannot keep the published nested commitment while tampering a side-table
+root. -/
+theorem introduce_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-- **`introduceWide_realizes` — NON-VACUITY (witness TRUE).** `goodIntroduceRow` (the passthrough+tick
 reference) decodes to a real introduce cell transition that, with frozen roots, inhabits
@@ -734,7 +764,8 @@ theorem introduceWide_clause_not_trivial :
 
 #assert_axioms introduceWide_constraints_eq
 #assert_axioms introduce_runnable_full_sound
-#assert_axioms introduce_runnable_rejects_root_tamper_or_collides
+#assert_axioms introduce_rejects_root_tamper_advantage_bound
+#assert_axioms introduce_rejects_root_tamper_rom
 #assert_axioms introduceWide_realizes
 #assert_axioms introduceWide_clause_not_trivial
 

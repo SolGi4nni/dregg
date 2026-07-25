@@ -632,3 +632,62 @@ fn token_macaroon_cross_cell_key_ref_refuses() {
     });
     assert_eq!(slot0(&ledger, &cid), Some(PRISTINE));
 }
+
+// ---------------------------------------------------------------------------
+// Token: reject — a cell-scoped macaroon minted for the ACTION'S OWN TARGET.
+//
+// FALSIFIER for the class "a secret derived from things that are not secret".
+// `derive_cell_macaroon_secret(federation_id, cell)` is a BLAKE3 KDF over two
+// PUBLIC values: the federation id (served by the node's own public endpoints)
+// and the target cell id (the thing the caller is naming in the action). So the
+// "root secret" backing this HMAC is a value every reader can recompute, and
+// `Authorization::Token` returns Ok(()) BEFORE the target cell's permission
+// lattice is consulted. The cross-cell key_ref check
+// (`token_macaroon_cross_cell_key_ref_refuses`) never covered the same-cell
+// case, which is the one an attacker uses.
+//
+// This must be a refusal that names the derivation, not a refusal that happens
+// to fall out of caveat evaluation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn token_macaroon_same_cell_public_derivation_refuses() {
+    use dregg_token::MacaroonToken;
+    use dregg_token::traits::AuthToken;
+
+    let method = [12u8; 32];
+    let (mut ledger, cid) = token_world(29, None);
+
+    // Everything the attacker needs is public: the federation id and the cell
+    // they are attacking. No secret is held.
+    let public_only_secret = dregg_turn::derive_cell_macaroon_secret(&FED, &cid);
+    let mac = MacaroonToken::mint(public_only_secret, b"kid", "dregg");
+    let encoded = mac.to_encoded().unwrap().into_bytes();
+
+    let executor = exec_at(100);
+    let auth = Authorization::Token {
+        encoded,
+        key_ref: TokenKeyRef::CellScopedMacaroon { cell: cid },
+        discharges: vec![],
+    };
+    let result = exec_action(
+        &executor,
+        &mut ledger,
+        cid,
+        0,
+        action_for(cid, method, auth),
+        None,
+    );
+    assert_rejected_with(
+        &result,
+        "same-cell macaroon over a public derivation",
+        |e| {
+            matches!(
+                e,
+                TurnError::TokenAuthInvalid { reason }
+                    if reason.contains("public") || reason.contains("not a secret")
+            )
+        },
+    );
+    assert_eq!(slot0(&ledger, &cid), Some(PRISTINE));
+}

@@ -124,7 +124,7 @@ fn make_transfer_turn(
 }
 
 /// Create a simple turn that sets a field on the agent's cell.
-fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64) -> Turn {
+fn make_set_field_turn(agent: CellId, index: u64, value: [u8; 32], nonce: u64) -> Turn {
     let mut forest = CallForest::new();
     let action = Action {
         target: agent,

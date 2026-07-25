@@ -105,6 +105,11 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # The recursion/shielded integration tests (moved from circuit/tests/) build real
 # turns. dev-dep cycle (turn → circuit-prove) is permitted by Cargo.
 dregg-turn = { path = "../turn" }
+# The rotated/welded leg MINTS the IVC + apex-shrink tests drive
+# (`rotation_witness::mint_*_participant_leg`) moved out of `dregg-turn`'s deleted
+# `prover` feature into this crate in PR3. Same permitted dev-dep cycle
+# (turn-prover -> circuit-prove), dev-scoped: the library build is untouched.
+dregg-turn-prover = { path = "../turn-prover" }
 curve25519-dalek = { version = "4", features = ["alloc"] }
 getrandom = { workspace = true }
 serde_json = { workspace = true }

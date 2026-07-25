@@ -55,19 +55,42 @@
 //!   [`install_code_owned_exact_fnsp_v3_verifier`]; the acceptance TOKEN and the
 //!   executor admission slot are unconditional core state.
 //!
-//! Still gated behind `dregg-turn`'s residual `prover` feature (PR3): the
-//! rotation-witness producers, the recursive-bundle producers,
-//! `mint_transfer_proven_receipt`, and `Turn::with_custom_program_proofs`.
+//! # What PR3 added — and the DELETION it enabled
+//!
+//! The last four prover surfaces moved here, after which `dregg-turn`'s `prover`
+//! feature and its `dregg-circuit-prove` dependency edge were **deleted**: core
+//! `dregg-turn` now links no prove crate at all and carries zero
+//! `#[cfg(feature = "prover")]` sites.
+//!
+//! - [`rotation_witness`] (Group A) — the seven per-turn rotated/welded leg
+//!   MINTING recipes. They ride `dregg_turn::rotation_witness`'s public
+//!   derivation (`produce`, `empty_revoked_root_8`, `sender_membership_teeth`)
+//!   plus the `umem` projection module; nothing private was exposed.
+//! - [`recursive_bundle`] (Group C) — the Golden-Vision recursive compression
+//!   PRODUCER. The `WitnessedReceipt` / `WitnessBundle` / `RecursiveProofVariant`
+//!   TYPES stay in core; the producer reaches core through
+//!   [`install_recursive_witness_producer`], and nothing installed ⇒ no recursive
+//!   variant attached (fail-closed by absence).
+//! - [`proven_receipt`] — `mint_transfer_proven_receipt`, the shared single
+//!   proving recipe for a genuine `EffectVmProof`. The `ProvenReceipt` type and
+//!   the whole `TurnProven` RESOLVER stay in core.
+//! - [`custom_program_proofs`] — `Turn::with_custom_program_proofs`, now the
+//!   [`TurnCustomProofsExt`] extension trait (the `custom_program_proofs` FIELD
+//!   and the `CustomProgramProof` wire type stay in core).
 
 use std::sync::Arc;
 
 pub mod aggregate_bilateral_prover;
+pub mod custom_program_proofs;
 pub mod descent_census_custom;
 pub mod faithful_note_spend_exact_v3_verifier;
 pub mod faithful_note_spend_verifier;
 pub mod private_graph_rewrite_custom;
 pub mod private_graph_rewrite_history;
 pub mod private_preference_custom;
+pub mod proven_receipt;
+pub mod recursive_bundle;
+pub mod rotation_witness;
 pub mod shielded_transfer_verifier;
 
 pub use aggregate_bilateral_prover::{
@@ -75,8 +98,13 @@ pub use aggregate_bilateral_prover::{
     prove_aggregated_tree, prove_cross_side_existence, verify_aggregated_bundle,
     verify_aggregated_tree, verify_cross_side_existence,
 };
+pub use custom_program_proofs::TurnCustomProofsExt;
 pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
 pub use faithful_note_spend_verifier::FaithfulNoteSpendVerifier;
+pub use proven_receipt::mint_transfer_proven_receipt;
+pub use recursive_bundle::{
+    CircuitRecursiveWitnessProducer, from_components_strict_recursive, produce_recursive_variant,
+};
 pub use shielded_transfer_verifier::CircuitShieldedTransferVerifier;
 
 /// Install the code-owned exact FNSP-v3 verifier as this process's ONE proof
@@ -93,4 +121,18 @@ pub fn install_code_owned_exact_fnsp_v3_verifier()
     dregg_turn::install_exact_fnsp_v3_proof_authority(Arc::new(
         FaithfulNoteSpendExactV3Verifier::new(),
     ))
+}
+
+/// Install the Golden-Vision recursive-compression producer for this process, so
+/// `WitnessedReceipt::from_components_with_compression(.., recursive_compress =
+/// true)` actually attaches a [`RecursiveProofVariant`](dregg_turn::witnessed_receipt::RecursiveProofVariant).
+///
+/// Install-once, like the exact-v3 proof authority: a second call returns `Err`
+/// and changes nothing. A process that never calls this simply emits
+/// Silver-Vision (inline-trace) receipts — the identical behavior to the deleted
+/// `#[cfg(not(feature = "prover"))]` build. Callers that REQUIRE the Golden form
+/// use [`from_components_strict_recursive`], which needs no installation.
+pub fn install_recursive_witness_producer()
+-> Result<(), dregg_turn::RecursiveWitnessProducerAlreadyInstalled> {
+    dregg_turn::install_recursive_witness_producer(Arc::new(CircuitRecursiveWitnessProducer::new()))
 }

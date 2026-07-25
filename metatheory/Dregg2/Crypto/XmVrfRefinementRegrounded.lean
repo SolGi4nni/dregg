@@ -42,6 +42,7 @@ fairness leg is NOT touched — its floor is the PRG, not the vacuous injective 
 uniqueness (`MSISHard`) is the sibling `VrfRegrounded`. Stays in the XM-VRF subtree.
 -/
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Crypto.XmVrfRefinement
 
 namespace Dregg2.Crypto.XmVrfRefinementRegrounded
@@ -53,8 +54,13 @@ open Dregg2.Circuit.HashFloorHonesty
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
-   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
-   hashAnsSizeOf openAnsSizeOf crEquivocator)
+   hermine_commitment_binding_advantage_bound crEquivocator)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily fixedTagCarrier romOpenGame RomOpenEff rom_open_binds romOpen_forger_excluded
+   romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
    collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
@@ -139,30 +145,131 @@ theorem xm_node_binding_advantage_bound {Epoch Output Rand Pre Digest : Type}
     Negl (gameAdv (xmNodeGame X) A) :=
   hermine_commitment_binding_advantage_bound (xmVrfNodeFamily X) Eff A hEff hD
 
-/-- **⚑ THE LEAF LEG'S EFFICIENCY OBLIGATION DISCHARGED.** A seat double-claimer that is EFFICIENT at the
-game's own answer encoding yields a collision finder that is STILL efficient (the extractor DISCARDS the
-published digest, growth `(1, 0)`), so the floor at `Eff := IsPolyTime` applies to IT. Per-site inputs:
-the reshaper's declared work `(cw, bw)` and the deployment's own pre-image/digest encodings. -/
-theorem xm_leaf_uniqueness_from_polyTime {Epoch Output Rand Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
-    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
-    (A : Adversary (xmLeafGame X))
-    (hA : IsPolyTime (openAnsSizeOf (xmVrfLeafFamily X) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (xmVrfLeafFamily X)
-      (IsPolyTime (hashAnsSizeOf (xmVrfLeafFamily X) szIn))) :
-    Negl (gameAdv (xmLeafGame X) A) :=
-  hermine_commitment_binding_from_polyTime (xmVrfLeafFamily X) szIn szOut A hA cw bw hD
+/-! ## §2R — ⚑⚑ THE DISCHARGED SUCCESSOR: both legs on the PROVED keyed-ROM floor, ONE oracle.
 
-/-- **⚑ THE NODE LEG'S EFFICIENCY OBLIGATION DISCHARGED.** Same, at the node hash. -/
-theorem xm_node_binding_from_polyTime {Epoch Output Rand Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : XmVrf Epoch Output Rand Pre Digest)
-    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
-    (A : Adversary (xmNodeGame X))
-    (hA : IsPolyTime (openAnsSizeOf (xmVrfNodeFamily X) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (xmVrfNodeFamily X)
-      (IsPolyTime (hashAnsSizeOf (xmVrfNodeFamily X) szIn))) :
-    Negl (gameAdv (xmNodeGame X) A) :=
-  hermine_commitment_binding_from_polyTime (xmVrfNodeFamily X) szIn szOut A hA cw bw hD
+⚑ **WHAT WAS DELETED HERE, AND WHY.** `xm_leaf_uniqueness_from_polyTime` and
+`xm_node_binding_from_polyTime` discharged `Eff` at `CostAdversary.IsPolyTime`, whose floor
+`HashCRHardQuant … (IsPolyTime …)` is REFUTED at deployed parameters
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`: `IsPolyTime` prices answer
+SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins with probability
+`1`). BOTH ARE DELETED, and replaced by the keyed-ROM successors below.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The deployed role-separated BLAKE3 is idealised as
+ONE SAMPLED oracle `H : Role × Pre → Fin (2 ^ l)` over the (finite, truncated-deployed-shape) framed
+pre-image space — the standard ROM idealisation at an ASYMPTOTIC digest width, a deliberate labelled
+modelling step, NOT a derivation about the fixed public function. Both legs run over the SAME sampled
+oracle, domain-separated by the deployed `Role` tag — the leaf carrier pins `Role.leaf`, the node
+carrier pins `Role.node` (`fixedTagCarrier`: the deployed prover never lets the adversary move the
+role). What the move buys: the floor under both bindings is `KeyedRomFloor.keyedRom_hard` (the
+birthday bound, PROVED) where the deleted forms carried a refuted hypothesis. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.XmVrfRefinement (Role)
+
+/-- `Role` is finite (two roles) — the flat family's key-space obligation, discharged once. -/
+def roleFin : Fintype Role :=
+  Fintype.ofList [Role.leaf, Role.node] (fun r => by cases r <;> simp)
+
+variable (Pre : Type) [Fintype Pre] [DecidableEq Pre] [Nonempty Pre]
+
+/-- **THE XM-VRF KEYED-ROM FAMILY** — ONE oracle for both legs, keyed by the DEPLOYED role tag
+(`Role.leaf` / `Role.node`, the same domain separation the prover absorbs), ideal `λ`-bit digests. -/
+def xmRomFamily : KeyedRomFamily :=
+  flatFamily Role roleFin inferInstance ⟨Role.leaf⟩ (fun _ => Pre)
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The family's width obligation, closed by construction. -/
+theorem xmRomFamily_card_R (l : ℕ) :
+    letI := (xmRomFamily Pre).rFin l
+    Fintype.card ((xmRomFamily Pre).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE LEAF CARRIER** — commitment `H (Role.leaf, p)`: the role is PINNED in the encoding (the
+deployed leaf layer never absorbs under another role), the payload is the framed
+`(epoch, output, rand)` pre-image itself, injective on the nose. -/
+def xmLeafRomCarrier : RomCarrier (xmRomFamily Pre) :=
+  fixedTagCarrier _ (fun _ => Role.leaf) (fun _ => Unit) (fun _ => Pre) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- **THE NODE CARRIER** — commitment `H (Role.node, p)`: same oracle, the OTHER pinned role. -/
+def xmNodeRomCarrier : RomCarrier (xmRomFamily Pre) :=
+  fixedTagCarrier _ (fun _ => Role.node) (fun _ => Unit) (fun _ => Pre) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- The seat double-claim at the sampled oracle: a PUBLISHED leaf digest opened by two DISTINCT framed
+pre-images. -/
+abbrev xmLeafRomGame : Game := romOpenGame (xmRomFamily Pre) (xmLeafRomCarrier Pre)
+
+/-- The Merkle-node equivocation at the sampled oracle: a PUBLISHED node opened by two DISTINCT framed
+child pairs. -/
+abbrev xmNodeRomGame : Game := romOpenGame (xmRomFamily Pre) (xmNodeRomCarrier Pre)
+
+/-- **THE DEPLOYED DOUBLE-CLAIM IS A WIN** — two distinct framed pre-images whose `Role.leaf`-tagged
+oracle digests both equal the published leaf digest are a win of the leaf game. -/
+theorem xmLeafRom_forgery_is_break (l : ℕ) (H : (xmLeafRomGame Pre).Inst l) (d : Fin (2 ^ l))
+    {p p' : Pre} (hne : p ≠ p') (h1 : H (Role.leaf, p) = d) (h2 : H (Role.leaf, p') = d) :
+    (xmLeafRomGame Pre).wins l H (d, (), p, p') :=
+  ⟨hne, h1, h2⟩
+
+/-- **THE DEPLOYED NODE EQUIVOCATION IS A WIN** — same, at the pinned `Role.node`. -/
+theorem xmNodeRom_forgery_is_break (l : ℕ) (H : (xmNodeRomGame Pre).Inst l) (d : Fin (2 ^ l))
+    {p p' : Pre} (hne : p ≠ p') (h1 : H (Role.node, p) = d) (h2 : H (Role.node, p') = d) :
+    (xmNodeRomGame Pre).wins l H (d, (), p, p') :=
+  ⟨hne, h1, h2⟩
+
+/-- **⚑⚑ THE RE-GROUNDED LEAF UNIQUENESS — floor PROVED, nothing refutable carried.** Every
+query-bounded seat double-claimer has NEGLIGIBLE advantage: at most one framed `(epoch, output, rand)`
+opens a published leaf digest except with negligible probability, in the keyed ROM model of the
+header. This is what `xm_leaf_uniqueness_from_polyTime` (DELETED — floor refuted) claimed and could
+not have. -/
+theorem xm_leaf_uniqueness_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (xmLeafRomGame Pre))
+    (hA : RomOpenEff (xmRomFamily Pre) (xmLeafRomCarrier Pre) Q A) :
+    Negl (gameAdv (xmLeafRomGame Pre) A) :=
+  rom_open_binds _ _ Q hQ (xmRomFamily_card_R Pre) A hA
+
+/-- **⚑ THE RE-GROUNDED NODE BINDING** — same floor, same oracle, the node leg. -/
+theorem xm_node_binding_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (xmNodeRomGame Pre))
+    (hA : RomOpenEff (xmRomFamily Pre) (xmNodeRomCarrier Pre) Q A) :
+    Negl (gameAdv (xmNodeRomGame Pre) A) :=
+  rom_open_binds _ _ Q hQ (xmRomFamily_card_R Pre) A hA
+
+/-- **(TOOTH — the counterexample DIES.)** A double-claimer with non-negligible advantage is OUTSIDE
+the query class. -/
+theorem xmLeafRom_nonNegl_forger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (xmLeafRomGame Pre)) (hnn : ¬ Negl (gameAdv (xmLeafRomGame Pre) A)) :
+    ¬ RomOpenEff (xmRomFamily Pre) (xmLeafRomCarrier Pre) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (xmRomFamily_card_R Pre) A hnn
+
+/-- **(TOOTH — admitted, winnable, DEFANGED, at a CLOSED instance.)** At `Pre = Fin 4`, `Q = 2`: the
+`0`-query hardcoded opener is IN the class, wins with POSITIVE probability, and its advantage is
+NEGLIGIBLE — the successor spine elaborates end-to-end at a closed instance. -/
+theorem xmLeafRom_fires :
+    (RomOpenEff (xmRomFamily (Fin 4)) (xmLeafRomCarrier (Fin 4)) (fun _ => 2)
+        (romOpenAdv _ _ (constOpenComp _ (xmLeafRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4)))))
+    ∧ (∀ l, 0 < gameAdv (xmLeafRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (xmLeafRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4)))) l)
+    ∧ Negl (gameAdv (xmLeafRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (xmLeafRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4))))) := by
+  refine ⟨constOpen_in_eff _ _ _ _ _ _ _,
+    fun l => constOpen_gameAdv_pos _ _ _ _ _ _ l (by show (0 : Fin 4) ≠ 1; decide),
+    constOpen_binds _ _ _ _ _ _ (fun _ => 2) ⟨1, 5, ?_⟩ (xmRomFamily_card_R (Fin 4))⟩
+  filter_upwards [Filter.eventually_ge_atTop 5] with n hn
+  have hn' : (5 : ℝ) ≤ (n : ℝ) := by exact_mod_cast hn
+  rw [abs_of_nonneg (by positivity)]
+  push_cast
+  nlinarith
+
+end RomSuccessor
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the deployed XM-VRF hashes. -/
 
@@ -257,8 +364,13 @@ theorem xm_uniqueness_eff_fires
   xmLeafGame_wins_iff,
   xm_leaf_uniqueness_advantage_bound,
   xm_node_binding_advantage_bound,
-  xm_leaf_uniqueness_from_polyTime,
-  xm_node_binding_from_polyTime,
+  xmRomFamily_card_R,
+  xmLeafRom_forgery_is_break,
+  xmNodeRom_forgery_is_break,
+  xm_leaf_uniqueness_rom,
+  xm_node_binding_rom,
+  xmLeafRom_nonNegl_forger_excluded,
+  xmLeafRom_fires,
   xmVrf_goodCR_leaf_CR,
   xmVrf_goodCR_node_CR,
   xmVrf_badCR_node_not_CR,

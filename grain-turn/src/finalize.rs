@@ -7,7 +7,7 @@
 //! STARK aggregate the Lean-proven verifier decides. This module is the SEAM between
 //! them: [`finalize_grain_turn`] mints the rotated leg(s) for a committed grain turn from
 //! its REAL captured data (pre-cell, effects, post-cell), reusing the SAME recipe the
-//! whole-history demo uses ([`dregg_turn::rotation_witness::mint_rotated_participant_leg`]),
+//! whole-history demo uses ([`dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`]),
 //! so R3 runs on a real driven session instead of a hand-minted fixture.
 //!
 //! ## A grain turn is HETEROGENEOUS → a cohort-run CHAIN, not one leg
@@ -41,7 +41,8 @@ use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_sdk::full_turn_proof::split_into_cohort_runs;
 use dregg_sdk::{AgentCipherclerk, RotationTurnWitness};
-use dregg_turn::rotation_witness::{empty_revoked_root_8, mint_rotated_participant_leg, produce};
+use dregg_turn::rotation_witness::{empty_revoked_root_8, produce};
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 use crate::GrainTurnRecord;
 
@@ -55,7 +56,7 @@ use crate::GrainTurnRecord;
 ///      decode ([`RotationTurnWitness::before_cell_state`]) — so the chain's genesis
 ///      old-root binds the committed pre-cell, not a synthetic zero-field state;
 ///   3. split into maximal homogeneous cohort runs (a grain turn is heterogeneous, so N
-///      runs), and for each run mint one [`dregg_turn::rotation_witness::mint_rotated_participant_leg`]
+///      runs), and for each run mint one [`dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`]
 ///      over the threaded per-run pre-state `s_k`, wrapping it as a [`FinalizedTurn`].
 ///
 /// The returned legs are a continuous sub-chain (`leg_k.new_root == leg_{k+1}.old_root`,

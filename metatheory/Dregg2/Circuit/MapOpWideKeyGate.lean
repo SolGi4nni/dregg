@@ -90,7 +90,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.LexCompare8Emit (lexBlockHolds lexTf lexLt8_refines)
 open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot perfectRoot_injective mapRoot opensToMerkle
   writesToMerkle)
-open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathRecompute_binds_updates map_set'
+open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathRecompute_binds_updates
+  noPathColl_of_CR map_set'
   split_of_getElem?_pair ReconcileGatesAt)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs)
 open Dregg2.Crypto.NonMembership (Sorted Adjacent)
@@ -410,9 +411,9 @@ theorem opensToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeC
     (hpath : pathRecompute hash (leafOfW hash E (k, v)) steps = r) :
     opensToMerkleW hash E dep r k (some v) := by
   subst hroot
-  have hbind := (pathRecompute_binds_updates hash hCR steps (h.map (leafOfW hash E))
+  have hbind := (pathRecompute_binds_updates hash steps (h.map (leafOfW hash E))
     (leafOfW hash E (k, v))
-    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpath)).1
+    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpath) (noPathColl_of_CR hCR)).1
   simp only [List.getElem?_map] at hbind
   cases he : h[pathPos steps]? with
   | none => rw [he] at hbind; simp at hbind
@@ -438,12 +439,14 @@ theorem opensToMerkleW_none_of_bracket (hash : List ℤ → ℤ) (hCR : Poseidon
     (hklo : klo < k) (hkhi : k < khi) :
     opensToMerkleW hash E dep r k none := by
   subst hroot
-  have hbindLo := (pathRecompute_binds_updates hash hCR stepsLo (h.map (leafOfW hash E))
+  have hbindLo := (pathRecompute_binds_updates hash stepsLo (h.map (leafOfW hash E))
     (leafOfW hash E (klo, vlo))
-    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpathLo)).1
-  have hbindHi := (pathRecompute_binds_updates hash hCR stepsHi (h.map (leafOfW hash E))
+    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpathLo)
+    (noPathColl_of_CR hCR)).1
+  have hbindHi := (pathRecompute_binds_updates hash stepsHi (h.map (leafOfW hash E))
     (leafOfW hash E (khi, vhi))
-    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpathHi)).1
+    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpathHi)
+    (noPathColl_of_CR hCR)).1
   simp only [List.getElem?_map] at hbindLo hbindHi
   cases heLo : h[pathPos stepsLo]? with
   | none => rw [heLo] at hbindLo; simp at hbindLo
@@ -472,9 +475,9 @@ theorem writesToMerkleW_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
     (hpathNew : pathRecompute hash (leafOfW hash E (k, v)) steps = r') :
     writesToMerkleW hash E dep r k v r' := by
   subst hroot
-  obtain ⟨hmem, hupd⟩ := pathRecompute_binds_updates hash hCR steps (h.map (leafOfW hash E))
+  obtain ⟨hmem, hupd⟩ := pathRecompute_binds_updates hash steps (h.map (leafOfW hash E))
     (leafOfW hash E (k, vOld))
-    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpathOld)
+    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpathOld) (noPathColl_of_CR hCR)
   simp only [List.getElem?_map] at hmem
   cases he : h[pathPos steps]? with
   | none => rw [he] at hmem; simp at hmem
@@ -849,8 +852,8 @@ theorem aafiInsertW_forces_imtInsertW (hash : List ℤ → ℤ) (hCR : Poseidon2
   have e1 : xs.length = 2 ^ s1.length := by rw [hl1]; exact hlen
   have hroot1 : pathRecompute hash (aafiLeafHashW hash lowAddr lowValue lowNext) s1
       = perfectRoot hash s1.length xs := by rw [hp1old, hor, hl1]
-  obtain ⟨hmem1, hupd1⟩ := pathRecompute_binds_updates hash hCR s1 xs
-    (aafiLeafHashW hash lowAddr lowValue lowNext) e1 hroot1
+  obtain ⟨hmem1, hupd1⟩ := pathRecompute_binds_updates hash s1 xs
+    (aafiLeafHashW hash lowAddr lowValue lowNext) e1 hroot1 (noPathColl_of_CR hCR)
   have hR1 : R1 = perfectRoot hash dep
       (xs.set (pathPos s1) (aafiLeafHashW hash lowAddr lowValue k)) := by
     rw [← hp1new, hupd1 (aafiLeafHashW hash lowAddr lowValue k), hl1]
@@ -860,8 +863,9 @@ theorem aafiInsertW_forces_imtInsertW (hash : List ℤ → ℤ) (hCR : Poseidon2
       = perfectRoot hash s2.length
           (xs.set (pathPos s1) (aafiLeafHashW hash lowAddr lowValue k)) := by
     rw [hp2e, hR1, hl2]
-  obtain ⟨hmem2, hupd2⟩ := pathRecompute_binds_updates hash hCR s2
+  obtain ⟨hmem2, hupd2⟩ := pathRecompute_binds_updates hash s2
     (xs.set (pathPos s1) (aafiLeafHashW hash lowAddr lowValue k)) freeEmpty e2 hroot2
+    (noPathColl_of_CR hCR)
   have hnew : newRoot = perfectRoot hash dep
       ((xs.set (pathPos s1) (aafiLeafHashW hash lowAddr lowValue k)).set (pathPos s2)
         (aafiLeafHashW hash k v lowNext)) := by

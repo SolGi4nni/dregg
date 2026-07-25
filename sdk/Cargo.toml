@@ -125,11 +125,19 @@ no-lean-link = [
     "dregg-lean-ffi/no-lean-link",
 ]
 dev = []
-# The SDK PRODUCER cluster. The rotated prover surface (`descriptor_ir2` prove,
-# the `*_wide` generators) is unconditional in `dregg-circuit`; the recursion
-# tower + custom-proof-bind ride the unconditional `dregg-circuit-prove` dep. This
-# feature now forwards the producer features of the turn/cell deps.
-prover = ["dregg-turn/prover", "dregg-cell/prover"]
+# The SDK PRODUCER cluster (~104 local `#[cfg(feature = "prover")]` sites). The
+# rotated prover surface (`descriptor_ir2` prove, the `*_wide` generators) is
+# unconditional in `dregg-circuit`; the recursion tower + custom-proof-bind ride
+# the unconditional `dregg-circuit-prove` dep above — so this feature forwards
+# NOTHING and pulls no dep.
+#
+# It used to be `["dregg-turn/prover", "dregg-cell/prover"]`. Both forwards are
+# GONE: `dregg-turn`'s `prover` feature was DELETED (proof production is the
+# `dregg-turn-prover` crate now) and `dregg-cell`'s was always a verified no-op
+# (`prover = []`). The flag survives only as this crate's OWN gate, and retiring
+# it the same way (an `sdk-prover` crate) is the next domino in
+# `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md` §5.
+prover = []
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated
 # behind a feature flag so that production builds cannot construct it at all.
@@ -138,6 +146,12 @@ prover = ["dregg-turn/prover", "dregg-cell/prover"]
 unsafe-test-utils = []
 
 [dev-dependencies]
+# The wrap-adapter tie test (`full_turn_proof.rs` tests) and the custom-proof-bind
+# round-trip (`tests/wide_completeness_ledger.rs`) call PROOF-PRODUCTION entry
+# points — `rotation_witness::finalized_turn_from_full_turn` and
+# `TurnCustomProofsExt::with_custom_program_proofs` — which live in the prover
+# CRATE since PR3. Test-scoped: the sdk library itself links no turn-prover.
+dregg-turn-prover = { path = "../turn-prover" }
 x25519-dalek = { workspace = true }
 # The running-binary ML-DSA verify gate (`tests/mldsa_wire_silo_verify.rs`) mints a GENUINE ML-DSA-65
 # `(pk, msg, ctx, sig)` with the SAME `fips204` 0.4.x the `dregg-pq` leaf carries, then asserts the

@@ -52,33 +52,44 @@ a `PredRE` over `Value` with a pin leaf, squarely IN the base fragment — and t
 
 ### Equivalence of guard spellings (§3) — the killer app
 Each row is `emptyFix` on the symmetric difference, `some true` = the two spellings accept EXACTLY
-the same words (every length, infinite alphabet), `some false` = a separating word exists.
+the same words (every length, infinite alphabet), `some false` = a separating word exists. Every
+row is ALSO a `Prop`: the last column is the theorem that carries it.
 
-| edit to the deployed guard | spelling | verdict |
-|----------------------------|----------|---------|
-| re-associate the `cat` chain | `neg ((any* ⬝ {) ⬝ ({ ⬝ any*))` | **EQUIVALENT** (`some true`) |
-| conjoin a total guard        | `noDoubleBraceRE ⋒ any*`        | **EQUIVALENT** (`some true`) |
-| rewrite POSITIVELY (no complement) | `(¬{ ⋓ ({ ⬝ ¬{))* ⬝ (ε ⋓ {)` | **EQUIVALENT** (`some true`) |
-| drop the trailing `any*`     | `neg (any* ⬝ { ⬝ {)`            | **NOT EQUIVALENT** (`some false`) |
-| "just check it isn't literally `{{`" | `neg ({ ⬝ {)`           | **NOT EQUIVALENT** (`some false`) |
+| edit to the deployed guard | spelling | verdict | `Prop` |
+|----------------------------|----------|---------|--------|
+| re-associate the `cat` chain | `neg ((any* ⬝ {) ⬝ ({ ⬝ any*))` | **EQUIVALENT** | `assoc_langEq` (hand) |
+| conjoin a total guard        | `noDoubleBraceRE ⋒ any*`        | **EQUIVALENT** | `redundant_langEq` (hand) |
+| rewrite POSITIVELY (no complement) | `(¬{ ⋓ ({ ⬝ ¬{))* ⬝ (ε ⋓ {)` | **EQUIVALENT** | `pos_langEq` (DECISION) |
+| drop the trailing `any*`     | `neg (any* ⬝ { ⬝ {)`            | **NOT EQUIVALENT** | `noTail_not_langEq` (DECISION) |
+| "just check it isn't literally `{{`" | `neg ({ ⬝ {)`           | **NOT EQUIVALENT** | `exactly_not_langEq` (hand) + `exactly_not_langEq_fix` (DECISION) |
 
-The two `some false` rows are REAL refactor bugs, and §3 exhibits the separating words the decision
-predicted: `[data, {, {]` and `[{, {, data]` are REJECTED by the deployed guard and ACCEPTED by the
-weakened spellings. §4 turns the second one into a theorem: a concrete hole assignment that the
-refactored template calls safe and the deployed template calls unsafe.
+The two NOT-EQUIVALENT rows are REAL refactor bugs, and §3 exhibits the separating words the
+decision predicted: `[data, {, {]` and `[{, {, data]` are REJECTED by the deployed guard and
+ACCEPTED by the weakened spellings. §4 turns the second one into a theorem: a concrete hole
+assignment that the refactored template calls safe and the deployed template calls unsafe, and
+(`pos_edit_preserves`) the positive rewrite into a template-level safety-preservation theorem.
 
-## Resource discipline (the 64GB/20min lesson)
-Everything here is the CHEAP Bool route: raw `emptyFix` over the SAME candidate covers the proven
-decisions compute (`fixCands`, the `coverOfSymbolic` arm), fired by `#guard` (compiled evaluation).
-**NO `@decide` / `of_decide_eq_*` / `native_decide` through a `Decidable` instance anywhere.** Fuels
-are 64–256; every frontier saturates in ≤ 20 `≅`-classes.
+## Resource discipline — MEASURED, not assumed
+The Bool route is the default: raw `emptyFix` over the SAME candidate covers the proven decisions
+compute (`fixCands`, the `coverOfSymbolic` arm), fired by `#guard` (compiled evaluation). Fuels are
+64–256; every frontier saturates in ≤ 20 `≅`-classes.
 
-A `#guard` proves no `Prop`. The verdicts inherit their MEANING from the proven cover + fixpoint
-theorems (`emptyFix_some_iff`, `reachFix_any_null_iff`, `coverOfSymbolic`) without kernel-reducing
-the instances — the same discipline as `Deriv/RealGuardAudit{,2}.lean`. Where this file states a
-`Prop`, it is proven by HAND (§3–§4), never lifted from a `#guard`. Two of those hand proofs
-(`assoc_langEq`, `redundant_langEq`) are independent CONFIRMATIONS of the machine's `some true`
-verdict on the same pair — decision and theorem agree.
+Where a verdict is worth a `Prop`, it is CROSSED — and the crossing was measured, not feared. The
+three decision-carried rows above run `predRE_equivalence_decidable_fix` (EquivalenceFixpoint) at
+fuel 256 through `of_decide_eq_{true,false}`, i.e. a real KERNEL reduction of the `≅`-fixpoint on
+the symmetric difference. Cost of all three together, `/usr/bin/time -l` on this file's own
+elaboration: **≈ 8 s wall and ≈ 0.17 GB above the bare-import baseline** (whole-file `lake env
+lean`: 19.5 s / 1.81 GB before, 27.6 s / 1.98 GB after — and most of BOTH numbers is loading
+mathlib oleans). That is nowhere near the 64GB/20min hazard an earlier revision of this header
+ASSERTED it would be; the assertion was wrong by two to three orders of magnitude and is retracted.
+The reason it is cheap is structural: the adaptive worklist saturates in **13** `≅`-classes over 13
+candidate frames (least saturating fuel 171 for the positive spelling, 155 and 101 for the two
+weakenings), so the kernel never touches the `emptinessBound` powerset.
+
+Still NO `native_decide` anywhere. The two hand proofs (`assoc_langEq`, `redundant_langEq`) remain
+independent CONFIRMATIONS of the machine's verdict on their pairs, and `exactly_not_langEq` is
+hand-proven with `exactly_not_langEq_fix` agreeing — decision and theorem agree wherever both
+exist.
 
 ## Semantic resolution
 Verdicts are over `Value` words at the `symEq "t"`-pin resolution — the alphabet `HandlebarsGuarded`
@@ -133,7 +144,9 @@ def nodbSym : SymbolicRE := ⟨noDoubleBraceRE, by rw [IsSymbolic]; rfl⟩
 theorem nodb_rigid : RigidFull noDoubleBraceRE := rigidRE_of_isSymbolic nodbSym.property
 
 /-- The deployed guard as a `RigidSymbolicRE` — the type the RUNNABLE equivalence decision
-(`predRE_equivalence_decidable_fix`) consumes. Membership is the whole content of §1. -/
+(`predRE_equivalence_decidable_fix`) consumes. Membership is the whole content of §1, and §3's
+three decision-carried equivalence theorems are exactly its consumption: every one of them is
+`predRE_equivalence_decidable_fix 256 nodbR _`. -/
 def nodbR : RigidSymbolicRE := ⟨nodbSym, nodb_rigid⟩
 
 -- The cover the decision computes for it: 3 candidate frames (no-`t`, and the pin twice over).
@@ -332,6 +345,47 @@ theorem exactly_not_langEq : ¬ ∀ w, derives w noDoubleBraceRE = derives w nod
   rw [deployed_rejects_sep, refactor_admits_sep] at hw
   exact Bool.noConfusion hw
 
+/-! ### The remaining verdicts, CROSSED from `#guard` to `Prop` by the running decision.
+
+The positive spelling is the one with no algebraic identity to hand-prove — it is a genuinely
+different machine — and dropping the trailing `any*` likewise had only a `#guard`. Both are lifted
+here by RUNNING `predRE_equivalence_decidable_fix` (EquivalenceFixpoint §2) in the kernel: it is
+`emptyFix` on the symmetric difference (the very `#guard`s above) composed with the proven
+`emptyFix_some_iff` and `langEq_iff_symDiff_empty`, so `of_decide_eq_{true,false}` yields the
+`∀ w`-statement itself. MEASURED cost, all three: ≈ 8 s / ≈ 0.17 GB over bare import — see the
+header's resource note, which used to assert the opposite. -/
+
+/-- The positive (complement-free) spelling, bundled into the runnable-equivalence fragment. -/
+def nodbPosR : RigidSymbolicRE :=
+  ⟨⟨nodbPos, by rw [IsSymbolic]; rfl⟩, show rigidRE nodbPos = true from rfl⟩
+
+/-- REFACTOR BUG #1, bundled. -/
+def nodbNoTailR : RigidSymbolicRE :=
+  ⟨⟨nodbNoTail, by rw [IsSymbolic]; rfl⟩, show rigidRE nodbNoTail = true from rfl⟩
+
+/-- REFACTOR BUG #2, bundled. -/
+def nodbExactlyR : RigidSymbolicRE :=
+  ⟨⟨nodbExactly, by rw [IsSymbolic]; rfl⟩, show rigidRE nodbExactly = true from rfl⟩
+
+/-- **The POSITIVE rewrite is FAITHFUL — as a `Prop`.** The deployed brace-ban and its
+complement-free spelling accept EXACTLY the same `Value` words, at EVERY length, over the infinite
+alphabet. No hand proof relates these two machines; the fixpoint decision does, in 13 `≅`-classes.
+This is the verdict this file previously left at `#guard` resolution. -/
+theorem pos_langEq : ∀ w, derives w noDoubleBraceRE = derives w nodbPos :=
+  @of_decide_eq_true _ (predRE_equivalence_decidable_fix 256 nodbR nodbPosR) (by rfl)
+
+/-- **Dropping the trailing `any*` is a REAL weakening — as a `Prop`.** Some word separates the
+deployed guard from refactor #1 (the `#guard`s exhibit `[{, {, data]`). -/
+theorem noTail_not_langEq : ¬ ∀ w, derives w noDoubleBraceRE = derives w nodbNoTail :=
+  @of_decide_eq_false _ (predRE_equivalence_decidable_fix 256 nodbR nodbNoTailR) (by rfl)
+
+/-- Refactor #2's separation, re-derived by the DECISION — the same statement
+`exactly_not_langEq` proves by hand from the exhibited word. Machine and theorem agree, in both
+directions this time (the hand proof exhibits a witness; the decision quantifies over all
+words). -/
+theorem exactly_not_langEq_fix : ¬ ∀ w, derives w noDoubleBraceRE = derives w nodbExactly :=
+  @of_decide_eq_false _ (predRE_equivalence_decidable_fix 256 nodbR nodbExactlyR) (by rfl)
+
 end Spellings
 
 /-! ## §4 THE TEMPLATER PAYOFF — what the two decisions MEAN for a template.
@@ -392,6 +446,24 @@ theorem assoc_edit_preserves (d : Nat → List Value) (hsafe : guardedSafe stric
   obtain ⟨rfl, rfl⟩ := hmem
   exact Or.inr ⟨rfl, by simp [strictT]⟩
 
+/-- The same template after the POSITIVE (complement-free) rewrite — the edit whose faithfulness
+only the fixpoint decision establishes (§3, `pos_langEq`). -/
+def posT : GuardedTemplate := ⟨[GSeg.lit [dataVal], GSeg.hole 0 nodbPos]⟩
+
+/-- **The killer app, CASHED at the template level**: rewriting the deployed guard into its
+complement-free spelling preserves every safe data assignment and every rendered output. Unlike
+`assoc_edit_preserves`, no algebraic identity backs this — it rides `pos_langEq`, i.e. the
+`≅`-fixpoint equivalence decision run in the kernel. This is what a template author actually asked
+for: "did my edit change what the slot accepts?", answered as a theorem. -/
+theorem pos_edit_preserves (d : Nat → List Value) (hsafe : guardedSafe strictT d) :
+    guardedSafe posT d ∧ render posT d = render strictT d := by
+  refine ⟨guardedSafe_swap (g := noDoubleBraceRE) (g' := nodbPos) pos_langEq ?_ hsafe, rfl⟩
+  intro id h hmem
+  simp only [posT, List.mem_cons, List.not_mem_nil, or_false, GSeg.hole.injEq,
+             reduceCtorEq, false_or] at hmem
+  obtain ⟨rfl, rfl⟩ := hmem
+  exact Or.inr ⟨rfl, by simp [strictT]⟩
+
 /-- The hole datum that separates the two spellings: a `{{`-bearing slot. -/
 def sepD : Nat → List Value := fun _ => [dataVal, braceVal, braceVal]
 
@@ -438,22 +510,30 @@ end Templates
   nodbContra_empty,
   derives_cat_assoc, assoc_langEq, redundant_langEq,
   deployed_rejects_sep, refactor_admits_sep, exactly_not_langEq,
+  pos_langEq, noTail_not_langEq, exactly_not_langEq_fix,
   no_data_for_empty_guard, guardedSafe_swap,
-  assoc_edit_preserves, bad_edit_admits_injection,
+  assoc_edit_preserves, pos_edit_preserves, bad_edit_admits_injection,
   brickT_unrenderable, brickT_no_accepting_certificate
 ]
 
 /-! ## §6 RESIDUALS — named precisely, not `sorry`-ed.
 
-* **(machine-verdict → `Prop`, deliberately not crossed)** The `#guard` verdicts are Bool facts. The
-  proven crossing to `Prop` is `emptyFix_some_iff` (§5 of `SymbolicFixpoint`) composed with
-  `langEq_iff_symDiff_empty`, and it needs `emptyFix C.cands fuel R = some b` as a KERNEL-reduced
-  `rfl` on the fixpoint. That reduction is exactly the 64GB/20min hazard this file is disciplined
-  against, so it is NOT run here. Consequence, stated plainly: `nodbPos ≡ noDoubleBraceRE` is a
-  MACHINE VERDICT at `#guard` resolution only — the two hand-proven equivalences (`assoc_langEq`,
-  `redundant_langEq`) and the hand-proven separation (`exactly_not_langEq`) are the ones that carry
-  `Prop`-level force. Closing the gap for `nodbPos` needs either a measured kernel reduction of
-  `emptyFix` on that one symmetric difference, or a hand proof of the positive-spelling identity.
+* **(machine-verdict → `Prop`: CROSSED, and the old cost claim RETRACTED)** An earlier revision of
+  this section said the kernel reduction needed for the crossing "is exactly the 64GB/20min hazard"
+  and refused to run it, leaving `nodbPos ≡ noDoubleBraceRE` at `#guard` resolution. That was an
+  ASSERTED cost, never measured, and it was wrong. Measured (`/usr/bin/time -l`, this file):
+  crossing ALL THREE remaining verdicts costs **≈ 8 s wall / ≈ 0.17 GB** over the bare-import
+  baseline — 19.5 s → 27.6 s and 1.81 GB → 1.98 GB for the whole file, most of which is mathlib
+  olean loading either way. Two to three orders of magnitude below the claimed hazard. So §3 now
+  crosses them: `pos_langEq`, `noTail_not_langEq`, `exactly_not_langEq_fix` are `Prop`s produced by
+  `predRE_equivalence_decidable_fix 256 nodbR _` (i.e. `emptyFix_some_iff` ∘
+  `langEq_iff_symDiff_empty`, kernel-reduced), and `pos_edit_preserves` cashes the positive rewrite
+  at the template level. The residual that REMAINS is narrow and structural: cheapness here is a
+  property of THESE machines (13 `≅`-classes, 13 candidate frames, saturating fuel ≤ 171), not a
+  general bound — the missing counting step in `SymbolicFixpoint`'s termination note (fuel
+  `(emptinessBound R + 1) * (|V| + 1) + 1` suffices) is still unproven, so a bigger guard's
+  crossing must be MEASURED again rather than assumed cheap. Measure, do not assert, in either
+  direction.
 
 * **(cover fidelity)** `fixCands` mirrors the `coverOfSymbolic` arm of the decision instances, so the
   raw `emptyFix` guards exercise the SAME search the instances would. It contains duplicate

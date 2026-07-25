@@ -286,8 +286,9 @@ impl RotationTurnWitness {
     /// The welded limbs are read straight off `before.pre_limbs` in the Lean-pinned order
     /// (`rotation_witness.rs:260-290`): `r0 = pre_limbs[1]` (balance_lo) · `r1 = pre_limbs[2]`
     /// (nonce) · `r2 = pre_limbs[3]` (balance_hi) · `r3..r10 = pre_limbs[4..12]` (fields[0..8],
-    /// already `fold_bytes32_to_bb`'d — copied verbatim, the same value the v1 state block
-    /// carries) · `cap_root = pre_limbs[B_CAP_ROOT]` (the canonical openable root). The
+    /// the `field_limbs8` lane-0 values — copied verbatim, the same value the v1 state block
+    /// carries; ⚠ this doc said `fold_bytes32_to_bb`'d, which the v13 fields-octet campaign
+    /// REPLACED with `field_limbs8`) · `cap_root = pre_limbs[B_CAP_ROOT]` (the canonical openable root). The
     /// authority-bearing residue (permissions/VK/delegate/program/mode + fields[8..16]) rides
     /// the witness-carried authority digest `r23` in the rotated commit AND is now ABSORBED by the
     /// v1-prefix `compute_commitment` as its FOURTH state-commit root input (the EffectVM
@@ -9923,7 +9924,7 @@ mod tests {
     /// **THE FULL-TURN → WRAP ADAPTER FAITHFULNESS TOOTH.** A REAL value-bearing transfer turn,
     /// proven the node's way (`prove_turn_self_sovereign_rotated` → a verifying `FullTurnProof`),
     /// is bridged into the wrap's IVC input by
-    /// [`dregg_turn::rotation_witness::finalized_turn_from_full_turn`]. The adapter re-proves the
+    /// [`dregg_turn_prover::rotation_witness::finalized_turn_from_full_turn`]. The adapter re-proves the
     /// rotated leg under the leaf-wrap config from the SAME turn context, and its fail-closed tie
     /// REQUIRES the wrap leg's wide 8-felt anchors to equal the `FullTurnProof`'s proven
     /// `(old_commit, new_commit)` — which are computed by an INDEPENDENT producer path
@@ -9980,7 +9981,7 @@ mod tests {
         // 2. THE ADAPTER: reconstruct the wrap leg from the SAME context; the fail-closed tie
         //    passes iff the wrap leg's wide anchors == the FullTurnProof's proven anchors → Ok.
         let empty = dregg_circuit::heap_root::empty_heap_root_8();
-        let ok = dregg_turn::rotation_witness::finalized_turn_from_full_turn(
+        let ok = dregg_turn_prover::rotation_witness::finalized_turn_from_full_turn(
             &initial,
             &effects,
             &before_cell,
@@ -10003,7 +10004,7 @@ mod tests {
         //    adapter never folds a leg that attests a different transition than the served proof.
         let mut bad_old = old_commit;
         bad_old[0] += BabyBear::ONE;
-        let refused = dregg_turn::rotation_witness::finalized_turn_from_full_turn(
+        let refused = dregg_turn_prover::rotation_witness::finalized_turn_from_full_turn(
             &initial,
             &effects,
             &before_cell,

@@ -142,6 +142,14 @@ fn main() {
         }
     }
 
+    // 6a. REGISTER THE CLIENT-SIDE `/` MENU from the ONE command registry. Without this the
+    //     Telegram client shows no command list (`getMyCommands` → `[]`) and the surface has to
+    //     be guessed. Non-fatal: a bot that cannot register its menu still answers commands.
+    match api.set_my_commands() {
+        Ok(count) => eprintln!("registered {count} command(s) with Telegram's / menu"),
+        Err(e) => eprintln!("WARN: setMyCommands failed ({e}) — the client / menu may be stale"),
+    }
+
     // 6b. ⚑ ARM THE DESCENT'S DAY BEFORE THE HOST IS BUILT — and keep it armed.
     //     The catalog registers the Descent against the LIVE verified drand day, so a run's
     //     banked relics mint under a provenance root that could not exist before that round was

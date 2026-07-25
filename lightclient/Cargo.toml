@@ -24,11 +24,13 @@ dregg-blocklace = { path = "../blocklace" }
 # construct `dregg_cell::Cell`s. Needed by the binary (not test-only), hence a normal dependency.
 dregg-cell = { path = "../cell" }
 # Bucket-F (PATH-PRESERVE Phase 5a): the rotated-leg MINTING recipe
-# (`rotation_witness::mint_rotated_participant_leg`) lives in `dregg-turn` (it drives
-# `rotation_witness::produce` over `Cell`s — `dregg-circuit` cannot host it, the cycle). The demo
-# binary + lib-test fixtures call it, so it is a normal dependency (its `prover`-gated mint is
-# forwarded below).
+# (`rotation_witness::mint_rotated_participant_leg`) drives `dregg_turn::rotation_witness::produce`
+# over `Cell`s (`dregg-circuit` cannot host it — the cycle), and since PR3 of the turn-prover
+# extraction it lives in the `dregg-turn-prover` CRATE, not behind `dregg-turn/prover`. `dregg-turn`
+# itself supplies the types this crate carries; `dregg-turn-prover` is optional, pulled by our own
+# `prover` feature (the whole lib is `#![cfg(feature = "prover")]`).
 dregg-turn = { path = "../turn" }
+dregg-turn-prover = { path = "../turn-prover", optional = true }
 # The finality-certificate leg (`FinalityCert`) verifies each validator's Ed25519 signature OVER the
 # finalized root (the `CertValid` binding leg — `FinalizedLightClient.CertValid`), not merely a count
 # of distinct pubkeys. So the light client depends on the same Ed25519 implementation the node signs
@@ -45,10 +47,12 @@ ed25519-dalek = { version = "2", features = ["std"] }
 dregg-pq = { path = "../dregg-pq" }
 
 [features]
-# `prover` forwards to dregg-circuit's prover feature (which is in its default set) and gates
-# the whole-history light client. On by default so `cargo build -p dregg-lightclient` carries it.
+# `prover` gates the whole-history light client (the whole lib is `#![cfg(feature = "prover")]`)
+# and pulls the leg-MINTING crate it needs. On by default so `cargo build -p dregg-lightclient`
+# carries it. (Was `["dregg-turn/prover"]`; that feature was DELETED — proof production is now the
+# `dregg-turn-prover` crate.)
 default = ["prover"]
-prover = ["dregg-turn/prover"]
+prover = ["dep:dregg-turn-prover"]
 
 [lints]
 workspace = true

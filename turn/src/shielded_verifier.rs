@@ -3,9 +3,10 @@
 //! A shielded transfer is admitted on a hiding uni-STARK plus a Pedersen
 //! conservation/range side, and both verifiers live in `dregg-circuit-prove` —
 //! the PROOF crate, not this one. Rather than pull that dependency into the core
-//! executor behind a `#[cfg(feature = "prover")]` (whose un-selected arm is never
-//! type-checked in a given build, the exact brittleness this campaign retires),
-//! the core defines the seam and `dregg-turn-prover` implements it.
+//! executor behind a cfg-gate on a `prover` feature (whose un-selected arm is
+//! never type-checked in a given build, the exact brittleness this campaign
+//! retires — and which no longer exists on `dregg-turn` at all as of PR3), the
+//! core defines the seam and `dregg-turn-prover` implements it.
 //!
 //! ## Verify-returns-VALUE (why the trait does not take the journal)
 //!

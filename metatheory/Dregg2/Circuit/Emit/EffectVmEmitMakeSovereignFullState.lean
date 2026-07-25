@@ -25,6 +25,7 @@ are unconditional disjunctions naming the sponge collision they would need.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitMakeSovereign
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitMakeSovereignFullState
 
@@ -151,49 +152,95 @@ theorem makeSovereign_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : 
 
 /-! ## §6 — THE ANTI-GHOST. -/
 
-/-- **`makeSovereign_runnable_full_commit_binds_or_collides` — the anti-ghost, UNCONDITIONALLY.** Two
-satisfying WIDE makeSovereign rows publishing the SAME `NEW_COMMIT`, whose `sysRootsDigestCol` carriers
-ARE the `systemRootsDigest` of `sr₁`/`sr₂`, EITHER agree on all 12 absorbed state-block columns AND on
-every side-table root, OR exhibit a genuine collision of the deployed sponge — on the state block
-(`WideColl`) or on the ordered root list (`RootsColl`).
+/-- ⚑ **WHAT CHANGED AND WHY (the reduction that replaces the deleted disjunctions).** This section
+used to export `makeSovereign_runnable_full_commit_binds_or_collides` / `makeSovereign_rejects_root_tamper_or_collides`, each concluding
+`… ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. Those forms are TRUE of the deployed sponge —
+unlike the `Poseidon2SpongeCR` predecessors, which it REFUTES — but they are UNCLOSED: a collision
+of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. They quantify over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. They are DELETED and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the forgery is a
+first-class `Game` at makeSovereign's OWN wide descriptor, the extractor is a MAP OF ADVERSARIES (the
+reduction-internal witness), and the conclusions are (a) negligibility under the DEPLOYED sponge's
+collision floor `HashCRHardQuant (spongeFamily D) Eff`, `hEff` in the open, both poles priced
+(`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`), and (b) the DISCHARGED keyed-ROM forms on
+the PROVED birthday floor (`keyedRom_hard`) — NO floor hypothesis — in the LABELLED random-oracle
+model of `EffectVmRowCommitReduction` §5's header (the sampled `Fin (2 ^ l)` digest is the
+modelling step; no `l` is the deployed ~31-bit felt). The ROM commitment layer carries no
+descriptor (the nested absorb schedule is one object across effects); makeSovereign's per-effect circuit
+content (`satisfiedVm` at `makeSovereignVmDescriptorWide`) lives in the `_advantage_bound` forms. -/
+def makeSovWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := makeSovereignVmDescriptorWide
+  usesWideSites := rfl
 
-The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed BabyBear
-sponge REFUTES, so at deployed parameters it was vacuous. This disjunction is formally weaker and holds
-of the deployed sponge. -/
-theorem makeSovereign_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash makeSovereignVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash makeSovereignVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  runnable_full_commit_binds_or_collides (makeSovRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `makeSovereign_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD BINDING for
+makeSovereign.** Under the DEPLOYED sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH SATISFYING `makeSovereignVmDescriptorWide`, publishing one `NEW_COMMIT` with genuine `systemRootsDigest`
+carriers, yet binding DIFFERENT state (an absorbed column or a side-table root), has NEGLIGIBLE
+advantage. Replaces the deleted bare disjunction. -/
+theorem makeSovereign_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D makeSovWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D makeSovWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D makeSovWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D makeSovWideRowSpec Eff A hEff hCR
 
-/-- **`makeSovereign_rejects_root_tamper_or_collides`.** Two satisfying WIDE makeSovereign rows publishing
-the same `NEW_COMMIT` that DISAGREE on some side-table root exhibit a genuine collision of the deployed
-sponge — so a root tamper is UNSAT unless the prover holds a sponge collision.
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑⚑ `makeSovereign_binds_full_state_rom` — the DISCHARGED whole-17-field binding, on the PROVED
+floor.** A query-bounded forger of the wide nested `state_commit` — the very commitment makeSovereign's
+wide row publishes — has NEGLIGIBLE advantage, in the keyed ROM model of
+`EffectVmRowCommitReduction` §5's header. NO floor hypothesis. The COMMITMENT layer carries no
+descriptor, so this is `wideRow_binds_rom` at the deployed tag space; makeSovereign's per-effect circuit
+content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem makeSovereign_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge REFUTES,
-so at deployed parameters it was vacuous. This form names what the tamper costs and holds of the deployed
-sponge. -/
-theorem makeSovereign_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash makeSovereignVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash makeSovereignVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (makeSovRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `makeSovereign_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED.** An
+efficient adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a
+satisfying wide makeSovereign row (a dropped escrow, an omitted nullifier, a reordered queue), except
+with negligible probability. Replaces the deleted `makeSovereign_rejects_root_tamper_or_collides`. -/
+theorem makeSovereign_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D makeSovWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D makeSovWideRowSpec (rootTamperToWide D makeSovWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D makeSovWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D makeSovWideRowSpec Eff A hEff hCR
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑ `makeSovereign_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor: a
+query-bounded adversary cannot keep the published nested commitment while tampering a side-table
+root. -/
+theorem makeSovereign_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-! ## §7 — NON-VACUITY. -/
 
@@ -237,8 +284,10 @@ theorem makeSov_clause_rejects_root_drop :
 #assert_axioms intent_to_zeroSpec
 #assert_axioms makeSovGates_give_zeroSpec
 #assert_axioms makeSovereign_runnable_full_sound
-#assert_axioms makeSovereign_runnable_full_commit_binds_or_collides
-#assert_axioms makeSovereign_rejects_root_tamper_or_collides
+#assert_axioms makeSovereign_binds_full_state_advantage_bound
+#assert_axioms makeSovereign_binds_full_state_rom
+#assert_axioms makeSovereign_rejects_root_tamper_advantage_bound
+#assert_axioms makeSovereign_rejects_root_tamper_rom
 #assert_axioms goodMakeSov_realizes
 #assert_axioms makeSov_clause_not_trivial
 #assert_axioms makeSov_clause_rejects_root_drop

@@ -198,42 +198,6 @@ impl WitnessBundle {
 // Recursive compression bridge (Golden Vision)
 // ---------------------------------------------------------------------------
 
-/// Produce a [`RecursiveProofVariant`] from an inline scope-2 trace + the
-/// receipt's public inputs.
-///
-/// Thin wrapper around
-/// [`dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer::produce`]
-/// so [`WitnessedReceipt::from_components_with_compression`] does not have
-/// to thread `BabyBear` through its signature. Returns the compressed
-/// variant on success; on failure returns the error string from the
-/// recursion library (e.g. AIR build failure, postcard encode error).
-///
-/// Relies on the `recursion` feature being enabled in `dregg-circuit`
-/// (which is in its default feature set). If the host disables the
-/// feature, this entry point becomes a link-time error — which is the
-/// honest signal: opt-in recursive compression requires the recursion
-/// substrate.
-#[cfg(feature = "prover")]
-fn produce_recursive_variant(
-    trace: &[Vec<dregg_circuit::field::BabyBear>],
-    public_inputs_u32: &[u32],
-) -> Result<RecursiveProofVariant, String> {
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer;
-
-    let pi: Vec<BabyBear> = public_inputs_u32
-        .iter()
-        .map(|&v| BabyBear::new_canonical(v))
-        .collect();
-
-    let out = RecursiveProofProducer::produce(trace, &pi)?;
-    Ok(RecursiveProofVariant {
-        proof_bytes: out.proof_bytes,
-        public_inputs: public_inputs_u32.to_vec(),
-        recursive_vk_hash: out.recursive_vk_hash,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // WitnessedReceipt
 // ---------------------------------------------------------------------------
@@ -406,23 +370,29 @@ impl WitnessedReceipt {
     /// Like [`Self::from_components`] but with an opt-in Golden Vision
     /// recursive compression flag.
     ///
-    /// When `recursive_compress` is `true` AND `trace` is `Some`, this
-    /// runs `dregg_circuit_prove::recursive_witness_bundle::RecursiveProofProducer`
-    /// on the trace + public inputs and attaches a [`RecursiveProofVariant`]
-    /// to the resulting [`WitnessBundle`]. The inline trace is kept
-    /// alongside, so downstream replayers may pick *either* mode (re-run
-    /// AIR vs. recursive verify).
+    /// When `recursive_compress` is `true` AND `trace` is `Some`, this asks the
+    /// INSTALLED
+    /// [`RecursiveWitnessProducer`](crate::recursive_witness_producer::RecursiveWitnessProducer)
+    /// for a [`RecursiveProofVariant`] over the trace + public inputs and attaches
+    /// it to the resulting [`WitnessBundle`]. The inline trace is kept alongside,
+    /// so downstream replayers may pick *either* mode (re-run AIR vs. recursive
+    /// verify). The producer itself is
+    /// `dregg_turn_prover::recursive_bundle::CircuitRecursiveWitnessProducer`
+    /// (over `dregg_circuit_prove`), injected at startup — core `dregg-turn` links
+    /// no prove crate.
     ///
     /// When `recursive_compress` is `false` (default), behaves identically
     /// to [`Self::from_components`].
     ///
     /// # Errors
     ///
-    /// Recursive compression is best-effort: if the producer fails, the
-    /// receipt is still returned with the inline trace attached (silver
-    /// vision form) so the chain is not lost. The recursive proof is just
-    /// not attached. Callers wanting hard-fail-on-compression should use
-    /// [`Self::from_components_strict_recursive`].
+    /// Recursive compression is best-effort: if the producer fails — or if NO
+    /// producer is installed in this process — the receipt is still returned with
+    /// the inline trace attached (silver vision form) so the chain is not lost. The
+    /// recursive proof is just not attached; nothing is fabricated. Callers wanting
+    /// hard-fail-on-compression use
+    /// `dregg_turn_prover::recursive_bundle::from_components_strict_recursive`,
+    /// which cannot be reached without linking the prover crate.
     pub fn from_components_with_compression(
         receipt: TurnReceipt,
         proof_bytes: Vec<u8>,
@@ -432,13 +402,13 @@ impl WitnessedReceipt {
     ) -> Self {
         let (witness_bundle, witness_hash) = match trace {
             Some(t) => {
-                #[cfg_attr(not(feature = "prover"), allow(unused_mut))]
                 let mut wb = WitnessBundle::inline_from_trace(t);
-                if recursive_compress {
-                    #[cfg(feature = "prover")]
-                    if let Ok(rp) = produce_recursive_variant(t, &public_inputs) {
-                        wb.recursive_proof = Some(rp);
-                    }
+                if recursive_compress
+                    && let Some(producer) =
+                        crate::recursive_witness_producer::recursive_witness_producer()
+                    && let Ok(rp) = producer.produce(t, &public_inputs)
+                {
+                    wb.recursive_proof = Some(rp);
                 }
                 let h = wb.witness_hash();
                 (Some(wb), h)
@@ -454,30 +424,6 @@ impl WitnessedReceipt {
             aggregate_membership: None,
             bilateral_schedule: None,
         }
-    }
-
-    /// Like [`Self::from_components_with_compression`] but hard-fails if
-    /// recursive compression cannot be produced. Use when the caller
-    /// requires the Golden Vision form.
-    #[cfg(feature = "prover")]
-    pub fn from_components_strict_recursive(
-        receipt: TurnReceipt,
-        proof_bytes: Vec<u8>,
-        public_inputs: Vec<u32>,
-        trace: &[Vec<dregg_circuit::field::BabyBear>],
-    ) -> Result<Self, String> {
-        let rp = produce_recursive_variant(trace, &public_inputs)?;
-        let wb = WitnessBundle::inline_with_recursive(trace, rp);
-        let h = wb.witness_hash();
-        Ok(Self {
-            receipt,
-            proof_bytes,
-            public_inputs,
-            witness_bundle: Some(wb),
-            witness_hash: h,
-            aggregate_membership: None,
-            bilateral_schedule: None,
-        })
     }
 
     /// Stage 7-γ.2 Phase 1: verify bilateral cross-cell consistency for a

@@ -53,19 +53,66 @@
 //! same boon on the same terms. A starting nudge raises the floor for everyone; it does not forge a
 //! run (the run is still really played + replay-verified) nor grant an edge the ranking cannot see.
 //!
+//! ## The TOMB path — the accrual a run's own record pays for
+//!
+//! [`grant_echoes`] takes the depth as an ARGUMENT, and nothing in the kernel prices that number
+//! (the doc-comment below used to call this "run-supplied, exactly the earned-XP model"; in
+//! practice callers across the tree pass `6`, `7`, `12` to a dungeon that has FOUR floors, because
+//! whatever number you type is the number you get). That is a ratchet a player mints for
+//! themselves. [`grant_echoes_at_depth`] is the replacement: one method PER REACHABLE DEPTH, each
+//! carrying an EXACT [`FieldDelta`](StateConstraint::FieldDelta) for that depth's payout, so
+//!
+//! * the set of payable depths is a CLOSED SET OF METHODS in the deployed program — a "death at
+//!   depth 12" has no case and is a default-deny refusal, not a bigger payout;
+//! * the amount is pinned by the kernel, not by the caller (`FieldDelta{echoes, e(d)}`);
+//! * the redemption also advances [`TOMBS_SLOT`] by exactly one, so `tombs` is a truthful count of
+//!   redeemed death-records rather than a number the app keeps.
+//!
+//! [`crate::tomb`] is the only thing that should call it: its [`Tomb`](crate::tomb::Tomb) reads the
+//! depth off the run's COMMITTED cell state and cannot be constructed any other way.
+//!
+//! ## The SLOT-BOUND currency tooth (a hole that was live until this commit)
+//!
+//! The `FieldEquals(dead, 1)` "only a real death pays" gate lived ONLY on the
+//! [`GRANT_ECHOES_METHOD`] case. But `apply_raw` is public and the evaluator runs EVERY matching
+//! case, so `SetField(echoes, 9_999)` STAPLED onto a legitimate `hero/gain_xp` turn — on a LIVING
+//! character — met only the global `Monotonic(echoes)` and committed. The meta-currency was
+//! mintable without dying at all, which is exactly the hole the `boon` and talent-tree
+//! `SlotChanged` cases were added to close one level further up (`meta.rs` case 3,
+//! `dreggnet_gear::talents`), left open on the currency those prices are denominated in.
+//! [`meta_hero_story`] now carries a `SlotChanged { ECHOES_SLOT }` case with `FieldEquals(dead, 1)`:
+//! the death gate binds to the WRITE, whoever authored it. Driven:
+//! [`meta_tests::a_stapled_echoes_write_cannot_mint_currency_on_a_living_sheet`].
+//!
+//! ## The RETURN RIGHT — the ratchet that is not power
+//!
+//! [`TOMB_DAYS_SLOT`] is a bitmask over the [`DAYS`] daily maps: bit `k` is set when day `k`'s map
+//! has killed you. It is globally [`Monotonic`](StateConstraint::Monotonic), each bit is set by its
+//! own method under an EXACT `FieldDelta{tomb_days, 1 << k}` (so a mark lands one specific day and
+//! a re-mark of a day you already hold is a refusal, not a silent no-op), and every mark is gated
+//! `FieldEquals(dead, 1)`.
+//!
+//! What it buys is deliberately NOT power: it is the right to open a later descent on a map that
+//! has already killed you ([`crate::tomb::may_return_to`]) instead of taking the beacon's draw.
+//! Every one of the 16 maps is Lean-checked completable in 20–26 of the 26 breath
+//! (`Dungeon.costAt_tense`), so none of them is *easier* — going back is a choice of battlefield,
+//! not a discount, and the only way to earn a battlefield is to lose on it.
+//!
 //! ## Honest scope
 //!
-//! - `echoes` / `boon` are REAL committed cell state on the persistent hero cell; the grant + claim
-//!   are REAL gated turns; the gates are REAL executor `StateConstraint`s (driven non-vacuously in
-//!   [`mod meta_tests`]: a grant on a living character and a claim below the price are real refusals
-//!   that commit nothing; a real death then funds a grant that funds a claim).
-//! - The depth→echoes amount is run-supplied (the run reports its real committed depth), exactly the
-//!   earned-XP model in [`progression::gain_xp`]. Binding the amount to a *replay-verified* depth
-//!   (rather than a supplied one) is the same succinct-proof frontier the XP grant names.
-//! - What a fuller meta-progression adds (named, not built here): a TREE of unlocks (each a
-//!   `FieldGte(echoes, price_k)` + `WriteOnce(boon_k)` slot), cosmetic legacies (a fallen character's
-//!   name/glyph carried into the next), and wiring the boon into a run's STARTING resources (a
-//!   starting field-dressing / +HP) as a compiler-emitted seed — each additive on this same tooth.
+//! - `echoes` / `boon` / `tomb_days` / `tombs` are REAL committed cell state on the persistent hero
+//!   cell; the grant + claim + mark are REAL gated turns; the gates are REAL executor
+//!   `StateConstraint`s (driven non-vacuously in [`mod meta_tests`]).
+//! - The kernel prices the SHAPE of the accrual (only on a dead sheet, only at a depth the dungeon
+//!   actually has, only in that depth's exact quantum, one tomb counted per grant). It does NOT
+//!   price the accrual against A SPECIFIC RUN ON ANOTHER CELL: the hero program cannot name a
+//!   per-run descent cell, so nothing in the executor stops a second grant funded by a second real
+//!   dead run. Binding the two cells needs the run's terminal state carried into the redemption
+//!   turn as a witness the executor verifies (a `BoundDelta` / `ObservedFieldEquals` shape against
+//!   the descent cell's finalized roots) — named, not built, and spelled out in [`crate::tomb`].
+//! - [`grant_echoes`] (the by-argument legacy path) is KEPT because four other crates drive it, and
+//!   it is now dead-gated at the write like everything else — but its AMOUNT is still un-priced.
+//!   Retiring it is a cross-crate cutover this module cannot make alone.
 
 use std::sync::Arc;
 
@@ -75,6 +122,7 @@ use dregg_app_framework::{
 };
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
+use crate::descent::{DAYS, FLOORS};
 use crate::progression::{self, DEAD_SLOT};
 
 // ── The two meta slots (on the persistent hero cell, beyond xp/level/class/abilities/dead) ──
@@ -86,15 +134,45 @@ pub const ECHOES_SLOT: u8 = 6;
 /// `boon` — the persistent UNLOCK slot. Globally [`WriteOnce`](StateConstraint::WriteOnce); a claim
 /// is a `FieldGte(echoes, `[`BOON_PRICE`]`)`-gated turn — the unlock is real, once-set cell state.
 pub const BOON_SLOT: u8 = 7;
+/// `tomb_days` — the RETURN-RIGHT mask over the [`DAYS`] daily maps: bit `k` set ⟺ day `k`'s map
+/// has killed you. Globally [`Monotonic`](StateConstraint::Monotonic); each bit is set by its own
+/// [`mark_tomb_day_method`] under an exact `FieldDelta{tomb_days, 1 << k}`, gated on a real death.
+///
+/// Slots 8–12 belong to [`dreggnet_gear::talents`](../../dreggnet_gear/talents/index.html) (the
+/// four talent slots plus the respec generation), which builds its story on top of this one; the
+/// meta slots resume at 13 so the two never collide on the same cell.
+pub const TOMB_DAYS_SLOT: u8 = 13;
+/// `tombs` — a truthful count of REDEEMED death-records. Globally
+/// [`Monotonic`](StateConstraint::Monotonic); every [`grant_echoes_at_depth`] turn must advance it
+/// by exactly one (`FieldDelta{tombs, 1}`) and no turn may move it by anything else, so it counts
+/// tomb redemptions rather than tracking them in app memory.
+pub const TOMBS_SLOT: u8 = 14;
 
 // ── The meta turn methods (the driver + the program agree on these) ──────────────
 
 /// The method a [`grant_echoes`] turn presents. Its case carries `FieldEquals(dead, 1)` (a real
 /// death happened) + `StrictMonotonic(echoes)` (a real positive accrual).
+///
+/// ⚠ LEGACY: the AMOUNT this method writes is whatever the caller computed — the kernel only
+/// checks it went up. [`grant_echoes_at_depth`] is the priced replacement.
 pub const GRANT_ECHOES_METHOD: &str = "meta/grant_echoes";
 /// The method a [`claim_boon`] turn presents. Its case carries `FieldGte(echoes, `[`BOON_PRICE`]`)`
 /// (enough accrued) + `WriteOnce(boon)` (claimed once).
 pub const CLAIM_BOON_METHOD: &str = "meta/claim_boon";
+
+/// The method a [`grant_echoes_at_depth`] turn presents, one per depth the dungeon actually has
+/// (`0..=`[`FLOORS`]). The case carries `FieldEquals(dead, 1)` + an EXACT
+/// `FieldDelta{echoes, `[`echoes_for_depth`]`(depth)}` + `FieldDelta{tombs, 1}`. A depth outside
+/// the dungeon names no case at all and is a default-deny refusal.
+pub fn tomb_grant_method(depth: u64) -> String {
+    format!("meta/grant_echoes/tomb/{depth}")
+}
+
+/// The method a [`mark_tomb_day`] turn presents, one per daily map (`0..`[`DAYS`]). The case
+/// carries `FieldEquals(dead, 1)` + an EXACT `FieldDelta{tomb_days, 1 << day}`.
+pub fn mark_tomb_day_method(day: usize) -> String {
+    format!("meta/mark_tomb_day/{day}")
+}
 
 // ── The (modest) meta curve ──────────────────────────────────────────────────────
 
@@ -140,6 +218,12 @@ pub fn meta_hero_story() -> CompiledStory {
         .var_slots
         .insert("echoes".to_string(), ECHOES_SLOT as u64);
     story.var_slots.insert("boon".to_string(), BOON_SLOT as u64);
+    story
+        .var_slots
+        .insert("tomb_days".to_string(), TOMB_DAYS_SLOT as u64);
+    story
+        .var_slots
+        .insert("tombs".to_string(), TOMBS_SLOT as u64);
 
     let CellProgram::Cases(cases) = &mut story.program else {
         panic!("the hero story is a Cases program");
@@ -157,6 +241,14 @@ pub fn meta_hero_story() -> CompiledStory {
     always
         .constraints
         .push(StateConstraint::WriteOnce { index: BOON_SLOT });
+    // The tomb ledger only ever grows: a day whose map has killed you stays killed, and a
+    // redeemed death-record is never un-counted.
+    always.constraints.push(StateConstraint::Monotonic {
+        index: TOMB_DAYS_SLOT,
+    });
+    always
+        .constraints
+        .push(StateConstraint::Monotonic { index: TOMBS_SLOT });
 
     // 2. grant_echoes — a real, strictly-positive accrual, ONLY on a dead character (a run that has
     //    truly ended in death). A grant on a living character fails `FieldEquals(dead, 1)`.
@@ -224,6 +316,122 @@ pub fn meta_hero_story() -> CompiledStory {
         ],
     });
 
+    // 5. THE SLOT-BOUND CURRENCY GATE — the tooth that makes "only a real death pays" real.
+    //
+    // "Granted ONLY on a real death" lived on the `MethodIs{GRANT_ECHOES_METHOD}` case (case 2).
+    // A `MethodIs` case gates only turns that PRESENT that method, and `apply_raw` is public — so
+    // `SetField(echoes, 9_999)` STAPLED onto a legitimate `hero/gain_xp` turn matched no grant
+    // case, faced only the global `Monotonic{echoes}` (0 -> 9_999 is monotone), and COMMITTED, on
+    // a LIVING character. The meta-currency every price in the tree is denominated in was mintable
+    // without dying. (Driven: `a_stapled_echoes_write_cannot_mint_currency_on_a_living_sheet`,
+    // which committed 9_999 echoes on a living hero before this case existed.)
+    //
+    // `SlotChanged` binds the death gate to THE WRITE rather than to the method: the case fires on
+    // any transition that moves `echoes`, whoever authored it. The evaluator runs EVERY matching
+    // case (`cell/src/program/eval.rs:104-120`), so this composes with the authoring method's own
+    // constraints instead of being skipped by it, and `SlotChanged` is not method-dispatching so
+    // default-deny is unaffected.
+    cases.push(TransitionCase {
+        guard: TransitionGuard::SlotChanged { index: ECHOES_SLOT },
+        constraints: vec![StateConstraint::FieldEquals {
+            index: DEAD_SLOT,
+            value: field_from_u64(1),
+        }],
+    });
+
+    // 6. THE PRICED TOMB GRANTS — one method per depth the dungeon actually has, each pinning the
+    //    payout with an EXACT `FieldDelta`. This is what stops the amount being whatever the
+    //    caller typed: a redemption for a death at depth `d` can move `echoes` by
+    //    `echoes_for_depth(d)` and by nothing else, and it must count the tomb.
+    for depth in 0..=FLOORS {
+        cases.push(TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol(&tomb_grant_method(depth)),
+            },
+            constraints: vec![
+                StateConstraint::FieldEquals {
+                    index: DEAD_SLOT,
+                    value: field_from_u64(1),
+                },
+                StateConstraint::FieldDelta {
+                    index: ECHOES_SLOT,
+                    delta: field_from_u64(echoes_for_depth(depth)),
+                },
+                StateConstraint::FieldDelta {
+                    index: TOMBS_SLOT,
+                    delta: field_from_u64(1),
+                },
+            ],
+        });
+    }
+
+    // 7. The tomb COUNT is slot-bound too: whatever method moves it, it moves by exactly one, on a
+    //    dead sheet. So `tombs` cannot be inflated to fake a long history of deaths.
+    cases.push(TransitionCase {
+        guard: TransitionGuard::SlotChanged { index: TOMBS_SLOT },
+        constraints: vec![
+            StateConstraint::FieldEquals {
+                index: DEAD_SLOT,
+                value: field_from_u64(1),
+            },
+            StateConstraint::FieldDelta {
+                index: TOMBS_SLOT,
+                delta: field_from_u64(1),
+            },
+        ],
+    });
+
+    // 8. THE RETURN RIGHT — one method per daily map, each setting exactly that map's bit.
+    //    `FieldDelta{tomb_days, 1 << day}` is exact, so marking a day you ALREADY hold is a
+    //    refusal (delta 0), not a silent no-op: the caller must check `may_return_to` first.
+    for day in 0..DAYS {
+        cases.push(TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol(&mark_tomb_day_method(day)),
+            },
+            constraints: vec![
+                StateConstraint::FieldEquals {
+                    index: DEAD_SLOT,
+                    value: field_from_u64(1),
+                },
+                StateConstraint::FieldDelta {
+                    index: TOMB_DAYS_SLOT,
+                    delta: field_from_u64(1u64 << day),
+                },
+            ],
+        });
+    }
+
+    // 9. And the mask is slot-bound: any write to it must be on a dead sheet, must not clear a day
+    //    already earned (`Monotonic`), and cannot exceed one map's worth of bits in magnitude.
+    //
+    //    RESIDUAL, stated rather than hidden: `FieldDeltaInRange` bounds the delta, it does not pin
+    //    it to the set `{1, 2, 4, …, 1 << (DAYS-1)}`. A stapled write can therefore set SEVERAL
+    //    day-bits in one turn (any delta in `[1, 1 << (DAYS-1)]`). Pinning it exactly needs a
+    //    `SimpleStateConstraint::FieldDelta` variant so the legal quanta can be `AnyOf`-ed; the
+    //    cell algebra exposes `FieldDelta` only at the outer `StateConstraint` level, which cannot
+    //    be disjoined. That one-variant gap is the reason every price tooth in this crate can bound
+    //    a stapled amount but not fix it.
+    cases.push(TransitionCase {
+        guard: TransitionGuard::SlotChanged {
+            index: TOMB_DAYS_SLOT,
+        },
+        constraints: vec![
+            StateConstraint::FieldEquals {
+                index: DEAD_SLOT,
+                value: field_from_u64(1),
+            },
+            StateConstraint::Monotonic {
+                index: TOMB_DAYS_SLOT,
+            },
+            StateConstraint::FieldDeltaInRange {
+                index: TOMB_DAYS_SLOT,
+                min_delta: field_from_u64(1),
+                max_delta: field_from_u64(1u64 << (DAYS - 1)),
+            },
+        ],
+    });
+
     story
 }
 
@@ -272,9 +480,73 @@ pub fn claim_boon(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
     )
 }
 
+/// **Redeem a death at `depth` — the PRICED accrual.** A real turn under
+/// [`tomb_grant_method`]`(depth)` writing `echoes += `[`echoes_for_depth`]`(depth)` and
+/// `tombs += 1`. Unlike [`grant_echoes`], the amount is not the caller's to choose: the case
+/// carries an exact `FieldDelta` for THIS depth, so a payload that writes anything else is refused,
+/// and a `depth` the dungeon does not have (`> `[`FLOORS`]) names no case at all and is a
+/// default-deny refusal.
+///
+/// [`crate::tomb::inter`] is the intended caller — it reads `depth` off a run's committed cell
+/// state rather than accepting a number.
+pub fn grant_echoes_at_depth(world: &WorldCell, depth: u64) -> Result<TurnReceipt, WorldError> {
+    let cell = world.cell_id();
+    let new_echoes = world.read_var("echoes") + echoes_for_depth(depth);
+    let new_tombs = world.read_var("tombs") + 1;
+    world.apply_raw(
+        &tomb_grant_method(depth),
+        vec![
+            Effect::SetField {
+                cell,
+                index: ECHOES_SLOT as u64,
+                value: field_from_u64(new_echoes),
+            },
+            Effect::SetField {
+                cell,
+                index: TOMBS_SLOT as u64,
+                value: field_from_u64(new_tombs),
+            },
+        ],
+    )
+}
+
+/// **Mark a daily map as one that has killed you** — a real turn under
+/// [`mark_tomb_day_method`]`(day)` setting bit `day` of [`TOMB_DAYS_SLOT`]. Gated
+/// `FieldEquals(dead, 1)` and pinned to that one bit by an exact `FieldDelta`, so a day you already
+/// hold is a REFUSAL (delta 0), not a no-op — check [`may_return_to`] first.
+pub fn mark_tomb_day(world: &WorldCell, day: usize) -> Result<TurnReceipt, WorldError> {
+    let cell = world.cell_id();
+    let next = world.read_var("tomb_days") | (1u64 << (day % DAYS));
+    world.apply_raw(
+        &mark_tomb_day_method(day % DAYS),
+        vec![Effect::SetField {
+            cell,
+            index: TOMB_DAYS_SLOT as u64,
+            value: field_from_u64(next),
+        }],
+    )
+}
+
 /// Current accrued meta-currency (the committed `echoes` slot).
 pub fn echoes(world: &WorldCell) -> u64 {
     world.read_var("echoes")
+}
+
+/// The committed RETURN-RIGHT mask — bit `k` set ⟺ day `k`'s map has killed this identity.
+pub fn tomb_days(world: &WorldCell) -> u64 {
+    world.read_var("tomb_days")
+}
+
+/// The committed count of redeemed death-records.
+pub fn tombs(world: &WorldCell) -> u64 {
+    world.read_var("tombs")
+}
+
+/// Whether this identity has earned the right to open a later descent on day `day`'s map — i.e.
+/// whether that map has killed it. Not a power: every drawn map is Lean-checked completable, so a
+/// return is a choice of battlefield, and losing there is the only way to earn one.
+pub fn may_return_to(world: &WorldCell, day: usize) -> bool {
+    tomb_days(world) & (1u64 << (day % DAYS)) != 0
 }
 
 /// Current unlock marker (the committed `boon` slot).
@@ -616,6 +888,209 @@ mod meta_tests {
         );
         claim_boon(&world).expect("a legitimately-funded claim still commits");
         assert!(has_boon(&world), "the real unlock landed");
+    }
+
+    /// THE SLOT-BOUND CURRENCY TOOTH (the falsifier for a hole that was live in HEAD until this
+    /// commit): an `echoes` write STAPLED onto a DIFFERENT method's legitimate turn, on a LIVING
+    /// character, is REFUSED.
+    ///
+    /// `apply_raw` is public, so a client can append `SetField(echoes, 9_999)` to any turn it is
+    /// otherwise entitled to make. The "granted ONLY on a real death" gate lived on the
+    /// `MethodIs{GRANT_ECHOES_METHOD}` case, which such a turn never matches; the only
+    /// non-dispatching guard on `echoes` was the global `Always Monotonic{echoes}`, and 0 -> 9_999
+    /// is perfectly monotone. DRIVEN, a `SetField(echoes, 9_999)` stapled onto a legitimate
+    /// `hero/gain_xp` committed **9,999 echoes on a character that never died** — enough to buy
+    /// every boon and every talent in `dreggnet_gear`, whose prices are denominated in this exact
+    /// slot. The `SlotChanged{echoes}` case binds the death gate to THE WRITE.
+    #[test]
+    fn a_stapled_echoes_write_cannot_mint_currency_on_a_living_sheet() {
+        let world = deploy_meta_hero(42);
+        progression::choose_class(&world, WARRIOR).expect("class");
+        assert!(!progression::is_dead(&world), "the hero is ALIVE");
+        let cell = world.cell_id();
+
+        // A legitimate gain_xp payload (xp 0 -> 1, strictly monotone, alive) plus a stapled mint.
+        let stapled = world.apply_raw(
+            progression::GAIN_XP_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: progression::XP_SLOT as u64,
+                    value: field_from_u64(1),
+                },
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as u64,
+                    value: field_from_u64(9_999),
+                },
+            ],
+        );
+        assert!(
+            matches!(stapled, Err(WorldError::Refused(_))),
+            "an echoes mint stapled onto a gain_xp turn on a LIVING hero must be REFUSED — \
+             otherwise every boon/talent price in the tree is free; got {stapled:?}"
+        );
+        assert_eq!(echoes(&world), 0, "anti-ghost: no minted currency");
+        assert_eq!(
+            world.read_var("xp"),
+            0,
+            "anti-ghost: the refusal committed NOTHING, not even the legitimate XP half"
+        );
+
+        // The claim_boon method is not the pivot either — the gate binds the WRITE.
+        let via_boon = world.apply_raw(
+            CLAIM_BOON_METHOD,
+            vec![Effect::SetField {
+                cell,
+                index: ECHOES_SLOT as u64,
+                value: field_from_u64(BOON_PRICE),
+            }],
+        );
+        assert!(
+            matches!(via_boon, Err(WorldError::Refused(_))),
+            "an echoes write under claim_boon on a living hero is refused too, got {via_boon:?}"
+        );
+        assert_eq!(echoes(&world), 0, "anti-ghost: still no currency");
+
+        // THE GATE IS A DEATH, NOT A BAN: once the hero has really died, the accrual commits.
+        progression::perish(&world).expect("a real death");
+        grant_echoes_at_depth(&world, 4).expect("a real death funds a real, priced accrual");
+        assert_eq!(echoes(&world), echoes_for_depth(4));
+    }
+
+    /// THE PRICED ACCRUAL (non-vacuous): the tomb grant's amount is fixed by the KERNEL, not by the
+    /// caller. The same method with a forged (larger) payload is refused; a depth the dungeon does
+    /// not have names no case and is a default-deny refusal; and the sanctioned call commits
+    /// exactly one depth's payout while counting exactly one tomb.
+    #[test]
+    fn the_tomb_grant_is_priced_by_the_kernel_not_the_caller() {
+        let world = deploy_meta_hero(43);
+        progression::perish(&world).expect("a real death");
+        let cell = world.cell_id();
+
+        // FORGE THE AMOUNT: present the depth-1 method but write the depth-4 payout.
+        let forged = world.apply_raw(
+            &tomb_grant_method(1),
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as u64,
+                    value: field_from_u64(echoes_for_depth(4)),
+                },
+                Effect::SetField {
+                    cell,
+                    index: TOMBS_SLOT as u64,
+                    value: field_from_u64(1),
+                },
+            ],
+        );
+        assert!(
+            matches!(forged, Err(WorldError::Refused(_))),
+            "a depth-1 redemption paying the depth-4 amount is refused (FieldDelta), got {forged:?}"
+        );
+        assert_eq!(echoes(&world), 0, "anti-ghost: nothing minted");
+
+        // A DEPTH THE DUNGEON DOES NOT HAVE: the callers scattered across the tree pass 6, 7, 12
+        // to a four-floor dungeon. There is no such case, so there is no such payout.
+        let too_deep = grant_echoes_at_depth(&world, FLOORS + 1);
+        assert!(
+            matches!(too_deep, Err(WorldError::Refused(_))),
+            "a death 'at depth {}' in a {FLOORS}-floor dungeon has no method and is default-denied, \
+             got {too_deep:?}",
+            FLOORS + 1
+        );
+        assert_eq!(echoes(&world), 0, "anti-ghost: still nothing");
+
+        // THE SANCTIONED PATH: exactly this depth's quantum, exactly one tomb.
+        grant_echoes_at_depth(&world, 3).expect("a depth-3 redemption commits");
+        assert_eq!(echoes(&world), echoes_for_depth(3));
+        assert_eq!(tombs(&world), 1, "one death redeemed, one tomb counted");
+        grant_echoes_at_depth(&world, 4).expect("a second, deeper death redeems too");
+        assert_eq!(echoes(&world), echoes_for_depth(3) + echoes_for_depth(4));
+        assert_eq!(tombs(&world), 2);
+
+        // The COUNT is slot-bound: a stapled jump in `tombs` (faking a long history of deaths, which
+        // any future ranking over "runs survived" would read) is refused.
+        let inflate = world.apply_raw(
+            GRANT_ECHOES_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as u64,
+                    value: field_from_u64(echoes(&world) + 1),
+                },
+                Effect::SetField {
+                    cell,
+                    index: TOMBS_SLOT as u64,
+                    value: field_from_u64(99),
+                },
+            ],
+        );
+        assert!(
+            matches!(inflate, Err(WorldError::Refused(_))),
+            "inflating the tomb count is refused (FieldDelta +1), got {inflate:?}"
+        );
+        assert_eq!(tombs(&world), 2, "anti-ghost: the count is honest");
+    }
+
+    /// THE RETURN RIGHT (non-vacuous, both directions): a death on a map marks THAT map and no
+    /// other; the mark is un-erasable; a second mark of the same map is refused; and a mark on a
+    /// living sheet is refused. The right is earned by losing there, and only there.
+    #[test]
+    fn the_return_right_is_earned_by_dying_there_and_never_erased() {
+        let world = deploy_meta_hero(44);
+        assert_eq!(tomb_days(&world), 0, "a fresh hero owes the dark nothing");
+
+        // A LIVING hero cannot mark a map — you have to actually lose on it.
+        let alive = mark_tomb_day(&world, 9);
+        assert!(
+            matches!(alive, Err(WorldError::Refused(_))),
+            "marking a map without dying on it is refused, got {alive:?}"
+        );
+        assert!(!may_return_to(&world, 9), "anti-ghost: no right earned");
+
+        progression::perish(&world).expect("a real death");
+        mark_tomb_day(&world, 9).expect("day 9's map killed you — the right is earned");
+        assert!(
+            may_return_to(&world, 9),
+            "you may go back to what killed you"
+        );
+        for other in [0usize, 1, 8, 10, 15] {
+            assert!(
+                !may_return_to(&world, other),
+                "day {other} never killed you, so it is not yours to choose"
+            );
+        }
+
+        // Marking the SAME map twice is a refusal, not a silent no-op (the exact FieldDelta).
+        let again = mark_tomb_day(&world, 9);
+        assert!(
+            matches!(again, Err(WorldError::Refused(_))),
+            "a map you already hold cannot be re-marked, got {again:?}"
+        );
+
+        // A second, different map stacks; the mask never loses a bit.
+        mark_tomb_day(&world, 13).expect("day 13's map killed you too");
+        assert!(may_return_to(&world, 9) && may_return_to(&world, 13));
+
+        // A direct write DOWN (forgetting a death) is refused by the Monotonic mask.
+        let cell = world.cell_id();
+        let erase = world.apply_raw(
+            &mark_tomb_day_method(9),
+            vec![Effect::SetField {
+                cell,
+                index: TOMB_DAYS_SLOT as u64,
+                value: field_from_u64(0),
+            }],
+        );
+        assert!(
+            matches!(erase, Err(WorldError::Refused(_))),
+            "erasing a tomb-day is refused (Monotonic), got {erase:?}"
+        );
+        assert!(
+            may_return_to(&world, 9) && may_return_to(&world, 13),
+            "anti-ghost: the dark does not forget"
+        );
     }
 
     /// The existing progression turns stay intact on the meta-augmented cell: choose class, earn XP,

@@ -27,6 +27,10 @@ dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-circuit = { path = "../circuit" }
 dregg-circuit-prove = { path = "../circuit-prove" }
+# The canonical chip-native typed projections (`canonical_32_to_felts_4`) the
+# proven-receipt mint fills the AIR-unconstrained TURN_HASH PI slot with — the same
+# leaf `dregg-turn`'s resolver reads them back through.
+dregg-commit = { path = "../commit" }
 dregg-types = { path = "../types" }
 postcard = { version = "1", features = ["alloc"] }
 serde = { workspace = true }

@@ -851,6 +851,27 @@ theorem corrected_ood_shape_inhabited :
       Dregg2.Circuit.ExtFieldChallenge.W poleInit 1 poleProof polePub poleExtView
       deployed_predicate_accepts_pole o⟩
 
+/-- **⚑ THE RESIDUAL CAVEAT, AS A THEOREM RATHER THAN A DOC-COMMENT.** The one accepting run of the
+apex-facing predicate exhibited anywhere in this tree carries NO table openings at all: `poleProof`
+never sets `tableOpenings`, so it is `[]`. Every corrected bundle of this campaign
+(`FriLdtExtractV3Cons`, `FriLdtExtractV3Faithful`, `ApexOodLaneRepair.FriLdtExtractCons`,
+`FriFsDecodedOodRepair`'s and `OodSingletonRepair`'s `…Cons` forms) RETAINS the conjunct
+`topen ∈ (view pi π).1.tableOpenings`. On THIS run that conjunct is refutable, so the corrected
+bundles have no exhibited model here either — the same disease, one conjunct over. Exported so the
+caveat is CONSUMED as a hypothesis (`PremiseInhabitabilitySweep` §2) instead of restated in prose. -/
+theorem deployed_accepting_pole_has_no_tableOpenings :
+    ∃ (perm : List Nat → List Nat) (RATE : Nat) (toNat : Nat → Nat) (params : FriParams)
+      (vk : RecursionVk Nat) (core : FriCore Nat) (A : FieldArith Nat)
+      (extCore : ExtFriCore Nat) (extA : ExtFriArith Nat) (Wres : Nat)
+      (initState : List Nat) (logN : Nat) (proof : BatchProofData Nat) (pub : WrapPublics Nat)
+      (view : ExtVerifierView Nat),
+      verifyAlgoUnifiedFaithfulExt perm RATE toNat params vk core A extCore extA Wres
+          initState logN proof pub view = true
+        ∧ proof.tableOpenings = [] :=
+  ⟨polePerm, poleRate, id, poleParams, poleVk, poleScalarCore, poleScalarArith, poleCore,
+    babyBearFriArith, Dregg2.Circuit.ExtFieldChallenge.W, poleInit, 1, poleProof, polePub,
+    poleExtView, deployed_predicate_accepts_pole, rfl⟩
+
 /-! ## §7 — the separation that makes the verifier-index change one-directional. -/
 
 /-- **The bare and deployed antecedents are NOT interchangeable.** There is a concrete proof the bare
@@ -889,6 +910,7 @@ theorem bundles_are_not_interchangeable :
 #assert_axioms deployed_predicate_accepts_pole
 #assert_axioms deployed_accepting_pole_nonempty
 #assert_axioms corrected_ood_shape_inhabited
+#assert_axioms deployed_accepting_pole_has_no_tableOpenings
 #assert_axioms bundles_are_not_interchangeable
 
 end Dregg2.Circuit.FriLdtExtractDeployed

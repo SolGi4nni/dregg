@@ -35,6 +35,7 @@ owns only its own declarations.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitIncrementNonceFullState
 
@@ -154,54 +155,95 @@ theorem incrementNonce_runnable_full_sound (hash : List ℤ → ℤ) (preRoots :
 
 /-! ## §5 — THE ANTI-GHOST: tamper ANY of the 17 fields ⇒ UNSAT (incl. any side-table root). -/
 
-/-- **`incrementNonce_runnable_full_commit_binds_or_collides` — whole-state binding over the WIDE
-commitment.** Two rows satisfying the wide incrementNonce descriptor that publish the SAME `NEW_COMMIT`,
-with `systemRootsDigest` carriers, EITHER agree on EVERY absorbed state-block column AND every side-table
-root, OR exhibit a genuine collision of the deployed sponge (`WideColl` on the two wide preimages, or
-`RootsColl` on the two root lists). So a prover cannot keep `NEW_COMMIT` while tampering ANY of the 17
-fields without producing a collision.
+/-- ⚑ **WHAT CHANGED AND WHY (the reduction that replaces the deleted disjunctions).** This section
+used to export `incrementNonce_runnable_full_commit_binds_or_collides` / `incrementNonce_rejects_root_tamper_or_collides`, each concluding
+`… ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. Those forms are TRUE of the deployed sponge —
+unlike the `Poseidon2SpongeCR` predecessors, which it REFUTES — but they are UNCLOSED: a collision
+of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. They quantify over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. They are DELETED and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the forgery is a
+first-class `Game` at incrementNonce's OWN wide descriptor, the extractor is a MAP OF ADVERSARIES (the
+reduction-internal witness), and the conclusions are (a) negligibility under the DEPLOYED sponge's
+collision floor `HashCRHardQuant (spongeFamily D) Eff`, `hEff` in the open, both poles priced
+(`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`), and (b) the DISCHARGED keyed-ROM forms on
+the PROVED birthday floor (`keyedRom_hard`) — NO floor hypothesis — in the LABELLED random-oracle
+model of `EffectVmRowCommitReduction` §5's header (the sampled `Fin (2 ^ l)` digest is the
+modelling step; no `l` is the deployed ~31-bit felt). The ROM commitment layer carries no
+descriptor (the nested absorb schedule is one object across effects); incrementNonce's per-effect circuit
+content (`satisfiedVm` at `incrementNonceVmDescriptorWide`) lives in the `_advantage_bound` forms. -/
+def incNonceWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := incrementNonceVmDescriptorWide
+  usesWideSites := rfl
 
-The former `incrementNonce_runnable_full_commit_binds` concluded the bare conjunction from
-`Poseidon2SpongeCR hash`. The deployed sponge REFUTES that hypothesis, so at deployed parameters that
-theorem was vacuous. This disjunction is formally weaker, but it HOLDS of the deployed sponge, which the
-old one did not. -/
-theorem incrementNonce_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash incrementNonceVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash incrementNonceVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  runnable_full_commit_binds_or_collides (incNonceRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `incrementNonce_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD BINDING for
+incrementNonce.** Under the DEPLOYED sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH SATISFYING `incrementNonceVmDescriptorWide`, publishing one `NEW_COMMIT` with genuine `systemRootsDigest`
+carriers, yet binding DIFFERENT state (an absorbed column or a side-table root), has NEGLIGIBLE
+advantage. Replaces the deleted bare disjunction. -/
+theorem incrementNonce_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D incNonceWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D incNonceWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D incNonceWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D incNonceWideRowSpec Eff A hEff hCR
 
-/-- **`incrementNonce_rejects_root_tamper_or_collides` — the side-table anti-ghost tooth (the gap's
-headline).** Two wide incrementNonce rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
-carriers) but whose side-table sub-blocks DIFFER at some root index `i` (a dropped escrow, an omitted
-nullifier) cannot both satisfy WITHOUT exhibiting a collision of the deployed sponge. The 8 side-table
-roots are bound BY the runnable commitment up to that collision — the Class-C gap cured for
-incrementNonce.
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑⚑ `incrementNonce_binds_full_state_rom` — the DISCHARGED whole-17-field binding, on the PROVED
+floor.** A query-bounded forger of the wide nested `state_commit` — the very commitment incrementNonce's
+wide row publishes — has NEGLIGIBLE advantage, in the keyed ROM model of
+`EffectVmRowCommitReduction` §5's header. NO floor hypothesis. The COMMITMENT layer carries no
+descriptor, so this is `wideRow_binds_rom` at the deployed tag space; incrementNonce's per-effect circuit
+content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem incrementNonce_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
-The former `incrementNonce_rejects_root_tamper` concluded `False` from `Poseidon2SpongeCR hash`, which
-the deployed sponge REFUTES; at deployed parameters it was vacuous. This disjunction is formally weaker,
-but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem incrementNonce_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash incrementNonceVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash incrementNonceVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (incNonceRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `incrementNonce_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED.** An
+efficient adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a
+satisfying wide incrementNonce row (a dropped escrow, an omitted nullifier, a reordered queue), except
+with negligible probability. Replaces the deleted `incrementNonce_rejects_root_tamper_or_collides`. -/
+theorem incrementNonce_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D incNonceWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D incNonceWideRowSpec (rootTamperToWide D incNonceWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D incNonceWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D incNonceWideRowSpec Eff A hEff hCR
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑ `incrementNonce_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor: a
+query-bounded adversary cannot keep the published nested commitment while tampering a side-table
+root. -/
+theorem incrementNonce_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-! ## §6 — NON-VACUITY: a real incrementNonce inhabits the full clause; a forged post is refuted. -/
 
@@ -255,8 +297,10 @@ theorem incNonce_clause_rejects_root_drop :
 
 #assert_axioms incNonceGates_give_cellSpec
 #assert_axioms incrementNonce_runnable_full_sound
-#assert_axioms incrementNonce_runnable_full_commit_binds_or_collides
-#assert_axioms incrementNonce_rejects_root_tamper_or_collides
+#assert_axioms incrementNonce_binds_full_state_advantage_bound
+#assert_axioms incrementNonce_binds_full_state_rom
+#assert_axioms incrementNonce_rejects_root_tamper_advantage_bound
+#assert_axioms incrementNonce_rejects_root_tamper_rom
 #assert_axioms goodIncNonce_realizes
 #assert_axioms incNonce_clause_not_trivial
 #assert_axioms incNonce_clause_rejects_root_drop

@@ -84,6 +84,7 @@ named `Poseidon2SpongeCR` floor (the same one the whole commitment tower carries
 axiom. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.LogUpColumnLayout
+import Dregg2.Crypto.SpongeCarrierReduction
 
 namespace Dregg2.Circuit.MapOpsColumnLayout
 
@@ -95,6 +96,7 @@ open Dregg2.Circuit.MapMerkleRoot (mapNode mapNode_injective foldLevel perfectRo
   perfectRoot_injective foldLevel_length_half mapRoot mapRoot_injective opensToMerkle
   writesToMerkle opensToMerkle_functional writesToMerkle_functional)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.AirChecksSatisfied (isArith MainAirAcceptF airAccept_forces_satisfied2)
 open Dregg2.Circuit.LogUpColumnLayout (BusModelOk busModel_forces_lookup_holds mem_lookupsInto)
 open Dregg2.Substrate
@@ -283,23 +285,97 @@ theorem perfectRoot_append (hash : List ℤ → ℤ) :
       (foldLevel_length_half hash (2 ^ d) R (by rw [hR, pow_succ]; ring))]
     rfl
 
-/-- **THE PATH-BINDING + UPDATE LAW (the crux; the extraction-shaped Merkle-opening argument).**
-Under the single named CR floor: a path recomputing `leaf` to the perfect-tree root of a
-`2^depth`-leaf vector `xs`
-  (1) BINDS the opened leaf — `xs[pathPos steps]? = some leaf` (a different claimed leaf under
-      the same root is two distinct child pairs under one `mapNode` image at some level, i.e. a
-      Poseidon2 collision — the same peel as `OodCommitmentBinding.merkleRecomputeZ_binds`), and
-  (2) FORCES THE UPDATE — the SAME siblings recompute any replacement `leaf'` to the root of
-      `xs.set (pathPos steps) leaf'` (CR pins every sibling to the true subtree root, so the
-      write's post-root column is the genuine updated commitment, not a forgery).
-Proven by ONE induction on the path, peeling `mapNode_injective` per level. -/
-theorem pathRecompute_binds_updates (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+/-! ## §2b — ⚑ THE PATH-BINDING FLOOR, RE-GROUNDED: the induction turned INSIDE OUT.
+
+`Poseidon2SpongeCR hash` is INJECTIVITY of a range-bounded sponge, and
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES it false at the deployed BabyBear
+parameters — so the old `pathRecompute_binds_updates`, which assumed it, was vacuously true and
+priced at nothing. The honest object does the SAME path walk in the other direction: assume the
+opening equivocates, and RETURN the level at which the deployed node hash actually collided.
+
+`pathCollFind` is that walk, as a TOTAL function of data the caller already has (the steps, the
+committed vector, the opened leaf); `pathRecompute_binds_updates_or_collides` is its
+UNCONDITIONAL correctness — no CR hypothesis, no injectivity, no floor, hence a true statement
+at deployed parameters, unlike the binding it replaces. `pathRecompute_binds_updates` then
+restores the OLD conclusion verbatim from a per-instance, refutable side condition about ONE
+named pair (`pathBinds_unconditional_false` shows that side condition is load-bearing;
+`pathColl_refutable` that it can fail; `path_binds_fires` that it holds — for EVERY hash — at an
+honest opening, so the restoration is not vacuous either). -/
+
+/-- **THE ORDERED NODE PREIMAGE at one path level.** The side bit fixes which side the recomputed
+subtree root sits on, EXACTLY as `pathRecompute` branches. Naming it makes the extractor's
+correspondence to the deployed recompute a rewrite rather than a case split repeated everywhere. -/
+def stepNode (b : Bool) (rec sib : ℤ) : List ℤ := if b then [sib, rec] else [rec, sib]
+
+/-- **THE DEPLOYED RECOMPUTE, ONE LEVEL, IN TERMS OF `stepNode`.** The bridge that makes the
+extractor provably walk the SAME path the verifier walks — not a parallel reconstruction. -/
+theorem pathRecompute_cons (hash : List ℤ → ℤ) (b : Bool) (sib : ℤ)
+    (rest : List (Bool × ℤ)) (leaf : ℤ) :
+    pathRecompute hash leaf ((b, sib) :: rest)
+      = hash (stepNode b (pathRecompute hash leaf rest) sib) := by
+  cases b <;> rfl
+
+/-- **⚑ THE PATH WALK, AS A FUNCTION.** Descend the path alongside the committed vector. At each
+level form the two ordered node preimages — the claimed one (`stepNode` of the recomputed subtree
+root and the supplied sibling) and the true one (`[root of the left half, root of the right half]`)
+— and if they DIFFER, that level IS the collision (the caller's equal-root hypothesis makes their
+sponges agree). Otherwise they agree componentwise, so descend into the half the side bit selects.
+If the path runs out, the equal-root hypothesis has already forced the opened leaf equal to the
+committed one, so that branch returns an equal pair and is never a collision —
+`pathRecompute_binds_updates_or_collides` is what pins the useful case. -/
+def pathCollFind (hash : List ℤ → ℤ) :
+    List (Bool × ℤ) → List ℤ → ℤ → List ℤ × List ℤ
+  | [], xs, leaf => ([leaf], [xs.headD 0])
+  | (b, sib) :: rest, xs, leaf =>
+      if stepNode b (pathRecompute hash leaf rest) sib
+          = [perfectRoot hash rest.length (xs.take (2 ^ rest.length)),
+             perfectRoot hash rest.length (xs.drop (2 ^ rest.length))] then
+        (if b then pathCollFind hash rest (xs.drop (2 ^ rest.length)) leaf
+         else pathCollFind hash rest (xs.take (2 ^ rest.length)) leaf)
+      else
+        (stepNode b (pathRecompute hash leaf rest) sib,
+         [perfectRoot hash rest.length (xs.take (2 ^ rest.length)),
+          perfectRoot hash rest.length (xs.drop (2 ^ rest.length))])
+
+/-- **THE EXTRACTOR DOES NOT BLOW UP ITS INPUT** — every branch returns two lists of at most two
+felts, whatever the tree depth. The cost model's output-growth obligation, PROVED; without it the
+reduction would not provably preserve efficiency. -/
+theorem pathCollFind_len_le (hash : List ℤ → ℤ) :
+    ∀ (steps : List (Bool × ℤ)) (xs : List ℤ) (leaf : ℤ),
+      (pathCollFind hash steps xs leaf).1.length
+        + (pathCollFind hash steps xs leaf).2.length ≤ 4 := by
+  intro steps
+  induction steps with
+  | nil => intro xs leaf; simp [pathCollFind]
+  | cons step rest ih =>
+    obtain ⟨b, sib⟩ := step
+    intro xs leaf
+    by_cases hAB : stepNode b (pathRecompute hash leaf rest) sib
+        = [perfectRoot hash rest.length (xs.take (2 ^ rest.length)),
+           perfectRoot hash rest.length (xs.drop (2 ^ rest.length))]
+    · rw [pathCollFind, if_pos hAB]
+      cases b
+      · simpa using ih (xs.take (2 ^ rest.length)) leaf
+      · simpa using ih (xs.drop (2 ^ rest.length)) leaf
+    · rw [pathCollFind, if_neg hAB]
+      cases b <;> simp [stepNode]
+
+/-- **⚑ THE HYPOTHESIS-FREE PATH-BINDING + UPDATE LAW.** A path recomputing `leaf` to the
+perfect-tree root of a `2^depth`-leaf vector `xs` either
+  (1) BINDS the opened leaf (`xs[pathPos steps]? = some leaf`) AND FORCES THE UPDATE (the SAME
+      siblings recompute any replacement `leaf'` to the root of `xs.set (pathPos steps) leaf'`),
+  (2) or the walk RETURNS a genuine collision of the deployed sponge — the exact pair the old
+      proof would have fed to the (false) injectivity.
+NO floor hypothesis anywhere: this holds of the deployed 1-felt Poseidon2 sponge, which the old
+`Poseidon2SpongeCR`-conditioned statement did not. -/
+theorem pathRecompute_binds_updates_or_collides (hash : List ℤ → ℤ) :
     ∀ (steps : List (Bool × ℤ)) (xs : List ℤ) (leaf : ℤ),
       xs.length = 2 ^ steps.length →
       pathRecompute hash leaf steps = perfectRoot hash steps.length xs →
-      xs[pathPos steps]? = some leaf ∧
-      ∀ leaf', pathRecompute hash leaf' steps
-        = perfectRoot hash steps.length (xs.set (pathPos steps) leaf') := by
+      (xs[pathPos steps]? = some leaf ∧
+        ∀ leaf', pathRecompute hash leaf' steps
+          = perfectRoot hash steps.length (xs.set (pathPos steps) leaf'))
+      ∨ IsSpongeColl hash (pathCollFind hash steps xs leaf) := by
   intro steps
   induction steps with
   | nil =>
@@ -313,7 +389,7 @@ theorem pathRecompute_binds_updates (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
         | nil => exact ⟨a, rfl⟩
         | cons b t' => simp at hlen
     have hx : leaf = x := hroot
-    constructor
+    refine Or.inl ⟨?_, ?_⟩
     · simp [pathPos, hx]
     · intro leaf'; rfl
   | cons step rest ih =>
@@ -330,49 +406,185 @@ theorem pathRecompute_binds_updates (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
       · rw [List.length_take]; omega
       · rw [List.length_drop]; omega
     have hposlt := pathPos_lt rest
+    have htake : (L ++ R).take (2 ^ rest.length) = L := List.take_left' hL
+    have hdrop : (L ++ R).drop (2 ^ rest.length) = R := List.drop_left' hL
+    have hcol : hash (stepNode b (pathRecompute hash leaf rest) sib)
+        = hash [perfectRoot hash rest.length L, perfectRoot hash rest.length R] := by
+      rw [← pathRecompute_cons hash b sib rest leaf, hroot]
+      simp only [List.length_cons]
+      exact perfectRoot_append hash rest.length L R hL hR
     cases b with
     | false =>
-      simp only [pathRecompute, List.length_cons] at hroot
-      rw [perfectRoot_append hash rest.length L R hL hR] at hroot
-      obtain ⟨hrec, hsib⟩ := mapNode_injective hash hCR hroot
-      obtain ⟨hmem, hupd⟩ := ih L leaf hL hrec
-      constructor
-      · simp only [pathPos]
-        rw [List.getElem?_append_left (by omega)]
-        exact hmem
-      · intro leaf'
-        simp only [pathRecompute, pathPos, List.length_cons]
-        rw [set_append_left' L R _ _ (by omega)]
-        rw [perfectRoot_append hash rest.length _ R (by rw [List.length_set]; exact hL) hR]
-        rw [hupd leaf', hsib]
+      by_cases hAB : stepNode false (pathRecompute hash leaf rest) sib
+          = [perfectRoot hash rest.length L, perfectRoot hash rest.length R]
+      · have hrec : pathRecompute hash leaf rest = perfectRoot hash rest.length L := by
+          simpa [stepNode] using (List.cons.inj hAB).1
+        have hsib : sib = perfectRoot hash rest.length R := by
+          have h2 := (List.cons.inj hAB).2
+          simpa [stepNode] using (List.cons.inj h2).1
+        rcases ih L leaf hL hrec with ⟨hmem, hupd⟩ | hcoll
+        · refine Or.inl ⟨?_, ?_⟩
+          · simp only [pathPos]
+            rw [List.getElem?_append_left (by omega)]
+            exact hmem
+          · intro leaf'
+            simp only [pathRecompute, pathPos, List.length_cons]
+            rw [set_append_left' L R _ _ (by omega)]
+            rw [perfectRoot_append hash rest.length _ R
+              (by rw [List.length_set]; exact hL) hR]
+            rw [hupd leaf', hsib]
+        · refine Or.inr ?_
+          simp only [pathCollFind, htake, hdrop, if_pos hAB, Bool.false_eq_true, if_false]
+          exact hcoll
+      · refine Or.inr ?_
+        simp only [pathCollFind, htake, hdrop, if_neg hAB]
+        exact ⟨hAB, hcol⟩
     | true =>
-      simp only [pathRecompute, List.length_cons] at hroot
-      rw [perfectRoot_append hash rest.length L R hL hR] at hroot
-      obtain ⟨hsib, hrec⟩ := mapNode_injective hash hCR hroot
-      obtain ⟨hmem, hupd⟩ := ih R leaf hR hrec
-      constructor
-      · simp only [pathPos]
-        rw [List.getElem?_append_right (by omega)]
-        rw [show 2 ^ rest.length + pathPos rest - L.length = pathPos rest by omega]
-        exact hmem
-      · intro leaf'
-        simp only [pathRecompute, pathPos, List.length_cons]
-        rw [show 2 ^ rest.length + pathPos rest = L.length + pathPos rest by omega]
-        rw [set_append_right' L R _ _]
-        rw [perfectRoot_append hash rest.length L _ hL (by rw [List.length_set]; exact hR)]
-        rw [hupd leaf', hsib]
+      by_cases hAB : stepNode true (pathRecompute hash leaf rest) sib
+          = [perfectRoot hash rest.length L, perfectRoot hash rest.length R]
+      · have hsib : sib = perfectRoot hash rest.length L := by
+          simpa [stepNode] using (List.cons.inj hAB).1
+        have hrec : pathRecompute hash leaf rest = perfectRoot hash rest.length R := by
+          have h2 := (List.cons.inj hAB).2
+          simpa [stepNode] using (List.cons.inj h2).1
+        rcases ih R leaf hR hrec with ⟨hmem, hupd⟩ | hcoll
+        · refine Or.inl ⟨?_, ?_⟩
+          · simp only [pathPos]
+            rw [List.getElem?_append_right (by omega)]
+            rw [show 2 ^ rest.length + pathPos rest - L.length = pathPos rest by omega]
+            exact hmem
+          · intro leaf'
+            simp only [pathRecompute, pathPos, List.length_cons]
+            rw [show 2 ^ rest.length + pathPos rest = L.length + pathPos rest by omega]
+            rw [set_append_right' L R _ _]
+            rw [perfectRoot_append hash rest.length L _ hL
+              (by rw [List.length_set]; exact hR)]
+            rw [hupd leaf', hsib]
+        · refine Or.inr ?_
+          simp only [pathCollFind, htake, hdrop, if_pos hAB, if_true]
+          exact hcoll
+      · refine Or.inr ?_
+        simp only [pathCollFind, htake, hdrop, if_neg hAB]
+        exact ⟨hAB, hcol⟩
+
+/-- **THE PATH-BINDING + UPDATE LAW (the crux; the extraction-shaped Merkle-opening argument).**
+A path recomputing `leaf` to the perfect-tree root of a `2^depth`-leaf vector `xs`
+  (1) BINDS the opened leaf — `xs[pathPos steps]? = some leaf`, and
+  (2) FORCES THE UPDATE — the SAME siblings recompute any replacement `leaf'` to the root of
+      `xs.set (pathPos steps) leaf'` (every sibling is pinned to the true subtree root, so the
+      write's post-root column is the genuine updated commitment, not a forgery).
+⚑ CUT OVER 2026-07-25: the refuted `Poseidon2SpongeCR hash` premise is GONE; what remains is a
+per-instance, refutable side condition about the ONE pair `pathCollFind` names for THIS opening.
+The old hypothesis IMPLIES it (`noPathColl_of_CR`), so this statement is strictly STRONGER, and
+its conclusion is byte-identical to the one it replaces. -/
+theorem pathRecompute_binds_updates (hash : List ℤ → ℤ)
+    (steps : List (Bool × ℤ)) (xs : List ℤ) (leaf : ℤ)
+    (hlen : xs.length = 2 ^ steps.length)
+    (hroot : pathRecompute hash leaf steps = perfectRoot hash steps.length xs)
+    (hno : ¬ IsSpongeColl hash (pathCollFind hash steps xs leaf)) :
+    xs[pathPos steps]? = some leaf ∧
+    ∀ leaf', pathRecompute hash leaf' steps
+      = perfectRoot hash steps.length (xs.set (pathPos steps) leaf') :=
+  (pathRecompute_binds_updates_or_collides hash steps xs leaf hlen hroot).resolve_right hno
+
+/-- **THE CUTOVER BRIDGE (path side).** The refuted universal injectivity kills the per-instance
+event, so a not-yet-ported consumer's floor flows into exactly ONE bridge application. Instance
+args implicit, so a rewired call site is exactly `(noPathColl_of_CR hCR)`. -/
+theorem noPathColl_of_CR {hash : List ℤ → ℤ} (hCR : Poseidon2SpongeCR hash)
+    {steps : List (Bool × ℤ)} {xs : List ℤ} {leaf : ℤ} :
+    ¬ IsSpongeColl hash (pathCollFind hash steps xs leaf) :=
+  fun hc => hc.1 (hCR _ _ hc.2)
+
+/-- The identity carrier for the bridge's side condition — the constant-headed replacement the
+`Tools/ConePort` `AppRule` shape needs so a level-2 threader's `noPathColl_of_CR hCR` application
+can be mechanically rewritten into a passed-through `hno` binder. -/
+theorem noPathColl_self {hash : List ℤ → ℤ} {steps : List (Bool × ℤ)} {xs : List ℤ} {leaf : ℤ}
+    (hno : ¬ IsSpongeColl hash (pathCollFind hash steps xs leaf)) :
+    ¬ IsSpongeColl hash (pathCollFind hash steps xs leaf) := hno
+
+/-! ### §2b TEETH — the side condition is load-bearing, refutable, AND satisfiable. -/
+
+/-- **LOAD-BEARING**: dropping the per-instance side condition is REFUTED. At the constant sponge
+the path `[(false, 0)]` recomputes the leaf `5` to the root of `[1, 2]` while position `0` holds
+`1` — the binding is FALSE, so the hypothesis is doing real work. -/
+theorem pathBinds_unconditional_false :
+    ¬ (∀ (hash : List ℤ → ℤ) (steps : List (Bool × ℤ)) (xs : List ℤ) (leaf : ℤ),
+        xs.length = 2 ^ steps.length →
+        pathRecompute hash leaf steps = perfectRoot hash steps.length xs →
+        xs[pathPos steps]? = some leaf) := by
+  intro hall
+  have h := hall (fun _ => 0) [(false, 0)] [1, 2] 5 rfl rfl
+  simp only [pathPos, List.getElem?_cons_zero, Option.some.injEq] at h
+  omega
+
+/-- **REFUTABLE**: on that same broken sponge the extractor RETURNS the collision, so the new side
+condition genuinely fails — it is not a `True` in disguise. -/
+theorem pathColl_refutable :
+    IsSpongeColl (fun _ => 0) (pathCollFind (fun _ => (0 : ℤ)) [(false, 0)] [1, 2] 5) := by
+  refine ⟨?_, rfl⟩
+  decide
+
+/-- **NON-VACUOUS**: at an honest opening the walk bottoms out at an EQUAL pair, so the side
+condition holds for EVERY hash — no CR, no floor — and the ported binding genuinely FIRES at
+deployed parameters. -/
+theorem path_binds_fires (hash : List ℤ → ℤ) :
+    ([3, 5] : List ℤ)[pathPos [(false, (5 : ℤ))]]? = some 3 :=
+  (pathRecompute_binds_updates hash [(false, (5 : ℤ))] [3, 5] 3 rfl rfl
+    (by intro hc; exact hc.1 rfl)).1
 
 /-! ## §3 — from a bound leaf to the HEAP opening (the sorted-map decode). -/
 
-/-- The heap leaf `hash[addr, value]` is injective under CR (the entry cannot be forged inside
-its digest). -/
-theorem leafOf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {e₁ e₂ : ℤ × ℤ} (h : Heap.leafOf hash e₁ = Heap.leafOf hash e₂) : e₁ = e₂ := by
-  obtain ⟨a₁, b₁⟩ := e₁
-  obtain ⟨a₂, b₂⟩ := e₂
-  have hl := hCR _ _ h
-  simp only [List.cons.injEq, and_true] at hl
-  simp_all
+/-- **`leafPre e`** — the heap leaf's sponge PREIMAGE, named so the per-instance collision event
+below is stated at exactly the pair the deployed digest absorbs. `Heap.leafOf hash e` IS
+`hash (leafPre e)` (`rfl`). -/
+def leafPre (e : ℤ × ℤ) : List ℤ := [e.1, e.2]
+
+/-- **THE HYPOTHESIS-FREE HEAP-LEAF BINDING.** Equal heap-leaf digests force equal entries OR
+name a genuine collision of the deployed sponge at the two absorbed preimages. NO floor. -/
+theorem leafOf_binds_or_collides (hash : List ℤ → ℤ) {e₁ e₂ : ℤ × ℤ}
+    (h : Heap.leafOf hash e₁ = Heap.leafOf hash e₂) :
+    e₁ = e₂ ∨ IsSpongeColl hash (leafPre e₁, leafPre e₂) := by
+  by_cases hpre : leafPre e₁ = leafPre e₂
+  · refine Or.inl ?_
+    obtain ⟨a₁, b₁⟩ := e₁
+    obtain ⟨a₂, b₂⟩ := e₂
+    simp only [leafPre, List.cons.injEq, and_true] at hpre
+    simp_all
+  · exact Or.inr ⟨hpre, h⟩
+
+/-- The heap leaf `hash[addr, value]` binds its entry: the entry cannot be forged inside its
+digest. ⚑ CUT OVER 2026-07-25 — the refuted `Poseidon2SpongeCR hash` premise is replaced by the
+per-instance, refutable side condition at the two NAMED preimages; same conclusion, and the old
+hypothesis implies the new one (`noLeafColl_of_CR`). -/
+theorem leafOf_injective (hash : List ℤ → ℤ)
+    {e₁ e₂ : ℤ × ℤ} (hno : ¬ IsSpongeColl hash (leafPre e₁, leafPre e₂))
+    (h : Heap.leafOf hash e₁ = Heap.leafOf hash e₂) : e₁ = e₂ :=
+  (leafOf_binds_or_collides hash h).resolve_right hno
+
+/-- **THE CUTOVER BRIDGE (leaf side).** -/
+theorem noLeafColl_of_CR {hash : List ℤ → ℤ} (hCR : Poseidon2SpongeCR hash) {e₁ e₂ : ℤ × ℤ} :
+    ¬ IsSpongeColl hash (leafPre e₁, leafPre e₂) :=
+  fun hc => hc.1 (hCR _ _ hc.2)
+
+/-- The identity carrier for the leaf bridge's side condition (the ConePort `AppRule` shape). -/
+theorem noLeafColl_self {hash : List ℤ → ℤ} {e₁ e₂ : ℤ × ℤ}
+    (hno : ¬ IsSpongeColl hash (leafPre e₁, leafPre e₂)) :
+    ¬ IsSpongeColl hash (leafPre e₁, leafPre e₂) := hno
+
+/-- **`heapAt h p`** — the committed entry at a position, TOTALLY (the out-of-range/absent case
+falls back to `(0, 0)`). Totality is what lets an opener's per-instance leaf side condition be
+stated at the position the path already fixes, instead of at a proof-local `cases` binder. -/
+def heapAt (h : Heap.FeltHeap) (p : Nat) : ℤ × ℤ := (h[p]?).getD (0, 0)
+
+@[simp] theorem heapAt_of_getElem? {h : Heap.FeltHeap} {p : Nat} {e : ℤ × ℤ}
+    (he : h[p]? = some e) : heapAt h p = e := by
+  simp [heapAt, he]
+
+/-- **REFUTABLE**: the leaf-side side condition genuinely fails at a broken sponge. -/
+theorem leafColl_refutable :
+    IsSpongeColl (fun _ => 0) (leafPre ((1 : ℤ), (2 : ℤ)), leafPre ((3 : ℤ), (4 : ℤ))) := by
+  refine ⟨?_, rfl⟩
+  decide
 
 /-- A positional entry of a SORTED heap IS its `get`: `h[p]? = some (k, v)` ⟹
 `Heap.get h k = some v` (strict sortedness makes the match unique). -/
@@ -468,23 +680,27 @@ theorem heapSet_eq_listSet :
 /-- **`.read` opener** — a path recomputing the row's `(key, value)` leaf to the committed root
 of a canonical heap FORCES the membership opening: the row cannot claim a value the heap does not
 hold at that key (a lie is a collision). -/
-theorem opensToMerkle_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (dep : Nat)
+theorem opensToMerkle_of_path (hash : List ℤ → ℤ) (dep : Nat)
     {r k v : ℤ} (h : Heap.FeltHeap) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep)
     (hroot : mapRoot hash dep h = r)
     (steps : List (Bool × ℤ)) (hsl : steps.length = dep)
-    (hpath : pathRecompute hash (Heap.leafOf hash (k, v)) steps = r) :
+    (hpath : pathRecompute hash (Heap.leafOf hash (k, v)) steps = r)
+    (hnoPath : ¬ IsSpongeColl hash
+      (pathCollFind hash steps (h.map (Heap.leafOf hash)) (Heap.leafOf hash (k, v))))
+    (hnoLeaf : ¬ IsSpongeColl hash (leafPre (heapAt h (pathPos steps)), leafPre (k, v))) :
     opensToMerkle hash dep r k (some v) := by
   subst hroot
-  have hbind := (pathRecompute_binds_updates hash hCR steps (h.map (Heap.leafOf hash))
+  have hbind := (pathRecompute_binds_updates hash steps (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (k, v))
-    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpath)).1
+    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpath) hnoPath).1
   simp only [List.getElem?_map] at hbind
   cases he : h[pathPos steps]? with
   | none => rw [he] at hbind; simp at hbind
   | some e =>
     rw [he] at hbind
     simp only [Option.map_some, Option.some.injEq] at hbind
-    obtain rfl := leafOf_injective hash hCR hbind
+    rw [heapAt_of_getElem? he] at hnoLeaf
+    obtain rfl := leafOf_injective hash hnoLeaf hbind
     exact ⟨h, hs, hlen, rfl, get_eq_some_of_getElem? hs he⟩
 
 /-- **`.absent` opener (the gap arm)** — TWO paths at CONSECUTIVE positions, opening leaves whose
@@ -492,7 +708,7 @@ keys strictly bracket the row's key, FORCE the non-membership opening: the commi
 both bracket leaves, position adjacency pins spine adjacency, and the proven sorted bracketing
 (`Heap.get_none_of_gap` = `sorted_gap_excludes`) excludes the key. The deployed double-spend
 tooth's opening, derived. -/
-theorem opensToMerkle_none_of_bracket (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opensToMerkle_none_of_bracket (hash : List ℤ → ℤ)
     (dep : Nat) {r k : ℤ} (h : Heap.FeltHeap) (hs : Heap.SortedKeys h)
     (hlen : h.length = 2 ^ dep) (hroot : mapRoot hash dep h = r)
     (stepsLo stepsHi : List (Bool × ℤ)) {klo vlo khi vhi : ℤ}
@@ -500,28 +716,38 @@ theorem opensToMerkle_none_of_bracket (hash : List ℤ → ℤ) (hCR : Poseidon2
     (hadj : pathPos stepsHi = pathPos stepsLo + 1)
     (hpathLo : pathRecompute hash (Heap.leafOf hash (klo, vlo)) stepsLo = r)
     (hpathHi : pathRecompute hash (Heap.leafOf hash (khi, vhi)) stepsHi = r)
-    (hklo : klo < k) (hkhi : k < khi) :
+    (hklo : klo < k) (hkhi : k < khi)
+    (hnoPathLo : ¬ IsSpongeColl hash
+      (pathCollFind hash stepsLo (h.map (Heap.leafOf hash)) (Heap.leafOf hash (klo, vlo))))
+    (hnoPathHi : ¬ IsSpongeColl hash
+      (pathCollFind hash stepsHi (h.map (Heap.leafOf hash)) (Heap.leafOf hash (khi, vhi))))
+    (hnoLeafLo : ¬ IsSpongeColl hash
+      (leafPre (heapAt h (pathPos stepsLo)), leafPre (klo, vlo)))
+    (hnoLeafHi : ¬ IsSpongeColl hash
+      (leafPre (heapAt h (pathPos stepsHi)), leafPre (khi, vhi))) :
     opensToMerkle hash dep r k none := by
   subst hroot
-  have hbindLo := (pathRecompute_binds_updates hash hCR stepsLo (h.map (Heap.leafOf hash))
+  have hbindLo := (pathRecompute_binds_updates hash stepsLo (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (klo, vlo))
-    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpathLo)).1
-  have hbindHi := (pathRecompute_binds_updates hash hCR stepsHi (h.map (Heap.leafOf hash))
+    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpathLo) hnoPathLo).1
+  have hbindHi := (pathRecompute_binds_updates hash stepsHi (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (khi, vhi))
-    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpathHi)).1
+    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpathHi) hnoPathHi).1
   simp only [List.getElem?_map] at hbindLo hbindHi
   cases heLo : h[pathPos stepsLo]? with
   | none => rw [heLo] at hbindLo; simp at hbindLo
   | some eLo =>
     rw [heLo] at hbindLo
     simp only [Option.map_some, Option.some.injEq] at hbindLo
-    obtain rfl := leafOf_injective hash hCR hbindLo
+    rw [heapAt_of_getElem? heLo] at hnoLeafLo
+    obtain rfl := leafOf_injective hash hnoLeafLo hbindLo
     cases heHi : h[pathPos stepsHi]? with
     | none => rw [heHi] at hbindHi; simp at hbindHi
     | some eHi =>
       rw [heHi] at hbindHi
       simp only [Option.map_some, Option.some.injEq] at hbindHi
-      obtain rfl := leafOf_injective hash hCR hbindHi
+      rw [heapAt_of_getElem? heHi] at hnoLeafHi
+      obtain rfl := leafOf_injective hash hnoLeafHi hbindHi
       rw [hadj] at heHi
       exact ⟨h, hs, hlen, rfl,
         Heap.get_none_of_gap h klo khi k hs (adjacent_of_getElem?_pair heLo heHi) hklo hkhi⟩
@@ -531,24 +757,28 @@ recomputing the new `(key, value)` leaf to the post-root column FORCE the write 
 post-root IS `mapRoot (Heap.set h key value)` (the update direction of the binding law pins every
 sibling, so a frozen or forged post-root is a collision), and the opened old leaf pins the key
 present so the sorted insert-or-update is the in-place positional update. -/
-theorem writesToMerkle_of_path (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (dep : Nat)
+theorem writesToMerkle_of_path (hash : List ℤ → ℤ) (dep : Nat)
     {r k v r' : ℤ} (h : Heap.FeltHeap) (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep)
     (hroot : mapRoot hash dep h = r)
     (steps : List (Bool × ℤ)) (vOld : ℤ) (hsl : steps.length = dep)
     (hpathOld : pathRecompute hash (Heap.leafOf hash (k, vOld)) steps = r)
-    (hpathNew : pathRecompute hash (Heap.leafOf hash (k, v)) steps = r') :
+    (hpathNew : pathRecompute hash (Heap.leafOf hash (k, v)) steps = r')
+    (hnoPath : ¬ IsSpongeColl hash
+      (pathCollFind hash steps (h.map (Heap.leafOf hash)) (Heap.leafOf hash (k, vOld))))
+    (hnoLeaf : ¬ IsSpongeColl hash (leafPre (heapAt h (pathPos steps)), leafPre (k, vOld))) :
     writesToMerkle hash dep r k v r' := by
   subst hroot
-  obtain ⟨hmem, hupd⟩ := pathRecompute_binds_updates hash hCR steps (h.map (Heap.leafOf hash))
+  obtain ⟨hmem, hupd⟩ := pathRecompute_binds_updates hash steps (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (k, vOld))
-    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpathOld)
+    (by rw [List.length_map, hlen, hsl]) (by rw [hsl]; exact hpathOld) hnoPath
   simp only [List.getElem?_map] at hmem
   cases he : h[pathPos steps]? with
   | none => rw [he] at hmem; simp at hmem
   | some e =>
     rw [he] at hmem
     simp only [Option.map_some, Option.some.injEq] at hmem
-    obtain rfl := leafOf_injective hash hCR hmem
+    rw [heapAt_of_getElem? he] at hnoLeaf
+    obtain rfl := leafOf_injective hash hnoLeaf hmem
     have hkmem : k ∈ Heap.keys h :=
       List.mem_map.mpr ⟨_, List.mem_of_getElem? he, rfl⟩
     have hnew : r' = mapRoot hash dep (Heap.set h k v) := by
@@ -637,25 +867,31 @@ theorem reconcileGates_force_opening (hash : List ℤ → ℤ) (hCR : Poseidon2S
   | read =>
     rw [hop] at hgates
     obtain ⟨⟨steps, hsl, hpath⟩, hnr⟩ := hgates
-    exact ⟨opensToMerkle_of_path hash hCR dep h hs hlen hroot steps hsl hpath, hnr⟩
+    exact ⟨opensToMerkle_of_path hash dep h hs hlen hroot steps hsl hpath
+      (noPathColl_of_CR hCR) (noLeafColl_of_CR hCR), hnr⟩
   | absent =>
     rw [hop] at hgates
     obtain ⟨⟨sLo, sHi, klo, vlo, khi, vhi, hlLo, hlHi, hposadj, hpLo, hpHi, hklo, hkhi⟩,
       hnr⟩ := hgates
-    exact ⟨opensToMerkle_none_of_bracket hash hCR dep h hs hlen hroot sLo sHi
-      hlLo hlHi hposadj hpLo hpHi hklo hkhi, hnr⟩
+    exact ⟨opensToMerkle_none_of_bracket hash dep h hs hlen hroot sLo sHi
+      hlLo hlHi hposadj hpLo hpHi hklo hkhi
+      (noPathColl_of_CR hCR) (noPathColl_of_CR hCR)
+      (noLeafColl_of_CR hCR) (noLeafColl_of_CR hCR), hnr⟩
   | write =>
     rw [hop] at hgates
     obtain ⟨steps, vOld, hsl, hpOld, hpNew⟩ := hgates
-    exact writesToMerkle_of_path hash hCR dep h hs hlen hroot steps vOld hsl hpOld hpNew
+    exact writesToMerkle_of_path hash dep h hs hlen hroot steps vOld hsl hpOld hpNew
+      (noPathColl_of_CR hCR) (noLeafColl_of_CR hCR)
   | insert =>
     rw [hop] at hgates
     obtain ⟨steps, vOld, hsl, hpOld, hpNew⟩ := hgates
-    exact writesToMerkle_of_path hash hCR dep h hs hlen hroot steps vOld hsl hpOld hpNew
+    exact writesToMerkle_of_path hash dep h hs hlen hroot steps vOld hsl hpOld hpNew
+      (noPathColl_of_CR hCR) (noLeafColl_of_CR hCR)
   | aafiInsert =>
     rw [hop] at hgates
     obtain ⟨steps, vOld, hsl, hpOld, hpNew⟩ := hgates
-    exact writesToMerkle_of_path hash hCR dep h hs hlen hroot steps vOld hsl hpOld hpNew
+    exact writesToMerkle_of_path hash dep h hs hlen hroot steps vOld hsl hpOld hpNew
+      (noPathColl_of_CR hCR) (noLeafColl_of_CR hCR)
 
 /-- **THE MAPOPS-AIR LAW (per row, deployed depth).** The deployed map-reconcile gates (at
 `MAP_TREE_DEPTH`) plus the single named CR floor FORCE the row denotation `MapOp.holdsAt` — the
@@ -1090,8 +1326,8 @@ theorem aafiInsert_forces_imtInsert (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
   have e1 : xs.length = 2 ^ s1.length := by rw [hl1]; exact hlen
   have hroot1 : pathRecompute hash (aafiLeafHash hash lowAddr lowValue lowNext) s1
       = perfectRoot hash s1.length xs := by rw [hp1old, hor, hl1]
-  obtain ⟨hmem1, hupd1⟩ := pathRecompute_binds_updates hash hCR s1 xs
-    (aafiLeafHash hash lowAddr lowValue lowNext) e1 hroot1
+  obtain ⟨hmem1, hupd1⟩ := pathRecompute_binds_updates hash s1 xs
+    (aafiLeafHash hash lowAddr lowValue lowNext) e1 hroot1 (noPathColl_of_CR hCR)
   have hR1 : R1 = perfectRoot hash dep
       (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) := by
     rw [← hp1new, hupd1 (aafiLeafHash hash lowAddr lowValue k), hl1]
@@ -1102,8 +1338,9 @@ theorem aafiInsert_forces_imtInsert (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
       = perfectRoot hash s2.length
           (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) := by
     rw [hp2e, hR1, hl2]
-  obtain ⟨hmem2, hupd2⟩ := pathRecompute_binds_updates hash hCR s2
+  obtain ⟨hmem2, hupd2⟩ := pathRecompute_binds_updates hash s2
     (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) freeEmpty e2 hroot2
+    (noPathColl_of_CR hCR)
   have hnew : newRoot = perfectRoot hash dep
       ((xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)).set (pathPos s2)
         (aafiLeafHash hash k v lowNext)) := by

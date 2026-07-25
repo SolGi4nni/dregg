@@ -2968,7 +2968,6 @@ mod hardening_tests {
     /// boundary-arithmetic pre-flight:
     ///   - asset 7 (A −10 / B +10) + asset 8 (C −5 / D +5): each balances → ACCEPT
     ///   - asset 7 (A −10) / asset 8 (B +10): cross-asset borrow → REJECT
-    #[cfg(feature = "prover")]
     #[test]
     fn per_asset_collector_in_air_accept_reject() {
         use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};

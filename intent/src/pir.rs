@@ -192,7 +192,7 @@ pub const MAX_INTENTS_PER_TAG: usize = 64;
 ///
 /// We encode each byte as a separate field element (value 0..255, always < p)
 /// to ensure lossless round-trip encoding/decoding. Using 4-byte packed encoding
-/// (BabyBear::encode_hash) is lossy because values >= p get reduced mod p.
+/// (bytes32_to_8_limbs) is lossy because values >= p get reduced mod p.
 pub const ELEMENTS_PER_ID: usize = 32;
 
 /// An inverted index over the intent pool, organized for PIR queries.

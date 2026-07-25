@@ -148,7 +148,7 @@ fn main() {
     // The trust root is a VERIFIED EffectVM STARK, not a bare receipt (assurance-perimeter
     // #3): Bob's finalized turn produces a ProvenReceipt (here minted directly), whose
     // committed pre/post endpoints Alice's condition binds.
-    let bob_proven = dregg_turn::mint_transfer_proven_receipt(bob_turn_hash, 100);
+    let bob_proven = dregg_turn_prover::mint_transfer_proven_receipt(bob_turn_hash, 100);
 
     // Alice's conditional: execute IFF a verified proof bound to Bob's turn is presented.
     let alice_conditional = ConditionalTurn {

@@ -17,7 +17,7 @@
 
 use dreggnet_telegram::api::encode_callback;
 use dreggnet_telegram::host::{HostPress, TelegramHost};
-use dreggnet_telegram::runtime::{HELP_TEXT, TextDecision, route_text_decided};
+use dreggnet_telegram::runtime::{TextDecision, help_text, route_text_decided};
 use dreggnet_telegram::transport::MockTransport;
 use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
 
@@ -191,7 +191,7 @@ fn a_command_still_routes_as_a_command_while_text_is_armed() {
     );
     assert_eq!(
         reply.as_deref(),
-        Some(HELP_TEXT),
+        Some(help_text().as_str()),
         "the help text answered — the command was not swallowed as document text",
     );
 }

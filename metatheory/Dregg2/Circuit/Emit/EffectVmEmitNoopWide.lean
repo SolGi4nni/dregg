@@ -57,6 +57,7 @@ Imports are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoopWide
 
@@ -169,54 +170,100 @@ theorem noop_runnable_full_sound (hash : List ℤ → ℤ)
 
 /-! ## §4 — ANTI-GHOST on ALL 17 fields (the generic teeth, instantiated). -/
 
-/-- **`noop_wide_binds_full_state_or_collides` — the whole-state anti-ghost.** Two rows satisfying the
-wide no-op descriptor that publish the SAME `NEW_COMMIT`, whose carriers ARE the `systemRootsDigest` of
-their post sub-blocks, EITHER agree on EVERY absorbed state-block column AND every side-table root, OR
-exhibit a genuine collision of the deployed sponge (`WideColl` on the two wide preimages, or `RootsColl`
-on the two root lists). So even the EMPTY-effect no-op binds the whole post-state up to a collision (the
-contrast with `skipDescriptor`, which binds nothing).
+/-- ⚑ **WHAT CHANGED AND WHY (the reduction that replaces the deleted disjunctions).** This section
+used to export `noop_wide_binds_full_state_or_collides` / `noop_wide_rejects_root_tamper_or_collides`, each concluding
+`… ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. Those forms are TRUE of the deployed sponge —
+unlike the `Poseidon2SpongeCR` predecessors, which it REFUTES — but they are UNCLOSED: a collision
+of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. They quantify over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. They are DELETED and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the forgery is a
+first-class `Game` at noop's OWN wide descriptor, the extractor is a MAP OF ADVERSARIES (the
+reduction-internal witness), and the conclusions are (a) negligibility under the DEPLOYED sponge's
+collision floor `HashCRHardQuant (spongeFamily D) Eff`, `hEff` in the open, both poles priced
+(`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`), and (b) the DISCHARGED keyed-ROM forms on
+the PROVED birthday floor (`keyedRom_hard`) — NO floor hypothesis — in the LABELLED random-oracle
+model of `EffectVmRowCommitReduction` §5's header (the sampled `Fin (2 ^ l)` digest is the
+modelling step; no `l` is the deployed ~31-bit felt). The ROM commitment layer carries no
+descriptor (the nested absorb schedule is one object across effects); noop's per-effect circuit
+content (`satisfiedVm` at `noopVmDescriptorWide`) lives in the `_advantage_bound` forms. -/
+def noopWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := noopVmDescriptorWide
+  usesWideSites := rfl
 
-The former `noop_wide_binds_full_state` concluded the bare conjunction from `Poseidon2SpongeCR hash`.
-The deployed sponge REFUTES that hypothesis, so at deployed parameters that theorem was vacuous. This
-disjunction is formally weaker, but it HOLDS of the deployed sponge, which the old one did not. -/
-theorem noop_wide_binds_full_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash noopVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noopVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.runnable_full_commit_binds_or_collides (noopRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `noop_wide_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD BINDING for
+noop.** Under the DEPLOYED sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH SATISFYING `noopVmDescriptorWide`, publishing one `NEW_COMMIT` with genuine `systemRootsDigest`
+carriers, yet binding DIFFERENT state (an absorbed column or a side-table root), has NEGLIGIBLE
+advantage. Replaces the deleted bare disjunction. -/
+theorem noop_wide_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D noopWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noopWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D noopWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D noopWideRowSpec Eff A hEff hCR
 
-/-- **`noop_wide_rejects_root_tamper_or_collides` — side-table anti-ghost.** Two wide no-op rows
-publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table sub-blocks DIFFER
-cannot both satisfy WITHOUT exhibiting a collision of the deployed sponge — the no-op's published
-commitment BINDS the side-table state up to that collision (the empty AIR could not).
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑⚑ `noop_wide_binds_full_state_rom` — the DISCHARGED whole-17-field binding, on the PROVED
+floor.** A query-bounded forger of the wide nested `state_commit` — the very commitment noop's
+wide row publishes — has NEGLIGIBLE advantage, in the keyed ROM model of
+`EffectVmRowCommitReduction` §5's header. NO floor hypothesis. The COMMITMENT layer carries no
+descriptor, so this is `wideRow_binds_rom` at the deployed tag space; noop's per-effect circuit
+content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem noop_wide_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
-The former `noop_wide_rejects_root_tamper` concluded `False` from `Poseidon2SpongeCR hash`, which the
-deployed sponge REFUTES; at deployed parameters it was vacuous. This disjunction is formally weaker, but
-it HOLDS of the deployed sponge, which the old one did not. -/
-theorem noop_wide_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots) (preRoots : SysRoots)
-    (hsat₁ : satisfiedVm hash noopVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noopVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  EffectVmFullStateRunnable.wide_rejects_root_tamper_or_collides (noopRunnableSpec preRoots)
-    hash e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `noop_wide_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED.** An
+efficient adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a
+satisfying wide noop row (a dropped escrow, an omitted nullifier, a reordered queue), except
+with negligible probability. Replaces the deleted `noop_wide_rejects_root_tamper_or_collides`. -/
+theorem noop_wide_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D noopWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noopWideRowSpec (rootTamperToWide D noopWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D noopWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D noopWideRowSpec Eff A hEff hCR
 
-#assert_axioms noop_wide_binds_full_state_or_collides
-#assert_axioms noop_wide_rejects_root_tamper_or_collides
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑ `noop_wide_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor: a
+query-bounded adversary cannot keep the published nested commitment while tampering a side-table
+root. -/
+theorem noop_wide_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+#assert_axioms noop_wide_binds_full_state_advantage_bound
+#assert_axioms noop_wide_binds_full_state_rom
+#assert_axioms noop_wide_rejects_root_tamper_advantage_bound
+#assert_axioms noop_wide_rejects_root_tamper_rom
 
 /-! ## §5 — NON-VACUITY: the full clause is INHABITED (TRUE) and REFUTABLE (FALSE), the wide descriptor is
 the genuine 188-wide `system_roots`-absorbing circuit, and it is NON-EMPTY (unlike `skipDescriptor`). -/

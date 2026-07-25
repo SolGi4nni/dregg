@@ -49,6 +49,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstatemonotone
 import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce
 
@@ -324,34 +325,40 @@ theorem incNonceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   rw [← hsaC]
   omega
 
-theorem incNonceDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hsat₁ : satisfiedVm hash incrementNonceVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash incrementNonceVmDescriptor e₂ true true)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ incNonceHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ incNonceHashSites := hsat₂.2.1
-  -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
-  -- chains the two commit cells (both canonical) into ℤ equality — no PI canonicality needed.
-  have hcm : ∀ (e : VmRowEnv), satisfiedVm hash incrementNonceVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hmem : (VmConstraint.piBinding .last (saCol state.STATE_COMMIT) pi.NEW_COMMIT)
-        ∈ incrementNonceVmDescriptor.constraints := by
-      unfold incrementNonceVmDescriptor
-      simp only [List.mem_append]
-      exact Or.inl (Or.inr (by simp [boundaryLastPins]))
-    simpa [VmConstraint.holdsVm] using hcs _ hmem
-  have h₁ := hcm e₁ hsat₁
-  have h₂ := hcm e₂ hsat₂
-  rw [hpub] at h₁
-  have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **WHAT CHANGED AND WHY.** This section used to export `incNonceDescriptor_commit_binds_state_or_collides`,
+concluding `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. That form is TRUE of the
+deployed sponge, but UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by
+pigeonhole (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is
+satisfiable through its RIGHT branch WITHOUT the binding ever holding. It quantified over
+SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED; its
+successors are the keyed-ROM closure below (the PROVED birthday floor, at incrementNonce's own sites) and
+the `Eff`-parametric deployed-hash reduction at incrementNonce's own descriptor. The extraction spine
+(`absorbed_determined_by_commit_or_collides`) REMAINS in the transfer keystone as the
+reduction-internal witness, its correct role. -/
+
+/-- **`incNonceNarrowRowSpec`** — incrementNonce's narrow descriptor as the reduction's per-effect datum: its hash sites
+ARE the deployed GROUP-4 sites (`rfl`). -/
+def incNonceNarrowRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.NarrowRowSpec where
+  descriptor := incrementNonceVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `incNonceDescriptor_binds_state_advantage_bound` — the DEPLOYED-hash reduction at incrementNonce's own descriptor (successor of the deleted
+`incNonceDescriptor_commit_binds_state_or_collides`).** Under the deployed sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH ACCEPTED by `incrementNonceVmDescriptor` (which includes the `boundaryLastPins` mod-`p` `NEW_COMMIT` pin)
+that publish one `state_commit` while disagreeing on the absorbed state block has NEGLIGIBLE
+advantage. -/
+theorem incNonceDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D incNonceNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D incNonceNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D incNonceNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D incNonceNarrowRowSpec Eff A hEff hCR
 
 open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
   Dregg2.Crypto.ConcreteSecurity in
@@ -362,8 +369,8 @@ parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
 producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
 absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
 (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
-deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
-deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+deployed-hash leg is the `Eff`-parametric `_advantage_bound` reduction above (its `boundaryLastPins`
+mod-`p` step is deployed-side content and deliberately does NOT transport to the λ-wide model). -/
 theorem incNonceVm_commit_binds_keyed (Q : ℕ → ℕ)
     (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
     (A : Adversary (narrowBreakGame incNonceHashSites))
@@ -613,7 +620,7 @@ theorem staleNonceIncNonceRow_rejected :
 #assert_axioms incNonceVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms incNonceDescriptor_full_sound
-#assert_axioms incNonceDescriptor_commit_binds_state_or_collides
+#assert_axioms incNonceDescriptor_binds_state_advantage_bound
 #assert_axioms incNonceVm_commit_binds_keyed
 #assert_axioms incNonce_balance_frozen
 #assert_axioms nonce_write_is_out_of_row

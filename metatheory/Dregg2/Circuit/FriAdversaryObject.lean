@@ -32,6 +32,16 @@ current tree supports:
     every round's challenge avoids its own point's bad set (`AvoidsBad`), the terminal word is
     far. `chainStep_is_load_bearing` is the mutation canary (drop `ChainStep` and the conclusion
     is FALSE at a witness); `honest_chain_far_fires` is the positive pole.
+  * **§3, 2026-07-24: the chain runs at an ARBITRARY STRATEGY.** `chain_far_strategy_of_farCover`
+    is the same induction with `honestStrategy fold w0` replaced by ANY `S : Strategy R C`, gated
+    on the PATH-LOCAL `FoldConsistentAlong` (each round's commitment is the fold of the previous
+    one, along the path the oracle actually walks — the branch of the L2 dichotomy the verifier's
+    fold-consistency checks force). `honest_foldConsistentAlong` proves the honest prover
+    satisfies it unconditionally, so `honest_chain_far` is now a one-line INSTANCE and the
+    generalization loses nothing. The gate is load-bearing, not decorative: `FriChainStepIdx`'s
+    `consistencyFreeSurvival_false` refutes the ungated probability bound with a prover that
+    COMMITS A CODEWORD at round 1 (escapes farness with probability 1 against a fold that
+    preserves farness perfectly and empty bad sets).
 
 ## ⚑ What this module does NOT do, stated so it cannot be read up
 
@@ -184,6 +194,90 @@ def AvoidsBad {R C D : Type} (enc : C → List R → D) (S : Strategy R C) (E : 
       H (enc (S cs) cs) ∉ E (enc (S cs) cs)
         ∧ AvoidsBad enc S E H n (H (enc (S cs) cs) :: cs)
 
+/-- **⚑ `FoldConsistentAlong` — the PATH-LOCAL fold-consistency predicate.** The ONE thing an
+arbitrary prover strategy has to do for the farness chain to run: along the FS path actually
+taken, the commitment of the next round must BE the fold of this round's commitment at the drawn
+challenge. Path-local, not global — it constrains `S` only at the `n` prefixes the oracle `H`
+actually walks (`[]`, `H (enc (S []) []) :: []`, …), and says NOTHING about `S` off that path.
+This is exactly the branch of the L2 dichotomy the verifier's fold-consistency spot checks force
+(the other branch being "the prover is caught"); it is NOT a restriction to the honest prover
+(`honest_foldConsistentAlong`: the honest strategy satisfies it unconditionally, so the honest
+theorems are instances, and `FriChainStepIdx.offpathS_ne_honest` exhibits a consistent strategy
+that is NOT honest, at the deployed arity-8 shape). Dropping it is not sound: `FriChainStepIdx`'s
+`consistencyFreeSurvival_false` refutes the ungated bound with a prover that COMMITS A CODEWORD
+at round 1. -/
+def FoldConsistentAlong {R C D : Type} (enc : C → List R → D) (S : Strategy R C)
+    (fold : C → R → C) (H : D → R) : ℕ → List R → Prop
+  | 0, _ => True
+  | n + 1, cs =>
+      S (H (enc (S cs) cs) :: cs) = fold (S cs) (H (enc (S cs) cs))
+        ∧ FoldConsistentAlong enc S fold H n (H (enc (S cs) cs) :: cs)
+
+@[simp] theorem foldConsistentAlong_zero {R C D : Type} (enc : C → List R → D) (S : Strategy R C)
+    (fold : C → R → C) (H : D → R) (cs : List R) :
+    FoldConsistentAlong enc S fold H 0 cs := trivial
+
+theorem foldConsistentAlong_succ {R C D : Type} (enc : C → List R → D) (S : Strategy R C)
+    (fold : C → R → C) (H : D → R) (n : ℕ) (cs : List R) :
+    FoldConsistentAlong enc S fold H (n + 1) cs ↔
+      (S (H (enc (S cs) cs) :: cs) = fold (S cs) (H (enc (S cs) cs))
+        ∧ FoldConsistentAlong enc S fold H n (H (enc (S cs) cs) :: cs)) := Iff.rfl
+
+/-- **THE GENERALIZATION LOSES NOTHING**: the honest strategy is fold-consistent along EVERY
+path, at every round count, for every oracle — by `honestStrategy_cons`, which is `rfl`. So every
+theorem gated on `FoldConsistentAlong` specializes to the honest prover with no side condition,
+and the pre-existing honest statements are literal instances (`honest_chain_far`,
+`FriChainStepIdx.honest_chain_far_of_farCover`, `FriChainStepIdx.chain_far_survival`). -/
+theorem honest_foldConsistentAlong {R C D : Type} (enc : C → List R → D) (fold : C → R → C)
+    (w0 : C) (H : D → R) :
+    ∀ (n : ℕ) (cs : List R), FoldConsistentAlong enc (honestStrategy fold w0) fold H n cs := by
+  intro n
+  induction n with
+  | zero => intro cs; exact foldConsistentAlong_zero enc _ fold H cs
+  | succ n ih =>
+      intro cs
+      rw [foldConsistentAlong_succ]
+      exact ⟨rfl, ih _⟩
+
+/-- **⚑ FAR SURVIVES THE WHOLE FOLD CHAIN, AT AN ARBITRARY PROVER STRATEGY.** The round-chain
+argument no longer assumes the prover is honest: `S : Strategy R C` is ANY (adaptive) strategy,
+and the only thing asked of it is `FoldConsistentAlong` — that along the path the oracle actually
+walks, each round's commitment is the fold of the previous one. Under `ChainStep`, if the current
+commitment is far and every remaining round's challenge avoids its point's bad set (which covers
+the word's good set at far words, `hcover`), the terminal commitment is still far.
+
+Same induction as the honest version (which is now the instance `honest_chain_far`): the honest
+prover is the everywhere-fold-consistent one. What the generalization buys is that `far` is now
+tracked through `S`'s ACTUAL commitments rather than through a fold of a fixed `w0` — the
+adversary chooses the words, and only the fold-consistency the verifier checks pins them. -/
+theorem chain_far_strategy_of_farCover {R C D : Type} {far : C → Prop} {goodSet : C → Finset R}
+    {fold : C → R → C} (hstep : ChainStep far goodSet fold)
+    (enc : C → List R → D) (E : D → Finset R) (S : Strategy R C)
+    (hcover : ∀ (w : C) (cs : List R), far w → goodSet w ⊆ E (enc w cs))
+    (H : D → R) :
+    ∀ (n : ℕ) (cs : List R),
+      far (S cs) →
+      AvoidsBad enc S E H n cs →
+      FoldConsistentAlong enc S fold H n cs →
+      far (S (fsChain enc S H n cs)) := by
+  intro n
+  induction n with
+  | zero =>
+      intro cs hfar _ _
+      simpa [fsChain] using hfar
+  | succ n ih =>
+      intro cs hfar havoid hcons
+      simp only [AvoidsBad] at havoid
+      rw [foldConsistentAlong_succ] at hcons
+      obtain ⟨hnotE, htail⟩ := havoid
+      obtain ⟨hfoldeq, hconstail⟩ := hcons
+      have hnotGood : H (enc (S cs) cs) ∉ goodSet (S cs) :=
+        fun hmem => hnotE (hcover _ _ hfar hmem)
+      have hfar' : far (S (H (enc (S cs) cs) :: cs)) := by
+        rw [hfoldeq]
+        exact hstep _ _ hfar hnotGood
+      simpa [fsChain] using ih (H (enc (S cs) cs) :: cs) hfar' htail hconstail
+
 /-- **⚑ FAR SURVIVES THE WHOLE FOLD CHAIN** (the proven easy half of the round-chain argument).
 For the honest-FOLD word evolution — which is the evolution the verifier's fold-consistency
 checks force on pain of a caught inconsistency, the OTHER branch of the L2 dichotomy — under
@@ -192,7 +286,12 @@ bad set (which COVERS the word's good set, `hcover`), then the terminal word is 
 
 Combined with the (deferred) `hit_cond` corollary this is the round-chain shape of `εFri`'s query
 leg: except with probability `≤ rounds·b/|R|`, a far word is STILL far at the terminal round,
-where the spot-check bound (`FriQuerySoundness.accept_prob_le`) finishes the argument. -/
+where the spot-check bound (`FriQuerySoundness.accept_prob_le`) finishes the argument.
+
+⚑ Now an INSTANCE of `chain_far_strategy_of_farCover` at `S := honestStrategy fold w0`
+(fold-consistency discharged by `honest_foldConsistentAlong`, the cover weakened to
+far-conditional on the way in): the statement is unchanged, the honest restriction is gone from
+the proof. -/
 theorem honest_chain_far {R C D : Type} {far : C → Prop} {goodSet : C → Finset R}
     {fold : C → R → C} (hstep : ChainStep far goodSet fold)
     (enc : C → List R → D) (E : D → Finset R) (w0 : C)
@@ -201,23 +300,11 @@ theorem honest_chain_far {R C D : Type} {far : C → Prop} {goodSet : C → Fins
     ∀ (n : ℕ) (cs : List R),
       far (honestStrategy fold w0 cs) →
       AvoidsBad enc (honestStrategy fold w0) E H n cs →
-      far (honestStrategy fold w0 (fsChain enc (honestStrategy fold w0) H n cs)) := by
-  intro n
-  induction n with
-  | zero =>
-      intro cs hfar _
-      simpa [fsChain] using hfar
-  | succ n ih =>
-      intro cs hfar havoid
-      simp only [AvoidsBad] at havoid
-      obtain ⟨hnotE, htail⟩ := havoid
-      have hnotGood :
-          H (enc (honestStrategy fold w0 cs) cs) ∉ goodSet (honestStrategy fold w0 cs) :=
-        fun hmem => hnotE (hcover _ _ hmem)
-      have hfar' :
-          far (honestStrategy fold w0 (H (enc (honestStrategy fold w0 cs) cs) :: cs)) := by
-        simpa using hstep _ _ hfar hnotGood
-      simpa [fsChain] using ih (H (enc (honestStrategy fold w0 cs) cs) :: cs) hfar' htail
+      far (honestStrategy fold w0 (fsChain enc (honestStrategy fold w0) H n cs)) :=
+  fun n cs hfar havoid =>
+    chain_far_strategy_of_farCover hstep enc E (honestStrategy fold w0)
+      (fun w cs' _ => hcover w cs') H n cs hfar havoid
+      (honest_foldConsistentAlong enc fold w0 H n cs)
 
 /-! ### §3.1 — teeth: the hypothesis is load-bearing, and the theorem fires. -/
 
@@ -263,6 +350,9 @@ theorem honest_chain_far_fires :
   fsRun_eval,
   fsChain_length,
   fsRun_queried,
+  foldConsistentAlong_succ,
+  honest_foldConsistentAlong,
+  chain_far_strategy_of_farCover,
   honest_chain_far,
   chainStep_is_load_bearing,
   honest_chain_far_fires

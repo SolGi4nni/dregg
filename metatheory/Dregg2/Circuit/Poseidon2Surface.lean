@@ -50,8 +50,14 @@ open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge poseidon2KeyedFa
 open Dregg2.Circuit.DomainSeparatedCREffRegrounded (DomainSeparatedCREff)
 open Dregg2.Circuit.SpongeForgeReduction
   (codeForgeGame codeForgeToFinder codeAnsSize hashAnsSize codeForge_advantage_bound
-   codeForge_binds_from_polyTime injective_code_forgery_is_break forge_floor_top_false_babyBear
-   forge_floor_bot_vacuous)
+   injective_code_forgery_is_break forge_floor_top_false_babyBear
+   forge_floor_bot_vacuous GoodCode codeRomFamily codeRomFamily_card_R codeRomCarrier
+   codeForgeRomGame codeRom_forgery_is_break codeForge_binds_rom codeRom_nonNegl_forger_excluded
+   intListBVec)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (babyBearP)
 
 /-! ## §0 — the two carriers (the split).
 
@@ -145,14 +151,76 @@ theorem p2Digest_binds_advantage_bound (D : DomainSeparatedSponge) (α : Type) (
     Negl (gameAdv (p2DigestBreakGame D α enc) adv) :=
   codeForge_advantage_bound D (List α) (p2Code enc) Eff adv hEff hCR
 
-/-- **⚑ `hEff` DISCHARGED at `Eff := IsPolyTime`.** An EFFICIENT list-digest forger stays efficient
-through the extractor, so the deployed floor applies and its advantage is negligible. -/
-theorem p2Digest_binds_from_polyTime (D : DomainSeparatedSponge) (α : Type) (enc : α → ℤ)
-    (adv : Adversary (p2DigestBreakGame D α enc))
-    (hA : IsPolyTime (codeAnsSize D (List α) (p2Code enc)) adv) (cw bw : ℕ)
-    (hCR : DomainSeparatedCREff D (IsPolyTime (hashAnsSize D))) :
-    Negl (gameAdv (p2DigestBreakGame D α enc) adv) :=
-  codeForge_binds_from_polyTime D (List α) (p2Code enc) adv hA cw bw hCR
+/-! ### §R2 — ⚑⚑ THE DISCHARGED SUCCESSOR: the list-digest binding on the PROVED keyed-ROM floor.
+
+⚑ **WHAT WAS DELETED HERE, AND WHY.** `p2Digest_binds_from_polyTime` discharged `Eff` at
+`CostAdversary.IsPolyTime`, whose floor `DomainSeparatedCREff D (IsPolyTime …)` is REFUTED at
+deployed parameters (`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`).
+DELETED, and replaced by the keyed-ROM successor: the forger is an ORACLE PROGRAM, the absorbed
+per-entry leaf list is embedded LOSSLESSLY into the truncated deployed shape (bounded length,
+BabyBear-range leaves — the deployed layout facts), and the floor is `KeyedRomFloor.keyedRom_hard`
+(the birthday bound, PROVED) through `SpongeForgeReduction.codeForge_binds_rom`. -/
+
+/-- Lists of at most `m` entries — the truncated deployed payload shape (every deployed absorb is
+length-bounded by its fixed layout). -/
+abbrev BoundedList (α : Type) (m : ℕ) : Type := {xs : List α // xs.length ≤ m}
+
+/-- The bounded-list absorption code is the per-entry leaf encoding, verbatim `p2Code`. -/
+theorem boundedList_code_injective {α : Type} {enc : α → ℤ} (henc : Function.Injective enc) :
+    Function.Injective (fun s : BoundedList α m => p2Code enc s.val) := by
+  intro a b h
+  exact Subtype.ext (p2Code_injective henc h)
+
+/-- The bounded-list code satisfies the deployed-shape side condition whenever the leaf encoder emits
+genuine BabyBear felts — the honest layout facts, never a claim about the hash. -/
+theorem boundedList_code_good {α : Type} {enc : α → ℤ} {m : ℕ}
+    (hrng : ∀ a, 0 ≤ enc a ∧ enc a < (babyBearP : ℤ)) (s : BoundedList α m) :
+    GoodCode m (p2Code enc s.val) := by
+  refine ⟨by simpa [p2Code] using s.property, fun x hx => ?_⟩
+  obtain ⟨a, -, rfl⟩ := List.mem_map.mp hx
+  exact hrng a
+
+/-- **THE LIST-DIGEST ROM CARRIER** — the `codeForgeRomGame` instantiation at the per-entry leaf
+code, over bounded lists of range-checked leaves. -/
+def p2RomCarrier (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (α : Type) (decA : DecidableEq α) (enc : α → ℤ) (henc : Function.Injective enc)
+    (hrng : ∀ a, 0 ≤ enc a ∧ enc a < (babyBearP : ℤ)) :
+    RomCarrier (codeRomFamily D tagDec m) :=
+  codeRomCarrier D tagDec m (BoundedList α m) (by exact letI := decA; inferInstance)
+    (fun s => p2Code enc s.val) (boundedList_code_injective henc)
+    (boundedList_code_good hrng)
+
+/-- The list-digest break at the sampled oracle. -/
+abbrev p2DigestRomGame (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (α : Type) (decA : DecidableEq α) (enc : α → ℤ) (henc : Function.Injective enc)
+    (hrng : ∀ a, 0 ≤ enc a ∧ enc a < (babyBearP : ℤ)) : Game :=
+  romCarrierGame (codeRomFamily D tagDec m) (p2RomCarrier D tagDec m α decA enc henc hrng)
+
+/-- **⚑ THE DEPLOYED LIST FORGERY IS A WIN** — two DISTINCT bounded lists whose absorbed leaf
+encodings the sampled oracle maps to ONE digest are a win: a genuine drop / reorder / substitution
+behind an equal digest, at the sampled oracle. -/
+theorem p2DigestRom_forgery_is_break (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (m : ℕ) (α : Type) (decA : DecidableEq α) (enc : α → ℤ) (henc : Function.Injective enc)
+    (hrng : ∀ a, 0 ≤ enc a ∧ enc a < (babyBearP : ℤ))
+    (l : ℕ) (H : (p2DigestRomGame D tagDec m α decA enc henc hrng).Inst l) (t : D.Tag)
+    {xs ys : BoundedList α m} (hne : xs ≠ ys)
+    (heq : H (t, intListBVec m (p2Code enc xs.val)) = H (t, intListBVec m (p2Code enc ys.val))) :
+    (p2DigestRomGame D tagDec m α decA enc henc hrng).wins l H ((t, ()), xs, ys) :=
+  ⟨hne, heq⟩
+
+/-- **⚑⚑ THE RE-GROUNDED LIST-DIGEST BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded list-digest forger has NEGLIGIBLE advantage: the digest pins the WHOLE ordered list
+except with negligible probability, in the keyed ROM model. Successor of the DELETED
+`p2Digest_binds_from_polyTime` (floor refuted). -/
+theorem p2Digest_binds_rom (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag) (m : ℕ)
+    (α : Type) (decA : DecidableEq α) (enc : α → ℤ) (henc : Function.Injective enc)
+    (hrng : ∀ a, 0 ≤ enc a ∧ enc a < (babyBearP : ℤ)) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (adv : Adversary (p2DigestRomGame D tagDec m α decA enc henc hrng))
+    (hA : RomCarrierEff (codeRomFamily D tagDec m)
+      (p2RomCarrier D tagDec m α decA enc henc hrng) Q adv) :
+    Negl (gameAdv (p2DigestRomGame D tagDec m α decA enc henc hrng) adv) :=
+  codeForge_binds_rom D tagDec m (BoundedList α m) _ _ _ _ Q hQ adv hA
 
 /-- **⚑ THE ⊤ POLE — FALSE at the REAL BabyBear parameters** (the honest price of `hEff`). -/
 theorem p2Digest_floor_top_false_babyBear (D : DomainSeparatedSponge)
@@ -451,7 +519,10 @@ def turnLogDigest (ts : List Turn) : ℤ :=
 #assert_axioms p2Digest_forgery_is_break
 #assert_axioms p2Digest_binds_or_collides
 #assert_axioms p2Digest_binds_advantage_bound
-#assert_axioms p2Digest_binds_from_polyTime
+#assert_axioms boundedList_code_injective
+#assert_axioms boundedList_code_good
+#assert_axioms p2DigestRom_forgery_is_break
+#assert_axioms p2Digest_binds_rom
 #assert_axioms p2Digest_floor_top_false_babyBear
 #assert_axioms p2Digest_floor_bot_vacuous
 #assert_axioms p2Digest_congr

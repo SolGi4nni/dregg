@@ -180,7 +180,7 @@ fn the_authorized_signer_without_a_membership_proof_is_refused() {
         "issue",
         vec![Effect::SetField {
             cell,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -284,7 +284,7 @@ fn the_executor_re_enforces_sender_authorized_a_non_issuer_is_refused() {
         "issue",
         vec![Effect::SetField {
             cell,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -339,7 +339,7 @@ fn the_executor_re_enforces_a_non_unit_issuance_is_refused() {
         "issue",
         vec![Effect::SetField {
             cell,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: field_from_u64(5),
         }],
     );
@@ -407,12 +407,12 @@ fn the_executor_re_enforces_a_revocation_root_rewind_is_refused() {
         vec![
             Effect::SetField {
                 cell,
-                index: REVOCATION_ROOT_SLOT,
+                index: REVOCATION_ROOT_SLOT as u64,
                 value: field_from_u64(0),
             },
             Effect::SetField {
                 cell,
-                index: ISSUANCE_COUNTER_SLOT,
+                index: ISSUANCE_COUNTER_SLOT as u64,
                 value: field_from_u64(mid_counter + 1),
             },
         ],

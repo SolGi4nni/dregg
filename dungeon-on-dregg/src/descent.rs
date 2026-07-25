@@ -1087,22 +1087,34 @@ pub fn crowned_line(day: usize) -> Vec<(&'static str, i64)> {
     let mut tape: Vec<(&'static str, i64)> = Vec::new();
     for floor in 1..=FLOORS {
         tape.push((DELVE, 0));
-        for _ in 0..world.guard_hp(floor) {
-            tape.push((SMITE, 0));
-        }
-        // Take every WAY-KEY minted on this floor (relics 1..FLOORS-1). Keys are looted where
-        // they lie, which is not necessarily the floor whose door they open.
-        for relic in 1..FLOORS {
+        // What the LINE needs from this floor: the way-keys (relics 1..FLOORS-1) and the prize
+        // (relic 0), wherever the day minted them. Treasures are deliberately left lying — see
+        // the capacity arithmetic below.
+        let mut needed: Vec<i64> = Vec::new();
+        for relic in 0..FLOORS {
             if world.homes[relic as usize] == floor {
-                tape.push((LOOT, relic as i64));
+                needed.push(relic as i64);
             }
         }
+        // ⚑ ONLY FIGHT WHERE THERE IS SOMETHING TO TAKE. This mirrors Lean's `floorLine`:
+        // "if anything needed lies here, fell the guardian and take it … a floor holding
+        // nothing the line needs costs exactly one breath — the day's map decides where the
+        // fighting happens." Smiting unconditionally is not merely wasteful, it is FATAL: on
+        // day 9 (`ghp = [0,2,2,2,2]`) four needless felled guardians cost 16 breath and the
+        // prize becomes unreachable inside BREATH. The first version of this function did
+        // exactly that and the all-sixteen-days replay caught it.
+        if !needed.is_empty() {
+            for _ in 0..world.guard_hp(floor) {
+                tape.push((SMITE, 0));
+            }
+            for relic in &needed {
+                tape.push((LOOT, *relic));
+            }
+        }
+        // Exercise every key won by now whose door is this floor's exit. Way `w`'s key is
+        // relic `w - 1`, and the draw guarantees `homes (keyFor w) < w`, so it is carried.
         if floor < FLOORS {
-            // Way `floor + 1`'s key is relic `floor`, and `homes[floor] <= floor`, so it is
-            // carried by now — that is exactly what `drawFamily_wf` decides.
             tape.push((UNLOCK, (floor + 1) as i64));
-        } else {
-            tape.push((LOOT, 0)); // the prize, at the bottom
         }
     }
     tape.push((FLEE, 0));

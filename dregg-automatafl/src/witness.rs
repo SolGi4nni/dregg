@@ -935,8 +935,10 @@ mod tests {
         );
     }
 
-    /// The n=5 deployed TEST board size has NO emitted Lean descriptor (only n=2, n=11 are pinned)
-    /// — the witness-gen path is correctly BLOCKED there, fail-closed, not silently mis-filled.
+    /// n=5 has NO emitted Lean descriptor (only n=2, n=11 are pinned) — the witness-gen path is
+    /// correctly BLOCKED there, fail-closed, not silently mis-filled. (n=5 is no longer the played
+    /// size: the surface moved to the STOCK 11x11 board precisely because this `None` meant no
+    /// played match could ever be attested. The blocked-not-faked property is kept pinned here.)
     #[test]
     fn n5_has_no_descriptor_blocked_not_faked() {
         assert!(

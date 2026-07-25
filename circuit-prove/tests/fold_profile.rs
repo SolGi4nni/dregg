@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::ivc_turn_chain::{FinalizedTurn, prove_turn_chain_recursive};
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 use tracing::span::Id;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;

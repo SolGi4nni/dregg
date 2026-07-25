@@ -47,9 +47,11 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 [dev-dependencies]
 # R3 test fixtures MIRROR `lightclient/src/bin/whole_history_demo.rs`: a real rotated
 # finalized-turn chain is minted from before/after actor `Cell`s via
-# `dregg_turn::rotation_witness::mint_rotated_participant_leg` (prover-gated), over
+# `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg` (the prover CRATE since
+# PR3; `dregg-turn`'s `prover` feature was deleted), over
 # `dregg_circuit::effect_vm::{CellState, Effect}` and `dregg_cell::Cell`.
-dregg-turn = { path = "../turn", features = ["prover"] }
+dregg-turn = { path = "../turn" }
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-cell = { path = "../cell" }
 
 [lints]

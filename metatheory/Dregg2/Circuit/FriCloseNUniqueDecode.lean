@@ -5,7 +5,10 @@ restated over the `FriSetupK` / `closeN` / `disagree` vocabulary.
 ## What this file is
 
 The FRI ladder's L5 target `DeployedTraceExtract.PositiveRadiusTraceDecode`
-(`DeployedTraceExtract.lean:301`) consumes proximity as `closeN S.C dRad oracle` — the
+(`DeployedTraceExtract.lean` §3′) consumes proximity as `closeN S.C dRad` — since the
+2026-07-24 batched-multi-column retype, PER COMMITTED COLUMN
+(`MatrixOracle.ColsClose S.C dRad oracle` = `∀ j, closeN S.C dRad (oracle.col j)`), so this
+per-word decoder is applied once per column of the batched commitment — in the
 `FriSoundness.lean:90` distance vocabulary (`disagree` at `:76`). The tree's RS
 unique-decoding `∃!` lives in POLYNOMIAL vocabulary:
 `NearDecodesWitness.near_word_decodes_existsUnique` (`NearDecodesWitness.lean:81`), whose

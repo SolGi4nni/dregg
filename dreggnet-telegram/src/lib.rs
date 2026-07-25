@@ -49,6 +49,7 @@ pub mod audit;
 /// Viewer-blind Telegram consent and public receipt provenance for explicit Chutes turns.
 pub mod chutes_consent;
 pub mod cipherclerk;
+pub mod commands;
 pub mod host;
 pub mod render;
 pub mod reqwest_transport;
@@ -317,6 +318,14 @@ impl<T: Transport> TelegramFrontend<T> {
         self.sessions.get(latest)
     }
 
+    /// The surface slot for EXACTLY this id — no "the chat's latest surface" fallback. Use this
+    /// when the question is "does this precise surface exist", which
+    /// [`session`](Self::session)'s fallback would answer `true` for any live surface in the
+    /// chat.
+    pub fn surface_slot(&self, session: &SessionId) -> Option<&TelegramSession> {
+        self.sessions.get(session)
+    }
+
     /// The surface a live message belongs to — how a press on a specific message finds its
     /// offering when a chat hosts several.
     pub fn surface_of_message(
@@ -332,6 +341,73 @@ impl<T: Transport> TelegramFrontend<T> {
     /// The chat's most recently presented surface id, if any.
     pub fn latest_surface(&self, chat_session: &SessionId) -> Option<&SessionId> {
         self.latest.get(chat_session)
+    }
+
+    /// **Repost `session`'s surface on the NEXT present** instead of editing its live message.
+    ///
+    /// A re-present normally EDITS the session's message in place — the right thing when a turn
+    /// LANDS (one live surface per offering, no chat spam). It is the wrong thing when the user
+    /// EXPLICITLY asks for a surface (`/offerings`, `/open`, a menu press): that message may be
+    /// hundreds of messages up the scrollback, so editing it produces NO VISIBLE RESPONSE and the
+    /// bot reads as dead. Clearing the recorded message id makes the next present SEND, so an
+    /// explicit request always lands something the user can see.
+    ///
+    /// The old message stays in the message index, so a press on it still resolves to THIS
+    /// surface (matched against whatever the surface presents now) rather than becoming a dead
+    /// button.
+    pub fn repost_next(&mut self, session: &SessionId) {
+        if let Some(slot) = self.sessions.get_mut(session) {
+            slot.message_id = None;
+        }
+    }
+
+    /// Whether `(chat, topic, message_id)` is one of this frontend's non-interactive COMPANION
+    /// pages (a proof-operation guide). Companions are deliberately absent from the routing
+    /// index, so a press on one must be refused OUTRIGHT — never resolved against the chat's
+    /// latest game keyboard. Distinguishing "a known companion" from "a message this process has
+    /// never heard of" is what lets an unknown message (every button in the chat, after a
+    /// restart) take the resume path instead of being refused as a dead button.
+    pub fn is_companion_message(
+        &self,
+        chat_id: ChatId,
+        message_thread_id: Option<i64>,
+        message_id: MessageId,
+    ) -> bool {
+        self.companions.iter().any(|((surface, _), ids)| {
+            Self::chat_of(surface) == Some((chat_id, message_thread_id))
+                && ids.iter().any(|id| id.0 == message_id.0)
+        })
+    }
+
+    /// **Tear down every surface this chat owns** — the frontend half of the `/cancel` escape.
+    /// Drops each surface slot, its message-index entries and its companion pages, plus the
+    /// chat's "latest surface" pointer. Returns the surface ids that were live, so the caller can
+    /// clear its own per-surface state (an armed free-text slot). Purely presentation state: no
+    /// host session and no committed move-log is touched.
+    pub fn teardown_chat(&mut self, chat_session: &SessionId) -> Vec<SessionId> {
+        let live: Vec<SessionId> = self
+            .sessions
+            .keys()
+            .filter(|sid| Self::chat_session_of(sid).as_ref() == Some(chat_session))
+            .cloned()
+            .collect();
+        for surface in &live {
+            if let Some(slot) = self.sessions.remove(surface) {
+                if let Some(mid) = slot.message_id {
+                    self.by_message
+                        .remove(&(slot.chat_id, slot.message_thread_id, mid.0));
+                }
+            }
+            self.companions.retain(|(owner, _), _| owner != surface);
+        }
+        self.latest.remove(chat_session);
+        // A chat's surfaces may also be indexed under messages whose slot was already replaced by
+        // a repost; drop every index entry addressed to this chat so no stale id survives.
+        if let Some((chat_id, topic)) = Self::chat_of(chat_session) {
+            self.by_message
+                .retain(|(c, t, _), _| !(*c == chat_id && *t == topic));
+        }
+        live
     }
 
     /// Every live surface in a chat, in stable (surface-id) order — what "two offerings are both

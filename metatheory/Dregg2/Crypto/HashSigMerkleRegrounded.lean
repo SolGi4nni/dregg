@@ -42,9 +42,14 @@ there was no game about the KEY SWAP at all — the forgery never appeared in a 
     sponge collision: the opening places the claimed key's leaf where the committed key's leaf is, so
     the two encodings hash equal, and `pkEncode_injective` contraposed makes them distinct. This is
     exactly the step `merkle_ots_binds_index` spends its (false) injectivity hypothesis on.
-  * **§4 — the bound, and its `hEff` DISCHARGED.** `keySwap_binds_advantage_bound` is the reduction at
-    an arbitrary class; `merkle_ots_binds_from_polyTime` proves the extracted finder efficient at
-    `Eff := IsPolyTime` (`CostAdversary`) instead of assuming it, so nothing floats.
+  * **§4 — the bound at an arbitrary class; §6 the DISCHARGED keyed-ROM successor.**
+    `keySwap_binds_advantage_bound` is the reduction at an arbitrary class. ⚑ The `IsPolyTime`
+    discharge that stood beside it (`merkle_ots_binds_from_polyTime`) is DELETED (07-24): its floor
+    `HashCRHardQuant (spongeFamily D) (IsPolyTime …)` is REFUTED at deployed parameters
+    (`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`). §6 restates the
+    key-swap game at the SAMPLED keyed oracle (the win relation applies the oracle inside the deployed
+    `mverify`/`masterKey`/`keyLog`, which are PARAMETRIC in the sponge) and closes it from
+    `KeyedRomFloor.keyedRom_hard` — the birthday bound, PROVED, nothing refutable carried.
 
 ## ⚑ THE NAMED, SEPARATELY-PRICED RESIDUAL — say it out loud
 
@@ -64,6 +69,8 @@ no fresh `axiom`, no `native_decide`.
 import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.CostTactics
+import Dregg2.Crypto.RomCarrierSites
+import Dregg2.Circuit.SpongeForgeReduction
 import Dregg2.Crypto.HashSigMerkle
 
 namespace Dregg2.Crypto.HashSigMerkleRegrounded
@@ -270,29 +277,6 @@ noncomputable def keySwapAnsSize (D : SpongeDeployment) (H : ℤ → ℤ) (ℓ N
 def spongeAnsSize (D : SpongeDeployment) : AnsSize (hashGame (spongeFamily D)) :=
   fun _ (p : List ℤ × List ℤ) => p.1.length + p.2.length
 
-/-- **⚑ `hEff` DISCHARGED — the many-time key-swap binding with NO floating efficiency parameter.** A
-key swapper that is EFFICIENT at the game's own answer encoding, put through the flattening extractor,
-yields a sponge-collision finder that is STILL efficient — so the collision floor at `Eff := IsPolyTime`
-applies to IT, and a key swap at an index succeeds only with negligible advantage.
-
-What remains supplied is the reshaper's declared work `(cw, bw)` — a Lean `fun` has no runtime, so that
-number is CHARGED in the program's syntax rather than derived. The output growth `(0, 4ℓ)` is PROVED
-from `pkEncode_length`, and no `PolyBoundedNat` overhead hypothesis is taken. -/
-theorem merkle_ots_binds_from_polyTime (D : SpongeDeployment) (H : ℤ → ℤ) (ℓ N : ℕ)
-    (A : Adversary (keySwapGame D H ℓ N)) (hA : IsPolyTime (keySwapAnsSize D H ℓ N) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (keySwapGame D H ℓ N) A) := by
-  have hEff : IsPolyTime (spongeAnsSize D) (keySwapToFinder D H ℓ N A) := by
-    poly_time (keySwapAnsSize D H ℓ N) (spongeAnsSize D)
-      (fun _ _ (a : KeySwap ℓ N) => (pkEncode a.s.pk, pkEncode (publicKey H (a.sks a.i))))
-      cw bw 0 (4 * ℓ) hA
-    intro n t a
-    show (pkEncode a.s.pk).length + (pkEncode (publicKey H (a.sks a.i))).length
-      ≤ 0 * (keySwapAnsSize D H ℓ N n a) + 4 * ℓ
-    rw [pkEncode_length, pkEncode_length]
-    omega
-  exact keySwap_binds_advantage_bound D H ℓ N (IsPolyTime (spongeAnsSize D)) A hEff hCR
-
 /-- **(TOOTH — the class the floor is instantiated at is NOT EMPTY.)** `HashCRHardQuant (spongeFamily D)
 (IsPolyTime (spongeAnsSize D))` is not the vacuous `Eff := ⊥` floor: the constant finder is in the
 class, because the answer it writes has size `0` under the game's own encoding. Together with
@@ -363,6 +347,186 @@ theorem keySwapGame_acceptance_reachable (D : SpongeDeployment) (H : ℤ → ℤ
       (msign (D.hashAt t) H sks i m).idx = i.val :=
   ⟨merkle_ots_correct (D.hashAt t) H sks i m, rfl, rfl⟩
 
+/-! ## §6 — ⚑⚑ THE DISCHARGED SUCCESSOR: the key-swap binding on the PROVED keyed-ROM floor.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The deployed p3 Poseidon2 sponge is idealised as ONE
+SAMPLED keyed oracle `H : Tag × Msg → Fin (2 ^ l)` over the truncated deployed message shape (at most
+`m` BabyBear-range limbs, `SpongeForgeReduction.intListBVec` — lossless on everything the deployed
+prover absorbs, `intListBVec_inj`). The deployed `mverify` / `masterKey` / `keyLog` are PARAMETRIC in
+the sponge, so the ROM game's win relation applies them at the ORACLE read back as a sponge
+(`oracleSponge`): nothing about the Merkle acceptance predicate is re-authored — only WHO evaluates
+the absorbed blocks changes, which is the modelling step. The two `GoodCode` conjuncts in the win
+relation are the truncation's honesty teeth: the extracted flattened keys are bounded (`pkEncode`
+emits exactly `2ℓ` limbs) in-range felt lists — the deployed key material's genuine layout — so a
+distinct pair stays distinct through the truncation. The OTS bit hash `H : ℤ → ℤ` stays a parameter,
+exactly as in §2: this file closes the SPONGE leg, and the MMR-root leg stays the named open carrier
+of the header. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily keyedRomGame keyedRom_hard)
+open Dregg2.Crypto.RomQueryFloor (RomEff)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.RomBindingReduction (OracleComp.mapOut OracleComp.mapOut_eval
+  OracleComp.mapOut_queryBounded)
+open Dregg2.Crypto.RomCarrierSites (babyBearP flatFamily BVec RomForgery RomForgeryEff)
+open Dregg2.Circuit.SpongeForgeReduction (GoodCode intListBVec intListBVec_inj)
+
+variable (D : SpongeDeployment) (tagDec : DecidableEq D.Tag)
+
+/-- **THE KEY-SWAP KEYED-ROM FAMILY** — keyed by the DEPLOYED tag space, messages the truncated
+deployed shape, ideal `λ`-bit digests. -/
+def ksRomFamily (m : ℕ) : KeyedRomFamily :=
+  flatFamily D.Tag D.tagFintype tagDec D.tagNonempty (fun _ => BVec (Fin babyBearP) m)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨(⟨0, by omega⟩, fun _ => none)⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem ksRomFamily_card_R (m : ℕ) (l : ℕ) :
+    letI := (ksRomFamily D tagDec m).rFin l
+    Fintype.card ((ksRomFamily D tagDec m).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE SAMPLED ORACLE, READ BACK AS THE DEPLOYED SPONGE SHAPE** at a tag: absorb a limb list by
+truncating it into the finite message domain, squeeze the digest back as a felt-shaped integer. This
+is what the deployed parametric `mverify`/`masterKey`/`keyLog` are applied at in the ROM game. -/
+def oracleSponge (m l : ℕ)
+    (Hor : (ksRomFamily D tagDec m).toRomFamily.D l → (ksRomFamily D tagDec m).toRomFamily.R l)
+    (t : D.Tag) : List ℤ → ℤ :=
+  fun xs => (((Hor (t, intListBVec m xs)).val : ℕ) : ℤ)
+
+/-- **THE KEY-SWAP FORGERY AT THE SAMPLED ORACLE** — §2's `keySwapGame` win relation verbatim, with
+the fixed `D.hashAt t` replaced by the sampled `oracleSponge` (the adversary picks the tag; the oracle
+it cannot pick), plus the two truncation-losslessness side conditions on the extracted key encodings
+(the deployed key material satisfies them by layout — `pkEncode_goodCode`). -/
+noncomputable def ksRomForgery (m ℓ N : ℕ) (HH : ℤ → ℤ) : RomForgery (ksRomFamily D tagDec m) where
+  Ans := fun _ => D.Tag × KeySwap ℓ N
+  wins := fun l Hor a =>
+    a.2.s.idx = a.2.i.val ∧
+      mverify (oracleSponge D tagDec m l Hor a.1) HH
+        (masterKey (oracleSponge D tagDec m l Hor a.1) HH a.2.sks) a.2.m a.2.s ∧
+      a.2.s.openLog = keyLog (oracleSponge D tagDec m l Hor a.1) HH a.2.sks ∧
+      a.2.s.pk ≠ publicKey HH (a.2.sks a.2.i) ∧
+      GoodCode m (pkEncode a.2.s.pk) ∧ GoodCode m (pkEncode (publicKey HH (a.2.sks a.2.i)))
+  winsDec := fun _ _ _ => Classical.propDecidable _
+
+/-- **THE DEPLOYED KEY MATERIAL SATISFIES THE TRUNCATION SIDE CONDITION** — `pkEncode` emits exactly
+`2ℓ` limbs, so at any budget `m ≥ 2ℓ` a key whose limbs are genuine BabyBear felts is a `GoodCode`.
+The honesty tooth that the two extra win conjuncts exclude NOTHING the deployed prover produces. -/
+theorem pkEncode_goodCode {ℓ m : ℕ} (pk : Fin ℓ → Bool → ℤ) (hm : 2 * ℓ ≤ m)
+    (hr : ∀ i b, 0 ≤ pk i b ∧ pk i b < (babyBearP : ℤ)) : GoodCode m (pkEncode pk) := by
+  refine ⟨by rw [pkEncode_length]; omega, fun x hx => ?_⟩
+  rcases List.mem_append.mp hx with h | h <;>
+    · obtain ⟨i, -, rfl⟩ := List.mem_map.mp h
+      exact hr i _
+
+/-- **THE EXTRACTOR** — the two truncated flattened keys, tagged at the attacked tag: a pure post-map
+of the forger's answer into the keyed collision game. -/
+def ksRomToFinder (m ℓ N : ℕ) (HH : ℤ → ℤ)
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game) :
+    Adversary (keyedRomGame (ksRomFamily D tagDec m)) where
+  run := fun l Hor =>
+    let a := A.run l Hor
+    ((a.1, intListBVec m (pkEncode a.2.s.pk)),
+      (a.1, intListBVec m (pkEncode (publicKey HH (a.2.sks a.2.i)))))
+
+/-- **⚑ WIN-PRESERVATION — `keySwap_wins_imp` at the sampled oracle.** Wherever the swapper wins, the
+two truncated flattened keys are a GENUINE collision of the sampled oracle: the opening places the
+claimed key's leaf where the committed key's leaf is (so the oracle agrees on the two messages), and
+`pkEncode_injective` + the truncation's losslessness (`intListBVec_inj`, on the win's own `GoodCode`
+conjuncts) make the two messages DISTINCT. -/
+theorem ksRom_wins_imp (m ℓ N : ℕ) (HH : ℤ → ℤ)
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game) (l : ℕ)
+    (Hor : (ksRomForgery D tagDec m ℓ N HH).game.Inst l)
+    (hwin : (ksRomForgery D tagDec m ℓ N HH).game.wins l Hor (A.run l Hor)) :
+    (keyedRomGame (ksRomFamily D tagDec m)).wins l Hor
+      ((ksRomToFinder D tagDec m ℓ N HH A).run l Hor) := by
+  obtain ⟨hidx, hv, hlog, hne, hg1, hg2⟩ := hwin
+  obtain ⟨-, hopen, -⟩ := hv
+  rw [hlog, hidx] at hopen
+  have hleaf : pkLeaf (oracleSponge D tagDec m l Hor (A.run l Hor).1) (A.run l Hor).2.s.pk
+      = pkLeaf (oracleSponge D tagDec m l Hor (A.run l Hor).1)
+          (publicKey HH ((A.run l Hor).2.sks (A.run l Hor).2.i)) :=
+    Option.some.inj ((hopen : _ = some _).symm.trans
+      (keyLog_getElem? (oracleSponge D tagDec m l Hor (A.run l Hor).1) HH
+        (A.run l Hor).2.sks (A.run l Hor).2.i))
+  refine ⟨fun hc => ?_, ?_⟩
+  · have he : intListBVec m (pkEncode (A.run l Hor).2.s.pk)
+        = intListBVec m (pkEncode (publicKey HH ((A.run l Hor).2.sks (A.run l Hor).2.i))) :=
+      congrArg Prod.snd hc
+    exact hne (pkEncode_injective (intListBVec_inj m hg1 hg2 he))
+  · have hz : (((Hor ((A.run l Hor).1,
+          intListBVec m (pkEncode (A.run l Hor).2.s.pk))).val : ℕ) : ℤ)
+        = (((Hor ((A.run l Hor).1,
+            intListBVec m (pkEncode (publicKey HH ((A.run l Hor).2.sks
+              (A.run l Hor).2.i))))).val : ℕ) : ℤ) := hleaf
+    have hv' : (Hor ((A.run l Hor).1, intListBVec m (pkEncode (A.run l Hor).2.s.pk))).val
+        = (Hor ((A.run l Hor).1, intListBVec m (pkEncode (publicKey HH
+            ((A.run l Hor).2.sks (A.run l Hor).2.i))))).val := by exact_mod_cast hz
+    exact Fin.ext hv'
+
+/-- **THE ADVANTAGE INEQUALITY** — over the SAME sampled oracle space, unconditional. -/
+theorem ksRom_adv_le (m ℓ N : ℕ) (HH : ℤ → ℤ)
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game) (l : ℕ) :
+    gameAdv (ksRomForgery D tagDec m ℓ N HH).game A l
+      ≤ gameAdv (keyedRomGame (ksRomFamily D tagDec m)) (ksRomToFinder D tagDec m ℓ N HH A) l := by
+  refine @winProb_le_of_imp _ ((ksRomForgery D tagDec m ℓ N HH).game.instFin l) _ _
+    (fun Hor hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  exact ksRom_wins_imp D tagDec m ℓ N HH A l Hor hH
+
+/-- **THE EXTRACTED FINDER IS QUERY-BOUNDED** — the extractor is a `mapOut` post-composition, which
+adds no queries: the honest successor of the deleted answer-size discharge. -/
+theorem ksRomToFinder_in_romEff (m ℓ N : ℕ) (HH : ℤ → ℤ) (Q : ℕ → ℕ)
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game)
+    (hA : RomForgeryEff (ksRomFamily D tagDec m) (ksRomForgery D tagDec m ℓ N HH) Q A) :
+    RomEff (ksRomFamily D tagDec m).toRomFamily Q (ksRomToFinder D tagDec m ℓ N HH A) := by
+  obtain ⟨M, hMQ, hrun⟩ := hA
+  refine ⟨fun l => OracleComp.mapOut
+      (fun a : D.Tag × KeySwap ℓ N =>
+        ((a.1, intListBVec m (pkEncode a.2.s.pk)),
+          (a.1, intListBVec m (pkEncode (publicKey HH (a.2.sks a.2.i)))))) (M l), ?_, ?_⟩
+  · exact fun l => OracleComp.mapOut_queryBounded _ (hMQ l)
+  · intro l Hor
+    show (let a := A.run l Hor;
+        ((a.1, intListBVec m (pkEncode a.2.s.pk)),
+          (a.1, intListBVec m (pkEncode (publicKey HH (a.2.sks a.2.i))))))
+      = _
+    rw [OracleComp.mapOut_eval, hrun l Hor]
+    rfl
+
+/-- **⚑⚑ THE RE-GROUNDED KEY-SWAP BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded key swapper has NEGLIGIBLE advantage: a verifying many-time signature carries the OTS
+public key the master root committed except with negligible probability, in the keyed ROM model of
+the header — so `lamport_forgery_breaks_hash` applies to the genuine key except with that advantage.
+This is what `merkle_ots_binds_from_polyTime` (DELETED — floor refuted) claimed and could not have. -/
+theorem merkle_ots_binds_rom (m ℓ N : ℕ) (HH : ℤ → ℤ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game)
+    (hA : RomForgeryEff (ksRomFamily D tagDec m) (ksRomForgery D tagDec m ℓ N HH) Q A) :
+    Negl (gameAdv (ksRomForgery D tagDec m ℓ N HH).game A) :=
+  negl_of_le (fun l => (gameAdv_mem_unit (ksRomForgery D tagDec m ℓ N HH).game A l).1)
+    (ksRom_adv_le D tagDec m ℓ N HH A)
+    (keyedRom_hard (ksRomFamily D tagDec m) Q hQ (ksRomFamily_card_R D tagDec m)
+      (ksRomToFinder D tagDec m ℓ N HH A) (ksRomToFinder_in_romEff D tagDec m ℓ N HH Q A hA))
+
+/-- **(CANARY — the ROM bound does NOT follow from the floor applied at ANOTHER finder.)** Only
+`ksRom_adv_le` connects the extracted finder to the key-swap game. -/
+example (m ℓ N : ℕ) (HH : ℤ → ℤ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (ksRomForgery D tagDec m ℓ N HH).game)
+    (B : Adversary (keyedRomGame (ksRomFamily D tagDec m)))
+    (hB : Dregg2.Crypto.KeyedRomFloor.KeyedRomEff (ksRomFamily D tagDec m) Q B) : True := by
+  fail_if_success
+    (have : Negl (gameAdv (ksRomForgery D tagDec m ℓ N HH).game A) :=
+      keyedRom_hard (ksRomFamily D tagDec m) Q hQ (ksRomFamily_card_R D tagDec m) B hB)
+  trivial
+
+end RomSuccessor
+
 #assert_all_clean [
   deployedSponge_is_family_instance,
   spongeFamily_CR_of_injective,
@@ -371,8 +535,13 @@ theorem keySwapGame_acceptance_reachable (D : SpongeDeployment) (H : ℤ → ℤ
   keySwap_adv_le,
   keySwap_binds_advantage_bound,
   pkEncode_length,
-  merkle_ots_binds_from_polyTime,
   spongeFloor_isPolyTime_inhabited,
+  ksRomFamily_card_R,
+  pkEncode_goodCode,
+  ksRom_wins_imp,
+  ksRom_adv_le,
+  ksRomToFinder_in_romEff,
+  merkle_ots_binds_rom,
   merkle_ots_eff_top_false,
   merkle_ots_eff_bot_vacuous,
   the_reduced_keySwap_bound_fires,

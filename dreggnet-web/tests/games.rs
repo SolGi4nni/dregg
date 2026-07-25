@@ -64,9 +64,11 @@ fn app() -> axum::Router {
     catalog_router(Arc::new(CatalogState::new()))
 }
 
-/// The 5×5 board index of `(x, y)`.
+/// The automatafl board index of `(x, y)` — derived from the board's OWN width
+/// ([`dregg_automatafl::game::N`], the stock two-player game), never a literal, so a board-size
+/// change moves this test with it instead of silently addressing the wrong squares.
 fn idx(x: i64, y: i64) -> i64 {
-    y * 5 + x
+    y * dregg_automatafl::game::N as i64 + x
 }
 
 /// BOTH games appear in the catalog, each with a play link.
@@ -114,8 +116,8 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
         "the match opens in the commit phase"
     );
 
-    // ── Seat A (browser user `alice`): select the attractor at (1,1), seal a move to (1,4).
-    let (_, body) = post(&app, &format!("{base}/act"), "select", idx(1, 1), "alice").await;
+    // ── Seat A (browser user `alice`): select the stock attractor at (3,1), seal a move to (3,3).
+    let (_, body) = post(&app, &format!("{base}/act"), "select", idx(3, 1), "alice").await;
     assert!(
         body.contains("Turn committed"),
         "the select lands a real turn: {body}"
@@ -126,8 +128,8 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
         "the selected piece lights its legal moves in the browser"
     );
 
-    // An ILLEGAL move — (1,1) → (3,3) is a diagonal. REFUSED; nothing commits.
-    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(3, 3), "alice").await;
+    // An ILLEGAL move — (3,1) → (4,2) is a diagonal. REFUSED; nothing commits.
+    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(4, 2), "alice").await;
     assert!(
         body.contains("Refused: illegal move"),
         "a diagonal is refused by the real referee: {body}"
@@ -139,17 +141,17 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
 
     // The legal seal lands. The POST re-renders AS alice (the viewer-aware host boundary), so the
     // sealer sees HER OWN move revealed — the opponent, not the sealer, is the one kept in the fog.
-    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(1, 4), "alice").await;
+    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(3, 3), "alice").await;
     assert!(body.contains("Turn committed"), "the seal lands: {body}");
     assert!(
         body.contains("YOUR sealed move"),
         "the sealer sees THEIR OWN sealed move on their own surface (per-viewer, not viewer-blind fog): {body}"
     );
 
-    // ── Seat B (browser user `bob`): select (3,3), seal to (3,0).
-    let (_, body) = post(&app, &format!("{base}/act"), "select", idx(3, 3), "bob").await;
+    // ── Seat B (browser user `bob`): select (7,1), seal to (7,3).
+    let (_, body) = post(&app, &format!("{base}/act"), "select", idx(7, 1), "bob").await;
     assert!(body.contains("Turn committed"), "bob claims seat B: {body}");
-    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(3, 0), "bob").await;
+    let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(7, 3), "bob").await;
     assert!(body.contains("Turn committed"));
     // Rendered AS bob now: bob sees HIS own seal, and ALICE's sealed move is FOG to him (only the
     // commitment shows) — the simultaneous-secret fog, correctly keyed to the OPPONENT's viewpoint.
@@ -178,7 +180,7 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
         body.contains("Automatafl — turn 1"),
         "the resolved turn counter advanced in the browser: {body}"
     );
-    // The board MOVED: the attractor that was at (1,1) is gone from that square, and the pieces
+    // The board MOVED: the attractor that was at (3,1) is gone from that square, and the pieces
     // landed. (The reference `apply_turn` decides exactly where; the in-crate tests pin that.)
     assert!(body.contains("coordgrid"), "the resolved board re-paints");
 
@@ -206,12 +208,17 @@ async fn the_server_form_automatafl_board_is_polished() {
     // Open the board and light a piece's legal moves (so a `highlighted` legal-move cell is present).
     let (status, body) = get(&app, base).await;
     assert_eq!(status, StatusCode::OK);
-    let (_, body_after) = post(&app, &format!("{base}/act"), "select", idx(1, 1), "alice").await;
+    let (_, body_after) = post(&app, &format!("{base}/act"), "select", idx(3, 1), "alice").await;
 
     // ── THE MARKUP: a coordgrid of square cells, clickable POST forms, tinted + highlighted.
+    // N-GENERIC: the expected markup is built from the board's own width, and the `checkered` class
+    // (the odd-width checkerboard) is decided by the renderer rather than by a board size in CSS.
+    let n = dregg_automatafl::game::N;
     assert!(
-        body.contains("<div class=\"coordgrid\" style=\"grid-template-columns:repeat(5,1fr)\">"),
-        "the board is a 5-wide coordgrid: {body}"
+        body.contains(&format!(
+            "<div class=\"coordgrid checkered\" style=\"grid-template-columns:repeat({n},1fr)\">"
+        )),
+        "the board is an {n}-wide coordgrid (the board's own width): {body}"
     );
     assert!(
         body.contains("<form class=\"cell") && body.contains("<button type=\"submit\">"),
@@ -232,7 +239,7 @@ async fn the_server_form_automatafl_board_is_polished() {
     // The grid frame + square cells.
     assert!(
         body.contains(".coordgrid{display:grid")
-            && body.contains("max-width:24rem")
+            && body.contains("max-width:32rem")
             && body.contains("border-radius:14px"),
         "the board is a centered, framed grid"
     );

@@ -3160,3 +3160,517 @@ objects; this file is the semantic law it discharges.
 
 Did NOT touch: `Market.lean`, `DarkBazaarSameOpening.lean`, other lane files (gadget/poly files
 present untracked — left alone). Committed NOTHING — supervisor gates. `git status` taken first.
+
+## 2026-07-23 apex2/poly-gadget
+
+**File (mine, new): `metatheory/Market/DarkBazaarSameOpeningGadgetPoly.lean`** — the apex
+CONSOLIDATION: the SameOpeningGadget lifted to the per-slot (polynomial-model) ciphertext, with
+the MASTER SOUNDNESS in one theorem. Substrate said out loud (in-file too): this AIR is AUTHORED
+IN LEAN — GadgetAcceptsPoly is the Lean in-circuit acceptance relation; no Rust AIR exists or
+will. Imports the apex files + Bfv read-only; edited NOTHING existing.
+
+`GadgetColumnsPoly` = 4 slot phase columns + 4 private slot noise columns + 8 shared root lanes.
+`GadgetAcceptsPoly P hash8 session B cols w := SafeNoise P B ∧ (∀ j, slotGate = 0 ∧ |noise j| ≤ B)
+∧ (∀ i, root lanes = orderRoot hash8 session w)` — per-slot decryption-consistency gates
+(`phase_j − (Δ·orderCode (w.orders j) + noise_j) = 0`) conjoined with the Poseidon2 root over ONE
+shared `w`.
+
+**Build (rule 3, done myself): `cd metatheory && lake env lean
+Market/DarkBazaarSameOpeningGadgetPoly.lean` = exit 0, printed
+`#assert_all_clean: 17 keystones pinned kernel-clean`.**
+
+Keystones (exact names, all in the #assert_all_clean):
+- `gadgetAcceptsPoly_sound` — **MASTER SOUNDNESS, hypothesis-free:** GadgetAcceptsPoly ⇒
+  `SameOpeningPoly P hash8 session B (slotCts P cols) cols.root w` (reuses
+  DarkBazaarSameOpeningPoly.SameOpeningPoly; no side conditions at all).
+- `gadgetAcceptsPoly_packs_to_gadgetAccepts` + `gadgetAcceptsPoly_sound_via_scalar_gadget` — the
+  poly gadget REFINES the scalar gadget: base-128 `packColumns` yields accepting SCALAR
+  `GadgetAccepts` under exact `PACK_GAIN·B` headroom, so the scalar `gadgetAccepts_sound` is
+  REUSED LITERALLY to land on scalar `SameOpening` at the packed carrier; `pack_routes_agree`
+  pins (definitionally, `rfl`) that this is the SAME carrier as
+  `sameOpeningPoly_packs_to_sameOpening ∘ gadgetAcceptsPoly_sound` — one relation family.
+- `gadgetAcceptsPoly_master` — the whole apex soundness in ONE theorem: acceptance ⇒
+  SameOpeningPoly ∧ scalar SameOpening (packed, under `SafeNoise P (PACK_GAIN·B)`) ∧ every slot
+  decrypts to EXACTLY its order code (`128 ≤ P.t`).
+- `gadgetAcceptsPoly_slot_decrypts` — per-slot exactness chained through the poly keystone
+  `slot_decrypts_exact`.
+- `gadgetPoly_complete` — converse: every SameOpeningPoly instance realizable by accepting
+  columns (faithful form, not strictly stronger).
+- **FAILING SIDE (required): `split_slot_fails_gadgetPoly`** — a witness where one slot uses a
+  DIFFERENT order than the root commits does NOT satisfy GadgetAcceptsPoly: root lanes from `w`,
+  slot j an exact encryption of o' with `orderCode o' ≠ orderCode (w.orders j)` — rejected for
+  EVERY noise-column assignment and EVERY budget B (gate forces `Δ·d`, d ≠ 0, killed by the
+  scalar gadget's hypothesis-free `delta_unsafe`). Engine lemma `slot_gate_pins_code` (the gate
+  pins each slot's code, no parameter hypotheses). `split_slot_red` itemizes both halves
+  INDEPENDENTLY valid (slot genuinely opens to o'; root genuinely w's) — the shared-w weld is
+  the content. `split_slot_shared_witness_is_collision` — strengthened: ANY u accepted on split
+  columns is a `RootCollision` with w (packed books provably differ via
+  packedBook_injective_on_orders) — no shared witness short of a Poseidon2 break.
+- GREEN + deployed pins (kernel `decide` on real fhe.rs degree-4096 numbers):
+  `honest_poly_accepts` (satisfiable, not an everything-rejector), `deployed_budget_safe`
+  (`SafeNoise fheRs4096 (2^20)`), `deployed_fixture_accepts_poly` (fixture book, zero slot
+  noise, accepted), `deployed_codes_differ` (tampered slot-0 code 90 ≠ 82),
+  `deployed_split_slot_rejected` (split columns rejected on deployed numbers for every noise
+  assignment), `deployed_master_chain` (the ENTIRE master chain discharged end-to-end on
+  deployed numbers via the poly file's `deployed_pack_headroom` + `deployed_code_window`).
+
+**NAMED not proved (in-file §8, none faked):** (1) **EMISSION — the open piece of this lane:**
+GadgetAcceptsPoly as a real emitted descriptor (EffectVmDescriptor2 with 4 phase + 4 noise
+columns, per-slot bit-decomposition range checks realizing `|noise_j| ≤ B`, TableId.poseidon2
+wide lookup binding root lanes to the SAME witness columns feeding all four gates, plus the
+Satisfied2 bridge analog of darkBazaarPrivateN4K4_emitted_air_sound) is NOT built — this file is
+a proved spec of the per-slot AIR, not a proof-carrying AIR. Also named: `SafeNoise P B` is a
+deployment-pinned parameter conjunct (as deployed_budget_safe pins it), NOT a per-proof
+constraint — the per-proof part is the range check. (2) RNS/CRT residue rows, mod-q wrap,
+negacyclic ring/NTT encoding — inherited from DarkBazaarSameOpeningPoly's named gaps, not
+widened. (3) Collective-key decryption-share columns (roadmap §3.2) — no single party can fill a
+phase column; per-slot restatement over share columns unbuilt. (4) Distributed witness
+production (roadmap §3.3) — out of scope of the acceptance relation, boundary explicit.
+
+Build note: `Market/DarkBazaarPrivateDescriptor.olean` was stale-missing in `.lake`; ran
+`lake build Market.DarkBazaarSameOpeningGadget Market.DarkBazaarSameOpeningPoly` (both green,
+their own assert lines reprinted: 11 and 8 keystones) before my file's `lake env lean`.
+
+Did NOT touch: `Market.lean`, any existing file, other lane files (`DarkBazaarCollectiveOpening.lean`
+appeared untracked mid-session — left alone). Committed NOTHING — supervisor gates. `git status`
+taken first.
+
+## 2026-07-23 apex2/collective
+
+**File (mine, new): `metatheory/Market/DarkBazaarCollectiveOpening.lean`** — the Tier-0
+NO-SINGLE-VIEWER piece (roadmap 3.3): the COLLECTIVE opening (n-of-n threshold decrypt, s = sum
+of s_i NEVER assembled) is as sound as the single-key decrypt, and the (n-1)-coalition view of
+the shares hides the book at the Smudging bound — with the leak PROVED below it. Substrate out
+loud: Lean relations + theorems only; no Rust AIR, no circuit here. Imports read-only:
+Bfv.Noise, Bfv.Smudging (NOT edited), Market.DarkBazaarDecryptConsistency,
+Market.DarkBazaarSameOpening, Market.DarkBazaarPrivateDescriptor (transitive).
+
+**Build (mine, run directly): `cd metatheory && lake env lean Market/DarkBazaarCollectiveOpening.lean`
+= exit 0, printed `#assert_all_clean: 17 keystones pinned kernel-clean`.**
+(Note: `Market/DarkBazaarPrivateDescriptor.olean` was MISSING from `.lake/build` at lane start —
+only .hash/.trace present; rebuilt via `lake build Market.DarkBazaarPrivateDescriptor` (green,
+92s, its own 18-keystone assert reprinted) before my file would load. No source file touched.)
+
+**Keystones (17 pinned):**
+
+- `CollectiveOpensTo` — the collective decryption (combine = c0 + sum of n party partial-phases,
+  exactly threshold.rs `c0' = c0 + sum h_i`) opens the ciphertext to m; DEFINED through
+  `DecryptConsistent` at the combined phase. Bridges `collective_is_decryptConsistent` /
+  `collective_is_bfvOpensTo` (both Iff.rfl): the collective relation IS the core/apex relation
+  shape — a refinement, not a fork.
+- `collective_decrypt_unique` — THE COLLECTIVE KEYSTONE: the collective form still UNIQUELY
+  determines m under the noise bound (decryptConsistent_unique composed over the summed shares;
+  the n-of-n split costs nothing in decrypt soundness). `collective_decrypts` — the unique
+  message is what the REAL decoder computes on the combined phase. `collective_book_unique` —
+  one collective transcript, one ORDER BOOK (via packedBook_openings_agree).
+- `combine_cancels_keys` — the n-of-n structure as algebra: combine sums the key terms away
+  EXACTLY (`= Δ·m + (eCt + Σ smudge)`); no assembled secret ever formed in-model.
+- GREEN: `honest_collective_opens` (generic); deployed pins on real fhe.rs-4096 numbers:
+  `deployed_honest_collective_opens` + `deployed_honest_collective_decrypts` (16 parties,
+  fold noise ≤ 2^32, per-party smudge ≤ 2^80 — chained through Smudging's
+  deployed_smudge_margin / deployed_smudged_decrypt_exact: hiding-level smudge and collective
+  exact decryption live at the SAME deployed parameters).
+- **RED (share validity): `single_tampered_share_breaks_opening`** — combine is BLIND to share
+  validity: ONE party shifting its share by Δ·k retargets the collective opening to m + k AND
+  uniqueness then REFUSES m (a proved ¬CollectiveOpensTo). Roadmap 3.2 as a theorem, not prose.
+- **NO-SINGLE-VIEWER: `CoalitionViewHides S B ε`** (a named relation with both directions):
+  `coalition_view_hides_of_bound` (any S, B: ≤ 2B/(2S+1), instantiating
+  Smudging.partial_decrypt_hides) and `deployed_coalition_view_hides` (S = 2^80 vs B = 2^32:
+  ≤ 2^-48, instantiating deployed_smudge_hides). The CONNECTION is proved; smudging is NOT
+  re-proved (Smudging.lean untouched).
+- **RED (the leak, required): `coalitionViewHides_fails_below_floor`** — for EVERY ε < 1, a 2^15
+  smudge against the deployed 2^32 envelope REFUTES the hiding relation, witnessed on the real
+  descriptor books (fixtureWitness vs tamperedOrderWitness, `deployed_fixture_books_differ` by
+  kernel decide) — the collective mirror of deployed_smudge_floor_leaks.
+  `no_smudge_coalition_distinguishes_books` — zero smudge: sd = 1 for ANY two distinct
+  fingerprints. `coalition_decoder_recovers_book` — the leak is CONSTRUCTIVE: an explicit
+  coalition decoder returns the TRUE book (full witness — packedBook, every order) on every
+  positive-probability observation when the smudge interval is below the fingerprint gap.
+  `deployed_floor_leak_in_envelope` — the leak pair (0, 2^32) lives INSIDE the legitimate
+  deployed envelope; not an out-of-envelope pathology.
+
+**NAMED not proved (in-file section 6, none faked):** (1) malicious-share validity (roadmap
+3.2) — the tamper RED proves combine is blind; the FIX (VSS / share same-opening, attributable
+refusal) is open. (2) Distributed witness production (roadmap 3.3) — collective DECRYPT covered;
+collaborative PROVING (no single prover reconstructs the book) untouched. (3) RLWE masking of
+the DIRECT Δ·m channel for a sub-quorum coalition — class B, estimator artifact, never a Lean
+theorem (Smudging scope note); what is proved is the NOISE-channel statement ("independent of m"
+means: the book-dependent fold-noise fingerprint of a published honest share is flooded).
+(4) Scalar model per-coefficient/per-share inherited from Bfv.Noise/Smudging; transcript-wide
+composition is Smudging §6's TranscriptHybridLedger, referenced — its hybrid certificate remains
+the named missing bridge, NOT discharged here. (5) keyTerm/c0 RLWE well-formedness under the
+collective key — assumed for the GREEN side only (REDs + uniqueness don't depend on it); the
+SameOpeningGadget's named collective-key residual.
+
+Did NOT touch: `Market.lean`, `Bfv/Smudging.lean`, any existing file, other lane files.
+Committed NOTHING — supervisor gates. `git status` taken first.
+
+## 2026-07-24 morning/fpga-scope
+
+**File (mine, new): `docs/deos/FHEGG-FPGA-SCOPE.md`** — a SCOPING deliverable (feasibility +
+first-stone design for an fhEgg FPGA datapath accelerator on AWS F2), explicitly NOT an
+implementation: no HDL written, no cycle model, no FPGA measurement claimed. Substrate said out
+loud in the doc header: the AIR/relation stays AUTHORED IN LEAN; the FPGA is a datapath callee
+under the Lean contract, same epistemic status as the WGSL kernels.
+
+Read first (per lane brief): `FHEGG-GPU-AMD-NUMBERS-2026-07-24.md`, `FHEGG-SAME-OPENING-APEX.md`,
+`FHEGG-MATURITY-ROADMAP.md` §3.1–3.5, TESTQALOG tail, `fhegg-fhe/src/{bfv_lean,bfv_gpu,bfv_mul,
+bfv_ntt_gpu,gpu_arena,mpc}.rs` + `shaders/{bfv_fold,bfv_ntt}.wgsl`. Found and built on TWO prior
+FPGA docs rather than duplicating them: `FHEGG-FPGA-ACCELERATOR.md` (F2 hardware citations,
+all-TFHE PBS sizing, TEE scoping, verified-HDL split) and `FHEGG-CODEX-ROUND4-RAW.md` Q2 (codex's
+crossing-appliance analysis + build/buy split + the placed-and-routed stop/go gate).
+
+The verdict (every claim in the doc cites file:line or a measured number):
+- Fold-add: NOT an FPGA target — measured TODAY 72–75% of resident wall-clock is PCIe upload
+  (~5.8 GB/s effective host→device derived from the published rows) and VU47P HBM (~460 GB/s)
+  ≈ 6750 XT GDDR6 (432 GB/s spec); an F2 sits behind the same bus. Agrees with codex Q2.
+- Negacyclic RNS-NTT under ct×ct multiply: the honest sweet spot — WGSL emulates the 36–37-bit
+  modmul as three-limb radix-2^16 Montgomery (`bfv_ntt_gpu.rs:8-12,37`); DSP48E2 does it natively
+  (~12–18 DSPs per pipelined modmul vs 9,024 available — labeled capacity arithmetic, not a perf
+  claim).
+- Crossing/argmax: not a first-stone target (adopted Tier-0 = output-boundary MPC ~1–7 ms CPU,
+  `mpc.rs:17,37-39`); the PBS crossing engine is the HPU-scale fallback build, already sized.
+- First stone: ONE RNS-NTT unit on one VU47P over exactly `FOLD_MODULI` (`bfv_lean.rs:72`), root
+  tables generated from the PROVED family — `deployedPsi_isPrimitiveRoot`
+  (`metatheory/Market/PrivateBookBfvRootOrder.lean:69`, exact order 8192 for all 3 deployed
+  moduli) — refining `NttRefines` (`WgpuBfvNttSpec.lean:234`) with the existing differential
+  corpus (`FHEGG-WGPU-VALIDATION-MATRIX.md` rows 23–24) and slotting in as a fifth labeled
+  `RnsNttBackend` variant with the engine's never-relabel fallback discipline.
+
+**NAMED missing / blocked (none faked):** (1) NO measured wgpu NTT wall-clock exists in this
+tree — the validation matrix is correctness-only; step 0 of the FPGA program is measuring the
+hbox 6750 XT NTT-multiply baseline (bench scaffold: `bin/private_book_bfv_wgpu_bench.rs`); no
+FPGA-win claim is possible before it. (2) `github.com/zama-ai/hpu_fpga` NOT fetchable from this
+session — treated as a published architecture reference only; its LICENSE must be read before any
+RTL-level reuse (named unverified). (3) Corrected the lane brief itself: F2 is VU47P UltraScale+
+HBM, NOT Versal (the Versal part is the Alveo V80 the HPU runs on — that gap IS the port cost).
+(4) Effort numbers are labeled models (weeks-to-months for stone 1, person-years for a PBS
+engine), not estimates from any measurement.
+
+Did NOT touch: `gpu_arena.rs` (supervisor-owned), Cargo.toml/lib.rs, any existing file. New file
+only + this append. Committed NOTHING — `git status` taken first.
+
+## 2026-07-24 morning/drex-residency
+
+**Deliverable (mine, new): `docs/deos/DREX-GPU-RESIDENCY-PLAN.md`** — READ-ONLY lane: the full
+DrEX dark-clear hot path traced in code with file:line for every op, the residency plan, and the
+blocker list. No clearing/GPU code edited; `gpu_arena.rs` untouched (supervisor owns it, chunked
+arena in flight). Every number is quoted from `FHEGG-GPU-AMD-NUMBERS-2026-07-24.md` /
+TESTQALOG:2929 or labeled **derived** (arithmetic on measured rows — nothing re-benchmarked).
+
+**The op sequence, pinned:** classic dark clear = ingress parse+verify (`order_ingress.rs:1067,
+1217`; strict parse `bfv_lean.rs:391`, O(N) host) → THE FOLD (`additive.rs:206-266` →
+`gpu_arena.rs:250-348` `fold_pair`: upload :750, `fold_resident_many` :826, `download_many` :954
+— the ONLY N-scale compute, GPU-resident today, the one real resident consumer per
+HANDOFF-FHEGG-CODEX-SWARM-RESULTS §5) → mask-add on HOST fhe.rs with a double wire re-encode of
+the folded curve (`boundary.rs:429-457`, `+=` at :448) → party smudged partial decrypt
+(`threshold.rs:508`, structurally host: secret shares) → combine (`threshold.rs:935,987`) → MPC
+crossing (`mpc.rs:433-488` model, `mpc_party.rs:2128,2458` runtime — interactive, latency-bound,
+b=16/K=4096 -> 221 network rounds per `mpc.rs:370-374`) → receipt (`attestation.rs`). Extended
+organs: convex `convex_engine.rs:301`/`convex_step.rs:246-310` (CPU only), ct×ct
+`dark_amm.rs:1064-1069` → `bfv_mul.rs:156` (CPU only; `bfv_ntt_gpu.rs` is below full multiply,
+its own :16-19).
+
+**Load-bearing DERIVED finding (named as derivation, not measurement):** the production call
+profile is K=1 — one clear folds each uploaded side ONCE (`additive.rs:238-241`,
+`reduction_rounds:0` one-chunk plan `gpu_arena.rs:305-310`). From the measured AMD rows
+(upload 34/137/282 ms at N=1000/4096/8192, 72-75% share): per-fold GPU non-upload cost
+f=(res-upload)/8, CPU per fold c=CPU/8 gives K=1 GPU e2e ~= upload+f = **~2.3x SLOWER than CPU**
+at every N, breakeven K* = upload/(c-f) ~= 2.4-2.5. The bench's K=8 amortization has NO
+production analog yet: the measured 2.7x resident win exists only at >=3 fold-scale resident ops
+per upload. The plan's spine: batch independent books per upload (R1, needs the chunked arena —
+resident set is ONE buffer, `ResidentHandle` gpu_arena.rs:117-131, 2^31 B binding -> 10922
+cts/chunk per `capacity_from_limits` :437-458, raw `upload` panics past it :771-775), keep the
+folded curves resident through the mask-add (R2, same RNS add as `bfv_fold.wgsl`; must preserve
+the deliberately-ungated [0,t) mod-t pad add, boundary.rs:426-428), convex-engine residency (R3,
+the native K>>1 workload), upload/compute overlap (R4, derived ceiling ~1.35x more at K=8),
+mapped-buffer ingress (R5, minor).
+
+**NAMED no-kernel / structural (none faked):** (1) NO GPU kernel anywhere in the tree for
+public-scalar multiply / fused scale-add (`bfv_fold.wgsl` is add-only) — blocks convex residency.
+(2) Full ct×ct multiply: NTT organ real (`bfv_ntt_gpu.rs`) but basis extension/tensor/relin are
+host-only (`bfv_mul.rs:33-38`). (3) The crossing's host+network round-trip is PROTOCOL, not a
+kernel gap — additive BFV has no comparison (`additive.rs:29-36`); curves exit only as
+one-time-padded threshold openings; only 2 folded cts (393 KB) ever leave the device, so
+whole-clear residency = amortizing the one big upload, not avoiding a book download. (4) The
+N=1M 11.4x histogram (TESTQALOG:2929) is the PLAINTEXT solver (`fhegg-solver/src/gpu.rs:118`),
+not an encrypted-fold result; encrypted N=1M = 196 GB of rows — only chunk-streamed residency is
+physically possible (12 GB VRAM -> derived ~61k cts fully resident). (5) None of R1-R5 has been
+measured; roadmap 3.4's exit criterion is unmet for all of them.
+
+Did NOT touch: `fhegg-fhe/src/gpu_arena.rs`, Cargo.toml, lib.rs, any existing file. New plan doc
++ this append only. Committed NOTHING — `git status` taken first (and again before this append).
+
+## 2026-07-24 morning/gadget-emit — SameOpeningGadget EMITTED: the apex relation is now a byte-pinned IR-2 descriptor with a Satisfied2→GadgetAccepts emit-soundness chain
+
+**File (mine, NEW): `metatheory/Market/EmitSameOpeningGadget.lean`.** Touched NOTHING else (no
+`Market.lean` registration — supervisor wiring; no gpu_arena.rs, no Cargo.toml). Committed
+NOTHING — `git status` taken first and again before this append.
+
+**Substrate, said out loud: this AIR is AUTHORED IN LEAN.** The descriptor
+(`sameOpeningGadgetDescriptor : EffectVmDescriptor2`), every gate expression, and the emit-
+soundness proof are Lean; the emitter is `lake env lean --run Market/EmitSameOpeningGadget.lean`
+(prints the IR-2 JSON). No Rust AIR written or implied.
+
+**Build (rule: compiler is the authority, run directly not piped):
+`cd metatheory && lake env lean Market/EmitSameOpeningGadget.lean` = exit 0, printed
+`#assert_all_clean: 14 keystones pinned kernel-clean`, zero warnings. Emit run: exit 0, valid
+JSON: `ir=2`, name `same-opening-gadget-n4::dec-limb-v1`, trace_width 297, public_input_count 20,
+579 constraints (1 poseidon2 lookup + 279 gates + 20 PI pins + 279 last-row boundary copies —
+count `#guard`-pinned). Byte pins in-file: JSON length == 210314 + name + Δ-digit substrings.**
+
+**The load-bearing emit decision (why this was not a one-gate emit):** deployed `fheRs4096` has
+`q` 109-bit, `Δ` 90-bit (kernel-pinned `delta_deployed`: Δ = 628790808402079651235184628), honest
+phase ≈ 2^118; BabyBear p ≈ 2^31. A single-column gate `phase − (Δ·b + e) ≡ 0 [ZMOD p]` is
+UNSOUND over ℤ (mod-p wrap admits forged books). The emitted dec-consistency half is therefore an
+exact base-2^12 limb system: 10 public phase limbs (cols 21..30, PI-pinned 10..19), 28 book bits
+(the SAME 28-bit pack the private descriptor commits; PACKED_BOOK reused at col 20), 88
+shifted-noise bits (offset encode `e = eShift − 2^87`), 10 carry columns × 15 bits (+1-offset for
+the −1 borrow), constant Δ digits `deltaDigit 0..7` (each < 2^12, `decide`-pinned recompose).
+Every gate value provably sits in the (−p,p) zero-residue window, so each ZMOD gate LIFTS to an
+exact ℤ equation; the telescoped chain (`limb_identity`, closed by one `linear_combination` over
+the 10 carry equations + top-carry-zero) forces `phase = Δ·packedBook w + e` over ℤ — no wrap.
+The Poseidon2 root half REUSES the private descriptor's `rootLookup` VERBATIM (same chip tuple,
+same column indices SESSION=0/RULE=1/ROOT=2..9/BLINDING=12..19/PACKED_BOOK=20).
+
+**Keystones (14 in `#assert_all_clean`, kernel-clean):**
+- `sameOpeningGadget_emit_sound` — THE EMIT-SOUNDNESS: `Satisfied2` of the emitted descriptor
+  (+ canonical cells, digit-canonical phase limbs, `ChipTableSoundN` poseidon2) ⟹
+  `GadgetAccepts fheRs4096 (permHash8 permOut) (a SESSION) cols (decodedW a)` — the PROVED
+  faithful relation of `DarkBazaarSameOpeningGadget`, at the deployed parameters, with a DECODED
+  witness (orders from the book bits, blinding from the shared BLINDING columns).
+- `sameOpeningGadget_emit_discharges_apex` — chained through `gadgetAccepts_sound`: the emitted
+  descriptor discharges `SameOpening` itself (the Tier-0 relation).
+- `sameOpeningGadget_emitted_statement_sound` — statement-level: `SameOpening` at the
+  PUBLIC-INPUT-read objects (session `pis 0`, phase `Σ 4096^k·pis(10+k)`, root `pis 2..9`) —
+  what a verifier actually checks.
+- The decode underneath: `limb_identity` (the telescope), `carry_gate_exact` (per-gate window
+  lift), `packed_book_bits_exact` + `packedBook_decoded_bits` (bit pack = decoded book pack,
+  base-128/base-2 regroup), `noise_in_margin` (offset range ⟹ `SafeNoise fheRs4096 |e|` via
+  `safeNoise_deployed_pow87`, kernel `decide` on the real 109-bit q), `gadget_wide_root_sound` +
+  `gadget_root_semantic` (all 8 root lanes = `orderRoot` of the SAME decoded witness),
+  `delta_deployed` + `delta_digits_recompose` (the deployed Δ and its emitted digits, kernel).
+
+**The JOIN, named precisely (from the lane spec):** statement-level weld — both descriptors
+expose `(session, rule, root[0..8))` at PI indices 0..9 and bind through the same poseidon2 chip;
+same-statement verification of both proofs pins the clearing book to the encrypted book via
+`RootCollision` (short of a Poseidon2 binding break). The cross-descriptor weld THEOREM (two
+Satisfied2 instances, shared PIs ⟹ ciphertext opens to the cleared book) is NAMED, not proved.
+
+**NAMED not proved (in-file module doc, none faked):** (1) emitted COMPLETENESS (trace
+realization of every accepting instance; also the emitted noise family is `|e| ≤ 2^87`, a strict
+subset of the ≈2^88 SafeNoise margin — completeness gap, zero soundness cost) — includes
+emitted-trace GREEN/satisfiability (relation-level GREEN exists in the gadget file). (2)
+phase-limb digit-canonicality is a STATEMENT obligation (`pis(10+k) < 4096`), like
+CanonicalAssignment. (3) RNS/CRT + collective-key binding of the limbs to the posted ciphertext
+(roadmap 3.2/3.3) — the host cannot honestly fill the phase alone. (4) the per-slot POLY emit
+(4 dec-chains sharing the root lookup, per `gadgetAcceptsPoly_master`) — not built. (5) golden
+file + `scripts/emit-descriptors.sh` registration + `Market.lean` root — supervisor wiring; the
+in-file byte pins (length 210314 + substrings) are the interim drift gate.
+
+Did NOT touch: `Market.lean`, `fhegg-fhe/src/gpu_arena.rs`, any existing file, other lanes'
+files. Commit: NOTHING.
+
+## 2026-07-24 pm/resident-crossing — the crossing is TWO different objects: plaintext-tier fold->crossing CAN fuse resident (kernel named, not built); the encrypted crossing round-trip is PROTOCOL, unreachable by any kernel
+
+**File (mine, NEW): `docs/deos/FHEGG-RESIDENT-CROSSING-ANALYSIS.md`.** Read-only lane: touched no
+code, no gpu_arena/bfv_gpu/shaders, no Cargo.toml/lib.rs, no other lane file. Committed NOTHING —
+`git status` taken first and again before this append.
+
+**Question 1 answered from code — the crossing is NOT a GPU kernel anywhere on the DrEX path:**
+encrypted crossing = Beaver-triple boolean MPC (`mpc_crossing` mpc.rs:433-488, `secure_min`
+:302-322, oblivious argmax :454-475); distributed runtime = `run_party` mpc_party.rs:2128 +
+`coordinate` :2458 with a per-AND-gate network opening loop — latency-bound (221 rounds at
+b=16/K=4096, `crossing_rounds` mpc.rs:370-374), per-round local work is XORs. Plaintext tier:
+fold IS a GPU kernel (`histogram` fhegg-solver/src/gpu.rs:118) but the crossing runs on CPU after
+a full K-bucket readback (gpu.rs:181; "histogram on device, scan+cross on CPU" bench.rs:77). The
+only encrypted GPU comparison in the tree is the TFHE tier (`torus_scalar_gt_chain.wgsl`) — the
+PBS-class path the additive fold was built to escape (additive.rs:1-27), not the DrEX path.
+
+**Question 2 — a resident crossing kernel is wgsl-shaped, for the PLAINTEXT tier only:** the
+arithmetic is suffix/prefix scan (clearing.rs:143-160) + elementwise min + ties-to-lowest argmax
+reduction (clearing.rs:165-179; combine rule identical to the MPC tournament's, so tie semantics
+are already test-pinned). At K<=4096 it is one workgroup, one dispatch. The composition is
+structurally admitted TODAY: `buf_hist` is STORAGE|COPY_SRC|COPY_DST (gpu.rs:78-92,:121) — a
+second pipeline binds it with zero copies; download shrinks from 2xKx4 B to 8-12 B. NAMED
+non-existence: no scan/min/argmax wgsl exists anywhere (full shader inventory in the doc).
+
+**Question 3 — the exact compositions:** plaintext: upload (N·8 B) -> histogram x2 -> NEW
+clearing_cross kernel -> download (crossed,p*,V*). Encrypted, the honest MAXIMUM: fold outputs
+are composable resident (STORAGE|COPY_SRC, gpu_arena.rs:850, :815-817) -> R2 resident mask-add
+(today `finish` breaks residency through wire bytes both ways, boundary.rs:439-456) -> download
+2 MASKED cts (393 KB, download_many :954) -> parties partial-decrypt off-device (threshold.rs:508)
+-> interactive MPC. "Only (p*,V*) downloads" is PROTOCOL-unreachable for the encrypted path:
+additive BFV has no comparison (additive.rs:29-36) and (p*,V*) is computed jointly across parties
+— a coordinator device computing it would BE the no-viewer violation. DrEX GPU win scope
+therefore = R1/R3/ctxct residency compute (per DREX-GPU-RESIDENCY-PLAN), never fold->crossing
+fusion.
+
+**Measured (real, this box, labeled — Apple M2 Max/Metal, NOT deploy hw; AMD rows stay
+authority):** `cargo build --release -p fhegg-solver --bin fhegg-bench` exit 0; ran the existing
+bench (output `scratchpad/fhegg_bench_mac.txt`). Clearing table: GPU-hist has a FLAT ~5.5 ms
+floor from N=100 to N=10^4 (CPU 1.7-196 us) = per-call composition overhead (2x pipeline-create
+gpu.rs:136-151 + submit + K-vector map-wait :94-110,:181) — exactly what a resident clearing pass
+deletes; N=1M: CPU 32.14 ms vs GPU 7.01 ms (4.6x; hbox authority row: 38.9->3.4 ms = 11.4x,
+TESTQALOG:2929). Honesty: biggest-book CPU rows include `allocate` (bench.rs:128), GPU rows do
+not — the 4.6x is slightly flattered. **Derived** (labeled): plaintext order uploads 8 B vs
+196608 B per encrypted row = 24576x bytes-per-fold-op — the arithmetic-intensity fact that makes
+the plaintext one-shot win 11.4x while the encrypted one-shot fold loses 0.22-0.33x. NOT
+measured (does not exist): the resident crossing kernel, any batched M-book clear — no number
+claimed for either.
+
+Did NOT touch: `fhegg-fhe/src/gpu_arena.rs`, `bfv_gpu.rs`, any shader, `fhegg-solver/src/gpu.rs`,
+Cargo.toml, lib.rs, any existing file. Commit: NOTHING.
+
+## 2026-07-24 pm/apex-rns-collective — CollectiveOpensToPoly: the collective opening lifted to the per-slot polynomial form, with wrong-slot AND short-quorum failing sides
+
+**File (mine, NEW): `metatheory/Market/DarkBazaarCollectiveOpeningPoly.lean`.** The named apex
+residual (FHEGG-SAME-OPENING-APEX.md par.3.2/3.3): the collective (no-single-viewer) opening,
+previously scalar-only (`DarkBazaarCollectiveOpening`), now lifted to the deployed per-slot
+shape (4 order slots, each opened by the SUM of n party shares, `threshold.rs` combine per
+ciphertext row). Touched NOTHING else. Committed NOTHING — `git status` taken first and again
+before this append.
+
+**Substrate, said out loud: this is the Lean-authored relation layer.** Any discharging
+gadget/descriptor is Lean-emitted (the EmitSameOpeningGadget shape); no Rust AIR written or
+implied.
+
+**Build (compiler is the authority): `cd metatheory && lake env lean
+Market/DarkBazaarCollectiveOpeningPoly.lean` = exit 0, printed
+`#assert_all_clean: 19 keystones pinned kernel-clean`, zero warnings.** (Dependency oleans
+first built via `lake build Market.DarkBazaarDecryptConsistency Market.DarkBazaarSameOpeningPoly
+Market.DarkBazaarCollectiveOpening` = exit 0, 3065 jobs.) No sorry, no :=True; every deployed
+pin is a kernel `decide` on the real 109-bit q.
+
+**The relation + keystones (19 in `#assert_all_clean`):**
+- `CollectiveOpensToPoly` — every slot's combined phase (public row + Sigma of n shares) is
+  decrypt-consistent at that slot's REAL `orderCode (w.orders j)` of ONE shared `w`, plus the
+  root conjunct. Defined THROUGH the scalar `CollectiveOpensTo` per slot; the no-drift bridge
+  `collectivePoly_is_decryptConsistent` is `Iff.rfl`.
+- **`collective_poly_decrypt_unique` (the requested keystone)** — one 4-slot collective
+  transcript cannot open to two books: scalar `collective_decrypt_unique` composed per slot
+  through `orderCode_injective`; corollaries `collective_poly_packedBook_unique` and
+  `collective_poly_decrypts` (the REAL combine->decryptPhase path returns exactly each slot's
+  code, `128 <= t` pinned).
+- **Connection to SameOpeningPoly, BOTH directions**: `collectivePoly_to_sameOpeningPoly`
+  (combined-phase cts satisfy `SameOpeningPoly` at budget B = max of the four slot noises —
+  safe because it IS one of them) and `sameOpeningPoly_to_collectivePoly` (converse via
+  `safeNoise_mono`); `collective_slots_pack_to_scalar_apex` chains to the PROVED scalar apex
+  `SameOpening` on the packed carrier under the exact `PACK_GAIN*B` headroom.
+- GREEN: `honest_poly_collective_opens` + deployed pins (16 parties/slot, fold noise <= 2^32,
+  smudges <= 2^80: opens AND decrypts exactly, via the imported deployed collective theorems).
+- **FAILING SIDES (required), three**: `wrong_slot_breaks_collectivePoly` (a slot collectively
+  opening to a wrong order is independently valid + root of intended w independently valid,
+  yet the book relation is FALSE — `delta_diff_unsafe` bite);
+  `single_tampered_share_breaks_poly_opening` (ONE party shifting ONE slot's share by Delta*k
+  retargets that slot and uniqueness refuses the whole book);
+  `short_quorum_breaks_opening`/`short_quorum_breaks_collectivePoly` (a party DROPPED from one
+  slot's combine — share zeroed, witness family share = Delta*k — opens to the wrong message
+  and REFUSES the true one). Non-vacuity: `deployed_short_quorum_red_inhabited` constructs a
+  real deployed 16-party transcript satisfying the relation WITH slot-0 party-0 share exactly
+  Delta*k — the RED bites live transcripts.
+- **Deployed order-of-operations pin (new fact, kernel-checked both ways):**
+  `deployed_collective_slot_budget_safe` (2^32 + 16*2^80 per-slot collective budget FITS the
+  margin) and `deployed_pack_after_smudge_blows_margin` (`PACK_GAIN * (2^32 + 16*2^80)` is
+  provably UNSAFE) — base-128 packing composes with the collective decrypt only on the
+  ciphertext side (fresh noise, cf. `deployed_pack_headroom`); recombining already-smudged
+  openings blows the margin. The smudge that buys hiding spends exactly the headroom the pack
+  would need.
+
+**NAMED not proved (in-file module doc, none faked):** (1) RNS residue rows — slot phases here
+are CRT-reconstructed integers; the `Z_q ~ prod Z_{qi}` bijection, per-residue consistency, and
+forged-single-residue-row attacks are not representable (inherited SameOpeningPoly scope).
+(2) mod-q wrap (Z phases) — inherited Bfv.Noise residual. (3) NTT/SIMD slot encoding vs the
+base-128 order-index pack — equivalence unformalized; only public-linear ops used. (4)
+collective-key RLWE well-formedness of each slot's (c0,c1) — GREEN-side assumption only (REDs
+and uniqueness do not depend on it). (5) malicious shares: the REDs PROVE combine is blind to
+share validity and quorum completeness; the FIX (VSS/share-validity with attributable refusal)
+and distributed witness production (no single prover reconstructs the book across slots) are
+the open frontier — nothing here authenticates a share or roster. (6) poly-level
+transcript-wide hiding is `Bfv.Smudging.TranscriptHybridLedger`, referenced not discharged.
+(7) `Market.lean` registration of the new module — supervisor wiring (file builds standalone
+via `lake env lean`, cited above).
+
+Did NOT touch: `fhegg-fhe/src/gpu_arena.rs`, `bfv_gpu.rs`, any shader, Cargo.toml, lib.rs,
+`Market.lean`, any existing file, other lanes' files. Commit: NOTHING.
+
+## 2026-07-24 pm/drex-tier-audit — DrEX Clear/Shielded/Dark tier status audit: CLEAR is BROKEN today (same-day regression, unflagged), SHIELDED's STARK wrap is structurally unreachable, DARK's cryptographic apex is proved-in-Lean with zero Rust wiring
+
+**File (mine, NEW): `docs/deos/DREX-TIER-STATUS-2026-07-24.md`.** Read-only audit — started the
+real `drex-web-v2` dev server (`node serve.mjs`, a free port) and posted real orders with `curl`;
+ran `cargo test -p fhegg-fhe --test dark_clearing_e2e --release` and the quorum variant; grepped
++ read source. Touched NOTHING else (no `gpu_arena.rs`/`bfv_gpu.rs`/shader/`Cargo.toml`/`lib.rs`,
+no other lane's file). `git status` taken before and after: clean of anything but this doc.
+Committed NOTHING.
+
+**Load-bearing finding, verified by EXECUTION against the running dev server:** `POST /clear` —
+DrEX's Tier-2 "open" ring-clear, the one tier the frontend markets as fully live — fails
+closed on every order book that actually clears a ring, **including `drex-web-v2`'s own baked-in
+default demo book** (`app.js:42-46`). Reproduced live:
+`{"error":"verified settlement rejected the ring: verified-executor FFI unavailable: no verified
+gate registered","ok":false}`. Root cause pinned to commit `1b8d7827c2` (today, 11:43am, already
+in HEAD): it inverted `dregg-intent`'s ring settlement
+(`intent/src/verified_settle.rs:351-388`) to fail-closed-refuse when no Lean-verified gate is
+registered — correct and intentional (`intent/tests/settle_fail_closed.rs` is the regression
+test for exactly this) — but `intent/src/bin/drex_clear.rs`, the binary
+`drex-web-v2/serve.mjs:60-67,109-111` shells out to for `/clear`, never registers one and
+*architecturally cannot* without a new dependency (`intent/Cargo.toml:32-37`,
+"FFI-FREE BY CONSTRUCTION"; only `node/src/lib.rs:609` does, and `drex_clear` is a separate
+short-lived CLI process, not the node). **The commit's own message names one broken downstream
+consumer (`starbridge-apps/tussle`) but not `drex_clear`/`drex-web-v2` — this audit is the first
+place that gap is named**, 2+ hours after the regression landed, in `TESTQALOG.md` or anywhere
+else grepped this session.
+
+**Second structural finding (pre-existing, not today's regression), verified by EXECUTION +
+CODE:** `POST /prove-shielded` (the reveal-nothing STARK wrap on the Shielded mechanism) cannot
+succeed for ANY user-submitted order, ever. `circuit-prove/src/cert_f_air.rs:355-376`
+hardcodes exactly two registered Cert-F programs (`epsilon: 0` and `epsilon: 2000`);
+`fhegg-solver/src/bin/fhegg_clear.rs:235` hardcodes `let epsilon = 0.5f64;` for every solve. The
+mismatch is unconditional. Corroborated independently: `dreggnet-market/src/
+certified_clearing.rs:29-33`'s own doc says its STARK receipt "fails closed today" for the
+identical reason (same registry). Reproduced live: `/prove-shielded` on a real order book →
+`"Cert-F public program is not registered as a Lean-emitted descriptor"`.
+
+**Architecture correction:** the mandate assumed `dreggnet-market::certified_clearing` feeds
+`drex-web-v2`. Grep-verified false — `certified_clearing` is referenced only inside
+`dreggnet-market` itself (`lib.rs:45`, `authenticated_receipt.rs`); `drex-web-v2/serve.mjs`
+shells directly to `intent`/`fhegg-solver`/`circuit-prove` binaries and never imports
+`dreggnet-market`. These are two independent products (DrEX = trading terminal;
+Dark Bazaar = game-economy sealed auction) sharing crypto substrate, not one pipeline. DrEX has
+no "list→bid→settle" verb shape at all (it has offer/want ring orders); that UX phrase matches
+the Dark Bazaar (`dreggnet-web`/`-telegram`/discord `market.rs`), audited separately in the doc.
+
+**SHIELDED tier, the private descriptor traced to exactly where it stops being live (fresh
+code-level confirmation of `THE-DARK-BAZAAR.md`'s existing GATED SUBSTRATE grade):**
+`circuit-prove/src/dark_bazaar_private.rs` (Lean-emitted N4K4 HidingFri relation) +
+`dreggnet-market/src/private_clearing.rs` are real and tested. But
+`.prepare_private_clearing_zk_with_binding` is called ONLY inside `#[cfg(test)] mod tests`
+(`dreggnet-catalog/src/private_bazaar_live.rs:587-588,765`) — the real production worker
+(`private_bazaar_worker.rs`, wired into `dreggnet-web-server.rs` /
+`dreggnet-telegram-bot.rs` / discord `market.rs`, grep-confirmed live) has zero references to it
+and only persists a `winner`+`settlement_turn` that already exists. The live Sealed Exchange
+settles by plaintext bid revelation today, exactly as `private_clearing.rs`'s own docstring
+concedes. `circuit-prove/src/shielded_exact_apex_v4.rs` (the module that would actually hide
+*value*, vs. FNSP-v3 which is live but publishes value/asset per its own scope note) explicitly
+self-documents as "binding and wire primitives, not proof acceptance authority" — ABSENT, not
+faked as more.
+
+**DARK tier: the crypto pipeline is real and passes, the apex is proved-in-Lean with zero Rust
+wiring, and the frontend's `live:false` label is the one place code and UI agree exactly.**
+Executed: `cargo test -p fhegg-fhe --test dark_clearing_e2e --release` → 1 passed, **4.83s**
+(full threshold-BFV → authenticated ingress → fold → masked-boundary opening → interactive MPC
+argmax → attested quorum receipt, all real, but every "party" is a local thread in one process,
+`dark_clearing_e2e.rs:14-15`). Quorum variant → 1 passed, **6.57s**. No product surface calls any
+of it (`serve.mjs`'s route table has no `/clear-dark`; `model.js:28-36` correctly labels the tier
+`live:false, grade:'FRONTIER'` — the one tier where the honesty labels and the code agree without
+qualification). The same-opening apex (`FHEGG-SAME-OPENING-APEX.md`, today) is freshly proved +
+emitted as a byte-pinned IR-2 descriptor and `Market.lean:44` now imports
+`Market.EmitSameOpeningGadget` (committed `29427bec84`, 13:20 today) — but
+`grep -rl "SameOpeningGadget" --include=*.rs .` returns **nothing**: zero Rust consumers, no
+`descriptor_by_name.rs` entry. Pure SEAM.
+
+Full per-stage LIVE/GATED/SEAM/ABSENT table, all citations, and the GPU-residency implication for
+DARK-tier UX latency (network-MPC rounds are the bottleneck, not the fold) are in the doc.
+
+Did NOT touch: `fhegg-fhe/src/gpu_arena.rs`, `bfv_gpu.rs`, any shader, any `Cargo.toml`,
+`lib.rs`, any other lane's file. Commit: NOTHING.

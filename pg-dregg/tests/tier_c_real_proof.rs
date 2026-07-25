@@ -43,7 +43,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     prove_turn_chain_recursive, FinalizedTurn, WholeChainProof,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 use pg_dregg::attest::{verify_serialized_proof, SerializedWholeChainProof, VkAnchor};
 

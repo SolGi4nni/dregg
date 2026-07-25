@@ -95,10 +95,12 @@ open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot perfectRoot_injective mapRoot
   mapRoot_injective)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathRecompute_binds_updates
+  pathCollFind noPathColl_of_CR noLeafColl_of_CR
   leafOf_injective ReconcileGatesAt toyHeap toyHeap_sorted toyAbsentOp)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs imtToHeap imtLeafHash
-  imtLeafHash_injective imtAbsent_excludes keys_imtToHeap imtSorted_cons_cons)
+  imtLeafHash_injective noImtLeafColl_of_CR imtAbsent_excludes keys_imtToHeap imtSorted_cons_cons)
 open Dregg2.Substrate
 
 set_option autoImplicit false
@@ -160,8 +162,8 @@ theorem absentImtGates_bind_low (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
   have e1 : xs.length = 2 ^ steps.length := by rw [hsl]; exact hlen
   have hroot1 : pathRecompute hash (imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩) steps
       = perfectRoot hash steps.length xs := by rw [hp, hor, hsl]
-  obtain ⟨hmem, _⟩ := pathRecompute_binds_updates hash hCR steps xs
-    (imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩) e1 hroot1
+  obtain ⟨hmem, _⟩ := pathRecompute_binds_updates hash steps xs
+    (imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩) e1 hroot1 (noPathColl_of_CR hCR)
   exact ⟨xs, pathPos steps, hlen, hor, hmem, hlk, hkn, hnr⟩
 
 /-- **The deployed gate yields the `ImtAbsent` witness** — the pointer bracket IS the witness the
@@ -202,7 +204,7 @@ theorem absentImtGates_force_absence (hash : List ℤ → ℤ) (hCR : Poseidon2S
     | some l =>
       rw [he] at hmem
       simp only [Option.map_some, Option.some.injEq] at hmem
-      obtain rfl := imtLeafHash_injective hash hCR hmem
+      obtain rfl := imtLeafHash_injective hash (noImtLeafColl_of_CR hCR) hmem
       exact List.mem_of_getElem? he
   have hnotin : key ∉ imtAddrs c :=
     imtAbsent_excludes hs ⟨⟨lowAddr, lowValue, lowNext⟩, hlow, hlk, hkn⟩
@@ -238,25 +240,27 @@ theorem adjacentBracket_forces_committed_pair (hash : List ℤ → ℤ) (hCR : P
       h[p]? = some (klo, vlo) ∧ h[p + 1]? = some (khi, vhi) ∧ klo < k ∧ k < khi := by
   obtain ⟨sLo, sHi, klo, vlo, khi, vhi, hlLo, hlHi, hadj, hpLo, hpHi, hklo, hkhi⟩ := hg
   subst hroot
-  have hbindLo := (pathRecompute_binds_updates hash hCR sLo (h.map (Heap.leafOf hash))
+  have hbindLo := (pathRecompute_binds_updates hash sLo (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (klo, vlo))
-    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpLo)).1
-  have hbindHi := (pathRecompute_binds_updates hash hCR sHi (h.map (Heap.leafOf hash))
+    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpLo)
+    (noPathColl_of_CR hCR)).1
+  have hbindHi := (pathRecompute_binds_updates hash sHi (h.map (Heap.leafOf hash))
     (Heap.leafOf hash (khi, vhi))
-    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpHi)).1
+    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpHi)
+    (noPathColl_of_CR hCR)).1
   simp only [List.getElem?_map] at hbindLo hbindHi
   cases heLo : h[pathPos sLo]? with
   | none => rw [heLo] at hbindLo; simp at hbindLo
   | some eLo =>
     rw [heLo] at hbindLo
     simp only [Option.map_some, Option.some.injEq] at hbindLo
-    obtain rfl := leafOf_injective hash hCR hbindLo
+    obtain rfl := leafOf_injective hash (noLeafColl_of_CR hCR) hbindLo
     cases heHi : h[pathPos sHi]? with
     | none => rw [heHi] at hbindHi; simp at hbindHi
     | some eHi =>
       rw [heHi] at hbindHi
       simp only [Option.map_some, Option.some.injEq] at hbindHi
-      obtain rfl := leafOf_injective hash hCR hbindHi
+      obtain rfl := leafOf_injective hash (noLeafColl_of_CR hCR) hbindHi
       rw [hadj] at heHi
       exact ⟨pathPos sLo, klo, vlo, khi, vhi, heLo, heHi, hklo, hkhi⟩
 

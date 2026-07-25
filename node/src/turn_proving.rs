@@ -1551,7 +1551,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     // CONVENTION (precision-critical — must byte-match what `verify_vm_descriptor2` anchors into
     // PIs 38/39/40 via `anchor_cap_open_turn_pins`): the single-felt cell projection is
     // `dregg_circuit::cap_root::fold_bytes32(cell_id.as_bytes())`
-    // (`circuit/src/cap_root.rs:194` = `hash_many(&BabyBear::encode_hash(bytes))`).
+    // (`circuit/src/cap_root.rs:194` = `hash_many(&dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes))`).
     //   - `src`   = the consumed cap's `leaf.target` — ALREADY the rooted value: the cap-leaf
     //               `target` is `fold_bytes32(cap.target.as_bytes())` (`cell/src/commitment.rs:506`),
     //               folded to `consumed.leaf_target` (`turn/src/executor/authorize.rs:1045`,
@@ -1680,7 +1680,7 @@ pub struct RetainedFinalizedTurnBytes {
 /// **THE FINALIZED-TURN RETENTION MINT** (commit path). From the SAME execution
 /// context `blocklace_sync::execute_finalized_turn` proved the turn with, mint
 /// the wrap-input `FinalizedTurn` via
-/// [`dregg_turn::rotation_witness::finalized_turn_from_full_turn`] — which
+/// [`dregg_turn_prover::rotation_witness::finalized_turn_from_full_turn`] — which
 /// re-proves the rotated leg under the leaf-wrap config and FAIL-CLOSES unless
 /// the leg's wide 8-felt anchors equal the served `FullTurnProof`'s proven
 /// `(old_commit, new_commit)` — and encode it for persistence.
@@ -1721,7 +1721,7 @@ pub fn mint_and_encode_finalized_turn(
             .map_err(|e| format!("finalized-turn retention: before_cell_state: {e}"))?,
         None => CellState::new(pre_balance, pre_nonce as u32),
     };
-    let finalized = dregg_turn::rotation_witness::finalized_turn_from_full_turn(
+    let finalized = dregg_turn_prover::rotation_witness::finalized_turn_from_full_turn(
         &initial_vm_state,
         &vm_effects,
         before_cell,

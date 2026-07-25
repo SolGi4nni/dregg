@@ -165,6 +165,43 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
 /// override is intentionally shared: operators should not have to discover
 /// that the initial Dregg2 facets parallelise while closure completion remains
 /// a serial, single-core tail.
+/// The jobs flag THIS `lake` actually understands, or `None`.
+///
+/// Lake's job control has moved across versions (`-j`/`--jobs` existed, then did not); passing a
+/// flag the binary rejects turns `lake build` into an immediate hard failure rather than a bounded
+/// one. Probe `lake help` once and believe it. `DREGG_LAKE_JOBS_FLAG` overrides (empty ⇒ none).
+fn lake_jobs_flag() -> Option<String> {
+    if let Ok(explicit) = std::env::var("DREGG_LAKE_JOBS_FLAG") {
+        let trimmed = explicit.trim();
+        return if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    let help = Command::new("lake").arg("help").output().ok()?;
+    let text = String::from_utf8_lossy(&help.stdout);
+    // Only a line that DOCUMENTS jobs counts. Substring-matching the raw help is a trap: `-j` is a
+    // substring of `--json`, which every lake has, so a naive `text.contains("-j")` "finds" a jobs
+    // flag on a lake that has none — and then passes it, and then every `lake build` dies with
+    // `unknown short option '-j'`. That is the exact bug this probe exists to prevent.
+    for line in text.lines() {
+        if !line.to_ascii_lowercase().contains("jobs") {
+            continue;
+        }
+        if line.contains("--jobs") {
+            return Some("--jobs".to_string());
+        }
+        if line
+            .split(|c: char| c.is_whitespace() || c == ',' || c == '=')
+            .any(|tok| tok == "-j")
+        {
+            return Some("-j".to_string());
+        }
+    }
+    None
+}
+
 fn configured_leanc_workers() -> usize {
     let available = std::thread::available_parallelism()
         .map(|count| count.get())
@@ -300,6 +337,74 @@ fn lean_sysroot() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The Lean module an emitted IR `.c` belongs to: `<ir>/Dregg2/Exec/FFI.c` → `Dregg2.Exec.FFI`.
+fn module_name_of_ir_c(ir_root: &Path, c: &Path) -> Option<String> {
+    let rel = c.strip_prefix(ir_root).ok()?;
+    Some(
+        rel.with_extension("")
+            .components()
+            .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("."),
+    )
+}
+
+/// The transitive `import` closure of `metatheory/Dregg2/FFI.lean` — THE Lean⟷Rust boundary module.
+///
+/// This is the set of modules whose compiled objects belong in the runtime archive. We walk the
+/// `.lean` sources rather than asking Lake, because it must work from a build script with no
+/// toolchain round-trip and because the answer is exactly a text-level import graph. Modules that
+/// resolve to no source file in `metatheory/` (Mathlib, Batteries, Std, …) are recorded and their
+/// edges are not followed: they are not ours to splice, and `complete_initializer_closure` pulls
+/// back whichever of them the spliced objects actually reference.
+///
+/// `None` means the boundary file could not be read at all — callers fall back to the old
+/// splice-everything behaviour rather than shipping an under-populated archive.
+fn boundary_closure(meta: &Path) -> Option<std::collections::HashSet<String>> {
+    let root = "Dregg2.FFI".to_string();
+    let source_of = |module: &str| -> PathBuf {
+        let mut p = meta.to_path_buf();
+        for seg in module.split('.') {
+            p.push(seg);
+        }
+        p.set_extension("lean");
+        p
+    };
+    // The boundary module itself must exist; anything less is a misconfigured tree, not a closure.
+    std::fs::read_to_string(source_of(&root)).ok()?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![root];
+    while let Some(module) = stack.pop() {
+        if !seen.insert(module.clone()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(source_of(&module)) else {
+            // Out-of-tree (dependency package or toolchain): recorded, edges not followed.
+            continue;
+        };
+        for line in text.lines() {
+            // Imports precede every declaration in Lean, but a doc block may mention the word;
+            // only a line whose FIRST token is `import` (optionally `meta`/`public`-qualified) is one.
+            let trimmed = line.trim_start();
+            let rest = trimmed
+                .strip_prefix("import ")
+                .or_else(|| trimmed.strip_prefix("meta import "))
+                .or_else(|| trimmed.strip_prefix("public import "));
+            let Some(rest) = rest else { continue };
+            let name: String = rest
+                .trim()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            if !name.is_empty() {
+                stack.push(name);
+            }
+        }
+    }
+    Some(seen)
 }
 
 /// Flatten an IR-relative `.c` path into the splice object name the archive uses, matching the
@@ -477,130 +582,48 @@ fn build_dregg2_archive(
     let ir_root = meta.join(".lake/build/ir");
     let dregg2_ir = ir_root.join("Dregg2");
 
-    // We build `Dregg2.Exec.FFI` (the executor exports) PLUS the verified-gate modules that live
-    // OUTSIDE its import closure — `Dregg2.Distributed.{FinalityGate,StrandAdmission}` and
-    // `Dregg2.Exec.DistributedExports` (the CapTP+coord decision gates). The splice compiles every
-    // `Dregg2/**/*.c` present in the IR tree, so each of these must be `lake build`-t for its `.c` to
-    // exist and be spliced in. Building them explicitly here (rather than relying on a prior full
-    // `lake build` of the root) is what lets a FRESH lane (e.g. a persvati build dir with no warm
-    // `.lake`) still emit and splice the gate exports. Each is incremental: an already-built module is
-    // a no-op. A failure on one is non-fatal — we splice whatever `:c` facets exist.
-    let lake_targets = [
-        "Dregg2.Exec.FFI",
-        "Dregg2.Distributed.FinalityGate",
-        "Dregg2.Distributed.StrandAdmission",
-        "Dregg2.Exec.DistributedExports",
-        // The verified FLOW-REFINEMENT DECISION export (`dregg_decide_refines`) lives in
-        // `Dregg2.Deos.FlowRefine`, also OUTSIDE the FFI import closure. Build it so its `.c` IR is
-        // emitted and the `dregg_decide_refines` symbol is spliced in — the deploy gate
-        // (`dregg-deploy/src/refine.rs`) calls it to run the PROVEN `decideRefines` instead of a mirror.
-        "Dregg2.Deos.FlowRefine",
-        // The NO-COPY (`lean_object*`) direct boundary builders/readers + the `execDirect` export
-        // (`Dregg2.Exec.FFIDirect`). It IMPORTS `Dregg2.Exec.FFI`, so building FFI already pulls it
-        // into the IR closure — but list it explicitly so a fresh lane with a cold `.lake` emits its
-        // `.c` and the splice picks up the `dregg_exec_full_forest_auth_direct` + `dregg_d_*` symbols.
-        "Dregg2.Exec.FFIDirect",
-        // STORAGE-IN-LEAN extraction: the verified content root over the deployed Poseidon2
-        // (`@[export] dregg_storage_content_root`), OUTSIDE the FFI closure — build it so its `.c` IR
-        // is emitted and the splice picks up the export.
-        "Dregg2.Storage.Deployed",
-        // FIPS-204-VERIFY extraction: the verified ML-DSA verify core over the deployed parameters
-        // (`@[export] dregg_fips204_verify`), OUTSIDE the FFI closure — build it so its `.c` IR is
-        // emitted and the splice picks up the export. Discharges the security-critical verify: the
-        // extracted `verifyCore` (= the `Fips204Spec.verifyB` predicate) runs as leanc-native code.
-        "Dregg2.Crypto.Fips204Verify",
-        // FIPS-203-KEM extraction: the verified ML-KEM (Kyber) encaps/decaps cores over the deployed
-        // parameters (`@[export] dregg_fips203_encaps` / `dregg_fips203_decaps`), OUTSIDE the FFI closure
-        // — build it so its `.c` IR is emitted and the splice picks up the exports. Discharges the
-        // security-critical decaps (re-encryption check + implicit reject) as leanc-native code, and the
-        // encaps→decaps round-trip: the extracted cores discharge `DreggKemRefinement.Fips203Correct`.
-        "Dregg2.Crypto.Fips203Kem",
-        // ML-KEM-768-DECAPS-REAL extraction (BRICK K6): the verified REAL, FULL-BYTE ML-KEM-768 decaps core
-        // (`@[export] dregg_mlkem_decaps_real` over `mlkemDecaps` — the full FO pipeline: SHA3-512 G split /
-        // K-PKE decrypt / re-encryption / byte-exact implicit-reject over the real 2400/1088-byte dk/ct, not
-        // the `A=1,n=1` scalar toy of `Fips203Kem`), OUTSIDE the FFI closure — build it so its `.c` IR is
-        // emitted and the splice picks up the export. This is the object `dregg-pq::HybridResponder::finish`
-        // routes through to take the `ml-kem` crate OUT of the deployed KEM-decaps TCB.
-        "Dregg2.Crypto.MlKemDecaps",
-        // ML-KEM-768-ENCAPS-REAL extraction (BRICK K5 — the ENCAPS mirror of K6): the verified REAL, FULL-BYTE
-        // ML-KEM-768 encaps core (`@[export] dregg_mlkem_encaps_real` over `mlkemEncaps` — the deterministic
-        // FIPS 203 Alg 16 FO encaps: `H(ek)` / `G(m ‖ H(ek))` split / K-PKE.Encrypt over the real 1184/1088-byte
-        // ek/ct, proved byte-exact vs the crate's `EncapsulateDeterministic`), OUTSIDE the FFI closure — build it
-        // so its `.c` IR is emitted and the splice picks up the export. This is the object
-        // `dregg-pq::hybrid_kem::initiate` routes through to take the `ml-kem` crate OUT of the deployed
-        // KEM-encaps TCB. Its OWN module `Dregg2.Crypto.MlKemEncaps` (imports `MlKemDecaps` for `kpkeEncrypt`).
-        "Dregg2.Crypto.MlKemEncaps",
-        // ML-KEM-768-KEYGEN-REAL extraction (BRICK K7 — the KEYGEN mirror of K5/K6): the verified REAL,
-        // FULL-BYTE ML-KEM-768 keygen core (`@[export] dregg_mlkem_keygen_real` over `mlkemKeygen` — the
-        // deterministic FIPS 203 ML-KEM.KeyGen_internal from a 64-byte (d ‖ z) seed, KAT-anchored vs the NIST
-        // ACVP keyGen vectors), OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice
-        // picks up the export. This is the object `dregg-pq::ml_kem768_keygen` routes through to take the
-        // `ml-kem` crate OUT of the deployed KEM-keygen TCB. Its OWN module `Dregg2.Crypto.MlKemKeygen`
-        // (imports `MlKemDecaps` for the SHA3 primitives + `MlKemSample`/`MlKemRing`/`MlKemCodec`).
-        "Dregg2.Crypto.MlKemKeygen",
-        // ML-DSA-65-KEYGEN-REAL extraction (the identity-key KEYGEN mirror of the ML-KEM keygen): the
-        // verified REAL, FULL-BYTE ML-DSA-65 keygen core (`@[export] dregg_mldsa_keygen_real` over
-        // `mldsaKeygenInternal` — the deterministic FIPS 204 ML-DSA.KeyGen_internal from a 32-byte ξ seed,
-        // KAT-anchored vs the NIST ACVP ML-DSA-65 keyGen vectors), OUTSIDE the FFI closure — build it so its
-        // `.c` IR is emitted and the splice picks up the export. This is the object
-        // `dregg-pq::MlDsaKey::from_ed25519_seed` routes through to take the `fips204` crate OUT of the
-        // deployed IDENTITY-KEY keygen TCB. Its OWN module `Dregg2.Crypto.MlDsaKeygen` (imports MlDsaExpandA /
-        // MlDsaRing / MlDsaCodec + MlKemDecaps for the SHA3 hex primitives).
-        "Dregg2.Crypto.MlDsaKeygen",
-        // FIPS-204-SIGN-REAL extraction (the brick-8 SIGN analog): the verified REAL, FULL-BYTE ML-DSA-65
-        // sign core (`@[export] dregg_fips204_sign_real` over `signCore` — the deterministic (`rnd = 0`)
-        // Fiat–Shamir-with-aborts signer: skDecode / ExpandMask / NTT / SampleInBall / MakeHint / rejection
-        // loop over the real 4032/3309-byte codec, proved byte-exact vs the crate's deterministic signature),
-        // OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice picks up the export.
-        // This is the object `dregg-pq::MlDsaKey::sign` routes through to take the `fips204` crate OUT of the
-        // deployed SIGN TCB. Its OWN module `Dregg2.Crypto.MlDsaSignReal` (distinct from `Fips204Verify`).
-        "Dregg2.Crypto.MlDsaSignReal",
-        // GRAIN R3 whole-history verify extraction: the verified R3-accept DECISION over the
-        // whole-chain STARK verified-status + the R1 head binding (`@[export] dregg_grain_r3_verify`),
-        // OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice picks up the
-        // export (and its Dregg2.Circuit.RecursiveAggregation import closure's freshly-emitted objects).
-        // The Rust `grain-verify::r3_verify` calls it as the LEAN-PROVEN R3-accept gate.
-        "Dregg2.Grain.R3Verify",
-        // HOLDING grant-weight verdict extraction: the verified non-custodial proof-of-holdings →
-        // governance-weight DECISION (`@[export] dregg_holding_grant_weight` over `grantWeightCore`,
-        // proved to realize the `grantsWeight` spec by `grantWeightCore_eq_grantsWeight`), so its `.c` IR
-        // is emitted for the splice. The Rust `dregg-governance::holding_weight::grant_weight` routes its
-        // weight verdict through it. (Its IR lands under `.lake/build/ir/Metatheory/`; see the
-        // splice-scope seam note at the `holding_grant_weight_present` probe below.)
-        "Dregg2.Bridge.ProofOfHoldings",
-        // INTERCHAIN reached-consensus verdict extraction: the verified bridge-trust DECISION
-        // (`@[export] dregg_interchain_reached_consensus` over `reachedConsensusWire`/`reachedConsensusCore`,
-        // proved to realize the `reachesConsensusSpec` fail-closed spec by `reachedConsensusCore_correct` +
-        // `reachedConsensusWire_realizes_core`), so its `.c` IR is emitted for the splice. The Rust
-        // `dregg-bridge::interchain_adapter`'s `TrustRung::reached_consensus` routes its verdict through it.
-        // It lives under `Dregg2/` so its IR emits under `.lake/build/ir/Dregg2/` and the
-        // `build_dregg2_archive` splice (which walks `Dregg2/**/*.c`) picks up the export.
-        "Dregg2.Bridge.InterchainAdapterDecision",
-        // DEPLOYED CONSTRAINT evaluator extraction: the one Lean source for the pure
-        // `StateConstraint`/`HeapAtom` admission teeth over the deployed substrate.
-        // It is outside the ordinary FFI closure, so build it explicitly for the
-        // archive splice and gate its bridge on the exported symbol below.
-        "Dregg2.Exec.DeployedConstraint",
-        // CROSS-CELL CONSERVATION decision extraction: the runtime-callable per-asset `Σδ=0`
-        // decision (`@[export] dregg_cross_cell_conserves` over `Dregg2.Circuit.CrossCellConserveDecision`,
-        // Init-only), proved to equal the committed `Dregg2.Circuit.CrossCellConservation` boundary by
-        // `CrossCellConserveRefine.decision_conserves_iff_air_boundary` / `satisfied_imp_decision_conserves`.
-        // OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice picks up the export.
-        // The Rust `turn/src/executor/atomic.rs` per-asset conservation gate routes through it
-        // (via `dregg-exec-lean`'s conservation oracle) instead of the hand-written `BlockConservation` twin.
-        "Dregg2.Circuit.CrossCellConserveDecision",
-    ];
-    // BOUNDED FAN-OUT (2026-07-25). `lake build` with no `-j` spawns one `leanc` per ready module,
-    // and each C-codegen job holds several hundred MB. Unbounded, that is the 55-job / ~35 GB
-    // stampede that took a laptop to load 154 and 54 GB of swap. `configured_leanc_workers()` defaults to a
-    // conservative share of the machine rather than all of it; `DREGG_LEANC_JOBS` overrides.
-    let lake_status = Command::new("lake")
-        .arg("build")
-        .arg("-j")
-        .arg(configured_leanc_workers().to_string())
-        .args(lake_targets)
-        .current_dir(meta)
-        .status();
+    // ONE TARGET. `Dregg2.FFI` (metatheory/Dregg2/FFI.lean) IS the Lean⟷Rust boundary: it imports
+    // every module that carries an `@[export]` Rust can call, and nothing else roots this build.
+    //
+    // This replaced a hand-maintained 24-entry list of "modules that live OUTSIDE the FFI import
+    // closure". That list was the drift surface: a module absent from it emitted no `:c` facet, so
+    // its symbol never entered the archive, so the Rust `#[cfg(dregg_*_present)]` bridge compiled its
+    // ABSENT arm and the node ran the un-gated path — green, silent, wrong. Three light-client gates
+    // (`dregg_{eth,mpt,tm}_lc_verify`) were dark exactly that way; they were the only Lean exports
+    // missing from the built archive. An import closure cannot drift from itself.
+    //
+    // Adding an export is now: put the `@[export]` next to its proof, add ONE `import` line to
+    // `Dregg2/FFI.lean`. Nothing here changes.
+    let lake_targets = ["Dregg2.FFI"];
+    // BOUNDED FAN-OUT, PROBED (2026-07-25). The intent is the 2026-07-25 containment fix: `lake
+    // build` unbounded spawns one child per ready module, each holding several hundred MB — the
+    // 55-job / ~35 GB stampede that took a laptop to load 154 and 54 GB of swap.
+    //
+    // ⚠ But the flag must EXIST. `Lake 5.0.0-src+d024af0 (Lean 4.30.0)` — the toolchain this repo
+    // pins — has **no `-j` and no `--jobs`**: `lake build -j 4` dies instantly with
+    // `unknown short option '-j'`. Passing it unconditionally did not bound the build, it made
+    // EVERY `lake build` from this script fail, which sent every non-strict build down the
+    // "restore the git-tracked seed" path — and the seed exports no PQ core at all. A containment
+    // measure that silently disarms the verified runtime is worse than none. So: ask lake what it
+    // supports, pass the flag only if it is real, and say so out loud when it is not.
+    let lake_jobs_flag = lake_jobs_flag();
+    if lake_jobs_flag.is_none() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: this `lake` exposes no jobs flag, so `lake build` \
+             elaboration parallelism is UNBOUNDED. The `leanc` phases this script runs itself are \
+             still bounded (DREGG_LEANC_JOBS={}). On a cold closure prefer a machine with cgroup \
+             containment.",
+            configured_leanc_workers()
+        );
+    }
+    let mut lake_cmd = Command::new("lake");
+    lake_cmd.arg("build");
+    if let Some(flag) = &lake_jobs_flag {
+        lake_cmd
+            .arg(flag)
+            .arg(configured_leanc_workers().to_string());
+    }
+    let lake_status = lake_cmd.args(lake_targets).current_dir(meta).status();
     match lake_status {
         Ok(s) if s.success() => {}
         Ok(s) => {
@@ -688,9 +711,46 @@ fn build_dregg2_archive(
     }
 
     // (2) Compile each Dregg2 `.c` newer than its cached `.o`, in parallel up to the CPU count.
+    //
+    // SCOPED TO THE BOUNDARY CLOSURE. This used to splice EVERY `Dregg2/**/*.c` present in the IR
+    // tree — i.e. whatever any lane had ever `lake build`-t, which is the whole proof tree. Measured
+    // on the 2026-07-24 release archive: 1701 of our 1893 spliced objects (63.4 MB) were NOT in the
+    // export closure at all, and they are what dragged most of the 200 MB of Mathlib in behind them
+    // (an object's `initialize_` hard-calls its imports' initializers, so an off-closure proof module
+    // pulls its whole `import Mathlib.…` chain into the link). The archive is the RUNTIME, not the
+    // build directory's history.
+    //
+    // The closure is read from `Dregg2/FFI.lean`'s imports, transitively, over the `.lean` sources —
+    // the same graph Lake used to decide what to elaborate. Anything genuinely referenced but not
+    // spliced here is still recovered afterwards by `complete_initializer_closure`, which chases
+    // undefined `initialize_*` edges; scoping the initial splice cannot lose a needed object, it can
+    // only stop shipping objects nothing links to.
+    let boundary = boundary_closure(meta);
     let mut c_files = Vec::new();
     collect_files(&dregg2_ir, &mut c_files);
     c_files.retain(|p| p.extension().map(|e| e == "c").unwrap_or(false));
+    if let Some(closure) = &boundary {
+        let before = c_files.len();
+        c_files.retain(|p| {
+            module_name_of_ir_c(&ir_root, p)
+                .map(|m| closure.contains(&m))
+                .unwrap_or(true)
+        });
+        println!(
+            "cargo:warning=dregg-lean-ffi: splicing the Dregg2.FFI boundary closure — {} of {} \
+             emitted Dregg2 C facets ({} off-closure proof modules not shipped in the runtime \
+             archive).",
+            c_files.len(),
+            before,
+            before - c_files.len()
+        );
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: could not read the Dregg2.FFI import closure from {} — \
+             splicing every emitted Dregg2 C facet (larger archive, same symbols).",
+            meta.join("Dregg2/FFI.lean").display()
+        );
+    }
     c_files.sort();
 
     // The exact set of object names we expect from the CURRENT source. Used to (a) drive the

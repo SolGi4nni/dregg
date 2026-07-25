@@ -14,12 +14,15 @@ dregg-captp = { path = "../captp" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-circuit = { path = "../circuit" }
-# The heavy prove crate is needed ONLY by turn's PRODUCER side (rotation_witness →
-# joint-turn aggregation / recursive witness bundle / custom proof-bind), all
-# `#[cfg(feature = "prover")]`. turn's executor VERIFY reconstructs PIs through the
-# `*_wide` generators, which are verify-level in `dregg-circuit` — so a verify-only
-# (`not(prover)`) turn build stays recursion-free (the seL4 verifier-PD floor).
-dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+# NO `dregg-circuit-prove` EDGE. Every producer that needed the heavy prove crate
+# (rotation_witness leg mints, the recursive witness bundle, the custom proof-bind
+# projection, `mint_transfer_proven_receipt`) now lives in `dregg-turn-prover`,
+# which depends on THIS crate — never the reverse. turn's executor VERIFY
+# reconstructs PIs through the `*_wide` generators, which are verify-level in
+# `dregg-circuit`, so core turn is recursion-free by construction (the seL4
+# verifier-PD floor and the wasm/zkvm card), not by a feature that happened to be
+# off. Adding this dep back would silently re-open the cfg-brittleness class
+# `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md` exists to close.
 dregg-commit = { path = "../commit" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-token = { path = "../token" }
@@ -67,16 +70,22 @@ ark-ff = { version = "0.5.0", optional = true }
 web-time = "1"
 
 [features]
-# The ROTATED sovereign verify leg (`executor::verify_and_commit_proof_rotated`
-# → `dregg-circuit::descriptor_ir2::verify_vm_descriptor2`) is now the SOLE
-# sovereign verify path (the weak v1 hand-AIR floor is RETIRED). `descriptor_ir2`
-# is unconditional in `dregg-circuit` (the verify floor); the PI-reconstruction
-# `*_wide` generators ride `dregg-circuit-prove`, an unconditional dep above. The
-# `prover` feature now gates only turn's own PROVE side (rotation_witness produce,
-# aggregate-bilateral prover); it forwards to `dregg-cell/prover` for the faithful
-# 8-felt commitment.
-default = ["prover", "threshold-sig"]
-prover = ["dep:dregg-circuit-prove", "dregg-cell/prover"]
+# THERE IS NO `prover` FEATURE. It was DELETED (PR3 of the turn-prover extraction)
+# together with the `dregg-circuit-prove` dependency edge: proof PRODUCTION lives
+# in the `dregg-turn-prover` CRATE, which is always compiled as itself, so a shape
+# change is a compile error at the source instead of a landmine in whichever
+# downstream crate's feature resolution happens to select the gated arm. Consumers
+# that need to PROVE add `dregg-turn-prover`; consumers that only build/verify
+# turns need nothing and no longer pull the recursion substrate. Where the executor
+# needs prover behavior it takes an injected trait impl and FAILS CLOSED when none
+# is injected (`shielded_verifier`, `recursive_witness_producer`, the exact-v3
+# proof authority). The `dregg-cell/prover` forward went with it — `cell` has
+# `prover = []`, a verified no-op.
+#
+# The ROTATED sovereign verify leg (`executor::verify_and_commit_proof_rotated` →
+# `dregg-circuit::descriptor_ir2::verify_vm_descriptor2`) is the SOLE sovereign
+# verify path (the weak v1 hand-AIR floor is RETIRED) and is unconditional.
+default = ["threshold-sig"]
 # Real BLS12-381 + KZG weighted-threshold-signature verifier for
 # `Authorization::Custom { vk_hash }` discharges (the governed-namespace
 # `commit_table_update` `GOVERNANCE_VK` fire). ON in the default set; the

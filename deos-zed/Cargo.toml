@@ -207,16 +207,16 @@ dregg-rbg = { path = "../rbg", optional = true }
 # otherwise reach for a C toolchain or x86 intrinsics.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `default-features = false` drops `threshold-sig` (the BLS/arkworks committee
-# verifier wasm32 cannot link), but `prover` STAYS ON: `dregg-turn` references
-# `dregg_circuit_prove` UNCONDITIONALLY in `witnessed_receipt::produce_recursive_variant`
-# (it is `prover`-gated only at the Cargo dep, not in the source), so a no-prover
-# `dregg-turn` does not compile standalone. This is the SAME resolution starbridge-v2's
-# wasm build reaches (there via `dregg-sdk`'s `prover` feature unifying onto
-# `dregg-turn`); we name it directly since deos-zed does not pull `dregg-sdk`.
-# `prover` pulls `dregg-circuit-prove`, which IS wasm-clean (starbridge-web proves
-# it). The verify floor (`descriptor_ir2`) is unconditional; this is the in-browser
-# executor's prove side, no Lean archive.
-dregg-turn = { path = "../turn", optional = true, default-features = false, features = ["prover"] }
+# verifier wasm32 cannot link). There is no longer a `prover` feature to keep on:
+# the stale reason for it — `dregg-turn` referencing `dregg_circuit_prove`
+# UNCONDITIONALLY in `witnessed_receipt::produce_recursive_variant`, so a no-prover
+# turn did not compile standalone — was FIXED at the root in PR3: that producer now
+# lives in `dregg-turn-prover` and core `dregg-turn` has no prove-crate edge at all.
+# The in-browser executor here is the VERIFY shape; if this crate ever needs to
+# PROVE in the tab, it adds `dregg-turn-prover` (wasm-clean — starbridge-web proves
+# `dregg-circuit-prove` builds for wasm32) as its own explicit dep, not as a feature
+# that unifies in invisibly.
+dregg-turn = { path = "../turn", optional = true, default-features = false }
 dregg-cell = { path = "../cell", optional = true, default-features = false }
 dregg-types = { path = "../types", optional = true }
 # The capability-secure directory namespace — wasm-clean (blake3 + the

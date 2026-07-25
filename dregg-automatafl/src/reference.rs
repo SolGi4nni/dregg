@@ -334,6 +334,20 @@ pub fn conflict_resolve(b: &Board, ms: &[Move]) -> Vec<Move> {
         .collect()
 }
 
+/// **Is this round CLEAN?** — every submitted move is [`move_valid`] AND conflict resolution drops
+/// NONE of them (no fork on a shared source, no clash on a shared destination).
+///
+/// This is the gate a FOLD must pass, and it is a real restriction, not a formality. The deployed
+/// surface resolves a clash by DROPPING the clashing moves; the actual ruleset says a clash MARKS
+/// the contested square and RE-ENTERS the round (the `roundStep` `.again` branch, whose Leg C
+/// descriptor exists but is not wired to the surface). So a conflicting round played on the surface
+/// is adjudicated by the audited-WRONG rule, and folding it would mint a succinct proof of a
+/// transition the game's own rules do not license. A conflicting round is therefore REFUSED at the
+/// fold (blocked-not-faked) rather than attested.
+pub fn round_is_clean(b: &Board, ms: &[Move]) -> bool {
+    ms.iter().all(|m| move_valid(b, m)) && conflict_resolve(b, ms).len() == ms.len()
+}
+
 /// `occluded` — does any interior cell of `m` block it? A cell blocks iff it is non-vacuum
 /// and is not one of the moving `srcs` (sources are passable). The refinement target of the
 /// C.4 coordinate-indexed occlusion in `moves::validate_occlusion`; exposed for the differential.

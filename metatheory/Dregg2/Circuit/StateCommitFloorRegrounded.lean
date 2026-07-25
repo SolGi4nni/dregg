@@ -99,6 +99,7 @@ import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.CostTactics
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.SpongeForgeReduction
 import Dregg2.Circuit.StateCommit
 
 namespace Dregg2.Circuit.StateCommitFloorRegrounded
@@ -802,7 +803,16 @@ smuggled in, and the floor may be restricted to diagonal finders without weakeni
 theorem scToLeafAdv_diagonal (F : StateCommitFamily) (A : Adversary (scEquivGame F)) (l : ℕ)
     (i : F.Inst l) : ((scToLeafAdv F A).run l i).1.1 = ((scToLeafAdv F A).run l i).2.1 := rfl
 
-/-! ## §9 — `hEff*` DISCHARGED: the four legs' efficiency is a THEOREM at `Eff := IsPolyTime`.
+/-! ## §9 — the answer-size cost model (the honest record), and ⚑ the DELETED `IsPolyTime` discharges.
+
+`stateCommit_equivocation_from_polyTime` and `log_equivocation_from_polyTime` stood here: all four
+`hEff*` legs (resp. the log leg) DERIVED at `Eff := IsPolyTime` by `poly_time`. Their floors
+`HashCRHardQuant … (IsPolyTime …)` are REFUTED at deployed parameters
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`: `IsPolyTime` prices answer
+SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins with probability
+`1`) — the derivations derived nothing real. BOTH ARE DELETED; §10 lands the successors on the PROVED
+keyed-ROM floor. The answer-size encodings and `scFrameList_length_le` below are KEPT as the honest
+record of what that cost model can price (and the frame horn's linear-output fact is real).
 
 §5's keystone carried FOUR bare `hEff*` parameters, one per extracted finder — the honest name for "the
 reduction is efficient", undischarged because `FloorGames` §8 had no cost model.
@@ -849,77 +859,9 @@ theorem scFrameList_length_le (F : StateCommitFamily) (l : ℕ) (i : F.Inst l)
   simp only [scFrameList, List.length_map, Finset.length_sort]
   exact Finset.card_le_card (Finset.sdiff_subset)
 
-/-- **⚑ ALL FOUR `hEff*` DISCHARGED — the re-grounded `StateCommit.cellDigest_binds_cells` with NO
-floating efficiency parameter.** A state-commitment equivocator that is EFFICIENT at the game's own
-answer encoding, put through the four horns of the partition walk, yields four collision finders that
-are STILL efficient — so the node, sponge and leaf collision floors at `Eff := IsPolyTime` apply to
-THEM, and the published cell-digest pins the whole cell map except with negligible probability.
-
-The four `hEff*` parameters of §5 are PROVED here, not assumed. What remains supplied is each
-reshaper's declared work `(cw, bw)`; no `PolyBoundedNat` overhead hypothesis is taken, because the
-composed overhead's poly-ness is derived from the equivocator's own bound. -/
-theorem stateCommit_equivocation_from_polyTime (F : StateCommitFamily)
-    (A : Adversary (scEquivGame F)) (hA : IsPolyTime (scAnsSize F) A) (cw bw : ℕ)
-    (hNode : HashCRHardQuant (scNodeFamily F) (IsPolyTime (scNodeAnsSize F)))
-    (hSponge : HashCRHardQuant (scSpongeFamily F) (IsPolyTime (scSpongeAnsSize F)))
-    (hLeaf : HashCRHardQuant (scLeafFamily F) (IsPolyTime (scLeafAnsSize F))) :
-    Negl (gameAdv (scEquivGame F) A) := by
-  have hOuter : IsPolyTime (scNodeAnsSize F) (scToOuterNodeAdv F A) := by
-    poly_time (scAnsSize F) (scNodeAnsSize F)
-      (fun l i (p : RecordKernelState × RecordKernelState) =>
-        (scOuterPair F l i p.1, scOuterPair F l i p.2))
-      cw bw 0 4 hA
-    intro l i p
-    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
-    omega
-  have hMoved : IsPolyTime (scNodeAnsSize F) (scToMovedNodeAdv F A) := by
-    poly_time (scAnsSize F) (scNodeAnsSize F)
-      (fun l i (p : RecordKernelState × RecordKernelState) =>
-        (scMovedPair F l i p.1.cell, scMovedPair F l i p.2.cell))
-      cw bw 0 4 hA
-    intro l i p
-    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
-    omega
-  have hSp : IsPolyTime (scSpongeAnsSize F) (scToSpongeAdv F A) := by
-    poly_time (scAnsSize F) (scSpongeAnsSize F)
-      (fun l i (p : RecordKernelState × RecordKernelState) =>
-        (scFrameList F l i p.1, scFrameList F l i p.2))
-      cw bw 1 0 hA
-    intro l i p
-    have h1 := scFrameList_length_le F l i p.1
-    have h2 := scFrameList_length_le F l i p.2
-    show (scFrameList F l i p.1).length + (scFrameList F l i p.2).length
-      ≤ 1 * (p.1.accounts.card + p.2.accounts.card) + 0
-    omega
-  have hLf : IsPolyTime (scLeafAnsSize F) (scToLeafAdv F A) := by
-    poly_time (scAnsSize F) (scLeafAnsSize F)
-      (fun _ _ (p : RecordKernelState × RecordKernelState) =>
-        ((diffCell p.1.cell p.2.cell, p.1.cell (diffCell p.1.cell p.2.cell)),
-         (diffCell p.1.cell p.2.cell, p.2.cell (diffCell p.1.cell p.2.cell))))
-      cw bw 0 4 hA
-    intro l i p
-    show (4 : ℕ) ≤ 0 * (scAnsSize F l p) + 4
-    omega
-  exact stateCommit_equivocation_advantage_bound F
-    (IsPolyTime (scNodeAnsSize F)) (IsPolyTime (scSpongeAnsSize F)) (IsPolyTime (scLeafAnsSize F))
-    A hOuter hMoved hSp hLf hNode hSponge hLeaf
-
 /-- **THE LOG GAME'S ANSWER ENCODING** — the two claimed receipt chains. -/
 def scLogAnsSize (F : LogCommitFamily) : AnsSize (hashGame (scLogFamily F)) :=
   fun _ (p : List Turn × List Turn) => p.1.length + p.2.length
-
-/-- **⚑ THE LOG CONSUMER'S `hEff` DISCHARGED — and its honest shape stated plainly.** §5b's bound is the
-floor applied to the equivocator ITSELF, because a receipt-chain equivocation IS definitionally a
-collision of the log hash: there is no tree, hence no extractor and no reduction hop, and inventing one
-would be theatre. What §9 changes is therefore exactly one thing, and it is the thing that was open: the
-adversary class is no longer a floating `Eff` but the CONCRETE `IsPolyTime` at the game's own answer
-encoding — a class proved non-empty (`scLogFloor_isPolyTime_inhabited`) and proved not to be `⊤`
-(`CostAdversary.bruteForce_not_polyTime`), so the floor sits strictly between the two poles §5b prices. -/
-theorem log_equivocation_from_polyTime (F : LogCommitFamily)
-    (A : Adversary (hashGame (scLogFamily F))) (hA : IsPolyTime (scLogAnsSize F) A)
-    (hLog : HashCRHardQuant (scLogFamily F) (IsPolyTime (scLogAnsSize F))) :
-    Negl (gameAdv (hashGame (scLogFamily F)) A) :=
-  log_equivocation_advantage_bound F (IsPolyTime (scLogAnsSize F)) A hA hLog
 
 /-- **(TOOTH — the node floor's class is NOT EMPTY.)** -/
 theorem scNodeFloor_isPolyTime_inhabited (F : StateCommitFamily) :
@@ -950,10 +892,591 @@ theorem scLogFloor_isPolyTime_inhabited (F : LogCommitFamily) :
         (fun _ _ => (([] : List Turn), ([] : List Turn)))).toAdversary :=
   isPolyTime_inhabited _ _ ⟨0, 0, fun _ _ => by simp [scLogAnsSize]⟩
 
+/-! ## §10 — ⚑⚑ THE DISCHARGED SUCCESSORS: the state-commit equivocation and the log binding on the
+PROVED keyed-ROM floor.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The three deployed hash surfaces — the leaf hash
+`CH`, the 2-to-1 node hash `compress`, the frame sponge `compressN` — are idealised as ONE SAMPLED
+oracle `H` over a THREE-shape, constructor-separated message domain (`ScRomMsg`): leaf messages are
+truncated `(cell, encV value)` pairs, node messages are pairs of `λ`-bit digests (the chained
+re-absorption, carried in the type exactly as `Exec.SystemRootsBindingReduction`'s `SysRomMsg`), and
+sponge messages are length-tagged vectors of at most `m` digests. `scRomFamily` is that surface AS a
+`StateCommitFamily` INSTANCE — so §3–§5's game, extractors, dichotomy and union bound apply VERBATIM;
+nothing about the reduction is re-authored, only WHO evaluates the absorbed messages changes. The
+floors §5's keystone consumes are then PROVED (`scNodeRom_hard` / `scSpongeRom_hard` /
+`scLeafRom_hard`, each `KeyedRomFloor.keyedRom_hard` through a query-preserving `mapOut` extraction),
+where the deleted `IsPolyTime` instantiation consumed floors that are REFUTED.
+
+⚑ **WHAT STAYS OPEN, NAMED.** The keystone `stateCommit_equivocation_rom` carries its four
+extracted-finder class memberships (`hOuter`/`hMoved`/`hSponge`/`hLeaf`) as HYPOTHESES — the honest
+`hEff` shape of §5, now at classes whose floors are PROVED. Deriving them from the equivocator's own
+query budget needs the CHAINED walk (the extracted digests are ORACLE outputs, so the extractor must
+re-query — `RomCarrierSites.OracleComp.bindComp` is the tool and the kernel's account count prices the
+walk); that derivation is the named residual. It is NOT vacuous conditioning:
+`stateCommit_equivocation_rom_fires` exhibits a REAL equivocator (with hand-built query trees for all
+four extracted finders) satisfying every hypothesis, end-to-end to a genuine `Negl`. The truncation
+windows (`InD`, `babyBearP`) are win-conditional side conditions in the classes — the deployed felt
+shapes satisfy them by layout, the felt-width wound carried visibly
+(`docs/WOUND-felt-width-boundaries-2026-07-19.md`). -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily keyedRomGame KeyedRomEff keyedRom_hard)
+open Dregg2.Crypto.RomQueryFloor (romCollisionGame RomEff)
+open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
+open Dregg2.Crypto.RomBindingReduction
+  (OracleComp.mapOut OracleComp.mapOut_eval OracleComp.mapOut_queryBounded RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (babyBearP babyBearP_pos flatFamily BVec)
+open Dregg2.Circuit.SpongeForgeReduction
+  (GoodCode codeRomFamily codeRomCarrier codeForgeRomGame codeForge_binds_rom)
+open Dregg2.Circuit.Poseidon2KeyedBridge (DomainSeparatedSponge)
+open Dregg2.Circuit.Poseidon2Binding.Reference (encV encV_inj)
+
+/-! ### The clamps, their losslessness on the deployed windows, and the message domain. -/
+
+/-- Clamp a natural id/encoding into the BabyBear window — total; the identity below `babyBearP`. -/
+def natBB (n : ℕ) : Fin babyBearP := ⟨n % babyBearP, Nat.mod_lt _ babyBearP_pos⟩
+
+theorem natBB_inj {a b : ℕ} (ha : a < babyBearP) (hb : b < babyBearP) (h : natBB a = natBB b) :
+    a = b := by
+  have hv : a % babyBearP = b % babyBearP := congrArg Fin.val h
+  rwa [Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt hb] at hv
+
+/-- The `λ`-bit digest window on `ℤ` — what every oracle output satisfies (`liftD_inD`). -/
+def InD (l : ℕ) (x : ℤ) : Prop := 0 ≤ x ∧ x < ((2 ^ l : ℕ) : ℤ)
+
+/-- Clamp an integer digest limb into the `λ`-bit window — total; lossless on `InD` limbs. -/
+def clampD (l : ℕ) (x : ℤ) : Fin (2 ^ l) :=
+  ⟨x.toNat % 2 ^ l, Nat.mod_lt _ (Nat.two_pow_pos l)⟩
+
+/-- Read a sampled digest back as the felt-shaped integer the deployed surfaces pass around. -/
+def liftD {l : ℕ} (r : Fin (2 ^ l)) : ℤ := ((r.val : ℕ) : ℤ)
+
+theorem liftD_inj {l : ℕ} {r s : Fin (2 ^ l)} (h : liftD r = liftD s) : r = s := by
+  simp only [liftD] at h
+  have hv : r.val = s.val := by exact_mod_cast h
+  exact Fin.ext hv
+
+theorem liftD_inD (l : ℕ) (r : Fin (2 ^ l)) : InD l (liftD r) := by
+  refine ⟨Int.natCast_nonneg _, ?_⟩
+  simp only [liftD]
+  exact_mod_cast r.isLt
+
+theorem clampD_inj {l : ℕ} {x y : ℤ} (hx : InD l x) (hy : InD l y)
+    (h : clampD l x = clampD l y) : x = y := by
+  have hvx : x.toNat % 2 ^ l = x.toNat := Nat.mod_eq_of_lt ((Int.toNat_lt hx.1).mpr hx.2)
+  have hvy : y.toNat % 2 ^ l = y.toNat := Nat.mod_eq_of_lt ((Int.toNat_lt hy.1).mpr hy.2)
+  have hv : x.toNat % 2 ^ l = y.toNat % 2 ^ l := congrArg Fin.val h
+  rw [hvx, hvy] at hv
+  have hcast : ((x.toNat : ℕ) : ℤ) = ((y.toNat : ℕ) : ℤ) := by exact_mod_cast hv
+  rwa [Int.toNat_of_nonneg hx.1, Int.toNat_of_nonneg hy.1] at hcast
+
+/-- Embed an integer digest list into the finite length-tagged vector shape (total; lossless on
+bounded `InD` lists by `bvecD_inj`). -/
+def bvecD (m l : ℕ) (xs : List ℤ) : BVec (Fin (2 ^ l)) m :=
+  (⟨min xs.length m, by omega⟩, fun i => (xs[i.val]?).map (clampD l))
+
+/-- **THE SPONGE TRUNCATION LOSES NOTHING** on bounded in-window lists. -/
+theorem bvecD_inj (m l : ℕ) {xs ys : List ℤ}
+    (hxl : xs.length ≤ m) (hyl : ys.length ≤ m)
+    (hxr : ∀ x ∈ xs, InD l x) (hyr : ∀ x ∈ ys, InD l x)
+    (h : bvecD m l xs = bvecD m l ys) : xs = ys := by
+  have hlen : xs.length = ys.length := by
+    have h1 : min xs.length m = min ys.length m :=
+      congrArg (fun p : BVec (Fin (2 ^ l)) m => p.1.val) h
+    omega
+  refine List.ext_getElem? (fun n => ?_)
+  by_cases hn : n < m
+  · have h2 : (xs[n]?).map (clampD l) = (ys[n]?).map (clampD l) :=
+      congrFun (congrArg Prod.snd h) ⟨n, hn⟩
+    by_cases hnx : n < xs.length
+    · have hny : n < ys.length := hlen ▸ hnx
+      rw [List.getElem?_eq_getElem hnx, List.getElem?_eq_getElem hny] at h2 ⊢
+      simp only [Option.map_some] at h2
+      exact congrArg some (clampD_inj (hxr _ (List.getElem_mem hnx)) (hyr _ (List.getElem_mem hny))
+        (Option.some.inj h2))
+    · have hny : ¬ n < ys.length := hlen ▸ hnx
+      rw [List.getElem?_eq_none (Nat.le_of_not_lt hnx),
+        List.getElem?_eq_none (Nat.le_of_not_lt hny)]
+  · rw [List.getElem?_eq_none (le_trans hxl (Nat.le_of_not_lt hn)),
+      List.getElem?_eq_none (le_trans hyl (Nat.le_of_not_lt hn))]
+
+/-- **THE THREE-SHAPE ORACLE MESSAGE DOMAIN** — leaf `(cell, encV value)` pairs, node digest pairs
+(the chained re-absorption, `λ`-bit limbs IN THE TYPE), and length-tagged sponge vectors — one
+sampled oracle, constructor-separated. -/
+abbrev ScRomMsg (m : ℕ) (l : ℕ) : Type :=
+  (Fin babyBearP × Fin babyBearP) ⊕ ((Fin (2 ^ l) × Fin (2 ^ l)) ⊕ BVec (Fin (2 ^ l)) m)
+
+/-- The keyed ROM family of the state-commit surface (trivial `Unit` tag: the three surfaces are
+domain-separated by constructor inside ONE oracle domain). -/
+def scRomOracle (m : ℕ) : KeyedRomFamily :=
+  flatFamily Unit inferInstance inferInstance inferInstance (fun l => ScRomMsg m l)
+    (fun _ => inferInstance) (fun _ => inferInstance)
+    (fun _ => ⟨Sum.inl (⟨0, babyBearP_pos⟩, ⟨0, babyBearP_pos⟩)⟩)
+
+/-- The family's width obligation, closed by construction. -/
+theorem scRomOracle_card_R (m l : ℕ) :
+    letI := (scRomOracle m).rFin l
+    Fintype.card ((scRomOracle m).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- The sampled-oracle space at parameter `l` — the instance the ROM games run over. -/
+abbrev ScOracle (m l : ℕ) : Type :=
+  (scRomOracle m).toRomFamily.D l → (scRomOracle m).toRomFamily.R l
+
+/-- **⚑ THE ROM STATE-COMMIT SURFACE, AS A `StateCommitFamily` INSTANCE.** The instance space is the
+sampled oracle; the three hashes are oracle calls at the three constructor-separated shapes. Because
+§3–§5 are proven for EVERY `StateCommitFamily`, the equivocation game, the four extractors, the
+dichotomy `sc_wins_imp` and the union bound `sc_adv_le` apply to THIS surface verbatim. -/
+def scRomFamily (t₀ : Turn) (m : ℕ) : StateCommitFamily where
+  Inst := fun l => ScOracle m l
+  instFin := fun l => (romCollisionGame (scRomOracle m).toRomFamily).instFin l
+  instNe := fun l => (romCollisionGame (scRomOracle m).toRomFamily).instNe l
+  CH := fun l H c v => liftD (H ((), Sum.inl (natBB c, natBB (encV v))))
+  compress := fun l H a b => liftD (H ((), Sum.inr (Sum.inl (clampD l a, clampD l b))))
+  compressN := fun l H xs => liftD (H ((), Sum.inr (Sum.inr (bvecD m l xs))))
+  turn := fun _ _ => t₀
+
+/-! ### The three floors, PROVED, at query-counted classes with win-conditional windows. -/
+
+/-- **THE QUERY-COUNTED NODE CLASS** — factors through a `Q`-query tree fixed before the oracle is
+sampled, and (win-conditionally) answers inside the `λ`-bit window. The extracted node finders satisfy
+the window UNCONDITIONALLY (their answers are oracle outputs); an arbitrary member only needs it where
+it wins, which is where the floor reads it. -/
+def ScNodeRomEff (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (B : Adversary (hashGame (scNodeFamily (scRomFamily t₀ m)))) : Prop :=
+  (∃ M : ∀ l, OracleComp ((scRomOracle m).toRomFamily.D l) ((scRomOracle m).toRomFamily.R l)
+      ((ℤ × ℤ) × (ℤ × ℤ)),
+    (∀ l, QueryBounded (Q l) (M l)) ∧ ∀ l (H : ScOracle m l), B.run l H = (M l).eval H)
+  ∧ ∀ l (H : ScOracle m l),
+      (hashGame (scNodeFamily (scRomFamily t₀ m))).wins l H (B.run l H) →
+        InD l (B.run l H).1.1 ∧ InD l (B.run l H).1.2
+          ∧ InD l (B.run l H).2.1 ∧ InD l (B.run l H).2.2
+
+/-- **THE QUERY-COUNTED SPONGE CLASS** — same shape at the list answers: bounded length, in-window
+limbs, win-conditionally. -/
+def ScSpongeRomEff (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (B : Adversary (hashGame (scSpongeFamily (scRomFamily t₀ m)))) : Prop :=
+  (∃ M : ∀ l, OracleComp ((scRomOracle m).toRomFamily.D l) ((scRomOracle m).toRomFamily.R l)
+      (List ℤ × List ℤ),
+    (∀ l, QueryBounded (Q l) (M l)) ∧ ∀ l (H : ScOracle m l), B.run l H = (M l).eval H)
+  ∧ ∀ l (H : ScOracle m l),
+      (hashGame (scSpongeFamily (scRomFamily t₀ m))).wins l H (B.run l H) →
+        ((show List ℤ from (B.run l H).1).length ≤ m
+            ∧ ∀ x ∈ (show List ℤ from (B.run l H).1), InD l x)
+          ∧ ((show List ℤ from (B.run l H).2).length ≤ m
+            ∧ ∀ x ∈ (show List ℤ from (B.run l H).2), InD l x)
+
+/-- **THE QUERY-COUNTED LEAF CLASS** — win-conditionally, cells and value encodings inside the
+BabyBear window (the deployed kernels' genuine layout). -/
+def ScLeafRomEff (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (B : Adversary (hashGame (scLeafFamily (scRomFamily t₀ m)))) : Prop :=
+  (∃ M : ∀ l, OracleComp ((scRomOracle m).toRomFamily.D l) ((scRomOracle m).toRomFamily.R l)
+      ((CellId × Value) × (CellId × Value)),
+    (∀ l, QueryBounded (Q l) (M l)) ∧ ∀ l (H : ScOracle m l), B.run l H = (M l).eval H)
+  ∧ ∀ l (H : ScOracle m l),
+      (hashGame (scLeafFamily (scRomFamily t₀ m))).wins l H (B.run l H) →
+        (B.run l H).1.1 < babyBearP ∧ (B.run l H).2.1 < babyBearP
+          ∧ encV (B.run l H).1.2 < babyBearP ∧ encV (B.run l H).2.2 < babyBearP
+
+/-- **⚑ THE NODE FLOOR, PROVED** — `keyedRom_hard` (the birthday bound) through a query-preserving
+`mapOut` extraction: a node collision in the window IS a collision of the sampled oracle at two
+distinct node messages. -/
+theorem scNodeRom_hard (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    HashCRHardQuant (scNodeFamily (scRomFamily t₀ m)) (ScNodeRomEff t₀ m Q) := by
+  intro B hB
+  obtain ⟨⟨M, hMQ, hrun⟩, hwr⟩ := hB
+  let C : Adversary (keyedRomGame (scRomOracle m)) :=
+    ⟨fun l H =>
+      (((), Sum.inr (Sum.inl (clampD l (B.run l H).1.1, clampD l (B.run l H).1.2))),
+       ((), Sum.inr (Sum.inl (clampD l (B.run l H).2.1, clampD l (B.run l H).2.2))))⟩
+  have hle : ∀ l, gameAdv (hashGame (scNodeFamily (scRomFamily t₀ m))) B l
+      ≤ gameAdv (keyedRomGame (scRomOracle m)) C l := by
+    intro l
+    refine @winProb_le_of_imp _
+      ((hashGame (scNodeFamily (scRomFamily t₀ m))).instFin l) _ _ (fun H hH => ?_)
+    rw [Adversary.hit_eq_true] at hH ⊢
+    obtain ⟨hne, heq⟩ := hH
+    obtain ⟨h11, h12, h21, h22⟩ := hwr l H ⟨hne, heq⟩
+    refine ⟨fun hc => ?_, liftD_inj heq⟩
+    have hp : (clampD l (B.run l H).1.1, clampD l (B.run l H).1.2)
+        = (clampD l (B.run l H).2.1, clampD l (B.run l H).2.2) :=
+      Sum.inl.inj (Sum.inr.inj (congrArg Prod.snd hc))
+    exact hne (Prod.ext (clampD_inj h11 h21 (congrArg Prod.fst hp))
+      (clampD_inj h12 h22 (congrArg Prod.snd hp)))
+  have hC : KeyedRomEff (scRomOracle m) Q C := by
+    refine ⟨fun l => OracleComp.mapOut (fun p : (ℤ × ℤ) × (ℤ × ℤ) =>
+        ((((), Sum.inr (Sum.inl (clampD l p.1.1, clampD l p.1.2))) :
+            (scRomOracle m).toRomFamily.D l),
+         (((), Sum.inr (Sum.inl (clampD l p.2.1, clampD l p.2.2))) :
+            (scRomOracle m).toRomFamily.D l))) (M l), ?_, ?_⟩
+    · exact fun l => OracleComp.mapOut_queryBounded _ (hMQ l)
+    · intro l H
+      show (((), Sum.inr (Sum.inl (clampD l (B.run l H).1.1, clampD l (B.run l H).1.2))),
+          ((), Sum.inr (Sum.inl (clampD l (B.run l H).2.1, clampD l (B.run l H).2.2)))) = _
+      rw [OracleComp.mapOut_eval, hrun l H]
+      rfl
+  exact negl_of_le
+    (fun l => (gameAdv_mem_unit (hashGame (scNodeFamily (scRomFamily t₀ m))) B l).1)
+    hle (keyedRom_hard (scRomOracle m) Q hQ (scRomOracle_card_R m) C hC)
+
+/-- **⚑ THE SPONGE FLOOR, PROVED** — same extraction at the vector shape; `bvecD_inj` is the
+distinctness step. -/
+theorem scSpongeRom_hard (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    HashCRHardQuant (scSpongeFamily (scRomFamily t₀ m)) (ScSpongeRomEff t₀ m Q) := by
+  intro B hB
+  obtain ⟨⟨M, hMQ, hrun⟩, hwr⟩ := hB
+  let C : Adversary (keyedRomGame (scRomOracle m)) :=
+    ⟨fun l H =>
+      (((), Sum.inr (Sum.inr (bvecD m l (B.run l H).1))),
+       ((), Sum.inr (Sum.inr (bvecD m l (B.run l H).2))))⟩
+  have hle : ∀ l, gameAdv (hashGame (scSpongeFamily (scRomFamily t₀ m))) B l
+      ≤ gameAdv (keyedRomGame (scRomOracle m)) C l := by
+    intro l
+    refine @winProb_le_of_imp _
+      ((hashGame (scSpongeFamily (scRomFamily t₀ m))).instFin l) _ _ (fun H hH => ?_)
+    rw [Adversary.hit_eq_true] at hH ⊢
+    obtain ⟨hne, heq⟩ := hH
+    obtain ⟨⟨hl1, hr1⟩, ⟨hl2, hr2⟩⟩ := hwr l H ⟨hne, heq⟩
+    refine ⟨fun hc => ?_, liftD_inj heq⟩
+    have hp : bvecD m l (B.run l H).1 = bvecD m l (B.run l H).2 :=
+      Sum.inr.inj (Sum.inr.inj (congrArg Prod.snd hc))
+    exact hne (bvecD_inj m l hl1 hl2 hr1 hr2 hp)
+  have hC : KeyedRomEff (scRomOracle m) Q C := by
+    refine ⟨fun l => OracleComp.mapOut (fun p : List ℤ × List ℤ =>
+        ((((), Sum.inr (Sum.inr (bvecD m l p.1))) : (scRomOracle m).toRomFamily.D l),
+         (((), Sum.inr (Sum.inr (bvecD m l p.2))) : (scRomOracle m).toRomFamily.D l))) (M l),
+      ?_, ?_⟩
+    · exact fun l => OracleComp.mapOut_queryBounded _ (hMQ l)
+    · intro l H
+      show (((), Sum.inr (Sum.inr (bvecD m l (B.run l H).1))),
+          ((), Sum.inr (Sum.inr (bvecD m l (B.run l H).2)))) = _
+      rw [OracleComp.mapOut_eval, hrun l H]
+      rfl
+  exact negl_of_le
+    (fun l => (gameAdv_mem_unit (hashGame (scSpongeFamily (scRomFamily t₀ m))) B l).1)
+    hle (keyedRom_hard (scRomOracle m) Q hQ (scRomOracle_card_R m) C hC)
+
+/-- **⚑ THE LEAF FLOOR, PROVED** — the horn `cellLeafInjective` carried for free, now paid by the
+birthday bound: a leaf collision in the BabyBear window is an oracle collision at two distinct leaf
+messages (`natBB_inj` on the cell and, via the PROVEN-injective `encV`, on the value). -/
+theorem scLeafRom_hard (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1))) :
+    HashCRHardQuant (scLeafFamily (scRomFamily t₀ m)) (ScLeafRomEff t₀ m Q) := by
+  intro B hB
+  obtain ⟨⟨M, hMQ, hrun⟩, hwr⟩ := hB
+  let C : Adversary (keyedRomGame (scRomOracle m)) :=
+    ⟨fun l H =>
+      (((), Sum.inl (natBB (B.run l H).1.1, natBB (encV (B.run l H).1.2))),
+       ((), Sum.inl (natBB (B.run l H).2.1, natBB (encV (B.run l H).2.2))))⟩
+  have hle : ∀ l, gameAdv (hashGame (scLeafFamily (scRomFamily t₀ m))) B l
+      ≤ gameAdv (keyedRomGame (scRomOracle m)) C l := by
+    intro l
+    refine @winProb_le_of_imp _
+      ((hashGame (scLeafFamily (scRomFamily t₀ m))).instFin l) _ _ (fun H hH => ?_)
+    rw [Adversary.hit_eq_true] at hH ⊢
+    obtain ⟨hne, heq⟩ := hH
+    obtain ⟨hc1, hc2, hv1, hv2⟩ := hwr l H ⟨hne, heq⟩
+    refine ⟨fun hc => ?_, liftD_inj heq⟩
+    have hp : (natBB (B.run l H).1.1, natBB (encV (B.run l H).1.2))
+        = (natBB (B.run l H).2.1, natBB (encV (B.run l H).2.2)) :=
+      Sum.inl.inj (congrArg Prod.snd hc)
+    exact hne (Prod.ext (natBB_inj hc1 hc2 (congrArg Prod.fst hp))
+      (encV_inj _ _ (natBB_inj hv1 hv2 (congrArg Prod.snd hp))))
+  have hC : KeyedRomEff (scRomOracle m) Q C := by
+    refine ⟨fun l => OracleComp.mapOut (fun p : (CellId × Value) × (CellId × Value) =>
+        ((((), Sum.inl (natBB p.1.1, natBB (encV p.1.2))) : (scRomOracle m).toRomFamily.D l),
+         (((), Sum.inl (natBB p.2.1, natBB (encV p.2.2))) : (scRomOracle m).toRomFamily.D l)))
+        (M l), ?_, ?_⟩
+    · exact fun l => OracleComp.mapOut_queryBounded _ (hMQ l)
+    · intro l H
+      show (((), Sum.inl (natBB (B.run l H).1.1, natBB (encV (B.run l H).1.2))),
+          ((), Sum.inl (natBB (B.run l H).2.1, natBB (encV (B.run l H).2.2)))) = _
+      rw [OracleComp.mapOut_eval, hrun l H]
+      rfl
+  exact negl_of_le
+    (fun l => (gameAdv_mem_unit (hashGame (scLeafFamily (scRomFamily t₀ m))) B l).1)
+    hle (keyedRom_hard (scRomOracle m) Q hQ (scRomOracle_card_R m) C hC)
+
+/-! ### The keystone, and its non-vacuity at a REAL end-to-end witness. -/
+
+/-- **⚑⚑ THE RE-GROUNDED STATE-COMMIT EQUIVOCATION BOUND, floors PROVED.** §5's keystone at the ROM
+surface: a state-commitment equivocator whose four extracted finders are query-bounded (the labelled
+open obligation — the chained walk, see the §10 header) has NEGLIGIBLE advantage, with the three
+collision floors DISCHARGED by the birthday bound instead of carried refutable. Successor of the
+DELETED `stateCommit_equivocation_from_polyTime` (whose floors were refuted, so its `poly_time`
+derivation transported nothing). -/
+theorem stateCommit_equivocation_rom (t₀ : Turn) (m : ℕ) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (scEquivGame (scRomFamily t₀ m)))
+    (hOuter : ScNodeRomEff t₀ m Q (scToOuterNodeAdv (scRomFamily t₀ m) A))
+    (hMoved : ScNodeRomEff t₀ m Q (scToMovedNodeAdv (scRomFamily t₀ m) A))
+    (hSponge : ScSpongeRomEff t₀ m Q (scToSpongeAdv (scRomFamily t₀ m) A))
+    (hLeaf : ScLeafRomEff t₀ m Q (scToLeafAdv (scRomFamily t₀ m) A)) :
+    Negl (gameAdv (scEquivGame (scRomFamily t₀ m)) A) :=
+  stateCommit_equivocation_advantage_bound (scRomFamily t₀ m)
+    (ScNodeRomEff t₀ m Q) (ScSpongeRomEff t₀ m Q) (ScLeafRomEff t₀ m Q)
+    A hOuter hMoved hSponge hLeaf
+    (scNodeRom_hard t₀ m Q hQ) (scSpongeRom_hard t₀ m Q hQ) (scLeafRom_hard t₀ m Q hQ)
+
+/-- The empty kernel — the fires witness's answer. -/
+def scRomK₀ : RecordKernelState :=
+  { accounts := ∅, cell := fun _ => default, caps := fun _ => [] }
+
+/-- The empty kernel's frame list is empty at EVERY sampled oracle. -/
+theorem scFrameList_k₀ (t₀ : Turn) (m l : ℕ) (H : ScOracle m l) :
+    scFrameList (scRomFamily t₀ m) l H scRomK₀ = [] := by
+  simp [scFrameList, scCarrier, scRomK₀]
+
+/-- The constant (hardcoded-answer) equivocator — the `IsPolyTime`-refuter's SHAPE, admitted here. -/
+def scRomConstAdv (t₀ : Turn) (m : ℕ) : Adversary (scEquivGame (scRomFamily t₀ m)) :=
+  ⟨fun _ _ => (scRomK₀, scRomK₀)⟩
+
+/-- **(WITNESS — the OUTER extracted finder factors through a 4-query tree.)** The hand-built walk:
+absorb the (empty) frame, the two moved leaves, then the moved node ON THE ANSWERS — a genuine
+chained query tree, with the win-conditional window vacuous (the answer pair is reflexive, and a
+collision needs distinct sides). -/
+theorem scRomConst_outer_eff (t₀ : Turn) (m : ℕ) :
+    ScNodeRomEff t₀ m (fun _ => 4) (scToOuterNodeAdv (scRomFamily t₀ m) (scRomConstAdv t₀ m)) := by
+  constructor
+  · refine ⟨fun l =>
+      .query ((), Sum.inr (Sum.inr (bvecD m l []))) (fun rF =>
+      .query ((), Sum.inl (natBB t₀.src, natBB (encV (default : Value)))) (fun r1 =>
+      .query ((), Sum.inl (natBB t₀.dst, natBB (encV (default : Value)))) (fun r2 =>
+      .query ((), Sum.inr (Sum.inl (clampD l (liftD r1), clampD l (liftD r2)))) (fun rM =>
+      .pure ((liftD rF, liftD rM), (liftD rF, liftD rM)))))), ?_, ?_⟩
+    · intro l
+      exact QueryBounded.query 3 _ _ fun rF => QueryBounded.query 2 _ _ fun r1 =>
+        QueryBounded.query 1 _ _ fun r2 => QueryBounded.query 0 _ _ fun rM =>
+          QueryBounded.pure 0 _
+    · intro l H
+      show (scOuterPair (scRomFamily t₀ m) l H scRomK₀,
+          scOuterPair (scRomFamily t₀ m) l H scRomK₀) = _
+      simp only [OracleComp.eval]
+      unfold scOuterPair
+      simp only [scFrameDigest_eq, scFrameList_k₀]
+      rfl
+  · intro l H hw
+    exact (hw.1 rfl).elim
+
+/-- **(WITNESS — the MOVED extracted finder factors through a 2-query tree.)** -/
+theorem scRomConst_moved_eff (t₀ : Turn) (m : ℕ) :
+    ScNodeRomEff t₀ m (fun _ => 4) (scToMovedNodeAdv (scRomFamily t₀ m) (scRomConstAdv t₀ m)) := by
+  constructor
+  · refine ⟨fun l =>
+      .query ((), Sum.inl (natBB t₀.src, natBB (encV (default : Value)))) (fun r1 =>
+      .query ((), Sum.inl (natBB t₀.dst, natBB (encV (default : Value)))) (fun r2 =>
+      .pure ((liftD r1, liftD r2), (liftD r1, liftD r2)))), ?_, ?_⟩
+    · intro l
+      exact (QueryBounded.query 1 _ _ fun r1 => QueryBounded.query 0 _ _ fun r2 =>
+        QueryBounded.pure 0 _).mono (show (2 : ℕ) ≤ 4 by omega)
+    · intro l H
+      show (scMovedPair (scRomFamily t₀ m) l H scRomK₀.cell,
+          scMovedPair (scRomFamily t₀ m) l H scRomK₀.cell) = _
+      simp only [OracleComp.eval]
+      rfl
+  · intro l H hw
+    exact (hw.1 rfl).elim
+
+/-- **(WITNESS — the SPONGE extracted finder is a `0`-query tree at the empty kernel.)** -/
+theorem scRomConst_sponge_eff (t₀ : Turn) (m : ℕ) :
+    ScSpongeRomEff t₀ m (fun _ => 4) (scToSpongeAdv (scRomFamily t₀ m) (scRomConstAdv t₀ m)) := by
+  constructor
+  · refine ⟨fun l => .pure (([] : List ℤ), ([] : List ℤ)), fun l => QueryBounded.pure 4 _, ?_⟩
+    intro l H
+    show (scFrameList (scRomFamily t₀ m) l H scRomK₀,
+        scFrameList (scRomFamily t₀ m) l H scRomK₀) = _
+    simp only [OracleComp.eval, scFrameList_k₀]
+  · intro l H hw
+    exact (hw.1 rfl).elim
+
+/-- **(WITNESS — the LEAF extracted finder is a `0`-query tree.)** -/
+theorem scRomConst_leaf_eff (t₀ : Turn) (m : ℕ) :
+    ScLeafRomEff t₀ m (fun _ => 4) (scToLeafAdv (scRomFamily t₀ m) (scRomConstAdv t₀ m)) := by
+  constructor
+  · exact ⟨fun l => .pure
+      ((diffCell scRomK₀.cell scRomK₀.cell, scRomK₀.cell (diffCell scRomK₀.cell scRomK₀.cell)),
+       (diffCell scRomK₀.cell scRomK₀.cell, scRomK₀.cell (diffCell scRomK₀.cell scRomK₀.cell))),
+      fun l => QueryBounded.pure 4 _, fun l H => rfl⟩
+  · intro l H hw
+    exact (hw.1 rfl).elim
+
+/-- **⚑ (TOOTH — the keystone FIRES end-to-end.)** Every hypothesis of
+`stateCommit_equivocation_rom` is satisfied at a REAL equivocator: the hardcoded-answer shape that
+refutes the `IsPolyTime` floor is ADMITTED by the query classes (with genuine hand-built query trees
+for all four extracted finders) and the keystone concludes a genuine `Negl` — the class is not empty,
+the conditioning is not vacuous. -/
+theorem stateCommit_equivocation_rom_fires (t₀ : Turn) (m : ℕ) :
+    Negl (gameAdv (scEquivGame (scRomFamily t₀ m)) (scRomConstAdv t₀ m)) := by
+  refine stateCommit_equivocation_rom t₀ m (fun _ => 4) ⟨1, 17, ?_⟩ (scRomConstAdv t₀ m)
+    (scRomConst_outer_eff t₀ m) (scRomConst_moved_eff t₀ m)
+    (scRomConst_sponge_eff t₀ m) (scRomConst_leaf_eff t₀ m)
+  filter_upwards [Filter.eventually_ge_atTop 1] with n hn
+  have hn' : (1 : ℝ) ≤ (n : ℝ) := by exact_mod_cast hn
+  rw [abs_of_nonneg (by positivity)]
+  push_cast
+  nlinarith
+
+/-- **(TOOTH — the ROM equivocation game is WINNABLE, so the keystone bounds something real.)** Two
+`AccountsWF` kernels over ONE live account with DIFFERENT cell maps collide at the CONSTANT oracle
+(every digest is the constant answer), so the equivocator that answers them wins with positive
+probability at every parameter. -/
+theorem scRomEquiv_winnable (m : ℕ) (l : ℕ) :
+    0 < gameAdv (scEquivGame (scRomFamily ⟨0, 1, 2, 0⟩ m))
+      ⟨fun _ _ => (({ accounts := {0}, cell := fun _ => Value.int 0, caps := fun _ => [] } :
+            RecordKernelState),
+          ({ accounts := {0},
+             cell := fun c => if c = 0 then Value.int 1 else Value.int 0,
+             caps := fun _ => [] } : RecordKernelState))⟩ l := by
+  obtain ⟨r₀⟩ := (scRomOracle m).rNe l
+  refine @Dregg2.Crypto.RomCarrierSites.winProb_pos_of_witness _
+    ((scEquivGame (scRomFamily ⟨0, 1, 2, 0⟩ m)).instFin l) _ (fun _ => r₀) ?_
+  rw [Adversary.hit_eq_true]
+  refine ⟨fun c hc => rfl, fun c hc => ?_, rfl, ?_, rfl⟩
+  · have h0 : ¬ c = 0 := by
+      intro h
+      subst h
+      exact hc (Finset.mem_singleton_self 0)
+    show (if c = 0 then Value.int 1 else Value.int 0) = default
+    rw [if_neg h0]
+    rfl
+  · intro h
+    have h0 := congrFun h 0
+    simp at h0
+
+/-! ### The LOG consumer's successor — §5b's honest shape at the sampled oracle: the break IS the
+collision, so the successor is the generic bounded-code carrier (`SpongeForgeReduction` §8) at the
+receipt-chain serialization; no tree, no walk, nothing re-authored. -/
+
+/-- The fixed-width receipt code: ALL FOUR fields, in order — the `Poseidon2Surface.encTurnRec`
+shape (`src`/`dst` bound, unlike the toy fold this file's §1 indicts). -/
+def encTurnCode (t : Turn) : List ℤ := [(t.actor : ℤ), (t.src : ℤ), (t.dst : ℤ), t.amt]
+
+theorem encTurnCode_length (t : Turn) : (encTurnCode t).length = 4 := rfl
+
+/-- Fixed-width blocks concatenate injectively (given equal chain lengths). -/
+theorem flatMap_encTurnCode_inj : ∀ {xs ys : List Turn}, xs.length = ys.length →
+    xs.flatMap encTurnCode = ys.flatMap encTurnCode → xs = ys := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro ys h _
+    exact (List.length_eq_zero_iff.mp h.symm).symm
+  | cons t ts ih =>
+    intro ys hlen hf
+    cases ys with
+    | nil => simp at hlen
+    | cons u us =>
+      rw [List.flatMap_cons, List.flatMap_cons] at hf
+      obtain ⟨hblk, hrest⟩ := List.append_inj hf
+        (by rw [encTurnCode_length, encTurnCode_length])
+      have hlen' : ts.length = us.length := by simpa using hlen
+      have ht : t = u := by
+        obtain ⟨a, s0, d0, mm⟩ := t
+        obtain ⟨a', s', d', mm'⟩ := u
+        simp only [encTurnCode, List.cons.injEq, and_true] at hblk
+        obtain ⟨h1, h2, h3, h4⟩ := hblk
+        have e1 : a = a' := by exact_mod_cast h1
+        have e2 : s0 = s' := by exact_mod_cast h2
+        have e3 : d0 = d' := by exact_mod_cast h3
+        subst e1; subst e2; subst e3; subst h4
+        rfl
+      rw [ht, ih hlen' hrest]
+
+/-- The length-prefixed receipt-chain code — the absorbed limb list. -/
+def turnChainCode (ts : List Turn) : List ℤ := ((ts.length : ℕ) : ℤ) :: ts.flatMap encTurnCode
+
+/-- **THE CHAIN CODE IS INJECTIVE, unconditionally** — the length prefix pins the block count and
+fixed-width blocks recover turn-by-turn. The structural fact `logHashInjective` never was. -/
+theorem turnChainCode_injective : Function.Injective turnChainCode := by
+  intro xs ys h
+  simp only [turnChainCode, List.cons.injEq] at h
+  obtain ⟨hlen, hflat⟩ := h
+  exact flatMap_encTurnCode_inj (by exact_mod_cast hlen) hflat
+
+theorem flatMap_encTurnCode_length (ts : List Turn) :
+    (ts.flatMap encTurnCode).length = 4 * ts.length := by
+  induction ts with
+  | nil => rfl
+  | cons t ts ih =>
+    rw [List.flatMap_cons, List.length_append, encTurnCode_length, ih, List.length_cons]
+    omega
+
+/-- The deployed felt window on a receipt — every field a genuine BabyBear-range value. -/
+def TurnInWindow (t : Turn) : Prop :=
+  (t.actor : ℤ) < babyBearP ∧ (t.src : ℤ) < babyBearP ∧ (t.dst : ℤ) < babyBearP
+    ∧ 0 ≤ t.amt ∧ t.amt < babyBearP
+
+/-- Receipt chains of at most `n` in-window turns — the truncated deployed payload shape. -/
+abbrev BoundedChain (n : ℕ) : Type := {ts : List Turn // ts.length ≤ n ∧ ∀ t ∈ ts, TurnInWindow t}
+
+/-- The bounded chain's code satisfies the ROM carrier's deployed-shape side condition. -/
+theorem boundedChain_code_good (n m : ℕ) (hm : 4 * n + 1 ≤ m) (hn : (n : ℤ) < (babyBearP : ℤ))
+    (s : BoundedChain n) : GoodCode m (turnChainCode s.val) := by
+  obtain ⟨hlen, hwin⟩ := s.property
+  constructor
+  · simp only [turnChainCode, List.length_cons, flatMap_encTurnCode_length]
+    omega
+  · intro x hx
+    simp only [turnChainCode, List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · refine ⟨Int.natCast_nonneg _, ?_⟩
+      have hcast : ((s.val.length : ℕ) : ℤ) ≤ (n : ℤ) := by exact_mod_cast hlen
+      linarith
+    · obtain ⟨t, ht, hxt⟩ := List.mem_flatMap.mp hx
+      obtain ⟨h1, h2, h3, h4, h5⟩ := hwin t ht
+      simp only [encTurnCode, List.mem_cons, List.not_mem_nil, or_false] at hxt
+      rcases hxt with rfl | rfl | rfl | rfl
+      · exact ⟨Int.natCast_nonneg _, h1⟩
+      · exact ⟨Int.natCast_nonneg _, h2⟩
+      · exact ⟨Int.natCast_nonneg _, h3⟩
+      · exact ⟨h4, h5⟩
+
+/-- **⚑⚑ THE RE-GROUNDED LOG BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded receipt-chain equivocator has NEGLIGIBLE advantage: the log digest pins the WHOLE
+ordered chain — `src`/`dst` included — except with negligible probability, in the keyed ROM model.
+Successor of the DELETED `log_equivocation_from_polyTime` (floor refuted); the reduction is the
+generic bounded-code carrier of `SpongeForgeReduction` §8 at the length-prefixed receipt code. -/
+theorem log_equivocation_rom (D : DomainSeparatedSponge) (tagDec : DecidableEq D.Tag)
+    (n m : ℕ) (hm : 4 * n + 1 ≤ m) (hn : (n : ℤ) < (babyBearP : ℤ)) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (adv : Adversary (codeForgeRomGame D tagDec m (BoundedChain n) inferInstance
+      (fun s => turnChainCode s.val) (fun _ _ h => Subtype.ext (turnChainCode_injective h))
+      (boundedChain_code_good n m hm hn)))
+    (hA : RomCarrierEff (codeRomFamily D tagDec m)
+      (codeRomCarrier D tagDec m (BoundedChain n) inferInstance
+        (fun s => turnChainCode s.val) (fun _ _ h => Subtype.ext (turnChainCode_injective h))
+        (boundedChain_code_good n m hm hn)) Q adv) :
+    Negl (gameAdv (codeForgeRomGame D tagDec m (BoundedChain n) inferInstance
+      (fun s => turnChainCode s.val) (fun _ _ h => Subtype.ext (turnChainCode_injective h))
+      (boundedChain_code_good n m hm hn)) adv) :=
+  codeForge_binds_rom D tagDec m (BoundedChain n) _ _ _ _ Q hQ adv hA
+
+end RomSuccessor
+
 #assert_all_clean [
   scFrameList_length_le,
-  stateCommit_equivocation_from_polyTime,
-  log_equivocation_from_polyTime,
+  natBB_inj,
+  clampD_inj,
+  bvecD_inj,
+  scRomOracle_card_R,
+  scNodeRom_hard,
+  scSpongeRom_hard,
+  scLeafRom_hard,
+  stateCommit_equivocation_rom,
+  scRomConst_outer_eff,
+  scRomConst_moved_eff,
+  scRomConst_sponge_eff,
+  scRomConst_leaf_eff,
+  stateCommit_equivocation_rom_fires,
+  scRomEquiv_winnable,
+  turnChainCode_injective,
+  log_equivocation_rom,
   scNodeFloor_isPolyTime_inhabited,
   scSpongeFloor_isPolyTime_inhabited,
   scLeafFloor_isPolyTime_inhabited,

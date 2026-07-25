@@ -25,6 +25,23 @@ corollary, all proven against green-at-HEAD imports:
     is not far" has `winProb ≤ n·b/|R|` (`n` rounds, `b`-capped bad sets). The proof is exactly
     the shape the deferral named: `fsRun_queryBounded` + `hit_cond` + `honest_chain_far`, glued by
     `hitWin_fsRun_true_iff` (the hit event on the FS tree IS the failure of `AvoidsBad`).
+  * **§3, 2026-07-24 — ⚑ THE PROVER IS NOW QUANTIFIED.** Until this landing every survival
+    theorem in the tree instantiated `S := honestStrategy fold w0`: the randomness was genuine
+    (uniform `H`) but the PROVER was not adversarial, so what was proved was "the HONEST fold
+    chain from a far word keeps it far except w.p. `n·b/|R|`". `chain_far_survival_strategy`
+    (and its indexed form `chain_far_survival_idx_strategy`, §4) states the SAME bound for an
+    ARBITRARY `S : Strategy R C`, gated on the path-local `FoldConsistentAlong`
+    (`FriAdversaryObject`) — the branch of the L2 dichotomy the verifier's fold-consistency spot
+    checks force. `chain_far_survival_strategy_gated` is the `bad && decide (consistent)` reading.
+    The honest statements are now literal INSTANCES (`honest_foldConsistentAlong` discharges the
+    gate for free), so nothing is lost; §6.1 fires the generalized bound at a prover PROVEN not
+    equal to the honest one (`offpathS_ne_honest`, bound `7/|BabyBear|`), so nothing is
+    disguised. **§3.1 is the canary**: `consistencyFreeSurvival_false` REFUTES the same statement
+    with the gate deleted — a prover that COMMITS A CODEWORD at round 1 escapes farness with
+    probability exactly 1 (`codewordCommit_escape_prob_one`) against an identity fold and empty
+    bad sets, i.e. against a claimed bound of 0. What is still NOT proved anywhere in-tree is the
+    other branch (that a fold-INCONSISTENT prover is caught by the query phase); that is the
+    query-phase dichotomy, priced separately and not by this file.
     ⚑ One hypothesis is DELIBERATELY different from the landed `honest_chain_far`: the cover is
     FAR-CONDITIONAL (`far w → goodSet w ⊆ E (enc w cs)`), proven sufficient by
     `honest_chain_far_of_farCover`. The unconditional cover the landed theorem demands is
@@ -99,7 +116,7 @@ open Dregg2.Circuit.FriAdversaryObject
 open Dregg2.Crypto.RomCounting
   (cyl mem_cyl cyl_empty cyl_nonempty condProb condProb_nonneg condProb_le_one condProb_congr
    condProb_le_of_imp condProb_eq_zero condProb_cyl_empty condProb_split condProb_fresh_eq)
-open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp)
+open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp winProb_top)
 open Dregg2.Circuit.FriSoundness (closeN closeN_zero_iff_mem disagree)
 open Dregg2.Circuit.FriFoldArity
   (FriSetupK Fold fold_close_of_arity_challenges friSetupK8 f0 f0_not_mem fHon8
@@ -273,7 +290,11 @@ theorem hitWin_fsRun_true_iff {R C D : Type} [DecidableEq R] (enc : C → List R
 stands on far words). This weakening is NOT cosmetic: §7's
 `unconditional_cover_trivial_at_deployed` proves the unconditional form forces `b ≥ |F|` at the
 deployed RS shape (a MEMBER word's good set is everything), i.e. the landed hypothesis shape
-admits no nontrivial deployed bound. -/
+admits no nontrivial deployed bound.
+
+⚑ 2026-07-24: now an INSTANCE of `FriAdversaryObject.chain_far_strategy_of_farCover` at
+`S := honestStrategy fold w0`, whose fold-consistency is unconditional
+(`honest_foldConsistentAlong`). Statement unchanged; the duplicated induction is gone. -/
 theorem honest_chain_far_of_farCover {R C D : Type} {far : C → Prop} {goodSet : C → Finset R}
     {fold : C → R → C} (hstep : ChainStep far goodSet fold)
     (enc : C → List R → D) (E : D → Finset R) (w0 : C)
@@ -282,23 +303,65 @@ theorem honest_chain_far_of_farCover {R C D : Type} {far : C → Prop} {goodSet 
     ∀ (n : ℕ) (cs : List R),
       far (honestStrategy fold w0 cs) →
       AvoidsBad enc (honestStrategy fold w0) E H n cs →
-      far (honestStrategy fold w0 (fsChain enc (honestStrategy fold w0) H n cs)) := by
-  intro n
-  induction n with
-  | zero =>
-      intro cs hfar _
-      simpa [fsChain] using hfar
-  | succ n ih =>
-      intro cs hfar havoid
-      simp only [AvoidsBad] at havoid
-      obtain ⟨hnotE, htail⟩ := havoid
-      have hnotGood :
-          H (enc (honestStrategy fold w0 cs) cs) ∉ goodSet (honestStrategy fold w0 cs) :=
-        fun hmem => hnotE (hcover _ _ hfar hmem)
-      have hfar' :
-          far (honestStrategy fold w0 (H (enc (honestStrategy fold w0 cs) cs) :: cs)) := by
-        simpa using hstep _ _ hfar hnotGood
-      simpa [fsChain] using ih (H (enc (honestStrategy fold w0 cs) cs) :: cs) hfar' htail
+      far (honestStrategy fold w0 (fsChain enc (honestStrategy fold w0) H n cs)) :=
+  fun n cs hfar havoid =>
+    chain_far_strategy_of_farCover hstep enc E (honestStrategy fold w0) hcover H n cs hfar havoid
+      (honest_foldConsistentAlong enc fold w0 H n cs)
+
+/-- **⚑⚑ CHAIN-FAR SURVIVAL AT AN ARBITRARY PROVER STRATEGY, PRICED.** The deepest probabilistic
+object of the FRI ladder, no longer restricted to the honest prover. `S : Strategy R C` is ANY
+adaptive strategy (challenge history ↦ next commitment); the only thing asked of it is the
+PATH-LOCAL `FoldConsistentAlong` (each round's commitment is the fold of the previous one along
+the path the oracle walks — what the verifier's fold-consistency spot checks force, on pain of
+being caught). Then any boolean event implying "`S` was fold-consistent along the path AND the
+terminal commitment is NOT far" has probability at most `n·b/|R|`.
+
+Same recipe as before — `fsRun_queryBounded` + `hit_bound` + `chain_far_strategy_of_farCover`,
+glued by `hitWin_fsRun_true_iff` — but the randomness is now genuinely quantified over a prover
+STRATEGY rather than over the honest fold of a fixed `w0`. `chain_far_survival` is the honest
+instance (nothing lost); `consistencyFreeSurvival_false` (§3.1) shows the gate cannot be dropped;
+`k8_chain_far_survival_offpath` (§6) fires it at the deployed arity-8 shape with a strategy
+PROVEN not equal to `honestStrategy`. -/
+theorem chain_far_survival_strategy {D R C : Type}
+    [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
+    {far : C → Prop} {goodSet : C → Finset R} {fold : C → R → C}
+    (hstep : ChainStep far goodSet fold)
+    (enc : C → List R → D) (E : D → Finset R) {b : ℕ} (hE : ∀ d, (E d).card ≤ b)
+    (S : Strategy R C) (hcover : ∀ (w : C) (cs : List R), far w → goodSet w ⊆ E (enc w cs))
+    (hfar0 : far (S [])) (n : ℕ) {bad : (D → R) → Bool}
+    (hbad : ∀ H : D → R, bad H = true →
+      FoldConsistentAlong enc S fold H n [] ∧ ¬ far (S (fsChain enc S H n []))) :
+    winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) := by
+  have himp : ∀ H : D → R, bad H = true → hitWin E (fsRun enc S n []) H = true := by
+    intro H hH
+    obtain ⟨hcons, hnotfar⟩ := hbad H hH
+    by_contra hnot
+    have havoid : AvoidsBad enc S E H n [] := by
+      by_contra hav
+      exact hnot ((hitWin_fsRun_true_iff enc S E H n []).mpr hav)
+    exact hnotfar (chain_far_strategy_of_farCover hstep enc E S hcover H n [] hfar0 havoid hcons)
+  exact (winProb_le_of_imp himp).trans (hit_bound _ (fsRun_queryBounded enc S n []) E hE)
+
+open Classical in
+/-- The **GATED-EVENT reading** of `chain_far_survival_strategy`: for an arbitrary strategy, the
+event "`bad` fires AND the strategy was fold-consistent along the walked path" is priced at
+`n·b/|R|`. This is the form a soundness assembly consumes — the other branch of the dichotomy
+("`S` was fold-inconsistent somewhere along the path") is the branch the verifier's spot checks
+catch, and is priced separately by the query phase. -/
+theorem chain_far_survival_strategy_gated {D R C : Type}
+    [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
+    {far : C → Prop} {goodSet : C → Finset R} {fold : C → R → C}
+    (hstep : ChainStep far goodSet fold)
+    (enc : C → List R → D) (E : D → Finset R) {b : ℕ} (hE : ∀ d, (E d).card ≤ b)
+    (S : Strategy R C) (hcover : ∀ (w : C) (cs : List R), far w → goodSet w ⊆ E (enc w cs))
+    (hfar0 : far (S [])) (n : ℕ) {bad : (D → R) → Bool}
+    (hbad : ∀ H : D → R, bad H = true → ¬ far (S (fsChain enc S H n []))) :
+    winProb (fun H : D → R => bad H && decide (FoldConsistentAlong enc S fold H n []))
+      ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) := by
+  refine chain_far_survival_strategy hstep enc E hE S hcover hfar0 n ?_
+  intro H hH
+  rw [Bool.and_eq_true] at hH
+  exact ⟨of_decide_eq_true hH.2, hbad H hH.1⟩
 
 /-- **⚑ CHAIN-FAR SURVIVAL, PRICED** — the corollary `FriAdversaryObject:38-47` deferred. Under a
 `ChainStep` instance with `b`-capped, far-conditionally-covered bad sets, ANY boolean event that
@@ -307,7 +370,11 @@ has probability at most `n·b/|R|` over the random oracle. Proof = the deferral'
 `fsRun_queryBounded` (the FS chain is an `n`-query tree) + `hit_cond`/`hit_bound` (the hit event
 is priced) + `honest_chain_far_of_farCover` (no hit ⟹ far survives), glued by
 `hitWin_fsRun_true_iff`. Stated against an abstract `bad` so no decidability of `far` is needed;
-`chain_far_survival_prob` reads it as the direct event. -/
+`chain_far_survival_prob` reads it as the direct event.
+
+⚑ 2026-07-24: now the HONEST INSTANCE of `chain_far_survival_strategy` — statement unchanged, and
+the fold-consistency gate discharges to nothing because `honest_foldConsistentAlong` holds
+unconditionally. That is the precise sense in which the strategy-generic bound loses nothing. -/
 theorem chain_far_survival {D R C : Type}
     [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
     {far : C → Prop} {goodSet : C → Finset R} {fold : C → R → C}
@@ -317,18 +384,10 @@ theorem chain_far_survival {D R C : Type}
     (hfar0 : far w0) (n : ℕ) {bad : (D → R) → Bool}
     (hbad : ∀ H : D → R, bad H = true →
       ¬ far (honestStrategy fold w0 (fsChain enc (honestStrategy fold w0) H n []))) :
-    winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) := by
-  have himp : ∀ H : D → R, bad H = true →
-      hitWin E (fsRun enc (honestStrategy fold w0) n []) H = true := by
-    intro H hH
-    by_contra hnot
-    have havoid : AvoidsBad enc (honestStrategy fold w0) E H n [] := by
-      by_contra hav
-      exact hnot ((hitWin_fsRun_true_iff enc _ E H n []).mpr hav)
-    exact hbad H hH (honest_chain_far_of_farCover hstep enc E w0 hcover H n []
-      (by simpa using hfar0) havoid)
-  exact (winProb_le_of_imp himp).trans
-    (hit_bound _ (fsRun_queryBounded enc (honestStrategy fold w0) n []) E hE)
+    winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) :=
+  chain_far_survival_strategy hstep enc E hE (honestStrategy fold w0) hcover
+    (by simpa using hfar0) n
+    (fun H hH => ⟨honest_foldConsistentAlong enc fold w0 H n [], hbad H hH⟩)
 
 open Classical in
 /-- The direct-event reading: `Pr[the terminal word is not far] ≤ n·b/|R|` (classical
@@ -345,6 +404,120 @@ theorem chain_far_survival_prob {D R C : Type}
       ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) :=
   chain_far_survival hstep enc E hE w0 hcover hfar0 n
     (fun _H h => of_decide_eq_true h)
+
+/-! ## §3.1 — ⚑ THE CANARY: without fold-consistency the strategy-generic bound is FALSE.
+
+The whole content of the generalization is that the gate `FoldConsistentAlong` is the ONLY thing
+`chain_far_survival_strategy` asks of an arbitrary prover — so it had better be load-bearing.
+It is, and this is the witness: a prover that simply COMMITS A CODEWORD at round 1 escapes
+farness with probability EXACTLY 1, against a fold that preserves farness perfectly (the
+identity) and EMPTY bad sets (`b = 0`, so the claimed bound is `0`). Every other hypothesis of
+`chain_far_survival` — `ChainStep`, the cap, the cover, initial farness — is satisfied. The
+strategy is excluded by exactly one thing: it is fold-INCONSISTENT at round 1
+(`codewordCommit_not_foldConsistent`). -/
+
+section Canary
+
+/-- Canary farness: `0` is the only far word. -/
+def canaryFar : ℕ → Prop := fun w => w = 0
+
+/-- The canary's fold is the IDENTITY — the most farness-preserving fold there is: EVERY
+challenge keeps a far word far, so the honest chain never loses farness at all. -/
+def canaryFold : ℕ → Bool → ℕ := fun w _ => w
+
+/-- Empty good sets. -/
+def canaryGood : ℕ → Finset Bool := fun _ => ∅
+
+/-- One query point (the canary needs no transcript structure). -/
+def canaryEnc : ℕ → List Bool → Unit := fun _ _ => ()
+
+/-- Empty bad sets: the cap is `b = 0`, so the survival bound being claimed is `n·0/2 = 0`. -/
+def canaryE : Unit → Finset Bool := fun _ => ∅
+
+/-- **THE CHEATING STRATEGY — COMMIT A CODEWORD AT ROUND 1.** At round 0 it shows the far word
+(`0`); from round 1 on it shows a NON-far word (a "codeword") no matter what challenge the oracle
+drew. Nothing in the `Strategy` type forbids this — which is the point: `Strategy R C` is
+`List R → C` and nothing ties `S cs` to a fold of `S cs.tail`. -/
+def codewordCommit : Strategy Bool ℕ := fun cs => cs.length
+
+/-- The canary's `ChainStep` holds — and not vacuously: the identity fold preserves farness at
+EVERY challenge, so this is the strongest possible per-round obligation. -/
+theorem canary_chainStep : ChainStep canaryFar canaryGood canaryFold :=
+  fun _w _r hfar _ => hfar
+
+/-- The canary's cap: `b = 0`. -/
+theorem canaryE_card : ∀ d, (canaryE d).card ≤ 0 := by
+  intro d
+  simp [canaryE]
+
+/-- The canary's (far-conditional, hence also unconditional) cover. -/
+theorem canary_cover : ∀ (w : ℕ) (cs : List Bool),
+    canaryFar w → canaryGood w ⊆ canaryE (canaryEnc w cs) := by
+  intro w cs _
+  simp [canaryGood, canaryE]
+
+/-- The cheating prover starts FAR: its round-0 commitment is the far word. -/
+theorem codewordCommit_far0 : canaryFar (codewordCommit []) := rfl
+
+/-- **The escape**: after one FS round the cheating prover's commitment is NOT far, for EVERY
+oracle. No randomness saves the bound — the escape is deterministic. -/
+theorem codewordCommit_escapes (H : Unit → Bool) :
+    ¬ canaryFar (codewordCommit (fsChain canaryEnc codewordCommit H 1 [])) := by
+  simp [fsChain, canaryEnc, canaryFar, codewordCommit]
+
+open Classical in
+/-- **Probability EXACTLY 1** — the cheating prover leaves farness with certainty, against a
+claimed bound of `1·0/|Bool| = 0`. -/
+theorem codewordCommit_escape_prob_one :
+    winProb (fun H : Unit → Bool =>
+        decide (¬ canaryFar (codewordCommit (fsChain canaryEnc codewordCommit H 1 [])))) = 1 := by
+  have hfun : (fun H : Unit → Bool =>
+      decide (¬ canaryFar (codewordCommit (fsChain canaryEnc codewordCommit H 1 []))))
+      = (fun _ : Unit → Bool => true) :=
+    funext fun H => decide_eq_true (codewordCommit_escapes H)
+  rw [hfun, winProb_top]
+
+/-- **⚑ AND IT IS EXACTLY FOLD-CONSISTENCY THAT EXCLUDES IT.** The cheating strategy fails
+`FoldConsistentAlong` at the very first round, under every oracle: it commits `1` where the fold
+of its own round-0 commitment is `0`. So `chain_far_survival_strategy` does not apply to it — the
+gate is not decoration, it is the whole difference between a true theorem and a false one. -/
+theorem codewordCommit_not_foldConsistent (H : Unit → Bool) :
+    ¬ FoldConsistentAlong canaryEnc codewordCommit canaryFold H 1 [] := by
+  intro hc
+  rw [foldConsistentAlong_succ] at hc
+  have h1 := hc.1
+  simp [codewordCommit, canaryFold, canaryEnc] at h1
+
+/-- **The consistency-FREE survival statement**, monomorphic at `(D, R, C) = (Unit, Bool, ℕ)`:
+`chain_far_survival_strategy` with the `FoldConsistentAlong` gate DELETED. Written out as a
+`Prop` so that it can be refuted as a theorem rather than argued in prose. -/
+def ConsistencyFreeSurvival : Prop :=
+  ∀ (far : ℕ → Prop) (goodSet : ℕ → Finset Bool) (fold : ℕ → Bool → ℕ),
+    ChainStep far goodSet fold →
+    ∀ (enc : ℕ → List Bool → Unit) (E : Unit → Finset Bool) (b : ℕ),
+      (∀ d, (E d).card ≤ b) →
+      ∀ S : Strategy Bool ℕ,
+        (∀ (w : ℕ) (cs : List Bool), far w → goodSet w ⊆ E (enc w cs)) →
+        far (S []) →
+        ∀ (n : ℕ) (bad : (Unit → Bool) → Bool),
+          (∀ H : Unit → Bool, bad H = true → ¬ far (S (fsChain enc S H n []))) →
+          winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card Bool : ℝ)
+
+/-- **⚑⚑ THE CANARY, AS A REFUTATION.** The consistency-free survival statement is FALSE. The
+witness is the codeword-committing prover: `ChainStep` holds (identity fold), the cap is `b = 0`,
+the cover holds, the prover starts far — and it leaves farness with probability `1 > 0`. So
+`FoldConsistentAlong` is LOAD-BEARING in `chain_far_survival_strategy`, and the tree's deepest
+probabilistic object was, before this generalization, silently assuming it away by fixing
+`S := honestStrategy fold w0` (for which the gate is free, `honest_foldConsistentAlong`). -/
+theorem consistencyFreeSurvival_false : ¬ ConsistencyFreeSurvival := by
+  intro h
+  have hb := h canaryFar canaryGood canaryFold canary_chainStep canaryEnc canaryE 0
+    canaryE_card codewordCommit canary_cover codewordCommit_far0 1 (fun _ => true)
+    (fun H _ => codewordCommit_escapes H)
+  rw [winProb_top] at hb
+  norm_num [Fintype.card_bool] at hb
+
+end Canary
 
 /-! ## §4 — ⚑ the INDEXED per-layer chain: the form the deployed shrinking-domain fold needs. -/
 
@@ -408,11 +581,33 @@ theorem terminal_layer {D R : Type} {W : ℕ → Type} (fold : ∀ i, W i → R 
   rw [honest_sig_layer, fsChain_length]
   simp
 
+/-- **⚑⚑ the COMPOSED survival bound over the schedule, AT AN ARBITRARY PROVER STRATEGY.** The
+multi-layer form of `chain_far_survival_strategy`: `S : Strategy R (Σ i, W i)` is any adaptive
+prover over layer-tagged commitments, gated only on path-local fold-consistency. One line through
+`chainStepIdx_iff_sigma`. `chain_far_survival_idx` is the honest instance. -/
+theorem chain_far_survival_idx_strategy {D R : Type} {W : ℕ → Type}
+    [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
+    {far : ∀ i, W i → Prop} {good : ∀ i, W i → Finset R} {fold : ∀ i, W i → R → W (i + 1)}
+    (hidx : ChainStepIdx far good fold)
+    (enc : (Σ i, W i) → List R → D) (E : D → Finset R) {b : ℕ}
+    (hE : ∀ d, (E d).card ≤ b) (S : Strategy R (Σ i, W i))
+    (hcover : ∀ (i : ℕ) (w : W i) (cs : List R), far i w → good i w ⊆ E (enc ⟨i, w⟩ cs))
+    (hfar0 : sigFar far (S [])) (n : ℕ) {bad : (D → R) → Bool}
+    (hbad : ∀ H : D → R, bad H = true →
+      FoldConsistentAlong enc S (sigFold fold) H n [] ∧
+        ¬ sigFar far (S (fsChain enc S H n []))) :
+    winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) :=
+  chain_far_survival_strategy (chainStepIdx_iff_sigma.mp hidx) enc E hE S
+    (fun w cs hf => by cases w with | mk i wi => exact hcover i wi cs hf)
+    hfar0 n hbad
+
 /-- **⚑ the COMPOSED survival bound over the schedule** — (iii) of the rung: a `ChainStepIdx`
 instance with per-layer far-conditionally-covered, `b`-capped good sets prices the whole
 multi-layer fold chain: any event implying "the layer-`n` terminal word is not `n`-far" has
 probability `≤ n·b/|R|`. One line through `chainStepIdx_iff_sigma` + `chain_far_survival` — the
-indexed form genuinely RIDES the landed fixed-`C` machinery rather than duplicating it. -/
+indexed form genuinely RIDES the landed fixed-`C` machinery rather than duplicating it.
+
+⚑ 2026-07-24: now the honest instance of `chain_far_survival_idx_strategy`. -/
 theorem chain_far_survival_idx {D R : Type} {W : ℕ → Type}
     [Fintype D] [DecidableEq D] [Fintype R] [DecidableEq R] [Nonempty R]
     {far : ∀ i, W i → Prop} {good : ∀ i, W i → Finset R} {fold : ∀ i, W i → R → W (i + 1)}
@@ -425,9 +620,10 @@ theorem chain_far_survival_idx {D R : Type} {W : ℕ → Type}
       ¬ sigFar far (honestStrategy (sigFold fold) ⟨0, w0⟩
           (fsChain enc (honestStrategy (sigFold fold) ⟨0, w0⟩) H n []))) :
     winProb bad ≤ ((n : ℝ) * (b : ℝ)) / (Fintype.card R : ℝ) :=
-  chain_far_survival (chainStepIdx_iff_sigma.mp hidx) enc E hE ⟨0, w0⟩
-    (fun w cs hf => by cases w with | mk i wi => exact hcover i wi cs hf)
-    hfar0 n hbad
+  chain_far_survival_idx_strategy hidx enc E hE
+    (honestStrategy (sigFold fold) ⟨0, w0⟩) hcover hfar0 n
+    (fun H hH =>
+      ⟨honest_foldConsistentAlong enc (sigFold fold) ⟨0, w0⟩ H n [], hbad H hH⟩)
 
 end Indexed
 
@@ -589,6 +785,58 @@ theorem k8_bound_lt_one : (7 : ℝ) / (Fintype.card BabyBear : ℝ) < 1 := by
   rw [ZMod.card]
   norm_num
 
+/-! ### §6.1 — the STRATEGY-generic bound fires at a prover that is NOT the honest one.
+
+`k8_chain_far_survival` fires the honest instance. The generalization is only worth something if
+it also fires at a strategy the honest one cannot express — otherwise `FoldConsistentAlong`
+would just be a disguised way of saying "S = honestStrategy". It is not: fold-consistency is
+PATH-LOCAL, so a prover is free to behave arbitrarily off the walked path. -/
+
+/-- **A NON-HONEST, path-consistent prover at the deployed arity-8 shape.** On prefixes of length
+≤ 1 — the entire 1-round FS path — it commits what the honest fold commits; on longer prefixes,
+where the honest prover would sit at layer ≥ 2, it commits the layer-0 word again. Nothing in
+`Strategy` forbids that, and nothing in `FoldConsistentAlong` at `n = 1` sees it. -/
+noncomputable def offpathS : Strategy BabyBear (Σ i, W8 i) :=
+  fun cs => if cs.length ≤ 1 then honestStrategy (sigFold fold8) ⟨0, f0⟩ cs else ⟨0, f0⟩
+
+/-- **It really is a different strategy**: at a 2-challenge prefix the honest prover is at layer
+2 (`honest_sig_layer`) and `offpathS` is at layer 0. So the strategy-generic theorem is NOT the
+honest theorem in disguise. -/
+theorem offpathS_ne_honest : offpathS ≠ honestStrategy (sigFold fold8) ⟨0, f0⟩ := by
+  intro h
+  have hfst : (offpathS [0, 0]).1
+      = (honestStrategy (sigFold fold8) ⟨0, f0⟩ [(0 : BabyBear), 0]).1 :=
+    congrArg Sigma.fst (congrFun h [0, 0])
+  rw [honest_sig_layer] at hfst
+  simp [offpathS] at hfst
+
+/-- `offpathS` IS fold-consistent along the 1-round path (it agrees with the honest fold there),
+under every oracle — so the gate admits it. -/
+theorem offpathS_consistent (H : Option (Fin 16 → BabyBear) → BabyBear) :
+    FoldConsistentAlong enc8 offpathS (sigFold fold8) H 1 [] := by
+  rw [foldConsistentAlong_succ]
+  refine ⟨?_, foldConsistentAlong_zero _ _ _ _ _⟩
+  simp [offpathS]
+
+open Classical in
+/-- **⚑ NON-VACUITY OF THE GENERALIZATION — the strategy-generic bound fires at a NON-honest
+prover, at the deployed arity-8 shape, with a nontrivial bound.** Same conclusion and same
+`7/|BabyBear|` as `k8_chain_far_survival`, but obtained for `offpathS`, which
+`offpathS_ne_honest` proves is not the honest strategy. The randomness is genuine (uniform `H`)
+and the prover is now quantified, not fixed. -/
+theorem k8_chain_far_survival_offpath :
+    winProb (fun H : Option (Fin 16 → BabyBear) → BabyBear =>
+        decide (Fold friSetupK8.geom (H (some f0)) f0 ∈ friSetupK8.C'))
+      ≤ (7 : ℝ) / (Fintype.card BabyBear : ℝ) := by
+  refine le_trans
+    (chain_far_survival_idx_strategy (W := W8) chainStepIdx8 enc8 E8 E8_card_le offpathS
+      E8_cover f0_not_mem 1 ?_)
+    (le_of_eq (by norm_num))
+  intro H hH
+  refine ⟨offpathS_consistent H, ?_⟩
+  intro hfar
+  exact hfar (of_decide_eq_true hH)
+
 end K8
 
 /-! ## §7 — the falsifiers: the un-generalized and the vacuous forms REFUTED. -/
@@ -691,17 +939,28 @@ end Falsifiers
   hit_bound,
   hitWin_fsRun_true_iff,
   honest_chain_far_of_farCover,
+  chain_far_survival_strategy,
+  chain_far_survival_strategy_gated,
   chain_far_survival,
   chain_far_survival_prob,
+  canary_chainStep,
+  codewordCommit_escapes,
+  codewordCommit_escape_prob_one,
+  codewordCommit_not_foldConsistent,
+  consistencyFreeSurvival_false,
   chainStepIdx_iff_sigma,
   honest_sig_layer,
   terminal_layer,
+  chain_far_survival_idx_strategy,
   chain_far_survival_idx,
   goodδ_card_lt,
   chainStepIdx8,
   E8_card_le,
   k8_chain_far_survival,
   k8_bound_lt_one,
+  offpathS_ne_honest,
+  offpathS_consistent,
+  k8_chain_far_survival_offpath,
   stair_chainStepIdx,
   fixed_radius_collapse_refuted,
   goodSet_by_definition_is_free,

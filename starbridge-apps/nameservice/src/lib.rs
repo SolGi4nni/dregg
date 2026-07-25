@@ -1924,7 +1924,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, EXPIRY_SLOT);
+                assert_eq!(*index, EXPIRY_SLOT as u64);
                 assert_eq!(*value, field_from_u64(2_000));
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -1941,7 +1941,7 @@ mod tests {
         assert_eq!(action.effects.len(), 3);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, OWNER_HASH_SLOT);
+                assert_eq!(*index, OWNER_HASH_SLOT as u64);
                 assert_eq!(*value, field_from_bytes(&new));
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -1950,7 +1950,7 @@ mod tests {
         // accept half to rotate the authority register to.
         match &action.effects[1] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, PENDING_OWNER_PK_SLOT);
+                assert_eq!(*index, PENDING_OWNER_PK_SLOT as u64);
                 assert_eq!(*value, new);
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -1966,7 +1966,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, OWNER_PK_SLOT);
+                assert_eq!(*index, OWNER_PK_SLOT as u64);
                 assert_eq!(*value, new);
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -2089,7 +2089,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, REVOKED_SLOT);
+                assert_eq!(*index, REVOKED_SLOT as u64);
                 assert_eq!(*value, revoked_tombstone("alice.dregg"));
                 assert_ne!(*value, [0u8; 32], "tombstone must be non-zero");
             }
@@ -2118,7 +2118,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, RESOLVE_TARGET_SLOT);
+                assert_eq!(*index, RESOLVE_TARGET_SLOT as u64);
                 assert_eq!(*value, target);
             }
             other => panic!("expected SetField, got {other:?}"),

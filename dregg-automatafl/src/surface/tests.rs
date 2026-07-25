@@ -103,27 +103,40 @@ fn seal(
 // 1. THE BOARD IS A COORDGRID
 // ────────────────────────────────────────────────────────────────────────────────────────────
 
-/// The board renders as a valid `CoordGrid`: 5 columns, 25 cells, the particles as glyphs, the
-/// automaton cell MARKED (`@`, tag `accent`, in the highlight-set).
+/// The board renders as a valid `CoordGrid`: 11 columns, 121 cells (the STOCK two-player board —
+/// the size the Lean descriptors are emitted at), the particles as glyphs, the automaton cell
+/// MARKED (`@`, tag `accent`, in the highlight-set).
 #[test]
 fn the_board_renders_as_a_coordgrid() {
     let off = AutomataflOffering;
     let session = off.open(SessionConfig::with_seed(11)).expect("open");
     let (cols, cells) = grid(&off.render(&session));
 
-    assert_eq!(cols, N, "five columns");
-    assert_eq!(cells.len(), CELLS, "one cell per board square");
+    assert_eq!(cols, N, "eleven columns — the stock board");
+    assert_eq!(cells.len(), CELLS, "one cell per board square (121)");
 
-    // The opening: four attractors, two repulsors, one automaton, the rest vacuum/goal squares.
-    assert_eq!(cells.iter().filter(|c| c.glyph == "A").count(), 4);
-    assert_eq!(cells.iter().filter(|c| c.glyph == "R").count(), 2);
+    // The STOCK opening: twelve attractors, twenty-four repulsors, one automaton dead centre.
+    assert_eq!(cells.iter().filter(|c| c.glyph == "A").count(), 12);
+    assert_eq!(cells.iter().filter(|c| c.glyph == "R").count(), 24);
     assert_eq!(cells.iter().filter(|c| c.glyph == "@").count(), 1);
 
-    // The automaton square (2,2) — marked and highlighted.
-    let auto_idx = index_of((2, 2)).unwrap();
+    // The automaton square (5,5) — marked and highlighted.
+    let auto_idx = index_of((5, 5)).unwrap();
     assert_eq!(cells[auto_idx].glyph, "@");
     assert_eq!(cells[auto_idx].tag, "accent");
     assert!(cells[auto_idx].highlight, "the automaton cell is marked");
+
+    // THE FOUR GOAL CORNERS ARE MARKED — even though the stock opening OCCUPIES every one of them
+    // (a repulsor sits on all four). Before, a goal was legible only by its `a`/`b` glyph, which a
+    // piece standing on it hides: on the stock board that made the four squares that decide the
+    // game paint as ordinary pieces.
+    for (g, who) in GOALS {
+        let i = index_of(g).expect("a goal corner is on the board");
+        assert_eq!(
+            cells[i].tag, "goal",
+            "goal corner {g:?} (seat {who}) is marked as an objective"
+        );
+    }
 
     // The grid AGREES with the reference board, square by square.
     let board = opening_board();
@@ -161,8 +174,8 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
         "with nothing selected, only the automaton is marked"
     );
 
-    // Seat A selects the attractor at (1,1) — a REAL turn.
-    let src = (1, 1);
+    // Seat A selects the stock attractor at (3,1) — a REAL turn.
+    let src = (3, 1);
     let src_idx = index_of(src).unwrap();
     assert!(
         off.advance(&mut session, act(SELECT, src_idx as i64), seat_a())
@@ -185,9 +198,13 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
             )
         })
         .collect();
-    // Rook line of (1,1) on a 5×5: row y=1 minus (1,1) → 4; column x=1 minus (1,1) → 4. The
-    // automaton is at (2,2) — not on this line, so nothing is excluded here.
-    assert_eq!(expected.len(), 8, "the rook line of (1,1) is eight squares");
+    // Rook line of (3,1) on an 11×11: row y=1 minus (3,1) → 10; column x=3 minus (3,1) → 10. The
+    // automaton is at (5,5) — on neither, so nothing is excluded here.
+    assert_eq!(
+        expected.len(),
+        20,
+        "the rook line of (3,1) is twenty squares"
+    );
 
     for &i in &expected {
         assert!(
@@ -206,7 +223,7 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
 
     // NON-VACUITY: every square that is NOT a legal target (and not the source / the automaton) is
     // NOT highlighted and offers no seal.
-    let auto_idx = index_of((2, 2)).unwrap();
+    let auto_idx = index_of((5, 5)).unwrap();
     for i in 0..CELLS {
         if expected.contains(&i) || i == src_idx || i == auto_idx {
             continue;
@@ -224,24 +241,25 @@ fn selecting_a_piece_highlights_exactly_its_legal_moves() {
         );
     }
 
-    // Four named illegal targets, explicitly: (3,3) is the diagonal; (2,3) / (4,4) / (0,0) share
-    // neither row nor column with (1,1) — off the rook line, so out of the highlight-set.
-    for bad in [(2, 3), (3, 3), (0, 0), (4, 4)] {
+    // Four named illegal targets, explicitly: (4,2) is the diagonal step; (0,0) / (10,10) / (5,4)
+    // share neither row nor column with (3,1) — off the rook line, so out of the highlight-set.
+    for bad in [(4, 2), (0, 0), (10, 10), (5, 4)] {
         let i = index_of(bad).unwrap();
         assert!(
             !cells[i].highlight,
-            "{bad:?} is not on (1,1)'s rook line — no highlight"
+            "{bad:?} is not on (3,1)'s rook line — no highlight"
         );
     }
 
-    // The automaton square is never a legal target — even on a rook line through it.
+    // The automaton square is never a legal target — even on a rook line through it. (0,5) holds
+    // a stock repulsor on the automaton's own rank.
     assert!(
         !move_valid(
             session.board(),
             &Move {
                 who: 0,
-                frm: (0, 2),
-                to: (2, 2)
+                frm: (0, 5),
+                to: (5, 5)
             }
         ),
         "the automaton's square is never a move target"
@@ -268,33 +286,33 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
         "sealing without selecting is refused"
     );
 
-    // Select (1,1) — a real turn.
-    let src_idx = index_of((1, 1)).unwrap() as i64;
+    // Select the stock attractor at (3,1) — a real turn.
+    let src_idx = index_of((3, 1)).unwrap() as i64;
     assert!(
         off.advance(&mut session, act(SELECT, src_idx), seat_a())
             .landed()
     );
     let commits_before = session.game().read_reg("commits");
 
-    // A DIAGONAL destination (3,3): not a rook line — refused.
-    let diag = index_of((3, 3)).unwrap() as i64;
+    // A DIAGONAL destination (4,2): not a rook line — refused.
+    let diag = index_of((4, 2)).unwrap() as i64;
     let refused = off.advance(&mut session, act(COMMIT, diag), seat_a());
     assert!(
         matches!(refused, Outcome::Refused(_)),
         "a diagonal move is refused"
     );
 
-    // The AUTOMATON's square (2,2) — on (1,1)'s… no: (2,2) is off (1,1)'s line anyway. Use a
-    // source on the automaton's row: select the repulsor at (0,2), then seal onto (2,2).
+    // The AUTOMATON's square (5,5) is off (3,1)'s line anyway. Use a source on the automaton's
+    // own rank: select the repulsor at (0,5), then seal onto (5,5).
     assert!(
         off.advance(
             &mut session,
-            act(SELECT, index_of((0, 2)).unwrap() as i64),
+            act(SELECT, index_of((0, 5)).unwrap() as i64),
             seat_a()
         )
         .landed()
     );
-    let onto_auto = index_of((2, 2)).unwrap() as i64;
+    let onto_auto = index_of((5, 5)).unwrap() as i64;
     assert!(
         matches!(
             off.advance(&mut session, act(COMMIT, onto_auto), seat_a()),
@@ -306,7 +324,7 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
     // An OFF-BOARD square is refused.
     assert!(
         matches!(
-            off.advance(&mut session, act(COMMIT, 99), seat_a()),
+            off.advance(&mut session, act(COMMIT, 999), seat_a()),
             Outcome::Refused(_)
         ),
         "an off-board square is refused"
@@ -320,8 +338,8 @@ fn an_illegal_move_is_refused_and_commits_nothing() {
     );
     assert!(matches!(session.phase(), Phase::Commit));
 
-    // A LEGAL seal from the same selection lands a real turn: (0,2) → (0,4), straight up the file.
-    let clean = index_of((0, 4)).unwrap() as i64;
+    // A LEGAL seal from the same selection lands a real turn: (0,5) → (3,5), along the rank.
+    let clean = index_of((3, 5)).unwrap() as i64;
     let landed = off.advance(&mut session, act(COMMIT, clean), seat_a());
     assert!(landed.landed(), "the legal seal lands a real receipt");
     assert_eq!(
@@ -342,8 +360,8 @@ fn a_viewer_sees_their_own_sealed_move_and_the_opponent_is_fog() {
     let off = AutomataflOffering;
     let mut session = off.open(SessionConfig::with_seed(14)).expect("open");
 
-    seal(&off, &mut session, &seat_a(), (1, 1), (1, 4));
-    seal(&off, &mut session, &seat_b(), (3, 3), (3, 0));
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (7, 1), (7, 3));
 
     let a_view = rendered_text(&off.render_for(&session, &seat_a()));
     let b_view = rendered_text(&off.render_for(&session, &seat_b()));
@@ -351,12 +369,12 @@ fn a_viewer_sees_their_own_sealed_move_and_the_opponent_is_fog() {
 
     // A sees their own move in full…
     assert!(
-        a_view.contains("YOUR sealed move: (1,1) → (1,4)"),
+        a_view.contains("YOUR sealed move: (3,1) → (3,3)"),
         "A reads their own sealed move\n{a_view}"
     );
     // …and NOT B's (fog: only the commitment).
     assert!(
-        !a_view.contains("(3,3) → (3,0)"),
+        !a_view.contains("(7,1) → (7,3)"),
         "B's sealed move is FOG to A\n{a_view}"
     );
     assert!(
@@ -365,14 +383,14 @@ fn a_viewer_sees_their_own_sealed_move_and_the_opponent_is_fog() {
     );
 
     // Symmetrically for B.
-    assert!(b_view.contains("YOUR sealed move: (3,3) → (3,0)"));
+    assert!(b_view.contains("YOUR sealed move: (7,1) → (7,3)"));
     assert!(
-        !b_view.contains("(1,1) → (1,4)"),
+        !b_view.contains("(3,1) → (3,3)"),
         "A's sealed move is FOG to B\n{b_view}"
     );
 
     // The PUBLIC surface fogs BOTH.
-    assert!(!public.contains("(1,1) → (1,4)") && !public.contains("(3,3) → (3,0)"));
+    assert!(!public.contains("(3,1) → (3,3)") && !public.contains("(7,1) → (7,3)"));
     assert_eq!(
         public.matches("move SEALED").count(),
         2,
@@ -384,7 +402,7 @@ fn a_viewer_sees_their_own_sealed_move_and_the_opponent_is_fog() {
     assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
     let after = rendered_text(&off.render(&session));
     assert!(
-        after.contains("revealed: (1,1) → (1,4)") && after.contains("revealed: (3,3) → (3,0)"),
+        after.contains("revealed: (3,1) → (3,3)") && after.contains("revealed: (7,1) → (7,3)"),
         "the reveal opens both moves\n{after}"
     );
 }
@@ -402,15 +420,17 @@ fn a_full_turn_resolves_exactly_as_the_reference() {
     let mut session = off.open(SessionConfig::with_seed(15)).expect("open");
 
     let before = session.board().clone();
+    // The CLEAN stock round the Lean resolve descriptor's own `clean_resolve_satisfies` guard
+    // pins: two independent, unoccluded attractor moves off the `y = 1` rank.
     let ma = Move {
         who: 0,
-        frm: (1, 1),
-        to: (1, 4),
+        frm: (3, 1),
+        to: (3, 3),
     };
     let mb = Move {
         who: 1,
-        frm: (3, 3),
-        to: (3, 0),
+        frm: (7, 1),
+        to: (7, 3),
     };
     seal(&off, &mut session, &seat_a(), ma.frm, ma.to);
     seal(&off, &mut session, &seat_b(), mb.frm, mb.to);
@@ -470,6 +490,94 @@ fn a_full_turn_resolves_exactly_as_the_reference() {
         report.turns >= 7,
         "genesis + 2 selects + 2 seals + 2 reveals + 1 resolve"
     );
+
+    // ── THE MOVE HISTORY IS RECORDED. Before this the surface threw every move away on the
+    // resolution, and the only foldable shape left was the automaton-only chain (which attests no
+    // move at all). The session now hands the crown the genesis position + the played rounds.
+    assert_eq!(
+        session.start_board().cells,
+        before.cells,
+        "the genesis position is retained (the fold's decodable board_genesis)"
+    );
+    assert_eq!(
+        session.rounds(),
+        &[(ma, mb)],
+        "the resolved round recorded BOTH seats' revealed moves, in seat order"
+    );
+    assert_eq!(
+        session.unfoldable_round(),
+        None,
+        "a clean round is foldable — nothing blocks the crown"
+    );
+}
+
+/// **A REFUSED resolution records NO round** (anti-ghost for the move history): the phase
+/// discipline refuses a resolve before both reveals, and the history stays empty.
+#[test]
+fn a_refused_resolution_records_no_round() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(19)).expect("open");
+
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (7, 1), (7, 3));
+    assert!(matches!(
+        off.advance(&mut session, act(RESOLVE, 0), seat_a()),
+        Outcome::Refused(_)
+    ));
+    assert!(
+        session.rounds().is_empty(),
+        "a refused resolution commits nothing and records nothing"
+    );
+}
+
+/// **A CONFLICTING round is recorded but is NOT foldable** — and it says so by name. Both seats
+/// fork the SAME source: conflict resolution drops both moves (the surface's audited-WRONG rule;
+/// the ruleset marks the square and re-enters the round). The round IS played and IS recorded —
+/// the history is the truth of what happened — but [`AutomataflSession::unfoldable_round`] names
+/// it, and the fold refuses it rather than minting a proof of an unlicensed transition.
+#[test]
+fn a_conflicting_round_is_played_but_refuses_to_fold() {
+    let off = AutomataflOffering;
+    let mut session = off.open(SessionConfig::with_seed(20)).expect("open");
+
+    // A FORK: both seats move the attractor at (3,1), to different squares.
+    let before = session.board().clone();
+    seal(&off, &mut session, &seat_a(), (3, 1), (3, 3));
+    seal(&off, &mut session, &seat_b(), (3, 1), (5, 1));
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_a()).landed());
+    assert!(off.advance(&mut session, act(REVEAL, 0), seat_b()).landed());
+    assert!(
+        off.advance(&mut session, act(RESOLVE, 0), seat_a())
+            .landed(),
+        "the conflicting round still RESOLVES on the surface (both moves dropped)"
+    );
+
+    // The surface's rule: both moves dropped, so the board only took the automaton's step.
+    assert_eq!(
+        session.board().cells,
+        apply_turn(
+            &before,
+            &[
+                Move {
+                    who: 0,
+                    frm: (3, 1),
+                    to: (3, 3)
+                },
+                Move {
+                    who: 1,
+                    frm: (3, 1),
+                    to: (5, 1)
+                },
+            ]
+        )
+        .cells
+    );
+    assert_eq!(session.rounds().len(), 1, "the round is recorded as played");
+    assert_eq!(
+        session.unfoldable_round(),
+        Some(0),
+        "round 0 CONFLICTS — the fold must refuse it by name, not fake a leaf"
+    );
 }
 
 /// The automaton REACHES a goal and the match is WON — a real terminal turn (`ended: true`), with
@@ -479,9 +587,9 @@ fn the_automaton_can_be_pulled_to_a_goal_and_win() {
     let off = AutomataflOffering;
     let mut session = off.open(SessionConfig::with_seed(16)).expect("open");
 
-    // Both seats pull the SAME lever — A moves the attractor at (1,1) onto the centre file north of
-    // the automaton, B moves the attractor at (3,3) out of the way. The reference decides what
-    // happens; we assert the offering reproduces it exactly, and drive to a decided match.
+    // Each seat pulls toward its OWN rank of goal corners (A the `y = 0` pair, B the `y = 10`
+    // pair) by putting an attractor on the automaton's file. The reference decides what actually
+    // happens; we assert the offering reproduces it exactly, turn for turn.
     let mut turns = 0;
     let mut won = None;
     while !session.ended() && turns < 12 {
@@ -489,7 +597,8 @@ fn the_automaton_can_be_pulled_to_a_goal_and_win() {
         // Pick the first legal move for each seat that pulls the automaton toward a goal — a simple
         // driver: A tries to place an attractor on the file above the automaton, B below.
         let pick = |seat: Seat, board: &Board| -> Option<Move> {
-            let goal = seat.goal();
+            // The seat owns TWO corners on the same rank; either wins, so aim at the first.
+            let goal = seat.goals()[0];
             for idx in 0..CELLS {
                 let frm = coord_of(idx);
                 if board.cell_at(frm) != ATT {
@@ -555,7 +664,7 @@ fn the_executor_refuses_a_forged_raw_turn() {
     // A `commit` that also MOVES a piece — the board is Immutable during the commit phase.
     let forged_board = vec![
         game.reg_effect("commits", 1),
-        game.cell_effect(index_of((1, 1)).unwrap(), 0), // wipe the attractor
+        game.cell_effect(index_of((3, 1)).unwrap(), 0), // wipe the stock attractor
     ];
     assert!(
         game.commit_raw(COMMIT, forged_board).is_err(),
@@ -605,7 +714,7 @@ fn a_derived_identity_claims_a_seat_and_a_third_is_a_spectator() {
     let bob = DreggIdentity("blake3-of-bob".into());
     let carol = DreggIdentity("blake3-of-carol".into());
 
-    let src = index_of((1, 1)).unwrap() as i64;
+    let src = index_of((3, 1)).unwrap() as i64;
     assert!(
         off.advance(&mut session, act(SELECT, src), alice.clone())
             .landed()
@@ -616,7 +725,7 @@ fn a_derived_identity_claims_a_seat_and_a_third_is_a_spectator() {
         "alice claimed seat A"
     );
 
-    let src_b = index_of((3, 3)).unwrap() as i64;
+    let src_b = index_of((7, 1)).unwrap() as i64;
     assert!(
         off.advance(&mut session, act(SELECT, src_b), bob.clone())
             .landed()
@@ -632,12 +741,12 @@ fn a_derived_identity_claims_a_seat_and_a_third_is_a_spectator() {
     assert_eq!(session.seat_of(&carol), None);
 
     // And alice's view fogs bob's seal, not her own (the same per-viewer projection).
-    seal(&off, &mut session, &alice, (1, 1), (1, 4));
-    seal(&off, &mut session, &bob, (3, 3), (3, 0));
+    seal(&off, &mut session, &alice, (3, 1), (3, 3));
+    seal(&off, &mut session, &bob, (7, 1), (7, 3));
     let a_view = rendered_text(&off.render_for(&session, &alice));
-    assert!(a_view.contains("YOUR sealed move: (1,1) → (1,4)"));
+    assert!(a_view.contains("YOUR sealed move: (3,1) → (3,3)"));
     assert!(
-        !a_view.contains("(3,3) → (3,0)"),
+        !a_view.contains("(7,1) → (7,3)"),
         "bob's seal is fog to alice"
     );
 }

@@ -5946,6 +5946,7 @@ dependencies = [
  "dregg-sdk",
  "dregg-storage",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "ed25519-dalek",
  "http 1.4.2",
@@ -6182,6 +6183,7 @@ dependencies = [
  "dregg-bridge",
  "dregg-cell",
  "dregg-cell-crypto",
+ "dregg-codec",
  "dregg-dsl",
  "dregg-dsl-runtime",
  "dregg-token",
@@ -6229,6 +6231,7 @@ dependencies = [
  "dregg-commit",
  "dregg-lean-ffi",
  "dregg-turn",
+ "dregg-turn-prover",
  "fhegg-solver",
  "fhir",
  "futures-channel",
@@ -6294,6 +6297,13 @@ dependencies = [
  "toml 0.8.23",
  "urlencoding",
  "zeroize",
+]
+
+[[package]]
+name = "dregg-codec"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -6408,6 +6418,7 @@ dependencies = [
  "dregg-token",
  "dregg-trace",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -6796,6 +6807,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-pq",
  "dregg-turn",
+ "dregg-turn-prover",
  "ed25519-dalek",
 ]
 
@@ -6826,6 +6838,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "dregg-mirror"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "deos-view",
+ "ed25519-dalek",
+ "http-serve",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7133,6 +7157,7 @@ dependencies = [
  "dregg-storage",
  "dregg-token",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-wire",
  "ed25519-dalek",
@@ -7256,6 +7281,7 @@ dependencies = [
  "dregg-token",
  "dregg-trace",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "ed25519-dalek",
  "fhegg-solver",
@@ -7499,6 +7525,7 @@ dependencies = [
  "dregg-sdk",
  "dregg-token",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "dregg-verifier",
  "getrandom 0.3.4",
@@ -7570,7 +7597,6 @@ dependencies = [
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
- "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-hints",
@@ -7598,6 +7624,7 @@ dependencies = [
  "dregg-cell-crypto",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-commit",
  "dregg-turn",
  "dregg-types",
  "postcard",
@@ -10468,6 +10495,7 @@ dependencies = [
  "dregg-query",
  "dregg-sdk",
  "dregg-turn",
+ "dregg-turn-prover",
  "grain-verify",
 ]
 
@@ -10481,6 +10509,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-lean-ffi",
  "dregg-turn",
+ "dregg-turn-prover",
  "serde",
  "serde_json",
 ]

@@ -34,7 +34,8 @@ use dreggnet_offerings::native_descent::{
 };
 use dreggnet_offerings::native_descent_wire::PortableRecord;
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
-use dreggnet_web::{DescentState, descent_router, make_app};
+use dreggnet_web::descent_play::descent_play_router;
+use dreggnet_web::{DescentState, descent_router};
 use dungeon_on_dregg::descent::{BREATH, FLOORS};
 use procgen_dregg::{CommittedSeed, daily_seed};
 use tower::ServiceExt;
@@ -359,8 +360,11 @@ async fn the_card_can_be_pasted_into_a_chat_as_the_same_board() {
 /// either surface and this fails until they agree again.
 #[tokio::test]
 async fn the_card_and_the_live_surface_speak_one_alphabet() {
+    // The play controller's OWN router, not the whole product app: this test needs one static
+    // asset, and `make_app` additionally arms the catalog's PQ identity layer (which fail-closes
+    // hard, and correctly, when the linked Lean archive does not export the verified cores).
     let js = {
-        let app = make_app();
+        let app = descent_play_router();
         let (status, body) = get(&app, "/descent/play/static/app.js").await;
         assert_eq!(status, StatusCode::OK, "the play controller serves");
         body

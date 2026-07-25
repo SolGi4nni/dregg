@@ -366,7 +366,7 @@ fn executor_attested_registration_event_carries_correct_name_hash() {
             use dregg_app_framework::Effect;
             let name_field_in_action = action.effects.iter().find_map(|e| {
                 if let Effect::SetField { index, value, .. } = e {
-                    if *index == starbridge_nameservice::NAME_HASH_SLOT {
+                    if *index == starbridge_nameservice::NAME_HASH_SLOT as u64 {
                         Some(*value)
                     } else {
                         None

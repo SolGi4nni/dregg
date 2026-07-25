@@ -617,10 +617,21 @@ against the carried claim (`ivc_turn_chain.rs:4442-4460`). So:
 * **The fixture cell.** `mint_turn` still folds automatafl legs over the `pk[0]=7` fixture
   (`fold.rs:~390`), not a real WorldCell — the `*_over_cell` twins exist for tug only. The board
   window makes the *board* real; the *cell* is still a nonce bump.
-* **n = 5.** The deployed playable surface is 5×5; both descriptors are emitted at n ∈ {2, 11}. The
-  n=5 route is correctly **blocked-not-faked** (`witness.rs::n5_has_no_descriptor_blocked_not_faked`),
-  and `fixed_n11_descriptor_is_not_live_game_shape` says the same for Leg S. Either emit at n=5 or
-  move the live game to 11×11 — do not pretend.
+* ~~**n = 5.**~~ **CLOSED (2026-07-24): the live game moved to 11×11.** `dregg-automatafl/src/game.rs`
+  now sets `N = 11`, `opening_board() = reference::stock_two_player()` and the four-corner
+  `GOAL_CORNERS_2P` win check, so the PLAYED board is the emitted-descriptor board. The surface
+  additionally RECORDS the move history (`AutomataflSession::rounds` / `start_board`), so
+  `crown.rs::played_automatafl` folds `AutomataflMatch::played(start, rounds)` — the two-leg chain
+  that attests the players' moves — instead of `automaton_only`, which attests none. Gate:
+  `dreggnet-game-board/tests/played_surface_folds.rs` (a round played on the real offering lowers to
+  both n=11 descriptors, traces accept, mid seam holds) and
+  `game.rs::the_played_board_size_has_both_emitted_lean_descriptors`.
+  The n=5 route stays **blocked-not-faked** for any caller that still hands one in
+  (`matches.rs::n5_has_no_descriptor_blocked_not_faked`).
+  RESIDUAL: only CLEAN rounds fold. A round the seats clashed on is played and recorded but REFUSED
+  by name (`MatchError::ConflictingRound`) — the surface drops clashing moves while the ruleset
+  marks the square and re-enters the round (Leg C, §6.3), and a descriptor/oracle mid disagreement
+  (the occupancy-blind 2-cycle detector) is refused as `MatchError::MidDiverges`.
 * **The floors.** Everything above sits on the deployed FRI posture
   (`docs/`/memory: 57 calculator bits, `project-fri-soundness-reality`) and on the
   witness-generation perimeter (`project-witness-gen-assurance-perimeter`) — the STARK proves the

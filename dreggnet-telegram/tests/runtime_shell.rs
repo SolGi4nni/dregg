@@ -16,7 +16,7 @@ use dreggnet_catalog::{GameEpochLedger, PlayerWorlds};
 use dreggnet_telegram::api::{LOCK_GLYPH, encode_callback};
 use dreggnet_telegram::host::{HostPress, TelegramHost};
 use dreggnet_telegram::runtime::{
-    BotEvent, HELP_TEXT, durable_telegram_host, parse_updates, route_callback, route_text,
+    BotEvent, durable_telegram_host, help_text, parse_updates, route_callback, route_text,
     try_durable_telegram_host,
 };
 use dreggnet_telegram::transport::MockTransport;
@@ -167,7 +167,7 @@ fn text_commands_route_through_the_shell() {
 
     assert_eq!(
         route_text(&mut h, chat, None, ALICE, "/help").as_deref(),
-        Some(HELP_TEXT),
+        Some(help_text().as_str()),
         "/help answers the command surface"
     );
 

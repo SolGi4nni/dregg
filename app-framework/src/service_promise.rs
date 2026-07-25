@@ -937,7 +937,7 @@ mod tests {
     ) {
         let service = ServiceId::of(CellId::from_bytes([0x5e; 32]), "render-report");
         let service_turn_hash = [0xAB; 32];
-        let proven = dregg_turn::mint_transfer_proven_receipt(service_turn_hash, 7);
+        let proven = dregg_turn_prover::mint_transfer_proven_receipt(service_turn_hash, 7);
         let promise = ServicePromise {
             provider: cid(2),
             service,

@@ -436,8 +436,7 @@ fn test_full_note_lifecycle() {
     let randomness_bb = bytes_to_babybear(&note.randomness);
 
     // Convert the 256-bit spending key to 8 BabyBear limbs (248 bits of security)
-    let spending_key_limbs =
-        dregg_circuit::note_spending_witness::key_to_field_elements(&spending_key);
+    let spending_key_limbs = dregg_circuit::effect_vm::bytes32_to_8_limbs(&spending_key);
 
     // Compute the circuit-level commitment (this is what the Merkle tree stores)
     let circuit_commitment = poseidon2::hash_many(&[
@@ -716,7 +715,7 @@ fn test_full_cross_federation_conditional_swap() {
     // Bob performed his turn; the commit pipeline produced a ProvenReceipt (the verified
     // rotated EffectVM STARK bound to bob_turn_hash). Alice's condition is TurnProven,
     // bound to Bob's turn hash + the proof's committed pre/post endpoints.
-    let bob_proven = dregg_turn::mint_transfer_proven_receipt(bob_turn_hash, 7);
+    let bob_proven = dregg_turn_prover::mint_transfer_proven_receipt(bob_turn_hash, 7);
     let conditional = ConditionalTurn {
         turn: alice_turn.clone(),
         condition: bob_proven.turn_proven_condition(),

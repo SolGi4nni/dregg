@@ -139,8 +139,10 @@ open Polynomial
 open Dregg2.Crypto.RomOracle (OracleComp QueryBounded)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_nonneg winProb_le_of_imp)
 open Dregg2.Circuit.FriChainStepIdx
-  (hitWin hitWin_query hit_bound ChainStepIdx chain_far_survival_idx sigFar sigFold)
-open Dregg2.Circuit.FriAdversaryObject (Strategy fsRun fsChain honestStrategy)
+  (hitWin hitWin_query hit_bound ChainStepIdx chain_far_survival_idx
+   chain_far_survival_idx_strategy sigFar sigFold)
+open Dregg2.Circuit.FriAdversaryObject
+  (Strategy fsRun fsChain honestStrategy FoldConsistentAlong honest_foldConsistentAlong)
 open Dregg2.Circuit.FriBatchedOracle (MatrixOracle)
 open Dregg2.Circuit.FriDeployedRateInstance (rsCode friSetupDeployed pR omega24)
 open Dregg2.Circuit.FriCloseNUniqueDecode (mem_rsCode_iff_lowDegree_evalVec)
@@ -826,7 +828,10 @@ oracle. Contrapositive: except with that probability, farness SURVIVES to the te
 round — where the query phase (priced separately, the L6 dichotomy) finishes; equivalently,
 an accepting run's committed word is `r₀`-close, which per §4 is the decode's `ColsClose`.
 One application of the landed `chain_far_survival_idx`; the CA enters ONLY as the bad-set
-cap, which is exactly the interface the plan needs L1–L6 to fill. -/
+cap, which is exactly the interface the plan needs L1–L6 to fill.
+
+⚑ 2026-07-24: this is now the HONEST INSTANCE of `ud_tower_far_survival_strategy` below, which
+states the same bound for an ARBITRARY prover strategy. Statement unchanged. -/
 theorem ud_tower_far_survival
     (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
     (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
@@ -848,6 +853,63 @@ theorem ud_tower_far_survival
     (towerEnc L nn) (towerE L nn V rr m dec)
     (towerE_card_le hm hsched hlift hCA) w0 towerE_cover
     ((towerFar_of_le (Nat.zero_le L) w0).mpr hfar0) rounds hbad
+
+open Classical in
+/-- **⚑⚑ THE INTERFACE THEOREM AT AN ARBITRARY PROVER STRATEGY.** Same hypotheses, same bound
+`rounds·(m−1)(r₁+1)/|F|` — but the prover is now quantified: `S : Strategy F (Σ i, Fin (nn i) → F)`
+is any adaptive strategy that commits the far `w0` at round 0 (`hstart`), and the only thing asked
+of it is the PATH-LOCAL `FoldConsistentAlong` (each round's commitment is the fold of the previous
+one along the path the oracle walks — what the verifier's fold-consistency spot checks force; the
+other branch of the dichotomy, "the prover is caught", is the query phase's job and is NOT proved
+here). `ud_tower_far_survival` is the honest instance (`honest_foldConsistentAlong` discharges the
+gate for free), and `FriChainStepIdx.consistencyFreeSurvival_false` proves the gate cannot simply
+be dropped: a prover that COMMITS A CODEWORD at round 1 escapes farness with probability 1. -/
+theorem ud_tower_far_survival_strategy
+    (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
+    (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
+    (hm : 1 ≤ m) (hsched : ∀ i, m * rr (i + 1) ≤ rr i)
+    (hlift : DecimLift nn V m dec)
+    (hCA : ∀ i, i < L →
+      CorrelatedAgreementCurveUDParam F (nn (i + 1)) (V (i + 1)) (rr (i + 1)) m)
+    (S : Strategy F (Σ i, (Fin (nn i) → F)))
+    (w0 : Fin (nn 0) → F) (hstart : S [] = ⟨0, w0⟩)
+    (hfar0 : ¬ closeN (V 0) (rr 0) w0)
+    (rounds : ℕ) {bad : (towerD L nn F → F) → Bool}
+    (hbad : ∀ H : towerD L nn F → F, bad H = true →
+      FoldConsistentAlong (towerEnc L nn) S (sigFold (towerFold nn m dec)) H rounds [] ∧
+        ¬ sigFar (towerFar L nn V rr) (S (fsChain (towerEnc L nn) S H rounds []))) :
+    winProb bad
+      ≤ ((rounds : ℝ) * (((m - 1) * (rr 1 + 1) : ℕ) : ℝ)) / (Fintype.card F : ℝ) := by
+  haveI : Nonempty F := ⟨0⟩
+  refine chain_far_survival_idx_strategy (towerChainStepIdx L nn V rr m dec)
+    (towerEnc L nn) (towerE L nn V rr m dec)
+    (towerE_card_le hm hsched hlift hCA) S towerE_cover ?_ rounds hbad
+  rw [hstart]
+  exact (towerFar_of_le (Nat.zero_le L) w0).mpr hfar0
+
+/-- The honest prover IS a `ud_tower_far_survival_strategy` instance — stated as a theorem so the
+"nothing is lost" claim is machine-checked at the tower, not just at the abstract layer. -/
+theorem ud_tower_far_survival_of_strategy
+    (L : ℕ) (nn : ℕ → ℕ) (V : ∀ i, Set (Fin (nn i) → F)) (rr : ℕ → ℕ) (m : ℕ)
+    (dec : ∀ i, (Fin (nn i) → F) → Fin m → (Fin (nn (i + 1)) → F))
+    (hm : 1 ≤ m) (hsched : ∀ i, m * rr (i + 1) ≤ rr i)
+    (hlift : DecimLift nn V m dec)
+    (hCA : ∀ i, i < L →
+      CorrelatedAgreementCurveUDParam F (nn (i + 1)) (V (i + 1)) (rr (i + 1)) m)
+    (w0 : Fin (nn 0) → F) (hfar0 : ¬ closeN (V 0) (rr 0) w0)
+    (rounds : ℕ) {bad : (towerD L nn F → F) → Bool}
+    (hbad : ∀ H : towerD L nn F → F, bad H = true →
+      ¬ sigFar (towerFar L nn V rr)
+          (honestStrategy (sigFold (towerFold nn m dec)) ⟨0, w0⟩
+            (fsChain (towerEnc L nn)
+              (honestStrategy (sigFold (towerFold nn m dec)) ⟨0, w0⟩) H rounds []))) :
+    winProb bad
+      ≤ ((rounds : ℝ) * (((m - 1) * (rr 1 + 1) : ℕ) : ℝ)) / (Fintype.card F : ℝ) :=
+  ud_tower_far_survival_strategy L nn V rr m dec hm hsched hlift hCA
+    (honestStrategy (sigFold (towerFold nn m dec)) ⟨0, w0⟩) w0 rfl hfar0 rounds
+    (fun H hH =>
+      ⟨honest_foldConsistentAlong (towerEnc L nn) (sigFold (towerFold nn m dec)) ⟨0, w0⟩
+        H rounds [], hbad H hH⟩)
 
 end Tower
 

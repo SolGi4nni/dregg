@@ -98,7 +98,9 @@ namespace Dregg2.Circuit.IndexedMerkleTree
 open Dregg2.Crypto.NonMembership (Sorted Adjacent sorted_gap_excludes head_lt_of_sorted sorted_tail)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.MapMerkleRoot (perfectRoot)
-open Dregg2.Circuit.MapOpsColumnLayout (pathRecompute pathPos pathRecompute_binds_updates)
+open Dregg2.Circuit.MapOpsColumnLayout (pathRecompute pathPos pathRecompute_binds_updates
+  pathCollFind noPathColl_of_CR)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Substrate
 
 set_option autoImplicit false
@@ -130,18 +132,51 @@ deriving DecidableEq, Repr
 `heap_root.rs::HeapLeaf::digest8` gains the `nextAddr` felt: arity 2 → 3). -/
 def imtLeafHash (hash : List ℤ → ℤ) (l : ImtLeaf) : ℤ := hash [l.addr, l.value, l.nextAddr]
 
-/-- **`imtLeafHash_injective`** — the IMT leaf digest BINDS its three fields under CR: a prover
-cannot forge the pointer (or address, or value) inside the digest. The crypto residue that binds a
-pointer-bracket opening / a low-leaf update to the committed chain — exactly `Heap.leafOf_injective`
-at 3-felt width, the SAME `Poseidon2SpongeCR` floor. -/
-theorem imtLeafHash_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {l₁ l₂ : ImtLeaf} (h : imtLeafHash hash l₁ = imtLeafHash hash l₂) : l₁ = l₂ := by
-  obtain ⟨a₁, v₁, n₁⟩ := l₁
-  obtain ⟨a₂, v₂, n₂⟩ := l₂
-  have hl := hCR _ _ h
-  simp only [List.cons.injEq, and_true] at hl
-  obtain ⟨ha, hv, hn⟩ := hl
-  subst ha; subst hv; subst hn; rfl
+/-- **`imtLeafPre l`** — the IMT leaf's sponge PREIMAGE, named so the per-instance collision event
+is stated at exactly the list the deployed digest absorbs (`imtLeafHash hash l = hash (imtLeafPre l)`,
+`rfl`). -/
+def imtLeafPre (l : ImtLeaf) : List ℤ := [l.addr, l.value, l.nextAddr]
+
+/-- **THE HYPOTHESIS-FREE IMT-LEAF BINDING.** Equal 3-felt leaf digests force equal leaves OR name a
+genuine collision of the deployed sponge at the two absorbed preimages. NO floor hypothesis. -/
+theorem imtLeafHash_binds_or_collides (hash : List ℤ → ℤ) {l₁ l₂ : ImtLeaf}
+    (h : imtLeafHash hash l₁ = imtLeafHash hash l₂) :
+    l₁ = l₂ ∨ IsSpongeColl hash (imtLeafPre l₁, imtLeafPre l₂) := by
+  by_cases hpre : imtLeafPre l₁ = imtLeafPre l₂
+  · refine Or.inl ?_
+    obtain ⟨a₁, v₁, n₁⟩ := l₁
+    obtain ⟨a₂, v₂, n₂⟩ := l₂
+    simp only [imtLeafPre, List.cons.injEq, and_true] at hpre
+    obtain ⟨ha, hv, hn⟩ := hpre
+    subst ha; subst hv; subst hn; rfl
+  · exact Or.inr ⟨hpre, h⟩
+
+/-- **`imtLeafHash_injective`** — the IMT leaf digest BINDS its three fields: a prover cannot forge
+the pointer (or address, or value) inside the digest. The crypto residue that binds a pointer-bracket
+opening / a low-leaf update to the committed chain — exactly `Heap.leafOf_injective` at 3-felt width.
+⛑ CUT OVER 2026-07-25: the refuted `Poseidon2SpongeCR hash` premise is replaced by the per-instance,
+refutable side condition at the two NAMED preimages (implied by the old one, `noImtLeafColl_of_CR`). -/
+theorem imtLeafHash_injective (hash : List ℤ → ℤ)
+    {l₁ l₂ : ImtLeaf} (hno : ¬ IsSpongeColl hash (imtLeafPre l₁, imtLeafPre l₂))
+    (h : imtLeafHash hash l₁ = imtLeafHash hash l₂) : l₁ = l₂ :=
+  (imtLeafHash_binds_or_collides hash h).resolve_right hno
+
+/-- **THE CUTOVER BRIDGE (IMT leaf side).** -/
+theorem noImtLeafColl_of_CR {hash : List ℤ → ℤ} (hCR : Poseidon2SpongeCR hash)
+    {l₁ l₂ : ImtLeaf} : ¬ IsSpongeColl hash (imtLeafPre l₁, imtLeafPre l₂) :=
+  fun hc => hc.1 (hCR _ _ hc.2)
+
+/-- **`ImtLeafCollIn hash ls low`** — the BOUNDED collision event: some leaf of the NAMED finite list
+`ls` collides with `low` under the deployed sponge. Bounded over data the deployment actually holds,
+so it is checkable and refutable — never a universal quantification over the sponge's whole domain. -/
+def ImtLeafCollIn (hash : List ℤ → ℤ) (ls : List ImtLeaf) (low : ImtLeaf) : Prop :=
+  ∃ l ∈ ls, IsSpongeColl hash (imtLeafPre l, imtLeafPre low)
+
+/-- The bounded event's bridge: the refuted universal kills it. -/
+theorem noImtLeafCollIn_of_CR {hash : List ℤ → ℤ} (hCR : Poseidon2SpongeCR hash)
+    {ls : List ImtLeaf} {low : ImtLeaf} : ¬ ImtLeafCollIn hash ls low := by
+  rintro ⟨l, _, hne, hh⟩
+  exact hne (hCR _ _ hh)
 
 variable {K : Type} {V : Type}
 
@@ -446,16 +481,18 @@ theorem imt_double_spend_unsat_reachable {lo hi : ℤ} (hlohi : lo < hi) {c : Li
 Merkle-path recompute whose post-root BINDS the spliced digest vector, via the PROVEN
 `pathRecompute_binds_updates` at the 3-felt IMT leaf (`imtLeafHash`). A frozen/forged post-root is a
 Poseidon2 collision — the SAME extraction the write leg rides, here on the pointer update. -/
-theorem imtLowUpdate_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem imtLowUpdate_binds (hash : List ℤ → ℤ)
     (steps : List (Bool × ℤ)) (xs : List ℤ) (low : ImtLeaf) (newNext : ℤ)
     (hlen : xs.length = 2 ^ steps.length)
     (hroot : pathRecompute hash (imtLeafHash hash low) steps
-      = perfectRoot hash steps.length xs) :
+      = perfectRoot hash steps.length xs)
+    (hno : ¬ IsSpongeColl hash (pathCollFind hash steps xs (imtLeafHash hash low))) :
     xs[pathPos steps]? = some (imtLeafHash hash low) ∧
     pathRecompute hash (imtLeafHash hash { low with nextAddr := newNext }) steps
       = perfectRoot hash steps.length
           (xs.set (pathPos steps) (imtLeafHash hash { low with nextAddr := newNext })) := by
-  obtain ⟨hmem, hupd⟩ := pathRecompute_binds_updates hash hCR steps xs (imtLeafHash hash low) hlen hroot
+  obtain ⟨hmem, hupd⟩ :=
+    pathRecompute_binds_updates hash steps xs (imtLeafHash hash low) hlen hroot hno
   exact ⟨hmem, hupd _⟩
 
 /-! ## §9 — LIVENESS + NON-VACUITY TEETH (both polarities), on short literal `ℤ` chains
@@ -553,8 +590,9 @@ def imtLayout (hash : List ℤ → ℤ) (pad : ℤ) (n : Nat) (phys : List ImtLe
 a genuine member of `phys`: the append-splits into the leaf-digest prefix (⟹ `∈ phys` by CR
 injectivity) or the `pad` replicate (excluded by `hpad`). NO re-assumption — proved from `imtLayout`'s
 definition. -/
-theorem mem_phys_of_layout_get (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem mem_phys_of_layout_get (hash : List ℤ → ℤ)
     {pad : ℤ} {n : Nat} {phys : List ImtLeaf} {p : Nat} {low : ImtLeaf}
+    (hno : ¬ ImtLeafCollIn hash phys low)
     (hpad : imtLeafHash hash low ≠ pad)
     (hp : (imtLayout hash pad n phys)[p]? = some (imtLeafHash hash low)) :
     low ∈ phys := by
@@ -563,7 +601,7 @@ theorem mem_phys_of_layout_get (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeC
   rcases hmem with hL | hR
   · rw [List.mem_map] at hL
     obtain ⟨l, hlp, hlh⟩ := hL
-    rwa [imtLeafHash_injective hash hCR hlh] at hlp
+    rwa [imtLeafHash_injective hash (fun hc => hno ⟨l, hlp, hc⟩) hlh] at hlp
   · exact absurd (List.eq_of_mem_replicate hR) hpad
 
 /-- **`ImtVecCorr hash pad n c xs`** — the chain↔vector correspondence the producer maintains, lifted
@@ -581,15 +619,18 @@ def ImtVecCorr (hash : List ℤ → ℤ) (pad : ℤ) (n : Nat)
 member of the sorted chain `c`: it is a member of the physical list (`mem_phys_of_layout_get`), and the
 permutation carries membership to `c` (`Perm.mem_iff`). This is the pure Lean fact that discharges the
 seam — the old `low ∈ c` hypothesis is now a THEOREM about the layout. -/
-theorem imtVecCorr_mem (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem imtVecCorr_mem (hash : List ℤ → ℤ)
     {pad : ℤ} {n : Nat} {c : List ImtLeaf} {xs : List ℤ} {p : Nat} {low : ImtLeaf}
+    (hno : ¬ ImtLeafCollIn hash c low)
     (hcorr : ImtVecCorr hash pad n c xs)
     (hpad : imtLeafHash hash low ≠ pad)
     (hp : xs[p]? = some (imtLeafHash hash low)) :
     low ∈ c := by
   obtain ⟨phys, hxs, hperm⟩ := hcorr
   subst hxs
-  exact hperm.mem_iff.mp (mem_phys_of_layout_get hash hCR hpad hp)
+  refine hperm.mem_iff.mp (mem_phys_of_layout_get hash ?_ hpad hp)
+  rintro ⟨l, hl, hc⟩
+  exact hno ⟨l, hperm.mem_iff.mp hl, hc⟩
 
 /-- **`PreRootModelsChain hash pad dep c oldRoot`** — the producer faithfulness for the AAFI PRE-root:
 whatever digest vector the gate commits behind `oldRoot` (`oldRoot = perfectRoot hash dep xs`) is an
@@ -684,7 +725,7 @@ theorem aafiGates_force_lowMem_layout (hash : List ℤ → ℤ) (hCR : Poseidon2
     MapOpsColumnLayout.aafiInsert_forces_imtInsert hash hCR dep hg
   -- `aafiLeafHash hash a v n` and `imtLeafHash hash ⟨a,v,n⟩` are both `hash [a,v,n]` (defeq).
   have hmem1' : xs[p1]? = some (imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩) := hmem1
-  exact imtVecCorr_mem hash hCR (hcorr xs hlen hor) hpad hmem1'
+  exact imtVecCorr_mem hash (noImtLeafCollIn_of_CR hCR) (hcorr xs hlen hor) hpad hmem1'
 
 /-- **`aafiGates_force_imtAbsent_layout` — the bracket witness with membership DISCHARGED.** Same
 conclusion as `aafiGates_force_imtAbsent`, but instead of the bare `low ∈ c` hypothesis it consumes the
@@ -847,7 +888,8 @@ theorem toy_low_ne_pad :
     imtLeafHash refSponge ⟨0, 0, 100⟩ ≠ MapOpsColumnLayout.aafiEmpty refSponge := by
   intro h
   have h' : imtLeafHash refSponge ⟨0, 0, 100⟩ = imtLeafHash refSponge ⟨0, 0, 0⟩ := h
-  have heq : (⟨0, 0, 100⟩ : ImtLeaf) = ⟨0, 0, 0⟩ := imtLeafHash_injective refSponge refSponge_CR h'
+  have heq : (⟨0, 0, 100⟩ : ImtLeaf) = ⟨0, 0, 0⟩ :=
+    imtLeafHash_injective refSponge (noImtLeafColl_of_CR refSponge_CR) h'
   exact absurd (congrArg ImtLeaf.nextAddr heq) (by norm_num)
 
 /-- **★ `ImtVecCorr` HOLDS concretely** — the toy committed vector `aafiXsToy` IS the `imtLayout` of the

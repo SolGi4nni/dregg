@@ -49,6 +49,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.sovereigncommitment
 import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitMakeSovereign
 
@@ -163,35 +164,61 @@ theorem makeSovereignVm_rejects_surviving_balance (env : VmRowEnv)
   simp only [gZero, VmConstraint.holdsVm, eSA, EmittedExpr.eval]
   exact not_modEq_zero_of_canon (b := 0) (by ring) hcanon (by norm_num) hwrong
 
-/-! ## §7 — the commitment binding (inherited from the keystone). -/
+/-! ## §7 — the commitment binding, REBUILT AS SECURITY REDUCTIONS.
 
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
-
-theorem makeSovereignVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ makeSovereignHashSites)
-    (hs₂ : siteHoldsAll hash e₂ makeSovereignHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+⚑ **WHAT CHANGED AND WHY.** This section used to export
+`makeSovereignVm_commit_binds_block_or_collides`, concluding
+`absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. That form is TRUE of the deployed
+sponge, but UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. It quantified over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED; the keyed-ROM closure below and the
+`Eff`-parametric deployed-hash reduction after it are its successors. The extraction spine
+(`absorbed_determined_by_commit_or_collides`) REMAINS in the transfer keystone as the
+reduction-internal witness, its correct role. -/
 
 open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
   Dregg2.Crypto.ConcreteSecurity in
-/-- **⚑ THE KEYED-FLOOR CLOSURE of the extraction disjunction above** (the honest successor of the
+/-- **⚑ THE KEYED-FLOOR CLOSURE at makeSovereign's own sites** (the honest successor of the
 fraud-deleted `EffectVmCommitReduction` claim, whose `IsPolyTime` floor is REFUTED at deployed
 parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
 (`EffectVmKeyedStateCommit` — a MODELLING step, see that module's header), every QUERY-BOUNDED forger
 producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
 absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
 (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
-deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
-deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+deployed-hash leg is the `Eff`-parametric `_advantage_bound` reduction below (its
+`boundaryLastPins` mod-`p` step is deployed-side content and deliberately does NOT transport to the
+λ-wide model). -/
 theorem makeSovereignVm_commit_binds_keyed (Q : ℕ → ℕ)
     (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
     (A : Adversary (narrowBreakGame makeSovereignHashSites))
     (hA : NarrowBreakEff makeSovereignHashSites Q A) :
     Negl (gameAdv (narrowBreakGame makeSovereignHashSites) A) :=
   narrowStateCommit_binds makeSovereignHashSites rfl Q hQ A hA
+
+/-- **`makeSovNarrowRowSpec`** — makeSovereign's narrow descriptor as the reduction's per-effect
+datum: its hash sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def makeSovNarrowRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.NarrowRowSpec where
+  descriptor := makeSovereignVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `makeSovereignVm_binds_block_advantage_bound` — the DEPLOYED-hash reduction at
+makeSovereign's own descriptor.** Under the deployed sponge's collision floor at the class `Eff`,
+an adversary producing two rows BOTH ACCEPTED by `makeSovereignVmDescriptor` that publish one
+`state_commit` while disagreeing on the absorbed state block has NEGLIGIBLE advantage. Replaces the
+deleted bare disjunction. -/
+theorem makeSovereignVm_binds_block_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D makeSovNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D makeSovNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D makeSovNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D makeSovNarrowRowSpec Eff A hEff hCR
 
 /-! ## §8 — the dropped record carries NO readable balance (the overlap with the executor).
 
@@ -353,7 +380,7 @@ theorem forgedRow_rejected : ¬ (gZero state.BALANCE_LO).holdsVm forgedRow false
 #assert_axioms makeSovereignVm_faithful
 #assert_axioms makeSovereignVm_rejects_nonzero
 #assert_axioms makeSovereignVm_rejects_surviving_balance
-#assert_axioms makeSovereignVm_commit_binds_block_or_collides
+#assert_axioms makeSovereignVm_binds_block_advantage_bound
 #assert_axioms makeSovereignVm_commit_binds_keyed
 #assert_axioms sovereignRebind_balOf_zero
 #assert_axioms makeSovereign_target_dropped

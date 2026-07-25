@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
+use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, WholeChainProofBytes};
 use dreggnet_game_board::Game;
 
 /// A real proof envelope + the anchor VK it verifies under, and where it came from.
@@ -56,6 +56,24 @@ pub fn fixture_paths(game: Game) -> (PathBuf, PathBuf) {
 fn load(bin: &Path, hex: &Path, source: &str) -> Option<RealProof> {
     let bytes = std::fs::read(bin).ok()?;
     let anchor = std::fs::read_to_string(hex).ok()?;
+    // The fixture FILE exists, so it must decode under HEAD's `WholeChainProof` envelope. A
+    // present-but-stale fixture (baked under an older envelope layout — e.g. before the v5
+    // board-window / v3 8-felt-anchor bumps) is a LOUD, actionable failure with the exact
+    // re-bake command — never the confusing mid-test `EnvelopeDecode{"Hit the end of buffer"}`
+    // panic that reads like an anti-forgery/anchor-binding regression and silently disables the
+    // light-client security teeth these tests carry.
+    if let Err(e) = WholeChainProofBytes::from_postcard(&bytes) {
+        panic!(
+            "STALE FIXTURE: {} does not decode under HEAD's WholeChainProof envelope ({e}). \
+             Re-bake it (the envelope format evolved): \
+             `DREGG_ALLOW_UNAUDITED_PQ=1 cargo run --release -p dregg-lightclient \
+             --bin produce_history_envelope --features prover -- 3 7`, then base64-decode the \
+             emitted `proof_bytes_b64` into {} and write `anchor_hex` (no trailing newline) to {}.",
+            bin.display(),
+            bin.display(),
+            hex.display(),
+        );
+    }
     Some(RealProof {
         bytes,
         vk: RecursionVk(parse_hex32(&anchor)),

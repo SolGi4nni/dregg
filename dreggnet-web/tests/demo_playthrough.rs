@@ -87,9 +87,9 @@ async fn post_json(app: &axum::Router, uri: &str, body: serde_json::Value) -> (S
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// The 5×5 board index of `(x, y)`.
+/// The automatafl board index of `(x, y)` — the board's OWN width, never a literal.
 fn idx(x: i64, y: i64) -> i64 {
-    y * 5 + x
+    y * dregg_automatafl::game::N as i64 + x
 }
 
 /// Write an HTML sample for eyeballing (best-effort; never fails the test).
@@ -142,19 +142,19 @@ async fn automatafl_full_playthrough_with_goal_squares() {
     let app = make_app();
     let base = "/offerings/automatafl/session/pt-auto";
 
-    // Open: the board paints, and the GOAL squares (glyph a/b) carry the distinct `goal` class —
-    // no longer indistinguishable from a plain vacant (tag-muted) cell.
+    // Open: the board paints, and the four GOAL CORNERS carry the distinct `goal` class — never
+    // indistinguishable from an ordinary square. On the STOCK opening every corner is OCCUPIED (a
+    // repulsor sits on all four), so the marker rides the cell's `goal` TAG rather than the
+    // lowercase `a`/`b` glyph a VACANT corner paints; both earn the ring.
     let (status, body) = get(&app, base).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("coordgrid"), "the board paints");
-    assert!(
-        body.contains("goal\">a</span>") || body.contains("goal\">a</button>"),
-        "seat A's goal square carries the distinct `goal` look: {}",
+    assert_eq!(
+        body.matches("tag-goal goal").count(),
+        4,
+        "all four goal corners carry the distinct `goal` look — they are OCCUPIED at the stock \
+         opening (a repulsor on each), so this is the tag-borne marker, not the `a`/`b` glyph: {}",
         &body[..body.len().min(400)]
-    );
-    assert!(
-        body.contains("goal\">b</span>") || body.contains("goal\">b</button>"),
-        "seat B's goal square carries the distinct `goal` look"
     );
     assert!(
         body.contains(".coordgrid .cell.goal{"),
@@ -163,7 +163,7 @@ async fn automatafl_full_playthrough_with_goal_squares() {
     sample("automatafl-board.html", &body);
 
     // ── A full simultaneous turn: select → (illegal refused) → commit → reveal → resolve.
-    let (_, body) = post_act(&app, &format!("{base}/act"), "select", idx(1, 1), "alice").await;
+    let (_, body) = post_act(&app, &format!("{base}/act"), "select", idx(3, 1), "alice").await;
     assert!(body.contains("Turn committed"), "the select lands: {body}");
     assert!(
         body.contains("highlighted"),
@@ -171,7 +171,7 @@ async fn automatafl_full_playthrough_with_goal_squares() {
     );
 
     // An illegal (diagonal) move is refused — nothing commits (no dead/ghost action).
-    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(3, 3), "alice").await;
+    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(4, 2), "alice").await;
     assert!(
         body.contains("Refused: illegal move"),
         "a diagonal is refused by the real referee: {body}"
@@ -181,11 +181,11 @@ async fn automatafl_full_playthrough_with_goal_squares() {
         "the refused move committed nothing"
     );
 
-    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(1, 4), "alice").await;
+    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(3, 3), "alice").await;
     assert!(body.contains("Turn committed"), "the legal seal lands");
-    let (_, body) = post_act(&app, &format!("{base}/act"), "select", idx(3, 3), "bob").await;
+    let (_, body) = post_act(&app, &format!("{base}/act"), "select", idx(7, 1), "bob").await;
     assert!(body.contains("Turn committed"), "bob claims seat B");
-    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(3, 0), "bob").await;
+    let (_, body) = post_act(&app, &format!("{base}/act"), "commit", idx(7, 3), "bob").await;
     assert!(body.contains("Turn committed"));
     assert!(body.contains("REVEAL (both moves sealed"), "both seals in");
 

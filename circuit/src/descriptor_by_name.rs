@@ -81,6 +81,29 @@ static DELEGATE_CACHE: LazyLock<EffectVmDescriptor2> = LazyLock::new(delegate_bi
 /// list), so a row that lands is checked the moment it lands.
 const STATIC_GOLDENS: &[(&str, &str)] = &[
     ("dfa-routing-toggle-2state::poseidon2-v1", DFA_ROUTING_JSON),
+    // The TABLE-AS-INPUT DFA-routing descriptor (`DfaRoutingTableEmit.lean`, routed through
+    // `EmitByName.lean`). Deliberately dispatched by EXACT NAME only — it is NOT a member of
+    // `PredicateKind::Dfa`'s family (that name list stays the deployed toggle descriptor), the same
+    // additive shape `faithful-note-spend-v3` and the automatafl leaves use.
+    //
+    // Why it is worth serving beside the toggle descriptor: its Lean refinement
+    // `tableRouting_refines_classify` is over the WHOLE emitted descriptor and GENERAL over the
+    // transition table, the automaton and the descriptor name — `Satisfied2Public` of the emitted
+    // bytes implies the exposed `pi[final_state]` IS `classifyFrom d pi[initial_state] word` for the
+    // ℕ-word read off the symbol column. The toggle descriptor's refinement is per-automaton and
+    // carries a terminal-step hypothesis plus a mod-`p` canonicality envelope; this one carries
+    // NEITHER, because the transition tooth is one `exact_public_rows` lookup (row-uniform: lookups
+    // have no last-row zerofier exemption) and table membership is an exact integer equality.
+    //
+    // Residual, named: the `exact_public_rows` LogUp receive is UNIT-CAPACITY, so a satisfying
+    // witness must consume the declared row multiset EXACTLY — this restricts witness EXISTENCE for
+    // words that re-use a transition, not soundness (the refinement consumes only the row
+    // constraints + table faithfulness). The checked-in instance declares the single transition
+    // `(0, 1, 1)`; a wider automaton needs its own emitted instance of the same Lean family.
+    (
+        "dregg-dfa-routing-table::exact-public-v1",
+        DFA_ROUTING_TABLE_EXACT_PUBLIC_JSON,
+    ),
     (
         "dregg-temporal-predicate-gte::dsl-v1",
         TEMPORAL_PREDICATE_JSON,
@@ -231,6 +254,8 @@ pub use crate::note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_leaf_descri
 // ---- The predicate-descriptor goldens: `include_str!` of the by-name files each Lean `#guard`
 // ---- emits and `scripts/emit-descriptors.sh` re-derives (see the module header). ----
 const DFA_ROUTING_JSON: &str = include_str!("../descriptors/by-name/dfa-routing.json");
+const DFA_ROUTING_TABLE_EXACT_PUBLIC_JSON: &str =
+    include_str!("../descriptors/by-name/dfa-routing-table-exact-public-v1.json");
 const TEMPORAL_PREDICATE_JSON: &str =
     include_str!("../descriptors/by-name/temporal-predicate.json");
 const MERKLE_MEMBERSHIP_DEPTH2_JSON: &str =

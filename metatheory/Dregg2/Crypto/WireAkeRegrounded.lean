@@ -32,6 +32,18 @@ own `cr`, so the deployed no-UKS guarantee no longer rides an empty hypothesis. 
   attack succeeds only with negligible advantage. Discharged by `thread_advantage_bound` (the single
   `CollisionResistant` leaf), reusing the generic commit-reveal keystone.
 
+## ⚑ The `IsPolyTime` discharge is DELETED; the DISCHARGED successor is §5's keyed-ROM binding (07-24)
+
+`channel_binding_from_polyTime` discharged `Eff` at `CostAdversary.IsPolyTime`, whose floor
+`HashCRHardQuant … (IsPolyTime …)` is REFUTED at deployed parameters
+(`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` — `IsPolyTime` prices answer
+SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins with probability
+`1`). It is DELETED, and §5 lands the successor on the PROVED keyed-ROM floor: the UKS forger is an
+ORACLE PROGRAM (`RomOpenEff`, query-counted, oracle sampled AFTER the program is fixed), and
+`channel_binding_rom` concludes `Negl` from `KeyedRomFloor.keyedRom_hard` (the birthday bound — a
+THEOREM) with NOTHING refutable carried. The `_advantage_bound` form above stays as the honest
+fixed-hash statement with `hEff` in the open.
+
 ## Non-fake
 
 The floor is SATISFIABLE (`channelKey_crK_CR`: the injective identity carrier `WireAke.crK` discharges it)
@@ -50,6 +62,7 @@ here lives elsewhere. `ake_authentication` / `ake_session_key_secure` are NOT to
 the standard floor (`SchnorrDLHard ∨ MSISHard`, `MLWESearchHard`), not to the vacuous injective `HashCR`.
 -/
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Crypto.WireAke
 
 namespace Dregg2.Crypto.WireAkeRegrounded
@@ -61,12 +74,16 @@ open Dregg2.Circuit.HashFloorHonesty
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
-   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
-   hashAnsSizeOf openAnsSizeOf crEquivocator)
+   hermine_commitment_binding_advantage_bound crEquivocator)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
    collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
-open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily taggedCarrier romOpenGame RomOpenEff rom_open_binds romOpen_forger_excluded
+   romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 
 set_option autoImplicit false
 
@@ -102,7 +119,8 @@ What stands here is the generic commit-opening REDUCTION (`HermineHashCRReground
 the deployed session-key family: the break is a `Game` whose win relation says an adversary published a
 session key together with two DISTINCT framed `(ss_x, ss_pq, transcript)` triples that BOTH derive it —
 the unknown-key-share attack, on the deployed key — and the extractor DISCARDS the key to reach a genuine
-collision. The advantage inequality is unconditional; the class is discharged at `IsPolyTime` below. -/
+collision. The advantage inequality is unconditional; the DISCHARGED instantiation is §5's keyed-ROM
+binding (the `IsPolyTime` discharge that stood here is deleted — its floor is refuted). -/
 
 /-- **THE UNKNOWN-KEY-SHARE GAME** — the commit-opening break of the deployed session-key hash. A win is
 one session key derived from two DISTINCT channels: exactly the attack `WireAke.channel_binding` denies. -/
@@ -131,21 +149,6 @@ theorem channel_binding_advantage_bound {Pre K : Type} [DecidableEq Pre] [Decida
     (hD : HashCRHardQuant (channelKeyFamily cr) Eff) :
     Negl (gameAdv (uksGame cr) A) :=
   hermine_commitment_binding_advantage_bound (channelKeyFamily cr) Eff A hEff hD
-
-/-- **⚑ THE EFFICIENCY OBLIGATION DISCHARGED.** A UKS adversary that is EFFICIENT at the game's own answer
-encoding yields a collision finder that is STILL efficient (the extractor DISCARDS the published key, so
-its growth constants are `(1, 0)` and nothing can blow up), so the collision floor at `Eff := IsPolyTime`
-applies to IT and the channel binds with no floating efficiency parameter. The per-site inputs are the
-reshaper's declared work `(cw, bw)` and the family's own encoding `szIn`/`szOut` — the deployed pre-image
-and key encodings, which a `KeyedHashFamily` over abstract carriers cannot supply itself. -/
-theorem channel_binding_from_polyTime {Pre K : Type} [DecidableEq Pre] [DecidableEq K]
-    (cr : CommitReveal Unit Pre K) (szIn : ℕ → Pre → ℕ) (szOut : ℕ → K → ℕ)
-    (A : Adversary (uksGame cr))
-    (hA : IsPolyTime (openAnsSizeOf (channelKeyFamily cr) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (channelKeyFamily cr)
-      (IsPolyTime (hashAnsSizeOf (channelKeyFamily cr) szIn))) :
-    Negl (gameAdv (uksGame cr) A) :=
-  hermine_commitment_binding_from_polyTime (channelKeyFamily cr) szIn szOut A hA cw bw hD
 
 /-! ## §3 — non-vacuity: the floor is satisfiable AND load-bearing on the channel-binding hash. -/
 
@@ -230,17 +233,119 @@ theorem channel_binding_eff_fires (A : Adversary (uksGame Dregg2.Crypto.WireAke.
   channel_binding_advantage_bound Dregg2.Crypto.WireAke.crK (fun _ => True) A trivial
     ((collisionResistant_iff_hashCRHardQuant_top _).mp channelKey_crK_CR)
 
+/-! ## §5 — ⚑⚑ THE DISCHARGED SUCCESSOR: the UKS binding on the PROVED keyed-ROM floor.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The deployed concat-KDF `cr.H ()` is idealised as ONE
+SAMPLED oracle `H : Unit × Pre → Fin (2 ^ l)` over the (finite, truncated-deployed-shape) framed
+`(ss_x, ss_pq, transcript)` pre-image space `Pre` — the standard ROM idealisation of the fixed KDF at
+an ASYMPTOTIC key width, exactly `RomCarrierSites`' header: a deliberate labelled modelling step, NOT a
+derivation about the fixed public function; there is no `l` at which `Fin (2 ^ l)` IS the deployed
+fixed-width session key. What it buys: the floor under the binding is `KeyedRomFloor.keyedRom_hard`
+(the birthday bound, PROVED) where the deleted `_from_polyTime` form carried a hypothesis that is
+FALSE. The break keeps the §2 commitOpenGame SHAPE: the PUBLISHED session key is in the win relation
+(`romOpenGame`), the forger is a query-counted oracle program fixed BEFORE the oracle is sampled. -/
+
+section RomSuccessor
+
+variable (Pre : Type) [Fintype Pre] [DecidableEq Pre] [Nonempty Pre]
+
+/-- **THE UKS KEYED-ROM FAMILY** — the deployed session-key KDF as a sampled oracle over the framed
+pre-image space (`Unit` tag: the deployed KDF has a single domain-separation slot; the KEYING is the
+oracle sampling itself), ideal `λ`-bit session keys. -/
+def uksRomFamily : KeyedRomFamily :=
+  flatFamily Unit inferInstance inferInstance inferInstance (fun _ => Pre)
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The family's width obligation, closed by construction — no site-side width fact survives. -/
+theorem uksRomFamily_card_R (l : ℕ) :
+    letI := (uksRomFamily Pre).rFin l
+    Fintype.card ((uksRomFamily Pre).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE UKS CARRIER** — the session key is one oracle query at the framed pre-image; the encoding is
+the identity in the payload, injective on the nose (the framing injectivity `WireAke.channel_binding`
+carries lives in the pre-image space itself here). -/
+def uksRomCarrier : RomCarrier (uksRomFamily Pre) :=
+  taggedCarrier _ (fun _ => Unit) (fun _ => Pre) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- **THE UKS BREAK AT THE SAMPLED ORACLE** — the §2 shape verbatim: the adversary PUBLISHES a session
+key and exhibits two DISTINCT framed pre-images that BOTH derive it. -/
+abbrev uksRomGame : Game := romOpenGame (uksRomFamily Pre) (uksRomCarrier Pre)
+
+/-- **THE DEPLOYED UKS ATTACK IS A WIN** — two distinct framed `(ss_x, ss_pq, transcript)` pre-images
+whose sampled-oracle keys both equal the published key `k` are a win of the game, by the win relation
+itself (`WireAke.uks_breaks_hashcr`, restated at the sampled oracle). -/
+theorem uksRom_forgery_is_break (l : ℕ) (H : (uksRomGame Pre).Inst l) (k : Fin (2 ^ l))
+    {p p' : Pre} (hne : p ≠ p') (h1 : H ((), p) = k) (h2 : H ((), p') = k) :
+    (uksRomGame Pre).wins l H (k, ((), ()), p, p') :=
+  ⟨hne, h1, h2⟩
+
+/-- **⚑⚑ THE RE-GROUNDED CHANNEL BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded UKS forger has NEGLIGIBLE advantage: one published session key derives from ONE channel
+except with negligible probability, in the keyed ROM model of the header. The hypotheses are a
+polynomial query budget and the forger's membership in the query class. This is what
+`channel_binding_from_polyTime` (DELETED — floor refuted) claimed and could not have. -/
+theorem channel_binding_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (uksRomGame Pre))
+    (hA : RomOpenEff (uksRomFamily Pre) (uksRomCarrier Pre) Q A) :
+    Negl (gameAdv (uksRomGame Pre) A) :=
+  rom_open_binds _ _ Q hQ (uksRomFamily_card_R Pre) A hA
+
+/-- **(TOOTH — the counterexample DIES.)** A UKS forger with non-negligible advantage is OUTSIDE the
+query class: the answer-size strategy that refutes the `IsPolyTime` floor cannot produce a member. -/
+theorem uksRom_nonNegl_forger_excluded (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (uksRomGame Pre)) (hnn : ¬ Negl (gameAdv (uksRomGame Pre) A)) :
+    ¬ RomOpenEff (uksRomFamily Pre) (uksRomCarrier Pre) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (uksRomFamily_card_R Pre) A hnn
+
+/-- **(TOOTH — admitted, winnable, DEFANGED, at a CLOSED instance.)** At `Pre = Fin 4`, `Q = 2`: the
+`0`-query hardcoded opener — the exact shape that refutes the `IsPolyTime` floor with probability `1` —
+is IN the class, wins with POSITIVE probability at every parameter, and its advantage is NEGLIGIBLE.
+The whole successor spine elaborates end-to-end at a closed instance; the counterexample dies by
+keying, not by exclusion. -/
+theorem uksRom_fires :
+    (RomOpenEff (uksRomFamily (Fin 4)) (uksRomCarrier (Fin 4)) (fun _ => 2)
+        (romOpenAdv _ _ (constOpenComp _ (uksRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ())) (fun _ => (0 : Fin 4))
+          (fun _ => (1 : Fin 4)))))
+    ∧ (∀ l, 0 < gameAdv (uksRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (uksRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ())) (fun _ => (0 : Fin 4))
+          (fun _ => (1 : Fin 4)))) l)
+    ∧ Negl (gameAdv (uksRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (uksRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ((), ())) (fun _ => (0 : Fin 4))
+          (fun _ => (1 : Fin 4))))) := by
+  refine ⟨constOpen_in_eff _ _ _ _ _ _ _,
+    fun l => constOpen_gameAdv_pos _ _ _ _ _ _ l (by show (0 : Fin 4) ≠ 1; decide),
+    constOpen_binds _ _ _ _ _ _ (fun _ => 2) ⟨1, 5, ?_⟩ (uksRomFamily_card_R (Fin 4))⟩
+  filter_upwards [Filter.eventually_ge_atTop 5] with n hn
+  have hn' : (5 : ℝ) ≤ (n : ℝ) := by exact_mod_cast hn
+  rw [abs_of_nonneg (by positivity)]
+  push_cast
+  nlinarith
+
+end RomSuccessor
+
 #assert_all_clean [
   uksGame_wins_iff,
   channel_binding_advantage_bound,
-  channel_binding_from_polyTime,
   sessionKey_eq_family,
   channelKey_crK_CR,
   channelKey_badCR_not_CR,
   channel_binding_fires,
   channelKey_eff_top_false,
   channelKey_eff_bot_vacuous,
-  channel_binding_eff_fires
+  channel_binding_eff_fires,
+  uksRomFamily_card_R,
+  uksRom_forgery_is_break,
+  channel_binding_rom,
+  uksRom_nonNegl_forger_excluded,
+  uksRom_fires
 ]
 
 end Dregg2.Crypto.WireAkeRegrounded

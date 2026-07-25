@@ -6,6 +6,16 @@
 //! `dregg-multiway-tug`'s `TugOffering`: where the tug paints a hidden HAND, automatafl paints a
 //! hidden MOVE on a shared BOARD.
 //!
+//! **The board is the STOCK 11×11 two-player game**, and every resolved round's two revealed moves
+//! are RECORDED ([`AutomataflSession::rounds`], [`AutomataflSession::start_board`]) — so a finished
+//! match hands the crown the exact object the two-leg fold attests
+//! (`AutomataflMatch::played(start, rounds)`: Leg R the players' adjudicated moves, Leg A the
+//! automaton's step, board-window chained). CLEAN rounds only: a round the seats CLASHED on is
+//! still played and still recorded, but [`AutomataflSession::unfoldable_round`] names it and the
+//! fold refuses it — the surface resolves a clash by DROPPING moves, which is not the rule the
+//! ruleset states (mark the square, re-enter the round), so attesting it would be a proof of a
+//! transition nobody licensed.
+//!
 //! **The board is a [`deos_view::ViewNode::CoordGrid`]** — one [`deos_view::CoordCell`] per square,
 //! the particle as the glyph (`·` vacuum, `R` repulsor, `A` attractor, `@` automaton), the
 //! automaton cell marked, and each affordance-bearing square carrying the `{turn, arg}` a click
@@ -49,10 +59,12 @@ use dreggnet_offerings::{
 };
 
 use crate::game::{
-    AutomataflGame, CELLS, COMMIT, GOAL_A, GOAL_B, MatchState, N, RESOLVE, REVEAL, SELECT,
-    coord_of, index_of, opening_board,
+    AutomataflGame, CELLS, COMMIT, GOALS, MatchState, N, RESOLVE, REVEAL, SELECT, coord_of,
+    goals_of, index_of, opening_board, winner_of,
 };
-use crate::reference::{ATT, AUTO, Board, Coord, Move, REP, VAC, apply_turn, move_valid};
+use crate::reference::{
+    ATT, AUTO, Board, Coord, Move, REP, VAC, apply_turn, move_valid, round_is_clean,
+};
 
 /// The default match seed when a [`SessionConfig`] pins none.
 const DEFAULT_SEED: u64 = 0xA07F;
@@ -64,9 +76,9 @@ const MAX_TURNS: u64 = 64;
 /// A seat at the table (automatafl is n=2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seat {
-    /// Seat A — goal square [`GOAL_A`].
+    /// Seat A — the two `y = 0` goal corners (see [`GOALS`]).
     A,
-    /// Seat B — goal square [`GOAL_B`].
+    /// Seat B — the two `y = 10` goal corners.
     B,
 }
 
@@ -87,12 +99,23 @@ impl Seat {
         }
     }
 
-    /// The seat's goal square — the automaton arriving here wins the match for them.
-    pub fn goal(self) -> Coord {
-        match self {
-            Seat::A => GOAL_A,
-            Seat::B => GOAL_B,
-        }
+    /// The seat's TWO goal corners — the automaton arriving on either wins the match for them
+    /// (the stock two-player rule: each player owns the two corners in one row).
+    pub fn goals(self) -> Vec<Coord> {
+        goals_of(self.idx() as u32)
+    }
+
+    /// The seat that owns goal corner `c`, if any.
+    pub fn owner_of_goal(c: Coord) -> Option<Seat> {
+        GOALS
+            .iter()
+            .find(|(g, _)| *g == c)
+            .map(|(_, w)| Seat::from_idx(*w))
+    }
+
+    /// The seat an index / owner tag (`0`/`1`) names.
+    pub fn from_idx(who: u32) -> Seat {
+        if who == 0 { Seat::A } else { Seat::B }
     }
 
     /// The seat's label.
@@ -139,6 +162,17 @@ pub struct AutomataflSession {
     game: AutomataflGame,
     /// The reference board (the oracle: `apply_turn` computes each resolution).
     board: Board,
+    /// **The GENESIS position** — the board the match opened on, kept so the played match can be
+    /// folded (`AutomataflMatch::played(start, rounds)`); the fold's first leaf declares this as
+    /// its IN window and the root exposes it as the decodable `board_genesis`.
+    start: Board,
+    /// **THE MOVE HISTORY** — every RESOLVED round's two revealed moves, in order. Without this
+    /// the surface threw every move away and the only foldable shape left was the automaton-only
+    /// chain, which attests K independent automaton steps and NO MOVE AT ALL. With it, a played
+    /// match folds through the TWO-LEG (Leg R resolve, Leg A step) chain that actually attests the
+    /// players' moves. Pushed on a LANDED resolution only (a refused resolution commits nothing
+    /// and records nothing — anti-ghost).
+    rounds: Vec<(Move, Move)>,
     /// The seat holders. A seat is CLAIMED by the first identity that acts from it (so a web /
     /// Discord / Telegram user — whose identity is a derived key, not a fixed string — really
     /// sits down). The canonical [`AutomataflOffering::seat_identity`] claims work the same way.
@@ -198,6 +232,35 @@ impl AutomataflSession {
     /// The reference board (the committed position).
     pub fn board(&self) -> &Board {
         &self.board
+    }
+
+    /// **The genesis position** — the board this match opened on (the fold's `board_genesis`).
+    pub fn start_board(&self) -> &Board {
+        &self.start
+    }
+
+    /// **The recorded move history** — each resolved round's `(seat A move, seat B move)`, in
+    /// order. This is the object `AutomataflMatch::played(start, rounds)` folds.
+    pub fn rounds(&self) -> &[(Move, Move)] {
+        &self.rounds
+    }
+
+    /// The index of the first recorded round that is NOT clean (a fork on a shared source or a
+    /// clash on a shared destination), or `None` when every round folds.
+    ///
+    /// A conflicting round is refused by the fold ([`round_is_clean`]): the surface resolved it by
+    /// DROPPING the clashing moves, which is the audited-WRONG rule — the ruleset marks the
+    /// contested square and re-enters the round. Surfacing the index here lets a frontend say
+    /// WHICH round blocks the crown instead of reporting an opaque prover failure.
+    pub fn unfoldable_round(&self) -> Option<usize> {
+        let mut b = self.start.clone();
+        for (i, (ma, mb)) in self.rounds.iter().enumerate() {
+            if !round_is_clean(&b, &[*ma, *mb]) {
+                return Some(i);
+            }
+            b = apply_turn(&b, &[*ma, *mb]);
+        }
+        None
     }
 
     /// The deployed executor game (read the COMMITTED state off the cell).
@@ -405,12 +468,20 @@ impl AutomataflSession {
             let is_selected = selections.contains(&c);
             let is_target = targets.contains(&c);
 
+            let is_goal = Seat::owner_of_goal(c).is_some();
+
             let (tag, highlight) = if is_auto {
                 ("accent", true)
             } else if is_selected {
                 ("warn", true)
             } else if is_target {
                 ("good", true)
+            } else if is_goal {
+                // THE OBJECTIVE RING on an OCCUPIED goal corner. A vacant one is already legible by
+                // its `a`/`b` glyph, but the stock opening starts with a repulsor on all four
+                // corners — without this the four squares that decide the game would paint as
+                // ordinary pieces, and a stranger could not see where the automaton must be driven.
+                ("goal", false)
             } else if p == VAC {
                 ("muted", false)
             } else {
@@ -426,11 +497,15 @@ impl AutomataflSession {
                 (String::new(), idx as i64)
             };
 
+            // A VACANT goal corner paints its owner's lowercase letter (`a` / `b`) — the four
+            // stock corners, two per seat. An OCCUPIED corner keeps its particle glyph and is
+            // marked by the `goal` tag above.
             let mut glyph = Self::glyph(p).to_string();
-            if p == VAC && c == GOAL_A {
-                glyph = "a".to_string(); // seat A's goal square
-            } else if p == VAC && c == GOAL_B {
-                glyph = "b".to_string();
+            if p == VAC && is_goal {
+                glyph = Seat::owner_of_goal(c)
+                    .expect("is_goal")
+                    .label()
+                    .to_lowercase();
             }
 
             cells.push(CoordCell {
@@ -516,6 +591,15 @@ impl AutomataflSession {
         ViewNode::Menu { items }
     }
 
+    /// A seat's two goal corners, rendered (`(0,0)·(10,0)`).
+    fn goal_text(seat: Seat) -> String {
+        seat.goals()
+            .iter()
+            .map(|c| format!("({},{})", c.0, c.1))
+            .collect::<Vec<_>>()
+            .join("·")
+    }
+
     /// The surface for `viewer` (`None` = a spectator: BOTH sealed moves are fog).
     fn surface_for(&self, viewer: Option<Seat>) -> Surface {
         let phase = self.phase();
@@ -547,13 +631,13 @@ impl AutomataflSession {
                     cases: Vec::<PillCase>::new(),
                 },
                 ViewNode::Pill {
-                    text: format!("goal A ({},{})", GOAL_A.0, GOAL_A.1),
+                    text: format!("goals A {}", Self::goal_text(Seat::A)),
                     tag: "good".to_string(),
                     slot: None,
                     cases: Vec::<PillCase>::new(),
                 },
                 ViewNode::Pill {
-                    text: format!("goal B ({},{})", GOAL_B.0, GOAL_B.1),
+                    text: format!("goals B {}", Self::goal_text(Seat::B)),
                     tag: "good".to_string(),
                     slot: None,
                     cases: Vec::<PillCase>::new(),
@@ -595,7 +679,9 @@ impl Offering for AutomataflOffering {
         let board = opening_board();
         let session = AutomataflSession {
             game,
+            start: board.clone(),
             board,
+            rounds: Vec::new(),
             seats: [None, None],
             sel: [None, None],
             committed: [None, None],
@@ -625,19 +711,14 @@ impl Offering for AutomataflOffering {
         let phase = session.phase();
         let mut out = Vec::new();
         if matches!(phase, Phase::Commit) {
-            // One `select` affordance per movable piece (the board grid paints the same
-            // `{turn, arg}` per square).
-            for idx in 0..CELLS {
-                let c = coord_of(idx);
-                if session.movable(c) {
-                    out.push(Action::new(
-                        format!("Select ({},{})", c.0, c.1),
-                        SELECT,
-                        idx as i64,
-                        true,
-                    ));
-                }
-            }
+            // ORDER MATTERS on a button-budgeted frontend. The Discord/Telegram renderers paint
+            // the first ≤25 actions as buttons and silently drop the rest; at 11×11 the stock
+            // opening has 36 movable pieces, so putting the SEAL targets after every select left
+            // a Discord player able to select a piece and never able to seal it. The live
+            // selection's targets therefore come FIRST (the affordance the phase is waiting on),
+            // then the selects. The WEB board is unaffected either way: every square of the
+            // `CoordGrid` is its own POST form, so the browser never reads this list.
+            //
             // One `commit` affordance per legal target of EITHER seat's live selection (a seat's
             // own board grid shows only its own; the executor re-checks the seat on advance).
             let mut targets: Vec<usize> = Vec::new();
@@ -661,6 +742,19 @@ impl Offering for AutomataflOffering {
                     idx as i64,
                     true,
                 ));
+            }
+            // One `select` affordance per movable piece (the board grid paints the same
+            // `{turn, arg}` per square).
+            for idx in 0..CELLS {
+                let c = coord_of(idx);
+                if session.movable(c) {
+                    out.push(Action::new(
+                        format!("Select ({},{})", c.0, c.1),
+                        SELECT,
+                        idx as i64,
+                        true,
+                    ));
+                }
             }
         }
         out.push(Action::new(
@@ -812,13 +906,10 @@ impl Offering for AutomataflOffering {
                 // THE RESOLUTION — the pure transition the AIR re-checks in-circuit: validity
                 // filter → conflict resolve → apply → the automaton's step.
                 let next = apply_turn(&session.board, &[ma, mb]);
-                let winner = if next.auto == GOAL_A {
-                    Some(Seat::A)
-                } else if next.auto == GOAL_B {
-                    Some(Seat::B)
-                } else {
-                    None
-                };
+                // THE WIN CHECK — the automaton standing on one of the four stock goal corners
+                // wins for that corner's owner (`reference::win_owner`, the `try_complete_round`
+                // goal scan).
+                let winner = winner_of(&next).map(Seat::from_idx);
 
                 let before = (
                     session.board.clone(),
@@ -836,6 +927,9 @@ impl Offering for AutomataflOffering {
                 session.revealed = [false, false];
                 session.winner = winner;
                 session.ended = winner.is_some() || session.turn_no >= MAX_TURNS;
+                // RECORD THE ROUND — the two revealed moves, in seat order, appended only once
+                // the executor accepts the resolution below (a refused resolution pops it).
+                session.rounds.push((ma, mb));
 
                 match session.game.commit_state(RESOLVE, &session.state()) {
                     Ok(receipt) => {
@@ -846,7 +940,8 @@ impl Offering for AutomataflOffering {
                         }
                     }
                     Err(e) => {
-                        // Nothing committed — restore the pre-resolution surface (anti-ghost).
+                        // Nothing committed — restore the pre-resolution surface (anti-ghost),
+                        // INCLUDING the move history: an unlanded round is not a played round.
                         session.board = before.0;
                         session.sel = before.1;
                         session.committed = before.2;
@@ -855,6 +950,7 @@ impl Offering for AutomataflOffering {
                         session.turn_no = before.5;
                         session.winner = None;
                         session.ended = false;
+                        session.rounds.pop();
                         refuse(e.to_string())
                     }
                 }

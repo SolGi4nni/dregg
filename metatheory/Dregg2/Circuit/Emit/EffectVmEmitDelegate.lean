@@ -58,6 +58,7 @@ transition IS universe-A's validated `caps`-digest transition; not a fourth spec
 `Poseidon2SpongeCR hash`; the cap-table digest ONLY as `Function.Injective D`. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 import Dregg2.Circuit.Inst.delegate
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitDelegate
@@ -312,35 +313,70 @@ theorem delegate_runnable_full_sound (D : Caps → ℤ) (s : RecChainedState) (a
   cap_runnable_full_sound (delegateCapDigestNew D s args) preRoots hash env pre post postRoots
     hrow henc hroots hgatesat
 
-/-- **`delegate_runnable_binds_full_state_or_collides` — the whole-17-field anti-ghost for `delegate`,
-UNCONDITIONALLY.** Two wide `delegate` rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
-carriers) EITHER agree on EVERY absorbed state-block column (the moved `cap_root` included) AND every
-side-table root, OR exhibit a genuine collision of the deployed sponge — on the state block (`WideColl`)
-or on the ordered root list (`RootsColl`). So keeping `NEW_COMMIT` while tampering any of the 17 fields
-COSTS a named sponge collision. Inherited from the shared
-`cap_runnable_binds_full_state_or_collides`.
+/-- ⚑ **WHAT CHANGED AND WHY (the reduction that replaces the deleted disjunction).** This section
+used to export `delegate_runnable_binds_full_state_or_collides`, concluding
+`… ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. That form is TRUE of the deployed sponge —
+unlike its `Poseidon2SpongeCR` predecessor, which it REFUTES — but it is UNCLOSED: a collision of
+the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. It quantified over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the forgery is a
+first-class `Game` at `delegate`'s OWN wide descriptor (the shared cap-graph
+`attenuateVmDescriptorWide`), the extractor is a MAP OF ADVERSARIES (the reduction-internal
+witness), and the conclusions are (a) negligibility under the DEPLOYED sponge's collision floor
+`HashCRHardQuant (spongeFamily D) Eff`, `hEff` in the open, both poles priced
+(`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`), and (b) the DISCHARGED keyed-ROM form on
+the PROVED birthday floor (`keyedRom_hard`) — NO floor hypothesis — in the LABELLED random-oracle
+model of `EffectVmRowCommitReduction` §5's header (the sampled `Fin (2 ^ l)` digest is the
+modelling step; no `l` is the deployed ~31-bit felt). The ROM commitment layer carries no
+descriptor (the nested absorb schedule is one object across effects); `delegate`'s per-effect
+circuit content (`satisfiedVm` at `delegateVmDescriptorWide`) lives in the `_advantage_bound`
+form. -/
+def delegateWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := delegateVmDescriptorWide
+  usesWideSites := rfl
 
-The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed BabyBear
-sponge REFUTES, so at deployed parameters it was vacuous. This disjunction is formally weaker and holds
-of the deployed sponge. -/
-theorem delegate_runnable_binds_full_state_or_collides (capDigestNew : ℤ) (preRoots : SysRoots)
-    (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash delegateVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash delegateVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂
-      ∧ (∀ i : Fin Dregg2.Exec.SystemRoots.N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  cap_runnable_binds_full_state_or_collides capDigestNew preRoots hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `delegate_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD BINDING for
+`delegate`.** Under the DEPLOYED sponge's collision floor at the class `Eff`, an adversary
+producing two rows BOTH SATISFYING `delegateVmDescriptorWide`, publishing one `NEW_COMMIT` with
+genuine `systemRootsDigest` carriers, yet binding DIFFERENT state (an absorbed column — the moved
+`cap_root` included — or a side-table root), has NEGLIGIBLE advantage. Replaces the deleted bare
+disjunction. -/
+theorem delegate_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D delegateWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D delegateWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D delegateWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D delegateWideRowSpec Eff A hEff hCR
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv) in
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded) in
+/-- **⚑⚑ `delegate_binds_full_state_rom` — the DISCHARGED whole-17-field binding, on the PROVED
+floor.** A query-bounded forger of the wide nested `state_commit` — the very commitment
+`delegate`'s wide row publishes — has NEGLIGIBLE advantage, in the keyed ROM model of
+`EffectVmRowCommitReduction` §5's header. NO floor hypothesis. The COMMITMENT layer carries no
+descriptor, so this is `wideRow_binds_rom` at the deployed tag space; `delegate`'s per-effect
+circuit content stays in the `_advantage_bound` form above, `hEff` in the open. -/
+theorem delegate_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
 
 #assert_axioms delegate_runnable_full_sound
-#assert_axioms delegate_runnable_binds_full_state_or_collides
+#assert_axioms delegate_binds_full_state_advantage_bound
+#assert_axioms delegate_binds_full_state_rom
 
 /-! ## §5 — Axiom-hygiene tripwires (the honesty tripwire). -/
 

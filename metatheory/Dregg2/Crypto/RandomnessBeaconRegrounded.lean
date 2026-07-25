@@ -45,6 +45,7 @@ Beacon commit-reveal leg. Generic template = `HermineHashCRRegrounded`; the PQ s
 = `XmVrfRefinementRegrounded`; the wire channel binding = `WireAkeRegrounded`. Stays in the beacon subtree.
 -/
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Crypto.HashRandRefinement
 
 namespace Dregg2.Crypto.RandomnessBeaconRegrounded
@@ -56,8 +57,13 @@ open Dregg2.Circuit.HashFloorHonesty
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
-   hermine_commitment_binding_advantage_bound hermine_commitment_binding_from_polyTime
-   hashAnsSizeOf openAnsSizeOf crEquivocator)
+   hermine_commitment_binding_advantage_bound crEquivocator)
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier)
+open Dregg2.Crypto.RomCarrierSites
+  (flatFamily fixedTagCarrier romOpenGame RomOpenEff rom_open_binds romOpen_forger_excluded
+   romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
    collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
@@ -167,46 +173,165 @@ theorem hashrand_output_binding_advantage_bound {Party Ct Pre Digest : Type}
     Negl (gameAdv (hashRandOutputGame X) A) :=
   hermine_commitment_binding_advantage_bound (hashRandOutputFamily X) Eff A hEff hD
 
-/-! ### §2b — all three efficiency obligations DISCHARGED at `Eff := IsPolyTime`.
+/-! ### §2R — ⚑⚑ THE DISCHARGED SUCCESSORS: all three legs on the PROVED keyed-ROM floor.
 
-Each extractor DISCARDS the published value and keeps the two pre-images, so its growth constants are
-`(1, 0)` and no output-size hypothesis is needed. The per-site inputs are the reshaper's declared work
-`(cw, bw)` — a Lean `fun` has no runtime — and the deployment's own pre-image/digest encodings, which a
-`KeyedHashFamily` over abstract carriers cannot supply itself. -/
+⚑ **WHAT WAS DELETED HERE, AND WHY.** `beacon_binding_from_polyTime`,
+`hashrand_commit_binding_from_polyTime` and `hashrand_output_binding_from_polyTime` discharged `Eff`
+at `CostAdversary.IsPolyTime`, whose floor `HashCRHardQuant … (IsPolyTime …)` is REFUTED at deployed
+parameters (`Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear`: `IsPolyTime`
+prices answer SIZE, so a `.pure` answerer with a hardcoded short collision is in the class and wins
+with probability `1`). ALL THREE ARE DELETED, and replaced by the keyed-ROM successors below.
 
-/-- **⚑ LEADER ELECTION'S EFFICIENCY OBLIGATION DISCHARGED.** A beacon-steering adversary that is
-EFFICIENT yields a collision finder that is STILL efficient, so the floor at `Eff := IsPolyTime` applies
-to IT: the beacon resists steering with NO floating efficiency parameter. -/
-theorem beacon_binding_from_polyTime {Idx W C : Type} [DecidableEq W] [DecidableEq C]
-    (cr : CommitReveal Idx W C) (i : Idx) (szIn : ℕ → W → ℕ) (szOut : ℕ → C → ℕ)
-    (A : Adversary (beaconGame cr i))
-    (hA : IsPolyTime (openAnsSizeOf (beaconHashFamily cr i) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (beaconHashFamily cr i)
-      (IsPolyTime (hashAnsSizeOf (beaconHashFamily cr i) szIn))) :
-    Negl (gameAdv (beaconGame cr i) A) :=
-  hermine_commitment_binding_from_polyTime (beaconHashFamily cr i) szIn szOut A hA cw bw hD
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The abstract beacon combine hash is idealised as ONE
+SAMPLED oracle `H : Idx × W → Fin (2 ^ l)` keyed by the beacon's own domain-separation index space;
+the deployed `crypto-hashrand` surface as ONE oracle `H : Role × Pre → Fin (2 ^ l)` keyed by the
+DEPLOYED `Role` tag, with the commit leg pinned at `Role.commit` and the combine leg at `Role.output`
+(`fixedTagCarrier` — both legs share one oracle, exactly the deployed domain separation). The standard
+ROM idealisation at an ASYMPTOTIC digest width — a deliberate labelled modelling step, NOT a
+derivation about the fixed public function. The floor under all three is
+`KeyedRomFloor.keyedRom_hard` (the birthday bound, PROVED); the breaks keep §2's commitOpenGame shape
+(`romOpenGame`: the PUBLISHED beacon output / commitment is in the win relation). -/
 
-/-- **⚑ THE DEPLOYED COMMIT LEG'S EFFICIENCY OBLIGATION DISCHARGED.** -/
-theorem hashrand_commit_binding_from_polyTime {Party Ct Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
-    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
-    (A : Adversary (hashRandCommitGame X))
-    (hA : IsPolyTime (openAnsSizeOf (hashRandCommitFamily X) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (hashRandCommitFamily X)
-      (IsPolyTime (hashAnsSizeOf (hashRandCommitFamily X) szIn))) :
-    Negl (gameAdv (hashRandCommitGame X) A) :=
-  hermine_commitment_binding_from_polyTime (hashRandCommitFamily X) szIn szOut A hA cw bw hD
+section RomSuccessor
 
-/-- **⚑ THE DEPLOYED COMBINE LEG'S EFFICIENCY OBLIGATION DISCHARGED.** -/
-theorem hashrand_output_binding_from_polyTime {Party Ct Pre Digest : Type}
-    [DecidableEq Pre] [DecidableEq Digest] (X : HashRand Party Ct Pre Digest)
-    (szIn : ℕ → Pre → ℕ) (szOut : ℕ → Digest → ℕ)
-    (A : Adversary (hashRandOutputGame X))
-    (hA : IsPolyTime (openAnsSizeOf (hashRandOutputFamily X) szIn szOut) A) (cw bw : ℕ)
-    (hD : HashCRHardQuant (hashRandOutputFamily X)
-      (IsPolyTime (hashAnsSizeOf (hashRandOutputFamily X) szIn))) :
-    Negl (gameAdv (hashRandOutputGame X) A) :=
-  hermine_commitment_binding_from_polyTime (hashRandOutputFamily X) szIn szOut A hA cw bw hD
+open Dregg2.Crypto.HashRandRefinement (Role) in
+/-- The deployed `crypto-hashrand` role tag is finite — the flat family's key obligation, once. -/
+def hrRoleFin : Fintype Role :=
+  Fintype.ofList [Role.commit, Role.output] (fun r => by cases r <;> simp)
+
+variable (Idx : Type) [Fintype Idx] [DecidableEq Idx] [Nonempty Idx]
+variable (W : Type) [Fintype W] [DecidableEq W] [Nonempty W]
+
+/-- **THE ABSTRACT-BEACON KEYED-ROM FAMILY** — the combine/commit hash as ONE sampled oracle over the
+index-separated domain `Idx × W`, ideal `λ`-bit outputs. -/
+def beaconRomFamily : KeyedRomFamily :=
+  flatFamily Idx inferInstance inferInstance inferInstance (fun _ => W)
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The beacon family's width obligation, closed by construction. -/
+theorem beaconRomFamily_card_R (l : ℕ) :
+    letI := (beaconRomFamily Idx W).rFin l
+    Fintype.card ((beaconRomFamily Idx W).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE BEACON CARRIER AT A PINNED INDEX `i`** — the deployed slot never lets the adversary move its
+domain-separation index; the payload is the framed reveal itself, injective on the nose. -/
+def beaconRomCarrier (i : Idx) : RomCarrier (beaconRomFamily Idx W) :=
+  fixedTagCarrier _ (fun _ => i) (fun _ => Unit) (fun _ => W) (fun _ => inferInstance)
+    (fun _ _ w => w) (fun _ _ _ _ h => h)
+
+/-- The beacon-steering break at the sampled oracle: one PUBLISHED beacon output produced by two
+DISTINCT reveals — §2's `beaconGame`, at the sampled oracle. -/
+abbrev beaconRomGame (i : Idx) : Game := romOpenGame (beaconRomFamily Idx W) (beaconRomCarrier Idx W i)
+
+/-- **THE DEPLOYED STEERING IS A WIN** — two distinct reveals whose `i`-tagged oracle outputs both
+equal the published beacon output are a win. -/
+theorem beaconRom_forgery_is_break (i : Idx) (l : ℕ) (H : (beaconRomGame Idx W i).Inst l)
+    (out : Fin (2 ^ l)) {w w' : W} (hne : w ≠ w')
+    (h1 : H (i, w) = out) (h2 : H (i, w') = out) :
+    (beaconRomGame Idx W i).wins l H (out, (), w, w') :=
+  ⟨hne, h1, h2⟩
+
+/-- **⚑⚑ THE RE-GROUNDED BEACON BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded beacon-steering adversary has NEGLIGIBLE advantage: no coalition steers or predicts the
+beacon except with negligible probability, in the keyed ROM model of the header. This is what
+`beacon_binding_from_polyTime` (DELETED — floor refuted) claimed and could not have. -/
+theorem beacon_binding_rom (i : Idx) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (beaconRomGame Idx W i))
+    (hA : RomOpenEff (beaconRomFamily Idx W) (beaconRomCarrier Idx W i) Q A) :
+    Negl (gameAdv (beaconRomGame Idx W i) A) :=
+  rom_open_binds _ _ Q hQ (beaconRomFamily_card_R Idx W) A hA
+
+/-- **(TOOTH — the counterexample DIES.)** A steering adversary with non-negligible advantage is
+OUTSIDE the query class. -/
+theorem beaconRom_nonNegl_forger_excluded (i : Idx) (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (beaconRomGame Idx W i)) (hnn : ¬ Negl (gameAdv (beaconRomGame Idx W i) A)) :
+    ¬ RomOpenEff (beaconRomFamily Idx W) (beaconRomCarrier Idx W i) Q A :=
+  romOpen_forger_excluded _ _ Q hQ (beaconRomFamily_card_R Idx W) A hnn
+
+/-! ### The DEPLOYED `crypto-hashrand` surface: one oracle, two pinned roles. -/
+
+open Dregg2.Crypto.HashRandRefinement (Role)
+
+variable (Pre : Type) [Fintype Pre] [DecidableEq Pre] [Nonempty Pre]
+
+/-- **THE `crypto-hashrand` KEYED-ROM FAMILY** — ONE oracle for both deployed legs, keyed by the
+DEPLOYED `Role` tag (`Role.commit` / `Role.output`), over the framed pre-image space. -/
+def hashRandRomFamily : KeyedRomFamily :=
+  flatFamily Role hrRoleFin inferInstance ⟨Role.commit⟩ (fun _ => Pre)
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- The deployed family's width obligation, closed by construction. -/
+theorem hashRandRomFamily_card_R (l : ℕ) :
+    letI := (hashRandRomFamily Pre).rFin l
+    Fintype.card ((hashRandRomFamily Pre).R l) = 2 ^ l := by
+  show Fintype.card (Fin (2 ^ l)) = 2 ^ l
+  simp
+
+/-- **THE COMMIT-LEG CARRIER** — `H (Role.commit, ·)`, role pinned in the encoding. -/
+def hashRandCommitRomCarrier : RomCarrier (hashRandRomFamily Pre) :=
+  fixedTagCarrier _ (fun _ => Role.commit) (fun _ => Unit) (fun _ => Pre) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- **THE COMBINE-LEG CARRIER** — `H (Role.output, ·)`, same oracle, the other pinned role. -/
+def hashRandOutputRomCarrier : RomCarrier (hashRandRomFamily Pre) :=
+  fixedTagCarrier _ (fun _ => Role.output) (fun _ => Unit) (fun _ => Pre) (fun _ => inferInstance)
+    (fun _ _ p => p) (fun _ _ _ _ h => h)
+
+/-- The commit-equivocation break at the sampled oracle (UNPREDICTABILITY's break). -/
+abbrev hashRandCommitRomGame : Game :=
+  romOpenGame (hashRandRomFamily Pre) (hashRandCommitRomCarrier Pre)
+
+/-- The bias break at the sampled oracle (UNBIASABILITY's break). -/
+abbrev hashRandOutputRomGame : Game :=
+  romOpenGame (hashRandRomFamily Pre) (hashRandOutputRomCarrier Pre)
+
+/-- **⚑ THE RE-GROUNDED DEPLOYED COMMIT BINDING** — an honest party is pinned to ONE contribution
+except with negligible probability (UNPREDICTABILITY's ground), floor PROVED. Successor of the
+deleted `hashrand_commit_binding_from_polyTime`. -/
+theorem hashrand_commit_binding_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (hashRandCommitRomGame Pre))
+    (hA : RomOpenEff (hashRandRomFamily Pre) (hashRandCommitRomCarrier Pre) Q A) :
+    Negl (gameAdv (hashRandCommitRomGame Pre) A) :=
+  rom_open_binds _ _ Q hQ (hashRandRomFamily_card_R Pre) A hA
+
+/-- **⚑ THE RE-GROUNDED DEPLOYED COMBINE BINDING** — the honest contribution MOVES the beacon except
+with negligible probability (UNBIASABILITY's ground), floor PROVED. Successor of the deleted
+`hashrand_output_binding_from_polyTime`. -/
+theorem hashrand_output_binding_rom (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (hashRandOutputRomGame Pre))
+    (hA : RomOpenEff (hashRandRomFamily Pre) (hashRandOutputRomCarrier Pre) Q A) :
+    Negl (gameAdv (hashRandOutputRomGame Pre) A) :=
+  rom_open_binds _ _ Q hQ (hashRandRomFamily_card_R Pre) A hA
+
+/-- **(TOOTH — admitted, winnable, DEFANGED, at a CLOSED instance.)** At `Pre = Fin 4`, `Q = 2`: the
+`0`-query hardcoded opener — the exact `IsPolyTime`-refuting shape — is IN the class, wins with
+POSITIVE probability, and its advantage is NEGLIGIBLE, on the DEPLOYED role-separated surface. -/
+theorem hashRandRom_fires :
+    (RomOpenEff (hashRandRomFamily (Fin 4)) (hashRandOutputRomCarrier (Fin 4)) (fun _ => 2)
+        (romOpenAdv _ _ (constOpenComp _ (hashRandOutputRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4)))))
+    ∧ (∀ l, 0 < gameAdv (hashRandOutputRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (hashRandOutputRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4)))) l)
+    ∧ Negl (gameAdv (hashRandOutputRomGame (Fin 4))
+        (romOpenAdv _ _ (constOpenComp _ (hashRandOutputRomCarrier (Fin 4))
+          (fun l => (0 : Fin (2 ^ l))) (fun _ => ()) (fun _ => (0 : Fin 4)) (fun _ => (1 : Fin 4))))) := by
+  refine ⟨constOpen_in_eff _ _ _ _ _ _ _,
+    fun l => constOpen_gameAdv_pos _ _ _ _ _ _ l (by show (0 : Fin 4) ≠ 1; decide),
+    constOpen_binds _ _ _ _ _ _ (fun _ => 2) ⟨1, 5, ?_⟩ (hashRandRomFamily_card_R (Fin 4))⟩
+  filter_upwards [Filter.eventually_ge_atTop 5] with n hn
+  have hn' : (5 : ℝ) ≤ (n : ℝ) := by exact_mod_cast hn
+  rw [abs_of_nonneg (by positivity)]
+  push_cast
+  nlinarith
+
+end RomSuccessor
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the abstract beacon and the deployed surface. -/
 
@@ -336,9 +461,14 @@ theorem hashrand_output_eff_fires
   hashrand_commit_binding_advantage_bound,
   hashrand_output_binding_advantage_bound,
   beaconGame_wins_iff,
-  beacon_binding_from_polyTime,
-  hashrand_commit_binding_from_polyTime,
-  hashrand_output_binding_from_polyTime,
+  beaconRomFamily_card_R,
+  beaconRom_forgery_is_break,
+  beacon_binding_rom,
+  beaconRom_nonNegl_forger_excluded,
+  hashRandRomFamily_card_R,
+  hashrand_commit_binding_rom,
+  hashrand_output_binding_rom,
+  hashRandRom_fires,
   beacon_exBeaconHash_CR,
   beacon_badBeaconOut_not_CR,
   hashRand_goodCR_commit_CR,

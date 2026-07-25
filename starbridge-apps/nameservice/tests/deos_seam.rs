@@ -211,7 +211,7 @@ fn the_executor_re_enforces_a_rewound_expiry_is_refused() {
     // A REWOUND expiry: 5_000 -> 4_000. `Monotonic(EXPIRY)` refuses the rewind.
     let rewind = vec![Effect::SetField {
         cell,
-        index: EXPIRY_SLOT,
+        index: EXPIRY_SLOT as u64,
         value: field_from_u64(4_000),
     }];
     let action = cclerk.make_action(cell, "renew_name", rewind);
@@ -257,7 +257,7 @@ fn the_executor_re_enforces_an_un_revoke_is_refused() {
     // changed value).
     let un_revoke = vec![Effect::SetField {
         cell,
-        index: REVOKED_SLOT,
+        index: REVOKED_SLOT as u64,
         value: field_from_u64(0),
     }];
     let action = cclerk.make_action(cell, "revoke_name", un_revoke);
@@ -303,7 +303,7 @@ fn the_executor_re_enforces_a_name_rebind_is_refused() {
     // old, changed value).
     let rebind = vec![Effect::SetField {
         cell,
-        index: NAME_HASH_SLOT,
+        index: NAME_HASH_SLOT as u64,
         value: field_from_bytes(b"evil.dregg"),
     }];
     let action = cclerk.make_action(cell, "register_name", rebind);

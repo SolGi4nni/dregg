@@ -32,6 +32,10 @@ __wip_tests = ["dep:dregg-bridge"]
 dregg-circuit = { path = "../circuit" }
 dregg-commit = { path = "../commit" }
 dregg-turn = { path = "../turn" }
+# `full_pipeline.rs` mints a genuine proven receipt
+# (`dregg_turn_prover::mint_transfer_proven_receipt`), which moved out of
+# `dregg-turn`'s deleted `prover` feature into the prover crate.
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-sdk = { path = "../sdk" }

@@ -50,15 +50,18 @@ SYNTAX — and DERIVES `hEff` with `CostTactics.poly_time`, leaving `hout` as th
 The ⊤-collapse witness (`CostAdversary.bruteForce`) is PROVED excluded from that class and the class is
 PROVED inhabited, so the instantiated floor sits strictly between the two poles proved in §4.
 
-## ⚑ The `_from_polyTime` discharge is SUPERSEDED (07-23)
+## ⚑ The `_from_polyTime` discharges are DELETED; §7 is the DISCHARGED successor (07-24)
 
 `Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` refutes the
 `IsPolyTime`-instantiated floor at the deployed sponge, and `Crypto.RomBindingReduction`'s header
-proves no `Eff` repairs the fixed-function game.  `encBinding_from_polyTime(_fixedWidth)` therefore
-discharge onto a hypothesis that is FALSE at deployed parameters; the DISCHARGED successor lives on
-the keyed-ROM floor — `Crypto.RomBindingReduction.romCarrier_binds` with `Crypto.RomCarrierSites`
-(`flatSite_binds`, `chained_rom_binds`) as the per-site kit.  The `_advantage_bound` forms here stay
-the honest fixed-hash statements with `hEff` in the open.
+proves no `Eff` repairs the fixed-function game.  `encBinding_from_polyTime` /
+`encBinding_from_polyTime_fixedWidth` therefore discharged onto a hypothesis that is FALSE at
+deployed parameters — they are DELETED, and §7 lands the successor in-file on the PROVED keyed-ROM
+floor: the forger is an ORACLE PROGRAM over the sampled key-separated oracle, the site's
+key-dependent encoder becomes a `RomCarrierSites.keyedEncCarrier`, and `encBinding_rom` concludes
+`Negl` from `KeyedRomFloor.keyedRom_hard` (the birthday bound — a THEOREM) via `flatSite_binds`,
+with nothing refutable carried.  The chained shape's successor is `RomCarrierSites.chained_rom_binds`.
+The `_advantage_bound` forms here stay the honest fixed-hash statements with `hEff` in the open.
 
 ## Bars
 
@@ -68,6 +71,7 @@ import Dregg2.Crypto.FloorGames
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.CostTactics
 import Dregg2.Crypto.HermineHashCRRegrounded
+import Dregg2.Crypto.RomCarrierSites
 import Dregg2.Tactics
 
 namespace Dregg2.Crypto.EncodedBindingReduction
@@ -184,7 +188,8 @@ theorem encBinding_advantage_bound (F : KeyedHashFamily) (α : Type)
   negl_of_le (fun l => (gameAdv_mem_unit (encBreakGame F α enc) A l).1)
     (enc_adv_le F α enc A) (hCR _ hEff)
 
-/-! ## §3 — `hEff` DISCHARGED: the extractor is a pure post-map, so efficiency is a THEOREM. -/
+/-! ## §3 — the extractor is a pure post-map (the cost-model record; the `IsPolyTime` discharge that
+stood here is DELETED — its floor is refuted — and §7 is the discharged keyed-ROM successor). -/
 
 /-- The extractor IS a `CostAdversary.Adversary.postMap` — a pure output reshaping with the key passed
 through.  Definitional, and it is what lets `poly_time` apply. -/
@@ -196,33 +201,6 @@ theorem encBreakToFinder_eq_postMap (F : KeyedHashFamily) (α : Type)
           (fun l k c => (enc l k c.1, enc l k c.2)) A :=
   rfl
 
-/-- **⚑ THE REDUCTION, WITH EFFICIENCY DISCHARGED.** An EFFICIENT digest forger, put through the
-encoder, yields a collision finder for the deployed primitive that is STILL efficient — so the floor at
-`Eff := IsPolyTime` applies to it and the forger's advantage is negligible.  `hEff` is PROVED
-(`CostTactics.poly_time`, which folds in `isPolyTime_postMap`'s tight-δ composition and DERIVES the
-poly overhead from the forger's own bound), not assumed.
-
-The per-site inputs are exactly two, and both are honest modelling data rather than crypto:
-  * `cw`/`bw` — the encoder's DECLARED work, linear in its input size, charged in the program's SYNTAX
-    (`CostAdversary` design commitment 5: a Lean function has no runtime);
-  * `hout` — the encoder's PROVED output growth at the two games' own size measures. -/
-theorem encBinding_from_polyTime (F : KeyedHashFamily) (α : Type)
-    (enc : ∀ l, F.Key l → α → F.Input)
-    (szA : AnsSize (encBreakGame F α enc)) (szH : AnsSize (hashGame F))
-    (A : Adversary (encBreakGame F α enc))
-    (hA : IsPolyTime szA A)
-    (cw bw co bo : ℕ)
-    (hout : ∀ l (k : F.Key l) (c : α × α),
-      szH l (enc l k c.1, enc l k c.2) ≤ co * szA l c + bo)
-    (hCR : HashCRHardQuant F (IsPolyTime szH)) :
-    Negl (gameAdv (encBreakGame F α enc) A) := by
-  have hEff : IsPolyTime szH (encBreakToFinder F α enc A) := by
-    rw [encBreakToFinder_eq_postMap]
-    poly_time szA szH (fun l (k : F.Key l) (c : α × α) => (enc l k c.1, enc l k c.2))
-      cw bw co bo hA
-    exact hout
-  exact encBinding_advantage_bound F α enc (IsPolyTime szH) A hEff hCR
-
 /-- **THE STANDARD ANSWER ENCODING OF THE COLLISION GAME** — the two claimed preimages, measured by the
 domain's own size.  Concrete on purpose: the size measure belongs to the GAME (`CostAdversary` design
 commitment 4), and leaving it open would let a degenerate `sz := 0` make output free. -/
@@ -233,28 +211,6 @@ def pairAnsSize (F : KeyedHashFamily) (szI : ℕ → F.Input → ℕ) : AnsSize 
 def domainAnsSize (F : KeyedHashFamily) (α : Type) (enc : ∀ l, F.Key l → α → F.Input)
     (szD : ℕ → α → ℕ) : AnsSize (encBreakGame F α enc) :=
   fun l c => szD l c.1 + szD l c.2
-
-/-- **⚑ THE FIXED-WIDTH SPECIALIZATION — the shape almost every deployed site hits.** When the deployed
-encoder emits a FIXED number of limbs (`w`), the output-growth obligation is discharged once here and no
-site has to restate it.  This is the deployed reality: a `system_roots` sub-block is 8 felts, a cap leaf
-is 7, a wide state block is 178 — all constants pinned by the layout, none of them adversary-controlled.
-
-The site's remaining obligation collapses to a single `w`-width fact. -/
-theorem encBinding_from_polyTime_fixedWidth (F : KeyedHashFamily) (α : Type)
-    (enc : ∀ l, F.Key l → α → F.Input)
-    (szI : ℕ → F.Input → ℕ) (szD : ℕ → α → ℕ) (w : ℕ)
-    (hw : ∀ l (k : F.Key l) (a : α), szI l (enc l k a) ≤ w)
-    (A : Adversary (encBreakGame F α enc))
-    (hA : IsPolyTime (domainAnsSize F α enc szD) A)
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant F (IsPolyTime (pairAnsSize F szI))) :
-    Negl (gameAdv (encBreakGame F α enc) A) := by
-  refine encBinding_from_polyTime F α enc (domainAnsSize F α enc szD) (pairAnsSize F szI)
-    A hA cw bw 0 (w + w) (fun l k c => ?_) hCR
-  have h1 := hw l k c.1
-  have h2 := hw l k c.2
-  show szI l (enc l k c.1) + szI l (enc l k c.2) ≤ 0 * _ + (w + w)
-  omega
 
 /-! ## §4 — both poles of the floor, PROVED, so any instantiation can be priced exactly. -/
 
@@ -406,6 +362,74 @@ theorem chained_binding_advantage_bound {F : KeyedHashFamily} (P : KeyedForgery 
       (encBinding_advantage_bound F α enc₁ Eff B₁ hEff₁ hCR)
       (encBinding_advantage_bound F β enc₂ Eff B₂ hEff₂ hCR))
 
+/-! ## §7 — ⚑⚑ THE DISCHARGED SUCCESSOR: the encoded-domain binding on the PROVED keyed-ROM floor.
+
+⚑ **THE MODELLING STEP, STATED (not smuggled).** The deployed keyed primitive is idealised as ONE
+SAMPLED oracle `H : Key × Msg → Fin (2 ^ l)` over the site's (finite, truncated-deployed-shape)
+absorbed message space — the standard ROM idealisation at an ASYMPTOTIC digest width, a deliberate
+labelled modelling step, NOT a derivation about the fixed public function.  The site's key-dependent
+encoder `emb` and its STRUCTURAL payload-injectivity — the same two facts §1 takes — become a
+`RomCarrierSites.keyedEncCarrier`; the adversary chooses which key to attack (the key is its
+CONTEXT), and what it cannot choose is the sampled oracle. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
+open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
+open Dregg2.Crypto.RomBindingReduction (RomCarrier romCarrierGame RomCarrierEff)
+open Dregg2.Crypto.RomCarrierSites (flatFamily keyedEncCarrier flatSite_binds)
+
+variable (Key : Type) [Fintype Key] [DecidableEq Key] [Nonempty Key]
+variable (Msg : ℕ → Type) [∀ l, Fintype (Msg l)] [∀ l, DecidableEq (Msg l)]
+  [∀ l, Nonempty (Msg l)]
+variable (α : ℕ → Type) [∀ l, DecidableEq (α l)]
+
+/-- **THE ENCODED-DOMAIN KEYED-ROM FAMILY** — the site's key space and truncated message shape under
+the ideal `λ`-bit digest. -/
+def encRomFamily : KeyedRomFamily :=
+  flatFamily Key inferInstance inferInstance inferInstance Msg
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+
+/-- **THE ENCODED-DOMAIN CARRIER** — the site's key-dependent encoder with its STRUCTURAL
+payload-injectivity, verbatim §1's two per-site obligations, now over the sampled oracle
+(`RomCarrierSites.keyedEncCarrier`: the key rides in the context). -/
+def encRomCarrier (emb : ∀ l, Key → α l → Msg l)
+    (emb_inj : ∀ l (k : Key) (a b : α l), emb l k a = emb l k b → a = b) :
+    RomCarrier (encRomFamily Key Msg) :=
+  keyedEncCarrier (encRomFamily Key Msg) α (fun _ => inferInstance) emb emb_inj
+
+/-- **THE FORGERY IS THE DEPLOYED OBJECT, at the sampled oracle** — two DISTINCT domain points whose
+encoded messages the oracle maps to ONE digest at the attacked key are a win of the carrier game
+(`encForgery_is_break_of_inj`, restated at the sampled oracle). -/
+theorem encRom_forgery_is_break (emb : ∀ l, Key → α l → Msg l)
+    (emb_inj : ∀ l (k : Key) (a b : α l), emb l k a = emb l k b → a = b)
+    (l : ℕ) (H : (romCarrierGame (encRomFamily Key Msg) (encRomCarrier Key Msg α emb emb_inj)).Inst l)
+    (k : Key) {a b : α l} (hne : a ≠ b) (heq : H (k, emb l k a) = H (k, emb l k b)) :
+    (romCarrierGame (encRomFamily Key Msg) (encRomCarrier Key Msg α emb emb_inj)).wins l H
+      (k, a, b) :=
+  ⟨hne, heq⟩
+
+/-- **⚑⚑ THE RE-GROUNDED ENCODED-DOMAIN BINDING — floor PROVED, nothing refutable carried.** Every
+query-bounded digest forger has NEGLIGIBLE advantage: the deployed digest binds its whole encoded
+domain except with negligible probability, in the keyed ROM model of the header.  The hypotheses are
+a polynomial query budget and the forger's membership in the query class.  This is what
+`encBinding_from_polyTime(_fixedWidth)` (DELETED — floor refuted) claimed and could not have; the
+fixed-width side condition dissolved into the finiteness of `Msg`. -/
+theorem encBinding_rom (emb : ∀ l, Key → α l → Msg l)
+    (emb_inj : ∀ l (k : Key) (a b : α l), emb l k a = emb l k b → a = b)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (romCarrierGame (encRomFamily Key Msg) (encRomCarrier Key Msg α emb emb_inj)))
+    (hA : RomCarrierEff (encRomFamily Key Msg) (encRomCarrier Key Msg α emb emb_inj) Q A) :
+    Negl (gameAdv (romCarrierGame (encRomFamily Key Msg)
+      (encRomCarrier Key Msg α emb emb_inj)) A) :=
+  flatSite_binds Key inferInstance inferInstance inferInstance Msg
+    (fun _ => inferInstance) (fun _ => inferInstance) (fun _ => inferInstance)
+    (encRomCarrier Key Msg α emb emb_inj) Q hQ A hA
+
+end RomSuccessor
+
+#assert_axioms encRom_forgery_is_break
+#assert_axioms encBinding_rom
 #assert_axioms encBreakGame_wins_iff
 #assert_axioms encForgery_is_break
 #assert_axioms encForgery_is_break_of_inj
@@ -413,8 +437,6 @@ theorem chained_binding_advantage_bound {F : KeyedHashFamily} (P : KeyedForgery 
 #assert_axioms enc_adv_le
 #assert_axioms encBinding_advantage_bound
 #assert_axioms encBreakToFinder_eq_postMap
-#assert_axioms encBinding_from_polyTime
-#assert_axioms encBinding_from_polyTime_fixedWidth
 #assert_axioms exists_collision_of_not_injective
 #assert_axioms floor_top_false_of_compressing
 #assert_axioms floor_bot_vacuous

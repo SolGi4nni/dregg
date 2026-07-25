@@ -172,7 +172,7 @@ dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 # circuit-prove crate `tier-c` already pulls — NOT the Lean runtime). This is the SAME
 # feature set as the tier-c dev-dep below; cargo unifies them. The default `cargo test`
 # core + the `pgNN` extension never pull it (they keep the `FoldProducer` stand-in).
-dregg-turn = { path = "../turn", default-features = false, features = ["prover"], optional = true }
+dregg-turn = { path = "../turn", default-features = false, optional = true }
 # `dregg-cell` for the executor's `Cell`/`Ledger`/`Permissions` types the Rust
 # producer builds its synthesized turn over. Pulled with `tier-d-rust` (and already a
 # transitive dep of `dregg-turn`); default-features OFF, Lean-free. Also a dev-dep
@@ -220,7 +220,11 @@ dregg-cell = { path = "../cell", default-features = false }
 # is RETIRED) and forwards to `dregg-circuit-prove`; it is the same prove graph the
 # tier-c proof-construction needs. `threshold-sig` stays off (the rotated mint does
 # not need arkworks); `no-lean-link` keeps the Lean archive out.
-dregg-turn = { path = "../turn", default-features = false, features = ["prover"] }
+dregg-turn = { path = "../turn", default-features = false }
+# The tier-c test mints a real rotated leg via
+# `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg` — proof PRODUCTION
+# left `dregg-turn` (whose `prover` feature was deleted) for its own always-compiled crate.
+dregg-turn-prover = { path = "../turn-prover" }
 # postcard is already a normal dependency above; the test re-uses it to project a
 # `WholeChainProof` into the transport blobs (the documented S2 producer mapping).
 

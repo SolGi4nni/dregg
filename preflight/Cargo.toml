@@ -23,9 +23,11 @@ dregg-circuit = { path = "../circuit" }
 # `verify_whole_chain_proof_bytes`) — the sovereign IVC-history check drives it
 # over genuinely minted rotated turns instead of the simulated IVC.
 dregg-circuit-prove = { path = "../circuit-prove" }
-# `prover` gates `rotation_witness::mint_rotated_participant_leg`, the production
-# recipe that mints the real rotated turn legs the whole-chain fold consumes.
-dregg-turn = { path = "../turn", features = ["prover"] }
+# `dregg-turn-prover` carries `rotation_witness::mint_rotated_participant_leg`, the production
+# recipe that mints the real rotated turn legs the whole-chain fold consumes (it moved out of
+# `dregg-turn`'s deleted `prover` feature into its own always-compiled crate).
+dregg-turn = { path = "../turn" }
+dregg-turn-prover = { path = "../turn-prover" }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-intent = { path = "../intent" }

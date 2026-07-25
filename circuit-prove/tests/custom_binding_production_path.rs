@@ -11,7 +11,7 @@
 //!      retained witness, so the off-AIR bytes are not load-bearing here);
 //!   2. `CustomWitnessBundle::from_bound_custom_proof` projects that retained witness into the bundle
 //!      (the RETENTION SEAM) — `None`-fail-closed if the proof came off the wire;
-//!   3. `dregg_turn::rotation_witness::mint_custom_wide_rotated_participant_leg` drives `produce`
+//!   3. `dregg_turn_prover::rotation_witness::mint_custom_wide_rotated_participant_leg` drives `produce`
 //!      over the real before/after `Cell`s and mints the `customVmDescriptor2R24` WIDE leg with the
 //!      bundle ATTACHED — the production minter (not the test setter).
 //!
@@ -42,7 +42,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, prove_turn_chain_recursive, verify_turn_chain_recursive,
 };
 use dregg_circuit_prove::joint_turn_aggregation::{CustomWitnessBundle, DescriptorParticipant};
-use dregg_turn::rotation_witness::mint_custom_wide_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_custom_wide_rotated_participant_leg;
 
 // ============================================================================
 // Fixtures (the same minimal-but-REAL custom program the adapter teeth use).

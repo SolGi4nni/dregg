@@ -770,7 +770,7 @@ mod tests {
     use dregg_circuit::effect_vm::{CellState, Effect};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-    use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+    use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
     use ed25519_dalek::{Signer, SigningKey};
 
     /// A deterministic Ed25519 signing key for validator `i` (test fixtures only).

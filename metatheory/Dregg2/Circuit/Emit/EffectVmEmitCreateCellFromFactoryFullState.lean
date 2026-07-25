@@ -16,12 +16,14 @@ The factory writes only NON-`balance` record fields (no economic-column counterp
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The anti-ghost theorems carry NO
-collision-resistance hypothesis: they conclude a disjunction naming the sponge collision they would
-otherwise assume away. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The §6 anti-ghost is a SECURITY
+REDUCTION (game + extractor-as-map-of-adversaries), not a bare `binds ∨ collides` disjunction: the
+deployed-sponge leg is `Eff`-parametric with `hEff` in the open, and the keyed-ROM leg is DISCHARGED
+on the PROVED birthday floor. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactory
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactoryFullState
 
@@ -31,8 +33,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactory
   (SEL_CREATECELLFROMFACTORY factoryRowGates factoryVmDescriptor BornEmptyRowIntent factoryVm_faithful)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
-  (baseAbsorbedCols RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds_or_collides
-   wide_rejects_root_tamper_or_collides WideColl RootsColl wideHashSites)
+  (baseAbsorbedCols RunnableFullStateSpec runnable_full_sound wideHashSites)
 open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
 
 set_option linter.unusedVariables false
@@ -142,50 +143,102 @@ theorem createCellFromFactory_runnable_full_sound (hash : List ℤ → ℤ) (pre
   runnable_full_sound (factoryRunnableSpec preRoots) hash env pre post postRoots hrow
     ⟨henc, hroots⟩ hsat
 
-/-! ## §6 — THE ANTI-GHOST. -/
+/-! ## §6 — ANTI-GHOST on all 17 fields, REBUILT AS SECURITY REDUCTIONS.
 
-/-- **`createCellFromFactory_runnable_full_commit_binds_or_collides` — the factory anti-ghost.** Two
-wide factory rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) EITHER agree on
-all 12 absorbed state-block columns AND pointwise on the 8 side-table roots, OR exhibit a collision of
-the deployed sponge — at the wide absorb, or at the two root lists.
+⚑ **WHAT CHANGED AND WHY.** This section used to export
+`createCellFromFactory_runnable_full_commit_binds_or_collides` /
+`createCellFromFactory_rejects_root_tamper_or_collides`, each concluding
+`… ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂`. Those forms are TRUE of the deployed sponge —
+unlike the `Poseidon2SpongeCR` predecessors they replaced, which it REFUTES — but they are UNCLOSED:
+a collision of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. They quantify over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES.
 
-The old form concluded the bare conjunction from `Poseidon2SpongeCR hash`, which the deployed sponge
-REFUTES; at deployed parameters it was vacuous. The disjunction is formally weaker and HOLDS of the
-deployed sponge. -/
-theorem createCellFromFactory_runnable_full_commit_binds_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash factoryVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash factoryVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
-    (baseAbsorbedCols e₁ = baseAbsorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i))
-    ∨ WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  runnable_full_commit_binds_or_collides (factoryRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+They are DELETED — not kept beside the new forms — and rebuilt on
+`Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable` §4: the forgery is a
+first-class `Game` AT THE FACTORY'S OWN WIDE DESCRIPTOR (a win is two rows BOTH ACCEPTED by
+`factoryVmDescriptorWide` publishing one `NEW_COMMIT` over different bound state), the extractor is
+a MAP OF ADVERSARIES (the reduction-internal witness, its correct role), and the conclusions are
 
-/-- **`createCellFromFactory_rejects_root_tamper_or_collides` — side-table anti-ghost for the
-factory.** Two wide factory rows publishing the same `NEW_COMMIT` whose side-table sub-blocks DIFFER
-at some index `i` exhibit a collision of the deployed sponge: forging a side-table root under a fixed
-commitment costs a sponge collision.
+  * negligibility under the DEPLOYED sponge's collision floor `HashCRHardQuant (spongeFamily D) Eff`,
+    `hEff` in the open, both poles priced (`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`); and
+  * the DISCHARGED keyed-ROM forms on the PROVED birthday floor (`keyedRom_hard`) — NO floor
+    hypothesis — in the LABELLED random-oracle model of `EffectVmRowCommitReduction` §5's header
+    (the sampled `Fin (2 ^ l)` digest is the modelling step; no `l` is the deployed ~31-bit felt).
 
-The old form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed sponge REFUTES; at
-deployed parameters it was vacuous. This one names the collision instead of assuming it away. -/
-theorem createCellFromFactory_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (preRoots : SysRoots) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash factoryVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash factoryVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (factoryRunnableSpec preRoots) hash e₁ e₂ sr₁ sr₂
-    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+The ROM commitment layer carries no descriptor (the nested absorb schedule is one object across
+effects); the factory's per-effect circuit content (`satisfiedVm` at `factoryVmDescriptorWide`)
+lives in the `_advantage_bound` forms. -/
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder)
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (WideRowSpec wideStateCarrier wideRowBreakGame wideRowToCarrier wideRow_binds_advantage_bound
+   wideRootTamperGame rootTamperToWide wide_root_tamper_advantage_bound
+   wideRomFamily wideRomBreakGame effectVmWideRomForgery wideRow_binds_rom
+   effectVmWideRomRootTamper wide_root_tamper_rom)
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff)
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+
+/-- **`factoryWideRowSpec`** — the factory's WIDE runnable descriptor as the reduction's per-effect
+datum. The only obligation is that its hash sites ARE the `system_roots`-absorbing wide sites
+(`rfl`). -/
+def factoryWideRowSpec : WideRowSpec where
+  descriptor := factoryVmDescriptorWide
+  usesWideSites := rfl
+
+/-- **⚑ `createCellFromFactory_binds_full_state_advantage_bound` — THE REDUCED WHOLE-17-FIELD
+BINDING.** Under the DEPLOYED sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH SATISFYING `factoryVmDescriptorWide`, publishing one `NEW_COMMIT` with genuine
+`systemRootsDigest` carriers, yet binding DIFFERENT state, has NEGLIGIBLE advantage. Replaces the
+deleted bare disjunction. -/
+theorem createCellFromFactory_binds_full_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRowBreakGame D factoryWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D factoryWideRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRowBreakGame D factoryWideRowSpec) A) :=
+  wideRow_binds_advantage_bound D factoryWideRowSpec Eff A hEff hCR
+
+/-- **⚑⚑ `createCellFromFactory_binds_full_state_rom` — the DISCHARGED whole-17-field binding, on
+the PROVED floor.** A query-bounded forger of the wide nested `state_commit` — the very commitment
+the factory's wide row publishes — has NEGLIGIBLE advantage, in the keyed ROM model of
+`EffectVmRowCommitReduction` §5's header. NO floor hypothesis. The COMMITMENT layer carries no
+descriptor (the nested absorb schedule is one object across effects), so this is
+`wideRow_binds_rom` at the deployed tag space; the factory's per-effect circuit content stays in
+the `_advantage_bound` form above, `hEff` in the open. -/
+theorem createCellFromFactory_binds_full_state_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (wideRomBreakGame D tagDec))
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomForgery D tagDec) Q A) :
+    Negl (gameAdv (wideRomBreakGame D tagDec) A) :=
+  wideRow_binds_rom D tagDec Q hQ A hA
+
+/-- **⚑ `createCellFromFactory_rejects_root_tamper_advantage_bound` — the side-table anti-ghost,
+REDUCED.** An efficient adversary cannot keep the published `NEW_COMMIT` while tampering a
+side-table root of a satisfying wide factory row, except with negligible probability. Replaces the
+deleted `createCellFromFactory_rejects_root_tamper_or_collides`. -/
+theorem createCellFromFactory_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D factoryWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D factoryWideRowSpec (rootTamperToWide D factoryWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D factoryWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D factoryWideRowSpec Eff A hEff hCR
+
+/-- **⚑ `createCellFromFactory_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED
+floor: a query-bounded adversary cannot keep the published nested commitment while tampering a
+side-table root. -/
+theorem createCellFromFactory_rejects_root_tamper_rom (D : SpongeKeyed)
+    (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
 
 /-! ## §7 — NON-VACUITY. -/
 
@@ -225,8 +278,10 @@ theorem factory_clause_rejects_root_drop :
 #assert_axioms intent_to_zeroSpec
 #assert_axioms factoryGates_give_zeroSpec
 #assert_axioms createCellFromFactory_runnable_full_sound
-#assert_axioms createCellFromFactory_runnable_full_commit_binds_or_collides
-#assert_axioms createCellFromFactory_rejects_root_tamper_or_collides
+#assert_axioms createCellFromFactory_binds_full_state_advantage_bound
+#assert_axioms createCellFromFactory_binds_full_state_rom
+#assert_axioms createCellFromFactory_rejects_root_tamper_advantage_bound
+#assert_axioms createCellFromFactory_rejects_root_tamper_rom
 #assert_axioms goodFactory_realizes
 #assert_axioms factory_clause_not_trivial
 #assert_axioms factory_clause_rejects_root_drop

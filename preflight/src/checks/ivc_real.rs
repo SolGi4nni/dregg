@@ -2,7 +2,7 @@
 //! preflight IVC check.
 //!
 //! `mint_real_turn` mints a genuine rotated turn leg on the production
-//! descriptor path (`dregg_turn::rotation_witness::mint_rotated_participant_leg`
+//! descriptor path (`dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`
 //! — the SAME producer recipe `lightclient/src/bin/produce_history_envelope.rs`
 //! ships), and `honest_chain_proof` folds a continuous 2-turn chain of those
 //! legs through the REAL whole-chain recursive prover
@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use dregg_cell::{AuthRequired, Cell, Permissions};
 use dregg_circuit_prove::ivc_turn_chain::{FinalizedTurn, RecursionVk, prove_turn_chain_recursive};
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 fn open_permissions() -> Permissions {
     Permissions {

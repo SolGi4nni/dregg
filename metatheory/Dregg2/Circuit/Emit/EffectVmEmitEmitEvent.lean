@@ -57,6 +57,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.cellstatelog
 import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
 
@@ -386,51 +387,40 @@ theorem emitEventDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
 
 theorem emit_sites_eq : emitEventVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem emitEventDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hsat₁ : satisfiedVm hash emitEventVmDescriptor e₁ true true)
-    (hsat₂ : satisfiedVm hash emitEventVmDescriptor e₂ true true)
-    -- FIELD-FAITHFUL bridge: the published commitment is a CANONICAL field element (Poseidon2's
-    -- output lives in `[0, p)`). The circuit pins `state_commit ≡ NEW_COMMIT [ZMOD p]`; canonicality
-    -- of the two digest columns lifts that field congruence to the ℤ equality collision-resistance
-    -- needs. This is an honest side condition (the deployed digest IS reduced), NOT a weakening.
-    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
-      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
-      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
-  have hc : ∀ (e : VmRowEnv), satisfiedVm hash emitEventVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
-    intro e hsat
-    obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ emitEventVmDescriptor.constraints := by
-        unfold emitEventVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
-      [ZMOD 2013265921] := by
-    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
-      rw [hpub]; exact (hc e₂ hsat₂).symm
-    exact (hc e₁ hsat₁).trans h2
-  -- canonicality of the two digest columns lifts the mod-p congruence to an ℤ equality
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    have hdvd := Int.modEq_iff_dvd.mp hmod
-    obtain ⟨l₁, u₁⟩ := hcanon₁
-    obtain ⟨l₂, u₂⟩ := hcanon₂
-    omega
-  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+/-! ⚑ **WHAT CHANGED AND WHY.** This section used to export `emitEventDescriptor_commit_binds_state_or_collides`,
+concluding `absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. That form is TRUE of the
+deployed sponge, but UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by
+pigeonhole (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is
+satisfiable through its RIGHT branch WITHOUT the binding ever holding. It quantified over
+SOLUTIONS; cryptographic hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED; its
+successors are the keyed-ROM closure below (the PROVED birthday floor, at emitEvent's own sites) and
+the `Eff`-parametric deployed-hash reduction at emitEvent's own descriptor. The extraction spine
+(`absorbed_determined_by_commit_or_collides`) REMAINS in the transfer keystone as the
+reduction-internal witness, its correct role. -/
+
+/-- **`emitEventNarrowRowSpec`** — emitEvent's narrow descriptor as the reduction's per-effect datum: its hash sites
+ARE the deployed GROUP-4 sites (`rfl`). -/
+def emitEventNarrowRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.NarrowRowSpec where
+  descriptor := emitEventVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `emitEventDescriptor_binds_state_advantage_bound` — the DEPLOYED-hash reduction at emitEvent's own descriptor (successor of the deleted
+`emitEventDescriptor_commit_binds_state_or_collides`).** Under the deployed sponge's collision floor at the class `Eff`, an adversary producing
+two rows BOTH ACCEPTED by `emitEventVmDescriptor` (which includes the `boundaryLastPins` mod-`p` `NEW_COMMIT` pin)
+that publish one `state_commit` while disagreeing on the absorbed state block has NEGLIGIBLE
+advantage. -/
+theorem emitEventDescriptor_binds_state_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D emitEventNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D emitEventNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D emitEventNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D emitEventNarrowRowSpec Eff A hEff hCR
 
 open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
   Dregg2.Crypto.ConcreteSecurity in
@@ -441,8 +431,8 @@ parameters): in the LABELLED random-oracle idealization of the GROUP-4 surface
 producing two rows that satisfy THIS effect's hash sites with a shared commit column but different
 absorbed 13-column state wins with NEGLIGIBLE probability — closed from the PROVED birthday floor
 (`keyedRom_hard`); no `IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The
-deployed-hash leg stays the unconditional disjunction above (its `boundaryLastPins` mod-`p` step is
-deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+deployed-hash leg is the `Eff`-parametric `_advantage_bound` reduction above (its `boundaryLastPins`
+mod-`p` step is deployed-side content and deliberately does NOT transport to the λ-wide model). -/
 theorem emitEventVm_commit_binds_keyed (Q : ℕ → ℕ)
     (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
     (A : Adversary (narrowBreakGame emitEventVmDescriptor.hashSites))
@@ -629,7 +619,7 @@ theorem staleNonceEmitRow_rejected :
 #assert_axioms emitEventVm_rejects_nonce_freeze
 #assert_axioms intent_to_tickCellSpec
 #assert_axioms emitEventDescriptor_full_sound
-#assert_axioms emitEventDescriptor_commit_binds_state_or_collides
+#assert_axioms emitEventDescriptor_binds_state_advantage_bound
 #assert_axioms emitEventVm_commit_binds_keyed
 #assert_axioms descriptor_agrees_with_executor
 #assert_axioms goodEmitRow_realizes_intent

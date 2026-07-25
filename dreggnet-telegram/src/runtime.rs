@@ -57,25 +57,14 @@ pub const POLL_TIMEOUT_SECS: u64 = 50;
 /// The Bot API cap on an `answerCallbackQuery` toast text.
 const CALLBACK_ANSWER_MAX: usize = 200;
 
-/// The `/help` (and `/start`) text — the shell's whole command surface, honestly enumerated.
-/// Native Descent, the dungeon, the playable Bazaar crawl and the proof-assigned raid lead;
-/// richer catalog surfaces remain the Lab, matching `dreggnet_catalog::lab_intro`.
-pub const HELP_TEXT: &str = "Dregg games use one addressed session-and-receipt protocol while keeping different rulebooks.\n\
-    ⚔️ /open descent — the Lean-authored custody dungeon\n\
-    🗝 /open dungeon — The Warden's Keep\n\
-    🕯 /open bazaar — the playable Dark Bazaar crawl (not the encrypted apex)\n\
-    🛡 /open private-raid — proof-assigned tactical party play\n\
-    🧪 The Lab also exposes markets, councils, RPG systems, and services:\n\
-    /offerings — the lab shelf (press a button to open one)\n\
-    /open <key> — open an offering in this chat (e.g. /open dungeon)\n\
-    /play — Mini App launch buttons: the rich web surface, per offering (DMs only)\n\
-    /link — bind this Telegram to your dregg root key (one you, across platforms; DMs only)\n\
-    /status — inspect this game's audience boundary, receipts, and proof operations\n\
-    /verify — re-verify this chat's committed chain by replay\n\
-    /act <turn> <arg> — fire a value-taking turn (e.g. /act bid 500)\n\
-    /operation <name> — caption a canonical receipt attachment with this (normally DM-only; the guide names exact shared exceptions)\n\
-    /help — this text\n\
-    A group chat plays as a collective; a DM plays solo. Sessions survive bot restarts.";
+/// **The `/help` (and `/start`) text — GENERATED** from [`crate::commands::COMMANDS`], the same
+/// registry [`route_text_decided`] resolves every command word through. A hand-maintained help
+/// string rots the moment a command is added (this one had: `/menu`, `/webapp`, `/record` and
+/// `/start` were dispatched and undocumented, while `/operation` was documented as a command
+/// though it is a document caption). Generated, it cannot.
+pub fn help_text() -> String {
+    crate::commands::help_text()
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The raw-method Bot API client (getUpdates / answerCallbackQuery / getMe / text replies)
@@ -133,6 +122,21 @@ impl<H: HttpPost> BotApi<H> {
             .and_then(Value::as_str)
             .unwrap_or("<unnamed bot>")
             .to_string())
+    }
+
+    /// **Register the client-side `/` menu** (`setMyCommands`) from the ONE command registry
+    /// ([`crate::commands::bot_father_commands`]). Without this call `getMyCommands` returns `[]`
+    /// and the Telegram client shows NO command list at all — the whole surface has to be
+    /// guessed, which is exactly how a user ends up typing `/descent` and getting
+    /// "unknown_command". Returns how many commands were registered.
+    pub fn set_my_commands(&self) -> Result<usize, TransportError> {
+        let commands: Vec<Value> = crate::commands::bot_father_commands()
+            .into_iter()
+            .map(|(command, description)| json!({ "command": command, "description": description }))
+            .collect();
+        let count = commands.len();
+        self.call("setMyCommands", &json!({ "commands": commands }))?;
+        Ok(count)
     }
 
     /// One `getUpdates` LONG POLL: block server-side up to [`POLL_TIMEOUT_SECS`] for new updates
@@ -579,37 +583,98 @@ pub fn route_callback_decided<T: Transport>(
     host: &mut TelegramHost<T>,
     query: CallbackQuery,
 ) -> (String, PressDecision) {
+    // Whatever an EARLIER interaction failed to paint is not this press's news; the ack must
+    // report only what this press did.
+    let _ = host.take_paint_failure();
     match host.press(query.clone()) {
         HostPress::NoSession => {
             let sid = TelegramFrontend::<T>::session_id(query.chat_id, query.message_thread_id);
-            let Some(key) = host.resume_chat(&sid) else {
+            // Resume EVERY offering this chat durably owns, not one arbitrary alphabetical
+            // winner, and re-present each as a fresh live message. A chat with `craft` and `doc`
+            // persisted used to rebind whichever sorted first no matter which message was
+            // pressed, so half the chat's buttons routed into the wrong offering — and if the
+            // winner was a session nothing could advance, the chat stayed pinned to it across
+            // every restart.
+            // The presser's identity is what makes an RPG session findable at all: it lives in
+            // THAT user's own per-identity world, not the shared catalog host.
+            let viewer = host.identity(query.from_user_id);
+            let keys = host.resume_chat_all(&sid, Some(&viewer));
+            let Some(primary) = keys.first().cloned() else {
                 return (
                     "No session in this chat yet — send /offerings to pick one.".to_string(),
                     PressDecision::NoSession,
                 );
             };
-            if host
-                .open(
-                    &key,
-                    query.chat_id,
-                    query.message_thread_id,
-                    query.from_user_id,
-                )
-                .is_err()
-            {
+            let mut reopened = Vec::new();
+            // A session that reopens but paints nothing is worse than one that refuses: the user
+            // is told their game is back and sees no message. Name each one.
+            let mut unpainted = Vec::new();
+            for key in &keys {
+                if host
+                    .open(
+                        key,
+                        query.chat_id,
+                        query.message_thread_id,
+                        query.from_user_id,
+                    )
+                    .is_ok()
+                {
+                    match host.take_paint_failure() {
+                        Some(why) => unpainted.push(format!("{key} ({why})")),
+                        None => reopened.push(key.clone()),
+                    }
+                }
+            }
+            if reopened.is_empty() && !unpainted.is_empty() {
                 return (
-                    format!("Could not reopen {key} — send /offerings."),
-                    PressDecision::ReopenFailed(key),
+                    format!(
+                        "Your session(s) resumed but could not be painted: {}. /cancel clears \
+                         this chat; /close <key> discards one.",
+                        unpainted.join(", ")
+                    ),
+                    PressDecision::ReopenFailed(primary),
+                );
+            }
+            if reopened.is_empty() {
+                return (
+                    format!("Could not reopen {primary} — send /offerings."),
+                    PressDecision::ReopenFailed(primary),
                 );
             }
             let press = host.press(query);
             let decision = PressDecision::of(&press);
+            // A press that STILL resolves nothing is a button from before the restart whose
+            // message this process cannot map — say so, and point at the live surfaces just
+            // reposted, instead of the bare "stale keyboard?" dead end.
+            if matches!(decision, PressDecision::NotOffered) {
+                return (
+                    format!(
+                        "That button is from before my last restart. I have reposted your live \
+                         session(s) below: {}. Press there, or /cancel to start clean.",
+                        reopened.join(", ")
+                    ),
+                    decision,
+                );
+            }
             (describe_press(press), decision)
         }
         press => {
             let decision = PressDecision::of(&press);
-            (describe_press(press), decision)
+            (ack_for(host, press), decision)
         }
+    }
+}
+
+/// [`describe_press`] plus the host's **paint failure**, if the press opened or advanced
+/// something whose surface never went out. A press that lands a turn nobody can see is the same
+/// silence `/open` used to answer with; the ack is the only place a presser would ever learn it.
+fn ack_for<T: Transport>(host: &mut TelegramHost<T>, press: HostPress) -> String {
+    let described = describe_press(press);
+    match host.take_paint_failure() {
+        None => described,
+        Some(why) => format!(
+            "{described} …but I could not paint the surface: {why}. /cancel clears this chat."
+        ),
     }
 }
 
@@ -663,6 +728,24 @@ pub enum TextDecision {
         /// The routed press's machine decision.
         press: PressDecision,
     },
+    /// `/offerings` was asked for and the menu could NOT be sent — the transport's reason,
+    /// answered to the user instead of silence.
+    MenuFailed {
+        /// The transport's own account of the failure.
+        why: String,
+    },
+    /// `/cancel` — the always-available escape cleared this chat's presentation state.
+    Cancelled {
+        /// The offering keys whose surfaces were cleared (empty = nothing was open).
+        cleared: Vec<String>,
+    },
+    /// `/close <key>` — a session was ended and its move-log discarded (or was not open).
+    Closed {
+        /// The offering key named.
+        key: String,
+        /// Whether a session was actually closed.
+        closed: bool,
+    },
     /// A recognized command with unusable arguments.
     Usage {
         /// The command whose usage was answered.
@@ -699,18 +782,129 @@ pub fn route_text_decided<T: Transport>(
         Some((c, r)) => (c, r.trim()),
         None => (text, ""),
     };
+    // Whatever an EARLIER interaction failed to paint is not this command's news.
+    let _ = host.take_paint_failure();
     // In a group, commands arrive suffixed with the bot's username: `/open@MyBot dungeon`.
-    let cmd = cmd.split('@').next().unwrap_or(cmd);
-    match cmd {
-        "/start" | "/help" => (Some(HELP_TEXT.to_string()), TextDecision::Help),
-        "/offerings" | "/menu" => {
-            host.present_offerings_menu(chat_id, topic);
-            (None, TextDecision::Menu)
+    let typed = cmd.split('@').next().unwrap_or(cmd);
+    // EVERY command word resolves through the ONE registry, which also folds aliases onto the
+    // canonical name (`/menu` → `/offerings`, `/record` → `/status`, `/reset` → `/cancel`). A
+    // word that is not registered cannot reach a handler — so a new command must be registered,
+    // and being registered is exactly what puts it in `/help` and in Telegram's `/` menu.
+    let cmd = match crate::commands::lookup(typed) {
+        Some(command) => command.name,
+        None if typed.starts_with('/') => {
+            // Answer in a DM (a user who guessed a command deserves to be told, and told WHERE
+            // the real list is — the live bot's own audit shows a real `/descent` met with
+            // total silence). Stay quiet in a group: Telegram delivers every member's slash
+            // word to the bot, and a collective chat does not want a bot correcting each one.
+            let reply = (!ChatKind::classify(chat_id, topic).is_collective())
+                .then(|| format!("{typed} is not a command. /help lists everything I answer to."));
+            return (
+                reply,
+                TextDecision::Unknown {
+                    cmd: typed.to_string(),
+                },
+            );
         }
+        // Not a command at all — fall through to the free-text path below.
+        None => "",
+    };
+    match cmd {
+        "/help" => {
+            // `/help <cmd>` renders one entry; an unrecognised argument says so and falls back to
+            // the full list rather than silently showing everything.
+            if rest.is_empty() {
+                return (Some(help_text()), TextDecision::Help);
+            }
+            match crate::commands::command_help(rest) {
+                Some(one) => (Some(one), TextDecision::Help),
+                None => (
+                    Some(format!("No command `{rest}`.\n\n{}", help_text())),
+                    TextDecision::Help,
+                ),
+            }
+        }
+        "/cancel" => {
+            // THE ESCAPE. It must work from every state, including no state at all — so it is
+            // routed before anything that could refuse, needs no session, and cannot fail.
+            let cleared = host.cancel_chat(chat_id, topic);
+            host.present_offerings_menu(chat_id, topic);
+            let what = if cleared.is_empty() {
+                "Nothing was open here — you are clear.".to_string()
+            } else {
+                format!(
+                    "Cleared this chat's surfaces ({}) and any pending text slot. Nothing \
+                     committed was discarded — /open <key> brings a session back with its \
+                     receipts intact.",
+                    cleared.join(", ")
+                )
+            };
+            (
+                Some(format!("{what} Here is the menu again.")),
+                TextDecision::Cancelled { cleared },
+            )
+        }
+        "/close" => {
+            if rest.is_empty() {
+                return (
+                    Some(
+                        "Usage: /close <key> — ENDS that session and DISCARDS its move-log. \
+                         /cancel is the non-destructive escape."
+                            .to_string(),
+                    ),
+                    TextDecision::Usage {
+                        cmd: cmd.to_string(),
+                    },
+                );
+            }
+            // A close that FAILED is not "nothing was open" — say which it was.
+            let closed = match host.close_offering(rest, chat_id, topic, uid) {
+                Ok(closed) => closed,
+                Err(why) => {
+                    return (
+                        Some(format!(
+                            "Could not close {rest}: {why}. /cancel clears this chat's surfaces \
+                             without touching any move-log."
+                        )),
+                        TextDecision::Closed {
+                            key: rest.to_string(),
+                            closed: false,
+                        },
+                    );
+                }
+            };
+            (
+                Some(if closed {
+                    format!(
+                        "Closed {rest} in this chat and forgot its move-log. /open {rest} starts \
+                         a fresh session."
+                    )
+                } else {
+                    format!("No {rest} session is open in this chat.")
+                }),
+                TextDecision::Closed {
+                    key: rest.to_string(),
+                    closed,
+                },
+            )
+        }
+        "/offerings" => match host.present_offerings_menu_result(chat_id, topic) {
+            // The menu message IS the reply.
+            (_, None) => (None, TextDecision::Menu),
+            // …unless it did not get sent, in which case SAY SO. Replying nothing to a failed
+            // present is what made the bot read as dead.
+            (_, Some(why)) => (
+                Some(format!(
+                    "I could not paint the offerings menu: {why}. /open <key> still opens one \
+                     directly, and /cancel clears this chat."
+                )),
+                TextDecision::MenuFailed { why },
+            ),
+        },
         // The Mini App launch tier: a menu of `web_app` buttons opening the rich web surface,
         // one per offering. `Err` is the honest human reply (tier unarmed / group chat —
         // Telegram only honors `web_app` inline buttons in DMs / a transport failure).
-        "/play" | "/webapp" => match host.present_play_menu(chat_id, topic) {
+        "/play" => match host.present_play_menu(chat_id, topic) {
             Ok(()) => (
                 None, // the launch menu IS the reply
                 TextDecision::PlayMenu {
@@ -751,14 +945,43 @@ pub fn route_text_decided<T: Transport>(
                     },
                 );
             }
+            // In a DM an open REPOSTS, so the surface itself is the visible reply. A group /
+            // forum topic deliberately keeps ONE shared message that every re-present edits in
+            // place (the audience rule rests on it), so a re-open there paints nothing new and
+            // wherever that message sits is where it stays — say so in words rather than
+            // answering the command with silence.
+            let repaint_in_place = ChatKind::classify(chat_id, topic).is_collective()
+                && host.has_live_surface(chat_id, topic, rest);
             match host.open(rest, chat_id, topic, uid) {
-                Ok(_) => (
-                    None, // the opened surface IS the reply
-                    TextDecision::Open {
-                        key: rest.to_string(),
-                        err: None,
-                    },
-                ),
+                // An `Ok` open whose surface was never PAINTED is the silent failure this arm
+                // used to answer with nothing at all — the session opens, the command replies
+                // `None`, and the chat shows no message. Say what went wrong instead.
+                Ok(_) => match host.take_paint_failure() {
+                    Some(why) => (
+                        Some(format!(
+                            "I opened {rest}, but could not paint its surface: {why}. \
+                             /cancel clears this chat; /close {rest} discards that session."
+                        )),
+                        TextDecision::Open {
+                            key: rest.to_string(),
+                            err: Some(why),
+                        },
+                    ),
+                    None => (
+                        // the opened surface IS the reply — unless it was an in-place repaint
+                        repaint_in_place.then(|| {
+                            format!(
+                                "{rest} is already open in this chat — I refreshed its message \
+                                 above (a group keeps ONE shared surface per game, so it stays \
+                                 where it is). /cancel clears this chat."
+                            )
+                        }),
+                        TextDecision::Open {
+                            key: rest.to_string(),
+                            err: None,
+                        },
+                    ),
+                },
                 Err(e) => (
                     // A shared-chat privacy refusal replies with its own redirect; a host failure
                     // keeps the "Cannot open <key>: …" shape.
@@ -770,12 +993,15 @@ pub fn route_text_decided<T: Transport>(
                 ),
             }
         }
-        "/status" | "/record" => {
+        "/status" => {
             // Like `/verify`, status remains useful immediately after a process restart: bind the
             // durable session to this chat and repaint before inspecting the shared game spine.
             let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
             if host.active_offering(&sid).is_none() {
-                if let Some(key) = host.resume_chat(&sid) {
+                // Viewer-aware: an RPG session lives in the presser's OWN per-identity world,
+                // so without the identity it is invisible to the resume path entirely.
+                let viewer = host.identity(uid);
+                for key in host.resume_chat_all(&sid, Some(&viewer)) {
                     let _ = host.open(&key, chat_id, topic, uid);
                 }
             }
@@ -858,12 +1084,6 @@ pub fn route_text_decided<T: Transport>(
                 },
             )
         }
-        _ if cmd.starts_with('/') => (
-            None,
-            TextDecision::Unknown {
-                cmd: cmd.to_string(),
-            },
-        ),
         // FREE TEXT (a non-command message). If — and ONLY if — the chat has ARMED a text
         // affordance (a deliberate press on a `wants_text` template, recorded per chat/session by
         // [`TelegramHost::press`]), route the whole message as that affordance's text input; the
@@ -878,7 +1098,10 @@ pub fn route_text_decided<T: Transport>(
             // so the chat is live again and the presented text buttons reappear for the user to
             // arm; without this a text-only user after a restart is stranded with no session.
             if host.active_offering(&sid).is_none() {
-                if let Some(key) = host.resume_chat(&sid) {
+                // Viewer-aware: an RPG session lives in the presser's OWN per-identity world,
+                // so without the identity it is invisible to the resume path entirely.
+                let viewer = host.identity(uid);
+                for key in host.resume_chat_all(&sid, Some(&viewer)) {
                     let _ = host.open(&key, chat_id, topic, uid);
                 }
             }
@@ -955,6 +1178,31 @@ impl TextDecision {
                 let (kind, reason, outcome, offering) = press.audit_parts();
                 Some((kind, reason, outcome, offering, cmd.clone()))
             }
+            TextDecision::MenuFailed { why } => Some((
+                "error",
+                format!("menu_send_failed: {why}"),
+                AuditOutcome::None,
+                None,
+                "/offerings".to_string(),
+            )),
+            TextDecision::Cancelled { cleared } => Some((
+                "routed",
+                format!("cancelled: {}", cleared.join(",")),
+                AuditOutcome::None,
+                None,
+                "/cancel".to_string(),
+            )),
+            TextDecision::Closed { key, closed } => Some((
+                if *closed { "routed" } else { "refused" },
+                if *closed {
+                    "closed_and_forgot_log".to_string()
+                } else {
+                    "no_such_session".to_string()
+                },
+                AuditOutcome::None,
+                Some(key.clone()),
+                "/close".to_string(),
+            )),
             TextDecision::Usage { cmd } => Some((
                 "refused",
                 "usage".to_string(),
@@ -1069,7 +1317,11 @@ pub fn describe_press(press: HostPress) -> String {
         // The privacy redirect IS the ack (and, being long, the loop also lands it in the chat).
         HostPress::OpenRefused { why, .. } => why,
         HostPress::NotOffered => {
-            "That button is not on the current surface (a stale keyboard?).".to_string()
+            // Name the way out. A refusal that only says "stale keyboard?" leaves the presser
+            // with no next move, which is how a chat reads as broken rather than as refused.
+            "That button is not on the current surface (a stale keyboard?). Send /offerings for \
+             a fresh menu, or /cancel to clear this chat."
+                .to_string()
         }
         HostPress::NoSession => "No session in this chat yet — send /offerings.".to_string(),
     }
@@ -1333,6 +1585,12 @@ pub fn try_durable_telegram_host_with_private_bazaar(
         // Live day binding, as `telegram_default_host` — see `host::arm_todays_descent_day`.
         &dreggnet_catalog::CatalogConfig::live(council_members),
         deployment,
+    )
+    // Bounded session lifecycle, as `telegram_default_host` — armed BEFORE the store attaches
+    // (so boot-resumed sessions get last-touched stamps) and never born unbounded.
+    .with_policy(
+        crate::host::resolve_telegram_policy(),
+        dreggnet_offerings::SystemClock,
     );
     attach_durable_telegram_store(host, &dir).map_err(|(_, error)| error)
 }

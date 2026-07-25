@@ -34,14 +34,17 @@ off-row.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; the commitment tooth is UNCONDITIONAL
-(an extraction-as-data disjunction), never conditioned on the (refuted) injective sponge floor.
-Read-only imports.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; the commitment tooth is a SECURITY
+REDUCTION (§7: the keyed-ROM closure on the PROVED birthday floor + the `Eff`-parametric
+deployed-hash reduction), never a bare disjunction and never conditioned on the (refuted) injective
+sponge floor. Read-only imports.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.factorycreation
+import Dregg2.Circuit.Emit.EffectVmKeyedStateCommit
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactory
 
@@ -156,17 +159,62 @@ theorem factoryVm_rejects_nonzero_balance (env : VmRowEnv)
   simp only [gZero, VmConstraint.holdsVm, eSA, EmittedExpr.eval]
   exact not_modEq_zero_of_canon (b := 0) (by ring) hcanon (by norm_num) hwrong
 
-/-! ## §7 — the commitment binding (inherited from the keystone). -/
+/-! ## §7 — the commitment binding, REBUILT AS SECURITY REDUCTIONS.
 
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
+⚑ **WHAT CHANGED AND WHY.** This section used to export
+`factoryVm_commit_binds_block_or_collides`, concluding
+`absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂`. That form is TRUE of the deployed
+sponge, but UNCLOSED: a collision of the deployed sponge EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so `binds ∨ collides` is satisfiable through
+its RIGHT branch WITHOUT the binding ever holding. It quantified over SOLUTIONS; cryptographic
+hardness quantifies over EFFICIENT ADVERSARIES. It is DELETED and replaced by two reductions: the
+keyed-ROM closure at the factory's OWN hash-site list (`EffectVmKeyedStateCommit`, from the PROVED
+birthday floor `keyedRom_hard`, no floor hypothesis — the LABELLED idealization of that module's
+header; no `l` is the deployed ~31-bit felt), and the deployed-hash `Eff`-parametric reduction at
+the factory's OWN descriptor (`EffectVmRowCommitReduction`, `hEff` in the open, both poles priced).
+The extraction spine (`absorbed_determined_by_commit_or_collides`) REMAINS in the transfer keystone
+as the reduction-internal witness, its correct role. -/
 
-theorem factoryVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ factoryHashSites)
-    (hs₂ : siteHoldsAll hash e₂ factoryHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
-  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
+open Dregg2.Circuit.Emit.EffectVmKeyedStateCommit Dregg2.Crypto.FloorGames
+  Dregg2.Crypto.ConcreteSecurity in
+/-- **⚑ `factoryVm_commit_binds_keyed` — THE KEYED-FLOOR CLOSURE at the factory's own sites.** In
+the LABELLED random-oracle idealization of the GROUP-4 surface (`EffectVmKeyedStateCommit`, a
+MODELLING step — see that module's header), every QUERY-BOUNDED forger producing two rows that
+satisfy the factory's hash sites with a shared commit column but different absorbed 13-column state
+wins with NEGLIGIBLE probability — from the PROVED birthday floor (`keyedRom_hard`); no
+`IsPolyTime`, no `Poseidon2SpongeCR`, no named-carrier hypothesis. The deployed-hash leg is the
+`Eff`-parametric `_advantage_bound` reduction below (its `boundaryLastPins` mod-`p` step is
+deployed-side content and deliberately does NOT transport to the λ-wide model). -/
+theorem factoryVm_commit_binds_keyed (Q : ℕ → ℕ)
+    (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (narrowBreakGame factoryHashSites))
+    (hA : NarrowBreakEff factoryHashSites Q A) :
+    Negl (gameAdv (narrowBreakGame factoryHashSites) A) :=
+  narrowStateCommit_binds factoryHashSites rfl Q hQ A hA
+
+/-- **`factoryNarrowRowSpec`** — the factory's narrow descriptor as the reduction's per-effect
+datum: its hash sites ARE the deployed GROUP-4 sites (`rfl`). -/
+def factoryNarrowRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.NarrowRowSpec where
+  descriptor := factoryVmDescriptor
+  usesTransferSites := rfl
+
+open Dregg2.Crypto.SpongeCarrierReduction (SpongeKeyed spongeFamily carrierBreakToFinder) in
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.FloorGames (Adversary gameAdv hashGame HashCRHardQuant) in
+open Dregg2.Crypto.ConcreteSecurity (Negl) in
+/-- **⚑ `factoryVm_binds_block_advantage_bound` — the DEPLOYED-hash reduction at the factory's own
+descriptor.** Under the deployed sponge's collision floor at the class `Eff`, an adversary
+producing two rows BOTH ACCEPTED by `factoryVmDescriptor` that publish one `state_commit` while
+disagreeing on the absorbed state block has NEGLIGIBLE advantage. Replaces the deleted bare
+disjunction. -/
+theorem factoryVm_binds_block_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (narrowRowBreakGame D factoryNarrowRowSpec))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier
+      (narrowRowToCarrier D factoryNarrowRowSpec A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (narrowRowBreakGame D factoryNarrowRowSpec) A) :=
+  narrowRow_binds_advantage_bound D factoryNarrowRowSpec Eff A hEff hCR
 
 /-! ## §8 — the minted cell's ECONOMIC balance is `0` (the overlap with the executor).
 
@@ -354,7 +402,8 @@ theorem forgedRow_rejected : ¬ (gZero state.BALANCE_LO).holdsVm forgedRow false
 #assert_axioms factoryVm_faithful
 #assert_axioms factoryVm_rejects_nonzero
 #assert_axioms factoryVm_rejects_nonzero_balance
-#assert_axioms factoryVm_commit_binds_block_or_collides
+#assert_axioms factoryVm_commit_binds_keyed
+#assert_axioms factoryVm_binds_block_advantage_bound
 #assert_axioms installInitialFields_balOf
 #assert_axioms factoryPostCell_balOf_zero
 #assert_axioms factory_newcell_is_zero

@@ -51,12 +51,9 @@ instead of forty times.
     inequality — note the adversary class does NOT appear in it), and
     `carrier_binds_advantage_bound` (the security conclusion under `HashCRHardQuant (spongeFamily D) Eff`).
 
-  * **§4 — `hEff` DISCHARGED.** `carrier_binds_from_polyTime` instantiates `Eff := IsPolyTime` and
-    derives the extracted finder's efficiency with `CostTactics.poly_time` instead of assuming it. The
-    output-growth obligation is the carrier's own `find_len_le` field, so the ONLY per-site inputs are
-    the domain facts: the extractor, its spec, and its output size. The reshaper's declared work
-    `(cw, bw)` stays an honest modelling input — a Lean function has no runtime, so that number is
-    charged in the program's syntax and can never be derived.
+  * **§4 — the answer-size cost model** (`carrierAnsSize`/`spongeAnsSize`): the honest record of what
+    that model prices. ⚑ The `IsPolyTime` discharge that stood here is DELETED — see the SUPERSEDED
+    section below; the discharged successor is `RomBindingReduction.romCarrier_binds`.
 
   * **§5 — both poles, and the canary.** `Eff := ⊤` is FALSE at real BabyBear parameters
     (`carrierFloor_top_false_babyBear`); `Eff := ⊥` is vacuous (`carrierFloor_bot_vacuous`); the class
@@ -65,16 +62,20 @@ instead of forty times.
     (`the_carrier_bound_needs_the_extracted_finder`) reds if a future edit lets the conclusion follow
     from the floor applied at some OTHER adversary.
 
-## ⚑ The `_from_polyTime` discharge is SUPERSEDED (07-23)
+## ⚑ The `_from_polyTime` discharges are DELETED (07-24); the successor is LANDED
 
 `Exec.SystemRootsBindingReduction.sysRoots_floor_polyTime_false_babyBear` REFUTES
 `HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))` at the deployed sponge, so §4's
-`carrier_binds_from_polyTime` is VACUOUS at deployed parameters — and `Crypto.RomBindingReduction`'s
-header proves the fixed-function game cannot be repaired by ANY `Eff`.  The DISCHARGED successor
-pattern is `Crypto.RomBindingReduction.romCarrier_binds` on the keyed-ROM floor, with
-`Crypto.RomCarrierSites` as the per-site kit; re-pointed sites (SystemRoots §7, Heap §2.4) DELETE
-their `_from_polyTime` forms.  §4 remains only as the honest record of what the answer-size cost
-model can and cannot discharge; the `_advantage_bound` forms (`hEff` in the open) stay the honest
+`carrier_binds_from_polyTime` (and §6's `idCarrier_binds_from_polyTime` inhabitation form) were
+VACUOUS at deployed parameters — and `Crypto.RomBindingReduction`'s header proves the fixed-function
+game cannot be repaired by ANY `Eff`.  BOTH ARE DELETED.  The DISCHARGED successor is
+`Crypto.RomBindingReduction.romCarrier_binds` on the PROVED keyed-ROM floor (with
+`Crypto.RomCarrierSites` as the per-site kit), and the inhabitation witness the deleted
+`idCarrier_binds_from_polyTime` supplied lives there as `RomBindingReduction.idRomCarrier_binds`
+(the identity carrier fires end-to-end on the proved floor).  Every deployed consumer is re-pointed
+(SystemRoots §7, Heap §2.4, FloorRegroundedConsumers, OodCommitmentBinding, the `Emit/*` sites).
+§4's answer-size encodings and both-poles teeth remain as the honest record of what the answer-size
+cost model can and cannot price; the `_advantage_bound` forms (`hEff` in the open) stay the honest
 fixed-hash statements.
 
 ## What this does NOT buy
@@ -332,31 +333,6 @@ def carrierAnsSize (D : SpongeKeyed) (C : SpongeCarrier) : AnsSize (carrierBreak
 def spongeAnsSize (D : SpongeKeyed) : AnsSize (hashGame (spongeFamily D)) :=
   fun _ p => p.1.length + p.2.length
 
-/-- **⚑ `hEff` DISCHARGED — the deployed binding at `Eff := IsPolyTime`.**
-
-A commitment equivocator that is EFFICIENT at the game's own answer encoding, put through the
-carrier's extractor, yields a sponge-collision finder that is STILL efficient — so the collision floor
-at `IsPolyTime` applies to it, and the equivocator's advantage is negligible.
-
-Everything except the reshaper's declared work `(cw, bw)` is derived. In particular NO
-`PolyBoundedNat` hypothesis is taken and NO overhead polynomial floats: `poly_time` folds in the
-tight-δ composition and the derived poly overhead, leaving only the output-growth obligation, which is
-the carrier's own PROVED `find_len_le`. The honest modelling input `(cw, bw)` remains because a Lean
-function has no runtime — that number can only be charged in the program's syntax, never derived. -/
-theorem carrier_binds_from_polyTime (D : SpongeKeyed) (C : SpongeCarrier)
-    (A : Adversary (carrierBreakGame D C))
-    (hA : IsPolyTime (carrierAnsSize D C) A)
-    (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (carrierBreakGame D C) A) := by
-  have hEff : IsPolyTime (spongeAnsSize D) (carrierBreakToFinder D C A) := by
-    poly_time (carrierAnsSize D C) (spongeAnsSize D)
-      (fun _ t (p : C.Ctx × C.Val × C.Val) => C.find (D.hashAt t) p.1 p.2.1 p.2.2)
-      cw bw C.outCo C.outBo hA
-    intro l t p
-    exact C.find_len_le (D.hashAt t) p.1 p.2.1 p.2.2
-  exact carrier_binds_advantage_bound D C (IsPolyTime (spongeAnsSize D)) A hEff hCR
-
 /-! ## §5 — the floor, PRICED at both poles, plus the canary and the inhabitation tooth. -/
 
 /-- **⚑ THE ⊤ POLE — the floor is FALSE at the REAL BabyBear parameters.** A sponge whose output is a
@@ -441,14 +417,9 @@ def idCarrier : SpongeCarrier where
   outBo := 0
   find_len_le := fun _ _ a b => by simp
 
-/-- The spine FIRES on the identity carrier: the interface is inhabited and the reduction elaborates
-end-to-end at `Eff := IsPolyTime`, with `hEff` discharged rather than assumed. -/
-theorem idCarrier_binds_from_polyTime (D : SpongeKeyed)
-    (A : Adversary (carrierBreakGame D idCarrier))
-    (hA : IsPolyTime (carrierAnsSize D idCarrier) A) (cw bw : ℕ)
-    (hCR : HashCRHardQuant (spongeFamily D) (IsPolyTime (spongeAnsSize D))) :
-    Negl (gameAdv (carrierBreakGame D idCarrier) A) :=
-  carrier_binds_from_polyTime D idCarrier A hA cw bw hCR
+/-! The identity carrier's inhabitation/fires witness now lives on the PROVED floor:
+`RomBindingReduction.idRomCarrier` / `idRomCarrier_binds` (the deleted `idCarrier_binds_from_polyTime`
+carried it on the refuted `IsPolyTime` floor, so it witnessed nothing at deployed parameters). -/
 
 /-! ## §7 — axiom-hygiene pins. -/
 
@@ -458,11 +429,9 @@ theorem idCarrier_binds_from_polyTime (D : SpongeKeyed)
 #assert_axioms carrier_wins_imp
 #assert_axioms carrier_adv_le
 #assert_axioms carrier_binds_advantage_bound
-#assert_axioms carrier_binds_from_polyTime
 #assert_axioms carrierFloor_top_false_babyBear
 #assert_axioms carrierFloor_bot_vacuous
 #assert_axioms carrierFloor_isPolyTime_inhabited
 #assert_axioms the_carrier_bound_needs_the_extracted_finder
-#assert_axioms idCarrier_binds_from_polyTime
 
 end Dregg2.Crypto.SpongeCarrierReduction

@@ -1,9 +1,31 @@
 # RUNBOOK — dreggnet-telegram-bot (the Telegram runtime shell)
 
-**Status: BUILT + TESTED, NOT DEPLOYED.** The whole shell (long-poll loop, durable
-per-`(offering, chat)` sessions, command surface) is driven green over `MockTransport` in
-`dreggnet-telegram/tests/`. The one thing no test can supply is the **BotFather token** — the
-real run is ops-gated on ember minting one. Nothing else is missing.
+**Status: LIVE on hbox as [@dreggnet_bot](https://t.me/dreggnet_bot) — and the running binary is
+STALE.** (This file said "NOT DEPLOYED" until 2026-07-25, five days after real users were
+already playing on it. Repo-vs-box drift in the runbook itself; state the box's truth here.)
+
+Ground truth, read off the box on 2026-07-25:
+
+| thing | value |
+| --- | --- |
+| unit | `dregg-telegram-bot.service` (user unit, `enable`d, `Restart=always`) |
+| binary | `~/dregg-telegram/dreggnet-telegram-bot`, **built 2026-07-19 06:06** |
+| source it was built from | ≈ `59ae56df6f` — it PREDATES `01046f85ac` (per-`(chat, offering)` surfaces) and every telegram commit since |
+| sessions | `~/.local/state/dregg-telegram/sessions` (`*.log` move-logs + `updates.offset`) |
+| audit | `~/dregg-shared/audit/audit-<date>.telegram-<pid>.NN.jsonl` (shared with web + discord) |
+| Mini App base | `https://arcade.dregg.net` |
+
+**A restart does NOT pick up new code** — `ExecStart` points at the copied binary, not at
+`target/`. Rebuilding and copying is a deliberate step:
+
+```
+ssh hbox 'cd ~/dev/breadstuffs && swarm-build cargo build --release -p dreggnet-telegram \
+  && install -m 755 target/release/dreggnet-telegram-bot ~/dregg-telegram/dreggnet-telegram-bot \
+  && systemctl --user restart dregg-telegram-bot'
+```
+
+Check what is actually running before diagnosing ANY behaviour report: a symptom explained by
+code that was never shipped is not the symptom the user hit.
 
 ## What runs
 
@@ -55,6 +77,53 @@ real run is ops-gated on ember minting one. Nothing else is missing.
   move on replay); the file is kept on disk as evidence, everything else resumes.
 - **Unwritable session dir** → loud warning, sessions degrade to in-memory (bot still runs).
 - **Network flap** → the loop backs off 5s and re-polls; sessions are unaffected.
+
+## The command surface (generated — do not hand-maintain it)
+
+`dreggnet_telegram::commands::COMMANDS` is the ONE registry. The dispatcher resolves every typed
+word through it, `/help` is generated from it, and boot calls `setMyCommands` from it so
+Telegram's client-side `/` menu is registered too. `tests/help_is_exhaustive.rs` fails the build
+if a registered command is missing from `/help` or does not dispatch. Adding a command anywhere
+else does nothing — it will not route.
+
+Check what the live bot advertises: `curl -s "https://api.telegram.org/bot$TOKEN/getMyCommands"`.
+An empty `[]` means the running binary predates this registration (the client then shows no `/`
+menu at all, and the surface has to be guessed).
+
+## When a chat gets stuck
+
+- **`/cancel`** (aliases `/reset`, `/stop`) — the escape, from ANY state, session or none. Drops
+  the chat's surfaces, stale keyboards and any armed free-text slot, and reposts the menu.
+  Non-destructive: no move-log is touched, and `/open <key>` brings a session back with its
+  receipts intact.
+- **`/close <key>`** — the destructive form: ends that session AND forgets its durable move-log.
+  Requires the key explicitly.
+- An armed free-text slot also expires on its own after `host::TEXT_ARM_TTL` (15 min), so a
+  forgotten arm cannot swallow a chat's messages indefinitely.
+- The surface message index is IN-MEMORY. After a restart, a press on a pre-restart button
+  resumes every offering that chat durably owns, reposts their live surfaces, and says so — it
+  is not a dead button. Opening (a `/open`, a menu press, a post-restart rebind) always POSTS a
+  fresh message; only a landed turn edits the live surface in place.
+- **A surface that cannot be painted now SAYS SO** instead of leaving the chat empty (`open`
+  used to answer `Ok` with no message at all when the render exceeded Telegram's 4096-character
+  ceiling, a `callback_data` exceeded 64 bytes, or a game's epoch generation could not be
+  recovered). `tests/every_offering_paints.rs` holds every catalog offering to "paint something
+  visible, or refuse legibly".
+
+### Clearing a wedged session from the box (ops, last resort)
+
+The in-chat escapes above need the NEW binary. On a stale deploy, a session whose every
+affordance refuses (a do-once RPG surface at the end of its content, e.g. `craft` once its
+benches are spent) can be cleared from the box — reversibly:
+
+```
+D=~/.local/state/dregg-telegram/sessions; Q=~/.local/state/dregg-telegram/sessions-quarantine
+mkdir -p $Q; head -1 $D/*.log            # line 1 of each log is `key <TAB> session-id <TAB> seed`
+mv $D/<the>.log $Q/                      # quarantine, never delete — it is the receipt chain
+systemctl --user restart dregg-telegram-bot   # drops it from memory; the rest resume by replay
+```
+
+Move the file back and restart to undo.
 
 ## The Mini App tier (the rich web surface beside the chat buttons)
 

@@ -179,7 +179,8 @@ SLOW). Phase 1 packs (`packs.rs`) and Phase 5 offering (`surface.rs: TugOffering
 are built. Open: Phase 4 Lean refinement.
 
 ### automatafl — the Custom-VK exemplar (driven; copy this to build a complex game)
-`dregg-automatafl`: simultaneous-move cellular-automaton boardgame (n=2, 5×5). `reference.rs:
+`dregg-automatafl`: simultaneous-move cellular-automaton boardgame (n=2 seats, **11×11 — the STOCK
+two-player board, which is also the emitted-descriptor size, so a played match FOLDS**). `reference.rs:
 apply_turn` is the off-circuit oracle; `air.rs` staged builders `build_d1/d2/d3/build_sealed`
 (+`_honest` witnesses); `builder.rs: Builder::air_accepts` is the fast refinement shadow;
 `game.rs: AutomataflGame` deploys the same match on a real WorldCell with a commit→reveal→resolve

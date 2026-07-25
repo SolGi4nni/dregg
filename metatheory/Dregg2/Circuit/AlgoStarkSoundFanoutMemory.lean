@@ -2,10 +2,29 @@
 # `Dregg2.Circuit.AlgoStarkSoundFanoutMemory` — the KERNEL STARK-SOUNDNESS FAN-OUT to the 7
 MEMORY-TOUCHING (mapOp) EFFECTS: `algoStarkSound_<effect>` for noteSpend / noteCreate /
 createCell / createCellFromFactory / spawn (+ spawnWrite) / refusal / heapWrite, each ONE
-invocation of the general assembler `AlgoStarkSoundGeneral.algoStarkSound_of_memoryLegs` with
+invocation of the general assembler `ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons` with
 its `MemoryLegs` input ASSEMBLED from the MapOps-AIR modeler (`MapOpsColumnLayout`), never
 re-assumed. (SetFieldDyn — the sole `.memOp` effect — is OUT OF SCOPE here; its leg load-bears
 the named-open higher-order-pole LogUp extension, `docs/SUPERSEDED/MEMORY-LEGS-SCOPE.md` §4.)
+
+## ⚑ MIGRATED OFF THE EMPTY PREMISE (2026-07-25)
+
+Every `hfri` in this file was `AlgoStarkSoundGeneral.FriLdtExtract`, whose OOD conjunct
+`oodPoint = [ood]` is REFUTED on every accepting run — `ApexOodLaneRepair.
+friLdtExtract_makes_verifyBatch_reject_everything` proves that premise forces
+`CircuitSoundness.verifyBatch` to reject EVERY input, so all ten statements below were vacuously
+true. They now take `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest`, the shape
+`FriVerifier.batchTablesCheck` actually matches at `FriVerifier.lean:805`) and route through
+`algoStarkSound_of_memoryLegs_cons`. Nothing is lost: `friLdtExtract_imp_cons` sends the old
+premise into the new one, so every statement here is now STRICTLY STRONGER than the one it
+replaced. Nothing is silently re-emptied: §7 instantiates the `_iff_noOodShape` receipt at each
+of the eight deployed descriptors — the corrected premise is EQUIVALENT to itself with the OOD
+conjunct deleted, so the repair contributes exactly zero strength and cannot be the reason any
+premise is empty. What it does NOT establish is satisfiability of the remaining conjuncts (the
+FRI-LDT/Merkle extraction) at the deployed `opaque` `cfg*` arguments — that is the untouched FRI
+floor, and one retained conjunct (`topen ∈ tableOpenings`) is refutable at the toy accepting pole
+(`docs/WOUND-apex-premise-vacuity-2026-07-24.md` §2), so no accepting model of the corrected
+bundle is exhibited anywhere.
 
 ## HONEST SCOPE (first sentence)
 
@@ -15,8 +34,8 @@ Per effect, the residual `Prop` hypotheses of `algoStarkSound_<effect>` are EXAC
      hash floor, instantiated at the FRI-commitment sponge and at the constraint-semantics hash
      (in deployment both are the same Poseidon2 sponge; stated separately for generality, no new
      crypto is assumed);
-  2. `FriLdtExtract … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle
-     (`AlgoStarkSoundGeneral`);
+  2. `FriLdtExtractCons … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
+     CORRECTED cons-shaped OOD point (`ApexOodLaneRepair`; see the migration note above);
   3. `BusModelFamily … <descriptor>` — the per-used-table LogUp bus models;
   4. `MapReconcileFamily … <descriptor>` — NAMED (NEW here, per-effect): per accepting batch,
      the deployed `Ir2Air::MapOps` AIR's accepted reconcile gate data
@@ -32,8 +51,8 @@ Per effect, the residual `Prop` hypotheses of `algoStarkSound_<effect>` are EXAC
      carried, not laundered.
 
 Everything else is DERIVED, ∀ d, with NO per-effect proof work:
-  * `MainAirAcceptF` / `hood` — the OOD column-layout modeler (inside
-    `algoStarkSound_of_memoryLegs`);
+  * `MainAirAcceptF` / `hood` — the OOD column-layout modeler at the cons shape (inside
+    `algoStarkSound_of_memoryLegs_cons`, via `hood_of_oodColumnLayout_cons`);
   * the `.lookup` non-arith arm — the LogUp bus modeler (`busModel_forces_lookup_holds`);
   * the `.mapOp` non-arith arm — the MapOps-AIR modeler (`mapOpsArm_of_modeler`), routed through
     the `MemoryLegs` catch-all arm here (`memoryLegs_of_mapShape`);
@@ -58,6 +77,7 @@ Sorry-free; no carrier props beyond the five NAMED residuals above; no `decide`/
 targeted (`lake build Dregg2.Circuit.AlgoStarkSoundFanoutMemory`).
 -/
 import Dregg2.Circuit.AlgoStarkSoundGeneral
+import Dregg2.Circuit.ApexOodLaneRepair
 import Dregg2.Circuit.MapOpsColumnLayout
 import Dregg2.Circuit.RotatedKernelRefinementExercise
 
@@ -69,8 +89,10 @@ open Dregg2.Circuit.CircuitSoundness (BatchPublicInputs BatchProof)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.AirChecksSatisfied (isArith)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.AlgoStarkSoundGeneral
-  (AcceptsFull FriLdtExtract BusModelFamily MemoryLegs algoStarkSound_of_memoryLegs)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (AcceptsFull BusModelFamily MemoryLegs)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape algoStarkSound_of_memoryLegs_cons
+   friLdtExtractCons_iff_noOodShape)
 open Dregg2.Circuit.MapOpsColumnLayout
   (MapReconcileModelOk mapOpsArm_of_modeler memLog_nil_of_no_memOps)
 open Dregg2.Circuit.Emit.EffectVmEmit (EffectVmDescriptor)
@@ -227,12 +249,20 @@ theorem memoryLegs_of_mapShape
   · exact hMapTF
 
 /-! ## §3 — THE ∀-d FAN-OUT ASSEMBLER: `AlgoStarkSound` for any lookup-or-mapOp descriptor,
-residual = {the named floor ×2, `FriLdtExtract d`, `BusModelFamily d`, `MapReconcileFamily d`,
+residual = {the named floor ×2, `FriLdtExtractCons d`, `BusModelFamily d`, `MapReconcileFamily d`,
 `MapTableAssembly d`}. -/
 
 /-- **`algoStarkSound_of_mapShape`** — the general assembler at the 7-effect shape:
-`algoStarkSound_of_memoryLegs` with its `MemoryLegs` input assembled by
-`memoryLegs_of_mapShape`. Nothing per-effect remains but the shape lemma and two `rfl`s. -/
+`ApexOodLaneRepair.algoStarkSound_of_memoryLegs_cons` with its `MemoryLegs` input assembled by
+`memoryLegs_of_mapShape`. Nothing per-effect remains but the shape lemma and two `rfl`s.
+
+MIGRATED (2026-07-25) off `AlgoStarkSoundGeneral.algoStarkSound_of_memoryLegs`/`FriLdtExtract`,
+whose OOD conjunct `oodPoint = [ood]` is REFUTED on accepting runs
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`); the FRI premise is now
+`FriLdtExtractCons` at the `ood :: oodRest` shape `FriVerifier.batchTablesCheck` matches. The
+premise is WEAKER (`ApexOodLaneRepair.friLdtExtract_imp_cons`), so this statement is STRONGER than
+the one it replaces, and its OOD conjunct is implied by its own antecedent
+(`fanout_correctedPremise_adds_no_strength` below). -/
 theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
     (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
@@ -245,13 +275,13 @@ theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m))
     (hsites : d.hashSites = []) (hranges : d.ranges = [])
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d)
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
     (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr d)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryLegs_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
     initState logN view tr hsites hranges hfri hbusF
     (memoryLegs_of_mapShape hash hCRh perm RATE toNat params vk core A initState logN view tr d
       hshape hrec hasm)
@@ -349,7 +379,7 @@ variable (tr : BatchPublicInputs → BatchProof → VmTrace)
 + set-insert `.insert` on limb 26). Residual = the five named bundles of the header. -/
 theorem algoStarkSound_noteSpend
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       noteSpendV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       noteSpendV3)
@@ -366,7 +396,7 @@ theorem algoStarkSound_noteSpend
 limb 27; append-only, no freshness tooth). -/
 theorem algoStarkSound_noteCreate
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       noteCreateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       noteCreateV3)
@@ -383,7 +413,7 @@ theorem algoStarkSound_noteCreate
 insert, limb 0). -/
 theorem algoStarkSound_createCell
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       createCellV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       createCellV3)
@@ -400,7 +430,7 @@ theorem algoStarkSound_createCell
 on the derived child VK). -/
 theorem algoStarkSound_createCellFromFactory
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       factoryV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       factoryV3)
@@ -417,7 +447,7 @@ theorem algoStarkSound_createCellFromFactory
 cap-handoff rides `spawnWriteV3`'s constraint wrap, not a map op — see below). -/
 theorem algoStarkSound_spawn
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       spawnV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       spawnV3)
@@ -435,7 +465,7 @@ rotation rebase carrying the SAME accounts map-op pair; the cap-tree insert is a
 constraint wrap, so the memory legs are identical in shape). -/
 theorem algoStarkSound_spawnWrite
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3)
@@ -452,7 +482,7 @@ theorem algoStarkSound_spawnWrite
 limb 36 at the differential-pinned constant key). -/
 theorem algoStarkSound_refusal
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3)
@@ -470,7 +500,7 @@ theorem algoStarkSound_refusal
 splice `.write` on the rotated heap-root limbs). -/
 theorem algoStarkSound_heapWrite
     (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
-    (hfri : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr
+    (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       heapWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       heapWriteV3)
@@ -509,8 +539,65 @@ theorem fanout_sideConditions_mechanical :
    ⟨rfl, rfl, memOpsOf_eq_nil_of_mapShape _ refusalFieldsWriteV3_shape⟩,
    ⟨rfl, rfl, memOpsOf_eq_nil_of_mapShape _ heapWriteV3_shape⟩⟩
 
+/-! ## §7 — ⚑ THE MIGRATION RECEIPT: the corrected premise adds ZERO strength, at the EIGHT
+deployed descriptors this file is stated at. -/
+
+/-- **The migrated premise cannot be the reason anything here is empty.** At each of the eight
+deployed descriptors, `FriLdtExtractCons` is EQUIVALENT to itself with the OOD-shape conjunct
+DELETED: the conjunct is supplied by the bundle's own antecedent (`AcceptsFull` ⟹ the OOD point is
+`ood :: oodRest`, since `batchTablesCheck` returns `false` on an empty one —
+`ApexOodLaneRepair.acceptsFull_gives_cons_shape`). Contrast the premise this file was migrated OFF:
+its singleton conjunct is CONTRADICTED by the same antecedent, which is exactly why it emptied
+every statement below it. Instantiation of `ApexOodLaneRepair.friLdtExtractCons_iff_noOodShape`,
+which holds `∀ d`; recorded here at the deployed descriptors so the receipt is read where the
+migration happened. -/
+theorem fanout_correctedPremise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace) :
+    ∀ d ∈ [noteSpendV3, noteCreateV3, createCellV3, factoryV3, spawnV3, spawnWriteV3,
+        refusalFieldsWriteV3, heapWriteV3],
+      (FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d
+        ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+          view tr d) :=
+  fun d _ => friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState
+    logN view tr d
+
+/-- **The fan-out assembler from a premise that never mentions the OOD shape** — the sharpest
+form of "this migration introduced no second vacuity": every `algoStarkSound_<effect>` below is
+available under a FRI bundle carrying NO OOD conjunct at all, so whatever emptiness the premise may
+still have is inherited ENTIRELY from the FRI-LDT / Merkle / Fiat–Shamir conjuncts (the undischarged
+floor) and NONE of it from the OOD repair. -/
+theorem algoStarkSound_of_mapShape_noOodShape {F : Type*} [Field F] [DecidableEq F]
+    (d : EffectVmDescriptor2)
+    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (fp : List ℤ → F) (embed : ℤ → F)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
+      (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m))
+    (hsites : d.hashSites = []) (hranges : d.ranges = [])
+    (hfri : FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+      view tr d)
+    (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
+    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr d)
+    (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
+    AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
+      (fullChecks core A toNat params.powBits) initState logN view :=
+  algoStarkSound_of_mapShape d sponge hCR hash hCRh fp embed perm RATE toNat params vk core A
+    initState logN view tr hshape hsites hranges
+    ((friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState logN
+      view tr d).mpr hfri) hbusF hrec hasm
+
 /-! ## Kernel-clean keystones (0 sorries; axiom floor is Lean's own). -/
 
+#assert_axioms fanout_correctedPremise_adds_no_strength
+#assert_axioms algoStarkSound_of_mapShape_noOodShape
 #assert_axioms shape_of_graduated_append
 #assert_axioms shape_of_pinned_graduated_append
 #assert_axioms memOpsOf_eq_nil_of_mapShape

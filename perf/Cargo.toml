@@ -26,7 +26,10 @@ publish = false
 # `prove_turn_self_sovereign` (the real node turn) + the descriptor-interpreter (`prove_vm_descriptor`),
 # NOT the v1 hand-AIR `prove_effect_vm_p3` (which is the `not(prover)` wasm floor, retired here).
 default = ["prover"]
-prover = ["dregg-sdk/prover", "dregg-turn/prover"]
+# `dregg-turn/prover` was DELETED (proof production moved to the `dregg-turn-prover` crate);
+# perf touches only turn's unconditional `rotation_witness::produce` derivation, so there is
+# nothing to repoint — the forward simply goes away.
+prover = ["dregg-sdk/prover"]
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }

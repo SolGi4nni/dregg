@@ -57,6 +57,7 @@ import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notecommitment
 import Dregg2.Exec.SystemRoots
 import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+import Dregg2.Circuit.Emit.EffectVmRowCommitReduction
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
 
@@ -742,71 +743,277 @@ theorem noteCreateColl_refutable_of_injective (hash : List ℤ → ℤ) (hCR : P
     (e₁ e₂ : VmRowEnv) : ¬ NoteCreateColl hash e₁ e₂ :=
   spongeColl_refutable_of_injective hash hCR _
 
-/-- **`noteCreateFull_commit_binds_sysdigest_or_collides` (UNCONDITIONAL).** Two rows satisfying the
-amplified hash-sites that publish the SAME `state_commit` EITHER have the SAME absorbed `system_roots`
-digest, OR exhibit a genuine collision of the deployed sponge at the pair `noteCreateCollFind` returns.
-So a prover CANNOT keep `state_commit` while tampering the side-table digest unless it holds that
-collision. -/
-theorem noteCreateFull_commit_binds_sysdigest_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
-    (hs₂ : siteHoldsAll hash e₂ noteCreateRootHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    e₁.loc SYS_DIG_AFTER = e₂.loc SYS_DIG_AFTER ∨ NoteCreateColl hash e₁ e₂ := by
-  rw [noteCreateRootHash_binds hash e₁ hs₁, noteCreateRootHash_binds hash e₂ hs₂] at hcommit
-  rcases group4Find_spec hash
-      (wideBlockA e₁) (wideBlockB e₁) (wideBlockC e₁) (e₁.loc SYS_DIG_AFTER)
-      (wideBlockA e₂) (wideBlockB e₂) (wideBlockC e₂) (e₂.loc SYS_DIG_AFTER)
-      hcommit with ⟨_, _, _, hd⟩ | hcoll
-  · exact Or.inl hd
-  · exact Or.inr hcoll
+/-! ⚑ **WHAT CHANGED AND WHY.** This region used to export
+`noteCreateFull_commit_binds_sysdigest_or_collides` and
+`noteCreateFull_binds_commitments_root_or_collides`, each a bare `binds ∨ collides` DISJUNCTION.
+Those forms are TRUE of the deployed sponge, but UNCLOSED: a collision of the deployed sponge
+EXISTS at BabyBear parameters by pigeonhole
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the disjunction is satisfiable through
+its collision branch WITHOUT the binding ever holding. They quantified over SOLUTIONS;
+cryptographic hardness quantifies over EFFICIENT ADVERSARIES. They are DELETED and rebuilt as
+SECURITY REDUCTIONS on the shared spine (`Crypto.SpongeCarrierReduction` carriers via
+`Emit.EffectVmRowCommitReduction`): the break is a first-class `Game` at noteCreate's OWN amplified
+site list `noteCreateRootHashSites`, the extractor is a MAP OF ADVERSARIES (the GROUP-4 peel
+`noteCreateCollFind` remains as the reduction-internal witness, its correct role), the advantage
+inequality is UNCONDITIONAL, and the conclusions are (a) `Eff`-parametric negligibility under the
+DEPLOYED sponge's collision floor `HashCRHardQuant (spongeFamily D) Eff` (both poles priced —
+`rowCommitFloor_top_false_babyBear` / `_bot_vacuous`) and (b) DISCHARGED keyed-ROM forms on the
+PROVED birthday floor (`keyedRom_hard`), NO floor hypothesis, in the LABELLED random-oracle model
+of `EffectVmRowCommitReduction` §5's header (no `l` is the deployed ~31-bit felt). The
+`_of_injective` no-strength-lost teeth below are kept, re-derived directly from the extraction
+spine. -/
 
-/-- **`noteCreateFull_binds_commitments_root_or_collides` — CONNECTED to `Exec.SystemRoots`,
-UNCONDITIONAL.** Two amplified rows that publish the same `state_commit` AND whose after-digest carrier
-IS the `systemRootsDigest` of their respective `system_roots` sub-blocks EITHER have the SAME
-`commitments` side-table root (and every other), OR name a collision of the deployed sponge — at the
-GROUP-4 absorption (`NoteCreateColl`) or at the ordered root list (`RootsColl`). The chain: equal
-commitment ⇒ equal digest carrier ⇒ equal side-table roots pointwise. Tampering ONLY the `commitments`
-root (omitting `cm`) provably MOVES `state_commit` ⇒ UNSAT unless the prover holds that collision.
+open Dregg2.Crypto.SpongeCarrierReduction
+  (SpongeKeyed spongeFamily carrierBreakGame carrierBreakToFinder carrier_binds_advantage_bound)
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction (group4Carrier wideStateCarrier G4Val WideVal)
+open Dregg2.Crypto.FloorGames (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
+open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded)
+open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
+open Dregg2.Exec.SystemRoots (systemRootsDigest_eq_hash_rootList)
 
-⚑ Both legs used to ride refuted floors: `Poseidon2SpongeCR` at the outer absorption and
-`Exec.SystemRoots.systemRootsDigest_binds_pointwise`'s `compressNInjective` at the roots digest. Neither
-is satisfiable by the deployed compressing sponge, so the old theorem was vacuous exactly where it was
-meant to bind the deployed note-commitment set. -/
-theorem noteCreateFull_binds_commitments_root_or_collides (hash : List ℤ → ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
-    (hs₂ : siteHoldsAll hash e₂ noteCreateRootHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT))
-    (hd₁ : e₁.loc SYS_DIG_AFTER = systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc SYS_DIG_AFTER = systemRootsDigest hash sr₂) :
-    (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i)
-    ∨ NoteCreateColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ := by
-  rcases noteCreateFull_commit_binds_sysdigest_or_collides hash e₁ e₂ hs₁ hs₂ hcommit with
-    hcar | hcoll
-  · have hdig : systemRootsDigest hash sr₁ = systemRootsDigest hash sr₂ := by
-      rw [← hd₁, ← hd₂]; exact hcar
-    rcases systemRootsDigest_binds_pointwise_or_collides hash sr₁ sr₂ hdig with hpt | hrcoll
-    · exact Or.inl hpt
-    · exact Or.inr (Or.inr hrcoll)
-  · exact Or.inr (Or.inl hcoll)
+/-- **THE SYS-DIGEST BREAK GAME at noteCreate's amplified sites.** The adversary is handed a
+uniformly sampled domain-separation tag and WINS iff it outputs two rows BOTH satisfying
+`noteCreateRootHashSites`, sharing the published `state_commit`, yet DISAGREEING on the absorbed
+`system_roots` digest carrier — the §11 OUT-OF-IR ghost, as a game. -/
+def noteCreateSysDigestBreakGame (D : SpongeKeyed) : Game where
+  Inst := fun _ => D.Tag
+  Ans := fun _ => VmRowEnv × VmRowEnv
+  instFin := fun _ => D.tagFintype
+  instNe := fun _ => D.tagNonempty
+  wins := fun _ t c =>
+    siteHoldsAll (D.hashAt t) c.1 noteCreateRootHashSites
+      ∧ siteHoldsAll (D.hashAt t) c.2 noteCreateRootHashSites
+      ∧ c.1.loc (saCol state.STATE_COMMIT) = c.2.loc (saCol state.STATE_COMMIT)
+      ∧ c.1.loc SYS_DIG_AFTER ≠ c.2.loc SYS_DIG_AFTER
+  winsDec := fun _ t c => inferInstance
+
+/-- Read a noteCreate row's GROUP-4 payload: the three wide blocks and the digest carrier. -/
+def noteCreatePayload (e : VmRowEnv) : G4Val :=
+  ((wideBlockA e, wideBlockB e, wideBlockC e), e.loc SYS_DIG_AFTER)
+
+/-- **THE LIFT, AS A MAP OF ADVERSARIES** — a sys-digest forger IS a `group4Carrier` equivocator. -/
+def sysDigestToCarrier (D : SpongeKeyed) (A : Adversary (noteCreateSysDigestBreakGame D)) :
+    Adversary (carrierBreakGame D group4Carrier) where
+  run := fun l t => ((), noteCreatePayload (A.run l t).1, noteCreatePayload (A.run l t).2)
+
+/-- **⚑ WIN-PRESERVATION.** The amplified sites make each published `state_commit` the GROUP-4
+digest of that row's payload (`noteCreateRootHash_binds`); the shared commit equates the two
+encodings, and the digest-carrier disagreement makes the payloads distinct. -/
+theorem sysDigest_wins_imp (D : SpongeKeyed) (A : Adversary (noteCreateSysDigestBreakGame D))
+    (l : ℕ) (t : D.Tag)
+    (hwin : (noteCreateSysDigestBreakGame D).wins l t (A.run l t)) :
+    (carrierBreakGame D group4Carrier).wins l t ((sysDigestToCarrier D A).run l t) := by
+  obtain ⟨hs₁, hs₂, hcommit, hne⟩ := hwin
+  refine ⟨fun hpay => hne (congrArg (fun v : G4Val => v.2) hpay), ?_⟩
+  have h₁ := noteCreateRootHash_binds (D.hashAt t) (A.run l t).1 hs₁
+  have h₂ := noteCreateRootHash_binds (D.hashAt t) (A.run l t).2 hs₂
+  exact h₁.symm.trans (hcommit.trans h₂)
+
+/-- **THE ADVANTAGE INEQUALITY** — unconditional, over ALL adversaries. -/
+theorem sysDigest_adv_le (D : SpongeKeyed) (A : Adversary (noteCreateSysDigestBreakGame D))
+    (l : ℕ) :
+    gameAdv (noteCreateSysDigestBreakGame D) A l
+      ≤ gameAdv (carrierBreakGame D group4Carrier) (sysDigestToCarrier D A) l := by
+  refine @winProb_le_of_imp _ (D.tagFintype) _ _ (fun t ht => ?_)
+  rw [Adversary.hit_eq_true] at ht ⊢
+  exact sysDigest_wins_imp D A l t ht
+
+/-- **⚑ `noteCreate_binds_sysdigest_advantage_bound` — the REDUCED sys-digest binding (successor of
+the deleted `noteCreateFull_commit_binds_sysdigest_or_collides`).** Under the DEPLOYED sponge's
+collision floor at the class `Eff`, an adversary that keeps the published `state_commit` while
+tampering the absorbed `system_roots` digest carrier has NEGLIGIBLE advantage. -/
+theorem noteCreate_binds_sysdigest_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (noteCreateSysDigestBreakGame D))
+    (hEff : Eff (carrierBreakToFinder D group4Carrier (sysDigestToCarrier D A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (noteCreateSysDigestBreakGame D) A) :=
+  negl_of_le (fun l => (gameAdv_mem_unit (noteCreateSysDigestBreakGame D) A l).1)
+    (sysDigest_adv_le D A)
+    (carrier_binds_advantage_bound D group4Carrier Eff (sysDigestToCarrier D A) hEff hCR)
+
+/-- **THE COMMITMENTS-ROOT BREAK GAME.** A win is two rows satisfying the amplified sites, sharing
+the published `state_commit`, whose digest carriers ARE the `systemRootsDigest` of their respective
+side-table sub-blocks — and yet the sub-blocks DIFFER at some root index (an omitted `cm`, a
+tampered escrow root). The deployed break behind the `commitments`-root binding, as a game. -/
+def noteCreateCommitRootBreakGame (D : SpongeKeyed) : Game where
+  Inst := fun _ => D.Tag
+  Ans := fun _ => (VmRowEnv × SysRoots) × (VmRowEnv × SysRoots)
+  instFin := fun _ => D.tagFintype
+  instNe := fun _ => D.tagNonempty
+  wins := fun _ t c =>
+    siteHoldsAll (D.hashAt t) c.1.1 noteCreateRootHashSites
+      ∧ siteHoldsAll (D.hashAt t) c.2.1 noteCreateRootHashSites
+      ∧ c.1.1.loc (saCol state.STATE_COMMIT) = c.2.1.loc (saCol state.STATE_COMMIT)
+      ∧ c.1.1.loc SYS_DIG_AFTER = systemRootsDigest (D.hashAt t) c.1.2
+      ∧ c.2.1.loc SYS_DIG_AFTER = systemRootsDigest (D.hashAt t) c.2.2
+      ∧ ∃ i : Fin N_SYSTEM_ROOTS, c.1.2 i ≠ c.2.2 i
+  winsDec := fun _ t c => inferInstance
+
+/-- **THE WIDE LIFT** — a commitments-root forger IS a `wideStateCarrier` equivocator: the payload
+carries the WHOLE side-table sub-block behind the fourth slot. -/
+def commitRootToCarrier (D : SpongeKeyed) (A : Adversary (noteCreateCommitRootBreakGame D)) :
+    Adversary (carrierBreakGame D wideStateCarrier) where
+  run := fun l t =>
+    ((), ((wideBlockA (A.run l t).1.1, wideBlockB (A.run l t).1.1, wideBlockC (A.run l t).1.1),
+          (A.run l t).1.2),
+         ((wideBlockA (A.run l t).2.1, wideBlockB (A.run l t).2.1, wideBlockC (A.run l t).2.1),
+          (A.run l t).2.2))
+
+/-- **⚑ WIN-PRESERVATION for the wide lift.** The digest carriers being the genuine roots sponge
+turns each published `state_commit` into `wideStateCarrier.enc` of that row's payload
+(`noteCreateRootHash_binds` + `systemRootsDigest_eq_hash_rootList`); the root disagreement makes
+the payloads distinct. -/
+theorem commitRoot_wins_imp (D : SpongeKeyed) (A : Adversary (noteCreateCommitRootBreakGame D))
+    (l : ℕ) (t : D.Tag)
+    (hwin : (noteCreateCommitRootBreakGame D).wins l t (A.run l t)) :
+    (carrierBreakGame D wideStateCarrier).wins l t ((commitRootToCarrier D A).run l t) := by
+  obtain ⟨hs₁, hs₂, hcommit, hd₁, hd₂, i, hi⟩ := hwin
+  refine ⟨?_, ?_⟩
+  · intro hpay
+    have hsr : (A.run l t).1.2 = (A.run l t).2.2 := congrArg (fun v : WideVal => v.2) hpay
+    exact hi (congrFun hsr i)
+  · have h₁ := noteCreateRootHash_binds (D.hashAt t) (A.run l t).1.1 hs₁
+    have h₂ := noteCreateRootHash_binds (D.hashAt t) (A.run l t).2.1 hs₂
+    have hr₁ : (A.run l t).1.1.loc SYS_DIG_AFTER
+        = (D.hashAt t) (rootList (A.run l t).1.2) := by
+      rw [hd₁, systemRootsDigest_eq_hash_rootList]
+    have hr₂ : (A.run l t).2.1.loc SYS_DIG_AFTER
+        = (D.hashAt t) (rootList (A.run l t).2.2) := by
+      rw [hd₂, systemRootsDigest_eq_hash_rootList]
+    rw [hr₁] at h₁
+    rw [hr₂] at h₂
+    exact h₁.symm.trans (hcommit.trans h₂)
+
+/-- **THE ADVANTAGE INEQUALITY for the wide lift** — unconditional, over ALL adversaries. -/
+theorem commitRoot_adv_le (D : SpongeKeyed) (A : Adversary (noteCreateCommitRootBreakGame D))
+    (l : ℕ) :
+    gameAdv (noteCreateCommitRootBreakGame D) A l
+      ≤ gameAdv (carrierBreakGame D wideStateCarrier) (commitRootToCarrier D A) l := by
+  refine @winProb_le_of_imp _ (D.tagFintype) _ _ (fun t ht => ?_)
+  rw [Adversary.hit_eq_true] at ht ⊢
+  exact commitRoot_wins_imp D A l t ht
+
+/-- **⚑ `noteCreate_binds_commitments_root_advantage_bound` — the REDUCED commitments-root binding
+(successor of the deleted `noteCreateFull_binds_commitments_root_or_collides`).** Under the
+DEPLOYED sponge's collision floor at the class `Eff`, an adversary that keeps the published
+`state_commit` (with genuine `systemRootsDigest` carriers) while tampering ANY side-table root —
+the `commitments` root included — has NEGLIGIBLE advantage. -/
+theorem noteCreate_binds_commitments_root_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (noteCreateCommitRootBreakGame D))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier (commitRootToCarrier D A)))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (noteCreateCommitRootBreakGame D) A) :=
+  negl_of_le (fun l => (gameAdv_mem_unit (noteCreateCommitRootBreakGame D) A l).1)
+    (commitRoot_adv_le D A)
+    (carrier_binds_advantage_bound D wideStateCarrier Eff (commitRootToCarrier D A) hEff hCR)
+
+/-! ### The keyed-ROM successors: the same two teeth DISCHARGED on the PROVED birthday floor. -/
+
+section RomSuccessor
+
+open Dregg2.Crypto.RomCarrierSites (RomForgery RomForgeryEff)
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction
+  (narrowRomFamily NarrowRomVal narrowRomCommit effectVmNarrowRomForgery narrowRow_binds_rom
+   wideRomFamily WideRomVal wideRomCommit effectVmWideRomRootTamper wide_root_tamper_rom)
+
+/-- **THE SYS-DIGEST ROM TAMPER** — the fourth-slot disagreement at the sampled oracle: two
+truncated GROUP-4 payloads that differ in the FOURTH SLOT (here: the side-table digest carrier)
+with one nested commitment. The narrow-nest restatement of `noteCreateSysDigestBreakGame`'s
+commitment content (the deployed-hash site legs stay in the `_advantage_bound` above). -/
+def noteCreateSysDigestRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (narrowRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × NarrowRomVal × NarrowRomVal
+  wins := fun l H a =>
+    a.2.1.2 ≠ a.2.2.2
+      ∧ narrowRomCommit D tagDec l H a.1 a.2.1 = narrowRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((narrowRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- **⚑⚑ `noteCreate_binds_sysdigest_rom` — the sys-digest tooth DISCHARGED on the PROVED floor.**
+A query-bounded forger that keeps the nested commitment while moving the fourth payload slot (the
+side-table digest carrier) has NEGLIGIBLE advantage — from `keyedRom_hard` (the birthday bound)
+via `narrowRow_binds_rom`, with NO floor hypothesis: a fourth-slot disagreement IS a payload
+disagreement. -/
+theorem noteCreate_binds_sysdigest_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (noteCreateSysDigestRomTamper D tagDec).game)
+    (hA : RomForgeryEff (narrowRomFamily D tagDec) (noteCreateSysDigestRomTamper D tagDec) Q A) :
+    Negl (gameAdv (noteCreateSysDigestRomTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (effectVmNarrowRomForgery D tagDec).game
+      (⟨A.run⟩ : Adversary (effectVmNarrowRomForgery D tagDec).game)) :=
+    narrowRow_binds_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (effectVmNarrowRomForgery D tagDec).game) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (noteCreateSysDigestRomTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((noteCreateSysDigestRomTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨hne, heq⟩ := hH
+  exact ⟨fun hc => hne (congrArg (fun p : NarrowRomVal => p.2) hc), heq⟩
+
+/-- **THE COMMITMENTS-ROOT ROM TAMPER** — a named-index disagreement in the side-table sub-block
+at the sampled oracle, with one nested wide commitment. -/
+def noteCreateCommitRootRomTamper (D : SpongeKeyed) (tagDec : DecidableEq D.Tag) :
+    RomForgery (wideRomFamily D tagDec) where
+  Ans := fun _ => D.Tag × WideRomVal × WideRomVal
+  wins := fun l H a =>
+    (∃ i : Fin 8, a.2.1.2 i ≠ a.2.2.2 i)
+      ∧ wideRomCommit D tagDec l H a.1 a.2.1 = wideRomCommit D tagDec l H a.1 a.2.2
+  winsDec := fun l _ _ => by
+    letI := ((wideRomFamily D tagDec).toRomFamily).rDec l
+    exact instDecidableAnd
+
+/-- **⚑⚑ `noteCreate_binds_commitments_root_rom` — the commitments-root tooth DISCHARGED on the
+PROVED floor.** A query-bounded forger that keeps the nested wide commitment while tampering the
+side-table sub-block at ANY named index has NEGLIGIBLE advantage — from `keyedRom_hard` via
+`wide_root_tamper_rom`, with NO floor hypothesis: an index-`i` disagreement makes the two
+sub-blocks distinct. -/
+theorem noteCreate_binds_commitments_root_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (noteCreateCommitRootRomTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (noteCreateCommitRootRomTamper D tagDec) Q A) :
+    Negl (gameAdv (noteCreateCommitRootRomTamper D tagDec).game A) := by
+  obtain ⟨M, hM, hrun⟩ := hA
+  have hgen : Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game
+      (⟨A.run⟩ : Adversary (effectVmWideRomRootTamper D tagDec).game)) :=
+    wide_root_tamper_rom D tagDec Q hQ
+      (⟨A.run⟩ : Adversary (effectVmWideRomRootTamper D tagDec).game) ⟨M, hM, hrun⟩
+  refine negl_of_le
+    (fun l => (gameAdv_mem_unit (noteCreateCommitRootRomTamper D tagDec).game A l).1)
+    (fun l => ?_) hgen
+  refine @winProb_le_of_imp _
+    (((noteCreateCommitRootRomTamper D tagDec).game).instFin l) _ _ (fun H hH => ?_)
+  rw [Adversary.hit_eq_true] at hH ⊢
+  obtain ⟨⟨i, hi⟩, heq⟩ := hH
+  exact ⟨fun hc => hi (congrFun hc i), heq⟩
+
+end RomSuccessor
 
 /-- **⚑ THE NO-STRENGTH-LOST TOOTH.** The deleted `noteCreateFull_commit_binds_sysdigest` is EXACTLY
-the injective special case. -/
+the injective special case — re-derived directly from the extraction spine (the reduction-internal
+witness), no disjunction export needed. -/
 theorem noteCreateFull_commit_binds_sysdigest_of_injective (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
     (hs₂ : siteHoldsAll hash e₂ noteCreateRootHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
     e₁.loc SYS_DIG_AFTER = e₂.loc SYS_DIG_AFTER := by
-  rcases noteCreateFull_commit_binds_sysdigest_or_collides hash e₁ e₂ hs₁ hs₂ hcommit with
-    hd | hcoll
+  rw [noteCreateRootHash_binds hash e₁ hs₁, noteCreateRootHash_binds hash e₂ hs₂] at hcommit
+  rcases group4Find_spec hash
+      (wideBlockA e₁) (wideBlockB e₁) (wideBlockC e₁) (e₁.loc SYS_DIG_AFTER)
+      (wideBlockA e₂) (wideBlockB e₂) (wideBlockC e₂) (e₂.loc SYS_DIG_AFTER)
+      hcommit with ⟨_, _, _, hd⟩ | hcoll
   · exact hd
   · exact absurd hcoll (noteCreateColl_refutable_of_injective hash hCR e₁ e₂)
 
 /-- **⚑ THE NO-STRENGTH-LOST TOOTH (roots).** The deleted `noteCreateFull_binds_commitments_root`,
-recovered verbatim as the injective special case. Standalone bridge, never a hypothesis on a deployed
-statement. -/
+recovered verbatim as the injective special case — re-derived through the sys-digest tooth and the
+roots-digest extraction spine. Standalone bridge, never a hypothesis on a deployed statement. -/
 theorem noteCreateFull_binds_commitments_root_of_injective (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
     (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
@@ -816,10 +1023,12 @@ theorem noteCreateFull_binds_commitments_root_of_injective (hash : List ℤ → 
     (hd₂ : e₂.loc SYS_DIG_AFTER = systemRootsDigest hash sr₂)
     (i : Fin N_SYSTEM_ROOTS) :
     sr₁ i = sr₂ i := by
-  rcases noteCreateFull_binds_commitments_root_or_collides hash e₁ e₂ sr₁ sr₂ hs₁ hs₂ hcommit hd₁ hd₂
-    with hpt | hcoll | hrcoll
+  have hd : e₁.loc SYS_DIG_AFTER = e₂.loc SYS_DIG_AFTER :=
+    noteCreateFull_commit_binds_sysdigest_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  have hdig : systemRootsDigest hash sr₁ = systemRootsDigest hash sr₂ := by
+    rw [← hd₁, ← hd₂]; exact hd
+  rcases systemRootsDigest_binds_pointwise_or_collides hash sr₁ sr₂ hdig with hpt | hrcoll
   · exact hpt i
-  · exact absurd hcoll (noteCreateColl_refutable_of_injective hash hCR e₁ e₂)
   · exact absurd hrcoll (rootsColl_refutable_of_injective hash hCR sr₁ sr₂)
 
 /-! ## §E — CONNECTOR to universe-A `noteCreateDescriptor_full_sound`: the amplified descriptor STILL
@@ -1110,54 +1319,69 @@ theorem noteCreate_runnable_full_sound (hash : List ℤ → ℤ)
   runnable_full_sound (noteCreateRunnableSpec hash value preRoots postRoots step) hash env pre post pr
     hrow hdec hgatesat
 
-/-- **`noteCreate_runnable_rejects_root_tamper_or_collides` — the side-table anti-ghost, as EXTRACTION.**
-Two rows satisfying the wide descriptor publishing the SAME `NEW_COMMIT` (with `systemRootsDigest`
-carriers) whose `system_roots` sub-blocks DIFFER at some index (a dropped/omitted `commitments` update, OR
-any other side-table root tampered) exhibit a concrete collision of `hash`: a `WideColl` on the wide
-absorbed lists, or a `RootsColl` on the two root lists. The whole-17-field anti-ghost tooth, specialised
-from `wide_rejects_root_tamper_or_collides`.
+/-! ⚑ **WHAT CHANGED AND WHY.** This region used to export
+`noteCreate_runnable_rejects_root_tamper_or_collides` /
+`noteCreate_runnable_rejects_state_tamper_or_collides`, each concluding
+`WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂` — TRUE of the deployed sponge but UNCLOSED (the
+collision branch is unconditionally available at BabyBear parameters by pigeonhole). They are
+DELETED and rebuilt on `Emit.EffectVmRowCommitReduction`, exactly as `EffectVmEmitMintRunnable`
+§4: the tampers are first-class `Game`s AT NOTECREATE'S OWN WIDE DESCRIPTOR, and the conclusions
+are `Eff`-parametric bounds under the deployed sponge's collision floor plus DISCHARGED keyed-ROM
+forms on the PROVED birthday floor. -/
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`. The deployed BabyBear sponge REFUTES
-that hypothesis (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the previous form was vacuous at
-deployed parameters. This disjunction is formally weaker and holds of the deployed sponge. -/
-theorem noteCreate_runnable_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
-    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash noteCreateVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noteCreateVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
-    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_root_tamper_or_collides (noteCreateRunnableSpec hash value preRoots postRoots step) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+/-- **`noteCreateWideRowSpec`** — noteCreate's WIDE runnable descriptor as the reduction's
+per-effect datum (`usesWideSites := rfl`, the `noteCreateWide_usesWideSites` fact). -/
+def noteCreateWideRowSpec : Dregg2.Circuit.Emit.EffectVmRowCommitReduction.WideRowSpec where
+  descriptor := noteCreateVmDescriptorWide
+  usesWideSites := rfl
 
-/-- **`noteCreate_runnable_rejects_state_tamper_or_collides` — the per-cell-block anti-ghost, as
-EXTRACTION.** Two wide rows publishing the same `NEW_COMMIT` whose absorbed state-block columns
-(balance/nonce/fields/cap) DIFFER exhibit a concrete collision of `hash` — a `WideColl` on the wide
-absorbed lists or a `RootsColl` on the two root lists. So a forged balance / tampered field / forged
-cap-root that still claims the published commitment IS a collision. Specialised from
-`wide_rejects_state_tamper_or_collides`.
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+/-- **⚑ `noteCreate_rejects_root_tamper_advantage_bound` — the side-table anti-ghost, REDUCED
+(successor of the deleted `noteCreate_runnable_rejects_root_tamper_or_collides`).** An efficient
+adversary cannot keep the published `NEW_COMMIT` while tampering a side-table root of a satisfying
+wide noteCreate row (an omitted `cm` publish included), except with negligible probability. -/
+theorem noteCreate_rejects_root_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideRootTamperGame D noteCreateWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noteCreateWideRowSpec (rootTamperToWide D noteCreateWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideRootTamperGame D noteCreateWideRowSpec) A) :=
+  wide_root_tamper_advantage_bound D noteCreateWideRowSpec Eff A hEff hCR
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge
-refutes; it was therefore vacuous at deployed parameters. This form is weaker and holds of that sponge. -/
-theorem noteCreate_runnable_rejects_state_tamper_or_collides (hash : List ℤ → ℤ)
-    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
-    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
-    (hsat₁ : satisfiedVm hash noteCreateVmDescriptorWide e₁ true true)
-    (hsat₂ : satisfiedVm hash noteCreateVmDescriptorWide e₂ true true)
-    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
-    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
-    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
-    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
-    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
-    (htamper : baseAbsorbedCols e₁ ≠ baseAbsorbedCols e₂) :
-    WideColl hash e₁ e₂ ∨ RootsColl hash sr₁ sr₂ :=
-  wide_rejects_state_tamper_or_collides (noteCreateRunnableSpec hash value preRoots postRoots step) hash
-    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+/-- **⚑ `noteCreate_rejects_root_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor. -/
+theorem noteCreate_rejects_root_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomRootTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomRootTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomRootTamper D tagDec).game A) :=
+  wide_root_tamper_rom D tagDec Q hQ A hA
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+/-- **⚑ `noteCreate_rejects_state_tamper_advantage_bound` — the per-cell-block anti-ghost, REDUCED
+(successor of the deleted `noteCreate_runnable_rejects_state_tamper_or_collides`).** An efficient
+adversary cannot keep the published `NEW_COMMIT` while tampering an absorbed state-block column of
+a satisfying wide noteCreate row, except with negligible probability. -/
+theorem noteCreate_rejects_state_tamper_advantage_bound (D : SpongeKeyed)
+    (Eff : Adversary (hashGame (spongeFamily D)) → Prop)
+    (A : Adversary (wideStateTamperGame D noteCreateWideRowSpec))
+    (hEff : Eff (carrierBreakToFinder D wideStateCarrier
+      (wideRowToCarrier D noteCreateWideRowSpec (stateTamperToWide D noteCreateWideRowSpec A))))
+    (hCR : HashCRHardQuant (spongeFamily D) Eff) :
+    Negl (gameAdv (wideStateTamperGame D noteCreateWideRowSpec) A) :=
+  wide_state_tamper_advantage_bound D noteCreateWideRowSpec Eff A hEff hCR
+
+open Dregg2.Circuit.Emit.EffectVmRowCommitReduction in
+open Dregg2.Crypto.RomCarrierSites (RomForgeryEff) in
+/-- **⚑ `noteCreate_rejects_state_tamper_rom`** — the same tooth DISCHARGED on the PROVED floor. -/
+theorem noteCreate_rejects_state_tamper_rom (D : SpongeKeyed) (tagDec : DecidableEq D.Tag)
+    (Q : ℕ → ℕ) (hQ : PolyBounded (fun l => ((Q l : ℝ) * (Q l : ℝ) + 1)))
+    (A : Adversary (effectVmWideRomStateTamper D tagDec).game)
+    (hA : RomForgeryEff (wideRomFamily D tagDec) (effectVmWideRomStateTamper D tagDec) Q A) :
+    Negl (gameAdv (effectVmWideRomStateTamper D tagDec).game A) :=
+  wide_state_tamper_rom D tagDec Q hQ A hA
 
 /-! ### §W.5 — NON-VACUITY of the wide instance: the full clause is INHABITED + REFUTABLE.
 
@@ -1231,8 +1455,10 @@ theorem noteCreate_fullClause_refutable (hash : List ℤ → ℤ) :
 #assert_axioms noteCreateWide_forces_freeze
 #assert_axioms noteCreateWide_forces_root
 #assert_axioms noteCreate_runnable_full_sound
-#assert_axioms noteCreate_runnable_rejects_root_tamper_or_collides
-#assert_axioms noteCreate_runnable_rejects_state_tamper_or_collides
+#assert_axioms noteCreate_rejects_root_tamper_advantage_bound
+#assert_axioms noteCreate_rejects_root_tamper_rom
+#assert_axioms noteCreate_rejects_state_tamper_advantage_bound
+#assert_axioms noteCreate_rejects_state_tamper_rom
 #assert_axioms noteCreate_fullClause_inhabited
 #assert_axioms noteCreate_fullClause_refutable
 
@@ -1264,8 +1490,10 @@ theorem noteCreate_fullClause_refutable (hash : List ℤ → ℤ) :
 #assert_axioms noteCreateFull_forces_root
 #assert_axioms noteCreateColl_irrefl
 #assert_axioms noteCreateColl_refutable_of_injective
-#assert_axioms noteCreateFull_commit_binds_sysdigest_or_collides
-#assert_axioms noteCreateFull_binds_commitments_root_or_collides
+#assert_axioms noteCreate_binds_sysdigest_advantage_bound
+#assert_axioms noteCreate_binds_sysdigest_rom
+#assert_axioms noteCreate_binds_commitments_root_advantage_bound
+#assert_axioms noteCreate_binds_commitments_root_rom
 #assert_axioms noteCreateFull_commit_binds_sysdigest_of_injective
 #assert_axioms noteCreateFull_binds_commitments_root_of_injective
 #assert_axioms noteCreateFull_sound

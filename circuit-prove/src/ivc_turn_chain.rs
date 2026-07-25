@@ -286,10 +286,12 @@ pub const SEG_ANCHOR_WIDTH: usize = 8;
 /// **THE WIDE CUSTOM LEG's EXPOSED FIELD-OCTET WIDTH (the app-root weld leg-emit).** The wide
 /// custom descriptor (`customVmDescriptor2R24`) publishes the cell's committed `fields[0..8]`
 /// octet — the faithfully-carried limbs the `new8` commitment absorbs — as 8 PIs positioned
-/// IMMEDIATELY BEFORE the 16 wide anchors, i.e. at leg PIs `[n - 2*SEG_ANCHOR_WIDTH - 8 .. n -
-/// 2*SEG_ANCHOR_WIDTH)`. The app-root arm reads `field[binding.field_key]` from this octet and the
-/// fold connects it to the sub-proof's published root `R`. Pinned to the Lean
-/// `customFieldKExposure` emit / the Rust `generate_rotated_custom_wide` field exposure.
+/// ahead of the post-fields-root octet and the 16 wide anchors; see
+/// [`custom_leg_field_octet_lo`] for the exact position (it is NOT immediately before the
+/// anchors — the `withAfterFieldsRootPins` octet sits between). The app-root arm reads
+/// `field[binding.field_key]` from this octet and the fold connects it to the sub-proof's
+/// published root `R`. Pinned to the Lean `customFieldKExposure` emit / the Rust
+/// `generate_rotated_custom_wide` field exposure.
 pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
 
 /// The native-eight post-state fields-map root published immediately after the
@@ -297,6 +299,34 @@ pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
 /// Lean source: `EffectVmEmitRotationV3.withAfterFieldsRootPins`; Rust witness
 /// source: `trace_rotated::FIELDS_ROOT_GROUP` (non-contiguous rotated columns).
 pub const CUSTOM_POST_FIELDS_ROOT_LEN: usize = 8;
+
+/// **WHERE THE WIDE CUSTOM LEG PUBLISHES THE COMMITTED `fields[0..8]` OCTET — the ONE derivation.**
+///
+/// The deployed wide custom member is
+/// `wideAppend (withAfterFieldsRootPins (withAfterOctetPins (withDfaRcPins customV3) 4))`
+/// (Lean `EmitWideRegistryProbe`, key `customVmDescriptor2R24`), and every wrapper APPENDS its
+/// pins to the PI tail. So the leg's PI vector ends, in emit order,
+///
+/// ```text
+///   [ … base pins … ‖ fields[0..8] octet (8) ‖ post-state fields-root (8) ‖ old8 (8) ‖ new8 (8) ]
+/// ```
+///
+/// and the octet therefore starts `CUSTOM_APP_FIELD_OCTET_LEN + CUSTOM_POST_FIELDS_ROOT_LEN +
+/// 2*SEG_ANCHOR_WIDTH` felts before the end — currently `n - 32` (measured: at the deployed
+/// `public_input_count = 98` the octet is PIs 66..74). `None` iff the leg is too short to carry
+/// that tail at all (i.e. it is not the wide app-root-weldable member).
+///
+/// EVERY reader of the octet — the deployed app-root arm below, the entity/braid fold, and the
+/// test probes — must go through THIS function. The offset was previously open-coded at each
+/// site; when `withAfterFieldsRootPins` was inserted between the octet and the anchors it moved
+/// the octet by 8 and a stale hand-written `n - 24` silently started reading the fields-root
+/// instead of the fields.
+#[inline]
+pub fn custom_leg_field_octet_lo(pi_len: usize) -> Option<usize> {
+    pi_len.checked_sub(
+        2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN + CUSTOM_APP_FIELD_OCTET_LEN,
+    )
+}
 
 /// Faithful custom-wide ABI: all eight canonical program-VK felts are trace-carried
 /// and pinned at PI 54..61 (low4 params + four exact VK teeth).
@@ -3665,19 +3695,14 @@ fn mint_rotated_turn_leaf(
                     }
                     // WHERE THE LEG PUBLISHES field_K: the wide custom descriptor exposes the
                     // cell's committed field octet (the faithfully-carried `fields[0..8]` the
-                    // `new8` commitment absorbs) as PIs immediately BEFORE the 16 wide anchors
-                    // — at `[n - 2*SEG_ANCHOR_WIDTH - CUSTOM_APP_FIELD_OCTET_LEN .. n -
-                    // 2*SEG_ANCHOR_WIDTH)` (the `generate_rotated_custom_wide` field-K exposure
-                    // / Lean `customFieldKExposure`). `field_key` selects the lane within that
-                    // octet; the claim is `L = app_root_len` felts wide starting there.
+                    // `new8` commitment absorbs) ahead of the post-fields-root octet and the 16
+                    // wide anchors — see `custom_leg_field_octet_lo`, the single derivation (the
+                    // `generate_rotated_custom_wide` field-K exposure / Lean
+                    // `customFieldKExposure`). `field_key` selects the lane within that octet;
+                    // the claim is `L = app_root_len` felts wide starting there.
                     let n = leg.public_inputs.len();
-                    let octet_lo = n
-                        .checked_sub(
-                            2 * SEG_ANCHOR_WIDTH
-                                + CUSTOM_POST_FIELDS_ROOT_LEN
-                                + CUSTOM_APP_FIELD_OCTET_LEN,
-                        )
-                        .ok_or_else(|| TurnChainError::TurnProofInvalid {
+                    let octet_lo = custom_leg_field_octet_lo(n).ok_or_else(|| {
+                        TurnChainError::TurnProofInvalid {
                             index: i,
                             reason: format!(
                                 "custom app-root leg publishes {n} PIs — too few to carry the \
@@ -3685,7 +3710,8 @@ fn mint_rotated_turn_leaf(
                                  descriptor must expose field_K (leg-emit not present)",
                                 2 * SEG_ANCHOR_WIDTH
                             ),
-                        })?;
+                        }
+                    })?;
                     if binding.field_key + binding.app_root_len > CUSTOM_APP_FIELD_OCTET_LEN {
                         return Err(TurnChainError::TurnProofInvalid {
                             index: i,
@@ -3781,11 +3807,8 @@ fn mint_rotated_turn_leaf(
                 });
             }
             let n = leg.public_inputs.len();
-            let octet_lo = n
-                .checked_sub(
-                    2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN + CUSTOM_APP_FIELD_OCTET_LEN,
-                )
-                .ok_or_else(|| TurnChainError::TurnProofInvalid {
+            let octet_lo =
+                custom_leg_field_octet_lo(n).ok_or_else(|| TurnChainError::TurnProofInvalid {
                     index: i,
                     reason: format!("direct-IR2 custom leg publishes only {n} PIs"),
                 })?;
@@ -5639,7 +5662,7 @@ pub fn fold_two_turns(
 // broken-order, ungated-forged-post-commit, stub-leaf, foreign-circuit-VK-pin,
 // in-circuit-wrap, and 2-step-inductive teeth) RELOCATED to the integration test
 // `circuit/tests/ivc_turn_chain_rotated.rs`, which can mint the mandatory ROTATED
-// participant through `dregg_turn::rotation_witness::mint_rotated_participant_leg`
+// participant through `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`
 // (the circuit lib cannot — it has no `dregg-cell` / `dregg-turn` dependency, the cycle).
 //
 // The `streaming_fold_tests` below are DIFFERENT in kind: pure host math over the fold

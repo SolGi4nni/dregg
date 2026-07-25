@@ -50,9 +50,11 @@
 //! ⚠ RESIDUAL — the HELD mask (col 75 = `prmCol dcol.HELD_MASK`) is a FREE PARAM: no hash-site absorbs
 //! it, no PI binds it. The interlock refutes rights-felt FORGERY, but `granted ⊑ held` bounds the
 //! committed rights only by a mask the PROVER CHOSE. Binding col 75 to an opened parent cap is the next
-//! rung (see `EffectVmEmitCapReshape` §4D's RESIDUAL). ⚠ The mint-flavour `capReshapeVmDescriptor`
-//! (a SEPARATE emitted JSON, consumed by `cap_reshape_descriptor.rs`) still carries the identical
-//! Defect-1 conflation on its own `nonAmpGates` — verified, in HORIZONLOG, out of this module's scope.
+//! rung (see `EffectVmEmitCapReshape` §4D's RESIDUAL). The mint-flavour `capReshapeVmDescriptor`
+//! (a SEPARATE emitted JSON, consumed by `cap_reshape_descriptor.rs`) carried the identical Defect-1
+//! conflation on its own `nonAmpGates` — FIXED 2026-07-24, with a both-ways behavioural canary
+//! (`cap_reshape_descriptor.rs::held_bits_bind_the_hashed_held_mask_felt`: the deployed pre-fix bytes
+//! ACCEPT the forgery, the fixed bytes REFUSE it). Those two descriptors were the whole class.
 //!
 //! ## Provenance (anti-drift, the LAW#1 way)
 //!

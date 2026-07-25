@@ -76,9 +76,9 @@ async fn post_json(app: &axum::Router, uri: &str, body: &str) -> (StatusCode, St
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-/// The 5×5 automatafl board index of `(x, y)`.
+/// The automatafl board index of `(x, y)` — the board's OWN width, never a literal.
 fn idx(x: i64, y: i64) -> i64 {
-    y * 5 + x
+    y * dregg_automatafl::game::N as i64 + x
 }
 
 /// `GET /health` answers 200 with an ok status — the liveness probe the fronting proxy checks.
@@ -299,16 +299,16 @@ async fn a_full_automatafl_turn_plays_through_the_merged_app() {
         "the match opens in the commit phase: {body}"
     );
 
-    // Seat A (alice): select the attractor at (1,1) — its legal-move set lights.
-    let (_, body) = post(&app, &act, "select", idx(1, 1), "alice").await;
+    // Seat A (alice): select the stock attractor at (3,1) — its legal-move set lights.
+    let (_, body) = post(&app, &act, "select", idx(3, 1), "alice").await;
     assert!(body.contains("Turn committed"), "the select lands: {body}");
     assert!(
         body.contains("highlighted"),
         "the selected piece lights its legal moves through the merged app: {body}"
     );
 
-    // An illegal diagonal (1,1)->(3,3) is refused by the real referee; nothing commits.
-    let (_, body) = post(&app, &act, "commit", idx(3, 3), "alice").await;
+    // An illegal diagonal (3,1)->(4,2) is refused by the real referee; nothing commits.
+    let (_, body) = post(&app, &act, "commit", idx(4, 2), "alice").await;
     assert!(
         body.contains("Refused: illegal move"),
         "a diagonal is refused: {body}"
@@ -320,17 +320,17 @@ async fn a_full_automatafl_turn_plays_through_the_merged_app() {
 
     // The legal seal lands. The POST re-renders AS alice (viewer-aware host boundary), so the sealer
     // sees HER OWN move revealed — the opponent, not the sealer, is the one kept in the fog.
-    let (_, body) = post(&app, &act, "commit", idx(1, 4), "alice").await;
+    let (_, body) = post(&app, &act, "commit", idx(3, 3), "alice").await;
     assert!(body.contains("Turn committed"), "the seal lands: {body}");
     assert!(
         body.contains("YOUR sealed move"),
         "the sealer sees THEIR OWN sealed move on their own surface (per-viewer, not viewer-blind fog): {body}"
     );
 
-    // Seat B (bob): select (3,3), seal to (3,0) — both seals in flips to reveal.
-    let (_, body) = post(&app, &act, "select", idx(3, 3), "bob").await;
+    // Seat B (bob): select (7,1), seal to (7,3) — both seals in flips to reveal.
+    let (_, body) = post(&app, &act, "select", idx(7, 1), "bob").await;
     assert!(body.contains("Turn committed"), "bob claims seat B: {body}");
-    let (_, body) = post(&app, &act, "commit", idx(3, 0), "bob").await;
+    let (_, body) = post(&app, &act, "commit", idx(7, 3), "bob").await;
     assert!(body.contains("Turn committed"));
     // Rendered AS bob now: ALICE's sealed move is FOG to him (only the commitment shows) — the
     // simultaneous-secret fog, correctly keyed to the OPPONENT's viewpoint.

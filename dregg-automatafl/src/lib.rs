@@ -24,6 +24,13 @@
 //! ([`AutomataflOffering`]) whose board is a [`deos_view::ViewNode::CoordGrid`] with rook-line
 //! legal-move highlighting and a per-viewer sealed-move fog — so automatafl plays on the web
 //! catalog (and thereby Discord / Telegram / WeChat, which render the same `Surface`).
+//!
+//! **THE PLAYED BOARD IS THE PROVEN BOARD.** The surface plays the STOCK 11×11 two-player game
+//! ([`reference::stock_two_player`], four corner goals) — the emitted descriptor size — and the
+//! session RECORDS every resolved round's two revealed moves ([`AutomataflSession::rounds`]). So a
+//! played match is exactly the object the two-leg fold attests. It previously played an invented
+//! 5×5 mini-variant and threw every move away, which left the crown with nothing but the
+//! automaton-only chain at a size no descriptor is emitted for.
 
 pub mod game;
 pub mod legc_layout;

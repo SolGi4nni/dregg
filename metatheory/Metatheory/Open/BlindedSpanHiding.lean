@@ -37,20 +37,23 @@ domain-separation prefix.
     is a real extractor (`recoverToPreimage`) + advantage inequality (`recover_adv_le`), NOT a `P → P`
     unfold: the floor game (wide-hash preimage) and the consumer game (deployed span recovery) are
     DIFFERENT games, connected only by the extractor (the CANARY `floor_at_other_finder_does_not_discharge`
-    pins that). `span_recovery_hard_from_polyTime` instantiates `Eff := CostAdversary.IsPolyTime` and
-    DISCHARGES the extractor's efficiency with `poly_time` (a pure reshaping, no assumed overhead) — the
-    `Market.WideCommitBoundary` methodology, on the hiding side.
+    pins that). The `IsPolyTime` instantiation
+    (`span_recovery_hard_from_polyTime`) is DELETED (07-24): its floor is REFUTED in this file
+    (`widePreimageFloor_polyTime_false`), and its DISCHARGED successor is LANDED —
+    `Metatheory.Open.BlindedSpanHidingKeyed.span_hiding_from_keyed_floor` / `spanRecoverGap_le`, the
+    same consumer on the PROVED keyed query-counted hiding floor
+    (`KeyedRomHidingFloor.keyedRomHiding_hard`), with the hardcoder ADMITTED and DEFANGED.
 
     ⚠ **THE HONEST PRICE, PROVED IN-FILE.** `WidePreimageFloor D (IsPolyTime …)` — the floor the
     `polyTime` instantiation rests on — is itself REFUTED at deployed parameters
     (`widePreimageFloor_polyTime_false`): `CostAdversary.idAdv` prices ANSWER SIZE, never search
     difficulty, so the constant finder that HARDCODES the (fixed, short) honest opening is `IsPolyTime`
     and wins with probability `1`. This is the `KeyedRomFloor.sysRoots_floor_polyTime_false_babyBear`
-    disease. So `span_recovery_hard_from_polyTime` is VACUOUS at the deployed hash, exactly like
-    `WideCommitBoundary.stateCommit_binds_from_polyTime`. The NON-VACUOUS floor is the KEYED,
-    QUERY-COUNTED class (`RomQueryFloor.RomEff` / `KeyedRomFloor`, challenge sampled AFTER the adversary,
-    so it cannot hardcode) — the repo's PROVEN fix for collisions, with NO preimage/hiding instance yet.
-    That instance is the named residual; it is the honest successor of this file's `IsPolyTime` floor.
+    disease. So the `IsPolyTime` form was VACUOUS at the deployed hash, exactly like
+    the deleted `WideCommitBoundary.stateCommit_binds_from_polyTime`. The NON-VACUOUS floor is the KEYED,
+    QUERY-COUNTED class (challenge sampled AFTER the adversary, so it cannot hardcode) — and its hiding
+    instance now EXISTS (`Dregg2.Crypto.KeyedRomHidingFloor` + `BlindedSpanHidingKeyed`), which is why
+    the `IsPolyTime` form is deleted rather than kept beside it.
 
   * **(c) OPEN — NOT in scope, NOT claimed.** Two things stay open, faithfully, as `EpistemicDial`/
     `PerfectZK` already hold them:
@@ -238,7 +241,10 @@ named preimage floor at a class `Eff`, a span-recoverer whose EXTRACTED preimage
 NEGLIGIBLE advantage: the deployed blinded leaf hides its span except with negligible probability. The
 content is the reduction (`recover_adv_le`), NOT a `P → P` unfold — the floor game and the consumer game
 are DIFFERENT (`floor_at_other_finder_does_not_discharge` is the canary). `hEff` is the standard "the
-reduction is efficient" (`FloorGames` §8); `§3` discharges it at `Eff := IsPolyTime`. -/
+reduction is efficient" (`FloorGames` §8); the DISCHARGED instantiation is
+`BlindedSpanHidingKeyed.span_hiding_from_keyed_floor` on the PROVED keyed hiding floor (the
+`IsPolyTime` discharge that stood in §3 is DELETED — `widePreimageFloor_polyTime_false` refutes its
+floor). -/
 theorem span_recovery_hard_from_preimage_floor
     (Eff : Adversary (D.widePreimageGame) → Prop) (A : Adversary (D.spanRecoverGame))
     (hEff : Eff (D.recoverToPreimage A)) (hFloor : D.WidePreimageFloor Eff) :
@@ -246,32 +252,19 @@ theorem span_recovery_hard_from_preimage_floor
   negl_of_le (fun l => (gameAdv_mem_unit (D.spanRecoverGame) A l).1)
     (D.recover_adv_le A) (hFloor (D.recoverToPreimage A) hEff)
 
-/-! ## §3 — `hEff` DISCHARGED at `Eff := IsPolyTime` (the real cost-model adversary). -/
+/-! ## §3 — ⚑ the `IsPolyTime` discharge is DELETED; the successor is LANDED.
 
-/-- **⚑ SPAN HIDING FROM THE PREIMAGE FLOOR, AT THE POLY-TIME CLASS.** A span-recoverer that is EFFICIENT
-at the game's own answer encoding, put through the extractor, yields a wide-hash preimage-finder that is
-still efficient — so the preimage floor at `IsPolyTime` applies to it, and the recoverer's advantage is
-negligible. The extractor is a pure reshaping (assemble the opening), so its efficiency is DISCHARGED by
-`poly_time` with the output-growth bound proved (`assemble` adds exactly 3 felts) and NO `PolyBoundedNat`
-overhead assumed — the `WideCommitBoundary` methodology.
-
-⚠ **PRICE (proved below): `D.WidePreimageFloor (IsPolyTime …)` is FALSE at deployed parameters**
-(`widePreimageFloor_polyTime_false`), so THIS theorem is VACUOUS at the deployed hash. The non-vacuous
-floor is the KEYED, QUERY-COUNTED class. Kept because it is the honest statement of what the `IsPolyTime`
-cost model buys (extractor efficiency, derived) and the exact site where the query-counted successor
-plugs in. -/
-theorem span_recovery_hard_from_polyTime (A : Adversary (D.spanRecoverGame))
-    (hA : IsPolyTime (D.spanAnsSize) A) (cw bw : ℕ)
-    (hFloor : D.WidePreimageFloor (IsPolyTime (D.preAnsSize))) :
-    Negl (gameAdv (D.spanRecoverGame) A) := by
-  have hEff : IsPolyTime (D.preAnsSize) (D.recoverToPreimage A) := by
-    poly_time (D.spanAnsSize) (D.preAnsSize)
-      (fun _ _ (c : List ℤ × ℤ) => D.assemble c.1 c.2) cw bw 1 2 hA
-    intro l t c
-    show (D.assemble c.1 c.2).length ≤ 1 * (D.spanAnsSize l c) + 2
-    simp only [assemble_length, spanAnsSize]
-    omega
-  exact D.span_recovery_hard_from_preimage_floor (IsPolyTime (D.preAnsSize)) A hEff hFloor
+`span_recovery_hard_from_polyTime` stood here: `Eff := IsPolyTime`, extractor efficiency discharged by
+`poly_time`. Its floor `WidePreimageFloor (IsPolyTime …)` is REFUTED below
+(`widePreimageFloor_polyTime_false` — the hardcoder of the FIXED published opening is `IsPolyTime` and
+wins with probability `1`), so the theorem was VACUOUS at the deployed hash. It is DELETED, not kept
+beside the repair; the DISCHARGED successor is `Metatheory.Open.BlindedSpanHidingKeyed`
+(`span_hiding_from_keyed_floor`, `spanRecoverGap_le`, `blindedSpan_recovery_negl`): the same
+span-recovery consumer on the PROVED keyed query-counted hiding floor
+(`KeyedRomHidingFloor.keyedRomHiding_hard`, challenge and blinding sampled AFTER the adversary), with
+the hardcoder ADMITTED at `Q = 0` and its recovery gap EXACTLY `0` — defanged, not excluded. The
+refutation and the class-inhabitation teeth below are KEPT: they are the cure's record, not the
+disease. -/
 
 /-! ## §3b — NON-VACUITY: both games are winnable at ⊤; the floor's poles; the IsPolyTime price. -/
 
@@ -422,7 +415,6 @@ example (D : BlindedSpanCommitment) (t : D.Tag) : (D.honestPreimage t).length = 
 #assert_axioms BlindedSpanCommitment.recover_wins_imp
 #assert_axioms BlindedSpanCommitment.recover_adv_le
 #assert_axioms BlindedSpanCommitment.span_recovery_hard_from_preimage_floor
-#assert_axioms BlindedSpanCommitment.span_recovery_hard_from_polyTime
 #assert_axioms BlindedSpanCommitment.spanRecover_top_false
 #assert_axioms BlindedSpanCommitment.widePreimage_top_false
 #assert_axioms BlindedSpanCommitment.widePreimage_bot_vacuous

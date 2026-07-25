@@ -285,6 +285,79 @@ fn mint_custom_leg_wide_geometry_is_coherent_fast() {
     );
 }
 
+/// ⚑ THE NON-IGNORED OCTET-POSITION CANARY (the offset-drift gate).
+///
+/// `probe_leg_field_octet` and the DEPLOYED app-root arm both locate the wide custom leg's committed
+/// `fields[0..8]` octet with `ivc_turn_chain::custom_leg_field_octet_lo`. That offset used to be
+/// hand-written as `n - 24` in the probe, and when the 8-felt post-state fields-root pins
+/// (`withAfterFieldsRootPins`) were inserted BETWEEN the octet and the 16 wide anchors the octet
+/// moved to `n - 32` — so the stale probe silently read the fields-root instead of the fields. The
+/// drift was invisible because the only test over the octet was `#[ignore]`d.
+///
+/// This canary is INDEPENDENT of the derivation: it stamps a distinctive marker into each of the
+/// cell's eight lane-0 field slots, runs the fast wide dispatch (no STARK, ~0.1s), then MEASURES
+/// where those markers actually land in the PI vector and requires that to be exactly the window
+/// `custom_leg_field_octet_lo` names. Any future PI-tail relayout that moves the octet fails HERE on
+/// every `cargo test`.
+#[test]
+fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
+    use dregg_circuit::effect_vm::field_limbs8;
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit_prove::ivc_turn_chain::custom_leg_field_octet_lo;
+
+    // Distinctive per-slot markers, far from any structural PI value the leg publishes.
+    let mut before = producer_cell(1000, 0);
+    for i in 0..LEG_FIELD_OCTET_LEN {
+        before.state.fields[i] = field_from_u64(7_000_001 + (i as u64) * 13);
+    }
+    let mut after = before.clone();
+    let _ = after.state.increment_nonce();
+
+    let (desc, _trace, dpis, _map_heaps, _mb) =
+        super::custom_leg_wide_desc_trace(&before, &after, [BabyBear::ZERO; 8])
+            .expect("the wide custom dispatch must not err");
+    assert_eq!(dpis.len(), desc.public_input_count);
+
+    let n = dpis.len();
+    let octet_lo = custom_leg_field_octet_lo(n)
+        .expect("the wide custom leg carries the octet + fields-root + anchors PI tail");
+    let marker = |i: usize| field_limbs8(&before.state.fields[i])[0];
+
+    // MEASURED, not derived: each marker occurs exactly once in the PI vector, and slot `i` lands at
+    // `octet_lo + i`. If the octet moves, this is where it is caught.
+    for i in 0..LEG_FIELD_OCTET_LEN {
+        let hits: Vec<usize> = dpis
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| **v == marker(i))
+            .map(|(j, _)| j)
+            .collect();
+        assert_eq!(
+            hits,
+            vec![octet_lo + i],
+            "committed fields[{i}] must be published exactly once, at the derived octet index \
+             {} (custom_leg_field_octet_lo({n}) = {octet_lo}) — measured {hits:?}. The wide \
+             custom PI tail is [octet 8 ‖ post-fields-root 8 ‖ old8 ‖ new8]; if a wrapper was \
+             added or removed, re-derive the offset there, do NOT hand-patch a reader.",
+            octet_lo + i
+        );
+    }
+
+    // And the whole exposed octet reads back as the committed values — what the app-root weld's
+    // `field_key` indexes, and what `probe_leg_field_octet` returns.
+    let octet: Vec<u32> = dpis[octet_lo..octet_lo + LEG_FIELD_OCTET_LEN]
+        .iter()
+        .map(|f| f.as_u32())
+        .collect();
+    let committed: Vec<u32> = (0..LEG_FIELD_OCTET_LEN)
+        .map(|i| marker(i).as_u32())
+        .collect();
+    assert_eq!(
+        octet, committed,
+        "the derived octet window IS the committed fields"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // SLOW (#[ignore]): the whole private match folds to one verify_history-accepted proof.
 // ---------------------------------------------------------------------------

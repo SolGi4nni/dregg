@@ -4,7 +4,7 @@
 //! teeth were DELETED when the v1 `DescriptorParticipant::v1(proof, trace)` leg was
 //! dropped — the leaf is now the rotated multi-table `Ir2BatchProof`
 //! (`RotatedParticipantLeg`), minted by
-//! `dregg_turn::rotation_witness::mint_rotated_participant_leg`. The lib crate could
+//! `dregg_turn_prover::rotation_witness::mint_rotated_participant_leg`. The lib crate could
 //! not host these teeth as integration tests because `circuit/tests/` can depend on
 //! `dregg-cell` + `dregg-turn` (which the lib cannot — a dependency cycle), and the
 //! rotated mint lives in `dregg-turn`. So the teeth are re-expressed HERE, through
@@ -44,7 +44,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     verify_whole_chain_proof_bytes,
 };
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 // A transfer's effect selector (`effect_vm::columns::sel::TRANSFER`), the selector
 // the ungated chain prover is handed for each rotated transfer leg.

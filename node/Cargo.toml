@@ -161,7 +161,10 @@ tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_jso
 # gates (the mcp.rs v1-demo-tool fences) align with the circuit's prover state. A `not(prover)`
 # node build keeps the v1 floor (the MCP standalone-effect-VM demo tools).
 default = ["prover"]
-prover = ["dregg-sdk/prover", "dregg-turn/prover", "dregg-cell/prover"]
+# `dregg-turn/prover` was DELETED (proof production is the `dregg-turn-prover` crate, an
+# UNCONDITIONAL dep of this crate above) and `dregg-cell/prover` was always a no-op, so this
+# now forwards only the SDK's own gate plus node's 19 local sites.
+prover = ["dregg-sdk/prover"]
 
 # THE DEOS-HOST: the node hosts a headless userspace deos-js "private server" program
 # (`--deos-program <path.js>`), running fully without gpui. Pulls in `mozjs` via deos-js,

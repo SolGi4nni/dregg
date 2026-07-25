@@ -34,7 +34,12 @@ nothing downstream reddens.
 
 ## The honest residual
 
-Same as `kernelConfigSound` (Poseidon2 CR ×2, `FriLdtExtract`, `BusModelFamily`, `MapReconcileFamily`,
+⚑ MIGRATED 2026-07-25: `hfri` was `AlgoStarkSoundGeneral.FriLdtExtract`, the singleton-OOD bundle
+PROVED to force `verifyBatch` to reject every input (so this theorem was vacuously true); it is now
+`ApexOodLaneRepair.FriLdtExtractCons`, with the zero-added-strength receipt at
+`AlgoStarkSoundKernelAvail.kernelAvailPremise_adds_no_strength`.
+
+Same as `kernelConfigSound` (Poseidon2 CR ×2, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
 `MapTableAssembly`, `DeployedRefines`, the per-effect readouts, `WitnessDecodes`, `mkLog`), PLUS the two
 umem `MemoryLegs` at the welded avail members, and the two `ClosureTransferAvail` `_availFix` readout
 bundles (the hardened transfer column+ledger+authority readouts / the hardened burn readout). Nothing
@@ -62,7 +67,9 @@ open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2)
 open Dregg2.Circuit.FriVerifierBridge
   (AlgoStarkSound ProofView DeployedRefines starkSound_of_verifyAlgo)
 open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullChecks)
-open Dregg2.Circuit.AlgoStarkSoundGeneral (FriLdtExtract BusModelFamily MemoryLegs)
+open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily MemoryLegs)
+open Dregg2.Circuit.ApexOodLaneRepair
+  (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly)
 open Dregg2.Circuit.AlgoStarkSoundKernelAvail (algoStarkSound_kernelAvail)
 open Dregg2.Circuit.ClosureFanoutGenuine (ClosureReadouts)
@@ -91,7 +98,7 @@ local notation "Slive" =>
 /-- **`kernelConfigSoundAvail` — verifyBatch-accept over `RfixAvail` ⟹ a REAL kernel-config transition with
 availability DISCHARGED.**
 
-From the HARDENED STARK-side floor (Poseidon2 CR ×2, `FriLdtExtract`/`BusModelFamily` at each `RfixAvail`
+From the HARDENED STARK-side floor (Poseidon2 CR ×2, `FriLdtExtractCons`/`BusModelFamily` at each `RfixAvail`
 descriptor, `MapReconcileFamily`/`MapTableAssembly` at the off-debit tags, the two umem `MemoryLegs` at the
 welded avail members, `DeployedRefines RfixAvail`) composed through `algoStarkSound_kernelAvail` +
 `starkSound_of_verifyAlgo`, and the config-side genuine readout bundle + the two `_availFix` readout
@@ -113,7 +120,7 @@ theorem kernelConfigSoundAvail
     (initState : List ℤ) (logN : Nat) (view : ProofView)
     (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace)
     -- ★ HARDENED STARK floor at the DEPLOYED descriptors.
-    (hfri : ∀ e : EffectIdx, FriLdtExtract sponge perm RATE toNat params vk core A initState
+    (hfri : ∀ e : EffectIdx, FriLdtExtractCons sponge perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
@@ -201,8 +208,43 @@ theorem kernelConfigSoundAvail
 
 end
 
+/-! ## §M — ⚑ THE MIGRATION RECEIPT (2026-07-25): the corrected premise adds ZERO strength. -/
+
+/-- **The migrated FRI premise cannot be the reason `kernelConfigSoundAvail` is empty.** At every
+DEPLOYED HARDENED tag, `FriLdtExtractCons … (RfixAvail e)` is EQUIVALENT to itself with the OOD-shape
+conjunct DELETED: that conjunct is supplied by the bundle's OWN `AcceptsFull` antecedent
+(`ApexOodLaneRepair.acceptsFull_gives_cons_shape` — `FriVerifier.batchTablesCheck` returns `false`
+on an empty `oodPoint`), so it cannot shrink the set of accepting runs the premise ranges over.
+
+Contrast the premise this capstone was migrated OFF — `AlgoStarkSoundGeneral.FriLdtExtract`,
+asserting the singleton `oodPoint = [ood]`: that conjunct is CONTRADICTED on accepting runs and
+forces `CircuitSoundness.verifyBatch` to reject EVERY input at the deployed `cfg*` arguments
+(`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`). Since this capstone is the
+VK a light client actually verifies against (`vkOfRegistry RfixAvail`), that is precisely the
+statement that had nothing behind it.
+
+⚠ NOT CLAIMED: satisfiability of the corrected bundle at the deployed arguments — its remaining
+conjuncts ARE the undischarged FRI-LDT / Merkle / Fiat–Shamir floor and `cfg*` are `opaque`. The
+retained conjunct `topen ∈ (view pi π).1.tableOpenings` is refutable at the toy accepting pole
+(whose `tableOpenings` is `[]`); that residual is inherited unchanged from the corrected bundle,
+not introduced by this migration. -/
+theorem kernelConfigAvailPremise_adds_no_strength
+    (sponge : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : EffectIdx → BatchPublicInputs → BatchProof → VmTrace) :
+    ∀ e : EffectIdx,
+      (FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view (tr e)
+          (RfixAvail e)
+        ↔ FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
+          view (tr e) (RfixAvail e)) :=
+  fun e => friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState
+    logN view (tr e) (RfixAvail e)
+
 /-! ## Kernel-clean keystone (0 sorries; axiom floor is Lean's own). -/
 
 #assert_axioms kernelConfigSoundAvail
+#assert_axioms kernelConfigAvailPremise_adds_no_strength
 
 end Dregg2.Circuit.KernelConfigSoundnessAvail

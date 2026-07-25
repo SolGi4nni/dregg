@@ -1166,6 +1166,14 @@ async fn post_tg_act(
         Err(resp) => return resp,
     };
     let sid = SessionId::new(id);
+    // THE SEAT LOCK on a minted automatafl table. Such a table binds its two seats to two
+    // unguessable BROWSER link labels; a Mini App actor is a custodial pubkey identity and can
+    // never be one of them, so admitting it here would let a Telegram user take a seat the invite
+    // link was supposed to hold. Refused for `af1-` automatafl sessions ONLY — every other
+    // key/session is untouched, and this Mini App never mints one.
+    if let Err(why) = crate::automatafl_web::enforce_seat_lock(&key, &sid.0, "") {
+        return (StatusCode::FORBIDDEN, why).into_response();
+    }
     // The PUBLIC audit substance, captured before `form` is consumed into the action: the
     // `{turn, arg, text}` IS the trail (§8 — user content, no secrets on this wire).
     let audit_detail = serde_json::json!({

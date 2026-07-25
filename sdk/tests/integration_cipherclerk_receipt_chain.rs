@@ -111,6 +111,9 @@ fn audit_77_wrong_prev_hash_is_rejected_strict() {
             assert_eq!(expected, Some(correct_prev), "expected = cclerk head");
             assert_eq!(got, Some(bogus_prev), "got = caller's bogus value");
         }
+        other => panic!(
+            "strict mode must reject a mismatched prev_hash with ReceiptChainMismatch, got {other:?}"
+        ),
     }
 
     // Chain is unchanged on rejection.

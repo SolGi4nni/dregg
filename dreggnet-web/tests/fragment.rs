@@ -77,9 +77,9 @@ fn app() -> axum::Router {
     catalog_router(Arc::new(CatalogState::new()))
 }
 
-/// The 5×5 board index of `(x, y)`.
+/// The automatafl board index of `(x, y)` — the board's OWN width, never a literal.
 fn idx(x: i64, y: i64) -> i64 {
-    y * 5 + x
+    y * dregg_automatafl::game::N as i64 + x
 }
 
 /// A fragment response is BARE surface HTML — no document, no head, no shell.
@@ -118,7 +118,7 @@ async fn x_fragment_returns_only_the_surface_full_page_otherwise() {
         &app,
         &format!("{base}/act"),
         "select",
-        idx(1, 1),
+        idx(3, 1),
         "alice",
         true,
     )
@@ -145,7 +145,7 @@ async fn x_fragment_returns_only_the_surface_full_page_otherwise() {
         &app,
         &format!("{base2}/act"),
         "select",
-        idx(1, 1),
+        idx(3, 1),
         "alice",
         false,
     )
@@ -205,10 +205,10 @@ async fn a_full_turn_advances_through_the_fragment_path() {
     };
 
     for (turn, arg, user) in [
-        ("select", idx(1, 1), "alice"),
-        ("commit", idx(1, 4), "alice"),
-        ("select", idx(3, 3), "bob"),
-        ("commit", idx(3, 0), "bob"),
+        ("select", idx(3, 1), "alice"),
+        ("commit", idx(3, 3), "alice"),
+        ("select", idx(7, 1), "bob"),
+        ("commit", idx(7, 3), "bob"),
         ("reveal", 0, "alice"),
         ("reveal", 0, "bob"),
     ] {

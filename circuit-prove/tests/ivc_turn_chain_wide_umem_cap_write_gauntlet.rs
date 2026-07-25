@@ -25,7 +25,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, TurnChainError, fold_wide_welded_umem_turn_chain_staged,
 };
 use dregg_circuit_prove::joint_turn_aggregation::{DescriptorParticipant, RotatedParticipantLeg};
-use dregg_turn::rotation_witness::{
+use dregg_turn_prover::rotation_witness::{
     mint_welded_wide_umem_cap_write_rotated_participant_leg,
     mint_welded_wide_umem_rotated_participant_leg,
 };

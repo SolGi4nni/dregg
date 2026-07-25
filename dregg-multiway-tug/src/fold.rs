@@ -48,7 +48,10 @@ use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_circuit_prove::ivc_turn_chain::prove_turn_chain_recursive;
-use dregg_circuit_prove::ivc_turn_chain::{FinalizedTurn, ir2_leaf_wrap_config};
+use dregg_circuit_prove::ivc_turn_chain::{
+    CUSTOM_APP_FIELD_OCTET_LEN as LEG_FIELD_OCTET_LEN, FinalizedTurn, custom_leg_field_octet_lo,
+    ir2_leaf_wrap_config,
+};
 use dregg_circuit_prove::joint_turn_aggregation::{
     CustomWitnessBundle, DescriptorParticipant, DescriptorStateLeafSource, RotatedParticipantLeg,
 };
@@ -293,7 +296,8 @@ pub fn custom_leg_wide_desc_trace(
         before_cell.state.nonce() as u32,
     );
     // ROUTE THE REAL COMMITTED FIELDS INTO THE EFFECTVM STATE. The wide leg exposes the AFTER-block
-    // `fields[0..8]` octet (leg PIs 62..69) that the app-root weld's `field_key` indexes; but that octet
+    // `fields[0..8]` octet (leg PIs `custom_leg_field_octet_lo(n) .. +8`, currently 66..74 at the
+    // deployed `public_input_count = 98`) that the app-root weld's `field_key` indexes; but that octet
     // is `fill_block`-OVERRIDDEN from the v1 EffectVM AFTER-state-block fields
     // (`row[STATE_AFTER_BASE + FIELD_BASE + i]` = `st.fields[i]`, `EffectVmEmitRotationV3.weldsAt`), NOT
     // from `after_w` — so with the default `CellState::new` (fields all zero) the octet is ALL ZEROS and
@@ -466,9 +470,11 @@ fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
     // DELIVER — THE APP-ROOT CUTOVER (the wide custom leg-emit `withAfterOctetPins customV3 4`):
     // weld the win sub-proof's PUBLISHED winner (the tug win-leaf's app-output PI, see below) to the
     // cell's REAL committed winner field IN-CIRCUIT. The wide leg exposes the AFTER-block `fields[0..8]`
-    // octet as leg PIs 62..69. The producer (`cell::commitment::compute_rotated_pre_limbs`,
-    // `for i in 0..8 { fields[i] -> limb 4+i }`) and the leg-emit (octet PI `62+k` reads AFTER col
-    // `CUSTOM_APP_FIELD_ROT_BASE + k` = `fields[k]` lane-0) put `cell.state.fields[k]` at octet index `k`.
+    // octet at leg PIs `custom_leg_field_octet_lo(n) .. +8` (currently 66..74; the position is DERIVED,
+    // never hand-written — see that function). The producer
+    // (`cell::commitment::compute_rotated_pre_limbs`, `for i in 0..8 { fields[i] -> limb 4+i }`) and the
+    // leg-emit (octet PI `octet_lo+k` reads AFTER col `CUSTOM_APP_FIELD_ROT_BASE + k` = `fields[k]`
+    // lane-0) put `cell.state.fields[k]` at octet index `k`.
     // So the OCTET INDEX of a cell field slot IS that slot itself (for slots `< CUSTOM_APP_FIELD_OCTET_LEN`).
     // `winner` rides cell field slot `reg("winner") == 7` (see `state::schema`; it was relocated into
     // `fields[0..7]` precisely so it lands in this exposed octet), so its `field_key` is that slot
@@ -518,15 +524,23 @@ fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
 }
 
 /// **THE EXPOSED FIELD OCTET (test accessor).** The AFTER-block committed `fields[0..8]` octet a
-/// probe custom-wide leg over `cell` publishes (leg PIs `octet_lo..octet_lo+8`, `octet_lo = n - 24` —
-/// ahead of the 16 wide anchors), as lane-0 `u32`s. This is EXACTLY the octet the app-root weld's
-/// `field_key` indexes; asserting `octet[reg("winner")] == winner` proves the winner is weldable at the
-/// leg level without minting the whole recursive fold.
+/// probe custom-wide leg over `cell` publishes, as lane-0 `u32`s. This is EXACTLY the octet the
+/// app-root weld's `field_key` indexes; asserting `octet[reg("winner")] == winner` proves the winner
+/// is weldable at the leg level without minting the whole recursive fold.
+///
+/// The position is NOT hand-written here: it comes from
+/// [`dregg_circuit_prove::ivc_turn_chain::custom_leg_field_octet_lo`], the SAME derivation the
+/// deployed app-root arm uses to locate `field[field_key]`, so this probe cannot disagree with the
+/// weld it is modeling. (It once did: a hardcoded `n - 24` survived the insertion of the 8-felt
+/// post-state fields-root pins between the octet and the 16 wide anchors, and read the fields-root
+/// instead of the fields. At the deployed `public_input_count = 98` the octet is PIs 66..74.)
 pub fn probe_leg_field_octet(cell: &Cell) -> Vec<u32> {
     let after = nonce_bumped(cell);
     let leg = cell_custom_leg(cell, &after, [BabyBear::ZERO; 8], None);
     let n = leg.public_inputs.len();
-    leg.public_inputs[n - 24..n - 16]
+    let octet_lo = custom_leg_field_octet_lo(n)
+        .expect("a wide custom leg publishes the field octet ahead of its fields-root + anchors");
+    leg.public_inputs[octet_lo..octet_lo + LEG_FIELD_OCTET_LEN]
         .iter()
         .map(|f| f.as_u32())
         .collect()

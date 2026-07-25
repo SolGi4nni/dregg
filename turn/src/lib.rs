@@ -115,6 +115,7 @@ pub mod pending;
 pub mod pq;
 pub mod presence_discharge;
 pub mod reactive;
+pub mod recursive_witness_producer;
 pub mod reversible;
 pub mod rotation_witness;
 pub mod routing;
@@ -145,8 +146,6 @@ pub use collapse::{
     CollapseResult, DEFERRED_STATE_HASH, WitnessMode, collapse, collapse_with, is_deferred,
 };
 pub use composer::{ComposeError, ComposedTurn, SignedFragment, TurnComposer};
-#[cfg(feature = "prover")]
-pub use conditional::mint_transfer_proven_receipt;
 pub use conditional::{
     BASE_CONDITIONAL_DEPOSIT, ConditionProof, ConditionalResult, ConditionalTurn,
     DEFAULT_MAX_ROOT_AGE, MAX_CONDITIONAL_DEADLINE, PER_BLOCK_DEPOSIT, ProofCondition,
@@ -224,6 +223,11 @@ pub use dregg_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,
     PresenceDischargeError, verify_presence_discharge,
+};
+pub use recursive_witness_producer::{
+    RecursiveWitnessProducer, RecursiveWitnessProducerAlreadyInstalled,
+    install_recursive_witness_producer, recursive_witness_producer,
+    recursive_witness_producer_installed,
 };
 pub use reversible::{
     CommittedReason, Inversion, InvertError, ReversibleError, ReversibleHistory, ReversibleStep,

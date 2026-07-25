@@ -29,7 +29,7 @@ use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, recursion_vk_fingerprint, verify_recursive_batch_proof_with_config,
 };
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 use p3_field::PrimeCharacteristicRing;
 
 fn open_permissions() -> dregg_cell::Permissions {

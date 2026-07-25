@@ -895,7 +895,7 @@ fn fold_demo_chain(
     use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
     use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
     use dregg_lightclient::fold_and_attest;
-    use dregg_turn::rotation_witness::mint_rotated_participant_leg;
+    use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
     // Bucket-F (PATH-PRESERVE Phase 5a): the finalized turns carry the MANDATORY ROTATED leg —
     // the rotated multi-table `Ir2BatchProof` minted by `mint_rotated_participant_leg` from the

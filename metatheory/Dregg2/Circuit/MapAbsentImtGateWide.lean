@@ -154,7 +154,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.LexCompare8Emit (lexBlockHolds lexTf)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot perfectRoot_injective)
-open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathRecompute_binds_updates)
+open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathRecompute_binds_updates
+  noPathColl_of_CR)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted ImtAbsent imtAddrs imtInsert)
 open Dregg2.Crypto.Digest8KeySpike (Digest8Key keyLo keyE imtAbsent_excludes_digest8)
 open Dregg2.Circuit.SortedTreeNonMembershipWide8 (keysOfW)
@@ -225,8 +226,8 @@ theorem absentImtGatesW_bind_low (hash : List ℤ → ℤ) (hCR : Poseidon2Spong
   have e1 : xs.length = 2 ^ steps.length := by rw [hsl]; exact hlen
   have hroot1 : pathRecompute hash (imtLeafHash8Of hash ⟨lowAddr, lowValue, lowNext⟩) steps
       = perfectRoot hash steps.length xs := by rw [hp, hor, hsl]
-  obtain ⟨hmem, _⟩ := pathRecompute_binds_updates hash hCR steps xs
-    (imtLeafHash8Of hash ⟨lowAddr, lowValue, lowNext⟩) e1 hroot1
+  obtain ⟨hmem, _⟩ := pathRecompute_binds_updates hash steps xs
+    (imtLeafHash8Of hash ⟨lowAddr, lowValue, lowNext⟩) e1 hroot1 (noPathColl_of_CR hCR)
   exact ⟨xs, pathPos steps, hlen, hor, hmem, hlk, hkn, hnr⟩
 
 /-- **The deployed wide gate yields the `ImtAbsent` witness at the FULL 8-felt key** — the pointer
@@ -340,12 +341,14 @@ theorem adjacentBracketW_forces_committed_pair (hash : List ℤ → ℤ) (hCR : 
       h[p]? = some (klo, vlo) ∧ h[p + 1]? = some (khi, vhi) ∧ klo < k ∧ k < khi := by
   obtain ⟨sLo, sHi, klo, vlo, khi, vhi, hlLo, hlHi, hadj, hpLo, hpHi, hklo, hkhi⟩ := hg
   subst hroot
-  have hbindLo := (pathRecompute_binds_updates hash hCR sLo (h.map (leafOfW hash wideEnc))
+  have hbindLo := (pathRecompute_binds_updates hash sLo (h.map (leafOfW hash wideEnc))
     (leafOfW hash wideEnc (klo, vlo))
-    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpLo)).1
-  have hbindHi := (pathRecompute_binds_updates hash hCR sHi (h.map (leafOfW hash wideEnc))
+    (by rw [List.length_map, hlen, hlLo]) (by rw [hlLo]; exact hpLo)
+    (noPathColl_of_CR hCR)).1
+  have hbindHi := (pathRecompute_binds_updates hash sHi (h.map (leafOfW hash wideEnc))
     (leafOfW hash wideEnc (khi, vhi))
-    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpHi)).1
+    (by rw [List.length_map, hlen, hlHi]) (by rw [hlHi]; exact hpHi)
+    (noPathColl_of_CR hCR)).1
   simp only [List.getElem?_map] at hbindLo hbindHi
   cases heLo : h[pathPos sLo]? with
   | none => rw [heLo] at hbindLo; simp at hbindLo

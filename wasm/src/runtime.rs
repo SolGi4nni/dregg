@@ -722,7 +722,7 @@ impl DreggRuntime {
         let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
-        let leg = dregg_turn::rotation_witness::mint_rotated_participant_leg(
+        let leg = dregg_turn_prover::rotation_witness::mint_rotated_participant_leg(
             &state,
             &vm_effects,
             &before_cell,

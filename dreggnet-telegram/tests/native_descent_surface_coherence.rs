@@ -76,7 +76,7 @@ fn telegram_preserves_native_action_order_and_surfaces_locked_executor_reasons()
     let expected = build_present_request(CHAT, None, &offering.render(&session), &actions);
 
     let mut host = host();
-    let _sid = host
+    let sid = host
         .open("descent", CHAT, None, ALICE)
         .expect("native Descent opens through Telegram");
     let actual = host
@@ -166,7 +166,7 @@ fn telegram_preserves_native_action_order_and_surfaces_locked_executor_reasons()
 #[test]
 fn telegram_terminal_record_names_the_actor_and_routes_live_reverification() {
     let mut host = host();
-    let sid = host
+    let _sid = host
         .open("descent", CHAT, None, ALICE)
         .expect("native Descent opens through Telegram");
     let alice = host.identity(ALICE);

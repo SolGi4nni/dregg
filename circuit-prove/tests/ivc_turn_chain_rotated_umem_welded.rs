@@ -25,7 +25,7 @@ use dregg_circuit_prove::ivc_turn_chain::{
     prove_welded_umem_turn_chain_recursive_staged, verify_turn_chain_recursive,
 };
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_turn::rotation_witness::mint_welded_umem_rotated_participant_leg;
+use dregg_turn_prover::rotation_witness::mint_welded_umem_rotated_participant_leg;
 
 /// OPEN permissions so the rotated producer-witness path admits the actor cell without auth gating.
 fn open_permissions() -> dregg_cell::Permissions {

@@ -89,8 +89,8 @@ pub mod fold {
     use dregg_circuit_prove::custom_leaf_adapter::prove_custom_leaf_with_app_root_commitment;
     use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
     use dregg_circuit_prove::ivc_turn_chain::{
-        CUSTOM_APP_FIELD_OCTET_LEN, CUSTOM_POST_FIELDS_ROOT_LEN, SEG_ANCHOR_WIDTH,
-        ir2_leaf_wrap_config, prove_descriptor_leaf_expose_segment_and_claims,
+        custom_leg_field_octet_lo, ir2_leaf_wrap_config,
+        prove_descriptor_leaf_expose_segment_and_claims,
     };
     use dregg_circuit_prove::joint_turn_aggregation::{CustomWitnessBundle, RotatedParticipantLeg};
     use dregg_circuit_prove::joint_turn_recursive::{
@@ -306,10 +306,7 @@ pub mod fold {
 
         let n = leg.public_inputs.len();
         let binding = landed.app_root_binding();
-        let octet_lo = n
-            .checked_sub(
-                2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN + CUSTOM_APP_FIELD_OCTET_LEN,
-            )
+        let octet_lo = custom_leg_field_octet_lo(n)
             .ok_or_else(|| format!("custom leg publishes {n} PIs — too few for the field octet"))?;
         let field_k_pi_lo = octet_lo + binding.field_key;
 
