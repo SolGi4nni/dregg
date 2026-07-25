@@ -27,7 +27,7 @@
 //! Why drop `/d/`: X truncates *displayed* link text. Every character of path prefix is a
 //! character of content address that does not survive the elision, and `/d/` carries zero
 //! information — the kind segment already namespaces the space. `dregg.gg/poll/7f2a9c4d`
-//! is 23 characters; `dregg.net/d/poll/b3_7f2a9c4d` is 28. Why KEEP the kind segment: it
+//! is 22 characters; `dregg.net/d/poll/b3_7f2a9c4d` is 28. Why KEEP the kind segment: it
 //! is what selects the renderer and what makes "unknown kind ⇒ clean 404" possible without
 //! searching every namespace and guessing, and it keeps one grammar shared with `port.ts`,
 //! which is kind-first.
@@ -301,7 +301,10 @@ mod tests {
         let c = parse_dregg_uri("https://dregg.net/d/poll/b3_7f2a9c4d").unwrap();
         assert_eq!(a, b);
         assert_eq!(a, c);
-        assert_eq!(canonical_uri(&a.kind, "7f2a9c4d"), "dregg://poll/b3_7f2a9c4d");
+        assert_eq!(
+            canonical_uri(&a.kind, "7f2a9c4d"),
+            "dregg://poll/b3_7f2a9c4d"
+        );
     }
 
     #[test]

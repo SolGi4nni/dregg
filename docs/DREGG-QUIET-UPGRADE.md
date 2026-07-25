@@ -45,7 +45,7 @@ resolving. Two deliberate shortenings, both bought with the same currency — X 
 *displayed* link text, so every character of path prefix is a character of address that does not
 survive the elision: the `/d/` segment is dropped (the kind segment already namespaces the
 space, so `/d/` carried no information), and the addr may be a **git-style unambiguous hex
-prefix** with the `b3_` tag optional. `dregg.gg/poll/7f2a9c4d` is 23 characters. An ambiguous
+prefix** with the `b3_` tag optional. `dregg.gg/poll/7f2a9c4d` is 22 characters. An ambiguous
 prefix is REFUSED, never resolved to a guess; the tag stays mandatory in the canonical
 `dregg://` string, which travels and must never lose its algorithm.
 
