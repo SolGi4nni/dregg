@@ -284,6 +284,27 @@ theorem memB_iff (M : List Coord) (q : Coord) : memB M q = true ↔ q ∈ M := b
 
 /-- A mover whose landing is not cleanly its own. Three ways, all decidable:
 
+⚑ **THIS IS A WELL-DEFINEDNESS GUARD, NOT A GAME RULE** (ember ruled 2026-07-24). The README's
+conflict list has exactly two entries — same source, and same destination with a non-vacuum
+source (plus the identical-move exception). The clause below is a THIRD condition that the
+README does not state, so read it as what it is: the predicate that makes a round's landings a
+PARTIAL INJECTION onto empty-or-emptying squares, which is precisely what makes `resolve_perm`
+provable. It is derived from README §"the weakest precondition that structurally ensures that
+following move resolution has a deterministic result", not invented beside the rules.
+
+**It is PROVABLY VACUOUS at the deployed game.** `resolvableB_pair` (below) proves a legal pair
+with distinct sources and distinct destinations is ALWAYS resolvable, so at m = 2 — and the
+deployed automatafl IS two-player (`stockGoals2`, `reference.rs::stock_two_player`; >2 players
+was never firmed up as a ruleset) — `unresolved` is empty by theorem and this guard never fires.
+Triggering it takes ≥ 3 movers in one round. So it costs nothing in play; it exists so that a
+hypothetical wider round CONFLICTS instead of corrupting the board.
+
+**Its failure mode is the point.** Every arm degrades to "this round is a conflict", never to a
+lost or overwritten piece — contrast `~/dev/automatafl/logic/`, whose `DetectAndConflict` arm
+falls through placing nothing and ANNIHILATES both pieces on exactly this configuration
+(`detect_merging_pathways` was never implemented), and `fastlogic`, which resolves it
+order-dependently. Both of those are experiments, not canonical.
+
 1. **the merge/confluence clause** — another mover claims the same landing square. This is
    audit divergence 3.7. `Automatafl.lean` resolved it by `journeys.find?`, i.e. by MOVE-LIST
    ORDER, and DELETED the loser. Here it is a conflict.
