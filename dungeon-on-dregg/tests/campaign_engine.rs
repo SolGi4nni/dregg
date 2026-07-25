@@ -329,7 +329,12 @@ fn one_player_across_seven_expeditions_the_map_opens_and_the_collection_fills() 
     drawn.insert(day);
     run_line(
         &mut campaign,
-        vec![DescentAction::Delve, DescentAction::Flee],
+        // One floor down, one floor back up, and out — banking demands the surface.
+        vec![
+            DescentAction::Delve,
+            DescentAction::Ascend,
+            DescentAction::Flee,
+        ],
     );
     let bail = come_home(&mut campaign);
     assert!(!bail.crowned());
@@ -497,7 +502,12 @@ fn a_forged_history_does_not_replay() {
     go_out(&mut campaign);
     run_line(
         &mut campaign,
-        vec![DescentAction::Delve, DescentAction::Flee],
+        // One floor down, one floor back up, and out — banking demands the surface.
+        vec![
+            DescentAction::Delve,
+            DescentAction::Ascend,
+            DescentAction::Flee,
+        ],
     );
     come_home(&mut campaign);
 

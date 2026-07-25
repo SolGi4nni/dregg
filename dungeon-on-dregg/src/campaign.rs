@@ -873,7 +873,9 @@ impl CampaignSession {
         let previous_deepest = self.chronicle.read_var(&deepest_var(index));
         let first_crown = outcome.crowned() && !self.region.is_cleared(&outcome.location);
 
-        let mut receipts = vec![self.seal_expedition(index, outcome, narration)?];
+        // ⚑ THE DEEPEST REACHED, not the floor standing at the end (see below).
+        let reached = self.expedition_deepest.max(outcome.depth);
+        let mut receipts = vec![self.seal_expedition(index, outcome, reached, narration)?];
 
         // The road opens only on the FIRST crown of a place. A later crown here is a
         // perfectly good run; it just does not re-open an already-open road, and it does
@@ -901,7 +903,6 @@ impl CampaignSession {
         // ⚑ THE DEEPEST REACHED, not the floor standing at the end. `outcome.depth` is the
         // latter, and after `ascend` a successful run ends at the surface — paying on it
         // would mean a crowned run earns no depth-XP at all.
-        let reached = self.expedition_deepest.max(outcome.depth);
         let depth_gain = reached.saturating_sub(previous_deepest);
         let xp = u64::from(first_crown) * CROWN_XP + minted * RELIC_XP + depth_gain * DEPTH_XP;
         if xp > 0 {
@@ -915,6 +916,7 @@ impl CampaignSession {
         &self,
         index: usize,
         outcome: &ExpeditionOutcome,
+        reached: u64,
         narration: [u8; 32],
     ) -> Result<TurnReceipt, CampaignError> {
         let cell = self.chronicle.cell_id();
@@ -933,7 +935,9 @@ impl CampaignSession {
                     Effect::SetField {
                         cell,
                         index: deepest_slot(index) as u64,
-                        value: field_from_u64(deepest.max(outcome.depth)),
+                        // ⚑ The high-water mark of THIS expedition, not the floor it
+                        // ended on — a banked run ends at the surface.
+                        value: field_from_u64(deepest.max(reached)),
                     },
                     Effect::SetField {
                         cell,
