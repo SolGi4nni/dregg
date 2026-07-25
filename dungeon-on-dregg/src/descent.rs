@@ -1066,3 +1066,80 @@ impl Descent {
         self.world.read_heap(self.dep.relic_key(i)).unwrap_or(0)
     }
 }
+
+/// **This day's crowned line** — the move tape that reaches the prize and banks it.
+///
+/// Lean PROVES such a line exists for every drawn map (`Dungeon.winsAt_true`,
+/// `Dungeon.draw_completable : ∀ n, Completable (drawInst n)`) but the proof's witness does
+/// not cross the FFI boundary, so callers used to hard-code day 0's tape and call it "the
+/// exact crowned line from the Lean model". That was true of the one dungeon that existed
+/// before the map became a function of the committed day-seed, and false on most of the
+/// sixteen that exist now. This regenerates it from the day's own [`DayWorld`].
+///
+/// The construction mirrors the Lean `crownedRun` and leans on two facts the draw guarantees:
+/// `homes (keyFor w) < w` (no key is minted behind the door it opens), so every key is in the
+/// pack by the time its way is reached; and the prize sits at the bottom. Way `w`'s key is
+/// relic `w - 1`, relic 0 is the prize, relics 4..7 are treasures this line deliberately
+/// leaves lying — at depth `FLOORS` the pack holds three keys plus the prize, which is
+/// exactly `CAP - FLOORS`, so taking a treasure would price the crown out of reach.
+pub fn crowned_line(day: usize) -> Vec<(&'static str, i64)> {
+    let world = day_world(day);
+    let mut tape: Vec<(&'static str, i64)> = Vec::new();
+    for floor in 1..=FLOORS {
+        tape.push((DELVE, 0));
+        for _ in 0..world.guard_hp(floor) {
+            tape.push((SMITE, 0));
+        }
+        // Take every WAY-KEY minted on this floor (relics 1..FLOORS-1). Keys are looted where
+        // they lie, which is not necessarily the floor whose door they open.
+        for relic in 1..FLOORS {
+            if world.homes[relic as usize] == floor {
+                tape.push((LOOT, relic as i64));
+            }
+        }
+        if floor < FLOORS {
+            // Way `floor + 1`'s key is relic `floor`, and `homes[floor] <= floor`, so it is
+            // carried by now — that is exactly what `drawFamily_wf` decides.
+            tape.push((UNLOCK, (floor + 1) as i64));
+        } else {
+            tape.push((LOOT, 0)); // the prize, at the bottom
+        }
+    }
+    tape.push((FLEE, 0));
+    tape
+}
+
+#[cfg(test)]
+mod crowned_line_tests {
+    use super::*;
+
+    /// The generated tape must actually CROWN, on every day the draw can produce — not on the
+    /// one day someone happened to write down. This is the anti-vacuity guard for
+    /// `crowned_line`: if the generator ever drifts from the map, some day stops banking.
+    #[test]
+    fn every_days_crowned_line_banks_the_prize_within_the_light() {
+        for day in 0..DAYS {
+            let mut sim = Sim::genesis_on_day(day);
+            for (turn, arg) in crowned_line(day) {
+                sim = match turn {
+                    DELVE => sim.delve(),
+                    SMITE => sim.smite(),
+                    LOOT => sim.loot(arg as usize),
+                    UNLOCK => sim.unlock(arg as u64),
+                    FLEE => sim.flee(),
+                    other => panic!("day {day}: crowned_line emitted unknown verb {other}"),
+                }
+                .unwrap_or_else(|e| panic!("day {day}: {turn}({arg}) refused: {e}"));
+            }
+            assert_eq!(
+                sim.custody[0], BANKED,
+                "day {day}: the crowned line did not bank the prize"
+            );
+            assert!(
+                sim.spent <= BREATH,
+                "day {day}: the line costs {} of {BREATH} light",
+                sim.spent
+            );
+        }
+    }
+}
