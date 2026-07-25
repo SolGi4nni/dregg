@@ -12,6 +12,26 @@
 //! bytes, and refuses replay without mutating an accepted assignment.  This is
 //! not distributed private-input assembly—the producer sees all inputs—and the
 //! standalone receipt is not claimed as an `Effect::Custom` cell transition.
+//!
+//! ## A SEAT HERE IS A NUMBER, NOT A PLAYER
+//!
+//! Nothing in the public statement identifies anybody.  `roles[i]` says "the
+//! `i`th row of some private matrix got this role"; WHOSE row that was is not a
+//! fact this proof carries.  A consumer that reads `roles[0]` as "the first
+//! player who joined" is asserting that binding itself, and a receipt minted
+//! over another group's matrix satisfies the relation just as well.
+//!
+//! The one public input a consumer can push identity through is [`session`],
+//! which the AIR binds.  Derive it from the roster — a canonical ordering of the
+//! authenticated identities plus whatever each of them committed to — and the
+//! statement itself then denotes exactly that group in exactly that seat order,
+//! recomputable by anyone from public data with no host records in the loop.
+//! `dreggnet_party::crew` is the worked instance of that pattern
+//! (`CrewRoll::proof_session` / `CrewRoll::accept`); a host that instead keeps an
+//! operation id it rechecks on restart is trusting its own bookkeeping, which is
+//! a weaker and separately-stated claim.
+//!
+//! [`session`]: RaidAssignmentSession::session
 
 use dregg_circuit_prove::private_raid_assignment as proof;
 use serde::{Deserialize, Serialize};

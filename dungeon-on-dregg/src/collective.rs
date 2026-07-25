@@ -74,7 +74,7 @@
 //! [`WorldCell`]: spween_dregg::WorldCell
 //! [`VoteError::Ineligible`]: collective_choice::VoteError::Ineligible
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use collective_choice::{
     BallotCap, CollectiveChoice, Decision, PollId, PollSpec, Tally, TurnReceipt, VoteEngine,
@@ -390,6 +390,19 @@ impl CollectiveRound {
     ) -> Result<CollectiveRound, CollectiveError> {
         let question = question.into();
         let mut engine = CollectiveChoice::new(federation);
+        // A DISTINCT-VOTER quorum larger than the seated electorate can never be reached:
+        // the `AffineLe` gate would refuse every decision-turn forever and the round would
+        // look merely "still open". The engine's own spec check bounds `quorum_m >= 1` but
+        // not this end (a WEIGHTED poll legitimately has a quorum above its voter count —
+        // this round is unweighted, so the bound is real). Refuse it at open time rather
+        // than shipping a fork nobody can ever resolve.
+        let seated: BTreeSet<[u8; 32]> = electorate.iter().map(|s| s.pk.0).collect();
+        if quorum > seated.len() as u64 {
+            return Err(CollectiveError::Vote(VoteError::BadPollSpec(format!(
+                "quorum {quorum} exceeds the {} distinct seated voter(s): the round could never resolve",
+                seated.len()
+            ))));
+        }
         let electorate_pks: Vec<[u8; 32]> = electorate.iter().map(|s| s.pk.0).collect();
         let spec = PollSpec {
             question: question.clone(),
@@ -973,5 +986,76 @@ mod collective_tests {
             other => panic!("a re-pointed option must be rejected, got {other:?}"),
         }
         assert_eq!(round.tally().expect("tally").total, 0, "nothing committed");
+    }
+
+    /// **AN UNREACHABLE QUORUM IS REFUSED AT OPEN TIME, not discovered as a permanent
+    /// stall.** A distinct-voter quorum above the seated electorate can never satisfy the
+    /// `AffineLe` gate: every seat could vote and the round would still report "still
+    /// open". `open_with` refuses it up front; the largest reachable quorum (unanimity)
+    /// still opens, so the bound is exact rather than merely conservative.
+    #[test]
+    fn a_quorum_larger_than_the_electorate_is_refused_instead_of_stalling_forever() {
+        let roster = demo_roster();
+        let proposals = || {
+            vec![
+                Proposal::new("Trade blows with the gate-warden", Command::trade_blows()),
+                Proposal::new("Press past into the plundered hall", Command::press_on()),
+            ]
+        };
+        // `CollectiveRound` is not `Debug`; keep only the refusal for the report.
+        let refused = CollectiveRound::open_with(
+            "Unreachable?",
+            proposals(),
+            &roster,
+            roster.len() as u64 + 1,
+            FEDERATION,
+        )
+        .err();
+        match refused {
+            Some(CollectiveError::Vote(VoteError::BadPollSpec(reason))) => {
+                assert!(
+                    reason.contains("could never resolve"),
+                    "the refusal names why: {reason}"
+                );
+            }
+            other => panic!("an unreachable quorum must be refused at open, got {other:?}"),
+        }
+
+        // Non-vacuous: unanimity — the largest REACHABLE quorum — still opens and resolves.
+        let mut round = CollectiveRound::open_with(
+            "Unanimous?",
+            proposals(),
+            &roster,
+            roster.len() as u64,
+            FEDERATION,
+        )
+        .expect("a unanimity quorum is reachable");
+        for custodian in demo_custodians() {
+            round
+                .cast(&custodian.sign_ballot(round.poll(), KP_TRADE_BLOWS))
+                .expect("every seat votes");
+        }
+        assert!(
+            round.resolve().expect("resolve").is_some(),
+            "a unanimous round certifies"
+        );
+
+        // A duplicate seat entry does not inflate the electorate into reachability: the
+        // engine counts DISTINCT keys, and so does the guard.
+        let mut doubled = roster.clone();
+        doubled.push(roster[0].clone());
+        assert!(
+            matches!(
+                CollectiveRound::open_with(
+                    "Doubled?",
+                    proposals(),
+                    &doubled,
+                    roster.len() as u64 + 1,
+                    FEDERATION
+                ),
+                Err(CollectiveError::Vote(VoteError::BadPollSpec(_)))
+            ),
+            "a repeated seat is one voter, not two"
+        );
     }
 }

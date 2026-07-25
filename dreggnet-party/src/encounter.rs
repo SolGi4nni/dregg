@@ -669,10 +669,17 @@ impl PartyArenaEncounter {
         }
         let fork = self.fork.as_mut().ok_or(EncounterError::ForkResolved)?;
         let ballot_poll = fork.poll();
-        let ballot = self
-            .party
-            .sign_ballot_as(fork, actor, option)
-            .map_err(|error| EncounterError::Unseated(error.0))?;
+        // `try_sign_ballot_as`, not `sign_ballot_as`: a party mustered by
+        // `Party::muster_with_custody` holds no secret for its seats (the players do), and
+        // that is a refusal to report, not a panic. Such a deployment submits an
+        // already-signed ballot rather than asking the host to mint one.
+        let ballot =
+            self.party
+                .try_sign_ballot_as(fork, actor, option)
+                .map_err(|error| match error {
+                    crate::BallotCustodyError::Unseated(who) => EncounterError::Unseated(who.0),
+                    remote => EncounterError::VoteRefused(remote.to_string()),
+                })?;
         let receipt = fork
             .cast_receipted(&ballot)
             .map_err(|error| EncounterError::VoteRefused(error.to_string()))?;

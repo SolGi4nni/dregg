@@ -62,11 +62,18 @@ use dregg_cell::{AuthRequired, CellId, CellProgram, FieldElement, StateConstrain
 use dregg_turn::action::Effect;
 use starbridge_v2::world::{CommitOutcome, World, make_open_cell, set_field};
 
+use dregg_types::PublicKey;
 use dungeon_on_dregg::collective::{
     CollectiveError, CollectiveRound, Custodian, Proposal, Seat as ElectorateSeat, SignedBallot,
 };
 use dungeon_on_dregg::narrator::Command;
 
+/// **THE BRAID** — a crew forms, takes provably-fair roles assigned from hidden
+/// preferences, and decides together. Unifies this crate's [`Seat`], the collective
+/// engine's elector, and the private-raid relation's anonymous seat index into ONE
+/// identity, and binds an otherwise-anonymous `roles[4]` to THIS crew inside the proof's
+/// public statement.
+pub mod crew;
 /// A replayable tactical encounter that braids this crate's role-capability
 /// receipts and signed fork certificate into real `combat::Arena` turns.
 pub mod encounter;
@@ -207,6 +214,31 @@ impl std::fmt::Display for UnseatedIdentity {
 
 impl std::error::Error for UnseatedIdentity {}
 
+/// Why the party could not mint a ballot on an identity's behalf.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BallotCustodyError {
+    /// The identity holds no seat in this party.
+    Unseated(UnseatedIdentity),
+    /// The seat's ballot secret lives with its player ([`SeatCustody::Remote`]); the
+    /// party holds only the verifying key, so the player must sign and submit their own
+    /// ballot to [`PartyFork::cast`].
+    Remote(String),
+}
+
+impl std::fmt::Display for BallotCustodyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unseated(who) => write!(f, "{who}"),
+            Self::Remote(identity) => write!(
+                f,
+                "{identity:?} holds their own ballot secret; the party cannot sign for them"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BallotCustodyError {}
+
 /// A move a seat can attempt — the union of every role's move. [`Party::act`] lowers it to
 /// cell-write effects and lets the REAL executor referee: a move whose target cells the
 /// acting seat holds no cap to is refused (forging / acting outside your seat), no host
@@ -234,7 +266,41 @@ pub struct Seat {
     role: Role,
     name: String,
     cell: CellId,
-    custodian: Custodian,
+    custody: SeatCustody,
+}
+
+/// Where a seat's ballot SECRET lives.
+///
+/// [`Party::muster`] / [`Party::muster_with_roster`] mint [`Custodian::demo`] keys, whose
+/// ed25519 seed is `blake3::derive_key(context, name)` — reproducible, which is what makes
+/// the demo and the tests stable, and which also means **anyone who knows the seat's name
+/// can reconstruct its secret**. That is fine for a hotseat/demo table and unusable for a
+/// deployment: "nobody forges your vote" is only true when the secret is the player's.
+/// [`Party::muster_with_custody`] seats [`SeatCustody::Remote`] instead — the party holds
+/// the player's real PUBLIC key and ballots arrive already signed on the player's device.
+pub enum SeatCustody {
+    /// The party holds this seat's signing key: it can mint the seat's ballots itself
+    /// ([`Party::sign_ballot`]). Hotseat / demo / test play.
+    Local(Custodian),
+    /// The secret stays with the player; the party holds only the verifying key. The party
+    /// CANNOT sign for this seat — a ballot must arrive from the player
+    /// ([`PartyFork::cast`]).
+    Remote(PublicKey),
+}
+
+impl SeatCustody {
+    /// This seat's custody PUBLIC key — its electorate identity, either way.
+    pub fn public_key(&self) -> PublicKey {
+        match self {
+            SeatCustody::Local(custodian) => custodian.public_key(),
+            SeatCustody::Remote(pk) => *pk,
+        }
+    }
+
+    /// Whether the party can mint this seat's ballots (only a local-custody seat).
+    pub fn is_local(&self) -> bool {
+        matches!(self, SeatCustody::Local(_))
+    }
 }
 
 impl Seat {
@@ -250,10 +316,17 @@ impl Seat {
     pub fn cell(&self) -> CellId {
         self.cell
     }
+    /// Where this seat's ballot secret lives.
+    pub fn custody(&self) -> &SeatCustody {
+        &self.custody
+    }
     /// This seat's registered electorate identity (name + custody public key) — enrolled
     /// into a fork's electorate. The secret is NOT included.
     pub fn electorate_seat(&self) -> ElectorateSeat {
-        self.custodian.seat()
+        ElectorateSeat {
+            name: self.name.clone(),
+            pk: self.custody.public_key(),
+        }
     }
 }
 
@@ -326,6 +399,45 @@ impl Party {
     /// one role. The resulting seat names are the supplied frontend identities;
     /// the role's capability set remains the executor-enforced mandate.
     pub fn muster_with_roster(roster: [(Role, String); 4]) -> Result<Party, PartyFormationError> {
+        Ok(Self::muster_canonical(Self::canonical_names(roster)?.map(
+            |name| {
+                let custody = SeatCustody::Local(Custodian::demo(&name));
+                (name, custody)
+            },
+        )))
+    }
+
+    /// **Muster a party whose seats hold their OWN ballot secrets.** Same shape as
+    /// [`Party::muster_with_roster`], except each entry supplies the player's real custody
+    /// PUBLIC key: the party never sees a secret, so a seat's ballot key is not derivable
+    /// from its public identity the way [`Custodian::demo`]'s is.
+    ///
+    /// A [`SeatCustody::Remote`] seat cannot have its ballot minted by the party
+    /// ([`Party::sign_ballot`] is unavailable, [`Party::try_sign_ballot`] returns `None`);
+    /// its ballots are signed on the player's device with
+    /// [`Custodian::sign_ballot`] and handed to [`PartyFork::cast`]. This is the
+    /// deployment shape; [`Party::muster_with_roster`] remains the hotseat/demo one.
+    pub fn muster_with_custody(
+        roster: [(Role, String, PublicKey); 4],
+    ) -> Result<Party, PartyFormationError> {
+        // The keys are indexed by role, so they survive canonicalization unchanged; a
+        // doubled role is caught by the one shared validation path below.
+        let mut keys: [Option<PublicKey>; 4] = [None; 4];
+        let plain: [(Role, String); 4] = roster.map(|(role, identity, pk)| {
+            keys[role.index()] = Some(pk);
+            (role, identity)
+        });
+        let mut canonical = Self::canonical_names(plain)?.map(Some);
+        Ok(Self::muster_canonical(std::array::from_fn(|seat| {
+            let name = canonical[seat].take().expect("each seat is built once");
+            let pk = keys[seat].expect("canonical_names proved every role is filled");
+            (name, SeatCustody::Remote(pk))
+        })))
+    }
+
+    /// Canonicalize a claimed roster into [`Role::ALL`] order, refusing an empty/overlong
+    /// identity, a doubled role, a doubled identity, or an unfilled role.
+    fn canonical_names(roster: [(Role, String); 4]) -> Result<[String; 4], PartyFormationError> {
         let mut names: [Option<String>; 4] = std::array::from_fn(|_| None);
         let mut identities = std::collections::BTreeSet::new();
         for (role, identity) in roster {
@@ -339,7 +451,7 @@ impl Party {
                 return Err(PartyFormationError::DuplicateRole(role));
             }
         }
-        let canonical = [
+        Ok([
             names[0]
                 .take()
                 .ok_or(PartyFormationError::MissingRole(Role::Tank))?,
@@ -352,12 +464,10 @@ impl Party {
             names[3]
                 .take()
                 .ok_or(PartyFormationError::MissingRole(Role::Healer))?,
-        ];
-
-        Ok(Self::muster_canonical(canonical))
+        ])
     }
 
-    fn muster_canonical(names: [String; 4]) -> Party {
+    fn muster_canonical(seats: [(String, SeatCustody); 4]) -> Party {
         let mut world = World::new().with_executor_signing_key(EXECUTOR_SEED);
 
         // The role-target cells (open — reach is what the caps gate).
@@ -417,23 +527,24 @@ impl Party {
             ),
         );
 
-        // The four seats — each a real player-cell holding ONLY its role's caps, plus a
-        // deterministic demo custody keypair (its ballot identity).
-        let roster = [
-            (Role::Tank, names[0].clone(), 0x0A, vec![front]),
-            (Role::Scout, names[1].clone(), 0x0B, vec![lock]),
-            (Role::Mage, names[2].clone(), 0x0C, vec![ward, focus]),
-            (Role::Healer, names[3].clone(), 0x0D, vec![rally, focus]),
+        // The four seats — each a real player-cell holding ONLY its role's caps, plus the
+        // custody the caller chose (a demo keypair, or the player's own public key).
+        let mandates: [(Role, u8, Vec<CellId>); 4] = [
+            (Role::Tank, 0x0A, vec![front]),
+            (Role::Scout, 0x0B, vec![lock]),
+            (Role::Mage, 0x0C, vec![ward, focus]),
+            (Role::Healer, 0x0D, vec![rally, focus]),
         ];
-        let seats: Vec<Seat> = roster
+        let seats: Vec<Seat> = mandates
             .into_iter()
-            .map(|(role, name, seed, caps)| {
+            .zip(seats)
+            .map(|((role, seed, caps), (name, custody))| {
                 let cell = install_seat(&mut world, seed, &caps);
                 Seat {
                     role,
-                    name: name.clone(),
+                    name,
                     cell,
-                    custodian: Custodian::demo(&name),
+                    custody,
                 }
             })
             .collect();
@@ -653,24 +764,66 @@ impl Party {
     /// Sign seat `seat_idx`'s ballot for `option` in `fork` — with the seat's OWN custody
     /// key (the seated identity). The returned [`SignedBallot`] is what
     /// [`PartyFork::cast`] admits.
+    ///
+    /// Only a [`SeatCustody::Local`] seat can be signed for here; a party mustered by
+    /// [`Party::muster_with_custody`] holds no secret to sign with, and its members sign
+    /// their own ballots. Use [`Party::try_sign_ballot`] when the custody mode is not
+    /// statically known.
+    ///
+    /// # Panics
+    /// If seat `seat_idx` holds [`SeatCustody::Remote`].
     pub fn sign_ballot(&self, fork: &PartyFork, seat_idx: usize, option: usize) -> SignedBallot {
-        self.seats[seat_idx]
-            .custodian
-            .sign_ballot(fork.poll(), option)
+        self.try_sign_ballot(fork, seat_idx, option)
+            .expect("this seat's ballot secret lives with its player, not with the party")
+    }
+
+    /// Sign seat `seat_idx`'s ballot if the party holds that seat's secret;
+    /// `None` for a [`SeatCustody::Remote`] seat (the player signs their own).
+    pub fn try_sign_ballot(
+        &self,
+        fork: &PartyFork,
+        seat_idx: usize,
+        option: usize,
+    ) -> Option<SignedBallot> {
+        match &self.seats[seat_idx].custody {
+            SeatCustody::Local(custodian) => Some(custodian.sign_ballot(fork.poll(), option)),
+            SeatCustody::Remote(_) => None,
+        }
+    }
+
+    /// Sign an authenticated identity's ballot when the party holds their secret.
+    /// [`BallotCustodyError::Unseated`] for an outsider, [`BallotCustodyError::Remote`]
+    /// when the secret is the player's — never a panic.
+    pub fn try_sign_ballot_as(
+        &self,
+        fork: &PartyFork,
+        identity: &str,
+        option: usize,
+    ) -> Result<SignedBallot, BallotCustodyError> {
+        let seat_idx = self
+            .seat_index_for(identity)
+            .ok_or_else(|| BallotCustodyError::Unseated(UnseatedIdentity(identity.to_string())))?;
+        self.try_sign_ballot(fork, seat_idx, option)
+            .ok_or_else(|| BallotCustodyError::Remote(identity.to_string()))
     }
 
     /// Sign a fork ballot under the custody key of the authenticated lobby
     /// identity's own seat. An outsider cannot select some other seat by index.
+    ///
+    /// # Panics
+    /// If the identity's seat holds [`SeatCustody::Remote`] — use
+    /// [`Party::try_sign_ballot_as`], which reports that as a value.
     pub fn sign_ballot_as(
         &self,
         fork: &PartyFork,
         identity: &str,
         option: usize,
     ) -> Result<SignedBallot, UnseatedIdentity> {
-        let seat_idx = self
-            .seat_index_for(identity)
-            .ok_or_else(|| UnseatedIdentity(identity.to_string()))?;
-        Ok(self.sign_ballot(fork, seat_idx, option))
+        match self.try_sign_ballot_as(fork, identity, option) {
+            Ok(ballot) => Ok(ballot),
+            Err(BallotCustodyError::Unseated(who)) => Err(who),
+            Err(remote) => panic!("{remote}"),
+        }
     }
 }
 
@@ -1310,6 +1463,79 @@ mod tests {
             1,
             "the committed fork gate still holds Left's path (WriteOnce refused any overwrite)"
         );
+    }
+
+    /// A NAME IS NOT A BALLOT KEY. [`Party::muster_with_roster`] mints [`Custodian::demo`]
+    /// seats, whose ed25519 seed is derived from the seat's PUBLIC name — so anyone who
+    /// knows "Bramwen" can mint Bramwen's ballot, and the demo path admits it. A party
+    /// mustered by [`Party::muster_with_custody`] holds only the players' verifying keys:
+    /// the same name-derived forgery is `Ineligible`, and only the real holder's signature
+    /// is admitted.
+    #[test]
+    fn a_custody_party_refuses_the_name_derived_ballot_the_demo_party_admits() {
+        // The hole, exhibited on the demo path: a name is enough to vote as that seat.
+        let demo_party = Party::muster();
+        let mut demo_fork = demo_party
+            .open_fork("Fork?", vec![("Left".into(), 1), ("Right".into(), 2)])
+            .expect("open");
+        let name_derived = Custodian::demo("Bramwen").sign_ballot(demo_fork.poll(), 0);
+        assert!(
+            demo_fork.cast(&name_derived).is_ok(),
+            "the demo roster's ballot key IS its public name — this is the hole"
+        );
+
+        // The deployment path: the players generate their own secrets; the party holds
+        // only the public keys.
+        let players: Vec<Custodian> = ["Bramwen", "Corvin", "Della", "Ferro"]
+            .into_iter()
+            .map(Custodian::generate)
+            .collect();
+        let party = Party::muster_with_custody([
+            (Role::Tank, "Bramwen".to_string(), players[0].public_key()),
+            (Role::Scout, "Corvin".to_string(), players[1].public_key()),
+            (Role::Mage, "Della".to_string(), players[2].public_key()),
+            (Role::Healer, "Ferro".to_string(), players[3].public_key()),
+        ])
+        .expect("the roster is valid");
+        for seat in party.seats() {
+            assert!(
+                !seat.custody().is_local(),
+                "the party holds no secret for {}",
+                seat.name()
+            );
+        }
+        let mut fork = party
+            .open_fork("Fork?", vec![("Left".into(), 1), ("Right".into(), 2)])
+            .expect("open");
+
+        // The party cannot mint a remote seat's ballot — and says so as a value.
+        assert!(party.try_sign_ballot(&fork, TANK, 0).is_none());
+        assert!(matches!(
+            party.try_sign_ballot_as(&fork, "Bramwen", 0),
+            Err(BallotCustodyError::Remote(_))
+        ));
+        assert!(matches!(
+            party.try_sign_ballot_as(&fork, "Mallory", 0),
+            Err(BallotCustodyError::Unseated(_))
+        ));
+
+        // The SAME name-derived forgery now holds no ballot cap: a valid signature is not
+        // a seat.
+        let forged = Custodian::demo("Bramwen").sign_ballot(fork.poll(), 0);
+        match fork.cast(&forged) {
+            Err(CollectiveError::Vote(VoteError::Ineligible)) => {}
+            other => panic!("a name-derived ballot must be Ineligible, got {other:?}"),
+        }
+        assert_eq!(
+            fork.tally().expect("tally").total,
+            0,
+            "the board did not move"
+        );
+
+        // Only the real holder's own signature is admitted.
+        fork.cast(&players[0].sign_ballot(fork.poll(), 0))
+            .expect("Bramwen's own custody signature is admitted");
+        assert_eq!(fork.tally().expect("tally").total, 1);
     }
 
     /// A DUPLICATE ballot by the same seat is refused by the real vote engine (WriteOnce

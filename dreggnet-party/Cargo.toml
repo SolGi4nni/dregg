@@ -55,8 +55,20 @@ collective-choice = { path = "../collective-choice" }
 # adversarial forged/non-member ballots the tests refuse.
 dregg-types = { path = "../types" }
 # Domain-separated, bounded lobby event journal. The root makes party formation
-# replay-verifiable without trusting a serialized roster blob.
+# replay-verifiable without trusting a serialized roster blob. Also the crew braid's
+# charter root / preference commitments / crew-bound proof-session derivation.
 blake3 = "1"
+
+[features]
+default = []
+# THE CREW BRAID's role-assignment leg (`crew::CrewRoll::assign_roles`): the real
+# Lean-emitted HidingFri private 4-seat/4-role relation, consumed through
+# `dungeon-on-dregg::private_raid`. Opt-in for exactly ONE reason — it links the heavy
+# proof PRODUCER (`dregg-circuit-prove` + plonky3). Everything the braid needs to BIND an
+# assignment to a crew (`crew::CrewCharter`, `crew::PreferenceCommitment`,
+# `crew::CrewRoll::proof_session`, the party<->raid role bijection) compiles
+# unconditionally, so a light consumer can still recompute and check the binding.
+private-role-assignment = ["dungeon-on-dregg/private-raid-assignment"]
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.
