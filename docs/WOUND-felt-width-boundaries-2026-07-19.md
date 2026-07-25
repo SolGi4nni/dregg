@@ -3,7 +3,8 @@
 **Opened 2026-07-19.** Found while chasing an unrelated FRI-soundness question ("why an 8-to-1
 fold?"). The 8-to-1 fold is fine (costs `log₂7 ≈ 2.8` bits, documented). But the question surfaced
 the *real* version of the worry: places where a Poseidon2/BabyBear digest (8 felts, ~124 bits) is
-silently squeezed to **one felt (~31 bits, birthday-collidable at ~2^15.5)** and then used as a
+silently squeezed to **one felt (~31 bits, birthday-collidable at ~2^15.5 — and O(1) where the
+prover picks the bytes, see the RE-PRICING section below)** and then used as a
 **security boundary** — a commitment, a signed payload, a membership key, an authorizing equality.
 
 The v10 / "faithful 8-felt" / `Faithful8` campaign was real and closed the sites it *targeted*
@@ -23,6 +24,126 @@ tell: **a doc-comment asserting collision-resistance over a value that has been 
 
 Provenance tags: **[V]** = verified by direct read this session · **[A]** = agent-read, not yet
 independently confirmed · **[?]** = severity needs one more trace before pricing.
+
+---
+
+## ⚑ RE-PRICING (2026-07-24) — READ BEFORE QUOTING A COST FROM THIS FILE
+
+Most `~2^31` figures below were derived from the felt WIDTH. Width bounds the image; it does not
+price the attack. The #25 closure (`fc61678a43`) found one fold that is LINEAR; re-reading the four
+byte→felt encoders this catalogue actually rides shows the correction is broader than that one fold
+and narrower than "everything is O(1)". **Three regimes, and the row's cost depends on which one it
+is in AND on whether the attack needs a COLLISION or a TARGETED HIT.**
+
+### The four encoders, read at HEAD
+
+**(1) `fold_bytes32_to_bb` — LINEAR. Confirmed.** `circuit/src/effect_vm/helpers.rs:167-179`:
+
+```rust
+const MIX: u32 = 0x4FD3_9C8B % crate::field::BABYBEAR_P;
+let limbs = bytes32_to_8_limbs(b);
+let mut acc = BabyBear::ZERO;
+for i in (0..8).rev() { acc = acc * mix + limbs[i]; }
+```
+
+`Σ_{i<8} limbs[i]·MIX^i` over `𝔽_p`. The limb vector is prover-choosable coordinate-wise (see (2)),
+so this is an onto linear form on `𝔽_p^8`. **Both a colliding pair AND a hit on any chosen target
+felt are ONE linear solve — O(1).** The collision constructor is exhibited and asserted, not argued:
+`circuit/tests/effects_hash_fold_and_burn_target_width.rs::fold_bytes32_to_bb_collides_in_o1_because_it_is_linear`.
+
+**(2) `bytes32_to_8_limbs` — the "wide" octet is NOT injective.** `helpers.rs:37-45` is
+`out[i] = BabyBear::new(u32::from_le_bytes(chunk)) ` with `BabyBear::new(v) = v % BABYBEAR_P`
+(`circuit/src/field.rs:114-116`, `p = 2^31 − 2^27 + 1 = 2013265921`). So for **any** 4-byte LE chunk
+whose u32 value `v < 2^32 − p` (≈53% of the u32 space), the 32-byte string with that chunk replaced
+by `v + p` is a DISTINCT value with an IDENTICAL 8-limb projection. `hash_to_8` — the executor and
+SDK "full ~256-bit binding" projector (`turn/src/executor/effect_vm_bridge.rs:104-106`,
+`sdk/src/cipherclerk.rs:6741-6743`) — **is** `bytes32_to_8_limbs`. Widening a carrier to the octet
+therefore retires the linear-solve collision family (the #25 falsifier asserts exactly that:
+`assert_ne!(la, lb)` on the solved pair) and **does not retire the mod-p alias family**. Against
+hash-image inputs this costs nothing (you cannot steer a BLAKE3 output into an aliased chunk without
+grinding); against a prover-chosen 32-byte wire blob it is a free collision at any width.
+
+**(3) `cap_root::fold_bytes32` and `bridge::present::bytes_to_babybear` — NOT linear, but O(1)
+collidable for the OTHER reason.** `circuit/src/cap_root.rs:254-256` is
+`hash_many(&BabyBear::encode_hash(bytes))` and `bridge/src/present.rs:1768-1771` is the same
+composition. Poseidon2 is not a linear form, so the lane's linearity correction **does not** extend
+here — but `BabyBear::encode_hash` (`field.rs:212-219`) is the same non-canonical `Self::new(val)`
+per 4-byte chunk as (2), so the fold inherits the alias family. **Already exhibited in-tree, twice,
+and both were read as evidence FOR the ~2^31 pricing rather than against it:**
+`circuit/src/exact_cap_root.rs:505` (`assert_eq!(fold_bytes32(&a), fold_bytes32(&b))`, `a = [0;32]`
+vs `b` = `p` in the low chunk) and `cell/src/state.rs:1430-1435` (`0x0800_0000` vs `0x8000_0001` —
+differing by exactly `p = 0x7800_0001`). `poseidon2::hash_bytes`
+(`circuit/src/poseidon2.rs:566-569` → `from_bytes_packed`, `field.rs:194-209`) is the same shape
+over arbitrary-length input.
+
+**(4) `commit::typed::canonical_32_to_felts_8` — LOSSY BY CONSTRUCTION, and this file called it
+benign.** `commit/src/typed.rs:565-576` packs `lo | mid1<<8 | mid2<<16 | ((hi & 0x3F) << 24)` —
+**bits 6 and 7 of bytes 3, 7, 11, 15, 19, 23, 27, 31 are DISCARDED**, 16 bits of a 256-bit input.
+A colliding pair is two bit flips, no search. The triage table's "30 bits/limb ⇒ 240-bit" is a
+statement about the IMAGE SIZE, not about collision cost. This feeds `compress_member`
+(`:604-610`), the `SenderAuthorized` membership leaf (#9) and the nullifier/adjacency leaves.
+
+### The rule — classify EVERY new entry on these two axes before writing a cost
+
+| axis 1: who picks the 32 bytes | axis 2: what the attack needs | cost |
+|---|---|---|
+| **DIRECT-LINEAR** — a prover-chosen wire field / witness column folded by `fold_bytes32_to_bb` | collision **or** targeted hit | **O(1)** — one linear solve |
+| **DIRECT-ALIAS** — prover-chosen bytes through `encode_hash` / `bytes32_to_8_limbs` / `from_bytes_packed` / `canonical_32_to_felts_8` | **collision** (conflate two objects I authored) | **O(1)** — add `p` to a chunk, or flip the dropped bits |
+| **DIRECT-ALIAS** | **targeted hit** (match a felt someone else fixed) | **~2^31 unchanged** — aliasing gives collisions, never preimages |
+| **PREIMAGE** — the 32 bytes are a hash image the attacker must invert or grind (`CellId::derive_raw`, a BLAKE3 receipt hash, a Poseidon2 state fold) | collision | ~2^15.5 birthday |
+| **PREIMAGE** | targeted hit | **~2^31 unchanged** |
+
+The distinction that moves rows is **DIRECT-ALIAS + collision**. That is where this catalogue was
+consistently ~31 bits too expensive, and it is the regime the two in-tree exhibited collisions were
+already sitting in. `#18`, `#19` and the umem value fold are in it; `#20`, `#22`, `#23`, `#24`,
+`#26`, `#2` are not — each was traced individually below and each one's `~2^31` **stands**.
+
+### What this does NOT license
+
+- **It is not a general "everything is O(1)."** Every one of the four encoders is followed, at some
+  sites, by a Poseidon2 squeeze over values the attacker cannot steer. Trace the byte source per
+  row; the wound's prose is not evidence.
+- **An exhibited collision is not an exponent.** #23's falsifier found a real present-cell-set
+  collision in **7,323 offline folds** and recorded it as an OBSERVATION, which is the right
+  discipline. Quantifying the caution: under the analytic 31-bit birthday model, a first collision
+  at `n = 7 323` has probability `1 − exp(−n²/2p) ≈ 1.2%` — a 1-in-80 draw, so it is weak evidence
+  of sub-31-bit effective entropy, not a measurement of it. If the fold really carried ~2^31 the
+  median first-collision count is `1.177·√p ≈ 54 500`; a median near 7 300 would imply an effective
+  image near **2^25**. The cheap discriminator is to re-run the existing `#[ignore]`d search with
+  ten different agent legs and read the MEDIAN. Until that runs, the honest statement is "cheaper
+  than quoted by an unknown factor", not "2^12.8".
+- **Do not let a KEY collision be scored as a VALUE collision.** #23's falsifier deliberately
+  REFUSES a key-collision pair so a same-leaf-address hit cannot be laundered as a root collision.
+  Any row whose cost was measured without that separation is attributing the wrong collision;
+  #5/#9/#11/#20/#24 are all key-or-leaf sites where the two are easy to confuse.
+
+### Sites this re-pricing surfaced that the catalogue did not have
+
+- **#32 — `umem_fold_bytes_v1` is an AFFINE byte fold whose doc-comment says "injective".**
+  `turn/src/umem.rs:1149-1156`: `acc = BabyBear::ONE; for b in bytes { acc = acc * mul + BabyBear::new(b as u32 + 1) }`
+  with `mul = 0x1000_0193`. It is the FALLBACK universal-map ADDRESS for every `UKey` outside the
+  five hot planes and the VALUE felt for every `UVal` outside `Bytes32`/`UmemRef`
+  (`:1197`, `:1211`), computed over `serde_json::to_vec(other)`. The comment at `:1194-1196` calls
+  it "a deterministic **injective** felt over its canonical serialization" — it is a linear form on
+  the byte vector into a ~2^31 image, so it is not injective and collisions are a solve, not a
+  search: meet-in-the-middle over four free serialization bytes is ~2^16, and O(1) wherever the
+  serialization carries a numeric field spanning the field. Same class as `fold_bytes32_to_bb`,
+  outside `check-no-degraded-felt.sh`'s scope, with the strongest false claim in the tree.
+  **DIRECT-LINEAR.** Kind C/D — the umem address grammar is Lean-authored (Rank-1 `uaddrEnc`).
+- **#33 — the umem `Bytes32` value felt is DIRECT-ALIAS.** `turn/src/umem.rs:1208`:
+  `Some(UVal::Bytes32(b)) | Some(UVal::UmemRef(b)) => (BabyBear::ONE, fold_bytes32(b))` — a
+  32-byte umem value the writer picks, through encoder (3). Two distinct committed umem values
+  collide for free. Same line for `UKey::NoteNullifier` / `UKey::BridgedNullifier` at `:1193`.
+- **The octet-widening residual (applies to #25's repair and to every "absorb all 8 limbs
+  (~256-bit binding)" comment in `effects_hash_inputs`).** Per (2), those arms bind the 8 limbs,
+  not the 32 bytes. For `CellDestroy`/`CellSeal`/`ReceiptArchive` targets (CellIds, hash images) the
+  gap is unreachable; for `EmitEvent`'s `topic_hash`/`payload_hash` and `Refusal`'s
+  `offered_action_commitment` — prover-chosen 32-byte blobs — two distinct effect lists share an
+  identical octet, hence an identical `PI[EFFECTS_HASH_BASE..+4]`, at zero cost. The tree already
+  owns the injective codec: `bytes32_to_u16_limbs` (`cell/src/note.rs:201-207`, sixteen `u16` lanes,
+  each `< 2^16 < p`, "no source chunk is reduced modulo BabyBear"), which is exactly what the v11
+  fields leaf switched to and why `cell/src/state.rs:1430-1445` separates the alias pair that
+  `fold_bytes32` conflates. Any future widening should use THAT, not `bytes32_to_8_limbs`.
 
 ---
 
@@ -647,7 +768,10 @@ GENUINE sites are all in the **complement of both defenses**, as the class predi
 **NOT covered (say it, so the next person does not assume it):** no Lean or Rust build/proof run this
 pass (read-only) — the R3 working-tree edits were READ, not machine-re-verified; no collision was
 executed (all ~2^31 prices are analytic, resting on `fold_bytes32`'s exhibited in-tree collision
-`circuit/src/exact_cap_root.rs:505` and the `CellId::derive_raw` BLAKE3 amplifier); seL4 PD deployment
+`circuit/src/exact_cap_root.rs:505` and the `CellId::derive_raw` BLAKE3 amplifier) — **⚠ corrected
+07-24: that exhibited collision is the FREE mod-p alias pair `(0, p)`, so citing it as the basis of
+a ~2^31 price had the evidence exactly backwards; it is a witness that the fold collides in O(1) on
+directly-chosen bytes. See the re-pricing section**; seL4 PD deployment
 status was established only from the crate header and symbol consumers, not from a boot; the Tier-2
 4-felt sites (`dsl_leaf_adapter`, `sovereign_leaf_adapter`, `verifier/src/lib.rs:466`) were not
 re-priced; `dreggnet-*`, `dungeon-on-dregg` beyond #18, `zkoracle` beyond #18/#19, `attested-dm`, and
@@ -709,6 +833,68 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
   narrow value is a prover-supplied 32-byte blob folded by this function is priced ~31 bits too
   expensive. Exhibited (not argued) by
   `fold_bytes32_to_bb_collides_in_o1_because_it_is_linear`.
+
+- **The correction CARRIED THROUGH the whole catalogue — per-row classification (07-24).** The rule
+  and the four encoders are at the top of this file; this is the ledger of which regime each
+  cost-bearing row is in. **Two rows moved (#18, #19), two are new (#32, #33), one "checked-benign"
+  entry was wrong (`canonical_32_to_felts_8`); every other `~2^31` was traced to its byte source and
+  STANDS.** The whole job is *who picks the 32 bytes*, so the byte source is named for each.
+
+  | # | narrow value | byte source | regime | verdict |
+  |---|---|---|---|---|
+  | 1 | `final_root[0]` of `wire_commit_8` | a state-commit fold over the aggregate's own execution | PREIMAGE | ~2^31 STANDS (moot — remediated) |
+  | 2 | `expected_federation_root` = `bytes_to_babybear(root)` | expected side is the VERIFIER'S CONFIG; the PI is computed in-circuit over the attacker's 4-ary ring | PREIMAGE, targeted | ~2^31 STANDS. Sub-note: the low-4-bytes branch (`sdk/src/verify.rs:139-146`) is `BabyBear::new(u32)`, so two distinct *configured* roots alias — config hygiene, not an attack surface |
+  | 3 | `compute_canonical_capability_root_felt` | attacker-chosen cap leaves through the Poseidon2 cap tree | PREIMAGE, collision | ~2^15.5 STANDS (already priced as birthday) |
+  | 4 | note commitment / nullifier as accumulator KEYS (`cell/src/{nullifier_set,commitment_set,shielded_note_set}.rs`, `fold_bytes32_to_bb`) | on the deployed exact-v3 path the nullifier is pinned to the accepted proof carrier (`apply.rs:1434`), so it is a derivation image | PREIMAGE | ~2^31 STANDS **conditionally** — the fold is DIRECT-LINEAR, so any path that admits a wire-chosen nullifier/commitment collapses this to O(1). Named as a standing falsifier, not re-priced |
+  | 5 | accumulator leaf keys (nf / cm / revoked) | same fold, same three hash-image sources | PREIMAGE | ~2^31 STANDS. Note the shape: once you hold ANY colliding 32-byte pair from any source, the linear fold puts them on the same leaf for free |
+  | 7 | `deco_payment_hash_felt` | `hash_many` over `[amount, felt_of_str(currency), hash_many(encode_hash(recipient)), felt_of_str(intent_id)]`; the strings arrive from Stripe, the recipient is a `CellId` | PREIMAGE | ~2^16 STANDS |
+  | 9 | `compress_member(pk)` leaf + `root_felt_from_slot` | leaf: a 32-byte candidate (`Sender` = an ed25519 pk / `Bytes` = arbitrary); root: **read raw from the slot, not folded** | DIRECT-ALIAS (leaf) / N-A (root) | **RESTATE, do not re-price.** The leaf encoder drops 16 bits (O(1) collision) but under `Sender` the bytes are a curve point that cannot be nudged, and under `Bytes` an attacker who can supply arbitrary bytes supplies the honest member's key outright — the lossiness buys nothing at THIS gate. The row's `~2^31` is not a fold cost and should not be quoted as one |
+  | 10 | shielded `merkle_root`/`nullifier`/`value_binding` declared `u32` | — | N-A | not a fold collision; #15/#16 dominate (wire-supplied root, unproved value link) |
+  | 11 | freshness/revocation root, depth 4 | prover-chosen padding leaves | DIRECT | "grind padding leaves" was never a 2^31 claim; unchanged |
+  | 12 | `interface_id` | the method list, folded `hash_many_8` end-to-end at HEAD | PREIMAGE | ~2^31 STANDS (widened + proven) |
+  | 13 | sandstorm-bridge | not traced this pass | — | UNPRICED — say so rather than inherit `~2^31` |
+  | 18 | `content_commitment` | **the oracle RESPONSE BODY — attacker-authored** | **DIRECT-ALIAS, collision** | **MOVED: ~2^15.5 → O(1)** |
+  | 19 | `template_commit` / `output_commit` | **the template segment encoding / the render output — prover-authored** | **DIRECT-ALIAS, collision** | **MOVED: ~2^15.5 → O(1)** (`output_commit` still gated by the `CompactCert` replay tooth) |
+  | 20 | `undelegated_spend_ancestor()` sentinel vs the revoked-set insert key `bytes32_to_8_limbs(child_id)[0]` | **`CellId::derive_raw` = BLAKE3 over `(public_key, token_id)`** (`types/src/lib.rs:891`) — the attacker must HIT the fixed public sentinel | PREIMAGE, targeted | **~2^31 STANDS — checked specifically.** The sentinel is computed by the linear fold but is a FIXED PUBLIC CONSTANT the attacker does not get to choose; what they must produce is a child id whose lane 0 equals it, and child ids are BLAKE3 images. Availability HIGH is unchanged. (The entry's own "an adversarial prover mints the same trace, because the AIR accepts any key" remains the cheaper, **width-independent** path — that is the unbound-witness hole, not this row's price) |
+  | 21 | `genesis_root[0]` / `final_root[0]` | `turn_anchors8` state folds | PREIMAGE | ~2^31 STANDS; DOMINATED unchanged |
+  | 22 | `final_root[0]` vs `anchored_head` | a host-grindable turn sequence's state-commit fold | PREIMAGE, targeted | ~2^31 STANDS — checked; CLOSED anyway |
+  | 23 | `cells_root` existence fold | keys are `hash_bytes(CellId)`; ids are BLAKE3 over attacker-chosen `(public_key, token_id)` | PREIMAGE | ~2^31 STANDS analytically — **but see the measured 7,323-fold hit and its 1.2% caveat in the re-pricing section.** Do not quote 2^12.8 |
+  | 24 | cap leaf `target`/`breadstuff` = `cap_root::fold_bytes32(CellId)` | **`CellId::derive_raw`, a BLAKE3 image** | PREIMAGE, targeted | **~2^31 STANDS — checked specifically.** Encoder (3)'s alias family does not help: you cannot steer a BLAKE3 output into an aliased chunk of a *chosen victim's* fold without grinding. Severity and the standing falsifier are unchanged |
+  | 25 | `Burn.target_hash` | prover-chosen where not pinned to a `CellId` | DIRECT-LINEAR | **O(1)** — the original correction; carrier widened |
+  | 26 | `hash_preimage32` Poseidon2 arm | the preimage is fully attacker-chosen (`WitnessKindTag::Preimage32`) | **DIRECT-ALIAS, but the attack needs a TARGETED HIT** | **~2^31 STANDS — checked specifically.** Both gates compare against a value the *honest* party committed earlier (`new_state.fields[idx]`, `old_fields[d]`), so a cheap collision between two attacker preimages is worthless; the KERI pre-rotation break needs the targeted grind. This is the clearest case of "aliasing gives collisions, never preimages" |
+  | 27 | seL4 `dreggcf_*` | Poseidon2 / BLAKE3 images; the MAC KEY is a ≤64-bit derivation | PREIMAGE | ~2^31 STANDS (the MAC key-recovery leg was never a fold cost) |
+  | 28 | `iroot` MMR | receipt hashes (BLAKE3 images), event-shaped leaves | PREIMAGE | ~2^31 STANDS; DOMINATED-BY-ABSENCE unchanged |
+  | 29 | narrow-leg `old_commit`/`new_commit` | a fabricated pre-state ground through the commitment chain | PREIMAGE, targeted | ~2^31 STANDS; DOMINATED unchanged |
+  | 30 | `compute_effects_hash` squeeze | Poseidon2 over the effect list | PREIMAGE | ~2^15.5 STANDS (fixed) |
+  | 31 | `effect_action_binding` | Poseidon2 squeeze over attacker-chosen effect params | PREIMAGE, targeted | ~2^31 STANDS |
+  | 32 | `umem_fold_bytes_v1` | `serde_json` bytes of a `UKey`/`UVal` | **DIRECT-LINEAR** | **NEW — O(1)–2^16** |
+  | 33 | umem `Bytes32` value / nullifier key | writer-chosen 32 bytes | **DIRECT-ALIAS, collision** | **NEW — O(1)** |
+
+  **Does the fix ORDER change?** Marginally, and in one direction: **#18/#19 rise past #25/#28/#29**
+  and now sit with the HIGH-severity library-surface rows (#2, #31) rather than below them — they
+  are live-consumer paths (`bound_attestation_commit` reads the committed narration weld off the
+  receipt) whose exploitation cost is now zero rather than 2^15.5. The campaign's TOP of the
+  worst-first table does **not** move: #23 is closed, #24's `~2^31` survived the re-pricing intact,
+  and the three biggest exposures in this file remain the non-width ones (#15 wire-supplied
+  shielded `merkle_root`, #16 the unproved value link, and the unbound-witness columns named at #20
+  and #25) — all of which dominate every fold price on this page regardless of which regime it is
+  in. **What DOES change is the meta-repair:** kind F part (i) should lint the *encoders*
+  (`encode_hash` / `bytes32_to_8_limbs` / `from_bytes_packed` / `canonical_32_to_felts_8` reached
+  from prover-chosen bytes), not only the two fold call-sites, and kind C's "the wide scheme must
+  fold the REAL PREIMAGES 8-felt end-to-end" needs one more clause: **through a CANONICAL byte→felt
+  codec** (`bytes32_to_u16_limbs`), because an 8-felt fold over a non-canonical encoder is still
+  O(1) collidable on directly-chosen bytes.
+
+- **No wound already CLOSED was closed at the wrong price — checked, with one qualification.** #1
+  (all 8 lanes signed), #12 (8-felt end-to-end fold), #22 (full `Digest8` + caller-supplied VK),
+  #23 (`Faithful8` producer), #30 (`hash_many_8` squeeze) and #6/#14 (logic bugs) were all
+  remediated by *removing the narrow value*, not by out-pricing an attacker — so none of them
+  depended on a 2^31 estimate being right, and each stays sound at O(1). The qualification is #25:
+  its widening to `bytes32_to_8_limbs` retires the linear-solve family but not the mod-p alias
+  family (see encoder (2) at the top), so the repair is correct for a `CellId` burn target and
+  incomplete for any prover-chosen 32-byte carrier that later rides the same projection. That is a
+  residual on the repair, not a mis-sized fix: the anchoring work #25 re-pointed at is still the
+  first-order item.
 
 - **#20 Spend delegation-ancestor key — NEWLY LOGGED, and the first EARNED
   `check-no-degraded-felt.sh` suppression in the tree.** `63a5bdd362` (the repair that restored the
@@ -1022,8 +1208,18 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
     it **looks** like every other ~256-bit commitment on the wire and is ≤31 bits. Contrast the
     FIRST data field on the same event, `narration_commitment` (`:292-298`), which is a real
     domain-separated BLAKE3 32-byte `symbol` — the prose is bound wide, the attestation weld is not.
-    Cost: ~2^15.5 to find two bodies sharing a `content_commitment`, ~2^31 to hit a chosen one. What
-    breaks: WHICH authenticated oracle body backs a committed narration. Kind **C** — there is no
+    ~~Cost: ~2^15.5 to find two bodies sharing a `content_commitment`, ~2^31 to hit a chosen one.~~
+    **RE-PRICED 07-24 — DIRECT-ALIAS, and the attack this site enables is the COLLISION half, so the
+    cost is O(1), not ~2^15.5.** `content_commitment(response_body) = hash_bytes(body)` and
+    `hash_bytes` is `hash_many(from_bytes_packed(data))` (`circuit/src/poseidon2.rs:566-569`), whose
+    per-4-byte packer is the non-canonical `Self::new(val) = val % p` (`field.rs:194-209`). The
+    response body is **attacker-chosen bytes**, so two bodies differing by exactly `p` in one 4-byte
+    group carry a **byte-identical** `content_commitment` with no search at all. That is precisely
+    "WHICH authenticated oracle body backs a committed narration": author both bodies, commit one,
+    present the other. The ~2^31 figure survives only for the *targeted* variant (hit a
+    `content_commit` someone else fixed), which is not the exposure this entry describes. Severity
+    moves **MODERATE → HIGH within its reachability class** (a live consumer path:
+    `bound_attestation_commit`). Kind **C** — there is no
     wide `content_commitment`; one must be BUILT (⇒ Lean-authored, Rust calls in).
   - **#19 — `RenderAttestation`'s two welds.** `zkoracle-prove/src/render.rs:198`
     `pub output_commit: BabyBear` is the gate in `verify_render_attestation` (`:295`, recompute over
@@ -1034,6 +1230,15 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
     passes the reproducibility check. `output_commit` has a genuine compensating tooth: the colliding
     output must ALSO replay the same `CompactCert` (`verify_cfg_compact`, `:299`), which constrains
     the search to structurally-identical renders — real, but not a width argument. Kind **C**.
+    **RE-PRICED 07-24 — DIRECT-ALIAS on both welds; the collision half is O(1), not ~2^15.5.** Both
+    are `hash_bytes` over prover-authored bytes (`template_commitment` at `:166` over the segment
+    encoding, `output_commit` over the presented output), i.e. encoder (3)/(4) of the re-pricing
+    section. A template substitution is: author two segment encodings differing by `+p` in one
+    4-byte group, commit one, present the other — no search. `template_commit`'s severity moves
+    **HIGH within its reachability class**; `output_commit`'s stays gated by the `CompactCert`
+    tooth, which is a *structural* constraint on the colliding output and is unaffected by the
+    re-pricing (it neither helps nor hurts the alias construction — the two outputs must still both
+    replay the cert). The targeted-hit variant of either weld remains ~2^31.
 
   **⚠ ANTI-PATTERN — do NOT repair these by re-hashing the narrow felts.** The obvious "widen it"
   move (`hash_many_8([content_commit, template_commit, …])`, or any wide fold seeded from the
@@ -1158,8 +1363,10 @@ files (`cell/src/commitment.rs`, `turn/src/rotation_witness.rs`,
 | 12 | `interface_id` — ~~1 felt, no wide twin~~ **Rust-widened to 8-felt at HEAD**; a factory VK is derived from it | `cell/src/interface.rs:275`; `directory/src/service_factory.rs:92` | ~2^31 → colliding interfaces share a VK | C | [V] **BYTE-SAFE PROVEN 07-22** (`InterfaceIdWidth.lean`; wound "no wide twin" was STALE) |
 | 13 | sandstorm-bridge — narrow throughout; byte-identity claim now **false** | `sandstorm-bridge/.../cell.rs:87,138` | ~2^31 (hostile host) | C/drift | [A] `cell/src/state.rs:535` widened, sandstorm did not — correctness drift too |
 | 14 | `leg_is_wide` cfg trap — non-prover build forces **every** leg narrow | `sdk/src/full_turn_proof.rs:5144` | verifies ~124-bit anchors at 31 bits | A | [A] wasm verifier is exactly this config; live trap, no current caller |
-| 18 | zkOracle `content_commitment` — the **cross-leg weld** is ONE `BabyBear`, then zero-padded to 32 bytes and bound into a receipt | `zkoracle-prove/src/attestation.rs:47,89`; `dungeon-on-dregg/src/narrator.rs:417-418,1064` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `BabyBear(pub u32)`; `field_from_u64` puts it in the LAST 8 bytes of a `[u8;32]` ⇒ **looks** ~256-bit on the wire, carries ≤31 bits |
-| 19 | `RenderAttestation` — `output_commit` (the verify-gate weld) and `template_commit` (the "generated by THIS template" gate) are both single felts | `zkoracle-prove/src/render.rs:166,198,201` | ~2^15.5 birthday / ~2^31 targeted | C | **[V]** `verify_render_attestation:295` gates on `output_commit`; `verify_render_reproducible:314` gates on `template_commit` |
+| 18 | zkOracle `content_commitment` — the **cross-leg weld** is ONE `BabyBear`, then zero-padded to 32 bytes and bound into a receipt | `zkoracle-prove/src/attestation.rs:47,89`; `dungeon-on-dregg/src/narrator.rs:417-418,1064` | **O(1)** (DIRECT-ALIAS collision; ~~2^15.5~~) / ~2^31 targeted | C | **[V]** `BabyBear(pub u32)`; `field_from_u64` puts it in the LAST 8 bytes of a `[u8;32]` ⇒ **looks** ~256-bit on the wire, carries ≤31 bits. **RE-PRICED 07-24:** `hash_bytes`'s `from_bytes_packed` reduces each 4-byte group mod `p`, and the response body is attacker-chosen ⇒ a colliding body pair is CONSTRUCTED (`+p` in one group), not searched |
+| 19 | `RenderAttestation` — `output_commit` (the verify-gate weld) and `template_commit` (the "generated by THIS template" gate) are both single felts | `zkoracle-prove/src/render.rs:166,198,201` | **O(1)** (DIRECT-ALIAS collision; ~~2^15.5~~) / ~2^31 targeted | C | **[V]** `verify_render_attestation:295` gates on `output_commit`; `verify_render_reproducible:314` gates on `template_commit`. **RE-PRICED 07-24:** both fold prover-authored bytes through `hash_bytes`; `template_commit`'s substitution needs no search. `output_commit` stays gated by the `CompactCert` replay tooth (structural, width-independent) |
+| 32 | **`umem_fold_bytes_v1` — an AFFINE byte fold documented as "injective"**; the fallback universal-map ADDRESS for every non-hot `UKey` and the VALUE felt for every non-`Bytes32` `UVal`, over `serde_json` bytes | `turn/src/umem.rs:1149-1156,1197,1211` | **O(1)–2^16** (DIRECT-LINEAR; MITM over 4 free bytes, O(1) with a field-spanning numeric) | C/D | **[V] NEW 07-24** `acc = acc*mul + (b+1)` is a linear form into a ~2^31 image; the `:1194` doc-comment's "deterministic **injective** felt" is false. Outside `check-no-degraded-felt.sh` scope. Address grammar is Lean-authored (Rank-1 `uaddrEnc`) |
+| 33 | **umem `Bytes32`/`UmemRef` value felt and `NoteNullifier`/`BridgedNullifier` key** — writer-chosen 32 bytes through `cap_root::fold_bytes32` | `turn/src/umem.rs:1193,1208` | **O(1)** (DIRECT-ALIAS collision) / ~2^31 targeted | D | **[V] NEW 07-24** encoder (3): `hash_many(encode_hash(b))` with non-canonical per-chunk `% p`. Two distinct committed umem values collide with no search |
 | 20 | Spend delegation-ancestor key — the public, fixed, system-wide "undelegated" sentinel is ONE felt in the grow-only revoked set's key domain | `circuit/src/effect_vm/trace_rotated.rs:1402,1415` | ~2^31 **offline** grind ⇒ permanent DoS on every undelegated `NoteSpend` | D | **[V]** availability HIGH / soundness NONE — same-fold-keyed `.absent` can only over-revoke; `MapOp.key : EmittedExpr` is one felt in the deployed IR ⇒ widening is VK-affecting. **The tree's one EARNED `check-no-degraded-felt` suppression** |
 | 22 | ~~Grain R3 anti-ghost head binding — ONE felt, beside a SELF-anchored VK~~ **CLOSED (row was STALE; see the 07-24 entry)** | `grain-verify/src/r3.rs:277,366`; `Dregg2/Grain/R3Verify.lean` | — | E | **[V] FIXED** both conjuncts: full `Digest8` head (all 8 lanes) + a caller-supplied `expected_vk` parameter (the proof's own fingerprint is reported, never the anchor); `neither_half_alone_suffices` machine-checked; new `r3_width_falsification.rs` drives the deployed Lean decision. No AIR/VK/descriptor byte touched |
 
@@ -1170,7 +1377,15 @@ sovereign turn, six lines from `COMMIT_LEN=8`), `verifier/src/lib.rs:466` (recei
 **Checked-benign (coverage, not omission):** `storage/src/bucket_commitment.rs:112`,
 `starbridge-apps/site-host/src/site.rs:174` (1-felt root is one input to a `wire_commit_8` fold that
 binds all limbs — no 31-bit intermediate); `circuit/src/effect_vm/trace.rs:673` anchor tags (all 8
-bound via `compute_effects_hash`); `commit/src/typed.rs:565` (30 bits/limb ⇒ 240-bit); **#21** the
+bound via `compute_effects_hash`); ~~`commit/src/typed.rs:565` (30 bits/limb ⇒ 240-bit)~~
+**— CORRECTED 07-24, this row was wrong.** `canonical_32_to_felts_8` DISCARDS bits 6-7 of bytes
+3,7,…,31 (`(hi & 0x3F) << 24`), so 16 of 256 input bits are dropped and a colliding 32-byte pair is
+**two bit flips, O(1)**. "240-bit" describes the IMAGE SIZE, not a collision cost. It is benign only
+where the 32 bytes are a hash image or a curve point the attacker cannot nudge (`compress_member`'s
+ed25519 sender pk under `PredicateInput::Sender`) — it is NOT benign as a general encoder, and
+`turn/src/executor/membership_verifier.rs:206` also accepts `PredicateInput::Bytes` (arbitrary
+32 bytes). Re-read #9's leaf domain before quoting its `~2^31`; the ROOT half of that row is not a
+fold at all (`root_felt_from_slot`, `:105-108`, reads a raw LE u32 out of the slot); **#21** the
 whole-chain binding-descriptor endpoints (`circuit-prove/src/ivc_turn_chain.rs:5485` tooth 2 +
 `circuit-prove/src/accumulator.rs:970`) — DOMINATED by the segment tooth's full-octet compare on the
 same code path, argued and now witnessed at BOTH endpoints in
@@ -1205,7 +1420,11 @@ not itemized.
   Lean+wide); the work is authoring the wide note/nullifier/interface/attestation schemes there and
   routing deployed narrow paths through them. **NEVER hand-write the wide commitment in Rust.**
   And for every one of these: the wide scheme must fold the **REAL PREIMAGES** 8-felt end-to-end —
-  re-hashing the existing narrow felt is `finalSqueezeOnly_still_conflates`, proved to still conflate.
+  re-hashing the existing narrow felt is `finalSqueezeOnly_still_conflates`, proved to still conflate
+  — **and it must do so through a CANONICAL byte→felt codec** (`bytes32_to_u16_limbs`, sixteen `u16`
+  lanes each `< 2^16 < p`), added 07-24: an 8-felt fold seeded by `encode_hash` /
+  `bytes32_to_8_limbs` / `from_bytes_packed` / `canonical_32_to_felts_8` is still O(1) collidable on
+  directly-chosen bytes, because those encoders are non-injective before the sponge ever runs.
 - **D — 31-bit KEYS inside accumulators; widening the root did nothing.** The sorted-tree membership
   descriptor's key width — also Lean-authored AIR. #5, #9, #11, #20, **#24** (a leaf **VALUE** fold, not
   a key — the digest's proven injectivity is over a tuple that already lost the bits), **#28**/**#29**
@@ -1284,3 +1503,17 @@ check whether the deployed value equals what the proof/scheme actually binds.
    makes them NOT-live — and it makes the width a *pre-priced* liability, because the anchoring work is
    already half-wired. When you find a narrow gate nobody anchors, the entry to write is the standing
    falsifier, not a dismissal.
+
+**Added by the 07-24 re-pricing, the fourth and sharpest:**
+4. **WIDTH IS NOT A PRICE. The price is the ENCODER plus who picks the bytes plus whether the attack
+   needs a collision or a targeted hit.** This catalogue quoted `~2^31` from the felt width ~42
+   times; the width bounds the IMAGE, and every one of the four byte→felt encoders in the tree is
+   non-injective *by construction* — one is a linear form (`fold_bytes32_to_bb`), two reduce each
+   4-byte chunk mod `p` without a canonicity check (`encode_hash`, `bytes32_to_8_limbs`,
+   `from_bytes_packed`), one simply discards 16 bits (`canonical_32_to_felts_8`). Where the bytes
+   are prover-chosen, a colliding pair is CONSTRUCTED. The `~2^31` survives only against hash
+   images, and only for the *targeted* half of the threat. The tell that this was missed for five
+   days: two in-tree tests already EXHIBIT free collisions of the deployed fold
+   (`exact_cap_root.rs:505`, `state.rs:1435`) and the sweep cited one of them as the *evidence base*
+   for the 2^31 prices. **Read the encoder, then the byte source, then the threat direction — in
+   that order — before any cost goes on this page.**
