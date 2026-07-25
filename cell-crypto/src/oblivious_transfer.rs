@@ -695,21 +695,9 @@ mod tests {
         let b2 = [4u8; 32];
 
         let base = derive_ot_key(&shared, &a, &b);
-        assert_ne!(
-            base,
-            derive_ot_key(&shared, &a2, &b),
-            "key must depend on A"
-        );
-        assert_ne!(
-            base,
-            derive_ot_key(&shared, &a, &b2),
-            "key must depend on B"
-        );
-        assert_eq!(
-            base,
-            derive_ot_key(&shared, &a, &b),
-            "same transcript ⇒ same key"
-        );
+        assert_ne!(base, derive_ot_key(&shared, &a2, &b), "key must depend on A");
+        assert_ne!(base, derive_ot_key(&shared, &a, &b2), "key must depend on B");
+        assert_eq!(base, derive_ot_key(&shared, &a, &b), "same transcript ⇒ same key");
     }
 
     #[test]

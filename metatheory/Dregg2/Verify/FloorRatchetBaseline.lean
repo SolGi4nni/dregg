@@ -1638,7 +1638,81 @@ Every line added here is a claim, on the record and in the diff, that a new decl
 to be built on a hypothesis this tree PROVES FALSE at deployed BabyBear parameters — i.e.
 that it is knowingly VACUOUS. Say why in the commit message. The next shrink-emit folds
 surviving entries into the chunks above and drops the ones that got ported. -/
-def manual : Array String := #[]
+def manual : Array String := #[
+-- ⚑ RAISE OF 2026-07-25, +56, and it is on the record WHY.
+--
+-- These did not appear because anyone wrote a new theorem. They appeared because previously
+-- DARK modules were ROOTED into `Dregg2.lean` after this baseline's pin (`0caf52c733`) — the
+-- STARK-apex rooting, three import lines pulling six modules — and their declarations entered
+-- the build carrying `Poseidon2SpongeCR`, which this tree PROVES FALSE at deployed BabyBear
+-- parameters. Every one of them is therefore VACUOUS: it says nothing about the deployed
+-- system. The gate is measuring the ROOT CLOSURE, so rooting a dark module surfaces its
+-- carriers, and that is correct behaviour, not a false positive — a vacuous theorem nobody
+-- compiled has now become a vacuous theorem the build asserts.
+--
+-- All 56 were verified to come from TRACKED, CLEAN files (no co-tenant WIP was laundered in),
+-- and 40 of them carry `Poseidon2SpongeCR` directly. They are grandfathered rather than ported
+-- because porting them is the STARK-apex lane's work, not this gate's, and blocking the whole
+-- swarm's build was the wrong way to hand it over.
+--
+-- ⚑ THIS IS THE PORTING BACKLOG'S HEAD. `AlgoStarkSoundFanoutMemFree` alone is 28 of them and
+-- is uniform in shape, so it is a codemod, not 28 re-proofs. Delete these lines as they port.
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_attenuate",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_bridgeMint",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_burn",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_cellDestroy",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_cellSeal",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_cellUnseal",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_delegate",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_delegateAtten",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_emitEvent",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_exercise",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_grantCap",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_incrementNonce",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_introduce",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_makeSovereign",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_memFree_apply",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_memFree_apply_noOodShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_mint",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_pipelinedSend",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_receiptArchive",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_refreshDelegation",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_revokeCapability",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_revokeDelegation",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_setFieldStatic",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_setPermissions",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_setProgram",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_setVK",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_supplyMint",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_transferFee",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCell",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCellFromFactory",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_heapWrite",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteCreate",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteSpend",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape_noOodShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_refusal",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawn",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawnWrite",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.memoryLegs_of_mapShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_of_memShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_of_memShape_noOodShape",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_setFieldDyn",
+  "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_setFieldDynForced",
+  "Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel",
+  "Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel_noOodShape",
+  "Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail",
+  "Dregg2.Circuit.BlindedMembershipBindingFromFold.blinded_membership_binding_from_fold",
+  "Dregg2.Circuit.BlindedMembershipBindingFromFold.honest_companion_fires",
+  "Dregg2.Circuit.ClosureAll.closedLogExtract_converse_costs_the_floor",
+  "Dregg2.Circuit.ClosureAll.closedLogExtract_no_strength_lost",
+  "Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_decoded_extChallenges",
+  "Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_decoded_extCons",
+  "Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_transferV3_extChallenges",
+  "Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_transferV3_extCons",
+  "Dregg2.Storage.DeployedFloorRefuted.deployed_instantiation_is_vacuous",
+  "Dregg2.Storage.DeployedFloorRefuted.floor_is_satisfiable_abstractly"]
 
 /-- The grandfathered carriers. Only ever gets SHORTER. -/
 def grandfathered : Array String :=
