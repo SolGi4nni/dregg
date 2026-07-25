@@ -153,6 +153,9 @@ deos-view = { path = "../deos-view", default-features = false }
 # Deterministic bidder-handle + nonce derivation (a `DreggIdentity` → a stable auction `CellId`
 # handle; a sealed bid's blinding nonce) — the same hash the substrate seals bids with.
 blake3 = "1"
+# OS entropy for custody roots that must not be a function of anything a caller passes —
+# `DarkPoolOffering::mount` draws the n-of-n committee's root from here, not from a `u64` seed.
+getrandom = { workspace = true }
 # The opt-in Dark Bazaar receipt path.  `dregg-circuit-prove` mints the hiding
 # Cert-F batch STARK; `fhegg-solver` supplies the deterministic clearing wire.
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }

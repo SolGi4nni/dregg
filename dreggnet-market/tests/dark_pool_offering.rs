@@ -41,7 +41,7 @@ fn must_land(
 /// relic they now own. The price is never chosen by this test: the pool's own exact quote is.
 #[test]
 fn a_player_takes_a_seat_and_swaps_for_a_real_receipt() {
-    let offering = DarkPoolOffering::mount(0xDA2C, 2).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(2).expect("mount the pool");
     let mut session = offering.open(SessionConfig::with_seed(1)).expect("open");
     let who = player("mira");
 
@@ -111,7 +111,7 @@ fn a_player_takes_a_seat_and_swaps_for_a_real_receipt() {
 /// — no purse debit, no relic, no journal turn, no public card.
 #[test]
 fn an_underpriced_self_priced_swap_is_refused_and_moves_nothing() {
-    let offering = DarkPoolOffering::mount(0xBADF, 2).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(2).expect("mount the pool");
     let mut session = offering.open(SessionConfig::default()).expect("open");
     let who = player("skimmer");
 
@@ -191,7 +191,7 @@ fn an_underpriced_self_priced_swap_is_refused_and_moves_nothing() {
 /// no fill price and no reserve, and the private projection carries the viewer's own.
 #[test]
 fn the_shared_surface_never_carries_a_fill_price_or_a_reserve() {
-    let offering = DarkPoolOffering::mount(0x5EED, 2).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(2).expect("mount the pool");
     let mut session = offering.open(SessionConfig::default()).expect("open");
     let who = player("quiet");
     assert!(offering.hidden_information());
@@ -282,7 +282,7 @@ fn the_shared_surface_never_carries_a_fill_price_or_a_reserve() {
 #[test]
 fn a_short_or_forged_coalition_does_not_open_the_dark_invariant() {
     const N: usize = 3;
-    let offering = DarkPoolOffering::mount(0xC0FF, N).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(N).expect("mount the pool");
     assert_eq!(offering.custodians(), N);
 
     // The invariant ciphertext of the pool's own fair candidate. An honest full quorum opens it
@@ -336,7 +336,7 @@ fn a_short_or_forged_coalition_does_not_open_the_dark_invariant() {
 /// and requires them to match. Corrupt either half and it breaks.
 #[test]
 fn verify_reopens_the_encrypted_reserves_under_the_full_quorum() {
-    let offering = DarkPoolOffering::mount(0xA11D, 2).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(2).expect("mount the pool");
     let mut session = offering.open(SessionConfig::default()).expect("open");
     let a = player("ari");
     let b = player("bex");
@@ -390,7 +390,7 @@ fn verify_reopens_the_encrypted_reserves_under_the_full_quorum() {
 #[test]
 fn the_key_ceremony_is_paid_at_genesis_and_never_on_the_session_path() {
     let start = Instant::now();
-    let offering = DarkPoolOffering::mount(0x6E51, 3).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(3).expect("mount the pool");
     let ceremony = start.elapsed();
 
     let start = Instant::now();
@@ -435,11 +435,103 @@ fn the_key_ceremony_is_paid_at_genesis_and_never_on_the_session_path() {
     );
 }
 
+/// **FALSIFIER — a caller-chosen `u64` is not custody, and the default mount no longer pretends
+/// it is.** `mount` used to take `(seed, custodians)` and derive every custodian's secret share
+/// from `blake3::derive_key("dregg-dark-pool-genesis-v1", seed ‖ custodians)`. Both inputs are
+/// caller-chosen parameters that appear in call sites, configs and logs, so the "n-of-n" committee
+/// was reconstructible by anyone who saw them.
+///
+/// This exhibits the theft landing on the reproducible path and dying on the default one:
+///
+/// * (a) against `mount_reproducible(SEED, N)`, an outsider whose ENTIRE input is `(SEED, N)`
+///   rebuilds a byte-identical committee and opens the pool's own invariant ciphertext to `k` —
+///   the full-quorum decryption, performed alone;
+/// * (b) that same rebuilt committee, pointed at a pool from the default `mount(N)`, does not
+///   recover `k`; and two default mounts do not even agree with each other.
+///
+/// (a) is what `mount` did on every call before this change.
+#[test]
+fn a_seed_is_not_custody_on_the_default_mount() {
+    const SEED: u64 = 0x5EA1;
+    const N: usize = 2;
+
+    // ── (a) the theft, against the REPRODUCIBLE pool ────────────────────────────────────────
+    let weak = DarkPoolOffering::mount_reproducible(SEED, N).expect("mount the reproducible pool");
+    let weak_ct = weak
+        .candidate_invariant(252, 1)
+        .expect("the genesis candidate");
+    let k = weak.public_invariant();
+
+    // The attacker knows only the two public parameters. They re-run the pool's OWN derivation
+    // (the same function `mount_reproducible` calls) and stand up their own copy of the committee.
+    let stolen_root = DarkPoolOffering::reproducible_custody_root(SEED, N);
+    let attacker = DarkPoolOffering::mount_with_custody_root(stolen_root, SEED, N)
+        .expect("the attacker rebuilds the committee from public parameters alone");
+    assert_eq!(
+        attacker
+            .with_custody(|c| c.collective_key_digest())
+            .expect("custody"),
+        weak.with_custody(|c| c.collective_key_digest())
+            .expect("custody"),
+        "the rebuilt committee must be the SAME committee — otherwise this test proves nothing"
+    );
+
+    // The victim pool's OWN ciphertext, opened by the outsider's committee. No quorum was asked.
+    let stolen = attacker
+        .with_custody(|c| {
+            let shares = c.shares(&weak_ct).expect("the attacker holds every share");
+            c.combine_shares(&shares)
+                .expect("and so combines them alone")
+        })
+        .expect("custody");
+    assert_eq!(
+        stolen, k,
+        "an outsider must be able to open a seed-mounted pool — if this fails the test is not \
+         exhibiting the wound"
+    );
+
+    // ── (b) the same theft against the DEFAULT mount ────────────────────────────────────────
+    let strong = DarkPoolOffering::mount(N).expect("mount the pool");
+    let strong_ct = strong
+        .candidate_invariant(252, 1)
+        .expect("the genesis candidate");
+    let strong_k = strong.public_invariant();
+    assert_eq!(strong_k, k, "both pools publish the same genesis invariant");
+
+    let attempt = attacker
+        .with_custody(|c| {
+            c.shares(&strong_ct)
+                .and_then(|shares| c.combine_shares(&shares))
+        })
+        .expect("custody");
+    match attempt {
+        Err(_) => {}
+        Ok(value) => assert_ne!(
+            value, strong_k,
+            "the public-parameter committee OPENED a default-mounted pool's book — the custody \
+             root is still a function of something a caller passes"
+        ),
+    }
+
+    // And the default mount is not even a function of its own argument: two mounts of the same
+    // roster are two different committees. (Under the old `mount(seed, n)` these were equal.)
+    let other = DarkPoolOffering::mount(N).expect("mount a second pool");
+    assert_ne!(
+        strong
+            .with_custody(|c| c.collective_key_digest())
+            .expect("custody"),
+        other
+            .with_custody(|c| c.collective_key_digest())
+            .expect("custody"),
+        "two default mounts share a collective key — the root is not coming from the OS"
+    );
+}
+
 /// A size the invariant cannot price exactly is refused, and so is a swap without a seat. Both
 /// are refusals of the *shape* of the request, and both commit nothing.
 #[test]
 fn an_unpriceable_size_and_a_seatless_taker_are_both_refused() {
-    let offering = DarkPoolOffering::mount(0x9F1E, 2).expect("mount the pool");
+    let offering = DarkPoolOffering::mount(2).expect("mount the pool");
     let mut session = offering.open(SessionConfig::default()).expect("open");
     let who = player("hasty");
 

@@ -631,34 +631,72 @@ pub struct DarkPoolOffering {
 }
 
 impl DarkPoolOffering {
-    /// Stand up the pool from a `u64` seed: run the n-of-n ceremony ONCE, encrypt the genesis
-    /// reserves to the collective key, and mint the relic vault.
+    /// Stand up the pool: run the n-of-n ceremony ONCE, encrypt the genesis reserves to the
+    /// collective key, and mint the relic vault.
+    ///
+    /// **Custody comes from the OS.** The 32-byte custody root every custodian's secret share
+    /// hangs off is drawn from `getrandom`, and so is the `seed` that names the pool's
+    /// vault/journal identity. Nothing a caller passes, and nothing published, reconstructs a
+    /// share: mounting the same `custodians` count twice yields two pools under unrelated keys.
+    ///
+    /// This is the only mount a deployment should use. The remaining custody caveat is
+    /// [`pool_ceremony`]'s and is unaffected by entropy: one process holding all `n` party roots
+    /// is a SIMULATED ceremony, not a distributed one.
     ///
     /// **This is the expensive call.** The keygen + relinearization ceremony at the degree-4096
     /// `fold_set` parameters is a fraction of a second per custodian, so it belongs to POOL
     /// GENESIS (a deployment event), never to a player opening a session. [`Offering::open`] is
     /// deliberately cheap and attaches to the already-ceremonied pool.
+    pub fn mount(custodians: usize) -> Result<Self, DarkPoolError> {
+        let mut root = [0u8; 32];
+        getrandom::fill(&mut root)
+            .expect("operating-system RNG must mint the dark pool's custody root");
+        let mut seed = [0u8; 8];
+        getrandom::fill(&mut seed)
+            .expect("operating-system RNG must mint the dark pool's market identity");
+        Self::stand_up(root, u64::from_le_bytes(seed), custodians)
+    }
+
+    /// **THE REPRODUCIBLE PATH — a `u64` seed is NOT custody.** Same ceremony as
+    /// [`mount`](Self::mount), except the custody root is
+    /// `blake3::derive_key("dregg-dark-pool-genesis-v1", seed ‖ custodians)`: it carries at most
+    /// **64 bits** and `seed` is a caller-chosen parameter, so anyone who learns
+    /// `(seed, custodians)` re-runs this derivation, reconstructs every custodian's share, and
+    /// decrypts the book alone. The n-of-n claim of a pool mounted this way is worth exactly the
+    /// secrecy of that `u64` — which is to say, nothing.
     ///
-    /// **The custody root of a pool mounted this way carries at most 64 bits, and `seed` is a
-    /// caller-chosen parameter.** Every custodian's secret share is derived from it, so anyone
-    /// who learns `(seed, custodians)` reconstructs the whole committee and decrypts the book
-    /// alone — the n-of-n property is worth exactly the secrecy of that `u64`. This is the
-    /// REPRODUCIBLE path: it exists so a test or an audit can replay a pool byte-for-byte. A
-    /// deployment that means the threshold claim uses
-    /// [`mount_with_custody_root`](Self::mount_with_custody_root) with 32 bytes of real entropy —
-    /// and even then, read [`pool_ceremony`]: one process holding all `n` roots is a simulated
-    /// ceremony, not a distributed one.
-    pub fn mount(seed: u64, custodians: usize) -> Result<Self, DarkPoolError> {
+    /// It exists so a test or an audit can replay a pool byte-for-byte, and every call site must
+    /// say why it needs determinism. A deployment uses [`mount`](Self::mount).
+    pub fn mount_reproducible(seed: u64, custodians: usize) -> Result<Self, DarkPoolError> {
+        Self::stand_up(
+            Self::reproducible_custody_root(seed, custodians),
+            seed,
+            custodians,
+        )
+    }
+
+    /// The custody root [`mount_reproducible`](Self::mount_reproducible) derives from its two
+    /// PUBLIC parameters. Exposed on purpose, because it is not a secret and pretending otherwise
+    /// is the whole hazard: an adversarial test calls this with the same `(seed, custodians)` a
+    /// reproducible pool was mounted under, feeds it to
+    /// [`mount_with_custody_root`](Self::mount_with_custody_root), and holds a byte-identical
+    /// committee that opens that pool's book. `mount_reproducible` calls exactly this function, so
+    /// the attacker's derivation and the pool's cannot drift apart.
+    pub fn reproducible_custody_root(seed: u64, custodians: usize) -> [u8; 32] {
         let mut material = Vec::with_capacity(16);
         material.extend_from_slice(&seed.to_le_bytes());
         material.extend_from_slice(&(custodians as u64).to_le_bytes());
-        let root = blake3::derive_key("dregg-dark-pool-genesis-v1", &material);
-        Self::stand_up(root, seed, custodians)
+        blake3::derive_key("dregg-dark-pool-genesis-v1", &material)
     }
 
-    /// Stand up the pool from a full 32-byte custody root. Same ceremony as [`mount`](Self::mount)
-    /// without the 64-bit ceiling on the root; `seed` still names the vault/journal identity, so
-    /// two pools on the same seed and different roots are the same market under different keys.
+    /// Stand up the pool from a caller-held full 32-byte custody root — for a deployment that
+    /// draws and keeps its own root out of band (a rebuildable pool, a root escrowed off the
+    /// coordinator). Same ceremony as [`mount`](Self::mount); `seed` names the vault/journal
+    /// identity, so two pools on the same seed and different roots are the same market under
+    /// different keys.
+    ///
+    /// `root` is a SECRET and MUST carry real entropy — every share derives from it. If you do not
+    /// already hold a root, call [`mount`](Self::mount) and let it draw one.
     pub fn mount_with_custody_root(
         root: [u8; 32],
         seed: u64,
