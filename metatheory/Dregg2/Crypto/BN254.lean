@@ -1,0 +1,30 @@
+/-
+# Dregg2.Crypto.BN254 — the BN254 / Groth16 pairing model (root aggregator).
+
+The Lean model of the BN254 pairing and the deployed Groth16 verify equation, built to instantiate
+the abstract `verifyProof` oracle in `Market.ProtocolAssurance` and (with knowledge-soundness)
+discharge `SettlementVerifier25Refines` (`ProtocolAssurance.lean:872`).
+
+Layers (each `lake build`-verified, kernel-clean; `#assert_axioms` on stated theorems):
+
+* `BN254.Fq`      — the base field `Fq = ZMod p` (`p` the BN254 base prime, ≠ the scalar `rBN254`);
+                    `CommRing` unconditional, `Field` under the named `[Fact (Nat.Prime pBN254)]`.
+* `BN254.Fp2`     — `Fp2 = Fq[u]/(u²+1)`; explicit coordinate `CommRing`, conjugation, norm.
+* `BN254.Fp6`     — `Fp6 = Fp2[v]/(v³−ξ)`, `ξ = 9+u`; `CommRing`.
+* `BN254.Fp12`    — `Fp12 = Fp6[w]/(w²−v)`; `CommRing` — the pairing's target field.
+* `BN254.Curves`  — `G1 : y²=x³+3 /Fq` and the twist `G2 : y²=x³+b' /Fp2` (`b'=3/ξ`), on-curve
+                    predicates + the standard generators (KATs), Mathlib `WeierstrassCurve` models.
+* `BN254.Pairing` — the optimal-ate `pairing = finalExp ∘ millerLoop`; inverse-free Jacobian point
+                    steps + denominator-eliminated line functions (DEFINITION); bilinearity /
+                    non-degeneracy / faithfulness are the named OPEN goals.
+* `BN254.Groth16` — the deployed 4-pairing + Pedersen-PoK 2-pairing verify EQUATION over the actual
+                    `DreggGroth16Verifier25.sol` VK (every VK point on-curve, KAT'd) + the bridge
+                    plan to `SettlementVerifier25Refines`.
+-/
+import Dregg2.Crypto.BN254.Fq
+import Dregg2.Crypto.BN254.Fp2
+import Dregg2.Crypto.BN254.Fp6
+import Dregg2.Crypto.BN254.Fp12
+import Dregg2.Crypto.BN254.Curves
+import Dregg2.Crypto.BN254.Pairing
+import Dregg2.Crypto.BN254.Groth16
