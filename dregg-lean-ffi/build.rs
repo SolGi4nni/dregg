@@ -736,9 +736,11 @@ fn build_dregg2_archive(
     // `.o` cache therefore produced `needs_splice == false` and linked the seed with every
     // security-critical splice-only export ABSENT, while the objects defining them sat unused in
     // `dregg2_closure_objs/`. See `archive_dregg2_complete` for the full note.
-    let slice_complete = archive_dregg2_complete(archive);
+    // (`archive.exists()` first so an absent base skips a pointless `nm` and reports itself through
+    // the ABSENT branch just below, not as an "incomplete slice".)
+    let slice_complete = archive.exists() && archive_dregg2_complete(archive);
     let needs_splice = recompiled || reseeded || !slice_complete;
-    if !recompiled && (reseeded || !slice_complete) {
+    if archive.exists() && !recompiled && (reseeded || !slice_complete) {
         println!(
             "cargo:warning=dregg-lean-ffi: forcing a re-splice with a WARM object cache \
              (reseeded={reseeded}, dregg2-slice-complete={slice_complete}) — a re-seeded or \
@@ -1609,12 +1611,14 @@ fn missing_required_exports(archive: &Path) -> Vec<(&'static str, &'static str)>
         .collect()
 }
 
-/// The subset of `required` the archive does not export, in ONE `nm` pass.
-fn missing_from(
-    archive: &Path,
+/// The subset of `required` absent from an ALREADY-COMPUTED export set. Takes the set rather than
+/// the path so the two gates in `main` share a single `nm` pass over the (~150 MB) archive instead
+/// of paying one each — `archive_exports` already runs one pass per probed symbol, so this stays
+/// cheap by construction.
+fn missing_in(
+    defined: &std::collections::HashSet<String>,
     required: &[(&'static str, &'static str)],
 ) -> Vec<(&'static str, &'static str)> {
-    let defined = archive_dregg_exports(archive);
     required
         .iter()
         .filter(|(sym, _)| !defined.contains(*sym))
@@ -2433,6 +2437,8 @@ fn main() {
     // for a native `--release`/distribution build or an explicit `DREGG_REQUIRE_LEAN=1`, so a
     // release binary can never silently ship without the verified cores. The opt-out for a
     // deliberately core-less build is `DREGG_REQUIRE_PQ_CORES=0`.
+    // ONE `nm` pass over the final artifact, shared by both export gates below.
+    let linked_exports = archive_dregg_exports(&build_archive);
     println!("cargo:rerun-if-env-changed=DREGG_REQUIRE_PQ_CORES");
     let require_pq_env = std::env::var("DREGG_REQUIRE_PQ_CORES").ok();
     let require_pq_off = matches!(
@@ -2449,7 +2455,7 @@ fn main() {
         // SAME table also drives (a) the pre-splice completeness check in `archive_dregg2_complete`
         // and (b) the per-probe `absent_export_warn` text. Same 6 symbols, same consequences, one
         // `nm` pass instead of six.
-        let missing = missing_from(&build_archive, REQUIRED_PQ_CORE_EXPORTS);
+        let missing = missing_in(&linked_exports, REQUIRED_PQ_CORE_EXPORTS);
         if !missing.is_empty() {
             let detail = missing
                 .iter()
@@ -2569,7 +2575,7 @@ fn main() {
         Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
     );
     if require_dec_on || (require_lean_native && !require_dec_off) {
-        let missing = missing_from(&build_archive, REQUIRED_DECISION_EXPORTS);
+        let missing = missing_in(&linked_exports, REQUIRED_DECISION_EXPORTS);
         if !missing.is_empty() {
             let detail = missing
                 .iter()
