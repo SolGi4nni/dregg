@@ -1985,13 +1985,33 @@ impl TurnExecutor {
     /// asset must conserve to zero independently. Bundles whose PI vectors are
     /// too short to carry the active v3 layout are already rejected by the
     /// caller's length check.
+    ///
+    /// ## House Law #1 — ONE conservation decider, and it is the Lean one
+    ///
+    /// This function does NOT decide conservation. It only DECODES the bundle's
+    /// public inputs into `(asset, signed_delta)` rows and hands them to
+    /// [`Self::check_per_asset_conservation_by_asset`] — the single per-asset
+    /// `Σδ=0` entry point, which routes through the installed `ConservationOracle`
+    /// (`dregg_cross_cell_conserves` /
+    /// `Dregg2.Circuit.CrossCellConserveDecision.conservesFFI`, proved equal to the
+    /// committed `CrossCellConservation` AIR boundary by
+    /// `CrossCellConserveRefine.decision_conserves_iff_air_boundary`).
+    ///
+    /// It previously ran its OWN `dregg_circuit::block_conservation::BlockConservation`
+    /// collector — a second, un-gated copy of the decision the executor path had
+    /// already routed to Lean, so the light-client / bundle leg silently kept the
+    /// hand-written Rust twin even on a node where the oracle was installed. That
+    /// copy is deleted; the bundle leg now inherits whatever the executor leg
+    /// decides with, by construction.
+    ///
+    /// The bundle signature carries no declared-supply rows (the caller only invokes
+    /// this for the conservation-CLOSED case — see `discloses_supply` above), so the
+    /// declared-supply argument is empty.
     fn check_bundle_per_asset_conservation(
         bundle_pis: &[Vec<dregg_circuit::field::BabyBear>],
     ) -> Result<(), TurnError> {
-        use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
-        use dregg_circuit::field::BabyBear;
-
-        let mut block = BlockConservation::new();
+        let mut entries: Vec<(dregg_circuit::field::BabyBear, i64)> =
+            Vec::with_capacity(bundle_pis.len());
         for (i, p) in bundle_pis.iter().enumerate() {
             let asset = dregg_circuit::extract_asset_class(p).ok_or_else(|| {
                 TurnError::InvalidExecutionProof(format!(
@@ -2003,31 +2023,20 @@ impl TurnExecutor {
                     "bundle proof {i} PI: failed to extract NET_DELTA"
                 ))
             })?;
-            let sign_credit = delta >= 0;
-            block.add_contribution(PerCellContribution {
-                asset,
-                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
-                net_delta_sign: if sign_credit {
-                    BabyBear::ZERO
-                } else {
-                    BabyBear::ONE
-                },
-            });
+            entries.push((asset, delta));
         }
 
-        if let Err(dregg_circuit::block_conservation::BlockConservationError::AssetImbalanced {
-            asset,
-            imbalance,
-        }) = block.check()
-        {
-            return Err(TurnError::InvalidExecutionProof(format!(
-                "bundle per-asset conservation violated: asset {} imbalance {} \
-                 (per-asset Σδ≠0 — value forged within or across an asset)",
-                asset.0, imbalance
-            )));
-        }
-
-        Ok(())
+        Self::check_per_asset_conservation_by_asset(&entries, &[]).map_err(|e| match e {
+            AtomicTurnError::PerAssetConservationViolation { asset, imbalance } => {
+                TurnError::InvalidExecutionProof(format!(
+                    "bundle per-asset conservation violated: asset {asset} imbalance {imbalance} \
+                     (per-asset Σδ≠0 — value forged within or across an asset)"
+                ))
+            }
+            other => TurnError::InvalidExecutionProof(format!(
+                "bundle per-asset conservation check failed: {other}"
+            )),
+        })
     }
 
     /// Snapshot-aware variant of `verify_proof_carrying_turn_bundle`.

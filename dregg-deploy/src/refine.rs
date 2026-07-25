@@ -53,7 +53,7 @@
 //! `apply` gate runs no-amplification; this module adds the optional refinement
 //! gate when a target (a running plan or an intent) is supplied.
 //!
-//! ## The verified procedure runs the gate (Lean-FFI, with a σ-free fallback)
+//! ## The verified procedure IS the gate on native (no fallback)
 //!
 //! [`decide_refines`] routes its `A ≤ᶠ B` decision through the verified Lean
 //! `@[export] dregg_decide_refines` (the PROVEN `FlowRefine.decideRefines`) when
@@ -63,12 +63,19 @@
 //! export's preorder-token wire ([`encode_proc`], the byte-exact inverse of
 //! `FlowRefine.encodeProcToks`/`decodeProc`).
 //!
-//! The in-process σ-free game ([`decide_refines_mirror`]) remains as the FALLBACK
-//! for targets that cannot link the Lean archive (`wasm32`, the zkvm guest) or a
-//! stale archive predating the export. It AGREES with the verified procedure by
-//! construction: the game is **σ-free** (`FlowRefine` §3 — the threaded state never
-//! decides a move; `PStep`/`moves` are purely syntactic), so the decision is a
-//! finite, state-free recursion the Lean and the Rust run identically. The
+//! On native (`cfg(any(unix, windows))`) there is NO Rust fallback: when the archive
+//! lacks the export or the FFI errors, [`decide_refines`] returns `false` — it REFUSES
+//! the deploy rather than re-deciding in an unverified mirror. (This paragraph used to
+//! say the σ-free game "remains as the FALLBACK … or a stale archive predating the
+//! export"; that was stale, and a stale fallback claim is how a deleted twin gets
+//! re-authorized on the next edit.)
+//!
+//! The in-process σ-free game ([`decide_refines_mirror`]) is compiled ONLY under
+//! `cfg(any(test, not(any(unix, windows))))` — i.e. on targets that cannot link the Lean
+//! archive at all (`wasm32`, the zkVM guest), plus the differential test. It AGREES with
+//! the verified procedure by construction: the game is **σ-free** (`FlowRefine` §3 — the
+//! threaded state never decides a move; `PStep`/`moves` are purely syntactic), so the
+//! decision is a finite, state-free recursion the Lean and the Rust run identically. The
 //! differential test in `tests.rs` asserts FFI-verdict == mirror-verdict on both
 //! polarities of `FlowAlgebra`'s counterexample.
 
