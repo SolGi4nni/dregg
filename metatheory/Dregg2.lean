@@ -1449,5 +1449,36 @@ import Dregg2.Crypto.CryptoVerifyAll -- ⚑⚑ ROOTS THE NIST CONFORMANCE CLUSTE
 -- since a removed command raises no error — is covered outside the build, by
 -- `scripts/cone_cutover_textual_check.sh`.
 import Dregg2.Verify.TeethWiring
+-- ─── ⚑⚑ THE ACCRUAL GATE (2026-07-25) ────────────────────────────────────────────────────
+-- The vacuity campaign was measured over its own window and it was LOSING: 52 refuted-floor
+-- carriers removed, 63 ADDED, net +11. Forty-six of the additions were brand-new theorems in
+-- brand-new modules landed by OTHER lanes while the campaign ran, each taking
+-- `Poseidon2SpongeCR` — which this tree PROVES FALSE at deployed BabyBear parameters — as a
+-- hypothesis, so each is VACUOUS. Accrual was outrunning removal ~1.2 : 1. Porting faster
+-- cannot win that race; only a gate can.
+--
+-- `#floor_ratchet` is that gate, and it is invoked HERE, at the end of the root module every
+-- lane already builds, because at this point the environment holds the whole tree. It fails
+-- the build when a declaration NOT in `Dregg2.Verify.FloorRatchetBaseline.grandfathered`
+-- takes a refuted floor as a hypothesis — via a binder, via a `Prop`-def whose BODY carries
+-- one (the ~250 `descriptorRefines`-shaped carriers no binder-keyed ruler can see), or via a
+-- structure FIELD (the bundle class). Refutations and reductions are exempt by construction:
+-- a conclusion of `¬ Floor …` or `False` never trips it.
+--
+-- ⚑ BOTH of its inputs arrive through IMPORTS — the environment, and the baseline (a Lean
+-- `def`). That is deliberate, and it is the repair of this campaign's previous tooth:
+-- `Tools/ConeCutoverListCommit` asserted its post-state by reading files through `IO.FS`,
+-- which lake's import-based dependency graph cannot see, so it was replayed from a cached
+-- olean forever — `lake build` EXIT=0 while a forced fresh elaboration EXIT=1 on a REAL
+-- violation. Nothing here reads a file. Adding a declaration anywhere under `Dregg2/`
+-- invalidates that module's olean, transitively invalidates this root, and re-runs the check.
+--
+-- The floor list is DERIVED from the tree's own refutation theorems, not hand-written, so
+-- proving a new floor false arms the gate for it the same build. `#floor_ratchet_floors`
+-- prints what it derived. The gate only GATES: a clean run means "no NEW declaration took a
+-- provably-false hypothesis", NOT that the grandfathered carriers are sound.
+import Dregg2.Verify.FloorRatchetBaseline
+import Dregg2.Verify.FloorRatchet
 
+#floor_ratchet
 #teeth_wired
