@@ -1062,6 +1062,7 @@ impl MapBriefing {
         for (verb, argument) in crowned_line(day) {
             let next = match verb {
                 DELVE => sim.delve(),
+                ASCEND => sim.ascend(),
                 SMITE => sim.smite(),
                 LOOT => sim.loot(argument as usize),
                 UNLOCK => sim.unlock(argument as u64),

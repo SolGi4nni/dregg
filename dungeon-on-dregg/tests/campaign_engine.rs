@@ -106,6 +106,22 @@ fn run_line(session: &mut CampaignSession, line: Vec<DescentAction>) {
     }
 }
 
+/// ⚑ THE WAY OUT IS A CLIMB. `flee` demands the surface, so ending a live expedition is
+/// `depth` ascends and then the bank. Any test that used to say "fleeing is always
+/// affordable while the light burns" was relying on the teleport `flee` that made the
+/// Descent deathless; there is no such move now, and a run that cannot afford the climb
+/// cannot end at all (`Dungeon.doomed_never_banks`).
+fn walk_out(session: &mut CampaignSession) {
+    while session.expedition().depth > 0 {
+        session
+            .advance(CampaignAction::Descent(DescentAction::Ascend), "Climbing.")
+            .expect("the climb home is unconditional but for the light");
+    }
+    session
+        .advance(CampaignAction::Descent(DescentAction::Flee), "Out.")
+        .expect("at the mouth, the bank is one breath");
+}
+
 fn come_home(session: &mut CampaignSession) -> ExpeditionOutcome {
     let outcome = session.expedition();
     let event = session
@@ -195,7 +211,10 @@ fn one_player_across_seven_expeditions_the_map_opens_and_the_collection_fills() 
 
     let first = come_home(&mut campaign);
     assert!(first.crowned());
-    assert_eq!(first.depth, FLOORS);
+    // ⚑ A BANKED RUN STANDS AT THE MOUTH (`Dungeon.banked_at_the_surface`). `depth` is the
+    // floor standing at the END, and the end of a successful run is the surface — it used
+    // to read `FLOORS` only because `flee` was a teleport out of the bottom.
+    assert_eq!(first.depth, 0);
     assert!(first.lost().is_empty(), "a fled run loses nothing");
 
     let sealed = campaign.projection().unwrap();
@@ -445,10 +464,8 @@ fn the_settlement_and_the_expedition_are_closed_to_each_other() {
         Err(CampaignError::Refused(_))
     ));
 
-    // Flee ends it; now home is open, and the expedition is closed.
-    campaign
-        .advance(CampaignAction::Descent(DescentAction::Flee), "Out.")
-        .expect("fleeing is always affordable while the light burns");
+    // The climb, then the bank, ends it; now home is open and the expedition is closed.
+    walk_out(&mut campaign);
     come_home(&mut campaign);
     assert_eq!(campaign.projection().unwrap().phase, Phase::Settlement);
     assert!(matches!(
@@ -632,9 +649,7 @@ fn a_greedy_run_driven_on_the_executor_does_not_crown() {
         }
     }
     if !campaign.expedition().over() {
-        campaign
-            .advance(CampaignAction::Descent(DescentAction::Flee), "Out.")
-            .expect("fleeing is always affordable while the light burns");
+        walk_out(&mut campaign);
     }
     let outcome = come_home(&mut campaign);
     assert!(
