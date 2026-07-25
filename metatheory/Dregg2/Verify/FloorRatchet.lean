@@ -33,22 +33,37 @@ There is no third input and no file read. The check cannot go stale without lake
 
 ## What counts as a violation
 A declaration in our modules whose ELABORATED TYPE mentions a refuted floor, in any position,
-directly or through a `Prop`-def whose BODY carries one. Three surfaces, all gated:
+directly or through a `Prop`-def whose BODY carries one, or through a STRUCTURE one of whose
+FIELDS carries one. Five surfaces, all gated:
 
   * **binder** — `theorem foo (hCR : Poseidon2SpongeCR hash) : …`. The visible class.
   * **prop-body** — `def descriptorRefines … : Prop := Poseidon2SpongeCR hash → …`. The floor
     is in the def's VALUE, so its users have NO floor binder and are invisible to every
     binder-keyed ruler. The census found ~250 carriers hiding behind three such defs
-    (`descriptorRefines`, `descriptorComplete`, `ClosedLogExtract`); the set is closed to a
-    fixpoint, so a def-of-a-def is caught too.
-  * **bundle/field** — a structure FIELD typed at a floor makes the structure UNINHABITABLE
-    at deployed parameters. Projections and `mk` are kept in the scan for exactly this reason
-    (the other compiler companions — `casesOn`, `recOn`, `injEq`, `eq_def`, … — are dropped as
-    noise; their parent is always caught).
+    (`descriptorRefines`, `descriptorComplete`, `ClosedLogExtract`).
+  * **propdef-user** — a declaration whose type mentions such a def.
+  * **bundle** — a STRUCTURE with a floor-typed FIELD. `CommitSurface` carries four
+    (`cmbInj`/`compInj : compressInjective`, `compNInj`, `leafInj`), so no inhabitant of it
+    exists at deployed BabyBear parameters.
+  * **bundle-user** — ⚑ THE B3 HOLE, closed 2026-07-25. A declaration that takes such a
+    structure as a HYPOTHESIS is exactly as vacuous as one taking a floor binder, and until this
+    landed it added ZERO carriers. The adversarial probe was one line:
+    `b3_via_grandfathered_bundle (R : Poseidon2RealizedSponge s) … : xs = ys := R.spongeCR xs ys h`
+    — the gate's prop-body fixpoint covered `Prop`-valued DEFS only and never propagated through
+    structure fields, so 32 grandfathered bundles (`CommitSurface` alone reached by 409
+    declarations) were a standing bypass anyone could take today.
+
+The prop-body and bundle sets are computed to a JOINT fixpoint: a `Prop` def whose body mentions
+a floor bundle carries a floor, a structure with a floor-carrying-`Prop`-def field carries one,
+and a structure with a floor-carrying-STRUCTURE field carries one. So a def-of-a-def, a
+bundle-of-a-bundle, and every mixture is caught.
+
+`mk` and projections stay in the scan (the other compiler companions — `casesOn`, `recOn`,
+`injEq`, `eq_def`, … — are dropped as noise; their parent is always caught).
 
 EXEMPT, because it is ANTI-floor content and the campaign wants MORE of it, not less: a
-declaration whose conclusion is `¬ Floor …` (a refutation witness) or `False` (a tooth /
-reduction stated contradiction-style). Writing a new refutation never trips the gate.
+declaration that REFUTES floor content and ASSUMES none — see `antiFloor`. Writing a new
+refutation never trips the gate; assuming a refuted floor on the way to a negation does.
 
 ## The floor list is DERIVED, never hand-maintained
 A hand list is how the Python ruler went blind to 7 of 10 refuted floors and how the campaign
@@ -66,9 +81,15 @@ Prove a new floor false and the gate starts defending it the same build, with no
 A gate that under-measures passes vacuously and looks exactly like success. `#floor_ratchet`
 hard-errors — never passes quietly — unless (a) the environment holds ≥ 500 000 constants
 (whole-tree scale), (b) every sentinel floor resolves, (c) every sentinel the tree refutes is
-REDISCOVERED as refuted by the derivation above, and (d) the three `prop-body` keystone gates
-are rediscovered. It shares those sentinels with `#floor_census` so the two instruments cannot
-drift apart.
+REDISCOVERED as refuted by the derivation above, (d) the `prop-body` keystone gates are
+rediscovered, (e) every sentinel BUNDLE is rediscovered as a floor-carrying structure, and
+(f) all five `FloorRatchetSpecimens` classify exactly as documented. It shares (b)-(d) with
+`#floor_census` so the two instruments cannot drift apart.
+
+(e) and (f) are the B3/B1/B2 teeth's own self-check. A fixpoint that stops propagating through
+fields, or an exemption predicate that degenerates in either direction, is INVISIBLE from a green
+build — the surface just reads lower, which is indistinguishable from progress. Both now fail the
+root build instead.
 
 ## The RATCHET
 The ~1650 existing carriers cannot be ported today, so the gate compares against a checked-in
@@ -126,28 +147,125 @@ def isGeneratedCompanion (n : Name) : Bool :=
       || s.startsWith "proof_" || (s.startsWith "eq_" && (s.drop 3).all Char.isDigit)
   | _ => false
 
-/-- ANTI-floor content, exempt from the gate: a conclusion of `¬ Floor …` (a refutation
-witness) or `False` (a tooth / a reduction stated contradiction-style). The campaign wants
-these written, so the gate must never make writing one a build error. Read off the TYPE's
-forall body syntactically — no naming convention is consulted. -/
-def isAntiFloor (floors : NameSet) (ty : Expr) : Bool :=
-  let b := ty.getForallBody
-  match notArg? b with
-  | some arg => match headConst? arg with
-                | some h => floors.contains h
-                | none   => false
-  | none => b.isAppOf ``False
+/-- SENTINEL BUNDLES: structures the joint fixpoint must rediscover as floor-carrying. A fixpoint
+that stops propagating through structure FIELDS reports a smaller surface and passes — which is
+exactly what B3 exploited — so these fail the build closed instead.
+
+`CommitSurface` is the worst of them (four refuted floors as fields, reached by 409 declarations);
+`Poseidon2RealizedSponge` is the one the original probe rode in on; `ClosureReadouts`,
+`ClosureReadoutsLive` and `StateDecodeLog` are TRANSITIVE (their floor arrives through fields of
+other bundles / floor-carrying `Prop` defs), so they pin the fixpoint's CLOSURE and not just its
+first step.
+
+⚑ A name here can fail closed for the GOOD reason: the bundle got PORTED, its floor field deleted,
+and it is correctly no longer floor-carrying. That is the ratchet noticing a win, and the fix is to
+delete the line in the same commit as the port. `DeployedCapTree.CapHashScheme` was on this list
+for exactly one afternoon before a co-tenant lane shed its `chipCR : Compress1CR` field
+(`Circuit/CapHashBundleCutoverCheck.lean`) and re-inhabited it with `deployedCapHashScheme`, whose
+own chip REFUTES the deleted field — so keep the list to bundles too big to fall by accident. -/
+def sentinelBundles : List Name :=
+  [ `Dregg2.Circuit.CircuitSoundness.CommitSurface
+  , `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
+  , `Dregg2.Circuit.ClosureLog.StateDecodeLog
+  , `Dregg2.Circuit.ClosureFanoutGenuine.ClosureReadouts
+  , `Dregg2.Circuit.ClosureReadoutsRealizable.ClosureReadoutsLive ]
+
+/-- The `antiFloor` SELF-TEST specimens and their required verdicts (`true` = must be exempt).
+Each name is a `Prop`-valued def in `Dregg2.Verify.FloorRatchetSpecimens` whose VALUE is a
+declaration TYPE; `surface` classifies the value and hard-errors if the verdict moved. -/
+def specimenVerdicts : List (Name × Bool) :=
+  [ (`Dregg2.Verify.FloorRatchetSpecimens.specRefutation, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specRefutationUncurried, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB1NegationLaundry, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB2FalseLaundry, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specB3BundleLaundry, false) ]
+
+/-- The specimens are the instrument's own fixtures, not tree content: excluded from the carrier
+surface so they never occupy lines in a baseline whose only healthy direction is shorter. -/
+def specimens : NameSet :=
+  specimenVerdicts.foldl (fun a (n, _) => a.insert n) {}
+
+/-- ANTI-floor content, exempt from the gate: a declaration that REFUTES floor content and
+ASSUMES none. Precisely, reading the type as `∀ x₁:A₁ … xₙ:Aₙ, C`:
+
+  * `C = ¬ F …` with `F` floor content, and NO `Aᵢ` is floor content; or
+  * `C = False`, `Aₙ` (the INNERMOST binder) is floor content, and no other `Aᵢ` is — which is
+    the first case uncurried, since `Γ → F → False` IS `Γ → ¬ F` by definition.
+
+The campaign wants refutations written, so the gate must never make writing one a build error;
+`Γ ⊢ ¬ F` and `Γ, F ⊢ False` are the two spellings of writing one, and both stay free.
+
+⚑ WHAT THIS TIGHTENS, and why. The shipped rule exempted ANY declaration whose conclusion was
+`¬ Floor …` or `False`, which is not a refutation test — it is a conclusion-shape test, and both
+adversarial probes walked straight through it carrying `Poseidon2SpongeCR`:
+
+  * **B1** `(hCR : Poseidon2SpongeCR f) : ¬ Poseidon2SpongeCR g` — a refuted floor in HYPOTHESIS
+    position on a declaration that merely happens to CONCLUDE a negation. Now gated: measured
+    cost on the tree at the time, **ZERO** existing declarations (no `¬`-concluding declaration
+    in the tree binds floor content), so this one is free.
+  * **B2** the `False` branch. `False` is the most permissive conclusion in the language;
+    exempting on it exempts on nothing. 113 existing declarations used it, and they are not
+    refutations — they are contrapositive SOUNDNESS claims: `consensus_safe_under_floor`,
+    `lightclient_no_fork`, `downgrade_resistant_under_floor`, `closure_rejects_overdebit_avail`,
+    every `*_rejects_*`/`*_unsat` in the emit tree. Each assumes a floor this tree PROVES FALSE
+    and concludes "the deployed system cannot be broken". They were laundered out of the census
+    by a spelling accident and are now counted.
+
+⚑ AND WHAT IT COSTS, stated plainly. Of those 113, a minority ARE genuine teeth that happen to
+put the floor binder somewhere other than last — `deployed_collision_refutes_domainSepCR`,
+`leafRealization_uninhabitable_babyBear`. They are now grandfathered, which is a MISLABEL, and
+the fix is a one-line restatement (move the floor binder last, or conclude `¬ F …`) that costs no
+proof work at all because the two are definitionally equal. There is NO sound syntactic separator
+here: `contentRoot_injective_of_binds_or_collides` (vacuous — "the derived root has no collision,
+GIVEN the base hash is CR") and `deployed_collision_refutes_domainSepCR` (a real refutation) have
+the SAME binder shape, a collision plus a floor, and differ only in which function the collision
+is of. Binder ORDER is a spelling the author controls; that is why the rule keys on it, and it is
+the honest reason this is a discipline rather than a decision procedure.
+
+Read off the TYPE syntactically — no naming convention, no proof term, no telescope
+instantiation. Keeping it type-only matters: a gate that read proof terms would classify the same
+statement differently depending on how it was proved. -/
+def antiFloor (content : Name → Bool) (ty : Expr) : Bool := Id.run do
+  -- The conclusion first, and CHEAPLY. This runs on every one of our ~300k declarations on every
+  -- root build; the spine walk below folds the constants of each binder domain, so it must be
+  -- reached only by the ~240 whose conclusion could possibly qualify.
+  let concl := ty.getForallBody
+  let neg? : Option Name := match notArg? concl with
+    | some arg => headConst? arg
+    | none     => none
+  let isNeg := match neg? with | some h => content h | none => false
+  let isFalse := neg?.isNone && concl.isAppOf ``False
+  unless isNeg || isFalse do return false
+  -- Walk the ∀-spine, remembering only whether some NON-innermost binder is floor content and
+  -- what the innermost binder's domain was. Bodies carry loose bvars; `foldConsts` does not care.
+  let touch (e : Expr) : Bool := e.foldConsts false (fun c a => a || content c)
+  let mut t := ty
+  let mut outerFloor := false
+  let mut lastDom : Option Expr := none
+  while t.isForall do
+    if let some d := lastDom then
+      if touch d then outerFloor := true
+    lastDom := some t.bindingDomain!
+    t := t.bindingBody!
+  let lastFloor := (lastDom.map touch).getD false
+  if isNeg then
+    -- `Γ ⊢ ¬ F …`: exempt only when NO binder is floor content (B1).
+    return !outerFloor && !lastFloor
+  else
+    -- `Γ, F ⊢ False`: the SAME statement uncurried (B2).
+    return lastFloor && !outerFloor
 
 /-- A declaration that violates (or is grandfathered under) the ratchet. -/
 structure Carrier where
   name  : Name
-  floor : Name          -- the refuted floor, or the `prop-body` def, it carries
-  cls   : String        -- "binder" | "prop-body" | "propdef-user"
+  floor : Name          -- the refuted floor, `prop-body` def, or floor BUNDLE it carries
+  cls   : String        -- "binder" | "prop-body" | "propdef-user" | "bundle" | "bundle-user"
   deriving Inhabited
 
 structure Surface where
   floors    : Array Name           -- refuted floors, DERIVED from the environment
-  propBody  : Array Name           -- Prop defs carrying a floor in their BODY (fixpoint)
+  propBody  : Array Name           -- Prop defs carrying a floor in their BODY (joint fixpoint)
+  bundles   : Array Name           -- structures with a floor-carrying FIELD (joint fixpoint)
   carriers  : Array Carrier        -- sorted by name
   shapeLeak : Nat                  -- `Function.Injective`-spelled sites (reported, ungated)
   total     : Nat                  -- constants in the environment
@@ -237,16 +355,39 @@ def surface : MetaM Surface := do
         genuine regression — either way the gate would defend a smaller floor set than the \
         tree actually refutes. Refusing to run."
 
-  -- ===== `prop-body` carriers: `def … : Prop := Floor … → …`, closed to a fixpoint =====
+  -- ===== the JOINT `prop-body` × `bundle` fixpoint =====
+  -- `prop-body`: `def … : Prop := Floor … → …` — the floor is in the def's VALUE, so its users
+  -- carry no floor binder.
+  -- `bundle`:    `structure S where … (fld : Floor …)` — the floor is a FIELD, so no inhabitant
+  -- of `S` exists at deployed parameters and a hypothesis `(s : S)` is exactly as vacuous as a
+  -- floor binder. Read off the CONSTRUCTOR's type, which spans the structure's parameters and
+  -- every field; the `c != nm` guard keeps a recursive structure from triggering on itself.
+  -- The two are closed TOGETHER: a `Prop` def can mention a bundle and a field can be typed at a
+  -- `Prop` def or at another bundle, so separate fixpoints would each miss the other's step.
   let mut propDefs : Array (Name × Array Name) := #[]
   for nm in ours do
     let some ci := env.find? nm | continue
     let .defnInfo di := ci | continue
     if floors.contains nm then continue
+    -- The `antiFloor` specimens are Prop-valued defs whose BODIES are floor-carrying by design.
+    -- They are the instrument's fixtures; letting them into the fixpoint would put five entries
+    -- in the gate's own report of what the TREE carries.
+    if specimens.contains nm then continue
     unless isPropValued di.type do continue
     propDefs := propDefs.push (nm, di.value.getUsedConstants)
+  let mut structDefs : Array (Name × Array Name) := #[]
+  for nm in ours do
+    let some ci := env.find? nm | continue
+    let .inductInfo ii := ci | continue
+    unless isStructure env nm do continue
+    let mut used : Array Name := #[]
+    for c in ii.ctors do
+      if let some cci := env.find? c then used := used ++ cci.type.getUsedConstants
+    structDefs := structDefs.push (nm, used)
   let mut pb : NameSet := {}
   let mut pbArr : Array Name := #[]
+  let mut bn : NameSet := {}
+  let mut bnArr : Array Name := #[]
   let mut iters := 0
   let mut changed := true
   while changed && iters < 100 do
@@ -254,18 +395,61 @@ def surface : MetaM Surface := do
     iters := iters + 1
     for (nm, used) in propDefs do
       if pb.contains nm then continue
-      if used.any (fun c => floors.contains c || pb.contains c) then
+      if used.any (fun c => floors.contains c || pb.contains c || bn.contains c) then
         pb := pb.insert nm
         pbArr := pbArr.push nm
         changed := true
+    for (nm, used) in structDefs do
+      if bn.contains nm then continue
+      if used.any (fun c =>
+           c != nm && (floors.contains c || pb.contains c || bn.contains c)) then
+        bn := bn.insert nm
+        bnArr := bnArr.push nm
+        changed := true
   if iters >= 100 then
-    throwError "FLOOR-RATCHET FAIL-CLOSED: the prop-body fixpoint did not converge."
-  -- (d) the three load-bearing prop-body keystone gates must be rediscovered
+    throwError "FLOOR-RATCHET FAIL-CLOSED: the prop-body × bundle fixpoint did not converge."
+  -- (d) the load-bearing prop-body keystone gates must be rediscovered
   for f in sentinelPropBody do
     unless pb.contains f do
       throwError "FLOOR-RATCHET FAIL-CLOSED: prop-body sentinel {f} was not discovered as a \
         floor-carrying Prop def. The ~250 carriers that hang off it invisibly would all pass \
         the gate. Refusing to run."
+  -- (e) every sentinel BUNDLE must be rediscovered — the B3 tooth's own self-check
+  for s in sentinelBundles do
+    unless env.contains s do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: bundle sentinel {s} is not in the environment. \
+        Partial import or a renamed structure — refusing to gate against a smaller bundle set."
+    unless bn.contains s do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: bundle sentinel {s} was not discovered as a \
+        floor-carrying STRUCTURE. Two ways this happens, and they need opposite responses.\n\
+        (a) THE FIXPOINT BROKE — it has stopped propagating through structure FIELDS, which is \
+        exactly the B3 bypass: every declaration taking {s} as a hypothesis would pass the gate \
+        while being as vacuous as a floor binder. Fix the fixpoint.\n\
+        (b) THE BUNDLE WAS PORTED — its floor field is deleted and it is correctly no longer \
+        floor-carrying. That is a WIN; delete this name from `sentinelBundles` in the same \
+        commit as the port, and re-emit the baseline to bank the carriers that fell with it.\n\
+        Check which by reading the structure's fields. Refusing to run until then."
+  let content : Name → Bool := fun c => floors.contains c || pb.contains c || bn.contains c
+  -- (f) the exemption predicate must still classify its five specimens as documented. A rule
+  -- that degenerates to "everything is a refutation" exempts the tree and passes forever; one
+  -- that degenerates the other way makes writing a refutation a build error. Neither is visible
+  -- from a green build, so both are asserted here on every run.
+  for (spec, wantExempt) in specimenVerdicts do
+    let some sci := env.find? spec
+      | throwError "FLOOR-RATCHET FAIL-CLOSED: antiFloor specimen {spec} is not in the \
+          environment. `Dregg2/Verify/FloorRatchetSpecimens.lean` is unimported or renamed, so \
+          the exemption predicate is running unchecked. Refusing to run."
+    let .defnInfo sdi := sci
+      | throwError "FLOOR-RATCHET FAIL-CLOSED: antiFloor specimen {spec} is not a def."
+    let got := antiFloor content sdi.value
+    unless got == wantExempt do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: antiFloor specimen {spec} classified \
+        {(if got then "EXEMPT" else "GATED")}, expected \
+        {(if wantExempt then "EXEMPT" else "GATED")}. \
+        The anti-floor exemption has moved. If it now exempts too much, the gate is a laundry \
+        (that is B1/B2: `False` and `¬ …` are conclusion SHAPES, not refutation tests). If too \
+        little, writing a refutation has become a build error. Fix the predicate, or change the \
+        specimen's expected verdict IN THE DIFF and say why."
 
   -- ===== the carrier surface =====
   let mut carriers : Array Carrier := #[]
@@ -273,10 +457,14 @@ def surface : MetaM Surface := do
   for nm in ours do
     if isGeneratedCompanion nm then continue
     if floors.contains nm then continue
+    if specimens.contains nm then continue
     let some ci := env.find? nm | continue
-    if isAntiFloor floors ci.type then continue
+    if antiFloor content ci.type then continue
     if pb.contains nm then
       carriers := carriers.push ⟨nm, nm, "prop-body"⟩
+      continue
+    if bn.contains nm then
+      carriers := carriers.push ⟨nm, nm, "bundle"⟩
       continue
     -- ONE `foldConsts` pass, not three scans of a `getUsedConstants` array. This loop runs
     -- over every one of our declarations on EVERY root build, and `getUsedConstants` allocates
@@ -291,20 +479,23 @@ def surface : MetaM Surface := do
     -- gate's total added cost, of order 10s on a root elaboration that already costs ~30s, and
     -- the fact that both forms return an identical surface (1586 carriers / 27 floors / 563
     -- shape-leaks) — which is a useful cross-check on this rewrite, and all it is.
-    let (floorHit, pbHit, injSeen) :=
-      ci.type.foldConsts (none, none, false) fun c (fh, ph, inj) =>
+    let (floorHit, pbHit, bnHit, injSeen) :=
+      ci.type.foldConsts (none, none, none, false) fun c (fh, ph, bh, inj) =>
         ( if fh.isNone && floors.contains c then some c else fh
         , if ph.isNone && pb.contains c then some c else ph
+        , if bh.isNone && bn.contains c then some c else bh
         , inj || c == ``Function.Injective )
     if let some f := floorHit then
       carriers := carriers.push ⟨nm, f, "binder"⟩
     else if let some f := pbHit then
       carriers := carriers.push ⟨nm, f, "propdef-user"⟩
+    else if let some f := bnHit then
+      carriers := carriers.push ⟨nm, f, "bundle-user"⟩
     else if injSeen then
       shapeLeak := shapeLeak + 1
   let sorted := carriers.qsort (fun a b => a.name.toString < b.name.toString)
   return { floors := floorArr.qsort (fun a b => a.toString < b.toString)
-           propBody := pbArr, carriers := sorted, shapeLeak, total }
+           propBody := pbArr, bundles := bnArr, carriers := sorted, shapeLeak, total }
 
 /-! ## The gate -/
 
@@ -339,8 +530,22 @@ def check (baseline : Array String) : MetaM Unit := do
          `Circuit/StateCommitLeafCutoverCheck.lean` for the worked shape. The old hypothesis \
          implies the new one, so the ported theorem is strictly STRONGER.\n\
       \n\
-      2. STATE IT AS ANTI-FLOOR CONTENT. A declaration concluding `¬ Floor …` or `False` is \
-         exempt by construction — refutations and reductions never trip this gate.\n\
+      2. STATE IT AS ANTI-FLOOR CONTENT — but SPELL IT AS A REFUTATION. Exempt means \"refutes \
+         floor content and assumes none\": conclusion `¬ Floor …` with no floor-carrying \
+         hypothesis, or, uncurried, conclusion `False` with the floor as the INNERMOST binder. A \
+         `False` conclusion alone is NOT enough (that was the B2 laundry: `False` is the most \
+         permissive conclusion in the language, and 113 contrapositive soundness claims — \
+         `consensus_safe_under_floor`, every `*_rejects_*` — rode it out of the census). If your \
+         declaration IS a refutation, move the floor binder LAST or conclude `¬ Floor …`; the \
+         two are definitionally equal, so it costs no proof work.\n\
+      \n\
+      ⚑ IF THE FLOOR ARRIVED THROUGH A STRUCTURE (class `bundle-user`), there is no binder to \
+         move: a field is fixed for the life of the value with no argument position. Do NOT swap \
+         in a `noColl` field — quantifying over a set chosen in advance is either empty or \
+         uninhabitable again, which removes the NAME the ruler counts while rebuilding the \
+         vacuity. DELETE the floor field and re-inhabit the structure with a CONSTRUCTED \
+         deployed inhabitant (precedent: `deployedPoseidon2Tree`, `deployedCompress2`, \
+         `deployedCap8Scheme`).\n\
       \n\
       3. GRANDFATHER IT, VISIBLY. If it genuinely cannot be ported now, paste the lines below \
          into `manual` in `Dregg2/Verify/FloorRatchetBaseline.lean` and say in the commit \
@@ -353,10 +558,13 @@ def check (baseline : Array String) : MetaM Unit := do
          change. The emitters are for a GREEN tree — plain after a port (shrink-only, banks \
          the win), `!` only to re-bootstrap the whole baseline.\n\
       \n{paste}\n"
+  let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
   logInfo s!"floor-ratchet OK — {s.carriers.size} grandfathered carriers over \
-    {s.floors.size} refuted floors ({s.propBody.size} prop-body defs); baseline \
-    {baseline.size}, slack {slack.size}; {s.shapeLeak} `Function.Injective`-spelled sites \
-    ungated (known residual); {s.total} constants."
+    {s.floors.size} refuted floors ({s.propBody.size} prop-body defs, {s.bundles.size} floor \
+    bundles); binder {byCls "binder"} + prop-body {byCls "prop-body"} + propdef-user \
+    {byCls "propdef-user"} + bundle {byCls "bundle"} + bundle-user {byCls "bundle-user"}; \
+    baseline {baseline.size}, slack {slack.size}; {s.shapeLeak} `Function.Injective`-spelled \
+    sites ungated (known residual); {s.total} constants."
 
 /-! ## Auditing what the gate DERIVED
 
@@ -384,14 +592,22 @@ def report : MetaM Unit := do
   for f in s.floors do
     let n := (s.carriers.filter (fun c => c.floor == f)).size
     lines := lines.push s!"  {n}\t{f}"
+  let mut blines : Array String := #[]
+  for b in s.bundles do
+    let n := (s.carriers.filter (fun c => c.floor == b)).size
+    blines := blines.push s!"  {n}\t{b}"
   let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
   logInfo s!"floor-ratchet DERIVED SURFACE\n\
     refuted floors ({s.floors.size}), with carrier counts:\n\
     {String.intercalate "\n" lines.toList}\n\
+    floor BUNDLES ({s.bundles.size}) — structures with a floor-carrying FIELD, with the number \
+    of declarations reached through each:\n\
+    {String.intercalate "\n" blines.toList}\n\
     prop-body Prop defs ({s.propBody.size}): \
     {String.intercalate ", " (s.propBody.toList.map (·.toString))}\n\
     carriers {s.carriers.size} = binder {byCls "binder"} + prop-body {byCls "prop-body"} \
-    + propdef-user {byCls "propdef-user"}\n\
+    + propdef-user {byCls "propdef-user"} + bundle {byCls "bundle"} \
+    + bundle-user {byCls "bundle-user"}\n\
     ungated `Function.Injective`-spelled sites: {s.shapeLeak}\n\
     constants in environment: {s.total}"
 
