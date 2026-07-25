@@ -42,6 +42,26 @@ is fast and authoritative for compile errors — use it before reporting.
 
 This is the "greens that mean something" class turned on our own tooling, which is why it belongs here.
 
+## The two instruments, and why BOTH are needed
+
+They catch disjoint classes, and neither sees the other's:
+
+| | catches | blind to |
+|---|---|---|
+| `#assert_axioms` (in-tree, fires on build) | `sorryAx` and non-kernel axioms — *what a proof rests on* | an **empty premise**: the vacuous apex was kernel-clean, sorry-free, and *true* |
+| `PremiseInhabitability` (this lane) | premises nothing can satisfy | a **carrier-gated** class whose `extractable : Prop` is `True` — that mode never mentions acceptance |
+
+And the carrier mode needs a third check (`CarrierAudit`), which demands a *refutation* at a broken
+sibling oracle — something `True` can never have.
+
+### The sweep that finds hygiene leaks (repeatable)
+
+`( lake build; echo FULL=$? ) > log 2>&1` then `grep "axiom-hygiene FAIL"`. **The tripwire only fires
+when someone actually builds the module** — which is why two RED-at-HEAD leaks sat unnoticed today, each
+written off as contention by a lane that never got a clean build. Run 2026-07-25: **zero failures outside
+`Games.Dungeon`**, whose eight are `*_admitted` placeholders in three files a co-tenant has open. The
+FRI/soundness cone is hygiene-clean.
+
 ## The instrument
 `Dregg2/Circuit/PremiseInhabitability.lean` — `Empties P acc := P → RejectsAll acc`, `Extracts`,
 `empties_of_refuted`, `empties_proves_anything`, `not_of_empties_of_acceptsSome`. Turns "audit note"
