@@ -463,6 +463,26 @@ private def forgeProof : BatchProofData Nat :=
 #guard betasBound forgeProof
   (deriveTranscript uPerm uRATE uToNat uParams uInit uLogN forgeProof uPub).betas = false
 
+/-- **THE SEPARATION, as a THEOREM (not just a `#guard`).** The bare `verifyAlgo` at the fully
+concrete `fullChecks` and the unified verifier are NOT equivalent: the free-beta forgery above is
+ACCEPTED by the former and REJECTED by the latter. The statement is closed (the fixture constants
+are existentially bound), so downstream files can cite it without touching the private fixture.
+
+This is what makes "acceptance implication" a ONE-WAY street: any assumption stated over bare
+`verifyAlgo` acceptance is quantified over strictly more runs — including this forgery — than the
+same assumption stated over the unified/faithful/extension-faithful verifier. -/
+theorem verifyAlgo_accepts_but_unified_rejects :
+    ∃ (perm : List Nat → List Nat) (RATE : Nat) (toNat : Nat → Nat) (params : FriParams)
+      (vk : RecursionVk Nat) (core : FriCore Nat) (A : FieldArith Nat)
+      (initState : List Nat) (logN : Nat) (proof : BatchProofData Nat) (pub : WrapPublics Nat),
+      verifyAlgo perm RATE toNat params vk (fullChecks core A toNat params.powBits)
+          initState logN proof pub = true
+        ∧ verifyAlgoUnified perm RATE toNat params vk core A initState logN proof pub = false :=
+  ⟨uPerm, uRATE, uToNat, uParams, uVk, uCore, uArith, uInit, uLogN, forgeProof, uPub,
+    by decide, by decide⟩
+
+#assert_axioms verifyAlgo_accepts_but_unified_rejects
+
 /-! ### The faithful single-AIR quotient and α/ζ teeth bite. -/
 
 private def powMod (m : Nat) (b : Nat) : Nat → Nat
