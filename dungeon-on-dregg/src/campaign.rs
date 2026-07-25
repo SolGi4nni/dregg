@@ -420,6 +420,12 @@ pub struct CampaignSession {
     /// Where the HELD expedition was deployed — not necessarily where the traveller now
     /// stands, since a settlement travel does not touch the expedition.
     expedition_location: String,
+    /// ⚑ THE DEEPEST FLOOR THE HELD EXPEDITION REACHED — a high-water mark, not the floor
+    /// it is standing on. Before `ascend` those were the same number and the chronicle read
+    /// the final depth; they are not the same now, and reading the final depth would pay
+    /// ZERO depth-XP for every successful run (a banked run ends at the surface). Rebuilt
+    /// deterministically on replay, because it moves only on a landed descent action.
+    expedition_deepest: u64,
     events: Vec<CampaignEvent>,
     root: [u8; 32],
 }
@@ -464,6 +470,7 @@ impl CampaignSession {
             chronicle,
             expedition_ordinal: 1,
             expedition_location,
+            expedition_deepest: 0,
             events: Vec::new(),
             root: [0; 32],
         };
@@ -623,10 +630,17 @@ impl CampaignSession {
             CampaignAction::Descent(command) => {
                 self.require_phase(Phase::Expedition, "an expedition move")?;
                 let (method, next) = descent_projection(self.descent.sim(), *command);
+                // The high-water mark moves BEFORE the commit is attempted only if the
+                // projection is legal; `commit_projected_with_event` below refuses
+                // otherwise and nothing is recorded, so this cannot drift.
+                let reached = next.as_ref().map(|s| s.depth).unwrap_or(0);
                 let primary = self
                     .descent
                     .commit_projected_with_event(method, next, event)
                     .map_err(CampaignError::world)?;
+                // Only a LANDED move moves the mark: the `?` above returns on refusal, so
+                // a refused delve can never inflate the chronicle's deepest reach.
+                self.expedition_deepest = self.expedition_deepest.max(reached);
                 receipts.push(primary);
             }
             CampaignAction::Return => {
@@ -662,6 +676,7 @@ impl CampaignSession {
                     .map_err(CampaignError::world)?;
                 self.expedition_ordinal = ordinal;
                 self.expedition_location = here;
+                self.expedition_deepest = 0;
             }
             CampaignAction::Travel { destination } => {
                 self.require_phase(Phase::Settlement, "travel")?;
@@ -883,7 +898,11 @@ impl CampaignSession {
             }
         }
 
-        let depth_gain = outcome.depth.saturating_sub(previous_deepest);
+        // ⚑ THE DEEPEST REACHED, not the floor standing at the end. `outcome.depth` is the
+        // latter, and after `ascend` a successful run ends at the surface — paying on it
+        // would mean a crowned run earns no depth-XP at all.
+        let reached = self.expedition_deepest.max(outcome.depth);
+        let depth_gain = reached.saturating_sub(previous_deepest);
         let xp = u64::from(first_crown) * CROWN_XP + minted * RELIC_XP + depth_gain * DEPTH_XP;
         if xp > 0 {
             receipts.push(progression::gain_xp(&self.hero, xp).map_err(CampaignError::world)?);
