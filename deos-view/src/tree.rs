@@ -826,6 +826,74 @@ pub fn coordgrid_text(cols: usize, cells: &[CoordCell]) -> String {
     lines.join("\n")
 }
 
+/// The default width, in glyph cells, of a plain-text meter bar ([`meter_text`]). Wide enough that
+/// a bar reads as a bar on a phone-width chat line, narrow enough that a 26-step clock still moves
+/// visibly on a single step.
+pub const METER_TEXT_WIDTH: usize = 12;
+
+/// **Render a literal-valued meter as a plain-text bar** — `████████░░░░ 18/26`.
+///
+/// The ONE text projection of a meter, shared by every bind-less renderer (discord / telegram /
+/// wechat / the no-JS web fallback) exactly as [`coordgrid_text`] is the one board projection, so a
+/// light clock or a carry-capacity reads IDENTICALLY on every channel instead of vanishing on the
+/// prose ones. Two honesty rules make the bar's *shape* mean what its numbers say:
+///
+/// * a non-zero `value` never paints an EMPTY bar (a player with one breath left sees one sliver,
+///   not nothing), and
+/// * a `value` short of `max` never paints a FULL bar (a nearly-full pack does not read as room).
+///
+/// `max == 0` (an undefined denominator — no guardian on the surface, no carry rights left) paints
+/// an empty track: the bar cannot lie about a ratio that does not exist.
+pub fn meter_text(value: u64, max: u64, width: usize) -> String {
+    format!("{} {value}/{max}", meter_bar(value, max, width))
+}
+
+/// The BAR half of [`meter_text`] — `████████░░░░`, with no trailing `value/max`. A renderer that
+/// paints the numbers itself (the web meter, which puts them in their own element) draws the track
+/// from this so it is the identical bar the prose channels show.
+pub fn meter_bar(value: u64, max: u64, width: usize) -> String {
+    let mut filled = if max == 0 || width == 0 {
+        0
+    } else {
+        // Round to NEAREST cell (not down): a bar that always under-reports drifts a whole cell
+        // behind the numbers beside it, which is exactly the disagreement a meter exists to avoid.
+        let clamped = value.min(max) as u128;
+        let (w, m) = (width as u128, max as u128);
+        ((clamped * w + m / 2) / m).min(w) as usize
+    };
+    // A non-zero value never paints an EMPTY bar; a value short of `max` never paints a FULL one.
+    // Rounding makes BOTH of these reachable, and both of them are lies a player would act on.
+    if value > 0 && max > 0 && filled == 0 {
+        filled = 1;
+    }
+    if value < max && width > 0 && filled == width {
+        filled = width - 1;
+    }
+    let mut bar = String::with_capacity(width * 3);
+    for _ in 0..filled {
+        bar.push('█');
+    }
+    for _ in filled..width {
+        bar.push('░');
+    }
+    bar
+}
+
+/// The one-line plain-text form of a [`ViewNode::Progress`] — its label followed by
+/// [`meter_text`]'s bar at [`METER_TEXT_WIDTH`]. Every prose renderer calls this, so a static meter
+/// is one string across discord / telegram / wechat rather than three near-misses.
+/// The label is emitted VERBATIM (never trimmed): a surface that pads its labels to a common width
+/// gets its stacked meters column-aligned on every prose channel, which is most of what makes a
+/// stack of bars readable at a glance.
+pub fn progress_text(label: &str, value: u64, max: u64) -> String {
+    let bar = meter_text(value, max, METER_TEXT_WIDTH);
+    if label.trim().is_empty() {
+        bar
+    } else {
+        format!("{label} {bar}")
+    }
+}
+
 /// Resolve a live `pill`'s display `(label, tag)` from its bound slot `value`: the first
 /// [`PillCase`] whose `value` matches wins, else the static `(text, tag)` fallback. The one
 /// helper every renderer calls so the value→word mapping is identical across them.
@@ -1708,5 +1776,50 @@ mod delight_tests {
         assert!(cells[1].turn.is_empty(), "the piece cell is inert");
         assert_eq!(cells[1].tag, "accent");
         assert!(cells[3].turn.is_empty(), "the wall cell is inert");
+    }
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::*;
+
+    /// The bar's SHAPE never contradicts its numbers: a burning-down clock reads full when full,
+    /// empty only when empty, and shows a sliver while anything is left.
+    #[test]
+    fn the_bar_never_lies_about_the_ratio_it_shows() {
+        assert_eq!(meter_bar(26, 26, 12), "████████████", "full is full");
+        assert_eq!(meter_bar(0, 26, 12), "░░░░░░░░░░░░", "empty is empty");
+        // 1/26 of 12 cells rounds to ZERO — but a player with one breath left has not run out, so
+        // the bar keeps one sliver rather than reading as death.
+        assert_eq!(
+            meter_bar(1, 26, 12),
+            "█░░░░░░░░░░░",
+            "a non-zero value never paints an empty bar"
+        );
+        // 25/26 of 12 cells rounds UP to 12 — but the pack is not full, so it must not read full.
+        assert_eq!(
+            meter_bar(25, 26, 12),
+            "███████████░",
+            "a value short of max never paints a FULL bar"
+        );
+        // An undefined denominator (no guardian on the surface, no carry rights left) cannot be a
+        // ratio, so the track stays empty instead of inventing one.
+        assert_eq!(meter_bar(0, 0, 12), "░░░░░░░░░░░░");
+        assert_eq!(meter_bar(3, 0, 12), "░░░░░░░░░░░░");
+        // Over-value is clamped, never overflowed.
+        assert_eq!(meter_bar(99, 26, 12), "████████████");
+    }
+
+    /// The text form is the bar plus the proof, and a padded label survives verbatim so a stack of
+    /// meters lines up in a chat message.
+    #[test]
+    fn the_text_form_carries_the_numbers_and_keeps_the_authors_padding() {
+        assert_eq!(meter_text(18, 26, 12), "████████░░░░ 18/26");
+        assert_eq!(progress_text("", 1, 2), "██████░░░░░░ 1/2");
+        assert_eq!(
+            progress_text("light   ", 18, 26),
+            "light    ████████░░░░ 18/26",
+            "the padding an author used to align a column is NOT trimmed away"
+        );
     }
 }

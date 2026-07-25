@@ -78,20 +78,29 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
                 push_line(out, line);
             }
         }
+        // A LITERAL-valued meter (a light clock, a carry capacity, a guardian's vitality) DOES have
+        // a plain-text form — `light ████████░░░░ 18/26` — because it carries its own numbers; it
+        // needs no live ledger the way a `gauge` does. It used to fall into the silent set below,
+        // so a game whose whole tension is a burning clock painted that clock on the web and NOTHING
+        // on Telegram/WeChat. One shared projection ([`crate::tree::progress_text`]), so the bar is
+        // the same bar on every channel.
+        ViewNode::Progress { value, max, label } => {
+            push_line(out, &crate::tree::progress_text(label, *value, *max));
+        }
         // ── The remaining leaves contribute NO chat prose (this match is EXHAUSTIVE on purpose:
         //    a new `ViewNode` variant must fail to compile here until its prose projection is
         //    DECIDED, never dropped by a silent `_ => {}`). None of these carries an affordance —
         //    every affordance rides the channel's carrier (Telegram's inline keyboard / WeChat's
         //    numbered reply list) via [`crate::backend::actuations`], NOT the prose — so a chat
-        //    surface legitimately omits their visual (a gauge/slider/pill/icon has no plain-text
-        //    form, and a `bind`/`gauge`'s live value is not available on this bind-less walk).
+        //    surface legitimately omits their visual (a slider/pill/icon is a badge or control
+        //    layer with no plain-text form, and a `bind`/`gauge`'s live value is not available on
+        //    this bind-less walk — unlike `progress`, which carries its own numbers).
         //    Their actuation reach is proven separately by the cross-surface differential test. ──
         ViewNode::Bind { .. }
         | ViewNode::Input { .. }
         | ViewNode::Gauge { .. }
         | ViewNode::Divider
         | ViewNode::Breadcrumb { .. }
-        | ViewNode::Progress { .. }
         | ViewNode::Pill { .. }
         | ViewNode::Icon { .. }
         | ViewNode::Halo { .. }
@@ -106,4 +115,60 @@ fn push_line(out: &mut String, line: &str) {
         out.push('\n');
     }
     out.push_str(line);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tree::{MenuItem, ViewNode};
+
+    /// A LITERAL meter reaches the prose channels. This is the regression: a game whose whole
+    /// tension is a burning clock rendered that clock in HTML and NOTHING at all in a Telegram or
+    /// WeChat message, because `progress` sat in the silent-leaf set beside the slot-bound `gauge`.
+    #[test]
+    fn a_literal_meter_paints_its_bar_in_prose() {
+        let tree = ViewNode::Section {
+            title: "Vitals".into(),
+            tag: "accent".into(),
+            children: vec![
+                ViewNode::Progress {
+                    value: 18,
+                    max: 26,
+                    label: "light   ".into(),
+                },
+                ViewNode::Progress {
+                    value: 2,
+                    max: 6,
+                    label: "pack    ".into(),
+                },
+                // The affordance half still rides the channel's carrier, not the prose.
+                ViewNode::Menu {
+                    items: vec![MenuItem {
+                        label: "Descend".into(),
+                        turn: "delve".into(),
+                        arg: 0,
+                        enabled: true,
+                    }],
+                },
+            ],
+        };
+        assert_eq!(
+            render_text(&tree),
+            "Vitals\nlight    ████████░░░░ 18/26\npack     ████░░░░░░░░ 2/6",
+            "both meters paint, aligned, and the menu stays out of the prose"
+        );
+    }
+
+    /// A slot-bound `gauge` still contributes nothing here — its value lives on a ledger this walk
+    /// does not have, and painting a fabricated fill would be a lie. The DIFFERENCE from `progress`
+    /// is the point: one carries its numbers, the other does not.
+    #[test]
+    fn a_slot_bound_gauge_still_paints_no_fabricated_fill() {
+        let tree = ViewNode::Gauge {
+            slot: 3,
+            max: 26,
+            label: "light".into(),
+        };
+        assert_eq!(render_text(&tree), "");
+    }
 }

@@ -240,7 +240,13 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
         // A coordinate board flattens to a text grid line-block; each CLICKABLE cell also joins
         // the component grid as a button (its glyph the label, its `{turn, arg}` the custom-id).
         ViewNode::CoordGrid { cols, cells } => {
-            push_line(&mut acc.description, &coordgrid_text(*cols, cells));
+            // Fenced. A board is a GRID, and Discord's embed description is a proportional font —
+            // unfenced, every column drifts and a 6×11 shaft reads as noise. The code fence is the
+            // one thing that makes the text projection actually land as a board on this channel.
+            push_line(
+                &mut acc.description,
+                &format!("```\n{}\n```", coordgrid_text(*cols, cells)),
+            );
             for cell in cells {
                 if !cell.turn.is_empty() {
                     acc.buttons.push((
@@ -265,8 +271,14 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
                 }
             }
         }
+        // A literal meter paints the SHARED bar (`light ████████░░░░ 18/26`) rather than a bare
+        // ratio — the same glyph bar telegram/wechat/the no-JS web fallback show, so a clock reads
+        // as a clock in an embed description.
         ViewNode::Progress { value, max, label } => {
-            push_line(&mut acc.description, &format!("{label}{value}/{max}"));
+            push_line(
+                &mut acc.description,
+                &crate::tree::progress_text(label, *value, *max),
+            );
         }
         ViewNode::Pill {
             text, tag, cases, ..
@@ -482,7 +494,9 @@ fn inline(
                 }
             }
         }
-        ViewNode::Progress { value, max, label } => parts.push(format!("{label}{value}/{max}")),
+        ViewNode::Progress { value, max, label } => {
+            parts.push(crate::tree::progress_text(label, *value, *max))
+        }
         ViewNode::Pill { text, .. } => parts.push(format!("`{text}`")),
         ViewNode::Icon { glyph, .. } => parts.push(glyph.clone()),
         ViewNode::Menu { items } => {

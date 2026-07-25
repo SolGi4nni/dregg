@@ -752,15 +752,30 @@ fn session_node(node: &ViewNode, sid: &str, out: &mut String) {
                 esc_form(glyph)
             ));
         }
-        // A `progress` bar is literal-valued → a static labelled bar. A `gauge` reads a live slot,
-        // which the no-JS path does not have (documented degradation): show its label + ceiling so
-        // it is visible rather than dropped, with no fabricated fill.
+        // A literal meter on the NO-JS route. `progress` carries its own numbers, so the fill is
+        // baked as an inline width (a styled page paints a real bar) AND the SHARED glyph bar rides
+        // beside it, so the meter reads as a meter even with the stylesheet stripped — the same bar
+        // Discord/Telegram/WeChat show. A `gauge` reads a LIVE slot, which the no-JS path does not
+        // have (documented degradation): it shows its label + ceiling, with no fabricated fill.
         ViewNode::Progress { value, max, label } => {
+            let pct = if *max == 0 {
+                0.0
+            } else {
+                (*value as f64 / *max as f64).clamp(0.0, 1.0) * 100.0
+            };
             out.push_str(&format!(
-                "<div class=\"progress\">{}{}/{}</div>",
-                esc_form(label),
-                value,
-                max
+                "<div class=\"progress\">\
+                 <span class=\"progress-label\">{label}</span>\
+                 <span class=\"progress-bar\">{bar}</span>\
+                 <span class=\"progress-track\">\
+                 <span class=\"progress-fill\" style=\"width:{pct:.1}%\"></span></span>\
+                 <span class=\"progress-value\">{value}/{max}</span></div>",
+                label = esc_form(label),
+                bar = esc_form(&crate::tree::meter_bar(
+                    *value,
+                    *max,
+                    crate::tree::METER_TEXT_WIDTH
+                )),
             ));
         }
         ViewNode::Gauge { slot, max, label } => {
