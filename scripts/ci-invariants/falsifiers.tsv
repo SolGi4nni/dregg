@@ -24,6 +24,8 @@
 # ── the two CRITICALs (live-surface soundness breaks) ───────────────────────────
 dregg-credentials	test:anonymity_soundness	cross_credential_predicate_forgery_rejected	CRITICAL predicate STARK verified against its own commitment (x==x) cross-credential forgery is refused
 dregg-turn	lib	test_cross_asset_excess_netting_rejected	CRITICAL asset-blind scalar excess netting (mint-from-nothing inflation) is refused by per-asset conservation on the main path
+dregg-turn	test:conservation_fails_closed_without_gate	conservation_fails_closed_without_gate	CRITICAL twin#1 with NO conservation oracle the asset-inflation boundary is REFUSED (ConservationGateUnavailable), never decided by the unverified Rust BlockConservation twin
+dregg-turn	test:conservation_oracle_installed_poles	conservation_gate_installed_admits_honest_and_refuses_violating	twin#1 the OTHER pole: with a conservation gate installed an honest turn still passes and the cross-asset teleport is still refused (a fail-closed path that breaks honest turns is not a fix)
 
 # ── the node consensus twins (tau / quorum) ────────────────────────────────────
 dregg-node	lib	rust_tau_twin_forbidden_on_verified_full_node	twin#8 the Rust tau ordering twin is forbidden on a verified full node

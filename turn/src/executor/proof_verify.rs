@@ -2033,6 +2033,10 @@ impl TurnExecutor {
                      (per-asset Σδ≠0 — value forged within or across an asset)"
                 ))
             }
+            // FAIL CLOSED, and surfaced as ITSELF: the bundle may well conserve — no verified gate
+            // was installed to say so. Collapsing this into `InvalidExecutionProof` would blame the
+            // prover for the verifier's missing archive.
+            AtomicTurnError::ConservationGateUnavailable => TurnError::ConservationGateUnavailable,
             other => TurnError::InvalidExecutionProof(format!(
                 "bundle per-asset conservation check failed: {other}"
             )),

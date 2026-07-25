@@ -1,7 +1,7 @@
 # ci-invariants.yml — THE ENFORCING GATE for the twin-deletion + megaswarm-fix campaign.
 #
 # Recommendation ① of the twin-deletion campaign: make the campaign's gains un-regressable.
-# It runs scripts/ci-invariants.sh, which enforces FIVE invariants (see docs/CI-INVARIANTS.md):
+# It runs scripts/ci-invariants.sh, which enforces SIX invariants (see docs/CI-INVARIANTS.md):
 #
 #   1  THE TREE BUILDS         — cargo check --workspace --all-targets --keep-going, zero
 #                                non-compiling members (the dregg-analyzer / PlayerWorlds class).
@@ -15,8 +15,15 @@
 #                                Added after five sites spent 20 days fetching mathlib's prebuilt
 #                                oleans into a directory lake does not read: a from-source mathlib
 #                                build is indistinguishable from a slow one in a green log.
+#   6  NO ACCEPTING FALLTHROUGH— the DATAFLOW half of invariant 4: at every registered decision
+#      ON A MISSING GATE         site, when the verified gate is ABSENT, control cannot reach an
+#                                ACCEPTING verdict. Invariant 4 greps for a SYMBOL and was green the
+#                                whole time turn/src/executor/atomic.rs fell through from a missing
+#                                conservation oracle into the unverified Rust BlockConservation twin
+#                                on NATIVE — the asset-inflation boundary. Carries its own
+#                                --self-test, so it proves it can go red on every run.
 #
-# The `structural` job (invariants 3+4+5, NO build) is the fast always-on required check. `tree-builds`
+# The `structural` job (invariants 3+4+5+6, NO build) is the fast always-on check. `tree-builds`
 # (invariant 1) and `falsifiers` (invariant 2) are the heavy jobs — they mirror ci.yml's toolchain /
 # system-deps / disk-reclaim / LFS setup. `tree-builds` overlaps ci.yml's `check` job but adds
 # --keep-going (enumerate EVERY failing crate, not just the first) and is the campaign's named gate.
@@ -40,9 +47,9 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # ── the fast, always-on required check: invariants 3 + 4, pure bash/grep/awk, no build ──
+  # ── the fast, always-on check: invariants 3 + 4 + 5 + 6; bash/grep/awk + python3, no build ──
   structural:
-    name: Structural invariants (no build — #[ignore] + Rust-twin + one-mathlib-path guards)
+    name: Structural invariants (no build — #[ignore] + Rust-twin + one-mathlib-path + gate-dataflow guards)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -149,6 +149,16 @@ pub enum AtomicTurnError {
     /// `asset` is the asset / issuer-cell class (the cell's `token_id` folded to
     /// a field element); `imbalance` is its signed `Σδ ≠ 0`.
     PerAssetConservationViolation { asset: u32, imbalance: i64 },
+    /// NO VERIFIED CONSERVATION GATE — the per-asset `Σδ=0` decision could not be made by the
+    /// proven Lean `dregg_cross_cell_conserves`, so the turn is REFUSED rather than decided by the
+    /// hand-written Rust `BlockConservation` twin (the one that already drifted into the asset-blind
+    /// inflation bug). Reached on a native build with no [`ConservationOracle`] installed: a
+    /// stale/absent `libdregg_lean.a`, or a startup that never called
+    /// `dregg-exec-lean::register_conservation_oracle`. This is a FAIL-CLOSED refusal, not a
+    /// conservation violation — the turn may well conserve; nothing entitled to say so was present.
+    ///
+    /// [`ConservationOracle`]: super::conservation_oracle::ConservationOracle
+    ConservationGateUnavailable,
     /// Agent cell not found (for fee/nonce).
     AgentNotFound(CellId),
     /// Insufficient balance for fee.
@@ -200,6 +210,14 @@ impl core::fmt::Display for AtomicTurnError {
                     asset, imbalance
                 )
             }
+            Self::ConservationGateUnavailable => write!(
+                f,
+                "no verified conservation gate: the per-asset Σδ=0 decision must be computed by the \
+                 proven Lean dregg_cross_cell_conserves, and no ConservationOracle is installed \
+                 (stale/absent libdregg_lean.a, or dregg-exec-lean never registered it) — REFUSING \
+                 the turn rather than deciding the asset-inflation boundary with the unverified Rust \
+                 BlockConservation twin"
+            ),
             Self::AgentNotFound(id) => write!(f, "agent cell not found: {}", id),
             Self::InsufficientFee {
                 available,
@@ -415,9 +433,21 @@ impl TurnExecutor {
         // Rust `BlockConservation` twin (which drifted once into the asset-blind inflation bug).
         //
         // `turn` compiles to wasm32 + the zkVM guest (no `libdregg_lean.a`), so this is a runtime seam,
-        // not a direct FFI call. When NO oracle is installed the LABELED Rust fallback below decides —
-        // the no-Lean-guest degradation and the interim until the archive relink is verified to fire the
-        // oracle. See `super::conservation_oracle`.
+        // not a direct FFI call. When NO oracle is installed a NATIVE build FAILS CLOSED (see below);
+        // only the no-Lean guest — and a debug build that has not opted in via `DREGG_REQUIRE_LEAN=1` —
+        // reaches the LABELED Rust fallback. See `super::conservation_oracle`.
+
+        // VACUOUS CALL — nothing to decide, so no gate is needed. A turn that moves no value at all
+        // (a `set_state`, a delegation, a permissions change) reaches here with an EMPTY delta set
+        // and no declared supply rows: there is no per-asset sum in existence to be nonzero. Without
+        // this, the fail-closed disposition below would refuse EVERY turn on a native node with no
+        // oracle, not just the ones that touch value — over-broad, and it would make the refusal say
+        // something it does not mean. This is not a conservation DECISION and not a carve-out in the
+        // fallback's favour: no rows, no arithmetic, no verdict to route anywhere.
+        if entries.is_empty() && declared_supply.is_empty() {
+            return Ok(());
+        }
+
         let rows: Vec<(u32, i64)> = entries.iter().map(|(a, d)| (a.0, *d)).collect();
         let supply_rows: Vec<(u32, i64)> = declared_supply
             .iter()
@@ -442,19 +472,53 @@ impl TurnExecutor {
             };
         }
 
-        Self::unverified_rust_conservation_fallback(entries, declared_supply)
+        // ── NO CONSERVATION ORACLE INSTALLED ⇒ FAIL CLOSED ──────────────────────────────────────
+        // A native build reaching here means the verified decision is UNAVAILABLE: a stale or absent
+        // `libdregg_lean.a`, or a startup that never called `register_conservation_oracle`. Falling
+        // through to the hand-written Rust `BlockConservation` here is exactly how a deployed node
+        // silently returned to the unverified decider on the ASSET-INFLATION boundary — the twin that
+        // already drifted once into the asset-blind inflation bug — with nothing but a build warning
+        // to say so. It REFUSES instead. On a native RELEASE build (a deployed node) the fallback is
+        // not merely unreachable, it is NOT COMPILED, so no later refactor can route back into it.
+        //
+        // The complementary cfg keeps the labeled arithmetic exactly where an archive cannot exist by
+        // construction (wasm32 / the zkVM guest, which cannot link `libdregg_lean.a`) plus native
+        // DEBUG builds, whose test binaries can never link it either — and `DREGG_REQUIRE_LEAN=1`
+        // promotes THOSE to the same hard refusal (the reality gate
+        // `turn/tests/conservation_fails_closed_without_gate.rs` drives that pole).
+        #[cfg(all(any(unix, windows), not(debug_assertions)))]
+        {
+            Err(AtomicTurnError::ConservationGateUnavailable)
+        }
+        #[cfg(not(all(any(unix, windows), not(debug_assertions))))]
+        {
+            if super::conservation_oracle::require_verified_conservation_gate() {
+                return Err(AtomicTurnError::ConservationGateUnavailable);
+            }
+            Self::unverified_rust_conservation_fallback(entries, declared_supply)
+        }
     }
 
     /// The LABELED, NON-VERIFIED Rust per-asset conservation arithmetic — the `dregg_circuit`
     /// `BlockConservation` collector's `Σδ=0`-per-asset decision. This is NOT "the check": on a
     /// deployed native node the verified Lean decision is installed as the conservation oracle
-    /// ([`check_per_asset_conservation_by_asset`] routes through it), so this fallback runs ONLY on the
-    /// no-Lean guest (wasm32 / zkVM, which cannot link `libdregg_lean.a`) and as the interim before the
-    /// oracle install is verified. It computes the SAME arithmetic the committed
+    /// ([`check_per_asset_conservation_by_asset`] routes through it), and a native node WITHOUT one
+    /// REFUSES. This fallback runs only where no archive can exist by construction — the no-Lean guest
+    /// (wasm32 / zkVM, which cannot link `libdregg_lean.a`) — and in native DEBUG builds that have not
+    /// set `DREGG_REQUIRE_LEAN=1`. It computes the SAME arithmetic the committed
     /// `Dregg2.Circuit.CrossCellConservation` AIR forces (proved equal by
-    /// `CrossCellConserveRefine.decision_conserves_iff_air_boundary`), so it is not an independent twin —
-    /// but it remains DEBT to delete once the archive relink is confirmed to fire the oracle, at which
-    /// point the native no-oracle path flips to fail-CLOSED.
+    /// `CrossCellConserveRefine.decision_conserves_iff_air_boundary`), so it is not an independent twin.
+    ///
+    /// ## It DOES NOT EXIST on a deployed node
+    ///
+    /// The cfg is the exact complement of the fail-closed cfg in
+    /// [`Self::check_per_asset_conservation_by_asset`]: this function is compiled ONLY where an archive
+    /// cannot exist by construction (wasm32 / the zkVM guest) or in a native DEBUG build, whose test
+    /// binaries can never link `libdregg_lean.a` either. A native RELEASE build — every deployed node —
+    /// does not contain this code at all, so a stale archive there is a REFUSAL, never a silent return
+    /// to the unverified decider. Where it IS compiled, `DREGG_REQUIRE_LEAN=1` still promotes the
+    /// no-oracle path to a refusal.
+    #[cfg(not(all(any(unix, windows), not(debug_assertions))))]
     fn unverified_rust_conservation_fallback(
         entries: &[(dregg_circuit::field::BabyBear, i64)],
         declared_supply: &[dregg_circuit::block_conservation::DeclaredSupplyChange],

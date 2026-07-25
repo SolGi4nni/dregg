@@ -1294,9 +1294,16 @@ impl TurnExecutor {
                     asset,
                     imbalance,
                 } => TurnError::PerAssetConservationViolation { asset, imbalance },
-                // `check_per_asset_conservation_by_asset` only ever returns
-                // `PerAssetConservationViolation`; any other variant is a
-                // contract break, surfaced as a plain conservation failure.
+                // FAIL CLOSED: no verified conservation gate was available to decide the
+                // asset-inflation boundary. Surfaced as itself — NOT collapsed into a
+                // conservation "violation", because the turn may well conserve; nothing
+                // entitled to say so was installed. See `conservation_oracle`.
+                super::atomic::AtomicTurnError::ConservationGateUnavailable => {
+                    TurnError::ConservationGateUnavailable
+                }
+                // `check_per_asset_conservation_by_asset` returns only those two;
+                // any other variant is a contract break, surfaced as a plain
+                // conservation failure.
                 _ => TurnError::ExcessNotZero { excess },
             };
             return TurnResult::Rejected {

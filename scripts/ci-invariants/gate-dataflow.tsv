@@ -1,0 +1,73 @@
+# gate-dataflow.tsv — INVARIANT 6's registry: THE DATAFLOW half of the Rust-twin guard.
+#
+# `lean-twins.tsv` asks "is the SYMBOL still there?". That question was green the whole time
+# `turn/src/executor/atomic.rs` was falling through from a missing `dregg_cross_cell_conserves`
+# oracle into the hand-written Rust `BlockConservation` decider — on NATIVE, at the
+# ASSET-INFLATION boundary, the twin that already produced one CRITICAL bug. A name-whitelist
+# cannot see a fallthrough.
+#
+# This registry asks the question that catches the CLASS: at each site that routes a decision
+# through a verified Lean gate, WHEN THE GATE IS ABSENT, can control reach an ACCEPTING verdict?
+# `scripts/ci-invariants/gate-dataflow.py` extracts the gate-absent region (else-arm / `None`|`Err`
+# match arm / `let..else` / `unwrap_or*` default / the fallthrough after `if let Some(gate)`),
+# resolves same-file helper calls two levels deep, skips `#[cfg(test)]` definitions, and requires
+# the region to REFUSE.
+#
+# COLUMNS (tab-separated; blank lines and #-comments ignored):
+#   file       the source file owning the live decision (FATAL if it moved — re-point the row)
+#   fn         the enclosing decision function (FATAL if no non-cfg(test) definition exists)
+#   acquire    regex matching the GATE ACQUISITION inside `fn` (the call whose None/Err is the
+#              "no verified gate" case)
+#   allow      `|`-separated DECLARED carve-outs, or `-` for none. Two kinds:
+#                <token>          a DISCRIMINATION that may guard a non-verified arm (a cfg
+#                                 predicate fragment, or a named runtime escape). The non-exempt
+#                                 arm must STILL refuse, or the row is red.
+#                narrow:<token>   the no-gate path IS this named, deliberately narrowed local
+#                                 decision (needs no Lean), accepted as the disposition.
+#   note       one line — which twin, and what the no-gate disposition is
+#
+# THE POINT OF THE `allow` COLUMN: a carve-out becomes a DECLARED, DIFFABLE FACT. Widening one is
+# a reviewable TSV diff. Forgetting to declare it is RED. Declaring one the code does not contain
+# is ALSO red (the checker still demands the refusal). An UNREGISTERED new gate site is invisible
+# to this file — add a row when you add a gate; `lean-twins.tsv` FATALs if a site file moves.
+#
+# file	fn	acquire	allow	note
+
+# ── twin#1 per-asset conservation — THE ASSET-INFLATION BOUNDARY, the reason this file exists ──
+# Pre-fix this row was RED: the fallthrough was a bare `Self::unverified_rust_conservation_fallback(..)`
+# under NO cfg at all, so a native node with a stale/absent libdregg_lean.a silently answered the
+# Σδ=0 question with the drifting Rust twin. Native now REFUSES; the Rust arithmetic survives only
+# where an archive cannot exist (wasm32 / zkVM guest) or in debug builds that opt out of the
+# fail-closed gate, and `DREGG_REQUIRE_LEAN=1` promotes even those to a refusal.
+turn/src/executor/atomic.rs	check_per_asset_conservation_by_asset	installed_conservation_oracle	any(unix, windows)|debug_assertions	twin#1 no conservation oracle => AtomicTurnError::ConservationGateUnavailable on native; Rust BlockConservation only on the no-archive guest / opted-out debug build
+
+# ── twin#2 cell StateConstraint eval (release-gated fail-closed; cell is a pervasive shared dep) ──
+cell/src/program/eval.rs	evaluate_constraint_full	installed_oracle	debug_assertions	twin#2 no constraint oracle => no_oracle_subset_disposition refuses the Lean subset on a native RELEASE build
+
+# ── twin#3 coord 2PC decide ──────────────────────────────────────────────────────────
+coord/src/atomic.rs	evaluate_votes	verified_decision	-	twin#3 no 2PC gate => evaluate_votes_no_gate returns Decision::Abort (refuse to commit)
+
+# ── twin#4 coord causal happened-before ──────────────────────────────────────────────
+coord/src/causal.rs	verified_happened_before	lean_happened_before	-	twin#4 no causal gate => `false` (not ordered), the conservative verdict
+
+# ── twin#5 coord shared-budget resolve ───────────────────────────────────────────────
+coord/src/shared_budget.rs	resolve_with_ordering	verified_resolve_ordering	-	twin#5 no tau-resolution gate => resolve_ordering_no_gate rejects EVERY debit
+
+# ── twin#6 captp handoff non-amplification ───────────────────────────────────────────
+captp/src/handoff.rs	validate_handoff_body	verified_non_amplifying	-	twin#6 no handoff gate => treated as AMPLIFYING, handoff refused
+
+# ── twin#7 strand admission (F-4) ────────────────────────────────────────────────────
+federation/src/admission.rs	admitted	lean_admitted	narrow:is_seed	twin#7 no admission gate => admitted_no_gate admits ONLY genesis seeds (a local deterministic check); every non-seed is refused
+
+# ── twin#9 deploy refinement ─────────────────────────────────────────────────────────
+dregg-deploy/src/refine.rs	decide_refines	decide_refines_gate_available	-	twin#9 no refinement export on native => `false` (does not refine) => the deploy is refused
+
+# ── twin#10 intent per-leg settle ────────────────────────────────────────────────────
+intent/src/verified_settle.rs	settle_leg_authoritative	ffi::settle_leg	-	twin#10 no settle gate => Err(FfiUnavailable) propagates and refuses the whole all-or-none ring
+
+# ── twin#11 finalization quorum ──────────────────────────────────────────────────────
+# The `quorum_rust_fallback_allowed` escape is DECLARED here on purpose: on a no-Lean build or under
+# the operator opt-in `DREGG_ALLOW_UNVERIFIED_CONSENSUS=1` the Rust root-agreement sibling decides.
+# That is a live, env-var-reachable unverified consensus decider and it is named here so it shows up
+# in every CI log rather than hiding in a `match` arm.
+node/src/finalization_votes.rs	verified_quorum_reached	verified_finalization_quorum	quorum_rust_fallback_allowed	twin#11 no quorum export => `false` (no attestation) unless the DECLARED no-Lean/operator-opt-in escape lets the Rust sibling decide

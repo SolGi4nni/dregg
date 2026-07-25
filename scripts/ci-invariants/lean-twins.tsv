@@ -30,6 +30,8 @@
 
 # ── twin#1 per-asset conservation (the highest-drift-risk twin; inflation boundary) ──
 route	turn/src/executor/atomic.rs	dregg_cross_cell_conserves	twin#1 per-asset conservation routes through the @[export] dregg_cross_cell_conserves
+route	turn/src/executor/atomic.rs	ConservationGateUnavailable	twin#1 the FAIL-CLOSED disposition: no conservation oracle => REFUSE, never the Rust BlockConservation twin (this is the row a name-grep could not provide — invariant 6 checks the DATAFLOW)
+route	turn/src/executor/atomic.rs	#\[cfg\(not\(all\(any\(unix, windows\), not\(debug_assertions\)\)\)\)\]	twin#1 the Rust conservation fallback stays STRICTLY gated out of every native release build (the complement of the fail-closed cfg); widening this cfg is how the twin comes back
 
 # ── twin#2 cell StateConstraint eval (native fail-closed when no oracle) ─────────────
 route	cell/src/program/eval.rs	no_oracle_subset_disposition	twin#2 a subset constraint with no oracle fails closed to the verified dregg_constraint_admits

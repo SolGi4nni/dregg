@@ -243,6 +243,10 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         // Per-asset conservation imbalance (asset id + signed imbalance, no cells named) —
         // a Conservation-family refusal, added to TurnError by the cross-cell conservation lane.
         PerAssetConservationViolation { .. } => (GuardKind::Conservation, vec![]),
+        // No verified conservation gate was installed, so the asset-inflation boundary was
+        // REFUSED rather than decided by the unverified Rust twin. A Conservation-family
+        // fail-closed refusal — it names no cell (the whole turn is refused, not one party).
+        ConservationGateUnavailable => (GuardKind::Conservation, vec![]),
 
         CapabilityNotHeld { actor, target } => (GuardKind::Capability, vec![*actor, *target]),
         DelegationDenied {

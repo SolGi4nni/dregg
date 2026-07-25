@@ -23,19 +23,30 @@
 #                                 path of its own, and the lakefile keeps its `git`+`rev` pin. Added
 #                                 2026-07-25 after five sites spent 20 days fetching the prebuilt
 #                                 oleans into a directory lake does not read (~84 min/job, measured).
+#   6  NO ACCEPTING FALLTHROUGH — the DATAFLOW half of invariant 4, over
+#      ON A MISSING GATE         scripts/ci-invariants/gate-dataflow.tsv: at every registered
+#                                decision site, when the verified gate is ABSENT, control cannot
+#                                reach an ACCEPTING verdict. Invariant 4 is a NAME-GREP and was
+#                                green the whole time turn/src/executor/atomic.rs fell through from
+#                                a missing conservation oracle into the Rust BlockConservation twin
+#                                on NATIVE — symbol present, route row green, asset-inflation
+#                                boundary decided by the unverified decider. A name-whitelist cannot
+#                                see a fallthrough; this asks the dataflow question instead. Its own
+#                                --self-test proves it can go RED on every run.
 #
 # See docs/CI-INVARIANTS.md for the full description, expected runtime, the fast subset, and
 # how to extend each registry.
 #
 # USAGE:
 #   scripts/ci-invariants.sh [SUBCOMMAND]
-#     all           (default) run all five invariants
-#     structural    invariants 3 + 4 + 5 + registry EXISTENCE only — NO cargo build (seconds)
+#     all           (default) run all six invariants
+#     structural    invariants 3 + 4 + 5 + 6 + registry EXISTENCE only — NO cargo build (seconds)
 #     build         invariant 1 only  (heavy: full workspace check)
 #     falsifiers    invariant 2 only  (heavy: compiles + runs the registry)
 #     no-ignore     invariant 3 only  (seconds)
 #     no-twin       invariant 4 only  (seconds)
 #     one-mathlib   invariant 5 only  (seconds)
+#     no-fallthrough invariant 6 only  (seconds; needs python3)
 #
 # ENV:
 #   CI_INVARIANTS_BUILD_ARGS   override the invariant-1 cargo args (default:
@@ -375,6 +386,36 @@ inv_one_mathlib_path() {
   done
 }
 
+# ════════════════════════════════════════════════════════════════════════════════
+# INVARIANT 6 — NO ACCEPTING FALLTHROUGH ON A MISSING VERIFIED GATE (dataflow)
+# ════════════════════════════════════════════════════════════════════════════════
+# The DATAFLOW half of invariant 4. Invariant 4 greps for a SYMBOL; that question was green the
+# whole time `turn/src/executor/atomic.rs` fell through from a missing conservation oracle into the
+# hand-written Rust `BlockConservation` twin ON NATIVE — the asset-inflation boundary decided by the
+# decider the twin-deletion campaign existed to retire. A name-whitelist cannot see a fallthrough.
+#
+# Delegated to `scripts/ci-invariants/gate-dataflow.py`: pure python3 (NO ast-grep / cargo / network
+# dependency, so the always-on `structural` job stays checkout-plus-bash). It fails CLOSED — an
+# unparseable site, a moved `fn`, or an undeterminable verdict is RED, never a skipped check — and
+# runs its own `--self-test` against synthetic fall-open / fail-closed fixtures on every invocation,
+# so the guard proves it can go red rather than asserting it.
+inv_no_fallthrough() {
+  hdr "Invariant 6 — NO ACCEPTING FALLTHROUGH ON A MISSING VERIFIED GATE (dataflow)"
+  local checker="$REG_DIR/gate-dataflow.py"
+  [ -f "$checker" ] || fatal "the dataflow checker '$checker' is missing. This gate cannot run without it."
+  [ -f "$REG_DIR/gate-dataflow.tsv" ] || fatal "registry '$REG_DIR/gate-dataflow.tsv' is missing. This gate cannot run without it."
+  command -v python3 >/dev/null 2>&1 || fatal "python3 is required for invariant 6 and is absent — this gate must never be a silent skip."
+  # The checker prints its own PASS/FAIL lines (and its self-test). Exit 2 = environment problem.
+  local rc=0
+  CI_INVARIANTS_ROOT="$ROOT" CI_INVARIANTS_DATAFLOW_TSV="$REG_DIR/gate-dataflow.tsv" \
+    python3 "$checker" || rc=$?
+  case "$rc" in
+    0) ok "every registered decision site REFUSES when its verified gate is absent" ;;
+    1) bad "a decision site can reach an ACCEPTING verdict with its verified gate ABSENT (see FAIL lines above). Fail it closed, or DECLARE the carve-out in scripts/ci-invariants/gate-dataflow.tsv." ;;
+    *) fatal "the dataflow checker could not run (exit $rc) — a moved decision site or a broken registry. Never a silent green." ;;
+  esac
+}
+
 # ── dispatch ────────────────────────────────────────────────────────────────────
 main() {
   local cmd="${1:-all}"
@@ -385,8 +426,9 @@ main() {
     no-ignore)  inv_no_ignore ;;
     no-twin)    inv_no_twin ;;
     one-mathlib) inv_one_mathlib_path ;;
-    structural) inv_no_ignore; inv_no_twin; inv_one_mathlib_path ;;
-    all)        inv_build; inv_falsifiers; inv_no_ignore; inv_no_twin; inv_one_mathlib_path ;;
+    no-fallthrough) inv_no_fallthrough ;;
+    structural) inv_no_ignore; inv_no_twin; inv_one_mathlib_path; inv_no_fallthrough ;;
+    all)        inv_build; inv_falsifiers; inv_no_ignore; inv_no_twin; inv_one_mathlib_path; inv_no_fallthrough ;;
     -h|--help|help)
       sed -n '2,45p' "$0"; exit 0 ;;
     *) fatal "unknown subcommand '$cmd' (try: all | structural | build | falsifiers | no-ignore | no-twin | one-mathlib)" ;;

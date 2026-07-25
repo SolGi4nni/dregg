@@ -143,6 +143,14 @@ fn assert_ledgers_agree(committed: &mut Ledger, rust: &mut Ledger, ids: &[CellId
 /// Drive `produce_via_lean` (the helper the node commit path calls under producer mode) and assert
 /// the verified producer's installed state matches the Rust differential.
 fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[CellId]) {
+    // ARM THE VERIFIED CONSERVATION ORACLE, exactly as `dregg_node`'s startup does. A native
+    // RELEASE build (this lane runs `--release`) REFUSES a value-moving turn when the per-asset
+    // `Σδ=0` gate is unavailable, rather than deciding the asset-inflation boundary with the
+    // unverified Rust `BlockConservation` twin — so the Rust reference executor below cannot commit
+    // a Transfer without it. Idempotent: the oracle is a process-wide `OnceLock`, so the second and
+    // later tests in this binary get a benign `Err("already installed")`.
+    let _ = dregg_exec_lean::register_conservation_oracle();
+
     // Independent Rust producer (the reference). Run it on its OWN executor + copy of the pre-state
     // — a SEPARATE executor so its committed receipt does not pollute the producer-mode executor's
     // receipt-chain head (which would make the verified ChainHead leg reject the producer turn).

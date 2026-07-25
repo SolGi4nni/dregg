@@ -158,6 +158,15 @@ pub enum TurnError {
     /// asset's signed `Σδ ≠ 0`.
     PerAssetConservationViolation { asset: u32, imbalance: i64 },
 
+    /// NO VERIFIED CONSERVATION GATE. The per-asset `Σδ=0` decision — the ASSET-INFLATION boundary —
+    /// must be computed by the proven Lean `dregg_cross_cell_conserves`, and no `ConservationOracle`
+    /// was installed (stale/absent `libdregg_lean.a`, or a startup that never called
+    /// `dregg-exec-lean::register_conservation_oracle`). The turn is REFUSED rather than decided by
+    /// the hand-written Rust `BlockConservation` twin, which already drifted once into the asset-blind
+    /// inflation bug. FAIL-CLOSED: this says nothing about whether the turn conserves — only that
+    /// nothing entitled to answer was present.
+    ConservationGateUnavailable,
+
     /// A balance_change would underflow the target cell's balance (withdrawal exceeds holdings).
     BalanceChangeUnderflow {
         cell: CellId,
@@ -728,6 +737,16 @@ impl core::fmt::Display for TurnError {
                     "per-asset conservation violated: asset {asset} nets to {imbalance} (≠ 0) — \
                      a cross-asset value teleport (mint one asset against a self-issued burn of \
                      another) that the scalar excess sum cannot see"
+                )
+            }
+            TurnError::ConservationGateUnavailable => {
+                write!(
+                    f,
+                    "no verified conservation gate: the per-asset Σδ=0 decision (the asset-inflation \
+                     boundary) must be computed by the proven Lean dregg_cross_cell_conserves, and no \
+                     ConservationOracle is installed — REFUSING the turn rather than deciding with the \
+                     unverified Rust BlockConservation twin. Install/refresh libdregg_lean.a (see \
+                     scripts/bootstrap.sh or scripts/fetch-lean-seed.sh)"
                 )
             }
             TurnError::BalanceChangeUnderflow {

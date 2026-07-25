@@ -5,23 +5,25 @@ megaswarm-fix campaign fought for, so the gains become **un-regressable**. It is
 of that campaign (`docs/TWIN-DELETION-MAP-2026-07-23.md`,
 `docs/MEGASWARM-FLAW-BACKLOG-2026-07-23.md`; memory `project-twin-deletion-campaign`).
 
-It enforces **five** invariants. Each is a hard failure with an actionable message; the script
+It enforces **six** invariants. Each is a hard failure with an actionable message; the script
 exits `0` (all pass), `1` (an invariant failed), or `2` (environment problem — a registry or source
 file moved, so the gate would otherwise check nothing).
 
 ```
-scripts/ci-invariants.sh [ all | structural | build | falsifiers | no-ignore | no-twin | one-mathlib ]
+scripts/ci-invariants.sh [ all | structural | build | falsifiers | no-ignore | no-twin | one-mathlib | no-fallthrough ]
 ```
 
-- `all` (default) — all five invariants.
-- `structural` — invariants **3 + 4 + 5** plus registry existence, **no cargo build**. Runs in
-  seconds; this is the always-on required PR check.
-- `build`, `falsifiers`, `no-ignore`, `no-twin`, `one-mathlib` — one invariant each.
+- `all` (default) — all six invariants.
+- `structural` — invariants **3 + 4 + 5 + 6** plus registry existence, **no cargo build**. Runs in
+  seconds; this is the always-on PR check.
+- `build`, `falsifiers`, `no-ignore`, `no-twin`, `one-mathlib`, `no-fallthrough` — one invariant each.
 
 Two checked-in registries drive it, both under `scripts/ci-invariants/`:
 
 - `falsifiers.tsv` — the security falsifiers (invariants 2, 3).
-- `lean-twins.tsv` — the Rust-twin regression guard (invariant 4).
+- `lean-twins.tsv` — the Rust-twin regression guard, by SYMBOL (invariant 4).
+- `gate-dataflow.tsv` — the same twin sites, by DATAFLOW (invariant 6), driven by
+  `gate-dataflow.py`.
 
 Add a row to a registry to extend the gate; no code edit is needed.
 
@@ -150,7 +152,7 @@ The route-through surface (the `verified_*` / `shadow_*` FFI bridges in `dregg-l
 
 | # | Live file | Guard(s) | Deleted twin it forbids |
 |---|---|---|---|
-| 1 | turn/src/executor/atomic.rs | route `dregg_cross_cell_conserves` | Rust `BlockConservation` as the live decider |
+| 1 | turn/src/executor/atomic.rs | route `dregg_cross_cell_conserves` + route `ConservationGateUnavailable` + route the fallback's `#[cfg(not(all(any(unix, windows), not(debug_assertions))))]` — **and invariant 6's dataflow row**, which is what actually catches a fallthrough | Rust `BlockConservation` as the live decider |
 | 2 | cell/src/program/eval.rs | route `no_oracle_subset_disposition` | silent Rust `match` when no oracle |
 | 3 | coord/src/atomic.rs | route `verified_decision` + cfgtest `evaluate_votes_native` | `evaluate_votes_native` live |
 | 4 | coord/src/causal.rs | route `verified_happened_before` | native `dag.happened_before` live |
@@ -166,6 +168,10 @@ The route-through surface (the `verified_*` / `shadow_*` FFI bridges in `dregg-l
 must call, a `cfgtest` for any native sibling that must stay test-only, and/or a `forbid` for the
 exact deleted-decider shape. To guard a new `@[export]`, add a `route` row for the Rust site that
 must call it.
+
+**And add a `gate-dataflow.tsv` row too.** These `route` rows are NAME-GREPS. Twin#1's was green
+for the entire life of the conservation fallthrough — the symbol was present and the fall-open
+sat two lines below it. Invariant 6 is where a new twin's no-gate DISPOSITION gets checked.
 
 ---
 
@@ -198,9 +204,53 @@ The two starbridge copies were worse than slow: they `sed`'d for the deleted `pa
 
 ---
 
+## Invariant 6 — NO ACCEPTING FALLTHROUGH ON A MISSING VERIFIED GATE
+
+`no-fallthrough`. Registry `scripts/ci-invariants/gate-dataflow.tsv`, checker
+`scripts/ci-invariants/gate-dataflow.py` (pure `python3` — no ast-grep, no cargo, no network, so the
+always-on `structural` job stays checkout-plus-bash).
+
+**Why it exists.** Invariant 4 is a NAME-GREP. Its `route` row for twin#1 asserts the symbol
+`dregg_cross_cell_conserves` appears in `turn/src/executor/atomic.rs` — and that row was **green the
+entire time** the file read:
+
+```rust
+if let Some(oracle) = installed_conservation_oracle() { return /* verified verdict */; }
+Self::unverified_rust_conservation_fallback(entries, declared_supply)   // <- on NATIVE
+```
+
+A native node with a stale or absent `libdregg_lean.a` therefore answered the per-asset `Σδ = 0`
+question — the **asset-inflation boundary**, the twin that already produced one CRITICAL bug — with
+the unverified Rust `BlockConservation` decider, and said so only in a build warning. A
+name-whitelist cannot see a fallthrough. This invariant asks the dataflow question instead.
+
+**The check.** For each row (`file`, `fn`, `acquire`, `allow`, `note`): slice the non-`cfg(test)`
+body of `fn`, find the gate acquisition matching `acquire`, extract the **gate-absent region** (the
+`else` arm / the `None`|`Err(..)` match arm / a `let .. else` block / an `unwrap_or*` default / the
+fallthrough after `if let Some(gate) { .. }` / `?`-propagation), resolve same-file helper calls two
+levels deep, and require the region to REFUSE. An ACCEPTING terminal reachable there is RED.
+
+**Carve-outs are declared, not implicit.** The `allow` column names the discriminators permitted to
+guard a non-verified arm at that site — a cfg fragment (`debug_assertions`) or a named runtime escape
+(`quorum_rust_fallback_allowed`) — and the non-exempt arm must *still* refuse. `narrow:<token>` marks
+a site whose no-gate path is a deliberately narrowed local decision (federation's "only genesis
+seeds"). So widening a carve-out is a reviewable TSV diff, declaring one the code does not contain is
+still red, and every declared escape is printed in the CI log instead of hiding in a `match` arm.
+
+**It fails closed.** An unparseable site, a moved `fn`, a missing `python3`, or a verdict it cannot
+determine is RED — never a skipped check.
+
+**It is not a theorem.** A structural dataflow check over the source at HEAD. It does not know
+whether `false` means "refuse" for a given predicate's polarity, and it stops at depth 2. It exists
+to make one known regression class impossible to land silently.
+
+---
+
 ## Wiring
 
-`.github/workflows/ci-invariants.yml` runs it. The `structural` job (invariants 3+4+5, no build) is
+`.github/workflows/ci-invariants.yml` runs it (tracked, on `origin/main` since `c5a3a963e0`,
+triggering on `push: main`, `pull_request`, and `workflow_dispatch`). The `structural` job
+(invariants 3+4+5+6, no build) is
 the fast always-on gate; `tree-builds` (invariant 1, `--keep-going`) and `falsifiers` (invariant 2)
 are the heavy jobs, mirroring `ci.yml`'s toolchain / system-deps / disk-reclaim / LFS setup. Run it
 locally the same way: `scripts/ci-invariants.sh structural` before a push, `scripts/ci-invariants.sh
@@ -218,3 +268,10 @@ Invariant 5 has no registry, so it is falsified by running the script against a 
 .github/workflows/` skeleton is enough). All five of its sub-checks were verified to go red that
 way on 2026-07-25: `path =` restored, `rev` dropped, a workflow naming `src/mathlib4`, an inline
 `lake exe cache get`, and a Lean job that installs the toolchain and never provisions.
+
+Invariant 6 carries its **own** non-vacuity proof and runs it on *every* invocation: `gate-dataflow.py`
+checks itself against a synthetic fall-open decider (must go RED) and a synthetic fail-closed one
+(must stay GREEN) before it looks at the tree, and the whole invariant fails if either verdict is
+wrong. It was also demonstrated red against the real pre-fix `atomic.rs` on 2026-07-25 — 9 of 10
+registered sites passing, the conservation twin the single failure — and green after the fail-closed
+fix. `--self-test` runs just that part.
