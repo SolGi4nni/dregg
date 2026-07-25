@@ -31,6 +31,22 @@
 //! structurally while keeping the executor's method-default-deny (the method disjunct
 //! inside the rider guard).
 //!
+//! ## Two blows: the press and the LUNGE (the guardian breaks your grip)
+//!
+//! The Descent has no hit points to take, so the guardian's counter-blow is priced in the
+//! only currency the run has: CAPACITY. `harm` is a run-long `0..=HARMCAP` ratchet and the
+//! capacity law is `pack + depth + harm <= CAP` — every point of harm is one relic that
+//! does not leave the dungeon. Two verbs land the same wound:
+//!
+//! * [`SMITE`] — the press: 2 breath, no harm (byte-identical to what the descent shipped);
+//! * [`LUNGE`] — 1 breath and `harm += 1`. Save a breath, pay a carry slot.
+//!
+//! It is a real decision because capacity already attenuates with depth: the same posted
+//! price is cheap at depth 1 (7 slots) and ruinous at depth 4 (4 slots — exactly three keys
+//! plus the prize). Lean states the stake as law: `Dungeon.crowned_full_bank_harmless` — a
+//! run that banks the prize AND all three keys took NO harm at all. Unlike `wounds`, `harm`
+//! is NOT reset by [`Sim::delve`] (`Dungeon.harm_ratchets`).
+//!
 //! ## The map is DAILY — drawn from the committed day-seed
 //!
 //! The descent used to ship one compile-time map: the same eight mint floors and the same
@@ -53,7 +69,7 @@
 //! * `DungeonProgram.crownedRunAdmitted` — each day's crowned line is admitted end to end
 //!   by the teeth emitted for THAT day.
 //!
-//! [`PROGRAM_JSON`] therefore carries the whole family: one fully emitted 13-case program
+//! [`PROGRAM_JSON`] therefore carries the whole family: one fully emitted 15-case program
 //! per map. Rust picks the index and resolves names to slots — it never assembles or
 //! edits a constraint. [`Descent::deploy_on_day`] is the daily entry (the beacon draws the
 //! map); [`Descent::deploy`] pins day 0, the shipped map, so a fixed script stays a fixed
@@ -94,7 +110,10 @@ pub const SCENE_ID: &str = "dungeon-on-dregg/descent1";
 pub const GENESIS: &str = "genesis";
 pub const DELVE: &str = "delve";
 pub const UNLOCK: &str = "unlock";
+/// **The press** — wound the guardian for 2 breath and no harm.
 pub const SMITE: &str = "smite";
+/// **The lunge** — the same wound for 1 breath, paid with `+1 harm` (a carry slot).
+pub const LUNGE: &str = "lunge";
 pub const LOOT: &str = "loot";
 pub const FLEE: &str = "flee";
 
@@ -107,10 +126,14 @@ pub const BREATH: u64 = 26;
 pub const CAP: u64 = 8;
 pub const CARRIED: u64 = 8;
 pub const BANKED: u64 = 9;
+/// The most harm a run can take: `harm` is a run-long `0..=2` ratchet, and every point
+/// of it is a permanently forfeited carry slot (`pack + depth + harm <= CAP`).
+/// The Lean `Dregg2.Games.Dungeon.HARMCAP`.
+pub const HARMCAP: u64 = 2;
 /// **The number of distinct maps the committed day-seed draws from** (the Lean
 /// `Dregg2.Games.Dungeon.dayCount`). Every member is checked legal and DRIVEN to a win in
 /// Lean (`drawFamily_wf`, `winsAt_true`), and every member has its own fully emitted
-/// 13-case program in [`PROGRAM_JSON`].
+/// 15-case program in [`PROGRAM_JSON`].
 pub const DAYS: usize = 16;
 
 /// Day 0 — the shipped map, kept as the canonical/default world. Relic 0 = THE PRIZE
@@ -177,22 +200,26 @@ pub fn guard_hp(depth: u64) -> u64 {
     CANON_WORLD.guard_hp(depth)
 }
 
-/// The 13 register components, in allocation order.  The six custody
+/// The 14 register components, in allocation order.  The six custody
 /// projections occupy fields 0..6 contiguously so the custom recursion fold
 /// can weld the AIR-counted census to the exact post-state registers in one
 /// mandatory app-root binding.  This is a greenfield layout epoch; all game
 /// logic resolves names through [`Deployment::reg`] and does not hard-code the
 /// former numeric order.
-pub const REGISTERS: [&str; 13] = [
+///
+/// ⚑ `harm` is APPENDED last: register slots are assigned in declaration order, so the
+/// thirteen that were here keep their slots and the custody-projection prefix is
+/// untouched.
+pub const REGISTERS: [&str; 14] = [
     "pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4", "depth", "spent", "wounds", "fate",
-    "way_2", "way_3", "way_4",
+    "way_2", "way_3", "way_4", "harm",
 ];
 
 pub fn relic_name(i: usize) -> String {
     format!("relic_{i}")
 }
 
-/// Build the declared schema: 13 register components + 8 relic-custody collections.
+/// Build the declared schema: 14 register components + 8 relic-custody collections.
 pub fn schema() -> Schema {
     let mut s = Schema::new(SCENE_ID)
         .stat("pack", 0, RELICS as u64)
@@ -211,7 +238,10 @@ pub fn schema() -> Schema {
         .stat("fate", 0, 1)
         .stat("way_2", 0, 1)
         .stat("way_3", 0, 1)
-        .stat("way_4", 0, 1);
+        .stat("way_4", 0, 1)
+        // The run-long grip ratchet. Declared LAST so no existing slot moves; its range
+        // is the Lean `HARMCAP` and the emitted `inRangeTwoSided harm 0 2` tooth.
+        .stat("harm", 0, HARMCAP);
     for i in 0..RELICS {
         s = s.collection(relic_name(i));
     }
@@ -641,6 +671,10 @@ pub struct Sim {
     pub depth: u64,
     pub spent: u64,
     pub wounds: u64,
+    /// **The run-long grip damage**, `0..=HARMCAP`. Unlike `wounds` (the standing
+    /// guardian's tally, reset by [`Sim::delve`]), `harm` never resets and never
+    /// decreases — it is subtracted from carrying rights for the rest of the run.
+    pub harm: u64,
     pub fate: u64,
     /// `[way_2, way_3, way_4]`, each 0/1 (way 1 is always open).
     pub ways: [u64; 3],
@@ -671,6 +705,7 @@ impl Sim {
             depth: 0,
             spent: 0,
             wounds: 0,
+            harm: 0,
             fate: 0,
             ways: [0, 0, 0],
             custody: world.homes,
@@ -715,7 +750,7 @@ impl Sim {
         if !self.way_open(self.depth + 1) {
             return Err("the way is shut — its key was never exercised");
         }
-        if self.pack() + self.depth + 1 > CAP {
+        if self.pack() + self.depth + 1 + self.harm > CAP {
             return Err("too laden to squeeze deeper (capacity attenuates)");
         }
         let mut s = self.clone();
@@ -759,6 +794,31 @@ impl Sim {
         Ok(s)
     }
 
+    /// **The lunge rule**: the same wound as [`smite`](Self::smite) for ONE breath,
+    /// paid in grip (`harm += 1`). The capacity clause is the whole decision — at depth
+    /// 1 it spends a carry slot you were never going to fill, at depth 4 it costs the
+    /// prize (the Lean `step .lunge`).
+    pub fn lunge(&self) -> Result<Sim, &'static str> {
+        self.alive_and_paid(1)?;
+        if self.depth < 1 {
+            return Err("no guardian on the surface");
+        }
+        if self.wounds + 1 > self.guard_hp(self.depth) {
+            return Err("the guardian is already slain");
+        }
+        if self.harm + 1 > HARMCAP {
+            return Err("your grip is already broken — there is nothing left to give");
+        }
+        if self.pack() + self.depth + self.harm + 1 > CAP {
+            return Err("a broken grip would spill what you carry (capacity attenuates)");
+        }
+        let mut s = self.clone();
+        s.wounds += 1;
+        s.spent += 1;
+        s.harm += 1;
+        Ok(s)
+    }
+
     /// The loot rule: take relic `r` from the standing floor's hoard.
     pub fn loot(&self, r: usize) -> Result<Sim, &'static str> {
         self.alive_and_paid(1)?;
@@ -771,7 +831,7 @@ impl Sim {
         if self.wounds != self.guard_hp(self.depth) {
             return Err("the guardian still stands");
         }
-        if self.pack() + 1 + self.depth > CAP {
+        if self.pack() + 1 + self.depth + self.harm > CAP {
             return Err("carrying rights exhausted (capacity attenuates)");
         }
         let mut s = self.clone();
@@ -911,12 +971,12 @@ impl Descent {
         self.world.cell_id()
     }
 
-    /// Every `SetField` effect that writes `sim` in full (13 registers + 8 relic keys).
+    /// Every `SetField` effect that writes `sim` in full (14 registers + 8 relic keys).
     /// The counters are PROJECTIONS of custody — the mover cannot even express a
     /// count↔custody disagreement.
     pub fn effects_for(&self, sim: &Sim) -> Vec<Effect> {
         let cell = self.cell();
-        let mut effects = Vec::with_capacity(13 + RELICS);
+        let mut effects = Vec::with_capacity(REGISTERS.len() + RELICS);
         let mut set_reg = |name: &str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
@@ -941,6 +1001,7 @@ impl Descent {
         set_reg("way_2", sim.ways[0]);
         set_reg("way_3", sim.ways[1]);
         set_reg("way_4", sim.ways[2]);
+        set_reg("harm", sim.harm);
         drop(set_reg);
         for (i, &c) in sim.custody.iter().enumerate() {
             effects.push(Effect::SetField {
@@ -992,6 +1053,9 @@ impl Descent {
     }
     pub fn smite(&mut self) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(SMITE, self.sim.smite())
+    }
+    pub fn lunge(&mut self) -> Result<TurnReceipt, WorldError> {
+        self.commit_verb(LUNGE, self.sim.lunge())
     }
     pub fn loot(&mut self, r: usize) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(LOOT, self.sim.loot(r))
@@ -1147,6 +1211,12 @@ mod crowned_line_tests {
                 sim.custody[0], BANKED,
                 "day {day}: the crowned line did not bank the prize"
             );
+            // ⚑ THE CROWN IS HARMLESS, on every day. The crowned line presses and never
+            // lunges, so `harm` is 0 along it — which is exactly why the new capacity
+            // term `pack + depth + harm <= CAP` degenerates to the old one here and
+            // completability survived the change by construction rather than by luck.
+            // This is the Rust half of `Dungeon.crowned_full_bank_harmless`.
+            assert_eq!(sim.harm, 0, "day {day}: the crowned line must take no harm");
             assert!(
                 sim.spent <= BREATH,
                 "day {day}: the line costs {} of {BREATH} light",

@@ -132,27 +132,29 @@ private theorem encode_scalar_relic (s : DState) (i : Nat) (hi : i < RELICS) :
 
 /-! ## 1. The register allocation and the marshalling (the descent's `tugSlots`). -/
 
-/-- Register allocation: the descent's 13 register names → deployed slot indices
-`0..12` (slots `13..15` spare, never named by a tooth). -/
+/-- Register allocation: the descent's 14 register names → deployed slot indices
+`0..13` (slots `14..15` spare, never named by a tooth). ⚑ `harm` was appended at 13, so
+no existing slot moved. -/
 def dgRegIdx : String → Nat
   | "depth" => 0 | "spent" => 1 | "wounds" => 2 | "fate" => 3
   | "pack" => 4 | "bank" => 5
   | "way_2" => 6 | "way_3" => 7 | "way_4" => 8
   | "hoard_1" => 9 | "hoard_2" => 10 | "hoard_3" => 11 | "hoard_4" => 12
+  | "harm" => 13
   | _ => 15
 
-/-- The 13 register names the descent's teeth may mention (heap keys are separate). -/
+/-- The 14 register names the descent's teeth may mention (heap keys are separate). -/
 def registerNames : List String :=
   ["depth", "spent", "wounds", "fate", "pack", "bank",
    wayName 2, wayName 3, wayName 4,
-   hoardName 1, hoardName 2, hoardName 3, hoardName 4]
+   hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
 
 /-- Marshal a model state into the deployed 16-slot register file, each projection at
 its `dgRegIdx` slot. -/
 def dgSlots (s : DState) : List DField :=
   [s.depth, s.spent, s.wounds, s.fate, pack s, bank s,
    s.ways.getD 0 0, s.ways.getD 1 0, s.ways.getD 2 0,
-   hoardAt s 1, hoardAt s 2, hoardAt s 3, hoardAt s 4, 0, 0, 0]
+   hoardAt s 1, hoardAt s 2, hoardAt s 3, hoardAt s 4, s.harm, 0, 0]
 
 /-- The heap keys the descent's teeth may mention: the spween sentinel + the eight
 individually committed relic custody keys. -/
@@ -194,7 +196,8 @@ private theorem resolve (s : DState) {r : String} (hr : r ∈ registerNames) :
   simp only [registerNames, wayName_2, wayName_3, wayName_4,
     hoardName_1, hoardName_2, hoardName_3, hoardName_4,
     List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl <;>
     exact ⟨by decide, by simp [encode, Value.scalar, Value.field, dgSlots, dgRegIdx]⟩
 
 /-- The heap twin: for a descent heap key, the Exec read is the cast of the marshalled
@@ -264,6 +267,16 @@ private theorem tight_step {s s' : DState} {m : Move}
       show s.wounds + 1 ≤ 2
       omega
     · exact absurd hstep (by simp)
+  | lunge =>
+    simp only [step] at hstep; split at hstep
+    · rename_i hcond
+      cases hstep
+      refine ⟨?_, hwys⟩
+      have := guardHp_le s.depth
+      have h2 := hcond.2.2.2.1
+      show s.wounds + 1 ≤ 2
+      omega
+    · exact absurd hstep (by simp)
   | loot r =>
     simp only [step] at hstep; split at hstep
     · cases hstep; exact ⟨hw, hwys⟩
@@ -319,7 +332,8 @@ the largest any projection can reach), hence far below both the `field_to_u64` l
 and the `FIELD_DELTA_RESULT_BITS` range. -/
 private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : String}
     (hr : r ∈ registerNames) : (dgSlots s).getD (dgRegIdx r) 0 ≤ 26 := by
-  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hrest⟩ := hInv
+  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hd0, hprize,
+    hharm⟩ := hInv
   obtain ⟨hw, hwys⟩ := ht
   have hpack : pack s ≤ 8 := le_trans List.countP_le_length (le_of_eq hlen)
   have hbank : bank s ≤ 8 := le_trans List.countP_le_length (le_of_eq hlen)
@@ -330,7 +344,8 @@ private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : Strin
     hoardName_1, hoardName_2, hoardName_3, hoardName_4,
     List.mem_cons, List.not_mem_nil, or_false] at hr
   have hFl : s.depth ≤ 4 := hdepth
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+    rfl | rfl
   · show s.depth ≤ 26; omega
   · show s.spent ≤ 26; exact hspent
   · show s.wounds ≤ 26; omega
@@ -344,6 +359,7 @@ private theorem regs_small {s : DState} (hInv : Inv s) (ht : Tight s) {r : Strin
   · show hoardAt s 2 ≤ 26; have := hhoard 2; omega
   · show hoardAt s 3 ≤ 26; have := hhoard 3; omega
   · show hoardAt s 4 ≤ 26; have := hhoard 4; omega
+  · show s.harm ≤ 26; have h2 : s.harm ≤ 2 := hharm; omega
 
 /-- Every marshalled heap value of an `Inv` state is at most `BANKED = 9`. -/
 private theorem heap_small {s : DState} (hInv : Inv s) {k : HeapKeyRef}
@@ -1053,7 +1069,7 @@ evaluator for EVERY verb (the cases each verb's method arm carries `coreTeeth`).
 
 private def verbCase : Move → Case
   | .delve => delveCase | .unlock _ => unlockCase | .smite => smiteCase
-  | .loot _ => lootCase | .flee => fleeCase
+  | .lunge => lungeCase | .loot _ => lootCase | .flee => fleeCase
 
 private theorem verbCase_mem (m : Move) : verbCase m ∈ programCases := by
   cases m <;> simp [verbCase, programCases]
@@ -1065,8 +1081,8 @@ private theorem verbCase_guard (m : Move) (o n : Value) :
 private theorem coreTeeth_mem_verbCase (m : Move) {c : Constraint}
     (hc : c ∈ coreTeeth) : c ∈ (verbCase m).constraints := by
   cases m <;>
-    · simp only [verbCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase,
-        List.mem_append]
+    · simp only [verbCase, delveCase, unlockCase, smiteCase, lungeCase, lootCase,
+        fleeCase, List.mem_append]
       tauto
 
 /-- Conservation reaches the deployed referee: on every reachable legal step, the
@@ -1082,8 +1098,9 @@ theorem descent_conserves_deployed {s s' : DState} {m : Move}
 /-- Capacity attenuation reaches the deployed referee (`AffineLe` over pack+depth). -/
 theorem descent_capacity_deployed {s s' : DState} {m : Move}
     (hreach : Reachable s) (hstep : step s m = some s') :
-    admitsTop (.base (.affineLe [((1 : Int), 4), ((1 : Int), 0)] (8 : Int)))
-      (dgInput s s' (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth")] (CAP : Int)))
+    admitsTop (.base (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int)))
+      (dgInput s s' (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth"),
+        ((1 : Int), "harm")] (CAP : Int)))
       = .ok :=
   descent_step_teeth_deployed hreach hstep (verbCase m) (verbCase_mem m)
     (verbCase_guard m _ _) _ (coreTeeth_mem_verbCase m (by simp [coreTeeth]))
@@ -1158,20 +1175,28 @@ theorem deployed_tooth_conserves (i : DInput)
   simpa using this
 
 /-- **Capacity inversion at deployed width**: ANY input the deployed `AffineLe`
-capacity tooth admits satisfies `pack-lane + depth-lane ≤ CAP`. -/
+capacity tooth admits satisfies `pack-lane + depth-lane + harm-lane ≤ CAP`. ⚑ The
+`harm` lane is what makes a broken grip cost a carry slot at DEPLOYED width, over
+attacker-supplied unsigned registers — not merely in the model. -/
 theorem deployed_tooth_capacity (i : DInput)
-    (h : admits (.affineLe [((1 : Int), 4), ((1 : Int), 0)] (8 : Int)) i = .ok) :
-    low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0) ≤ CAP := by
+    (h : admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
+      i = .ok) :
+    low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0)
+      + low64 (i.newRegs.getD 13 0) ≤ CAP := by
   simp only [admits, Dregg2.Exec.DeployedConstraint.affineSum] at h
   rw [if_neg (by decide : ¬ (4 : Nat) ≥ stateSlots),
-      if_neg (by decide : ¬ (0 : Nat) ≥ stateSlots)] at h
+      if_neg (by decide : ¬ (0 : Nat) ≥ stateSlots),
+      if_neg (by decide : ¬ (13 : Nat) ≥ stateSlots)] at h
   simp only at h
   by_cases hgt : (1 : Int) * (low64 (i.newRegs.getD 4 0) : Int)
-      + ((1 : Int) * (low64 (i.newRegs.getD 0 0) : Int) + 0) > 8
+      + ((1 : Int) * (low64 (i.newRegs.getD 0 0) : Int)
+        + ((1 : Int) * (low64 (i.newRegs.getD 13 0) : Int) + 0)) > 8
   · rw [if_pos hgt] at h; cases h
-  · have : (low64 (i.newRegs.getD 4 0) : Int) + (low64 (i.newRegs.getD 0 0) : Int) ≤ 8 := by
+  · have : (low64 (i.newRegs.getD 4 0) : Int) + (low64 (i.newRegs.getD 0 0) : Int)
+        + (low64 (i.newRegs.getD 13 0) : Int) ≤ 8 := by
       omega
-    show low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0) ≤ 8
+    show low64 (i.newRegs.getD 4 0) + low64 (i.newRegs.getD 0 0)
+      + low64 (i.newRegs.getD 13 0) ≤ 8
     exact_mod_cast this
 
 /-- **Clock inversion at deployed width**: ANY input the deployed strict-monotone +
@@ -1229,10 +1254,20 @@ private def mkI (oldR newR : List DField) : DInput :=
   (mkI regs0 [1, 4, 1, 0, 1, 0, 0, 0, 0, 2, 2, 2, 1, 0, 0, 0]) = DAdmit.ok
 
 -- Capacity: pack 8 at depth 1 is REFUSED; 4 at 4 admits.
-#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0)] (8 : Int))
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
   (mkI regs0 [1, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.violated
-#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0)] (8 : Int))
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
   (mkI regs0 [4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) = DAdmit.ok
+-- ⚑ HARM COSTS A SLOT AT DEPLOYED WIDTH: the SAME pack-4-at-depth-4 that admits above
+-- is REFUSED once one point of grip is broken (harm lane 13 = 1) — the prize does not
+-- fit beside a lunge.
+#guard admits (.affineLe [((1 : Int), 4), ((1 : Int), 0), ((1 : Int), 13)] (8 : Int))
+  (mkI regs0 [4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]) = DAdmit.violated
+-- The ratchet's range tooth bites at deployed width: harm 3 is out of `[0, 2]`.
+#guard admits (.inRangeTwoSided 13 0 2)
+  (mkI regs0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]) = DAdmit.violated
+#guard admits (.inRangeTwoSided 13 0 2)
+  (mkI regs0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0]) = DAdmit.ok
 
 -- The clock: a free turn (spent unchanged) is REFUSED; an over-cap clock is REFUSED.
 #guard admits (.strictMonotonic 1)
@@ -1279,6 +1314,16 @@ local instance : WorldParam := instAt 0
   (let s := st [.delve]
    let s' := st [.delve, .smite]
    (smiteCase.constraints ++ spentRider.constraints).all fun c =>
+     match Constraint.toDTop c with
+     | some dt => decide (admitsTop dt (dgInput s s' c) = DAdmit.ok)
+     | none => true)
+
+-- ⚑ The LUNGE's twin: an honest lunge step has every in-subset tooth of its own arm,
+-- the anti-staple `harmRider`, AND the spent rider admitted at deployed width.
+#guard
+  (let s := st [.delve]
+   let s' := st [.delve, .lunge]
+   (lungeCase.constraints ++ harmRider.constraints ++ spentRider.constraints).all fun c =>
      match Constraint.toDTop c with
      | some dt => decide (admitsTop dt (dgInput s s' c) = DAdmit.ok)
      | none => true)

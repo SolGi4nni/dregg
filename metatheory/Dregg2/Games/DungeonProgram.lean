@@ -17,8 +17,10 @@ construction (edit a rule here, re-emit, and the deployed game changes: the cana
    `AllOf[SlotChanged, AnyOf[MethodIs…]]`). This retires the standing
    stapleable-slot falsifier *structurally*: ANY verb that moves `depth` pays the delve
    law, ANY verb that flips a `way_w` must EXHIBIT the carried key-relic, ANY verb that
-   moves `bank`/`fate` pays the banking law, and ANY exertion (a `spent` change) pays
-   the conservation/ratchet/capacity commons. The method list inside the guard keeps the
+   moves `bank`/`fate` pays the banking law, ANY verb that moves `harm` pays the WHOLE
+   lunge law (`harmRider` — the newest slot got its rider in the same change that
+   introduced it, not later), and ANY exertion (a `spent` change) pays the
+   conservation/ratchet/capacity commons. The method list inside the guard keeps the
    executor's method-default-deny intact (`unknown_method_refused`).
 
 2. **The proofs run against the LAW-#1 evaluator.** `toExec` lifts this program into
@@ -28,14 +30,15 @@ construction (edit a rule here, re-emit, and the deployed game changes: the cana
      * `admitted_verb_conserves` — any admitted verb turn's post-state sums the relic
        zones to exactly `RELICS` (no dupe, no burn);
      * `admitted_verb_capacity` — any admitted verb turn satisfies
-       `pack + depth ≤ CAP` (attenuation reaches the deployed teeth);
+       `pack + depth + harm ≤ CAP` (attenuation, INCLUDING the grip the guardians broke,
+       reaches the deployed teeth);
      * `admitted_verb_pays` — any admitted verb turn strictly spends breath, capped at
        `BREATH` (the clock);
      * `admitted_verb_alive` — any admitted verb turn starts from `fate = 0`
        (the banked tomb is frozen: `banked_tomb_refuses`);
      * `way_flip_exhibits_key` — any admitted turn that flips `way_w` carries the
        `0 → 1` transition AND the post-state holds key-relic `w−1` CARRIED;
-     * `unknown_method_refused` — a method outside the six verbs is default-denied.
+     * `unknown_method_refused` — a method outside the seven verbs is default-denied.
 
 3. **Custody projections are exact, not parallel bookkeeping.** The spent rider
    carries six `countFieldsEq` aggregate teeth.  Every ordinary verb therefore proves
@@ -52,6 +55,16 @@ construction (edit a rule here, re-emit, and the deployed game changes: the cana
    reimagined dungeon was AUTHORED so the refinement is direct. ⚑ The way-flip inversion is
    now proven for ALL THREE locked ways (`way_flip_exhibits_key` ⇒ `way2/3/4_flip_exhibits_key`),
    closing the audit's "ways 3/4 are Rust-driven" gap.
+
+5. **TWO BLOWS, ONE OF THEM PAID IN CAPACITY.** `smite` (the press: 2 breath, no harm) and
+   `lunge` (1 breath, `harm += 1`) wound identically; what separates them is the core
+   `affineLe`, which now prices `pack + depth + harm` against `CAP`. Because capacity
+   already attenuates with depth, the same posted price is cheap at depth 1 (7 slots) and
+   ruinous at depth 4 (4 slots — exactly three keys plus the prize), so a `guardHp = 2`
+   floor is a mixable decision rather than a quotient. `harm` is a `[0, HARMCAP]` ratchet:
+   `lungeCase` and `harmRider` both carry `fieldDelta harm 1` (an exact step, so it cannot
+   run backward) and `inRangeTwoSided harm 0 HARMCAP`, and every other verb FREEZES the
+   slot.
 
 ## Honest scope
 
@@ -217,14 +230,16 @@ def homeCode (i : Nat) : Nat := homeFloors.getD i 0
 /-- The genesis hoard census — a PROJECTION of `homeFloors` (relics at floor d). -/
 def genesisHoard (d : Nat) : Nat := (homeFloors.filter (· == d)).length
 
-def verbs : List String := ["delve", "unlock", "smite", "loot", "flee"]
+def verbs : List String := ["delve", "unlock", "smite", "loot", "flee", "lunge"]
 
 /-- **The core commons** — on EVERY verb case and every rider:
-conservation, capacity attenuation, the strictly-spending capped clock, and the
-aliveness/banking fate law (`0→0` stay alive, `0→1` bank; a banked run matches nothing). -/
+conservation, capacity attenuation **including the broken grip** (`pack + depth + harm ≤
+CAP` — the deployed form of `Dungeon.capacity_attenuates`), the strictly-spending capped
+clock, and the aliveness/banking fate law (`0→0` stay alive, `0→1` bank; a banked run
+matches nothing). -/
 def coreTeeth : List Constraint :=
   [ .sumEquals zones RELICS,
-    .affineLe [((1 : Int), "pack"), ((1 : Int), "depth")] (CAP : Int),
+    .affineLe [((1 : Int), "pack"), ((1 : Int), "depth"), ((1 : Int), "harm")] (CAP : Int),
     .strictMonotonic "spent",
     .fieldLte "spent" BREATH,
     .allowedTransitions "fate" [(0, 0), (0, 1)] ]
@@ -284,6 +299,7 @@ def genesisCase : Case :=
       .heapField .sentinel (.deltaEquals 1),
       .fieldEquals "depth" 0, .fieldEquals "spent" 0, .fieldEquals "wounds" 0,
       .fieldEquals "fate" 0, .fieldEquals "pack" 0, .fieldEquals "bank" 0,
+      .fieldEquals "harm" 0,
       .fieldEquals (wayName 2) 0, .fieldEquals (wayName 3) 0, .fieldEquals (wayName 4) 0,
       .fieldEquals (hoardName 1) (genesisHoard 1),
       .fieldEquals (hoardName 2) (genesisHoard 2),
@@ -300,7 +316,7 @@ def delveCase : Case :=
       .fieldEquals "wounds" 0, .fieldEquals "fate" 0,
       wayTooth 2, wayTooth 3, wayTooth 4 ]
     ++ frozen ["pack", "bank", wayName 2, wayName 3, wayName 4,
-               hoardName 1, hoardName 2, hoardName 3, hoardName 4]
+               hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
     ++ relicFreeze⟩
 
 /-- **unlock** — exercise a carried key: pay 1 breath; WHICH way may flip (and that its
@@ -310,16 +326,32 @@ def unlockCase : Case :=
     coreTeeth ++
     [ .fieldDelta "spent" 1, .fieldEquals "fate" 0 ]
     ++ frozen ["depth", "wounds", "pack", "bank",
-               hoardName 1, hoardName 2, hoardName 3, hoardName 4]
+               hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
     ++ relicFreeze⟩
 
-/-- **smite** — wound the standing guardian by exactly 1: pay 2 breath (it strikes
-back); never below the surface's edge (`depth ≥ 1`); never past the guardian's
-vitality. Nothing else moves. -/
+/-- **smite — THE PRESS.** Wound the standing guardian by exactly 1: pay 2 breath (it
+strikes back); never below the surface's edge (`depth ≥ 1`); never past the guardian's
+vitality. Nothing else moves — in particular `harm` is FROZEN here, which is what makes
+the press the safe blow and `lunge` the paid one. -/
 def smiteCase : Case :=
   ⟨.methodIs "smite",
     coreTeeth ++
     [ .fieldDelta "spent" 2, .fieldDelta "wounds" 1,
+      .fieldGte "depth" 1, .fieldEquals "fate" 0,
+      guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4 ]
+    ++ frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4,
+               hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]
+    ++ relicFreeze⟩
+
+/-- **lunge** — the SAME wound for ONE breath, paid in grip: `harm += 1`, ratcheted
+inside `[0, HARMCAP]`, and the core `affineLe` then prices it against depth
+(`pack + depth + harm ≤ CAP`). Everything the press freezes is frozen here too, except
+the one register that is the whole point. -/
+def lungeCase : Case :=
+  ⟨.methodIs "lunge",
+    coreTeeth ++
+    [ .fieldDelta "spent" 1, .fieldDelta "wounds" 1, .fieldDelta "harm" 1,
+      .inRangeTwoSided "harm" 0 HARMCAP,
       .fieldGte "depth" 1, .fieldEquals "fate" 0,
       guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4 ]
     ++ frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4,
@@ -337,7 +369,7 @@ def lootCase : Case :=
       .fieldGte "depth" 1, .fieldEquals "fate" 0,
       guardSlainTooth 1, guardSlainTooth 2, guardSlainTooth 3, guardSlainTooth 4,
       hoardFrameTooth 1, hoardFrameTooth 2, hoardFrameTooth 3, hoardFrameTooth 4 ]
-    ++ frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4]⟩
+    ++ frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm"]⟩
 
 /-- **flee** — the run ends: pay 1 breath, the pack empties into the bank
 (`pack' = 0` + hoards frozen + conservation ⇒ `bank' = bank + pack`), fate `0→1`. -/
@@ -346,7 +378,7 @@ def fleeCase : Case :=
     coreTeeth ++
     [ .fieldDelta "spent" 1, .fieldEquals "fate" 1, .fieldEquals "pack" 0 ]
     ++ frozen ["depth", "wounds", wayName 2, wayName 3, wayName 4,
-               hoardName 1, hoardName 2, hoardName 3, hoardName 4]⟩
+               hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"]⟩
 
 /-! ### The riders — `SlotChanged` carries the gate (the stapleable-slot fix). -/
 
@@ -374,6 +406,17 @@ def bankRider : Case :=
   ⟨.slotChangedForMethods "bank" verbs,
     coreTeeth ++ [.fieldEquals "fate" 1, .fieldEquals "pack" 0]⟩
 
+/-- ⚑ **ANY verb that moves `harm` is a lawful lunge.** Without this rider the `harm`
+slot would be STAPLEABLE onto another method's turn — the standing hole class this
+program retires structurally (see the module header, point 1). The rider re-demands the
+lunge law METHOD-INDEPENDENTLY: exactly `+1`, inside the `[0, HARMCAP]` ratchet, on the
+same turn as the wound it bought, below the surface's edge, and alive. -/
+def harmRider : Case :=
+  ⟨.slotChangedForMethods "harm" verbs,
+    coreTeeth ++
+    [ .fieldDelta "harm" 1, .inRangeTwoSided "harm" 0 HARMCAP,
+      .fieldDelta "wounds" 1, .fieldGte "depth" 1, .fieldEquals "fate" 0 ]⟩
+
 /-- ANY exertion (a `spent` change — every verb) pays the heavy commons: zone ranges,
 the per-relic provenance ratchet, and the genesis-sentinel freeze. -/
 def spentRider : Case :=
@@ -381,10 +424,11 @@ def spentRider : Case :=
     coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
       [.heapField .sentinel .immutable]⟩
 
-/-- The deployed case list: the six verb arms + the six riders. -/
+/-- The deployed case list: the seven verb arms + the seven riders. -/
 def programCases : List Case :=
-  [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase,
-    depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, spentRider ]
+  [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+    depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
+    spentRider ]
 
 /-- **`dungeonProgram` — the DEPLOYED descent teeth, authored in Lean.** -/
 def dungeonProgram : CellProgram := .cases programCases
@@ -406,6 +450,7 @@ def methodIdx : String → Nat
   | "smite"   => 3
   | "loot"    => 4
   | "flee"    => 5
+  | "lunge"   => 6
   | _         => 1000
 
 def Simple.toExec : Simple → Dregg2.Exec.SimpleConstraint
@@ -477,11 +522,11 @@ theorem admits_cases_mem {tcs : List TransitionCase} {m : Nat} {o n : Value}
 open Dregg2.Exec in
 /-- Every verb case's teeth BEGIN with `coreTeeth`; an admitted verb turn therefore
 satisfies every core tooth. (`m` ranges over the five verb indices.) -/
-theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     ∀ c ∈ coreTeeth, evalConstraint c.toExec o n = true := by
   intro c hc
-  rcases hm with rfl | rfl | rfl | rfl | rfl
+  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl
   · exact admits_cases_mem (tcs := programCases.map Case.toExec) h
       (tc := delveCase.toExec)
       (List.mem_map_of_mem (by simp [programCases])) (by rfl)
@@ -502,12 +547,16 @@ theorem verb_core_teeth {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ 
       (tc := fleeCase.toExec)
       (List.mem_map_of_mem (by simp [programCases])) (by rfl)
       c.toExec (List.mem_map_of_mem (by simp [fleeCase, List.mem_append, hc]))
+  · exact admits_cases_mem (tcs := programCases.map Case.toExec) h
+      (tc := lungeCase.toExec)
+      (List.mem_map_of_mem (by simp [programCases])) (by rfl)
+      c.toExec (List.mem_map_of_mem (by simp [lungeCase, List.mem_append, hc]))
 
 open Dregg2.Exec in
 /-- **No dupe, no burn — deployed**: any admitted verb turn's post-state sums the six
 relic zones to exactly `RELICS`, whatever the writes were. -/
 theorem admitted_verb_conserves {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     sumScalars n zones = some (RELICS : Int) := by
   have := verb_core_teeth hm h (.sumEquals zones RELICS) (by simp [coreTeeth])
@@ -515,19 +564,23 @@ theorem admitted_verb_conserves {m : Nat}
 
 open Dregg2.Exec in
 /-- **Attenuation — deployed**: any admitted verb turn's post-state satisfies
-`pack + depth ≤ CAP`. -/
+`pack + depth + harm ≤ CAP`. ⚑ The `harm` term is what makes the guardian's blow cost
+something on the deployed teeth rather than in prose: a broken grip is a carry slot the
+capacity commons will not give back, on EVERY verb. -/
 theorem admitted_verb_capacity {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
-    ∃ p d : Int, n.scalar "pack" = some p ∧ n.scalar "depth" = some d
-      ∧ p + d ≤ (CAP : Int) := by
+    ∃ p d x : Int, n.scalar "pack" = some p ∧ n.scalar "depth" = some d
+      ∧ n.scalar "harm" = some x ∧ p + d + x ≤ (CAP : Int) := by
   have hT := verb_core_teeth hm h
-    (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth")] (CAP : Int))
+    (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth"), ((1 : Int), "harm")] (CAP : Int))
     (by simp [coreTeeth])
   have hT' : evalConstraint
-      (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth")] (CAP : Int)) o n = true := hT
+      (.affineLe [((1 : Int), "pack"), ((1 : Int), "depth"), ((1 : Int), "harm")]
+        (CAP : Int)) o n = true := hT
   obtain ⟨s, hsum, hle⟩ :=
-    (evalConstraint_affineLe_iff [((1 : Int), "pack"), ((1 : Int), "depth")]
+    (evalConstraint_affineLe_iff
+      [((1 : Int), "pack"), ((1 : Int), "depth"), ((1 : Int), "harm")]
       (CAP : Int) o n).mp hT'
   cases hp : n.scalar "pack" with
   | none => simp [affineSum, hp] at hsum
@@ -535,16 +588,19 @@ theorem admitted_verb_capacity {m : Nat}
     cases hd : n.scalar "depth" with
     | none => simp [affineSum, hp, hd] at hsum
     | some d =>
-      refine ⟨p, d, rfl, rfl, ?_⟩
-      simp only [affineSum, List.foldr_cons, List.foldr_nil, hp, hd] at hsum
-      injection hsum with hsum
-      omega
+      cases hx : n.scalar "harm" with
+      | none => simp [affineSum, hp, hd, hx] at hsum
+      | some x =>
+        refine ⟨p, d, x, rfl, rfl, rfl, ?_⟩
+        simp only [affineSum, List.foldr_cons, List.foldr_nil, hp, hd, hx] at hsum
+        injection hsum with hsum
+        omega
 
 open Dregg2.Exec in
 /-- **The clock — deployed**: any admitted verb turn strictly spends breath, and the
 post-state clock is capped at `BREATH`. -/
 theorem admitted_verb_pays {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     ∃ a b : Int, o.scalar "spent" = some a ∧ n.scalar "spent" = some b
       ∧ a < b ∧ b ≤ (BREATH : Int) := by
@@ -561,7 +617,7 @@ open Dregg2.Exec in
 /-- **Aliveness — deployed**: any admitted verb turn STARTS alive (`old fate = 0`);
 its post-fate is `0` (still alive) or `1` (banked this turn). -/
 theorem admitted_verb_alive {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true) :
     o.scalar "fate" = some 0
       ∧ (n.scalar "fate" = some 0 ∨ n.scalar "fate" = some 1) := by
@@ -589,7 +645,7 @@ theorem admitted_verb_alive {m : Nat}
 open Dregg2.Exec in
 /-- **The banked tomb is frozen — deployed**: from `old fate = 1` NO verb is admitted. -/
 theorem banked_tomb_refuses {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (hf : o.scalar "fate" = some 1) :
     RecordProgram.admits dungeonExec m o n = false := by
   cases hadm : RecordProgram.admits dungeonExec m o n with
@@ -603,7 +659,7 @@ open Dregg2.Exec in
 /-- **The dead light refuses — deployed**: at `old spent = BREATH` NO verb is admitted
 (strict spend + the cap are jointly unsatisfiable). -/
 theorem dead_light_refuses {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (hs : o.scalar "spent" = some (BREATH : Int)) :
     RecordProgram.admits dungeonExec m o n = false := by
   cases hadm : RecordProgram.admits dungeonExec m o n with
@@ -622,7 +678,7 @@ verb set — there is no verb from which a keyless way-flip is admissible. ⚑ T
 former way-2-only inversion: ways 3 and 4 (`way3_flip_exhibits_key`, `way4_flip_exhibits_key` below)
 are now proven, not Rust-driven — the audit's "ways 3/4 are Rust-driven" gap is closed. -/
 theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
-    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName w) == n.scalar (wayName w)) = false) :
     n.scalar (relicName (keyFor w)) = some (CARRIED : Int)
@@ -630,7 +686,7 @@ theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
   have hmem : (wayRider w).toExec ∈ programCases.map Case.toExec := by
     rcases hw with rfl | rfl | rfl <;> exact List.mem_map_of_mem (by simp [programCases])
   have hmatch : (wayRider w).toExec.guard.matches m o n = true := by
-    rcases hm with rfl | rfl | rfl | rfl | rfl <;>
+    rcases hm with rfl | rfl | rfl | rfl | rfl | rfl <;>
       simp [wayRider, Case.toExec, Guard.toExec, verbs, methodIdx,
             TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, hflip]
   have hall := admits_cases_mem (tcs := programCases.map Case.toExec) h
@@ -671,7 +727,7 @@ theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
 open Dregg2.Exec in
 /-- Way 2 (`keyFor 2 = 1`) — the original inversion, now a corollary of the general lemma. -/
 theorem way2_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 2) == n.scalar (wayName 2)) = false) :
     n.scalar (relicName 1) = some (CARRIED : Int)
@@ -681,7 +737,7 @@ theorem way2_flip_exhibits_key {m : Nat}
 open Dregg2.Exec in
 /-- Way 3 (`keyFor 3 = 2`) — proven, not Rust-driven. -/
 theorem way3_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 3) == n.scalar (wayName 3)) = false) :
     n.scalar (relicName 2) = some (CARRIED : Int)
@@ -691,7 +747,7 @@ theorem way3_flip_exhibits_key {m : Nat}
 open Dregg2.Exec in
 /-- Way 4 (`keyFor 4 = 3`) — proven, not Rust-driven. -/
 theorem way4_flip_exhibits_key {m : Nat}
-    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
     (hflip : (o.scalar (wayName 4) == n.scalar (wayName 4)) = false) :
     n.scalar (relicName 3) = some (CARRIED : Int)
@@ -699,9 +755,9 @@ theorem way4_flip_exhibits_key {m : Nat}
   way_flip_exhibits_key 4 (Or.inr (Or.inr rfl)) hm h hflip
 
 open Dregg2.Exec in
-/-- **Method-default-deny survives the riders**: a method outside the six verbs is
+/-- **Method-default-deny survives the riders**: a method outside the seven verbs is
 refused outright — no case (method arm or rider) matches it. -/
-theorem unknown_method_refused {m : Nat} (hm : 6 ≤ m) (o n : Value) :
+theorem unknown_method_refused {m : Nat} (hm : 7 ≤ m) (o n : Value) :
     RecordProgram.admits dungeonExec m o n = false := by
   have h0 : ((0 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h1 : ((1 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
@@ -709,13 +765,14 @@ theorem unknown_method_refused {m : Nat} (hm : 6 ≤ m) (o n : Value) :
   have h3 : ((3 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h4 : ((4 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   have h5 : ((5 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
+  have h6 : ((6 : Nat) == m) = false := beq_eq_false_iff_ne.mpr (by omega)
   simp [dungeonExec, dungeonProgram, programCases, CellProgram.toExec, Case.toExec,
         Guard.toExec, verbs, methodIdx, RecordProgram.admits,
         TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
-        genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase,
-        depthRider, wayRider, fateRider, bankRider, spentRider,
-        List.map_cons, List.map_nil, List.filter_cons, List.filter_nil,
-        h0, h1, h2, h3, h4, h5]
+        genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+        depthRider, wayRider, fateRider, bankRider, harmRider, spentRider,
+        List.map_cons, List.map_nil, List.filter_nil,
+        h0, h1, h2, h3, h4, h5, h6]
 
 /-! ## 5. The model↔program weld — encode the model state, DRIVE the runs. -/
 
@@ -725,6 +782,7 @@ definitions), so the encoding cannot disagree with the model about counts. -/
 def encode (s : DState) : Value :=
   .record
     ([ ("depth", .int s.depth), ("spent", .int s.spent), ("wounds", .int s.wounds),
+       ("harm", .int s.harm),
        ("fate", .int s.fate), ("pack", .int (pack s)), ("bank", .int (bank s)),
        (wayName 2, .int (s.ways.getD 0 0)), (wayName 3, .int (s.ways.getD 1 0)),
        (wayName 4, .int (s.ways.getD 2 0)),
@@ -737,8 +795,8 @@ def encode (s : DState) : Value :=
 relic heap keys unwritten (absent — on the heap, absent ≠ present-zero). -/
 def preGenesis : Value :=
   .record
-    [ ("depth", .int 0), ("spent", .int 0), ("wounds", .int 0), ("fate", .int 0),
-      ("pack", .int 0), ("bank", .int 0),
+    [ ("depth", .int 0), ("spent", .int 0), ("wounds", .int 0), ("harm", .int 0),
+      ("fate", .int 0), ("pack", .int 0), ("bank", .int 0),
       (wayName 2, .int 0), (wayName 3, .int 0), (wayName 4, .int 0),
       (hoardName 1, .int 0), (hoardName 2, .int 0), (hoardName 3, .int 0),
       (hoardName 4, .int 0), (sentinelField, .int 0) ]
@@ -749,6 +807,7 @@ def moveIdx : Move → Nat
   | .smite    => 3
   | .loot _   => 4
   | .flee     => 5
+  | .lunge    => 6
 
 /-- Drive a model script through the DEPLOYED program: every step must be BOTH
 model-legal and program-admitted on the encoded transition. -/
@@ -787,8 +846,8 @@ private def spentRiderWithoutProjection : Case :=
 
 private def dungeonExecWithoutProjection : Dregg2.Exec.RecordProgram :=
   CellProgram.toExec (.cases
-    [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase,
-      depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider,
+    [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+      depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
       spentRiderWithoutProjection ])
 
 /-! ### The weld, DRIVEN (`#guard` — kernel-evaluated, no axioms):
@@ -874,12 +933,40 @@ local instance : WorldParam := instAt 0
   (Dregg2.Exec.RecordProgram.admits dungeonExec 0 (encode genesisState)
      (encode genesisState)) = false
 
--- Attack 8 — UNKNOWN METHOD: a method outside the six verbs is default-denied even
+-- Attack 8 — UNKNOWN METHOD: a method outside the seven verbs is default-denied even
 -- with a fully-lawful-looking write set.
 #guard
   (let s := st [.delve]
-   Dregg2.Exec.RecordProgram.admits dungeonExec 7 (encode s)
+   Dregg2.Exec.RecordProgram.admits dungeonExec 8 (encode s)
      (setF (encode s) "spent" 2)) = false
+
+-- ⚑ Attack 9 — THE STAPLED GRIP: taking the lunge's DISCOUNT under the press. A `smite`
+-- that pays only 1 breath by writing `harm += 1` is REFUSED: the press freezes `harm`,
+-- and (method-independently) the `harmRider` demands the whole lunge law. This is the
+-- standing stapleable-slot falsifier, aimed at the new register.
+#guard
+  (let s := st [.delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 3 (encode s)
+     (setF (setF (setF (encode s) "harm" 1) "spent" 2) "wounds" 1)) = false
+-- …and the honest twin: the SAME write set under `lunge` (method 6) IS admitted.
+#guard
+  (let s := st [.delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 6 (encode s)
+     (setF (setF (setF (encode s) "harm" 1) "spent" 2) "wounds" 1)) = true
+
+-- Attack 9b — HARM STAPLED ONTO A LOOT (the slot's other tempting host): refused.
+#guard
+  (let s := st [.delve, .smite]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 4 (encode s)
+     (setF (setF (setF (setF (encode s) (relicName 1) CARRIED) "pack" 1)
+        (hoardName 1) 2) "harm" 1)) = false
+
+-- Attack 9c — THE RATCHET RUNS BACKWARD: a `lunge`-shaped turn that HEALS the grip
+-- (`harm` 1 → 0) is refused; `fieldDelta harm 1` is a signed-exact step, not a bound.
+#guard
+  (let s := st [.delve, .lunge, .loot 1, .unlock 2, .delve]
+   Dregg2.Exec.RecordProgram.admits dungeonExec 6 (encode s)
+     (setF (setF (setF (encode s) "harm" 0) "spent" 6) "wounds" 1)) = false
 
 -- The 27th breath: from a legally-exhausted clock nothing is admitted (driven twin of
 -- `dead_light_refuses`; spent = 25 + smite(2) would break the cap).
@@ -1000,12 +1087,12 @@ def emitFamilyJson : String :=
 section CanonEmit
 local instance : WorldParam := instAt 0
 
--- The emit runs and carries the scene header + all 13 cases, for every day.
+-- The emit runs and carries the scene header + all 15 cases, for every day.
 #guard (emitJson dungeonProgram).startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\""
-#guard (match dungeonProgram with | .cases cs => cs.length) = 13
+#guard (match dungeonProgram with | .cases cs => cs.length) = 15
 #guard emitFamilyJson.startsWith "{\n  \"scene\": \"dungeon-on-dregg/descent1\",\n  \"days\": 16"
 #guard (List.range dayCount).all
-        (fun k => (match (@dungeonProgram (instAt k)) with | .cases cs => cs).length == 13)
+        (fun k => (match (@dungeonProgram (instAt k)) with | .cases cs => cs).length == 15)
 
 end CanonEmit
 

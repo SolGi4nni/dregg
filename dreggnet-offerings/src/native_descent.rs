@@ -44,8 +44,9 @@ use dregg_app_framework::TurnReceipt;
 /// settled run's owned notes without its own dependency on the asset layer.
 pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
-    BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT,
-    PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed, day_world,
+    BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, HARMCAP, LOOT,
+    LUNGE, PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed,
+    day_world,
 };
 /// **The world's presentation constants**, re-exported so a FRONTEND can size a light bar or a
 /// carry meter against the same Lean-sourced numbers this surface does, without its own dependency
@@ -167,6 +168,9 @@ pub enum NativeDescentMove {
         way: u64,
     },
     Smite,
+    /// **The lunge** — the same wound for one light instead of two, paid with `+1 harm`
+    /// (one carry slot, forfeited for the rest of the run).
+    Lunge,
     /// Stable relic identifier carried by records and surface adapters.
     /// Conversion to the executor's target-sized collection index happens
     /// only inside [`NativeDescentMove::execute`] and is checked.
@@ -188,12 +192,13 @@ impl NativeDescentMove {
                     .expect("the matched native unlock argument is non-negative"),
             }),
             (SMITE, 0) => Ok(Self::Smite),
+            (LUNGE, 0) => Ok(Self::Lunge),
             (LOOT, 0..=7) => Ok(Self::Loot {
                 relic: u64::try_from(action.arg)
                     .expect("the matched native relic argument is non-negative"),
             }),
             (FLEE, 0) => Ok(Self::Flee),
-            (verb, _) if matches!(verb, DELVE | UNLOCK | SMITE | LOOT | FLEE) => {
+            (verb, _) if matches!(verb, DELVE | UNLOCK | SMITE | LUNGE | LOOT | FLEE) => {
                 Err(format!("invalid argument for native Descent verb {verb:?}"))
             }
             (verb, _) => Err(format!("unknown native Descent affordance {verb:?}")),
@@ -205,6 +210,7 @@ impl NativeDescentMove {
             Self::Delve => game.delve(),
             Self::Unlock { way } => game.unlock(way),
             Self::Smite => game.smite(),
+            Self::Lunge => game.lunge(),
             Self::Loot { relic } => {
                 let relic = usize::try_from(relic).map_err(|_| {
                     WorldError::Refused(
@@ -235,6 +241,11 @@ impl NativeDescentMove {
             }
             Self::Flee => {
                 hasher.update(&[4]);
+            }
+            // ⚑ A NEW TAG, never a renumber: every tag 0–4 keeps its byte, so an existing
+            // run's move-tape hash is unchanged by the arrival of the lunge.
+            Self::Lunge => {
+                hasher.update(&[5]);
             }
         }
     }
@@ -861,10 +872,24 @@ impl NativeDescentOffering {
                 sim.delve().is_ok(),
             ),
             Action::new(
-                format!("⚔ Strike the guardian{}", light_cost(LIGHT_SMITE)),
+                format!("⚔ Press the guardian{}", light_cost(LIGHT_SMITE)),
                 SMITE,
                 0,
                 sim.smite().is_ok(),
+            ),
+            // The same wound for half the light. The label names BOTH prices, because the
+            // second one is the whole decision: a forfeited carry slot is invisible until
+            // the bottom, where capacity is `CAP - FLOORS` and the prize needs all of it.
+            Action::new(
+                format!(
+                    "⚡ Lunge — one light, one carry slot forfeit ({}/{} grip broken){}",
+                    sim.harm,
+                    HARMCAP,
+                    light_cost(LIGHT_LUNGE)
+                ),
+                LUNGE,
+                0,
+                sim.lunge().is_ok(),
             ),
             Action::new(
                 if pack == 0 {
@@ -2619,6 +2644,7 @@ const MAP_COLS: usize = 3 + RELICS;
 const LIGHT_DELVE: u64 = 1;
 const LIGHT_UNLOCK: u64 = 1;
 const LIGHT_SMITE: u64 = 2;
+const LIGHT_LUNGE: u64 = 1;
 const LIGHT_LOOT: u64 = 1;
 const LIGHT_FLEE: u64 = 1;
 
@@ -2709,7 +2735,7 @@ fn descent_map(sim: &Sim) -> ViewNode {
                 (true, false) => "bad",
                 _ => "muted",
             },
-            standing_here && sim.smite().is_ok(),
+            standing_here && (sim.smite().is_ok() || sim.lunge().is_ok()),
         ));
 
         // One column per relic: the relics LYING on this floor.

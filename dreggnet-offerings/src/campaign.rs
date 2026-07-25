@@ -29,7 +29,7 @@
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, LUNGE, SMITE, UNLOCK};
 use dungeon_on_dregg::overworld::{RegionCell, RegionMap, deepening_ways};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
@@ -843,6 +843,7 @@ fn parse_native_move(action: &Action) -> Result<NativeDescentMove, String> {
             way: u64::try_from(way).expect("the matched campaign unlock argument is non-negative"),
         }),
         (SMITE, 0) => Ok(NativeDescentMove::Smite),
+        (LUNGE, 0) => Ok(NativeDescentMove::Lunge),
         (LOOT, relic @ 0..=7) => Ok(NativeDescentMove::Loot {
             relic: u64::try_from(relic)
                 .expect("the matched campaign relic argument is non-negative"),
@@ -862,6 +863,7 @@ fn action_for_native_move(command: NativeDescentMove) -> Result<Action, String> 
             true,
         ),
         NativeDescentMove::Smite => Action::new("replay smite", SMITE, 0, true),
+        NativeDescentMove::Lunge => Action::new("replay lunge", LUNGE, 0, true),
         NativeDescentMove::Loot { relic } => Action::new(
             "replay loot",
             LOOT,
@@ -976,6 +978,11 @@ fn hash_command(hasher: &mut blake3::Hasher, command: &DescentCampaignMove) {
                 }
                 NativeDescentMove::Flee => {
                     hasher.update(&[4]);
+                }
+                // A NEW tag, never a renumber: tags 0–4 keep their bytes, so an existing
+                // campaign's command hash is unchanged by the arrival of the lunge.
+                NativeDescentMove::Lunge => {
+                    hasher.update(&[5]);
                 }
             }
         }

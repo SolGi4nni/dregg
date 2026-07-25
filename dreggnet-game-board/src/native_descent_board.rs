@@ -583,6 +583,7 @@ fn command_action(command: NativeDescentMove) -> Result<(&'static str, i64), Nat
             .map(|way| ("unlock", way))
             .map_err(|_| malformed("unlock argument exceeds the action wire")),
         NativeDescentMove::Smite => Ok(("smite", 0)),
+        NativeDescentMove::Lunge => Ok(("lunge", 0)),
         NativeDescentMove::Loot { relic } => i64::try_from(relic)
             .map(|relic| ("loot", relic))
             .map_err(|_| malformed("loot argument exceeds the action wire")),
@@ -597,6 +598,9 @@ fn encode_command(out: &mut Vec<u8>, command: NativeDescentMove) {
         NativeDescentMove::Smite => (2, 0),
         NativeDescentMove::Loot { relic } => (3, relic),
         NativeDescentMove::Flee => (4, 0),
+        // A NEW tag, never a renumber: tags 0–4 keep their bytes, so a board snapshot
+        // recorded before the lunge existed still decodes to the same command sequence.
+        NativeDescentMove::Lunge => (5, 0),
     };
     out.push(tag);
     put_u64(out, arg);
@@ -611,6 +615,7 @@ fn decode_command(cursor: &mut Cursor<'_>) -> Result<NativeDescentMove, NativeBo
         (2, 0) => Ok(NativeDescentMove::Smite),
         (3, relic) => Ok(NativeDescentMove::Loot { relic }),
         (4, 0) => Ok(NativeDescentMove::Flee),
+        (5, 0) => Ok(NativeDescentMove::Lunge),
         _ => Err(malformed("non-canonical native command")),
     }
 }

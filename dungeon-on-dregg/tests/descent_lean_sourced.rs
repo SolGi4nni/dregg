@@ -14,8 +14,8 @@ use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, symbol}
 use dregg_cell::program::TransitionMeta;
 use dregg_cell::state::CellState;
 use dungeon_on_dregg::descent::{
-    BANKED, CARRIED, DELVE, Deployment, Descent, FLEE, GENESIS, LOOT, PROGRAM_JSON, SCENE_ID,
-    SMITE, Sim, UNLOCK,
+    BANKED, CARRIED, DELVE, Deployment, Descent, FLEE, GENESIS, HARMCAP, LOOT, LUNGE, PROGRAM_JSON,
+    SCENE_ID, SMITE, Sim, UNLOCK,
 };
 use spween_dregg::WorldError;
 
@@ -74,7 +74,7 @@ fn loaded_program_is_the_lean_object() {
     let CellProgram::Cases(cases) = &program else {
         panic!("descent program must be Cases");
     };
-    assert_eq!(cases.len(), 13, "6 verb arms + 6 riders + genesis");
+    assert_eq!(cases.len(), 15, "6 verb arms + 7 riders + genesis");
     // The genesis arm is MethodIs("genesis") and carries a HeapField tooth on the
     // genesis sentinel (spween keys the sentinel machinery off exactly this shape).
     let genesis = cases
@@ -493,5 +493,171 @@ fn the_clock_binds() {
     assert!(
         refused(d.commit_raw(SMITE, effects)),
         "the light caps at 26"
+    );
+}
+
+// =============================================================================
+// THE LUNGE — the second blow, driven on the real executor.
+// =============================================================================
+
+/// THE TRADE IS REAL, ON THE DEPLOYED TEETH. The same wound, one breath cheaper, and the
+/// `harm` register moves — through the loaded artifact (which had to grow a register, a
+/// verb arm and an anti-staple rider for this turn to be admissible at all).
+#[test]
+fn a_lunge_buys_a_breath_and_the_executor_records_the_broken_grip() {
+    let mut pressed = Descent::deploy(11).expect("deploy");
+    pressed.delve().expect("way 1 is always open");
+    pressed.smite().expect("the press");
+    assert_eq!(pressed.read_reg("spent"), 3, "delve 1 + press 2");
+    assert_eq!(pressed.read_reg("harm"), 0, "the press breaks no grip");
+
+    let mut lunged = Descent::deploy(11).expect("deploy");
+    lunged.delve().expect("way 1 is always open");
+    lunged.lunge().expect("the lunge");
+    assert_eq!(lunged.read_reg("spent"), 2, "delve 1 + lunge 1");
+    assert_eq!(lunged.read_reg("wounds"), 1, "the same wound");
+    assert_eq!(lunged.read_reg("harm"), 1, "one carry slot forfeit");
+    // …and the wound it bought is real: the guardian is slain, so the loot admits.
+    lunged
+        .loot(1)
+        .expect("the key lies here and the guardian is down");
+    assert_eq!(lunged.read_reg("pack"), 1);
+}
+
+/// ⚑ ANTI-STAPLE, ON THE DEPLOYED TEETH. The `harm` slot cannot be moved under another
+/// verb's method to buy the lunge's discount: a `smite`-shaped turn that pays 1 breath
+/// and writes `harm += 1` is a REAL executor refusal that commits nothing. This is the
+/// standing stapleable-slot falsifier aimed at the new register (`smite` freezes `harm`,
+/// and the `harmRider` re-demands the whole lunge law method-independently).
+#[test]
+fn harm_stapled_onto_a_press_is_refused_and_commits_nothing() {
+    let mut d = Descent::deploy(12).expect("deploy");
+    d.delve().expect("way 1 is always open");
+    let before = d.sim().clone();
+
+    let mut forged = before.clone();
+    forged.wounds += 1;
+    forged.spent += 1;
+    forged.harm += 1;
+    let effects = d.effects_for(&forged);
+    assert!(
+        refused(d.commit_raw(SMITE, effects)),
+        "harm stapled onto the press is refused by the Lean-sourced teeth"
+    );
+    assert_eq!(
+        d.read_reg("harm"),
+        before.harm,
+        "anti-ghost: no grip broken"
+    );
+    assert_eq!(
+        d.read_reg("spent"),
+        before.spent,
+        "anti-ghost: no breath spent"
+    );
+
+    // The honest twin: the SAME write set under `lunge` commits.
+    let effects = d.effects_for(&forged);
+    d.commit_raw(LUNGE, effects)
+        .expect("the honest lunge commits");
+    assert_eq!(d.read_reg("harm"), before.harm + 1);
+}
+
+/// THE RATCHET RUNS ONE WAY AND HAS A CEILING, ON THE DEPLOYED TEETH.
+///
+/// The third lunge here is on a FRESH floor (`delve` resets `wounds`, so the guardian
+/// tooth is satisfied) and inside capacity (`pack 2 + depth 2 + harm 3 = 7 <= CAP`), so
+/// the only thing left to refuse it is the `[0, HARMCAP]` ratchet — this isolates the
+/// ceiling rather than re-testing the guardian.
+#[test]
+fn the_grip_never_heals_and_the_ratchet_has_a_ceiling() {
+    // Day 9 is `ghp = [0, 2, 2, 2, 2]`, `homes = [4, 1, 1, 2, 1, 2, 3, 4]` — both way-2
+    // keys lie on floor 1 and every guardian takes two blows.
+    let mut d = Descent::deploy_on_world(
+        5,
+        dungeon_on_dregg::descent::day_seed_from_deploy_seed(5),
+        9,
+    )
+    .expect("deploy on day 9");
+    d.delve().expect("way 1 is always open");
+    d.lunge().expect("first lunge");
+    d.lunge().expect("second lunge");
+    assert_eq!(d.read_reg("harm"), HARMCAP, "the ratchet is at its ceiling");
+    assert_eq!(d.read_reg("wounds"), 2, "the guardian is down");
+    d.loot(1).expect("the way-2 key");
+    d.loot(2).expect("the way-3 key");
+    d.unlock(2).expect("exercise it");
+    d.delve().expect("floor 2, a fresh guardian");
+    assert_eq!(d.read_reg("wounds"), 0, "wounds reset");
+    assert_eq!(
+        d.read_reg("harm"),
+        HARMCAP,
+        "harm does NOT reset — it is run-long"
+    );
+
+    // A third lunge would be harm 3. The guardian is fresh and capacity is fine, so the
+    // ratchet's ceiling is the only thing refusing it — the mover and the executor agree.
+    assert!(d.sim().lunge().is_err(), "the mover refuses a third lunge");
+    let before = d.sim().clone();
+    let mut over = before.clone();
+    over.wounds += 1;
+    over.spent += 1;
+    over.harm += 1;
+    let effects = d.effects_for(&over);
+    assert!(
+        refused(d.commit_raw(LUNGE, effects)),
+        "harm past the ratchet's ceiling is refused"
+    );
+
+    // Healing is refused too: `fieldDelta harm 1` is an exact step, not a bound.
+    let mut healed = before.clone();
+    healed.harm -= 1;
+    healed.wounds += 1;
+    healed.spent += 1;
+    let effects = d.effects_for(&healed);
+    assert!(
+        refused(d.commit_raw(LUNGE, effects)),
+        "a grip that heals is refused"
+    );
+    assert_eq!(d.read_reg("harm"), HARMCAP, "anti-ghost: the ratchet held");
+}
+
+/// ⚑ THE STAKE, DRIVEN: `Dungeon.crowned_full_bank_harmless` says a run that banks the
+/// prize AND all three keys took no harm at all. Here is the executor's half of it — the
+/// crowned line with ONE breath saved by a lunge on floor 1 cannot take the prize,
+/// because at depth 4 capacity is `CAP - FLOORS - harm` and the prize needs all of it.
+#[test]
+fn one_lunge_forfeits_the_crown() {
+    let mut d = Descent::deploy(7).expect("deploy");
+    d.delve().expect("floor 1");
+    d.lunge().expect("save a breath on the shallow guardian");
+    d.loot(1).expect("the way-2 key");
+    d.unlock(2).expect("exercise it");
+    d.delve().expect("floor 2");
+    d.smite().expect("press");
+    d.loot(2).expect("the way-3 key");
+    d.unlock(3).expect("exercise it");
+    d.delve().expect("floor 3");
+    d.smite().expect("press");
+    d.smite().expect("press");
+    d.loot(3).expect("the way-4 key");
+    d.unlock(4).expect("exercise it");
+    d.delve().expect("the bottom");
+    d.smite().expect("press");
+    d.smite().expect("press");
+    assert_eq!(d.read_reg("pack"), 3, "three keys");
+    assert_eq!(d.read_reg("harm"), 1, "one broken grip");
+    // pack 3 + 1 + depth 4 + harm 1 = 9 > CAP = 8.
+    assert!(
+        d.sim().loot(0).is_err(),
+        "the prize does not fit beside a broken grip"
+    );
+    // And the executor refuses the forged projection too.
+    let mut forged = d.sim().clone();
+    forged.custody[0] = CARRIED;
+    forged.spent += 1;
+    let effects = d.effects_for(&forged);
+    assert!(
+        refused(d.commit_raw(LOOT, effects)),
+        "the capacity commons refuse the crowned loot at harm = 1"
     );
 }

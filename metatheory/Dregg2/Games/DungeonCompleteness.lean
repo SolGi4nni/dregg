@@ -37,7 +37,7 @@ open Dregg2.Exec in
 /-- Negative tooth: changing any deployed keyed way while mutating/omitting its
 required carried-key exhibit is refused. -/
 theorem way_flip_key_mutation_refused (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ FLOORS)
-    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
+    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5 ∨ m = 6)
     {o n : Value}
     (hflip : (o.scalar (wayName w) == n.scalar (wayName w)) = false)
     (hmut : n.scalar (relicName (keyFor w)) ≠ some (CARRIED : Int)) :
@@ -95,6 +95,11 @@ private theorem encode_scalar_wounds (s : DState) :
   simp [encode, Value.scalar, Value.field]
 
 open Dregg2.Exec in
+private theorem encode_scalar_harm (s : DState) :
+    (encode s).scalar "harm" = some (s.harm : Int) := by
+  simp [encode, Value.scalar, Value.field]
+
+open Dregg2.Exec in
 private theorem encode_scalar_fate (s : DState) :
     (encode s).scalar "fate" = some (s.fate : Int) := by
   simp [encode, Value.scalar, Value.field]
@@ -137,7 +142,7 @@ private theorem encode_scalar_relic (s : DState) (i : Nat) (hi : i < RELICS) :
     simp [encode, Value.scalar, Value.field]
 
 attribute [simp] encode_scalar_depth encode_scalar_spent encode_scalar_wounds
-  encode_scalar_fate encode_scalar_pack encode_scalar_bank
+  encode_scalar_harm encode_scalar_fate encode_scalar_pack encode_scalar_bank
 
 open Dregg2.Exec in
 @[simp] private theorem encode_scalar_way2 (s : DState) :
@@ -257,6 +262,11 @@ theorem modelProgramInv_step {s s' : DState} {m : Move}
     split at hstep
     · cases hstep; exact hhome
     · exact absurd hstep (by simp)
+  | lunge =>
+    simp only [step] at hstep
+    split at hstep
+    · cases hstep; exact hhome
+    · exact absurd hstep (by simp)
   | loot r =>
     simp only [step] at hstep
     split at hstep
@@ -296,7 +306,7 @@ theorem modelProgramInv_step {s s' : DState} {m : Move}
 The model's coarse custody alphabet permits this state; the authored program's
 provenance tooth deliberately does not. -/
 def wrongHomeState : DState :=
-  { depth := 0, spent := 0, wounds := 0, fate := 0, ways := [0, 0, 0],
+  { depth := 0, spent := 0, wounds := 0, harm := 0, fate := 0, ways := [0, 0, 0],
     custody := [4, 2, 2, 3, 1, 1, 2, 3] }
 
 theorem wrongHomeState_inv : Inv wrongHomeState := by
@@ -389,8 +399,11 @@ private theorem coreTeeth_honest {s s' : DState} {m : Move}
   rcases hc with rfl | rfl | rfl | rfl | rfl
   · simp [Constraint.toExec, evalConstraint, hsum]
   · apply (evalConstraint_affineLe_iff _ _ _ _).2
-    refine ⟨(pack s' : Int) + (s'.depth : Int), ?_, ?_⟩
-    · simp [affineSum, add_comm]
+    refine ⟨(pack s' : Int) + (s'.depth : Int) + (s'.harm : Int), ?_, ?_⟩
+    · simp only [affineSum, List.map_cons, List.map_nil, List.foldr_cons,
+        List.foldr_nil, encode_scalar_pack, encode_scalar_depth, encode_scalar_harm,
+        Option.some.injEq]
+      ring
     · exact_mod_cast hPost.1.2.2.2.2.2.1
   · exact (evalSimple_strictMono_iff "spent" (encode s) (encode s')).2
       ⟨s.spent, s'.spent, by simp, by simp, by exact_mod_cast hspend⟩
@@ -597,6 +610,9 @@ private theorem case_all_of_constraints
 @[simp] private theorem smiteCase_guard : smiteCase.guard = .methodIs "smite" := rfl
 @[simp] private theorem lootCase_guard : lootCase.guard = .methodIs "loot" := rfl
 @[simp] private theorem fleeCase_guard : fleeCase.guard = .methodIs "flee" := rfl
+@[simp] private theorem lungeCase_guard : lungeCase.guard = .methodIs "lunge" := rfl
+@[simp] private theorem harmRider_guard :
+    harmRider.guard = .slotChangedForMethods "harm" verbs := rfl
 @[simp] private theorem depthRider_guard :
     depthRider.guard = .slotChangedForMethods "depth" verbs := rfl
 @[simp] private theorem wayRider_guard (w : Nat) :
@@ -769,7 +785,7 @@ private theorem delveCase_honest {s s' : DState}
       .fieldEquals "wounds" 0, .fieldEquals "fate" 0,
       wayTooth 2, wayTooth 3, wayTooth 4] ++
     frozen ["pack", "bank", wayName 2, wayName 3, wayName 4,
-      hoardName 1, hoardName 2, hoardName 3, hoardName 4] ++ relicFreeze at hc
+      hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -800,7 +816,7 @@ private theorem delveCase_honest {s s' : DState}
     · exact delve_wayTooth_honest hstep 4 (by decide) (by decide)
   · obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     all_goals
       simp only [step] at hstep
       split at hstep
@@ -861,7 +877,7 @@ theorem modelProgram_delve_admitted {s s' : DState}
   simp only [step] at hstep
   split at hstep
   · have hs' : s' =
-        { depth := s.depth + 1, spent := s.spent + 1, wounds := 0,
+        { depth := s.depth + 1, spent := s.spent + 1, wounds := 0, harm := s.harm,
           fate := s.fate, ways := s.ways, custody := s.custody } :=
       (Option.some.inj hstep).symm
     have hfilter :
@@ -870,7 +886,8 @@ theorem modelProgram_delve_admitted {s s' : DState}
             (encode s')) =
           [delveCase.toExec, depthRider.toExec, spentRider.toExec] := by
       simp [programCases, genesisCase, delveCase, unlockCase, smiteCase, lootCase,
-        fleeCase, depthRider, wayRider, fateRider, bankRider, spentRider,
+        fleeCase, lungeCase, depthRider, wayRider, fateRider, bankRider, harmRider,
+        spentRider,
         Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches,
         Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, verbs, bank, moveIdx, hs']
     simp only [dungeonExec, dungeonProgram, CellProgram.toExec,
@@ -887,7 +904,7 @@ private theorem unlockCase_honest {s s' : DState} {w : Nat}
   intro c hc
   change c ∈ coreTeeth ++ [.fieldDelta "spent" 1, .fieldEquals "fate" 0] ++
     frozen ["depth", "wounds", "pack", "bank", hoardName 1, hoardName 2,
-      hoardName 3, hoardName 4] ++ relicFreeze at hc
+      hoardName 3, hoardName 4, "harm"] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -905,7 +922,7 @@ private theorem unlockCase_honest {s s' : DState} {w : Nat}
       · exact absurd hstep (by simp)
   · obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     all_goals
       simp only [step] at hstep
       split at hstep
@@ -1004,7 +1021,7 @@ theorem modelProgram_unlock_admitted {s s' : DState} {w : Nat}
         simp only [programCases, List.map_cons, List.map_nil, List.mem_cons,
           List.not_mem_nil, or_false] at htc
         rcases htc with rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-          rfl | rfl | rfl | rfl | rfl | rfl
+          rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
         · exfalso
           simp [Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches,
             moveIdx] at hmatch
@@ -1021,6 +1038,8 @@ theorem modelProgram_unlock_admitted {s s' : DState} {w : Nat}
         · exfalso
           simp [Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches,
             moveIdx] at hmatch
+        · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+            TransitionGuard.matches, moveIdx] at hmatch
         · exfalso
           simp [Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches,
             Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, verbs, moveIdx] at hmatch
@@ -1050,6 +1069,9 @@ theorem modelProgram_unlock_admitted {s s' : DState} {w : Nat}
           simp [Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches,
             Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, verbs, bank, moveIdx,
             hlegal] at hmatch
+        · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+            TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+            verbs, moveIdx] at hmatch
         · exact hSpent
   · exact absurd hstep (by simp)
 
@@ -1093,7 +1115,7 @@ private theorem smiteCase_honest {s s' : DState}
       .fieldGte "depth" 1, .fieldEquals "fate" 0,
       guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4] ++
     frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4,
-      hoardName 1, hoardName 2, hoardName 3, hoardName 4] ++ relicFreeze at hc
+      hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1129,7 +1151,7 @@ private theorem smiteCase_honest {s s' : DState}
     · exact smite_guardCap_honest hstep 4
   · obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     all_goals
       simp only [step] at hstep
       split at hstep
@@ -1168,7 +1190,7 @@ theorem modelProgram_smite_admitted {s s' : DState}
       simp only [programCases, List.map_cons, List.map_nil, List.mem_cons,
         List.not_mem_nil, or_false] at htc
       rcases htc with rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-        rfl | rfl | rfl | rfl | rfl | rfl
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
@@ -1176,6 +1198,8 @@ theorem modelProgram_smite_admitted {s s' : DState}
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exact hSmite
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
@@ -1198,6 +1222,243 @@ theorem modelProgram_smite_admitted {s s' : DState}
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
           verbs, bank, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
+      · exact hSpent
+  · exact absurd hstep (by simp)
+
+/-! ### The LUNGE — the second blow, and the only verb that may move `harm`.
+
+`lunge` is `smite`'s twin everywhere except the two registers that are the whole design:
+it pays `1` breath instead of `2`, and it writes `harm += 1`. So its completeness rung
+is the smite rung plus (a) the `harm` delta and range teeth on its own arm and (b) the
+`harmRider`, which fires on ANY method that moves the slot and therefore has to be
+discharged here rather than assumed. -/
+
+open Dregg2.Exec in
+private theorem lunge_guardCap_honest {s s' : DState}
+    (hstep : step s .lunge = some s') (d : Nat) :
+    evalConstraint (guardCapTooth d).toExec (encode s) (encode s') = true := by
+  simp only [step] at hstep
+  split at hstep
+  · rename_i hlegal
+    cases hstep
+    by_cases heq : s.depth = d
+    · simp only [guardCapTooth, Constraint.toExec, List.map_cons, List.map_nil,
+        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
+        Bool.or_eq_true]
+      right
+      unfold evalSimple
+      rw [encode_scalar_wounds]
+      change decide (((s.wounds + 1 : Nat) : Int) ≤ (guardHp d : Int)) = true
+      apply decide_eq_true
+      exact_mod_cast (heq ▸ hlegal.2.2.2.1)
+    · simp only [guardCapTooth, Constraint.toExec, List.map_cons, List.map_nil,
+        Simple.toExec, evalConstraint, List.any_cons, List.any_nil, Bool.or_false,
+        Bool.or_eq_true]
+      left
+      simp only [evalSimple]
+      rw [encode_scalar_depth]
+      have hz : (s.depth : Int) ≠ (d : Int) := by exact_mod_cast heq
+      simpa using hz
+  · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- The two teeth that ARE the lunge: an exact `+1` on `harm`, inside the ratchet's
+`[0, HARMCAP]` range. Both are discharged from the model gate `s.harm + 1 ≤ HARMCAP`. -/
+private theorem lunge_harm_eq {s s' : DState} (hstep : step s .lunge = some s') :
+    s'.harm = s.harm + 1 ∧ s.harm + 1 ≤ HARMCAP := by
+  simp only [step] at hstep
+  split at hstep
+  · rename_i hlegal
+    cases hstep
+    exact ⟨rfl, hlegal.2.2.2.2.1⟩
+  · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+private theorem lunge_harm_honest {s s' : DState}
+    (hstep : step s .lunge = some s') :
+    evalConstraint (Constraint.fieldDelta "harm" 1).toExec (encode s) (encode s') = true
+      ∧ evalConstraint (Constraint.inRangeTwoSided "harm" 0 HARMCAP).toExec
+          (encode s) (encode s') = true := by
+  obtain ⟨hdelta, hcapH⟩ := lunge_harm_eq hstep
+  refine ⟨?_, ?_⟩
+  · simp only [Constraint.toExec, evalConstraint]
+    unfold evalSimple
+    rw [encode_scalar_harm, encode_scalar_harm, hdelta]
+    simp
+  · apply (evalSimple_inRangeTwoSided_iff "harm" (0 : Int) ((HARMCAP : Nat) : Int)
+      (encode s) (encode s')).2
+    refine ⟨(s'.harm : Int), encode_scalar_harm s', by exact_mod_cast Nat.zero_le _, ?_⟩
+    rw [hdelta]
+    exact_mod_cast hcapH
+
+open Dregg2.Exec in
+private theorem lungeCase_honest {s s' : DState}
+    (hInv : ModelProgramInv s) (hstep : step s .lunge = some s') :
+    (lungeCase.toExec).constraints.all
+      (fun c => evalConstraint c (encode s) (encode s')) = true := by
+  apply case_all_of_constraints
+  intro c hc
+  change c ∈ coreTeeth ++
+    [.fieldDelta "spent" 1, .fieldDelta "wounds" 1, .fieldDelta "harm" 1,
+      .inRangeTwoSided "harm" 0 HARMCAP,
+      .fieldGte "depth" 1, .fieldEquals "fate" 0,
+      guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4] ++
+    frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4,
+      hoardName 1, hoardName 2, hoardName 3, hoardName 4] ++ relicFreeze at hc
+  simp only [List.mem_append] at hc
+  rcases hc with ((hcore | hverb) | hfrozen) | hrelic
+  · exact coreTeeth_honest hInv hstep c hcore
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at hverb
+    rcases hverb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    · simp only [Constraint.toExec, evalConstraint]
+      unfold evalSimple
+      rw [encode_scalar_spent, encode_scalar_spent, legal_step_spent_eq hstep]
+      simp [price]
+    · simp only [step] at hstep
+      split at hstep
+      · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
+      · exact absurd hstep (by simp)
+    · exact (lunge_harm_honest hstep).1
+    · exact (lunge_harm_honest hstep).2
+    · simp only [step] at hstep
+      split at hstep
+      · rename_i hlegal
+        cases hstep
+        simp only [Constraint.toExec, evalConstraint]
+        unfold evalSimple
+        rw [encode_scalar_depth]
+        change decide ((1 : Int) ≤ (s.depth : Int)) = true
+        exact decide_eq_true (by exact_mod_cast hlegal.2.2.1)
+      · exact absurd hstep (by simp)
+    · simp only [step] at hstep
+      split at hstep
+      · rename_i hlegal
+        cases hstep
+        simp [Constraint.toExec, evalConstraint, evalSimple, hlegal.1]
+      · exact absurd hstep (by simp)
+    · exact lunge_guardCap_honest hstep 1
+    · exact lunge_guardCap_honest hstep 2
+    · exact lunge_guardCap_honest hstep 3
+    · exact lunge_guardCap_honest hstep 4
+  · obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hfrozen
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    all_goals
+      simp only [step] at hstep
+      split at hstep
+      · cases hstep
+        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt]
+      · exact absurd hstep (by simp)
+  · obtain ⟨i, hiRange, rfl⟩ := List.mem_map.mp hrelic
+    have hi : i < RELICS := List.mem_range.mp hiRange
+    simp only [step] at hstep
+    split at hstep
+    · cases hstep
+      simp only [Constraint.toExec, HeapAtom.toExec, HeapKeyRef.field,
+        evalConstraint, evalSimple]
+      rw [encode_scalar_relic s i hi, encode_scalar_relic _ i hi]
+      simp
+    · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- ⚑ THE ANTI-STAPLE RIDER, DISCHARGED. `harmRider` fires on any method that moves the
+`harm` slot; the honest lunge satisfies its whole law, so the rider costs the legal verb
+nothing while making the slot unstapleable onto every other one. -/
+private theorem harmRider_lunge_honest {s s' : DState}
+    (hInv : ModelProgramInv s) (hstep : step s .lunge = some s') :
+    (harmRider.toExec).constraints.all
+      (fun c => evalConstraint c (encode s) (encode s')) = true := by
+  apply case_all_of_constraints
+  intro c hc
+  change c ∈ coreTeeth ++
+    [.fieldDelta "harm" 1, .inRangeTwoSided "harm" 0 HARMCAP,
+      .fieldDelta "wounds" 1, .fieldGte "depth" 1, .fieldEquals "fate" 0] at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hc
+  rcases hc with hcore | rfl | rfl | rfl | rfl | rfl
+  · exact coreTeeth_honest hInv hstep c hcore
+  · exact (lunge_harm_honest hstep).1
+  · exact (lunge_harm_honest hstep).2
+  · simp only [step] at hstep
+    split at hstep
+    · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
+    · exact absurd hstep (by simp)
+  · simp only [step] at hstep
+    split at hstep
+    · rename_i hlegal
+      cases hstep
+      simp only [Constraint.toExec, evalConstraint]
+      unfold evalSimple
+      rw [encode_scalar_depth]
+      change decide ((1 : Int) ≤ (s.depth : Int)) = true
+      exact decide_eq_true (by exact_mod_cast hlegal.2.2.1)
+    · exact absurd hstep (by simp)
+  · simp only [step] at hstep
+    split at hstep
+    · rename_i hlegal
+      cases hstep
+      simp [Constraint.toExec, evalConstraint, evalSimple, hlegal.1]
+    · exact absurd hstep (by simp)
+
+open Dregg2.Exec in
+/-- **Every honest lunge is admitted** — its own arm, the `harmRider` its write summons,
+and the universal spent rider. -/
+theorem modelProgram_lunge_admitted {s s' : DState}
+    (hInv : ModelProgramInv s) (hstep : step s .lunge = some s') :
+    RecordProgram.admits dungeonExec (moveIdx .lunge)
+      (encode s) (encode s') = true := by
+  have hLunge := lungeCase_honest hInv hstep
+  have hHarm := harmRider_lunge_honest hInv hstep
+  have hSpent : (spentRider.toExec).constraints.all
+      (fun c => evalConstraint c (encode s) (encode s')) = true :=
+    case_all_of_constraints (spentRider_honest hInv hstep)
+  simp only [step] at hstep
+  split at hstep
+  · rename_i hlegal
+    cases hstep
+    simp only [dungeonExec, dungeonProgram, CellProgram.toExec]
+    apply cases_admit_of
+    · refine ⟨lungeCase.toExec, by simp [programCases], ?_⟩
+      simp [Case.toExec, Guard.toExec, methodIdx, TransitionGuard.matches, moveIdx]
+    · intro tc htc hmatch
+      simp only [programCases, List.map_cons, List.map_nil, List.mem_cons,
+        List.not_mem_nil, or_false] at htc
+      rcases htc with rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
+      · exact hLunge
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx, hlegal.1] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, bank, moveIdx] at hmatch
+      · exact hHarm
       · exact hSpent
   · exact absurd hstep (by simp)
 
@@ -1280,7 +1541,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
       guardSlainTooth 1, guardSlainTooth 2, guardSlainTooth 3, guardSlainTooth 4,
       hoardFrameTooth 1, hoardFrameTooth 2, hoardFrameTooth 3,
       hoardFrameTooth 4] ++
-    frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4] at hc
+    frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm"] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1299,7 +1560,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
           apply beq_eq_false_iff_ne.mpr
           have hFloorCarried : FLOORS < CARRIED := by decide
           omega
-        have hpack : pack (DState.mk s.depth (s.spent + 1) s.wounds s.fate
+        have hpack : pack (DState.mk s.depth (s.spent + 1) s.wounds s.harm s.fate
               s.ways (s.custody.set r CARRIED)) = pack s + 1 := by
           simp only [pack]
           exact countP_set_bump_local _ hlegal.2.2.2.1 hdepthCarried (by simp)
@@ -1335,7 +1596,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
     · exact loot_hoardFrame_honest hInv hstep (by decide) (by decide)
   · obtain ⟨reg, hreg, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hreg
-    rcases hreg with rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hreg with rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · simp only [step] at hstep
       split at hstep
       · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
@@ -1353,7 +1614,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
           have hFloorBanked : FLOORS < BANKED := by decide
           omega
         have hcarriedBanked : (CARRIED == BANKED) = false := by decide
-        have hbank : bank (DState.mk s.depth (s.spent + 1) s.wounds s.fate
+        have hbank : bank (DState.mk s.depth (s.spent + 1) s.wounds s.harm s.fate
               s.ways (s.custody.set r CARRIED)) = bank s := by
           simp only [bank]
           exact countP_set_same_local _ hlegal.2.2.2.1
@@ -1398,7 +1659,7 @@ theorem modelProgram_loot_admitted {s s' : DState} {r : Nat}
       simp only [programCases, List.map_cons, List.map_nil, List.mem_cons,
         List.not_mem_nil, or_false] at htc
       rcases htc with rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-        rfl | rfl | rfl | rfl | rfl | rfl
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
@@ -1408,6 +1669,8 @@ theorem modelProgram_loot_admitted {s s' : DState} {r : Nat}
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exact hLoot
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
@@ -1428,6 +1691,9 @@ theorem modelProgram_loot_admitted {s s' : DState} {r : Nat}
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
           verbs, bank, moveIdx, hbankSame] at hmatch
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
       · exact hSpent
   · exact absurd hstep (by simp)
 
@@ -1452,7 +1718,7 @@ private theorem flee_hoard_immutable_honest {s s' : DState}
     rw [encode_scalar_hoard s d hdLo hdHi,
       encode_scalar_hoard _ d hdLo hdHi]
     rw [show hoardAt
-        { depth := s.depth, spent := s.spent + 1, wounds := s.wounds,
+        { depth := s.depth, spent := s.spent + 1, wounds := s.wounds, harm := s.harm,
           fate := 1, ways := s.ways,
           custody := s.custody.map
             (fun c => if c = CARRIED then BANKED else c) } d = hoardAt s d by
@@ -1470,7 +1736,7 @@ private theorem fleeCase_honest {s s' : DState}
   change c ∈ coreTeeth ++
     [.fieldDelta "spent" 1, .fieldEquals "fate" 1, .fieldEquals "pack" 0] ++
     frozen ["depth", "wounds", wayName 2, wayName 3, wayName 4,
-      hoardName 1, hoardName 2, hoardName 3, hoardName 4] at hc
+      hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm"] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1487,7 +1753,7 @@ private theorem fleeCase_honest {s s' : DState}
     · simp only [step] at hstep
       split at hstep
       · have hpack : pack
-            { depth := s.depth, spent := s.spent + 1, wounds := s.wounds,
+            { depth := s.depth, spent := s.spent + 1, wounds := s.wounds, harm := s.harm,
               fate := 1, ways := s.ways,
               custody := s.custody.map
                 (fun c => if c = CARRIED then BANKED else c) } = 0 := by
@@ -1497,7 +1763,7 @@ private theorem fleeCase_honest {s s' : DState}
       · exact absurd hstep (by simp)
   · obtain ⟨reg, hreg, rfl⟩ := List.mem_map.mp hfrozen
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hreg
-    rcases hreg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hreg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
     · simp only [step] at hstep
       split at hstep
       · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
@@ -1522,6 +1788,10 @@ private theorem fleeCase_honest {s s' : DState}
     · exact flee_hoard_immutable_honest hstep 2 (by decide) (by decide)
     · exact flee_hoard_immutable_honest hstep 3 (by decide) (by decide)
     · exact flee_hoard_immutable_honest hstep 4 (by decide) (by decide)
+    · simp only [step] at hstep
+      split at hstep
+      · cases hstep; simp [Constraint.toExec, evalConstraint, evalSimple]
+      · exact absurd hstep (by simp)
 
 open Dregg2.Exec in
 private theorem fateRider_flee_honest {s s' : DState}
@@ -1544,7 +1814,7 @@ private theorem fateRider_flee_honest {s s' : DState}
   · simp only [step] at hstep
     split at hstep
     · have hpack : pack
-          { depth := s.depth, spent := s.spent + 1, wounds := s.wounds,
+          { depth := s.depth, spent := s.spent + 1, wounds := s.wounds, harm := s.harm,
             fate := 1, ways := s.ways,
             custody := s.custody.map
               (fun c => if c = CARRIED then BANKED else c) } = 0 := by
@@ -1571,7 +1841,7 @@ private theorem bankRider_flee_honest {s s' : DState}
   · simp only [step] at hstep
     split at hstep
     · have hpack : pack
-          { depth := s.depth, spent := s.spent + 1, wounds := s.wounds,
+          { depth := s.depth, spent := s.spent + 1, wounds := s.wounds, harm := s.harm,
             fate := 1, ways := s.ways,
             custody := s.custody.map
               (fun c => if c = CARRIED then BANKED else c) } = 0 := by
@@ -1602,7 +1872,7 @@ theorem modelProgram_flee_admitted {s s' : DState}
       simp only [programCases, List.map_cons, List.map_nil, List.mem_cons,
         List.not_mem_nil, or_false] at htc
       rcases htc with rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-        rfl | rfl | rfl | rfl | rfl | rfl
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
@@ -1614,6 +1884,8 @@ theorem modelProgram_flee_admitted {s s' : DState}
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, moveIdx] at hmatch
       · exact hFlee
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, moveIdx] at hmatch
       · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
           TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
           verbs, moveIdx] at hmatch
@@ -1628,6 +1900,9 @@ theorem modelProgram_flee_admitted {s s' : DState}
           verbs, moveIdx] at hmatch
       · exact hFate
       · exact hBank
+      · exfalso; simp [Case.toExec, Guard.toExec, methodIdx,
+          TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch,
+          verbs, moveIdx] at hmatch
       · exact hSpent
   · exact absurd hstep (by simp)
 
@@ -1642,6 +1917,7 @@ theorem modelProgram_step_admitted {s s' : DState} {m : Move}
   | delve => exact modelProgram_delve_admitted hInv hstep
   | unlock w => exact modelProgram_unlock_admitted hInv hstep
   | smite => exact modelProgram_smite_admitted hInv hstep
+  | lunge => exact modelProgram_lunge_admitted hInv hstep
   | loot r => exact modelProgram_loot_admitted hInv hstep
   | flee => exact modelProgram_flee_admitted hInv hstep
 
@@ -1710,6 +1986,7 @@ theorem inv_not_sufficient_for_step_admission :
 #assert_axioms modelProgram_delve_admitted
 #assert_axioms modelProgram_unlock_admitted
 #assert_axioms modelProgram_smite_admitted
+#assert_axioms modelProgram_lunge_admitted
 #assert_axioms modelProgram_loot_admitted
 #assert_axioms modelProgram_flee_admitted
 #assert_axioms modelProgram_step_admitted

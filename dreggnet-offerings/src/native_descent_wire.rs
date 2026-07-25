@@ -400,6 +400,7 @@ fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
             i64::try_from(way).expect("native way index fits the action wire"),
         ),
         NativeDescentMove::Smite => ("smite", 0),
+        NativeDescentMove::Lunge => ("lunge", 0),
         NativeDescentMove::Loot { relic } => (
             "loot",
             i64::try_from(relic).expect("native relic index fits the action wire"),

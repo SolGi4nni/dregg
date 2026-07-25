@@ -29,6 +29,17 @@ dreggic object it wants to be:
    a run is at most `BREATH` turns (`run_bounded`) and at `spent = BREATH` no verb is
    legal (`the_light_dies`).
 
+3b. **The guardian does not kill you — it BREAKS YOUR GRIP.** There are no hit points to
+   take, so the descent's HP-analogue is CAPACITY. `harm` is a run-long ratchet in
+   `0..HARMCAP` and the capacity law is `pack + depth + harm ≤ CAP`: every harm taken is
+   one relic that does not leave the dungeon. Two verbs strike the standing guardian:
+   `smite` (the *press*) costs 2 breath and no harm, `lunge` costs 1 breath and +1 harm.
+   Because capacity already attenuates with depth, the SAME posted price is cheap at
+   depth 1 (7 slots) and ruinous at depth 4 (4 slots — exactly three keys plus the
+   prize), so a `guardHp = 2` floor is a mixable decision rather than a quotient. Unlike
+   `wounds`, `harm` is NOT reset by `delve` (`harm_ratchets`); and taking any harm at all
+   forfeits the full crown (`crowned_full_bank_harmless`).
+
 4. **Keys are capabilities.** The way to floor `w` opens only by EXERCISING the carried
    key-relic for `w` (`keyless_unlock_impossible`): a key is an owned, un-dupable relic
    whose own provenance chain proves where it was won.
@@ -61,8 +72,13 @@ abbrev RELICS : Nat := 8
 clear is impossible (see `no_run_banks_everything` — by capacity, not by breath). -/
 abbrev BREATH : Nat := 26
 
-/-- Carrying rights at the surface; the capacity law is `pack + depth ≤ CAP`. -/
+/-- Carrying rights at the surface; the capacity law is `pack + depth + harm ≤ CAP`. -/
 abbrev CAP : Nat := 8
+
+/-- The most harm a run can take and still be running: `harm` is a `0..2` ratchet, and
+each point of it is a permanently forfeited carry slot. Three broken grips and there is
+nothing left to attenuate — the deployed `harm` register carries exactly this range. -/
+abbrev HARMCAP : Nat := 2
 
 /-! ### Custody codes — the provenance ratchet's ordered alphabet.
 
@@ -206,14 +222,19 @@ structure DState where
   depth   : Nat
   spent   : Nat
   wounds  : Nat
+  /-- The RUN-LONG grip damage the guardians have done, `0..HARMCAP`. Unlike `wounds`
+  (which is the standing guardian's tally and resets on `delve`), `harm` never resets and
+  never decreases: it is subtracted from carrying rights for the rest of the run. -/
+  harm    : Nat
   fate    : Nat          -- 0 = alive, 1 = banked
   ways    : List Nat     -- 0/1 each
   custody : List Nat
 deriving Repr, DecidableEq
 
-/-- The minted world: surface, full light, ways shut, every relic at its home floor. -/
+/-- The minted world: surface, full light, unbroken grip, ways shut, every relic at its
+home floor. -/
 def genesisState : DState :=
-  { depth := 0, spent := 0, wounds := 0, fate := 0
+  { depth := 0, spent := 0, wounds := 0, harm := 0, fate := 0
     ways := [0, 0, 0], custody := homeFloors }
 
 /-- Pack size — a PROJECTION of custody (design law 1). -/
@@ -237,12 +258,14 @@ def wayOpen (s : DState) (d : Nat) : Bool :=
 inductive Move where
   | delve                  -- descend one floor (the way must be open; wounds reset)
   | unlock (w : Nat)       -- exercise the carried key-relic to open way w
-  | smite                  -- wound the standing floor's guardian (price 2 — it strikes back)
+  | smite                  -- THE PRESS: wound the guardian (price 2 — it strikes back)
+  | lunge                  -- wound the guardian for 1 breath and +1 HARM (a carry slot)
   | loot (r : Nat)         -- take relic r from the standing floor's hoard (guardian slain)
   | flee                   -- surface and bank the pack; the run ends
 deriving Repr, DecidableEq
 
-/-- The posted price of a verb in breath. -/
+/-- The posted price of a verb in breath. `smite` alone costs two: `lunge` buys that
+second breath back and pays for it in `harm` instead. -/
 def price : Move → Nat
   | .smite => 2
   | _      => 1
@@ -253,7 +276,9 @@ def step (s : DState) : Move → Option DState
   | .delve =>
       if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ s.depth < FLOORS
           ∧ wayOpen s (s.depth + 1) = true
-          ∧ pack s + (s.depth + 1) ≤ CAP then       -- attenuated carrying rights
+          ∧ pack s + (s.depth + 1) + s.harm ≤ CAP then  -- attenuated carrying rights
+        -- `wounds` resets (a fresh guardian stands below); `harm` does NOT — it is a
+        -- run-long ratchet, and `{s with …}` carries it forward by construction.
         some { s with depth := s.depth + 1, wounds := 0, spent := s.spent + 1 }
       else none
   | .unlock w =>
@@ -267,11 +292,21 @@ def step (s : DState) : Move → Option DState
           ∧ s.wounds + 1 ≤ guardHp s.depth then
         some { s with wounds := s.wounds + 1, spent := s.spent + 2 }
       else none
+  | .lunge =>
+      -- The same blow for HALF the breath, paid in grip: `harm + 1`. The capacity
+      -- clause is the whole decision — at depth 1 it costs a slot you were never going
+      -- to fill, at depth 4 it costs the prize.
+      if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ 1 ≤ s.depth
+          ∧ s.wounds + 1 ≤ guardHp s.depth
+          ∧ s.harm + 1 ≤ HARMCAP                       -- the ratchet's ceiling
+          ∧ pack s + s.depth + (s.harm + 1) ≤ CAP then -- attenuated carrying rights
+        some { s with wounds := s.wounds + 1, spent := s.spent + 1, harm := s.harm + 1 }
+      else none
   | .loot r =>
       if s.fate = 0 ∧ s.spent + 1 ≤ BREATH ∧ 1 ≤ s.depth
           ∧ s.custody[r]? = some s.depth              -- the relic lies HERE
           ∧ s.wounds = guardHp s.depth                -- the guardian is slain
-          ∧ pack s + 1 + s.depth ≤ CAP then           -- attenuated carrying rights
+          ∧ pack s + 1 + s.depth + s.harm ≤ CAP then  -- attenuated carrying rights
         some { s with custody := s.custody.set r CARRIED, spent := s.spent + 1 }
       else none
   | .flee =>
@@ -412,11 +447,12 @@ def Inv (s : DState) : Prop :=
     ∧ s.depth ≤ FLOORS
     ∧ s.fate ≤ 1
     ∧ s.ways.length = FLOORS - 1
-    ∧ pack s + s.depth ≤ CAP
+    ∧ pack s + s.depth + s.harm ≤ CAP
     ∧ (s.fate = 0 → bank s = 0)
-    ∧ (s.fate = 1 → pack s = 0 ∧ bank s + s.depth ≤ CAP)
+    ∧ (s.fate = 1 → pack s = 0 ∧ bank s + s.depth + s.harm ≤ CAP)
     ∧ (s.depth = 0 → pack s = 0 ∧ bank s = 0)
     ∧ (s.custody[0]? = some FLOORS ∨ s.depth = FLOORS)
+    ∧ s.harm ≤ HARMCAP
 
 /-- No relic is minted already-carried or already-banked (every home is a real floor). -/
 private theorem genesis_pack_zero : pack genesisState = 0 := by
@@ -446,10 +482,10 @@ private theorem genesis_prize : genesisState.custody[0]? = some FLOORS := by
 theorem inv_genesis : Inv genesisState := by
   refine ⟨⟨wf_homes_length, ?_⟩,
     (Nat.zero_le _), (Nat.zero_le _), (Nat.zero_le _), rfl, ?_, ?_, ?_, ?_,
-    Or.inl genesis_prize⟩
+    Or.inl genesis_prize, Nat.zero_le _⟩
   · intro c hc
     exact Or.inl (wf_home_floor hc)
-  · show pack genesisState + 0 ≤ CAP
+  · show pack genesisState + 0 + 0 ≤ CAP
     rw [genesis_pack_zero]; decide
   · intro _; exact genesis_bank_zero
   · intro hf; exact absurd (show (0 : Nat) = 1 from hf) (by decide)
@@ -458,7 +494,8 @@ theorem inv_genesis : Inv genesisState := by
 /-- **Invariant preservation** — every legal turn preserves the design laws. -/
 theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some s') :
     Inv s' := by
-  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hd0, hprize⟩ := hInv
+  obtain ⟨⟨hlen, hcodes⟩, hspent, hdepth, hfate, hways, hcap, hb0, hb1, hd0, hprize,
+    hharm⟩ := hInv
   cases m with
   | delve =>
     simp only [step] at h
@@ -466,7 +503,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3, h4⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, ?_, ?_, hways, ?_, ?_, ?_, ?_, ?_⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, ?_, ?_, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
       · show s.spent + 1 ≤ BREATH; omega
       · show s.depth + 1 ≤ FLOORS; omega
       · exact hfate
@@ -484,7 +521,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3, h4, h5⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, ?_, hcap, ?_, ?_, hd0, ?_⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, ?_, hcap, ?_, ?_, hd0, ?_, hharm⟩
       · show s.spent + 1 ≤ BREATH; omega
       · show (s.ways.set (w - 2) 1).length = FLOORS - 1
         simpa using hways
@@ -500,13 +537,29 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
     case isTrue hcond =>
       obtain ⟨h0, h1, h2, h3⟩ := hcond
       cases h
-      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, hcap, ?_, ?_, hd0, ?_⟩
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, hcap, ?_, ?_, hd0, ?_, hharm⟩
       · show s.spent + 2 ≤ BREATH; omega
       · intro hf; exact hb0 hf
       · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
       · rcases hprize with hp | hp
         · exact Or.inl hp
         · exact Or.inr hp
+    case isFalse => exact absurd h (by simp)
+  | lunge =>
+    simp only [step] at h
+    split at h
+    case isTrue hcond =>
+      obtain ⟨h0, h1, h2, h3, h4, h5⟩ := hcond
+      cases h
+      refine ⟨⟨hlen, hcodes⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, hd0, ?_, ?_⟩
+      · show s.spent + 1 ≤ BREATH; omega
+      · show pack s + s.depth + (s.harm + 1) ≤ CAP; exact h5
+      · intro hf; exact hb0 hf
+      · intro hf; exact absurd (show s.fate = 1 from hf) (by omega)
+      · rcases hprize with hp | hp
+        · exact Or.inl hp
+        · exact Or.inr hp
+      · show s.harm + 1 ≤ HARMCAP; exact h4
     case isFalse => exact absurd h (by simp)
   | loot r =>
     simp only [step] at h
@@ -527,7 +580,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
           (s.custody.set r CARRIED).countP (· == BANKED)
             = s.custody.countP (· == BANKED) :=
         countP_set_same _ h3 (by simp [hdB])
-      refine ⟨⟨?_, ?_⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, ?_, ?_⟩
+      refine ⟨⟨?_, ?_⟩, ?_, hdepth, hfate, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
       · show (s.custody.set r CARRIED).length = RELICS
         simpa using hlen
       · intro c hc
@@ -535,7 +588,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
         · exact hcodes c hcl
         · right; left; exact hcv
       · show s.spent + 1 ≤ BREATH; omega
-      · show (s.custody.set r CARRIED).countP (· == CARRIED) + s.depth ≤ CAP
+      · show (s.custody.set r CARRIED).countP (· == CARRIED) + s.depth + s.harm ≤ CAP
         rw [hpackBump]
         exact h5
       · intro _
@@ -568,7 +621,7 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
       have hbank : (s.custody.map fleeMap).countP (· == BANKED)
           = s.custody.countP (· == CARRIED) + s.custody.countP (· == BANKED) :=
         countP_fleeMap_banked _
-      refine ⟨⟨?_, ?_⟩, ?_, hdepth, ?_, hways, ?_, ?_, ?_, ?_, ?_⟩
+      refine ⟨⟨?_, ?_⟩, ?_, hdepth, ?_, hways, ?_, ?_, ?_, ?_, ?_, hharm⟩
       · show (s.custody.map fleeMap).length = RELICS
         simpa using hlen
       · intro c hc
@@ -582,17 +635,22 @@ theorem inv_step {s s' : DState} {m : Move} (hInv : Inv s) (h : step s m = some 
           subst hca; exact hcodes c ha
       · show s.spent + 1 ≤ BREATH; omega
       · show (1 : Nat) ≤ 1; exact Nat.le_refl 1
-      · show (s.custody.map fleeMap).countP (· == CARRIED) + s.depth ≤ CAP
-        rw [hpack0]; omega
+      · show (s.custody.map fleeMap).countP (· == CARRIED) + s.depth + s.harm ≤ CAP
+        rw [hpack0]
+        have hcap' : pack s + s.depth + s.harm ≤ CAP := hcap
+        simp only [pack] at hcap'
+        omega
       · intro hf; exact absurd (show (1 : Nat) = 0 from hf) (by omega)
       · intro _
         refine ⟨hpack0, ?_⟩
-        show (s.custody.map fleeMap).countP (· == BANKED) + s.depth ≤ CAP
+        show (s.custody.map fleeMap).countP (· == BANKED) + s.depth + s.harm ≤ CAP
         rw [hbank]
         have hbz := hb0 h0
         simp only [bank] at hbz
         rw [hbz]
-        simpa [pack] using hcap
+        have hcap' : pack s + s.depth + s.harm ≤ CAP := hcap
+        simp only [pack] at hcap'
+        omega
       · intro hdz
         have hdz' : s.depth = 0 := hdz
         obtain ⟨hp, hb⟩ := hd0 hdz'
@@ -634,10 +692,26 @@ theorem inv_reachable {s : DState} (h : Reachable s) : Inv s := by
 
 /-! ## 7. The design laws as standalone theorems. -/
 
-/-- **Law 2 — descent attenuates capability**: carried relics + depth never exceed CAP. -/
+/-- **Law 2 — descent attenuates capability**: carried relics + depth + the grip the
+guardians have broken never exceed CAP. -/
 theorem capacity_attenuates {s : DState} (h : Reachable s) :
-    pack s + s.depth ≤ CAP :=
+    pack s + s.depth + s.harm ≤ CAP :=
   (inv_reachable h).2.2.2.2.2.1
+
+/-- **Law 3b — harm is a RATCHET, and `delve` does not wash it off.** `wounds` is the
+standing guardian's tally and resets on descent; `harm` is the run's, and only ever
+climbs — capped at `HARMCAP`. -/
+theorem harm_ratchets {s s' : DState} {m : Move} (h : step s m = some s') :
+    s.harm ≤ s'.harm := by
+  cases m <;> simp only [step] at h <;> split at h <;>
+    first
+      | (cases h; exact Nat.le_refl _)
+      | (cases h; exact Nat.le_succ _)
+      | (cases h; omega)
+      | exact absurd h (by simp)
+
+theorem harm_bounded {s : DState} (h : Reachable s) : s.harm ≤ HARMCAP :=
+  (inv_reachable h).2.2.2.2.2.2.2.2.2.2
 
 /-- **Law 3a — the light dies**: at `spent = BREATH` no verb is legal. Permadeath is a
 theorem, not a timer. -/
@@ -720,6 +794,10 @@ theorem custody_ratchet {s s' : DState} {m : Move} (hInv : Inv s)
     simp only [step] at h; split at h
     · cases h; simp only at hgb; rw [hga] at hgb; cases hgb; omega
     · exact absurd h (by simp)
+  | lunge =>
+    simp only [step] at h; split at h
+    · cases h; simp only at hgb; rw [hga] at hgb; cases hgb; omega
+    · exact absurd h (by simp)
   | loot r =>
     simp only [step] at h; split at h
     · rename_i hc
@@ -757,7 +835,7 @@ be banked; the capacity attenuation makes a full clear UNPROVABLE, not merely ha
 theorem no_run_banks_everything {s : DState} (h : Reachable s) :
     bank s < RELICS := by
   have hInv := inv_reachable h
-  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, _⟩ := hInv
+  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, _, hharm⟩ := hInv
   by_cases hf : s.fate = 0
   · have := hb0 hf
     simp [RELICS] at *
@@ -771,14 +849,15 @@ theorem no_run_banks_everything {s : DState} (h : Reachable s) :
     · simp [CAP, RELICS] at *
       omega
 
-/-- **The crowned run banks at most half the hoard**: banking THE PRIZE (relic 0)
-means the run stood at the bottom, and capacity at the bottom is `CAP − FLOORS = 4`.
-Glory costs carrying rights. -/
+/-- **The crowned run banks at most half the hoard, MINUS what the guardians took**:
+banking THE PRIZE (relic 0) means the run stood at the bottom, and capacity at the
+bottom is `CAP − FLOORS = 4` less every point of `harm`. Glory costs carrying rights,
+and each lunge on the way down is one relic that does not leave the dungeon. -/
 theorem crowned_bank_le_four {s : DState} (h : Reachable s)
     (hcrown : s.custody[0]? = some BANKED) :
-    bank s ≤ CAP - FLOORS := by
+    bank s ≤ CAP - FLOORS - s.harm := by
   have hInv := inv_reachable h
-  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, hprize⟩ := hInv
+  obtain ⟨⟨hlen, _⟩, _, hdepth, hfate, _, hcap, hb0, hb1, hd0, hprize, hharm⟩ := hInv
   have hdF : s.depth = FLOORS := by
     rcases hprize with hp | hp
     · rw [hcrown] at hp
@@ -790,8 +869,21 @@ theorem crowned_bank_le_four {s : DState} (h : Reachable s)
   · have := hb0 hf; omega
   · have hf1 : s.fate = 1 := by omega
     obtain ⟨_, hb⟩ := hb1 hf1
-    simp [CAP, FLOORS] at *
+    have hCAP : (CAP : Nat) = 8 := rfl
+    have hFL : (FLOORS : Nat) = 4 := rfl
     omega
+
+/-- **THE STAKE, AS LAW: the full crown is HARMLESS.** A run that banks the prize AND
+all three way-keys (`bank = CAP − FLOORS = 4`) took no harm at all — there is no line
+in which you trade a breath for a broken grip and still walk out with everything. This
+is what makes `lunge` a decision rather than a discount. -/
+theorem crowned_full_bank_harmless {s : DState} (h : Reachable s)
+    (hcrown : s.custody[0]? = some BANKED) (hfull : bank s = CAP - FLOORS) :
+    s.harm = 0 := by
+  have hle := crowned_bank_le_four h hcrown
+  have hCAP : (CAP : Nat) = 8 := rfl
+  have hFL : (FLOORS : Nat) = 4 := rfl
+  omega
 
 /-! ## 8. THE CROWNED LINE — a winning receipt chain GENERATED from the day's world.
 
@@ -998,11 +1090,48 @@ local instance : WorldParam := instAt 0
 -- fleeing twice:
 #guard (replay [.delve, .flee, .flee]) = none
 
+/-! ### THE LUNGE, DRIVEN (day 0: `ghp = [0, 1, 1, 2, 2]`).
+
+Everything below is `decide`-evaluated through the real `step`; nothing is asserted. -/
+
+-- The same wound, one breath cheaper — and one carry slot poorer.
+#guard (replay [.delve, .lunge, .loot 1]).map (·.spent)  = some 3
+#guard (replay [.delve, .smite, .loot 1]).map (·.spent)  = some 4
+#guard (replay [.delve, .lunge, .loot 1]).map (·.harm)   = some 1
+#guard (replay [.delve, .smite, .loot 1]).map (·.harm)   = some 0
+
+-- ⚑ `delve` RESETS `wounds` AND CARRIES `harm` — the ratchet is run-long.
+#guard (replay [.delve, .lunge, .loot 1, .unlock 2, .delve]).map (·.wounds) = some 0
+#guard (replay [.delve, .lunge, .loot 1, .unlock 2, .delve]).map (·.harm)   = some 1
+
+-- The ratchet's ceiling BITES: two lunges are a run, a third is refused (harm ≤ 2).
+-- (Capacity alone would still permit it here — 2 + 3 + 3 = 8 = CAP — so this refusal is
+-- HARMCAP's, not the capacity clause's.)
+#guard (replay [.delve, .lunge, .loot 1, .unlock 2,
+                .delve, .lunge, .loot 2]).map (·.harm) = some 2
+#guard (replay [.delve, .lunge, .loot 1, .unlock 2,
+                .delve, .lunge, .loot 2, .unlock 3, .delve, .lunge]) = none
+
+-- ⚑ THE DECISION AT THE BOTTOM: the crowned line with ONE breath saved by a lunge on
+-- floor 1 CANNOT take the prize — at depth 4 the pack holds three keys and capacity is
+-- `CAP - FLOORS - harm = 3`. One saved breath, one forfeited crown.
+#guard replay
+  [ .delve, .lunge, .loot 1, .unlock 2,
+    .delve, .smite, .loot 2, .unlock 3,
+    .delve, .smite, .smite, .loot 3, .unlock 4,
+    .delve, .smite, .smite, .loot 0,
+    .flee ] = none
+-- …and the same line with the press (today's smite) still crowns, for 24 of 26 breath.
+#guard (replay crownedRun).map (·.harm) = some 0
+
 end Canon
 
 /-! ## 11. Axiom hygiene. -/
 
 #assert_axioms capacity_attenuates
+#assert_axioms harm_ratchets
+#assert_axioms harm_bounded
+#assert_axioms crowned_full_bank_harmless
 #assert_axioms the_light_dies
 #assert_axioms run_bounded
 #assert_axioms banked_run_frozen
