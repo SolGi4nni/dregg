@@ -50,6 +50,8 @@ mod dispatch;
 mod handlers_act;
 mod handlers_apps;
 mod handlers_delegate;
+/// The ENCRYPTED CALL AUCTION tools (`crate::dark_clearing_service` over MCP).
+mod handlers_market;
 mod handlers_orient;
 mod handlers_privacy;
 mod handlers_verify;
@@ -64,6 +66,7 @@ use dispatch::*;
 use handlers_act::*;
 use handlers_apps::*;
 use handlers_delegate::*;
+use handlers_market::*;
 use handlers_orient::*;
 use handlers_privacy::*;
 use handlers_verify::*;

@@ -209,6 +209,12 @@ pub struct NodeState {
     /// boot so a realm created through the node survives a restart. See
     /// [`crate::realm_service`].
     realms: Arc<RwLock<crate::realm_service::NodeRealms>>,
+    /// The node-hosted ENCRYPTED CALL AUCTION ([`crate::dark_clearing_service`]): live clearing
+    /// sessions (each with its own Shamir BFV custody quorum and pinned trader roster) plus this
+    /// surface's receipt chain. In-memory by design — a clearing session's custody shares are
+    /// deliberately not persisted, so a restart ends every open session rather than reviving a
+    /// key from disk.
+    dark_clearing: Arc<RwLock<crate::dark_clearing_service::NodeDarkClearing>>,
 }
 
 /// One fixed-size, cursor-only page of the public append-only faithful note
@@ -1312,6 +1318,9 @@ impl NodeState {
             gossip: Arc::new(RwLock::new(None)),
             prove_pool: Arc::new(RwLock::new(None)),
             realms: Arc::new(RwLock::new(realms)),
+            dark_clearing: Arc::new(RwLock::new(
+                crate::dark_clearing_service::NodeDarkClearing::new(),
+            )),
         })
     }
 
@@ -1519,6 +1528,9 @@ impl NodeState {
             gossip: Arc::new(RwLock::new(None)),
             prove_pool: Arc::new(RwLock::new(None)),
             realms: Arc::new(RwLock::new(realms)),
+            dark_clearing: Arc::new(RwLock::new(
+                crate::dark_clearing_service::NodeDarkClearing::new(),
+            )),
         })
     }
 
@@ -1527,6 +1539,14 @@ impl NodeState {
     /// via realm-model's gate and are durable across a restart.
     pub fn realms(&self) -> Arc<RwLock<crate::realm_service::NodeRealms>> {
         Arc::clone(&self.realms)
+    }
+
+    /// Handle to the node-hosted encrypted call auction
+    /// ([`crate::dark_clearing_service`]). Every accept through it leaves a receipt, and it
+    /// refuses fail-closed when the committee, the verified core, or the certificate is
+    /// unavailable.
+    pub fn dark_clearing(&self) -> Arc<RwLock<crate::dark_clearing_service::NodeDarkClearing>> {
+        Arc::clone(&self.dark_clearing)
     }
 
     /// Acquire a read lock on the inner state.

@@ -17,6 +17,11 @@ pub mod channels_service;
 pub mod committee_replay;
 pub mod config;
 pub mod coord_gate;
+/// THE ENCRYPTED CALL AUCTION on the node's own surface: trader-encrypted, signed BFV order
+/// ingress, a carry-free homomorphic fold, a masked quorum boundary, an MPC crossing that reveals
+/// only `(p*, V*)`, and a quorum-co-signed attested clearing receipt. Gated to the Lean-emitted
+/// `dark-bazaar-private-n4k4` family; fails closed on committee / verified-core / certificate.
+pub mod dark_clearing_service;
 // THE DEOS-HOST (opt-in `deos-host` feature): the node hosts a headless userspace
 // deos-js "private server" program. Pulls in mozjs via deos-js, so it is feature-gated.
 #[cfg(feature = "deos-host")]

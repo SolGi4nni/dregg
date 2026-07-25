@@ -55,7 +55,14 @@ pub(super) fn tool_group(tool: &str) -> &'static str {
         | "dregg_unseal_data"
         | "dregg_create_stealth_address"
         | "dregg_private_transfer"
-        | "dregg_encrypt_intent" => "privacy",
+        | "dregg_encrypt_intent"
+        // The ENCRYPTED CALL AUCTION: orders arrive as BFV ciphertexts the trader built in its
+        // own process, and only (p*, V*) is ever opened. It belongs with privacy, not with the
+        // plaintext gallery auction (`dregg_list_auctions` / `dregg_place_bid`).
+        | "dregg_dark_clearing_open"
+        | "dregg_dark_clearing_submit"
+        | "dregg_dark_clearing_clear"
+        | "dregg_dark_clearing_result" => "privacy",
 
         "dregg_register_name"
         | "dregg_publish_subscription"
@@ -90,6 +97,10 @@ pub(super) fn tool_title(tool: &str) -> &'static str {
         "dregg_get_channel_status" => "Read Channel Status",
         "dregg_get_receipt_chain" => "Read Receipt Chain",
         "dregg_seal_data" => "Seal Data (Encrypt)",
+        "dregg_dark_clearing_open" => "Open Encrypted Auction",
+        "dregg_dark_clearing_submit" => "Submit Encrypted Order",
+        "dregg_dark_clearing_clear" => "Clear Encrypted Auction",
+        "dregg_dark_clearing_result" => "Read Cleared Price",
         "dregg_unseal_data" => "Unseal Data (Decrypt)",
         "dregg_make_sovereign" => "Make Cell Sovereign",
         "dregg_peer_exchange" => "Sovereign Peer Exchange",
@@ -539,6 +550,82 @@ pub(super) fn tool_definitions_raw() -> Vec<McpToolDef> {
                     "limit": { "type": "integer", "description": "Maximum number of receipts to return (default: 50)" }
                 },
                 "required": []
+            }),
+        },
+        // ─── THE ENCRYPTED CALL AUCTION ───────────────────────────────────────────
+        // `crate::dark_clearing_service`. Gated to the Lean-emitted
+        // `dark-bazaar-private-n4k4` family (N=4 orders, K=4 buckets, 4-bit quantities);
+        // fails closed on committee / verified_core / certificate. No tool here can
+        // return an order.
+        McpToolDef {
+            name: "dregg_dark_clearing_open",
+            title: None,
+            output_schema: None,
+            annotations: None,
+            description: "Open an ENCRYPTED call auction: run a real Shamir BFV key ceremony and \
+                          pin the ordered trader roster. Returns the public collective key a \
+                          trader encrypts against. Gated to the Lean-emitted \
+                          dark-bazaar-private-n4k4 family (exactly 4 traders).",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "traders": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Exactly 4 hex-encoded 32-byte Ed25519 verifying keys, in roster order. Only these keys may submit."
+                    }
+                },
+                "required": ["traders"]
+            }),
+        },
+        McpToolDef {
+            name: "dregg_dark_clearing_submit",
+            title: None,
+            output_schema: None,
+            annotations: None,
+            description: "Submit ONE encrypted order to an open auction. The envelope is built \
+                          and signed in YOUR process; this node never accepts, stores, logs, or \
+                          returns a plaintext order. Returns a chained receipt of digests.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "description": "Hex 32-byte session nonce from dregg_dark_clearing_open." },
+                    "envelope_b64": { "type": "string", "description": "Base64 of the exact fhegg-fhe SignedOrderSubmission wire bytes (BFV ciphertext + Ed25519 attribution). No plaintext order field is present in it." }
+                },
+                "required": ["session", "envelope_b64"]
+            }),
+        },
+        McpToolDef {
+            name: "dregg_dark_clearing_clear",
+            title: None,
+            output_schema: None,
+            annotations: None,
+            description: "Clear a complete encrypted book: homomorphic fold, masked quorum \
+                          boundary opening, MPC crossing. Reveals ONLY the clearing price bucket \
+                          p* and cleared volume V*, with a quorum-co-signed attested receipt. \
+                          Refuses fail-closed if the committee, the verified core, or the \
+                          certificate is unavailable.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "description": "Hex 32-byte session nonce." }
+                },
+                "required": ["session"]
+            }),
+        },
+        McpToolDef {
+            name: "dregg_dark_clearing_result",
+            title: None,
+            output_schema: None,
+            annotations: None,
+            description: "Read a cleared auction's result: (p*, V*) plus the attestation digests. \
+                          There is nothing else to read — no order, no curve, no per-bucket volume.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session": { "type": "string", "description": "Hex 32-byte session nonce." }
+                },
+                "required": ["session"]
             }),
         },
         McpToolDef {
@@ -1231,7 +1318,8 @@ pub(super) fn tool_required_scope(tool: &str) -> &'static str {
         | "dregg_get_blocklace_status"
         | "dregg_get_constitution"
         | "dregg_check_resource_budget"
-        | "dregg_list_auctions" => "read",
+        | "dregg_list_auctions"
+        | "dregg_dark_clearing_result" => "read",
 
         // ── write: state mutation on the caller's behalf ─────────────────────
         "dregg_authorize"
@@ -1255,7 +1343,12 @@ pub(super) fn tool_required_scope(tool: &str) -> &'static str {
         | "dregg_extend_trustline"
         | "dregg_register_name"
         | "dregg_publish_subscription"
-        | "dregg_register_service" => "write",
+        | "dregg_register_service"
+        // Submitting an encrypted order and running the clear are caller-behalf state
+        // mutations; standing up a session (a real BFV key ceremony that pins a trader
+        // roster) is administration.
+        | "dregg_dark_clearing_submit"
+        | "dregg_dark_clearing_clear" => "write",
 
         // ── admin: capability / identity / governance administration ─────────
         "dregg_create_agent"
@@ -1271,7 +1364,8 @@ pub(super) fn tool_required_scope(tool: &str) -> &'static str {
         | "dregg_create_from_factory"
         | "dregg_create_cell_from_factory_effect"
         | "dregg_propose_membership"
-        | "dregg_issue_credential" => "admin",
+        | "dregg_issue_credential"
+        | "dregg_dark_clearing_open" => "admin",
 
         // Fail-closed: an unmapped tool requires the strongest authority.
         _ => "admin",

@@ -108,6 +108,20 @@ starbridge-execution-lease = { path = "../starbridge-apps/execution-lease" }
 # see dregg-cell by design) and calls MirrorBatch::from_parts + RootChain to ship verified
 # turns. (.docs-history-noclaude/PG-DREGG.md §8; node/src/pg_mirror.rs.)
 pg-dregg = { path = "../pg-dregg", default-features = false }
+# THE ENCRYPTED CALL AUCTION (`dark_clearing_service.rs`). Unconditional, not a feature: the
+# wound this closes is "no real crypto touches a user surface," and a default-off feature would
+# leave the shipped node exactly as it was. This pulls fhegg-fhe's DEFAULT surface only — the
+# threshold/quorum BFV DKG, the authenticated encrypted order ingress, the carry-free additive
+# fold, the masked boundary, the PartyMPC crossing, and the clearing attestation. It does NOT
+# enable `tfhe-integer` (no tfhe-rs in the node graph) and does NOT enable `amm-input-binding`
+# (no extra proof tower). `fhe`/`fhe-traits` are named directly so the node can parse and publish
+# the collective public key a trader encrypts against.
+fhegg-fhe = { path = "../fhegg-fhe" }
+fhe = "0.1.1"
+fhe-traits = "0.1.1"
+# `rand` 0.8 is the RNG trait `fhegg-fhe`'s PartyMPC ingress and preprocessing are written
+# against (`rand::Rng`); the node feeds them `OsRng`, never a seeded RNG.
+rand = "0.8"
 dregg-macaroon = { workspace = true, features = ["crypto"] }
 ark-serialize = { workspace = true }
 ark-std = "0.5.0"

@@ -235,6 +235,11 @@ pub(super) async fn dispatch_tool(name: &str, params: Value, state: &NodeState) 
         "dregg_get_receipt_chain" => tool_get_receipt_chain(&params, state).await,
         "dregg_seal_data" => tool_seal_data(&params, state).await,
         "dregg_unseal_data" => tool_unseal_data(&params, state).await,
+        // THE ENCRYPTED CALL AUCTION (`crate::dark_clearing_service`)
+        "dregg_dark_clearing_open" => tool_dark_clearing_open(&params, state).await,
+        "dregg_dark_clearing_submit" => tool_dark_clearing_submit(&params, state).await,
+        "dregg_dark_clearing_clear" => tool_dark_clearing_clear(&params, state).await,
+        "dregg_dark_clearing_result" => tool_dark_clearing_result(&params, state).await,
         // Sovereign Cells
         "dregg_make_sovereign" => tool_make_sovereign(&params, state).await,
         "dregg_peer_exchange" => tool_peer_exchange(&params, state).await,

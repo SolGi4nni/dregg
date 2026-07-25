@@ -2203,6 +2203,13 @@ pub fn router_with_cors(
         // Private dependent-turn custody: bearer-gated, bounded octet-stream
         // arm plus cancel/status. Signed/sealed bytes are never returned.
         .merge(crate::private_dependent_turns::routes())
+        // THE ENCRYPTED CALL AUCTION: submit a trader-encrypted, trader-signed BFV order and
+        // read a cleared `(p*, V*)`. Bearer-gated like the rest of the protected surface; no
+        // route of it returns an order, a side, a limit, a quantity, a trader index, a
+        // ciphertext, or a per-bucket volume. Gated to the Lean-emitted
+        // `dark-bazaar-private-n4k4` family and fails closed on committee / verified-core /
+        // certificate. (`crate::dark_clearing_service`.)
+        .merge(crate::dark_clearing_service::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
