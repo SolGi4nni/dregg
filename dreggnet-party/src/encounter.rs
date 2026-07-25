@@ -52,6 +52,26 @@ use crate::{
     ROLE_SLOT, Role,
 };
 
+/// The parameter relation that makes a Scout basic attack unable to cross the Arena HP
+/// floor, and therefore makes a Scout `UnsafeStrike` preflight arm unnecessary.
+///
+/// `contribute` routes a Scout to `finish` when `hp <= FINISH_THRESHOLD` and to `attack`
+/// (a `d ATTACK_DIE`, damage `<= ATTACK_DIE`) otherwise. The attack branch is therefore
+/// only reachable with `hp > FINISH_THRESHOLD`, and it can floor the target only if
+/// `hp <= ATTACK_DIE`. While `FINISH_THRESHOLD >= ATTACK_DIE` that window is empty.
+///
+/// This is a COMPILE-TIME check on purpose. The runtime guard that used to stand here was
+/// `hp > FINISH_THRESHOLD && hp <= ATTACK_DIE` with both constants equal to `8` — an
+/// unsatisfiable condition, i.e. a guard that could never refuse anything. Separating the
+/// two constants reds this assertion at build time and sends the reader to
+/// `preflight_player`, where the arm must be restored.
+const SCOUT_ATTACK_CANNOT_FLOOR: () = assert!(
+    FINISH_THRESHOLD >= ATTACK_DIE,
+    "FINISH_THRESHOLD < ATTACK_DIE: a Scout basic attack can now floor the target, so \
+     preflight_player needs its Scout UnsafeStrike arm back (see the comment there)"
+);
+const _: () = SCOUT_ATTACK_CANNOT_FLOOR;
+
 const GENESIS_DOMAIN: &[u8] = b"dregg.party-arena.genesis.v1";
 const EVENT_DOMAIN: &[u8] = b"dregg.party-arena.event.v1";
 const CONTRIBUTION_INTENT_DOMAIN: &str = "dregg.party-arena.contribution-intent.v1";
@@ -1163,13 +1183,15 @@ impl PartyArenaEncounter {
         }
         let hp = self.arena.hp(target);
         match requested {
-            Role::Scout if hp > FINISH_THRESHOLD && hp <= ATTACK_DIE => {
-                Err(EncounterError::UnsafeStrike {
-                    target,
-                    hp,
-                    die: ATTACK_DIE,
-                })
-            }
+            // NOTE: there is NO Scout `UnsafeStrike` arm, and that is a THEOREM about the
+            // shipped parameters, not an omission. A Scout with `hp <= FINISH_THRESHOLD`
+            // takes the `finish` branch (see `contribute`); otherwise it attacks for at most
+            // `ATTACK_DIE`. So the only unsafe Scout strike is `FINISH_THRESHOLD < hp <=
+            // ATTACK_DIE` — an EMPTY interval while `FINISH_THRESHOLD >= ATTACK_DIE`, which
+            // `SCOUT_ATTACK_CANNOT_FLOOR` below proves at compile time. This file used to
+            // carry that arm as live code; it was unsatisfiable (clippy
+            // `impossible_comparisons`) and therefore refused nothing. If the balance
+            // constants ever separate, the const assertion fails to compile and points here.
             Role::Scout if hp <= FINISH_THRESHOLD && self.arena.is_guarding(target) => Err(
                 EncounterError::ArenaRefused("a guarding target cannot be finished".to_string()),
             ),

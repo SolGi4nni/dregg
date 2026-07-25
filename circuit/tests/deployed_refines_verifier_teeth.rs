@@ -226,14 +226,17 @@ fn deployed_verify_batch_bites_on_every_verifyalgo_tooth() {
     // the cross-table grand product. Transfer carries chip + range lookups, so at least one
     // instance publishes lookup data.
     expect_reject("logup bus (bump cumulative_sum)", &|p| {
-        let mut bumped = false;
-        'outer: for inst in p.global_lookup_data.iter_mut() {
-            for ld in inst.iter_mut() {
-                ld.cumulative_sum += Ef::ONE;
-                bumped = true;
-                break 'outer;
-            }
-        }
+        // "Bump the FIRST published bus." Written as a labelled double `for` with an
+        // immediate `break 'outer`, which clippy's `never_loop` (correctness) flags —
+        // the inner loop cannot reach a second iteration, so it is not a loop. Said as
+        // the `.next()` it is, the shape matches the intent.
+        let bumped = p
+            .global_lookup_data
+            .iter_mut()
+            .flat_map(|inst| inst.iter_mut())
+            .next()
+            .map(|ld| ld.cumulative_sum += Ef::ONE)
+            .is_some();
         assert!(
             bumped,
             "transfer proof must publish at least one logup bus (chip/range lookups)"

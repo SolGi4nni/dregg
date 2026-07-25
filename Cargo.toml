@@ -276,7 +276,32 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["std", "derive"] }
 
 [workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
+all = { level = "warn", priority = -2 }
+# `deny` (escalated from the `all = warn` blanket, 2026-07-25).
+#
+# `clippy::correctness` is DENY-BY-DEFAULT upstream. Setting `all = "warn"` above
+# silently DOWNGRADED it, and the whole group then drowned in ~4000 lines of style
+# warnings that nobody reads. What that cost, concretely: `dreggnet-party`'s Scout
+# `UnsafeStrike` preflight was `hp > FINISH_THRESHOLD && hp <= ATTACK_DIE` with both
+# constants equal to `8` — an UNSATISFIABLE guard, i.e. a check that could never
+# refuse anything. `impossible_comparisons` had been naming it, at warn level, in
+# every build, for as long as it existed.
+#
+# This group is exactly the "a guard that cannot fire" detector: `impossible_comparisons`,
+# `absurd_extreme_comparisons`, `never_loop`, `unit_cmp`, `eq_op`, `ifs_same_cond`,
+# `bad_bit_mask`, `reversed_empty_ranges`, `while_immutable_condition`, `min_max`,
+# `erasing_op`. Every one of them describes code that LOOKS like a check and is not.
+# Same discipline (and same reasoning) as `unexpected_cfgs = "deny"` below.
+#
+# Priorities: cargo requires every lint GROUP to sit strictly below every individual
+# lint, so the per-lint `allow`s stay at 0, `correctness` at -1, and `all` at -2.
+# Emission order is ascending priority, so `all = warn` lands first and `correctness
+# = deny` overrides it for that subgroup only; the style/pedantic half of `all`
+# stays advisory, and an explicit per-lint `allow` still beats both. If a correctness
+# lint is genuinely wanted, `#[expect(clippy::…, reason = "…")]` at the site —
+# `expect`, not `allow`, so it self-retires when the shape changes. Verified over
+# `cargo clippy --workspace --all-targets --keep-going` on 2026-07-25.
+correctness = { level = "deny", priority = -1 }
 assign_op_pattern = "allow"
 # Stylistic `chunks_exact(N)` -> `as_chunks::<N>()` nudge; a fresh clippy flags it
 # but it's a readability preference, not a correctness lint — allowed like the rest.

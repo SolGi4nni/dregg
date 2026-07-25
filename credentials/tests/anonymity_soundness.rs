@@ -402,11 +402,24 @@ fn cross_credential_predicate_forgery_rejected() {
         ..Default::default()
     };
     let result = verify(&a_pres, &verify_opts);
+    // ⚠ READ THIS GREEN AT ITS ACTUAL RESOLUTION. The message here used to say "Today
+    // verify() ACCEPTS (the forgery)" — that was true when written and is now STALE.
+    // Since the 2026-07-24 fail-close (`credentials/src/verification.rs`, the
+    // `expected_predicates` loop returns `PredicateProofInvalid` UNCONDITIONALLY), this
+    // refusal is NOT a soundness verdict about the forgery: verify() refuses EVERY
+    // presentation carrying an expected predicate, genuine or forged. Its paired positive
+    // control `matching_predicate_proof_accepted` was inverted to `.is_err()` for the same
+    // reason, so NO test in this file can currently distinguish a working predicate
+    // verifier from a deleted one. That is a deliberate fail-closed posture, not coverage.
+    //
+    // This test becomes a real falsifier again — and only then — when the presentation
+    // STARK exposes a trusted `facts_root` public input and the accept path is restored.
+    // Restore BOTH polarities in the same commit, or the pair stays vacuous.
     assert!(
         result.is_err(),
-        "SOUNDNESS: a predicate proof minted from a DIFFERENT credential must NOT satisfy this \
-         presentation's predicate — credential A (age 15) is not >= 18. Today verify() ACCEPTS \
-         (the forgery); this assert is exactly what the facts_root binding must make hold."
+        "a predicate proof minted from a DIFFERENT credential must not satisfy this \
+         presentation's predicate — credential A (age 15) is not >= 18. NOTE: today this \
+         passes via the blanket fail-close, not via a facts_root binding; see the comment above."
     );
 }
 

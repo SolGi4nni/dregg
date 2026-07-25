@@ -854,12 +854,18 @@ pub(crate) fn truncate_executor_consensus_state_in(
                 target = Some(decode_frontier(bytes.value()));
             }
         }
-        let mut tracked_tail_exists = false;
-        for entry in frontiers.range(new_cursor..)? {
-            entry.map_err(|error| StoreError::Database(error.to_string()))?;
-            tracked_tail_exists = true;
-            break;
-        }
+        // An EXISTENCE probe, not a scan: "is there any frontier at or past the new
+        // cursor?". It was written as a `for … { …; break; }`, which clippy's
+        // `never_loop` (a CORRECTNESS lint) flags — correctly, since a loop that
+        // cannot iterate twice is not a loop. Written as the `.next()` it is, the
+        // shape matches the intent and the lint has nothing to say.
+        let mut tail = frontiers.range(new_cursor..)?;
+        let tracked_tail_exists = tail
+            .next()
+            .transpose()
+            .map_err(|error| StoreError::Database(error.to_string()))?
+            .is_some();
+        drop(tail);
         (target, tracked_tail_exists)
     };
 

@@ -75,6 +75,49 @@ if [ "${1:-}" = "--force-cold" ]; then FORCE_COLD=1; shift; fi
 LANE="${1:?usage: pbuild [--force-cold] <lane> <command...>}"; shift
 [ "$#" -ge 1 ] || { echo "pbuild: no command given" >&2; exit 2; }
 
+# ---- THE VERDICT LINE -----------------------------------------------------
+# Agents are told "check the VERDICT line, never the exit code". Until 2026-07-25
+# there WAS no verdict line, so that instruction could not be followed — and the
+# failure it exists to prevent kept happening. Three lanes in one night read
+# `scripts/pbuild … ; echo "EXIT=$?"` as a PASS when `$?` was the status of the
+# trailing `echo`/`tail`, not of the build; one of those "successes" had a log
+# whose entire content was this script's own COLD-LANE REFUSAL. A background-task
+# notification saying "completed (exit code 0)" for a compound command reports on
+# the last command of the compound, and nothing upstream can fix that.
+#
+# So pbuild states its own outcome, once, in a line that is hard to lose:
+#
+#   pbuild: VERDICT outcome=PASS|FAIL|REFUSED status=<n> lane=<lane> host=<host> cmd=<cmd>
+#
+# On STDOUT deliberately. Every idiom agents actually use — `> log 2>&1`,
+# `2>&1 | tee log`, `| tail -n 50` — carries stdout; a stderr-only line is exactly
+# what `| tail` drops. Emitted from an EXIT trap so it covers `set -e` aborts and
+# the `exit 3`/`exit 4` guard refusals too, not just the happy path.
+#
+#   grep 'pbuild: VERDICT' <log>     # the only line worth trusting
+#
+# REFUSED is called out separately from FAIL on purpose: a refusal means the build
+# NEVER RAN, so neither a red nor a green may be read off that log at all.
+PBUILD_CMD_DESC="$*"
+# PHASE, not the exit code, decides REFUSED vs FAIL. Keying off status numbers would
+# be its own version of this bug: a remote `cargo` is free to exit 3 or 4, and a
+# guard refusal and a genuine build failure must never be confusable.
+PBUILD_PHASE=guard
+_pbuild_verdict() {
+  _pb_status=$?
+  if [ "$PBUILD_PHASE" = guard ]; then
+    _pb_outcome=REFUSED
+  elif [ "$_pb_status" -eq 0 ]; then
+    _pb_outcome=PASS
+  else
+    _pb_outcome=FAIL
+  fi
+  printf 'pbuild: VERDICT outcome=%s status=%s lane=%s host=%s cmd=%s\n' \
+    "$_pb_outcome" "$_pb_status" "$LANE" "$HOST" "$PBUILD_CMD_DESC"
+  return "$_pb_status"
+}
+trap _pbuild_verdict EXIT
+
 # Repo root, derived from THIS script's own location (scripts/pbuild) — NOT a hardcoded maintainer
 # path (#39). The old absolute `SRC` silently rsync'd the wrong tree from any other clone.
 SRC="$(cd "$(dirname "$0")/.." && pwd)/"
@@ -276,6 +319,10 @@ for _v in $(env | sed -n 's/^\(DREGG_[A-Z0-9_]*\)=.*/\1/p'); do
   REMOTE_ENV+="export ${_v}=${_q}; "
 done
 [ -n "$REMOTE_ENV" ] && echo "pbuild: forwarding $(printf '%s' "$REMOTE_ENV" | grep -o 'DREGG_[A-Z0-9_]*' | tr '\n' ' ')to ${HOST}" >&2
+
+# Every guard has passed and the tree is synced: from here a nonzero status is the
+# BUILD's verdict, not a refusal. (See the VERDICT block at the top.)
+PBUILD_PHASE=run
 
 # Build with cargo + elan env sourced (non-login shells lack them). Persvati's
 # empty-wrapper path is intentionally byte-for-byte the historical behavior.

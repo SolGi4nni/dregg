@@ -530,6 +530,64 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace -- -D warnings
 
+  # ── The half of clippy that is a REAL gate ───────────────────────────────────
+  # The advisory job above cannot fail, and its ~4000 lines of style warnings are
+  # where a guard-that-cannot-fire goes to hide. Concretely: `dreggnet-party`'s
+  # Scout `UnsafeStrike` preflight was `hp > FINISH_THRESHOLD && hp <= ATTACK_DIE`
+  # with both constants `8` — UNSATISFIABLE, a check that could never refuse
+  # anything — and `impossible_comparisons` had been printing it, at warn level,
+  # in every build, unread.
+  #
+  # `clippy::correctness` is deny-by-default upstream; `[workspace.lints.clippy]`
+  # now restores that (`all` was silently downgrading it). This job is the CI half:
+  # it runs the group over EVERY target (the advisory job omits `--all-targets`, so
+  # all test code is invisible to it) and it does NOT continue-on-error.
+  #
+  # `--keep-going` + the diagnostic grep, rather than the exit code, on purpose: a
+  # handful of test targets do not compile at HEAD (see the "dark targets" note in
+  # docs/), and `--keep-going` lets the correctness sweep still cover everything
+  # that DOES compile instead of stopping at the first broken target. Those targets
+  # are a separate, named debt — not a reason for this gate to be advisory too.
+  clippy-correctness:
+    name: Clippy (correctness — HARD GATE)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: correctness sweep over every target
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: |
+          set -uo pipefail
+          cargo clippy --workspace --all-targets --keep-going --message-format=short \
+            > clippy-correctness.log 2>&1 || true
+          # A correctness lint is `deny` via [workspace.lints.clippy], so it lands as
+          # `error: <message>` on a source line. Compile errors (E0xxx) are the separate
+          # dark-target debt and are reported, not gated, here.
+          if grep -E '^[^ ].*\.rs:[0-9]+:[0-9]+: error: ' clippy-correctness.log \
+               | grep -v 'error\[E[0-9]' > correctness-hits.txt; then
+            echo "::error::clippy::correctness fired — a check that cannot refuse anything, or worse."
+            cat correctness-hits.txt
+            echo
+            echo "Fix it, or — if the shape is deliberate — annotate the SITE with"
+            echo "  #[expect(clippy::<lint>, reason = \"...\")]"
+            echo "(expect, not allow: it self-retires when the shape changes)."
+            exit 1
+          fi
+          echo "correctness: clean."
+          if grep -q '^error: could not compile' clippy-correctness.log; then
+            echo "::warning::targets that do NOT compile at this commit (dark — they run nothing):"
+            grep '^error: could not compile' clippy-correctness.log | sort -u
+          fi
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

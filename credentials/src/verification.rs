@@ -241,6 +241,17 @@ fn verify_inner(
     //   (iii) verify the STARK cryptographically against the proof's own
     //         `fact_commitment` (which the proof's STARK binds to the
     //         witnessed value). A garbage / mismatched proof fails here.
+    // `never_loop` is a CORRECTNESS lint and it is RIGHT: this body cannot reach a
+    // second iteration, because the FAIL-CLOSED refusal at the bottom returns
+    // unconditionally. That is deliberate (see the long note there), not an escape
+    // that forgot to `continue` — refusing on the first expected predicate refuses
+    // the presentation. `expect` rather than `allow` on purpose: when the sound
+    // accept path lands and the body stops returning unconditionally, the
+    // expectation goes unfulfilled and this comment is dragged back into review.
+    #[expect(
+        clippy::never_loop,
+        reason = "the body FAIL-CLOSES unconditionally until a trusted facts_root PI exists"
+    )]
     for expected in &options.expected_predicates {
         let candidate = predicate_proofs
             .iter()
