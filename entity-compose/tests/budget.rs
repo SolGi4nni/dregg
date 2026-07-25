@@ -1,22 +1,25 @@
-//! **THE BUDGET — the entity's composition rides `dregg-param-compose`'s 803-column leaf.**
+//! **THE BUDGET — the entity's composition rides the LEAN-AUTHORED 770-column leaf.**
 //!
-//! A realistic HOARDLIGHT-scale entity composition (4 subjects x 8 params + 6 knots, the shape
-//! `dregg-param-compose` measures at an 803-column leaf) is built through THIS crate's substrate
-//! (a deployed entity + partners) and LOWERED to the IR-v2 leaf the fold actually proves. The
-//! test ASSERTS the leaf fits the deployed `MAX_TRACE_WIDTH = 1024` cap at ZERO lowering lane
-//! columns (the node8 digest is program-owned) — a gate that can go red, not a print.
+//! A realistic HOARDLIGHT-scale entity composition (4 subjects x 8 params + 6 knots, the DEPLOYED
+//! shape `pcRealistic`) is built through THIS crate's substrate (a deployed entity + partners) and
+//! measured against the IR-v2 leaf the fold actually proves — the object
+//! `metatheory/Dregg2/Circuit/Emit/ParamComposeGolden.lean` byte-pins. The test ASSERTS the leaf
+//! fits the deployed `MAX_TRACE_WIDTH = 1024` cap and that the produced witness satisfies it: a
+//! gate that can go red, not a print.
+//!
+//! There is no lowering step and hence no lane-column term: the Lean family emits IR-v2 directly,
+//! and its wide `node8` digest sites are program-owned.
 //!
 //! Run: cargo test -p dregg-entity-compose --test budget -- --nocapture
 
-use dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2;
-use dregg_circuit::dsl::circuit::MAX_TRACE_WIDTH;
-use dregg_circuit::field::BabyBear;
-use dregg_entity_compose::{compose_onto, deploy_entity, door_felt8, entity_key};
-use dregg_param_compose::air::build;
+use dregg_circuit::dsl::circuit::{MAX_PUBLIC_INPUTS, MAX_TRACE_WIDTH};
+use dregg_entity_compose::{compose_onto, deploy_entity, entity_key};
+use dregg_param_compose::lean_descriptor::lean_descriptor_for;
 use dregg_param_compose::model::{Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
+use dregg_param_compose::witness::ComposeLayout;
 
-/// The realistic shape: 4 subjects, 8 params each, 8 linear terms, 6 knots (saturated).
+/// The realistic (DEPLOYED) shape: 4 subjects, 8 params each, 8 linear terms, 6 knots (saturated).
 fn realistic_shape() -> ComposeShape {
     ComposeShape::new(4, 8, 8, 6)
 }
@@ -71,46 +74,56 @@ fn ruleset() -> Ruleset {
 }
 
 #[test]
-fn the_realistic_entity_composition_rides_the_803_column_leaf() {
+fn the_realistic_entity_composition_rides_the_lean_770_column_leaf() {
     let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed =
         compose_onto(&entity, &partners(), ruleset(), realistic_shape(), 8).expect("composes");
 
-    // Rebuild the AIR bound to the entity's REAL commitments and lower it to the fold leaf.
-    let old8 = door_felt8(&landed.old_commitment);
-    let new8 = door_felt8(&landed.new_commitment);
-    let air = build(&landed.shape, &landed.composition, &old8, &new8).expect("builds");
-    assert!(
-        air.builder.air_accepts(),
-        "the saturated realistic composition must self-accept"
+    // The LEAN-EMITTED descriptor for this shape — the object the fold proves.
+    let desc = lean_descriptor_for(&landed.shape)
+        .expect("the deployed shape has a byte-pinned Lean descriptor");
+    assert_eq!(
+        desc.name,
+        "dregg-param-compose-v1-n4p8l8k6i28::poseidon2-node8"
+    );
+    assert_eq!(desc.trace_width, 770);
+    assert_eq!(
+        ComposeLayout::new(&landed.shape).width,
+        desc.trace_width,
+        "the witness producer's layout must be the emitted width"
     );
 
-    let program = air.builder.cellprogram();
-    let prog = program.descriptor.trace_width;
-    let lowered = cellprogram_to_descriptor2(&program).expect("lowers to a foldable leaf");
-    let leaf = lowered.trace_width;
-    let lane = leaf - prog;
+    // The produced witness satisfies it (the deployed IR-v2 row-local evaluator's verdict).
+    assert!(
+        landed.lean_descriptor_accepts(),
+        "the saturated realistic composition's witness must satisfy the emitted descriptor"
+    );
 
+    let sites = desc
+        .constraints
+        .iter()
+        .filter(|c| matches!(c, dregg_circuit::descriptor_ir2::VmConstraint2::Lookup(_)))
+        .count();
     eprintln!(
-        "REALISTIC ENTITY COMPOSITION (n4 p8 l8 k6): prog={prog} lane={lane} leaf={leaf}/{MAX_TRACE_WIDTH} \
-         pis={} sites={} — outcome={}",
-        air.builder.pis.len(),
-        air.builder.hash_site_count(),
+        "REALISTIC ENTITY COMPOSITION (n4 p8 l8 k6, LEAN-AUTHORED): leaf={}/{MAX_TRACE_WIDTH} \
+         constraints={} pis={} sites={sites} — outcome={}",
+        desc.trace_width,
+        desc.constraints.len(),
+        landed.pis.len(),
         landed.outcome,
     );
 
-    assert_eq!(
-        lane, 0,
-        "the node8 digest is program-owned, so the lowered leaf must allocate ZERO lane columns"
-    );
     assert!(
-        leaf <= MAX_TRACE_WIDTH,
-        "the realistic entity composition must fold as ONE leaf: {leaf} > {MAX_TRACE_WIDTH}"
+        desc.trace_width <= MAX_TRACE_WIDTH,
+        "the realistic entity composition must fold as ONE leaf: {} > {MAX_TRACE_WIDTH}",
+        desc.trace_width
     );
     // The public-input budget: constant in the subject count, inside the door's 64-PI cap.
+    assert_eq!(landed.pis.len(), desc.public_input_count);
     assert!(
-        air.builder.pis.len() <= dregg_param_compose::shape::MAX_PUBLIC_INPUTS,
+        landed.pis.len() <= MAX_PUBLIC_INPUTS,
         "the composition PIs must fit the deployed cap"
     );
-    let _ = BabyBear::ZERO; // (keep the field import meaningful if the asserts change)
+    // The fuel meter the shape publishes is the number of sites the descriptor actually carries.
+    assert_eq!(sites, landed.shape.hash_sites());
 }

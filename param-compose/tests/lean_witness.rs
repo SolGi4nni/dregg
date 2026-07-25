@@ -30,7 +30,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 use dregg_param_compose::digest::DIGEST_FELTS;
 use dregg_param_compose::field::fb;
-use dregg_param_compose::lean_descriptor::{lean_descriptor_for, pc_min, pc_realistic};
+use dregg_param_compose::lean_descriptor::{
+    lean_descriptor_for, lean_descriptor_name, pc_min, pc_realistic, pinned_shapes,
+};
 use dregg_param_compose::model::{Composition, Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::pi;
 use dregg_param_compose::shape::ComposeShape;
@@ -391,5 +393,97 @@ fn the_lean_descriptor_really_proves_over_the_produced_witness() {
         );
         verify_vm_descriptor2(&desc, &proof, &w.pis)
             .unwrap_or_else(|e| panic!("{name}: the proof must verify: {e}"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6. THE PIN CENSUS. Every shape Rust claims to reach, Lean actually pinned.
+// ---------------------------------------------------------------------------
+
+/// **`pinned_shapes()` is a MIRROR of the Lean tree, and this is the gate that it is a faithful
+/// one.** Each entry must resolve out of the Lean SOURCE TEXT, decode as IR-v2, and carry the
+/// descriptor name that shape emits. A shape listed in Rust but dropped from (or never landed in)
+/// the Lean tree goes RED here instead of quietly leaving the reachable set — the resolver derives
+/// the golden `def` name from the shape, so a typo'd or missing pin is indistinguishable from
+/// "unreachable" without this check.
+///
+/// It also re-checks the LAYOUT against the emitted width at every pinned shape, not just the two
+/// the older cases cover: `ComposeLayout` computes the column layout in Rust, and if it disagreed
+/// with the Lean emission at any shape the witness producer would fill the wrong columns.
+#[test]
+fn every_pinned_shape_resolves_and_names_itself() {
+    let shapes = pinned_shapes();
+    assert_eq!(shapes.len(), 18, "the pinned census changed size");
+    for (name, shape) in shapes {
+        let desc = lean_descriptor_for(&shape).unwrap_or_else(|| {
+            panic!("{name}: Lean must carry a byte-pinned instance at {shape:?}")
+        });
+        assert_eq!(
+            desc.name,
+            lean_descriptor_name(&shape),
+            "{name}: the decoded golden must be the descriptor this shape names"
+        );
+        assert_eq!(
+            desc.trace_width,
+            ComposeLayout::new(&shape).width,
+            "{name}: the Rust column layout drifted from the Lean-emitted width"
+        );
+        assert_eq!(
+            desc.public_input_count,
+            pi::public_input_count(),
+            "{name}: the PI layout is constant across shapes"
+        );
+        let bad = check_layout_against_descriptor(&ComposeLayout::new(&shape), &desc);
+        assert!(bad.is_empty(), "{name}: layout drifted from Lean: {bad:?}");
+    }
+}
+
+/// **THE STRUCTURAL CROSS-CHECK, AS A GATE.** `lib.rs` publishes a MEASURED budget table for the
+/// hand-written Rust AIR's own column count (`prog`) at three shapes. The Lean family emits exactly
+/// 33 fewer at each: `air.rs:312`'s single `zero` column plus the four 8-felt IV column groups
+/// `air.rs::wide_chain` allocates once per chain (`1 + 4 * 8 = 33`), which the Lean author replaces
+/// with literal constants in the chip tuple.
+///
+/// Both terms depend on NOTHING but "there are four digest chains", so the delta is shape-invariant
+/// by construction — which is what makes it evidence that the two objects are the same AIR rather
+/// than a coincidence at one size. This asserts it at every shape where a Rust `prog` number is
+/// published; `tests/size.rs` measures the Rust side at five of them directly.
+#[test]
+fn the_lean_width_is_the_rust_width_less_the_thirty_three_pinned_columns() {
+    // (shape, the `prog` column count `lib.rs`'s budget table publishes for the Rust AIR)
+    for (shape, rust_prog) in [
+        (ComposeShape::new(2, 2, 1, 1), 219usize),
+        (ComposeShape::new(3, 4, 3, 2), 379),
+        (pc_realistic(), 803),
+    ] {
+        let lean = lean_descriptor_for(&shape)
+            .expect("a Lean-pinned shape")
+            .trace_width;
+        assert_eq!(
+            lean + 33,
+            rust_prog,
+            "{shape:?}: the Lean emission is {lean}, the published Rust prog is {rust_prog}; the \
+             delta must be exactly the `zero` column + 4 x 8 IV columns"
+        );
+    }
+}
+
+/// **THE `None` STAYS FAIL-CLOSED.** Widening the reachable set is a Lean change; a shape Lean has
+/// not pinned must still be UNREACHABLE from Rust rather than re-emitted here (re-emitting would be
+/// authoring the AIR in Rust). This drives that half so the resolver's fallback cannot rot into a
+/// silent Rust-side construction.
+#[test]
+fn an_unpinned_shape_is_still_unreachable() {
+    for unpinned in [
+        ComposeShape::new(7, 9, 5, 4),
+        ComposeShape::new(3, 4, 3, 2).with_identity_bits(27),
+        // The vacuous-ordering shape `size.rs` refuses: never pinned, because the object must not
+        // exist. `identity_bits_sound` is FALSE here.
+        pc_realistic().with_identity_bits(31),
+    ] {
+        assert!(
+            lean_descriptor_for(&unpinned).is_none(),
+            "{unpinned:?}: an unpinned shape must be UNREACHABLE, not reconstructed in Rust"
+        );
     }
 }

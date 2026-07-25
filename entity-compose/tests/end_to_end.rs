@@ -29,7 +29,6 @@ use dregg_turn::{
 
 use dregg_entity_compose::{
     LandedComposition, PROJECTION_WIDE_BASE, compose_onto, deploy_entity, entity_key,
-    program_descriptor,
 };
 use dregg_param_compose::model::{Knot, LinearTerm, Ruleset, Subject};
 use dregg_param_compose::shape::ComposeShape;
@@ -38,8 +37,12 @@ use dregg_param_compose::shape::ComposeShape;
 const ROLE_ACTOR: u64 = 101;
 const ROLE_PARTNER: u64 = 202;
 
+/// **The DEPLOYED shape** — `n4 p8 l8 k6` at the default 28-bit identity namespace, which is Lean's
+/// `pcRealistic` and the ONE shape the byte-pinned `paramComposeDesc` golden covers. A shape is a
+/// BOUND, so this composition's 2 subjects / 4 active params / 1 linear term / 1 knot ride it
+/// unchanged; a shape Lean has not pinned is blocked, not faked.
 fn shape() -> ComposeShape {
-    ComposeShape::new(3, 4, 3, 2)
+    ComposeShape::new(4, 8, 8, 6)
 }
 
 /// The primary entity's projection: identity 7, params `[2, 5, 0, 0]`.
@@ -113,9 +116,11 @@ impl CustomEffectVerifier for AcceptVerifier {
 /// Register an accepting verifier under a GENUINE v2 `vk_hash` derived from the composition
 /// program's own descriptor — so the registry's layered binding is satisfied honestly.
 fn registry_for(landed: &LandedComposition) -> (CustomEffectRegistry, [u8; 32]) {
-    let program_bytes =
-        postcard::to_allocvec(&program_descriptor(&landed.shape, &landed.composition))
-            .expect("descriptor serializes");
+    // The program bytes are the LEAN-EMITTED descriptor's own wire string, so the registry's vk
+    // names the Lean-authored AIR rather than a Rust re-authoring of it.
+    let program_bytes = landed
+        .program_bytes()
+        .expect("the deployed shape has a byte-pinned Lean descriptor");
     let air_fingerprint = *blake3::hash(b"entity-compose-air").as_bytes();
     let verifier_fingerprint =
         VerifierFingerprint::SourceHash(*blake3::hash(b"entity-compose-verifier").as_bytes());
@@ -210,8 +215,9 @@ fn entity_params_compose_and_the_turn_passes_the_door_and_the_weld() {
     // The composed outcome is exactly what the law licenses: 10*2 + (-2)*5*4 = 20 - 40 = -20.
     assert_eq!(landed.outcome, -20, "the ruleset's licensed outcome");
     assert!(
-        landed.air_accepts(),
-        "the honest composition must self-accept (the fast shadow of 'the leaf proves')"
+        landed.lean_descriptor_accepts(),
+        "the honest composition's produced witness must satisfy the LEAN-AUTHORED descriptor \
+         (the deployed IR-v2 row-local evaluator's verdict, the fast shadow of 'the leaf proves')"
     );
 
     let (cell_id, mut ledger, _entity) = entity.into_registered_ledger();
@@ -343,39 +349,38 @@ fn a_composition_about_a_different_entity_is_refused_by_the_weld() {
 // ===========================================================================
 
 /// **A composition the ruleset does NOT license has no satisfying witness — so there is no turn
-/// to carry.** The forged claim is self-consistent everywhere else; only THE LAW refuses it. (The
-/// fast `air_accepts` shadow; `tests/leaf_prove.rs` shows the same against the real STARK.)
+/// to carry.** The forged claim is RE-COMMITTED honestly (the digest chains and the published PIs
+/// bind the lie), so it is self-consistent everywhere else and only THE LAW — a gate of the
+/// LEAN-AUTHORED descriptor — can refuse it. (`tests/leaf_prove.rs` shows the same against the
+/// real STARK.)
 #[test]
 fn a_composition_the_ruleset_does_not_license_has_no_satisfying_witness() {
-    use dregg_param_compose::air::{Forgery, build_forged};
+    use dregg_param_compose::field::fb;
+    use dregg_param_compose::lean_descriptor::lean_descriptor_for;
+    use dregg_param_compose::witness::compose_trace_accepts;
 
     let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
-    let old8 = dregg_entity_compose::door_felt8(&landed.old_commitment);
-    let new8 = dregg_entity_compose::door_felt8(&landed.new_commitment);
+    let desc = lean_descriptor_for(&landed.shape).expect("the deployed shape is Lean-pinned");
 
     let truth = landed.outcome;
     for delta in [1i128, -1, 1000] {
-        let forged = build_forged(
-            &landed.shape,
-            &landed.composition,
-            &old8,
-            &new8,
-            &Forgery {
-                claimed_outcome: Some(truth + delta),
-                ..Default::default()
-            },
-        )
-        .expect("builds");
+        let mut forged = landed.witness.clone();
+        forged.row[forged.layout.out_col] = fb(truth + delta);
+        forged.fill_chains();
+        forged.fill_pis();
         assert!(
-            !forged.builder.air_accepts(),
+            !compose_trace_accepts(&desc, &forged),
             "an outcome the ruleset does not license (={}, licensed {truth}) must have NO \
              satisfying witness",
             truth + delta
         );
     }
     // Positive pole: the licensed outcome accepts — the refusals are the law discriminating.
-    assert!(landed.air_accepts(), "the licensed composition accepts");
+    assert!(
+        landed.lean_descriptor_accepts(),
+        "the licensed composition accepts"
+    );
 }
 
 // ===========================================================================
@@ -470,4 +475,87 @@ fn the_post_state_commits_the_outcome_and_declares_the_app_root_weld() {
         landed.old_commitment, landed.new_commitment,
         "installing the outcome must advance the cell commitment"
     );
+}
+
+// ===========================================================================
+// THE ROUTE — the production path invokes the LEAN-AUTHORED AIR.
+// ===========================================================================
+
+/// **THE FOLD LEAF IS THE LEAN OBJECT.** The inputs this crate hands the deployed direct-IR2 leaf
+/// are the byte-pinned `paramComposeDesc` descriptor itself plus a trace filled by the witness
+/// producer — no Rust `CellProgram` is lowered, so the relation has exactly one semantics. The
+/// producer's PIs are the SAME vector `compose_onto` packaged, so the proven trace and the
+/// published sub-proof cannot disagree.
+#[test]
+fn the_fold_leaf_inputs_carry_the_lean_authored_descriptor() {
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
+    let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
+
+    // The leg's real rotated anchors differ from the crate's own v9 context; the producer re-fills
+    // the door prefix over them, and the published outcome is UNCHANGED (it is a function of the
+    // composition alone).
+    let leg_old8: [dregg_circuit::field::BabyBear; 8] =
+        core::array::from_fn(|i| dregg_circuit::field::BabyBear::new(7_000 + i as u32));
+    let leg_new8: [dregg_circuit::field::BabyBear; 8] =
+        core::array::from_fn(|i| dregg_circuit::field::BabyBear::new(8_000 + i as u32));
+    let (desc, base_trace, pis) = landed
+        .direct_ir2_leaf_inputs(&leg_old8, &leg_new8, 2)
+        .expect("the deployed shape resolves the Lean descriptor and the witness satisfies it");
+
+    assert_eq!(
+        desc.name, "dregg-param-compose-v1-n4p8l8k6i28::poseidon2-node8",
+        "the leaf must prove the LEAN-emitted descriptor"
+    );
+    assert_eq!(base_trace.len(), 2);
+    assert!(base_trace.iter().all(|r| r.len() == desc.trace_width));
+    assert_eq!(pis.len(), desc.public_input_count);
+    assert_eq!(
+        &pis[..8],
+        &leg_old8[..],
+        "the door prefix rides the leg's roots"
+    );
+    assert_eq!(&pis[8..16], &leg_new8[..]);
+
+    // The published outcome PI is the composition's, unchanged by the anchors — and it is the
+    // octet the app-root binding welds to the committed cell field.
+    let base = dregg_param_compose::pi::outcome_commitment_base();
+    assert_eq!(
+        &pis[base..base + 8],
+        &landed.outcome_commitment[..],
+        "the published outcome is a function of the composition alone"
+    );
+
+    // And the PIs `compose_onto` packaged are the SAME producer's, over the crate's own anchors.
+    assert_eq!(
+        &landed.pis[base..base + 8],
+        &landed.outcome_commitment[..],
+        "one PI source: the producer's"
+    );
+}
+
+/// **BLOCKED, NOT FAKED.** A shape Lean has NOT byte-pinned has no reachable AIR: there is no
+/// Rust-authored fallback to degrade to, so the route refuses by name rather than attesting
+/// something no emitted object defines.
+#[test]
+fn an_unpinned_shape_is_refused_rather_than_faked() {
+    use dregg_param_compose::model::ComposeError;
+
+    // `n3 p4 l3 k2` used to be the witness of unpinnedness; it is now BYTE-PINNED
+    // (`ParamComposeGoldenShapes.pcLeaf`, 346 columns), so it no longer drives this path. The
+    // bounds are held fixed and only the identity namespace is moved off a pinned width — 27 is
+    // SOUND (`1 <= 27 <= 28`), so the refusal here is genuinely "Lean pinned no wire at this
+    // shape", not the shape guard firing for some other reason.
+    let unpinned = ComposeShape::new(3, 4, 3, 2).with_identity_bits(27);
+    let entity = deploy_entity(entity_key(1), 1_000, actor());
+    let landed = compose_onto(&entity, &[partner()], ruleset(), unpinned, 4).expect("composes");
+    assert!(
+        !landed.lean_descriptor_accepts(),
+        "an unpinned shape must not claim acceptance"
+    );
+    assert!(landed.program_bytes().is_none());
+    let z = [dregg_circuit::field::BabyBear::ZERO; 8];
+    assert!(matches!(
+        landed.direct_ir2_leaf_inputs(&z, &z, 2),
+        Err(ComposeError::NoLeanDescriptor)
+    ));
 }

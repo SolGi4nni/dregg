@@ -119,6 +119,14 @@ pub enum ComposeError {
     ExceedsShape(&'static str),
     /// An identity exceeds the range the in-circuit ordering comparison is sound over.
     IdentityOutOfRange(u64),
+    /// **BLOCKED, NOT FAKED.** Lean has no byte-pinned descriptor at this shape, so the
+    /// Lean-authored AIR is not reachable from Rust. There is no Rust-authored fallback AIR to
+    /// degrade to; widening the reachable set is a Lean change (a new `#guard`-pinned instance).
+    /// See `crate::lean_descriptor`.
+    NoLeanDescriptor,
+    /// The produced witness does NOT satisfy the emitted descriptor. A witness-generator fault —
+    /// refused here rather than handed to the prover. See `crate::witness::compose_trace_accepts`.
+    WitnessRefusedByDescriptor,
 }
 
 impl core::fmt::Display for ComposeError {
@@ -133,6 +141,14 @@ impl core::fmt::Display for ComposeError {
             }
             ComposeError::ExceedsShape(what) => write!(f, "exceeds shape bound: {what}"),
             ComposeError::IdentityOutOfRange(i) => write!(f, "identity {i} out of range"),
+            ComposeError::NoLeanDescriptor => write!(
+                f,
+                "no Lean-pinned param-compose descriptor at this shape (blocked, not faked)"
+            ),
+            ComposeError::WitnessRefusedByDescriptor => write!(
+                f,
+                "the produced witness does not satisfy the emitted param-compose descriptor"
+            ),
         }
     }
 }
