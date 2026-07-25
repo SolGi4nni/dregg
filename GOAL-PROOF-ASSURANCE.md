@@ -49,6 +49,18 @@ into "theorem". **Repair obligation:** every fix must prove the corrected conjun
 acceptance* (hence add zero strength) — a repair that swaps one vacuity for another is worse than
 none, because it looks fixed.
 
+## ⚑ THE APEX IS CUT OVER (2026-07-25)
+
+`starkSound_of_friLdtExtract_transferV3` keeps its name and now takes `FriLdtExtractV3Faithful` instead
+of the bundle **proved** to force `verifyBatch` to reject every input. All 8 consumers migrated; verified
+myself that the only remaining hypothesis sites on a proved-empty bundle are a *labelled subsumption
+receipt* and a *transport*, not consumers. **No soundness conclusion in the tree is drawn from a
+proved-empty premise.**
+
+Every migration is a **strengthening** (`V3 → Cons → Faithful`), and `retiredPremise_imp_apexPremise`
+proves migration costs a consumer nothing. What it buys, exactly: the premise no longer *forces*
+universal rejection. It does **not** prove satisfiability at the opaque `cfg*` args — nothing can.
+
 ## In flight (background agents)
 - `cut:memfree-fanout` — migrate ~25 `hfri : FriLdtExtract` consumers to the cons-shape assembler
 - `cut:memory-and-kernel` — memory fanout + kernel/config, **and the true census** (35 is an estimate)
