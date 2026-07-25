@@ -1,144 +1,80 @@
-# $DREGG, computrons, and the units of the dregg economy
+# $DREGG and the units of the dregg economy
 
-*Present-tense, what-is. The canonical statement of what the $DREGG token is, what it
-does, what it deliberately does not do, and how it relates to the network's internal
-metering unit — so the answer to "what's the tokenomics?" comes from the repo, not a
-chat thread. Every claim carries a maturity label: **RUNS** (a test or demo exercises it
-green), **BUILT** (real code, not exercised end-to-end live), **NAMED** (stub or doc
-only), **VISION** (design doc). Sibling docs: `docs/deos/INTERCHAIN-MODEL.md` (how
-proofs cross chains), `docs/deos/PROOF-OF-HOLDINGS.md` (governance weight),
-`docs/deos/TOKEN-MIRROR-BRIDGE.md` (the vault).*
+*What the token is, what it does, what it deliberately doesn't. Present-tense, code-grounded.
+Maturity labels: **LIVE** (mainnet/live surface), **RUNS** (green on test/mock), **BUILT** (real
+code, not exercised live), **POLICY** (a governed choice, not a protocol law), **DESIGN** (intended,
+not built).*
 
-## The token in one paragraph
+## $DREGG in a paragraph
 
-$DREGG is a fixed-supply SPL token native to Solana (~1B units, pump.fun launch). There
-is no emission schedule, no inflation, no protocol mint. The architecture reinforces
-this rather than hedging it: dregg **networks proofs, not tokens** — other chains verify
-proofs *about* dregg state; $DREGG is never minted on another chain
-(`docs/deos/INTERCHAIN-MODEL.md`, "What universal means here"). When $DREGG enters
-dregg's own state it does so as a 1:1 mirror against tokens locked in a vault, and the
-executor refuses any mint that would break `live_supply <= currently_locked`
-(`turn/src/executor/bridge_ledger.rs`). Redeeming burns the mirror before release. The
-repo deliberately pins **no** mainnet mint address in code; the binding is an operator
-env decision (`dregg-pay/src/config.rs`, `DREGG_PAY_MINT`) — confirm the canonical
-contract address out-of-band before citing one.
+$DREGG is a fixed-supply SPL token on Solana (~1B units, pump.fun launch). The protocol never mints
+it — that's a **POLICY** backed by a real fixed SPL, not a claim about the kernel. When $DREGG enters
+dregg's state it's a 1:1 mirror against tokens locked in a vault; the executor refuses any mirror-mint
+that would break `live_supply ≤ currently_locked`, and redeeming burns the mirror before release
+(**BUILT**). No mainnet mint address is pinned in code — it's an operator env decision; confirm the
+canonical contract out-of-band.
 
-## The four roles of $DREGG (maturity-labeled)
+## The kernel doesn't set monetary policy — it enforces authorization
 
-**1. It buys services, never features.** The locked posture across the games and
-service surfaces (`docs/GAME-STRATEGY.md`, decisions locked 2026-07-12): $DREGG buys
-AI-narration run credits, hosting, cosmetics, entry — never power, never yield.
-The payment rail is real code: `dregg-pay/` implements per-user Solana deposit
-addresses, an idempotent credit ledger, and dual-asset treasury economics — USDC is
-**fuel** (funds real inference, fails closed when empty), $DREGG is the **pile**
-(accumulates in an illiquid operator treasury rather than being market-sold; an OTC leg
-recycles pile for USDC at a 10% discount, governance-voted, operator-signed). A run
-costs $0.10 by default and paying in $DREGG earns a ~20% discount over USDC via a
-Jupiter price oracle (`dregg-pay/src/pricing.rs`, `dregg-pay/src/otc.rs`). **RUNS on
-mock chains** (`cargo test -p dregg-pay` green end-to-end, Discord bot loop fully
-wired); **the mainnet flip has not been made** — the deployed game surface is free to
-play, sets no payment env, and the go-live runbook (`docs/ops/PAYMENTS-GO-LIVE.md`) is
-written but unfired. No real $DREGG has yet been accepted for a service.
+Every turn is net-zero per asset (**LIVE**) — you can't create value inside a transfer. Tokens come
+into existence exactly one way: a capability-gated **mint** by the token's issuer (and a cell can't
+coin its own supply). A **burn** is the permissionless inverse and is *conserving* — it moves tokens
+to an issuer well that holds negative supply, so circulating supply falls while the books stay
+balanced. Nothing is ever destroyed out of the accounting.
 
-**2. It grants governance weight without staking.** A holder proves — cryptographically,
-against a stake-weighted ≥2/3 Solana consensus supermajority anchored at a
-governance-pinned checkpoint — that their own wallet held N units at a finalized
-snapshot slot, and receives vote weight N. No lock, no transfer, no wrapped token, no
-yield; custody preservation is a Lean theorem (`weight_backed_and_noncustodial`,
-`metatheory/Dregg2/Bridge/ProofOfHoldings.lean`), and the weight verdict itself is
-rendered by the extracted Lean core with no Rust fallback
-(`dregg-governance/src/holding_weight.rs`). Snapshot semantics are deliberate: weight
-is fixed per poll at a pinned slot with a consume-once nullifier per (poll, holder,
-asset) — this is what defeats flash-loan weight and buy-vote-sell-revote, not a
-fluidity bug. **RUNS in test** (13/13 bridge holdings polarities, 59/59 governance lib
-tests, forged 1-key stake table rejected); **no mainnet feed has been ingested yet**, so no real
-mainnet holding has been proven end-to-end — but rung-1 live-feed ingestion is landed
-(`72561117d`: the gated e2e boots its own `solana-test-validator`, mints a real
-750-token SPL holding, and ingests it over live RPC to ConsensusVerified against the
-caller's governance anchor; the mainnet `SnapshotFeed` is designed, unfired). Holding-weighted ballots
-land on the verified vote engine: `VerifiedHoldingBallotBox` opens each poll as a real
-`collective_choice` poll and casts via `cast_weighted` — one consume-once nullifier per
-weighted ballot, the tally bumped by exactly the granted weight under the same
-one-ballot-per-voter gates (`dregg-governance/src/holding_weight.rs`). The old
-host-side ballot box survives only as a demoted in-crate compat shim with no external
-consumers.
+The consequence worth stating once: the kernel supports mintable **and** fixed-supply tokens. Which
+one $DREGG is, is $DREGG's policy. Other tokens run whatever policy their issuer chooses. There's no
+protocol-level inflation of $DREGG because we chose a fixed SPL — not because the kernel forbids
+minting.
 
-**3. It becomes spendable inside dregg through the vault.** To *spend* (rather than
-reference) $DREGG inside dregg, you lock into the Solana vault program
-(`solana-lock/`), and dregg mints mirror-$DREGG 1:1 against the observed lock —
-consume-once nullifier, committed supply ledger, conservation-gated
-(`turn/src/executor/bridge_ledger.rs::bridge_mint_against_lock`). This is real custody,
-surrendered to a program that releases only on evidence — and the honest trust ladder
-is: the production inbound slice is an M-of-N **oracle attestation** (BUILT/RUNS in
-test); the **consensus-verified** inbound successor (bank-state-derived stake tables,
-authorized-voter-bound tally, weak-subjectivity anchor) is built and green against
-fixture clusters (`bridge/tests/solana_lock_trustless.rs`) but has never verified real
-mainnet consensus; **release is oracle-custodial on every path** (there is no trustless
-outbound yet). The three soundness suspects flagged 2026-07-15 are CLOSED (`72561117d`,
-each red-first both-polarity): value-release now requires a rooted-finality leg (an
-exact-slot optimistic grade survives only under an explicitly-named `_optimistic`
-entry); `derive_stake_table` enforces a total-effective-stake floor cross-checked
-against the proven StakeHistory sysvar (an under-supplied stake set is
-`StakeBelowHistoryFloor`, refused); and `rotate()` tallies via `tally_authorized`,
-binding rotation witnesses to the trusted epoch's on-chain authorized voters. Nothing
-in this leg is deployed holding real value today.
+## What $DREGG does
 
-**4. Collateral and bonds — mostly not $DREGG, and deliberately so.** The bonded
-subsystems that exist are denominated in other units: relay operator bonds and slashing
-run on internal computrons (`node/src/relay_dispute.rs`, RUNS in test), and the
-launchpad's deployer bond example is ETH-denominated (`tools/deployer-gate/`). The
-repo's own mechanism analysis argues **against** token-denominated conduct bonds: a
-bond denominated in the token it polices loses value exactly when misconduct occurs, so
-bonds should be quote-asset-denominated (`docs/deos/FHEGG-CODEX-ROUND4.md`). A $DREGG
-bond/collateral sink via the ordinary Payable rail (bridged $DREGG is already an
-ordinary asset to the service economy, `docs/guide/SERVICE-ECONOMY-SDK.md`) is
-**DESIGNED, not built** — `docs/deos/DREGG-BOND-DESIGN.md` (quote-floored
-two-tranche bond: the deterrence floor is quote-asset-covered; $DREGG is a
-junior first-loss tranche that never counts toward the floor), which prices
-exactly the correlated-devaluation problem the codex analysis identifies.
+- **Buys services, never power.** The pay rail (`dregg-pay`) gives each user a Solana deposit address;
+  send $DREGG or USDC → run-credits. A run is ~$0.10 in USDC; paying in $DREGG earns a ~20% holder
+  discount (Jupiter oracle). **RUNS on mock; the mainnet flip is not made** — the live game is free.
+- **Governs, by proof-of-holdings.** Voting weight is a snapshot proof that you hold your own $DREGG;
+  per-poll nullifiers defeat flash-loan voting. No staking, no lockups, no yield. **BUILT.**
+- **Never buys features.** Across the games: $DREGG buys credits/hosting/cosmetics — never power,
+  never yield. In-play units (gold, hp, echoes, relics, soulbound badges) are decoupled from real
+  value; power is earned by playing, not purchased. **LIVE.**
 
-## What deliberately does not exist
+## Security is game-based, and penalties redistribute
 
-No staking yield. No burn mechanism (slash remainders are conserving transfers to a
-treasury cell; supply is never destroyed by protocol action). No protocol fee capture
-routed to the token — the launchpad's only fee is a 30bps pool swap fee that accrues to
-the pool's own reserves, and launchpad slashes compensate holders, never the platform.
-No play-to-earn: leaderboard reward is glory, not yield (locked decision,
-`docs/GAME-STRATEGY.md`). Anyone reading dregg's tokenomics through the
-staking/burn/P2E template will find the template empty; the design is a fixed-cap asset
-whose demand comes from services, discounts, treasury-pile accumulation, and
-non-custodial governance — with each leg's maturity labeled above.
+The base can't inflate, so security comes from bonds and forfeiture, not emissions:
+- **Conduct bonds** — a deployer posts a bond, escrow-locked while a launch is live, slashable on
+  proven misconduct behind a timelocked, vetoable process. **BUILT (PoC).**
+- **Relay dispute slashing** — a dropped custody obligation is convicted by a referee; the bond
+  **redistributes** (restitution to the wronged party, remainder to a treasury). **LIVE.**
+- **Equivocation court** — two conflicting blocks for one slot → an auto-firing court seizes the bond.
+  **RUNS.**
 
-## Computrons are not the token
+Penalties **redistribute, they don't destroy** — at worst into a **DAO-governed treasury**, and the
+**DAO can vote to burn**. Burning is a governance policy on a redistributing base, not a hardcoded
+protocol sink. (One mechanism, the court, *can* be configured to send its seizure to an unspendable
+sink — the metering unit, not $DREGG — but that's an option, not the rule.) And bonds aren't
+denominated in the token they police: the senior deterrence tranche is in a quote/metering unit,
+$DREGG at most a junior first-loss (**DESIGN**).
 
-Computrons are dregg's internal compute-metering unit — the gas, not the asset. A turn
-declares a fee; the fee **is** the computron budget, and execution that would exceed it
-is refused (`turn/src/executor/costs.rs`, `turn/src/executor/execute.rs`). The cost
-table is explicitly a testing default, not a governed price list. Budget distribution
-across execution silos is Byzantine-tolerant bounded counters (Stingray,
-arXiv:2501.06531 — `coord/src/budget.rs`, RUNS). Fees are conserving moves, not burns:
-50% proposer / 30% treasury / ≥20% fee-well, with unconfigured shares burned
-(`turn/src/executor/mod.rs`). Computrons also denominate storage quotas, relay inbox
-deposits, and operator bonds. Supply today is devnet-shaped: a rate-limited faucet
-drains a pre-funded cell (`node/src/api.rs`); the Discord surface displays the unit as
-"DEC", which is a display label with no code tie to the Solana token.
+## Treasury and business
 
-**There is no peg, oracle, purchase path, or exchange rate between computrons and
-$DREGG anywhere in the code.** Claiming "$DREGG powers dregg compute" is unsupported at
-HEAD. What exists are the docking points a purchase path would attach to: the relay
-`FeePolicy.external_rate_micros` field (a per-external-asset units-per-computron rate,
-designed for USDC/ETH deposit vouchers, disabled by default —
-`node/src/relay_service.rs`), the Payable rail that treats any bridged asset as
-spendable, and the fee-distribution engine that already routes every metered turn's
-value to named cells. Because the bounded counter is generic over any fungible
-resource, "computrons can be purchased in any asset at an operator- or market-set rate"
-is an open **design decision**, not a kernel change — the natural verified venue for
-market-set rates being DrEX ring clearing (`docs/deos/DREX-DESIGN.md`), which is
-**VISION** for this purpose.
+"USDC is the fuel, $DREGG is the pile." USDC funds inference and fails closed when empty; $DREGG
+accrues to an illiquid treasury that's **recycled, not market-dumped** (a governed swap, or an OTC
+desk selling pile $DREGG at a discount to people bringing USDC). No $DREGG is market-sold to pay
+bills, and none is burned today (**BUILT/POLICY**). The one product that moves value across cells
+today is **agent-platform** — renting confined agent "grains" for per-period rent (**RUNS**) —
+alongside AI-narration credits, execution leases, a compute exchange, async STARK proving, and TEE
+attestation.
 
-## Rules for talking about this
+## Not built yet (so nobody's surprised)
 
-Present-tense claims track the maturity labels — say which. Do not use staking, burn,
-or P2E vocabulary for mechanisms that do not exist. Do not cite a mint address from
-memory; confirm out-of-band. The differentiating posture is that the maturity labels
-are published by the project itself: lead with what runs, own every gap out loud.
+- **No native fungible-token standard** (no ERC-20/Token-2022 equivalent with lifecycle hooks). The
+  primitive is `cell + token_id + issuer-well`. Interim: issue on Solana/EVM and settle a proof about
+  that L2 into dregg (the on-chain peer-verification we're building). Native dreggic tokens with
+  lifecycle hooks are **DESIGN**.
+- **Burns as value accrual.** The burn primitives exist; today value accrues via services + the
+  recycled treasury. If burns ever accrue value, it'll be a DAO **POLICY**, named and voted.
+- **The mainnet payment flip.** Real $DREGG has never been accepted; the go-live runbook is gated.
+
+---
+*Sibling docs: `docs/deos/INTERCHAIN-MODEL.md`, `docs/deos/PROOF-OF-HOLDINGS.md`,
+`docs/deos/DREGG-BOND-DESIGN.md`, `docs/deos/TOKEN-MIRROR-BRIDGE.md`.*
