@@ -1137,6 +1137,17 @@ impl<S: SnapshotBankSource> HoldingFeedSource for SnapshotFeed<S> {
 /// LOUD, never a silent pass over fabricated bytes (the load-bearing faithfulness
 /// posture, runbook §7). The pipeline stages are written out so the SHAPE is
 /// reviewable; each is gated on the format work landing.
+///
+/// **NOT COMPILED FOR `wasm32`.** This source is native-only *in fact* and now says
+/// so: it names a snapshot archive by `PathBuf` and opens it with `std::fs::File`,
+/// which on `wasm32-unknown-unknown` is a std stub that can only ever fail at
+/// runtime — there is no filesystem in a browser tab. The gate is not a
+/// convenience: the `.tar.zst` container needs `zstd`, whose `zstd-sys` build
+/// script compiles the vendored C library (including `huf_decompress_amd64.S`,
+/// x86-64 assembly) and therefore cannot be built for `wasm32` at all. The dep is
+/// declared under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` in
+/// `bridge/Cargo.toml` to match this gate; the two must move together.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct AgaveSnapshotBank {
     /// Path to the Agave full snapshot archive on a durable data-dir.
     pub archive_path: std::path::PathBuf,
@@ -1144,6 +1155,7 @@ pub struct AgaveSnapshotBank {
     pub anchor: WeakSubjectivityAnchor,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AgaveSnapshotBank {
     /// Point at a snapshot archive and the pinned anchor.
     pub fn new(
@@ -1157,6 +1169,7 @@ impl AgaveSnapshotBank {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SnapshotBankSource for AgaveSnapshotBank {
     fn load_bank(&self, token_account: &[u8; 32]) -> Result<SnapshotBank, FeedError> {
         // REAL parse (Track A rung 2): unpack the `.tar.zst` archive, decode the
@@ -1200,7 +1213,14 @@ impl SnapshotBankSource for AgaveSnapshotBank {
 // fixint-LE bincode wire Agave serializes those primitive fields with. Parsing
 // them out of a real mainnet `SerializableVersionedBank` remains the named
 // snapshot-fixture residual.
+//
+// NATIVE-ONLY (`cfg(not(target_arch = "wasm32"))`): every entry point here reads an
+// archive off a real filesystem (`read_archive` → `std::fs::File::open`) and decodes
+// a Zstandard stream (`zstd`, whose `zstd-sys` build script compiles x86-64 assembly
+// and has no wasm32 build at all). A browser tab has neither. Keep this gate in
+// lockstep with the target-specific `zstd`/`tar` deps in `bridge/Cargo.toml`.
 
+#[cfg(not(target_arch = "wasm32"))]
 mod agave_snapshot {
     use super::*;
     use crate::solana_provenance::{STAKE_PROGRAM_ID, vote_program_id};
@@ -1572,8 +1592,9 @@ mod agave_snapshot {
 /// mainnet snapshot (a real bank carries the full `SerializableVersionedBank`; a
 /// real accounts DB has millions of accounts across many storages) — it is the
 /// smallest archive in the real format that drives the parser end-to-end. Gated on
-/// `cfg(test)` / the dev-only `test-utils` feature.
-#[cfg(any(test, feature = "test-utils"))]
+/// `cfg(test)` / the dev-only `test-utils` feature — and, like the parser it feeds,
+/// NOT on `wasm32` (it *writes* the `.tar.zst` with `zstd`/`tar`).
+#[cfg(all(any(test, feature = "test-utils"), not(target_arch = "wasm32")))]
 pub mod agave_snapshot_synth {
     use super::agave_snapshot::{STORE_META_OVERHEAD, SnapshotBankMeta};
     use super::*;

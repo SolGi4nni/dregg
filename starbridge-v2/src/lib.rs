@@ -70,9 +70,19 @@ pub mod affordance;
 // the dregg SOURCE (the Rust/Lean/docs that DEFINE the system), shipped inside the
 // AppImage at `usr/share/dregg-src/dregg-src.tar.zst`. An agent put INTO deos (the
 // embedded Hermes, or the cockpit) can read the source it is trapped within — a
-// read cap, no write authority. Always available (zstd/tar only; the firmament
-// read-only mount helper is feature-gated inside). See
+// read cap, no write authority. Available on every NATIVE target (zstd/tar only;
+// the firmament read-only mount helper is feature-gated inside). See
 // `docs/deos/SELF-DESCRIBING-VESSEL.md`.
+//
+// NOT COMPILED FOR `wasm32`: the vessel LOCATES its carrier on a filesystem
+// (executable-relative AppImage search / `DREGG_SRC_ARCHIVE`) and reads it with
+// `std::fs`, which a browser tab does not have — and its `zstd` codec's `zstd-sys`
+// build script compiles x86-64 assembly (`huf_decompress_amd64.S`) that has no
+// wasm32 build at all. This crate reaches the browser game bundle through
+// `dungeon-on-dregg -> dreggnet-offerings -> dregg-wasm`, so an ungated `zstd` here
+// breaks `/descent/play`. Keep this gate in lockstep with the target-specific
+// `zstd`/`tar` deps in `Cargo.toml`.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod source_vessel;
 
 // The WEB-OF-CELLS browser — the cockpit as a native browser of the `dregg://`

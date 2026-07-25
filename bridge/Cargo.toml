@@ -70,15 +70,6 @@ solana-vote-interface = { version = "6.0.2", default-features = false, features 
 # bincode 1.x (Solana's instruction-data codec) for decoding the `VoteInstruction`
 # carried in a real vote transaction's instruction data.
 bincode = "1"
-# The Agave full-snapshot container is a `.tar.zst` archive: `zstd` for the real
-# Zstandard stream and `tar` for the USTAR entry walk (`snapshots/<slot>/<slot>`
-# bank fields + `accounts/<slot>.<id>` AppendVec storages). Both are standard,
-# byte-faithful codecs already in the workspace lock (pulled by other members);
-# they add no new transitive crates beyond their own. Used by
-# `solana_feed::agave_snapshot` to unpack a real snapshot archive into the
-# committed `SnapshotBank` the anchored verifier consumes.
-zstd = "0.13"
-tar = "0.4"
 # Type-only Solana stake interface for the REAL warmup/cooldown effective-stake
 # curve (`Delegation::stake_v2` / `StakeHistory` / `StakeHistoryEntry` + the
 # `warmup_cooldown_allowance` rate constants — 25% original / 9% tower). Pulled
@@ -113,6 +104,42 @@ sha3 = "0.10"
 # vectors. Never compiled into a shipped (non-test-utils) build.
 solana-hash = { version = "4", optional = true }
 solana-pubkey = { version = "4", optional = true }
+
+# ── NATIVE-ONLY: the Agave snapshot-archive codecs ────────────────────────────
+# The Agave full-snapshot container is a `.tar.zst` archive: `zstd` for the real
+# Zstandard stream and `tar` for the USTAR entry walk (`snapshots/<slot>/<slot>`
+# bank fields + `accounts/<slot>.<id>` AppendVec storages). Both are standard,
+# byte-faithful codecs already in the workspace lock (pulled by other members);
+# they add no new transitive crates beyond their own. Used by
+# `solana_feed::agave_snapshot` to unpack a real snapshot archive into the
+# committed `SnapshotBank` the anchored verifier consumes.
+#
+# TARGET-GATED OFF `wasm32`, and this is a HARD requirement, not tidiness:
+# `zstd-sys`'s build script compiles the vendored C library with `cc`, and one of
+# its inputs is `zstd/lib/decompress/huf_decompress_amd64.S` — **x86-64 assembly**.
+# Building `dregg-wasm` for `wasm32-unknown-unknown` therefore ran
+# `clang --target=wasm32-unknown-unknown ... -c huf_decompress_amd64.S` and died,
+# which is why the browser bundle could not be rebuilt for five days.
+#
+# The game bundle really does reach this crate, by THREE independent edges — not the
+# one that is usually named: `dregg-wasm -> dregg-intent -> dregg-bridge`,
+# `dregg-wasm -> dregg-sdk -> dregg-bridge`, and `dregg-wasm -> dreggnet-offerings ->
+# dregg-pay -> dregg-bridge` (dregg-pay also reaches it via dregg-governance). Cutting
+# any one of them changes nothing. Measured on the shipped bundle, though, this crate
+# contributes **259 bytes** of the 61,108,004 — the linker already drops it. So the
+# coupling costs BUILDABILITY and compile time, not size; do not sever it expecting
+# megabytes back (the megabytes are `circuit/descriptors/`, ~35 MB of `include_str!`ed
+# AIR registries in the data section).
+#
+# The consumer is native-only in fact anyway: `read_archive` opens the archive with
+# `std::fs::File::open`, and wasm32-unknown-unknown's `std::fs` is a stub that can
+# only fail at runtime. Its module (`solana_feed::agave_snapshot`, plus
+# `AgaveSnapshotBank` and the synthetic-archive builder) carries the matching
+# `#[cfg(not(target_arch = "wasm32"))]`. Move the two together or the wasm build
+# breaks again.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zstd = "0.13"
+tar = "0.4"
 
 [dev-dependencies]
 criterion = { workspace = true }

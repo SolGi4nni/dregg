@@ -1234,6 +1234,7 @@ dependencies = [
  "dregg-payable",
  "dregg-sdk",
  "dregg-turn",
+ "dregg-turn-prover",
  "dregg-types",
  "ed25519-dalek",
  "serde",
@@ -1561,6 +1562,7 @@ dependencies = [
  "ed25519-dalek",
  "postcard",
  "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -1694,6 +1696,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-pq",
  "dregg-turn",
+ "dregg-turn-prover",
  "ed25519-dalek",
 ]
 
@@ -1723,6 +1726,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-lean-ffi",
  "dregg-lightclient",
  "dregg-schema",
  "dregg-turn",
@@ -1947,7 +1951,6 @@ dependencies = [
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
- "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-hints",
@@ -1970,8 +1973,10 @@ name = "dregg-turn-prover"
 version = "0.1.0"
 dependencies = [
  "dregg-cell",
+ "dregg-cell-crypto",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-commit",
  "dregg-turn",
  "dregg-types",
  "postcard",
@@ -2092,6 +2097,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-app-framework",
+ "dregg-lean-ffi",
  "dregg-node-target",
  "dregg-pay",
  "dregg-types",

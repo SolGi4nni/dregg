@@ -502,14 +502,6 @@ thiserror = "2"
 # Used by the embedded `World` for the image-commitment root + cell snapshots.
 blake3 = "1"
 postcard = { version = "1", features = ["use-std"] }
-# THE SELF-DESCRIBING VESSEL carrier codec (`src/source_vessel.rs`): the bundled
-# dregg source ships as a `dregg-src.tar.zst` tarball (scripts/pack-dregg-src.sh)
-# inside the AppImage; `SourceVessel` decodes it at runtime to read the source it
-# inhabits. Both already resolve in this workspace's graph (gpui/servo transitive),
-# so naming them directly pulls NO new crate — just makes the dep explicit. The
-# `tar` reader is pure-Rust; `zstd` is the same codec the carrier was packed with.
-zstd = "0.13"
-tar = "0.4"
 # The headless cockpit bake re-encodes the captured RGBA to a PNG visual check
 # (the raw `.rgba` the seL4 PD bakes is written directly). Gated on
 # `headless-render`. 0.25 matches gpui_wgpu's `image` (one resolved version).
@@ -577,6 +569,24 @@ gpui-component = { git = "https://github.com/emberian/gpui-component", rev = "49
 # so wasm32 compiles the Rust fallback paths — a statement about wasm32's linker
 # (it cannot link libdregg_lean.a), never about which guarantees native has.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# THE SELF-DESCRIBING VESSEL carrier codec (`src/source_vessel.rs`): the bundled
+# dregg source ships as a `dregg-src.tar.zst` tarball (scripts/pack-dregg-src.sh)
+# inside the AppImage; `SourceVessel` decodes it at runtime to read the source it
+# inhabits. Both already resolve in this workspace's graph (gpui/servo transitive),
+# so naming them directly pulls NO new crate — just makes the dep explicit. The
+# `tar` reader is pure-Rust; `zstd` is the same codec the carrier was packed with.
+#
+# TARGET-GATED OFF `wasm32`, and this is a HARD requirement: `zstd-sys`'s build
+# script compiles the vendored C library including
+# `zstd/lib/decompress/huf_decompress_amd64.S` — **x86-64 assembly** — so
+# `clang --target=wasm32-unknown-unknown` cannot build it at any optimisation level.
+# This crate reaches the browser game bundle via `dungeon-on-dregg ->
+# dreggnet-offerings -> dregg-wasm`, so leaving it ungated is what broke
+# `/descent/play`'s rebuild. The consumer is native-only in fact anyway (it locates
+# the carrier on a filesystem and reads it with `std::fs`); `src/source_vessel.rs`
+# carries the matching `#[cfg(not(target_arch = "wasm32"))]`. Move the two together.
+zstd = "0.13"
+tar = "0.4"
 # The self-hosting dev-loop surfaces (pulled by `dev-surfaces`). Own workspaces,
 # same gpui fork @407a6ff → one gpui resolves across the graph. deos-zed rides
 # gpui-component (vendored); deos-terminal rides alacritty_terminal.
