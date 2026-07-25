@@ -22,8 +22,8 @@
 use deos_view::text::render_text;
 use deos_view::{CoordCell, ViewNode};
 use dreggnet_offerings::native_descent::{
-    CARRY_CAP, DUNGEON_FLOORS, DUNGEON_RELICS, LIGHT_BREATH, NativeDescentOffering,
-    NativeDescentSession, guardian_hp,
+    CARRY_CAP, DUNGEON_DAYS, DUNGEON_FLOORS, DUNGEON_RELICS, LIGHT_BREATH, NativeDescentOffering,
+    NativeDescentSession,
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dungeon_on_dregg::descent::{DELVE, LOOT, RELICS as DESCENT_RELICS, SMITE};
@@ -370,8 +370,9 @@ fn the_light_clock_and_the_attenuating_carry_ceiling_are_real_meters() {
     );
     assert_eq!(
         meter(surface.view(), "guardian"),
-        (0, guardian_hp(1)),
-        "a floor's guardian gets a vitality meter against its real hp"
+        (0, session.day_world().guard_hp(1)),
+        "a floor's guardian gets a vitality meter against its real hp — THIS DAY's, off the run's \
+         own drawn map, not the day-0 table"
     );
 }
 
@@ -474,4 +475,180 @@ fn the_map_and_the_meters_survive_the_shared_prose_projection() {
         text.contains("open way") && text.contains("crown"),
         "the legend rides along:\n{text}"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THE GUARDIAN IS A DAY FACT
+//
+// The map is drawn from the committed day-seed: which floor each relic is minted on, and how much
+// vitality each floor's guardian carries. `descent::guard_hp` is DAY 0's table. Every surface
+// number that quoted it was right on one day in sixteen — a `0/1` meter under a guardian that
+// takes two blows, a glyph that reads SLAIN while the hoard is still shut, and a pressure line
+// that prices the toll at half. These are the tests that fail if any of that comes back.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Day 0's floor-`depth` guardian — the number the surface used to quote unconditionally.
+fn day_zero_guard_hp(depth: u64) -> u64 {
+    dungeon_on_dregg::descent::CANON_WORLD.guard_hp(depth)
+}
+
+/// **The draw MUST actually vary guardian vitality.** If it does not, every "day-aware guardian"
+/// claim in this crate is decoration over a constant, which is a bigger finding than the display
+/// bug the next test guards — so say it loudly rather than passing vacuously.
+#[test]
+fn the_committed_day_seed_really_does_vary_guardian_vitality() {
+    let differing: Vec<(usize, u64, u64, u64)> = (0..DUNGEON_DAYS)
+        .flat_map(|day| {
+            let world = dungeon_on_dregg::descent::day_world(day);
+            (1..=DUNGEON_FLOORS).filter_map(move |floor| {
+                let hp = world.guard_hp(floor);
+                (hp != day_zero_guard_hp(floor)).then_some((
+                    day,
+                    floor,
+                    hp,
+                    day_zero_guard_hp(floor),
+                ))
+            })
+        })
+        .collect();
+    assert!(
+        !differing.is_empty(),
+        "NO drawn day gives ANY floor a guardian vitality different from day 0's. The day-seed is \
+         then not varying guardian vitality at all, and every day-aware guardian accessor in this \
+         crate is ceremony over one constant — a bigger finding than the surface bug this suite \
+         guards. Read `dungeon-on-dregg/program/dungeon_program.json`'s `ghp` arrays before \
+         weakening this assertion."
+    );
+    // And the floor-1 case specifically, because that is the floor a player meets first and the
+    // one the surface test below stands on.
+    assert!(
+        differing.iter().any(|(_, floor, _, _)| *floor == 1),
+        "no drawn day changes FLOOR 1's guardian; the first guardian a player ever meets is the \
+         same every day, so the surface bug this suite guards would be unobservable there: \
+         {differing:?}"
+    );
+}
+
+/// A deploy seed whose drawn map arms floor 1 with a vitality that is NOT day 0's, and that
+/// vitality. SEARCHED, never written down — the map is a function of the committed day-seed and a
+/// literal that encodes a world-fact outlives the world.
+fn seed_whose_first_guardian_is_not_day_zeros(offering: &NativeDescentOffering) -> (u64, u64) {
+    // 251 is the whole normalized deploy-seed space (`Offering::open` folds `n % 251 + 1`).
+    for seed in 0..251u64 {
+        let hp = offering
+            .day_world_for_seed(seed)
+            .expect("a seed-derived offering resolves a map for every seed")
+            .guard_hp(1);
+        if hp != day_zero_guard_hp(1) {
+            return (seed, hp);
+        }
+    }
+    panic!(
+        "no deploy seed in the whole 0..251 space draws a floor-1 guardian differing from day 0's \
+         ({}), even though some drawn day does. The seed → day-index reduction is then not \
+         covering the family and this suite cannot observe the bug it exists to catch.",
+        day_zero_guard_hp(1)
+    );
+}
+
+/// **THE FALSIFIER.** On a day whose first guardian is not day 0's, the guardian meter, the map
+/// glyph, and the pressure line must all agree with `day_world().guard_hp(1)`.
+///
+/// Against the old surface (which read the free `descent::guard_hp`) every one of these fails:
+/// the meter is denominated `1`, one blow flips the glyph to SLAIN while the hoard stays shut, and
+/// the pressure line offers to open the floor for one strike and two light. Against the fixed
+/// surface they are the day's own numbers.
+#[test]
+fn the_guardian_meter_and_the_strike_affordance_read_this_days_vitality() {
+    let offering = NativeDescentOffering::new();
+    let (seed, hp) = seed_whose_first_guardian_is_not_day_zeros(&offering);
+    let mut session = offering.open(SessionConfig::with_seed(seed)).expect("open");
+    assert_eq!(
+        session.day_world().guard_hp(1),
+        hp,
+        "the session opened on the map the offering published for this seed"
+    );
+    assert_ne!(
+        hp,
+        day_zero_guard_hp(1),
+        "this day's guardian is not day 0's"
+    );
+
+    land(&offering, &mut session, DELVE, 0);
+
+    // ── The meter. Denominated in TODAY's vitality. ──
+    let surface = offering.render(&session);
+    assert_eq!(
+        meter(surface.view(), "guardian"),
+        (0, hp),
+        "the guardian meter is sized against the guardian the executor will make this run fight"
+    );
+
+    // ── The pressure line. It prices the toll in strikes AND in light, and both are day facts. ──
+    let text = render_text(surface.view());
+    assert!(
+        text.contains(&format!("{hp} more strikes, {} light", hp * 2)),
+        "the pressure line owes {hp} strikes at 2 light each on this day:\n{text}"
+    );
+
+    // ── The affordance. One blow short of the toll the guardian STILL stands: the glyph must not
+    //    read slain, and the floor's hoard must not light up. This is the half a player pays for.
+    for blow in 1..hp {
+        land(&offering, &mut session, SMITE, 0);
+        let (_, cells) = the_map(offering.render(&session).view());
+        assert_eq!(
+            cell(&cells, 0, 2).glyph,
+            "G",
+            "after {blow} of {hp} blows the guardian is still standing and the map must say so"
+        );
+        let lit: Vec<usize> = (0..DUNGEON_RELICS)
+            .filter(|r| relic_row(&cells, *r) == Some(0) && cell(&cells, 0, 3 + r).highlight)
+            .collect();
+        assert!(
+            lit.is_empty(),
+            "after {blow} of {hp} blows the hoard is still shut, so nothing on floor 1 may be lit \
+             for the taking: {lit:?}"
+        );
+    }
+
+    // ── The last blow. Now, and only now, the glyph falls and the hoard opens. ──
+    land(&offering, &mut session, SMITE, 0);
+    let (_, cells) = the_map(offering.render(&session).view());
+    assert_eq!(cell(&cells, 0, 2).glyph, "x", "the {hp}th blow fells it");
+    let lit: Vec<usize> = (0..DUNGEON_RELICS)
+        .filter(|r| relic_row(&cells, *r) == Some(0) && cell(&cells, 0, 3 + r).highlight)
+        .collect();
+    assert!(
+        !lit.is_empty(),
+        "with the guardian down the floor's hoard is lit for the taking"
+    );
+    let text = render_text(offering.render(&session).view());
+    assert!(
+        !text.contains("the guardian stands"),
+        "a felled guardian is not still standing in the prose:\n{text}"
+    );
+}
+
+/// **The map a surface PUBLISHES for a seed is the map a session OPENED on that seed.**
+///
+/// `day_world_for_seed` exists so the browser play page can size its guardian meter before (and
+/// beside) a session. If it and `Offering::open` ever resolved through different normalizations or
+/// different day bindings, the page would draw one dungeon while the executor refereed another —
+/// which is exactly the bug this whole section is about, moved one layer out.
+#[test]
+fn the_published_day_world_is_the_one_a_session_plays() {
+    for offering in [
+        NativeDescentOffering::new(),
+        NativeDescentOffering::on_day(procgen_dregg::CommittedSeed::from_bytes([7u8; 32])),
+    ] {
+        for seed in 0..251u64 {
+            let published = offering.day_world_for_seed(seed).expect("a map resolves");
+            let session = offering.open(SessionConfig::with_seed(seed)).expect("open");
+            assert_eq!(
+                published,
+                session.day_world(),
+                "seed {seed}: the published map and the deployed map are the same dungeon"
+            );
+        }
+    }
 }

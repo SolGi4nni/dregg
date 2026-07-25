@@ -45,15 +45,23 @@ use dregg_app_framework::TurnReceipt;
 pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
     BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT,
-    PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_seed_from_deploy_seed, guard_hp,
+    PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed, day_world,
 };
 /// **The world's presentation constants**, re-exported so a FRONTEND can size a light bar or a
 /// carry meter against the same Lean-sourced numbers this surface does, without its own dependency
 /// on the game crate — and so a browser-side mirror of them can be PINNED by a test against these
 /// rather than drifting silently. They decide nothing; the executor is still the only referee.
+///
+/// These are the numbers that are the SAME every day. The guardian vitalities and the relic mint
+/// homes are NOT among them — they are drawn from the committed day-seed, so a frontend sizing a
+/// guardian meter asks the run for [`DayWorld`] ([`NativeDescentSession::day_world`], or
+/// [`NativeDescentOffering::day_world_for_seed`] before a session exists) instead of reading a
+/// constant. There deliberately is no `guardian_hp` re-export any more: the free
+/// `descent::guard_hp` is day 0's table and is therefore right on one day in
+/// [`DAYS`](dungeon_on_dregg::descent::DAYS).
 pub use dungeon_on_dregg::descent::{
     BANKED as CUSTODY_BANKED, BREATH as LIGHT_BREATH, CAP as CARRY_CAP, CARRIED as CUSTODY_CARRIED,
-    FLOORS as DUNGEON_FLOORS, RELICS as DUNGEON_RELICS, guard_hp as guardian_hp,
+    DAYS as DUNGEON_DAYS, DayWorld, FLOORS as DUNGEON_FLOORS, RELICS as DUNGEON_RELICS,
 };
 use dungeon_on_dregg::loot::LootError;
 /// The settled run's owned-note world and the shape of what it recorded — re-exported so a
@@ -449,6 +457,17 @@ impl NativeDescentSession {
         &self.game
     }
 
+    /// **THIS run's drawn map** — where each relic was minted and how much vitality each floor's
+    /// guardian has TODAY.
+    ///
+    /// Every guardian-shaped number a surface renders (the vitality meter's denominator, whether
+    /// the glyph reads slain, how many strikes and how much light are still owed) comes from here,
+    /// never from the free `descent::guard_hp`, which is DAY 0's table and is therefore wrong on
+    /// fifteen of the sixteen drawn maps.
+    pub fn day_world(&self) -> DayWorld {
+        self.game.day_world()
+    }
+
     /// The run's committed day-seed — the provenance root this session's banked relics mint
     /// under. Reproducible from the deploy seed unless the offering bound a day
     /// ([`NativeDescentOffering::on_day`] / [`on_beacon`](NativeDescentOffering::on_beacon)).
@@ -645,6 +664,13 @@ pub fn encode_native_descent_private_deal(
 /// distinct provenance roots (a banked note cannot be pre-computed before the day's beacon
 /// round matures), and distinct worlds within one day keep distinct roots; both are
 /// re-derivable by anyone holding the day's seed.
+/// **The one deploy-seed normalization.** A [`SessionConfig`] seed is folded into `1..=251` here
+/// and nowhere else, so the map a surface PUBLISHES for a seed and the map the session OPENED on
+/// that seed cannot come from two different normalizations.
+fn normalize_seed(seed: u64) -> u8 {
+    ((seed % 251) + 1) as u8
+}
+
 pub fn native_descent_run_day_seed(day: &CommittedSeed, seed: u8) -> CommittedSeed {
     let mut hasher = blake3::Hasher::new_derive_key(RUN_DAY_SEED_DOMAIN);
     hasher.update(day.as_bytes());
@@ -789,6 +815,22 @@ impl NativeDescentOffering {
                     )
                 }),
         }
+    }
+
+    /// **The drawn map a session opened at `seed` would play**, without opening one.
+    ///
+    /// A surface that must publish the day's guardian vitalities *before* (or beside) a session —
+    /// the browser play page mirrors them to size its meter — asks HERE. It resolves through this
+    /// offering's own [`DayBinding`], the same [`normalize_seed`] the [`open`](Offering::open)
+    /// path applies, and the game crate's own `day_index` / `day_world`, so it cannot describe a
+    /// different dungeon than the session will. `native_descent::the_published_day_world_is_the_one_a_session_plays`
+    /// pins that agreement over every seed on every drawn day.
+    ///
+    /// A live binding with no currently-verified day resolves no map, exactly as it opens no
+    /// session.
+    pub fn day_world_for_seed(&self, seed: u64) -> Result<DayWorld, OfferingError> {
+        let run_day_seed = self.run_day_seed(normalize_seed(seed))?;
+        Ok(day_world(day_index(&run_day_seed)))
     }
 
     /// Resume an untrusted record only after exact native re-execution.
@@ -938,7 +980,7 @@ impl Offering for NativeDescentOffering {
     type Session = NativeDescentSession;
 
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
-        let seed = ((cfg.seed.unwrap_or(1) % 251) + 1) as u8;
+        let seed = normalize_seed(cfg.seed.unwrap_or(1));
         let game = Descent::deploy_on_day(seed, self.run_day_seed(seed)?)
             .map_err(|error| OfferingError::Deploy(error.to_string()))?;
         let root = genesis_root(seed, game.day_seed(), game.sim());
@@ -1091,7 +1133,10 @@ impl Offering for NativeDescentOffering {
         if sim.depth >= 1 {
             vitals.push(ViewNode::Progress {
                 value: sim.wounds,
-                max: guard_hp(sim.depth),
+                // THIS DAY's guardian, off the run's own drawn map — never the day-0 table. A
+                // meter reading `0/1` where today's guardian has two points of vitality tells a
+                // player one blow will open the hoard, and it will not.
+                max: sim.guard_hp(sim.depth),
                 label: "guardian".to_string(),
             });
         }
@@ -2652,7 +2697,7 @@ fn descent_map(sim: &Sim) -> ViewNode {
 
         // The floor's guardian. Wounds are per-standing-floor, so only the guardian you face can
         // read as slain; the rest stand.
-        let slain_here = standing_here && sim.wounds >= guard_hp(floor);
+        let slain_here = standing_here && sim.wounds >= sim.guard_hp(floor);
         cells.push(map_cell(
             if slain_here {
                 GLYPH_GUARDIAN_SLAIN
@@ -2782,12 +2827,15 @@ fn descent_pressures(sim: &Sim) -> Vec<ViewNode> {
             "⚠ the light is guttering — {light} left, and climbing out costs {LIGHT_FLEE}"
         )));
     }
-    if sim.depth >= 1 && sim.wounds < guard_hp(sim.depth) {
+    // The toll is THIS DAY's: the drawn map decides how much vitality this floor's guardian has,
+    // so the strikes-remaining count is read off the run's own world. Quoting day 0's table here
+    // priced the guardian wrong — and it is a PRICE, in the one resource the run cannot refill.
+    let owed = sim.guard_hp(sim.depth).saturating_sub(sim.wounds);
+    if sim.depth >= 1 && owed > 0 {
         out.push(ViewNode::Text(format!(
-            "⚠ the guardian stands — the floor's hoard stays shut until it falls ({} more strike{}, {} light)",
-            guard_hp(sim.depth) - sim.wounds,
-            if guard_hp(sim.depth) - sim.wounds == 1 { "" } else { "s" },
-            (guard_hp(sim.depth) - sim.wounds) * LIGHT_SMITE
+            "⚠ the guardian stands — the floor's hoard stays shut until it falls ({owed} more strike{}, {} light)",
+            if owed == 1 { "" } else { "s" },
+            owed * LIGHT_SMITE
         )));
     }
     if sim.pack() + 1 + sim.depth > CAP {

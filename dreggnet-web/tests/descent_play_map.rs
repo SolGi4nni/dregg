@@ -4,13 +4,20 @@
 //! page paints its surface in the browser (the wasm-driven controller builds DOM directly), so the
 //! shaft map and the light clock live in `app.js`, not in a server-rendered `ViewNode`. That buys
 //! reactivity and costs a MIRROR: the page carries the world's constants (`BREATH`, `CAP`,
-//! `FLOORS`, `RELICS`, the custody codes, `guard_hp`) in order to size a bar and label a row.
+//! `FLOORS`, `RELICS`, the custody codes) in order to size a bar and label a row.
 //!
 //! A mirror nobody checks is a bug with a delay fuse — the day the game's light clock changes, the
 //! page keeps drawing the old ceiling and lies to every player. So this suite pins EACH mirrored
 //! constant against the Rust constant it mirrors, by reading the ACTUAL served script. It also
 //! pins that the map and the meters are in that script at all, so the picture cannot quietly
 //! regress to the four bare stat boxes and a row of custody integers it replaced.
+//!
+//! **What may be mirrored at all is the second question this suite answers.** Guardian vitality is
+//! NOT a world constant — it is drawn from the committed day-seed, sixteen maps of it — so it
+//! cannot live in the script as a literal, and a mirror test that pinned it there certified a
+//! number wrong on fifteen days in sixteen. That pin is now inverted: the script must carry no
+//! day-0 table, must take the day's vitalities from the served descriptor, and must open no world
+//! when it cannot.
 //!
 //! What this does NOT claim: that the browser paints correctly (no DOM is exercised here — the
 //! action-menu module has its own `descent_play_actions.mjs` suite). It claims the served script
@@ -66,15 +73,65 @@ async fn the_browser_mirror_of_the_worlds_constants_matches_the_game() {
              a number the game no longer uses"
         );
     }
+}
 
-    // `guard_hp` is a TABLE, mirrored as an array indexed by depth. Pin it entry by entry.
-    let table: Vec<String> = (0..=FLOORS).map(|d| guard_hp(d).to_string()).collect();
-    let decl = format!("const GUARD_HP = [{}];", table.join(", "));
-    assert!(
-        js.contains(&decl),
-        "the play page mirrors guard_hp as `{decl}` — a drifted table draws a guardian meter \
-         against the wrong vitality"
+/// **THE GUARDIAN TABLE IS NOT A CONSTANT AND MUST NOT BE MIRRORED AS ONE.**
+///
+/// Guardian vitality is DRAWN FROM THE COMMITTED DAY-SEED — sixteen maps, and day 0 is one of
+/// them. The page used to carry `const GUARD_HP = [0, 1, 1, 2, 2];`, day 0's table, and this suite
+/// used to PIN it, so the mirror check certified a number that was wrong on fifteen days in
+/// sixteen: a `0/1` guardian bar over a two-point guardian, and a hoard still shut after the blow
+/// the picture promised would open it.
+///
+/// So the pin inverts. The script must carry NO day-0 table at all; it must take the day's
+/// vitalities from the served descriptor (or the shell's fallback attribute) and REFUSE TO OPEN A
+/// WORLD if neither resolves — never silently fall back to a default table, which is the same bug
+/// with a comment on it. What the numbers must equal is pinned where the server can compare them
+/// to a real deployed session (`descent_play::tests::the_descriptor_publishes_the_days_own_guardian_vitalities`).
+#[tokio::test]
+async fn the_browser_takes_todays_guardian_vitalities_from_the_day_and_never_a_literal() {
+    let js = play_script().await;
+
+    // The exact literal the page used to ship, plus any other hard-coded table shaped like a
+    // guardian row. Its return is the regression this test exists to catch.
+    let day_zero = format!(
+        "[{}]",
+        (0..=FLOORS)
+            .map(|d| guard_hp(d).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
+    assert!(
+        !js.contains(&format!("const GUARD_HP = {day_zero};")),
+        "the play page hard-codes day 0's guardian table `{day_zero}` again — it is right on one \
+         drawn day in sixteen and draws the wrong guardian on the rest"
+    );
+    assert!(
+        js.contains("let GUARD_HP = null;"),
+        "the guardian table is a per-day value the page receives, so it starts EMPTY"
+    );
+
+    // It arrives from the day, both ways: the descriptor the tab fetches, and the shell attribute
+    // that keeps a failed fetch honest rather than defaulting.
+    assert!(
+        js.contains("today.guardHp") && js.contains("root.dataset.guardHp"),
+        "the page reads the day's vitalities from `day.json` with the shell's `data-guard-hp` as \
+         the fallback"
+    );
+    // FAIL-CLOSED: no map, no world. A page that opened a run anyway would be drawing a guardian
+    // it made up.
+    assert!(
+        js.contains("if (!GUARD_HP) {") && js.contains("no world was opened"),
+        "a page that cannot resolve today's guardians opens no world at all"
+    );
+
+    // And the meter/pressure/glyph readers all go through it rather than a re-derived rule.
+    for reader in ["GUARD_HP[floor]", "GUARD_HP[sim.depth]"] {
+        assert!(
+            js.contains(reader),
+            "the guardian picture is sized off the day's table (`{reader}`)"
+        );
+    }
 }
 
 /// **The map is on the page.** Not "a map function exists somewhere" — the shaft grid, one column

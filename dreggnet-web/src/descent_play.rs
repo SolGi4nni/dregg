@@ -39,6 +39,8 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
+use dreggnet_offerings::native_descent::{DayWorld, NativeDescentOffering};
+use procgen_dregg::beacon::DailyBeacon;
 
 /// The strict Content-Security-Policy for the play page. `'wasm-unsafe-eval'` is the single
 /// concession WebAssembly instantiation requires (it is NOT `'unsafe-eval'` and does NOT loosen JS
@@ -154,11 +156,18 @@ async fn get_play_day_json() -> Response {
     // Absent (the offline day) the fields are omitted and the tab opens the seed-derived practice
     // world under its honest `offline-date` label. The signature is not trusted: a forged pair does
     // not verify in the tab, so there is no world and no day (exactly the offering's own tooth).
-    if day.source.is_live_beacon() {
-        if let Some(beacon) = crate::descent::todays_live_beacon() {
-            body["round"] = serde_json::json!(beacon.round);
-            body["signatureHex"] = serde_json::json!(lower_hex(&beacon.signature));
-        }
+    if let Some(beacon) = play_beacon(&day) {
+        body["round"] = serde_json::json!(beacon.round);
+        body["signatureHex"] = serde_json::json!(lower_hex(&beacon.signature));
+    }
+    // ⚑ THE DAY'S GUARDIANS. The map — relic homes AND per-floor guardian vitality — is drawn from
+    // the committed day-seed, so the vitality table is a DAY FACT, not a constant, and the page
+    // cannot carry it as a literal. Published here from the offering the tab is about to open
+    // (`todays_day_world`), so the meter the browser sizes is sized against the guardian the
+    // executor will actually make it fight. Omitted when no map resolved: the tab then opens no
+    // world rather than drawing day 0's guardians over today's dungeon.
+    if let Some(world) = todays_day_world(&day) {
+        body["guardHp"] = serde_json::json!(world.ghp);
     }
     (
         [
@@ -173,6 +182,54 @@ async fn get_play_day_json() -> Response {
 fn native_seed_for_day(day: &procgen_dregg::descent_day::DescentDay) -> u32 {
     let bytes = day.seed.as_bytes();
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// The day's raw drand pair **exactly when the tab will open `fromBeacon` on it**: today resolved
+/// to a verified beacon AND this process still holds that beacon. One helper so the descriptor,
+/// the shell, and the published map cannot disagree about which world the tab is about to deploy.
+fn play_beacon(day: &procgen_dregg::descent_day::DescentDay) -> Option<DailyBeacon> {
+    day.source
+        .is_live_beacon()
+        .then(crate::descent::todays_live_beacon)
+        .flatten()
+}
+
+/// **TODAY's drawn map — resolved by the OFFERING the tab is about to open, not mirrored.**
+///
+/// The Descent's map is a function of the committed day-seed: which floor each relic is minted on,
+/// and **how much vitality each floor's guardian has**. Sixteen maps exist and day 0 is one of
+/// them, so a page carrying `descent::guard_hp`'s day-0 table draws a guardian meter that is wrong
+/// on fifteen days in sixteen — a `1/1` bar under a guardian that takes two blows, and a "one
+/// strike and the hoard opens" reading that costs the player the light to discover.
+///
+/// This asks [`NativeDescentOffering::day_world_for_seed`] under the SAME day binding the tab uses
+/// (`fromBeacon` on a live beacon day, else the seed-derived practice world) with the SAME native
+/// seed the descriptor publishes, so the served table is the table the deployed session plays.
+/// `None` — an unverifiable beacon — publishes no map, and the tab then opens no world, which is
+/// the same fail-closed answer `fromBeacon` itself gives.
+fn todays_day_world(day: &procgen_dregg::descent_day::DescentDay) -> Option<DayWorld> {
+    let offering = match play_beacon(day) {
+        Some(beacon) => NativeDescentOffering::on_beacon(&beacon).ok()?,
+        None => NativeDescentOffering::new(),
+    };
+    offering
+        .day_world_for_seed(u64::from(native_seed_for_day(day)))
+        .ok()
+}
+
+/// The day's guardian-vitality table as the comma-joined list the shell's `data-guard-hp` carries
+/// (empty when no map resolved — the tab then refuses rather than guessing day 0).
+fn todays_guard_hp_attr(day: &procgen_dregg::descent_day::DescentDay) -> String {
+    todays_day_world(day)
+        .map(|world| {
+            world
+                .ghp
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default()
 }
 
 /// Lowercase-hex encode the day's beacon signature for the tab's `fromBeacon` call.
@@ -303,7 +360,8 @@ fn shell_page() -> String {
          <p>Carry relics through a finite light clock. Keys attenuate as you descend; what you do \
          not bank on a proved exit never became yours.</p></header>\
          <div id=\"descent-play-root\" data-day-key=\"{day_key}\" \
-         data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\">\
+         data-native-seed=\"{native_seed}\" data-day-source=\"{day_source}\" \
+         data-guard-hp=\"{guard_hp}\">\
          <p class=\"notice\" role=\"status\">Opening the native executor…</p>\
          </div>\
          <noscript><p class=\"notice refused\" role=\"status\">The Descent plays in-tab with \
@@ -322,6 +380,9 @@ fn shell_page() -> String {
         } else {
             "offline-date"
         },
+        // TODAY's guardian vitalities, so a tab whose `day.json` fetch fails still sizes its
+        // guardian meter against the map it is actually playing. Empty when no map resolved.
+        guard_hp = crate::esc(&todays_guard_hp_attr(&day)),
         footer = crate::FOOTER,
     )
 }
@@ -506,14 +567,36 @@ function maybeAutoAnchor() {
 // The world's Lean-sourced constants, mirrored here to SIZE bars and LABEL rows. They decide
 // nothing. `dreggnet-web/tests/descent_play_map.rs` pins every one of them against the Rust
 // constant it mirrors, so this block cannot drift away from the game in silence.
+//
+// Only the numbers that are the SAME EVERY DAY may live here as literals. The map is drawn from
+// the committed day-seed, so the guardian vitality table is NOT a constant: it arrives from
+// `day.json` / the shell's `data-guard-hp` below, resolved by the same offering the tab opens.
 const FLOORS = 4;
 const RELICS = 8;
 const BREATH = 26;
 const CAP = 8;
 const CARRIED = 8;
 const BANKED = 9;
-// guard_hp(depth), indexed by depth 0..FLOORS.
-const GUARD_HP = [0, 1, 1, 2, 2];
+
+// TODAY's `guardHp(depth)`, indexed by depth 0..FLOORS — the drawn map's, not day 0's. Populated
+// by `boot()` before anything renders; a page that could not resolve it opens no world at all,
+// because a guardian meter sized against the wrong day tells a player one blow will open the hoard
+// when today it takes two. FAIL-CLOSED, never a default table.
+let GUARD_HP = null;
+
+// Parse a served guardian-vitality table: exactly `FLOORS + 1` non-negative integers, depth 0
+// first. Anything else is not a map and yields null (the caller refuses the open).
+function parseGuardHp(raw) {
+  let list = raw;
+  if (typeof raw === "string") {
+    list = raw.split(",").map(part => Number(part.trim()));
+  }
+  if (!Array.isArray(list) || list.length !== FLOORS + 1) return null;
+  for (const entry of list) {
+    if (!Number.isInteger(entry) || entry < 0) return null;
+  }
+  return list;
+}
 
 // One character per cell, so the map is the same map the Discord/Telegram/WeChat text grid paints.
 const GLYPH_EMPTY = "·";
@@ -847,6 +930,14 @@ async function boot() {
     notice("Today's native seed descriptor is malformed; no world was opened.");
     return;
   }
+  // TODAY's guardian vitalities — the drawn map's, from the descriptor (or the shell's fallback
+  // attribute). Not a constant and not defaulted: the map varies with the day-seed, and a meter
+  // sized against day 0's guardians misprices the one resource the run cannot refill.
+  GUARD_HP = parseGuardHp(today && today.guardHp) || parseGuardHp(root.dataset.guardHp);
+  if (!GUARD_HP) {
+    notice("Today's dungeon map did not resolve, so no guardian could be sized honestly; no world was opened.");
+    return;
+  }
   root.dataset.dayKey = dayKey;
   root.dataset.nativeSeed = String(nativeSeed);
   // A verified beacon day carries its raw drand pair; a fresh open then binds the run's provenance
@@ -1086,6 +1177,73 @@ mod tests {
             procgen_dregg::daily_seed(&day.epoch).as_bytes(),
             day.seed.as_bytes()
         );
+    }
+
+    /// **THE DAY'S GUARDIANS ARE PUBLISHED, AND THEY ARE THE SESSION'S.**
+    ///
+    /// The map — relic homes and per-floor guardian vitality — is drawn from the committed
+    /// day-seed. The page used to carry `descent::guard_hp`'s DAY-0 table as a JS literal, so on
+    /// fifteen of the sixteen drawn days it sized the guardian meter against a guardian that does
+    /// not exist: a `0/1` bar under a two-point guardian, and a hoard that stays shut after the
+    /// blow the picture said would open it.
+    ///
+    /// The pin is not "the descriptor carries some numbers" — it is that the descriptor's table is
+    /// the table a session OPENED the way the tab opens it actually plays. A mirror re-derived
+    /// here would only pin this test against itself.
+    #[tokio::test]
+    async fn the_descriptor_publishes_the_days_own_guardian_vitalities() {
+        use dreggnet_offerings::{Offering, SessionConfig};
+
+        let day = crate::descent::todays_day();
+        let seed = u64::from(super::native_seed_for_day(&day));
+        // No process armed a live beacon in a test, so the tab's own branch here is the
+        // seed-derived practice world — the same one `todays_day_world` resolves.
+        assert!(
+            super::play_beacon(&day).is_none(),
+            "this test asserts the seed-derived branch; a live beacon armed in-process changes it"
+        );
+        let session = dreggnet_offerings::native_descent::NativeDescentOffering::new()
+            .open(SessionConfig::with_seed(seed))
+            .expect("today's native world opens");
+        let played: Vec<u64> = session.day_world().ghp.to_vec();
+
+        let body = axum::body::to_bytes(super::get_play_day_json().await.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v["guardHp"],
+            serde_json::json!(played),
+            "the descriptor publishes the guardian vitalities the DEPLOYED session fights, not a \
+             constant table"
+        );
+
+        // The shell's fallback attribute carries the same table, so a tab whose `day.json` fetch
+        // fails still sizes its meter against today's dungeon rather than day 0's.
+        let html = super::shell_page();
+        let attr = format!(
+            "data-guard-hp=\"{}\"",
+            played
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert!(
+            html.contains(&attr),
+            "the shell carries today's guardian table as `{attr}`:\n{html}"
+        );
+
+        // And it is a DAY fact, not day 0's table wearing a new name: on any day the draw moved a
+        // guardian, the published numbers move with it.
+        let day_zero: Vec<u64> = dungeon_on_dregg::descent::CANON_WORLD.ghp.to_vec();
+        if played != day_zero {
+            assert_ne!(
+                v["guardHp"],
+                serde_json::json!(day_zero),
+                "today's drawn map is not day 0's, so the published table must not be day 0's"
+            );
+        }
     }
 
     #[tokio::test]
