@@ -25,19 +25,25 @@
 //!   cell's committed native `fields[0..8]` octet.
 //!
 //! * [`fold`] (feature `prove`) turns that landed composition into a fold-ready custom turn:
-//!   [`fold::braid_custom_bundle`] packages the re-provable composition leaf + the app-root
-//!   binding into a `CustomWitnessBundle`, and [`fold::mint_entity_custom_leg`] mints the wide
+//!   [`fold::braid_direct_ir2_bundle`] packages the re-provable composition leaf + the app-root
+//!   binding into a `CustomIr2WitnessBundle`, and [`fold::mint_entity_custom_leg`] mints the wide
 //!   Custom leg over the entity's real cell. Handed to the deployed chain prover (or folded
-//!   directly through `prove_custom_binding_node_app_root_segmented`), a turn whose published
+//!   directly through `prove_direct_ir2_binding_node_app_root_segmented`), a turn whose published
 //!   outcome does not match the committed octet has NO satisfying fold — UNSAT, refused.
 //!
 //! ## The substrate, said out loud
 //!
-//! The outcome→cell-field weld is **not hand-written Rust AIR and not new Lean AIR**. It is an
-//! ADOPTION of the deployed app-root atom (the same in-circuit tie the multiway-tug win-proof
-//! ships): a `connect` inside the recursion tree a pure light client folds, whose keystone
-//! descends from Lean `CustomBindingFromFold`. This crate only DECLARES the binding and routes
-//! the fold through the deployed node — it authors no constraints.
+//! Two different things, both worth naming:
+//!
+//! * **The composition AIR is LEAN-AUTHORED** (`ParamComposeEmit.lean`). The sub-proof leaf
+//!   re-proves that EMITTED descriptor directly (`prove_direct_ir2_leaf_with_app_root_commitment`)
+//!   rather than lowering a Rust `CellProgram`, so the relation has exactly one semantics. Rust
+//!   fills the trace; it authors no constraint.
+//! * **The outcome→cell-field weld is not hand-written Rust AIR and not new Lean AIR.** It is an
+//!   ADOPTION of the deployed app-root atom (the same in-circuit tie the multiway-tug win-proof
+//!   ships): a `connect` inside the recursion tree a pure light client folds, whose keystone
+//!   descends from Lean `CustomBindingFromFold`. This crate only DECLARES the binding and routes
+//!   the fold through the deployed node.
 
 pub use dregg_entity_compose::{
     Comp, DeployedEntity, EntityKey, LandedComposition, Shape, compose_onto, deploy_entity,
@@ -86,39 +92,64 @@ pub mod fold {
     };
     use dregg_circuit::effect_vm::{CellState, Effect, field_limbs8};
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit_prove::custom_leaf_adapter::prove_custom_leaf_with_app_root_commitment;
+    use dregg_circuit_prove::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_root_commitment;
     use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
     use dregg_circuit_prove::ivc_turn_chain::{
-        custom_leg_field_octet_lo, ir2_leaf_wrap_config,
-        prove_descriptor_leaf_expose_segment_and_claims,
+        CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN, custom_leg_field_octet_lo,
+        ir2_leaf_wrap_config, prove_descriptor_leaf_expose_segment_and_claims,
     };
-    use dregg_circuit_prove::joint_turn_aggregation::{CustomWitnessBundle, RotatedParticipantLeg};
+    use dregg_circuit_prove::joint_turn_aggregation::{
+        CustomIr2VkRecipe, CustomIr2WitnessBundle, RotatedParticipantLeg,
+    };
     use dregg_circuit_prove::joint_turn_recursive::{
-        CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO, prove_custom_binding_node_app_root_segmented,
+        CUSTOM_COMMIT_LEN, CUSTOM_COMMIT_PI_LO, prove_direct_ir2_binding_node_app_root_segmented,
     };
     use dregg_entity_compose::LandedComposition;
     use dregg_param_compose::model::ComposeError;
+    use dregg_param_compose::shape::ComposeShape;
     use dregg_turn::rotation_witness as rw;
 
-    /// Build the fold-ready `CustomWitnessBundle` for a landed composition, bound to a leg's REAL
+    /// **THE COMPOSITION'S CANONICAL-v2 REGISTRY RECIPE**, over the LEAN-EMITTED descriptor's own
+    /// wire bytes. The `vk_hash` a composition turn names is therefore a key over the Lean object,
+    /// not over a Rust re-authoring of it — and
+    /// `CustomIr2VkRecipe::require_exact_descriptor` re-parses these bytes back to the exact
+    /// descriptor the recursion leaf proves, so the two cannot diverge.
+    ///
+    /// `None` at a shape Lean has not byte-pinned (blocked, not faked).
+    pub fn braid_vk_recipe(shape: &ComposeShape) -> Option<CustomIr2VkRecipe> {
+        let program_bytes = dregg_entity_compose::program_bytes(shape)?;
+        Some(CustomIr2VkRecipe::source_hash(
+            program_bytes,
+            *blake3::hash(b"dregg-param-compose-lean-authored-air-v1").as_bytes(),
+            *blake3::hash(b"dregg-param-compose-ir2-descriptor-verifier-v1").as_bytes(),
+            b"plonky3-babybear-fri-ir2".to_vec(),
+        ))
+    }
+
+    /// Build the fold-ready **direct-IR2** bundle for a landed composition, bound to a leg's REAL
     /// rotated roots `(old8, new8)`, with the outcome→cell-field **app-root binding** declared.
-    /// Handed to the deployed chain prover, this routes the custom turn through
-    /// `prove_custom_binding_node_app_root_segmented`, forcing published-outcome == committed-octet.
-    pub fn braid_custom_bundle(
+    ///
+    /// The sub-proof re-proves the **LEAN-AUTHORED descriptor** itself
+    /// (`prove_direct_ir2_leaf_with_app_root_commitment`), not a lowered Rust `CellProgram` — there
+    /// is no second semantics for the relation. Handed to the deployed chain prover, this routes the
+    /// custom turn through `prove_direct_ir2_binding_node_app_root_segmented`, forcing
+    /// published-outcome == committed-octet AND leg-VK8 == the descriptor's canonical VK8.
+    pub fn braid_direct_ir2_bundle(
         landed: &LandedComposition,
         old8: &[BabyBear; 8],
         new8: &[BabyBear; 8],
         num_rows: usize,
-    ) -> Result<CustomWitnessBundle, ComposeError> {
-        let (program, witness_values, num_rows, public_inputs) =
-            landed.fold_leaf_inputs(old8, new8, num_rows)?;
-        Ok(CustomWitnessBundle {
-            program,
-            witness_values,
-            num_rows,
+    ) -> Result<CustomIr2WitnessBundle, ComposeError> {
+        let (descriptor, base_trace, public_inputs) =
+            landed.direct_ir2_leaf_inputs(old8, new8, num_rows)?;
+        let vk_recipe = braid_vk_recipe(&landed.shape).ok_or(ComposeError::NoLeanDescriptor)?;
+        Ok(CustomIr2WitnessBundle {
+            descriptor,
+            base_trace,
             public_inputs,
-            app_root_binding: Some(landed.app_root_binding()),
-            descriptor_state_leaf: None,
+            vk_recipe,
+            app_root_binding: landed.app_root_binding(),
+            post_fields_root_binding: None,
         })
     }
 
@@ -144,13 +175,16 @@ pub mod fold {
     /// `fields[0..8]` octet into the EffectVM state so the leg exposes it (leg PIs `[n-32 .. n-24)`)
     /// — the octet the app-root weld's `field_key` indexes and the `new8` commitment absorbs at
     /// lane-0. A `Custom` effect never mutates fields, so the exposed AFTER octet carries exactly
-    /// the committed outcome. `commit` is the published `custom_proof_commitment`; `bundle` is the
+    /// the committed outcome. `commit` is the published `custom_proof_commitment`; `vk8` is the
+    /// composition program's canonical VK octet (the direct-IR2 node CONNECTS it to the sub-proof
+    /// leaf's own, so a leg naming a different program has no satisfying fold); `bundle` is the
     /// retained re-provable sub-proof (with its app-root binding).
     pub fn mint_entity_custom_leg(
         before: &Cell,
         after: &Cell,
         commit: [BabyBear; 8],
-        bundle: Option<CustomWitnessBundle>,
+        vk8: [BabyBear; 8],
+        bundle: Option<CustomIr2WitnessBundle>,
     ) -> RotatedParticipantLeg {
         let mut st = CellState::new(after.state.balance() as u64, before.state.nonce() as u32);
         // Route the AFTER cell's real committed lane-0 field octet into the EffectVM state — the
@@ -162,8 +196,11 @@ pub mod fold {
         }
         st.refresh_commitment();
 
+        // The leg NAMES the composition program by its canonical 8-felt VK identity. The direct-IR2
+        // binding node connects this octet to the sub-proof leaf's own, so a leg naming a different
+        // program cannot fold with this composition's sub-proof.
         let effects = vec![Effect::Custom {
-            program_vk_hash: [BabyBear::new(9); 8],
+            program_vk_hash: vk8,
             proof_commitment: commit,
         }];
 
@@ -219,6 +256,18 @@ pub mod fold {
             &commit[..],
             "custom leg must publish the claimed 8-felt commitment at PI 46..53"
         );
+        assert!(
+            dpis.len() >= CUSTOM_PROGRAM_VK_PI_LO + DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN,
+            "custom leg PI vector must carry the faithful program-VK octet at {CUSTOM_PROGRAM_VK_PI_LO}..\
+             (got {})",
+            dpis.len()
+        );
+        assert_eq!(
+            &dpis[CUSTOM_PROGRAM_VK_PI_LO
+                ..CUSTOM_PROGRAM_VK_PI_LO + DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN],
+            &vk8[..],
+            "custom leg must publish the composition program's canonical VK octet"
+        );
 
         let config = ir2_leaf_wrap_config();
         let proof = prove_vm_descriptor2_for_config(
@@ -239,7 +288,7 @@ pub mod fold {
             carrier_witness: None,
         };
         match bundle {
-            Some(b) => leg.with_custom_witness(b),
+            Some(b) => leg.with_carrier_witness(b.into()),
             None => leg,
         }
     }
@@ -250,7 +299,13 @@ pub mod fold {
     /// the cells' limbs + iroot, independent of the claimed commitment), so the sub-proof PIs can
     /// be built over them before the real leg is minted.
     pub fn entity_leg_roots(before: &Cell, after: &Cell) -> ([BabyBear; 8], [BabyBear; 8]) {
-        let probe = mint_entity_custom_leg(before, after, [BabyBear::ZERO; 8], None);
+        let probe = mint_entity_custom_leg(
+            before,
+            after,
+            [BabyBear::ZERO; 8],
+            [BabyBear::ZERO; 8],
+            None,
+        );
         (
             probe.wide_old_root8().expect("wide-anchored"),
             probe.wide_new_root8().expect("wide-anchored"),
@@ -281,14 +336,16 @@ pub mod fold {
     /// **DRIVE THE OUTCOME→CELL-FIELD WELD, END TO END THROUGH THE DEPLOYED APP-ROOT FOLD NODE.**
     ///
     /// Mints the wide Custom leg over `(before, after)` (exposing the committed `fields[0..8]`
-    /// octet), the app-root sub-proof leaf (re-exposing the composition's published outcome), and
-    /// folds them through `prove_custom_binding_node_app_root_segmented` — the deployed keystone
-    /// tie. Returns `Ok(())` iff the fold produces a root (the published outcome equals the
-    /// committed octet, lane-by-lane); returns `Err(reason)` iff any tooth conflicts (an outcome
-    /// that does not match the committed field has no satisfying fold — UNSAT, refused). This is
-    /// the SAME app-root node the deployed chain prover mints for a bundle carrying an
-    /// `app_root_binding`, so the acceptance/refusal is a property of the artifact a pure light
-    /// client folds.
+    /// octet and the composition program's canonical VK octet), the **direct-IR2** app-root
+    /// sub-proof leaf — which re-proves the LEAN-AUTHORED descriptor itself, re-exposing the
+    /// composition's published outcome — and folds them through
+    /// `prove_direct_ir2_binding_node_app_root_segmented`, the deployed keystone tie. Returns
+    /// `Ok(())` iff the fold produces a root (the published outcome equals the committed octet,
+    /// lane-by-lane, AND the leg's VK octet equals the descriptor's); returns `Err(reason)` iff any
+    /// tooth conflicts (an outcome that does not match the committed field has no satisfying fold —
+    /// UNSAT, refused). This is the SAME node the deployed chain prover mints for a
+    /// `CarrierWitness::CustomIr2` bundle, so the acceptance/refusal is a property of the artifact a
+    /// pure light client folds.
     pub fn fold_composition_app_root(
         before: &Cell,
         after: &Cell,
@@ -297,12 +354,13 @@ pub mod fold {
     ) -> Result<(), String> {
         let config = ir2_leaf_wrap_config();
         // Two-phase: probe the leg's real rotated roots, build the sub-proof PIs over them, then
-        // mint the real leg carrying the sub-proof's genuine commitment.
+        // mint the real leg carrying the sub-proof's genuine commitment and program VK.
         let (old8, new8) = entity_leg_roots(before, after);
         let bundle =
-            braid_custom_bundle(landed, &old8, &new8, num_rows).map_err(|e| e.to_string())?;
+            braid_direct_ir2_bundle(landed, &old8, &new8, num_rows).map_err(|e| e.to_string())?;
         let commit = custom_proof_pi_commitment(&bundle.public_inputs);
-        let leg = mint_entity_custom_leg(before, after, commit, None);
+        let vk8 = bundle.vk_recipe.canonical_vk_felts();
+        let leg = mint_entity_custom_leg(before, after, commit, vk8, None);
 
         let n = leg.public_inputs.len();
         let binding = landed.app_root_binding();
@@ -318,17 +376,18 @@ pub mod fold {
             &[
                 (CUSTOM_COMMIT_PI_LO, CUSTOM_COMMIT_LEN),
                 (field_k_pi_lo, binding.app_root_len),
+                (CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN),
             ],
         )?;
-        let app_leaf = prove_custom_leaf_with_app_root_commitment(
-            &bundle.program,
-            &bundle.witness_values,
-            bundle.num_rows,
+        let app_leaf = prove_direct_ir2_leaf_with_app_root_commitment(
+            &bundle.descriptor,
+            &bundle.base_trace,
             &bundle.public_inputs,
+            &bundle.vk_recipe,
             &binding,
             &config,
         )?;
-        prove_custom_binding_node_app_root_segmented(
+        prove_direct_ir2_binding_node_app_root_segmented(
             &dual,
             &app_leaf,
             &config,

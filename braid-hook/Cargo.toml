@@ -21,7 +21,7 @@ description = "The reusable Braid wiring: a game/offering composes a param-carry
 # The SLOW real-fold path: assemble a CustomWitnessBundle, mint the wide Custom leg over a real
 # cell, and drive the deployed app-root fold node (dregg-circuit-prove — the plonky3 recursion
 # prover). Off by default so the bare dev loop that builds this member never pulls the prover.
-prove = ["dep:dregg-circuit-prove"]
+prove = ["dep:dregg-circuit-prove", "dep:blake3"]
 
 [dependencies]
 # The Braid, graduated: a param-carrying entity composed into a state-welded outcome, with the
@@ -35,9 +35,11 @@ dregg-circuit = { path = "../circuit" }
 dregg-cell = { path = "../cell" }
 # The rotation witness the wide Custom leg is anchored over.
 dregg-turn = { path = "../turn" }
-# SLOW prove path (feature `prove` only): CustomWitnessBundle, the wide-leg leaf-wrap config, and
-# the deployed app-root fold node that ties the published outcome to the committed octet.
+# SLOW prove path (feature `prove` only): the direct-IR2 custom bundle, the wide-leg leaf-wrap
+# config, and the deployed app-root fold node that ties the published outcome to the committed octet.
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+# The canonical-v2 registry recipe's fingerprints (feature `prove` only).
+blake3 = { version = "1", optional = true }
 
 # Bound to the workspace lint set (2026-07-25). The load-bearing member is
 # `unexpected_cfgs = "deny"`: a `#[cfg(feature = "X")]` naming a feature this manifest does
