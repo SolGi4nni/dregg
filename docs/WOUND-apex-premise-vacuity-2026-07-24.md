@@ -96,11 +96,54 @@ Recorded because they were nearly lost when a concurrent commit swept the files 
 4. What the repairs buy, exactly: **the premise no longer *forces* universal rejection.** Satisfiability
    at the opaque `cfg*` args remains unproven and is labelled, not claimed.
 
+## Status update (2026-07-25)
+
+**The census in this doc was wrong and is corrected.** "~35 consumers" conflated prose with code. The
+real figure: **392 occurrences across 35 files**; by *binder position*, bare `FriLdtExtract` 8 — **all
+vacuity-subjects**, not consumers — `Cons` 47, `V3` 14 (8 genuine consumers), `V3Cons/Faithful` 7.
+
+- **The bare-premise cutover is COMPLETE** (`756efedb01`, `fb741c815f`): zero soundness consumers remain
+  on it, verified by grepping binder positions. It also turned up an **orphan fan-out**
+  (`AlgoStarkSoundFanoutSetField`) this doc never listed.
+- **The subtle find, worth generalizing:** `decodedLdtLink_of_friLdtExtract` was the *only* entry into
+  `DecodedLdtLink`, and composing the corrected implication downstream would **not** have repaired it —
+  *composing after an empty premise leaves the entry empty*. That is precisely why a cutover is not the
+  same as adding a corrected variant beside the old one.
+- **Non-emptiness reached a form sharper than this doc's bar**: `..._noOodShape` derives the conclusion
+  from a premise **mentioning no OOD conjunct at all**. A premise cannot be emptied by a conjunct it does
+  not contain.
+- **The instrument has been RUN** — `Dregg2/Circuit/PremiseInhabitabilitySweep.lean`, 37 theorems,
+  R1–R18, enumeration *mechanical* (39 structural candidates + 13 more found by grepping
+  `extractable : Prop`). This discharges the old "run the instrument over the remaining classes" item.
+  Settled: `StarkComplete` **collapses** with the landed bundle; `GroundedApex.BindingExtract` is
+  **free** (zero information); `AccumulatorSound` is **negative at deployment** — correcting an earlier
+  pass that had read it as an abstract class, because *a verdict about an abstract class is not a
+  verdict about its instantiation*.
+- **The `tableOpenings` falsifier is answered at the pole**:
+  `at_the_only_exhibited_pole_the_repair_is_half_realized` reads **both halves off the same run**, so the
+  repair's outstanding debt is exactly **one conjunct**, not diffuse.
+
+### ⚑ A wound class this doc did not know about — R11
+
+Thirteen soundness classes gate extraction on a **self-chosen `extractable : Prop`**, and **all eight**
+in-tree reference instances set it to `True`. The family's own non-vacuity witnesses pass the carrier
+half *by writing `True`*. Two **independent** vacuity modes are proved:
+
+- a legal kernel that **accepts every triple** with `extractable := False` — the gated soundness shape
+  then holds for *arbitrary* conclusion, i.e. true and unappliable. **`PremiseInhabitability`
+  structurally cannot see this mode**, because it is not about acceptance at all;
+- a true carrier over a verifier that rejects everything (the mode the instrument *does* see).
+
+Checking either alone is not a check; the criterion is `CarrierLive`. `PortalFloor` is this same tree
+doing it correctly — carrier proved at a reference instance, refuted at a forge instance — so this is a
+**default that spread**, not an unavoidable design.
+
 ## Next
 
-- Migrate the ~35 consumers to the corrected assembler; until then the deployed apex chain is
-  byte-for-byte as vacuous as before.
-- Run the instrument over the remaining soundness classes (`StarkComplete`, `AccumulatorSound`, …).
-- The named next falsifier: **does the deployed predicate accept a run with `tableOpenings = []`?**
-  Unprovable at opaque `cfg*`, but the ∀-instantiation form of every bundle in this family is already
-  refuted at the pole.
+- The **8 `FriLdtExtractV3` consumers**, including the named apex `starkSound_of_friLdtExtract_transferV3`.
+  Corrected targets are on disk and `StarkSoundFriLdtCorrected` still has no callers. *(dispatched)*
+- **R11**: replace `extractable := True` with real carriers, following `PortalFloor`. *(dispatched)*
+- **~28 declarations remain `UNKNOWN` at deployment**, concentrated in the abstract-verifier families —
+  for the structural reason that the tree never instantiates them at a deployed verifier. Every
+  `UNKNOWN` is an unsettled entry, **not** a pass.
+- Standing ceiling: **nothing proves any bundle satisfiable at the opaque `cfg*` args, and nothing can.**
