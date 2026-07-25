@@ -64,3 +64,57 @@ their own bodies, and it took ember reading it to catch that.
 
 Related: `feedback-a-doc-comment-is-a-name-not-a-proof`,
 `feedback-commit-subjects-are-claims`.
+
+---
+
+## 4. ⚠ RETRACTED BY ME — "automatafl is a dead draw between competent players"
+
+A design-audit lane reported that automatafl draws structurally: two one-ply
+simultaneous-minimax seats drew 6/6, a 5× search-budget advantage still drew 5/5,
+and the position freezes in 8–11 turns. **I relayed that conclusion to ember
+without interrogating its method. It does not support the claim.**
+
+**Why the evidence does not reach the conclusion:**
+
+1. **Two DETERMINISTIC agents on a MIRROR-SYMMETRIC board play mirror-symmetric
+   games.** The observed freeze is an artifact of determinism plus symmetry, not a
+   property of automatafl.
+2. **In a SIMULTANEOUS-move game, optimal play is generally MIXED.** A deterministic
+   one-ply agent is not a weak player — it is the wrong kind of object. It cannot
+   reason about the opponent reasoning about it, which is the whole game. Sealed
+   simultaneous choice is precisely where pure strategies fail.
+3. **"5× the search budget" at fixed one-ply depth buys nothing.** Budget is not
+   depth. The asymmetric run varied a parameter that could not affect the outcome
+   and read the null result as robustness.
+
+So the measurement is real and the interpretation is wrong: it measured *these
+agents' inability to break a position*, and reported it as the position being
+unbreakable.
+
+**ember's argument, which is the decisive one:** *"if the mechanics are purely
+symmetric so that all asymmetry comes from inside the players then… that's just
+chess."* Symmetric mechanics with asymmetry arising from PLAY is the definition of
+the abstract-strategy genre — chess, go, hex. "Both sides can restore parity" would
+indict every one of them. And AIs have never played automatafl competently, so no
+bot result should be read as a statement about the game.
+
+**Standing:** automatafl needs NO asymmetric opening. That recommendation is
+withdrawn.
+
+**What the lane's automatafl work leaves standing** (different evidence, unaffected):
+- `adjudicateCapped` — the deployed surface already capped at `MAX_TURNS = 64` and
+  called it a draw, a terminal rule that lived in Rust and in NO theorem. Proving it
+  is right regardless of how often the cap is reached.
+- The clash/fold finding (§1 above) — a code reading, not a play result.
+- The merge-clause vacuity at n=2 and turn-vs-match termination — both structural.
+
+**The tug findings also stand**, on different evidence: the 66% no-winner rate is a
+measurement of OUTCOMES against an absolute threshold (traced to tied rows going
+uncontrolled, with charm summing to 21 under exclusive control), and the missing
+I-cut-you-choose is a reading of the Lean, not a play result.
+
+**The lesson, and it is mine:** I have spent this session telling lanes not to trust
+doc-comments, commit subjects, or names — and then took a lane's *conclusion* at
+face value without checking whether its *method* could support it. A measurement is
+evidence about the thing measured. Two blind agents drawing is evidence about the
+agents.
