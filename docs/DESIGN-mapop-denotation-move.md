@@ -324,7 +324,7 @@ statement about a real turn.
 | # | Unknown | What settles it |
 |---|---|---|
 | 1 | Do the four missing arity-3 opener laws (`.read`/`.write`/`.insert`/`.aafiInsert`) go through as smoothly as `.absent` did? The `.write`/`.insert` kinds must move a root, so they need `pathRecompute_binds_updates` at the arity-3 leaf — which exists post-cutover but was proved for the arity-2 leaf. | Attempt `.read` first (the easiest: one membership path, root preserved). If it lands in a day, stage 2 is a week; if the update law does not transfer, stage 2 is the whole programme. |
-| 2 | Does the **padded** `commit` admit a `SizeOk`/`HeapOk` pair that still leaves the two narrow `rfl`s intact? I argued yes structurally but did not build it. | Land the padded instance and re-run the two conservativity `rfl`s. Half a day. |
+| 2 | ~~Does the **padded** `commit` admit a `SizeOk`/`HeapOk` pair that still leaves the two narrow `rfl`s intact? Half a day.~~ **SETTLED — see §11. The `SizeOk`/`HeapOk` pair is free, the two `rfl`s are untouched (nothing landed touches `MapDenotationSchema`), and conservativity is stronger than hoped: the padded `commit` is *equal* to the dense one on a full tree. But the framing of the question was wrong, and "half a day" was wrong for the right reason: what the padded instance lacks is not a `SizeOk` but INJECTIVITY, and padded injectivity is REFUTED — at a hash that IS injective.** | — |
 | 3 | ~~Is the category-(b) claim — that `MemoryLegs` and the 8 fan-outs are truly `Prop`-opaque and re-elaborate for free — true against the *kernel*?~~ **SETTLED — the falsifier RAN; see §10.** (b) IS free: 522 of the 536 downstream modules are indifferent. But the transport bill is **20 sites across 10 modules**, not 3, and the whole-tree `lake build` the falsifier called for would have MISSED the tier it was aimed at. | — |
 | 4 | ~~Does the AIR enforce the relink?~~ **SETTLED this session — see below.** | — |
 | 5 | Whether rooting the 6 orphans surfaces failures that the allowlist has been hiding — they are green *in isolation*, which is not the same as green under CI's flags/targets. | Root them and run CI once. ~156 s of elaboration plus one CI cycle. |
@@ -584,3 +584,159 @@ Unknown #3 is **SETTLED**: (b) free and confirmed against the kernel; (c)'s tail
 concentrated in the per-effect teeth plus a descriptor-optimizer transport tier the doc never named; and
 the falsifier had to be run per-module rather than as one `lake build`, because six of the modules it was
 aimed at are in no build target at all.
+
+---
+
+## 11. ⚑⚑ STAGE 2b IS LANDED — and the obvious route was REFUTED, not merely unproved
+
+**Date:** 2026-07-25, same day. **Module:** `metatheory/Dregg2/Circuit/MapPaddedDenotation.lean` (NEW,
+additive, rooted in `metatheory/Dregg2.lean` on the line after `MapDenotationSchema`). `lake build`
+exit 0 at 24 s; 36 `#assert_axioms` all clean (⊆ propext/Classical.choice/Quot.sound); no
+`sorry`/`admit`/`native_decide`; **no new floor and `Poseidon2SpongeCR` appears in no type in the
+file.** No landed file was edited — `MapDenotationSchema.lean`'s two conservativity `rfl`s and its
+eleven asserts are byte-identical, so §2's kernel certificates are untouched by construction.
+
+### 11.1 The work order's option (a) is REFUTED — and CR does not save it
+
+§10.6 measured *that* the three functional teeth die at a relaxed `SizeOk`. This settles *why*, and
+the reason forecloses the fix the falsifier proposed:
+
+> `heap_root.rs` pads with the **literal** `BabyBear::ZERO` (`EMPTY_SUBTREE_ROOTS[0]`,
+> `heap_root.rs:72–87`; real leaves are a contiguous sorted prefix, `CanonicalHeapTree::new:213–262`).
+> **If a live leaf digest equals the padding constant, its entry becomes invisible.** `h ++ [e]` with
+> `leafOf hash e = 0` pads to the *same* digest vector as `h`, hence to the same root — while
+> `Heap.get` disagrees at `e.1`: one heap PRESENTS the key, the other reports it ABSENT. That is
+> exactly what `opensToMerkle_some_excludes_none` forbids.
+
+And the event is **orthogonal to the hash floor.** `Poseidon2SpongeCR hash` is
+`∀ xs ys, hash xs = hash ys → xs = ys`; it says nothing about whether the padding constant lies in the
+leaf-digest image. Machine-checked, at a hash that satisfies exactly that injectivity:
+
+* `padded_ghost2` / `padded_ghost3` — two distinct sorted heaps of admissible sparse occupancy with
+  **equal padded roots** and a **some/none split at the same key**, at every depth, at the arity-2
+  fold and at the deployed arity-3 relinked fold.
+* `padded_injectivity_is_refuted` / `padded_imt_injectivity_is_refuted` — the negations, the second at
+  `MAP_TREE_DEPTH = 16` and the deployed leaf. (Both are anti-floor content: conclusion `False`.)
+
+So **the seventh obvious approach was also impossible**, and stating the result "at `refSponge`" would
+not have removed the ghost — that is the whole content of the refutation. The witness hash is
+`ghostSpongeAt pre := fun xs => refSponge xs - refSponge pre`: injective because subtracting a constant
+is a bijection of ℤ, and `ghostSpongeAt pre pre = 0`. It models the one fact about the deployed hash
+that matters — a hash whose range covers BabyBear certainly has a preimage of `0`, and the deployed
+builder never checks that no live leaf hits it.
+
+**Priced at deployed parameters, this is a single-target preimage, not a birthday event.** An adversary
+needs one `(addr, value, next)` with `hash[addr, value, next] = 0`. At the **1-felt** scalar commitment
+this denotation layer uses (`MapLeafSchema.commit : … → ℤ`, BabyBear `p ≈ 2^31`) that is ~2^31 hash
+evaluations with `next = SENTINEL_MAX` fixed and `value` free — **feasible on a laptop**, and the same
+species as the felt-width finding. At the deployed 8-felt tree (`HEAP_ZERO8`, `CanonicalHeapTree8`) the
+same event costs ~2^124.
+
+### 11.2 What was landed instead: (c), the `_or_collides` idiom applied to the PADDING event
+
+Option (b) — the functional theorems as schema hypotheses — was rejected: it pushes the obligation onto
+the one instance that cannot discharge it. What is landed binds the padded root **unconditionally** and
+names the residual:
+
+* `padImtRoot_binds_or_ghost_or_collides` (and its arity-2 twin) — **no hypothesis on `hash` at all**,
+  at neither the node nor the leaf. Residuals: `PadGhost3` (*the actual committed digest vector
+  contains the padding constant* — a bounded, decidable property of committed data, deliberately NOT
+  `∃ e, leafOf hash e = 0`, which pigeonhole makes unconditionally true and which would carry no more
+  content than `True`) and `SpongeColl hash (…Find …)` at the pair a **total extractor** returns.
+* The 1-felt scalar layer's whole binding spine had to be cured to get there, and that is a bonus
+  deliverable: `mapNode_binds_or_collides`, `foldLevel_binds_or_collides`,
+  `perfectRoot_binds_or_collides`, `mapRoot_binds_or_collides` — floor-free replacements for
+  `MapMerkleRoot`'s `*_injective` chain, mechanically mirroring the 8-felt §5b tower that already
+  existed. **`mapRoot_injective`'s refuted floor is now optional at the dense instance too.**
+* `perfectRoot_all_padding` welds the model to `heap_root.rs`'s precomputed `EMPTY_SUBTREE_ROOTS`
+  (`e 0 = ZERO`, `e (k+1) = heap_node(e k, e k)`), which is what makes "dense fold of a zero-padded
+  vector" a faithful model of the deployed **sparse** fold.
+
+### 11.3 The schema-level teeth the landed schema had nothing of
+
+`MapLeafTeeth S` is a bundle an instance must EARN, and it is deliberately not a bag of hypotheses:
+besides `binds` it carries **two anti-laundering fields** — `resid_refuted` (the residual VANISHES at a
+hash-level `Good` predicate) and `good_inhabited` (`Good` is non-empty, so `resid_refuted` is not
+discharged by an empty premise). Together these make `Resid := True` and `Resid := (h₁ ≠ h₂)`
+unbuildable. The three anti-ghost theorems are proved ONCE over the bundle:
+
+| tooth | schema-level statement |
+|---|---|
+| `opensToMerkleS_functional_or_resid` / `…_of_good` | root + key determine the read |
+| `opensToMerkleS_some_excludes_none_or_resid` / `…_of_good` | presence excludes claimed absence |
+| `writesToMerkleS_functional_or_resid` / `…_of_good` | root + key + value determine `new_root` |
+
+Per §5b.E's discipline the `_or_resid` forms take the two witness heaps **explicitly** — the extractor's
+output is a function of the witnesses, so `… ∨ ∃ residual` would be the free pass the idiom exists to
+avoid. The `_of_good` forms are the existential-level statements over `opensToMerkleS`/`writesToMerkleS`,
+i.e. exactly the three theorems this doc named, now existing at schema level for the first time.
+
+**Three instances, all inhabited** (a schema-level tooth with no inhabited instance would be the
+∃-image mistake): `narrowTeeth` (dense arity-2, deployed-today), `padNarrowTeeth` (arity-2 padded), and
+`padImtTeeth` (**the deployed shape: arity-3 IMT leaves over `relink_next_addrs` + zero padding**). The
+padded instances' `Good` is `Function.Injective hash ∧ PadFree hash`; `good_inhabited` is witnessed by
+`oddSponge xs := 2 * refSponge xs + 1`, injective and never `0`.
+
+⚠ **`HeapOk` is NOT where pad-freeness went.** Putting it there would have been option (b) wearing a
+hat — the deployed builder cannot discharge it. It rides in the CONCLUSION as a named residual.
+
+### 11.4 Conservativity is EQUALITY, and §10.6's breakage does not recur
+
+* `padMapRoot_dense` / `padImtRoot_dense` — on a **full** tree the padded `commit` *is* the dense one.
+  The padded schema EXTENDS the landed pair rather than rivalling it. `opensToMerkle_to_padded`: every
+  dense opening is a padded opening.
+* `narrow_opensToMerkle_functional`, `narrow_opensToMerkle_some_excludes_none`,
+  `narrow_writesToMerkle_functional` — the three dense theorems, re-derived **from** the schema-level
+  teeth at `narrowTeeth`, at `MapMerkleRoot`'s own statement shape with the refuted floor spelled as
+  the injectivity it definitionally is. The measured §10.6 red is gone in both directions.
+* The two landed `rfl`s are untouched because nothing landed edits `MapDenotationSchema.lean`.
+
+### 11.5 The teeth BITE, at the deployed padding constant and the deployed depth
+
+* `bite_presents` — a **sparse** one-live-leaf tree at `MAP_TREE_DEPTH = 16` PRESENTS its key under the
+  deployed padded arity-3 denotation. The dense `opensToMerkle` has no witness for such a tree at all;
+  this is the first map-op opening inhabited at a tree `heap_root.rs` would actually build.
+* `bite_absence_is_refused` — **the anti-ghost tooth**: that same committed root cannot be opened at
+  that same key as ABSENT. `bite_write_is_functional` — the `new_root` column cannot be forged.
+* `ghost_pair_is_the_named_resid` — `padded_ghost3`'s colliding pair, fed to the tooth, lands **on the
+  named residual** rather than escaping unnamed. Both directions of the disjunction are live.
+
+Nothing in §9 of the module evaluates a root: `biteRoot` is *named* as the schema's own `commit`, per
+`MapReconcileImtRepoint` §4a's discipline.
+
+### 11.6 STAGE 2b: UNBLOCKED, with one deployed-side residual named
+
+Stage 2b's blocking question — "can a padded instance carry the anti-ghost teeth?" — is **answered
+yes**, and it is landed with the teeth attached rather than assumed. Stage 3 can now cut over to a
+schema that is faithful in **both** shape dimensions (arity *and* occupancy) instead of only one, which
+is what §3 called co-equal and §6 said the apex needs before it says anything about a real turn.
+
+What is **not** closed, and must not be laundered:
+
+1. **The deployed builder does not check pad-freeness.** `PadFree` is a decidable per-commitment
+   property; `heap_root.rs` never tests it (the only `assert_ne!` against `ZERO` is a test about the
+   empty *root*, `heap_root.rs:1294`). **The cheap deployed fix is to pad with a DOMAIN-SEPARATED
+   digest instead of a literal zero** — then padding-vs-leaf separation is the *same named CR floor*
+   the tower already carries, and this residual disappears rather than being priced. Binding the live
+   occupancy count into the root would also close it. Either is a small change to
+   `EMPTY_SUBTREE_ROOTS[0]`'s definition plus its 8-felt twin.
+2. **The 1-felt scalar denotation layer remains the wrong width.** At 1 felt the ghost costs ~2^31; the
+   deployed tree is 8-felt. This is `MapMerkleRoot`'s own named residue (the §2–§5 scalar model vs the
+   §5b `node8` model), and stage 3 should cut the denotation to the 8-felt objects, not the scalar ones.
+3. **Stage 2 proper is untouched** — `.read`/`.write`/`.insert`/`.aafiInsert` still have no arity-3
+   opener law, so the modeller still cannot DERIVE `holdsAtS` for them (§7-#1).
+4. **§10.5's repricing stands.** The 20 punch-through sites / 40 asserted theorems are unaffected by
+   this lane; the recommendation to restate the per-effect teeth over `MapOp.holdsAtS S` additively
+   *during* stage 2 is unchanged and is now cheaper, because the teeth they lean on by name
+   (functionality) exist at schema level.
+5. **⚑ THE PADDING-GHOST CLASS IS A SPREAD, NOT LOCAL TO THE MAP TREE.** Read this session:
+   `cap_root.rs:137–188` pads with the same literal constant (`CAP_ZERO8 = [BabyBear::ZERO; …]`,
+   `EMPTY_SUBTREE_ROOTS[0]`) under the same contiguous-prefix sparse fold, and `heap_root.rs:48–51`
+   states the sentinels are shared by "the sorted openable trees (heap / cap / fields)". Grepped both
+   files: **there is no leaf-digest-vs-padding guard anywhere** — the only `assert_ne!(_, ZERO)` is a
+   test about the *empty root* (`heap_root.rs:1294`), and the dense reference build literally
+   `leaf_digests.resize(capacity, BabyBear::ZERO)` (`heap_root.rs:1554`), which is exactly the `padTo`
+   the Lean models. So the same "a live leaf digest that hits the padding constant makes its entry
+   invisible" argument applies verbatim to the CAP tree and the fields tree. **The domain-separated
+   padding fix in item 1 should be applied to all three at once**, and until it is, every padded
+   sorted-tree denotation in this family owes the same named residual.
