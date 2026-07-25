@@ -40,7 +40,10 @@ const ALICE: u64 = 7001;
 
 type Host = TelegramHost<MockTransport>;
 
-fn host() -> Host {
+/// A fresh in-memory host. NOT named `host` on purpose: every test binds a local `host`, and a
+/// local shadows the function for the rest of the block, so a second `let mut host = fresh_host();` in
+/// one test would try to CALL the first host.
+fn fresh_host() -> Host {
     TelegramHost::new(BOT_SECRET, MockTransport::new(), &[ALICE])
 }
 
@@ -83,7 +86,7 @@ fn seen(host: &Host) -> usize {
 /// pressed on.
 #[test]
 fn multi_step_menu_navigation_renders_at_every_step() {
-    let mut host = host();
+    let mut host = fresh_host();
 
     // ── 1. /offerings — the menu appears.
     let before = seen(&host);
@@ -107,6 +110,8 @@ fn multi_step_menu_navigation_renders_at_every_step() {
     );
 
     // ── 2. Press "open dungeon" ON THE MENU MESSAGE — the submenu (the offering's surface).
+    // The button's payload is read off the host BEFORE the routing call takes `&mut host`.
+    let dungeon_index = menu_index(&host, "dungeon");
     let before = seen(&host);
     let (_, decision) = route_callback_decided(
         &mut host,
@@ -114,7 +119,7 @@ fn multi_step_menu_navigation_renders_at_every_step() {
             CHAT,
             menu_1,
             ALICE,
-            encode_callback(TURN_OPEN, menu_index(&host, "dungeon")),
+            encode_callback(TURN_OPEN, dungeon_index),
         ),
     );
     assert!(
@@ -149,6 +154,7 @@ fn multi_step_menu_navigation_renders_at_every_step() {
     );
 
     // ── 4. Press a DIFFERENT offering on the fresh menu message.
+    let craft_index = menu_index(&host, "craft");
     let before = seen(&host);
     let (_, decision) = route_callback_decided(
         &mut host,
@@ -156,7 +162,7 @@ fn multi_step_menu_navigation_renders_at_every_step() {
             CHAT,
             menu_2,
             ALICE,
-            encode_callback(TURN_OPEN, menu_index(&host, "craft")),
+            encode_callback(TURN_OPEN, craft_index),
         ),
     );
     assert!(
@@ -203,7 +209,7 @@ fn multi_step_menu_navigation_renders_at_every_step() {
             CHAT,
             menu_1,
             ALICE,
-            encode_callback(TURN_OPEN, menu_index(&host, "dungeon")),
+            encode_callback(TURN_OPEN, dungeon_index),
         ),
     );
     assert!(
@@ -216,7 +222,7 @@ fn multi_step_menu_navigation_renders_at_every_step() {
 /// that names an offering directly.
 #[test]
 fn reopening_an_offering_reposts_instead_of_editing_a_scrolled_away_message() {
-    let mut host = host();
+    let mut host = fresh_host();
 
     let (_, first) = route_text_decided(&mut host, CHAT, None, ALICE, "/open dungeon");
     assert!(
@@ -251,6 +257,15 @@ fn reopening_an_offering_reposts_instead_of_editing_a_scrolled_away_message() {
 fn a_press_on_a_message_this_process_never_presented_is_not_a_dead_button() {
     let dir = tempfile::tempdir().expect("a temp session dir");
     let store = dir.path().to_path_buf();
+    // The DURABLE epoch ledger, under the session dir — exactly what
+    // `bin/dreggnet-telegram-bot.rs` builds (`GameEpochLedger::open(session_dir.join(
+    // "game-epochs"))`). It is load-bearing for this test, not incidental: `dungeon` is a catalog
+    // GAME, and `resume_chat_all` fail-closes on a game whose durable routing epoch cannot be
+    // recovered. With an `in_memory_random()` ledger, process #2 mints a NEW host incarnation, so
+    // the resumed dungeon session has no recoverable generation and is (correctly) dropped — the
+    // press then reports `NoSession` and the test would be measuring a restart the real bot never
+    // performs.
+    let epochs = store.join("game-epochs");
 
     // ── Process #1: open the dungeon and play one turn, durably.
     let pre_restart_message = {
@@ -263,14 +278,15 @@ fn a_press_on_a_message_this_process_never_presented_is_not_a_dead_button() {
             MockTransport::new(),
             build,
             dreggnet_catalog::PlayerWorlds::new,
-            dreggnet_catalog::GameEpochLedger::in_memory_random().expect("epoch ledger"),
+            dreggnet_catalog::GameEpochLedger::open(&epochs).expect("durable epoch ledger"),
         )
         .expect("the durable host opens");
         route_text_decided(&mut host, CHAT, None, ALICE, "/open dungeon");
         surface_message(&host, "dungeon")
     };
 
-    // ── Process #2: the SAME store, a brand-new in-memory frontend (the restart).
+    // ── Process #2: the SAME store and the SAME durable epoch ledger, a brand-new in-memory
+    //    frontend (the restart).
     let build = {
         let store = store.clone();
         move || dreggnet_telegram::runtime::try_durable_telegram_host(store, Vec::new())
@@ -280,7 +296,7 @@ fn a_press_on_a_message_this_process_never_presented_is_not_a_dead_button() {
         MockTransport::new(),
         build,
         dreggnet_catalog::PlayerWorlds::new,
-        dreggnet_catalog::GameEpochLedger::in_memory_random().expect("epoch ledger"),
+        dreggnet_catalog::GameEpochLedger::open(&epochs).expect("durable epoch ledger"),
     )
     .expect("the durable host reopens");
 
@@ -319,7 +335,7 @@ fn a_press_on_a_message_this_process_never_presented_is_not_a_dead_button() {
 #[test]
 fn cancel_is_an_escape_from_every_state() {
     // ── From a cold chat with nothing open.
-    let mut host = host();
+    let mut host = fresh_host();
     let (reply, decision) = route_text_decided(&mut host, CHAT, None, ALICE, "/cancel");
     assert!(
         matches!(&decision, TextDecision::Cancelled { cleared } if cleared.is_empty()),
@@ -333,7 +349,7 @@ fn cancel_is_an_escape_from_every_state() {
 
     // ── With sessions open: they are cleared from the chat's presentation state, and the
     //    committed sessions survive (a re-open brings them back).
-    let mut host = host();
+    let mut host = fresh_host();
     route_text_decided(&mut host, CHAT, None, ALICE, "/open dungeon");
     route_text_decided(&mut host, CHAT, None, ALICE, "/open craft");
     let (_, decision) = route_text_decided(&mut host, CHAT, None, ALICE, "/cancel");
@@ -360,7 +376,7 @@ fn cancel_is_an_escape_from_every_state() {
     );
 
     // ── Mid-armed-text: /cancel disarms, so the next plain message is chatter again.
-    let mut host = host();
+    let mut host = fresh_host();
     route_text_decided(&mut host, CHAT, None, ALICE, "/open doc");
     let doc_message = surface_message(&host, "doc");
     let text_button = host
@@ -467,7 +483,7 @@ fn close_forgets_the_move_log_and_a_fresh_open_still_works() {
 /// has every later message swallowed into that offering, forever, with no input able to clear it.
 #[test]
 fn an_armed_text_slot_expires_and_stops_swallowing_messages() {
-    let mut host = host();
+    let mut host = fresh_host();
     route_text_decided(&mut host, CHAT, None, ALICE, "/open doc");
     let doc_message = surface_message(&host, "doc");
     // NOT conditional (see `cancel_is_an_escape_from_every_state`): a doc surface without a

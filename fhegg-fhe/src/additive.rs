@@ -574,12 +574,9 @@ pub struct BfvFoldTiming {
 /// 128-bit sets at degrees 1024,2048,4096,8192,16384; we take the degree-4096
 /// set (nth 2): 4096 slots (≥ any tested K), a ~109-bit ciphertext modulus q
 /// (noise budget for millions of adds), plaintext modulus ≈ 2^plaintext_nbits.
-pub fn pick_params(plaintext_nbits: usize) -> Arc<BfvParameters> {
-    BfvParameters::default_parameters_128(plaintext_nbits)
-        .expect("128-bit BFV params")
-        .nth(2)
-        .expect("degree-4096 parameter set")
-}
+/// (Relocated to the wasm-clean `fhegg_core::params`; re-exported here so every `crate::additive::pick_params`
+/// caller — including the threshold committee — is unchanged while the party ops migrate to `fhegg-core`.)
+pub use fhegg_core::params::pick_params;
 
 /// Legacy single-key folded book with its curves still encrypted. `bfv_fold`
 /// decrypts this to check against the plaintext reference, and the legacy

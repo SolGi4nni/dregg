@@ -7,3 +7,4 @@
 //! that keeps the ceremony party compilable to wasm.
 
 pub mod bfv_lean;
+pub mod params;

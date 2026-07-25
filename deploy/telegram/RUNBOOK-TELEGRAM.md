@@ -4,25 +4,43 @@
 STALE.** (This file said "NOT DEPLOYED" until 2026-07-25, five days after real users were
 already playing on it. Repo-vs-box drift in the runbook itself; state the box's truth here.)
 
-Ground truth, read off the box on 2026-07-25:
+Ground truth, re-read off the box on 2026-07-25 12:0x EDT (a later read than the first table below
+recorded — the binary HAS been rebuilt since, and is STILL pre-fix):
 
 | thing | value |
 | --- | --- |
-| unit | `dregg-telegram-bot.service` (user unit, `enable`d, `Restart=always`) |
-| binary | `~/dregg-telegram/dreggnet-telegram-bot`, **built 2026-07-19 06:06** |
-| source it was built from | ≈ `59ae56df6f` — it PREDATES `01046f85ac` (per-`(chat, offering)` surfaces) and every telegram commit since |
+| unit | `dregg-telegram-bot.service` (user unit, `enable`d, `Restart=always`) — `active`, pid 2394337, started 2026-07-25 02:12:12 EDT |
+| binary | `~/dregg-telegram/dreggnet-telegram-bot`, **built 2026-07-25 02:11** (189 MB) |
+| what that binary CONTAINS | the hand-written `runtime::HELP_TEXT` (`"the lab shelf (press a button to open one)"`, `"/help — this text"`) and **none** of the command-registry / menu-repost / restart-resume work: `commands.rs`'s strings are ABSENT, and the boot journal has no `registered N command(s) with Telegram's / menu` line, so `setMyCommands` never ran |
+| the box's own checkout | `~/dev/breadstuffs` at `fdfef4613` (2026-07-24) — `dreggnet-telegram/src/commands.rs` **does not exist there**, so a rebuild on the box ships the OLD bot until it pulls |
 | sessions | `~/.local/state/dregg-telegram/sessions` (`*.log` move-logs + `updates.offset`) |
 | audit | `~/dregg-shared/audit/audit-<date>.telegram-<pid>.NN.jsonl` (shared with web + discord) |
 | Mini App base | `https://arcade.dregg.net` |
+
+⚑ So every behaviour report dated on or before 2026-07-25 — the invisible `/offerings`, the dead
+post-restart button, the thin `/help`, `/descent` answered with silence — is a report about the
+PRE-FIX bot. The repair is committed (`c5a3a963e0`) and tested in the repo; it is **not deployed**.
+Deploying it needs a `git pull` on the box first, then the rebuild-and-copy below.
 
 **A restart does NOT pick up new code** — `ExecStart` points at the copied binary, not at
 `target/`. Rebuilding and copying is a deliberate step:
 
 ```
-ssh hbox 'cd ~/dev/breadstuffs && swarm-build cargo build --release -p dreggnet-telegram \
+ssh hbox 'cd ~/dev/breadstuffs && git pull \
+  && swarm-build cargo build --release -p dreggnet-telegram \
   && install -m 755 target/release/dreggnet-telegram-bot ~/dregg-telegram/dreggnet-telegram-bot \
   && systemctl --user restart dregg-telegram-bot'
 ```
+
+Then CONFIRM the shipped binary is the one you meant, rather than trusting the restart:
+
+```
+ssh hbox 'grep -c "the lab shelf — a button per offering" ~/dregg-telegram/dreggnet-telegram-bot \
+  && journalctl --user -u dregg-telegram-bot -n 20 --no-pager | grep "registered .* command"'
+```
+
+A non-zero grep and a `registered N command(s)` boot line together mean the command registry is
+live; either one missing means the old binary is still serving.
 
 Check what is actually running before diagnosing ANY behaviour report: a symptom explained by
 code that was never shipped is not the symptom the user hit.

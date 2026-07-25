@@ -9047,6 +9047,9 @@ dependencies = [
 [[package]]
 name = "fhegg-core"
 version = "0.1.0"
+dependencies = [
+ "fhe",
+]
 
 [[package]]
 name = "fhegg-fhe"

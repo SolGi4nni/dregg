@@ -8,5 +8,8 @@ description = "fhEgg core: wasm-clean BFV/threshold primitives shared by fhegg-f
 # Deliberately dependency-light: bfv_lean is pure std (byte-interop RNS, no fhe/rand/serde). Threshold party
 # ops (to be moved here next) add fhe/rand_09 only. NO wgpu/tfhe — that is what keeps this wasm-clean.
 [dependencies]
+# fhe: the wasm-clean BFV lib (pure-Rust num-bigint, confirmed wasm32-compatible). pick_params + the
+# threshold party ops need it. NO wgpu/tfhe.
+fhe = "0.1.1"
 
 [dev-dependencies]

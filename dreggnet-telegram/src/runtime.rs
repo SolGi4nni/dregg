@@ -1090,6 +1090,21 @@ pub fn route_text_decided<T: Transport>(
         // executor referees what lands. Otherwise it is ordinary chatter and stays `Ignored`
         // (never swallow arbitrary group talk — text is claimed only when a slot is genuinely
         // armed for this chat's session).
+        // A REGISTERED command word that reached this fallthrough has NO dispatcher arm. `cmd` is
+        // `""` for ordinary text and the canonical registry name otherwise, so this is exactly the
+        // "documented but unrouted" shape — and letting it fall into the free-text path answered
+        // it with the same SILENCE ordinary chatter gets, which is the one thing the registry
+        // exists to prevent. Say so instead, and make it a decision the audit and
+        // `every_registered_command_dispatches` can both see.
+        _ if !cmd.is_empty() => (
+            Some(format!(
+                "{cmd} is in my command list but has no handler — that is a bug in me, not in \
+                 you. /help lists what works, /cancel always works."
+            )),
+            TextDecision::Unknown {
+                cmd: cmd.to_string(),
+            },
+        ),
         _ => {
             let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
             // Restart-resume: after a restart this process never bound the chat's durably-resumed

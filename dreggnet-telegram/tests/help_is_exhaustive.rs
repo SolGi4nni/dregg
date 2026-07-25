@@ -141,10 +141,24 @@ fn every_registered_command_dispatches() {
         TelegramHost::new(BOT_SECRET, MockTransport::new(), &[ALICE]);
     for command in COMMANDS {
         for word in std::iter::once(command.name).chain(command.aliases.iter().copied()) {
-            let (_, decision) = route_text_decided(&mut host, CHAT, None, ALICE, word);
+            let (reply, decision) = route_text_decided(&mut host, CHAT, None, ALICE, word);
             assert!(
                 !matches!(decision, TextDecision::Unknown { .. }),
                 "`{word}` is registered but the dispatcher does not route it: {decision:?}"
+            );
+            // …and NOT `Ignored` either. A registry entry with no dispatcher arm used to fall
+            // through to the free-text path and be reported as ordinary chatter — the assertion
+            // above passes for that, so on its own it is a gate that cannot go red. `Ignored` is
+            // the SILENCE the registry exists to make impossible.
+            assert!(
+                !matches!(decision, TextDecision::Ignored),
+                "`{word}` is registered but fell through to the free-text path (silence): \
+                 {decision:?}"
+            );
+            assert!(
+                reply.is_some() || matches!(decision, TextDecision::Menu),
+                "`{word}` answers something the user can see (the offerings menu IS its own \
+                 reply, so `Menu` is the one decision allowed to reply `None`): {decision:?}"
             );
         }
     }
