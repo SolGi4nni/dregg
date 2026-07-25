@@ -103,56 +103,115 @@ fn land(
     }
 }
 
-/// Drive a real native session through `tape` and export its record. The tape is played through the
-/// REAL executor-backed Offering, so a fixture that is not a legal run cannot be manufactured.
-fn record(seed: &CommittedSeed, actor: &str, tape: &[(&str, i64)]) -> NativeDescentRecord {
+/// **Drive a real crown-seeking run, planned against the executor's OWN legality list.**
+///
+/// The fixture used to be a literal tape (`delve, smite, loot 1, unlock 2, …`). That was a
+/// hostage to the rules: the night `harm`/`lunge` landed and re-emitted the day family, a floor
+/// needed a second blow, and every assertion in this file died on `loot(1) refused: the guardian
+/// still stands` — a fixture failure wearing a product failure's clothes.
+///
+/// So the line is PLANNED, never spelled: each step reads `Offering::actions` (the
+/// executor-backed `enabled` verdict, the same list the browser's board lights up from) and takes
+/// the highest-priority move that is actually legal right now. The strategy is the crown line —
+/// take the prize, take the way-keys, put the guardian down, open the way, go deeper — and
+/// deliberately never loots a treasure, because carrying rights attenuate with depth and a greedy
+/// pack cannot reach floor 4.
+///
+/// It therefore survives a re-drawn map, a changed guardian vitality, and a new verb. What it
+/// cannot do is manufacture an illegal run: every move goes through the real executor, and the
+/// caller asserts the outcome it wanted actually happened.
+fn drive_crown_line(
+    offering: &NativeDescentOffering,
+    session: &mut NativeDescentSession,
+    actor: &str,
+) {
+    // The crown, then the three way-keys. Never relics 4–7: a pack of treasure cannot descend.
+    let wanted: [i64; 4] = [0, 1, 2, 3];
+    for _ in 0..64 {
+        let actions = offering.actions(session);
+        let can = |turn: &str, arg: i64| {
+            actions
+                .iter()
+                .any(|a| a.turn == turn && a.arg == arg && a.enabled)
+        };
+
+        // 1. The prize and the keys, the moment the floor's hoard opens.
+        if let Some(&relic) = wanted.iter().find(|&&relic| can("loot", relic)) {
+            land(offering, session, actor, "loot", relic);
+            continue;
+        }
+        // 2. The guardian stands between us and the hoard. `smite` only — `lunge` is the cheap
+        //    blow that costs a carry slot, and this line needs all four.
+        if can("smite", 0) {
+            land(offering, session, actor, "smite", 0);
+            continue;
+        }
+        // 3. Exercise a carried key, then step through.
+        if let Some(way) = (2..=FLOORS as i64).find(|&way| can("unlock", way)) {
+            land(offering, session, actor, "unlock", way);
+            continue;
+        }
+        if can("delve", 0) {
+            land(offering, session, actor, "delve", 0);
+            continue;
+        }
+        // 4. ⚑ THE CLIMB HOME. `flee` is illegal below the surface, so once the bottom is
+        //    cleared the line pays one light per floor to get back out.
+        if can("ascend", 0) {
+            land(offering, session, actor, "ascend", 0);
+            continue;
+        }
+        break;
+    }
+}
+
+/// A settled crown run: the planned line, then the proved exit that banks the pack.
+fn crowned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
     let offering = NativeDescentOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
         .expect("the native day opens");
-    for (turn, arg) in tape {
-        land(&offering, &mut session, actor, turn, *arg);
-    }
-    session.export_record()
+    // `drive_crown_line` already pays the climb home — `flee` is illegal below the surface.
+    drive_crown_line(&offering, &mut session, actor);
+    land(&offering, &mut session, actor, "flee", 0);
+    let record = session.export_record();
+    assert!(
+        record
+            .completion
+            .as_ref()
+            .is_some_and(|completion| completion.crowned),
+        "the planned line must actually crown, or every assertion below is about a run that did \
+         not happen"
+    );
+    record
 }
 
-/// The crown line: down to floor 4, exercising each way-key in turn, and OUT — the run that ranks.
-const CROWN_TAPE: &[(&str, i64)] = &[
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 1),
-    ("unlock", 2),
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 2),
-    ("unlock", 3),
-    ("delve", 0),
-    ("smite", 0),
-    ("smite", 0),
-    ("loot", 3),
-    ("unlock", 4),
-    ("delve", 0),
-    ("smite", 0),
-    ("smite", 0),
-    ("loot", 0),
-    ("flee", 0),
-];
-
-/// The same line, ABANDONED one move from the exit: the pack is full and NOTHING is banked.
-const ABANDONED_TAPE: &[(&str, i64)] = &[
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 1),
-    ("unlock", 2),
-    ("delve", 0),
-    ("smite", 0),
-    ("loot", 2),
-    ("unlock", 3),
-    ("delve", 0),
-    ("smite", 0),
-    ("smite", 0),
-    ("loot", 3),
-];
+/// The SAME line, abandoned one move from the exit: the pack is full and NOTHING is banked. This
+/// is the common loss — far more reachable than a dead light — and the card must not dress it as
+/// a haul.
+fn abandoned_record(seed: &CommittedSeed, actor: &str) -> NativeDescentRecord {
+    let offering = NativeDescentOffering::new();
+    let mut session = offering
+        .open(SessionConfig::with_seed(u64::from(native_seed_input(seed))))
+        .expect("the native day opens");
+    drive_crown_line(&offering, &mut session, actor);
+    let record = session.export_record();
+    assert!(
+        record.completion.is_none(),
+        "an abandoned run has not settled"
+    );
+    let carrying = record
+        .events
+        .last()
+        .map(|event| event.post.pack())
+        .unwrap_or(0);
+    assert!(
+        carrying > 0,
+        "the abandoned fixture must actually be CARRYING something, or the loss it is meant to \
+         show is not on the card"
+    );
+    record
+}
 
 /// Submit a record and return its share-card HTML.
 async fn card_for(app: &axum::Router, native: &NativeDescentRecord) -> String {
@@ -183,7 +242,7 @@ fn board() -> (axum::Router, CommittedSeed) {
 #[tokio::test]
 async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
     let (app, seed) = board();
-    let card = card_for(&app, &record(&seed, "web:crowned", CROWN_TAPE)).await;
+    let card = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
 
     // The board is there, and it is the LIVE board's shape: `3 + RELICS` columns.
     assert!(
@@ -205,7 +264,7 @@ async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
     }
     // BANKED reads as banked: a filled cell, plus the prize NAMED.
     assert!(
-        card.contains("rc-cell tag-good banked"),
+        card.contains("rc-cell tag-vault banked"),
         "the banked relics are filled solid: {card}"
     );
     assert!(
@@ -255,15 +314,15 @@ async fn a_crowned_run_card_paints_the_shaft_and_the_haul() {
 #[tokio::test]
 async fn an_unbanked_pack_never_looks_like_a_haul() {
     let (app, seed) = board();
-    let abandoned = card_for(&app, &record(&seed, "web:abandoned", ABANDONED_TAPE)).await;
-    let crowned = card_for(&app, &record(&seed, "web:crowned", CROWN_TAPE)).await;
+    let abandoned = card_for(&app, &abandoned_record(&seed, "web:abandoned")).await;
+    let crowned = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
 
     assert!(
-        abandoned.contains("rc-cell tag-warn at-risk"),
+        abandoned.contains("rc-cell tag-relic at-risk"),
         "the carried relics are outlined, not filled: {abandoned}"
     );
     assert!(
-        !abandoned.contains("rc-cell tag-good banked"),
+        !abandoned.contains("rc-cell tag-vault banked"),
         "an unfinished run has banked NOTHING and no cell may say otherwise: {abandoned}"
     );
     assert!(
@@ -281,8 +340,8 @@ async fn an_unbanked_pack_never_looks_like_a_haul() {
     );
 
     // The differential: same columns, one `flee` apart.
-    assert!(crowned.contains("rc-cell tag-good banked"));
-    assert!(!crowned.contains("rc-cell tag-warn at-risk"));
+    assert!(crowned.contains("rc-cell tag-vault banked"));
+    assert!(!crowned.contains("rc-cell tag-relic at-risk"));
 }
 
 /// **The link unfurls.** A page whose whole job is to be posted is judged by its preview, and meta
@@ -290,7 +349,7 @@ async fn an_unbanked_pack_never_looks_like_a_haul() {
 #[tokio::test]
 async fn the_share_link_carries_the_runs_story_into_a_social_preview() {
     let (app, seed) = board();
-    let card = card_for(&app, &record(&seed, "web:crowned", CROWN_TAPE)).await;
+    let card = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
 
     let head = card
         .split("</head>")
@@ -325,7 +384,7 @@ async fn the_share_link_carries_the_runs_story_into_a_social_preview() {
 #[tokio::test]
 async fn the_card_can_be_pasted_into_a_chat_as_the_same_board() {
     let (app, seed) = board();
-    let card = card_for(&app, &record(&seed, "web:crowned", CROWN_TAPE)).await;
+    let card = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
 
     assert!(card.contains("class=\"rc-text\""), "the copy block exists");
     let pre = card
@@ -354,6 +413,75 @@ async fn the_card_can_be_pasted_into_a_chat_as_the_same_board() {
     );
 }
 
+/// **The card and the live game are lit by ONE palette.**
+///
+/// The `/descent/play` redesign gave the game a meaning-bearing palette — brass is light, violet
+/// is proof, rust is peril — and the run-card is the room a player is thrown into straight after
+/// leaving it. A share link in the old cyan/mint tokens would read as a different product.
+///
+/// So this scrapes the SERVED play surface's own `--nd-*` colour tokens and requires the card's
+/// `--rc-*` tokens of the same name to hold the identical hex. Retune the game and this fails
+/// until the card follows; it cannot be satisfied by a copy that has since drifted.
+#[tokio::test]
+async fn the_card_is_lit_by_the_live_surfaces_palette() {
+    let play = {
+        let app = descent_play_router();
+        let (status, body) = get(&app, "/descent/play").await;
+        assert_eq!(status, StatusCode::OK, "the play shell serves");
+        body
+    };
+    let (app, seed) = board();
+    let card = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
+
+    // `--nd-torch-hot:#f0c98d` → ("torch-hot", "#f0c98d")
+    let mut checked = 0;
+    for chunk in play.split("--nd-").skip(1) {
+        let Some((name, rest)) = chunk.split_once(':') else {
+            continue;
+        };
+        if !rest.starts_with('#') {
+            continue; // not a colour token (a number, a var(), an easing curve)
+        }
+        let hex: String = rest[..]
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit() || *c == '#')
+            .collect();
+        if hex.len() < 4 {
+            continue;
+        }
+        let mine = format!("--rc-{name}:{hex}");
+        // Only names the card actually uses are welded; the card need not adopt every token.
+        if !card.contains(&format!("--rc-{name}:")) {
+            continue;
+        }
+        assert!(
+            card.contains(&mine),
+            "the run-card's `--rc-{name}` must be the play surface's `--nd-{name}` ({hex}) — the \
+             share link is the room the player just left, and a drifted token makes it a \
+             different product"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 12,
+        "the palette weld covered only {checked} tokens — if this collapses it is passing \
+         vacuously, not agreeing"
+    );
+
+    // The three meanings, pinned where they actually land on the board: banked custody is PROOF
+    // (violet), a carried relic is LIGHT (brass). If those two ever paint the same, the card has
+    // stopped telling the story it exists to tell.
+    assert!(
+        card.contains("rc-cell tag-vault banked"),
+        "banked custody paints as proof: {card}"
+    );
+    assert!(
+        card.contains(".rc-cell.tag-vault{color:var(--rc-proof-lit)")
+            && card.contains(".rc-cell.tag-relic{color:var(--rc-torch)"),
+        "violet is proof and brass is light — not the other way round: {card}"
+    );
+}
+
 /// **The card and the live game speak ONE alphabet.** `native_descent`'s glyph table is private, so
 /// the card mirrors it — and this is the weld that keeps the mirror honest: every `const GLYPH_* =
 /// "…"` the SERVED play controller declares must appear in the card's own legend. Change a glyph on
@@ -370,7 +498,7 @@ async fn the_card_and_the_live_surface_speak_one_alphabet() {
         body
     };
     let (app, seed) = board();
-    let card = card_for(&app, &record(&seed, "web:crowned", CROWN_TAPE)).await;
+    let card = card_for(&app, &crowned_record(&seed, "web:crowned")).await;
     let legend = card
         .split("class=\"rc-legend\">")
         .nth(1)

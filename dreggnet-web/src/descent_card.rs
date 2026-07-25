@@ -23,7 +23,14 @@
 //!   committed day-seed) — nothing here mirrors a world number;
 //! * the plain-text board is [`deos_view::coordgrid_text`], the ONE board projection every text
 //!   channel already uses, so the copyable card is the same board Discord/Telegram paint;
-//! * the light clock is [`deos_view::meter_bar`], the ONE meter projection.
+//! * the light clock is [`deos_view::meter_bar`], the ONE meter projection;
+//! * the PALETTE and the per-cell tag names are the redressed play surface's
+//!   (`descent_play`'s `PLAY_STYLE` / `buildMap`): the brand's night palette, in which colour
+//!   means exactly three things — **brass is light** (the torch, a relic you can see or are
+//!   carrying, the floor you ended on), **violet is proof** (custody a proved exit settled),
+//!   **rust is peril**. That mapping is what lets the card tell its whole story in colour: the
+//!   run is the question *did the brass become violet?*, and a run whose light died answers in
+//!   rust.
 //!
 //! The GLYPHS are the one genuine mirror: `native_descent`'s table is private to that crate.
 //! `tests/descent_run_card.rs` pins each of them against the served play controller's own
@@ -43,8 +50,16 @@
 //!
 //! `flee` banks the whole pack, so a run that ENDED has an empty pack row. A run whose light died
 //! never fled: its relics are frozen in the `@` row forever, and the vault is empty. That is the
-//! game's strongest beat and the card paints it as a beat — the pack row struck through in red,
+//! game's strongest beat and the card paints it as a beat — the pack row struck through in rust,
 //! the vault row's emptiness said out loud — instead of reporting `Banked relics: 0`.
+//!
+//! It used to be a loss the rules could barely deliver: before `ascend`, `flee` cost one light from
+//! ANY depth, and a brute force over the sixteen Lean-emitted drawn maps said the light could only
+//! actually run out on days 9 and 13. That is fixed at the source — `flee` now demands the surface
+//! and the climb is priced per floor, so every one of the sixteen maps has losable positions
+//! (`Dungeon.doomed_every_day`). The card still gives equal weight to the two losses every run
+//! takes — an unfinished run's pack, carried and never banked, and the relics left lying in the
+//! dark because carrying rights attenuate with depth.
 
 use deos_view::{CoordCell, METER_TEXT_WIDTH, coordgrid_text, meter_bar};
 use dreggnet_offerings::native_descent::{
@@ -87,13 +102,10 @@ fn relic_glyph(relic: usize) -> &'static str {
     }
 }
 
-/// The semantic palette tag a relic's cell paints in — the live board's tags.
+/// The semantic palette tag a relic's cell paints in — the live board's own `relicTag`. The crown
+/// is its own tag (hotter brass); every other relic is `relic`.
 fn relic_tag(relic: usize) -> &'static str {
-    match relic {
-        0 => "accent",
-        1..=3 => "warn",
-        _ => "good",
-    }
+    if relic == 0 { "crown" } else { "relic" }
 }
 
 /// A relic named as a NOUN (the live surface names it as an action — "Take the …" — because there
@@ -137,7 +149,8 @@ impl Ending {
         }
     }
 
-    /// The semantic palette tag (`good` / `bad` / `warn`).
+    /// The card's edge/stamp tone: settled reads as PROOF, a dead light as PERIL, an unfinished
+    /// run as TORCHLIGHT (it is still burning).
     pub(crate) fn tone(self) -> &'static str {
         match self {
             Ending::Crowned | Ending::Banked => "good",
@@ -165,6 +178,13 @@ pub(crate) struct RunStory {
     state: PortableSim,
     world: DayWorld,
     ending: Ending,
+    /// **The deepest floor the run ever stood on**, taken over the whole replayed tape.
+    ///
+    /// This CANNOT be read off the final state any more. `flee` now demands the surface and the
+    /// climb is priced per floor (`ascend`), so a settled run's final `depth` is **0** — a card
+    /// that reported the final depth would tell every crowned player they reached floor 0. The
+    /// depth a run is proud of is its maximum, and only the tape has it.
+    deepest: u64,
 }
 
 /// A cell's story-flavour, on top of the live board's palette tag: what makes the run-card's board
@@ -200,7 +220,7 @@ impl Cell {
     }
 
     fn empty() -> Self {
-        Cell::new(GLYPH_EMPTY, "muted", Flavour::Plain)
+        Cell::new(GLYPH_EMPTY, "void", Flavour::Plain)
     }
 
     /// The shared board projection's cell. `highlight` stays FALSE on every run-card cell: the
@@ -222,8 +242,10 @@ impl RunStory {
     /// Read a run's story off its replayed final state and the day's drawn map.
     ///
     /// `crowned` is the settlement's own committed bit; it is used only to refine a settled run's
-    /// word, never to claim a run settled.
-    pub(crate) fn new(state: PortableSim, world: DayWorld, crowned: bool) -> Self {
+    /// word, never to claim a run settled. `deepest` is the maximum depth over the replayed tape —
+    /// see [`RunStory::deepest`](struct.RunStory.html).
+    pub(crate) fn new(state: PortableSim, world: DayWorld, crowned: bool, deepest: u64) -> Self {
+        let state_depth = state.depth;
         let ending = if state.fate != 0 {
             if crowned || custody_of(&state, 0) == Some(CUSTODY_BANKED) {
                 Ending::Crowned
@@ -240,6 +262,8 @@ impl RunStory {
             state,
             world,
             ending,
+            // A tape can never report a depth shallower than the state it ended in.
+            deepest: deepest.max(state_depth),
         }
     }
 
@@ -282,9 +306,15 @@ impl RunStory {
             .collect()
     }
 
-    /// The deepest floor the run stood on. `delve` is the only depth change and it only goes down,
-    /// so the final depth IS the deepest reached.
+    /// **How deep they got** — the deepest floor the run ever stood on. Since `ascend`/`flee` this
+    /// is emphatically NOT `state.depth`: a settled run climbed back out and ends at the surface.
     pub(crate) fn depth(&self) -> u64 {
+        self.deepest
+    }
+
+    /// Where the run came to rest: the surface for a settled run, the floor it froze on for a run
+    /// whose light died. Distinct from [`depth`](Self::depth), and only the board uses it.
+    fn resting_depth(&self) -> u64 {
         self.state.depth
     }
 
@@ -306,22 +336,26 @@ impl RunStory {
     /// surface's rows, columns and glyphs, with the run's ending decided per cell.
     fn board(&self) -> Vec<Cell> {
         let mut cells = Vec::with_capacity(MAP_COLS * (DUNGEON_FLOORS as usize + 2));
-        let depth = self.state.depth;
+        // TWO depths now, and conflating them is how the card would start lying: `deepest` is the
+        // floor the run is PROUD of (the `>` mark, and "how deep they got"); `resting` is where it
+        // came to rest — the surface for a settled run, the floor it froze on for a dead one.
+        let deepest = self.deepest;
+        let resting = self.resting_depth();
 
         for floor in 1..=DUNGEON_FLOORS {
-            let ended_here = depth == floor;
-            let unreached = floor > depth;
+            let marked_here = deepest == floor;
+            let unreached = floor > deepest;
 
             // The row marker: the floor's number, or `>` on the floor the run ended standing on.
-            let marker = if ended_here {
+            let marker = if marked_here {
                 GLYPH_YOU.to_string()
             } else {
                 floor.to_string()
             };
             cells.push(Cell::new(
                 &marker,
-                if ended_here { "accent" } else { "muted" },
-                if ended_here {
+                if marked_here { "you" } else { "mark" },
+                if marked_here {
                     Flavour::Here
                 } else if unreached {
                     Flavour::Unreached
@@ -336,24 +370,27 @@ impl RunStory {
             let open = way_open(&self.state, floor);
             cells.push(Cell::new(
                 if open { GLYPH_WAY_OPEN } else { GLYPH_WAY_SHUT },
-                if open { "good" } else { "bad" },
+                if open { "open" } else { "shut" },
                 Flavour::Plain,
             ));
 
             // The guardian. Wounds are per-standing-floor, so only the guardian the run ENDED
             // facing can read as slain — exactly the live board's rule, on the day's own vitality
             // table rather than day 0's.
-            let slain_here = ended_here && self.state.wounds >= self.world.guard_hp(floor);
+            // Wounds are per-standing-floor, so the only guardian whose state the record still
+            // knows is the one on the floor the run came to REST on — not the deepest it reached.
+            let standing_here = resting == floor;
+            let slain_here = standing_here && self.state.wounds >= self.world.guard_hp(floor);
             cells.push(Cell::new(
                 if slain_here {
                     GLYPH_GUARDIAN_SLAIN
                 } else {
                     GLYPH_GUARDIAN
                 },
-                match (ended_here, slain_here) {
-                    (true, true) => "good",
-                    (true, false) => "bad",
-                    _ => "muted",
+                match (standing_here, slain_here) {
+                    (true, true) => "fallen",
+                    (true, false) => "guard",
+                    _ => "dim",
                 },
                 Flavour::Plain,
             ));
@@ -379,11 +416,15 @@ impl RunStory {
         // The pack row. `flee` banks the whole pack, so on a SETTLED run it is empty by
         // construction; anything still here is a relic that never became anyone's — lost outright
         // if the light died, at risk while the run is unfinished.
+        // The colour IS the story, in the play surface's own three words: BRASS is torchlight (a
+        // relic you can see, a relic you are carrying), VIOLET is proof (custody a proved exit
+        // settled), RUST is peril. So the whole card asks one question — did the brass become
+        // violet? — and a run whose light died answers it in rust.
         let carrying = !self.in_pack().is_empty();
         let (pack_flavour, pack_tag) = match (self.ending, carrying) {
-            (Ending::LightDied, true) => (Flavour::Lost, "bad"),
-            (Ending::Delving, true) => (Flavour::AtRisk, "warn"),
-            _ => (Flavour::Plain, "muted"),
+            (Ending::LightDied, true) => (Flavour::Lost, "peril"),
+            (Ending::Delving, true) => (Flavour::AtRisk, "relic"),
+            _ => (Flavour::Plain, "mark"),
         };
         cells.push(Cell::new(GLYPH_PACK, pack_tag, pack_flavour));
         cells.push(Cell::empty());
@@ -392,10 +433,13 @@ impl RunStory {
             if custody_of(&self.state, relic) == Some(CUSTODY_CARRIED) {
                 cells.push(Cell::new(
                     relic_glyph(relic),
-                    match pack_flavour {
-                        Flavour::Lost => "bad",
-                        Flavour::AtRisk => "warn",
-                        _ => relic_tag(relic),
+                    // The live board paints the whole pack row `relic` (brass): carried is seen,
+                    // not settled. A dead run's pack is the one place the card departs, and it
+                    // departs into peril — because that is exactly what happened to it.
+                    if pack_flavour == Flavour::Lost {
+                        "peril"
+                    } else {
+                        "relic"
                     },
                     pack_flavour,
                 ));
@@ -404,18 +448,18 @@ impl RunStory {
             }
         }
 
-        // The vault row — what came out.
+        // The vault row — what a proved exit settled. VIOLET, the live board's `vault`.
         let any_banked = !self.banked().is_empty();
         cells.push(Cell::new(
             GLYPH_VAULT,
-            if any_banked { "good" } else { "muted" },
+            if any_banked { "vault" } else { "mark" },
             Flavour::Plain,
         ));
         cells.push(Cell::empty());
         cells.push(Cell::empty());
         for relic in 0..DUNGEON_RELICS {
             if custody_of(&self.state, relic) == Some(CUSTODY_BANKED) {
-                cells.push(Cell::new(relic_glyph(relic), "good", Flavour::Banked));
+                cells.push(Cell::new(relic_glyph(relic), "vault", Flavour::Banked));
             } else {
                 cells.push(Cell::empty());
             }
@@ -427,14 +471,22 @@ impl RunStory {
     /// The per-row caption the text board carries — what makes an `@` row of glyphs read as a loss
     /// rather than as data.
     fn row_labels(&self) -> Vec<String> {
-        let depth = self.state.depth;
+        let deepest = self.deepest;
+        let resting = self.resting_depth();
+        let froze_here = !self.ending.settled();
         let mut labels: Vec<String> = (1..=DUNGEON_FLOORS)
-            .map(|floor| match floor.cmp(&depth) {
-                std::cmp::Ordering::Equal => {
-                    format!("floor {floor} — the run ended here")
+            .map(|floor| {
+                if floor > deepest {
+                    format!("floor {floor} — never reached")
+                } else if floor == deepest && froze_here && floor == resting {
+                    format!("floor {floor} — deepest reached, and where it stopped")
+                } else if floor == deepest {
+                    format!("floor {floor} — deepest reached")
+                } else if froze_here && floor == resting {
+                    format!("floor {floor} — where the run stopped")
+                } else {
+                    format!("floor {floor}")
                 }
-                std::cmp::Ordering::Greater => format!("floor {floor} — never reached"),
-                std::cmp::Ordering::Less => format!("floor {floor}"),
             })
             .collect();
 
@@ -519,19 +571,19 @@ impl RunStory {
         };
         match self.ending {
             Ending::Crowned => format!(
-                "The Crown of the Deep came out of floor {} — {} relic{} banked, {} light left of {LIGHT_BREATH}.{and_left}",
+                "Carried the Crown of the Deep up from floor {} — {} relic{} banked, {} light left of {LIGHT_BREATH}.{and_left}",
                 self.depth(),
                 banked.len(),
                 plural(banked.len()),
                 self.light_left(),
             ),
             Ending::Banked if banked.is_empty() => format!(
-                "Climbed out of floor {} empty-handed with {} light left of {LIGHT_BREATH}.{and_left}",
+                "Climbed out from floor {} empty-handed with {} light left of {LIGHT_BREATH}.{and_left}",
                 self.depth(),
                 self.light_left(),
             ),
             Ending::Banked => format!(
-                "{} relic{} carried out of floor {} on a proved exit, with {} light left of {LIGHT_BREATH}.{and_left}",
+                "{} relic{} carried up from floor {} on a proved exit, with {} light left of {LIGHT_BREATH}.{and_left}",
                 banked.len(),
                 plural(banked.len()),
                 self.depth(),
@@ -547,7 +599,7 @@ impl RunStory {
                 name_list(&lost),
             ),
             Ending::Delving => format!(
-                "Still on floor {} of {DUNGEON_FLOORS} with {} light left of {LIGHT_BREATH} and {} relic{} riding unbanked in the pack — this run has not ended.",
+                "Down to floor {} of {DUNGEON_FLOORS}, {} light left of {LIGHT_BREATH}, {} relic{} riding unbanked in the pack — this run has not ended.",
                 self.depth(),
                 self.light_left(),
                 self.in_pack().len(),
@@ -673,7 +725,7 @@ impl RunStory {
              <div class=\"rc-stat\"><dt>light left</dt>\
              <dd><span class=\"rc-bar{light_tone}\"><i style=\"width:{light_pct:.1}%\"></i></span>\
              <b>{light_left}</b><span class=\"rc-of\">/{breath}</span></dd></div>\
-             <div class=\"rc-stat\"><dt>depth reached</dt>\
+             <div class=\"rc-stat\"><dt>deepest floor</dt>\
              <dd><span class=\"rc-bar\"><i style=\"width:{depth_pct:.1}%\"></i></span>\
              <b>{depth}</b><span class=\"rc-of\">/{floors}</span></dd></div>\
              <div class=\"rc-stat\"><dt>{haul_label}</dt>\
@@ -704,7 +756,9 @@ impl RunStory {
             } else {
                 "relics LOST"
             },
-            haul_tone = if lost.is_empty() { "" } else { " low" },
+            // The haul bar is PROOF (violet) when it counts what a proved exit settled, and PERIL
+            // (rust) when it counts bodies instead.
+            haul_tone = if lost.is_empty() { " proof" } else { " low" },
             haul_pct = haul_pct,
             haul_count = haul_count,
             relics = DUNGEON_RELICS,
@@ -720,7 +774,7 @@ impl RunStory {
         let lost = self.lost();
         let banked = self.banked();
         format!(
-            "The shaft at the end of the run. Floor {} of {DUNGEON_FLOORS}. \
+            "The shaft at the end of the run. Deepest floor {} of {DUNGEON_FLOORS}. \
              {} banked, {} left in the pack{}.",
             self.depth(),
             if banked.is_empty() {
@@ -747,7 +801,7 @@ impl RunStory {
 fn legend_line() -> &'static str {
     "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). \
      columns: floor · way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). \
-     > where the run ended · / open way · # shut way · G guardian · x slain · \
+     > the deepest floor reached · / open way · # shut way · G guardian · x slain · \
      C crown · k way-key · * treasure"
 }
 
@@ -794,49 +848,77 @@ fn sentence_case(s: &str) -> String {
 /// idiom) so the two cannot drift apart, and deliberately HIGH-CONTRAST and compact: this card is
 /// screenshotted, thumbnailed and pasted into chats far more often than it is read at full size.
 pub(crate) const CARD_STYLE: &str = r#"<style>
-.rc{--rc-edge:#334c73;margin:var(--s5) 0;padding:clamp(1rem,3.4vw,1.6rem);border:1px solid var(--rc-edge);border-radius:var(--r-lg);background:linear-gradient(168deg,#0a1120,#05080f 62%);box-shadow:0 26px 60px -34px #000,inset 0 1px 0 rgba(255,255,255,.035)}
-.rc-good{--rc-edge:rgba(79,220,160,.5)}.rc-bad{--rc-edge:rgba(255,123,134,.5)}.rc-warn{--rc-edge:rgba(245,200,92,.45)}
+/* THE NIGHT PALETTE — the brand's, and the same one `/descent/play` was redressed in, so the
+   share link looks like the room the player just left. Colour means exactly three things:
+   BRASS is light (the torch, a relic you can see or are carrying, the floor you ended on),
+   VIOLET is proof (custody a proved exit settled, a replay that verified), RUST is peril. */
+.rc{--rc-ground:#0b0a10;--rc-panel:#131118;--rc-deep:#07060b;--rc-stone:#191621;
+--rc-ink:#dcd8e4;--rc-soft:#a49fb4;--rc-faint:#6d6880;--rc-ghost:#463f57;
+--rc-line:#272233;--rc-line-soft:#1c1826;--rc-line-lit:#3a3247;
+--rc-torch:#d8b47e;--rc-torch-hot:#f0c98d;--rc-torch-deep:#b08d57;
+--rc-proof:#a89fd8;--rc-proof-lit:#cfc8f0;--rc-peril:#c96a5e;--rc-peril-lit:#e59289;
+--rc-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+--rc-edge:var(--rc-line-lit);
+margin:var(--s5) 0;padding:clamp(1rem,3.4vw,1.6rem);border:1px solid var(--rc-edge);border-radius:14px;
+background:linear-gradient(168deg,var(--rc-panel),var(--rc-ground) 62%);color:var(--rc-ink);
+box-shadow:0 26px 60px -34px #000,inset 0 1px 0 rgba(255,255,255,.03)}
+.rc-good{--rc-edge:rgba(168,159,216,.5)}.rc-bad{--rc-edge:rgba(201,106,94,.5)}.rc-warn{--rc-edge:rgba(216,180,126,.42)}
 .rc-head{margin:0 0 1rem}
-.rc-eyebrow{margin:0 0 .5rem;font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.15em;text-transform:uppercase;color:var(--fg-3)}
-.rc-stamp{margin:0;font-size:clamp(1.9rem,7.4vw,3.1rem);line-height:.98;font-weight:800;letter-spacing:-.03em;color:var(--good);text-shadow:0 0 34px rgba(79,220,160,.34)}
-.rc-bad .rc-stamp{color:var(--bad);text-shadow:0 0 34px rgba(255,123,134,.32)}
-.rc-warn .rc-stamp{color:var(--warn);text-shadow:0 0 30px rgba(245,200,92,.26)}
-.rc-who{margin:.3rem 0 0;font-family:var(--mono);font-size:var(--t-sm);color:var(--fg-2);overflow-wrap:anywhere}
-.rc-deck{margin:.7rem 0 0;font-size:var(--t-lead);line-height:1.5;color:var(--fg);max-width:52ch}
+.rc-eyebrow{margin:0 0 .5rem;font-family:var(--rc-mono);font-size:.6875rem;letter-spacing:.15em;text-transform:uppercase;color:var(--rc-faint)}
+/* The stamp is the one thing that must survive a thumbnail, so it is set display-large. */
+.rc-stamp{margin:0;font-size:clamp(1.9rem,7.4vw,3.1rem);line-height:.98;font-weight:800;letter-spacing:-.03em;color:var(--rc-proof-lit);text-shadow:0 0 34px rgba(168,159,216,.45)}
+.rc-bad .rc-stamp{color:var(--rc-peril-lit);text-shadow:0 0 34px rgba(201,106,94,.42)}
+.rc-warn .rc-stamp{color:var(--rc-torch);text-shadow:0 0 30px rgba(216,180,126,.35)}
+.rc-who{margin:.3rem 0 0;font-family:var(--rc-mono);font-size:.8125rem;color:var(--rc-soft);overflow-wrap:anywhere}
+.rc-deck{margin:.7rem 0 0;font-size:1.0625rem;line-height:1.5;color:var(--rc-ink);max-width:52ch}
 .rc-body{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:clamp(.9rem,3vw,1.6rem);align-items:start}
 /* THE SHAFT — a relic keeps its COLUMN, so the eye follows it down the card. */
-.rc-map{display:grid;gap:.2rem;padding:.5rem;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:#03060d}
-.rc-cell{display:grid;place-items:center;aspect-ratio:1/1;min-width:0;border:1px solid transparent;border-radius:3px;background:rgba(255,255,255,.022);color:#5c6478;font-family:var(--mono);font-size:clamp(.7rem,2.1vw,1.05rem);font-weight:700;line-height:1}
-.rc-cell.tag-muted{color:#39415a}
-.rc-cell.tag-accent{color:#eaf3ff;background:rgba(92,201,255,.14);border-color:rgba(92,201,255,.44)}
-.rc-cell.tag-good{color:var(--good)}.rc-cell.tag-warn{color:var(--warn)}.rc-cell.tag-bad{color:var(--bad)}
-.rc-cell.unreached{opacity:.42}
-.rc-cell.here{box-shadow:0 0 0 1px rgba(92,201,255,.34)}
-/* BANKED — solid, filled, finished. It is theirs and it looks it. */
-.rc-cell.banked{color:#02251a;background:linear-gradient(180deg,#63e9b1,#2fb87e);border-color:#7cf0c0;box-shadow:0 0 16px -5px rgba(79,220,160,.95)}
-/* LOST — struck through in red. The pack row of a run whose light died. */
-.rc-cell.lost{color:#ffb3b9;border-color:rgba(255,123,134,.5);background:linear-gradient(135deg,transparent 43%,rgba(255,123,134,.72) 43%,rgba(255,123,134,.72) 57%,transparent 57%),rgba(255,123,134,.09)}
-/* AT RISK — carried by a run that has not ended. Outlined, not filled: not theirs yet. */
-.rc-cell.at-risk{color:var(--warn);border-color:rgba(245,200,92,.55);border-style:dashed;background:rgba(245,200,92,.07)}
+.rc-map{display:grid;gap:.2rem;padding:.5rem;border:1px solid var(--rc-line-soft);border-radius:8px;background:var(--rc-deep)}
+.rc-cell{display:grid;place-items:center;aspect-ratio:1/1;min-width:0;border:1px solid transparent;border-radius:2px;background:rgba(255,255,255,.014);color:var(--rc-ghost);font-family:var(--rc-mono);font-size:clamp(.7rem,2.1vw,1.05rem);font-weight:700;line-height:1}
+.rc-cell.tag-void{color:#2f2a3b}
+.rc-cell.tag-mark{color:var(--rc-faint)}
+.rc-cell.tag-dim{color:#413b4f}
+.rc-cell.tag-open{color:#5d7566}
+.rc-cell.tag-shut{color:var(--rc-peril);background:rgba(201,106,94,.08);border-color:rgba(201,106,94,.22)}
+.rc-cell.tag-guard{color:var(--rc-peril-lit);background:rgba(201,106,94,.1);border-color:rgba(201,106,94,.3)}
+.rc-cell.tag-fallen{color:#4b4457}
+.rc-cell.tag-relic{color:var(--rc-torch);text-shadow:0 0 10px rgba(216,180,126,.45)}
+.rc-cell.tag-crown{color:#fff4dd;background:rgba(240,201,141,.16);border-color:rgba(240,201,141,.42);text-shadow:0 0 14px rgba(240,201,141,.7)}
+.rc-cell.tag-vault{color:var(--rc-proof-lit);text-shadow:0 0 12px rgba(168,159,216,.55)}
+/* The card's ONE tag the live board has no equivalent for: a relic the run can no longer act on
+   at all. The live board never needs it — while you are playing, nothing is finally lost. */
+.rc-cell.tag-peril{color:var(--rc-peril-lit)}
+/* The floor the run ended on — the torch, burned down to where it stopped. */
+.rc-cell.tag-you{color:#100c07;background:linear-gradient(180deg,var(--rc-torch-hot),var(--rc-torch-deep));border-color:var(--rc-torch-hot);box-shadow:0 0 16px -4px rgba(240,201,141,.85)}
+/* A floor the run never stood on: out of the torch's reach. */
+.rc-cell.unreached{opacity:.4}
+/* BANKED — solid violet. Proof, settled, finished; it is theirs and it looks it. */
+.rc-cell.banked{color:#141024;background:linear-gradient(180deg,var(--rc-proof-lit),var(--rc-proof));border-color:var(--rc-proof-lit);text-shadow:none;box-shadow:0 0 16px -5px rgba(168,159,216,.95)}
+/* AT RISK — brass, outlined and DASHED. Torchlit but not yet proof: carried, not banked. */
+.rc-cell.at-risk{color:var(--rc-torch-hot);border-color:rgba(216,180,126,.6);border-style:dashed;background:rgba(216,180,126,.07)}
+/* LOST — struck through in rust. The pack row of a run whose light died. */
+.rc-cell.lost{color:var(--rc-peril-lit);border-color:rgba(201,106,94,.55);background:linear-gradient(135deg,transparent 43%,rgba(201,106,94,.8) 43%,rgba(201,106,94,.8) 57%,transparent 57%),rgba(201,106,94,.1)}
 .rc-stats{margin:0;display:grid;gap:.75rem;align-content:start}
-.rc-stat dt{font-family:var(--mono);font-size:var(--t-micro);letter-spacing:.13em;text-transform:uppercase;color:var(--fg-3)}
-.rc-stat dd{margin:.3rem 0 0;display:flex;align-items:baseline;gap:.5rem;font-family:var(--mono)}
-.rc-stat dd b{font-size:1.35rem;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
-.rc-of{color:var(--fg-3);font-size:var(--t-sm)}
-.rc-bar{flex:1 1 auto;min-width:2.5rem;height:.5rem;border-radius:999px;background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);overflow:hidden}
-.rc-bar i{display:block;height:100%;background:linear-gradient(90deg,#2fb87e,#63e9b1)}
-.rc-bar.low i{background:linear-gradient(90deg,#8c3b36,#ff7b86)}
-.rc-loss,.rc-risk{margin:1rem 0 0;padding:.75rem .9rem;border-left:3px solid var(--bad);border-radius:0 var(--r-sm) var(--r-sm) 0;background:rgba(255,123,134,.08);color:#ffd6d9;line-height:1.55}
-.rc-risk{border-left-color:var(--warn);background:rgba(245,200,92,.07);color:#f6e3b6}
-.rc-loss strong{color:#fff}.rc-risk strong{color:#fff}
-.rc-spoils{margin:.7rem 0 0;color:var(--fg-2);line-height:1.55}
-.rc-spoils strong{color:var(--good)}
-.rc-left{margin:.7rem 0 0;color:var(--fg-3);line-height:1.55;font-size:var(--t-sm)}
-.rc-left strong{color:var(--fg-2)}
-.rc-legend{margin:.9rem 0 0;font-family:var(--mono);font-size:var(--t-micro);line-height:1.75;color:var(--fg-3);overflow-wrap:anywhere}
+.rc-stat dt{font-family:var(--rc-mono);font-size:.6875rem;letter-spacing:.13em;text-transform:uppercase;color:var(--rc-faint)}
+.rc-stat dd{margin:.3rem 0 0;display:flex;align-items:baseline;gap:.5rem;font-family:var(--rc-mono)}
+.rc-stat dd b{font-size:1.35rem;font-weight:800;color:var(--rc-ink);font-variant-numeric:tabular-nums}
+.rc-of{color:var(--rc-faint);font-size:.8125rem}
+.rc-bar{flex:1 1 auto;min-width:2.5rem;height:.5rem;border-radius:999px;background:var(--rc-stone);box-shadow:inset 0 0 0 1px var(--rc-line);overflow:hidden}
+/* The light bar is the TORCH: brass, and it burns down. The haul bar is PROOF: violet. */
+.rc-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--rc-torch-deep),var(--rc-torch-hot))}
+.rc-bar.proof i{background:linear-gradient(90deg,var(--rc-proof),var(--rc-proof-lit))}
+.rc-bar.low i{background:linear-gradient(90deg,#8c3b36,var(--rc-peril-lit))}
+.rc-loss,.rc-risk{margin:1rem 0 0;padding:.75rem .9rem;border-left:3px solid var(--rc-peril);border-radius:0 8px 8px 0;background:rgba(201,106,94,.09);color:#f3d3cf;line-height:1.55}
+.rc-risk{border-left-color:var(--rc-torch);background:rgba(216,180,126,.07);color:#eddcc0}
+.rc-loss strong,.rc-risk strong{color:#fff}
+.rc-spoils{margin:.7rem 0 0;color:var(--rc-soft);line-height:1.55}
+.rc-spoils strong{color:var(--rc-proof-lit)}
+.rc-left{margin:.7rem 0 0;color:var(--rc-faint);line-height:1.55;font-size:.8125rem}
+.rc-left strong{color:var(--rc-soft)}
+.rc-legend{margin:.9rem 0 0;font-family:var(--rc-mono);font-size:.6875rem;line-height:1.75;color:var(--rc-faint);overflow-wrap:anywhere}
 .rc-text{margin:var(--s4) 0 0}
-.rc-text summary{cursor:pointer;font-size:var(--t-sm);color:var(--fg-2);padding:.4rem 0}
-.rc-text pre{margin:.5rem 0 0;padding:.85rem;overflow-x:auto;border:1px solid var(--line-soft);border-radius:var(--r-sm);background:#03060d;color:var(--fg-2);font-family:var(--mono);font-size:var(--t-micro);line-height:1.5}
+.rc-text summary{cursor:pointer;font-size:.8125rem;color:var(--rc-soft);padding:.4rem 0}
+.rc-text pre{margin:.5rem 0 0;padding:.85rem;overflow-x:auto;border:1px solid var(--rc-line-soft);border-radius:8px;background:var(--rc-deep);color:var(--rc-soft);font-family:var(--rc-mono);font-size:.6875rem;line-height:1.5}
 @media(max-width:640px){.rc-body{grid-template-columns:1fr}.rc-map{max-width:100%}.rc-stat dd b{font-size:1.15rem}}
 </style>"#;
 
@@ -879,6 +961,7 @@ mod tests {
             sim(3, LIGHT_BREATH, 2, 0, [1, 1, 0], [4, 8, 8, 8, 1, 1, 8, 3]),
             world(),
             false,
+            3,
         )
     }
 
@@ -886,9 +969,13 @@ mod tests {
     /// pack (crown included) into the vault.
     fn crowned() -> RunStory {
         RunStory::new(
-            sim(4, 22, 2, 1, [1, 1, 1], [9, 9, 9, 9, 1, 1, 9, 3]),
+            // A settled run ends at the SURFACE — `flee` refuses from below — so the final depth
+            // is 0 and the deepest floor (4) rides alongside it. This fixture is the shape the
+            // `ascend` rules actually produce.
+            sim(0, 26 - 2, 0, 1, [1, 1, 1], [9, 9, 9, 9, 1, 1, 9, 3]),
             world(),
             true,
+            4,
         )
     }
 
@@ -920,7 +1007,7 @@ mod tests {
         let died_html = died.html("web:alice", "d1-off", "aabbccdd");
         let out_html = out.html("web:alice", "d1-off", "aabbccdd");
         assert!(
-            died_html.contains("rc-cell tag-bad lost"),
+            died_html.contains("rc-cell tag-peril lost"),
             "the lost relics are struck through: {died_html}"
         );
         assert!(
@@ -928,7 +1015,7 @@ mod tests {
             "a dead run has no banked cell: {died_html}"
         );
         assert!(
-            out_html.contains("rc-cell tag-good banked"),
+            out_html.contains("rc-cell tag-vault banked"),
             "the banked relics are filled solid: {out_html}"
         );
         assert!(
@@ -1016,6 +1103,7 @@ mod tests {
             sim(1, 2, 0, 0, [0, 0, 0], [4, 1, 2, 3, 1, 1, 2, 3]),
             world(),
             false,
+            1,
         );
         assert_eq!(story.ending(), Ending::Delving);
         assert!(
@@ -1039,6 +1127,7 @@ mod tests {
             sim(3, 18, 2, 0, [1, 1, 0], [4, 8, 8, 8, 1, 1, 8, 3]),
             world(),
             false,
+            3,
         );
         assert_eq!(walked_away.ending(), Ending::Delving);
         assert_eq!(walked_away.in_pack(), vec![1, 2, 3, 6]);
@@ -1048,7 +1137,7 @@ mod tests {
         );
         let html = walked_away.html("web:alice", "d1-off", "aabbccdd");
         assert!(
-            html.contains("rc-cell tag-warn at-risk"),
+            html.contains("rc-cell tag-relic at-risk"),
             "the carried relics are outlined, not filled: {html}"
         );
         assert!(
@@ -1056,7 +1145,7 @@ mod tests {
             "the risk is said in words: {html}"
         );
         assert!(
-            !html.contains("rc-cell tag-good banked"),
+            !html.contains("rc-cell tag-vault banked"),
             "an unfinished run has banked nothing: {html}"
         );
     }
@@ -1099,6 +1188,7 @@ mod tests {
             sim(2, LIGHT_BREATH, 1, 0, [1, 0, 0], [4, 8, 2, 3, 1, 1, 2, 3]),
             world(),
             false,
+            2,
         );
         assert_eq!(burnt.light_left(), 0);
         assert_eq!(burnt.light_spent(), LIGHT_BREATH);
@@ -1106,6 +1196,7 @@ mod tests {
             sim(1, 1, 0, 0, [0, 0, 0], [4, 1, 2, 3, 1, 1, 2, 3]),
             world(),
             false,
+            1,
         );
         assert_eq!(fresh.light_left() + fresh.light_spent(), LIGHT_BREATH);
     }
@@ -1116,7 +1207,7 @@ mod tests {
     #[test]
     fn the_guardian_column_reads_the_days_drawn_vitality() {
         let state = sim(3, 20, 2, 0, [1, 1, 0], [4, 8, 8, 3, 1, 1, 2, 3]);
-        let canon = RunStory::new(state.clone(), world(), false);
+        let canon = RunStory::new(state.clone(), world(), false, 3);
         let tough = RunStory::new(
             state,
             DayWorld {
@@ -1124,6 +1215,7 @@ mod tests {
                 ghp: [0, 1, 1, 3, 2],
             },
             false,
+            3,
         );
         let guardian = |story: &RunStory| story.board()[2 * MAP_COLS + 2].glyph.clone();
         assert_eq!(
@@ -1152,20 +1244,20 @@ mod tests {
             "\n",
             " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
             " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
-            " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 — the run ended here\n",
+            " >  /  x  ·  ·  ·  ·  ·  ·  ·  *    floor 3 — deepest reached, and where it stopped\n",
             " 4  #  G  C  ·  ·  ·  ·  ·  ·  ·    floor 4 — never reached\n",
             " @  ·  ·  ·  k  k  k  ·  ·  *  ·    LOST — the light died with 4 relics still on them\n",
             " $  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    banked — nothing; no proved exit was ever made\n",
             "\n",
-            "light  ░░░░░░░░░░░░  0 left of 26 (26 spent)\n",
+            "light  ░░░░░░░░░░░░  0 left of 30 (30 spent)\n",
             "depth  3 of 4\n",
             "\n",
             "left in the dark: the Crown of the Deep, treasure 1, treasure 2 and treasure 4\n",
             "\n",
             "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
             "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
-            "> where the run ended · / open way · # shut way · G guardian · x slain · C crown · ",
-            "k way-key · * treasure\n",
+            "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
+            "C crown · k way-key · * treasure\n",
         );
         assert_eq!(
             rendered, expected,
@@ -1181,25 +1273,25 @@ mod tests {
         let rendered = crowned().text_card("web:alice", "d20260-off");
         let expected = concat!(
             "CROWNED — web:alice · d20260-off\n",
-            "The Crown of the Deep came out of floor 4 — 5 relics banked, 4 light left of 26. ",
+            "Carried the Crown of the Deep up from floor 4 — 5 relics banked, 6 light left of 30. ",
             "3 relics left in the dark.\n",
             "\n",
             " 1  /  G  ·  ·  ·  ·  *  *  ·  ·    floor 1\n",
             " 2  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 2\n",
             " 3  /  G  ·  ·  ·  ·  ·  ·  ·  *    floor 3\n",
-            " >  /  x  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 — the run ended here\n",
+            " >  /  G  ·  ·  ·  ·  ·  ·  ·  ·    floor 4 — deepest reached\n",
             " @  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·    pack — emptied into the vault by the exit\n",
             " $  ·  ·  C  k  k  k  ·  ·  *  ·    banked — 5 relics came out\n",
             "\n",
-            "light  ██░░░░░░░░░░  4 left of 26 (22 spent)\n",
+            "light  ██░░░░░░░░░░  6 left of 30 (24 spent)\n",
             "depth  4 of 4\n",
             "\n",
             "left in the dark: treasure 1, treasure 2 and treasure 4\n",
             "\n",
             "rows: floors 1–4 · @ the pack (never banked) · $ the vault (theirs). columns: floor · ",
             "way · guardian · then one per relic (1 crown, 2–4 way-keys, 5–8 treasures). ",
-            "> where the run ended · / open way · # shut way · G guardian · x slain · C crown · ",
-            "k way-key · * treasure\n",
+            "> the deepest floor reached · / open way · # shut way · G guardian · x slain · ",
+            "C crown · k way-key · * treasure\n",
         );
         assert_eq!(
             rendered, expected,
@@ -1213,7 +1305,7 @@ mod tests {
     fn a_truncated_custody_vector_renders_instead_of_panicking() {
         let mut state = sim(2, 8, 1, 0, [1, 0, 0], [4, 8, 2, 3, 1, 1, 2, 3]);
         state.custody.truncate(3);
-        let story = RunStory::new(state, world(), false);
+        let story = RunStory::new(state, world(), false, 2);
         assert_eq!(
             story.board().len(),
             MAP_COLS * (DUNGEON_FLOORS as usize + 2)

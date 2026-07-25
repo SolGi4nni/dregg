@@ -231,6 +231,10 @@ struct VerifiedNativeRun {
     /// committed day-seed. Carried because the run-card's guardian column would otherwise read
     /// day 0's shipped vitalities on every beacon day.
     world: DayWorld,
+    /// **The deepest floor the replayed tape ever stood on.** Since `ascend` landed and `flee`
+    /// began demanding the surface, the final state's `depth` is `0` on every settled run — so the
+    /// one number a player is proud of has to be taken over the WHOLE tape, not off its end.
+    deepest_depth: u64,
 }
 
 impl VerifiedNativeRun {
@@ -248,7 +252,7 @@ impl VerifiedNativeRun {
     fn story(&self) -> Option<RunStory> {
         self.final_state
             .clone()
-            .map(|state| RunStory::new(state, self.world, self.crowned()))
+            .map(|state| RunStory::new(state, self.world, self.crowned(), self.deepest_depth))
     }
 }
 
@@ -849,6 +853,14 @@ fn verify_native_record(
     let actual = PortableRecord::from_record(&session.export_record());
     // The REPLAYED final state (the last landed event's post-state), never the submitted one.
     let final_state = actual.events.last().map(|event| event.post.clone());
+    // ...and the deepest floor the tape ever reached. A settled run ends at the surface (`flee`
+    // refuses from below), so this is the only place "how deep did they get" survives.
+    let deepest_depth = actual
+        .events
+        .iter()
+        .map(|event| event.post.depth)
+        .max()
+        .unwrap_or(0);
     Ok(VerifiedNativeRun {
         actor: actual
             .actor
@@ -859,6 +871,7 @@ fn verify_native_record(
         completion: actual.completion,
         final_state,
         world,
+        deepest_depth,
     })
 }
 
