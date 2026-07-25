@@ -135,3 +135,53 @@ The FriLedger cascade is fixed. The suite still does not run:
 
 Within the armed set, by contrast, **nothing is dark**: all 24 binaries execute, **191/191 tests pass**,
 law-1 ratchet included.
+
+---
+
+# Handoff: deleting `param-compose`'s Rust AIR (1028 lines)
+
+**Everything proof-side is done.** The production path is off the Rust AIR and type-verified; all 16
+shapes the test corpus builds are byte-pinned in Lean. What remains is a corpus migration plus a build
+the box could not schedule (load 400+, shared cargo lock saturated for the whole session).
+
+## Three traps that will bite whoever finishes it
+
+1. **⚑ Pinning a shape BREAKS the test that used its unpinnedness as a witness.**
+   `entity-compose/tests/end_to_end.rs::an_unpinned_shape_is_refused_rather_than_faked` used
+   `n3 p4 l3 k2` to prove the resolver refuses unpinned shapes. **That shape is now pinned**, so the
+   test goes red the moment the resolver lands. Already moved to `i27` (same bounds, still sound, so it
+   exercises the real no-pin path). ⇒ `param-compose/src/lean_descriptor.rs`,
+   `param-compose/tests/lean_witness.rs` and `entity-compose/tests/end_to_end.rs` **must land in ONE
+   commit**. The Lean half is already at HEAD.
+2. **`braid-hook/tests/weld_canary.rs`** (an `#[ignore]`d real-fold canary) runs at `n3 p4 l3 k2` and
+   previously hit `NoLeanDescriptor`. Pinning `pcLeaf` **unblocks** it — expect it to start doing work.
+3. **`size.rs`'s `lane == 0` assertion has no Lean-route counterpart** — it measures the
+   `CellProgram`→IR2 custom-leaf lowering, which the Lean object *bypasses* (it is already IR-v2). Its
+   content (every lookup is a wide 25-tuple `node8`) is already a Lean `#guard`. **Route it there; do
+   not fabricate a Rust stand-in.**
+
+## Two shapes deliberately NOT pinned — and must stay unpinned
+
+`n1 p4 l3 k2` (over-shape composition) and `n4 p8 l8 k6 i31` (`identityBitsSound` false) are built only
+to be **refused**. *Pinning them would pin an object that must not exist.* Both refusal paths already
+exist in `witness.rs`.
+
+## The +33 column invariant — at what resolution
+
+`air.rs` allocates one `zero` column plus 8 IV columns per chain × 4 chains = **33**, and **no shape
+field appears in either term**, so the delta is shape-invariant *by construction*. **Measured** at the 3
+rows `lib.rs` publishes (219 / 379 / 803); **derived** at the other 13. The Lean headers say
+measured-vs-derived rather than claiming measurement everywhere. When the lock clears, `size.rs` prints
+the Rust program at 9 of 16 — the numbers that must appear are 219/379/803, 691/719/747/775, 1310, 2495.
+
+## The deletion commit itself
+
+Delete `param-compose/src/air.rs` (659) and `builder.rs` (369) **together with** the two law-1 BASELINE
+rows (`"param-compose/src/air.rs", 19` and `"builder.rs", 9`), or the ratchet's stale-entry check fires.
+Run `cargo test -p dregg-param-compose -p dregg-entity-compose` first.
+
+**Ledger line that belongs IN that commit, not in a retrospective:** four things lose their only checker
+— the digest chains' root-is-the-fold induction, the ordering tooth's integer-level non-vacuity, the
+activity-prefix corollaries, and an assembled `Satisfied2` witness — plus multi-shape VK distinctness and
+the cross-shape hash-site census. The emitted descriptor *carries* those gates; the Lean refinement has
+not *proven* them.
