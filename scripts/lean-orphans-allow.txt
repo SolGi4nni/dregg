@@ -37,7 +37,6 @@ Dregg2.Circuit.Emit.CommittedThresholdRefine  # GREEN self-checked (#assert clea
 Dregg2.Circuit.Emit.DerivationEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.DerivationRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.DerivationRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.DfaRoutingEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.DfaRoutingGeneralEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.DfaRoutingRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.DfaRoutingRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -61,7 +60,6 @@ Dregg2.Circuit.Emit.MultiStepChainRefine  # GREEN self-checked (#assert clean), 
 Dregg2.Circuit.Emit.NoteSpendingLeafEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.NoteSpendingLeafRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
-Dregg2.Circuit.Emit.PredicatesNeqEmit  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesNeqRefine  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
 Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2Full  # GREEN self-checked (#assert clean), REGISTERABLE — Circuit.Emit refine/rung cluster
@@ -105,7 +103,6 @@ Dregg2.Crypto.EncapsCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE
 Dregg2.Crypto.KemSoundnessQuant  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.MlDsaHintCodec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.MlDsaSigCodecClosed  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
-Dregg2.Crypto.MlDsaSignReal  # GREEN, #guard-only (no axiom self-check) — PQ-crypto spec cluster
 Dregg2.Crypto.NttFaithful  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.SignCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
 Dregg2.Crypto.VerifyCoreEqSpec  # GREEN self-checked (#assert clean), REGISTERABLE — PQ-crypto spec cluster
@@ -114,10 +111,6 @@ Dregg2.Crypto.VerifyCoreSpec  # GREEN self-checked (#assert clean), REGISTERABLE
 
 # --- light-client / proof-of-holdings bridge WIP (Eth/Tendermint/MPT clients, holding-fold tally) ---
 Dregg2.Bridge.HoldingWeightedTally  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.LightClientEth  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.LightClientMpt  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.LightClientTendermint  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
-Dregg2.Bridge.VerifiedLightClient  # GREEN self-checked (#assert clean), REGISTERABLE — light-client / proof-of-holdings cluster
 
 # --- game AIRs authored in Lean, actively churning (Dungeon/MultiwayTug/Automatafl); carry sorry — not for the metatheory-no-sorry build ---
 Dregg2.Games.AutomataflAir  # GREEN self-checked (#assert clean), REGISTERABLE — game-AIR cluster
@@ -134,7 +127,6 @@ Dregg2.Verify.LoadBearingLint  # GREEN, NO self-check — asserts nothing on its
 Dregg2.Apps.ColonistJob  # GREEN self-checked (#assert clean), REGISTERABLE — app-demo cluster
 
 # --- direct-FFI variant (FFIDirect) outside the export closure ---
-Dregg2.Exec.FFIDirect  # GREEN, #guard-only (no axiom self-check) — FFI-direct variant
 
 # --- the Claims axiom-net — KNOWN 'ran nowhere' (see MEMORY: CI-meaningfulness audit); being wired on its own track ---
 Dregg2.Claims  # GREEN self-checked (#assert clean), REGISTERABLE — Claims axiom-net

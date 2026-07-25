@@ -56,6 +56,13 @@
 #   * metatheory/Dregg2.lean missing              -> FAIL (the lib root is the anchor)
 #   A gate that scans an empty set is the exact disease it exists to treat.
 #
+# ROOT TRUNCATION (this gate DETECTS it; it cannot PREVENT it)
+#   A truncated metatheory/Dregg2.lean moves this gate from 133 orphans to 1199 (measured), so it
+#   goes hard red — but only AFTER the bad commit is history. On a mass orphaning the gate now says
+#   "SUSPECT ROOT TRUNCATION" and points at the root instead of printing a thousand ORPHAN lines.
+#   The PREVENTION is scripts/git-hooks/pre-commit's curated-list shrink guard, which refuses to let
+#   metatheory/Dregg2.lean (and Market/Bfv/EmitByName) lose an entry without declared intent.
+#
 # ALLOWLIST STALENESS (the list cannot outlive the exclusion it records)
 #   * a listed module that IS now reachable        -> FAIL (registered but not de-listed)
 #   * a listed module whose file does not exist     -> FAIL (deleted/renamed; drop the entry)
@@ -230,8 +237,32 @@ if unlisted:
         "\ncheck-lean-orphans: FAIL — %d Dregg2 module(s) are reachable from NOTHING and are\n"
         "  not in the allowlist (they build under `lake env lean` but run in NO CI target):\n"
         % len(unlisted))
-    for m in unlisted:
+    for m in unlisted[:40]:
         sys.stderr.write("    ORPHAN  %s\n" % m)
+    if len(unlisted) > 40:
+        sys.stderr.write("    … and %d more (listing capped)\n" % (len(unlisted) - 40))
+
+    # ROOT-TRUNCATION HYPOTHESIS — read this BEFORE registering or allowlisting anything.
+    # A mass orphaning is almost never "many new unregistered modules"; it is ONE truncated root.
+    # Twice on 2026-07-25 a window-edit cut metatheory/Dregg2.lean down to a ~240-line prefix
+    # (6b1e156bdf: 1290 → 231 imports; 8a28420ec9: 1301 → 217), and this gate's own numbers move
+    # 133 orphans → 1199 under that cut (measured). Steady state is ~130 TOTAL orphans, so a few
+    # hundred UNLISTED means the ROOT lost imports, not that the corpus grew.
+    # This is a HINT: it can neither pass nor fail the gate, so the threshold cannot rot into a
+    # wrong verdict. PREVENTION lives in scripts/git-hooks/pre-commit (curated-list shrink guard),
+    # which refuses the commit that does this in the first place.
+    if len(unlisted) > 200:
+        root_imports = len(imports_of(os.path.join(mt_dir, "Dregg2.lean")))
+        sys.stderr.write(
+            "\n  ⚑ SUSPECT ROOT TRUNCATION rather than %d genuinely new orphans.\n"
+            "    metatheory/Dregg2.lean currently lists %d imports. Check the ROOT first:\n"
+            "      git diff HEAD -- metatheory/Dregg2.lean | head -40\n"
+            "      git log --stat -3 -- metatheory/Dregg2.lean     # look for `1 insertion, NNNN deletions`\n"
+            "    A CLEAN POSITIONAL SUFFIX CUT — lines 1..N byte-identical, everything past N gone,\n"
+            "    one import appended — is a read-window/append/write-back edit, not a real change.\n"
+            "    RESTORE the root; do NOT allowlist the fallout.\n"
+            % (len(unlisted), root_imports))
+
     sys.stderr.write(
         "\n  FIX one of:\n"
         "    (a) register it — add `import %s` to metatheory/Dregg2.lean (or an aggregator\n"

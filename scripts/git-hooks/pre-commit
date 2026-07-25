@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Pre-commit: rustfmt every STAGED .rs file on its way into the commit, so format-drift never lands
-# (keeps CI's Format job green without anyone having to remember `cargo fmt`).
+# Pre-commit, in order: (1) secret scan, (2) CURATED-LIST SHRINK GUARD — a staged edit must never
+# silently DROP entries from metatheory/Dregg2.lean & friends (see the block below; this is the
+# structural fix for the two root truncations of 2026-07-25), (3) rustfmt every STAGED .rs file on
+# its way into the commit, so format-drift never lands (keeps CI's Format job green without anyone
+# having to remember `cargo fmt`).
+#
+# (1) and (2) BLOCK the commit. (3) never does.
 #
 # - Touches ONLY staged files (not the tree), so it's safe alongside concurrent edits / parallel agents.
 # - Re-stages each formatted file so the commit contains the formatted version.
@@ -21,6 +26,186 @@ repo_root="$(git rev-parse --show-toplevel)"
 # --- secret-scan backstop: BLOCK the commit if a real secret is staged (see docs/PUBLISHING-SAFETY.md) ---
 if [ -x "$repo_root/scripts/git-hooks/secret-scan.sh" ]; then
   "$repo_root/scripts/git-hooks/secret-scan.sh" staged || exit 1
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# CURATED-LIST SHRINK GUARD — a staged edit may ADD entries freely, but must never REMOVE one
+# without declaring the intent.
+#
+# THE INVARIANT is a SET DIFFERENCE against HEAD's blob, deliberately NOT a pinned count: these
+# lists grow several times per hour, and a hand-pinned number is the decay class this repo spent
+# 2026-07-24 repairing. Additions are free; removals must be declared.
+#
+# WHY IT EXISTS — twice in under three hours, 2026-07-25, same signature:
+#   6b1e156bdf (00:19)  metatheory/Dregg2.lean cut at line 254: 1290 → 231 imports
+#   8a28420ec9 (02:52)  same file cut at line 240: 1301 → 217 imports (stat: 1 insertion, 1157 deletions)
+#   Both were CLEAN POSITIONAL SUFFIX CUTS: lines 1..N byte-identical to the parent, everything
+#   past N gone, exactly ONE import appended, and a commit message about genuine work that never
+#   mentioned removing anything. That is what a read-a-window / append / write-back edit does to a
+#   1400-line file — whatever appended the import never read the whole file first.
+#   COST, measured: in the dark window `lake build Dregg2` compiled 1052 targets; the restored root
+#   compiles 10225. Every `exit 0` in that window covered ~10% of the build graph, and it hid a real
+#   keystone failure (Argus.Effects.SetField: a type mismatch plus setField_compile_sound depending
+#   on sorryAx).
+#
+# WHY HERE rather than in CI: this hook is the only thing that can PREVENT the commit. CI's
+# scripts/check-lean-orphans.sh does see a truncated root (measured: 133 orphans → 1199, so ~1112
+# UNLISTED and hard red) — but only after the bad commit is already history and the dark window has
+# already opened: 66 min for the first incident, 5 min for the second. Detection after the fact is
+# what we already had, twice.
+#
+# THE DECLARED-INTENT ESCAPE (someone will legitimately delete a module):
+#   DREGG_ALLOW_LIST_SHRINK=1 git commit ...                        # allow every removal
+#   DREGG_ALLOW_LIST_SHRINK=metatheory/Dregg2.lean git commit ...   # allow removals in these paths
+#   (comma- or space-separated). It is never silent: an allowed shrink prints a loud ALLOWED banner
+#   listing exactly what was dropped, so it shows up in the terminal and in the agent transcript.
+#
+# NOT GUARDED, on purpose:
+#   scripts/lean-orphans-allow.txt — removing an entry IS the intended maintenance operation
+#     (de-listing a now-reachable module), so blocking would fire on the correct action. It needs no
+#     guard: check-lean-orphans.sh re-derives the list's completeness from scratch every run, so a
+#     removal that should not have happened turns the module into an UNLISTED ORPHAN and fails there.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+# Escape predicate. $1 = repo-relative path.
+list_shrink_allowed() {
+  local decl="${DREGG_ALLOW_LIST_SHRINK:-}"
+  case "$decl" in
+    '')                 return 1 ;;
+    1|all|ALL|yes|YES)  return 0 ;;
+    *) case " ${decl//,/ } " in *" $1 "*) return 0 ;; esac
+       return 1 ;;
+  esac
+}
+
+# Entry extractors: read blob text on stdin, print the ENTRY SET (sorted, unique).
+# Each must be a plain text scan — no Lean, no jq, no python: a hook runs on every commit.
+list_entries() {
+  case "$1" in
+    lean-import)  sed -n 's/^import[[:space:]]\{1,\}\([A-Za-z0-9_.]\{1,\}\).*/\1/p' ;;
+    emit-byname)  sed -n 's/.*("\([A-Za-z0-9_.-]\{1,\}\.json\)".*/\1/p' ;;
+    json-map-key) sed -n 's/^[[:space:]]*"\([^"]\{1,\}\.json\)"[[:space:]]*:.*/\1/p' ;;
+    *)            cat >/dev/null ;;   # unknown kind → empty set → tripped by the vacuity floor
+  esac | LC_ALL=C sort -u
+}
+
+list_guard_fail=0
+
+# Compare one guarded list's HEAD entry set against what is about to be committed.
+list_guard_one() {
+  local path="$1" kind="$2" mode="$3" label="$4"
+  local tmpd oldsz staged src nold nnew nrem nl_new k
+
+  # Not in HEAD → brand-new file: there is nothing to lose.
+  git cat-file -e "HEAD:$path" 2>/dev/null || return 0
+
+  if git diff --cached --quiet -- "$path" 2>/dev/null; then
+    # index == HEAD for this path. If the WORKTREE also matches, nothing can have been removed —
+    # take the fast path so the common commit (no guarded list touched) costs one `git diff` per
+    # entry instead of two blob reads plus two sorts.
+    git diff --quiet -- "$path" 2>/dev/null && return 0
+    staged=0; src="worktree"    # unstaged: WARN only (this commit is not the one doing damage)
+  else
+    staged=1; src="staged"
+  fi
+
+  tmpd="$(mktemp -d)" || return 0
+  git cat-file blob "HEAD:$path" > "$tmpd/oldtxt" 2>/dev/null
+  if [ "$staged" = 1 ]; then
+    # `:$path` is the INDEX blob = exactly what lands in the commit. Fails (→ empty) when the path
+    # is staged for DELETION, which correctly reads as "every entry removed".
+    git cat-file blob ":$path" > "$tmpd/newtxt" 2>/dev/null || : > "$tmpd/newtxt"
+  else
+    if [ -f "$repo_root/$path" ]; then cp "$repo_root/$path" "$tmpd/newtxt"; else : > "$tmpd/newtxt"; fi
+  fi
+  list_entries "$kind" < "$tmpd/oldtxt" > "$tmpd/old"
+  list_entries "$kind" < "$tmpd/newtxt" > "$tmpd/new"
+
+  nold="$(wc -l < "$tmpd/old" | tr -d ' ')"
+  nnew="$(wc -l < "$tmpd/new" | tr -d ' ')"
+
+  # VACUITY FLOOR: a guarded list whose HEAD copy yields ZERO entries means the extractor rotted
+  # (the file's shape changed under it), and the guard is silently protecting nothing. Fail loud
+  # instead. No pinned count — the only assertion is "non-empty file ⇒ non-empty entry set".
+  oldsz="$(git cat-file -s "HEAD:$path" 2>/dev/null || echo 0)"
+  if [ "$nold" -eq 0 ] && [ "${oldsz:-0}" -gt 0 ]; then
+    printf '\npre-commit: FAIL — curated-list guard EXTRACTOR ROT on %s\n' "$path" >&2
+    printf '  HEAD'"'"'s copy is %s bytes but the `%s` extractor found ZERO %s. The file'"'"'s shape\n' "$oldsz" "$kind" "$label" >&2
+    printf '  changed under the guard, so it has been protecting NOTHING. Fix the extractor in\n' >&2
+    printf '  scripts/git-hooks/pre-commit (list_entries) — do not silence this.\n' >&2
+    list_guard_fail=1
+    rm -rf "$tmpd"; return 0
+  fi
+
+  LC_ALL=C comm -23 "$tmpd/old" "$tmpd/new" > "$tmpd/removed"
+  nrem="$(wc -l < "$tmpd/removed" | tr -d ' ')"
+  if [ "$nrem" -eq 0 ]; then rm -rf "$tmpd"; return 0; fi
+
+  local verdict
+  if [ "$mode" != block ]; then
+    verdict="WARN"
+  elif [ "$staged" = 0 ]; then
+    verdict="WARN"
+  elif list_shrink_allowed "$path"; then
+    verdict="ALLOWED"
+  else
+    verdict="FAIL"; list_guard_fail=1
+  fi
+
+  printf '\npre-commit: %s — %s %s DROPPED from %s (%s copy)\n' \
+    "$verdict" "$nrem" "$label" "$path" "$src" >&2
+  printf '  entry count %s → %s (a removal of %s)\n' "$nold" "$nnew" "$nrem" >&2
+  head -n 12 "$tmpd/removed" | sed 's/^/    REMOVED  /' >&2
+  [ "$nrem" -gt 12 ] && printf '    … and %s more\n' "$((nrem - 12))" >&2
+
+  # Name the mechanism when the diff has the truncation fingerprint: everything up to line k is
+  # byte-identical and the tail is simply gone (with at most one line appended at the cut).
+  nl_new="$(wc -l < "$tmpd/newtxt" | tr -d ' ')"
+  k=$((nl_new - 1))
+  if [ "$nl_new" -lt "$(wc -l < "$tmpd/oldtxt" | tr -d ' ')" ] && [ "$k" -ge 1 ]; then
+    head -n "$k" "$tmpd/oldtxt" > "$tmpd/oldpre"
+    head -n "$k" "$tmpd/newtxt" > "$tmpd/newpre"
+    if cmp -s "$tmpd/oldpre" "$tmpd/newpre"; then
+      printf '  ⚑ SIGNATURE: CLEAN POSITIONAL SUFFIX CUT — lines 1..%s are byte-identical to HEAD and\n' "$k" >&2
+      printf '    everything past line %s is gone. Your edit wrote back a WINDOW, not the file. Re-read\n' "$nl_new" >&2
+      printf '    the whole file and re-apply your addition; do NOT "restore and re-append".\n' >&2
+    fi
+  fi
+
+  case "$verdict" in
+    FAIL) printf '  → To land a DELIBERATE removal, declare it:  DREGG_ALLOW_LIST_SHRINK=%s git commit ...\n' "$path" >&2
+          printf '    (or DREGG_ALLOW_LIST_SHRINK=1 for all). Bypassing with --no-verify leaves no record.\n' >&2 ;;
+    ALLOWED) printf '  → permitted by DREGG_ALLOW_LIST_SHRINK=%s (declared intent, recorded here)\n' "${DREGG_ALLOW_LIST_SHRINK:-}" >&2 ;;
+    WARN) if [ "$staged" = 0 ]; then
+            printf '  → NOT staged, so this commit is not blocked — but your WORKING TREE is dark right now.\n' >&2
+          else
+            printf '  → advisory only for this path (regenerated wholesale, so a drop is informative not wrong).\n' >&2
+          fi ;;
+  esac
+  rm -rf "$tmpd"
+}
+
+# path | extractor kind | block|warn | human label
+#
+# The lean roots are the whole exposure: metatheory/lakefile.toml declares Dregg2, Market and Bfv
+# WITHOUT `globs`, so each lib's build target set IS the transitive closure of its root's imports —
+# cut the root and the build silently shrinks. The globbed libs (Metatheory.+, Polis.+) cannot be
+# darkened this way and are not listed.
+while IFS='|' read -r g_path g_kind g_mode g_label; do
+  case "$g_path" in ''|'#'*) continue ;; esac
+  [ -n "$g_kind" ] || continue
+  list_guard_one "$g_path" "$g_kind" "$g_mode" "$g_label" < /dev/null
+done <<'GUARDED_LISTS'
+metatheory/Dregg2.lean|lean-import|block|imports (Dregg2 lean_lib root — its import closure IS the default build)
+metatheory/Market.lean|lean-import|block|imports (Market lean_lib root — non-globbed, same exposure)
+metatheory/Bfv.lean|lean-import|block|imports (Bfv lean_lib root — non-globbed, same exposure)
+metatheory/EmitByName.lean|emit-byname|block|by-name descriptor routes (byNameDescriptors)
+circuit/descriptors/PROVENANCE.json|json-map-key|warn|descriptor_sha256 entries
+GUARDED_LISTS
+
+if [ "$list_guard_fail" != 0 ]; then
+  printf '\npre-commit: BLOCKED — a curated list would shrink without declared intent. See above.\n' >&2
+  exit 1
 fi
 
 command -v rustfmt >/dev/null 2>&1 || exit 0   # no rustfmt on PATH → don't block the commit
