@@ -43,6 +43,24 @@ authenticated-clearing = ["certified-clearing", "dep:fhegg-fhe"]
 # public Cert-F book: it consumes the no-single-viewer pipeline's independently
 # reconstructed canonical context and fully verified quorum receipt.
 fhegg-settlement = ["dep:fhegg-fhe", "dep:ed25519-dalek"]
+# THE PLAYABLE DARK POOL. Deliberately much lighter than `dark-amm-game`: it
+# consumes only fhegg-fhe's DEFAULT surface (threshold BFV + the wrap-guarded
+# multiply engine + the dark-AMM invariant), never the HidingFri/Tier-1
+# proof tower, so mounting a pool costs a BFV key ceremony and not a prover.
+dark-pool-offering = [
+    "dep:fhegg-fhe",
+    "dep:fhe",
+    "dep:fhe-traits",
+    "dep:rand_09",
+]
+# THE ORACLE PIT — a confidential prediction market whose subject is the daily
+# Descent. Positions ride BFV ciphertexts under an n-of-n collective key
+# (`fhegg-fhe/threshold`), the line is the quadratic cost function's marginal
+# prices opened by full quorum, and settlement is the run record's EXACT
+# re-execution through `dreggnet_offerings::native_descent` (already a
+# non-optional dependency). Opt-in so the ordinary market does not pull the FHE
+# stack merely to list, bid, or settle an auction.
+oracle-pit = ["dep:fhegg-fhe", "dep:fhe", "dep:fhe-traits", "dep:rand_09"]
 # Executable game-facing encrypted-amount constant-product table. Kept
 # independent of `fhegg-settlement`: both use the generic hosted operation seam,
 # while this feature pays only for its own BFV producer/verifier boundary.
@@ -61,6 +79,16 @@ dark-amm-game = [
 name = "dark-amm-tool"
 path = "src/bin/dark-amm-tool.rs"
 required-features = ["dark-amm-game"]
+
+[[test]]
+name = "oracle_pit_descent_market"
+path = "tests/oracle_pit_descent_market.rs"
+required-features = ["oracle-pit"]
+
+[[test]]
+name = "dark_pool_offering"
+path = "tests/dark_pool_offering.rs"
+required-features = ["dark-pool-offering"]
 
 [[test]]
 name = "private_bfv_attested_clearing"

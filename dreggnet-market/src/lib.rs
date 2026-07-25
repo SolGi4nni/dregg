@@ -154,6 +154,24 @@ pub mod dark_amm_collective;
 #[cfg(feature = "dark-amm-game")]
 pub mod dark_amm_collective_worker;
 
+/// THE PLAYABLE DARK POOL — a blind relic vendor a player can actually press a button on.
+/// Reserves live only as BFV ciphertexts under an n-of-n collective key, a swap is admitted
+/// only when one homomorphic constant-product check opens (under a FULL threshold quorum) to
+/// the public invariant, and the relic + `$DREGG` cross through the owner-gated sealed escrow
+/// with a real committed journal turn as the receipt. Distinct from [`dark_amm_game`], which
+/// is upload-only and has no affordances. See [`dark_pool_offering`].
+#[cfg(feature = "dark-pool-offering")]
+pub mod dark_pool_offering;
+
+/// THE ORACLE PIT — a confidential prediction market whose SUBJECT is the daily Descent.
+/// Public odds, private positions: a position rides a BFV ciphertext under an n-of-n collective
+/// key plus a hiding commitment frozen on a real `WriteOnce` board, the published line is the
+/// quadratic cost function's marginal prices opened by a FULL threshold quorum, and the market
+/// settles on the run record's EXACT re-execution through the Lean-emitted dungeon program — not
+/// on any asserted result. See [`oracle_pit`].
+#[cfg(feature = "oracle-pit")]
+pub mod oracle_pit;
+
 use dreggnet_offerings::{
     Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
     BinaryOperationReplayMaterial, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
