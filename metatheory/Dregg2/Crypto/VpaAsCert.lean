@@ -137,12 +137,12 @@ control), but the config it threads carries a STACK whose push/pop is class-driv
 The visibly-pushdown rung is `Hypergraph.Cert R_vpa` + the `stepValid` wrapper. -/
 def R_vpa (a b : VStep State Gamma) : Prop := b.pre = a.post
 
-/-- **`vchained`** — a VPA run's chaining predicate: consecutive steps connect end-to-end. Identical
-structural recursion to `Hypergraph.chain R_vpa` (proved in `vchained_iff_chain`). -/
-def vchained : List (VStep State Gamma) → Prop
-  | [] => True
-  | [_] => True
-  | a :: b :: rest => R_vpa a b ∧ vchained (b :: rest)
+/-- **`vchained`** — a VPA run's chaining predicate: consecutive steps connect end-to-end. DEFINED as
+the generic `Hypergraph.chain` (`Crypto/Chain.lean`) at `R_vpa` — the same delegation `Dfa.chained`
+makes at `fun a b => b.state = a.next`, so the identification with the substrate's chain is `Iff.rfl`
+(`vchained_iff_chain`), not a re-rolled recursion with an induction to bridge it. -/
+def vchained : List (VStep State Gamma) → Prop :=
+  Hypergraph.chain R_vpa
 
 /-- **`VpaAccepts M q₀ accept run`** — the VPA acceptance STATEMENT: a NON-EMPTY, well-chained run that
 starts in `q₀` with EMPTY stack, ends in an `accept` state with EMPTY stack (well-matched), and whose
@@ -162,17 +162,13 @@ def VpaAccepts (M : Vpa State Gamma) (q₀ : State) (accept : State → Prop)
 
 /-! ## The rung — a VPA run IS a `Hypergraph.Cert` over `R_vpa`. -/
 
-/-- **`vchained_iff_chain`** — the DEFINITIONAL heart: `vchained` IS `Hypergraph.chain R_vpa`. Both are
-the same structural recursion on the run (`[]`/`[_]` are `True`; `a :: b :: rest` conjoins the head
-relation `R_vpa a b` with the recursive tail). So a VPA chain and a `Hypergraph` reduction chain over
-`R_vpa` are the same predicate — exactly as `DfaAsCert.chained_iff_chain` shows for the regular rung. -/
+/-- **`vchained_iff_chain`** — the DEFINITIONAL heart: `vchained` IS `Hypergraph.chain R_vpa`. Since
+`vchained` is DEFINED as `Hypergraph.chain R_vpa`, the identification is `Iff.rfl` — a VPA chain and a
+`Hypergraph` reduction chain over `R_vpa` are the same predicate, by definition. Exactly the form
+`DfaAsCert.chained_iff_chain` takes for the regular rung. -/
 theorem vchained_iff_chain :
-    ∀ run : List (VStep State Gamma), vchained run ↔ Hypergraph.chain R_vpa run
-  | [] => Iff.rfl
-  | [_] => Iff.rfl
-  | a :: b :: rest => by
-    simp only [vchained, Hypergraph.chain]
-    exact and_congr Iff.rfl (vchained_iff_chain (b :: rest))
+    ∀ run : List (VStep State Gamma), vchained run ↔ Hypergraph.chain R_vpa run :=
+  fun _ => Iff.rfl
 
 /-- **`vpaAccepts_as_cert`** — THE RUNG. `VpaAccepts M q₀ accept run` holds IFF there exist endpoint steps
 `first`/`last` such that the run is a genuine `Hypergraph.Cert R_vpa first last run` TOGETHER WITH the VPA
