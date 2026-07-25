@@ -77,14 +77,18 @@ compute (`fixCands`, the `coverOfSymbolic` arm), fired by `#guard` (compiled eva
 Where a verdict is worth a `Prop`, it is CROSSED — and the crossing was measured, not feared. The
 three decision-carried rows above run `predRE_equivalence_decidable_fix` (EquivalenceFixpoint) at
 fuel 256 through `of_decide_eq_{true,false}`, i.e. a real KERNEL reduction of the `≅`-fixpoint on
-the symmetric difference. Cost of all three together, `/usr/bin/time -l` on this file's own
-elaboration: **≈ 8 s wall and ≈ 0.17 GB above the bare-import baseline** (whole-file `lake env
-lean`: 19.5 s / 1.81 GB before, 27.6 s / 1.98 GB after — and most of BOTH numbers is loading
-mathlib oleans). That is nowhere near the 64GB/20min hazard an earlier revision of this header
-ASSERTED it would be; the assertion was wrong by two to three orders of magnitude and is retracted.
-The reason it is cheap is structural: the adaptive worklist saturates in **13** `≅`-classes over 13
-candidate frames (least saturating fuel 171 for the positive spelling, 155 and 101 for the two
-weakenings), so the kernel never touches the `emptinessBound` powerset.
+the symmetric difference. Cost of all three together, `/usr/bin/time -l` over `lake env lean` on
+this file (3 runs, warm): **+2.1 s CPU and +0.16 GB peak RSS** — whole file 3.5 s → 5.6 s user,
+1.81 GB → 1.97 GB peak, against a bare-import baseline of 1.5 s / 1.78 GB (i.e. nearly all of the
+absolute memory is loading mathlib oleans, not the fixpoint). Wall clock is I/O-noise-dominated at
+this size (5–9 s either way), so CPU is the honest figure. That is nowhere near the 64GB/20min
+hazard an earlier revision of this header ASSERTED it would be — wrong by ~2.5 orders of magnitude
+in time and ~2.5 in memory — and the assertion is retracted. The reason it is cheap is structural:
+the adaptive worklist saturates in a HANDFUL of `≅`-classes — 13 classes over 13 candidate frames
+for the positive spelling (least saturating fuel 171), 17 over 9 frames for refactor #2 (fuel 155),
+11 over 9 for refactor #1 (fuel 101) — so the kernel never touches the `emptinessBound` powerset.
+Fuel above the saturation point is FREE (the worklist returns as soon as `pending` empties), which
+is why 256 is safe to carry.
 
 Still NO `native_decide` anywhere. The two hand proofs (`assoc_langEq`, `redundant_langEq`) remain
 independent CONFIRMATIONS of the machine's verdict on their pairs, and `exactly_not_langEq` is
@@ -352,8 +356,8 @@ different machine — and dropping the trailing `any*` likewise had only a `#gua
 here by RUNNING `predRE_equivalence_decidable_fix` (EquivalenceFixpoint §2) in the kernel: it is
 `emptyFix` on the symmetric difference (the very `#guard`s above) composed with the proven
 `emptyFix_some_iff` and `langEq_iff_symDiff_empty`, so `of_decide_eq_{true,false}` yields the
-`∀ w`-statement itself. MEASURED cost, all three: ≈ 8 s / ≈ 0.17 GB over bare import — see the
-header's resource note, which used to assert the opposite. -/
+`∀ w`-statement itself. MEASURED cost, all three: +2.1–2.4 s CPU / +0.16–0.19 GB (an independent verify's 3 warm runs averaged 5.81 s / 1.99 GB whole-file vs the 5.62 s / 1.97 GB recorded here — same order, ~12% above; treat these as a range, not a point) peak RSS — see the header's
+resource note, which used to assert the opposite without measuring. -/
 
 /-- The positive (complement-free) spelling, bundled into the runnable-equivalence fragment. -/
 def nodbPosR : RigidSymbolicRE :=
@@ -521,10 +525,13 @@ end Templates
 * **(machine-verdict → `Prop`: CROSSED, and the old cost claim RETRACTED)** An earlier revision of
   this section said the kernel reduction needed for the crossing "is exactly the 64GB/20min hazard"
   and refused to run it, leaving `nodbPos ≡ noDoubleBraceRE` at `#guard` resolution. That was an
-  ASSERTED cost, never measured, and it was wrong. Measured (`/usr/bin/time -l`, this file):
-  crossing ALL THREE remaining verdicts costs **≈ 8 s wall / ≈ 0.17 GB** over the bare-import
-  baseline — 19.5 s → 27.6 s and 1.81 GB → 1.98 GB for the whole file, most of which is mathlib
-  olean loading either way. Two to three orders of magnitude below the claimed hazard. So §3 now
+  ASSERTED cost, never measured, and it was wrong. Measured (`/usr/bin/time -l`, this file, 3 warm
+  runs): crossing ALL THREE remaining verdicts costs **+2.1–2.4 s CPU / +0.16–0.19 GB (an independent verify's 3 warm runs averaged 5.81 s / 1.99 GB whole-file vs the 5.62 s / 1.97 GB recorded here — same order, ~12% above; treat these as a range, not a point) peak RSS** — whole
+  file 3.5 s → 5.6 s user and 1.81 GB → 1.97 GB, against a 1.5 s / 1.78 GB bare-import baseline, so
+  the memory is mathlib oleans either way. ~2.5 orders of magnitude below the claimed hazard on
+  both axes (20 min → 2.1 s; 64 GB → 0.16 GB incremental) — and a deliberately FALSE variant of the
+  same reduction (claiming `nodbNoTail` equivalent) is REJECTED by `rfl`, so the crossing is doing
+  real discriminating work, not reducing to a tautology. So §3 now
   crosses them: `pos_langEq`, `noTail_not_langEq`, `exactly_not_langEq_fix` are `Prop`s produced by
   `predRE_equivalence_decidable_fix 256 nodbR _` (i.e. `emptyFix_some_iff` ∘
   `langEq_iff_symDiff_empty`, kernel-reduced), and `pos_edit_preserves` cashes the positive rewrite
