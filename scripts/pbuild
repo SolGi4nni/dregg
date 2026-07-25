@@ -256,6 +256,7 @@ if [ -z "$REMOTE_WRAPPER" ]; then
   ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
     [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
     export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
+    ${REMOTE_ENV}\
     cd '${REMOTE}' && $*"
 else
   # One argument retains the established compound-command interface. Multiple
